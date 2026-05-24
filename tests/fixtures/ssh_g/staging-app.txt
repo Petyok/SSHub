@@ -1,0 +1,4 @@
+host staging-app
+hostname 10.0.2.10
+user deploy
+port 22

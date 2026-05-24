@@ -1,0 +1,335 @@
+//! Embedded PTY-backed SSH session.
+//!
+//! Replaces the external kitty/ghostty launcher. When a host is connected,
+//! sshub spawns ssh on a pseudo-TTY, parses output through a VT100 emulator,
+//! and renders the terminal grid fullscreen inside the existing ratatui app.
+
+pub mod connect;
+pub mod keys;
+pub mod parser;
+pub mod pty;
+pub mod render;
+
+use std::time::Instant;
+
+use anyhow::Result;
+
+pub use parser::ParserState;
+pub use pty::{PtyEvent, PtyRuntime};
+
+/// Lifecycle of an embedded SSH session.
+#[derive(Debug)]
+pub enum SessionPhase {
+    /// Child spawned, no bytes received yet.
+    Connecting { started_at: Instant },
+    /// First bytes received; live PTY.
+    Running { started_at: Instant },
+    /// Child exited. Screen frozen; any key returns to dashboard.
+    Exited { status: String, at: Instant },
+}
+
+impl SessionPhase {
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, SessionPhase::Exited { .. })
+    }
+}
+
+/// Configuration for spawning the embedded session.
+#[derive(Clone)]
+pub struct SessionConfig {
+    /// Full argv. argv\[0\] is the program (typically `ssh`).
+    pub argv: Vec<String>,
+    /// Display name shown in the header (host alias or label).
+    pub display_name: String,
+    /// Resolved host metadata used by the header + connect animation.
+    pub meta: SessionMeta,
+    /// One-shot secret typed into the PTY when ssh prompts. Cleared after
+    /// the first send. `None` when no credential is stored or the host
+    /// uses an unlocked key / agent.
+    pub pending_secret: Option<PendingSecret>,
+}
+
+/// Auto-respond once to either a password or passphrase prompt.
+#[derive(Debug, Clone)]
+pub enum PendingSecret {
+    /// Sent on `password:`-style prompts only.
+    Password(String),
+    /// Sent on `Enter passphrase for …` prompts only.
+    Passphrase(String),
+}
+
+impl PendingSecret {
+    pub fn value(&self) -> &str {
+        match self {
+            PendingSecret::Password(s) | PendingSecret::Passphrase(s) => s.as_str(),
+        }
+    }
+}
+
+/// Host metadata captured at connect time. Used by the header bar and the
+/// scripted ConnectScreen.
+#[derive(Debug, Clone, Default)]
+pub struct SessionMeta {
+    /// Remote username, if known.
+    pub user: Option<String>,
+    /// Hostname or IP we're trying to reach (post-resolve).
+    pub address: Option<String>,
+    /// Port (defaults to 22 if unknown).
+    pub port: Option<u16>,
+    /// Path to the private key, if one is bound to this host.
+    pub identity: Option<String>,
+    /// Jump host fqdn, if proxy_jump is configured.
+    pub proxy_jump: Option<String>,
+    /// Launcher DB row id, if this is a managed host. Lets the header look
+    /// up active tunnels.
+    pub host_id: Option<i64>,
+}
+
+/// One active embedded session.
+pub struct Session {
+    pub display_name: String,
+    pub meta: SessionMeta,
+    pub phase: SessionPhase,
+    pub runtime: PtyRuntime,
+    pub parser: ParserState,
+    /// First argv element the user actually saw — the `$ ssh …` line of
+    /// the ConnectScreen renders from this.
+    pub display_argv: Vec<String>,
+    /// Original SessionConfig kept so Ctrl+T can duplicate this tab into a
+    /// fresh PTY without re-walking the host lookup.
+    pub config: SessionConfig,
+    /// Stored secret to auto-type at the next matching prompt. Cleared after
+    /// it fires once, so retries on wrong passwords don't loop forever.
+    pending_secret: Option<PendingSecret>,
+    /// Tracks whether we've already typed a secret this session. Used to
+    /// avoid spamming the remote with the same wrong password on retry.
+    secret_sent: bool,
+    /// Diagnostic strings produced during the session lifetime (e.g. "auth:
+    /// matched password prompt, typed N chars"). Drained by the main loop
+    /// into `app.ssh_log` so the user can see exactly what we did.
+    diagnostics: Vec<String>,
+}
+
+impl Session {
+    /// Spawn the child on a freshly allocated PTY and start the reader thread.
+    pub fn spawn(config: SessionConfig, rows: u16, cols: u16) -> Result<Self> {
+        // Reserve 1 row for header + 1 row for footer; ensure non-zero PTY.
+        let pty_rows = rows.saturating_sub(2).max(1);
+        let pty_cols = cols.max(1);
+
+        let runtime = PtyRuntime::spawn(&config.argv, pty_rows, pty_cols)?;
+        let parser = ParserState::new(pty_rows, pty_cols);
+
+        let display_argv = config.argv.clone();
+
+        Ok(Self {
+            display_name: config.display_name.clone(),
+            meta: config.meta.clone(),
+            phase: SessionPhase::Connecting {
+                started_at: Instant::now(),
+            },
+            runtime,
+            parser,
+            display_argv,
+            pending_secret: config.pending_secret.clone(),
+            secret_sent: false,
+            diagnostics: Vec::new(),
+            config,
+        })
+    }
+
+    /// Drain accumulated diagnostic strings (e.g. for the SSH log panel).
+    pub fn take_diagnostics(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.diagnostics)
+    }
+
+    /// Drain PTY events from the reader thread into the parser. Non-blocking;
+    /// safe to call every frame. After each batch of bytes lands we scan the
+    /// screen for an unanswered password / passphrase prompt and auto-type
+    /// the stored secret exactly once.
+    pub fn drain(&mut self) {
+        let mut had_bytes = false;
+        while let Some(event) = self.runtime.try_recv() {
+            match event {
+                PtyEvent::Bytes(bytes) => {
+                    if matches!(self.phase, SessionPhase::Connecting { .. }) {
+                        self.phase = SessionPhase::Running {
+                            started_at: Instant::now(),
+                        };
+                    }
+                    self.parser.process(&bytes);
+                    had_bytes = true;
+                }
+                PtyEvent::Exited(status) => {
+                    self.phase = SessionPhase::Exited {
+                        status,
+                        at: Instant::now(),
+                    };
+                }
+            }
+        }
+        if had_bytes {
+            self.maybe_send_pending_secret();
+        }
+    }
+
+    /// If the live screen ends with a prompt that matches our stored secret
+    /// kind, type it now. Fires at most once per session so a wrong password
+    /// doesn't loop the connect.
+    fn maybe_send_pending_secret(&mut self) {
+        if self.secret_sent || self.pending_secret.is_none() {
+            return;
+        }
+        let secret = self.pending_secret.as_ref().unwrap().clone();
+        let snippet = current_screen_tail(self.parser.screen());
+        let lower = snippet.to_ascii_lowercase();
+
+        let (matched, kind) = match secret {
+            PendingSecret::Password(_) => (contains_prompt(&lower, PASSWORD_NEEDLES), "password"),
+            PendingSecret::Passphrase(_) => {
+                (contains_prompt(&lower, PASSPHRASE_NEEDLES), "passphrase")
+            }
+        };
+
+        if !matched {
+            return;
+        }
+
+        let mut bytes = secret.value().as_bytes().to_vec();
+        bytes.push(b'\r');
+        let written = bytes.len();
+        match self.runtime.write(&bytes) {
+            Ok(()) => {
+                self.diagnostics.push(format!(
+                    "auth: matched {kind} prompt, typed {} bytes + CR",
+                    written - 1
+                ));
+            }
+            Err(e) => {
+                self.diagnostics.push(format!(
+                    "auth: matched {kind} prompt but write failed: {e:#}"
+                ));
+            }
+        }
+        self.secret_sent = true;
+        self.pending_secret = None;
+    }
+
+    /// Has this session been armed with a stored secret? Used by callers
+    /// (the main loop) to decide whether to surface an "armed but never
+    /// matched" diagnostic when the session ends.
+    pub fn was_armed(&self) -> bool {
+        self.config.pending_secret.is_some()
+    }
+
+    /// Whether the auto-typer has fired.
+    pub fn secret_was_sent(&self) -> bool {
+        self.secret_sent
+    }
+
+    /// Snapshot of the bottom rows of the visible screen — used to surface
+    /// diagnostics like "armed but no prompt seen, screen shows X".
+    pub fn screen_tail_snippet(&self) -> String {
+        current_screen_tail(self.parser.screen())
+    }
+
+    /// Update both the PTY size and the parser grid. Body rows = total - header - footer.
+    pub fn resize(&mut self, rows: u16, cols: u16) {
+        let pty_rows = rows.saturating_sub(2).max(1);
+        let pty_cols = cols.max(1);
+        self.parser.set_size(pty_rows, pty_cols);
+        let _ = self.runtime.resize(pty_rows, pty_cols);
+    }
+
+    /// Write raw bytes (already-encoded keystroke) to the PTY.
+    pub fn write(&mut self, bytes: &[u8]) -> Result<()> {
+        self.runtime.write(bytes)
+    }
+}
+
+/// Things ssh / sshd actually say when asking for a password. Keep the
+/// list small and substring-checked to tolerate locale variations and
+/// banner prefixes. Lower-case only.
+const PASSWORD_NEEDLES: &[&str] = &[
+    "password:",
+    "password: ",
+    "'s password:",
+    "(current) unix password:",
+    "current password:",
+];
+
+/// Stems we look for in passphrase prompts.
+const PASSPHRASE_NEEDLES: &[&str] = &["passphrase for", "enter passphrase"];
+
+/// Substring match across the screen tail. Tolerant to position so prompts
+/// like "deploy@host's password:" or a prompt followed by a trailing space
+/// still match.
+fn contains_prompt(haystack: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|n| haystack.contains(n))
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        // PtyRuntime::Drop kills the child and joins the reader thread.
+    }
+}
+
+/// Return the last few visible non-empty rows of the screen as a single
+/// string (newest line last). Used by the prompt scanner — looking at the
+/// tail rather than the full screen keeps the match cheap and tolerant of
+/// pre-existing text earlier in the buffer.
+fn current_screen_tail(screen: &vt100::Screen) -> String {
+    let (rows, cols) = screen.size();
+    let mut out = String::new();
+    // Last 3 visible rows.
+    let start = rows.saturating_sub(3);
+    for row in start..rows {
+        for col in 0..cols {
+            if let Some(cell) = screen.cell(row, col) {
+                if cell.has_contents() {
+                    out.push_str(&cell.contents());
+                }
+            }
+        }
+        out.push('\n');
+    }
+    out
+}
+
+#[cfg(test)]
+mod prompt_tests {
+    use super::*;
+
+    #[test]
+    fn detects_password_prompt() {
+        // The real scanner lowercases the whole tail first.
+        let cases = [
+            "deploy@host's password: ",
+            "Password:",
+            "deploy@10.0.0.1's password:",
+            "(current) UNIX password:",
+        ];
+        for c in cases {
+            assert!(
+                contains_prompt(&c.to_ascii_lowercase(), PASSWORD_NEEDLES),
+                "should match password prompt in {c:?}"
+            );
+        }
+        assert!(!contains_prompt("hello world", PASSWORD_NEEDLES));
+    }
+
+    #[test]
+    fn detects_passphrase_prompt() {
+        let cases = [
+            "Enter passphrase for key '/home/me/.ssh/id_rsa':",
+            "Enter passphrase for /home/me/.ssh/id_rsa:",
+            "enter passphrase:",
+        ];
+        for c in cases {
+            assert!(
+                contains_prompt(&c.to_ascii_lowercase(), PASSPHRASE_NEEDLES),
+                "should match passphrase prompt in {c:?}"
+            );
+        }
+    }
+}

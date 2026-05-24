@@ -1,0 +1,4 @@
+host dev-local
+hostname localhost
+user dev
+port 22

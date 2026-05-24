@@ -1,0 +1,13 @@
+/target/
+**/*.rs.bk
+*.pdb
+.DS_Store
+
+# AI tooling / local workspace
+.claude/
+.agents/
+.codex/
+.cursor/
+
+# Design artifacts (not part of the release)
+/design_handoff_sshub/

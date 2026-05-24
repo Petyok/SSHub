@@ -1,0 +1,5 @@
+terminal = "kitty"
+
+[appearance]
+show_detail_panel = true
+date_format = "%Y-%m-%d %H:%M"

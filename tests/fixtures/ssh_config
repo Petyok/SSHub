@@ -1,0 +1,12 @@
+# Sample SSH config for tests
+Host dev-local
+    HostName localhost
+    User dev
+
+Host staging-app
+    HostName 10.0.2.10
+    User deploy
+
+Host prod-db-01
+    HostName 10.0.1.5
+    User ubuntu
