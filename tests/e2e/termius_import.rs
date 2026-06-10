@@ -166,14 +166,13 @@ impl sshub::credentials::PasswordStore for MapPasswordStore {
 
 #[test]
 fn imported_host_password_is_resolved_at_connect_time() {
-    // Mirrors a real Termius row: empty label, a password, no key.
+    // Mirrors a real Termius export byte-for-byte: UTF-8 BOM, CRLF line
+    // endings, every field double-quoted.
     let export = tempfile::tempdir().unwrap();
-    std::fs::write(
-        export.path().join("L00t.csv"),
-        "Label,Host,Port,Username,Password,SSH_Key,OS\n\
-         ,10.100.19.83,22,su-adm,StrongPassw0rd,,\n",
-    )
-    .unwrap();
+    let real =
+        "\u{feff}\"Label\",\"Host\",\"Port\",\"Username\",\"Password\",\"SSH_Key\",\"OS\"\r\n\
+                \"dev-alumni\",\"10.100.19.83\",\"22\",\"su-adm\",\"StrongPassw0rd\",\"\",\"\"\r\n";
+    std::fs::write(export.path().join("L00t.csv"), real).unwrap();
 
     let store = Arc::new(LauncherStore::open_in_memory().unwrap());
     let pw = MapPasswordStore::default();
@@ -183,8 +182,10 @@ fn imported_host_password_is_resolved_at_connect_time() {
     assert_eq!(report.passwords_stored, 1, "password must be stored");
     assert_eq!(report.keyring_failures, 0);
 
-    // The host took its name from Host (label was empty) and has_password set.
-    let host = store.get_host_by_name("10.100.19.83").unwrap().unwrap();
+    // The host took its name from the Label and has_password set.
+    let host = store.get_host_by_name("dev-alumni").unwrap().unwrap();
+    assert_eq!(host.address, "10.100.19.83");
+    assert_eq!(host.username.as_deref(), Some("su-adm"));
     assert!(
         host.has_password,
         "row must be flagged as having a password"
@@ -196,7 +197,7 @@ fn imported_host_password_is_resolved_at_connect_time() {
     let entry = app
         .hosts
         .iter()
-        .find(|h| h.name() == "10.100.19.83")
+        .find(|h| h.name() == "dev-alumni")
         .cloned()
         .expect("imported host present after reload");
     let (secret, diag) = sshub::app::resolve_pending_secret(&entry, &pw);
