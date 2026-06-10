@@ -274,16 +274,26 @@ impl Drop for Session {
     }
 }
 
-/// Return the last few visible non-empty rows of the screen as a single
-/// string (newest line last). Used by the prompt scanner — looking at the
-/// tail rather than the full screen keeps the match cheap and tolerant of
-/// pre-existing text earlier in the buffer.
+/// Return a few rows of the screen ending at the cursor row, as a single
+/// string. Used by the prompt scanner.
+///
+/// The window is anchored on the *cursor row*, not the physical bottom of the
+/// grid: a freshly-cleared ssh session prints its banner and `password:`
+/// prompt at the TOP of a tall PTY, leaving the bottom rows blank. Reading the
+/// physical bottom would see "(blank)" and miss the prompt entirely (which is
+/// exactly the bug where stored passwords were never auto-typed). The cursor
+/// sits on the prompt line, so anchoring there works whether the prompt is at
+/// the top of a fresh screen or at the bottom of a scrolled shell.
 fn current_screen_tail(screen: &vt100::Screen) -> String {
     let (rows, cols) = screen.size();
+    if rows == 0 {
+        return String::new();
+    }
+    let (cursor_row, _) = screen.cursor_position();
+    let last = cursor_row.min(rows - 1);
+    let start = last.saturating_sub(3);
     let mut out = String::new();
-    // Last 3 visible rows.
-    let start = rows.saturating_sub(3);
-    for row in start..rows {
+    for row in start..=last {
         for col in 0..cols {
             if let Some(cell) = screen.cell(row, col) {
                 if cell.has_contents() {
@@ -316,6 +326,25 @@ mod prompt_tests {
             );
         }
         assert!(!contains_prompt("hello world", PASSWORD_NEEDLES));
+    }
+
+    #[test]
+    fn screen_tail_finds_prompt_at_top_of_tall_screen() {
+        // Regression: a fresh ssh session prints its banner + password prompt
+        // at the top of a tall PTY, leaving the bottom blank. The scanner must
+        // still see the prompt (it used to read the physical bottom 3 rows and
+        // find "(blank)", so the stored password was never auto-typed).
+        let mut parser = vt100::Parser::new(40, 100, 0);
+        parser.process(
+            b"** WARNING: connection is not using a post-quantum key exchange algorithm.\r\n\
+              ** This session may be vulnerable to \"store now, decrypt later\" attacks.\r\n\
+              su-adm@10.100.19.105's password: ",
+        );
+        let tail = current_screen_tail(parser.screen());
+        assert!(
+            contains_prompt(&tail.to_ascii_lowercase(), PASSWORD_NEEDLES),
+            "scanner must find the top-of-screen prompt, got tail: {tail:?}"
+        );
     }
 
     #[test]
