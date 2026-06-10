@@ -9,6 +9,8 @@ Set TypingSpeed 60ms
 Hide
 Type "export SSHUB_CONFIG_DIR=demo/home/.config/sshub SSHUB_DATA_DIR=demo/home/.local/share/sshub SSHUB_SSH_CONFIG=demo/home/ssh_config PATH=$PWD/target/release:$PATH"
 Enter
+Type "rm -f demo/home/.local/share/sshub/launcher.db*"
+Enter
 Type "clear && sshub"
 Enter
 Sleep 1s

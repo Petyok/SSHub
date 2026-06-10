@@ -11,6 +11,8 @@ Type "export SSHUB_CONFIG_DIR=demo/home/.config/sshub SSHUB_DATA_DIR=demo/home/.
 Enter
 Type "export PATH=$PWD/demo/bin:$PWD/target/release:$PATH"
 Enter
+Type "rm -f demo/home/.local/share/sshub/launcher.db*"
+Enter
 Type "clear && sshub"
 Enter
 Sleep 2s
