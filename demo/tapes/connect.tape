@@ -15,7 +15,7 @@ Type "rm -f demo/home/.local/share/sshub/launcher.db*"
 Enter
 Type "clear && sshub"
 Enter
-Sleep 2s
+Sleep 1s
 Space
 Sleep 1s
 Show
@@ -34,7 +34,7 @@ Sleep 1s
 Sleep 3s
 
 # Run something silly on the "remote"
-Type `cowsay "ssh-tui: 100% vibe-coded slop, made by Claude Opus 4.8"`
+Type `cowsay "SSHub: 100% vibe-coded slop, made with Claude Opus 4.8"`
 Sleep 800ms
 Enter
 Sleep 3s

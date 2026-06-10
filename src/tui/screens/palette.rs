@@ -218,16 +218,22 @@ pub fn render_palette(
             })
             .unwrap_or_else(|| entry.name().to_string());
 
+        // Prefer the host's own username, then fall back to its identity's.
         let user_full = entry
             .managed()
-            .and_then(|m| m.identity.as_ref())
-            .and_then(|id| id.username.as_deref())
+            .and_then(|m| {
+                m.username
+                    .as_deref()
+                    .or_else(|| m.identity.as_ref().and_then(|id| id.username.as_deref()))
+            })
             .unwrap_or("");
 
-        let user_addr = if !user_full.is_empty() {
-            format!("{}@{}", user_full, host_addr)
+        // Show the connection target as `user@host` only when a user is known;
+        // otherwise leave the "user" field empty rather than echoing the address.
+        let user_addr = if user_full.is_empty() {
+            String::new()
         } else {
-            host_addr.clone()
+            format!("{}@{}", user_full, host_addr)
         };
 
         let identity_path = entry

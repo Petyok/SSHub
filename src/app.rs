@@ -971,8 +971,10 @@ impl App {
             }
             let host = match self.resolver.resolve_host(&name) {
                 Ok(host) => host,
-                Err(err) => {
-                    eprintln!("warning: skip host {name}: {err:#}");
+                Err(_) => {
+                    // Can't resolve this alias via `ssh -G`; skip it. We run
+                    // under raw mode, so never write to stderr here (it would
+                    // corrupt the TUI). The host simply won't be listed.
                     continue;
                 }
             };
@@ -3225,9 +3227,13 @@ impl App {
 
         if let Some(id) = form.id {
             if password_changed {
-                let _ = self
+                if let Err(e) = self
                     .password_store
-                    .set(&crate::credentials::identity_key(id), &form.password);
+                    .set(&crate::credentials::identity_key(id), &form.password)
+                {
+                    self.identity_notice =
+                        Some(format!("Saved, but storing the passphrase failed: {e}"));
+                }
             }
             self.store.update_identity(
                 id,
@@ -3251,10 +3257,13 @@ impl App {
                 has_password: new_has_password,
             })?;
             if password_changed {
-                let _ = self.password_store.set(
+                if let Err(e) = self.password_store.set(
                     &crate::credentials::identity_key(created.id),
                     &form.password,
-                );
+                ) {
+                    self.identity_notice =
+                        Some(format!("Saved, but storing the passphrase failed: {e}"));
+                }
             }
         }
 
@@ -3481,9 +3490,12 @@ impl App {
             };
             let saved_name = form.name.clone();
             if host_pw_changed {
-                let _ = self
+                if let Err(e) = self
                     .password_store
-                    .set(&crate::credentials::host_key(id), &form.password);
+                    .set(&crate::credentials::host_key(id), &form.password)
+                {
+                    self.host_notice = Some(format!("Saved, but storing the password failed: {e}"));
+                }
             }
             self.store.update_host(
                 id,
@@ -3542,9 +3554,12 @@ impl App {
         let saved_name = name.to_string();
         if let Some(id) = form.id {
             if host_pw_changed {
-                let _ = self
+                if let Err(e) = self
                     .password_store
-                    .set(&crate::credentials::host_key(id), &form.password);
+                    .set(&crate::credentials::host_key(id), &form.password)
+                {
+                    self.host_notice = Some(format!("Saved, but storing the password failed: {e}"));
+                }
             }
             self.store.update_host(
                 id,
@@ -3584,9 +3599,12 @@ impl App {
                 username,
             })?;
             if host_pw_changed {
-                let _ = self
+                if let Err(e) = self
                     .password_store
-                    .set(&crate::credentials::host_key(created.id), &form.password);
+                    .set(&crate::credentials::host_key(created.id), &form.password)
+                {
+                    self.host_notice = Some(format!("Saved, but storing the password failed: {e}"));
+                }
             }
         }
 

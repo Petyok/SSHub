@@ -80,6 +80,7 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
+        crate::secure_fs::restrict_dir(parent);
     }
 
     if !path.exists() {

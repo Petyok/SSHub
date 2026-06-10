@@ -671,6 +671,21 @@ mod tests {
     use super::*;
     use crate::store::{HostSource, LauncherStore, NewHost, NewHostGroup};
 
+    #[cfg(unix)]
+    #[test]
+    fn open_restricts_db_and_dir_to_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("data");
+        let db = dir.join("launcher.db");
+        let _store = LauncherStore::open(&db).unwrap();
+
+        let dir_mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        let db_mode = std::fs::metadata(&db).unwrap().permissions().mode() & 0o777;
+        assert_eq!(dir_mode, 0o700, "data dir must be owner-only");
+        assert_eq!(db_mode, 0o600, "launcher.db must be owner-only");
+    }
+
     #[test]
     fn group_crud_roundtrip() {
         let store = LauncherStore::open_in_memory().unwrap();

@@ -27,11 +27,9 @@ pub fn sync_ssh_config_hosts(resolver: &dyn HostResolver, store: &LauncherStore)
     for existing in rows {
         let resolved = match resolver.resolve_host(&existing.name) {
             Ok(host) => host,
-            Err(err) => {
-                eprintln!(
-                    "warning: skip ssh_config sync for {}: {err:#}",
-                    existing.name
-                );
+            Err(_) => {
+                // Host no longer resolvable; leave the existing row untouched.
+                // Runs during a TUI reload — no stderr (would corrupt the UI).
                 continue;
             }
         };
@@ -62,8 +60,9 @@ pub fn import_ssh_config(
     for name in names {
         let resolved = match resolver.resolve_host(&name) {
             Ok(host) => host,
-            Err(err) => {
-                eprintln!("warning: skip import for {name}: {err:#}");
+            Err(_) => {
+                // Counted in report.failed (surfaced to the user by the import
+                // handler). No stderr — import runs under raw mode.
                 report.failed += 1;
                 continue;
             }

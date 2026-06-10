@@ -6,6 +6,7 @@ pub mod launcher;
 pub mod metadata;
 pub mod ping;
 pub mod search;
+pub mod secure_fs;
 pub mod session;
 pub mod ssh;
 pub mod store;

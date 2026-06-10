@@ -30,10 +30,14 @@ impl LauncherStore {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("create launcher db directory {}", parent.display()))?;
+            // The DB holds host addresses and the auth log; keep the directory
+            // (and any SQLite -wal/-shm sidecars) owner-only.
+            crate::secure_fs::restrict_dir(parent);
         }
 
         let conn = Connection::open(path)
             .with_context(|| format!("open launcher db at {}", path.display()))?;
+        crate::secure_fs::restrict_file(path);
         migrate::run_migrations(&conn, path)?;
 
         let store = Self {
