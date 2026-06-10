@@ -74,7 +74,7 @@ pub fn render_help() -> Paragraph<'static> {
         Line::from(""),
         section("tools"),
         entry("? / Shift+H", "Toggle this help screen"),
-        entry("F2 / Ctrl+S", "Save form"),
+        entry("F2 / Ctrl+S", "Save form (or Enter on the last field)"),
         entry("q", "Quit"),
         Line::from(""),
         Line::from(Span::styled("? / Esc / Enter to close", theme::dim())),

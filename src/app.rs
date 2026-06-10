@@ -3739,6 +3739,17 @@ impl App {
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.save_host_form()?;
             }
+            // Enter opens the field editor, except on the last field (OS icon,
+            // a picker edited with ←/→) where it saves the whole form — a
+            // modifier-free save path for keyboards where Ctrl is remapped.
+            KeyCode::Enter
+                if self
+                    .host_form
+                    .as_ref()
+                    .is_some_and(|f| f.field == HostFormField::OsIcon) =>
+            {
+                self.save_host_form()?;
+            }
             KeyCode::Enter => self.host_form_open_edit()?,
             KeyCode::Down | KeyCode::Char('j') if key.modifiers.is_empty() => {
                 self.host_form_field_next();
@@ -3795,6 +3806,10 @@ impl App {
                 let snapshot = form.edit_snapshot.clone();
                 *form.active_field_mut() = snapshot;
                 form.editing = false;
+                // Revert the field value, but treat the form as touched so a
+                // subsequent Esc in navigation offers Save/Discard rather than
+                // closing silently (avoids surprise data loss).
+                form.dirty = true;
             }
             KeyCode::Backspace => self.host_form_backspace(),
             KeyCode::Right if form.field.is_picker() => self.host_form_picker_scroll(1),

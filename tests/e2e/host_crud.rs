@@ -204,6 +204,60 @@ fn adding_host_with_duplicate_name_renames_instead_of_crashing() {
 }
 
 #[test]
+fn enter_on_last_field_saves_the_form() {
+    let file = NamedTempFile::new().unwrap();
+    let path = file.path();
+    let mut app = app_with_store(path);
+
+    app.handle_key(key_char('a')).unwrap();
+    assert_eq!(app.mode, AppMode::HostForm);
+    edit_field(&mut app, "10.0.0.7"); // Address
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Password
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Username
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Label
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Name
+    edit_field(&mut app, "edge-1");
+
+    // Walk Up to the last field (OS icon): Name → Label → Username → Password
+    // → Address → (wrap) OS icon. Enter there should save, not open an editor.
+    for _ in 0..5 {
+        app.handle_key(key(KeyCode::Up)).unwrap();
+    }
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+
+    assert_eq!(
+        app.mode,
+        AppMode::Normal,
+        "Enter on last field saves & closes"
+    );
+    let store = LauncherStore::open(path).unwrap();
+    assert!(store.get_host_by_name("edge-1").unwrap().is_some());
+}
+
+#[test]
+fn esc_inside_field_edit_marks_form_dirty_for_discard_prompt() {
+    let file = NamedTempFile::new().unwrap();
+    let path = file.path();
+    let mut app = app_with_store(path);
+
+    app.handle_key(key_char('a')).unwrap();
+    // Open the Address field, type, then Esc out of the edit (reverts value).
+    app.handle_key(key(KeyCode::Enter)).unwrap(); // open edit
+    type_text(&mut app, "10.9.9.9");
+    app.handle_key(key(KeyCode::Esc)).unwrap(); // cancel field edit → reverts
+    assert_eq!(app.mode, AppMode::HostForm, "still in the form");
+
+    // Esc in navigation must now prompt instead of silently closing.
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert_eq!(app.mode, AppMode::ConfirmDiscard);
+
+    // 'n' discards and closes.
+    app.handle_key(key_char('n')).unwrap();
+    assert_eq!(app.mode, AppMode::Normal);
+    assert!(app.hosts.is_empty());
+}
+
+#[test]
 fn delete_ssh_config_host_shows_notice() {
     use std::collections::HashMap;
 
