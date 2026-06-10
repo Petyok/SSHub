@@ -140,6 +140,73 @@ fn esc_cancels_import_prompt() {
     assert!(app.import_prompt.is_none());
 }
 
+/// In-memory password store that actually persists within the test (unlike
+/// `NoopPasswordStore`), so we can assert the full import → resolve path.
+#[derive(Default)]
+struct MapPasswordStore {
+    map: std::sync::Mutex<std::collections::HashMap<String, String>>,
+}
+
+impl sshub::credentials::PasswordStore for MapPasswordStore {
+    fn get(&self, key: &str) -> anyhow::Result<Option<String>> {
+        Ok(self.map.lock().unwrap().get(key).cloned())
+    }
+    fn set(&self, key: &str, password: &str) -> anyhow::Result<()> {
+        self.map
+            .lock()
+            .unwrap()
+            .insert(key.to_string(), password.to_string());
+        Ok(())
+    }
+    fn delete(&self, key: &str) -> anyhow::Result<()> {
+        self.map.lock().unwrap().remove(key);
+        Ok(())
+    }
+}
+
+#[test]
+fn imported_host_password_is_resolved_at_connect_time() {
+    // Mirrors a real Termius row: empty label, a password, no key.
+    let export = tempfile::tempdir().unwrap();
+    std::fs::write(
+        export.path().join("L00t.csv"),
+        "Label,Host,Port,Username,Password,SSH_Key,OS\n\
+         ,10.100.19.83,22,su-adm,StrongPassw0rd,,\n",
+    )
+    .unwrap();
+
+    let store = Arc::new(LauncherStore::open_in_memory().unwrap());
+    let pw = MapPasswordStore::default();
+
+    let report = sshub::import::termius_csv::import_csv_export(export.path(), &store, &pw).unwrap();
+    assert_eq!(report.hosts_imported, 1);
+    assert_eq!(report.passwords_stored, 1, "password must be stored");
+    assert_eq!(report.keyring_failures, 0);
+
+    // The host took its name from Host (label was empty) and has_password set.
+    let host = store.get_host_by_name("10.100.19.83").unwrap().unwrap();
+    assert!(
+        host.has_password,
+        "row must be flagged as having a password"
+    );
+
+    // The connect path must resolve the stored password (not fall back to a
+    // manual ssh prompt).
+    let mut app = new_app(Arc::clone(&store));
+    let entry = app
+        .hosts
+        .iter()
+        .find(|h| h.name() == "10.100.19.83")
+        .cloned()
+        .expect("imported host present after reload");
+    let (secret, diag) = sshub::app::resolve_pending_secret(&entry, &pw);
+    match secret {
+        Some(sshub::session::PendingSecret::Password(p)) => assert_eq!(p, "StrongPassw0rd"),
+        other => panic!("expected a resolved password, got {other:?} ({diag})"),
+    }
+    let _ = &mut app;
+}
+
 #[test]
 fn import_prompt_bad_path_keeps_prompt_open_with_notice() {
     let store = Arc::new(LauncherStore::open_in_memory().unwrap());
