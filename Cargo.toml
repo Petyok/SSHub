@@ -20,7 +20,17 @@ path = "src/lib.rs"
 [dependencies]
 anyhow = "1"
 crossterm = "0.28"
-keyring = "3"
+# Enable real OS backends. Without a backend feature, keyring 3.x silently
+# falls back to an in-memory mock store: set()/get() work within one process
+# (so a write+read-back check passes) but nothing persists across restarts —
+# which looks exactly like "passwords aren't being saved". The secret-service
+# features are Linux/BSD-only and compile to no-ops elsewhere.
+keyring = { version = "3", features = [
+    "apple-native",
+    "windows-native",
+    "sync-secret-service",
+    "crypto-rust",
+] }
 libc = "0.2"
 notify = "7"
 nucleo = "0.3"

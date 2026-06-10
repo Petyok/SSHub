@@ -20,6 +20,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Install libdbus (Linux keyring backend)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Build
         run: cargo build --all-targets
       - name: Run tests
@@ -34,6 +37,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Install libdbus (Linux keyring backend)
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: rustfmt
         run: cargo fmt --check
       - name: clippy

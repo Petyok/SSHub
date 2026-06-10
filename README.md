@@ -34,6 +34,22 @@ Static screenshot:
 
 Requires Rust toolchain (edition 2021) and `ssh` in `PATH`.
 
+On Linux, building also needs the D-Bus client library for the keyring
+(Secret Service) backend that stores host passwords and key passphrases:
+
+```bash
+# Debian/Ubuntu
+sudo apt-get install -y libdbus-1-dev pkg-config
+# Fedora
+sudo dnf install -y dbus-devel pkgconf-pkg-config
+# Arch
+sudo pacman -S --needed dbus
+```
+
+At runtime, a Secret Service provider (gnome-keyring, KWallet, …) must be
+running and unlocked for credentials to persist; otherwise SSHub warns and ssh
+falls back to prompting.
+
 ```bash
 git clone https://github.com/Petyok/SSHub.git
 cd SSHub
