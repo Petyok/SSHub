@@ -4,7 +4,20 @@ A terminal UI for managing and connecting to SSH hosts. Combines your `~/.ssh/co
 
 > ⚠️ This project is 100% vibe-coded slop made with dynamic workflows using Claude Opus 4.8. Use at your own risk.
 
+![SSHub demo](demo/gifs/overview.gif)
+
+<details>
+<summary>More demos</summary>
+
+Adding a managed host and marking it as a favorite:
+
+![Add host demo](demo/gifs/add-host.gif)
+
+Static screenshot:
+
 ![SSHub screenshot](shot.png)
+
+</details>
 
 ## Features
 

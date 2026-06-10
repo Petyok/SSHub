@@ -1,0 +1,30 @@
+Host web-prod-01
+    HostName 203.0.113.10
+    User deploy
+    Port 22
+
+Host web-prod-02
+    HostName 203.0.113.11
+    User deploy
+
+Host db-primary
+    HostName 10.0.1.5
+    User postgres
+    Port 5432
+
+Host db-replica
+    HostName 10.0.1.6
+    User postgres
+
+Host staging-app
+    HostName 198.51.100.20
+    User ubuntu
+
+Host ci-runner
+    HostName 192.0.2.99
+    User runner
+    ProxyJump bastion
+
+Host bastion
+    HostName 203.0.113.1
+    User jump
