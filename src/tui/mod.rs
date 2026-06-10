@@ -533,6 +533,55 @@ mod tests {
     }
 
     #[test]
+    fn palette_popup_interior_filled_with_theme_bg() {
+        // Regression: the palette overlay used to leave its interior at the
+        // terminal default background while the group/user columns were painted
+        // theme::BG, producing dark vertical bars. The whole interior must now
+        // be theme::BG (or SEL_BG on the selected row).
+        let mut app = test_app_with_many_hosts(92);
+        app.mode = AppMode::Palette;
+        app.palette_results = (0..92).collect();
+        app.palette_selected = 0;
+        let buf = render_to_buffer(&app, 120, 38);
+
+        // Find a popup interior row (one fully inside the centered box) and
+        // assert no cell is left at the reset/default background.
+        let mut checked_rows = 0;
+        for y in 0..buf.area.height {
+            let row_has_box = (0..buf.area.width)
+                .any(|x| matches!(buf.cell((x, y)).unwrap().bg, Color::Rgb(0x0b, 0x0d, 0x10)));
+            if !row_has_box {
+                continue;
+            }
+            checked_rows += 1;
+            for x in 0..buf.area.width {
+                let bg = buf.cell((x, y)).unwrap().bg;
+                if matches!(
+                    bg,
+                    Color::Rgb(0x0b, 0x0d, 0x10) | Color::Rgb(0x18, 0x2b, 0x22)
+                ) {
+                    continue; // theme::BG or SEL_BG — fine
+                }
+                // Outside the popup, default bg is expected; only flag default
+                // bg sandwiched between theme::BG cells (i.e. inside the box).
+                let left = (0..x).rev().find_map(|xx| {
+                    matches!(buf.cell((xx, y)).unwrap().bg, Color::Rgb(0x0b, 0x0d, 0x10))
+                        .then_some(())
+                });
+                let right = (x + 1..buf.area.width).find_map(|xx| {
+                    matches!(buf.cell((xx, y)).unwrap().bg, Color::Rgb(0x0b, 0x0d, 0x10))
+                        .then_some(())
+                });
+                assert!(
+                    !(left.is_some() && right.is_some()),
+                    "default-bg hole inside palette popup at ({x},{y})"
+                );
+            }
+        }
+        assert!(checked_rows > 10, "expected to inspect the popup body rows");
+    }
+
+    #[test]
     fn render_palette_mode_shows_query() {
         let mut app = test_app_with_hosts();
         app.mode = AppMode::Palette;
