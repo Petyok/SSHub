@@ -54,6 +54,15 @@ sshub --dry-run    # exit immediately (CI / scripts)
 sshub --help       # show options
 ```
 
+### Commands
+
+```bash
+# Wipe the launcher database — managed hosts, groups, identities, tunnels and
+# the audit log. Irreversible, so it refuses unless you confirm. Your
+# ~/.ssh/config (and the hosts imported from it) are left untouched.
+sshub db purge --yes-i-am-stupid
+```
+
 ### Data paths
 
 | Resource   | Default path                          |

@@ -34,7 +34,7 @@ use std::panic;
 use std::sync::Once;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
 };
@@ -46,6 +46,31 @@ use ratatui::backend::{CrosstermBackend, TestBackend};
 use ratatui::Terminal;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Delete the launcher database (and any SQLite sidecar files) under the
+/// resolved data directory. Returns the paths that were actually removed.
+///
+/// Only the SSHub-managed database is touched — `~/.ssh/config` and the hosts
+/// imported from it are left alone, and they reappear on the next launch.
+/// Passwords stored in the OS keyring are not removed (they become orphaned).
+pub fn purge_database() -> Result<Vec<std::path::PathBuf>> {
+    let base = config::data_dir()?.join("launcher.db");
+    let mut removed = Vec::new();
+    for suffix in ["", "-wal", "-shm", "-journal"] {
+        let path = if suffix.is_empty() {
+            base.clone()
+        } else {
+            let mut s = base.clone().into_os_string();
+            s.push(suffix);
+            std::path::PathBuf::from(s)
+        };
+        if path.exists() {
+            std::fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
+            removed.push(path);
+        }
+    }
+    Ok(removed)
+}
 
 /// Run the application (entry point for the binary).
 pub fn run() -> Result<()> {
