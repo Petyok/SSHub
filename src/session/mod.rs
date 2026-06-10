@@ -10,7 +10,7 @@ pub mod parser;
 pub mod pty;
 pub mod render;
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
@@ -152,11 +152,6 @@ impl Session {
         while let Some(event) = self.runtime.try_recv() {
             match event {
                 PtyEvent::Bytes(bytes) => {
-                    if matches!(self.phase, SessionPhase::Connecting { .. }) {
-                        self.phase = SessionPhase::Running {
-                            started_at: Instant::now(),
-                        };
-                    }
                     self.parser.process(&bytes);
                     had_bytes = true;
                 }
@@ -170,6 +165,26 @@ impl Session {
         }
         if had_bytes {
             self.maybe_send_pending_secret();
+            self.maybe_reveal();
+        }
+    }
+
+    /// Decide whether to switch from the scripted connect animation to the
+    /// live terminal. For a session armed with a stored credential we keep the
+    /// animation playing over the banner + `password:` prompt and only reveal
+    /// once the secret has been auto-typed — so the user never sees the raw
+    /// auth handshake flicker by. Sessions without a stored secret (key auth,
+    /// manual password) reveal as soon as the first bytes arrive. A timeout
+    /// fails open so a prompt we couldn't match (or interactive auth) is never
+    /// hidden forever.
+    fn maybe_reveal(&mut self) {
+        let SessionPhase::Connecting { started_at } = self.phase else {
+            return;
+        };
+        if should_reveal(self.was_armed(), self.secret_sent, started_at.elapsed()) {
+            self.phase = SessionPhase::Running {
+                started_at: Instant::now(),
+            };
         }
     }
 
@@ -245,6 +260,19 @@ impl Session {
     pub fn write(&mut self, bytes: &[u8]) -> Result<()> {
         self.runtime.write(bytes)
     }
+}
+
+/// How long an armed session keeps the connect animation up while waiting to
+/// auto-type a credential. If no matching prompt appears within this window
+/// (unrecognised prompt wording, interactive/2FA auth, key auth that still
+/// emits a banner), we reveal the live terminal so the user can take over.
+const REVEAL_TIMEOUT: Duration = Duration::from_secs(6);
+
+/// Whether to switch from the connect animation to the live terminal.
+/// Unarmed sessions reveal immediately; armed ones stay hidden until the
+/// secret is typed, or until the reveal timeout fails open.
+fn should_reveal(armed: bool, secret_sent: bool, elapsed: Duration) -> bool {
+    !armed || secret_sent || elapsed >= REVEAL_TIMEOUT
 }
 
 /// Things ssh / sshd actually say when asking for a password. Keep the
@@ -326,6 +354,24 @@ mod prompt_tests {
             );
         }
         assert!(!contains_prompt("hello world", PASSWORD_NEEDLES));
+    }
+
+    #[test]
+    fn reveal_policy_hides_auth_handshake_for_armed_sessions() {
+        let z = Duration::from_secs(0);
+        // Unarmed (key auth / manual): reveal as soon as bytes arrive.
+        assert!(should_reveal(false, false, z));
+        // Armed, password not yet typed: keep the animation up.
+        assert!(!should_reveal(true, false, z));
+        // Armed, password typed: reveal the post-auth shell.
+        assert!(should_reveal(true, true, z));
+        // Armed, prompt never matched: fail open after the timeout.
+        assert!(should_reveal(true, false, REVEAL_TIMEOUT));
+        assert!(!should_reveal(
+            true,
+            false,
+            REVEAL_TIMEOUT - Duration::from_millis(1)
+        ));
     }
 
     #[test]
