@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Demo stand-in for `ssh`, used ONLY when recording VHS GIFs.
+#
+# SSHub spawns `ssh <host>` on a PTY. The demo tapes prepend demo/bin to PATH,
+# so this script shadows the real ssh and renders a believable session without
+# needing a live server. Do NOT install this on your PATH outside recordings.
+
+host="${!#}"   # last positional arg == the ssh target
+[ -z "$host" ] && host="demo-vm"
+
+# Make the demo cowsay reachable from the inner interactive shell.
+here="$(cd "$(dirname "$0")" && pwd)"
+export PATH="$here:$PATH"
+
+sleep 0.5
+printf '\n'
+printf 'Welcome to %s — Ubuntu 24.04.1 LTS (GNU/Linux 6.8.0)\n\n' "$host"
+printf ' * Documentation:  https://help.ubuntu.com\n'
+printf ' * Support:        https://ubuntu.com/pro\n\n'
+printf 'Last login: Tue Jun 10 13:37:00 2026 from 10.0.0.42\n\n'
+
+export PS1="\[\e[32m\]deploy@${host}\[\e[0m\]:\[\e[34m\]~\[\e[0m\]\$ "
+exec bash --norc -i

@@ -15,14 +15,20 @@ Sleep 1s
 Show
 
 # Intro animation, then skip into the app
-Sleep 4s
+Sleep 13s
 Space
 Sleep 2s
 
 # Browse hosts
-Type "jjj"
+Type "j"
 Sleep 1s
-Type "kk"
+Type "j"
+Sleep 1s
+Type "j"
+Sleep 1s
+Type "k"
+Sleep 1s
+Type "k"
 Sleep 1s
 
 # Toggle detail panel
@@ -33,7 +39,7 @@ Sleep 1s
 
 # Fuzzy search
 Type "/"
-Sleep 500ms
+Sleep 1s
 Type "db"
 Sleep 2s
 Escape
@@ -41,19 +47,19 @@ Sleep 1s
 
 # Tour the tabs
 Type "2"
-Sleep 2s
+Sleep 3s
 Type "3"
-Sleep 2s
+Sleep 3s
 Type "4"
-Sleep 2s
+Sleep 3s
 Type "1"
-Sleep 1.5s
+Sleep 2s
 
 # Help screen
 Type "?"
 Sleep 3s
 Escape
-Sleep 1.5s
+Sleep 2s
 
 Hide
 Type "q"

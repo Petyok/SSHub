@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Tiny cowsay stand-in for the demo recording (real cowsay may not be installed).
+msg="$*"
+[ -z "$msg" ] && msg="Moo."
+n=$(( ${#msg} + 2 ))
+bar() { printf ' '; printf -- "$1%.0s" $(seq 1 "$n"); printf '\n'; }
+bar '_'
+printf '< %s >\n' "$msg"
+bar '-'
+cat <<'COW'
+        \   ^__^
+         \  (oo)\_______
+            (__)\       )\/\
+                ||----w |
+                ||     ||
+COW

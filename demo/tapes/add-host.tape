@@ -24,37 +24,43 @@ Sleep 1.5s
 
 # Address (first field)
 Enter
-Sleep 400ms
+Sleep 600ms
 Type "203.0.113.42"
-Sleep 400ms
+Sleep 600ms
 Enter
-Sleep 400ms
+Sleep 600ms
 
-# Down past Password to Username
-Down
+# Fill Password
 Down
 Enter
-Sleep 400ms
-Type "deploy"
-Sleep 400ms
+Sleep 600ms
+Type "BlahblahblahPASSWORD!!!"
+Sleep 600ms
 Enter
-Sleep 400ms
+
+# Fill Username
+Down
+Enter
+Sleep 600ms
+Type "pizza-lover-9000"
+Sleep 600ms
+Enter
 
 # Label
 Down
 Enter
-Sleep 400ms
+Sleep 600ms
 Type "Demo VM"
-Sleep 400ms
+Sleep 600ms
 Enter
-Sleep 400ms
+Sleep 600ms
 
 # Name (alias)
 Down
 Enter
-Sleep 400ms
-Type "demo-vm"
-Sleep 400ms
+Sleep 600ms
+Type "demo-vm-1"
+Sleep 600ms
 Enter
 Sleep 800ms
 
@@ -64,6 +70,7 @@ Sleep 2s
 
 # Find the new host, then favorite the selected row
 Type "/"
+Sleep 2s
 Type "demo"
 Sleep 2s
 Escape
