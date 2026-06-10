@@ -6,9 +6,6 @@ A terminal UI for managing and connecting to SSH hosts. Combines your `~/.ssh/co
 
 ![SSHub demo](demo/gifs/overview.gif)
 
-<details>
-<summary>More demos</summary>
-
 Connecting to a host — the session runs in an embedded PTY right inside the TUI:
 
 ![Connect demo](demo/gifs/connect.gif)
@@ -20,8 +17,6 @@ Adding a managed host and marking it as a favorite:
 Static screenshot:
 
 ![SSHub screenshot](shot.png)
-
-</details>
 
 ## Features
 

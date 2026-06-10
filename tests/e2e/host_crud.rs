@@ -170,6 +170,40 @@ fn host_duplicate_creates_copy() {
 }
 
 #[test]
+fn adding_host_with_duplicate_name_renames_instead_of_crashing() {
+    let file = NamedTempFile::new().unwrap();
+    let path = file.path();
+    let mut app = app_with_store(path);
+
+    // Add a host named "web".
+    let add_web = |app: &mut App| {
+        app.handle_key(key_char('a')).unwrap();
+        edit_field(app, "10.0.0.1");
+        app.handle_key(key(KeyCode::Down)).unwrap(); // → Password
+        app.handle_key(key(KeyCode::Down)).unwrap(); // → Username
+        app.handle_key(key(KeyCode::Down)).unwrap(); // → Label
+        app.handle_key(key(KeyCode::Down)).unwrap(); // → Name
+        edit_field(app, "web");
+        app.handle_key(key(KeyCode::F(2))).unwrap(); // save
+    };
+
+    add_web(&mut app);
+    assert_eq!(app.hosts.len(), 1);
+    assert!(app.host_notice.is_none());
+
+    // Adding "web" again must NOT bubble a UNIQUE-constraint error (which used
+    // to abort the app); it should auto-rename to "web-2" and notify the user.
+    add_web(&mut app);
+    assert_eq!(app.mode, AppMode::Normal);
+    assert_eq!(app.hosts.len(), 2);
+    assert!(app.hosts.iter().any(|h| h.name() == "web-2"));
+    assert!(app.host_notice.as_deref().unwrap_or("").contains("web-2"));
+
+    let store = LauncherStore::open(path).unwrap();
+    assert!(store.get_host_by_name("web-2").unwrap().is_some());
+}
+
+#[test]
 fn delete_ssh_config_host_shows_notice() {
     use std::collections::HashMap;
 

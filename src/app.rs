@@ -3528,6 +3528,17 @@ impl App {
         let os_icon = os_icon_from_index(form.os_icon_index);
         let proxy_jump = optional_field(&form.proxy_jump);
         let remote_command = optional_field(&form.remote_command);
+
+        // Avoid the `hosts.name` UNIQUE constraint (which would otherwise abort
+        // the app): if the name is taken, fall back to `name-2`, `name-3`, …
+        // An edit keeps its own current name via `exclude_id`.
+        let unique_name = self.store.unique_host_name(name, form.id)?;
+        if unique_name != name {
+            self.host_notice = Some(format!(
+                "Name '{name}' already exists \u{2014} saved as '{unique_name}'"
+            ));
+        }
+        let name = unique_name.as_str();
         let saved_name = name.to_string();
         if let Some(id) = form.id {
             if host_pw_changed {

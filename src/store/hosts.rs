@@ -370,6 +370,30 @@ impl LauncherStore {
         Ok(UpsertSshConfigOutcome::Inserted)
     }
 
+    /// Return `base` if no managed host already uses that name, otherwise the
+    /// first free `base-2`, `base-3`, … variant. `exclude_id` lets an edit keep
+    /// its own current name. Used to avoid the `hosts.name` UNIQUE constraint
+    /// firing (which would otherwise bubble up as a fatal error).
+    pub fn unique_host_name(&self, base: &str, exclude_id: Option<i64>) -> Result<String> {
+        let is_free = |name: &str| -> Result<bool> {
+            match self.get_host_by_name(name)? {
+                Some(existing) => Ok(Some(existing.id) == exclude_id),
+                None => Ok(true),
+            }
+        };
+        if is_free(base)? {
+            return Ok(base.to_string());
+        }
+        let mut suffix = 2u32;
+        loop {
+            let candidate = format!("{base}-{suffix}");
+            if is_free(&candidate)? {
+                return Ok(candidate);
+            }
+            suffix += 1;
+        }
+    }
+
     pub fn duplicate_host(&self, id: i64) -> Result<Option<ManagedHost>> {
         let current = match self.get_host(id)? {
             Some(v) => v,
@@ -687,6 +711,50 @@ mod tests {
         assert!(store.delete_group(b.id).unwrap());
         assert!(store.get_group(b.id).unwrap().is_none());
         assert_eq!(store.list_groups().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn unique_host_name_suffixes_on_collision() {
+        let store = LauncherStore::open_in_memory().unwrap();
+        let mk = |name: &str| {
+            store
+                .create_host(&NewHost {
+                    name: name.into(),
+                    address: "10.0.0.1".into(),
+                    port: 22,
+                    ..Default::default()
+                })
+                .unwrap()
+        };
+
+        // Free name is returned unchanged.
+        assert_eq!(store.unique_host_name("web", None).unwrap(), "web");
+
+        let web = mk("web");
+        // Taken name falls back to `-2`, then `-3`, …
+        assert_eq!(store.unique_host_name("web", None).unwrap(), "web-2");
+        mk("web-2");
+        assert_eq!(store.unique_host_name("web", None).unwrap(), "web-3");
+
+        // An edit may keep its own current name (exclude_id).
+        assert_eq!(store.unique_host_name("web", Some(web.id)).unwrap(), "web");
+    }
+
+    #[test]
+    fn create_host_with_duplicate_name_errors_without_guard() {
+        // Sanity: the raw INSERT really does fail on a duplicate name, which is
+        // why callers must go through `unique_host_name` first.
+        let store = LauncherStore::open_in_memory().unwrap();
+        let mk = || {
+            store.create_host(&NewHost {
+                name: "dup".into(),
+                address: "10.0.0.1".into(),
+                port: 22,
+                ..Default::default()
+            })
+        };
+        mk().unwrap();
+        assert!(mk().is_err());
     }
 
     #[test]
