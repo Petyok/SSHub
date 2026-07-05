@@ -237,6 +237,19 @@ pub fn import_csv_export(
         };
 
         let identity_id = if let Some(existing) = store.get_identity_by_name(&name)? {
+            // Re-import: make sure the identity points at the key material
+            // from THIS export (the key may have been rotated since).
+            let dest = copy_key_into_ssh(&kf.pem_path, &name)?;
+            if existing.private_key.as_deref() != Some(dest.as_path()) {
+                store.update_identity(
+                    existing.id,
+                    &crate::store::IdentityUpdate {
+                        private_key: Some(Some(dest)),
+                        has_password: Some(kf.passphrase.is_some()),
+                        ..Default::default()
+                    },
+                )?;
+            }
             existing.id
         } else {
             let dest = copy_key_into_ssh(&kf.pem_path, &name)?;
@@ -412,7 +425,10 @@ fn find_loot_csv(dir: &Path) -> Option<PathBuf> {
 
 /// Copy a private key into `~/.ssh/termius_<name>` with `0600` permissions.
 ///
-/// Existing files are left untouched.
+/// If the destination already holds the same key, it is reused. If it holds
+/// DIFFERENT content (two export keys whose names sanitise to the same
+/// `safe_name`, e.g. `a/b` and `a b`), a numeric suffix is appended so one
+/// host is never silently bound to another host's key.
 fn copy_key_into_ssh(src: &Path, name: &str) -> Result<PathBuf> {
     let home =
         std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME environment variable not set"))?;
@@ -420,19 +436,32 @@ fn copy_key_into_ssh(src: &Path, name: &str) -> Result<PathBuf> {
     std::fs::create_dir_all(&ssh_dir)?;
 
     let safe_name = name.replace(['/', '\\', ' '], "_");
-    let dest = ssh_dir.join(format!("termius_{safe_name}"));
+    let content = std::fs::read(src).with_context(|| format!("reading key {}", src.display()))?;
 
-    if !dest.exists() {
-        let content =
-            std::fs::read(src).with_context(|| format!("reading key {}", src.display()))?;
-        std::fs::write(&dest, content)?;
+    for attempt in 0..100 {
+        let file_name = if attempt == 0 {
+            format!("termius_{safe_name}")
+        } else {
+            format!("termius_{safe_name}-{}", attempt + 1)
+        };
+        let dest = ssh_dir.join(file_name);
+
+        if dest.exists() {
+            match std::fs::read(&dest) {
+                Ok(existing) if existing == content => return Ok(dest),
+                _ => continue, // name collision with different key material
+            }
+        }
+
+        std::fs::write(&dest, &content)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o600))?;
         }
+        return Ok(dest);
     }
-    Ok(dest)
+    anyhow::bail!("too many conflicting termius_{safe_name}* key files in ~/.ssh")
 }
 
 // ---------------------------------------------------------------------------

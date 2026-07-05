@@ -109,7 +109,14 @@ pub fn parse_host_aliases(config: &str) -> Vec<String> {
         if line.is_empty() {
             continue;
         }
-        let Some(rest) = line.strip_prefix("Host ") else {
+        // ssh_config keywords are case-insensitive and may be separated by
+        // any whitespace (spaces or tabs), or '='.
+        let mut it = line.splitn(2, |c: char| c.is_whitespace() || c == '=');
+        let keyword = it.next().unwrap_or("");
+        if !keyword.eq_ignore_ascii_case("host") {
+            continue;
+        }
+        let Some(rest) = it.next() else {
             continue;
         };
         for alias in rest.split_whitespace() {

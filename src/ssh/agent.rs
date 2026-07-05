@@ -57,20 +57,26 @@ fn list_agent_keys() -> Result<Vec<AgentKey>> {
     let keys = stdout
         .lines()
         .filter_map(|line| {
-            let parts: Vec<&str> = line.splitn(4, ' ').collect();
-            if parts.len() >= 3 {
-                Some(AgentKey {
-                    bits: parts[0].to_string(),
-                    fingerprint: parts[1].to_string(),
-                    comment: parts.get(2).unwrap_or(&"").to_string(),
-                    key_type: parts
-                        .get(3)
-                        .map(|s| s.trim_matches(|c| c == '(' || c == ')').to_string())
-                        .unwrap_or_default(),
-                })
-            } else {
-                None
-            }
+            // Format: "<bits> <fingerprint> <comment with spaces> (TYPE)" —
+            // the type is the LAST token in parens; everything between the
+            // fingerprint and it is the comment.
+            let mut parts = line.split_whitespace();
+            let bits = parts.next()?.to_string();
+            let fingerprint = parts.next()?.to_string();
+            let rest: Vec<&str> = parts.collect();
+            let (key_type, comment) = match rest.split_last() {
+                Some((last, front)) if last.starts_with('(') && last.ends_with(')') => (
+                    last.trim_matches(|c| c == '(' || c == ')').to_string(),
+                    front.join(" "),
+                ),
+                _ => (String::new(), rest.join(" ")),
+            };
+            Some(AgentKey {
+                bits,
+                fingerprint,
+                comment,
+                key_type,
+            })
         })
         .collect();
     Ok(keys)

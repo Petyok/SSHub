@@ -625,7 +625,7 @@ fn row_to_managed_host(row: &rusqlite::Row<'_>) -> rusqlite::Result<ManagedHost>
         name: row.get(1)?,
         label: row.get(2)?,
         address: row.get(3)?,
-        port: row.get::<_, i64>(4)? as u16,
+        port: u16::try_from(row.get::<_, i64>(4)?).unwrap_or(22),
         group_id: row.get(5)?,
         identity_id: row.get(6)?,
         group,
