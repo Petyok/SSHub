@@ -257,11 +257,3 @@ fn host_address(entry: &HostEntry) -> String {
     }
 }
 
-/// Truncate a string to at most `max` characters.
-fn truncate_str(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        s.chars().take(max.saturating_sub(1)).collect::<String>() + "\u{2026}"
-    }
-}

@@ -143,7 +143,7 @@ impl MetadataStore for MetadataDb {
             None => true,
         };
 
-        if let Some(old) = current {
+        if current.is_some() {
             self.with_conn(|conn| {
                 conn.execute(
                     "UPDATE host_metadata SET favorite = ?1 WHERE host_name = ?2",
@@ -151,7 +151,7 @@ impl MetadataStore for MetadataDb {
                 )?;
                 Ok(())
             })?;
-            Ok(old != 0)
+            Ok(new_favorite)
         } else {
             self.upsert(&HostMetadata {
                 host_name: host_name.to_string(),
@@ -286,10 +286,11 @@ mod tests {
         let db = db();
         db.upsert(&HostMetadata::new("web")).unwrap();
 
-        assert!(!db.toggle_favorite("web").unwrap());
+        // Returns the NEW favorite state.
+        assert!(db.toggle_favorite("web").unwrap());
         assert!(db.get("web").unwrap().unwrap().favorite);
 
-        assert!(db.toggle_favorite("web").unwrap());
+        assert!(!db.toggle_favorite("web").unwrap());
         assert!(!db.get("web").unwrap().unwrap().favorite);
     }
 
