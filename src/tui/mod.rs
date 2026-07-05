@@ -196,9 +196,11 @@ fn footer_keybinds(active_tab: usize) -> Vec<(&'static str, &'static str)> {
             ("\u{2191}\u{2193}", "select"),
             ("\u{21b5}", "connect"),
             ("/", "search"),
-            ("n", "new host"),
+            ("#", "tags"),
+            ("a", "add"),
+            ("e", "edit"),
+            ("d", "del"),
             ("G", "groups"),
-            ("c", "clear log"),
             ("?", "help"),
             ("q", "quit"),
         ],
@@ -218,7 +220,7 @@ fn footer_keybinds(active_tab: usize) -> Vec<(&'static str, &'static str)> {
             ("e", "edit"),
             ("d", "delete"),
             ("r", "remove agent"),
-            ("p", "set default"),
+            ("p", "add to agent"),
             ("?", "help"),
             ("q", "quit"),
         ],
@@ -226,7 +228,6 @@ fn footer_keybinds(active_tab: usize) -> Vec<(&'static str, &'static str)> {
             ("\u{2191}\u{2193}", "select"),
             ("f", "filter"),
             ("r", "range"),
-            ("/", "search"),
             ("?", "help"),
             ("q", "quit"),
         ],
@@ -336,6 +337,26 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
             if let Some(form) = app.group_form.as_ref() {
                 frame.render_widget(screens::group_form::render_group_form(form), popup_area);
             }
+        }
+    }
+
+    // Validation errors belong INSIDE the popup — the dashboard status bar is
+    // hidden behind it, so a save failure otherwise looks like a stuck form.
+    let notice = match kind {
+        FormKind::Host => app.host_notice.as_deref(),
+        FormKind::Identity => app.identity_notice.as_deref(),
+        FormKind::Group => app.group_notice.as_deref(),
+    };
+    if let Some(notice) = notice {
+        let y = popup_area.y + popup_area.height.saturating_sub(2);
+        if y > popup_area.y && popup_area.width > 4 {
+            let msg = text::ellipsize(notice, popup_area.width as usize - 4);
+            frame.buffer_mut().set_string(
+                popup_area.x + 2,
+                y,
+                &msg,
+                Style::default().fg(Color::Red),
+            );
         }
     }
 }

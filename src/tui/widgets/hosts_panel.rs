@@ -35,6 +35,24 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
     // the flattened visual-row index, counting group headers and blank
     // separators alongside host rows. The offset math lives on `App` so click
     // mapping stays in sync with what is drawn.
+    // Empty state: tell a first-time user how to get hosts in.
+    if app.hosts.is_empty() {
+        let lines = [
+            "No hosts yet.",
+            "",
+            "a        add a host",
+            "Shift+I  import ~/.ssh/config",
+            "Shift+T  import Termius export",
+        ];
+        for (i, line) in lines.iter().enumerate() {
+            let y = cy + 1 + i as u16;
+            if (y as usize) < cy as usize + ch {
+                buf.set_string(cx, y, crate::tui::text::ellipsize(line, cw), theme::mute());
+            }
+        }
+        return;
+    }
+
     let offset = app.host_scroll_offset(body_h);
     let window_end = offset + body_h;
 

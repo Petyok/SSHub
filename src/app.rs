@@ -1843,22 +1843,9 @@ impl App {
     }
 
     fn rebuild_palette_results(&mut self) {
-        if self.palette_query.is_empty() {
-            self.palette_results = (0..self.hosts.len()).collect();
-        } else {
-            let q = self.palette_query.to_lowercase();
-            self.palette_results = self
-                .hosts
-                .iter()
-                .enumerate()
-                .filter(|(_, h)| {
-                    let text = format!("{} {} {}", h.name(), h.display_name(), h.tags().join(" "))
-                        .to_lowercase();
-                    text.contains(&q)
-                })
-                .map(|(i, _)| i)
-                .collect();
-        }
+        // nucleo fuzzy match (same engine as list search) — the palette is
+        // advertised as fuzzy, so typos and abbreviations must match too.
+        self.palette_results = self.search.update_query(&self.hosts, &self.palette_query);
         if self.palette_selected >= self.palette_results.len() {
             self.palette_selected = 0;
         }
@@ -2458,6 +2445,7 @@ impl App {
             } else {
                 Some(form.label)
             },
+            // Preserved below when editing an existing tunnel.
             auto_connect: false,
         };
 
@@ -2466,9 +2454,13 @@ impl App {
                 self.store.create_tunnel(&new)?;
                 self.tunnel_notice = Some(format!("Created tunnel :{local_port}"));
             }
-            Some(_id) => {
-                // For now, delete and recreate (update not implemented)
-                self.store.delete_tunnel(_id)?;
+            Some(id) => {
+                // Recreate, carrying over fields the form doesn't expose.
+                let mut new = new;
+                if let Some(existing) = self.tunnels.iter().find(|t| t.id == id) {
+                    new.auto_connect = existing.auto_connect;
+                }
+                self.store.delete_tunnel(id)?;
                 self.store.create_tunnel(&new)?;
                 self.tunnel_notice = Some(format!("Updated tunnel :{local_port}"));
             }
@@ -3852,10 +3844,9 @@ impl App {
                 let snapshot = form.edit_snapshot.clone();
                 *form.active_field_mut() = snapshot;
                 form.editing = false;
-                // Revert the field value, but treat the form as touched so a
-                // subsequent Esc in navigation offers Save/Discard rather than
-                // closing silently (avoids surprise data loss).
-                form.dirty = true;
+                // Reverted to the pre-edit value: the form is exactly as
+                // dirty as it was before entering the field, so don't flag
+                // it — otherwise Esc-Esc asks "Save changes?" after zero edits.
             }
             KeyCode::Backspace => self.host_form_backspace(),
             KeyCode::Right if form.field.is_picker() => self.host_form_picker_scroll(1),
