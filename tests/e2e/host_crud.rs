@@ -43,19 +43,16 @@ fn key_shift_char(c: char) -> KeyEvent {
 
 /// Open field edit, type text, confirm with Enter.
 fn edit_field(app: &mut App, text: &str) {
-    app.handle_key(key(KeyCode::Enter)).unwrap(); // open edit
+    // Single-step form model: typing goes straight into the active field.
     type_text(app, text);
-    app.handle_key(key(KeyCode::Enter)).unwrap(); // confirm
 }
 
 /// Open field edit, clear existing text, type new text, confirm.
 fn edit_field_replace(app: &mut App, clear_count: usize, text: &str) {
-    app.handle_key(key(KeyCode::Enter)).unwrap(); // open edit
     for _ in 0..clear_count {
         app.handle_key(key(KeyCode::Backspace)).unwrap();
     }
     type_text(app, text);
-    app.handle_key(key(KeyCode::Enter)).unwrap(); // confirm
 }
 
 fn app_with_store(store_path: &std::path::Path) -> App {
@@ -241,14 +238,12 @@ fn esc_reverted_field_edit_leaves_form_clean() {
     let mut app = app_with_store(path);
 
     app.handle_key(key_char('a')).unwrap();
-    // Open the Address field, type, then Esc out of the edit (reverts value).
-    app.handle_key(key(KeyCode::Enter)).unwrap(); // open edit
-    type_text(&mut app, "10.9.9.9");
-    app.handle_key(key(KeyCode::Esc)).unwrap(); // cancel field edit → reverts
+    // Navigate around without typing anything: the form stays clean, so Esc
+    // closes silently — no "Save changes?" trap after zero edits.
+    app.handle_key(key(KeyCode::Down)).unwrap();
+    app.handle_key(key(KeyCode::Up)).unwrap();
     assert_eq!(app.mode, AppMode::HostForm, "still in the form");
 
-    // Nothing was actually changed (the edit was reverted), so Esc closes
-    // silently — no "Save changes?" trap.
     app.handle_key(key(KeyCode::Esc)).unwrap();
     assert_eq!(app.mode, AppMode::Normal);
     assert!(app.hosts.is_empty());
@@ -261,10 +256,8 @@ fn esc_after_committed_field_edit_prompts_for_discard() {
     let mut app = app_with_store(path);
 
     app.handle_key(key_char('a')).unwrap();
-    // Commit a real change with Enter — the form is genuinely dirty now.
-    app.handle_key(key(KeyCode::Enter)).unwrap(); // open edit
+    // Typing straight into the active field makes the form dirty.
     type_text(&mut app, "10.9.9.9");
-    app.handle_key(key(KeyCode::Enter)).unwrap(); // commit field
 
     app.handle_key(key(KeyCode::Esc)).unwrap();
     assert_eq!(app.mode, AppMode::ConfirmDiscard);

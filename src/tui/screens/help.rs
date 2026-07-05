@@ -81,7 +81,7 @@ pub fn render_help() -> Paragraph<'static> {
         entry("PgUp/PgDn", "Scroll session history"),
         entry("", ""),
         entry("? / Shift+H", "Toggle this help screen"),
-        entry("F2 / Ctrl+S", "Save form (or Enter on the last field)"),
+        entry("F2 / Ctrl+S", "Save form (or Enter on the last field); type directly into fields"),
         entry("q", "Quit"),
         Line::from(""),
         Line::from(Span::styled("? / Esc / Enter to close", theme::dim())),

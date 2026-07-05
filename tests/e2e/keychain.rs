@@ -40,19 +40,16 @@ fn key_char(c: char) -> KeyEvent {
 
 /// Open field edit, type text, confirm with Enter.
 fn edit_field(app: &mut App, text: &str) {
-    app.handle_key(key(KeyCode::Enter)).unwrap();
+    // Single-step form model: typing goes straight into the active field.
     type_text(app, text);
-    app.handle_key(key(KeyCode::Enter)).unwrap();
 }
 
 /// Open field edit, clear existing text, type new text, confirm.
 fn edit_field_replace(app: &mut App, clear_count: usize, text: &str) {
-    app.handle_key(key(KeyCode::Enter)).unwrap();
     for _ in 0..clear_count {
         app.handle_key(key(KeyCode::Backspace)).unwrap();
     }
     type_text(app, text);
-    app.handle_key(key(KeyCode::Enter)).unwrap();
 }
 
 fn app_with_store(store_path: &std::path::Path) -> App {

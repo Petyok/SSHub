@@ -344,15 +344,12 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
         buf.set_string(val_x, row_y, truncate(display, val_w), val_style);
 
         // Arrow indicator for active field
-        if is_active && !form.editing {
+        if is_active {
             buf.set_string(inner.x, row_y, "›", theme::green());
         }
 
         // Navigation hints for Type/Host fields
-        if is_active
-            && !form.editing
-            && matches!(field, TunnelFormField::Type | TunnelFormField::Host)
-        {
+        if is_active && matches!(field, TunnelFormField::Type | TunnelFormField::Host) {
             let hint = "←/→";
             let hx = val_x + display.len() as u16 + 1;
             if hx + hint.len() as u16 <= inner.x + inner.width {
@@ -364,11 +361,7 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
     // Footer hints
     let hint_y = inner.y + inner.height.saturating_sub(1);
     if hint_y > inner.y + fields.len() as u16 {
-        let hint = if form.editing {
-            "Enter: confirm  Esc: cancel"
-        } else {
-            "Enter: edit  F2/Ctrl+S: save  Esc: close"
-        };
+        let hint = "type to edit  Tab/\u{2193}: next  F2/Ctrl+S: save  Esc: close";
         buf.set_string(inner.x + 1, hint_y, hint, theme::dim());
     }
 }

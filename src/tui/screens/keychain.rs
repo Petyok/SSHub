@@ -113,7 +113,7 @@ pub fn render_identity_form(form: &IdentityFormEdit) -> Paragraph<'static> {
     }
     lines.push(ratatui::text::Line::from(""));
     lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
-        "Enter: edit field │ F2/Ctrl+S: save │ Up/Down: navigate │ Esc: cancel",
+        "type to edit │ Tab/↓: next │ F2/Ctrl+S: save │ Esc: cancel",
         Style::default().add_modifier(Modifier::DIM),
     )));
     Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("Identity"))

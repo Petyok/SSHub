@@ -1812,8 +1812,9 @@ impl App {
                     };
                     self.mode = AppMode::Normal;
                     if let Some(p) = pos {
+                        // First Enter selects the host in the list; connecting
+                        // is a deliberate second Enter from Normal mode.
                         self.selected = p;
-                        self.connect_selected()?;
                     }
                 } else {
                     self.mode = AppMode::Normal;
@@ -2002,7 +2003,6 @@ impl App {
                 self.refresh_audit_events();
             }
             KeyCode::Char('h') if key.modifiers.is_empty() => self.active_tab = 0,
-            KeyCode::Esc if key.modifiers.is_empty() => self.active_tab = 0,
             KeyCode::Char('?') if key.modifiers.is_empty() => {
                 self.pre_help_mode = Some(self.mode);
                 self.mode = AppMode::Help;
@@ -2140,7 +2140,7 @@ impl App {
                     host_id: None,
                     label: String::new(),
                     active_field: TunnelFormField::Host,
-                    editing: false,
+                    editing: true,
                     edit_snapshot: String::new(),
                     dirty: false,
                 });
@@ -2157,7 +2157,7 @@ impl App {
                         host_id: tunnel.host_id,
                         label: tunnel.label.clone().unwrap_or_default(),
                         active_field: TunnelFormField::Host,
-                        editing: false,
+                        editing: true,
                         edit_snapshot: String::new(),
                         dirty: false,
                     });
@@ -2187,7 +2187,6 @@ impl App {
                 self.refresh_audit_events();
             }
             KeyCode::Char('h') if key.modifiers.is_empty() => self.active_tab = 0,
-            KeyCode::Esc if key.modifiers.is_empty() => self.active_tab = 0,
             KeyCode::Char('?') if key.modifiers.is_empty() => {
                 self.pre_help_mode = Some(self.mode);
                 self.mode = AppMode::Help;
@@ -2279,53 +2278,30 @@ impl App {
         let Some(form) = self.tunnel_form.as_ref() else {
             return Ok(());
         };
-        if form.editing {
-            self.handle_key_tunnel_form_editing(key)
-        } else {
-            self.handle_key_tunnel_form_navigating(key)
-        }
-    }
-
-    fn handle_key_tunnel_form_navigating(&mut self, key: KeyEvent) -> Result<()> {
+        let field = form.active_field;
         match key.code {
-            KeyCode::Down | KeyCode::Char('j') => {
+            KeyCode::Esc => {
+                if self.tunnel_form.as_ref().is_some_and(|f| f.dirty) {
+                    self.mode = AppMode::ConfirmDiscard;
+                } else {
+                    self.tunnel_form = None;
+                    self.mode = AppMode::Normal;
+                }
+            }
+            KeyCode::F(2) => self.save_tunnel_form()?,
+            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.save_tunnel_form()?;
+            }
+            // Single-step model: Enter on the last field saves.
+            KeyCode::Enter if field == TunnelFormField::Label => self.save_tunnel_form()?,
+            KeyCode::Enter | KeyCode::Tab | KeyCode::Down if key.modifiers.is_empty() => {
                 if let Some(form) = self.tunnel_form.as_mut() {
                     form.active_field = form.active_field.next();
                 }
             }
-            KeyCode::Up | KeyCode::Char('k') => {
+            KeyCode::BackTab | KeyCode::Up => {
                 if let Some(form) = self.tunnel_form.as_mut() {
                     form.active_field = form.active_field.prev();
-                }
-            }
-            KeyCode::Enter => {
-                if let Some(form) = self.tunnel_form.as_mut() {
-                    if form.active_field == TunnelFormField::Type {
-                        form.tunnel_type = form.tunnel_type.next();
-                        form.dirty = true;
-                    } else if form.active_field == TunnelFormField::Host {
-                        // Cycle through available hosts
-                        let host_ids: Vec<i64> =
-                            self.hosts.iter().filter_map(|h| h.managed_id()).collect();
-                        if !host_ids.is_empty() {
-                            let current_idx = form
-                                .host_id
-                                .and_then(|id| host_ids.iter().position(|&h| h == id))
-                                .map(|i| i + 1)
-                                .unwrap_or(0);
-                            form.host_id = Some(host_ids[current_idx % host_ids.len()]);
-                            form.dirty = true;
-                        }
-                    } else {
-                        form.editing = true;
-                        form.edit_snapshot = match form.active_field {
-                            TunnelFormField::LocalPort => form.local_port.clone(),
-                            TunnelFormField::RemoteHost => form.remote_host.clone(),
-                            TunnelFormField::RemotePort => form.remote_port.clone(),
-                            TunnelFormField::Label => form.label.clone(),
-                            _ => String::new(),
-                        };
-                    }
                 }
             }
             KeyCode::Left | KeyCode::Right => {
@@ -2354,63 +2330,35 @@ impl App {
                     }
                 }
             }
-            KeyCode::Esc => {
-                if self.tunnel_form.as_ref().is_some_and(|f| f.dirty) {
-                    self.mode = AppMode::ConfirmDiscard;
-                } else {
-                    self.tunnel_form = None;
-                    self.mode = AppMode::Normal;
-                }
-            }
-            KeyCode::F(2) => self.save_tunnel_form()?,
-            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.save_tunnel_form()?
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    fn handle_key_tunnel_form_editing(&mut self, key: KeyEvent) -> Result<()> {
-        let Some(form) = self.tunnel_form.as_mut() else {
-            return Ok(());
-        };
-
-        match key.code {
-            KeyCode::Enter => {
-                form.editing = false;
-            }
-            KeyCode::Esc => {
-                match form.active_field {
-                    TunnelFormField::LocalPort => form.local_port = form.edit_snapshot.clone(),
-                    TunnelFormField::RemoteHost => form.remote_host = form.edit_snapshot.clone(),
-                    TunnelFormField::RemotePort => form.remote_port = form.edit_snapshot.clone(),
-                    TunnelFormField::Label => form.label = form.edit_snapshot.clone(),
-                    _ => {}
-                }
-                form.editing = false;
-            }
-            KeyCode::Char(c) if !c.is_control() => {
-                let field = match form.active_field {
-                    TunnelFormField::LocalPort => &mut form.local_port,
-                    TunnelFormField::RemoteHost => &mut form.remote_host,
-                    TunnelFormField::RemotePort => &mut form.remote_port,
-                    TunnelFormField::Label => &mut form.label,
-                    _ => return Ok(()),
-                };
-                field.push(c);
-                form.dirty = true;
-            }
             KeyCode::Backspace => {
-                let field = match form.active_field {
-                    TunnelFormField::LocalPort => &mut form.local_port,
-                    TunnelFormField::RemoteHost => &mut form.remote_host,
-                    TunnelFormField::RemotePort => &mut form.remote_port,
-                    TunnelFormField::Label => &mut form.label,
-                    _ => return Ok(()),
-                };
-                field.pop();
-                form.dirty = true;
+                if let Some(form) = self.tunnel_form.as_mut() {
+                    let field = match form.active_field {
+                        TunnelFormField::LocalPort => &mut form.local_port,
+                        TunnelFormField::RemoteHost => &mut form.remote_host,
+                        TunnelFormField::RemotePort => &mut form.remote_port,
+                        TunnelFormField::Label => &mut form.label,
+                        _ => return Ok(()),
+                    };
+                    if field.pop().is_some() {
+                        form.dirty = true;
+                    }
+                }
+            }
+            KeyCode::Char(c)
+                if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
+                    && !c.is_control() =>
+            {
+                if let Some(form) = self.tunnel_form.as_mut() {
+                    let field = match form.active_field {
+                        TunnelFormField::LocalPort => &mut form.local_port,
+                        TunnelFormField::RemoteHost => &mut form.remote_host,
+                        TunnelFormField::RemotePort => &mut form.remote_port,
+                        TunnelFormField::Label => &mut form.label,
+                        _ => return Ok(()),
+                    };
+                    field.push(c);
+                    form.dirty = true;
+                }
             }
             _ => {}
         }
@@ -2475,57 +2423,21 @@ impl App {
         let Some(form) = self.identity_form.as_ref() else {
             return Ok(());
         };
-
-        if form.editing {
-            self.handle_key_identity_form_editing(key)
-        } else {
-            self.handle_key_identity_form_navigating(key)
-        }
-    }
-
-    fn handle_key_identity_form_navigating(&mut self, key: KeyEvent) -> Result<()> {
+        let field = form.field;
         match key.code {
             KeyCode::Esc => self.cancel_identity_form()?,
             KeyCode::F(2) => self.save_identity_form()?,
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.save_identity_form()?;
             }
-            KeyCode::Enter => self.identity_form_open_edit()?,
-            KeyCode::Tab | KeyCode::Down if key.modifiers.is_empty() => {
+            // Single-step model: Enter on the last field saves.
+            KeyCode::Enter if field == IdentityFormField::Password => {
+                self.save_identity_form()?;
+            }
+            KeyCode::Enter | KeyCode::Tab | KeyCode::Down if key.modifiers.is_empty() => {
                 self.identity_form_field_next();
             }
             KeyCode::BackTab | KeyCode::Up => self.identity_form_field_prev(),
-            _ => {}
-        }
-        Ok(())
-    }
-
-    fn identity_form_open_edit(&mut self) -> Result<()> {
-        let Some(form) = self.identity_form.as_mut() else {
-            return Ok(());
-        };
-        form.edit_snapshot = form.active_field().to_string();
-        form.cursor = text_input::char_len(form.active_field());
-        form.editing = true;
-        Ok(())
-    }
-
-    fn handle_key_identity_form_editing(&mut self, key: KeyEvent) -> Result<()> {
-        let Some(form) = self.identity_form.as_mut() else {
-            return Ok(());
-        };
-        match key.code {
-            KeyCode::Enter => {
-                if form.active_field() != form.edit_snapshot {
-                    form.dirty = true;
-                }
-                form.editing = false;
-            }
-            KeyCode::Esc => {
-                let snapshot = form.edit_snapshot.clone();
-                *form.active_field_mut() = snapshot;
-                form.editing = false;
-            }
             KeyCode::Backspace => self.identity_form_backspace(),
             KeyCode::Char(c)
                 if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
@@ -3180,7 +3092,7 @@ impl App {
                 has_password: identity.has_password,
                 field: IdentityFormField::Name,
                 cursor: text_input::char_len(&identity.name),
-                editing: false,
+                editing: true,
                 edit_snapshot: String::new(),
                 dirty: false,
             }
@@ -3195,7 +3107,7 @@ impl App {
                 has_password: false,
                 field: IdentityFormField::Name,
                 cursor: 0,
-                editing: false,
+                editing: true,
                 edit_snapshot: String::new(),
                 dirty: false,
             }
@@ -3334,7 +3246,10 @@ impl App {
             return;
         };
         let c = form.cursor;
-        form.cursor = text_input::backspace_at(form.active_field_mut(), c);
+        if c > 0 {
+            form.cursor = text_input::backspace_at(form.active_field_mut(), c);
+            form.dirty = true;
+        }
     }
 
     fn identity_form_insert(&mut self, ch: char) {
@@ -3343,6 +3258,7 @@ impl App {
         };
         let c = form.cursor;
         form.cursor = text_input::insert_at(form.active_field_mut(), c, ch);
+        form.dirty = true;
     }
 
     fn move_identity_selection(&mut self, delta: i32) {
@@ -3449,7 +3365,7 @@ impl App {
                 field: start_field,
                 cursor: start_cursor,
                 metadata_only,
-                editing: false,
+                editing: true,
                 edit_snapshot: String::new(),
                 dirty: false,
             }
@@ -3473,7 +3389,7 @@ impl App {
                 field: HostFormField::Address,
                 cursor: 0,
                 metadata_only: false,
-                editing: false,
+                editing: true,
                 edit_snapshot: String::new(),
                 dirty: false,
             }
@@ -3762,105 +3678,38 @@ impl App {
         let Some(form) = self.host_form.as_ref() else {
             return Ok(());
         };
-
-        if form.editing {
-            self.handle_key_host_form_editing(key)
-        } else {
-            self.handle_key_host_form_navigating(key)
-        }
-    }
-
-    fn handle_key_host_form_navigating(&mut self, key: KeyEvent) -> Result<()> {
+        let field = form.field;
         match key.code {
             KeyCode::Esc => self.cancel_host_form()?,
             KeyCode::F(2) => self.save_host_form()?,
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.save_host_form()?;
             }
-            // Enter opens the field editor, except on the last field (OS icon,
-            // a picker edited with ←/→) where it saves the whole form — a
-            // modifier-free save path for keyboards where Ctrl is remapped.
-            KeyCode::Enter
-                if self
-                    .host_form
-                    .as_ref()
-                    .is_some_and(|f| f.field == HostFormField::OsIcon) =>
-            {
-                self.save_host_form()?;
-            }
-            KeyCode::Enter => self.host_form_open_edit()?,
-            KeyCode::Down | KeyCode::Char('j') if key.modifiers.is_empty() => {
+            // Single-step model: type straight into the active field.
+            // Enter/Tab/Down advance; Enter on the LAST field saves the form
+            // (a modifier-free save path; F2/Ctrl+S always work).
+            KeyCode::Enter if field == HostFormField::OsIcon => self.save_host_form()?,
+            KeyCode::Enter | KeyCode::Tab | KeyCode::Down if key.modifiers.is_empty() => {
                 self.host_form_field_next();
             }
-            KeyCode::Up | KeyCode::Char('k') if key.modifiers.is_empty() => {
-                self.host_form_field_prev();
+            KeyCode::BackTab | KeyCode::Up => self.host_form_field_prev(),
+            KeyCode::Right if field.is_picker() || field.is_toggle() => {
+                self.host_form_picker_scroll(1);
             }
-            KeyCode::Tab if key.modifiers.is_empty() => self.host_form_field_next(),
-            KeyCode::BackTab => self.host_form_field_prev(),
+            KeyCode::Left if field.is_picker() || field.is_toggle() => {
+                self.host_form_picker_scroll(-1);
+            }
             KeyCode::Char(' ')
-                if key.modifiers.is_empty()
-                    && self
-                        .host_form
-                        .as_ref()
-                        .is_some_and(|f| f.field == HostFormField::ForwardAgent) =>
+                if key.modifiers.is_empty() && field == HostFormField::ForwardAgent =>
             {
                 self.host_form_toggle();
             }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    fn host_form_open_edit(&mut self) -> Result<()> {
-        let Some(form) = self.host_form.as_mut() else {
-            return Ok(());
-        };
-        if form.metadata_only && form.field.is_connection_field() {
-            return Ok(());
-        }
-        if form.field == HostFormField::ForwardAgent {
-            form.forward_agent = !form.forward_agent;
-            return Ok(());
-        }
-        // Snapshot current value
-        form.edit_snapshot = form.active_field().to_string();
-        form.cursor = text_input::char_len(form.active_field());
-        form.editing = true;
-        Ok(())
-    }
-
-    fn handle_key_host_form_editing(&mut self, key: KeyEvent) -> Result<()> {
-        let Some(form) = self.host_form.as_mut() else {
-            return Ok(());
-        };
-        match key.code {
-            KeyCode::Enter => {
-                if form.active_field() != form.edit_snapshot {
-                    form.dirty = true;
-                }
-                form.editing = false;
-            }
-            KeyCode::Esc => {
-                let snapshot = form.edit_snapshot.clone();
-                *form.active_field_mut() = snapshot;
-                form.editing = false;
-                // Reverted to the pre-edit value: the form is exactly as
-                // dirty as it was before entering the field, so don't flag
-                // it — otherwise Esc-Esc asks "Save changes?" after zero edits.
-            }
             KeyCode::Backspace => self.host_form_backspace(),
-            KeyCode::Right if form.field.is_picker() => self.host_form_picker_scroll(1),
-            KeyCode::Left if form.field.is_picker() => self.host_form_picker_scroll(-1),
-            KeyCode::Char(' ') if key.modifiers.is_empty() => {
-                if !form.field.is_picker() && !form.field.is_toggle() {
-                    self.host_form_insert(' ');
-                }
-            }
             KeyCode::Char(c)
                 if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
                     && !c.is_control()
-                    && !form.field.is_picker()
-                    && !form.field.is_toggle() =>
+                    && !field.is_picker()
+                    && !field.is_toggle() =>
             {
                 self.host_form_insert(c);
             }
@@ -3946,7 +3795,10 @@ impl App {
             return;
         }
         let c = form.cursor;
-        form.cursor = text_input::backspace_at(form.active_field_mut(), c);
+        if c > 0 {
+            form.cursor = text_input::backspace_at(form.active_field_mut(), c);
+            form.dirty = true;
+        }
     }
 
     fn host_form_insert(&mut self, ch: char) {
@@ -3961,6 +3813,7 @@ impl App {
         }
         let c = form.cursor;
         form.cursor = text_input::insert_at(form.active_field_mut(), c, ch);
+        form.dirty = true;
     }
 
     fn enter_host_detail(&mut self) -> Result<()> {
@@ -4984,25 +4837,18 @@ mod tests {
         app.reload_identities().unwrap();
         app.handle_key(key_char('a')).unwrap();
 
-        // Open Name field edit, type, confirm
-        app.handle_key(key(KeyCode::Enter)).unwrap();
+        // Single-step model: type straight into the active field, ↓ advances.
         for c in "work-laptop".chars() {
             app.handle_key(key_char(c)).unwrap();
         }
-        app.handle_key(key(KeyCode::Enter)).unwrap();
         app.handle_key(key(KeyCode::Down)).unwrap(); // → Username
-        app.handle_key(key(KeyCode::Enter)).unwrap();
         for c in "deploy".chars() {
             app.handle_key(key_char(c)).unwrap();
         }
-        app.handle_key(key(KeyCode::Enter)).unwrap();
-        app.handle_key(key(KeyCode::Down)).unwrap(); // → Password (skip)
         app.handle_key(key(KeyCode::Down)).unwrap(); // → PrivateKey
-        app.handle_key(key(KeyCode::Enter)).unwrap();
         for c in "~/.ssh/id_ed25519".chars() {
             app.handle_key(key_char(c)).unwrap();
         }
-        app.handle_key(key(KeyCode::Enter)).unwrap();
         // F2 to save
         app.handle_key(key(KeyCode::F(2))).unwrap();
 

@@ -54,9 +54,8 @@ fn key_ctrl_shift_char(c: char) -> KeyEvent {
 
 /// Open field edit, type text, confirm with Enter.
 fn edit_field(app: &mut App, text: &str) {
-    app.handle_key(key(KeyCode::Enter)).unwrap();
+    // Single-step form model: typing goes straight into the active field.
     type_text(app, text);
-    app.handle_key(key(KeyCode::Enter)).unwrap();
 }
 
 fn app_with_store(store_path: &std::path::Path) -> App {
@@ -111,10 +110,8 @@ fn create_group_assign_host_visible_in_tree() {
     edit_field(&mut app, "vc-host");
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Port (skip)
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Group
-                                                 // Open edit on picker, scroll right, confirm
-    app.handle_key(key(KeyCode::Enter)).unwrap();
+    // Pickers scroll in place with ←/→ — no edit mode needed.
     app.handle_key(key(KeyCode::Right)).unwrap();
-    app.handle_key(key(KeyCode::Enter)).unwrap();
     app.handle_key(key(KeyCode::F(2))).unwrap(); // save form
 
     assert_eq!(app.mode, AppMode::Normal);
@@ -162,9 +159,7 @@ fn rename_and_delete_group_via_shortcuts() {
     edit_field(&mut app, "g-host");
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Port (skip)
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Group
-    app.handle_key(key(KeyCode::Enter)).unwrap();
     app.handle_key(key(KeyCode::Right)).unwrap();
-    app.handle_key(key(KeyCode::Enter)).unwrap();
     app.handle_key(key(KeyCode::F(2))).unwrap(); // save form
 
     // Ctrl+G renames group of selected host
@@ -219,9 +214,7 @@ fn delete_group_cancel_preserves_group() {
     edit_field(&mut app, "t-host");
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Port (skip)
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Group
-    app.handle_key(key(KeyCode::Enter)).unwrap();
     app.handle_key(key(KeyCode::Right)).unwrap();
-    app.handle_key(key(KeyCode::Enter)).unwrap();
     app.handle_key(key(KeyCode::F(2))).unwrap(); // save form
     assert_eq!(app.mode, AppMode::Normal);
 

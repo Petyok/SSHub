@@ -159,7 +159,7 @@ pub fn render_host_form(
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "Enter: edit field (saves on last field) │ F2/Ctrl+S: save │ Up/Down: navigate │ Space: toggle │ Esc: cancel",
+        "type to edit │ Tab/↓: next (Enter on last saves) │ F2/Ctrl+S: save │ ←/→: pick │ Esc: cancel",
         Style::default().add_modifier(Modifier::DIM),
     )));
 

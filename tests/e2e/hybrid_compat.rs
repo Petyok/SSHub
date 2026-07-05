@@ -75,9 +75,7 @@ fn edit_ssh_config_managed_host_opens_metadata_only_form() {
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Group
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Identity
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Tags
-    app.handle_key(key(KeyCode::Enter)).unwrap(); // open edit
     type_text(&mut app, "imported");
-    app.handle_key(key(KeyCode::Enter)).unwrap(); // confirm
     app.handle_key(key(KeyCode::F(2))).unwrap(); // save form
 
     assert_eq!(app.mode, AppMode::Normal);
