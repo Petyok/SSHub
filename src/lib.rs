@@ -166,7 +166,7 @@ fn run_terminal_loop(app: &mut App, auto_quit: Option<&str>) -> Result<()> {
             }
         }
         for (host_name, line) in diag_entries {
-            app.ssh_log.push(crate::ssh::probe::SshLogEntry {
+            app.push_ssh_log(crate::ssh::probe::SshLogEntry {
                 host_name,
                 line,
                 level: crate::ssh::probe::LogLevel::Info,
@@ -243,10 +243,17 @@ fn apply_auto_quit(app: &mut App, auto_quit: Option<&str>) -> Result<()> {
 
 fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
     if event::poll(POLL_INTERVAL)? {
-        match event::read()? {
-            Event::Key(key) => app.handle_key(key)?,
-            Event::Mouse(mouse) => app.handle_mouse(mouse)?,
-            _ => {}
+        // Drain everything already queued: one event per 50ms frame makes
+        // paste into an embedded session crawl at ~20 chars/sec.
+        loop {
+            match event::read()? {
+                Event::Key(key) => app.handle_key(key)?,
+                Event::Mouse(mouse) => app.handle_mouse(mouse)?,
+                _ => {}
+            }
+            if app.should_quit || !event::poll(std::time::Duration::ZERO)? {
+                break;
+            }
         }
     }
 
@@ -275,11 +282,9 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
 
     // Drain SSH probe log entries from background worker
     if let Some(rx) = app.probe_rx.as_ref() {
-        while let Ok(entry) = rx.try_recv() {
-            app.ssh_log.push(entry);
-            if app.ssh_log.len() > 100 {
-                app.ssh_log.remove(0);
-            }
+        let entries: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        for entry in entries {
+            app.push_ssh_log(entry);
         }
     }
 

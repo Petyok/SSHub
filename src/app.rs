@@ -941,6 +941,17 @@ impl App {
     }
 
     /// Reload host list from launcher store + ssh_config resolver, rebuild filter.
+    /// Append to the SSH log, keeping a bounded history so a long-running
+    /// session doesn't grow memory without limit.
+    pub fn push_ssh_log(&mut self, entry: crate::ssh::probe::SshLogEntry) {
+        self.ssh_log.push(entry);
+        const MAX_SSH_LOG: usize = 200;
+        if self.ssh_log.len() > MAX_SSH_LOG {
+            let excess = self.ssh_log.len() - MAX_SSH_LOG;
+            self.ssh_log.drain(..excess);
+        }
+    }
+
     pub fn reload_hosts(&mut self) -> Result<()> {
         let selected_name = self.selected_entry().map(|e| e.name().to_string());
 
@@ -1143,7 +1154,7 @@ impl App {
             } else {
                 crate::ssh::probe::LogLevel::Info
             };
-            self.ssh_log.push(crate::ssh::probe::SshLogEntry {
+            self.push_ssh_log(crate::ssh::probe::SshLogEntry {
                 host_name: entry.name().to_string(),
                 line: credential_diag,
                 level,
@@ -1166,7 +1177,7 @@ impl App {
                     "Command not found: '{}'. Check your PATH or install it.",
                     first_cmd
                 );
-                self.ssh_log.push(crate::ssh::probe::SshLogEntry {
+                self.push_ssh_log(crate::ssh::probe::SshLogEntry {
                     host_name: entry.name().to_string(),
                     line: msg.clone(),
                     level: crate::ssh::probe::LogLevel::Error,
@@ -1185,7 +1196,7 @@ impl App {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as i64;
-        self.ssh_log.push(crate::ssh::probe::SshLogEntry {
+        self.push_ssh_log(crate::ssh::probe::SshLogEntry {
             host_name: entry.name().to_string(),
             line: format!("$ {}", ssh_argv.join(" ")),
             level: crate::ssh::probe::LogLevel::Success,
@@ -1233,7 +1244,7 @@ impl App {
                     let _ = self
                         .store
                         .log_auth_event(&host_name, username, via, "fail", &err_msg);
-                    self.ssh_log.push(crate::ssh::probe::SshLogEntry {
+                    self.push_ssh_log(crate::ssh::probe::SshLogEntry {
                         host_name: host_name.clone(),
                         line: err_msg.clone(),
                         level: crate::ssh::probe::LogLevel::Error,
@@ -1432,10 +1443,18 @@ impl App {
                             }
                         }
                         3 => {
-                            // Audit table
+                            // Audit table (mirror the renderer's scroll math)
                             let data_y = areas.body.y + 3;
                             if y >= data_y {
-                                let row = (y - data_y) as usize;
+                                let max_rows = (areas.body.y + areas.body.height)
+                                    .saturating_sub(data_y)
+                                    as usize;
+                                let scroll = if max_rows > 0 && self.audit_selected >= max_rows {
+                                    self.audit_selected - max_rows + 1
+                                } else {
+                                    0
+                                };
+                                let row = (y - data_y) as usize + scroll;
                                 if row < self.auth_events_cache.len() {
                                     self.audit_selected = row;
                                 }
@@ -1653,6 +1672,11 @@ impl App {
                 self.move_selection(1)
             }
             KeyCode::Char('k') | KeyCode::Up if key.modifiers.is_empty() => self.move_selection(-1),
+            KeyCode::Esc if key.modifiers.is_empty() && self.tag_filter.is_some() => {
+                self.tag_filter = None;
+                self.search_query.clear();
+                self.rebuild_filter();
+            }
             KeyCode::Enter => self.connect_selected()?,
             KeyCode::Char('a') if key.modifiers.is_empty() => self.enter_host_form(None, false)?,
             KeyCode::Char('d') if key.modifiers.is_empty() => self.delete_selected_host()?,
@@ -1773,13 +1797,24 @@ impl App {
             }
             KeyCode::Enter => {
                 if let Some(&idx) = self.palette_results.get(self.palette_selected) {
-                    self.selected = self
-                        .filtered_indices
-                        .iter()
-                        .position(|&i| i == idx)
-                        .unwrap_or(0);
+                    // The palette searches ALL hosts; the chosen one may be
+                    // hidden by an active tag/search filter. Clear filters in
+                    // that case — never silently connect to a different host.
+                    let pos = self.filtered_indices.iter().position(|&i| i == idx);
+                    let pos = match pos {
+                        Some(p) => Some(p),
+                        None => {
+                            self.tag_filter = None;
+                            self.search_query.clear();
+                            self.rebuild_filter();
+                            self.filtered_indices.iter().position(|&i| i == idx)
+                        }
+                    };
                     self.mode = AppMode::Normal;
-                    self.connect_selected()?;
+                    if let Some(p) = pos {
+                        self.selected = p;
+                        self.connect_selected()?;
+                    }
                 } else {
                     self.mode = AppMode::Normal;
                 }
@@ -1862,6 +1897,7 @@ impl App {
         if key.code == KeyCode::Enter {
             self.tag_filter = optional_field(&self.search_query);
             self.rebuild_filter();
+            self.mode = AppMode::Normal;
             return Ok(());
         }
         if key.code == KeyCode::Backspace {
@@ -2602,13 +2638,23 @@ impl App {
     fn handle_key_confirm_discard(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
             KeyCode::Char('y') if key.modifiers.is_empty() => {
-                // Save
+                // Save; on validation failure the form survives — return to it
+                // so the user sees the notice instead of a stuck dialog.
                 if self.host_form.is_some() {
                     self.save_host_form()?;
+                    if self.host_form.is_some() && self.mode == AppMode::ConfirmDiscard {
+                        self.mode = AppMode::HostForm;
+                    }
                 } else if self.identity_form.is_some() {
                     self.save_identity_form()?;
+                    if self.identity_form.is_some() && self.mode == AppMode::ConfirmDiscard {
+                        self.mode = AppMode::IdentityForm;
+                    }
                 } else if self.tunnel_form.is_some() {
                     self.save_tunnel_form()?;
+                    if self.tunnel_form.is_some() && self.mode == AppMode::ConfirmDiscard {
+                        self.mode = AppMode::TunnelForm;
+                    }
                 }
             }
             KeyCode::Char('n') if key.modifiers.is_empty() => {
@@ -2822,7 +2868,7 @@ impl App {
                     .take(120)
                     .collect();
                 let host_name = session.display_name.clone();
-                self.ssh_log.push(crate::ssh::probe::SshLogEntry {
+                self.push_ssh_log(crate::ssh::probe::SshLogEntry {
                     host_name,
                     line: format!(
                         "auth: armed but no prompt matched. last visible line: {preview:?}"
@@ -5004,12 +5050,17 @@ mod tests {
         app.handle_key(key_char('d')).unwrap();
         app.handle_key(key(KeyCode::Enter)).unwrap();
 
+        // Enter applies the filter and returns to Normal so the list can be
+        // navigated while filtered.
+        assert_eq!(app.mode, AppMode::Normal);
         assert_eq!(app.tag_filter.as_deref(), Some("prod"));
         assert_eq!(app.filtered_indices, vec![0]);
 
+        // Esc in Normal clears the active tag filter.
         app.handle_key(key(KeyCode::Esc)).unwrap();
         assert_eq!(app.mode, AppMode::Normal);
         assert!(app.tag_filter.is_none());
+        assert_eq!(app.filtered_indices.len(), 2);
     }
 
     #[test]
