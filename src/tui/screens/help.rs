@@ -50,7 +50,7 @@ pub fn render_help() -> Paragraph<'static> {
         Line::from(""),
         section("audit (tab 4)"),
         entry("f", "Cycle filter (all/ok/fail)"),
-        entry("r", "Cycle range (all/today/week/month)"),
+        entry("r", "Cycle range (all/24h/week/month)"),
         Line::from(""),
         section("search"),
         entry("/", "Open fuzzy palette"),

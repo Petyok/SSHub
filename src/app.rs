@@ -146,7 +146,7 @@ impl AuditRange {
     pub fn label(self) -> &'static str {
         match self {
             AuditRange::All => "all",
-            AuditRange::Today => "today",
+            AuditRange::Today => "24h",
             AuditRange::Week => "week",
             AuditRange::Month => "month",
         }

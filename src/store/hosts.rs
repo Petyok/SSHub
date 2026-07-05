@@ -160,63 +160,68 @@ impl LauncherStore {
     }
 
     pub fn update_host(&self, id: i64, update: &HostUpdate) -> Result<Option<ManagedHost>> {
-        let current = match self.get_host(id)? {
-            Some(v) => v,
-            None => return Ok(None),
-        };
-
-        if current.source == HostSource::SshConfig && update_changes_connection_fields(update) {
-            anyhow::bail!("connection fields are read-only for ssh_config hosts");
-        }
-
-        let label = match &update.label {
-            Some(v) => v.clone(),
-            None => current.label.clone(),
-        };
-        let name = update.name.as_ref().unwrap_or(&current.name).clone();
-        let address = update.address.as_ref().unwrap_or(&current.address).clone();
-        let port = update.port.unwrap_or(current.port);
-        let group_id = match &update.group_id {
-            Some(v) => *v,
-            None => current.group_id,
-        };
-        let identity_id = match &update.identity_id {
-            Some(v) => *v,
-            None => current.identity_id,
-        };
-        let tags = update.tags.as_ref().unwrap_or(&current.tags).clone();
-        let notes = match &update.notes {
-            Some(v) => v.clone(),
-            None => current.notes.clone(),
-        };
-        let os_icon = match &update.os_icon {
-            Some(v) => v.clone(),
-            None => current.os_icon.clone(),
-        };
-        let proxy_jump = match &update.proxy_jump {
-            Some(v) => v.clone(),
-            None => current.proxy_jump.clone(),
-        };
-        let forward_agent = update.forward_agent.unwrap_or(current.forward_agent);
-        let remote_command = match &update.remote_command {
-            Some(v) => v.clone(),
-            None => current.remote_command.clone(),
-        };
-        let environment = match &update.environment {
-            Some(v) => v.clone(),
-            None => current.environment.clone(),
-        };
-        let favorite = update.favorite.unwrap_or(current.favorite);
-        let sort_order = update.sort_order.unwrap_or(current.sort_order);
-        let has_password = update.has_password.unwrap_or(current.has_password);
-        let username = match &update.username {
-            Some(v) => v.clone(),
-            None => current.username.clone(),
-        };
-        let tags_json = tags_to_json(&tags)?;
-        let now = now_ts();
-
+        // Read-merge-write under one transaction on one connection: a
+        // concurrent writer (watcher reimport, second instance) can no longer
+        // slip between the read and the write and get its change overwritten.
         self.with_conn(|conn| {
+            let tx = conn.unchecked_transaction()?;
+
+            let current = match load_host_by_id(conn, id)? {
+                Some(v) => v,
+                None => return Ok(None),
+            };
+
+            if current.source == HostSource::SshConfig && update_changes_connection_fields(update) {
+                anyhow::bail!("connection fields are read-only for ssh_config hosts");
+            }
+
+            let label = match &update.label {
+                Some(v) => v.clone(),
+                None => current.label.clone(),
+            };
+            let name = update.name.as_ref().unwrap_or(&current.name).clone();
+            let address = update.address.as_ref().unwrap_or(&current.address).clone();
+            let port = update.port.unwrap_or(current.port);
+            let group_id = match &update.group_id {
+                Some(v) => *v,
+                None => current.group_id,
+            };
+            let identity_id = match &update.identity_id {
+                Some(v) => *v,
+                None => current.identity_id,
+            };
+            let tags = update.tags.as_ref().unwrap_or(&current.tags).clone();
+            let notes = match &update.notes {
+                Some(v) => v.clone(),
+                None => current.notes.clone(),
+            };
+            let os_icon = match &update.os_icon {
+                Some(v) => v.clone(),
+                None => current.os_icon.clone(),
+            };
+            let proxy_jump = match &update.proxy_jump {
+                Some(v) => v.clone(),
+                None => current.proxy_jump.clone(),
+            };
+            let forward_agent = update.forward_agent.unwrap_or(current.forward_agent);
+            let remote_command = match &update.remote_command {
+                Some(v) => v.clone(),
+                None => current.remote_command.clone(),
+            };
+            let environment = match &update.environment {
+                Some(v) => v.clone(),
+                None => current.environment.clone(),
+            };
+            let favorite = update.favorite.unwrap_or(current.favorite);
+            let sort_order = update.sort_order.unwrap_or(current.sort_order);
+            let has_password = update.has_password.unwrap_or(current.has_password);
+            let username = match &update.username {
+                Some(v) => v.clone(),
+                None => current.username.clone(),
+            };
+            let tags_json = tags_to_json(&tags)?;
+            let now = now_ts();
+
             conn.execute(
                 "UPDATE hosts
                  SET name = ?1, label = ?2, address = ?3, port = ?4, group_id = ?5, identity_id = ?6,
@@ -246,10 +251,11 @@ impl LauncherStore {
                     environment,
                 ],
             )?;
-            Ok(())
-        })?;
 
-        self.get_host(id)
+            let updated = load_host_by_id(conn, id)?;
+            tx.commit()?;
+            Ok(updated)
+        })
     }
 
     pub fn set_host_last_connected(&self, id: i64, ts: i64) -> Result<()> {
@@ -284,28 +290,38 @@ impl LauncherStore {
 
     /// Swap `sort_order` values between two launcher hosts.
     pub fn swap_host_sort_orders(&self, id_a: i64, id_b: i64) -> Result<()> {
-        let a = self
-            .get_host(id_a)?
-            .context("host a missing for sort swap")?;
-        let b = self
-            .get_host(id_b)?
-            .context("host b missing for sort swap")?;
-
-        self.update_host(
-            id_a,
-            &HostUpdate {
-                sort_order: Some(b.sort_order),
-                ..Default::default()
-            },
-        )?;
-        self.update_host(
-            id_b,
-            &HostUpdate {
-                sort_order: Some(a.sort_order),
-                ..Default::default()
-            },
-        )?;
-        Ok(())
+        // Atomic: a crash between the two updates must not leave both hosts
+        // with the same sort_order.
+        self.with_conn(|conn| {
+            let tx = conn.unchecked_transaction()?;
+            let so_a: i64 = conn
+                .query_row(
+                    "SELECT sort_order FROM hosts WHERE id = ?1",
+                    params![id_a],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .context("host a missing for sort swap")?;
+            let so_b: i64 = conn
+                .query_row(
+                    "SELECT sort_order FROM hosts WHERE id = ?1",
+                    params![id_b],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .context("host b missing for sort swap")?;
+            let now = now_ts();
+            conn.execute(
+                "UPDATE hosts SET sort_order = ?1, updated_at = ?2 WHERE id = ?3",
+                params![so_b, now, id_a],
+            )?;
+            conn.execute(
+                "UPDATE hosts SET sort_order = ?1, updated_at = ?2 WHERE id = ?3",
+                params![so_a, now, id_b],
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
     }
 
     /// Insert or update a host imported from ssh config. Never overwrites launcher rows.
