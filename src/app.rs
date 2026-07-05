@@ -321,7 +321,7 @@ impl HostEntry {
 
     pub fn environment(&self) -> Option<&str> {
         match self {
-            Self::Managed(_) => None,
+            Self::Managed(m) => m.environment.as_deref(),
             Self::Legacy { meta, .. } => meta.environment.as_deref(),
         }
     }
@@ -3980,17 +3980,34 @@ impl App {
         let last_connected = self.hosts[host_idx].last_connected();
         let description = optional_field(&edit.description);
         let environment = optional_field(&edit.environment);
-        let meta = crate::metadata::HostMetadata {
-            host_name: host_name.clone(),
-            tags: parse_tags(&edit.tags),
-            description,
-            environment,
-            favorite,
-            last_connected,
-        };
-        self.metadata.upsert(&meta)?;
-        if let Some((_, stored_meta)) = self.hosts[host_idx].legacy_mut() {
-            *stored_meta = meta;
+        let tags = parse_tags(&edit.tags);
+
+        // Managed hosts (launcher + imported ssh_config rows) live in
+        // launcher.db — persist there, or the edit is lost on reload.
+        if let HostEntry::Managed(managed) = &self.hosts[host_idx] {
+            let id = managed.id;
+            let update = crate::store::HostUpdate {
+                tags: Some(tags),
+                notes: Some(description),
+                environment: Some(environment),
+                ..Default::default()
+            };
+            if let Some(updated) = self.store.update_host(id, &update)? {
+                self.hosts[host_idx] = HostEntry::Managed(updated);
+            }
+        } else {
+            let meta = crate::metadata::HostMetadata {
+                host_name: host_name.clone(),
+                tags,
+                description,
+                environment,
+                favorite,
+                last_connected,
+            };
+            self.metadata.upsert(&meta)?;
+            if let Some((_, stored_meta)) = self.hosts[host_idx].legacy_mut() {
+                *stored_meta = meta;
+            }
         }
         self.rebuild_filter();
         self.mode = AppMode::Normal;

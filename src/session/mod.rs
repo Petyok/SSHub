@@ -292,6 +292,7 @@ const PASSPHRASE_NEEDLES: &[&str] = &["passphrase for", "enter passphrase"];
 /// Substring match across the screen tail. Tolerant to position so prompts
 /// like "deploy@host's password:" or a prompt followed by a trailing space
 /// still match.
+#[cfg(test)]
 fn contains_prompt(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|n| haystack.contains(n))
 }

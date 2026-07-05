@@ -12,7 +12,7 @@ pub use types::{
 
 use anyhow::{Context, Result};
 use rusqlite::Connection;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Mutex;
 
 /// SQLite-backed launcher store (hosts, groups, identities).
@@ -57,7 +57,10 @@ impl LauncherStore {
     /// In-memory store for unit tests.
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
-        let path = PathBuf::from(":memory:");
+        // Point the "launcher path" into a throwaway location that cannot have
+        // a metadata.db sibling: with ":memory:" the legacy-import step would
+        // look for ./metadata.db in the CWD and silently import it in tests.
+        let path = std::env::temp_dir().join("sshub-in-memory/launcher.db");
         migrate::run_migrations(&conn, &path)?;
         let store = Self {
             conn: Mutex::new(conn),

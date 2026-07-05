@@ -37,9 +37,12 @@ impl MetadataDb {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("create metadata db directory {}", parent.display()))?;
+            crate::secure_fs::restrict_dir(parent);
         }
         let conn = Connection::open(path)
             .with_context(|| format!("open metadata db at {}", path.display()))?;
+        crate::secure_fs::restrict_file(path);
+        conn.execute_batch("PRAGMA busy_timeout = 5000;")?;
         conn.execute_batch(SCHEMA)?;
         Ok(Self {
             conn: Mutex::new(conn),

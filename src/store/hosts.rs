@@ -202,6 +202,10 @@ impl LauncherStore {
             Some(v) => v.clone(),
             None => current.remote_command.clone(),
         };
+        let environment = match &update.environment {
+            Some(v) => v.clone(),
+            None => current.environment.clone(),
+        };
         let favorite = update.favorite.unwrap_or(current.favorite);
         let sort_order = update.sort_order.unwrap_or(current.sort_order);
         let has_password = update.has_password.unwrap_or(current.has_password);
@@ -217,7 +221,8 @@ impl LauncherStore {
                 "UPDATE hosts
                  SET name = ?1, label = ?2, address = ?3, port = ?4, group_id = ?5, identity_id = ?6,
                      os_icon = ?7, tags = ?8, notes = ?9, proxy_jump = ?10, forward_agent = ?11,
-                     remote_command = ?12, favorite = ?13, sort_order = ?14, has_password = ?15, username = ?16, updated_at = ?17
+                     remote_command = ?12, favorite = ?13, sort_order = ?14, has_password = ?15, username = ?16, updated_at = ?17,
+                     environment = ?19
                  WHERE id = ?18",
                 params![
                     name,
@@ -238,6 +243,7 @@ impl LauncherStore {
                     username,
                     now,
                     id,
+                    environment,
                 ],
             )?;
             Ok(())
@@ -560,7 +566,8 @@ fn load_host_by_id(conn: &rusqlite::Connection, id: i64) -> Result<Option<Manage
                 h.sort_order, h.favorite, h.last_connected, h.source, h.ssh_config_hash,
                 h.has_password, h.created_at, h.updated_at, h.username,
                 g.id, g.name, g.sort_order,
-                i.id, i.name, i.username, i.private_key, i.certificate, i.has_password
+                i.id, i.name, i.username, i.private_key, i.certificate, i.has_password,
+                h.environment
          FROM hosts h
          LEFT JOIN host_groups g ON g.id = h.group_id
          LEFT JOIN identities i ON i.id = h.identity_id
@@ -629,6 +636,7 @@ fn row_to_managed_host(row: &rusqlite::Row<'_>) -> rusqlite::Result<ManagedHost>
         proxy_jump: row.get(10)?,
         forward_agent: row.get::<_, i64>(11)? != 0,
         remote_command: row.get(12)?,
+        environment: row.get(31)?,
         sort_order: row.get(13)?,
         favorite: row.get::<_, i64>(14)? != 0,
         last_connected: row.get(15)?,

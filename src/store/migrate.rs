@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 const V2_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -64,15 +64,18 @@ CREATE TABLE IF NOT EXISTS host_metadata (
 
 pub(crate) fn run_migrations(conn: &Connection, launcher_path: &Path) -> Result<()> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
-    conn.execute_batch(V2_SCHEMA)?;
+    // Wait instead of failing with SQLITE_BUSY when another instance (or the
+    // watcher-triggered reimport) holds the write lock.
+    conn.execute_batch("PRAGMA busy_timeout = 5000;")?;
+
+    // Run the whole chain atomically: a crash mid-migration must not leave the
+    // schema half-upgraded with no recorded version step.
+    let tx = conn.unchecked_transaction()?;
+    tx.execute_batch(V2_SCHEMA)?;
 
     let current = schema_version(conn)?;
     if current >= SCHEMA_VERSION {
         return Ok(());
-    }
-
-    if current == 0 {
-        migrate_legacy_metadata(conn, launcher_path)?;
     }
 
     if current < 3 {
@@ -91,7 +94,17 @@ pub(crate) fn run_migrations(conn: &Connection, launcher_path: &Path) -> Result<
         migrate_v5_to_v6(conn)?;
     }
 
+    if current < 7 {
+        migrate_v6_to_v7(conn)?;
+    }
+
+    // Runs last so all columns it writes to (e.g. environment) already exist.
+    if current == 0 {
+        migrate_legacy_metadata(conn, launcher_path)?;
+    }
+
     set_schema_version(conn, SCHEMA_VERSION)?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -136,7 +149,7 @@ fn migrate_legacy_metadata(conn: &Connection, launcher_path: &Path) -> Result<()
     legacy.execute_batch(LEGACY_METADATA_SCHEMA)?;
 
     let mut stmt = legacy.prepare(
-        "SELECT host_name, tags, description, favorite, last_connected
+        "SELECT host_name, tags, description, environment, favorite, last_connected
          FROM host_metadata",
     )?;
     let rows = stmt.query_map([], |row| {
@@ -144,26 +157,30 @@ fn migrate_legacy_metadata(conn: &Connection, launcher_path: &Path) -> Result<()
             row.get::<_, String>(0)?,
             row.get::<_, Option<String>>(1)?,
             row.get::<_, Option<String>>(2)?,
-            row.get::<_, i64>(3)?,
-            row.get::<_, Option<i64>>(4)?,
+            row.get::<_, Option<String>>(3)?,
+            row.get::<_, i64>(4)?,
+            row.get::<_, Option<i64>>(5)?,
         ))
     })?;
 
     let now = now_ts();
     for row in rows {
-        let (host_name, tags_raw, description, favorite, last_connected) = row?;
-        let tags = tags_from_json(tags_raw)?;
+        let (host_name, tags_raw, description, environment, favorite, last_connected) = row?;
+        // A single corrupt tags blob must not brick the whole app on startup:
+        // fall back to no tags instead of failing the migration.
+        let tags = tags_from_json(tags_raw).unwrap_or_default();
         let tags_json = serde_json::to_string(&tags)?;
 
         conn.execute(
             "INSERT OR IGNORE INTO hosts
-                (name, label, address, port, tags, notes, favorite, last_connected,
+                (name, label, address, port, tags, notes, environment, favorite, last_connected,
                  source, created_at, updated_at)
-             VALUES (?1, NULL, ?1, 22, ?2, ?3, ?4, ?5, 'ssh_config', ?6, ?6)",
+             VALUES (?1, NULL, ?1, 22, ?2, ?3, ?4, ?5, ?6, 'ssh_config', ?7, ?7)",
             params![
                 host_name,
                 tags_json,
                 description,
+                environment,
                 favorite,
                 last_connected,
                 now,
@@ -269,6 +286,17 @@ fn migrate_v5_to_v6(conn: &Connection) -> Result<()> {
             updated_at    INTEGER NOT NULL
         );",
     )?;
+    Ok(())
+}
+
+fn migrate_v6_to_v7(conn: &Connection) -> Result<()> {
+    let has_col: bool = conn
+        .prepare("SELECT COUNT(*) FROM pragma_table_info('hosts') WHERE name = 'environment'")?
+        .query_row([], |row| row.get::<_, i64>(0))
+        .map(|c| c > 0)?;
+    if !has_col {
+        conn.execute_batch("ALTER TABLE hosts ADD COLUMN environment TEXT;")?;
+    }
     Ok(())
 }
 
@@ -382,6 +410,37 @@ mod tests {
         assert_eq!(last_connected, Some(1_700_000_000));
         let parsed_tags: Vec<String> = serde_json::from_str(&tags).unwrap();
         assert_eq!(parsed_tags, vec!["prod", "web"]);
+    }
+
+    #[test]
+    fn migration_imports_legacy_environment_and_tolerates_bad_tags() {
+        let dir = temp_dir();
+        let metadata_path = dir.path().join("metadata.db");
+        let launcher_path = dir.path().join("launcher.db");
+
+        let legacy = Connection::open(&metadata_path).unwrap();
+        legacy.execute_batch(LEGACY_METADATA_SCHEMA).unwrap();
+        legacy
+            .execute(
+                "INSERT INTO host_metadata (host_name, tags, description, environment, favorite)
+                 VALUES ('envhost', 'not-json', NULL, 'prod', 0)",
+                [],
+            )
+            .unwrap();
+        drop(legacy);
+
+        let conn = Connection::open(&launcher_path).unwrap();
+        run_migrations(&conn, &launcher_path).unwrap();
+
+        let (environment, tags): (Option<String>, String) = conn
+            .query_row(
+                "SELECT environment, tags FROM hosts WHERE name = 'envhost'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(environment.as_deref(), Some("prod"));
+        assert_eq!(tags, "[]");
     }
 
     #[test]

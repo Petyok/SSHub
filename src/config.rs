@@ -95,11 +95,8 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
 /// Falls back to `SSH_LAUNCHER_CONFIG_DIR` for backward compatibility.
 /// Migrates data from `~/.config/ssh-launcher` if the new path doesn't exist yet.
 pub fn config_dir() -> anyhow::Result<std::path::PathBuf> {
-    if let Ok(dir) = std::env::var("SSHUB_CONFIG_DIR") {
-        return Ok(dir.into());
-    }
-    if let Ok(dir) = std::env::var("SSH_LAUNCHER_CONFIG_DIR") {
-        return Ok(dir.into());
+    if let Some(dir) = env_dir("SSHUB_CONFIG_DIR").or_else(|| env_dir("SSH_LAUNCHER_CONFIG_DIR")) {
+        return Ok(dir);
     }
     let home = std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME not set"))?;
     let new_dir = std::path::PathBuf::from(&home).join(".config/sshub");
@@ -112,11 +109,8 @@ pub fn config_dir() -> anyhow::Result<std::path::PathBuf> {
 /// Falls back to `SSH_LAUNCHER_DATA_DIR` for backward compatibility.
 /// Migrates data from `~/.local/share/ssh-launcher` if the new path doesn't exist yet.
 pub fn data_dir() -> anyhow::Result<std::path::PathBuf> {
-    if let Ok(dir) = std::env::var("SSHUB_DATA_DIR") {
-        return Ok(dir.into());
-    }
-    if let Ok(dir) = std::env::var("SSH_LAUNCHER_DATA_DIR") {
-        return Ok(dir.into());
+    if let Some(dir) = env_dir("SSHUB_DATA_DIR").or_else(|| env_dir("SSH_LAUNCHER_DATA_DIR")) {
+        return Ok(dir);
     }
     let home = std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME not set"))?;
     let new_dir = std::path::PathBuf::from(&home).join(".local/share/sshub");
@@ -125,16 +119,38 @@ pub fn data_dir() -> anyhow::Result<std::path::PathBuf> {
     Ok(new_dir)
 }
 
+/// Env-var directory override; empty values are ignored so e.g.
+/// `SSHUB_CONFIG_DIR=""` doesn't silently resolve to the CWD.
+fn env_dir(var: &str) -> Option<std::path::PathBuf> {
+    match std::env::var(var) {
+        Ok(dir) if !dir.trim().is_empty() => Some(dir.into()),
+        _ => None,
+    }
+}
+
 /// If `new_dir` does not exist but `legacy_dir` does, copy the legacy directory
 /// to the new location so user data is preserved on upgrade.
+///
+/// The copy is staged into a `<new_dir>.migrating` sibling and renamed into
+/// place only when complete: a crash or I/O error mid-copy must not leave a
+/// half-populated `new_dir`, because `new_dir.exists()` would then prevent the
+/// migration from ever being retried (frozen partial copy, "lost" hosts).
 fn migrate_legacy_dir(new_dir: &Path, legacy_dir: &Path) {
-    if !new_dir.exists() && legacy_dir.exists() {
-        if let Err(e) = copy_dir_recursive(legacy_dir, new_dir) {
-            eprintln!(
-                "Warning: failed to migrate data from {}: {e}",
-                legacy_dir.display()
-            );
-        }
+    if new_dir.exists() || !legacy_dir.exists() {
+        return;
+    }
+    let staging = new_dir.with_extension("migrating");
+    let _ = fs::remove_dir_all(&staging);
+    let result = copy_dir_recursive(legacy_dir, &staging)
+        .and_then(|()| fs::rename(&staging, new_dir));
+    if let Err(e) = result {
+        let _ = fs::remove_dir_all(&staging);
+        eprintln!(
+            "Warning: failed to migrate data from {}: {e}",
+            legacy_dir.display()
+        );
+    } else {
+        crate::secure_fs::restrict_dir(new_dir);
     }
 }
 
