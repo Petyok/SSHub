@@ -55,7 +55,14 @@ pub fn dashboard_layout(area: Rect) -> DashboardAreas {
     let body_h = h.saturating_sub(chrome);
 
     let header = Rect::new(area.x, area.y, w, header_h.min(h));
-    let tab_bar = Rect::new(area.x, area.y + header_h + rule1, w, tab_h);
+    // Clamp to a zero-height rect when the terminal is too short for the
+    // chrome — renderers skip zero-height areas instead of panicking.
+    let tab_y = area.y + header_h + rule1;
+    let tab_bar = if tab_y + tab_h <= area.y + h {
+        Rect::new(area.x, tab_y, w, tab_h)
+    } else {
+        Rect::new(area.x, area.y, w, 0)
+    };
     let body_y = area.y + header_h + rule1 + tab_h + rule2;
     let body = Rect::new(area.x, body_y, w, body_h);
     let footer = Rect::new(area.x, area.y + h.saturating_sub(footer_h), w, footer_h);

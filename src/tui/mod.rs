@@ -55,7 +55,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     widgets::header::render_header(frame, areas.header, total, online, slow, down, &clock);
 
     // Horizontal rule 1
-    let rule1 = Rect::new(area.x, areas.header.y + areas.header.height, area.width, 1);
+    let rule1 = row_in(area, areas.header.y + areas.header.height);
     widgets::footer::render_hrule(frame, rule1, false);
 
     // Tab bar
@@ -63,12 +63,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     widgets::tab_bar::render_tab_bar(frame, areas.tab_bar, app.active_tab + 1, scope_path);
 
     // Horizontal rule 2
-    let rule2 = Rect::new(
-        area.x,
-        areas.tab_bar.y + areas.tab_bar.height,
-        area.width,
-        1,
-    );
+    let rule2 = row_in(area, areas.tab_bar.y + areas.tab_bar.height);
     widgets::footer::render_hrule(frame, rule2, false);
 
     // ── Tab body dispatch ─────────────────────────────────────
@@ -81,7 +76,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     // Horizontal rule 3: above footer (bold)
-    let rule3 = Rect::new(area.x, areas.footer.y.saturating_sub(1), area.width, 1);
+    let rule3 = row_in(area, areas.footer.y.saturating_sub(1));
     widgets::footer::render_hrule(frame, rule3, true);
 
     // Footer keybinds (tab-specific)
@@ -165,6 +160,16 @@ fn render_import_prompt_popup(frame: &mut Frame, app: &App) {
         ),
         popup_area,
     );
+}
+
+/// A one-row rect at `y`, or a zero-height rect when `y` falls outside
+/// `area` (tiny terminals) — rendering helpers skip zero-height rects.
+fn row_in(area: Rect, y: u16) -> Rect {
+    if y >= area.y && y < area.y + area.height {
+        Rect::new(area.x, y, area.width, 1)
+    } else {
+        Rect::new(area.x, area.y, area.width, 0)
+    }
 }
 
 fn compute_header_stats(app: &App) -> (usize, usize, usize, usize) {

@@ -112,10 +112,15 @@ fn render_recent_panel(buf: &mut Buffer, area: Rect, app: &App) {
             let display: String = host.chars().take(name_max).collect();
             buf.set_string(col, y, &display, theme::text());
 
-            // age — right-aligned in MUTE
+            // age — right-aligned in MUTE; skip when the column is too narrow
             let age = format_relative_time(*ts);
-            let age_col = area.x + area.width - 2 - age.len() as u16;
-            buf.set_string(age_col, y, &age, theme::mute());
+            let needed = 2 + age.len() as u16;
+            if area.width > needed {
+                let age_col = area.x + area.width - needed;
+                if age_col > col {
+                    buf.set_string(age_col, y, &age, theme::mute());
+                }
+            }
         }
     }
 

@@ -72,7 +72,7 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
             let name_max = cw.saturating_sub(6 + count_suffix.len());
             let truncated_label: String = label.chars().take(name_max).collect();
             buf.set_string(col, y, &truncated_label, theme::white());
-            col += truncated_label.len() as u16;
+            col += truncated_label.chars().count() as u16;
 
             // Pad with spaces, then dots, then count — right-aligned
             let used = (col - cx) as usize;
@@ -83,10 +83,10 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
                 let dots: String = " \u{00b7}".repeat(remaining / 2);
                 let dots_trimmed: String = dots.chars().take(remaining).collect();
                 buf.set_string(col, y, &dots_trimmed, theme::mute());
-                col += dots_trimmed.len() as u16;
+                col += dots_trimmed.chars().count() as u16;
             }
             // Count in MUTE
-            let count_x = cx + cw as u16 - count_suffix.len() as u16;
+            let count_x = cx + (cw as u16).saturating_sub(count_suffix.len() as u16);
             if count_x > col {
                 buf.set_string(count_x, y, &count_suffix, theme::mute());
             }
@@ -155,19 +155,26 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
                 theme::dim()
             };
 
-            // Name — padded/truncated to 14 chars.
-            let name = entry.display_name();
-            let name_display = format!("{:<14}", truncate_str(name, 14));
-            buf.set_string(col, y, &name_display, name_style);
-            col += 14;
-            col += 1; // gap
+            let inner_right = cx + cw as u16;
 
-            // Address — padded/truncated to 14 chars.
+            // Name — up to 14 chars, clamped to the panel width so narrow
+            // terminals don't bleed into the border/neighbouring column.
+            let name = entry.display_name();
+            let name_w = (inner_right.saturating_sub(col) as usize).min(14);
+            if name_w > 0 {
+                let name_display = crate::tui::text::pad_ellipsize(name, name_w);
+                buf.set_string(col, y, &name_display, name_style);
+                col += name_w as u16 + 1; // + gap
+            }
+
+            // Address — up to 14 chars, only if it still fits.
             let addr = host_address(entry);
-            let addr_display = format!("{:<14}", truncate_str(&addr, 14));
-            buf.set_string(col, y, &addr_display, dim_style);
-            col += 14;
-            col += 1; // gap
+            let addr_w = (inner_right.saturating_sub(col) as usize).min(14);
+            if addr_w >= 4 {
+                let addr_display = crate::tui::text::pad_ellipsize(&addr, addr_w);
+                buf.set_string(col, y, &addr_display, dim_style);
+                col += addr_w as u16 + 1; // + gap
+            }
 
             // Ping value — right-aligned in 6 chars at the right edge.
             let ping_width: u16 = 6;
