@@ -196,13 +196,13 @@ impl Session {
             return;
         }
         let secret = self.pending_secret.as_ref().unwrap().clone();
-        let snippet = current_screen_tail(self.parser.screen());
-        let lower = snippet.to_ascii_lowercase();
+        let line = line_before_cursor(self.parser.screen());
+        let lower = line.to_ascii_lowercase();
 
         let (matched, kind) = match secret {
-            PendingSecret::Password(_) => (contains_prompt(&lower, PASSWORD_NEEDLES), "password"),
+            PendingSecret::Password(_) => (ends_with_prompt(&lower, PASSWORD_NEEDLES), "password"),
             PendingSecret::Passphrase(_) => {
-                (contains_prompt(&lower, PASSPHRASE_NEEDLES), "passphrase")
+                (ends_with_prompt(&lower, PASSPHRASE_NEEDLES), "passphrase")
             }
         };
 
@@ -294,6 +294,38 @@ const PASSPHRASE_NEEDLES: &[&str] = &["passphrase for", "enter passphrase"];
 /// still match.
 fn contains_prompt(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|n| haystack.contains(n))
+}
+
+/// A prompt is only "live" when the cursor sits right after it, waiting for
+/// input. Matching the *end* of the cursor line (not a substring anywhere in
+/// the tail) prevents auto-typing the secret into a shell because a banner or
+/// MOTD merely *mentions* e.g. "change your password:".
+/// The line must both mention the needle and end with `:` — i.e. look like an
+/// input prompt the cursor is parked on, not prose that scrolled past.
+fn ends_with_prompt(line: &str, needles: &[&str]) -> bool {
+    let trimmed = line.trim_end();
+    trimmed.ends_with(':') && needles.iter().any(|n| trimmed.contains(n.trim_end()))
+}
+
+/// Text of the cursor row up to (and excluding) the cursor column.
+fn line_before_cursor(screen: &vt100::Screen) -> String {
+    let (rows, _) = screen.size();
+    if rows == 0 {
+        return String::new();
+    }
+    let (cursor_row, cursor_col) = screen.cursor_position();
+    let row = cursor_row.min(rows - 1);
+    let mut out = String::new();
+    for col in 0..cursor_col {
+        if let Some(cell) = screen.cell(row, col) {
+            if cell.has_contents() {
+                out.push_str(&cell.contents());
+            } else {
+                out.push(' ');
+            }
+        }
+    }
+    out
 }
 
 impl Drop for Session {
@@ -391,6 +423,41 @@ mod prompt_tests {
             contains_prompt(&tail.to_ascii_lowercase(), PASSWORD_NEEDLES),
             "scanner must find the top-of-screen prompt, got tail: {tail:?}"
         );
+    }
+
+    #[test]
+    fn motd_mentioning_password_does_not_trigger_autotype() {
+        // A banner that *mentions* "password:" mid-text must not match: the
+        // scanner now looks only at the cursor line, which must end with ':'.
+        let mut parser = vt100::Parser::new(40, 100, 0);
+        parser.process(
+            b"* Policy: you must change your password: rotate it every 90 days.\r\n\
+              Loading profile...\r\n",
+        );
+        let line = line_before_cursor(parser.screen());
+        assert!(
+            !ends_with_prompt(&line.to_ascii_lowercase(), PASSWORD_NEEDLES),
+            "MOTD text must not look like a live prompt, got line: {line:?}"
+        );
+
+        // A real prompt (cursor parked right after "password: ") still matches.
+        parser.process(b"deploy@host's password: ");
+        let line = line_before_cursor(parser.screen());
+        assert!(
+            ends_with_prompt(&line.to_ascii_lowercase(), PASSWORD_NEEDLES),
+            "live prompt must match, got line: {line:?}"
+        );
+    }
+
+    #[test]
+    fn passphrase_prompt_matches_at_cursor_line() {
+        let mut parser = vt100::Parser::new(10, 100, 0);
+        parser.process(b"Enter passphrase for key '/home/me/.ssh/id_rsa': ");
+        let line = line_before_cursor(parser.screen());
+        assert!(ends_with_prompt(
+            &line.to_ascii_lowercase(),
+            PASSPHRASE_NEEDLES
+        ));
     }
 
     #[test]
