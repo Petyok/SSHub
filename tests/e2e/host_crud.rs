@@ -235,7 +235,7 @@ fn enter_on_last_field_saves_the_form() {
 }
 
 #[test]
-fn esc_inside_field_edit_marks_form_dirty_for_discard_prompt() {
+fn esc_reverted_field_edit_leaves_form_clean() {
     let file = NamedTempFile::new().unwrap();
     let path = file.path();
     let mut app = app_with_store(path);
@@ -247,7 +247,25 @@ fn esc_inside_field_edit_marks_form_dirty_for_discard_prompt() {
     app.handle_key(key(KeyCode::Esc)).unwrap(); // cancel field edit → reverts
     assert_eq!(app.mode, AppMode::HostForm, "still in the form");
 
-    // Esc in navigation must now prompt instead of silently closing.
+    // Nothing was actually changed (the edit was reverted), so Esc closes
+    // silently — no "Save changes?" trap.
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert_eq!(app.mode, AppMode::Normal);
+    assert!(app.hosts.is_empty());
+}
+
+#[test]
+fn esc_after_committed_field_edit_prompts_for_discard() {
+    let file = NamedTempFile::new().unwrap();
+    let path = file.path();
+    let mut app = app_with_store(path);
+
+    app.handle_key(key_char('a')).unwrap();
+    // Commit a real change with Enter — the form is genuinely dirty now.
+    app.handle_key(key(KeyCode::Enter)).unwrap(); // open edit
+    type_text(&mut app, "10.9.9.9");
+    app.handle_key(key(KeyCode::Enter)).unwrap(); // commit field
+
     app.handle_key(key(KeyCode::Esc)).unwrap();
     assert_eq!(app.mode, AppMode::ConfirmDiscard);
 
