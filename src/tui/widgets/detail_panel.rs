@@ -59,7 +59,7 @@ fn field_with_cursor(label: &str, value: &str, cursor: usize, active: bool) -> S
     let display = if value.is_empty() {
         "_".to_string()
     } else {
-        let clamped = cursor.min(value.len());
+        let clamped = crate::text_input::byte_index(value, cursor);
         let (before, after) = value.split_at(clamped);
         format!("{before}_{after}")
     };

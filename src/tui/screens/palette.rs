@@ -144,11 +144,7 @@ pub fn render_palette(
 
         // host name — up to 30 chars
         let name_width = 30.min(w.saturating_sub(3));
-        let name_display: String = if name.len() > name_width {
-            format!("{}\u{2026}", &name[..name_width - 1])
-        } else {
-            format!("{:<width$}", name, width = name_width)
-        };
+        let name_display = crate::tui::text::pad_ellipsize(name, name_width);
 
         let name_style = if is_selected {
             theme::white().bg(theme::SEL_BG)
@@ -161,11 +157,7 @@ pub fn render_palette(
         // group label — up to 14 chars
         if col < inner.x + inner.width {
             let group_width = 14.min((inner.x + inner.width - col) as usize);
-            let group_display: String = if group_name.len() > group_width {
-                format!("{}\u{2026}", &group_name[..group_width - 1])
-            } else {
-                format!("{:<width$}", group_name, width = group_width)
-            };
+            let group_display = crate::tui::text::pad_ellipsize(group_name, group_width);
             buf.set_string(
                 col,
                 row_y,
@@ -178,11 +170,7 @@ pub fn render_palette(
         // user — up to 14 chars
         if col < inner.x + inner.width {
             let user_width = 14.min((inner.x + inner.width - col) as usize);
-            let user_display: String = if user.len() > user_width {
-                format!("{}\u{2026}", &user[..user_width - 1])
-            } else {
-                format!("{:<width$}", user, width = user_width)
-            };
+            let user_display = crate::tui::text::pad_ellipsize(user, user_width);
             buf.set_string(
                 col,
                 row_y,
@@ -289,10 +277,6 @@ fn render_detail_kv(buf: &mut Buffer, x: u16, y: u16, max_width: u16, key: &str,
     buf.set_string(x, y, &label, theme::mute());
     let val_x = x + label.len() as u16;
     let avail = max_width.saturating_sub(label.len() as u16) as usize;
-    let truncated: String = if value.len() > avail {
-        format!("{}\u{2026}", &value[..avail.saturating_sub(1)])
-    } else {
-        value.to_string()
-    };
+    let truncated = crate::tui::text::ellipsize(value, avail);
     buf.set_string(val_x, y, &truncated, theme::text());
 }

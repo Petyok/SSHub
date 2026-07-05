@@ -2,6 +2,7 @@ pub mod animation;
 pub mod dashboard_layout;
 pub mod layout;
 pub mod screens;
+pub mod text;
 pub mod theme;
 pub mod widgets;
 

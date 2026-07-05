@@ -2645,7 +2645,7 @@ impl App {
             GroupFormEdit {
                 id: Some(group.id),
                 name: group.name.clone(),
-                cursor: group.name.len(),
+                cursor: text_input::char_len(&group.name),
                 return_to_manage,
             }
         } else {
@@ -3141,7 +3141,7 @@ impl App {
                 password: String::new(),
                 has_password: identity.has_password,
                 field: IdentityFormField::Name,
-                cursor: identity.name.len(),
+                cursor: text_input::char_len(&identity.name),
                 editing: false,
                 edit_snapshot: String::new(),
                 dirty: false,
@@ -3383,9 +3383,9 @@ impl App {
                 HostFormField::Address
             };
             let start_cursor = if metadata_only {
-                managed.label.as_deref().unwrap_or("").len()
+                text_input::char_len(managed.label.as_deref().unwrap_or(""))
             } else {
-                managed.address.len()
+                text_input::char_len(&managed.address)
             };
 
             HostFormEdit {
@@ -3944,7 +3944,7 @@ impl App {
             description,
             environment,
             field: DetailEditField::Tags,
-            cursor: tags.len(),
+            cursor: text_input::char_len(&tags),
         });
         self.mode = AppMode::HostDetail;
         Ok(())
@@ -4002,7 +4002,7 @@ impl App {
             return;
         };
         edit.field = edit.field.next();
-        edit.cursor = edit.active_field().len();
+        edit.cursor = text_input::char_len(edit.active_field());
     }
 
     fn detail_edit_field_prev(&mut self) {
@@ -4010,7 +4010,7 @@ impl App {
             return;
         };
         edit.field = edit.field.prev();
-        edit.cursor = edit.active_field().len();
+        edit.cursor = text_input::char_len(edit.active_field());
     }
 
     fn detail_edit_backspace(&mut self) {
