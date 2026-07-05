@@ -56,18 +56,36 @@ fn template_supports_managed(template: &str) -> bool {
 fn join_shell_words(words: &[String]) -> String {
     words
         .iter()
-        .map(|word| {
-            if word
-                .chars()
-                .any(|c| c.is_whitespace() || matches!(c, '\'' | '"' | '\\'))
-            {
-                format!("'{word}'")
-            } else {
-                word.clone()
-            }
-        })
+        .map(|word| quote_shell_word(word))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// POSIX-safe single-quoting: wraps in `'...'`, embedded `'` becomes `'\''`.
+fn quote_shell_word(word: &str) -> String {
+    let needs_quoting = word.is_empty()
+        || word.chars().any(|c| {
+            c.is_whitespace()
+                || matches!(
+                    c,
+                    '\'' | '"' | '\\' | ';' | '|' | '&' | '$' | '`' | '<' | '>' | '(' | ')' | '*'
+                        | '?' | '[' | ']' | '~' | '#' | '!' | '{' | '}'
+                )
+        });
+    if !needs_quoting {
+        return word.to_string();
+    }
+    let mut out = String::with_capacity(word.len() + 2);
+    out.push('\'');
+    for c in word.chars() {
+        if c == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('\'');
+    out
 }
 
 fn replace_trailing_ssh_alias(
@@ -177,6 +195,13 @@ fn validate_shell_safe_host(host: &SshHost) -> Result<()> {
         ("user", user),
         ("hostname", hostname),
         ("port", port.as_str()),
+        ("identity_file", host.identity_file.as_deref().unwrap_or("")),
+        (
+            "certificate_file",
+            host.certificate_file.as_deref().unwrap_or(""),
+        ),
+        ("proxy_jump", host.proxy_jump.as_deref().unwrap_or("")),
+        ("remote_command", host.remote_command.as_deref().unwrap_or("")),
     ] {
         if value
             .chars()
@@ -293,6 +318,31 @@ mod tests {
         assert!(!needs_shell("wezterm start -- ssh host"));
         assert!(needs_shell("echo hi | less"));
         assert!(!needs_shell("sh -c 'echo hi | less'"));
+    }
+
+    #[test]
+    fn quote_shell_word_escapes_embedded_single_quotes() {
+        assert_eq!(quote_shell_word("plain"), "plain");
+        assert_eq!(quote_shell_word("has space"), "'has space'");
+        assert_eq!(
+            quote_shell_word("x'; touch /tmp/pwned; '"),
+            r#"'x'\''; touch /tmp/pwned; '\'''"#
+        );
+        assert_eq!(quote_shell_word(""), "''");
+        assert_eq!(quote_shell_word("a;b"), "'a;b'");
+    }
+
+    #[test]
+    fn rejects_shell_metacharacters_in_extended_fields_when_needs_shell() {
+        let mut host = SshHost::new("prod");
+        host.remote_command = Some("uptime; rm -rf /".into());
+        let err = build_argv("echo {host} | less", &host).unwrap_err();
+        assert!(err.to_string().contains("shell metacharacters"));
+
+        let mut host = SshHost::new("prod");
+        host.identity_file = Some("/tmp/key`id`".into());
+        let err = build_argv("echo {host} | less", &host).unwrap_err();
+        assert!(err.to_string().contains("shell metacharacters"));
     }
 
     #[test]

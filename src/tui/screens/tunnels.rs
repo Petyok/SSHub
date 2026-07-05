@@ -72,7 +72,7 @@ pub fn render_tunnels(frame: &mut Frame, area: Rect, app: &App) {
         let y = data_y + i as u16;
         let row_idx = scroll + i;
         let is_selected = row_idx == app.tunnel_selected;
-        let is_running = app.tunnel_manager.is_running(tunnel.id);
+        let status = app.tunnel_manager.status(tunnel.id);
         let uptime = app.tunnel_manager.uptime_secs(tunnel.id);
 
         let host_name = tunnel
@@ -87,7 +87,7 @@ pub fn render_tunnels(frame: &mut Frame, area: Rect, app: &App) {
             inner_w,
             tunnel,
             is_selected,
-            is_running,
+            status,
             uptime,
             host_name.as_deref(),
         );
@@ -118,10 +118,11 @@ fn render_tunnel_row(
     w: u16,
     tunnel: &crate::store::Tunnel,
     selected: bool,
-    running: bool,
+    status: &str,
     uptime: Option<u64>,
     host_name: Option<&str>,
 ) {
+    let running = status == "up";
     let base_style = if selected {
         theme::selected()
     } else {
@@ -142,10 +143,10 @@ fn render_tunnel_row(
 
     // STATUS dot
     let status_w = cols[0].1;
-    let (dot, dot_color) = if running {
-        ("●", theme::GREEN)
-    } else {
-        ("○", theme::DIM)
+    let (dot, dot_color) = match status {
+        "up" => ("●", theme::GREEN),
+        "error" => ("●", theme::RED),
+        _ => ("○", theme::DIM),
     };
     let dot_style = if selected {
         Style::default().fg(dot_color).bg(theme::SEL_BG)
@@ -160,6 +161,13 @@ fn render_tunnel_row(
             y,
             label,
             if selected { base_style } else { theme::green() },
+        );
+    } else if status == "error" {
+        buf.set_string(
+            cx + 2,
+            y,
+            "err",
+            if selected { base_style } else { theme::red() },
         );
     } else {
         buf.set_string(

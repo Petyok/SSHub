@@ -72,6 +72,19 @@ impl TunnelManager {
         args.push(spec);
 
         if let Some(host) = host {
+            if host.port != 22 {
+                args.push("-p".into());
+                args.push(host.port.to_string());
+            }
+            if let Some(ref jump) = host.proxy_jump {
+                if !jump.is_empty() {
+                    args.push("-J".into());
+                    args.push(jump.clone());
+                }
+            }
+            if host.forward_agent {
+                args.push("-A".into());
+            }
             if let Some(ref identity) = host.identity {
                 if let Some(ref key) = identity.private_key {
                     args.push("-i".into());
@@ -123,25 +136,34 @@ impl TunnelManager {
 
     pub fn check_health(&mut self) {
         for proc in self.processes.values_mut() {
+            // Once a tunnel has terminated, keep its final status so the UI
+            // can show *why* it stopped; the entry is cleared on stop()/start().
+            if !matches!(proc.status, TunnelStatus::Up) {
+                continue;
+            }
             match proc.child.try_wait() {
                 Ok(Some(status)) => {
-                    if status.success() {
-                        proc.status = TunnelStatus::Down;
-                    } else {
-                        proc.status = TunnelStatus::Error(format!("exited with {}", status));
+                    // stderr is piped: capture the ssh error for diagnostics.
+                    let mut detail = String::new();
+                    if let Some(ref mut stderr) = proc.child.stderr {
+                        use std::io::Read;
+                        let _ = stderr.read_to_string(&mut detail);
                     }
+                    let detail = detail.lines().last().unwrap_or("").trim().to_string();
+                    proc.status = if status.success() {
+                        TunnelStatus::Down
+                    } else if detail.is_empty() {
+                        TunnelStatus::Error(format!("exited with {}", status))
+                    } else {
+                        TunnelStatus::Error(detail)
+                    };
                 }
-                Ok(None) => {
-                    proc.status = TunnelStatus::Up;
-                }
+                Ok(None) => {}
                 Err(e) => {
                     proc.status = TunnelStatus::Error(format!("{e}"));
                 }
             }
         }
-        // Remove dead processes
-        self.processes
-            .retain(|_, p| matches!(p.status, TunnelStatus::Up));
     }
 
     pub fn status(&self, tunnel_id: i64) -> &str {
@@ -151,17 +173,31 @@ impl TunnelManager {
             .unwrap_or("stopped")
     }
 
+    /// Detailed error message for a failed tunnel, if any.
+    pub fn error_detail(&self, tunnel_id: i64) -> Option<&str> {
+        match self.processes.get(&tunnel_id).map(|p| &p.status) {
+            Some(TunnelStatus::Error(msg)) => Some(msg.as_str()),
+            _ => None,
+        }
+    }
+
     pub fn is_running(&self, tunnel_id: i64) -> bool {
-        self.processes.contains_key(&tunnel_id)
+        self.processes
+            .get(&tunnel_id)
+            .is_some_and(|p| matches!(p.status, TunnelStatus::Up))
     }
 
     pub fn active_count(&self) -> usize {
-        self.processes.len()
+        self.processes
+            .values()
+            .filter(|p| matches!(p.status, TunnelStatus::Up))
+            .count()
     }
 
     pub fn uptime_secs(&self, tunnel_id: i64) -> Option<u64> {
         self.processes
             .get(&tunnel_id)
+            .filter(|p| matches!(p.status, TunnelStatus::Up))
             .map(|p| p.started_at.elapsed().as_secs())
     }
 }
