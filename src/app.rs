@@ -858,7 +858,9 @@ pub struct App {
     pub search_query: String,
     pub mode: AppMode,
     pub config: AppConfig,
-    pub tag_filter: Option<String>,
+    /// Active tag filters. A host matches when it carries every selected tag
+    /// (AND). Empty means no tag filtering.
+    pub tag_filters: Vec<String>,
     /// Highlighted row in the tag-filter popup (0 = "all"; 1.. = a tag).
     pub tag_filter_selected: usize,
     pub watcher_rx: Option<Receiver<WatchEvent>>,
@@ -982,7 +984,7 @@ impl App {
             search_query: String::new(),
             mode: AppMode::Normal,
             config,
-            tag_filter: None,
+            tag_filters: Vec::new(),
             tag_filter_selected: 0,
             watcher_rx: None,
             should_quit: false,
@@ -1964,8 +1966,8 @@ impl App {
                 self.move_selection(1)
             }
             KeyCode::Char('k') | KeyCode::Up if key.modifiers.is_empty() => self.move_selection(-1),
-            KeyCode::Esc if key.modifiers.is_empty() && self.tag_filter.is_some() => {
-                self.tag_filter = None;
+            KeyCode::Esc if key.modifiers.is_empty() && !self.tag_filters.is_empty() => {
+                self.tag_filters.clear();
                 self.search_query.clear();
                 self.rebuild_filter();
             }
@@ -2195,16 +2197,13 @@ impl App {
     fn open_tag_filter(&mut self) {
         self.mode = AppMode::TagFilter;
         self.search_query.clear();
-        // Preselect the currently active filter, else "(all)".
-        let rows = self.tag_filter_rows();
-        self.tag_filter_selected = match &self.tag_filter {
-            Some(active) => rows.iter().position(|t| t == active).unwrap_or(0),
-            None => 0,
-        };
+        self.tag_filter_selected = 0;
     }
 
     /// Rows shown in the tag-filter popup: `["(all)", <matching unique tags>]`,
-    /// filtered by the typed query (case-insensitive substring).
+    /// filtered by the typed query (case-insensitive substring). Currently
+    /// selected tags always appear even if they no longer match the query, so
+    /// they can be toggled back off.
     pub fn tag_filter_rows(&self) -> Vec<String> {
         let query = self.search_query.to_lowercase();
         let mut rows = vec!["(all)".to_string()];
@@ -2212,7 +2211,11 @@ impl App {
             .hosts
             .iter()
             .flat_map(|entry| entry.tags().iter().cloned())
-            .filter(|t| query.is_empty() || t.to_lowercase().contains(&query))
+            .filter(|t| {
+                query.is_empty()
+                    || t.to_lowercase().contains(&query)
+                    || self.tag_filters.contains(t)
+            })
             .collect();
         tags.sort();
         tags.dedup();
@@ -2220,24 +2223,57 @@ impl App {
         rows
     }
 
+    /// Whether `tag` is one of the active filters.
+    pub fn is_tag_active(&self, tag: &str) -> bool {
+        self.tag_filters.iter().any(|t| t == tag)
+    }
+
+    fn toggle_tag_filter(&mut self, tag: &str) {
+        if let Some(pos) = self.tag_filters.iter().position(|t| t == tag) {
+            self.tag_filters.remove(pos);
+        } else {
+            self.tag_filters.push(tag.to_string());
+        }
+        self.rebuild_filter();
+    }
+
+    /// Toggle the tag under the popup cursor, or clear all when on "(all)".
+    fn toggle_highlighted_tag(&mut self) {
+        let rows = self.tag_filter_rows();
+        match rows.get(self.tag_filter_selected) {
+            Some(_) if self.tag_filter_selected == 0 => {
+                self.tag_filters.clear();
+                self.rebuild_filter();
+            }
+            Some(tag) => {
+                let tag = tag.clone();
+                self.toggle_tag_filter(&tag);
+            }
+            None => {}
+        }
+    }
+
     fn handle_key_tag_filter(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
+            // Esc closes without changing the current selection (toggles made
+            // with Space are already applied live).
             KeyCode::Esc => {
-                // Cancel without touching the active filter, matching the other
-                // pickers. Use the "(all)" row (or Esc in Normal) to clear.
-                self.search_query.clear();
-                self.mode = AppMode::Normal;
-            }
-            KeyCode::Enter => {
-                let rows = self.tag_filter_rows();
-                let chosen = rows.get(self.tag_filter_selected);
-                self.tag_filter = match chosen {
-                    Some(tag) if self.tag_filter_selected > 0 => Some(tag.clone()),
-                    _ => None,
-                };
                 self.search_query.clear();
                 self.mode = AppMode::Normal;
                 self.rebuild_filter();
+            }
+            // Enter toggles the highlighted row, then closes — the fast path for
+            // picking a single tag.
+            KeyCode::Enter => {
+                self.toggle_highlighted_tag();
+                self.search_query.clear();
+                self.mode = AppMode::Normal;
+                self.rebuild_filter();
+            }
+            // Space toggles the highlighted tag and keeps the menu open so the
+            // user can select several tags in a row.
+            KeyCode::Char(' ') => {
+                self.toggle_highlighted_tag();
             }
             KeyCode::Down => {
                 let len = self.tag_filter_rows().len();
@@ -2265,7 +2301,7 @@ impl App {
     }
 
     /// After the query changes, highlight the first matching tag (index 1) so
-    /// Enter applies it. Falls back to "(all)" when nothing matches or the
+    /// Space toggles it. Falls back to "(all)" when nothing matches or the
     /// query is empty.
     fn reset_tag_filter_selection(&mut self) {
         let has_match = self.tag_filter_rows().len() > 1;
@@ -4848,7 +4884,7 @@ impl App {
         self.search_query.clear();
         self.mode = AppMode::Normal;
         if reset_filter {
-            self.tag_filter = None;
+            self.tag_filters.clear();
         }
         self.rebuild_filter();
     }
@@ -5131,15 +5167,19 @@ impl App {
     }
 
     pub(crate) fn rebuild_filter(&mut self) {
-        let candidates: Vec<usize> = if let Some(tag) = &self.tag_filter {
+        let candidates: Vec<usize> = if self.tag_filters.is_empty() {
+            (0..self.hosts.len()).collect()
+        } else {
             self.hosts
                 .iter()
                 .enumerate()
-                .filter(|(_, entry)| entry.tags().iter().any(|t| t == tag))
+                .filter(|(_, entry)| {
+                    let tags = entry.tags();
+                    // AND: the host must carry every selected tag.
+                    self.tag_filters.iter().all(|f| tags.iter().any(|t| t == f))
+                })
                 .map(|(idx, _)| idx)
                 .collect()
-        } else {
-            (0..self.hosts.len()).collect()
         };
 
         let entries: Vec<HostEntry> = candidates
@@ -5162,7 +5202,7 @@ impl App {
         self.group_sections = build_group_sections(&self.hosts, &self.groups, &filtered);
         // While a filter is active, drop groups that have no matching hosts so
         // the list only shows sections that actually contain results.
-        let filtering = self.tag_filter.is_some() || !self.search_query.is_empty();
+        let filtering = !self.tag_filters.is_empty() || !self.search_query.is_empty();
         if filtering {
             self.group_sections
                 .retain(|section| !section.host_indices.is_empty());
@@ -5212,7 +5252,7 @@ impl App {
         // A tag/search filter may hide the chosen host — drop it rather than
         // silently landing on a different row.
         if !self.filtered_indices.contains(&idx) {
-            self.tag_filter = None;
+            self.tag_filters.clear();
             self.search_query.clear();
             self.rebuild_filter();
         }
@@ -6114,7 +6154,7 @@ mod tests {
     #[test]
     fn esc_exits_search_and_clears_query_and_tag_filter() {
         let mut app = test_app(vec![("alpha", host("alpha"))]);
-        app.tag_filter = Some("prod".into());
+        app.tag_filters = vec!["prod".into()];
         app.mode = AppMode::Search;
         app.search_query = "al".into();
 
@@ -6122,7 +6162,7 @@ mod tests {
 
         assert_eq!(app.mode, AppMode::Normal);
         assert!(app.search_query.is_empty());
-        assert!(app.tag_filter.is_none());
+        assert!(app.tag_filters.is_empty());
     }
 
     #[test]
@@ -6462,7 +6502,7 @@ mod tests {
         let mut app = test_app(vec![("web", host("web")), ("db", host("db"))]);
         legacy_meta(&mut app.hosts[0]).tags = vec!["prod".into()];
         legacy_meta(&mut app.hosts[1]).tags = vec!["staging".into()];
-        app.tag_filter = Some("prod".into());
+        app.tag_filters = vec!["prod".into()];
         app.rebuild_filter();
 
         assert_eq!(app.filtered_indices, vec![0]);
@@ -6480,14 +6520,58 @@ mod tests {
         assert_eq!(app.tag_filter_rows(), vec!["(all)", "prod", "staging"]);
         assert_eq!(app.tag_filter_selected, 0);
 
-        // Arrow down twice lands on "staging" and Enter applies it.
+        // Arrow down twice lands on "staging" and Enter toggles + applies it.
         app.handle_key(key(KeyCode::Down)).unwrap();
         app.handle_key(key(KeyCode::Down)).unwrap();
         app.handle_key(key(KeyCode::Enter)).unwrap();
 
         assert_eq!(app.mode, AppMode::Normal);
-        assert_eq!(app.tag_filter.as_deref(), Some("staging"));
+        assert_eq!(app.tag_filters, vec!["staging".to_string()]);
         assert_eq!(app.filtered_indices, vec![1]);
+    }
+
+    #[test]
+    fn tag_filter_picker_space_toggles_multiple_tags_and_ands_them() {
+        let mut app = test_app(vec![
+            ("web", host("web")),
+            ("db", host("db")),
+            ("both", host("both")),
+        ]);
+        legacy_meta(&mut app.hosts[0]).tags = vec!["prod".into()];
+        legacy_meta(&mut app.hosts[1]).tags = vec!["eu".into()];
+        legacy_meta(&mut app.hosts[2]).tags = vec!["prod".into(), "eu".into()];
+        app.rebuild_filter();
+
+        app.handle_key(key_char('#')).unwrap();
+        // Rows: ["(all)", "eu", "prod"]. Space toggles a tag and stays open.
+        app.handle_key(key(KeyCode::Down)).unwrap(); // → "eu"
+        app.handle_key(key_char(' ')).unwrap();
+        assert_eq!(app.mode, AppMode::TagFilter, "stays open after Space");
+        assert_eq!(app.tag_filters, vec!["eu".to_string()]);
+
+        app.handle_key(key(KeyCode::Down)).unwrap(); // → "prod"
+        app.handle_key(key_char(' ')).unwrap();
+        assert_eq!(app.tag_filters, vec!["eu".to_string(), "prod".to_string()]);
+
+        // AND semantics: only the host carrying both tags survives.
+        app.handle_key(key(KeyCode::Esc)).unwrap();
+        assert_eq!(app.mode, AppMode::Normal);
+        assert_eq!(app.filtered_indices, vec![2]);
+    }
+
+    #[test]
+    fn tag_filter_picker_space_toggles_tag_off() {
+        let mut app = test_app(vec![("web", host("web")), ("db", host("db"))]);
+        legacy_meta(&mut app.hosts[0]).tags = vec!["prod".into()];
+        legacy_meta(&mut app.hosts[1]).tags = vec!["staging".into()];
+        app.tag_filters = vec!["prod".into()];
+        app.rebuild_filter();
+
+        app.handle_key(key_char('#')).unwrap();
+        app.handle_key(key(KeyCode::Down)).unwrap(); // → "prod" (already active)
+        app.handle_key(key_char(' ')).unwrap(); // toggle off
+        assert!(app.tag_filters.is_empty());
+        assert_eq!(app.filtered_indices.len(), 2);
     }
 
     #[test]
@@ -6495,19 +6579,17 @@ mod tests {
         let mut app = test_app(vec![("web", host("web")), ("db", host("db"))]);
         legacy_meta(&mut app.hosts[0]).tags = vec!["prod".into()];
         legacy_meta(&mut app.hosts[1]).tags = vec!["staging".into()];
-        app.tag_filter = Some("prod".into());
+        app.tag_filters = vec!["prod".into()];
         app.rebuild_filter();
 
         app.handle_key(key_char('#')).unwrap();
-        // Opening preselects the active filter row, not "(all)".
-        assert_eq!(app.tag_filter_selected, 1);
-
-        // Move up to "(all)" and apply to clear the filter.
-        app.handle_key(key(KeyCode::Up)).unwrap();
+        // Cursor opens on the "(all)" row.
         assert_eq!(app.tag_filter_selected, 0);
+
+        // Enter on "(all)" clears every active filter and closes.
         app.handle_key(key(KeyCode::Enter)).unwrap();
 
-        assert!(app.tag_filter.is_none());
+        assert!(app.tag_filters.is_empty());
         assert_eq!(app.filtered_indices.len(), 2);
     }
 
@@ -6516,15 +6598,15 @@ mod tests {
         let mut app = test_app(vec![("web", host("web")), ("db", host("db"))]);
         legacy_meta(&mut app.hosts[0]).tags = vec!["prod".into()];
         legacy_meta(&mut app.hosts[1]).tags = vec!["staging".into()];
-        app.tag_filter = Some("prod".into());
+        app.tag_filters = vec!["prod".into()];
         app.rebuild_filter();
 
         app.handle_key(key_char('#')).unwrap();
-        // Esc cancels the picker without touching the active filter.
+        // Esc closes the picker without touching the active filter.
         app.handle_key(key(KeyCode::Esc)).unwrap();
 
         assert_eq!(app.mode, AppMode::Normal);
-        assert_eq!(app.tag_filter.as_deref(), Some("prod"));
+        assert_eq!(app.tag_filters, vec!["prod".to_string()]);
         assert_eq!(app.filtered_indices, vec![0]);
     }
 
@@ -6544,16 +6626,16 @@ mod tests {
         app.handle_key(key_char('d')).unwrap();
         app.handle_key(key(KeyCode::Enter)).unwrap();
 
-        // Enter applies the filter and returns to Normal so the list can be
-        // navigated while filtered.
+        // Enter toggles the highlighted match, applies it and returns to Normal
+        // so the list can be navigated while filtered.
         assert_eq!(app.mode, AppMode::Normal);
-        assert_eq!(app.tag_filter.as_deref(), Some("prod"));
+        assert_eq!(app.tag_filters, vec!["prod".to_string()]);
         assert_eq!(app.filtered_indices, vec![0]);
 
         // Esc in Normal clears the active tag filter.
         app.handle_key(key(KeyCode::Esc)).unwrap();
         assert_eq!(app.mode, AppMode::Normal);
-        assert!(app.tag_filter.is_none());
+        assert!(app.tag_filters.is_empty());
         assert_eq!(app.filtered_indices.len(), 2);
     }
 

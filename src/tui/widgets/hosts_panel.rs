@@ -16,7 +16,16 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
 
     // Total host count for the panel badge.
     let count_str = app.filtered_indices.len().to_string();
-    panel_box::render_panel_box(buf, area, "hosts", Some(&count_str));
+    // Surface active tag filters in the panel title so they stay visible once
+    // the picker popup closes.
+    let raw_title = if app.tag_filters.is_empty() {
+        "hosts".to_string()
+    } else {
+        format!("hosts · #{}", app.tag_filters.join(" #"))
+    };
+    let max_title = (area.width as usize).saturating_sub(12).max(5);
+    let title = crate::tui::text::ellipsize(&raw_title, max_title);
+    panel_box::render_panel_box(buf, area, &title, Some(&count_str));
 
     // Content area inside the panel borders: x+2, y+1, width-4, height-2
     if area.width < 6 || area.height < 4 {
@@ -84,7 +93,10 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
                     buf.set_string(cx, y, &blank, theme::selected());
                 }
                 let (arrow_style, label_style) = if selected {
-                    (theme::white().bg(theme::SEL_BG), theme::white().bg(theme::SEL_BG))
+                    (
+                        theme::white().bg(theme::SEL_BG),
+                        theme::white().bg(theme::SEL_BG),
+                    )
                 } else {
                     (theme::mute(), theme::white())
                 };
@@ -125,118 +137,118 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
                 let entry = &app.hosts[host_idx];
 
                 // If selected, fill the entire row with SEL_BG.
-            if is_selected {
-                let blank = " ".repeat(cw);
-                buf.set_string(cx, y, &blank, theme::selected());
-            }
-
-            let mut col = cx + 1; // indent host rows by 1
-
-            // Status dot — reflects ping latency.
-            let host_name_for_dot = entry.name();
-            let (dot_char, dot_color) = match app.ping_data.get(host_name_for_dot) {
-                Some(samples) if !samples.is_empty() => {
-                    let latest = *samples.last().unwrap();
-                    if latest < 100 {
-                        ("\u{25cf}", theme::GREEN) // ● green
-                    } else if latest <= 200 {
-                        ("\u{25cf}", theme::AMBER) // ● amber
-                    } else {
-                        ("\u{25cf}", theme::RED) // ● red
-                    }
+                if is_selected {
+                    let blank = " ".repeat(cw);
+                    buf.set_string(cx, y, &blank, theme::selected());
                 }
-                _ => ("\u{25cb}", theme::DIM), // ○ dim (no data)
-            };
-            let dot_style = if is_selected {
-                ratatui::style::Style::default()
-                    .fg(dot_color)
-                    .bg(theme::SEL_BG)
-            } else {
-                ratatui::style::Style::default().fg(dot_color)
-            };
-            buf.set_string(col, y, dot_char, dot_style);
-            col += 2; // dot + space
 
-            // Base style for text on this row.
-            let name_style = if is_selected {
-                theme::selected()
-            } else {
-                theme::text()
-            };
-            let dim_style = if is_selected {
-                ratatui::style::Style::default()
-                    .fg(theme::DIM)
-                    .bg(theme::SEL_BG)
-            } else {
-                theme::dim()
-            };
+                let mut col = cx + 1; // indent host rows by 1
 
-            let inner_right = cx + cw as u16;
-
-            // Name — width driven by the zoom level (+/-), clamped to the panel
-            // width so narrow terminals don't bleed into the border/neighbour.
-            let name = entry.display_name();
-            let name_w = (inner_right.saturating_sub(col) as usize).min(app.name_col_width());
-            if name_w > 0 {
-                let name_display = crate::tui::text::pad_ellipsize(name, name_w);
-                buf.set_string(col, y, &name_display, name_style);
-                col += name_w as u16 + 1; // + gap
-            }
-
-            // Address — up to 14 chars, only if it still fits.
-            let addr = host_address(entry);
-            let addr_w = (inner_right.saturating_sub(col) as usize).min(14);
-            if addr_w >= 4 {
-                let addr_display = crate::tui::text::pad_ellipsize(&addr, addr_w);
-                buf.set_string(col, y, &addr_display, dim_style);
-                col += addr_w as u16 + 1; // + gap
-            }
-
-            // Ping value — right-aligned in 6 chars at the right edge.
-            let ping_width: u16 = 6;
-            let right_edge = cx + cw as u16;
-            if right_edge >= col + ping_width {
-                let ping_x = right_edge - ping_width;
-                let host_name = entry.name();
-                let (ping_str, ping_style) = match app.ping_data.get(host_name) {
+                // Status dot — reflects ping latency.
+                let host_name_for_dot = entry.name();
+                let (dot_char, dot_color) = match app.ping_data.get(host_name_for_dot) {
                     Some(samples) if !samples.is_empty() => {
                         let latest = *samples.last().unwrap();
-                        let s = format!(
-                            "{:>width$}",
-                            format!("{}ms", latest),
-                            width = ping_width as usize
-                        );
-                        let style = if latest < 100 {
-                            dim_style
+                        if latest < 100 {
+                            ("\u{25cf}", theme::GREEN) // ● green
                         } else if latest <= 200 {
-                            if is_selected {
-                                ratatui::style::Style::default()
-                                    .fg(theme::AMBER)
-                                    .bg(theme::SEL_BG)
-                            } else {
-                                theme::amber()
-                            }
+                            ("\u{25cf}", theme::AMBER) // ● amber
                         } else {
-                            if is_selected {
-                                ratatui::style::Style::default()
-                                    .fg(theme::RED)
-                                    .bg(theme::SEL_BG)
-                            } else {
-                                theme::red()
-                            }
-                        };
-                        (s, style)
+                            ("\u{25cf}", theme::RED) // ● red
+                        }
                     }
-                    _ => {
-                        // No ping data yet — show dash, right-aligned
-                        (
-                            format!("{:>width$}", "\u{2014}", width = ping_width as usize),
-                            dim_style,
-                        )
-                    }
+                    _ => ("\u{25cb}", theme::DIM), // ○ dim (no data)
                 };
-                buf.set_string(ping_x, y, &ping_str, ping_style);
-            }
+                let dot_style = if is_selected {
+                    ratatui::style::Style::default()
+                        .fg(dot_color)
+                        .bg(theme::SEL_BG)
+                } else {
+                    ratatui::style::Style::default().fg(dot_color)
+                };
+                buf.set_string(col, y, dot_char, dot_style);
+                col += 2; // dot + space
+
+                // Base style for text on this row.
+                let name_style = if is_selected {
+                    theme::selected()
+                } else {
+                    theme::text()
+                };
+                let dim_style = if is_selected {
+                    ratatui::style::Style::default()
+                        .fg(theme::DIM)
+                        .bg(theme::SEL_BG)
+                } else {
+                    theme::dim()
+                };
+
+                let inner_right = cx + cw as u16;
+
+                // Name — width driven by the zoom level (+/-), clamped to the panel
+                // width so narrow terminals don't bleed into the border/neighbour.
+                let name = entry.display_name();
+                let name_w = (inner_right.saturating_sub(col) as usize).min(app.name_col_width());
+                if name_w > 0 {
+                    let name_display = crate::tui::text::pad_ellipsize(name, name_w);
+                    buf.set_string(col, y, &name_display, name_style);
+                    col += name_w as u16 + 1; // + gap
+                }
+
+                // Address — up to 14 chars, only if it still fits.
+                let addr = host_address(entry);
+                let addr_w = (inner_right.saturating_sub(col) as usize).min(14);
+                if addr_w >= 4 {
+                    let addr_display = crate::tui::text::pad_ellipsize(&addr, addr_w);
+                    buf.set_string(col, y, &addr_display, dim_style);
+                    col += addr_w as u16 + 1; // + gap
+                }
+
+                // Ping value — right-aligned in 6 chars at the right edge.
+                let ping_width: u16 = 6;
+                let right_edge = cx + cw as u16;
+                if right_edge >= col + ping_width {
+                    let ping_x = right_edge - ping_width;
+                    let host_name = entry.name();
+                    let (ping_str, ping_style) = match app.ping_data.get(host_name) {
+                        Some(samples) if !samples.is_empty() => {
+                            let latest = *samples.last().unwrap();
+                            let s = format!(
+                                "{:>width$}",
+                                format!("{}ms", latest),
+                                width = ping_width as usize
+                            );
+                            let style = if latest < 100 {
+                                dim_style
+                            } else if latest <= 200 {
+                                if is_selected {
+                                    ratatui::style::Style::default()
+                                        .fg(theme::AMBER)
+                                        .bg(theme::SEL_BG)
+                                } else {
+                                    theme::amber()
+                                }
+                            } else {
+                                if is_selected {
+                                    ratatui::style::Style::default()
+                                        .fg(theme::RED)
+                                        .bg(theme::SEL_BG)
+                                } else {
+                                    theme::red()
+                                }
+                            };
+                            (s, style)
+                        }
+                        _ => {
+                            // No ping data yet — show dash, right-aligned
+                            (
+                                format!("{:>width$}", "\u{2014}", width = ping_width as usize),
+                                dim_style,
+                            )
+                        }
+                    };
+                    buf.set_string(ping_x, y, &ping_str, ping_style);
+                }
             }
         }
     }
@@ -271,4 +283,3 @@ fn host_address(entry: &HostEntry) -> String {
         }
     }
 }
-

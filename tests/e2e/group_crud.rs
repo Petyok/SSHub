@@ -249,7 +249,7 @@ fn tag_filter_hides_groups_with_no_matches() {
     type_text(&mut app, "eu");
     app.handle_key(key(KeyCode::Enter)).unwrap();
 
-    assert_eq!(app.tag_filter.as_deref(), Some("eu"));
+    assert_eq!(app.tag_filters, vec!["eu".to_string()]);
     let labels: Vec<&str> = app.group_sections.iter().map(|s| s.label.as_str()).collect();
     assert!(labels.contains(&"prod"), "prod kept, got {labels:?}");
     assert!(!labels.contains(&"dev"), "dev hidden, got {labels:?}");

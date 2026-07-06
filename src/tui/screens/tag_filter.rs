@@ -14,9 +14,14 @@ pub fn render(frame: &mut Frame, app: &App) {
     let rows = app.tag_filter_rows();
     let has_tags = rows.len() > 1;
 
-    let title = " filter by tag ";
+    let active = app.tag_filters.len();
+    let title = if active > 0 {
+        format!(" filter by tag · {active} active ")
+    } else {
+        " filter by tag ".to_string()
+    };
     let query_line = format!("› {}\u{2588}", app.search_query);
-    let hint = "↑/↓ move · Enter apply · (all) clears · Esc cancel";
+    let hint = "↑/↓ move · Space toggle (multi) · Enter apply · Esc close";
 
     let empty_note = "no tags yet — add comma-separated tags on a host";
 
@@ -74,7 +79,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         for (i, label) in rows.iter().enumerate().take(max_rows) {
             let ry = list_top + i as u16;
             let is_sel = i == app.tag_filter_selected;
-            let is_active = app.tag_filter.as_deref() == Some(label.as_str());
+            let is_active = app.is_tag_active(label);
             let style = if is_sel {
                 theme::selected()
             } else {
