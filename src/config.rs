@@ -23,6 +23,10 @@ pub struct AppearanceConfig {
     /// Ask for confirmation before quitting (q / Ctrl+C). Default true.
     #[serde(default = "default_true")]
     pub confirm_quit: bool,
+    /// Columns in the identities grid. 0 = auto (fit 1-2). Adjusted in-app
+    /// with `[` / `]`.
+    #[serde(default)]
+    pub identity_columns: usize,
 }
 
 fn default_true() -> bool {
@@ -40,6 +44,7 @@ impl Default for AppearanceConfig {
             date_format: default_date_format(),
             disable_animation: false,
             confirm_quit: true,
+            identity_columns: 0,
         }
     }
 }

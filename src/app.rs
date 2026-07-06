@@ -1612,13 +1612,26 @@ impl App {
                         2 => {
                             // Keys cards
                             if !self.identities.is_empty() {
-                                let cards_per_row = if areas.body.width >= 132 { 2 } else { 1 };
+                                let inner_w =
+                                    crate::tui::screens::keys::inner_width(areas.body.width);
+                                let cards_per_row = crate::tui::screens::keys::resolve_columns(
+                                    inner_w,
+                                    self.config.appearance.identity_columns,
+                                );
                                 let card_h = 6u16;
                                 let rel_y = y.saturating_sub(areas.body.y);
                                 let row_idx = rel_y / (card_h + 1);
                                 let col_idx = if cards_per_row > 1 {
-                                    let card_w = 42u16;
-                                    let margin = if areas.body.width >= 132 { 2 } else { 1 };
+                                    let card_w =
+                                        inner_w.saturating_sub((cards_per_row as u16 - 1) * 2)
+                                            / cards_per_row as u16;
+                                    let margin = if areas.body.width >= 132 {
+                                        2
+                                    } else if areas.body.width >= 80 {
+                                        1
+                                    } else {
+                                        0
+                                    };
                                     let rel_x = x.saturating_sub(areas.body.x + margin);
                                     (rel_x / (card_w + 2)).min(cards_per_row as u16 - 1)
                                 } else {
@@ -2193,6 +2206,8 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => self.move_identity_grid(-1, 0),
             KeyCode::Char('l') | KeyCode::Right => self.move_identity_grid(0, 1),
             KeyCode::Left => self.move_identity_grid(0, -1),
+            KeyCode::Char(']') if key.modifiers.is_empty() => self.adjust_identity_columns(1),
+            KeyCode::Char('[') if key.modifiers.is_empty() => self.adjust_identity_columns(-1),
             KeyCode::Char('a') if key.modifiers.is_empty() => self.enter_identity_form(None)?,
             KeyCode::Char('e') if key.modifiers.is_empty() => self.edit_selected_identity()?,
             KeyCode::Char('d') if key.modifiers.is_empty() => self.delete_selected_identity()?,
@@ -3530,13 +3545,25 @@ impl App {
         form.dirty = true;
     }
 
-    /// Columns in the identities grid, matching the renderer's threshold.
+    /// Columns in the identities grid — the exact value the renderer uses.
     fn identity_cards_per_row(&self) -> i32 {
-        if self.terminal_area.width >= 132 {
-            2
-        } else {
-            1
-        }
+        let inner_w = crate::tui::screens::keys::inner_width(self.terminal_area.width);
+        crate::tui::screens::keys::resolve_columns(inner_w, self.config.appearance.identity_columns)
+            as i32
+    }
+
+    /// Change how many columns the identities grid shows (`delta` +1/-1),
+    /// clamped to what fits, and persist it.
+    fn adjust_identity_columns(&mut self, delta: i32) {
+        let inner_w = crate::tui::screens::keys::inner_width(self.terminal_area.width);
+        let max = crate::tui::screens::keys::max_columns(inner_w) as i32;
+        // Start from the currently-shown count so +/- feels direct even when
+        // the stored preference is 0 (auto).
+        let current = self.identity_cards_per_row();
+        let next = (current + delta).clamp(1, max);
+        self.config.appearance.identity_columns = next as usize;
+        self.save_config_quietly();
+        self.identity_notice = Some(format!("Identity columns: {next}"));
     }
 
     /// Grid move: `dr` rows down/up, `dc` columns right/left. Left/right never

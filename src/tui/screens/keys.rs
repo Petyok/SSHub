@@ -8,6 +8,42 @@ use crate::tui::theme;
 
 const CARD_W: u16 = 42;
 const CARD_H: u16 = 6;
+/// Narrowest a card may shrink to before content becomes unreadable.
+const MIN_CARD_W: u16 = 26;
+const CARD_GAP: u16 = 2;
+
+/// Inner content width of the identities body for a given total width
+/// (mirrors the margin logic in [`render_keys`]).
+pub fn inner_width(total_width: u16) -> u16 {
+    let margin = if total_width >= 132 {
+        2
+    } else if total_width >= 80 {
+        1
+    } else {
+        0
+    };
+    total_width.saturating_sub(margin * 2)
+}
+
+/// How many columns of at least [`MIN_CARD_W`] fit into `inner_w`.
+pub fn max_columns(inner_w: u16) -> usize {
+    (((inner_w + CARD_GAP) / (MIN_CARD_W + CARD_GAP)) as usize).max(1)
+}
+
+/// Resolve the column count for the identities grid. `pref == 0` means auto
+/// (the original 1-or-2 heuristic); otherwise the user's choice, clamped to
+/// what fits.
+pub fn resolve_columns(inner_w: u16, pref: usize) -> usize {
+    if pref == 0 {
+        if inner_w >= CARD_W * 2 + CARD_GAP {
+            2
+        } else {
+            1
+        }
+    } else {
+        pref.clamp(1, max_columns(inner_w))
+    }
+}
 
 pub fn render_keys(frame: &mut Frame, area: Rect, app: &App) {
     if area.height < 4 || area.width < 20 {
@@ -27,13 +63,10 @@ pub fn render_keys(frame: &mut Frame, area: Rect, app: &App) {
 
     let agent = app.agent_info.as_ref();
 
-    // Cards per row
-    let cards_per_row = if inner_w >= CARD_W * 2 + 2 { 2 } else { 1 };
-    let card_w = if cards_per_row > 1 {
-        (inner_w - 2) / 2
-    } else {
-        inner_w
-    };
+    // Cards per row — user preference (0 = auto), clamped to what fits.
+    let cards_per_row = resolve_columns(inner_w, app.config.appearance.identity_columns);
+    let cpr_u16 = cards_per_row as u16;
+    let card_w = (inner_w.saturating_sub((cpr_u16 - 1) * CARD_GAP)) / cpr_u16;
 
     if app.identities.is_empty() {
         let msg = "No identities — press 'a' (key or user+password)";
@@ -61,7 +94,7 @@ pub fn render_keys(frame: &mut Frame, area: Rect, app: &App) {
         }
 
         let col = i % cpr;
-        let card_x = inner_x + (col as u16) * (card_w + 2);
+        let card_x = inner_x + (col as u16) * (card_w + CARD_GAP);
         let y = area.y + ((row - row_offset) as u16) * row_stride;
 
         let is_selected = i == app.identity_selected;
@@ -357,6 +390,19 @@ mod tests {
             certificate: None,
             has_password,
         }
+    }
+
+    #[test]
+    fn resolve_columns_auto_and_manual() {
+        // Auto (pref 0): 2 when two full cards fit, else 1.
+        assert_eq!(resolve_columns(CARD_W * 2 + CARD_GAP, 0), 2);
+        assert_eq!(resolve_columns(CARD_W, 0), 1);
+        // Manual pref clamps to what fits.
+        assert_eq!(resolve_columns(200, 3), 3);
+        assert_eq!(resolve_columns(60, 4), max_columns(60));
+        assert!(resolve_columns(60, 4) >= 1);
+        // pref of 1 always honoured.
+        assert_eq!(resolve_columns(500, 1), 1);
     }
 
     #[test]

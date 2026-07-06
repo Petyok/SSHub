@@ -43,6 +43,7 @@ pub fn render_help() -> Paragraph<'static> {
         Line::from(""),
         section("identities (tab 3)"),
         entry("←→ / l", "Move between columns (grid)"),
+        entry("[ / ]", "Fewer / more columns (saved)"),
         entry("a", "Add identity (key or user+password)"),
         entry("e", "Edit identity"),
         entry("d", "Delete identity"),
