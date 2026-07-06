@@ -95,6 +95,10 @@ pub fn render(frame: &mut Frame, app: &App) {
             );
         }
         AppMode::HostForm => render_form_popup(frame, app, FormKind::Host),
+        AppMode::FieldPicker => {
+            render_form_popup(frame, app, FormKind::Host);
+            screens::field_picker::render_field_picker(frame, app);
+        }
         AppMode::IdentityForm => render_form_popup(frame, app, FormKind::Identity),
         AppMode::GroupForm => render_form_popup(frame, app, FormKind::Group),
         AppMode::TunnelForm => screens::tunnels::render_tunnel_form(frame, app),

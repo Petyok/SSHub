@@ -78,6 +78,8 @@ pub enum AppMode {
     IdentityForm,
     GroupForm,
     GroupManage,
+    /// Dropdown over the host form's Group/Identity field.
+    FieldPicker,
     TunnelForm,
     ConfirmDelete,
     ConfirmDiscard,
@@ -518,6 +520,27 @@ fn managed_to_ssh_host(m: &ManagedHost) -> SshHost {
     host
 }
 
+/// Which host-form field the dropdown is editing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickerKind {
+    Group,
+    Identity,
+}
+
+/// Dropdown overlay for the host form's Group/Identity picker fields.
+///
+/// For `Group`, the last row is a "+ New group…" affordance: selecting it
+/// switches the overlay into inline text entry (`creating`) that creates the
+/// group in the store and selects it — no trip to the group-manage screen.
+#[derive(Debug, Clone)]
+pub struct FieldPicker {
+    pub kind: PickerKind,
+    pub selected: usize,
+    /// `Some(name)` while typing a brand-new group name inline.
+    pub creating: Option<String>,
+    pub cursor: usize,
+}
+
 /// In-progress host form while in [`AppMode::HostForm`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostFormEdit {
@@ -745,6 +768,7 @@ pub struct App {
     pub identity_notice: Option<String>,
     pub groups: Vec<HostGroup>,
     pub host_form: Option<HostFormEdit>,
+    pub field_picker: Option<FieldPicker>,
     pub group_form: Option<GroupFormEdit>,
     pub import_prompt: Option<ImportPromptEdit>,
     pub group_manage_selected: usize,
@@ -851,6 +875,7 @@ impl App {
             identity_notice: None,
             groups: Vec::new(),
             host_form: None,
+            field_picker: None,
             group_form: None,
             import_prompt: None,
             group_manage_selected: 0,
@@ -1305,6 +1330,7 @@ impl App {
             AppMode::HostForm => self.handle_key_host_form(key),
             AppMode::IdentityForm => self.handle_key_identity_form(key),
             AppMode::GroupForm => self.handle_key_group_form(key),
+            AppMode::FieldPicker => self.handle_key_field_picker(key),
             AppMode::ImportPrompt => self.handle_key_import_prompt(key),
             AppMode::GroupManage => self.handle_key_group_manage(key),
             AppMode::Palette => self.handle_key_palette(key),
@@ -3688,6 +3714,10 @@ impl App {
             // Single-step model: type straight into the active field.
             // Enter/Tab/Down advance; Enter on the LAST field saves the form
             // (a modifier-free save path; F2/Ctrl+S always work).
+            KeyCode::Enter if field == HostFormField::Group => self.open_field_picker(PickerKind::Group),
+            KeyCode::Enter if field == HostFormField::Identity => {
+                self.open_field_picker(PickerKind::Identity)
+            }
             KeyCode::Enter if field == HostFormField::OsIcon => self.save_host_form()?,
             KeyCode::Enter | KeyCode::Tab | KeyCode::Down if key.modifiers.is_empty() => {
                 self.host_form_field_next();
@@ -3732,6 +3762,178 @@ impl App {
         };
         form.field = form.field.prev();
         form.cursor = text_input::char_len(form.active_field());
+    }
+
+    /// Number of selectable rows in the dropdown (incl. the "+ New group" row).
+    pub fn field_picker_len(&self, kind: PickerKind) -> usize {
+        match kind {
+            // (none) + groups + "+ New group…"
+            PickerKind::Group => self.groups.len() + 2,
+            PickerKind::Identity => self.identities.len(),
+        }
+    }
+
+    /// Index of the "+ New group…" row (Group picker only).
+    fn field_picker_create_index(&self) -> usize {
+        self.groups.len() + 1
+    }
+
+    fn open_field_picker(&mut self, kind: PickerKind) {
+        let Some(form) = self.host_form.as_ref() else {
+            return;
+        };
+        if form.metadata_only && kind == PickerKind::Identity {
+            // Identity is a connection field for imported hosts — read-only.
+            return;
+        }
+        let selected = match kind {
+            PickerKind::Group => form.group_index,
+            PickerKind::Identity => form.identity_index,
+        };
+        self.field_picker = Some(FieldPicker {
+            kind,
+            selected,
+            creating: None,
+            cursor: 0,
+        });
+        self.mode = AppMode::FieldPicker;
+    }
+
+    fn handle_key_field_picker(&mut self, key: KeyEvent) -> Result<()> {
+        let Some(picker) = self.field_picker.as_ref() else {
+            self.mode = AppMode::HostForm;
+            return Ok(());
+        };
+
+        // Inline "create new group" text entry.
+        if picker.creating.is_some() {
+            return self.handle_key_field_picker_creating(key);
+        }
+
+        let kind = picker.kind;
+        let len = self.field_picker_len(kind);
+        match key.code {
+            KeyCode::Esc => {
+                self.field_picker = None;
+                self.mode = AppMode::HostForm;
+            }
+            KeyCode::Down | KeyCode::Char('j') if key.modifiers.is_empty() => {
+                if let Some(p) = self.field_picker.as_mut() {
+                    p.selected = (p.selected + 1) % len.max(1);
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') if key.modifiers.is_empty() => {
+                if let Some(p) = self.field_picker.as_mut() {
+                    p.selected = (p.selected + len.saturating_sub(1)) % len.max(1);
+                }
+            }
+            KeyCode::Enter => self.field_picker_confirm()?,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn field_picker_confirm(&mut self) -> Result<()> {
+        let Some(picker) = self.field_picker.as_ref() else {
+            return Ok(());
+        };
+        match picker.kind {
+            PickerKind::Group => {
+                if picker.selected == self.field_picker_create_index() {
+                    // Enter inline "new group" text entry.
+                    if let Some(p) = self.field_picker.as_mut() {
+                        p.creating = Some(String::new());
+                        p.cursor = 0;
+                    }
+                    return Ok(());
+                }
+                if let Some(form) = self.host_form.as_mut() {
+                    form.group_index = picker.selected;
+                    form.dirty = true;
+                }
+            }
+            PickerKind::Identity => {
+                if let Some(form) = self.host_form.as_mut() {
+                    form.identity_index = picker.selected;
+                    form.dirty = true;
+                }
+            }
+        }
+        self.field_picker = None;
+        self.mode = AppMode::HostForm;
+        Ok(())
+    }
+
+    fn handle_key_field_picker_creating(&mut self, key: KeyEvent) -> Result<()> {
+        match key.code {
+            KeyCode::Esc => {
+                // Back to the list, keep the dropdown open.
+                if let Some(p) = self.field_picker.as_mut() {
+                    p.creating = None;
+                    p.cursor = 0;
+                }
+            }
+            KeyCode::Enter => self.field_picker_create_group()?,
+            KeyCode::Backspace => {
+                if let Some(p) = self.field_picker.as_mut() {
+                    if let Some(name) = p.creating.as_mut() {
+                        let c = p.cursor;
+                        p.cursor = text_input::backspace_at(name, c);
+                    }
+                }
+            }
+            KeyCode::Char(c)
+                if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
+                    && !c.is_control() =>
+            {
+                if let Some(p) = self.field_picker.as_mut() {
+                    if let Some(name) = p.creating.as_mut() {
+                        let cur = p.cursor;
+                        p.cursor = text_input::insert_at(name, cur, c);
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn field_picker_create_group(&mut self) -> Result<()> {
+        let name = self
+            .field_picker
+            .as_ref()
+            .and_then(|p| p.creating.clone())
+            .unwrap_or_default();
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            return Ok(());
+        }
+        // Reuse an existing group with the same name instead of erroring.
+        let id = match self.store.list_groups()?.into_iter().find(|g| g.name == name) {
+            Some(g) => g.id,
+            None => {
+                self.store
+                    .create_group(&crate::store::NewHostGroup {
+                        name: name.clone(),
+                        sort_order: self.groups.len() as i32,
+                    })?
+                    .id
+            }
+        };
+        self.groups = self.store.list_groups()?;
+        if let Some(form) = self.host_form.as_mut() {
+            // group_index: 0 = (none), 1.. = groups in list order.
+            form.group_index = self
+                .groups
+                .iter()
+                .position(|g| g.id == id)
+                .map(|i| i + 1)
+                .unwrap_or(0);
+            form.dirty = true;
+        }
+        self.field_picker = None;
+        self.mode = AppMode::HostForm;
+        Ok(())
     }
 
     fn host_form_picker_scroll(&mut self, delta: i32) {

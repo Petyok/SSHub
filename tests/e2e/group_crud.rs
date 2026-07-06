@@ -138,6 +138,54 @@ fn create_group_assign_host_visible_in_tree() {
 }
 
 #[test]
+fn host_form_group_dropdown_creates_group_inline() {
+    let file = NamedTempFile::new().unwrap();
+    let mut app = app_with_store(file.path());
+
+    // New host, fill the required fields.
+    app.handle_key(key_char('a')).unwrap();
+    edit_field(&mut app, "10.0.0.20"); // Address
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Password
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Username
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Label
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Name
+    edit_field(&mut app, "inline-host");
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Port
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Group
+
+    // Enter opens the dropdown; no groups exist yet, so the only rows are
+    // "(none)" and "+ New group…".
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert_eq!(app.mode, AppMode::FieldPicker);
+
+    // Move to the "+ New group…" row (index groups.len()+1 == 1 here).
+    app.handle_key(key(KeyCode::Down)).unwrap();
+    app.handle_key(key(KeyCode::Enter)).unwrap(); // enter inline create
+    type_text(&mut app, "prod");
+    app.handle_key(key(KeyCode::Enter)).unwrap(); // create + select
+
+    // Back in the form, group is now selected.
+    assert_eq!(app.mode, AppMode::HostForm);
+    assert!(app.groups.iter().any(|g| g.name == "prod"));
+
+    app.handle_key(key(KeyCode::F(2))).unwrap(); // save
+    assert_eq!(app.mode, AppMode::Normal);
+
+    let store = LauncherStore::open(file.path()).unwrap();
+    let host = store
+        .get_host_by_name("inline-host")
+        .unwrap()
+        .expect("persisted");
+    let group = store
+        .list_groups()
+        .unwrap()
+        .into_iter()
+        .find(|g| g.name == "prod")
+        .expect("group created inline");
+    assert_eq!(host.group_id, Some(group.id));
+}
+
+#[test]
 fn rename_and_delete_group_via_shortcuts() {
     let file = NamedTempFile::new().unwrap();
     let mut app = app_with_store(file.path());

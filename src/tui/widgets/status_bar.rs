@@ -14,6 +14,7 @@ fn mode_label(mode: AppMode) -> &'static str {
         AppMode::IdentityForm => "Identity form",
         AppMode::GroupForm => "Group form",
         AppMode::GroupManage => "Groups",
+        AppMode::FieldPicker => "Select",
         AppMode::ConfirmDelete => "Confirm delete",
         AppMode::ConfirmDiscard => "Save changes?",
         AppMode::Help => "Help",

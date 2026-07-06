@@ -58,6 +58,7 @@ pub fn render_help() -> Paragraph<'static> {
         entry("#", "Filter by tag"),
         Line::from(""),
         section("groups"),
+        entry("Enter", "In host form on Group: open dropdown (+ create new)"),
         entry("Shift+G", "Manage groups"),
         entry("Ctrl+G", "Rename selected group"),
         entry("Ctrl+Shift+G", "Delete selected group"),
