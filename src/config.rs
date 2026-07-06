@@ -20,6 +20,9 @@ pub struct AppearanceConfig {
     pub date_format: String,
     #[serde(default)]
     pub disable_animation: bool,
+    /// Ask for confirmation before quitting (q / Ctrl+C). Default true.
+    #[serde(default = "default_true")]
+    pub confirm_quit: bool,
 }
 
 fn default_true() -> bool {
@@ -36,6 +39,7 @@ impl Default for AppearanceConfig {
             show_detail_panel: true,
             date_format: default_date_format(),
             disable_animation: false,
+            confirm_quit: true,
         }
     }
 }

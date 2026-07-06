@@ -87,7 +87,7 @@ pub fn render_help() -> Paragraph<'static> {
         entry("? / Shift+H", "Toggle this help screen"),
         entry("F2 / Ctrl+S", "Save form (rebindable)"),
         entry("Ctrl+K", "Edit keybindings (save/quit/help/search/add/delete/…)"),
-        entry("q", "Quit"),
+        entry("q / Ctrl+C", "Quit (asks to confirm; disable via appearance.confirm_quit)"),
         Line::from(""),
         Line::from(Span::styled("? / Esc / Enter to close", theme::dim())),
     ];

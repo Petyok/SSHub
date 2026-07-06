@@ -138,7 +138,10 @@ fn j_k_navigation_then_quit() {
     app.handle_key(key_char('k')).unwrap();
     assert_eq!(app.selected, 0);
 
+    // 'q' asks for confirmation; 'y' confirms.
     app.handle_key(key_char('q')).unwrap();
+    assert_eq!(app.mode, AppMode::ConfirmQuit);
+    app.handle_key(key_char('y')).unwrap();
     assert!(app.should_quit);
 }
 

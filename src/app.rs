@@ -122,6 +122,8 @@ pub enum AppMode {
     FieldPicker,
     /// Keybinding editor overlay.
     KeybindEditor,
+    /// Quit confirmation dialog.
+    ConfirmQuit,
     TunnelForm,
     ConfirmDelete,
     ConfirmDiscard,
@@ -830,6 +832,8 @@ pub struct App {
     pub sort_mode: SortMode,
     pub pending_delete: Option<PendingDelete>,
     pub pre_help_mode: Option<AppMode>,
+    /// Mode to return to if the quit dialog is cancelled.
+    pub pre_quit_mode: Option<AppMode>,
     pub group_sections: Vec<HostGroupSection>,
     /// Selectable rows (group headers + hosts of expanded groups).
     pub nav_rows: Vec<NavRow>,
@@ -943,6 +947,7 @@ impl App {
             sort_mode: SortMode::default(),
             pending_delete: None,
             pre_help_mode: None,
+            pre_quit_mode: None,
             group_sections: Vec::new(),
             nav_rows: Vec::new(),
             collapsed_groups: std::collections::HashSet::new(),
@@ -1382,7 +1387,14 @@ impl App {
         }
 
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-            self.should_quit = true;
+            // First Ctrl+C asks for confirmation (if enabled); a second Ctrl+C
+            // while the dialog is up forces the quit.
+            if self.mode == AppMode::ConfirmQuit || !self.config.appearance.confirm_quit {
+                self.should_quit = true;
+            } else {
+                self.pre_quit_mode = Some(self.mode);
+                self.mode = AppMode::ConfirmQuit;
+            }
             return Ok(());
         }
 
@@ -1402,6 +1414,7 @@ impl App {
 
         match self.mode {
             AppMode::KeybindEditor => self.handle_key_keybind_editor(key),
+            AppMode::ConfirmQuit => self.handle_key_confirm_quit(key),
             AppMode::Help => self.handle_key_help(key),
             AppMode::ConfirmDiscard => self.handle_key_confirm_discard(key),
             AppMode::ConfirmDelete => self.handle_key_confirm_delete(key),
@@ -1793,9 +1806,7 @@ impl App {
         self.host_notice = None;
 
         match key.code {
-            _ if self.is_action(KeyAction::Quit, &key) => {
-                self.should_quit = true;
-            }
+            _ if self.is_action(KeyAction::Quit, &key) => self.request_quit(),
             KeyCode::Up if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.move_host_manual(-1)?
             }
@@ -2088,9 +2099,7 @@ impl App {
         self.identity_notice = None;
 
         match key.code {
-            _ if self.is_action(KeyAction::Quit, &key) => {
-                self.should_quit = true;
-            }
+            _ if self.is_action(KeyAction::Quit, &key) => self.request_quit(),
             KeyCode::Char('h') if key.modifiers.is_empty() => {
                 self.active_tab = 0;
             }
@@ -2124,9 +2133,7 @@ impl App {
 
     fn handle_key_audit(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
-            _ if self.is_action(KeyAction::Quit, &key) => {
-                self.should_quit = true;
-            }
+            _ if self.is_action(KeyAction::Quit, &key) => self.request_quit(),
             KeyCode::Char('j') | KeyCode::Down => {
                 if !self.auth_events_cache.is_empty() {
                     self.audit_selected =
@@ -2272,7 +2279,7 @@ impl App {
         self.tunnel_notice = None;
 
         match key.code {
-            _ if self.is_action(KeyAction::Quit, &key) => self.should_quit = true,
+            _ if self.is_action(KeyAction::Quit, &key) => self.request_quit(),
             KeyCode::Char('j') | KeyCode::Down => {
                 if !self.tunnels.is_empty() {
                     self.tunnel_selected = (self.tunnel_selected + 1).min(self.tunnels.len() - 1);
@@ -2647,9 +2654,7 @@ impl App {
         self.group_notice = None;
 
         match key.code {
-            _ if self.is_action(KeyAction::Quit, &key) => {
-                self.should_quit = true;
-            }
+            _ if self.is_action(KeyAction::Quit, &key) => self.request_quit(),
             KeyCode::Esc | KeyCode::Char('h') if key.modifiers.is_empty() => {
                 self.mode = AppMode::Normal;
             }
@@ -4296,6 +4301,32 @@ impl App {
         self.selected = ((next % len + len) % len) as usize;
     }
 
+    /// Begin quitting: show the confirmation dialog, or quit immediately when
+    /// confirmation is disabled in config.
+    fn request_quit(&mut self) {
+        if !self.config.appearance.confirm_quit {
+            self.should_quit = true;
+            return;
+        }
+        if self.mode != AppMode::ConfirmQuit {
+            self.pre_quit_mode = Some(self.mode);
+            self.mode = AppMode::ConfirmQuit;
+        }
+    }
+
+    fn handle_key_confirm_quit(&mut self, key: KeyEvent) -> Result<()> {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                self.should_quit = true;
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                self.mode = self.pre_quit_mode.take().unwrap_or(AppMode::Normal);
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     fn handle_key_keybind_editor(&mut self, key: KeyEvent) -> Result<()> {
         let Some(editor) = self.keybind_editor else {
             self.mode = AppMode::Normal;
@@ -5123,6 +5154,46 @@ mod tests {
     }
 
     #[test]
+    fn quit_asks_for_confirmation_by_default() {
+        let mut app = test_app(vec![("web", host("web"))]);
+        // 'q' opens the confirm dialog instead of quitting.
+        app.handle_key(key_char('q')).unwrap();
+        assert_eq!(app.mode, AppMode::ConfirmQuit);
+        assert!(!app.should_quit);
+
+        // 'n' cancels back to Normal.
+        app.handle_key(key_char('n')).unwrap();
+        assert_eq!(app.mode, AppMode::Normal);
+        assert!(!app.should_quit);
+
+        // 'q' then 'y' quits.
+        app.handle_key(key_char('q')).unwrap();
+        app.handle_key(key_char('y')).unwrap();
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn ctrl_c_confirms_then_forces() {
+        let mut app = test_app(vec![("web", host("web"))]);
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        // First Ctrl+C asks.
+        app.handle_key(ctrl_c).unwrap();
+        assert_eq!(app.mode, AppMode::ConfirmQuit);
+        assert!(!app.should_quit);
+        // Second Ctrl+C forces quit.
+        app.handle_key(ctrl_c).unwrap();
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn quit_confirmation_can_be_disabled() {
+        let mut app = test_app(vec![("web", host("web"))]);
+        app.config.appearance.confirm_quit = false;
+        app.handle_key(key_char('q')).unwrap();
+        assert!(app.should_quit);
+    }
+
+    #[test]
     fn rebinding_add_host_action_takes_effect() {
         let mut app = test_app(vec![("web", host("web"))]);
         // Default: 'a' opens the new-host form.
@@ -5542,7 +5613,9 @@ mod tests {
 
     #[test]
     fn q_and_ctrl_c_quit() {
+        // With confirmation disabled, q and Ctrl+C quit immediately.
         let mut app = test_app(vec![("web", host("web"))]);
+        app.config.appearance.confirm_quit = false;
 
         app.handle_key(key_char('q')).unwrap();
         assert!(app.should_quit);

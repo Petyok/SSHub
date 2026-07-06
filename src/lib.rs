@@ -231,6 +231,10 @@ fn apply_auto_quit(app: &mut App, auto_quit: Option<&str>) -> Result<()> {
     match auto_quit {
         Some("q") => {
             app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::empty()))?;
+            // 'q' may raise the quit-confirmation dialog; confirm it.
+            if app.mode == AppMode::ConfirmQuit {
+                app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::empty()))?;
+            }
             if !app.should_quit {
                 anyhow::bail!("auto-quit with 'q' did not set should_quit");
             }

@@ -115,6 +115,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         AppMode::ConfirmDelete => render_confirm_delete_popup(frame, app),
         AppMode::Help => render_help_popup(frame),
         AppMode::KeybindEditor => screens::keybind_editor::render_keybind_editor(frame, app),
+        AppMode::ConfirmQuit => render_confirm_quit_popup(frame, app),
         AppMode::ImportPrompt => render_import_prompt_popup(frame, app),
         _ => {}
     }
@@ -365,6 +366,37 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
             );
         }
     }
+}
+
+fn render_confirm_quit_popup(frame: &mut Frame, app: &App) {
+    let active = app.tunnel_manager.active_count();
+    let message = if active > 0 {
+        format!("Quit sshub?\n{active} active tunnel(s) will be closed.")
+    } else {
+        "Quit sshub?".to_string()
+    };
+    let hint = "y: quit \u{2502} n: stay \u{2502} Esc: cancel";
+
+    let area = frame.area();
+    let popup_width = 44u16.min(area.width);
+    let popup_height = if active > 0 { 6u16 } else { 5u16 }.min(area.height);
+    let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
+    let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    frame.render_widget(Clear, popup_area);
+    frame.render_widget(
+        Paragraph::new(format!("{message}\n{hint}"))
+            .wrap(Wrap { trim: false })
+            .style(Style::default().fg(Color::Yellow))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Confirm quit")
+                    .border_style(Style::default().fg(Color::Yellow)),
+            ),
+        popup_area,
+    );
 }
 
 fn render_confirm_discard_popup(frame: &mut Frame) {
