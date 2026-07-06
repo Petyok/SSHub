@@ -65,7 +65,10 @@ pub fn render(frame: &mut Frame, app: &App) {
         buf.set_string(
             row_x,
             ry,
-            crate::tui::text::ellipsize(&format!("{marker}{label}"), (popup.width - 3) as usize),
+            crate::tui::text::ellipsize(
+                &format!("{marker}{label}"),
+                popup.width.saturating_sub(3) as usize,
+            ),
             style,
         );
     }
@@ -75,7 +78,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     buf.set_string(
         row_x,
         hint_y,
-        crate::tui::text::ellipsize(hint, (popup.width - 3) as usize),
+        crate::tui::text::ellipsize(hint, popup.width.saturating_sub(3) as usize),
         theme::mute(),
     );
 }

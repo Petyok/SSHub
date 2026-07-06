@@ -1087,6 +1087,7 @@ impl App {
     pub fn reload_hosts(&mut self) -> Result<()> {
         let selected_name = self.selected_entry().map(|e| e.name().to_string());
         self.load_collapsed_groups();
+        self.load_name_zoom();
 
         sync_ssh_config_hosts(self.resolver.as_ref(), &self.store)?;
 
@@ -2023,12 +2024,12 @@ impl App {
             KeyCode::Char('+' | '=')
                 if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
             {
-                self.name_zoom = (self.name_zoom + 1).min(NAME_ZOOM_MAX);
+                self.set_name_zoom((self.name_zoom + 1).min(NAME_ZOOM_MAX));
             }
             KeyCode::Char('-' | '_')
                 if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
             {
-                self.name_zoom = self.name_zoom.saturating_sub(1);
+                self.set_name_zoom(self.name_zoom.saturating_sub(1));
             }
             KeyCode::Char('f') if key.modifiers.is_empty() => self.toggle_favorite()?,
             KeyCode::Tab => self.detail_focus = !self.detail_focus,
@@ -2942,6 +2943,24 @@ impl App {
         NAME_WIDTH_BASE + self.name_zoom * NAME_WIDTH_STEP
     }
 
+    /// Set the host-name zoom level and persist it so it survives restarts.
+    fn set_name_zoom(&mut self, level: usize) {
+        let level = level.min(NAME_ZOOM_MAX);
+        if level == self.name_zoom {
+            return;
+        }
+        self.name_zoom = level;
+        let _ = self.store.set_ui_state("name_zoom", &level.to_string());
+    }
+
+    fn load_name_zoom(&mut self) {
+        if let Ok(Some(raw)) = self.store.get_ui_state("name_zoom") {
+            if let Ok(level) = raw.parse::<usize>() {
+                self.name_zoom = level.min(NAME_ZOOM_MAX);
+            }
+        }
+    }
+
     /// Open the dedicated default-identity picker for the selected group header.
     fn open_group_identity_picker(&mut self) -> Result<()> {
         let Some(group) = self
@@ -2976,12 +2995,12 @@ impl App {
                 self.group_identity_picker = None;
                 self.mode = AppMode::Normal;
             }
-            KeyCode::Char('j') | KeyCode::Down => {
+            KeyCode::Char('j') | KeyCode::Down | KeyCode::Right => {
                 if let Some(p) = self.group_identity_picker.as_mut() {
                     p.selected = (p.selected + 1) % len;
                 }
             }
-            KeyCode::Char('k') | KeyCode::Up => {
+            KeyCode::Char('k') | KeyCode::Up | KeyCode::Left => {
                 if let Some(p) = self.group_identity_picker.as_mut() {
                     p.selected = (p.selected + len - 1) % len;
                 }
