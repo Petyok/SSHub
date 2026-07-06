@@ -223,7 +223,7 @@ fn footer_keybinds(active_tab: usize) -> Vec<(&'static str, &'static str)> {
         ],
         2 => vec![
             ("\u{2191}\u{2193}", "select"),
-            ("a", "add key"),
+            ("a", "add"),
             ("e", "edit"),
             ("d", "delete"),
             ("r", "remove agent"),

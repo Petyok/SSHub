@@ -464,10 +464,21 @@ pub fn resolve_pending_secret(
     if let Some(identity) = managed.identity.as_ref() {
         if identity.has_password {
             let key = crate::credentials::identity_key(identity.id);
+            // A secret on an identity WITH a key unlocks that key (passphrase);
+            // on a keyless identity it's a shared login password, letting many
+            // hosts reuse one user+password credential.
+            let has_key = identity.private_key.is_some();
             return match password_store.get(&key) {
                 Ok(Some(pw)) => (
-                    Some(crate::session::PendingSecret::Passphrase(pw)),
-                    format!("auth: using stored passphrase ({key})"),
+                    Some(if has_key {
+                        crate::session::PendingSecret::Passphrase(pw)
+                    } else {
+                        crate::session::PendingSecret::Password(pw)
+                    }),
+                    format!(
+                        "auth: using stored {} ({key})",
+                        if has_key { "passphrase" } else { "password" }
+                    ),
                 ),
                 Ok(None) => (
                     None,
@@ -5100,8 +5111,8 @@ fn optional_field(raw: &str) -> Option<String> {
 fn tab_from_x(x: u16) -> Option<usize> {
     // Tab bar layout (from tab_bar.rs): 1-char left margin, then per tab:
     // 4 chars for number+brackets + label_len + 3 chars gap
-    // Labels: "hosts"(5), "tunnels"(7), "keys"(4), "audit"(5)
-    let labels = [5u16, 7, 4, 5];
+    // Labels: "hosts"(5), "tunnels"(7), "identities"(10), "audit"(5)
+    let labels = [5u16, 7, 10, 5];
     let mut cx = 1u16; // 1-char margin
     for (i, label_len) in labels.iter().enumerate() {
         let tab_w = 4 + label_len + 3;
@@ -5350,6 +5361,54 @@ mod tests {
         let form = app.identity_form.as_ref().unwrap();
         assert!(form.pasted_key.is_none());
         assert!(form.private_key.is_empty());
+    }
+
+    #[test]
+    fn keyless_identity_secret_is_a_login_password() {
+        use std::collections::HashMap;
+        use std::sync::Mutex;
+        struct MapStore(Mutex<HashMap<String, String>>);
+        impl crate::credentials::PasswordStore for MapStore {
+            fn get(&self, k: &str) -> anyhow::Result<Option<String>> {
+                Ok(self.0.lock().unwrap().get(k).cloned())
+            }
+            fn set(&self, k: &str, v: &str) -> anyhow::Result<()> {
+                self.0.lock().unwrap().insert(k.into(), v.into());
+                Ok(())
+            }
+            fn delete(&self, k: &str) -> anyhow::Result<()> {
+                self.0.lock().unwrap().remove(k);
+                Ok(())
+            }
+        }
+
+        let store = test_store();
+        // Identity with username + password, no key file.
+        let id = store
+            .create_identity(&crate::store::NewIdentity {
+                name: "team".into(),
+                username: Some("ops".into()),
+                private_key: None,
+                certificate: None,
+                sort_order: 0,
+                has_password: true,
+            })
+            .unwrap()
+            .id;
+        let mut nh = NewHost::launcher("h1", "10.0.0.1");
+        nh.identity_id = Some(id);
+        let host_id = store.create_host(&nh).unwrap().id;
+
+        let pw = MapStore(Mutex::new(HashMap::new()));
+        crate::credentials::PasswordStore::set(&pw, &crate::credentials::identity_key(id), "s3cret")
+            .unwrap();
+
+        let entry = HostEntry::Managed(store.get_host(host_id).unwrap().unwrap());
+        let (secret, diag) = resolve_pending_secret(&entry, &pw);
+        assert!(
+            matches!(secret, Some(crate::session::PendingSecret::Password(ref p)) if p == "s3cret"),
+            "keyless identity should yield a login password, got {secret:?} / {diag}"
+        );
     }
 
     #[test]

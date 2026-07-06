@@ -36,7 +36,7 @@ pub fn render_keys(frame: &mut Frame, area: Rect, app: &App) {
     };
 
     if app.identities.is_empty() {
-        let msg = "No keys — press 'a' to add";
+        let msg = "No identities — press 'a' (key or user+password)";
         let x = inner_x + (inner_w.saturating_sub(msg.len() as u16)) / 2;
         buf.set_string(x, area.y + 2, msg, theme::dim());
     }

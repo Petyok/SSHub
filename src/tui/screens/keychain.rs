@@ -106,8 +106,16 @@ pub fn render_identity_form(form: &IdentityFormEdit, save_hint: &str) -> Paragra
         } else {
             Style::default()
         };
+        // The secret field is a key passphrase when a key is set, otherwise a
+        // shared login password reused across hosts.
+        let has_key = !form.private_key.is_empty() || form.pasted_key.is_some();
+        let label = if field == IdentityFormField::Password && !has_key {
+            "Password"
+        } else {
+            field.label()
+        };
         lines.push(ratatui::text::Line::from(vec![
-            ratatui::text::Span::styled(format!("{prefix}{}: ", field.label()), label_style),
+            ratatui::text::Span::styled(format!("{prefix}{label}: "), label_style),
             ratatui::text::Span::styled(display, value_style),
         ]));
     }

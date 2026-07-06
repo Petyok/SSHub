@@ -9,7 +9,7 @@ use crate::tui::theme;
 const TABS: [(&str, &str); 4] = [
     ("1", "hosts"),
     ("2", "tunnels"),
-    ("3", "keys"),
+    ("3", "identities"),
     ("4", "audit"),
 ];
 
