@@ -2262,10 +2262,19 @@ impl App {
                 self.mode = AppMode::Normal;
                 self.rebuild_filter();
             }
-            // Enter toggles the highlighted row, then closes — the fast path for
-            // picking a single tag.
+            // Enter confirms and closes. It never removes a tag: it clears all
+            // on "(all)", adds the highlighted tag if it isn't active yet (the
+            // fast single-pick path), and otherwise just closes.
             KeyCode::Enter => {
-                self.toggle_highlighted_tag();
+                let rows = self.tag_filter_rows();
+                match rows.get(self.tag_filter_selected) {
+                    Some(_) if self.tag_filter_selected == 0 => self.tag_filters.clear(),
+                    Some(tag) if !self.is_tag_active(tag) => {
+                        let tag = tag.clone();
+                        self.tag_filters.push(tag);
+                    }
+                    _ => {}
+                }
                 self.search_query.clear();
                 self.mode = AppMode::Normal;
                 self.rebuild_filter();
@@ -6556,6 +6565,33 @@ mod tests {
         // AND semantics: only the host carrying both tags survives.
         app.handle_key(key(KeyCode::Esc)).unwrap();
         assert_eq!(app.mode, AppMode::Normal);
+        assert_eq!(app.filtered_indices, vec![2]);
+    }
+
+    #[test]
+    fn tag_filter_picker_enter_after_multiselect_keeps_all_tags() {
+        // Regression: Enter must confirm the built-up set, never remove the
+        // last-highlighted tag.
+        let mut app = test_app(vec![
+            ("web", host("web")),
+            ("db", host("db")),
+            ("both", host("both")),
+        ]);
+        legacy_meta(&mut app.hosts[0]).tags = vec!["prod".into()];
+        legacy_meta(&mut app.hosts[1]).tags = vec!["eu".into()];
+        legacy_meta(&mut app.hosts[2]).tags = vec!["prod".into(), "eu".into()];
+        app.rebuild_filter();
+
+        app.handle_key(key_char('#')).unwrap();
+        app.handle_key(key(KeyCode::Down)).unwrap(); // → "eu"
+        app.handle_key(key_char(' ')).unwrap(); // toggle eu on
+        app.handle_key(key(KeyCode::Down)).unwrap(); // → "prod"
+        app.handle_key(key_char(' ')).unwrap(); // toggle prod on
+        // Cursor still on "prod" (active). Enter must NOT toggle it off.
+        app.handle_key(key(KeyCode::Enter)).unwrap();
+
+        assert_eq!(app.mode, AppMode::Normal);
+        assert_eq!(app.tag_filters, vec!["eu".to_string(), "prod".to_string()]);
         assert_eq!(app.filtered_indices, vec![2]);
     }
 

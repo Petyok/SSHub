@@ -21,7 +21,14 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
     let raw_title = if app.tag_filters.is_empty() {
         "hosts".to_string()
     } else {
-        format!("hosts · #{}", app.tag_filters.join(" #"))
+        // Spell out the AND operator so an empty result set is self-explaining.
+        let joined = app
+            .tag_filters
+            .iter()
+            .map(|t| format!("#{t}"))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        format!("hosts · {joined}")
     };
     let max_title = (area.width as usize).saturating_sub(12).max(5);
     let title = crate::tui::text::ellipsize(&raw_title, max_title);
