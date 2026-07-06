@@ -2725,9 +2725,17 @@ impl App {
     }
 
     fn selected_host_group_id(&self) -> Option<i64> {
+        // Prefer the selected host's group; fall back to a selected group header
+        // so "add host" while sitting on a group header files it in that group.
         self.selected_entry()
             .and_then(|e| e.managed())
             .and_then(|m| m.group_id)
+            .or_else(|| {
+                self.selected_nav_header()
+                    .and_then(|si| self.group_sections.get(si))
+                    .and_then(|section| section.group.as_ref())
+                    .map(|g| g.id)
+            })
     }
 
     fn enter_group_manage(&mut self) -> Result<()> {
@@ -2844,6 +2852,12 @@ impl App {
     }
 
     fn enter_group_form(&mut self, existing: Option<&HostGroup>) -> Result<()> {
+        // The default-identity selector reads `self.identities`; it is loaded
+        // lazily elsewhere, so ensure it's populated before opening the form.
+        // A seeded "Default" identity always exists, so empty means "not loaded".
+        if self.identities.is_empty() {
+            self.identities = self.store.list_identities()?;
+        }
         let return_to_manage = self.mode == AppMode::GroupManage;
         let form = if let Some(group) = existing {
             GroupFormEdit {
