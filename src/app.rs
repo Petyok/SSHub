@@ -3060,10 +3060,16 @@ impl App {
     }
 
     fn load_ui_zoom(&mut self) {
-        if let Ok(Some(raw)) = self.store.get_ui_state("ui_zoom") {
-            if let Ok(level) = raw.parse::<usize>() {
-                self.ui_zoom = level.min(UI_ZOOM_MAX);
-            }
+        // Fall back to the pre-rename "name_zoom" key so an upgraded user keeps
+        // their previous zoom level.
+        let raw = self
+            .store
+            .get_ui_state("ui_zoom")
+            .ok()
+            .flatten()
+            .or_else(|| self.store.get_ui_state("name_zoom").ok().flatten());
+        if let Some(level) = raw.and_then(|r| r.parse::<usize>().ok()) {
+            self.ui_zoom = level.min(UI_ZOOM_MAX);
         }
     }
 
