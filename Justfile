@@ -17,3 +17,24 @@ build:
 # Run with dry-run (no TUI)
 dry-run:
     cargo run -- --dry-run
+
+# Install the release binary to ~/.local/bin and a launcher entry so sshub
+# shows up in your application launcher (GNOME, rofi, etc). Uses kitty if
+# available, otherwise falls back to xterm.
+install: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bin="$HOME/.local/bin/sshub"
+    term="$(command -v kitty || command -v ghostty || command -v alacritty || command -v foot || echo xterm)"
+    install -Dm755 target/release/sshub "$bin"
+    mkdir -p "$HOME/.local/share/applications"
+    sed -e "s|@TERM@|$term|g" -e "s|@BIN@|$bin|g" \
+        assets/sshub.desktop > "$HOME/.local/share/applications/sshub.desktop"
+    update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
+    echo "Installed $bin and launcher entry (terminal: $term)."
+    echo "If it doesn't show up, log out/in or run: update-desktop-database ~/.local/share/applications"
+
+# Remove the installed binary and launcher entry.
+uninstall:
+    rm -f "$HOME/.local/bin/sshub" "$HOME/.local/share/applications/sshub.desktop"
+    @echo "Removed sshub binary and launcher entry."

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=SSHub
+GenericName=SSH Launcher
+Comment=TUI SSH host launcher, tunnels and key manager
+Exec=@TERM@ --class sshub -e @BIN@
+Icon=utilities-terminal
+Terminal=false
+Categories=Network;
+Keywords=ssh;terminal;server;tunnel;host;
+StartupWMClass=sshub
