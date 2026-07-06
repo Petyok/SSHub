@@ -234,7 +234,7 @@ fn footer_keybinds(active_tab: usize) -> Vec<(&'static str, &'static str)> {
             ("a", "add"),
             ("e", "edit"),
             ("d", "delete"),
-            ("p", "agent+"),
+            ("p/r", "agent +/-"),
             ("?", "help"),
             ("q", "quit"),
         ],

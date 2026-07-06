@@ -2223,10 +2223,10 @@ impl App {
     fn handle_key_tag_filter(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
             KeyCode::Esc => {
-                self.tag_filter = None;
+                // Cancel without touching the active filter, matching the other
+                // pickers. Use the "(all)" row (or Esc in Normal) to clear.
                 self.search_query.clear();
                 self.mode = AppMode::Normal;
-                self.rebuild_filter();
             }
             KeyCode::Enter => {
                 let rows = self.tag_filter_rows();
@@ -6502,6 +6502,23 @@ mod tests {
 
         assert!(app.tag_filter.is_none());
         assert_eq!(app.filtered_indices.len(), 2);
+    }
+
+    #[test]
+    fn tag_filter_picker_esc_keeps_active_filter() {
+        let mut app = test_app(vec![("web", host("web")), ("db", host("db"))]);
+        legacy_meta(&mut app.hosts[0]).tags = vec!["prod".into()];
+        legacy_meta(&mut app.hosts[1]).tags = vec!["staging".into()];
+        app.tag_filter = Some("prod".into());
+        app.rebuild_filter();
+
+        app.handle_key(key_char('#')).unwrap();
+        // Esc cancels the picker without touching the active filter.
+        app.handle_key(key(KeyCode::Esc)).unwrap();
+
+        assert_eq!(app.mode, AppMode::Normal);
+        assert_eq!(app.tag_filter.as_deref(), Some("prod"));
+        assert_eq!(app.filtered_indices, vec![0]);
     }
 
     #[test]

@@ -16,7 +16,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     let title = " filter by tag ";
     let query_line = format!("› {}\u{2588}", app.search_query);
-    let hint = "↑/↓ move · Enter apply · Esc clear";
+    let hint = "↑/↓ move · Enter apply · (all) clears · Esc cancel";
 
     let empty_note = "no tags yet — add comma-separated tags on a host";
 
@@ -26,7 +26,11 @@ pub fn render(frame: &mut Frame, app: &App) {
         .max(title.chars().count())
         .max(hint.chars().count())
         .max(query_line.chars().count())
-        .max(if has_tags { 0 } else { empty_note.chars().count() })
+        .max(if has_tags {
+            0
+        } else {
+            empty_note.chars().count()
+        })
         .max(28) as u16;
     let popup_w = (inner_w + 4).min(area.width.saturating_sub(2));
     // query line + separator + rows + hint + borders.
@@ -71,7 +75,11 @@ pub fn render(frame: &mut Frame, app: &App) {
             let ry = list_top + i as u16;
             let is_sel = i == app.tag_filter_selected;
             let is_active = app.tag_filter.as_deref() == Some(label.as_str());
-            let style = if is_sel { theme::selected() } else { theme::text() };
+            let style = if is_sel {
+                theme::selected()
+            } else {
+                theme::text()
+            };
             if is_sel {
                 let blank = " ".repeat(popup.width.saturating_sub(2) as usize);
                 buf.set_string(popup.x + 1, ry, &blank, theme::selected());

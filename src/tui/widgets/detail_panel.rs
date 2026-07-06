@@ -161,7 +161,7 @@ fn host_detail_edit(app: &App, entry: &HostEntry, _host_idx: usize) -> Vec<Line<
     let ssh = entry.ssh_host();
 
     let tags_line = field_with_cursor(
-        "Tags",
+        "Tags (comma-separated)",
         &edit.tags,
         edit.cursor,
         edit.field == DetailEditField::Tags,
@@ -289,7 +289,7 @@ mod tests {
             .map(|l| l.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(text.contains("> Tags: prod_"));
+        assert!(text.contains("> Tags (comma-separated): prod_"));
         assert!(text.contains("[Enter] save"));
         assert!(!text.contains("[e] edit metadata"));
     }
