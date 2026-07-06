@@ -2189,8 +2189,10 @@ impl App {
             KeyCode::Esc if key.modifiers.is_empty() => {
                 self.active_tab = 0;
             }
-            KeyCode::Char('j') | KeyCode::Down => self.move_identity_selection(1),
-            KeyCode::Char('k') | KeyCode::Up => self.move_identity_selection(-1),
+            KeyCode::Char('j') | KeyCode::Down => self.move_identity_grid(1, 0),
+            KeyCode::Char('k') | KeyCode::Up => self.move_identity_grid(-1, 0),
+            KeyCode::Char('l') | KeyCode::Right => self.move_identity_grid(0, 1),
+            KeyCode::Left => self.move_identity_grid(0, -1),
             KeyCode::Char('a') if key.modifiers.is_empty() => self.enter_identity_form(None)?,
             KeyCode::Char('e') if key.modifiers.is_empty() => self.edit_selected_identity()?,
             KeyCode::Char('d') if key.modifiers.is_empty() => self.delete_selected_identity()?,
@@ -3528,14 +3530,45 @@ impl App {
         form.dirty = true;
     }
 
-    fn move_identity_selection(&mut self, delta: i32) {
+    /// Columns in the identities grid, matching the renderer's threshold.
+    fn identity_cards_per_row(&self) -> i32 {
+        if self.terminal_area.width >= 132 {
+            2
+        } else {
+            1
+        }
+    }
+
+    /// Grid move: `dr` rows down/up, `dc` columns right/left. Left/right never
+    /// wrap across rows so navigation stays predictable.
+    fn move_identity_grid(&mut self, dr: i32, dc: i32) {
         if self.identities.is_empty() {
             self.identity_selected = 0;
             return;
         }
-        let len = self.identities.len();
-        let next = self.identity_selected as i32 + delta;
-        self.identity_selected = next.clamp(0, len.saturating_sub(1) as i32) as usize;
+        let cpr = self.identity_cards_per_row();
+        let len = self.identities.len() as i32;
+        let cur = self.identity_selected as i32;
+        if dc != 0 {
+            let col = cur % cpr;
+            let target_col = col + dc;
+            if target_col < 0 || target_col >= cpr {
+                return; // stay put at the row edge
+            }
+            let next = cur + dc;
+            if next >= 0 && next < len {
+                self.identity_selected = next as usize;
+            }
+        } else if dr != 0 {
+            let mut next = cur + dr * cpr;
+            // Moving down past the end: drop onto the (shorter) last row's card.
+            if dr > 0 && next >= len && cur < len - 1 {
+                next = len - 1;
+            }
+            if next >= 0 && next < len {
+                self.identity_selected = next as usize;
+            }
+        }
     }
 
     fn clamp_identity_selected(&mut self) {
@@ -5361,6 +5394,39 @@ mod tests {
         let form = app.identity_form.as_ref().unwrap();
         assert!(form.pasted_key.is_none());
         assert!(form.private_key.is_empty());
+    }
+
+    #[test]
+    fn identity_grid_navigation_moves_by_row_and_column() {
+        let mut app = test_app(vec![("web", host("web"))]);
+        app.terminal_area = ratatui::layout::Rect::new(0, 0, 140, 40); // wide → 2 cols
+        app.identities = (0..5)
+            .map(|i| crate::store::Identity {
+                id: i,
+                name: format!("id{i}"),
+                username: None,
+                private_key: None,
+                certificate: None,
+                has_password: false,
+            })
+            .collect();
+        // Grid: [0,1] [2,3] [4]
+        app.identity_selected = 0;
+        app.move_identity_grid(0, 1);
+        assert_eq!(app.identity_selected, 1, "right");
+        app.move_identity_grid(0, 1);
+        assert_eq!(app.identity_selected, 1, "right at edge stays");
+        app.move_identity_grid(1, 0);
+        assert_eq!(app.identity_selected, 3, "down a row, same column");
+        app.move_identity_grid(0, -1);
+        assert_eq!(app.identity_selected, 2, "left");
+        app.move_identity_grid(1, 0);
+        assert_eq!(app.identity_selected, 4, "down into last row");
+        app.move_identity_grid(1, 0);
+        assert_eq!(app.identity_selected, 4, "no row below, stays");
+        app.identity_selected = 3;
+        app.move_identity_grid(1, 0);
+        assert_eq!(app.identity_selected, 4, "down from col1 drops onto shorter last row");
     }
 
     #[test]

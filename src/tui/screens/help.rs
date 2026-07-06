@@ -42,6 +42,7 @@ pub fn render_help() -> Paragraph<'static> {
         entry("x", "Kill tunnel process"),
         Line::from(""),
         section("identities (tab 3)"),
+        entry("←→ / l", "Move between columns (grid)"),
         entry("a", "Add identity (key or user+password)"),
         entry("e", "Edit identity"),
         entry("d", "Delete identity"),
