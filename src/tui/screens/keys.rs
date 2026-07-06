@@ -178,12 +178,12 @@ fn render_card(
         buf.set_string(fp_x, y + 2, truncate(&fp, (inner_w / 2) as usize), fp_style);
     }
 
-    // Row 3: Key path
+    // Row 3: Key path (or a note for a keyless password credential)
     let path_str = identity
         .private_key
         .as_ref()
         .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|| "(no key)".into());
+        .unwrap_or_else(|| "password login (no key)".into());
     let path_style = if selected {
         Style::default().fg(theme::DIM).bg(theme::SEL_BG)
     } else {
@@ -196,38 +196,59 @@ fn render_card(
         path_style,
     );
 
-    // Row 4: Agent status + password indicator
-    let loaded = is_loaded_in_agent(identity, agent);
-    let (dot, dot_color, label) = if loaded {
-        ("●", theme::GREEN, " loaded")
-    } else {
-        ("○", theme::DIM, " not loaded")
-    };
-    let dot_style = if selected {
-        Style::default().fg(dot_color).bg(theme::SEL_BG)
-    } else {
-        Style::default().fg(dot_color)
-    };
-    buf.set_string(inner_x, y + 4, dot, dot_style);
-    let label_style = if selected {
-        Style::default()
-            .fg(if loaded { theme::GREEN } else { theme::DIM })
-            .bg(theme::SEL_BG)
-    } else if loaded {
-        theme::green()
-    } else {
-        theme::dim()
-    };
-    buf.set_string(inner_x + 1, y + 4, label, label_style);
-
-    if identity.has_password {
-        let pw_x = inner_x + 12;
-        let pw_style = if selected {
-            Style::default().fg(theme::AMBER).bg(theme::SEL_BG)
+    // Row 4: for a key, show agent load status (+ passphrase indicator);
+    // for a keyless password credential, just the password status.
+    if identity.private_key.is_some() {
+        let loaded = is_loaded_in_agent(identity, agent);
+        let (dot, dot_color, label) = if loaded {
+            ("●", theme::GREEN, " loaded")
         } else {
-            theme::amber()
+            ("○", theme::DIM, " not loaded")
         };
-        buf.set_string(pw_x, y + 4, "● password", pw_style);
+        let dot_style = if selected {
+            Style::default().fg(dot_color).bg(theme::SEL_BG)
+        } else {
+            Style::default().fg(dot_color)
+        };
+        buf.set_string(inner_x, y + 4, dot, dot_style);
+        let label_style = if selected {
+            Style::default()
+                .fg(if loaded { theme::GREEN } else { theme::DIM })
+                .bg(theme::SEL_BG)
+        } else if loaded {
+            theme::green()
+        } else {
+            theme::dim()
+        };
+        buf.set_string(inner_x + 1, y + 4, label, label_style);
+
+        if identity.has_password {
+            // Passphrase indicator, placed after the status label (whose width
+            // varies: " loaded" vs " not loaded") with a 2-col gap, if it fits.
+            let pw_x = inner_x + 1 + label.chars().count() as u16 + 2;
+            let pw_text = "● passphrase";
+            if pw_x + pw_text.chars().count() as u16 <= inner_x + inner_w {
+                let pw_style = if selected {
+                    Style::default().fg(theme::AMBER).bg(theme::SEL_BG)
+                } else {
+                    theme::amber()
+                };
+                buf.set_string(pw_x, y + 4, pw_text, pw_style);
+            }
+        }
+    } else {
+        let (dot, color, text) = if identity.has_password {
+            ("●", theme::AMBER, " password set")
+        } else {
+            ("○", theme::DIM, " no password")
+        };
+        let base = if selected {
+            Style::default().bg(theme::SEL_BG)
+        } else {
+            Style::default()
+        };
+        buf.set_string(inner_x, y + 4, dot, base.fg(color));
+        buf.set_string(inner_x + 1, y + 4, text, base.fg(color));
     }
 }
 
@@ -264,7 +285,9 @@ fn detect_key_type(identity: &Identity) -> String {
         .map(|p| p.to_string_lossy().to_lowercase())
         .unwrap_or_default();
 
-    if path.contains("ed25519") {
+    if identity.private_key.is_none() {
+        "password".into()
+    } else if path.contains("ed25519") {
         "ed25519".into()
     } else if path.contains("ecdsa") {
         "ecdsa".into()
@@ -310,5 +333,56 @@ fn truncate(s: &str, max: usize) -> &str {
             .map(|(i, c)| i + c.len_utf8())
             .unwrap_or(0);
         &s[..end]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::buffer::Buffer;
+    use std::path::PathBuf;
+
+    fn row_text(buf: &Buffer, y: u16, w: u16) -> String {
+        (0..w)
+            .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+            .collect()
+    }
+
+    fn identity(private_key: Option<&str>, has_password: bool) -> Identity {
+        Identity {
+            id: 1,
+            name: "selectel-core".into(),
+            username: Some("root".into()),
+            private_key: private_key.map(PathBuf::from),
+            certificate: None,
+            has_password,
+        }
+    }
+
+    #[test]
+    fn key_card_status_row_does_not_overlap() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, CARD_W, CARD_H));
+        let id = identity(Some("/home/u/.ssh/sshub_selectel-core"), true);
+        render_card(&mut buf, 0, 0, CARD_W, &id, false, None);
+
+        let row = row_text(&buf, 4, CARD_W);
+        // Both labels present, and "passphrase" isn't glued onto "loaded".
+        assert!(row.contains("not loaded"), "row: {row:?}");
+        assert!(row.contains("passphrase"), "row: {row:?}");
+        assert!(!row.contains("loaded● passphrase") && !row.contains("loaded●passphrase"),
+            "labels overlap: {row:?}");
+        assert!(row.contains("loaded  ● passphrase") || row.contains("loaded ● passphrase"),
+            "expected a gap before the passphrase marker: {row:?}");
+    }
+
+    #[test]
+    fn keyless_card_shows_password_credential() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, CARD_W, CARD_H));
+        let id = identity(None, true);
+        render_card(&mut buf, 0, 0, CARD_W, &id, false, None);
+
+        assert!(row_text(&buf, 1, CARD_W).contains("password"), "badge missing");
+        assert!(row_text(&buf, 3, CARD_W).contains("no key"), "row3: expected keyless note");
+        assert!(row_text(&buf, 4, CARD_W).contains("password set"), "row4: expected password status");
     }
 }
