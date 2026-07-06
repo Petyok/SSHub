@@ -40,6 +40,27 @@ impl Default for AppearanceConfig {
     }
 }
 
+/// User-remappable keybindings. Each entry is a list of key specs so a user
+/// can add their own binding without losing the defaults. Specs look like
+/// `"F2"`, `"Ctrl+S"`, `"Alt+Enter"`, `"F10"` (parsed in `app`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeybindsConfig {
+    #[serde(default = "default_save_keys")]
+    pub save: Vec<String>,
+}
+
+fn default_save_keys() -> Vec<String> {
+    vec!["F2".to_string(), "Ctrl+S".to_string()]
+}
+
+impl Default for KeybindsConfig {
+    fn default() -> Self {
+        Self {
+            save: default_save_keys(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
@@ -47,6 +68,8 @@ pub struct AppConfig {
     pub launch_command: Option<String>,
     #[serde(default)]
     pub appearance: AppearanceConfig,
+    #[serde(default)]
+    pub keybinds: KeybindsConfig,
 }
 
 impl Default for AppConfig {
@@ -55,6 +78,7 @@ impl Default for AppConfig {
             terminal: TerminalKind::Kitty,
             launch_command: None,
             appearance: AppearanceConfig::default(),
+            keybinds: KeybindsConfig::default(),
         }
     }
 }

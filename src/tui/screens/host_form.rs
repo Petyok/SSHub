@@ -11,6 +11,7 @@ pub fn render_host_form(
     form: &HostFormEdit,
     groups: &[HostGroup],
     identities: &[Identity],
+    save_hint: &str,
 ) -> Paragraph<'static> {
     let title = if form.metadata_only {
         "Edit metadata (ssh_config)"
@@ -159,7 +160,7 @@ pub fn render_host_form(
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "type to edit │ Tab/↓: next │ Enter: open picker (Group/Identity) │ F2/Ctrl+S: save │ Esc: cancel",
+        format!("type to edit │ Tab/↓: next │ Enter: open picker (Group/Identity) │ {save_hint}: save │ Esc: cancel"),
         Style::default().add_modifier(Modifier::DIM),
     )));
 

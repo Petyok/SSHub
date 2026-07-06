@@ -2418,10 +2418,7 @@ impl App {
                     self.mode = AppMode::Normal;
                 }
             }
-            KeyCode::F(2) => self.save_tunnel_form()?,
-            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.save_tunnel_form()?;
-            }
+            _ if self.is_save_key(&key) => self.save_tunnel_form()?,
             // Single-step model: Enter on the last field saves.
             KeyCode::Enter if field == TunnelFormField::Label => self.save_tunnel_form()?,
             KeyCode::Enter | KeyCode::Tab | KeyCode::Down if key.modifiers.is_empty() => {
@@ -2556,10 +2553,7 @@ impl App {
         let field = form.field;
         match key.code {
             KeyCode::Esc => self.cancel_identity_form()?,
-            KeyCode::F(2) => self.save_identity_form()?,
-            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.save_identity_form()?;
-            }
+            _ if self.is_save_key(&key) => self.save_identity_form()?,
             // Single-step model: Enter on the last field saves.
             KeyCode::Enter if field == IdentityFormField::Password => {
                 self.save_identity_form()?;
@@ -3172,10 +3166,8 @@ impl App {
 
         match key.code {
             KeyCode::Esc => self.cancel_group_form()?,
-            KeyCode::Enter | KeyCode::F(2) => self.save_group_form()?,
-            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.save_group_form()?;
-            }
+            KeyCode::Enter => self.save_group_form()?,
+            _ if self.is_save_key(&key) => self.save_group_form()?,
             KeyCode::Backspace if key.modifiers.is_empty() => self.group_form_backspace(),
             KeyCode::Char(c)
                 if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
@@ -3835,10 +3827,7 @@ impl App {
         let field = form.field;
         match key.code {
             KeyCode::Esc => self.cancel_host_form()?,
-            KeyCode::F(2) => self.save_host_form()?,
-            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.save_host_form()?;
-            }
+            _ if self.is_save_key(&key) => self.save_host_form()?,
             // Single-step model: type straight into the active field.
             // Enter/Tab/Down advance; Enter on the LAST field saves the form
             // (a modifier-free save path; F2/Ctrl+S always work).
@@ -4284,6 +4273,28 @@ impl App {
         let next = self.selected as i32 + delta;
         // Wrap around: going past the end wraps to the beginning and vice versa
         self.selected = ((next % len + len) % len) as usize;
+    }
+
+    /// Short human label of the configured save keys, e.g. `"F2/Ctrl+S"`,
+    /// for form hints.
+    pub fn save_key_label(&self) -> String {
+        let keys = &self.config.keybinds.save;
+        if keys.is_empty() {
+            "F2".to_string()
+        } else {
+            keys.join("/")
+        }
+    }
+
+    /// Whether `key` matches one of the user-configured "save" bindings
+    /// (`config.keybinds.save`, default F2 / Ctrl+S).
+    pub fn is_save_key(&self, key: &KeyEvent) -> bool {
+        self.config
+            .keybinds
+            .save
+            .iter()
+            .filter_map(|spec| parse_keyspec(spec))
+            .any(|(code, mods)| keyspec_matches(code, mods, key))
     }
 
     /// The section index if the current selection is a group header.
@@ -4746,6 +4757,57 @@ fn build_group_sections(
     sections
 }
 
+/// Parse a keybinding spec like `"Ctrl+S"`, `"F2"`, `"Alt+Enter"` into a
+/// (code, modifiers) pair. Returns `None` for unrecognised specs.
+fn parse_keyspec(spec: &str) -> Option<(KeyCode, KeyModifiers)> {
+    let parts: Vec<&str> = spec.split('+').map(|p| p.trim()).collect();
+    let (key_part, mod_parts) = parts.split_last()?;
+    let mut mods = KeyModifiers::empty();
+    for m in mod_parts {
+        match m.to_ascii_lowercase().as_str() {
+            "ctrl" | "control" => mods |= KeyModifiers::CONTROL,
+            "alt" | "option" => mods |= KeyModifiers::ALT,
+            "shift" => mods |= KeyModifiers::SHIFT,
+            _ => return None,
+        }
+    }
+    let key = key_part.trim();
+    if key.is_empty() {
+        return None;
+    }
+    let code = match key.to_ascii_lowercase().as_str() {
+        "enter" | "return" => KeyCode::Enter,
+        "tab" => KeyCode::Tab,
+        "space" => KeyCode::Char(' '),
+        "esc" | "escape" => KeyCode::Esc,
+        lower => {
+            // Function key "F1".."F12"?
+            if let Some(n) = lower
+                .strip_prefix('f')
+                .filter(|r| !r.is_empty() && r.chars().all(|c| c.is_ascii_digit()))
+                .and_then(|r| r.parse::<u8>().ok())
+            {
+                KeyCode::F(n)
+            } else if lower.chars().count() == 1 {
+                KeyCode::Char(lower.chars().next().unwrap())
+            } else {
+                return None;
+            }
+        }
+    };
+    Some((code, mods))
+}
+
+/// Match a parsed spec against an incoming event, comparing char keys
+/// case-insensitively (so `Ctrl+S` matches whatever case crossterm reports).
+fn keyspec_matches(code: KeyCode, mods: KeyModifiers, key: &KeyEvent) -> bool {
+    let code_eq = match (code, key.code) {
+        (KeyCode::Char(a), KeyCode::Char(b)) => a.eq_ignore_ascii_case(&b),
+        (a, b) => a == b,
+    };
+    code_eq && key.modifiers == mods
+}
+
 fn optional_field(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -4870,6 +4932,39 @@ mod tests {
         let mut h = SshHost::new(name);
         h.hostname = Some(format!("{name}.example.com"));
         h
+    }
+
+    #[test]
+    fn parse_keyspec_handles_common_forms() {
+        assert_eq!(parse_keyspec("F2"), Some((KeyCode::F(2), KeyModifiers::empty())));
+        assert_eq!(parse_keyspec("F10"), Some((KeyCode::F(10), KeyModifiers::empty())));
+        assert_eq!(
+            parse_keyspec("Ctrl+S"),
+            Some((KeyCode::Char('s'), KeyModifiers::CONTROL))
+        );
+        assert_eq!(
+            parse_keyspec("Alt+Enter"),
+            Some((KeyCode::Enter, KeyModifiers::ALT))
+        );
+        assert_eq!(parse_keyspec(""), None);
+        assert_eq!(parse_keyspec("Meta+X"), None);
+    }
+
+    #[test]
+    fn is_save_key_respects_config() {
+        let mut app = test_app(vec![("web", host("web"))]);
+        // Defaults: F2 and Ctrl+S.
+        assert!(app.is_save_key(&key(KeyCode::F(2))));
+        assert!(app.is_save_key(&KeyEvent::new(
+            KeyCode::Char('s'),
+            KeyModifiers::CONTROL
+        )));
+        assert!(!app.is_save_key(&key(KeyCode::F(4))));
+
+        // Remap to Ctrl+Enter only.
+        app.config.keybinds.save = vec!["Ctrl+Enter".to_string()];
+        assert!(app.is_save_key(&KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL)));
+        assert!(!app.is_save_key(&key(KeyCode::F(2))));
     }
 
     #[test]

@@ -361,7 +361,7 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
     // Footer hints
     let hint_y = inner.y + inner.height.saturating_sub(1);
     if hint_y > inner.y + fields.len() as u16 {
-        let hint = "type to edit  Tab/\u{2193}: next  F2/Ctrl+S: save  Esc: close";
+        let hint = format!("type to edit  Tab/\u{2193}: next  {}: save  Esc: close", app.save_key_label());
         buf.set_string(inner.x + 1, hint_y, hint, theme::dim());
     }
 }

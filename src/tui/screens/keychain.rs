@@ -43,7 +43,7 @@ pub fn render_identity_list(app: &App) -> List<'static> {
     List::new(items)
 }
 
-pub fn render_identity_form(form: &IdentityFormEdit) -> Paragraph<'static> {
+pub fn render_identity_form(form: &IdentityFormEdit, save_hint: &str) -> Paragraph<'static> {
     let mut lines = Vec::with_capacity(IdentityFormField::ALL.len() + 2);
     for field in IdentityFormField::ALL {
         let active = form.field == field;
@@ -113,7 +113,7 @@ pub fn render_identity_form(form: &IdentityFormEdit) -> Paragraph<'static> {
     }
     lines.push(ratatui::text::Line::from(""));
     lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
-        "type to edit │ Tab/↓: next │ F2/Ctrl+S: save │ Esc: cancel",
+        format!("type to edit │ Tab/↓: next │ {save_hint}: save │ Esc: cancel"),
         Style::default().add_modifier(Modifier::DIM),
     )));
     Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("Identity"))
