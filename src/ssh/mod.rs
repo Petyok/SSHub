@@ -2,6 +2,7 @@ pub mod agent;
 mod export;
 mod host;
 mod import;
+mod keyfile;
 pub mod probe;
 mod resolver;
 
@@ -11,6 +12,7 @@ pub use import::{
     compute_ssh_config_hash, import_ssh_config, materialize_ssh_config_host, sync_ssh_config_hosts,
     ImportReport,
 };
+pub use keyfile::{looks_like_private_key, write_key_material};
 pub use resolver::{
     expand_tilde, parse_host_aliases, parse_ssh_g_output, ssh_config_path, HostResolver,
     SshConfigResolver,

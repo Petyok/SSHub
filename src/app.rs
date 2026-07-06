@@ -747,6 +747,9 @@ pub struct IdentityFormEdit {
     pub certificate: String,
     pub password: String,
     pub has_password: bool,
+    /// Full key material pasted into the Private key field; written to
+    /// `~/.ssh/sshub_<name>` on save (the path field then points at it).
+    pub pasted_key: Option<String>,
     pub field: IdentityFormField,
     pub cursor: usize,
     pub editing: bool,
@@ -1405,6 +1408,24 @@ impl App {
                 | AppMode::ImportPrompt
         );
         if !text_entry {
+            return Ok(());
+        }
+
+        // Pasting key material into the identity "Private key path" field:
+        // keep the full multi-line blob and write it to a key file on save.
+        if self.mode == AppMode::IdentityForm
+            && crate::ssh::looks_like_private_key(text)
+            && self
+                .identity_form
+                .as_ref()
+                .is_some_and(|f| f.field == IdentityFormField::PrivateKey)
+        {
+            if let Some(form) = self.identity_form.as_mut() {
+                form.pasted_key = Some(text.to_string());
+                form.private_key = "(pasted key — saved to ~/.ssh on save)".to_string();
+                form.cursor = text_input::char_len(&form.private_key);
+                form.dirty = true;
+            }
             return Ok(());
         }
 
@@ -3280,6 +3301,7 @@ impl App {
                     .unwrap_or_default(),
                 password: String::new(),
                 has_password: identity.has_password,
+                pasted_key: None,
                 field: IdentityFormField::Name,
                 cursor: text_input::char_len(&identity.name),
                 editing: true,
@@ -3295,6 +3317,7 @@ impl App {
                 certificate: String::new(),
                 password: String::new(),
                 has_password: false,
+                pasted_key: None,
                 field: IdentityFormField::Name,
                 cursor: 0,
                 editing: true,
@@ -3355,7 +3378,18 @@ impl App {
         }
 
         let username = optional_field(&form.username);
-        let private_key = optional_path(&form.private_key);
+        let private_key = if let Some(blob) = form.pasted_key.as_deref() {
+            match crate::ssh::write_key_material(name, blob) {
+                Ok(path) => Some(path),
+                Err(e) => {
+                    self.identity_notice = Some(format!("Could not write key file: {e}"));
+                    self.identity_form = Some(form);
+                    return Ok(());
+                }
+            }
+        } else {
+            optional_path(&form.private_key)
+        };
         let certificate = optional_path(&form.certificate);
 
         let password_changed = !form.password.is_empty();
@@ -3435,6 +3469,13 @@ impl App {
         let Some(form) = self.identity_form.as_mut() else {
             return;
         };
+        if form.field == IdentityFormField::PrivateKey && form.pasted_key.is_some() {
+            // One backspace discards the pasted blob entirely.
+            form.pasted_key = None;
+            form.private_key.clear();
+            form.cursor = 0;
+            return;
+        }
         let c = form.cursor;
         if c > 0 {
             form.cursor = text_input::backspace_at(form.active_field_mut(), c);
@@ -3446,6 +3487,7 @@ impl App {
         let Some(form) = self.identity_form.as_mut() else {
             return;
         };
+        form.clear_pasted_key_marker();
         let c = form.cursor;
         form.cursor = text_input::insert_at(form.active_field_mut(), c, ch);
         form.dirty = true;
@@ -4824,6 +4866,16 @@ impl IdentityFormEdit {
             IdentityFormField::Password => &mut self.password,
         }
     }
+
+    /// Typing over a pasted key blob discards it (the field reverts to a
+    /// plain path input).
+    fn clear_pasted_key_marker(&mut self) {
+        if self.field == IdentityFormField::PrivateKey && self.pasted_key.is_some() {
+            self.pasted_key = None;
+            self.private_key.clear();
+            self.cursor = 0;
+        }
+    }
 }
 
 impl HostDetailEdit {
@@ -5214,14 +5266,66 @@ mod tests {
 
         // Still in the form, on the same field, no host connection triggered.
         assert_eq!(app.mode, AppMode::IdentityForm);
-        assert_eq!(
-            app.identity_form.as_ref().unwrap().field,
-            IdentityFormField::PrivateKey
-        );
-        // Newlines dropped; printable content preserved in the field.
-        let field = &app.identity_form.as_ref().unwrap().private_key;
-        assert!(field.contains("BEGIN OPENSSH PRIVATE KEY"));
-        assert!(!field.contains('\n'));
+        let form = app.identity_form.as_ref().unwrap();
+        assert_eq!(form.field, IdentityFormField::PrivateKey);
+        // Key material captured as a blob (written to a file on save).
+        assert_eq!(form.pasted_key.as_deref(), Some(key_blob));
+        assert!(form.private_key.contains("pasted key"));
+    }
+
+    #[test]
+    fn pasted_key_material_is_written_to_a_file_on_save() {
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("HOME", dir.path());
+
+        let mut app = test_app(vec![("web", host("web"))]);
+        app.active_tab = 2;
+        app.enter_identity_form(None).unwrap();
+
+        // Name the identity, then paste key material into the key field.
+        for c in "pasted-id".chars() {
+            app.handle_key(key_char(c)).unwrap();
+        }
+        while app.identity_form.as_ref().unwrap().field != IdentityFormField::PrivateKey {
+            app.handle_key(key(KeyCode::Down)).unwrap();
+        }
+        let blob = "-----BEGIN OPENSSH PRIVATE KEY-----\nabc123\n-----END OPENSSH PRIVATE KEY-----";
+        app.handle_paste(blob).unwrap();
+        assert!(app.identity_form.as_ref().unwrap().pasted_key.is_some());
+
+        app.handle_key(key(KeyCode::F(2))).unwrap(); // save
+        assert_eq!(app.mode, AppMode::Normal);
+
+        let created = app
+            .store
+            .get_identity_by_name("pasted-id")
+            .unwrap()
+            .expect("identity created");
+        let path = created.private_key.expect("key path set");
+        assert!(path.to_string_lossy().contains("sshub_pasted-id"));
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert!(contents.contains("BEGIN OPENSSH PRIVATE KEY"));
+        assert!(contents.ends_with('\n'));
+
+        std::env::remove_var("HOME");
+    }
+
+    #[test]
+    fn backspace_discards_pasted_key_blob() {
+        let mut app = test_app(vec![("web", host("web"))]);
+        app.active_tab = 2;
+        app.enter_identity_form(None).unwrap();
+        while app.identity_form.as_ref().unwrap().field != IdentityFormField::PrivateKey {
+            app.handle_key(key(KeyCode::Down)).unwrap();
+        }
+        app.handle_paste("-----BEGIN OPENSSH PRIVATE KEY-----\nx\n-----END OPENSSH PRIVATE KEY-----")
+            .unwrap();
+        assert!(app.identity_form.as_ref().unwrap().pasted_key.is_some());
+
+        app.handle_key(key(KeyCode::Backspace)).unwrap();
+        let form = app.identity_form.as_ref().unwrap();
+        assert!(form.pasted_key.is_none());
+        assert!(form.private_key.is_empty());
     }
 
     #[test]
