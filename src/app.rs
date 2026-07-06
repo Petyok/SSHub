@@ -64,6 +64,13 @@ pub const UNGROUPED_LABEL: &str = "_ungrouped";
 /// positive, so -1 never collides).
 pub const UNGROUPED_KEY: i64 = -1;
 
+/// Base host-name column width (chars) at zoom level 0.
+pub const NAME_WIDTH_BASE: usize = 14;
+/// Extra name-column width added per zoom level.
+pub const NAME_WIDTH_STEP: usize = 8;
+/// Maximum host-name zoom level.
+pub const NAME_ZOOM_MAX: usize = 3;
+
 /// One section in the group tree (real group or virtual ungrouped bucket).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostGroupSection {
@@ -118,6 +125,8 @@ pub enum AppMode {
     IdentityForm,
     GroupForm,
     GroupManage,
+    /// Dedicated popup for choosing a group's default identity (`e` on a group).
+    GroupIdentityPicker,
     /// Dropdown over the host form's Group/Identity field.
     FieldPicker,
     /// Keybinding editor overlay.
@@ -740,6 +749,15 @@ pub struct GroupFormEdit {
     pub return_to_manage: bool,
 }
 
+/// Dedicated popup to pick a group's default identity ([`AppMode::GroupIdentityPicker`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupIdentityPicker {
+    pub group_id: i64,
+    pub group_name: String,
+    /// Selected row: `0` = "(none)", `1..` = index into `App::identities` + 1.
+    pub selected: usize,
+}
+
 /// Single-field path prompt for the Termius CSV import ([`AppMode::ImportPrompt`]).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ImportPromptEdit {
@@ -841,7 +859,11 @@ pub struct App {
     pub host_form: Option<HostFormEdit>,
     pub field_picker: Option<FieldPicker>,
     pub group_form: Option<GroupFormEdit>,
+    /// Dedicated default-identity picker for a group (opened with `e`).
+    pub group_identity_picker: Option<GroupIdentityPicker>,
     pub import_prompt: Option<ImportPromptEdit>,
+    /// Host-name column zoom level (0 = compact). Widens truncated names.
+    pub name_zoom: usize,
     pub group_manage_selected: usize,
     pub group_notice: Option<String>,
     pub host_notice: Option<String>,
@@ -956,7 +978,9 @@ impl App {
             host_form: None,
             field_picker: None,
             group_form: None,
+            group_identity_picker: None,
             import_prompt: None,
+            name_zoom: 0,
             group_manage_selected: 0,
             group_notice: None,
             host_notice: None,
@@ -1508,6 +1532,7 @@ impl App {
             AppMode::HostForm => self.handle_key_host_form(key),
             AppMode::IdentityForm => self.handle_key_identity_form(key),
             AppMode::GroupForm => self.handle_key_group_form(key),
+            AppMode::GroupIdentityPicker => self.handle_key_group_identity_picker(key),
             AppMode::FieldPicker => self.handle_key_field_picker(key),
             AppMode::ImportPrompt => self.handle_key_import_prompt(key),
             AppMode::GroupManage => self.handle_key_group_manage(key),
@@ -1985,7 +2010,26 @@ impl App {
             KeyCode::Char('T') if key.modifiers.contains(KeyModifiers::SHIFT) => {
                 self.open_import_prompt();
             }
-            KeyCode::Char('e') if key.modifiers.is_empty() => self.edit_selected_host()?,
+            // `e` on a group header configures its default identity; on a host
+            // it edits the host.
+            KeyCode::Char('e') if key.modifiers.is_empty() => {
+                if self.selected_nav_header().is_some() {
+                    self.open_group_identity_picker()?;
+                } else {
+                    self.edit_selected_host()?;
+                }
+            }
+            // Host-name column zoom: widen (`+`/`=`) or narrow (`-`/`_`).
+            KeyCode::Char('+' | '=')
+                if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
+            {
+                self.name_zoom = (self.name_zoom + 1).min(NAME_ZOOM_MAX);
+            }
+            KeyCode::Char('-' | '_')
+                if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
+            {
+                self.name_zoom = self.name_zoom.saturating_sub(1);
+            }
             KeyCode::Char('f') if key.modifiers.is_empty() => self.toggle_favorite()?,
             KeyCode::Tab => self.detail_focus = !self.detail_focus,
             _ if self.is_action(KeyAction::Search, &key) => {
@@ -2891,6 +2935,92 @@ impl App {
             return Ok(());
         };
         self.enter_group_form(Some(&group))
+    }
+
+    /// Current host-name column width in chars, driven by [`App::name_zoom`].
+    pub fn name_col_width(&self) -> usize {
+        NAME_WIDTH_BASE + self.name_zoom * NAME_WIDTH_STEP
+    }
+
+    /// Open the dedicated default-identity picker for the selected group header.
+    fn open_group_identity_picker(&mut self) -> Result<()> {
+        let Some(group) = self
+            .selected_nav_header()
+            .and_then(|si| self.group_sections.get(si))
+            .and_then(|section| section.group.clone())
+        else {
+            self.host_notice = Some("Ungrouped hosts have no default identity.".into());
+            return Ok(());
+        };
+        if self.identities.is_empty() {
+            self.identities = self.store.list_identities()?;
+        }
+        let selected = group
+            .default_identity_id
+            .and_then(|id| self.identities.iter().position(|i| i.id == id).map(|p| p + 1))
+            .unwrap_or(0);
+        self.group_identity_picker = Some(GroupIdentityPicker {
+            group_id: group.id,
+            group_name: group.name.clone(),
+            selected,
+        });
+        self.mode = AppMode::GroupIdentityPicker;
+        Ok(())
+    }
+
+    fn handle_key_group_identity_picker(&mut self, key: KeyEvent) -> Result<()> {
+        // Ring of options: index 0 = "(none)", then one per identity.
+        let len = self.identities.len() + 1;
+        match key.code {
+            KeyCode::Esc => {
+                self.group_identity_picker = None;
+                self.mode = AppMode::Normal;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                if let Some(p) = self.group_identity_picker.as_mut() {
+                    p.selected = (p.selected + 1) % len;
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if let Some(p) = self.group_identity_picker.as_mut() {
+                    p.selected = (p.selected + len - 1) % len;
+                }
+            }
+            KeyCode::Enter => self.save_group_identity_picker()?,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn save_group_identity_picker(&mut self) -> Result<()> {
+        let Some(picker) = self.group_identity_picker.take() else {
+            self.mode = AppMode::Normal;
+            return Ok(());
+        };
+        let new_id = if picker.selected == 0 {
+            None
+        } else {
+            self.identities.get(picker.selected - 1).map(|i| i.id)
+        };
+        self.store.update_group(
+            picker.group_id,
+            &HostGroupUpdate {
+                default_identity_id: Some(new_id),
+                ..Default::default()
+            },
+        )?;
+        self.reload_hosts()?;
+        let name = self
+            .identities
+            .iter()
+            .find(|i| Some(i.id) == new_id)
+            .map(|i| i.name.clone());
+        self.host_notice = Some(match name {
+            Some(n) => format!("'{}' default identity → {n}", picker.group_name),
+            None => format!("'{}' default identity cleared", picker.group_name),
+        });
+        self.mode = AppMode::Normal;
+        Ok(())
     }
 
     fn delete_selected_host_group(&mut self) -> Result<()> {

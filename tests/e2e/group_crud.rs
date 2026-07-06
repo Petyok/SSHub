@@ -416,3 +416,45 @@ fn collapsing_a_group_hides_its_hosts_and_persists() {
         "expanded again"
     );
 }
+
+#[test]
+fn e_on_group_header_sets_default_identity_via_picker() {
+    let file = NamedTempFile::new().unwrap();
+    let mut app = app_with_grouped_host(file.path());
+
+    // Move selection onto the "servers" header.
+    while app.selected_nav_header().is_none() {
+        app.handle_key(key_char('k')).unwrap();
+    }
+
+    // `e` on a header opens the dedicated default-identity picker.
+    app.handle_key(key_char('e')).unwrap();
+    assert_eq!(app.mode, AppMode::GroupIdentityPicker);
+    assert!(app.group_identity_picker.is_some());
+
+    // Row 0 is "(none)"; step to the first real identity and confirm.
+    app.handle_key(key_char('j')).unwrap();
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert_eq!(app.mode, AppMode::Normal);
+
+    let first_identity = app.identities[0].id;
+    let group = app.groups.iter().find(|g| g.name == "servers").unwrap();
+    assert_eq!(group.default_identity_id, Some(first_identity));
+
+    // Persisted: a fresh app over the same DB sees the default identity.
+    let app2 = app_with_grouped_host(file.path());
+    let group2 = app2.groups.iter().find(|g| g.name == "servers").unwrap();
+    assert_eq!(group2.default_identity_id, Some(first_identity));
+
+    // Re-open and select "(none)" to clear it.
+    let mut app = app;
+    while app.selected_nav_header().is_none() {
+        app.handle_key(key_char('k')).unwrap();
+    }
+    app.handle_key(key_char('e')).unwrap();
+    // Selection starts on the current identity (row 1); go back to row 0.
+    app.handle_key(key_char('k')).unwrap();
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    let group = app.groups.iter().find(|g| g.name == "servers").unwrap();
+    assert_eq!(group.default_identity_id, None);
+}

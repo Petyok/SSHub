@@ -97,25 +97,26 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
                 buf.set_string(col, y, arrow, arrow_style);
                 col += 2; // arrow + space
 
-                let name_max = cw.saturating_sub(6 + count_suffix.len());
+                // Right-align the count first and reserve its slot. Filling the
+                // dotted leader up to (but not into) that slot means the count
+                // always renders, regardless of the label length's parity.
+                let count_x = cx + (cw as u16).saturating_sub(count_suffix.len() as u16);
+
+                // Label, truncated so it can never run into the count slot
+                // (leave at least one cell of gap before the count).
+                let name_max = (count_x.saturating_sub(col) as usize).saturating_sub(1);
                 let truncated_label: String = label.chars().take(name_max).collect();
                 buf.set_string(col, y, &truncated_label, label_style);
                 col += truncated_label.chars().count() as u16;
 
-                let used = (col - cx) as usize;
-                let remaining = cw.saturating_sub(used + 1 + count_suffix.len());
-                if remaining > 2 {
-                    buf.set_string(col, y, " ", mute_bg);
-                    col += 1;
-                    let dots: String = " \u{00b7}".repeat(remaining / 2);
-                    let dots_trimmed: String = dots.chars().take(remaining).collect();
-                    buf.set_string(col, y, &dots_trimmed, mute_bg);
-                    col += dots_trimmed.chars().count() as u16;
-                }
-                let count_x = cx + (cw as u16).saturating_sub(count_suffix.len() as u16);
+                // Dotted leader fills the gap [col, count_x).
                 if count_x > col {
-                    buf.set_string(count_x, y, &count_suffix, mute_bg);
+                    let gap = (count_x - col) as usize;
+                    let dots: String = " \u{00b7}".repeat(gap.div_ceil(2));
+                    let dots_trimmed: String = dots.chars().take(gap).collect();
+                    buf.set_string(col, y, &dots_trimmed, mute_bg);
                 }
+                buf.set_string(count_x, y, &count_suffix, mute_bg);
             }
             VisualRow::Host {
                 host_idx,
@@ -172,10 +173,10 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
 
             let inner_right = cx + cw as u16;
 
-            // Name — up to 14 chars, clamped to the panel width so narrow
-            // terminals don't bleed into the border/neighbouring column.
+            // Name — width driven by the zoom level (+/-), clamped to the panel
+            // width so narrow terminals don't bleed into the border/neighbour.
             let name = entry.display_name();
-            let name_w = (inner_right.saturating_sub(col) as usize).min(14);
+            let name_w = (inner_right.saturating_sub(col) as usize).min(app.name_col_width());
             if name_w > 0 {
                 let name_display = crate::tui::text::pad_ellipsize(name, name_w);
                 buf.set_string(col, y, &name_display, name_style);
