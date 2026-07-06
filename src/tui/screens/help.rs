@@ -29,7 +29,7 @@ pub fn render_help() -> Paragraph<'static> {
         entry("d", "Delete selected host"),
         entry("Shift+D", "Duplicate selected host"),
         entry("f", "Toggle favorite"),
-        entry("+ / -", "Widen / narrow host name column (zoom)"),
+        entry("+ / -", "Zoom: widen / narrow the hosts column"),
         entry("s", "Cycle sort mode"),
         entry("Ctrl+\u{2191}\u{2193}", "Move host up / down (manual sort)"),
         entry("c", "Clear SSH log"),

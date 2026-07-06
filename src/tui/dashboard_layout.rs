@@ -35,12 +35,19 @@ pub struct DashboardAreas {
     pub footer: Rect,
 }
 
-/// Compute dashboard areas from terminal size.
+/// Compute dashboard areas from terminal size (zoom level 0).
 ///
 /// Layout adapts to terminal width:
 /// - ≥132 cols: 3 columns (42+1+42+1+42 + 4 margin = 132)
 /// - <132 cols: columns shrink proportionally, margins reduce
 pub fn dashboard_layout(area: Rect) -> DashboardAreas {
+    dashboard_layout_zoomed(area, 0)
+}
+
+/// Compute dashboard areas, giving the left (hosts) column more width as the
+/// UI zoom level increases. The middle and right columns shrink to compensate
+/// but keep a usable minimum width.
+pub fn dashboard_layout_zoomed(area: Rect, zoom: usize) -> DashboardAreas {
     let w = area.width;
     let h = area.height;
 
@@ -78,19 +85,26 @@ pub fn dashboard_layout(area: Rect) -> DashboardAreas {
     };
     let inner_w = w.saturating_sub(margin * 2);
     let gutter = 1u16;
-    let col_w = if inner_w >= 3 + 2 * gutter {
-        (inner_w - 2 * gutter) / 3
-    } else {
-        inner_w / 3
-    };
+    // Width available for the three columns after removing the two gutters.
+    let usable = inner_w.saturating_sub(2 * gutter);
+    let base = usable / 3;
 
-    let col_left = Rect::new(area.x + margin, body_y, col_w, body_h);
-    let col_mid = Rect::new(col_left.x + col_w + gutter, body_y, col_w, body_h);
+    // Zoom shifts ~1/10 of the usable width into the left column per level,
+    // while keeping the middle and right columns above a usable minimum.
+    let min_side = 16u16;
+    let bonus = (usable / 10).saturating_mul(zoom as u16);
+    let max_left = usable.saturating_sub(2 * min_side).max(base);
+    let left_w = (base + bonus).min(max_left).max(1);
+    let rest = usable.saturating_sub(left_w);
+    let mid_w = rest / 2;
+
+    let col_left = Rect::new(area.x + margin, body_y, left_w, body_h);
+    let col_mid = Rect::new(col_left.x + left_w + gutter, body_y, mid_w, body_h);
     let col_right = Rect::new(
-        col_mid.x + col_w + gutter,
+        col_mid.x + mid_w + gutter,
         body_y,
         // Take remaining space (handles rounding)
-        w.saturating_sub(col_mid.x + col_w + gutter + margin - area.x),
+        w.saturating_sub(col_mid.x + mid_w + gutter + margin - area.x),
         body_h,
     );
 
@@ -137,5 +151,30 @@ mod tests {
         let a = dashboard_layout(Rect::new(0, 0, 40, 10));
         assert!(a.col_left.width > 0);
         assert!(a.body.height > 0);
+    }
+
+    #[test]
+    fn zoom_widens_left_column_and_shrinks_others() {
+        let base = dashboard_layout_zoomed(Rect::new(0, 0, 132, 38), 0);
+        let zoomed = dashboard_layout_zoomed(Rect::new(0, 0, 132, 38), 2);
+        assert!(
+            zoomed.col_left.width > base.col_left.width,
+            "left column grows with zoom"
+        );
+        assert!(
+            zoomed.col_mid.width < base.col_mid.width,
+            "middle column shrinks with zoom"
+        );
+        // Columns still tile left→mid→right without overlap.
+        assert!(zoomed.col_mid.x >= zoomed.col_left.x + zoomed.col_left.width);
+        assert!(zoomed.col_right.x >= zoomed.col_mid.x + zoomed.col_mid.width);
+    }
+
+    #[test]
+    fn zoom_keeps_side_columns_usable() {
+        // Even at max zoom the middle/right columns keep a usable width.
+        let z = dashboard_layout_zoomed(Rect::new(0, 0, 132, 38), 3);
+        assert!(z.col_mid.width >= 14);
+        assert!(z.col_right.width >= 14);
     }
 }

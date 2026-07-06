@@ -47,7 +47,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // ── Dashboard chrome (shared across all tabs) ─────────────
     let area = frame.area();
-    let areas = dashboard_layout::dashboard_layout(area);
+    let areas = dashboard_layout::dashboard_layout_zoomed(area, app.ui_zoom);
 
     // Header stats
     let (total, online, slow, down) = compute_header_stats(app);

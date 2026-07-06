@@ -68,8 +68,8 @@ pub const UNGROUPED_KEY: i64 = -1;
 pub const NAME_WIDTH_BASE: usize = 14;
 /// Extra name-column width added per zoom level.
 pub const NAME_WIDTH_STEP: usize = 8;
-/// Maximum host-name zoom level.
-pub const NAME_ZOOM_MAX: usize = 3;
+/// Maximum UI zoom level.
+pub const UI_ZOOM_MAX: usize = 3;
 
 /// One section in the group tree (real group or virtual ungrouped bucket).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -876,8 +876,9 @@ pub struct App {
     /// Searchable SSH-server picker for the tunnel form.
     pub tunnel_host_picker: Option<TunnelHostPicker>,
     pub import_prompt: Option<ImportPromptEdit>,
-    /// Host-name column zoom level (0 = compact). Widens truncated names.
-    pub name_zoom: usize,
+    /// UI zoom level (0 = default). Widens the hosts column in the layout and
+    /// the host-name column within it.
+    pub ui_zoom: usize,
     pub group_manage_selected: usize,
     pub group_notice: Option<String>,
     pub host_notice: Option<String>,
@@ -995,7 +996,7 @@ impl App {
             group_identity_picker: None,
             tunnel_host_picker: None,
             import_prompt: None,
-            name_zoom: 0,
+            ui_zoom: 0,
             group_manage_selected: 0,
             group_notice: None,
             host_notice: None,
@@ -1102,7 +1103,7 @@ impl App {
     pub fn reload_hosts(&mut self) -> Result<()> {
         let selected_name = self.selected_entry().map(|e| e.name().to_string());
         self.load_collapsed_groups();
-        self.load_name_zoom();
+        self.load_ui_zoom();
 
         sync_ssh_config_hosts(self.resolver.as_ref(), &self.store)?;
 
@@ -1578,7 +1579,8 @@ impl App {
             return Ok(());
         }
 
-        let areas = crate::tui::dashboard_layout::dashboard_layout(self.terminal_area);
+        let areas =
+            crate::tui::dashboard_layout::dashboard_layout_zoomed(self.terminal_area, self.ui_zoom);
         let x = mouse.column;
         let y = mouse.row;
 
@@ -2040,12 +2042,12 @@ impl App {
             KeyCode::Char('+' | '=')
                 if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
             {
-                self.set_name_zoom((self.name_zoom + 1).min(NAME_ZOOM_MAX));
+                self.set_ui_zoom((self.ui_zoom + 1).min(UI_ZOOM_MAX));
             }
             KeyCode::Char('-' | '_')
                 if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
             {
-                self.set_name_zoom(self.name_zoom.saturating_sub(1));
+                self.set_ui_zoom(self.ui_zoom.saturating_sub(1));
             }
             KeyCode::Char('f') if key.modifiers.is_empty() => self.toggle_favorite()?,
             KeyCode::Tab => self.detail_focus = !self.detail_focus,
@@ -3042,25 +3044,25 @@ impl App {
         self.enter_group_form(Some(&group))
     }
 
-    /// Current host-name column width in chars, driven by [`App::name_zoom`].
+    /// Current host-name column width in chars, driven by [`App::ui_zoom`].
     pub fn name_col_width(&self) -> usize {
-        NAME_WIDTH_BASE + self.name_zoom * NAME_WIDTH_STEP
+        NAME_WIDTH_BASE + self.ui_zoom * NAME_WIDTH_STEP
     }
 
-    /// Set the host-name zoom level and persist it so it survives restarts.
-    fn set_name_zoom(&mut self, level: usize) {
-        let level = level.min(NAME_ZOOM_MAX);
-        if level == self.name_zoom {
+    /// Set the UI zoom level and persist it so it survives restarts.
+    fn set_ui_zoom(&mut self, level: usize) {
+        let level = level.min(UI_ZOOM_MAX);
+        if level == self.ui_zoom {
             return;
         }
-        self.name_zoom = level;
-        let _ = self.store.set_ui_state("name_zoom", &level.to_string());
+        self.ui_zoom = level;
+        let _ = self.store.set_ui_state("ui_zoom", &level.to_string());
     }
 
-    fn load_name_zoom(&mut self) {
-        if let Ok(Some(raw)) = self.store.get_ui_state("name_zoom") {
+    fn load_ui_zoom(&mut self) {
+        if let Ok(Some(raw)) = self.store.get_ui_state("ui_zoom") {
             if let Ok(level) = raw.parse::<usize>() {
-                self.name_zoom = level.min(NAME_ZOOM_MAX);
+                self.ui_zoom = level.min(UI_ZOOM_MAX);
             }
         }
     }
