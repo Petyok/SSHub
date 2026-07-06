@@ -342,7 +342,16 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
         }
         FormKind::Group => {
             if let Some(form) = app.group_form.as_ref() {
-                frame.render_widget(screens::group_form::render_group_form(form), popup_area);
+                let identity_name = form.default_identity_id.and_then(|id| {
+                    app.identities
+                        .iter()
+                        .find(|i| i.id == id)
+                        .map(|i| i.name.clone())
+                });
+                frame.render_widget(
+                    screens::group_form::render_group_form(form, identity_name.as_deref()),
+                    popup_area,
+                );
             }
         }
     }

@@ -15,21 +15,25 @@ impl LauncherStore {
         let now = now_ts();
         self.with_conn(|conn| {
             conn.execute(
-                "INSERT INTO host_groups (name, sort_order, created_at) VALUES (?1, ?2, ?3)",
-                params![group.name, group.sort_order, now],
+                "INSERT INTO host_groups (name, sort_order, default_identity_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![group.name, group.sort_order, group.default_identity_id, now],
             )?;
             Ok(HostGroup {
                 id: conn.last_insert_rowid(),
                 name: group.name.clone(),
                 sort_order: group.sort_order,
+                default_identity_id: group.default_identity_id,
             })
         })
     }
 
     pub fn get_group(&self, id: i64) -> Result<Option<HostGroup>> {
         self.with_conn(|conn| {
-            conn.prepare("SELECT id, name, sort_order FROM host_groups WHERE id = ?1")?
-                .query_row(params![id], row_to_group)
+            conn.prepare(
+                "SELECT id, name, sort_order, default_identity_id FROM host_groups WHERE id = ?1",
+            )?
+            .query_row(params![id], row_to_group)
                 .optional()
                 .map_err(Into::into)
         })
@@ -38,7 +42,8 @@ impl LauncherStore {
     pub fn list_groups(&self) -> Result<Vec<HostGroup>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, name, sort_order FROM host_groups ORDER BY sort_order, name",
+                "SELECT id, name, sort_order, default_identity_id
+                 FROM host_groups ORDER BY sort_order, name",
             )?;
             let rows = stmt.query_map([], row_to_group)?;
             rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -53,11 +58,15 @@ impl LauncherStore {
 
         let name = update.name.as_ref().unwrap_or(&current.name);
         let sort_order = update.sort_order.unwrap_or(current.sort_order);
+        let default_identity_id = update
+            .default_identity_id
+            .unwrap_or(current.default_identity_id);
 
         self.with_conn(|conn| {
             conn.execute(
-                "UPDATE host_groups SET name = ?1, sort_order = ?2 WHERE id = ?3",
-                params![name, sort_order, id],
+                "UPDATE host_groups
+                 SET name = ?1, sort_order = ?2, default_identity_id = ?3 WHERE id = ?4",
+                params![name, sort_order, default_identity_id, id],
             )?;
             Ok(())
         })?;
@@ -605,6 +614,7 @@ fn row_to_group(row: &rusqlite::Row<'_>) -> rusqlite::Result<HostGroup> {
         id: row.get(0)?,
         name: row.get(1)?,
         sort_order: row.get(2)?,
+        default_identity_id: row.get(3)?,
     })
 }
 
@@ -626,6 +636,10 @@ fn row_to_managed_host(row: &rusqlite::Row<'_>) -> rusqlite::Result<ManagedHost>
             id: row.get(22)?,
             name: row.get(23)?,
             sort_order: row.get(24)?,
+            // The host-list JOIN doesn't select the group's default identity;
+            // it's only needed when adding a new host, which reads the group
+            // via get_group/list_groups. Leave unset here.
+            default_identity_id: None,
         }),
         None => None,
     };
@@ -749,6 +763,7 @@ mod tests {
             .create_group(&NewHostGroup {
                 name: "dev".into(),
                 sort_order: 0,
+                ..Default::default()
             })
             .unwrap();
 
@@ -764,6 +779,7 @@ mod tests {
                 &HostGroupUpdate {
                     name: Some("production".into()),
                     sort_order: Some(5),
+                    ..Default::default()
                 },
             )
             .unwrap()
@@ -774,6 +790,56 @@ mod tests {
         assert!(store.delete_group(b.id).unwrap());
         assert!(store.get_group(b.id).unwrap().is_none());
         assert_eq!(store.list_groups().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn group_default_identity_round_trips() {
+        let store = LauncherStore::open_in_memory().unwrap();
+        let identity_id = store.list_identities().unwrap()[0].id;
+
+        let group = store
+            .create_group(&NewHostGroup {
+                name: "prod".into(),
+                sort_order: 0,
+                default_identity_id: Some(identity_id),
+            })
+            .unwrap();
+        assert_eq!(group.default_identity_id, Some(identity_id));
+        assert_eq!(
+            store.get_group(group.id).unwrap().unwrap().default_identity_id,
+            Some(identity_id)
+        );
+
+        // Clearing the default via update (outer Some, inner None).
+        store
+            .update_group(
+                group.id,
+                &HostGroupUpdate {
+                    default_identity_id: Some(None),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            store.get_group(group.id).unwrap().unwrap().default_identity_id,
+            None
+        );
+
+        // Deleting the identity nulls the group's reference (ON DELETE SET NULL).
+        store
+            .update_group(
+                group.id,
+                &HostGroupUpdate {
+                    default_identity_id: Some(Some(identity_id)),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        store.delete_identity(identity_id).unwrap();
+        assert_eq!(
+            store.get_group(group.id).unwrap().unwrap().default_identity_id,
+            None
+        );
     }
 
     #[test]
@@ -833,6 +899,7 @@ mod tests {
             .create_group(&NewHostGroup {
                 name: "staging".into(),
                 sort_order: 0,
+                ..Default::default()
             })
             .unwrap();
 
@@ -873,6 +940,7 @@ mod tests {
             .create_group(&NewHostGroup {
                 name: "dev-vcenter".into(),
                 sort_order: 0,
+                ..Default::default()
             })
             .unwrap();
 

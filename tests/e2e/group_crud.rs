@@ -350,6 +350,7 @@ fn app_with_grouped_host(path: &std::path::Path) -> App {
             .create_group(&NewHostGroup {
                 name: "servers".into(),
                 sort_order: 0,
+                ..Default::default()
             })
             .unwrap()
             .id;

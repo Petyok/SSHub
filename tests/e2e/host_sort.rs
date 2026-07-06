@@ -222,6 +222,7 @@ fn group_sections_include_ungrouped_virtual_group() {
         .create_group(&NewHostGroup {
             name: "dev-vcenter".into(),
             sort_order: 0,
+            ..Default::default()
         })
         .unwrap();
     store

@@ -5,6 +5,8 @@ pub struct HostGroup {
     pub id: i64,
     pub name: String,
     pub sort_order: i32,
+    /// Identity new hosts in this group inherit by default. `None` = no default.
+    pub default_identity_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,12 +146,15 @@ pub struct HostUpdate {
 pub struct NewHostGroup {
     pub name: String,
     pub sort_order: i32,
+    pub default_identity_id: Option<i64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct HostGroupUpdate {
     pub name: Option<String>,
     pub sort_order: Option<i32>,
+    /// Outer `Some` = change the default identity; inner `None` = clear it.
+    pub default_identity_id: Option<Option<i64>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

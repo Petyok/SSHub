@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 9;
 
 const V2_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -100,6 +100,10 @@ pub(crate) fn run_migrations(conn: &Connection, launcher_path: &Path) -> Result<
 
     if current < 8 {
         migrate_v7_to_v8(conn)?;
+    }
+
+    if current < 9 {
+        migrate_v8_to_v9(conn)?;
     }
 
     // Runs last so all columns it writes to (e.g. environment) already exist.
@@ -313,6 +317,25 @@ fn migrate_v7_to_v8(conn: &Connection) -> Result<()> {
             value TEXT NOT NULL
         );",
     )?;
+    Ok(())
+}
+
+fn migrate_v8_to_v9(conn: &Connection) -> Result<()> {
+    // A group can name a default identity; new hosts added to the group
+    // inherit it automatically.
+    let has_col: bool = conn
+        .prepare(
+            "SELECT COUNT(*) FROM pragma_table_info('host_groups') WHERE name = 'default_identity_id'",
+        )?
+        .query_row([], |row| row.get::<_, i64>(0))
+        .map(|c| c > 0)?;
+    if !has_col {
+        conn.execute_batch(
+            "ALTER TABLE host_groups
+                ADD COLUMN default_identity_id INTEGER
+                REFERENCES identities(id) ON DELETE SET NULL;",
+        )?;
+    }
     Ok(())
 }
 

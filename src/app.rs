@@ -734,6 +734,8 @@ pub struct GroupFormEdit {
     pub id: Option<i64>,
     pub name: String,
     pub cursor: usize,
+    /// Default identity new hosts in this group inherit. Cycled with ←/→.
+    pub default_identity_id: Option<i64>,
     /// Return to GroupManage after save/cancel (vs Normal when opened from Ctrl+G shortcut).
     pub return_to_manage: bool,
 }
@@ -2848,6 +2850,7 @@ impl App {
                 id: Some(group.id),
                 name: group.name.clone(),
                 cursor: text_input::char_len(&group.name),
+                default_identity_id: group.default_identity_id,
                 return_to_manage,
             }
         } else {
@@ -2855,6 +2858,7 @@ impl App {
                 id: None,
                 name: String::new(),
                 cursor: 0,
+                default_identity_id: None,
                 return_to_manage,
             }
         };
@@ -3267,6 +3271,7 @@ impl App {
                 &HostGroupUpdate {
                     name: Some(name.to_string()),
                     sort_order: None,
+                    default_identity_id: Some(form.default_identity_id),
                 },
             )?;
         } else {
@@ -3274,6 +3279,7 @@ impl App {
             self.store.create_group(&NewHostGroup {
                 name: name.to_string(),
                 sort_order,
+                default_identity_id: form.default_identity_id,
             })?;
         }
 
@@ -3296,6 +3302,8 @@ impl App {
             KeyCode::Esc => self.cancel_group_form()?,
             KeyCode::Enter => self.save_group_form()?,
             _ if self.is_save_key(&key) => self.save_group_form()?,
+            KeyCode::Left => self.group_form_cycle_identity(-1),
+            KeyCode::Right => self.group_form_cycle_identity(1),
             KeyCode::Backspace if key.modifiers.is_empty() => self.group_form_backspace(),
             KeyCode::Char(c)
                 if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
@@ -3306,6 +3314,26 @@ impl App {
             _ => {}
         }
         Ok(())
+    }
+
+    /// Cycle the group's default identity through `[none, id0, id1, …]`.
+    fn group_form_cycle_identity(&mut self, delta: i32) {
+        // Build the option ring: index 0 is "none", then each identity.
+        let ids: Vec<i64> = self.identities.iter().map(|i| i.id).collect();
+        let len = ids.len() as i32 + 1;
+        let Some(form) = self.group_form.as_mut() else {
+            return;
+        };
+        let cur = match form.default_identity_id {
+            None => 0,
+            Some(id) => ids.iter().position(|&x| x == id).map_or(0, |p| p as i32 + 1),
+        };
+        let next = (cur + delta).rem_euclid(len);
+        form.default_identity_id = if next == 0 {
+            None
+        } else {
+            Some(ids[(next - 1) as usize])
+        };
     }
 
     fn group_form_insert(&mut self, ch: char) {
@@ -3732,6 +3760,18 @@ impl App {
                 dirty: false,
             }
         } else {
+            // Prefill group + identity from the group the user is currently in.
+            // A new host added inside a group inherits the group's default identity.
+            let selected_group_id = self.selected_host_group_id();
+            let group_index = selected_group_id
+                .and_then(|gid| self.groups.iter().position(|g| g.id == gid).map(|i| i + 1))
+                .unwrap_or(0);
+            let identity_index = selected_group_id
+                .and_then(|gid| self.groups.iter().find(|g| g.id == gid))
+                .and_then(|g| g.default_identity_id)
+                .and_then(|iid| self.identities.iter().position(|i| i.id == iid))
+                .unwrap_or(default_identity_index);
+
             HostFormEdit {
                 id: None,
                 address: String::new(),
@@ -3739,8 +3779,8 @@ impl App {
                 label: String::new(),
                 name: String::new(),
                 port: "22".into(),
-                group_index: 0,
-                identity_index: default_identity_index,
+                group_index,
+                identity_index,
                 tags: String::new(),
                 proxy_jump: String::new(),
                 forward_agent: false,
@@ -4180,8 +4220,18 @@ impl App {
                     }
                     return Ok(());
                 }
+                let group_index = picker.selected;
+                // Picking a group applies its default identity, if it has one.
+                let default_identity_index = group_index
+                    .checked_sub(1)
+                    .and_then(|gi| self.groups.get(gi))
+                    .and_then(|g| g.default_identity_id)
+                    .and_then(|iid| self.identities.iter().position(|i| i.id == iid));
                 if let Some(form) = self.host_form.as_mut() {
-                    form.group_index = picker.selected;
+                    form.group_index = group_index;
+                    if let Some(idx) = default_identity_index {
+                        form.identity_index = idx;
+                    }
                     form.dirty = true;
                 }
             }
@@ -4249,6 +4299,7 @@ impl App {
                     .create_group(&crate::store::NewHostGroup {
                         name: name.clone(),
                         sort_order: self.groups.len() as i32,
+                        default_identity_id: None,
                     })?
                     .id
             }
