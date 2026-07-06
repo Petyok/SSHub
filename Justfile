@@ -27,14 +27,18 @@ install: build
     bin="$HOME/.local/bin/sshub"
     term="$(command -v kitty || command -v ghostty || command -v alacritty || command -v foot || echo xterm)"
     install -Dm755 target/release/sshub "$bin"
+    install -Dm644 assets/sshub.svg "$HOME/.local/share/icons/hicolor/scalable/apps/sshub.svg"
     mkdir -p "$HOME/.local/share/applications"
     sed -e "s|@TERM@|$term|g" -e "s|@BIN@|$bin|g" \
         assets/sshub.desktop > "$HOME/.local/share/applications/sshub.desktop"
     update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
-    echo "Installed $bin and launcher entry (terminal: $term)."
+    gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
+    echo "Installed $bin, icon and launcher entry (terminal: $term)."
     echo "If it doesn't show up, log out/in or run: update-desktop-database ~/.local/share/applications"
 
 # Remove the installed binary and launcher entry.
 uninstall:
-    rm -f "$HOME/.local/bin/sshub" "$HOME/.local/share/applications/sshub.desktop"
-    @echo "Removed sshub binary and launcher entry."
+    rm -f "$HOME/.local/bin/sshub" \
+          "$HOME/.local/share/applications/sshub.desktop" \
+          "$HOME/.local/share/icons/hicolor/scalable/apps/sshub.svg"
+    @echo "Removed sshub binary, icon and launcher entry."

@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b2430"/>
+      <stop offset="1" stop-color="#11161e"/>
+    </linearGradient>
+  </defs>
+  <rect x="6" y="6" width="116" height="116" rx="24" fill="url(#bg)" stroke="#2a3543" stroke-width="2"/>
+  <!-- hub: a central node linked to three hosts -->
+  <g stroke="#3b4a5c" stroke-width="3" fill="none">
+    <line x1="64" y1="40" x2="38" y2="84"/>
+    <line x1="64" y1="40" x2="90" y2="84"/>
+    <line x1="64" y1="40" x2="64" y2="88"/>
+  </g>
+  <circle cx="64" cy="40" r="10" fill="#7ee787"/>
+  <circle cx="38" cy="84" r="7" fill="#5a6b7d"/>
+  <circle cx="90" cy="84" r="7" fill="#5a6b7d"/>
+  <circle cx="64" cy="88" r="7" fill="#5a6b7d"/>
+  <!-- terminal prompt -->
+  <path d="M34 104 l10 6 -10 6" fill="none" stroke="#7ee787" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="52" y1="116" x2="72" y2="116" stroke="#7ee787" stroke-width="4" stroke-linecap="round"/>
+</svg>
