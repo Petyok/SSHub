@@ -9,6 +9,7 @@ mod hybrid_compat;
 mod import_export;
 mod keychain;
 mod metadata_persist;
+mod quick_connect;
 mod search_and_navigate;
 mod ssh_config_sync;
 mod termius_import;

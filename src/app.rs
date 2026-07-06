@@ -2125,28 +2125,15 @@ impl App {
                 self.mode = AppMode::Normal;
             }
             KeyCode::Enter => {
-                if let Some(&idx) = self.palette_results.get(self.palette_selected) {
-                    // The palette searches ALL hosts; the chosen one may be
-                    // hidden by an active tag/search filter. Clear filters in
-                    // that case — never silently connect to a different host.
-                    let pos = self.filtered_indices.iter().position(|&i| i == idx);
-                    let pos = match pos {
-                        Some(p) => Some(p),
-                        None => {
-                            self.tag_filter = None;
-                            self.search_query.clear();
-                            self.rebuild_filter();
-                            self.filtered_indices.iter().position(|&i| i == idx)
-                        }
-                    };
-                    self.mode = AppMode::Normal;
-                    if let Some(p) = pos {
-                        // First Enter selects the host in the list; connecting
-                        // is a deliberate second Enter from Normal mode.
-                        self.selected = p;
+                let chosen = self.palette_results.get(self.palette_selected).copied();
+                self.mode = AppMode::Normal;
+                if let Some(idx) = chosen {
+                    // Reveal (and select) the exact host chosen, then connect.
+                    // `reveal_host` clears any filter that hides it and expands
+                    // its group, so we never connect to a different host.
+                    if self.reveal_host(idx) {
+                        self.connect_selected()?;
                     }
-                } else {
-                    self.mode = AppMode::Normal;
                 }
             }
             KeyCode::Up => {
@@ -5141,6 +5128,46 @@ impl App {
             self.selected = 0;
         } else if self.selected >= self.nav_rows.len() {
             self.selected = self.nav_rows.len() - 1;
+        }
+    }
+
+    /// Make the host at `idx` (an index into [`App::hosts`]) the current
+    /// selection: drop any tag/search filter that hides it, expand its group if
+    /// collapsed, and point `selected` at its navigation row. Returns whether
+    /// the host is now selectable (found in `nav_rows`).
+    ///
+    /// Used by quick-connect, where the fuzzy palette can pick a host that the
+    /// current filter or a collapsed group would otherwise hide.
+    pub fn reveal_host(&mut self, idx: usize) -> bool {
+        if idx >= self.hosts.len() {
+            return false;
+        }
+        // A tag/search filter may hide the chosen host — drop it rather than
+        // silently landing on a different row.
+        if !self.filtered_indices.contains(&idx) {
+            self.tag_filter = None;
+            self.search_query.clear();
+            self.rebuild_filter();
+        }
+        // Expand the host's group so its row is navigable.
+        let key = self
+            .hosts
+            .get(idx)
+            .and_then(|h| h.group_id())
+            .unwrap_or(UNGROUPED_KEY);
+        if self.collapsed_groups.remove(&key) {
+            self.persist_collapsed_groups();
+            self.rebuild_filter();
+        }
+        if let Some(pos) = self
+            .nav_rows
+            .iter()
+            .position(|r| matches!(r, NavRow::Host(i) if *i == idx))
+        {
+            self.selected = pos;
+            true
+        } else {
+            false
         }
     }
 
