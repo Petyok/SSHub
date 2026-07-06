@@ -181,11 +181,22 @@ impl Session {
         let SessionPhase::Connecting { started_at } = self.phase else {
             return;
         };
-        if should_reveal(self.was_armed(), self.secret_sent, started_at.elapsed()) {
+        // A host-key verification prompt needs a yes/no from the user right
+        // now — reveal immediately even for an armed session, or the connect
+        // silently stalls behind the animation.
+        if self.awaiting_host_verification()
+            || should_reveal(self.was_armed(), self.secret_sent, started_at.elapsed())
+        {
             self.phase = SessionPhase::Running {
                 started_at: Instant::now(),
             };
         }
+    }
+
+    /// Whether the current screen is asking to accept an unknown host key.
+    fn awaiting_host_verification(&self) -> bool {
+        let tail = current_screen_tail(self.parser.screen()).to_ascii_lowercase();
+        HOST_VERIFY_NEEDLES.iter().any(|n| tail.contains(n))
     }
 
     /// If the live screen ends with a prompt that matches our stored secret
@@ -288,6 +299,16 @@ const PASSWORD_NEEDLES: &[&str] = &[
 
 /// Stems we look for in passphrase prompts.
 const PASSPHRASE_NEEDLES: &[&str] = &["passphrase for", "enter passphrase"];
+
+/// Phrases ssh prints when it needs the user to accept an unknown host key
+/// ("Are you sure you want to continue connecting (yes/no/[fingerprint])?").
+/// This needs interactive input we can't supply, so the connect screen must
+/// reveal the live terminal immediately instead of hiding it.
+const HOST_VERIFY_NEEDLES: &[&str] = &[
+    "authenticity of host",
+    "continue connecting",
+    "key fingerprint is",
+];
 
 /// Substring match across the screen tail. Tolerant to position so prompts
 /// like "deploy@host's password:" or a prompt followed by a trailing space
@@ -405,6 +426,22 @@ mod prompt_tests {
             false,
             REVEAL_TIMEOUT - Duration::from_millis(1)
         ));
+    }
+
+    #[test]
+    fn host_key_verification_prompt_is_detected() {
+        let mut parser = vt100::Parser::new(40, 100, 0);
+        parser.process(
+            b"The authenticity of host 'srv (10.0.0.1)' can't be established.\r\n\
+              ED25519 key fingerprint is SHA256:abc123def456.\r\n\
+              This key is not known by any other names.\r\n\
+              Are you sure you want to continue connecting (yes/no/[fingerprint])? ",
+        );
+        let tail = current_screen_tail(parser.screen()).to_ascii_lowercase();
+        assert!(
+            HOST_VERIFY_NEEDLES.iter().any(|n| tail.contains(n)),
+            "host-key prompt must be detected, tail: {tail:?}"
+        );
     }
 
     #[test]

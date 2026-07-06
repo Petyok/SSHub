@@ -1,7 +1,56 @@
 //! Writing pasted private-key material into `~/.ssh` as proper key files.
 
 use anyhow::{Context, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+/// Run `ssh-keygen -y -P <passphrase> -f <path>` and classify the outcome.
+/// Returns `None` when the answer is unknown (ssh-keygen missing, file
+/// unreadable, or an error unrelated to encryption) so callers can fail open.
+fn probe_key(path: &Path, passphrase: &str) -> Option<KeyProbe> {
+    let output = Command::new("ssh-keygen")
+        .arg("-y")
+        .arg("-P")
+        .arg(passphrase)
+        .arg("-f")
+        .arg(path)
+        .output()
+        .ok()?;
+    if output.status.success() {
+        return Some(KeyProbe::Ok);
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
+    if stderr.contains("passphrase") || stderr.contains("incorrect") {
+        Some(KeyProbe::WrongPassphrase)
+    } else {
+        None // parse error / not a key / etc — don't block on it
+    }
+}
+
+enum KeyProbe {
+    Ok,
+    WrongPassphrase,
+}
+
+/// Whether the key at `path` is passphrase-protected.
+/// `Some(true)`/`Some(false)` when determinable, `None` when unknown.
+pub fn key_is_encrypted(path: &Path) -> Option<bool> {
+    match probe_key(path, "") {
+        Some(KeyProbe::Ok) => Some(false),
+        Some(KeyProbe::WrongPassphrase) => Some(true),
+        None => None,
+    }
+}
+
+/// Whether `passphrase` correctly decrypts the key at `path`.
+/// `None` when it can't be determined (e.g. ssh-keygen unavailable).
+pub fn passphrase_matches(path: &Path, passphrase: &str) -> Option<bool> {
+    match probe_key(path, passphrase) {
+        Some(KeyProbe::Ok) => Some(true),
+        Some(KeyProbe::WrongPassphrase) => Some(false),
+        None => None,
+    }
+}
 
 /// Does `text` look like pasted private-key material (rather than a path)?
 pub fn looks_like_private_key(text: &str) -> bool {
@@ -85,6 +134,45 @@ mod tests {
         assert!(!looks_like_private_key(
             "-----BEGIN CERTIFICATE-----\nabc"
         ));
+    }
+
+    fn ssh_keygen_available() -> bool {
+        Command::new("ssh-keygen")
+            .arg("-?")
+            .output()
+            .map(|o| o.status.code().is_some())
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn detects_encrypted_vs_plain_keys() {
+        if !ssh_keygen_available() {
+            eprintln!("skipping: ssh-keygen not available");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let plain = dir.path().join("plain");
+        let enc = dir.path().join("enc");
+
+        // Unencrypted key.
+        Command::new("ssh-keygen")
+            .args(["-t", "ed25519", "-N", "", "-f"])
+            .arg(&plain)
+            .output()
+            .unwrap();
+        // Passphrase-protected key.
+        Command::new("ssh-keygen")
+            .args(["-t", "ed25519", "-N", "secret123", "-f"])
+            .arg(&enc)
+            .output()
+            .unwrap();
+
+        assert_eq!(key_is_encrypted(&plain), Some(false));
+        assert_eq!(key_is_encrypted(&enc), Some(true));
+        assert_eq!(passphrase_matches(&enc, "secret123"), Some(true));
+        assert_eq!(passphrase_matches(&enc, "wrong"), Some(false));
+        // Missing file → unknown, never blocks.
+        assert_eq!(key_is_encrypted(&dir.path().join("nope")), None);
     }
 
     #[test]

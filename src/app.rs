@@ -3392,6 +3392,30 @@ impl App {
         };
         let certificate = optional_path(&form.certificate);
 
+        // If the key is passphrase-protected, require (and verify) the
+        // passphrase before saving — otherwise auto-auth would silently fail
+        // later. Skip when a passphrase is already stored (has_password).
+        if let Some(ref key_path) = private_key {
+            let expanded = crate::ssh::expand_tilde(&key_path.to_string_lossy());
+            if form.password.is_empty() && !form.has_password {
+                if crate::ssh::key_is_encrypted(&expanded) == Some(true) {
+                    self.identity_notice =
+                        Some("This key is passphrase-protected — enter its passphrase".into());
+                    let mut form = form;
+                    form.field = IdentityFormField::Password;
+                    form.cursor = 0;
+                    self.identity_form = Some(form);
+                    return Ok(());
+                }
+            } else if !form.password.is_empty()
+                && crate::ssh::passphrase_matches(&expanded, &form.password) == Some(false)
+            {
+                self.identity_notice = Some("Passphrase does not match this key".into());
+                self.identity_form = Some(form);
+                return Ok(());
+            }
+        }
+
         let password_changed = !form.password.is_empty();
         let new_has_password = if password_changed {
             true
