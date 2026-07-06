@@ -2,9 +2,13 @@ use super::*;
 
 impl App {
     pub fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
+        if self.mode == AppMode::SessionHostPicker {
+            return self.handle_key_session_host_picker(key);
+        }
+
         // When an embedded session is active, Ctrl+C inside the terminal must
         // reach the remote shell — not quit sshub. Session mode intercepts all
-        // keys (except Ctrl+D / Esc, which end the session) before this check.
+        // keys (except detach / tab keys) before this check.
         if matches!(self.mode, AppMode::Connecting | AppMode::Session) {
             return self.handle_key_session(key);
         }
@@ -46,6 +50,7 @@ impl App {
             AppMode::GroupForm => self.handle_key_group_form(key),
             AppMode::GroupIdentityPicker => self.handle_key_group_identity_picker(key),
             AppMode::TunnelHostPicker => self.handle_key_tunnel_host_picker(key),
+            AppMode::SessionHostPicker => self.handle_key_session_host_picker(key),
             AppMode::FieldPicker => self.handle_key_field_picker(key),
             AppMode::ImportPrompt => self.handle_key_import_prompt(key),
             AppMode::GroupManage => self.handle_key_group_manage(key),
@@ -66,6 +71,10 @@ impl App {
 
     pub(crate) fn handle_key_normal(&mut self, key: KeyEvent) -> Result<()> {
         self.host_notice = None;
+
+        if self.handle_key_background_sessions(&key) {
+            return Ok(());
+        }
 
         match key.code {
             _ if self.is_action(KeyAction::Quit, &key) => self.request_quit(),

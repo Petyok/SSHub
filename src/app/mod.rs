@@ -99,6 +99,8 @@ pub struct App {
     pub group_identity_picker: Option<GroupIdentityPicker>,
     /// Searchable SSH-server picker for the tunnel form.
     pub tunnel_host_picker: Option<TunnelHostPicker>,
+    /// Searchable host picker for a new embedded session tab.
+    pub session_host_picker: Option<SessionHostPicker>,
     pub import_prompt: Option<ImportPromptEdit>,
     /// UI zoom level (0 = default). Widens the hosts column in the layout and
     /// the host-name column within it.
@@ -220,6 +222,7 @@ impl App {
             group_form: None,
             group_identity_picker: None,
             tunnel_host_picker: None,
+            session_host_picker: None,
             import_prompt: None,
             ui_zoom: 0,
             group_manage_selected: 0,

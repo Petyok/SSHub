@@ -6,7 +6,18 @@ impl App {
         let Some(entry) = self.selected_entry().cloned() else {
             return Ok(());
         };
+        self.connect_host_entry(entry)
+    }
 
+    /// Launch SSH for a host by index in [`App::hosts`].
+    pub fn connect_host_at(&mut self, host_idx: usize) -> Result<()> {
+        let Some(entry) = self.hosts.get(host_idx).cloned() else {
+            return Ok(());
+        };
+        self.connect_host_entry(entry)
+    }
+
+    fn connect_host_entry(&mut self, entry: HostEntry) -> Result<()> {
         // Determine the stored secret to feed ssh at the first prompt. A
         // host-level credential is sent at `password:`-style prompts; an
         // identity-level credential is sent at `Enter passphrase for …`.

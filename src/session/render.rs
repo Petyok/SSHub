@@ -93,12 +93,11 @@ fn render_header(frame: &mut Frame, area: Rect, session: &Session, app: &App) {
         }
     }
 
-    // Right-side hints. Always show Ctrl+D exit; Ctrl+T new is most useful
-    // alongside the tab strip.
+    // Right-side hints for tab management.
     let hint_text: String = if app.sessions.len() > 1 {
-        "Ctrl+T new  Ctrl+W close  Ctrl+PgUp/Dn switch  Ctrl+D exit".into()
+        "Ctrl+T new  Ctrl+W close  Ctrl+[/] tabs  Ctrl+D detach".into()
     } else {
-        "Ctrl+T new tab  Ctrl+D exit".into()
+        "Ctrl+T new tab  Ctrl+D detach".into()
     };
     let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
     let pad = (area.width as usize).saturating_sub(used + hint_text.chars().count() + 1);

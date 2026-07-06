@@ -94,6 +94,8 @@ pub enum AppMode {
     GroupIdentityPicker,
     /// Searchable dropdown for choosing the tunnel form's SSH server.
     TunnelHostPicker,
+    /// Searchable dropdown for opening a new embedded SSH session tab.
+    SessionHostPicker,
     /// Dropdown over the host form's Group/Identity field.
     FieldPicker,
     /// Keybinding editor overlay.
@@ -582,6 +584,18 @@ pub struct TunnelHostPicker {
     pub query: String,
     /// Index into the current filtered match list.
     pub selected: usize,
+}
+
+/// Searchable dropdown for opening a new SSH session tab
+/// ([`AppMode::SessionHostPicker`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionHostPicker {
+    /// Case-insensitive substring filter typed by the user.
+    pub query: String,
+    /// Index into the current filtered match list.
+    pub selected: usize,
+    /// Mode to restore when the picker is dismissed without connecting.
+    pub return_mode: AppMode,
 }
 
 /// Single-field path prompt for the Termius CSV import ([`AppMode::ImportPrompt`]).

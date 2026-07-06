@@ -70,6 +70,18 @@ pub struct KeybindsConfig {
     pub duplicate: Vec<String>,
     #[serde(default = "default_tag_filter_keys")]
     pub tag_filter: Vec<String>,
+    #[serde(default = "default_session_new_tab_keys")]
+    pub session_new_tab: Vec<String>,
+    #[serde(default = "default_session_close_tab_keys")]
+    pub session_close_tab: Vec<String>,
+    #[serde(default = "default_session_tab_prev_keys")]
+    pub session_tab_prev: Vec<String>,
+    #[serde(default = "default_session_tab_next_keys")]
+    pub session_tab_next: Vec<String>,
+    #[serde(default = "default_session_detach_keys")]
+    pub session_detach: Vec<String>,
+    #[serde(default = "default_session_focus_keys")]
+    pub session_focus: Vec<String>,
 }
 
 fn default_save_keys() -> Vec<String> {
@@ -96,6 +108,24 @@ fn default_duplicate_keys() -> Vec<String> {
 fn default_tag_filter_keys() -> Vec<String> {
     vec!["#".to_string()]
 }
+fn default_session_new_tab_keys() -> Vec<String> {
+    vec!["Ctrl+T".to_string()]
+}
+fn default_session_close_tab_keys() -> Vec<String> {
+    vec!["Ctrl+W".to_string()]
+}
+fn default_session_tab_prev_keys() -> Vec<String> {
+    vec!["Ctrl+[".to_string(), "Ctrl+PageUp".to_string()]
+}
+fn default_session_tab_next_keys() -> Vec<String> {
+    vec!["Ctrl+]".to_string(), "Ctrl+PageDown".to_string()]
+}
+fn default_session_detach_keys() -> Vec<String> {
+    vec!["Ctrl+D".to_string()]
+}
+fn default_session_focus_keys() -> Vec<String> {
+    vec!["Ctrl+Shift+S".to_string()]
+}
 
 impl Default for KeybindsConfig {
     fn default() -> Self {
@@ -108,6 +138,12 @@ impl Default for KeybindsConfig {
             delete: default_delete_keys(),
             duplicate: default_duplicate_keys(),
             tag_filter: default_tag_filter_keys(),
+            session_new_tab: default_session_new_tab_keys(),
+            session_close_tab: default_session_close_tab_keys(),
+            session_tab_prev: default_session_tab_prev_keys(),
+            session_tab_next: default_session_tab_next_keys(),
+            session_detach: default_session_detach_keys(),
+            session_focus: default_session_focus_keys(),
         }
     }
 }
@@ -123,6 +159,12 @@ impl KeybindsConfig {
             KeyAction::Delete => default_delete_keys(),
             KeyAction::Duplicate => default_duplicate_keys(),
             KeyAction::TagFilter => default_tag_filter_keys(),
+            KeyAction::SessionNewTab => default_session_new_tab_keys(),
+            KeyAction::SessionCloseTab => default_session_close_tab_keys(),
+            KeyAction::SessionTabPrev => default_session_tab_prev_keys(),
+            KeyAction::SessionTabNext => default_session_tab_next_keys(),
+            KeyAction::SessionDetach => default_session_detach_keys(),
+            KeyAction::SessionFocus => default_session_focus_keys(),
         }
     }
 
@@ -141,6 +183,12 @@ impl KeybindsConfig {
             KeyAction::Delete => &self.delete,
             KeyAction::Duplicate => &self.duplicate,
             KeyAction::TagFilter => &self.tag_filter,
+            KeyAction::SessionNewTab => &self.session_new_tab,
+            KeyAction::SessionCloseTab => &self.session_close_tab,
+            KeyAction::SessionTabPrev => &self.session_tab_prev,
+            KeyAction::SessionTabNext => &self.session_tab_next,
+            KeyAction::SessionDetach => &self.session_detach,
+            KeyAction::SessionFocus => &self.session_focus,
         }
     }
 
@@ -154,6 +202,12 @@ impl KeybindsConfig {
             KeyAction::Delete => self.delete = binds,
             KeyAction::Duplicate => self.duplicate = binds,
             KeyAction::TagFilter => self.tag_filter = binds,
+            KeyAction::SessionNewTab => self.session_new_tab = binds,
+            KeyAction::SessionCloseTab => self.session_close_tab = binds,
+            KeyAction::SessionTabPrev => self.session_tab_prev = binds,
+            KeyAction::SessionTabNext => self.session_tab_next = binds,
+            KeyAction::SessionDetach => self.session_detach = binds,
+            KeyAction::SessionFocus => self.session_focus = binds,
         }
     }
 
@@ -178,11 +232,17 @@ pub enum KeyAction {
     Delete,
     Duplicate,
     TagFilter,
+    SessionNewTab,
+    SessionCloseTab,
+    SessionTabPrev,
+    SessionTabNext,
+    SessionDetach,
+    SessionFocus,
 }
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 8] = [
+    pub const ALL: [KeyAction; 14] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -191,6 +251,12 @@ impl KeyAction {
         KeyAction::Delete,
         KeyAction::Duplicate,
         KeyAction::TagFilter,
+        KeyAction::SessionNewTab,
+        KeyAction::SessionCloseTab,
+        KeyAction::SessionTabPrev,
+        KeyAction::SessionTabNext,
+        KeyAction::SessionDetach,
+        KeyAction::SessionFocus,
     ];
 
     pub fn label(self) -> &'static str {
@@ -203,6 +269,12 @@ impl KeyAction {
             KeyAction::Delete => "Delete host",
             KeyAction::Duplicate => "Duplicate host",
             KeyAction::TagFilter => "Filter by tag",
+            KeyAction::SessionNewTab => "New session tab",
+            KeyAction::SessionCloseTab => "Close session tab",
+            KeyAction::SessionTabPrev => "Previous session tab",
+            KeyAction::SessionTabNext => "Next session tab",
+            KeyAction::SessionDetach => "Detach to dashboard",
+            KeyAction::SessionFocus => "Focus session tab",
         }
     }
 }

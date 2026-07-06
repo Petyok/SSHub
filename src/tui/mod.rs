@@ -27,9 +27,17 @@ pub fn format_local_time(epoch_secs: i64) -> String {
 }
 
 pub fn render(frame: &mut Frame, app: &App) {
+    let session_behind_picker = app.mode == AppMode::SessionHostPicker
+        && app.session_host_picker.as_ref().is_some_and(|p| {
+            matches!(p.return_mode, AppMode::Connecting | AppMode::Session)
+        });
+
     // Embedded session takes over the whole frame — no dashboard chrome.
-    if matches!(app.mode, AppMode::Connecting | AppMode::Session) {
+    if matches!(app.mode, AppMode::Connecting | AppMode::Session) || session_behind_picker {
         crate::session::render::render(frame, app);
+        if app.mode == AppMode::SessionHostPicker {
+            screens::session_host_picker::render(frame, app);
+        }
         return;
     }
 
@@ -80,7 +88,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     widgets::footer::render_hrule(frame, rule3, true);
 
     // Footer keybinds (tab-specific)
-    let keybinds = footer_keybinds(app.active_tab);
+    let keybinds = footer_keybinds(app);
     widgets::footer::render_footer(frame, areas.footer, &keybinds);
 
     // ── Overlay popups ─────────────────────────────────────────
@@ -108,6 +116,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             screens::tunnels::render_tunnel_form(frame, app);
             screens::tunnels::render_tunnel_host_picker(frame, app);
         }
+        AppMode::SessionHostPicker => screens::session_host_picker::render(frame, app),
         AppMode::ConfirmDiscard => {
             if app.host_form.is_some() {
                 render_form_popup(frame, app, FormKind::Host);
@@ -202,8 +211,8 @@ fn compute_header_stats(app: &App) -> (usize, usize, usize, usize) {
     (total, online, slow, down)
 }
 
-fn footer_keybinds(active_tab: usize) -> Vec<(&'static str, &'static str)> {
-    match active_tab {
+fn footer_keybinds(app: &App) -> Vec<(&'static str, &'static str)> {
+    let mut binds = match app.active_tab {
         0 => vec![
             ("\u{2191}\u{2193}", "select"),
             ("\u{21b5}", "connect"),
@@ -246,7 +255,13 @@ fn footer_keybinds(active_tab: usize) -> Vec<(&'static str, &'static str)> {
             ("q", "quit"),
         ],
         _ => vec![("q", "quit")],
+    };
+    if !app.sessions.is_empty() {
+        binds.push(("^D", "detach"));
+        binds.push(("^[/]", "tabs"));
+        binds.push(("^T", "new tab"));
     }
+    binds
 }
 
 fn render_hosts_body(frame: &mut Frame, areas: &dashboard_layout::DashboardAreas, app: &App) {

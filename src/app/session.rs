@@ -3,39 +3,28 @@ use super::*;
 impl App {
     /// Handle a keystroke while an embedded session is active.
     ///
-    /// - `Ctrl+D` closes the active tab (returns to dashboard when the last
-    ///   tab closes).
-    /// - `Ctrl+T` opens a new tab to the same host (duplicates the current
-    ///   session config).
-    /// - `Ctrl+W` closes the active tab (alias for Ctrl+D).
-    /// - `Ctrl+PgUp` / `Ctrl+PgDn` switch tabs.
-    /// - `Esc` during Connecting cancels and returns; after running, forwards.
-    /// - `PgUp` / `PgDn` navigate scrollback locally (don't reach the shell).
-    /// - Everything else snaps scrollback to live and forwards encoded bytes.
+    /// Session tab keys are user-configurable (see [`KeyAction::SessionNewTab`]
+    /// and friends). `PgUp` / `PgDn` without Ctrl navigate scrollback locally.
     pub(crate) fn handle_key_session(&mut self, key: KeyEvent) -> Result<()> {
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-
-        // Tab management intercepts. These never reach the remote.
-        if ctrl {
-            match key.code {
-                KeyCode::Char('t') | KeyCode::Char('T') => {
-                    self.duplicate_active_session();
-                    return Ok(());
-                }
-                KeyCode::Char('w') | KeyCode::Char('W') => {
-                    self.close_active_session();
-                    return Ok(());
-                }
-                KeyCode::PageUp => {
-                    self.switch_session(-1);
-                    return Ok(());
-                }
-                KeyCode::PageDown => {
-                    self.switch_session(1);
-                    return Ok(());
-                }
-                _ => {}
-            }
+        if self.is_action(KeyAction::SessionNewTab, &key) {
+            self.open_session_host_picker();
+            return Ok(());
+        }
+        if self.is_action(KeyAction::SessionCloseTab, &key) {
+            self.close_active_session();
+            return Ok(());
+        }
+        if self.is_action(KeyAction::SessionDetach, &key) {
+            self.detach_to_dashboard();
+            return Ok(());
+        }
+        if self.is_action(KeyAction::SessionTabPrev, &key) {
+            self.switch_session(-1);
+            return Ok(());
+        }
+        if self.is_action(KeyAction::SessionTabNext, &key) {
+            self.switch_session(1);
+            return Ok(());
         }
 
         // Capture self.terminal_area.height before we take a mutable borrow
@@ -48,11 +37,6 @@ impl App {
         };
 
         if session.phase.is_terminal() {
-            self.close_active_session();
-            return Ok(());
-        }
-
-        if ctrl && matches!(key.code, KeyCode::Char('d') | KeyCode::Char('D')) {
             self.close_active_session();
             return Ok(());
         }
@@ -91,6 +75,127 @@ impl App {
         Ok(())
     }
 
+    /// Session tab keys while on the dashboard with background sessions.
+    pub(crate) fn handle_key_background_sessions(&mut self, key: &KeyEvent) -> bool {
+        if self.sessions.is_empty() {
+            return false;
+        }
+        if self.is_action(KeyAction::SessionFocus, key) {
+            self.focus_active_session();
+            return true;
+        }
+        if self.is_action(KeyAction::SessionTabPrev, key) {
+            self.switch_session(-1);
+            self.focus_active_session();
+            return true;
+        }
+        if self.is_action(KeyAction::SessionTabNext, key) {
+            self.switch_session(1);
+            self.focus_active_session();
+            return true;
+        }
+        if self.is_action(KeyAction::SessionNewTab, key) {
+            self.open_session_host_picker();
+            return true;
+        }
+        if self.is_action(KeyAction::SessionCloseTab, key) {
+            self.close_active_session();
+            return true;
+        }
+        false
+    }
+
+    /// Hosts matching the session tab picker's query, as `(host index, label)`.
+    pub fn session_host_matches(&self) -> Vec<(usize, String)> {
+        let query = self
+            .session_host_picker
+            .as_ref()
+            .map(|p| p.query.to_lowercase())
+            .unwrap_or_default();
+        self.hosts
+            .iter()
+            .enumerate()
+            .filter(|(_, h)| {
+                if query.is_empty() {
+                    return true;
+                }
+                let name = h.name().to_lowercase();
+                let label = h.display_name().to_lowercase();
+                name.contains(&query) || label.contains(&query)
+            })
+            .map(|(idx, h)| (idx, format!("{}  {}", h.display_name(), h.name())))
+            .collect()
+    }
+
+    pub(crate) fn open_session_host_picker(&mut self) {
+        let return_mode = self.mode;
+        self.session_host_picker = Some(SessionHostPicker {
+            query: String::new(),
+            selected: 0,
+            return_mode,
+        });
+        self.mode = AppMode::SessionHostPicker;
+    }
+
+    pub(crate) fn handle_key_session_host_picker(&mut self, key: KeyEvent) -> Result<()> {
+        let return_mode = self
+            .session_host_picker
+            .as_ref()
+            .map(|p| p.return_mode)
+            .unwrap_or(AppMode::Normal);
+        let len = self.session_host_matches().len();
+        match key.code {
+            KeyCode::Esc => {
+                self.session_host_picker = None;
+                self.mode = return_mode;
+            }
+            KeyCode::Down => {
+                if len > 0 {
+                    if let Some(p) = self.session_host_picker.as_mut() {
+                        p.selected = (p.selected + 1) % len;
+                    }
+                }
+            }
+            KeyCode::Up => {
+                if len > 0 {
+                    if let Some(p) = self.session_host_picker.as_mut() {
+                        p.selected = (p.selected + len - 1) % len;
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                let matches = self.session_host_matches();
+                let host_idx = self
+                    .session_host_picker
+                    .as_ref()
+                    .and_then(|p| matches.get(p.selected))
+                    .map(|(idx, _)| *idx);
+                self.session_host_picker = None;
+                self.mode = return_mode;
+                if let Some(idx) = host_idx {
+                    self.connect_host_at(idx)?;
+                }
+            }
+            KeyCode::Backspace => {
+                if let Some(p) = self.session_host_picker.as_mut() {
+                    p.query.pop();
+                    p.selected = 0;
+                }
+            }
+            KeyCode::Char(c)
+                if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
+                    && !c.is_control() =>
+            {
+                if let Some(p) = self.session_host_picker.as_mut() {
+                    p.query.push(c);
+                    p.selected = 0;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     /// Shared accessor for the visible session, if any.
     pub fn active_session(&self) -> Option<&crate::session::Session> {
         self.active_session.and_then(|i| self.sessions.get(i))
@@ -99,6 +204,30 @@ impl App {
     pub fn active_session_mut(&mut self) -> Option<&mut crate::session::Session> {
         let idx = self.active_session?;
         self.sessions.get_mut(idx)
+    }
+
+    /// Return to the dashboard without tearing down background sessions.
+    pub fn detach_to_dashboard(&mut self) {
+        if self.sessions.is_empty() {
+            self.mode = AppMode::Normal;
+            return;
+        }
+        self.mode = AppMode::Normal;
+    }
+
+    /// Re-enter the active embedded session from the dashboard.
+    pub fn focus_active_session(&mut self) {
+        let Some(idx) = self.active_session else {
+            if self.sessions.is_empty() {
+                self.mode = AppMode::Normal;
+            }
+            return;
+        };
+        let phase = &self.sessions[idx].phase;
+        self.mode = match phase {
+            crate::session::SessionPhase::Connecting { .. } => AppMode::Connecting,
+            _ => AppMode::Session,
+        };
     }
 
     /// Tear down the active embedded session and return to the dashboard when
@@ -146,30 +275,15 @@ impl App {
         } else {
             // Stay at the same index if possible, else drop back to the new last.
             self.active_session = Some(idx.min(self.sessions.len() - 1));
-            self.mode = AppMode::Session;
-        }
-    }
-
-    /// Spawn a fresh session reusing the active tab's config (same host).
-    pub fn duplicate_active_session(&mut self) {
-        let Some(idx) = self.active_session else {
-            return;
-        };
-        let Some(active) = self.sessions.get(idx) else {
-            return;
-        };
-        let cfg = active.config.clone();
-        let rows = self.terminal_area.height.max(3);
-        let cols = self.terminal_area.width.max(20);
-        match crate::session::Session::spawn(cfg, rows, cols) {
-            Ok(session) => {
-                self.sessions.push(session);
-                self.active_session = Some(self.sessions.len() - 1);
-                self.mode = AppMode::Connecting;
-            }
-            Err(e) => {
-                self.host_notice = Some(format!("New tab failed: {e:#}"));
-            }
+            let phase = &self.sessions[self.active_session.unwrap()].phase;
+            self.mode = if self.mode == AppMode::Normal {
+                AppMode::Normal
+            } else {
+                match phase {
+                    crate::session::SessionPhase::Connecting { .. } => AppMode::Connecting,
+                    _ => AppMode::Session,
+                }
+            };
         }
     }
 
@@ -184,6 +298,10 @@ impl App {
         let cur = self.active_session.unwrap_or(0) as isize;
         let next = ((cur + delta) % len + len) % len;
         self.active_session = Some(next as usize);
+
+        if self.mode == AppMode::Normal {
+            return;
+        }
 
         // Reflect the new active session's phase in app.mode, so render
         // dispatch picks the right path.

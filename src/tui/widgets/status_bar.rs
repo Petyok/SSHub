@@ -15,6 +15,7 @@ fn mode_label(mode: AppMode) -> &'static str {
         AppMode::GroupForm => "Group form",
         AppMode::GroupIdentityPicker => "Group identity",
         AppMode::TunnelHostPicker => "Select server",
+        AppMode::SessionHostPicker => "New session",
         AppMode::GroupManage => "Groups",
         AppMode::FieldPicker => "Select",
         AppMode::KeybindEditor => "Keybindings",
@@ -55,6 +56,11 @@ pub fn render_status_bar(app: &App) -> Paragraph<'static> {
         "{shown}/{total} hosts │ sort: {} │ {mode} │ {action} │ q: quit",
         app.sort_mode.label()
     );
+    if !app.sessions.is_empty() {
+        let n = app.sessions.len();
+        let tab = app.active_session.map(|i| i + 1).unwrap_or(1);
+        line.push_str(&format!(" │ {n} session{} (tab {tab})", if n == 1 { "" } else { "s" }));
+    }
     if let Some(notice) = &app.host_notice {
         line.push_str(" │ ");
         line.push_str(notice);
