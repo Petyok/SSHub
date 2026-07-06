@@ -56,77 +56,74 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
     let offset = app.host_scroll_offset(body_h);
     let window_end = offset + body_h;
 
-    let mut vrow = 0usize;
+    use crate::app::VisualRow;
+    let visual = app.host_visual_rows();
 
-    // ── Group sections ───────────────────────────────────
-    'sections: for (si, section) in app.group_sections.iter().enumerate() {
-        // Blank line between groups (not before the first).
-        if si > 0 {
-            if vrow >= window_end {
-                break 'sections;
-            }
-            vrow += 1;
+    for (vrow, row) in visual.iter().enumerate() {
+        if vrow < offset || vrow >= window_end {
+            continue;
         }
+        let y = cy + (vrow - offset) as u16;
 
-        // ── Group header row ─────────────────────────────
-        if vrow >= window_end {
-            break 'sections;
-        }
-        if vrow >= offset {
-            let arrow = "\u{25be}"; // ▾ (always expanded for now)
-            let host_count = section.host_indices.len();
-            let count_suffix = format!("({})", host_count);
-            let label = &section.label;
+        match *row {
+            VisualRow::Blank => {}
+            VisualRow::Header {
+                section,
+                collapsed,
+                selected,
+            } => {
+                let section = &app.group_sections[section];
+                let arrow = if collapsed { "\u{25b8}" } else { "\u{25be}" }; // ▸ / ▾
+                let host_count = section.host_indices.len();
+                let count_suffix = format!("({})", host_count);
+                let label = &section.label;
+                let mut col = cx;
 
-            // Build: ▾ <label>  ··· (N)
-            let y = cy + (vrow - offset) as u16;
-            let mut col = cx;
+                if selected {
+                    let blank = " ".repeat(cw);
+                    buf.set_string(cx, y, &blank, theme::selected());
+                }
+                let (arrow_style, label_style) = if selected {
+                    (theme::white().bg(theme::SEL_BG), theme::white().bg(theme::SEL_BG))
+                } else {
+                    (theme::mute(), theme::white())
+                };
+                let mute_bg = if selected {
+                    theme::mute().bg(theme::SEL_BG)
+                } else {
+                    theme::mute()
+                };
 
-            // Arrow in MUTE
-            buf.set_string(col, y, arrow, theme::mute());
-            col += 2; // arrow + space
+                buf.set_string(col, y, arrow, arrow_style);
+                col += 2; // arrow + space
 
-            // Group name in WHITE
-            let name_max = cw.saturating_sub(6 + count_suffix.len());
-            let truncated_label: String = label.chars().take(name_max).collect();
-            buf.set_string(col, y, &truncated_label, theme::white());
-            col += truncated_label.chars().count() as u16;
+                let name_max = cw.saturating_sub(6 + count_suffix.len());
+                let truncated_label: String = label.chars().take(name_max).collect();
+                buf.set_string(col, y, &truncated_label, label_style);
+                col += truncated_label.chars().count() as u16;
 
-            // Pad with spaces, then dots, then count — right-aligned
-            let used = (col - cx) as usize;
-            let remaining = cw.saturating_sub(used + 1 + count_suffix.len());
-            if remaining > 2 {
-                buf.set_string(col, y, " ", theme::mute());
-                col += 1;
-                let dots: String = " \u{00b7}".repeat(remaining / 2);
-                let dots_trimmed: String = dots.chars().take(remaining).collect();
-                buf.set_string(col, y, &dots_trimmed, theme::mute());
-                col += dots_trimmed.chars().count() as u16;
+                let used = (col - cx) as usize;
+                let remaining = cw.saturating_sub(used + 1 + count_suffix.len());
+                if remaining > 2 {
+                    buf.set_string(col, y, " ", mute_bg);
+                    col += 1;
+                    let dots: String = " \u{00b7}".repeat(remaining / 2);
+                    let dots_trimmed: String = dots.chars().take(remaining).collect();
+                    buf.set_string(col, y, &dots_trimmed, mute_bg);
+                    col += dots_trimmed.chars().count() as u16;
+                }
+                let count_x = cx + (cw as u16).saturating_sub(count_suffix.len() as u16);
+                if count_x > col {
+                    buf.set_string(count_x, y, &count_suffix, mute_bg);
+                }
             }
-            // Count in MUTE
-            let count_x = cx + (cw as u16).saturating_sub(count_suffix.len() as u16);
-            if count_x > col {
-                buf.set_string(count_x, y, &count_suffix, theme::mute());
-            }
-        }
+            VisualRow::Host {
+                host_idx,
+                selected: is_selected,
+            } => {
+                let entry = &app.hosts[host_idx];
 
-        vrow += 1;
-
-        // ── Host rows ────────────────────────────────────
-        for &host_idx in &section.host_indices {
-            if vrow >= window_end {
-                break 'sections;
-            }
-            if vrow < offset {
-                vrow += 1;
-                continue;
-            }
-
-            let entry = &app.hosts[host_idx];
-            let is_selected = app.selected_host_index() == Some(host_idx);
-            let y = cy + (vrow - offset) as u16;
-
-            // If selected, fill the entire row with SEL_BG.
+                // If selected, fill the entire row with SEL_BG.
             if is_selected {
                 let blank = " ".repeat(cw);
                 buf.set_string(cx, y, &blank, theme::selected());
@@ -239,8 +236,7 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
                 };
                 buf.set_string(ping_x, y, &ping_str, ping_style);
             }
-
-            vrow += 1;
+            }
         }
     }
 

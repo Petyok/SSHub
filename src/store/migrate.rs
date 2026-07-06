@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 const V2_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -96,6 +96,10 @@ pub(crate) fn run_migrations(conn: &Connection, launcher_path: &Path) -> Result<
 
     if current < 7 {
         migrate_v6_to_v7(conn)?;
+    }
+
+    if current < 8 {
+        migrate_v7_to_v8(conn)?;
     }
 
     // Runs last so all columns it writes to (e.g. environment) already exist.
@@ -297,6 +301,18 @@ fn migrate_v6_to_v7(conn: &Connection) -> Result<()> {
     if !has_col {
         conn.execute_batch("ALTER TABLE hosts ADD COLUMN environment TEXT;")?;
     }
+    Ok(())
+}
+
+fn migrate_v7_to_v8(conn: &Connection) -> Result<()> {
+    // Small key/value store for UI state that isn't host data (e.g. which
+    // groups are collapsed in the tree).
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS ui_state (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );",
+    )?;
     Ok(())
 }
 

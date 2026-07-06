@@ -60,12 +60,52 @@ impl SortMode {
 /// Virtual group label for hosts without a DB group.
 pub const UNGROUPED_LABEL: &str = "_ungrouped";
 
+/// Collapsed-state key for the virtual "ungrouped" bucket (real group ids are
+/// positive, so -1 never collides).
+pub const UNGROUPED_KEY: i64 = -1;
+
 /// One section in the group tree (real group or virtual ungrouped bucket).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostGroupSection {
     pub group: Option<HostGroup>,
     pub label: String,
     pub host_indices: Vec<usize>,
+    /// Whether this section is collapsed (host rows hidden).
+    pub collapsed: bool,
+}
+
+impl HostGroupSection {
+    /// Stable collapse-state key: the group id, or [`UNGROUPED_KEY`].
+    pub fn key(&self) -> i64 {
+        self.group.as_ref().map(|g| g.id).unwrap_or(UNGROUPED_KEY)
+    }
+}
+
+/// A selectable row in the hosts tree: either a group header or a host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NavRow {
+    /// Index into `group_sections`.
+    Header(usize),
+    /// Index into `hosts`.
+    Host(usize),
+}
+
+/// A rendered row in the hosts tree (superset of [`NavRow`] with blank
+/// separators). The single source of truth for rendering, scrolling and click
+/// mapping so they never drift apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VisualRow {
+    /// Blank separator between sections.
+    Blank,
+    Header {
+        section: usize,
+        collapsed: bool,
+        selected: bool,
+    },
+    Host {
+        host_idx: usize,
+        selected: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -778,6 +818,10 @@ pub struct App {
     pub pending_delete: Option<PendingDelete>,
     pub pre_help_mode: Option<AppMode>,
     pub group_sections: Vec<HostGroupSection>,
+    /// Selectable rows (group headers + hosts of expanded groups).
+    pub nav_rows: Vec<NavRow>,
+    /// Group keys ([`HostGroupSection::key`]) that are currently collapsed.
+    pub collapsed_groups: std::collections::HashSet<i64>,
     pub active_tab: usize,
     pub palette_query: String,
     pub palette_selected: usize,
@@ -885,6 +929,8 @@ impl App {
             pending_delete: None,
             pre_help_mode: None,
             group_sections: Vec::new(),
+            nav_rows: Vec::new(),
+            collapsed_groups: std::collections::HashSet::new(),
             active_tab: 0,
             palette_query: String::new(),
             palette_selected: 0,
@@ -979,6 +1025,7 @@ impl App {
 
     pub fn reload_hosts(&mut self) -> Result<()> {
         let selected_name = self.selected_entry().map(|e| e.name().to_string());
+        self.load_collapsed_groups();
 
         sync_ssh_config_hosts(self.resolver.as_ref(), &self.store)?;
 
@@ -1405,16 +1452,19 @@ impl App {
                                 let ch = areas.col_left.height.saturating_sub(2);
                                 let body_h = if ch > 2 { ch - 2 } else { ch } as usize;
                                 if y >= content_y {
-                                    if let Some(idx) = self.host_row_to_index(y - content_y, body_h)
-                                    {
-                                        let filt_pos =
-                                            self.filtered_indices.iter().position(|&fi| fi == idx);
-                                        if let Some(pos) = filt_pos {
+                                    let rel = y - content_y;
+                                    if let Some(idx) = self.host_row_to_index(rel, body_h) {
+                                        if let Some(pos) = self.nav_rows.iter().position(
+                                            |r| matches!(r, NavRow::Host(i) if *i == idx),
+                                        ) {
                                             self.selected = pos;
                                             if is_double {
                                                 self.connect_selected()?;
                                             }
                                         }
+                                    } else if let Some(si) = self.host_row_to_header(rel, body_h) {
+                                        // Click on a group header toggles collapse.
+                                        self.toggle_group_by_section(si);
                                     }
                                 }
                             }
@@ -1599,22 +1649,14 @@ impl App {
     /// Flattened host-tree layout: total visual rows (group headers + blank
     /// separators + host rows) and the visual row of the selected host.
     pub fn host_visual_layout(&self) -> (usize, Option<usize>) {
-        let selected = self.selected_host_index();
-        let mut vrow = 0usize;
-        let mut sel = None;
-        for (si, section) in self.group_sections.iter().enumerate() {
-            if si > 0 {
-                vrow += 1; // blank separator
-            }
-            vrow += 1; // group header
-            for &host_idx in &section.host_indices {
-                if Some(host_idx) == selected {
-                    sel = Some(vrow);
-                }
-                vrow += 1;
-            }
-        }
-        (vrow, sel)
+        let rows = self.host_visual_rows();
+        let sel = rows.iter().position(|r| {
+            matches!(
+                r,
+                VisualRow::Header { selected: true, .. } | VisualRow::Host { selected: true, .. }
+            )
+        });
+        (rows.len(), sel)
     }
 
     /// Scroll offset (in visual rows) for a host panel of `body_h` rows that
@@ -1652,28 +1694,63 @@ impl App {
     /// Map a click at visible row `rel_y` (within a `body_h`-row panel) to the
     /// host index under it, accounting for the current scroll offset.
     fn host_row_to_index(&self, rel_y: u16, body_h: usize) -> Option<usize> {
-        if self.group_sections.is_empty() {
-            return None;
-        }
         let target = rel_y as usize + self.host_scroll_offset(body_h);
-        let mut vrow = 0usize;
-        for (si, section) in self.group_sections.iter().enumerate() {
-            if si > 0 {
-                vrow += 1; // blank separator
-            }
-            vrow += 1; // group header
-            for &host_idx in &section.host_indices {
-                if vrow == target {
-                    return Some(host_idx);
-                }
-                vrow += 1;
-            }
+        match self.host_visual_rows().get(target) {
+            Some(VisualRow::Host { host_idx, .. }) => Some(*host_idx),
+            _ => None,
         }
-        None
+    }
+
+    /// Map a click at visible row `rel_y` to a group-header section index (for
+    /// click-to-collapse), accounting for the current scroll offset.
+    fn host_row_to_header(&self, rel_y: u16, body_h: usize) -> Option<usize> {
+        let target = rel_y as usize + self.host_scroll_offset(body_h);
+        match self.host_visual_rows().get(target) {
+            Some(VisualRow::Header { section, .. }) => Some(*section),
+            _ => None,
+        }
     }
 
     pub fn selected_host_index(&self) -> Option<usize> {
-        self.filtered_indices.get(self.selected).copied()
+        match self.nav_rows.get(self.selected) {
+            Some(NavRow::Host(i)) => Some(*i),
+            _ => None,
+        }
+    }
+
+    /// The full rendered layout of the hosts tree: blank separators, group
+    /// headers and host rows, with per-row selection state. Single source of
+    /// truth shared by rendering, scroll math and click mapping.
+    pub fn host_visual_rows(&self) -> Vec<VisualRow> {
+        let mut rows = Vec::new();
+        let mut nav_idx = 0usize;
+        for (si, section) in self.group_sections.iter().enumerate() {
+            if si > 0 {
+                rows.push(VisualRow::Blank);
+            }
+            let has_header = self
+                .nav_rows
+                .iter()
+                .any(|r| matches!(r, NavRow::Header(s) if *s == si));
+            if has_header {
+                rows.push(VisualRow::Header {
+                    section: si,
+                    collapsed: section.collapsed,
+                    selected: self.selected == nav_idx,
+                });
+                nav_idx += 1;
+            }
+            if !section.collapsed {
+                for &host_idx in &section.host_indices {
+                    rows.push(VisualRow::Host {
+                        host_idx,
+                        selected: self.selected == nav_idx,
+                    });
+                    nav_idx += 1;
+                }
+            }
+        }
+        rows
     }
 
     pub fn selected_entry(&self) -> Option<&HostEntry> {
@@ -1702,6 +1779,33 @@ impl App {
                 self.tag_filter = None;
                 self.search_query.clear();
                 self.rebuild_filter();
+            }
+            // Collapse/expand the group under the selection.
+            KeyCode::Char(' ') if key.modifiers.is_empty() => self.toggle_selected_group(),
+            KeyCode::Left if key.modifiers.is_empty() => {
+                if self.selected_nav_header().is_some_and(|si| {
+                    !self.group_sections[si].collapsed
+                }) {
+                    self.toggle_selected_group();
+                }
+            }
+            KeyCode::Right if key.modifiers.is_empty() => {
+                if self
+                    .selected_nav_header()
+                    .is_some_and(|si| self.group_sections[si].collapsed)
+                {
+                    self.toggle_selected_group();
+                }
+            }
+            KeyCode::Char('Z') if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                // Collapse all, or expand all if everything is already collapsed.
+                let all_collapsed = !self.group_sections.is_empty()
+                    && self.group_sections.iter().all(|s| s.collapsed);
+                self.set_all_groups_collapsed(!all_collapsed);
+            }
+            // Enter on a group header toggles it; on a host it connects.
+            KeyCode::Enter if self.selected_nav_header().is_some() => {
+                self.toggle_selected_group()
             }
             KeyCode::Enter => self.connect_selected()?,
             KeyCode::Char('a') if key.modifiers.is_empty() => self.enter_host_form(None, false)?,
@@ -4172,14 +4276,84 @@ impl App {
     }
 
     fn move_selection(&mut self, delta: i32) {
-        if self.filtered_indices.is_empty() {
+        if self.nav_rows.is_empty() {
             self.selected = 0;
             return;
         }
-        let len = self.filtered_indices.len() as i32;
+        let len = self.nav_rows.len() as i32;
         let next = self.selected as i32 + delta;
         // Wrap around: going past the end wraps to the beginning and vice versa
         self.selected = ((next % len + len) % len) as usize;
+    }
+
+    /// The section index if the current selection is a group header.
+    pub fn selected_nav_header(&self) -> Option<usize> {
+        match self.nav_rows.get(self.selected) {
+            Some(NavRow::Header(si)) => Some(*si),
+            _ => None,
+        }
+    }
+
+    fn load_collapsed_groups(&mut self) {
+        if let Ok(Some(raw)) = self.store.get_ui_state("collapsed_groups") {
+            if let Ok(ids) = serde_json::from_str::<Vec<i64>>(&raw) {
+                self.collapsed_groups = ids.into_iter().collect();
+            }
+        }
+    }
+
+    fn persist_collapsed_groups(&self) {
+        let mut ids: Vec<i64> = self.collapsed_groups.iter().copied().collect();
+        ids.sort_unstable();
+        if let Ok(json) = serde_json::to_string(&ids) {
+            let _ = self.store.set_ui_state("collapsed_groups", &json);
+        }
+    }
+
+    /// Toggle collapse of the group header under the selection, keeping the
+    /// selection on that header, and persist the new state.
+    fn toggle_selected_group(&mut self) {
+        if let Some(si) = self.selected_nav_header() {
+            self.toggle_group_by_section(si);
+        }
+    }
+
+    fn toggle_group_by_section(&mut self, si: usize) {
+        let Some(section) = self.group_sections.get(si) else {
+            return;
+        };
+        let key = section.key();
+        if !self.collapsed_groups.remove(&key) {
+            self.collapsed_groups.insert(key);
+        }
+        self.persist_collapsed_groups();
+        self.rebuild_filter();
+        if let Some(pos) = self.nav_rows.iter().position(
+            |r| matches!(r, NavRow::Header(s) if self.group_sections[*s].key() == key),
+        ) {
+            self.selected = pos;
+        }
+    }
+
+    /// Collapse (`false`) or expand (`true`) every group at once.
+    fn set_all_groups_collapsed(&mut self, collapsed: bool) {
+        if collapsed {
+            self.collapsed_groups = self.group_sections.iter().map(|s| s.key()).collect();
+        } else {
+            self.collapsed_groups.clear();
+        }
+        self.persist_collapsed_groups();
+        let sel_key = self
+            .selected_nav_header()
+            .map(|si| self.group_sections[si].key());
+        self.rebuild_filter();
+        if let Some(key) = sel_key {
+            if let Some(pos) = self.nav_rows.iter().position(
+                |r| matches!(r, NavRow::Header(s) if self.group_sections[*s].key() == key),
+            ) {
+                self.selected = pos;
+            }
+        }
     }
 
     fn toggle_favorite(&mut self) -> Result<()> {
@@ -4226,12 +4400,18 @@ impl App {
             return Ok(());
         };
         let name = self.selected_entry().map(|e| e.name().to_string());
-        let current = self.selected;
-        let target = current as i32 + delta;
-        if target < 0 || target >= self.filtered_indices.len() as i32 {
-            return Ok(());
-        }
-        let other_idx = self.filtered_indices[target as usize];
+        // Find the adjacent *host* nav row in the requested direction (skip
+        // group headers so manual reorder only swaps hosts).
+        let mut probe = self.selected as i32 + delta;
+        let other_idx = loop {
+            if probe < 0 || probe >= self.nav_rows.len() as i32 {
+                return Ok(());
+            }
+            match self.nav_rows[probe as usize] {
+                NavRow::Host(i) => break i,
+                NavRow::Header(_) => probe += delta,
+            }
+        };
         let Some(other_id) = self.hosts[other_idx].managed_id() else {
             return Ok(());
         };
@@ -4279,27 +4459,48 @@ impl App {
             .iter()
             .flat_map(|s| s.host_indices.iter().copied())
             .collect();
+
+        // Tree mode (navigable, collapsible headers) kicks in only once the
+        // user has real groups — a pure ssh_config list stays a flat host list.
+        let tree_mode = !self.groups.is_empty();
+        let mut nav = Vec::new();
+        for (si, section) in self.group_sections.iter_mut().enumerate() {
+            section.collapsed = tree_mode && self.collapsed_groups.contains(&section.key());
+            if tree_mode {
+                nav.push(NavRow::Header(si));
+            }
+            if !section.collapsed {
+                nav.extend(section.host_indices.iter().map(|&h| NavRow::Host(h)));
+            }
+        }
+        self.nav_rows = nav;
         self.clamp_selected();
     }
 
     fn clamp_selected(&mut self) {
-        if self.filtered_indices.is_empty() {
+        if self.nav_rows.is_empty() {
             self.selected = 0;
-        } else if self.selected >= self.filtered_indices.len() {
-            self.selected = self.filtered_indices.len() - 1;
+        } else if self.selected >= self.nav_rows.len() {
+            self.selected = self.nav_rows.len() - 1;
         }
     }
 
     fn restore_selection_by_name(&mut self, name: &str) {
-        if let Some(pos) = self
-            .filtered_indices
+        let host_idx = self
+            .hosts
             .iter()
-            .position(|&idx| self.hosts[idx].name() == name)
-        {
-            self.selected = pos;
-        } else {
-            self.clamp_selected();
+            .position(|h| h.name() == name);
+        if let Some(hi) = host_idx {
+            if let Some(pos) = self
+                .nav_rows
+                .iter()
+                .position(|r| matches!(r, NavRow::Host(i) if *i == hi))
+            {
+                self.selected = pos;
+                return;
+            }
         }
+        self.clamp_selected();
     }
 }
 
@@ -4524,6 +4725,7 @@ fn build_group_sections(
             group: Some(group.clone()),
             label: group.name.clone(),
             host_indices,
+            collapsed: false,
         });
     }
 
@@ -4537,6 +4739,7 @@ fn build_group_sections(
             group: None,
             label: UNGROUPED_LABEL.to_string(),
             host_indices: ungrouped,
+            collapsed: false,
         });
     }
 

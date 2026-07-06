@@ -210,7 +210,7 @@ fn host_detail_text(app: &App, entry: &HostEntry, host_idx: usize) -> Vec<Line<'
 }
 
 pub fn render_detail_panel(app: &App) -> Paragraph<'static> {
-    let lines = if let Some(&host_idx) = app.filtered_indices.get(app.selected) {
+    let lines = if let Some(host_idx) = app.selected_host_index() {
         let entry = &app.hosts[host_idx];
         host_detail_text(app, entry, host_idx)
     } else {

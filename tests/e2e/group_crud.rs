@@ -338,3 +338,80 @@ fn group_manage_navigation() {
     app.handle_key(key_char('k')).unwrap();
     assert_eq!(app.group_manage_selected, 0);
 }
+
+use sshub::store::{NewHost, NewHostGroup};
+
+/// Create a group with one host, return the app positioned in Normal mode.
+fn app_with_grouped_host(path: &std::path::Path) -> App {
+    let store = Arc::new(LauncherStore::open(path).unwrap());
+    // Idempotent: the test opens the same DB twice to check persistence.
+    if store.get_host_by_name("host-a").unwrap().is_none() {
+        let gid = store
+            .create_group(&NewHostGroup {
+                name: "servers".into(),
+                sort_order: 0,
+            })
+            .unwrap()
+            .id;
+        let mut nh = NewHost::launcher("host-a", "10.0.0.1");
+        nh.group_id = Some(gid);
+        store.create_host(&nh).unwrap();
+    }
+
+    let mut app = App::new_with_deps(
+        AppConfig::default(),
+        AppDeps {
+            resolver: Box::new(EmptyResolver),
+            metadata: Arc::new(MetadataDb::default()),
+            store,
+            launcher: Box::new(MockLauncher::new()),
+            password_store: Box::new(sshub::credentials::NoopPasswordStore),
+        },
+    );
+    app.reload_hosts().unwrap();
+    app
+}
+
+#[test]
+fn collapsing_a_group_hides_its_hosts_and_persists() {
+    let file = NamedTempFile::new().unwrap();
+    let mut app = app_with_grouped_host(file.path());
+
+    // Move selection onto the "servers" header.
+    while app.selected_nav_header().is_none() {
+        app.handle_key(key_char('k')).unwrap();
+    }
+    assert!(app.selected_host_index().is_none(), "on a header");
+
+    // Collapse with Space: the host row disappears from navigation.
+    let before = app.nav_rows.len();
+    app.handle_key(key_char(' ')).unwrap();
+    assert!(app.nav_rows.len() < before, "host hidden after collapse");
+    assert!(
+        app.group_sections.iter().any(|s| s.label == "servers" && s.collapsed),
+        "section marked collapsed"
+    );
+
+    // Persisted to launcher.db ui_state.
+    let raw = app
+        .store()
+        .get_ui_state("collapsed_groups")
+        .unwrap()
+        .expect("persisted");
+    assert!(raw.contains(&app.groups[0].id.to_string()));
+
+    // A fresh app over the same DB restores the collapsed state.
+    let app2 = app_with_grouped_host(file.path());
+    assert!(
+        app2.group_sections.iter().any(|s| s.label == "servers" && s.collapsed),
+        "collapse restored on reload"
+    );
+
+    // Expanding with Enter on the header brings the host back.
+    let mut app = app;
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert!(
+        app.group_sections.iter().all(|s| !s.collapsed),
+        "expanded again"
+    );
+}

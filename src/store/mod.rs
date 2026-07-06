@@ -79,6 +79,32 @@ impl LauncherStore {
             .map_err(|_| anyhow::anyhow!("launcher store connection poisoned"))?;
         f(&conn)
     }
+
+    /// Read a UI-state value by key (see [`Self::set_ui_state`]).
+    pub fn get_ui_state(&self, key: &str) -> Result<Option<String>> {
+        use rusqlite::OptionalExtension;
+        self.with_conn(|conn| {
+            conn.query_row(
+                "SELECT value FROM ui_state WHERE key = ?1",
+                rusqlite::params![key],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(Into::into)
+        })
+    }
+
+    /// Persist a small UI-state value (e.g. collapsed-group set as JSON).
+    pub fn set_ui_state(&self, key: &str, value: &str) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO ui_state (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                rusqlite::params![key, value],
+            )?;
+            Ok(())
+        })
+    }
 }
 
 #[cfg(test)]
