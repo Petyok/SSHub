@@ -47,16 +47,92 @@ impl Default for AppearanceConfig {
 pub struct KeybindsConfig {
     #[serde(default = "default_save_keys")]
     pub save: Vec<String>,
+    #[serde(default = "default_quit_keys")]
+    pub quit: Vec<String>,
+    #[serde(default = "default_help_keys")]
+    pub help: Vec<String>,
+    #[serde(default = "default_search_keys")]
+    pub search: Vec<String>,
 }
 
 fn default_save_keys() -> Vec<String> {
     vec!["F2".to_string(), "Ctrl+S".to_string()]
+}
+fn default_quit_keys() -> Vec<String> {
+    vec!["q".to_string()]
+}
+fn default_help_keys() -> Vec<String> {
+    vec!["?".to_string(), "Shift+H".to_string()]
+}
+fn default_search_keys() -> Vec<String> {
+    vec!["/".to_string()]
 }
 
 impl Default for KeybindsConfig {
     fn default() -> Self {
         Self {
             save: default_save_keys(),
+            quit: default_quit_keys(),
+            help: default_help_keys(),
+            search: default_search_keys(),
+        }
+    }
+}
+
+impl KeybindsConfig {
+    /// Restore one action's bindings to its built-in default.
+    pub fn reset_action(&mut self, action: KeyAction) {
+        match action {
+            KeyAction::Save => self.save = default_save_keys(),
+            KeyAction::Quit => self.quit = default_quit_keys(),
+            KeyAction::Help => self.help = default_help_keys(),
+            KeyAction::Search => self.search = default_search_keys(),
+        }
+    }
+
+    pub fn binds(&self, action: KeyAction) -> &[String] {
+        match action {
+            KeyAction::Save => &self.save,
+            KeyAction::Quit => &self.quit,
+            KeyAction::Help => &self.help,
+            KeyAction::Search => &self.search,
+        }
+    }
+
+    pub fn set(&mut self, action: KeyAction, binds: Vec<String>) {
+        match action {
+            KeyAction::Save => self.save = binds,
+            KeyAction::Quit => self.quit = binds,
+            KeyAction::Help => self.help = binds,
+            KeyAction::Search => self.search = binds,
+        }
+    }
+}
+
+/// An action whose keybinding is user-configurable and editable in the UI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyAction {
+    Save,
+    Quit,
+    Help,
+    Search,
+}
+
+impl KeyAction {
+    /// All editable actions, in display order.
+    pub const ALL: [KeyAction; 4] = [
+        KeyAction::Save,
+        KeyAction::Quit,
+        KeyAction::Help,
+        KeyAction::Search,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            KeyAction::Save => "Save form",
+            KeyAction::Quit => "Quit",
+            KeyAction::Help => "Help",
+            KeyAction::Search => "Search / palette",
         }
     }
 }
@@ -113,6 +189,21 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
 
     let content = fs::read_to_string(&path)?;
     parse_config_str(&content)
+}
+
+/// Serialize and atomically write `config` back to `config.toml`.
+pub fn save_config(config: &AppConfig) -> anyhow::Result<()> {
+    let path = config_file_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+        crate::secure_fs::restrict_dir(parent);
+    }
+    let toml = toml::to_string_pretty(config)
+        .map_err(|e| anyhow::anyhow!("failed to serialize config: {e}"))?;
+    let tmp = path.with_extension("toml.tmp");
+    fs::write(&tmp, toml)?;
+    fs::rename(&tmp, &path)?;
+    Ok(())
 }
 
 /// Config directory (`~/.config/sshub` or `SSHUB_CONFIG_DIR`).

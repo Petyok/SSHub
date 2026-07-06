@@ -114,6 +114,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         }
         AppMode::ConfirmDelete => render_confirm_delete_popup(frame, app),
         AppMode::Help => render_help_popup(frame),
+        AppMode::KeybindEditor => screens::keybind_editor::render_keybind_editor(frame, app),
         AppMode::ImportPrompt => render_import_prompt_popup(frame, app),
         _ => {}
     }

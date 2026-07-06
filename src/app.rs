@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
-use crate::config::{self, AppConfig};
+use crate::config::{self, AppConfig, KeyAction};
 use crate::launcher::{self, TerminalLauncher};
 use crate::metadata::{MetadataDb, MetadataStore};
 use crate::search::HostSearch;
@@ -120,6 +120,8 @@ pub enum AppMode {
     GroupManage,
     /// Dropdown over the host form's Group/Identity field.
     FieldPicker,
+    /// Keybinding editor overlay.
+    KeybindEditor,
     TunnelForm,
     ConfirmDelete,
     ConfirmDiscard,
@@ -560,6 +562,15 @@ fn managed_to_ssh_host(m: &ManagedHost) -> SshHost {
     host
 }
 
+/// State of the keybinding editor overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeybindEditor {
+    /// Index into [`KeyAction::ALL`].
+    pub selected: usize,
+    /// When true, the next key press is captured as the new binding.
+    pub capturing: bool,
+}
+
 /// Which host-form field the dropdown is editing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PickerKind {
@@ -822,6 +833,8 @@ pub struct App {
     pub nav_rows: Vec<NavRow>,
     /// Group keys ([`HostGroupSection::key`]) that are currently collapsed.
     pub collapsed_groups: std::collections::HashSet<i64>,
+    /// Keybind editor state: `(selected action row, capturing next key)`.
+    pub keybind_editor: Option<KeybindEditor>,
     pub active_tab: usize,
     pub palette_query: String,
     pub palette_selected: usize,
@@ -931,6 +944,7 @@ impl App {
             group_sections: Vec::new(),
             nav_rows: Vec::new(),
             collapsed_groups: std::collections::HashSet::new(),
+            keybind_editor: None,
             active_tab: 0,
             palette_query: String::new(),
             palette_selected: 0,
@@ -1370,7 +1384,21 @@ impl App {
             return Ok(());
         }
 
+        // Ctrl+K opens the keybinding editor from any normal navigation screen.
+        if self.mode == AppMode::Normal
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('k') | KeyCode::Char('K'))
+        {
+            self.keybind_editor = Some(KeybindEditor {
+                selected: 0,
+                capturing: false,
+            });
+            self.mode = AppMode::KeybindEditor;
+            return Ok(());
+        }
+
         match self.mode {
+            AppMode::KeybindEditor => self.handle_key_keybind_editor(key),
             AppMode::Help => self.handle_key_help(key),
             AppMode::ConfirmDiscard => self.handle_key_confirm_discard(key),
             AppMode::ConfirmDelete => self.handle_key_confirm_delete(key),
@@ -1762,7 +1790,7 @@ impl App {
         self.host_notice = None;
 
         match key.code {
-            KeyCode::Char('q') if key.modifiers.is_empty() => {
+            _ if self.is_action(KeyAction::Quit, &key) => {
                 self.should_quit = true;
             }
             KeyCode::Up if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1810,10 +1838,6 @@ impl App {
             KeyCode::Enter => self.connect_selected()?,
             KeyCode::Char('a') if key.modifiers.is_empty() => self.enter_host_form(None, false)?,
             KeyCode::Char('d') if key.modifiers.is_empty() => self.delete_selected_host()?,
-            KeyCode::Char('H') if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                self.pre_help_mode = Some(self.mode);
-                self.mode = AppMode::Help;
-            }
             KeyCode::Char('D') if key.modifiers.contains(KeyModifiers::SHIFT) => {
                 self.duplicate_selected_host()?
             }
@@ -1852,13 +1876,13 @@ impl App {
             KeyCode::Char('e') if key.modifiers.is_empty() => self.edit_selected_host()?,
             KeyCode::Char('f') if key.modifiers.is_empty() => self.toggle_favorite()?,
             KeyCode::Tab => self.detail_focus = !self.detail_focus,
-            KeyCode::Char('/') if key.modifiers.is_empty() => {
+            _ if self.is_action(KeyAction::Search, &key) => {
                 self.palette_query.clear();
                 self.palette_selected = 0;
                 self.palette_results = (0..self.hosts.len()).collect();
                 self.mode = AppMode::Palette;
             }
-            KeyCode::Char('?') if key.modifiers.is_empty() => {
+            _ if self.is_action(KeyAction::Help, &key) => {
                 self.pre_help_mode = Some(self.mode);
                 self.mode = AppMode::Help;
             }
@@ -2063,7 +2087,7 @@ impl App {
         self.identity_notice = None;
 
         match key.code {
-            KeyCode::Char('q') if key.modifiers.is_empty() => {
+            _ if self.is_action(KeyAction::Quit, &key) => {
                 self.should_quit = true;
             }
             KeyCode::Char('h') if key.modifiers.is_empty() => {
@@ -2088,11 +2112,7 @@ impl App {
             KeyCode::Char('d') if key.modifiers.is_empty() => self.delete_selected_identity()?,
             KeyCode::Char('r') if key.modifiers.is_empty() => self.remove_selected_from_agent()?,
             KeyCode::Char('p') if key.modifiers.is_empty() => self.add_selected_to_agent()?,
-            KeyCode::Char('H') if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                self.pre_help_mode = Some(self.mode);
-                self.mode = AppMode::Help;
-            }
-            KeyCode::Char('?') if key.modifiers.is_empty() => {
+            _ if self.is_action(KeyAction::Help, &key) => {
                 self.pre_help_mode = Some(self.mode);
                 self.mode = AppMode::Help;
             }
@@ -2103,7 +2123,7 @@ impl App {
 
     fn handle_key_audit(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
-            KeyCode::Char('q') if key.modifiers.is_empty() => {
+            _ if self.is_action(KeyAction::Quit, &key) => {
                 self.should_quit = true;
             }
             KeyCode::Char('j') | KeyCode::Down => {
@@ -2133,7 +2153,7 @@ impl App {
                 self.refresh_audit_events();
             }
             KeyCode::Char('h') if key.modifiers.is_empty() => self.active_tab = 0,
-            KeyCode::Char('?') if key.modifiers.is_empty() => {
+            _ if self.is_action(KeyAction::Help, &key) => {
                 self.pre_help_mode = Some(self.mode);
                 self.mode = AppMode::Help;
             }
@@ -2251,7 +2271,7 @@ impl App {
         self.tunnel_notice = None;
 
         match key.code {
-            KeyCode::Char('q') if key.modifiers.is_empty() => self.should_quit = true,
+            _ if self.is_action(KeyAction::Quit, &key) => self.should_quit = true,
             KeyCode::Char('j') | KeyCode::Down => {
                 if !self.tunnels.is_empty() {
                     self.tunnel_selected = (self.tunnel_selected + 1).min(self.tunnels.len() - 1);
@@ -2317,7 +2337,7 @@ impl App {
                 self.refresh_audit_events();
             }
             KeyCode::Char('h') if key.modifiers.is_empty() => self.active_tab = 0,
-            KeyCode::Char('?') if key.modifiers.is_empty() => {
+            _ if self.is_action(KeyAction::Help, &key) => {
                 self.pre_help_mode = Some(self.mode);
                 self.mode = AppMode::Help;
             }
@@ -2626,7 +2646,7 @@ impl App {
         self.group_notice = None;
 
         match key.code {
-            KeyCode::Char('q') if key.modifiers.is_empty() => {
+            _ if self.is_action(KeyAction::Quit, &key) => {
                 self.should_quit = true;
             }
             KeyCode::Esc | KeyCode::Char('h') if key.modifiers.is_empty() => {
@@ -4275,6 +4295,71 @@ impl App {
         self.selected = ((next % len + len) % len) as usize;
     }
 
+    fn handle_key_keybind_editor(&mut self, key: KeyEvent) -> Result<()> {
+        let Some(editor) = self.keybind_editor else {
+            self.mode = AppMode::Normal;
+            return Ok(());
+        };
+
+        if editor.capturing {
+            match key.code {
+                KeyCode::Esc => {
+                    if let Some(e) = self.keybind_editor.as_mut() {
+                        e.capturing = false;
+                    }
+                }
+                _ => {
+                    if let Some(spec) = keyevent_to_spec(&key) {
+                        let action = KeyAction::ALL[editor.selected];
+                        self.config.keybinds.set(action, vec![spec]);
+                        self.save_config_quietly();
+                    }
+                    if let Some(e) = self.keybind_editor.as_mut() {
+                        e.capturing = false;
+                    }
+                }
+            }
+            return Ok(());
+        }
+
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.keybind_editor = None;
+                self.mode = AppMode::Normal;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                if let Some(e) = self.keybind_editor.as_mut() {
+                    e.selected = (e.selected + 1) % KeyAction::ALL.len();
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if let Some(e) = self.keybind_editor.as_mut() {
+                    e.selected =
+                        (e.selected + KeyAction::ALL.len() - 1) % KeyAction::ALL.len();
+                }
+            }
+            KeyCode::Enter | KeyCode::Char('c') => {
+                if let Some(e) = self.keybind_editor.as_mut() {
+                    e.capturing = true;
+                }
+            }
+            KeyCode::Char('r') => {
+                let action = KeyAction::ALL[editor.selected];
+                self.config.keybinds.reset_action(action);
+                self.save_config_quietly();
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Persist config, surfacing failures as a non-fatal host notice.
+    fn save_config_quietly(&mut self) {
+        if let Err(e) = crate::config::save_config(&self.config) {
+            self.host_notice = Some(format!("Could not save config: {e}"));
+        }
+    }
+
     /// Short human label of the configured save keys, e.g. `"F2/Ctrl+S"`,
     /// for form hints.
     pub fn save_key_label(&self) -> String {
@@ -4286,15 +4371,19 @@ impl App {
         }
     }
 
-    /// Whether `key` matches one of the user-configured "save" bindings
-    /// (`config.keybinds.save`, default F2 / Ctrl+S).
-    pub fn is_save_key(&self, key: &KeyEvent) -> bool {
+    /// Whether `key` matches one of the user-configured bindings for `action`.
+    pub fn is_action(&self, action: KeyAction, key: &KeyEvent) -> bool {
         self.config
             .keybinds
-            .save
+            .binds(action)
             .iter()
             .filter_map(|spec| parse_keyspec(spec))
             .any(|(code, mods)| keyspec_matches(code, mods, key))
+    }
+
+    /// Whether `key` matches the configured "save" binding (default F2/Ctrl+S).
+    pub fn is_save_key(&self, key: &KeyEvent) -> bool {
+        self.is_action(KeyAction::Save, key)
     }
 
     /// The section index if the current selection is a group header.
@@ -4798,6 +4887,36 @@ fn parse_keyspec(spec: &str) -> Option<(KeyCode, KeyModifiers)> {
     Some((code, mods))
 }
 
+/// Serialize an incoming key event into a spec string (inverse of
+/// [`parse_keyspec`]) for capturing a binding in the UI. Returns `None` for
+/// keys that can't be a binding (bare modifiers, unsupported codes).
+fn keyevent_to_spec(key: &KeyEvent) -> Option<String> {
+    let base = match key.code {
+        KeyCode::Enter => "Enter".to_string(),
+        KeyCode::Tab => "Tab".to_string(),
+        KeyCode::Char(' ') => "Space".to_string(),
+        KeyCode::Esc => "Esc".to_string(),
+        KeyCode::F(n) => format!("F{n}"),
+        KeyCode::Char(c) => c.to_ascii_uppercase().to_string(),
+        _ => return None,
+    };
+    let mut out = String::new();
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        out.push_str("Ctrl+");
+    }
+    if key.modifiers.contains(KeyModifiers::ALT) {
+        out.push_str("Alt+");
+    }
+    // Shift is only meaningful for keys that aren't already shifted into a
+    // distinct char (e.g. Shift+H stays "Shift+H"; '?' has no Shift prefix).
+    if key.modifiers.contains(KeyModifiers::SHIFT) && !matches!(key.code, KeyCode::Char(c) if !c.is_ascii_alphabetic())
+    {
+        out.push_str("Shift+");
+    }
+    out.push_str(&base);
+    Some(out)
+}
+
 /// Match a parsed spec against an incoming event, comparing char keys
 /// case-insensitively (so `Ctrl+S` matches whatever case crossterm reports).
 fn keyspec_matches(code: KeyCode, mods: KeyModifiers, key: &KeyEvent) -> bool {
@@ -4932,6 +5051,50 @@ mod tests {
         let mut h = SshHost::new(name);
         h.hostname = Some(format!("{name}.example.com"));
         h
+    }
+
+    #[test]
+    fn keyevent_to_spec_roundtrips() {
+        let f2 = KeyEvent::new(KeyCode::F(2), KeyModifiers::empty());
+        assert_eq!(keyevent_to_spec(&f2).as_deref(), Some("F2"));
+        let ctrl_s = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
+        assert_eq!(keyevent_to_spec(&ctrl_s).as_deref(), Some("Ctrl+S"));
+        // Round-trips through parse_keyspec back to a matching event.
+        let spec = keyevent_to_spec(&ctrl_s).unwrap();
+        let (code, mods) = parse_keyspec(&spec).unwrap();
+        assert!(keyspec_matches(code, mods, &ctrl_s));
+    }
+
+    #[test]
+    fn keybind_editor_captures_and_persists() {
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("SSHUB_CONFIG_DIR", dir.path());
+
+        let mut app = test_app(vec![("web", host("web"))]);
+        // Open the editor (Ctrl+K).
+        app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL))
+            .unwrap();
+        assert_eq!(app.mode, AppMode::KeybindEditor);
+
+        // Row 0 is "Save". Enter starts capture; press F10 to bind it.
+        app.handle_key(key(KeyCode::Enter)).unwrap();
+        assert!(app.keybind_editor.unwrap().capturing);
+        app.handle_key(key(KeyCode::F(10))).unwrap();
+        assert!(!app.keybind_editor.unwrap().capturing);
+
+        assert_eq!(app.config.keybinds.save, vec!["F10".to_string()]);
+        assert!(app.is_save_key(&key(KeyCode::F(10))));
+        assert!(!app.is_save_key(&key(KeyCode::F(2))));
+
+        // Persisted to config.toml under the temp dir.
+        let saved = crate::config::load_config().unwrap();
+        assert_eq!(saved.keybinds.save, vec!["F10".to_string()]);
+
+        // 'r' resets the selected action to defaults.
+        app.handle_key(key_char('r')).unwrap();
+        assert_eq!(app.config.keybinds.save, vec!["F2", "Ctrl+S"]);
+
+        std::env::remove_var("SSHUB_CONFIG_DIR");
     }
 
     #[test]

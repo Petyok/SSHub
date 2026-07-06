@@ -3,6 +3,7 @@ pub mod field_picker;
 pub mod group_form;
 pub mod group_manage;
 pub mod help;
+pub mod keybind_editor;
 pub mod host_form;
 pub mod hosts;
 pub mod keychain;
