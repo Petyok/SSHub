@@ -1,10 +1,8 @@
 //! Fullscreen session view: 1-row header, body, 1-row footer.
 //!
-//! The body is either the scripted ConnectScreen animation (when
-//! `phase = Connecting`) or the live PTY grid via `tui_term`. Header / footer
-//! match the design tokens in `src/tui/theme.rs`.
-
-use std::time::Instant;
+//! The body is the live PTY grid via `tui_term` — including while connecting,
+//! so the real ssh handshake (`ssh -v`) is shown verbatim with nothing
+//! fabricated. Header / footer match the design tokens in `src/tui/theme.rs`.
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
@@ -15,7 +13,7 @@ use ratatui::Frame;
 use tui_term::widget::PseudoTerminal;
 
 use crate::app::App;
-use crate::session::{connect, Session, SessionMeta, SessionPhase};
+use crate::session::{Session, SessionMeta, SessionPhase};
 use crate::tui::theme;
 
 pub fn render(frame: &mut Frame, app: &App) {
@@ -62,9 +60,12 @@ fn render_header(frame: &mut Frame, area: Rect, session: &Session, app: &App) {
     } else {
         // Single-tab header — full connection detail.
         let (status_label, status_style) = match &session.phase {
-            SessionPhase::Connecting { .. } => ("● connecting", theme::amber()),
-            SessionPhase::Running { .. } => ("● connected", theme::green()),
             SessionPhase::Exited { .. } => ("● exited", theme::red()),
+            // Only claim "connected" once ssh has genuinely reached the remote.
+            // The connect screen may be shown live before that (or revealed by
+            // the timeout fail-open), in which case we're still "connecting".
+            _ if session.is_connected() => ("● connected", theme::green()),
+            _ => ("● connecting", theme::amber()),
         };
         spans.push(Span::styled(status_label, status_style));
         spans.push(Span::raw("  "));
@@ -156,29 +157,12 @@ fn tunnel_summary(app: &App, meta: &SessionMeta) -> Option<String> {
 // ── Body ─────────────────────────────────────────────────────
 
 fn render_body(frame: &mut Frame, area: Rect, session: &Session) {
-    match &session.phase {
-        SessionPhase::Connecting { started_at } => {
-            render_connect_animation(frame, area, session, *started_at)
-        }
-        SessionPhase::Running { .. } | SessionPhase::Exited { .. } => {
-            let term = PseudoTerminal::new(session.parser.screen());
-            frame.render_widget(term, area);
-        }
-    }
-}
-
-fn render_connect_animation(frame: &mut Frame, area: Rect, session: &Session, started_at: Instant) {
-    let elapsed = started_at.elapsed();
-    let mut lines = connect::visible_lines(session, elapsed);
-    if lines.is_empty() {
-        return;
-    }
-    // Indent each line by 2 columns so the body has breathing room (matches
-    // overlays.jsx::ConnectScreen).
-    for line in lines.iter_mut() {
-        line.spans.insert(0, Span::raw("  "));
-    }
-    frame.render_widget(Paragraph::new(lines), area);
+    // Always render the live PTY grid — including while connecting. ssh runs
+    // with `-v`, so its real handshake (Connecting to…, Authenticated to…,
+    // and any error) streams here verbatim. No scripted animation, nothing
+    // fabricated: the user sees exactly what ssh is doing.
+    let term = PseudoTerminal::new(session.parser.screen());
+    frame.render_widget(term, area);
 }
 
 // ── Footer ───────────────────────────────────────────────────
@@ -213,15 +197,23 @@ fn render_footer(frame: &mut Frame, area: Rect, session: &Session) {
     let mute = Style::default().fg(theme::MUTE);
     let bullet = Span::styled(" · ", mute);
 
+    // Real host:port from the session meta — no fabricated cipher/keepalive.
+    let target = {
+        let host = session
+            .meta
+            .address
+            .clone()
+            .unwrap_or_else(|| session.display_name.clone());
+        match session.meta.port {
+            Some(p) => format!("{host}:{p}"),
+            None => host,
+        }
+    };
     let mut spans = vec![
         Span::raw(" "),
         Span::styled(elapsed_str, mute),
         bullet.clone(),
-        Span::styled("keepalive 30s", mute),
-        bullet.clone(),
-        Span::styled("cipher chacha20-poly1305", mute),
-        bullet,
-        Span::styled("compression off", mute),
+        Span::styled(target, mute),
     ];
 
     // When scrolled back, hint at how to return to live output. Otherwise

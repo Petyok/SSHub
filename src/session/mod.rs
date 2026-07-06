@@ -5,7 +5,6 @@
 //! and renders the terminal grid fullscreen inside the existing ratatui app.
 
 pub mod askpass;
-pub mod connect;
 pub mod keys;
 pub mod parser;
 pub mod pty;
@@ -114,6 +113,11 @@ pub struct Session {
     _askpass: Option<askpass::AskpassSecret>,
     /// Whether the askpass path is active (auth handled invisibly).
     use_askpass: bool,
+    /// True once we've seen real bytes from ssh (i.e. the remote actually
+    /// responded). Distinguishes a genuine connection from the timeout
+    /// fail-open reveal, so the header never claims "connected" while ssh is
+    /// still stuck on the TCP connect.
+    connected: bool,
 }
 
 impl Session {
@@ -168,6 +172,7 @@ impl Session {
             diagnostics,
             _askpass: askpass,
             use_askpass,
+            connected: false,
             config,
         })
     }
@@ -200,6 +205,7 @@ impl Session {
         }
         if had_bytes {
             self.maybe_send_pending_secret();
+            self.maybe_detect_connected();
             self.maybe_reveal();
         }
         // Safety net: reveal after the timeout even with no output at all, so a
@@ -251,10 +257,30 @@ impl Session {
         }
     }
 
+    /// Whether ssh has genuinely reached the remote (real bytes seen), as
+    /// opposed to the connect screen being revealed by the timeout fail-open.
+    pub fn is_connected(&self) -> bool {
+        self.connected
+    }
+
     /// Whether the current screen is asking to accept an unknown host key.
     fn awaiting_host_verification(&self) -> bool {
         let tail = current_screen_tail(self.parser.screen()).to_ascii_lowercase();
         HOST_VERIFY_NEEDLES.iter().any(|n| tail.contains(n))
+    }
+
+    /// Latch `connected` once ssh's `-v` output shows the real auth-success
+    /// marker. This is the only honest "connected" signal — the mere arrival
+    /// of bytes doesn't count, since `-v` prints local debug lines before the
+    /// TCP connect even completes.
+    fn maybe_detect_connected(&mut self) {
+        if self.connected {
+            return;
+        }
+        let text = full_screen_text(self.parser.screen()).to_ascii_lowercase();
+        if CONNECTED_NEEDLES.iter().any(|n| text.contains(n)) {
+            self.connected = true;
+        }
     }
 
     /// If the live screen ends with a prompt that matches our stored secret
@@ -369,6 +395,28 @@ const HOST_VERIFY_NEEDLES: &[&str] = &[
     "continue connecting",
     "key fingerprint is",
 ];
+
+/// Real markers ssh (`-v`) prints once it has genuinely authenticated to the
+/// remote. Seeing any of these is the only honest "connected" signal. Lower
+/// case only.
+const CONNECTED_NEEDLES: &[&str] = &["authenticated to ", "authenticated ("];
+
+/// Whole visible screen flattened to one lowercase-friendly string.
+fn full_screen_text(screen: &vt100::Screen) -> String {
+    let (rows, cols) = screen.size();
+    let mut out = String::new();
+    for row in 0..rows {
+        for col in 0..cols {
+            if let Some(cell) = screen.cell(row, col) {
+                if cell.has_contents() {
+                    out.push_str(&cell.contents());
+                }
+            }
+        }
+        out.push('\n');
+    }
+    out
+}
 
 /// Substring match across the screen tail. Tolerant to position so prompts
 /// like "deploy@host's password:" or a prompt followed by a trailing space

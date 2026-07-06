@@ -1253,9 +1253,15 @@ impl App {
         // the askpass helper to confirm the fingerprint, get the password back
         // instead of "yes", and deadlock. Changed keys are still refused.
         let mut ssh_argv = ssh_argv_for_entry(&entry);
-        if pending_secret.is_some() && ssh_argv.first().map(String::as_str) == Some("ssh") {
-            ssh_argv.insert(1, "-o".into());
-            ssh_argv.insert(2, "StrictHostKeyChecking=accept-new".into());
+        if ssh_argv.first().map(String::as_str) == Some("ssh") {
+            // `-v` streams ssh's real handshake into the session terminal, so
+            // the connect screen shows the genuine process instead of a
+            // scripted animation.
+            ssh_argv.insert(1, "-v".into());
+            if pending_secret.is_some() {
+                ssh_argv.insert(1, "-o".into());
+                ssh_argv.insert(2, "StrictHostKeyChecking=accept-new".into());
+            }
         }
 
         // Surface the credential decision so it's visible in the SSH log
