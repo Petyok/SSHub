@@ -1247,11 +1247,16 @@ impl App {
         let (pending_secret, credential_diag): (Option<crate::session::PendingSecret>, String) =
             resolve_pending_secret(&entry, self.password_store.as_ref());
 
-        // Build ssh argv. We no longer prepend an `env SSH_ASKPASS=…` shim:
-        // because the session now owns the PTY, we read prompts from the
-        // terminal output and type the secret directly — no temp file, no
-        // dependence on the OpenSSH version honouring SSH_ASKPASS_REQUIRE.
-        let ssh_argv = ssh_argv_for_entry(&entry);
+        // Build ssh argv. The session hands a stored secret to ssh via
+        // SSH_ASKPASS. When a secret is present, auto-accept a genuinely new
+        // host key: otherwise ssh (with SSH_ASKPASS_REQUIRE=force) would ask
+        // the askpass helper to confirm the fingerprint, get the password back
+        // instead of "yes", and deadlock. Changed keys are still refused.
+        let mut ssh_argv = ssh_argv_for_entry(&entry);
+        if pending_secret.is_some() && ssh_argv.first().map(String::as_str) == Some("ssh") {
+            ssh_argv.insert(1, "-o".into());
+            ssh_argv.insert(2, "StrictHostKeyChecking=accept-new".into());
+        }
 
         // Surface the credential decision so it's visible in the SSH log
         // panel after the session ends.

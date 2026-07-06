@@ -144,6 +144,16 @@ impl Session {
 
         let display_argv = config.argv.clone();
 
+        // Transparent auth log: say exactly how the stored secret is delivered.
+        let mut diagnostics = Vec::new();
+        if config.pending_secret.is_some() {
+            diagnostics.push(if use_askpass {
+                "auth: credential handed to ssh via SSH_ASKPASS".to_string()
+            } else {
+                "auth: SSH_ASKPASS unavailable — will type at the prompt".to_string()
+            });
+        }
+
         Ok(Self {
             display_name: config.display_name.clone(),
             meta: config.meta.clone(),
@@ -155,7 +165,7 @@ impl Session {
             display_argv,
             pending_secret: config.pending_secret.clone(),
             secret_sent: false,
-            diagnostics: Vec::new(),
+            diagnostics,
             _askpass: askpass,
             use_askpass,
             config,
@@ -180,6 +190,7 @@ impl Session {
                     had_bytes = true;
                 }
                 PtyEvent::Exited(status) => {
+                    self.diagnostics.push(format!("session: ssh exited ({status})"));
                     self.phase = SessionPhase::Exited {
                         status,
                         at: Instant::now(),
@@ -190,6 +201,23 @@ impl Session {
         if had_bytes {
             self.maybe_send_pending_secret();
             self.maybe_reveal();
+        }
+        // Safety net: reveal after the timeout even with no output at all, so a
+        // session blocked on auth never hangs the connect screen forever.
+        self.reveal_on_timeout();
+    }
+
+    /// Reveal the live terminal once the connect timeout elapses, regardless of
+    /// whether any bytes arrived.
+    fn reveal_on_timeout(&mut self) {
+        if let SessionPhase::Connecting { started_at } = self.phase {
+            if started_at.elapsed() >= REVEAL_TIMEOUT {
+                self.diagnostics
+                    .push("auth: connect timed out — showing live terminal".into());
+                self.phase = SessionPhase::Running {
+                    started_at: Instant::now(),
+                };
+            }
         }
     }
 
@@ -208,9 +236,15 @@ impl Session {
         // A host-key verification prompt needs a yes/no from the user right
         // now — reveal immediately even for an armed session, or the connect
         // silently stalls behind the animation.
+        let elapsed = started_at.elapsed();
         if self.awaiting_host_verification()
-            || should_reveal(self.was_armed(), self.secret_sent, started_at.elapsed())
+            || should_reveal(self.was_armed(), self.secret_sent, elapsed)
         {
+            if self.was_armed() && !self.secret_sent && elapsed >= REVEAL_TIMEOUT {
+                self.diagnostics.push(
+                    "auth: no matching prompt within timeout — showing live terminal".into(),
+                );
+            }
             self.phase = SessionPhase::Running {
                 started_at: Instant::now(),
             };
@@ -227,7 +261,9 @@ impl Session {
     /// kind, type it now. Fires at most once per session so a wrong password
     /// doesn't loop the connect.
     fn maybe_send_pending_secret(&mut self) {
-        if self.secret_sent || self.pending_secret.is_none() {
+        // When askpass is active, ssh gets the secret itself — never type into
+        // the PTY. This is only a fallback for when askpass couldn't be staged.
+        if self.use_askpass || self.secret_sent || self.pending_secret.is_none() {
             return;
         }
         let secret = self.pending_secret.as_ref().unwrap().clone();
