@@ -33,7 +33,7 @@ pub struct PtyRuntime {
 }
 
 impl PtyRuntime {
-    pub fn spawn(argv: &[String], rows: u16, cols: u16) -> Result<Self> {
+    pub fn spawn(argv: &[String], rows: u16, cols: u16, env: &[(String, String)]) -> Result<Self> {
         let program = argv.first().ok_or_else(|| anyhow!("empty argv"))?.clone();
 
         let mut cmd = CommandBuilder::new(&program);
@@ -42,6 +42,9 @@ impl PtyRuntime {
         }
         if let Ok(cwd) = std::env::current_dir() {
             cmd.cwd(cwd);
+        }
+        for (k, v) in env {
+            cmd.env(k, v);
         }
         // Override TERM. Our vt100 emulator is xterm-compatible; advertising
         // `xterm-kitty` (often inherited from the user's host kitty session)

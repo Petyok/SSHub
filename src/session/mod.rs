@@ -4,6 +4,7 @@
 //! sshub spawns ssh on a pseudo-TTY, parses output through a VT100 emulator,
 //! and renders the terminal grid fullscreen inside the existing ratatui app.
 
+pub mod askpass;
 pub mod connect;
 pub mod keys;
 pub mod parser;
@@ -104,10 +105,15 @@ pub struct Session {
     /// Tracks whether we've already typed a secret this session. Used to
     /// avoid spamming the remote with the same wrong password on retry.
     secret_sent: bool,
-    /// Diagnostic strings produced during the session lifetime (e.g. "auth:
-    /// matched password prompt, typed N chars"). Drained by the main loop
-    /// into `app.ssh_log` so the user can see exactly what we did.
+    /// Diagnostic strings produced during the session lifetime. Drained by the
+    /// main loop into `app.ssh_log`.
     diagnostics: Vec<String>,
+    /// Secret staged for `SSH_ASKPASS`; kept alive so its temp file is removed
+    /// when the session ends. `Some` means ssh answers auth prompts silently
+    /// via the helper (no visible prompt, no typing into the PTY).
+    _askpass: Option<askpass::AskpassSecret>,
+    /// Whether the askpass path is active (auth handled invisibly).
+    use_askpass: bool,
 }
 
 impl Session {
@@ -117,7 +123,23 @@ impl Session {
         let pty_rows = rows.saturating_sub(2).max(1);
         let pty_cols = cols.max(1);
 
-        let runtime = PtyRuntime::spawn(&config.argv, pty_rows, pty_cols)?;
+        // Prefer handing the secret to ssh via SSH_ASKPASS so the passphrase/
+        // password prompt never shows on screen. Falls back to typing into the
+        // PTY (below) if we can't stage it or ssh is too old to honour it.
+        let mut env: Vec<(String, String)> = Vec::new();
+        let mut askpass = None;
+        let mut use_askpass = false;
+        if let Some(secret) = config.pending_secret.as_ref() {
+            if let Ok(exe) = std::env::current_exe() {
+                if let Ok(guard) = askpass::AskpassSecret::new(secret.value()) {
+                    env = guard.env(&exe);
+                    askpass = Some(guard);
+                    use_askpass = true;
+                }
+            }
+        }
+
+        let runtime = PtyRuntime::spawn(&config.argv, pty_rows, pty_cols, &env)?;
         let parser = ParserState::new(pty_rows, pty_cols);
 
         let display_argv = config.argv.clone();
@@ -134,6 +156,8 @@ impl Session {
             pending_secret: config.pending_secret.clone(),
             secret_sent: false,
             diagnostics: Vec::new(),
+            _askpass: askpass,
+            use_askpass,
             config,
         })
     }
@@ -223,18 +247,15 @@ impl Session {
 
         let mut bytes = secret.value().as_bytes().to_vec();
         bytes.push(b'\r');
-        let written = bytes.len();
         match self.runtime.write(&bytes) {
             Ok(()) => {
-                self.diagnostics.push(format!(
-                    "auth: matched {kind} prompt, typed {} bytes + CR",
-                    written - 1
-                ));
+                // Don't log the byte count — it leaks the secret's length.
+                self.diagnostics
+                    .push(format!("auth: provided stored {kind}"));
             }
             Err(e) => {
-                self.diagnostics.push(format!(
-                    "auth: matched {kind} prompt but write failed: {e:#}"
-                ));
+                self.diagnostics
+                    .push(format!("auth: could not provide {kind}: {e:#}"));
             }
         }
         self.secret_sent = true;
@@ -245,7 +266,10 @@ impl Session {
     /// (the main loop) to decide whether to surface an "armed but never
     /// matched" diagnostic when the session ends.
     pub fn was_armed(&self) -> bool {
-        self.config.pending_secret.is_some()
+        // When askpass handles auth there is no on-screen prompt to hide, so
+        // the connect screen should reveal like an ordinary key-auth session
+        // (immediately) rather than waiting to type a secret.
+        self.config.pending_secret.is_some() && !self.use_askpass
     }
 
     /// Whether the auto-typer has fired.

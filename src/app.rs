@@ -446,7 +446,7 @@ pub fn resolve_pending_secret(
         return match password_store.get(&key) {
             Ok(Some(pw)) => (
                 Some(crate::session::PendingSecret::Password(pw)),
-                format!("auth: will auto-type host password on first prompt ({key})"),
+                format!("auth: using stored password ({key})"),
             ),
             Ok(None) => (
                 None,
@@ -467,7 +467,7 @@ pub fn resolve_pending_secret(
             return match password_store.get(&key) {
                 Ok(Some(pw)) => (
                     Some(crate::session::PendingSecret::Passphrase(pw)),
-                    format!("auth: will auto-type key passphrase on first prompt ({key})"),
+                    format!("auth: using stored passphrase ({key})"),
                 ),
                 Ok(None) => (
                     None,

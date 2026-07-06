@@ -4,6 +4,12 @@ use anyhow::Result;
 const CONFIRM_FLAG: &str = "--yes-i-am-stupid";
 
 fn main() -> Result<()> {
+    // If ssh re-executed us as its SSH_ASKPASS helper, emit the staged secret
+    // and exit before touching argv or the TUI.
+    if sshub::session::askpass::maybe_run_askpass() {
+        return Ok(());
+    }
+
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     if args.iter().any(|a| a == "--help" || a == "-h") {
