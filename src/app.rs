@@ -5160,6 +5160,13 @@ impl App {
         // moving past a grouped host visually "teleports" to the group at the
         // top of the list and back.
         self.group_sections = build_group_sections(&self.hosts, &self.groups, &filtered);
+        // While a filter is active, drop groups that have no matching hosts so
+        // the list only shows sections that actually contain results.
+        let filtering = self.tag_filter.is_some() || !self.search_query.is_empty();
+        if filtering {
+            self.group_sections
+                .retain(|section| !section.host_indices.is_empty());
+        }
         self.filtered_indices = self
             .group_sections
             .iter()

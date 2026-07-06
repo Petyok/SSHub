@@ -186,6 +186,76 @@ fn host_form_group_dropdown_creates_group_inline() {
 }
 
 #[test]
+fn tag_filter_hides_groups_with_no_matches() {
+    use sshub::store::{NewHost, NewHostGroup};
+
+    let file = NamedTempFile::new().unwrap();
+    let store = Arc::new(LauncherStore::open(file.path()).unwrap());
+
+    let prod = store
+        .create_group(&NewHostGroup {
+            name: "prod".into(),
+            sort_order: 0,
+            ..Default::default()
+        })
+        .unwrap();
+    let dev = store
+        .create_group(&NewHostGroup {
+            name: "dev".into(),
+            sort_order: 1,
+            ..Default::default()
+        })
+        .unwrap();
+
+    store
+        .create_host(&NewHost {
+            name: "web1".into(),
+            address: "10.0.0.1".into(),
+            port: 22,
+            group_id: Some(prod.id),
+            tags: vec!["eu".into()],
+            ..Default::default()
+        })
+        .unwrap();
+    store
+        .create_host(&NewHost {
+            name: "db1".into(),
+            address: "10.0.0.2".into(),
+            port: 22,
+            group_id: Some(dev.id),
+            tags: vec!["us".into()],
+            ..Default::default()
+        })
+        .unwrap();
+
+    let mut app = App::new_with_deps(
+        AppConfig::default(),
+        AppDeps {
+            resolver: Box::new(EmptyResolver),
+            metadata: Arc::new(MetadataDb::default()),
+            store,
+            launcher: Box::new(MockLauncher::new()),
+            password_store: Box::new(sshub::credentials::NoopPasswordStore),
+        },
+    );
+    app.reload_hosts().unwrap();
+
+    // No filter: both groups are visible.
+    let labels: Vec<&str> = app.group_sections.iter().map(|s| s.label.as_str()).collect();
+    assert!(labels.contains(&"prod") && labels.contains(&"dev"), "both groups shown, got {labels:?}");
+
+    // Filter by "eu": only "prod" contains a match, so "dev" is hidden.
+    app.handle_key(key_char('#')).unwrap();
+    type_text(&mut app, "eu");
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+
+    assert_eq!(app.tag_filter.as_deref(), Some("eu"));
+    let labels: Vec<&str> = app.group_sections.iter().map(|s| s.label.as_str()).collect();
+    assert!(labels.contains(&"prod"), "prod kept, got {labels:?}");
+    assert!(!labels.contains(&"dev"), "dev hidden, got {labels:?}");
+}
+
+#[test]
 fn rename_and_delete_group_via_shortcuts() {
     let file = NamedTempFile::new().unwrap();
     let mut app = app_with_store(file.path());
