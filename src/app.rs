@@ -127,6 +127,8 @@ pub enum AppMode {
     GroupManage,
     /// Dedicated popup for choosing a group's default identity (`e` on a group).
     GroupIdentityPicker,
+    /// Searchable dropdown for choosing the tunnel form's SSH server.
+    TunnelHostPicker,
     /// Dropdown over the host form's Group/Identity field.
     FieldPicker,
     /// Keybinding editor overlay.
@@ -758,6 +760,16 @@ pub struct GroupIdentityPicker {
     pub selected: usize,
 }
 
+/// Searchable dropdown for choosing the tunnel form's SSH server
+/// ([`AppMode::TunnelHostPicker`]).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TunnelHostPicker {
+    /// Case-insensitive substring filter typed by the user.
+    pub query: String,
+    /// Index into the current filtered match list.
+    pub selected: usize,
+}
+
 /// Single-field path prompt for the Termius CSV import ([`AppMode::ImportPrompt`]).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ImportPromptEdit {
@@ -861,6 +873,8 @@ pub struct App {
     pub group_form: Option<GroupFormEdit>,
     /// Dedicated default-identity picker for a group (opened with `e`).
     pub group_identity_picker: Option<GroupIdentityPicker>,
+    /// Searchable SSH-server picker for the tunnel form.
+    pub tunnel_host_picker: Option<TunnelHostPicker>,
     pub import_prompt: Option<ImportPromptEdit>,
     /// Host-name column zoom level (0 = compact). Widens truncated names.
     pub name_zoom: usize,
@@ -979,6 +993,7 @@ impl App {
             field_picker: None,
             group_form: None,
             group_identity_picker: None,
+            tunnel_host_picker: None,
             import_prompt: None,
             name_zoom: 0,
             group_manage_selected: 0,
@@ -1534,6 +1549,7 @@ impl App {
             AppMode::IdentityForm => self.handle_key_identity_form(key),
             AppMode::GroupForm => self.handle_key_group_form(key),
             AppMode::GroupIdentityPicker => self.handle_key_group_identity_picker(key),
+            AppMode::TunnelHostPicker => self.handle_key_tunnel_host_picker(key),
             AppMode::FieldPicker => self.handle_key_field_picker(key),
             AppMode::ImportPrompt => self.handle_key_import_prompt(key),
             AppMode::GroupManage => self.handle_key_group_manage(key),
@@ -2596,6 +2612,11 @@ impl App {
                 }
             }
             _ if self.is_save_key(&key) => self.save_tunnel_form()?,
+            // The SSH server field opens a searchable picker instead of the
+            // old one-at-a-time ←/→ cycle.
+            KeyCode::Enter | KeyCode::Char(' ') if field == TunnelFormField::Host => {
+                self.open_tunnel_host_picker();
+            }
             // Single-step model: Enter on the last field saves.
             KeyCode::Enter if field == TunnelFormField::Label => self.save_tunnel_form()?,
             KeyCode::Enter | KeyCode::Tab | KeyCode::Down if key.modifiers.is_empty() => {
@@ -2614,23 +2635,8 @@ impl App {
                         form.tunnel_type = form.tunnel_type.next();
                         form.dirty = true;
                     } else if form.active_field == TunnelFormField::Host {
-                        let host_ids: Vec<i64> =
-                            self.hosts.iter().filter_map(|h| h.managed_id()).collect();
-                        if !host_ids.is_empty() {
-                            let current_idx = form
-                                .host_id
-                                .and_then(|id| host_ids.iter().position(|&h| h == id));
-                            let next = match key.code {
-                                KeyCode::Right => {
-                                    current_idx.map(|i| (i + 1) % host_ids.len()).unwrap_or(0)
-                                }
-                                _ => current_idx
-                                    .map(|i| (i + host_ids.len() - 1) % host_ids.len())
-                                    .unwrap_or(host_ids.len() - 1),
-                            };
-                            form.host_id = Some(host_ids[next]);
-                            form.dirty = true;
-                        }
+                        // The server field is chosen via the searchable picker.
+                        self.open_tunnel_host_picker();
                     }
                 }
             }
@@ -2662,6 +2668,104 @@ impl App {
                     };
                     field.push(c);
                     form.dirty = true;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Managed hosts matching the tunnel picker's current query, in list order,
+    /// as `(id, display name)` pairs. All hosts when the query is empty.
+    pub fn tunnel_host_matches(&self) -> Vec<(i64, String)> {
+        let query = self
+            .tunnel_host_picker
+            .as_ref()
+            .map(|p| p.query.to_lowercase())
+            .unwrap_or_default();
+        self.hosts
+            .iter()
+            .filter_map(|h| {
+                let id = h.managed_id()?;
+                let name = h.display_name().to_string();
+                if query.is_empty() || name.to_lowercase().contains(&query) {
+                    Some((id, name))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn open_tunnel_host_picker(&mut self) {
+        if self.tunnel_form.is_none() {
+            return;
+        }
+        // Preselect the currently chosen server, if any.
+        let current = self.tunnel_form.as_ref().and_then(|f| f.host_id);
+        let selected = current
+            .and_then(|id| {
+                self.hosts
+                    .iter()
+                    .filter_map(|h| h.managed_id())
+                    .position(|h| h == id)
+            })
+            .unwrap_or(0);
+        self.tunnel_host_picker = Some(TunnelHostPicker {
+            query: String::new(),
+            selected,
+        });
+        self.mode = AppMode::TunnelHostPicker;
+    }
+
+    fn handle_key_tunnel_host_picker(&mut self, key: KeyEvent) -> Result<()> {
+        let len = self.tunnel_host_matches().len();
+        match key.code {
+            KeyCode::Esc => {
+                self.tunnel_host_picker = None;
+                self.mode = AppMode::TunnelForm;
+            }
+            KeyCode::Down => {
+                if len > 0 {
+                    if let Some(p) = self.tunnel_host_picker.as_mut() {
+                        p.selected = (p.selected + 1) % len;
+                    }
+                }
+            }
+            KeyCode::Up => {
+                if len > 0 {
+                    if let Some(p) = self.tunnel_host_picker.as_mut() {
+                        p.selected = (p.selected + len - 1) % len;
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                let matches = self.tunnel_host_matches();
+                let chosen = self
+                    .tunnel_host_picker
+                    .as_ref()
+                    .and_then(|p| matches.get(p.selected))
+                    .map(|(id, _)| *id);
+                if let (Some(id), Some(form)) = (chosen, self.tunnel_form.as_mut()) {
+                    form.host_id = Some(id);
+                    form.dirty = true;
+                }
+                self.tunnel_host_picker = None;
+                self.mode = AppMode::TunnelForm;
+            }
+            KeyCode::Backspace => {
+                if let Some(p) = self.tunnel_host_picker.as_mut() {
+                    p.query.pop();
+                    p.selected = 0;
+                }
+            }
+            KeyCode::Char(c)
+                if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
+                    && !c.is_control() =>
+            {
+                if let Some(p) = self.tunnel_host_picker.as_mut() {
+                    p.query.push(c);
+                    p.selected = 0;
                 }
             }
             _ => {}

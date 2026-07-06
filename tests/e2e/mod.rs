@@ -12,3 +12,4 @@ mod metadata_persist;
 mod search_and_navigate;
 mod ssh_config_sync;
 mod termius_import;
+mod tunnel_form;

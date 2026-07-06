@@ -103,6 +103,10 @@ pub fn render(frame: &mut Frame, app: &App) {
         AppMode::GroupForm => render_form_popup(frame, app, FormKind::Group),
         AppMode::GroupIdentityPicker => screens::group_identity_picker::render(frame, app),
         AppMode::TunnelForm => screens::tunnels::render_tunnel_form(frame, app),
+        AppMode::TunnelHostPicker => {
+            screens::tunnels::render_tunnel_form(frame, app);
+            screens::tunnels::render_tunnel_host_picker(frame, app);
+        }
         AppMode::ConfirmDiscard => {
             if app.host_form.is_some() {
                 render_form_popup(frame, app, FormKind::Host);

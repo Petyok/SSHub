@@ -14,6 +14,7 @@ fn mode_label(mode: AppMode) -> &'static str {
         AppMode::IdentityForm => "Identity form",
         AppMode::GroupForm => "Group form",
         AppMode::GroupIdentityPicker => "Group identity",
+        AppMode::TunnelHostPicker => "Select server",
         AppMode::GroupManage => "Groups",
         AppMode::FieldPicker => "Select",
         AppMode::KeybindEditor => "Keybindings",
