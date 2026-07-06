@@ -75,7 +75,7 @@ pub fn inv() -> Style {
 /// Status dot colour by status string.
 pub fn status_color(status: &str) -> Color {
     match status {
-        "ok" | "online" | "up" => GREEN,
+        "ok" | "launched" | "online" | "up" => GREEN,
         "slow" | "idle" | "retry" | "warning" => AMBER,
         "down" | "fail" | "error" | "unreachable" => RED,
         _ => DIM,

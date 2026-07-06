@@ -561,13 +561,18 @@ impl LauncherStore {
     pub fn auth_event_stats(&self, days: i64) -> Result<(i64, i64)> {
         let cutoff = now_ts() - days * 86400;
         self.with_conn(|conn| {
+            // A successful connect is logged as 'launched' (session started);
+            // 'ok' is kept for backward compatibility. Everything else is a
+            // failure.
             let ok: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM auth_events WHERE status = 'ok' AND created_at >= ?1",
+                "SELECT COUNT(*) FROM auth_events
+                 WHERE status IN ('ok', 'launched') AND created_at >= ?1",
                 params![cutoff],
                 |row| row.get(0),
             )?;
             let fail: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM auth_events WHERE status != 'ok' AND created_at >= ?1",
+                "SELECT COUNT(*) FROM auth_events
+                 WHERE status NOT IN ('ok', 'launched') AND created_at >= ?1",
                 params![cutoff],
                 |row| row.get(0),
             )?;
@@ -695,6 +700,24 @@ fn update_changes_connection_fields(update: &HostUpdate) -> bool {
 mod tests {
     use super::*;
     use crate::store::{HostSource, LauncherStore, NewHost, NewHostGroup};
+
+    #[test]
+    fn auth_stats_count_launched_as_success() {
+        let store = LauncherStore::open_in_memory().unwrap();
+        store
+            .log_auth_event("h1", Some("root"), "direct", "launched", "session started")
+            .unwrap();
+        store
+            .log_auth_event("h2", Some("root"), "direct", "launched", "session started")
+            .unwrap();
+        store
+            .log_auth_event("h3", None, "direct", "fail", "spawn failed")
+            .unwrap();
+
+        let (ok, fail) = store.auth_event_stats(7).unwrap();
+        assert_eq!(ok, 2, "launched connects must count as ok");
+        assert_eq!(fail, 1);
+    }
 
     #[cfg(unix)]
     #[test]

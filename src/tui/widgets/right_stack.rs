@@ -189,11 +189,7 @@ fn render_auth_panel(buf: &mut Buffer, area: Rect, app: &App) {
         }
         let age = format_relative_time(ev.created_at);
         let host: String = ev.host_name.chars().take(name_max).collect();
-        let status_style = if ev.status == "ok" {
-            theme::green()
-        } else {
-            theme::red()
-        };
+        let status_style = ratatui::style::Style::default().fg(theme::status_color(&ev.status));
         let mut col = inner_x;
         let age_display = format!("{:>6} ", age);
         buf.set_string(col, y, &age_display, theme::mute());
