@@ -3,6 +3,33 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
 
+/// Sentinel stored in [`PingResult`] sample history when `ping` times out or
+/// the host is otherwise unreachable. Never a real RTT.
+pub const PING_UNREACHABLE: u32 = u32::MAX;
+
+pub fn is_unreachable(ms: u32) -> bool {
+    ms == PING_UNREACHABLE
+}
+
+/// How to bucket a host for header stats / list dots from its ping history.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PingClass {
+    /// No probe yet (or empty history).
+    Unknown,
+    Unreachable,
+    Online,
+    Slow,
+}
+
+pub fn classify_ping(samples: Option<&[u32]>) -> PingClass {
+    match samples.and_then(|s| s.last().copied()) {
+        None => PingClass::Unknown,
+        Some(ms) if is_unreachable(ms) => PingClass::Unreachable,
+        Some(ms) if ms < 100 => PingClass::Online,
+        Some(_) => PingClass::Slow,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PingResult {
     pub host_name: String,
@@ -73,6 +100,19 @@ fn parse_ping_time(output: &str) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn classify_ping_buckets() {
+        use super::{classify_ping, PingClass, PING_UNREACHABLE};
+        assert_eq!(classify_ping(None), PingClass::Unknown);
+        assert_eq!(classify_ping(Some(&[])), PingClass::Unknown);
+        assert_eq!(classify_ping(Some(&[50])), PingClass::Online);
+        assert_eq!(classify_ping(Some(&[120])), PingClass::Slow);
+        assert_eq!(
+            classify_ping(Some(&[PING_UNREACHABLE])),
+            PingClass::Unreachable
+        );
+    }
 
     #[test]
     fn parse_linux_ping() {

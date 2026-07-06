@@ -251,7 +251,7 @@ fn render_ping_panel(buf: &mut Buffer, area: Rect, app: &App) {
             if idx < samples.len() {
                 let v = samples[idx];
                 total_samples += 1;
-                if v == 0 {
+                if crate::ping::is_unreachable(v) || v == 0 {
                     loss_count += 1;
                 } else {
                     sum += v as u64;

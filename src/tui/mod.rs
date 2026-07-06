@@ -185,21 +185,21 @@ fn row_in(area: Rect, y: u16) -> Rect {
 }
 
 fn compute_header_stats(app: &App) -> (usize, usize, usize, usize) {
+    use crate::ping::{classify_ping, PingClass};
+
     let total = app.hosts.len();
     let mut online = 0usize;
     let mut slow = 0usize;
+    let mut down = 0usize;
     for h in &app.hosts {
-        if let Some(samples) = app.ping_data.get(h.name()) {
-            if let Some(&last) = samples.last() {
-                if last < 100 {
-                    online += 1;
-                } else {
-                    slow += 1;
-                }
-            }
+        match classify_ping(app.ping_data.get(h.name()).map(|v| v.as_slice())) {
+            PingClass::Online => online += 1,
+            PingClass::Slow => slow += 1,
+            PingClass::Unreachable => down += 1,
+            PingClass::Unknown => {}
         }
     }
-    (total, online, slow, 0)
+    (total, online, slow, down)
 }
 
 fn footer_keybinds(active_tab: usize) -> Vec<(&'static str, &'static str)> {
@@ -688,6 +688,26 @@ mod tests {
         let buffer = render_to_buffer(&app, 120, 38);
         assert!(buffer_contains(&buffer, "hosts:"));
         assert!(buffer_contains(&buffer, "online"));
+    }
+
+    #[test]
+    fn header_stats_count_unreachable_hosts() {
+        use crate::ping::{PING_UNREACHABLE, PingClass, classify_ping};
+
+        let mut app = test_app_with_many_hosts(3);
+        app.ping_data.insert("host-00".into(), vec![50]);
+        app.ping_data.insert("host-01".into(), vec![120]);
+        app.ping_data.insert("host-02".into(), vec![PING_UNREACHABLE]);
+
+        let (total, online, slow, down) = compute_header_stats(&app);
+        assert_eq!(total, 3);
+        assert_eq!(online, 1);
+        assert_eq!(slow, 1);
+        assert_eq!(down, 1);
+        assert_eq!(
+            classify_ping(app.ping_data.get("host-02").map(|v| v.as_slice())),
+            PingClass::Unreachable
+        );
     }
 
     #[test]

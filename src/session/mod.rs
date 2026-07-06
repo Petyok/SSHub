@@ -279,7 +279,12 @@ impl Session {
         }
         let text = full_screen_text(self.parser.screen()).to_ascii_lowercase();
         if CONNECTED_NEEDLES.iter().any(|n| text.contains(n)) {
-            self.connected = true;
+            if !self.connected {
+                self.connected = true;
+                // Drop the verbose `-v` handshake from scrollback so the live
+                // shell starts on a clean screen.
+                self.parser.clear_buffer();
+            }
         }
     }
 

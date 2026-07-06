@@ -75,6 +75,12 @@ impl App {
             KeyCode::Down if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.move_host_manual(1)?
             }
+            KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.move_selection_by_group(-1);
+            }
+            KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.move_selection_by_group(1);
+            }
             KeyCode::Char('j') | KeyCode::Down if key.modifiers.is_empty() => {
                 self.move_selection(1)
             }
@@ -520,6 +526,46 @@ impl App {
         let next = self.selected as i32 + delta;
         // Wrap around: going past the end wraps to the beginning and vice versa
         self.selected = ((next % len + len) % len) as usize;
+    }
+
+    /// Jump the selection to the previous/next group header. When the cursor
+    /// is on a host row, the jump is relative to that host's group. Wraps at
+    /// both ends. No-op when there are no groups (flat host list).
+    pub(crate) fn move_selection_by_group(&mut self, delta: i32) {
+        if self.groups.is_empty() || self.nav_rows.is_empty() {
+            return;
+        }
+
+        let header_positions: Vec<usize> = self
+            .nav_rows
+            .iter()
+            .enumerate()
+            .filter_map(|(i, r)| matches!(r, NavRow::Header(_)).then_some(i))
+            .collect();
+        if header_positions.is_empty() {
+            return;
+        }
+
+        let current_group = match self.nav_rows.get(self.selected) {
+            Some(NavRow::Header(si)) => Some(*si),
+            Some(NavRow::Host(host_idx)) => self
+                .group_sections
+                .iter()
+                .position(|s| s.host_indices.contains(host_idx)),
+            None => None,
+        };
+        let current_group = current_group.unwrap_or(0);
+
+        let current_header_idx = header_positions
+            .iter()
+            .position(|&pos| {
+                matches!(self.nav_rows[pos], NavRow::Header(si) if si == current_group)
+            })
+            .unwrap_or(0);
+
+        let len = header_positions.len() as i32;
+        let next = (current_header_idx as i32 + delta).rem_euclid(len) as usize;
+        self.selected = header_positions[next];
     }
 
     /// Begin quitting: show the confirmation dialog, or quit immediately when

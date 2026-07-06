@@ -269,7 +269,11 @@ fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
     let all_samples: Vec<u32> = app
         .ping_data
         .values()
-        .flat_map(|v| v.iter().copied())
+        .flat_map(|v| {
+            v.iter()
+                .copied()
+                .filter(|ms| !crate::ping::is_unreachable(*ms))
+        })
         .collect();
 
     if all_samples.is_empty() {
@@ -299,7 +303,9 @@ fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
         for samples in app.ping_data.values() {
             let start = samples.len().saturating_sub(30);
             for &v in &samples[start..] {
-                combined.push(v);
+                if !crate::ping::is_unreachable(v) {
+                    combined.push(v);
+                }
             }
         }
         let start = combined.len().saturating_sub(30);

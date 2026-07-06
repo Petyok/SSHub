@@ -252,3 +252,78 @@ pub(crate) fn reload_hosts_skips_unresolved_and_preserves_selection() {
     app.reload_hosts().unwrap();
     assert_eq!(app.selected_entry().unwrap().name(), "good");
 }
+
+fn key_shift(code: KeyCode) -> KeyEvent {
+    KeyEvent::new(code, KeyModifiers::SHIFT)
+}
+
+#[test]
+pub(crate) fn shift_arrow_jumps_between_group_headers() {
+    use crate::store::{NewHost, NewHostGroup};
+
+    let store = test_store();
+    let g1 = store
+        .create_group(&NewHostGroup {
+            name: "alpha".into(),
+            sort_order: 0,
+            ..Default::default()
+        })
+        .unwrap();
+    let g2 = store
+        .create_group(&NewHostGroup {
+            name: "beta".into(),
+            sort_order: 1,
+            ..Default::default()
+        })
+        .unwrap();
+    store
+        .create_host(&NewHost {
+            name: "a1".into(),
+            address: "10.0.0.1".into(),
+            port: 22,
+            group_id: Some(g1.id),
+            ..Default::default()
+        })
+        .unwrap();
+    store
+        .create_host(&NewHost {
+            name: "b1".into(),
+            address: "10.0.0.2".into(),
+            port: 22,
+            group_id: Some(g2.id),
+            ..Default::default()
+        })
+        .unwrap();
+
+    let mut app = App::new_with_deps(
+        AppConfig::default(),
+        AppDeps {
+            resolver: Box::new(MockResolver::new(vec![])),
+            metadata: Arc::new(MetadataDb::default()),
+            store,
+            launcher: Box::new(RecordingLauncher::new().0),
+            password_store: Box::new(crate::credentials::NoopPasswordStore),
+        },
+    );
+    app.reload_hosts().unwrap();
+
+    // Tree: [Header alpha, Host a1, Header beta, Host b1]
+    assert_eq!(app.nav_rows.len(), 4);
+    assert!(matches!(app.nav_rows[0], NavRow::Header(0)));
+    assert!(matches!(app.nav_rows[2], NavRow::Header(1)));
+
+    // On first host inside alpha — Shift+Down lands on beta header.
+    app.selected = 1;
+    app.handle_key(key_shift(KeyCode::Down)).unwrap();
+    assert_eq!(app.selected, 2);
+    assert_eq!(app.selected_nav_header(), Some(1));
+
+    // Shift+Down wraps to alpha header.
+    app.handle_key(key_shift(KeyCode::Down)).unwrap();
+    assert_eq!(app.selected, 0);
+    assert_eq!(app.selected_nav_header(), Some(0));
+
+    // Shift+Up from alpha header wraps to beta.
+    app.handle_key(key_shift(KeyCode::Up)).unwrap();
+    assert_eq!(app.selected, 2);
+}

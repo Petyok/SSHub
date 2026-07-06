@@ -153,18 +153,19 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
 
                 // Status dot — reflects ping latency.
                 let host_name_for_dot = entry.name();
-                let (dot_char, dot_color) = match app.ping_data.get(host_name_for_dot) {
-                    Some(samples) if !samples.is_empty() => {
-                        let latest = *samples.last().unwrap();
-                        if latest < 100 {
-                            ("\u{25cf}", theme::GREEN) // ● green
-                        } else if latest <= 200 {
-                            ("\u{25cf}", theme::AMBER) // ● amber
+                let ping_samples = app.ping_data.get(host_name_for_dot).map(|v| v.as_slice());
+                let (dot_char, dot_color) = match crate::ping::classify_ping(ping_samples) {
+                    crate::ping::PingClass::Online => ("\u{25cf}", theme::GREEN),
+                    crate::ping::PingClass::Slow => {
+                        let ms = ping_samples.and_then(|s| s.last().copied()).unwrap_or(0);
+                        if ms <= 200 {
+                            ("\u{25cf}", theme::AMBER)
                         } else {
-                            ("\u{25cf}", theme::RED) // ● red
+                            ("\u{25cf}", theme::RED)
                         }
                     }
-                    _ => ("\u{25cb}", theme::DIM), // ○ dim (no data)
+                    crate::ping::PingClass::Unreachable => ("\u{25cf}", theme::RED),
+                    crate::ping::PingClass::Unknown => ("\u{25cb}", theme::DIM),
                 };
                 let dot_style = if is_selected {
                     ratatui::style::Style::default()
@@ -217,9 +218,10 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
                 if right_edge >= col + ping_width {
                     let ping_x = right_edge - ping_width;
                     let host_name = entry.name();
-                    let (ping_str, ping_style) = match app.ping_data.get(host_name) {
-                        Some(samples) if !samples.is_empty() => {
-                            let latest = *samples.last().unwrap();
+                    let ping_samples = app.ping_data.get(host_name).map(|v| v.as_slice());
+                    let (ping_str, ping_style) = match crate::ping::classify_ping(ping_samples) {
+                        crate::ping::PingClass::Online | crate::ping::PingClass::Slow => {
+                            let latest = ping_samples.and_then(|s| s.last().copied()).unwrap_or(0);
                             let s = format!(
                                 "{:>width$}",
                                 format!("{}ms", latest),
@@ -246,13 +248,10 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
                             };
                             (s, style)
                         }
-                        _ => {
-                            // No ping data yet — show dash, right-aligned
-                            (
-                                format!("{:>width$}", "\u{2014}", width = ping_width as usize),
-                                dim_style,
-                            )
-                        }
+                        crate::ping::PingClass::Unreachable | crate::ping::PingClass::Unknown => (
+                            format!("{:>width$}", "\u{2014}", width = ping_width as usize),
+                            dim_style,
+                        ),
                     };
                     buf.set_string(ping_x, y, &ping_str, ping_style);
                 }

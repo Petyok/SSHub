@@ -160,14 +160,29 @@ fn run_terminal_loop(app: &mut App, auto_quit: Option<&str>) -> Result<()> {
         // terminal changes size — every tab shares the same body area.
         let resized = last_size != Some((sz.width, sz.height));
         let mut diag_entries: Vec<(String, String)> = Vec::new();
+        let mut newly_connected: Vec<String> = Vec::new();
         for s in app.sessions.iter_mut() {
+            let was_connected = s.is_connected();
             s.drain();
             if resized {
                 s.resize(sz.height, sz.width);
             }
-            for line in s.take_diagnostics() {
-                diag_entries.push((s.display_name.clone(), line));
+            if s.is_connected() && !was_connected {
+                newly_connected.push(s.display_name.clone());
             }
+            let connected = s.is_connected();
+            for line in s.take_diagnostics() {
+                // Handshake diagnostics only; after connect keep session-exit lines.
+                let keep = !connected
+                    || line.starts_with("session:")
+                    || line.starts_with("auth: could not");
+                if keep {
+                    diag_entries.push((s.display_name.clone(), line));
+                }
+            }
+        }
+        for host_name in newly_connected {
+            app.clear_ssh_log_for_host(&host_name);
         }
         for (host_name, line) in diag_entries {
             app.push_ssh_log(crate::ssh::probe::SshLogEntry {
@@ -280,11 +295,23 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
     if let Some(rx) = app.ping_rx.as_ref() {
         while let Ok(result) = rx.try_recv() {
             let entry = app.ping_data.entry(result.host_name.clone()).or_default();
-            if let Some(ms) = result.latency_ms {
-                entry.push(ms);
-                if entry.len() > 30 {
-                    entry.remove(0);
-                } // rolling 30 samples
+            match result.latency_ms {
+                Some(ms) => {
+                    // Drop a trailing unreachable marker when the host recovers.
+                    if entry.last() == Some(&crate::ping::PING_UNREACHABLE) {
+                        entry.clear();
+                    }
+                    entry.push(ms);
+                    if entry.len() > 30 {
+                        entry.remove(0);
+                    }
+                }
+                None => {
+                    entry.push(crate::ping::PING_UNREACHABLE);
+                    if entry.len() > 30 {
+                        entry.remove(0);
+                    }
+                }
             }
         }
     }

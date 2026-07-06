@@ -325,6 +325,12 @@ impl App {
         }
     }
 
+    /// Drop all SSH log entries for `host_name`. Called once a session has
+    /// authenticated so connect-time debug noise doesn't linger on the dashboard.
+    pub fn clear_ssh_log_for_host(&mut self, host_name: &str) {
+        self.ssh_log.retain(|e| e.host_name != host_name);
+    }
+
     pub fn reload_hosts(&mut self) -> Result<()> {
         let selected_name = self.selected_entry().map(|e| e.name().to_string());
         self.load_collapsed_groups();

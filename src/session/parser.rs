@@ -51,6 +51,13 @@ impl ParserState {
     pub fn snap_to_bottom(&mut self) {
         self.inner.set_scrollback(0);
     }
+
+    /// Wipe the terminal buffer and scrollback. Used once ssh has
+    /// authenticated so the `-v` handshake noise doesn't clutter the session.
+    pub fn clear_buffer(&mut self) {
+        let (rows, cols) = self.inner.screen().size();
+        self.inner = vt100::Parser::new(rows, cols, 10_000);
+    }
 }
 
 #[cfg(test)]

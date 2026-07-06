@@ -33,6 +33,7 @@ pub fn render_help() -> Paragraph<'static> {
         entry("Shift+D", "Duplicate selected host"),
         entry("f", "Toggle favorite"),
         entry("+ / -", "Zoom: widen / narrow the hosts column"),
+        entry("Shift+\u{2191}\u{2193}", "Jump between group headers"),
         entry("s", "Cycle sort mode"),
         entry("Ctrl+\u{2191}\u{2193}", "Move host up / down (manual sort)"),
         entry("c", "Clear SSH log"),
@@ -77,6 +78,10 @@ pub fn render_help() -> Paragraph<'static> {
         Line::from(""),
         section("groups"),
         entry("Space / ←→", "Collapse / expand selected group"),
+        entry(
+            "Shift+\u{2191}\u{2193}",
+            "Jump between group headers (from any row in the group)",
+        ),
         entry(
             "Enter",
             "On a group header: collapse/expand; on a host: connect",
