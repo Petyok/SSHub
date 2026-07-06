@@ -53,6 +53,14 @@ pub struct KeybindsConfig {
     pub help: Vec<String>,
     #[serde(default = "default_search_keys")]
     pub search: Vec<String>,
+    #[serde(default = "default_add_host_keys")]
+    pub add_host: Vec<String>,
+    #[serde(default = "default_delete_keys")]
+    pub delete: Vec<String>,
+    #[serde(default = "default_duplicate_keys")]
+    pub duplicate: Vec<String>,
+    #[serde(default = "default_tag_filter_keys")]
+    pub tag_filter: Vec<String>,
 }
 
 fn default_save_keys() -> Vec<String> {
@@ -67,6 +75,18 @@ fn default_help_keys() -> Vec<String> {
 fn default_search_keys() -> Vec<String> {
     vec!["/".to_string()]
 }
+fn default_add_host_keys() -> Vec<String> {
+    vec!["a".to_string()]
+}
+fn default_delete_keys() -> Vec<String> {
+    vec!["d".to_string()]
+}
+fn default_duplicate_keys() -> Vec<String> {
+    vec!["Shift+D".to_string()]
+}
+fn default_tag_filter_keys() -> Vec<String> {
+    vec!["#".to_string()]
+}
 
 impl Default for KeybindsConfig {
     fn default() -> Self {
@@ -75,19 +95,31 @@ impl Default for KeybindsConfig {
             quit: default_quit_keys(),
             help: default_help_keys(),
             search: default_search_keys(),
+            add_host: default_add_host_keys(),
+            delete: default_delete_keys(),
+            duplicate: default_duplicate_keys(),
+            tag_filter: default_tag_filter_keys(),
         }
     }
 }
 
 impl KeybindsConfig {
+    fn default_for(action: KeyAction) -> Vec<String> {
+        match action {
+            KeyAction::Save => default_save_keys(),
+            KeyAction::Quit => default_quit_keys(),
+            KeyAction::Help => default_help_keys(),
+            KeyAction::Search => default_search_keys(),
+            KeyAction::AddHost => default_add_host_keys(),
+            KeyAction::Delete => default_delete_keys(),
+            KeyAction::Duplicate => default_duplicate_keys(),
+            KeyAction::TagFilter => default_tag_filter_keys(),
+        }
+    }
+
     /// Restore one action's bindings to its built-in default.
     pub fn reset_action(&mut self, action: KeyAction) {
-        match action {
-            KeyAction::Save => self.save = default_save_keys(),
-            KeyAction::Quit => self.quit = default_quit_keys(),
-            KeyAction::Help => self.help = default_help_keys(),
-            KeyAction::Search => self.search = default_search_keys(),
-        }
+        self.set(action, Self::default_for(action));
     }
 
     pub fn binds(&self, action: KeyAction) -> &[String] {
@@ -96,6 +128,10 @@ impl KeybindsConfig {
             KeyAction::Quit => &self.quit,
             KeyAction::Help => &self.help,
             KeyAction::Search => &self.search,
+            KeyAction::AddHost => &self.add_host,
+            KeyAction::Delete => &self.delete,
+            KeyAction::Duplicate => &self.duplicate,
+            KeyAction::TagFilter => &self.tag_filter,
         }
     }
 
@@ -105,6 +141,19 @@ impl KeybindsConfig {
             KeyAction::Quit => self.quit = binds,
             KeyAction::Help => self.help = binds,
             KeyAction::Search => self.search = binds,
+            KeyAction::AddHost => self.add_host = binds,
+            KeyAction::Delete => self.delete = binds,
+            KeyAction::Duplicate => self.duplicate = binds,
+            KeyAction::TagFilter => self.tag_filter = binds,
+        }
+    }
+
+    /// Append `spec` to an action's bindings unless already present.
+    pub fn add(&mut self, action: KeyAction, spec: String) {
+        let mut binds = self.binds(action).to_vec();
+        if !binds.iter().any(|b| b.eq_ignore_ascii_case(&spec)) {
+            binds.push(spec);
+            self.set(action, binds);
         }
     }
 }
@@ -116,15 +165,23 @@ pub enum KeyAction {
     Quit,
     Help,
     Search,
+    AddHost,
+    Delete,
+    Duplicate,
+    TagFilter,
 }
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 4] = [
+    pub const ALL: [KeyAction; 8] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
         KeyAction::Search,
+        KeyAction::AddHost,
+        KeyAction::Delete,
+        KeyAction::Duplicate,
+        KeyAction::TagFilter,
     ];
 
     pub fn label(self) -> &'static str {
@@ -133,6 +190,10 @@ impl KeyAction {
             KeyAction::Quit => "Quit",
             KeyAction::Help => "Help",
             KeyAction::Search => "Search / palette",
+            KeyAction::AddHost => "Add host",
+            KeyAction::Delete => "Delete host",
+            KeyAction::Duplicate => "Duplicate host",
+            KeyAction::TagFilter => "Filter by tag",
         }
     }
 }

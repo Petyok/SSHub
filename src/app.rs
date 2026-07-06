@@ -567,8 +567,10 @@ fn managed_to_ssh_host(m: &ManagedHost) -> SshHost {
 pub struct KeybindEditor {
     /// Index into [`KeyAction::ALL`].
     pub selected: usize,
-    /// When true, the next key press is captured as the new binding.
+    /// When true, the next key press is captured as a binding.
     pub capturing: bool,
+    /// When capturing, whether to append (`true`) or replace (`false`).
+    pub append: bool,
 }
 
 /// Which host-form field the dropdown is editing.
@@ -1392,6 +1394,7 @@ impl App {
             self.keybind_editor = Some(KeybindEditor {
                 selected: 0,
                 capturing: false,
+                append: false,
             });
             self.mode = AppMode::KeybindEditor;
             return Ok(());
@@ -1836,11 +1839,9 @@ impl App {
                 self.toggle_selected_group()
             }
             KeyCode::Enter => self.connect_selected()?,
-            KeyCode::Char('a') if key.modifiers.is_empty() => self.enter_host_form(None, false)?,
-            KeyCode::Char('d') if key.modifiers.is_empty() => self.delete_selected_host()?,
-            KeyCode::Char('D') if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                self.duplicate_selected_host()?
-            }
+            _ if self.is_action(KeyAction::AddHost, &key) => self.enter_host_form(None, false)?,
+            _ if self.is_action(KeyAction::Delete, &key) => self.delete_selected_host()?,
+            _ if self.is_action(KeyAction::Duplicate, &key) => self.duplicate_selected_host()?,
             KeyCode::Char('E') if key.modifiers.contains(KeyModifiers::SHIFT) => {
                 match self.export_ssh_config() {
                     Ok(path) => {
@@ -1886,7 +1887,7 @@ impl App {
                 self.pre_help_mode = Some(self.mode);
                 self.mode = AppMode::Help;
             }
-            KeyCode::Char('#') if key.modifiers.is_empty() => {
+            _ if self.is_action(KeyAction::TagFilter, &key) => {
                 self.mode = AppMode::TagFilter;
                 self.search_query.clear();
             }
@@ -4302,22 +4303,19 @@ impl App {
         };
 
         if editor.capturing {
-            match key.code {
-                KeyCode::Esc => {
-                    if let Some(e) = self.keybind_editor.as_mut() {
-                        e.capturing = false;
-                    }
-                }
-                _ => {
-                    if let Some(spec) = keyevent_to_spec(&key) {
-                        let action = KeyAction::ALL[editor.selected];
+            if key.code != KeyCode::Esc {
+                if let Some(spec) = keyevent_to_spec(&key) {
+                    let action = KeyAction::ALL[editor.selected];
+                    if editor.append {
+                        self.config.keybinds.add(action, spec);
+                    } else {
                         self.config.keybinds.set(action, vec![spec]);
-                        self.save_config_quietly();
                     }
-                    if let Some(e) = self.keybind_editor.as_mut() {
-                        e.capturing = false;
-                    }
+                    self.save_config_quietly();
                 }
+            }
+            if let Some(e) = self.keybind_editor.as_mut() {
+                e.capturing = false;
             }
             return Ok(());
         }
@@ -4338,14 +4336,28 @@ impl App {
                         (e.selected + KeyAction::ALL.len() - 1) % KeyAction::ALL.len();
                 }
             }
+            // Enter/c: replace with a single new key. a: add another binding.
             KeyCode::Enter | KeyCode::Char('c') => {
                 if let Some(e) = self.keybind_editor.as_mut() {
                     e.capturing = true;
+                    e.append = false;
+                }
+            }
+            KeyCode::Char('a') => {
+                if let Some(e) = self.keybind_editor.as_mut() {
+                    e.capturing = true;
+                    e.append = true;
                 }
             }
             KeyCode::Char('r') => {
                 let action = KeyAction::ALL[editor.selected];
                 self.config.keybinds.reset_action(action);
+                self.save_config_quietly();
+            }
+            KeyCode::Char('x') => {
+                // Unbind the action entirely.
+                let action = KeyAction::ALL[editor.selected];
+                self.config.keybinds.set(action, Vec::new());
                 self.save_config_quietly();
             }
             _ => {}
@@ -5090,11 +5102,43 @@ mod tests {
         let saved = crate::config::load_config().unwrap();
         assert_eq!(saved.keybinds.save, vec!["F10".to_string()]);
 
+        // 'a' adds another binding without replacing.
+        app.handle_key(key_char('a')).unwrap();
+        assert!(app.keybind_editor.unwrap().append);
+        app.handle_key(key(KeyCode::F(12))).unwrap();
+        assert_eq!(app.config.keybinds.save, vec!["F10".to_string(), "F12".to_string()]);
+        assert!(app.is_save_key(&key(KeyCode::F(10))));
+        assert!(app.is_save_key(&key(KeyCode::F(12))));
+
+        // 'x' unbinds the action entirely.
+        app.handle_key(key_char('x')).unwrap();
+        assert!(app.config.keybinds.save.is_empty());
+        assert!(!app.is_save_key(&key(KeyCode::F(10))));
+
         // 'r' resets the selected action to defaults.
         app.handle_key(key_char('r')).unwrap();
         assert_eq!(app.config.keybinds.save, vec!["F2", "Ctrl+S"]);
 
         std::env::remove_var("SSHUB_CONFIG_DIR");
+    }
+
+    #[test]
+    fn rebinding_add_host_action_takes_effect() {
+        let mut app = test_app(vec![("web", host("web"))]);
+        // Default: 'a' opens the new-host form.
+        app.handle_key(key_char('a')).unwrap();
+        assert_eq!(app.mode, AppMode::HostForm);
+        app.handle_key(key(KeyCode::Esc)).unwrap();
+        assert_eq!(app.mode, AppMode::Normal);
+
+        // Rebind add-host to 'n'; now 'a' no longer opens the form, 'n' does.
+        app.config.keybinds.set(KeyAction::AddHost, vec!["n".to_string()]);
+        app.handle_key(key_char('a')).unwrap();
+        assert_ne!(app.mode, AppMode::HostForm);
+        // 'a' fell through to the palette (type-to-search).
+        app.mode = AppMode::Normal;
+        app.handle_key(key_char('n')).unwrap();
+        assert_eq!(app.mode, AppMode::HostForm);
     }
 
     #[test]

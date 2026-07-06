@@ -72,9 +72,13 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
     // Hint line at the bottom.
     let hint_y = popup.y + popup.height.saturating_sub(2);
     let hint = if editor.capturing {
-        "press any key to bind  │  Esc: cancel"
+        if editor.append {
+            "press a key to add  │  Esc: cancel"
+        } else {
+            "press a key to bind  │  Esc: cancel"
+        }
     } else {
-        "↑↓ move  │  Enter: rebind  │  r: reset  │  Esc: close"
+        "↑↓ move │ Enter: set │ a: add │ r: reset │ x: unbind │ Esc: close"
     };
     buf.set_string(
         row_x,
