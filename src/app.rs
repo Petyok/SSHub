@@ -859,6 +859,8 @@ pub struct App {
     pub mode: AppMode,
     pub config: AppConfig,
     pub tag_filter: Option<String>,
+    /// Highlighted row in the tag-filter popup (0 = "all"; 1.. = a tag).
+    pub tag_filter_selected: usize,
     pub watcher_rx: Option<Receiver<WatchEvent>>,
     pub should_quit: bool,
     pub detail_focus: bool,
@@ -981,6 +983,7 @@ impl App {
             mode: AppMode::Normal,
             config,
             tag_filter: None,
+            tag_filter_selected: 0,
             watcher_rx: None,
             should_quit: false,
             detail_focus: false,
@@ -2062,8 +2065,7 @@ impl App {
                 self.mode = AppMode::Help;
             }
             _ if self.is_action(KeyAction::TagFilter, &key) => {
-                self.mode = AppMode::TagFilter;
-                self.search_query.clear();
+                self.open_tag_filter();
             }
             KeyCode::Char('c') if key.modifiers.is_empty() => {
                 self.ssh_log.clear();
@@ -2190,30 +2192,88 @@ impl App {
         Ok(())
     }
 
+    fn open_tag_filter(&mut self) {
+        self.mode = AppMode::TagFilter;
+        self.search_query.clear();
+        // Preselect the currently active filter, else "(all)".
+        let rows = self.tag_filter_rows();
+        self.tag_filter_selected = match &self.tag_filter {
+            Some(active) => rows.iter().position(|t| t == active).unwrap_or(0),
+            None => 0,
+        };
+    }
+
+    /// Rows shown in the tag-filter popup: `["(all)", <matching unique tags>]`,
+    /// filtered by the typed query (case-insensitive substring).
+    pub fn tag_filter_rows(&self) -> Vec<String> {
+        let query = self.search_query.to_lowercase();
+        let mut rows = vec!["(all)".to_string()];
+        let mut tags: Vec<String> = self
+            .hosts
+            .iter()
+            .flat_map(|entry| entry.tags().iter().cloned())
+            .filter(|t| query.is_empty() || t.to_lowercase().contains(&query))
+            .collect();
+        tags.sort();
+        tags.dedup();
+        rows.extend(tags);
+        rows
+    }
+
     fn handle_key_tag_filter(&mut self, key: KeyEvent) -> Result<()> {
-        if key.code == KeyCode::Esc {
-            self.tag_filter = None;
-            self.search_query.clear();
-            self.mode = AppMode::Normal;
-            self.rebuild_filter();
-            return Ok(());
-        }
-        if key.code == KeyCode::Enter {
-            self.tag_filter = optional_field(&self.search_query);
-            self.rebuild_filter();
-            self.mode = AppMode::Normal;
-            return Ok(());
-        }
-        if key.code == KeyCode::Backspace {
-            self.search_query.pop();
-            return Ok(());
-        }
-        if let KeyCode::Char(c) = key.code {
-            if key.modifiers.is_empty() && !c.is_control() {
-                self.search_query.push(c);
+        match key.code {
+            KeyCode::Esc => {
+                self.tag_filter = None;
+                self.search_query.clear();
+                self.mode = AppMode::Normal;
+                self.rebuild_filter();
             }
+            KeyCode::Enter => {
+                let rows = self.tag_filter_rows();
+                let chosen = rows.get(self.tag_filter_selected);
+                self.tag_filter = match chosen {
+                    Some(tag) if self.tag_filter_selected > 0 => Some(tag.clone()),
+                    _ => None,
+                };
+                self.search_query.clear();
+                self.mode = AppMode::Normal;
+                self.rebuild_filter();
+            }
+            KeyCode::Down => {
+                let len = self.tag_filter_rows().len();
+                if len > 0 {
+                    self.tag_filter_selected = (self.tag_filter_selected + 1) % len;
+                }
+            }
+            KeyCode::Up => {
+                let len = self.tag_filter_rows().len();
+                if len > 0 {
+                    self.tag_filter_selected = (self.tag_filter_selected + len - 1) % len;
+                }
+            }
+            KeyCode::Backspace => {
+                self.search_query.pop();
+                self.reset_tag_filter_selection();
+            }
+            KeyCode::Char(c) if key.modifiers.is_empty() && !c.is_control() => {
+                self.search_query.push(c);
+                self.reset_tag_filter_selection();
+            }
+            _ => {}
         }
         Ok(())
+    }
+
+    /// After the query changes, highlight the first matching tag (index 1) so
+    /// Enter applies it. Falls back to "(all)" when nothing matches or the
+    /// query is empty.
+    fn reset_tag_filter_selection(&mut self) {
+        let has_match = self.tag_filter_rows().len() > 1;
+        self.tag_filter_selected = if !self.search_query.is_empty() && has_match {
+            1
+        } else {
+            0
+        };
     }
 
     fn handle_key_host_detail(&mut self, key: KeyEvent) -> Result<()> {
@@ -6399,6 +6459,49 @@ mod tests {
         app.rebuild_filter();
 
         assert_eq!(app.filtered_indices, vec![0]);
+    }
+
+    #[test]
+    fn tag_filter_picker_arrow_selects_and_applies_tag() {
+        let mut app = test_app(vec![("web", host("web")), ("db", host("db"))]);
+        legacy_meta(&mut app.hosts[0]).tags = vec!["prod".into()];
+        legacy_meta(&mut app.hosts[1]).tags = vec!["staging".into()];
+        app.rebuild_filter();
+
+        app.handle_key(key_char('#')).unwrap();
+        // Rows are ["(all)", "prod", "staging"]; row 0 selected by default.
+        assert_eq!(app.tag_filter_rows(), vec!["(all)", "prod", "staging"]);
+        assert_eq!(app.tag_filter_selected, 0);
+
+        // Arrow down twice lands on "staging" and Enter applies it.
+        app.handle_key(key(KeyCode::Down)).unwrap();
+        app.handle_key(key(KeyCode::Down)).unwrap();
+        app.handle_key(key(KeyCode::Enter)).unwrap();
+
+        assert_eq!(app.mode, AppMode::Normal);
+        assert_eq!(app.tag_filter.as_deref(), Some("staging"));
+        assert_eq!(app.filtered_indices, vec![1]);
+    }
+
+    #[test]
+    fn tag_filter_picker_all_row_clears_filter() {
+        let mut app = test_app(vec![("web", host("web")), ("db", host("db"))]);
+        legacy_meta(&mut app.hosts[0]).tags = vec!["prod".into()];
+        legacy_meta(&mut app.hosts[1]).tags = vec!["staging".into()];
+        app.tag_filter = Some("prod".into());
+        app.rebuild_filter();
+
+        app.handle_key(key_char('#')).unwrap();
+        // Opening preselects the active filter row, not "(all)".
+        assert_eq!(app.tag_filter_selected, 1);
+
+        // Move up to "(all)" and apply to clear the filter.
+        app.handle_key(key(KeyCode::Up)).unwrap();
+        assert_eq!(app.tag_filter_selected, 0);
+        app.handle_key(key(KeyCode::Enter)).unwrap();
+
+        assert!(app.tag_filter.is_none());
+        assert_eq!(app.filtered_indices.len(), 2);
     }
 
     #[test]

@@ -78,7 +78,7 @@ pub fn render_host_form(
                 ("Identity", identity_label(form.identity_index, identities))
             }
             HostFormField::Tags => (
-                "Tags",
+                "Tags (comma-separated)",
                 if editing {
                     text_input::with_cursor(&form.tags, form.cursor)
                 } else {
