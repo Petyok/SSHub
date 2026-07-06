@@ -200,6 +200,7 @@ pub struct SshConfigHostImport {
     pub ssh_config_hash: String,
     pub tags: Vec<String>,
     pub notes: Option<String>,
+    pub environment: Option<String>,
     pub favorite: bool,
     pub last_connected: Option<i64>,
 }

@@ -206,6 +206,7 @@ mod tests {
                 ssh_config_hash: "hash".into(),
                 tags: vec![],
                 notes: None,
+                environment: None,
                 favorite: false,
                 last_connected: None,
             })

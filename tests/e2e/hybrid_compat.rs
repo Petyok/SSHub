@@ -190,3 +190,56 @@ fn type_text(app: &mut App, text: &str) {
         app.handle_key(key_char(c)).unwrap();
     }
 }
+
+#[test]
+fn editing_unimported_ssh_config_alias_allows_group_assignment() {
+    // Fresh env: ssh_config hosts appear as live-resolver Legacy entries
+    // (never imported into launcher.db). This mirrors a `monitor`-style host.
+    let (file, mut app) = hybrid_env();
+    let idx = app
+        .hosts
+        .iter()
+        .position(|h| h.name() == "dev-local")
+        .expect("dev-local present");
+    app.selected = app
+        .filtered_indices
+        .iter()
+        .position(|&i| i == idx)
+        .expect("in filter");
+
+    // Editing materializes it into launcher.db and opens the full metadata
+    // form (not the tags-only HostDetail), so a group can be assigned.
+    app.handle_key(key_char('e')).unwrap();
+    assert_eq!(app.mode, AppMode::HostForm);
+    assert!(app.host_form.as_ref().unwrap().metadata_only);
+
+    let dev = app
+        .store()
+        .get_host_by_name("dev-local")
+        .unwrap()
+        .expect("materialized into launcher.db");
+    assert_eq!(dev.source, HostSource::SshConfig);
+
+    // Navigate to Group and create one inline via the dropdown.
+    use sshub::app::HostFormField;
+    while app.host_form.as_ref().unwrap().field != HostFormField::Group {
+        app.handle_key(key(KeyCode::Down)).unwrap();
+    }
+    app.handle_key(key(KeyCode::Enter)).unwrap(); // open dropdown
+    assert_eq!(app.mode, AppMode::FieldPicker);
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → "+ New group…"
+    app.handle_key(key(KeyCode::Enter)).unwrap(); // inline create
+    type_text(&mut app, "infra");
+    app.handle_key(key(KeyCode::Enter)).unwrap(); // create + select
+    app.handle_key(key(KeyCode::F(2))).unwrap(); // save
+
+    let store = LauncherStore::open(file.path()).unwrap();
+    let dev = store.get_host_by_name("dev-local").unwrap().unwrap();
+    let group = store
+        .list_groups()
+        .unwrap()
+        .into_iter()
+        .find(|g| g.name == "infra")
+        .expect("group created");
+    assert_eq!(dev.group_id, Some(group.id));
+}

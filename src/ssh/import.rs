@@ -97,9 +97,30 @@ fn build_sync_import(
         ssh_config_hash: compute_ssh_config_hash(resolved),
         tags: existing.tags.clone(),
         notes: existing.notes.clone(),
+        environment: existing.environment.clone(),
         favorite: existing.favorite,
         last_connected: existing.last_connected,
     }
+}
+
+/// Materialize a single live ssh_config alias into launcher.db as a
+/// `source=ssh_config` row, so it gains a metadata overlay (group, identity,
+/// tags, notes) that a live-resolver-only alias cannot store.
+///
+/// Returns `Ok(true)` if the host now exists as an ssh_config row, `Ok(false)`
+/// if it could not be resolved or a launcher row already owns the name.
+pub fn materialize_ssh_config_host(
+    resolver: &dyn HostResolver,
+    store: &LauncherStore,
+    metadata: &dyn MetadataStore,
+    name: &str,
+) -> Result<bool> {
+    let resolved = match resolver.resolve_host(name) {
+        Ok(host) => host,
+        Err(_) => return Ok(false),
+    };
+    let import = build_import_row(name, &resolved, metadata)?;
+    Ok(store.upsert_ssh_config_host(&import)? != UpsertSshConfigOutcome::SkippedLauncher)
 }
 
 fn build_import_row(
@@ -114,9 +135,9 @@ fn build_import_row(
     let port = resolved.port.unwrap_or(22);
 
     let meta = metadata.get(name)?;
-    let (tags, notes, favorite, last_connected) = match meta {
-        Some(m) => (m.tags, m.description, m.favorite, m.last_connected),
-        None => (Vec::new(), None, false, None),
+    let (tags, notes, environment, favorite, last_connected) = match meta {
+        Some(m) => (m.tags, m.description, m.environment, m.favorite, m.last_connected),
+        None => (Vec::new(), None, None, false, None),
     };
 
     Ok(SshConfigHostImport {
@@ -129,6 +150,7 @@ fn build_import_row(
         ssh_config_hash: compute_ssh_config_hash(resolved),
         tags,
         notes,
+        environment,
         favorite,
         last_connected,
     })

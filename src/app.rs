@@ -3325,7 +3325,31 @@ impl App {
             Some(HostSource::Launcher) => {
                 self.enter_host_form(managed.as_ref(), false)?;
             }
-            None => self.enter_host_detail()?,
+            None => {
+                // Legacy ssh_config alias with no launcher row yet: materialize
+                // it into launcher.db so it gains a group/identity/metadata
+                // overlay, then edit that full form instead of the tags-only
+                // HostDetail (which has no Group field).
+                let name = self.hosts[host_idx].name().to_string();
+                let materialized = crate::ssh::materialize_ssh_config_host(
+                    self.resolver.as_ref(),
+                    &self.store,
+                    self.metadata.as_ref(),
+                    &name,
+                )?;
+                if materialized {
+                    self.reload_hosts()?;
+                    self.restore_selection_by_name(&name);
+                    let managed = self
+                        .selected_host_index()
+                        .and_then(|idx| self.hosts[idx].managed().cloned());
+                    if managed.is_some() {
+                        self.enter_host_form(managed.as_ref(), true)?;
+                        return Ok(());
+                    }
+                }
+                self.enter_host_detail()?;
+            }
         }
         Ok(())
     }
@@ -4900,7 +4924,9 @@ mod tests {
         legacy_meta(&mut app.hosts[0]).description = Some("Primary".into());
         legacy_meta(&mut app.hosts[0]).environment = Some("staging".into());
 
-        app.handle_key(key_char('e')).unwrap();
+        // HostDetail is the fallback metadata editor (used when an ssh_config
+        // alias can't be materialized). Drive it directly.
+        app.enter_host_detail().unwrap();
         assert_eq!(app.mode, AppMode::HostDetail);
         let edit = app.detail_edit.as_ref().unwrap();
         assert_eq!(edit.tags, "prod");
@@ -4929,7 +4955,7 @@ mod tests {
         );
         app.reload_hosts().unwrap();
 
-        app.handle_key(key_char('e')).unwrap();
+        app.enter_host_detail().unwrap();
         app.handle_key(key_char('p')).unwrap();
         app.handle_key(key_char('r')).unwrap();
         app.handle_key(key_char('o')).unwrap();
@@ -4975,7 +5001,7 @@ mod tests {
         legacy_meta(&mut app.hosts[0]).description = Some("saved".into());
         metadata.upsert(legacy_meta(&mut app.hosts[0])).unwrap();
 
-        app.handle_key(key_char('e')).unwrap();
+        app.enter_host_detail().unwrap();
         app.handle_key(key_char('x')).unwrap();
         app.handle_key(key(KeyCode::Esc)).unwrap();
 
@@ -4986,7 +5012,7 @@ mod tests {
     #[test]
     fn favourite_toggle_works_in_host_detail() {
         let mut app = test_app(vec![("web", host("web"))]);
-        app.handle_key(key_char('e')).unwrap();
+        app.enter_host_detail().unwrap();
         app.handle_key(key_char('f')).unwrap();
         assert!(app.hosts[0].favorite());
     }

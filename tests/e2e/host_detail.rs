@@ -77,62 +77,64 @@ fn app_with_persisted_db(db_path: &std::path::Path) -> App {
 }
 
 #[test]
-fn host_detail_edit_save_persists_to_db() {
+fn editing_ssh_config_alias_materializes_and_persists_tags() {
     let file = NamedTempFile::new().unwrap();
     let path = file.path();
     let mut app = app_with_persisted_db(path);
 
+    // `web` is a live ssh_config alias (not in launcher.db). Editing it
+    // materializes it into launcher.db and opens the metadata form, where
+    // tags/group/identity are editable and persisted to the launcher store.
     app.handle_key(key_char('e')).unwrap();
-    assert_eq!(app.mode, AppMode::HostDetail);
+    assert_eq!(app.mode, AppMode::HostForm);
+    assert!(app.host_form.as_ref().unwrap().metadata_only);
 
+    // Navigate to the Tags field and type.
+    use sshub::app::HostFormField;
+    while app.host_form.as_ref().unwrap().field != HostFormField::Tags {
+        app.handle_key(key(KeyCode::Down)).unwrap();
+    }
     for c in "prod, db".chars() {
         app.handle_key(key_char(c)).unwrap();
     }
-    app.handle_key(key(KeyCode::Tab)).unwrap();
-    for c in "Primary server".chars() {
-        app.handle_key(key_char(c)).unwrap();
-    }
-    app.handle_key(key(KeyCode::Tab)).unwrap();
-    for c in "production".chars() {
-        app.handle_key(key_char(c)).unwrap();
-    }
-    app.handle_key(key(KeyCode::Enter)).unwrap();
+    app.handle_key(key(KeyCode::F(2))).unwrap();
 
     assert_eq!(app.mode, AppMode::Normal);
     assert_eq!(app.hosts[0].tags(), &["prod", "db"]);
-    assert_eq!(app.hosts[0].description(), Some("Primary server"));
-    assert_eq!(app.hosts[0].environment(), Some("production"));
 
-    let db = MetadataDb::open(path).unwrap();
-    let loaded = db.get("web").unwrap().expect("saved row");
-    assert_eq!(loaded.tags, vec!["prod", "db"]);
-    assert_eq!(loaded.description.as_deref(), Some("Primary server"));
-    assert_eq!(loaded.environment.as_deref(), Some("production"));
+    let store = app.store();
+    let row = store.get_host_by_name("web").unwrap().expect("materialized");
+    assert_eq!(row.source, sshub::store::HostSource::SshConfig);
+    assert_eq!(row.tags, vec!["prod", "db"]);
 }
 
 #[test]
-fn host_detail_esc_cancel_reloads_from_db() {
+fn editing_alias_preserves_existing_metadata_on_materialize() {
     let file = NamedTempFile::new().unwrap();
     let path = file.path();
     let mut app = app_with_persisted_db(path);
 
+    // Pre-existing legacy metadata (from the MVP metadata.db) must carry over
+    // when the alias is materialized into launcher.db.
     if let sshub::app::HostEntry::Legacy { meta, .. } = &mut app.hosts[0] {
         meta.description = Some("stored".into());
+        meta.environment = Some("prod".into());
         MetadataDb::open(path).unwrap().upsert(meta).unwrap();
     }
+    app.reload_hosts().unwrap();
 
-    app.handle_key(key_char('e')).unwrap();
-    app.handle_key(key_char('x')).unwrap();
-    app.handle_key(key(KeyCode::Esc)).unwrap();
-
+    app.handle_key(key_char('e')).unwrap(); // materialize + open form
+    assert_eq!(app.mode, AppMode::HostForm);
+    app.handle_key(key(KeyCode::Esc)).unwrap(); // no changes → close cleanly
     assert_eq!(app.mode, AppMode::Normal);
-    assert_eq!(app.hosts[0].description(), Some("stored"));
 
-    let db = MetadataDb::open(path).unwrap();
-    assert_eq!(
-        db.get("web").unwrap().unwrap().description.as_deref(),
-        Some("stored")
-    );
+    let row = app
+        .store()
+        .get_host_by_name("web")
+        .unwrap()
+        .expect("materialized");
+    assert_eq!(row.notes.as_deref(), Some("stored"));
+    assert_eq!(row.environment.as_deref(), Some("prod"));
 }
 
 #[test]
@@ -150,11 +152,6 @@ fn favorite_toggle_in_normal_and_host_detail() {
 
     app.handle_key(key_char('f')).unwrap();
     assert!(!app.hosts[0].favorite());
-
-    app.handle_key(key_char('e')).unwrap();
-    app.handle_key(key_char('f')).unwrap();
-    assert!(app.hosts[0].favorite());
-
     let db = MetadataDb::open(path).unwrap();
-    assert!(db.get("web").unwrap().unwrap().favorite);
+    assert!(!db.get("web").unwrap().unwrap().favorite);
 }

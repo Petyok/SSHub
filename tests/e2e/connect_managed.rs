@@ -128,6 +128,7 @@ fn connect_ssh_config_host_uses_alias_mode() {
             ssh_config_hash: "abc123".into(),
             tags: vec![],
             notes: None,
+            environment: None,
             favorite: false,
             last_connected: None,
         })
