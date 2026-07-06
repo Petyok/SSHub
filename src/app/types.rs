@@ -409,6 +409,8 @@ impl HostEntry {
 pub struct KeybindEditor {
     /// Index into [`KeyAction::ALL`].
     pub selected: usize,
+    /// First visible row in the action list (for scrolling).
+    pub scroll: usize,
     /// When true, the next key press is captured as a binding.
     pub capturing: bool,
     /// When capturing, whether to append (`true`) or replace (`false`).

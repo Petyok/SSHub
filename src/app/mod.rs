@@ -426,3 +426,9 @@ impl App {
         &self.store
     }
 }
+
+impl Drop for App {
+    fn drop(&mut self) {
+        self.shutdown_all();
+    }
+}

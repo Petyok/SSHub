@@ -144,6 +144,45 @@ pub(crate) fn session_tabs_switch_detach_and_focus() {
 }
 
 #[test]
+pub(crate) fn shutdown_all_kills_detached_sessions() {
+    let metadata: Arc<dyn MetadataStore> = Arc::new(MetadataDb::default());
+    let (launcher, _launched) = RecordingLauncher::new();
+    let resolver = MockResolver::new(vec![("edge", host("edge"))]);
+    let mut app = App::new_with_deps(
+        AppConfig::default(),
+        AppDeps {
+            resolver: Box::new(resolver),
+            metadata,
+            store: test_store(),
+            launcher: Box::new(launcher),
+            password_store: Box::new(crate::credentials::NoopPasswordStore),
+        },
+    );
+    app.reload_hosts().unwrap();
+    app.terminal_area = ratatui::layout::Rect::new(0, 0, 80, 24);
+
+    let cfg = crate::session::SessionConfig {
+        argv: vec!["sleep".into(), "30".into()],
+        display_name: "edge".into(),
+        meta: crate::session::SessionMeta::default(),
+        pending_secret: None,
+    };
+    app.sessions
+        .push(crate::session::Session::spawn(cfg, 24, 80).unwrap());
+    app.active_session = Some(0);
+    app.mode = AppMode::Session;
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.mode, AppMode::Normal);
+    assert_eq!(app.sessions.len(), 1);
+
+    app.shutdown_all();
+    assert!(app.sessions.is_empty());
+    assert!(app.active_session.is_none());
+}
+
+#[test]
 pub(crate) fn tab_toggles_detail_focus() {
     let mut app = test_app(vec![("web", host("web"))]);
     assert!(!app.detail_focus);

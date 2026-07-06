@@ -31,6 +31,18 @@ impl App {
         // on `session` — borrowck won't let us re-read self after that.
         let body_rows = self.terminal_area.height.saturating_sub(2).max(1) as usize;
 
+        let cancel_connecting = matches!(
+            self.active_session().map(|s| &s.phase),
+            Some(crate::session::SessionPhase::Connecting { .. })
+        ) && self.is_action(KeyAction::SessionCancel, &key);
+        let scroll_up = self.is_action(KeyAction::SessionScrollUp, &key);
+        let scroll_down = self.is_action(KeyAction::SessionScrollDown, &key);
+
+        if cancel_connecting {
+            self.close_active_session();
+            return Ok(());
+        }
+
         let Some(session) = self.active_session_mut() else {
             self.mode = AppMode::Normal;
             return Ok(());
@@ -41,28 +53,15 @@ impl App {
             return Ok(());
         }
 
-        if key.code == KeyCode::Esc
-            && matches!(
-                session.phase,
-                crate::session::SessionPhase::Connecting { .. }
-            )
-        {
-            self.close_active_session();
-            return Ok(());
-        }
-
         // Local scrollback navigation. Half a screen per press.
         let half = (body_rows / 2).max(1);
-        match key.code {
-            KeyCode::PageUp => {
-                session.parser.scroll_up(half);
-                return Ok(());
-            }
-            KeyCode::PageDown => {
-                session.parser.scroll_down(half);
-                return Ok(());
-            }
-            _ => {}
+        if scroll_up {
+            session.parser.scroll_up(half);
+            return Ok(());
+        }
+        if scroll_down {
+            session.parser.scroll_down(half);
+            return Ok(());
         }
 
         // Any other key snaps the view back to live and forwards.
@@ -315,9 +314,15 @@ impl App {
     /// Legacy alias retained for tests / callers that explicitly want to end
     /// the whole session stack.
     pub fn end_session(&mut self) {
+        self.shutdown_all();
+        self.mode = AppMode::Normal;
+    }
+
+    /// Kill every embedded SSH child and clear tab state. Called on quit and
+    /// from [`Drop`] so detached sessions never outlive the app.
+    pub fn shutdown_all(&mut self) {
         self.sessions.clear();
         self.active_session = None;
-        self.mode = AppMode::Normal;
     }
 
     /// Copy the SSH log entries for the selected host to the system clipboard

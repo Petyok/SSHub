@@ -195,6 +195,7 @@ impl Session {
                     had_bytes = true;
                 }
                 PtyEvent::Exited(status) => {
+                    self.runtime.reap_child();
                     self.diagnostics
                         .push(format!("session: ssh exited ({status})"));
                     self.phase = SessionPhase::Exited {

@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
@@ -139,17 +140,45 @@ impl PtyRuntime {
     pub fn is_closed(&self) -> bool {
         self.closed.load(Ordering::Relaxed)
     }
+
+    /// Reap a child that has already exited. Prevents zombies while the
+    /// [`Session`] object stays alive in a detached tab.
+    pub fn reap_child(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.wait();
+        }
+    }
+
+    fn terminate_child(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            terminate_child_process(&mut *child);
+        }
+    }
+}
+
+/// Kill the embedded ssh child and its process group, then reap it.
+fn terminate_child_process(child: &mut dyn portable_pty::Child) {
+    #[cfg(unix)]
+    if let Some(pid) = child.process_id() {
+        let pgid = pid as libc::pid_t;
+        // portable-pty calls setsid() in the slave pre_exec, so `-pid` hits the
+        // whole session (ssh and any local helpers).
+        unsafe {
+            libc::kill(-pgid, libc::SIGHUP);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        unsafe {
+            libc::kill(-pgid, libc::SIGTERM);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 impl Drop for PtyRuntime {
     fn drop(&mut self) {
-        // Best-effort: kill the child, then join the reader thread with a short
-        // grace period. Reader exits when the master is dropped (its clone reader
-        // returns EOF / error).
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
+        self.terminate_child();
         if let Some(handle) = self.reader_thread.take() {
             let _ = handle.join();
         }

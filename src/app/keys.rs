@@ -13,7 +13,7 @@ impl App {
             return self.handle_key_session(key);
         }
 
-        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+        if self.is_action(KeyAction::ForceQuit, &key) {
             // First Ctrl+C asks for confirmation (if enabled); a second Ctrl+C
             // while the dialog is up forces the quit.
             if self.mode == AppMode::ConfirmQuit || !self.config.appearance.confirm_quit {
@@ -25,13 +25,11 @@ impl App {
             return Ok(());
         }
 
-        // Ctrl+K opens the keybinding editor from any normal navigation screen.
-        if self.mode == AppMode::Normal
-            && key.modifiers.contains(KeyModifiers::CONTROL)
-            && matches!(key.code, KeyCode::Char('k') | KeyCode::Char('K'))
-        {
+        // Keybinding editor from the dashboard navigation screens.
+        if self.mode == AppMode::Normal && self.is_action(KeyAction::KeybindEditor, &key) {
             self.keybind_editor = Some(KeybindEditor {
                 selected: 0,
+                scroll: 0,
                 capturing: false,
                 append: false,
             });
@@ -76,32 +74,25 @@ impl App {
             return Ok(());
         }
 
+        if self.try_tab_switch(&key)? {
+            return Ok(());
+        }
+
         match key.code {
             _ if self.is_action(KeyAction::Quit, &key) => self.request_quit(),
-            KeyCode::Up if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.move_host_manual(-1)?
-            }
-            KeyCode::Down if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.move_host_manual(1)?
-            }
-            KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                self.move_selection_by_group(-1);
-            }
-            KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                self.move_selection_by_group(1);
-            }
-            KeyCode::Char('j') | KeyCode::Down if key.modifiers.is_empty() => {
-                self.move_selection(1)
-            }
-            KeyCode::Char('k') | KeyCode::Up if key.modifiers.is_empty() => self.move_selection(-1),
-            KeyCode::Esc if key.modifiers.is_empty() && !self.tag_filters.is_empty() => {
+            _ if self.is_action(KeyAction::MoveHostUp, &key) => self.move_host_manual(-1)?,
+            _ if self.is_action(KeyAction::MoveHostDown, &key) => self.move_host_manual(1)?,
+            _ if self.is_action(KeyAction::MoveGroupUp, &key) => self.move_selection_by_group(-1),
+            _ if self.is_action(KeyAction::MoveGroupDown, &key) => self.move_selection_by_group(1),
+            _ if self.is_action(KeyAction::MoveDown, &key) => self.move_selection(1),
+            _ if self.is_action(KeyAction::MoveUp, &key) => self.move_selection(-1),
+            _ if self.is_action(KeyAction::Cancel, &key) && !self.tag_filters.is_empty() => {
                 self.tag_filters.clear();
                 self.search_query.clear();
                 self.rebuild_filter();
             }
-            // Collapse/expand the group under the selection.
-            KeyCode::Char(' ') if key.modifiers.is_empty() => self.toggle_selected_group(),
-            KeyCode::Left if key.modifiers.is_empty() => {
+            _ if self.is_action(KeyAction::ToggleGroup, &key) => self.toggle_selected_group(),
+            _ if self.is_action(KeyAction::FoldGroupIn, &key) => {
                 if self
                     .selected_nav_header()
                     .is_some_and(|si| !self.group_sections[si].collapsed)
@@ -109,7 +100,7 @@ impl App {
                     self.toggle_selected_group();
                 }
             }
-            KeyCode::Right if key.modifiers.is_empty() => {
+            _ if self.is_action(KeyAction::FoldGroupOut, &key) => {
                 if self
                     .selected_nav_header()
                     .is_some_and(|si| self.group_sections[si].collapsed)
@@ -117,19 +108,21 @@ impl App {
                     self.toggle_selected_group();
                 }
             }
-            KeyCode::Char('Z') if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                // Collapse all, or expand all if everything is already collapsed.
+            _ if self.is_action(KeyAction::CollapseAll, &key) => {
                 let all_collapsed = !self.group_sections.is_empty()
                     && self.group_sections.iter().all(|s| s.collapsed);
                 self.set_all_groups_collapsed(!all_collapsed);
             }
-            // Enter on a group header toggles it; on a host it connects.
-            KeyCode::Enter if self.selected_nav_header().is_some() => self.toggle_selected_group(),
-            KeyCode::Enter => self.connect_selected()?,
+            _ if self.selected_nav_header().is_some()
+                && self.is_action(KeyAction::Connect, &key) =>
+            {
+                self.toggle_selected_group()
+            }
+            _ if self.is_action(KeyAction::Connect, &key) => self.connect_selected()?,
             _ if self.is_action(KeyAction::AddHost, &key) => self.enter_host_form(None, false)?,
             _ if self.is_action(KeyAction::Delete, &key) => self.delete_selected_host()?,
             _ if self.is_action(KeyAction::Duplicate, &key) => self.duplicate_selected_host()?,
-            KeyCode::Char('E') if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            _ if self.is_action(KeyAction::ExportSsh, &key) => {
                 match self.export_ssh_config() {
                     Ok(path) => {
                         let count = self
@@ -143,7 +136,7 @@ impl App {
                     Err(e) => self.host_notice = Some(format!("Export failed: {e:#}")),
                 }
             }
-            KeyCode::Char('I') if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            _ if self.is_action(KeyAction::ImportSsh, &key) => {
                 match self.import_ssh_config() {
                     Ok(report) => {
                         let mut msg = format!(
@@ -158,31 +151,24 @@ impl App {
                     Err(e) => self.host_notice = Some(format!("Import failed: {e:#}")),
                 }
             }
-            KeyCode::Char('T') if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                self.open_import_prompt();
-            }
-            // `e` on a group header configures its default identity; on a host
-            // it edits the host.
-            KeyCode::Char('e') if key.modifiers.is_empty() => {
+            _ if self.is_action(KeyAction::ImportTermius, &key) => self.open_import_prompt(),
+            _ if self.is_action(KeyAction::Edit, &key) => {
                 if self.selected_nav_header().is_some() {
                     self.open_group_identity_picker()?;
                 } else {
                     self.edit_selected_host()?;
                 }
             }
-            // Host-name column zoom: widen (`+`/`=`) or narrow (`-`/`_`).
-            KeyCode::Char('+' | '=')
-                if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
-            {
+            _ if self.is_action(KeyAction::UiZoomIn, &key) => {
                 self.set_ui_zoom((self.ui_zoom + 1).min(UI_ZOOM_MAX));
             }
-            KeyCode::Char('-' | '_')
-                if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
-            {
+            _ if self.is_action(KeyAction::UiZoomOut, &key) => {
                 self.set_ui_zoom(self.ui_zoom.saturating_sub(1));
             }
-            KeyCode::Char('f') if key.modifiers.is_empty() => self.toggle_favorite()?,
-            KeyCode::Tab => self.detail_focus = !self.detail_focus,
+            _ if self.is_action(KeyAction::Favorite, &key) => self.toggle_favorite()?,
+            _ if self.is_action(KeyAction::DetailFocus, &key) => {
+                self.detail_focus = !self.detail_focus;
+            }
             _ if self.is_action(KeyAction::Search, &key) => {
                 self.palette_query.clear();
                 self.palette_selected = 0;
@@ -193,47 +179,18 @@ impl App {
                 self.pre_help_mode = Some(self.mode);
                 self.mode = AppMode::Help;
             }
-            _ if self.is_action(KeyAction::TagFilter, &key) => {
-                self.open_tag_filter();
-            }
-            KeyCode::Char('c') if key.modifiers.is_empty() => {
+            _ if self.is_action(KeyAction::TagFilter, &key) => self.open_tag_filter(),
+            _ if self.is_action(KeyAction::ClearSshLog, &key) => {
                 self.ssh_log.clear();
                 self.ssh_log_scroll = 0;
-                // The periodic ssh probe was removed — the receiver is left
-                // around for the type signature but never produces anything.
                 self.probe_rx = None;
                 self.host_notice = Some("SSH log cleared.".into());
             }
-            KeyCode::Char('i') if key.modifiers.is_empty() => self.switch_to_keys_tab()?,
-            KeyCode::Char('h') if key.modifiers.is_empty() => self.active_tab = 0,
-            KeyCode::Char('1') if key.modifiers.is_empty() => self.active_tab = 0,
-            KeyCode::Char('2') if key.modifiers.is_empty() => self.switch_to_tunnels_tab()?,
-            KeyCode::Char('3') if key.modifiers.is_empty() => self.switch_to_keys_tab()?,
-            KeyCode::Char('4') if key.modifiers.is_empty() => {
-                self.active_tab = 3;
-                self.refresh_audit_events();
-            }
-            KeyCode::Char('s') if key.modifiers.is_empty() => self.cycle_sort_mode(),
-            KeyCode::Char('y') if key.modifiers.is_empty() => self.yank_ssh_log()?,
-            KeyCode::Char('g' | 'G')
-                if key
-                    .modifiers
-                    .contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT) =>
-            {
-                self.delete_selected_host_group()?
-            }
-            KeyCode::Char('g' | 'G')
-                if key.modifiers.contains(KeyModifiers::SHIFT)
-                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
-                self.enter_group_manage()?
-            }
-            KeyCode::Char('g' | 'G')
-                if key.modifiers.contains(KeyModifiers::CONTROL)
-                    && !key.modifiers.contains(KeyModifiers::SHIFT) =>
-            {
-                self.rename_selected_host_group()?
-            }
+            _ if self.is_action(KeyAction::SortCycle, &key) => self.cycle_sort_mode(),
+            _ if self.is_action(KeyAction::YankLog, &key) => self.yank_ssh_log()?,
+            _ if self.is_action(KeyAction::DeleteGroup, &key) => self.delete_selected_host_group()?,
+            _ if self.is_action(KeyAction::GroupsManage, &key) => self.enter_group_manage()?,
+            _ if self.is_action(KeyAction::RenameGroup, &key) => self.rename_selected_host_group()?,
             // Unmatched chars open the fuzzy palette instead of legacy search
             KeyCode::Char(c)
                 if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
@@ -250,29 +207,48 @@ impl App {
         Ok(())
     }
 
+    /// Switch dashboard tabs when a tab keybinding matches.
+    pub(crate) fn try_tab_switch(&mut self, key: &KeyEvent) -> Result<bool> {
+        if self.is_action(KeyAction::TabHosts, key) {
+            self.active_tab = 0;
+            return Ok(true);
+        }
+        if self.is_action(KeyAction::TabTunnels, key) {
+            self.switch_to_tunnels_tab()?;
+            return Ok(true);
+        }
+        if self.is_action(KeyAction::TabKeys, key) {
+            self.switch_to_keys_tab()?;
+            return Ok(true);
+        }
+        if self.is_action(KeyAction::TabAudit, key) {
+            self.active_tab = 3;
+            self.refresh_audit_events();
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
     pub(crate) fn handle_key_palette(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
-            KeyCode::Esc => {
+            _ if self.is_action(KeyAction::Cancel, &key) => {
                 self.mode = AppMode::Normal;
             }
-            KeyCode::Enter => {
+            _ if self.is_action(KeyAction::Connect, &key) => {
                 let chosen = self.palette_results.get(self.palette_selected).copied();
                 self.mode = AppMode::Normal;
                 if let Some(idx) = chosen {
-                    // Reveal (and select) the exact host chosen, then connect.
-                    // `reveal_host` clears any filter that hides it and expands
-                    // its group, so we never connect to a different host.
                     if self.reveal_host(idx) {
                         self.connect_selected()?;
                     }
                 }
             }
-            KeyCode::Up => {
+            _ if self.is_action(KeyAction::MoveUp, &key) => {
                 if self.palette_selected > 0 {
                     self.palette_selected -= 1;
                 }
             }
-            KeyCode::Down => {
+            _ if self.is_action(KeyAction::MoveDown, &key) => {
                 if self.palette_selected + 1 < self.palette_results.len() {
                     self.palette_selected += 1;
                 }
@@ -301,10 +277,10 @@ impl App {
 
     pub(crate) fn handle_key_search(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
-            KeyCode::Esc => self.exit_search(true),
-            KeyCode::Char('j') | KeyCode::Down => self.move_selection(1),
-            KeyCode::Char('k') | KeyCode::Up => self.move_selection(-1),
-            KeyCode::Enter => self.connect_selected()?,
+            _ if self.is_action(KeyAction::Cancel, &key) => self.exit_search(true),
+            _ if self.is_action(KeyAction::MoveDown, &key) => self.move_selection(1),
+            _ if self.is_action(KeyAction::MoveUp, &key) => self.move_selection(-1),
+            _ if self.is_action(KeyAction::Connect, &key) => self.connect_selected()?,
             KeyCode::Backspace => {
                 self.search_query.pop();
                 self.rebuild_filter();
@@ -327,17 +303,13 @@ impl App {
         }
 
         match key.code {
-            KeyCode::Esc => self.cancel_host_detail()?,
-            KeyCode::Enter => self.save_host_detail()?,
-            KeyCode::Char('f') if key.modifiers.is_empty() => self.toggle_favorite()?,
-            KeyCode::Tab if key.modifiers.is_empty() => self.detail_edit_field_next(),
+            _ if self.is_action(KeyAction::Cancel, &key) => self.cancel_host_detail()?,
+            _ if self.is_action(KeyAction::Connect, &key) => self.save_host_detail()?,
+            _ if self.is_action(KeyAction::Favorite, &key) => self.toggle_favorite()?,
+            _ if self.is_action(KeyAction::DetailFocus, &key) => self.detail_edit_field_next(),
             KeyCode::BackTab => self.detail_edit_field_prev(),
-            KeyCode::Char('j') | KeyCode::Down if key.modifiers.is_empty() => {
-                self.detail_edit_field_next()
-            }
-            KeyCode::Char('k') | KeyCode::Up if key.modifiers.is_empty() => {
-                self.detail_edit_field_prev()
-            }
+            _ if self.is_action(KeyAction::MoveDown, &key) => self.detail_edit_field_next(),
+            _ if self.is_action(KeyAction::MoveUp, &key) => self.detail_edit_field_prev(),
             KeyCode::Backspace if key.modifiers.is_empty() => self.detail_edit_backspace(),
             KeyCode::Char(c)
                 if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
@@ -353,34 +325,32 @@ impl App {
     pub(crate) fn handle_key_keychain(&mut self, key: KeyEvent) -> Result<()> {
         self.identity_notice = None;
 
+        if self.try_tab_switch(&key)? {
+            return Ok(());
+        }
+
         match key.code {
             _ if self.is_action(KeyAction::Quit, &key) => self.request_quit(),
-            KeyCode::Char('h') if key.modifiers.is_empty() => {
+            _ if self.is_action(KeyAction::Cancel, &key) => {
                 self.active_tab = 0;
             }
-            KeyCode::Char('1') if key.modifiers.is_empty() => {
-                self.active_tab = 0;
+            _ if self.is_action(KeyAction::MoveDown, &key) => self.move_identity_grid(1, 0),
+            _ if self.is_action(KeyAction::MoveUp, &key) => self.move_identity_grid(-1, 0),
+            _ if self.is_action(KeyAction::MoveRight, &key) => self.move_identity_grid(0, 1),
+            _ if self.is_action(KeyAction::MoveLeft, &key) => self.move_identity_grid(0, -1),
+            _ if self.is_action(KeyAction::IdentityColumnsInc, &key) => {
+                self.adjust_identity_columns(1);
             }
-            KeyCode::Char('2') if key.modifiers.is_empty() => self.switch_to_tunnels_tab()?,
-            KeyCode::Char('3') if key.modifiers.is_empty() => self.switch_to_keys_tab()?,
-            KeyCode::Char('4') if key.modifiers.is_empty() => {
-                self.active_tab = 3;
-                self.refresh_audit_events();
+            _ if self.is_action(KeyAction::IdentityColumnsDec, &key) => {
+                self.adjust_identity_columns(-1);
             }
-            KeyCode::Esc if key.modifiers.is_empty() => {
-                self.active_tab = 0;
+            _ if self.is_action(KeyAction::AddHost, &key) => self.enter_identity_form(None)?,
+            _ if self.is_action(KeyAction::Edit, &key) => self.edit_selected_identity()?,
+            _ if self.is_action(KeyAction::Delete, &key) => self.delete_selected_identity()?,
+            _ if self.is_action(KeyAction::RemoveFromAgent, &key) => {
+                self.remove_selected_from_agent()?;
             }
-            KeyCode::Char('j') | KeyCode::Down => self.move_identity_grid(1, 0),
-            KeyCode::Char('k') | KeyCode::Up => self.move_identity_grid(-1, 0),
-            KeyCode::Char('l') | KeyCode::Right => self.move_identity_grid(0, 1),
-            KeyCode::Left => self.move_identity_grid(0, -1),
-            KeyCode::Char(']') if key.modifiers.is_empty() => self.adjust_identity_columns(1),
-            KeyCode::Char('[') if key.modifiers.is_empty() => self.adjust_identity_columns(-1),
-            KeyCode::Char('a') if key.modifiers.is_empty() => self.enter_identity_form(None)?,
-            KeyCode::Char('e') if key.modifiers.is_empty() => self.edit_selected_identity()?,
-            KeyCode::Char('d') if key.modifiers.is_empty() => self.delete_selected_identity()?,
-            KeyCode::Char('r') if key.modifiers.is_empty() => self.remove_selected_from_agent()?,
-            KeyCode::Char('p') if key.modifiers.is_empty() => self.add_selected_to_agent()?,
+            _ if self.is_action(KeyAction::AddToAgent, &key) => self.add_selected_to_agent()?,
             _ if self.is_action(KeyAction::Help, &key) => {
                 self.pre_help_mode = Some(self.mode);
                 self.mode = AppMode::Help;
@@ -392,7 +362,7 @@ impl App {
 
     pub(crate) fn handle_key_confirm_discard(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
-            KeyCode::Char('y') if key.modifiers.is_empty() => {
+            _ if self.is_action(KeyAction::ConfirmYes, &key) => {
                 // Save; on validation failure the form survives — return to it
                 // so the user sees the notice instead of a stuck dialog.
                 if self.host_form.is_some() {
@@ -412,7 +382,7 @@ impl App {
                     }
                 }
             }
-            KeyCode::Char('n') if key.modifiers.is_empty() => {
+            _ if self.is_action(KeyAction::ConfirmNo, &key) => {
                 // Discard
                 if self.host_form.is_some() {
                     self.discard_host_form()?;
@@ -423,7 +393,7 @@ impl App {
                     self.mode = AppMode::Normal;
                 }
             }
-            KeyCode::Esc => {
+            _ if self.is_action(KeyAction::Cancel, &key) => {
                 // Go back to form
                 if self.host_form.is_some() {
                     self.mode = AppMode::HostForm;
@@ -441,18 +411,19 @@ impl App {
     }
 
     pub(crate) fn handle_key_help(&mut self, key: KeyEvent) -> Result<()> {
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') | KeyCode::Enter => {
-                self.mode = self.pre_help_mode.take().unwrap_or(AppMode::Normal);
-            }
-            _ => {}
+        if self.is_action(KeyAction::Cancel, &key)
+            || self.is_action(KeyAction::Quit, &key)
+            || self.is_action(KeyAction::Help, &key)
+            || self.is_action(KeyAction::Connect, &key)
+        {
+            self.mode = self.pre_help_mode.take().unwrap_or(AppMode::Normal);
         }
         Ok(())
     }
 
     pub(crate) fn handle_key_confirm_delete(&mut self, key: KeyEvent) -> Result<()> {
-        match key.code {
-            KeyCode::Char('y') => match self.pending_delete.take() {
+        if self.is_action(KeyAction::ConfirmYes, &key) {
+            match self.pending_delete.take() {
                 Some(PendingDelete::Host { id, name }) => {
                     match self.store.delete_host(id)? {
                         DeleteHostOutcome::Deleted => {
@@ -502,17 +473,17 @@ impl App {
                 None => {
                     self.mode = AppMode::Normal;
                 }
-            },
-            KeyCode::Char('n') | KeyCode::Esc => {
-                let was_group = matches!(self.pending_delete, Some(PendingDelete::Group { .. }));
-                self.pending_delete = None;
-                if was_group {
-                    self.enter_group_manage()?;
-                } else {
-                    self.mode = AppMode::Normal;
-                }
             }
-            _ => {}
+        } else if self.is_action(KeyAction::ConfirmNo, &key)
+            || self.is_action(KeyAction::Cancel, &key)
+        {
+            let was_group = matches!(self.pending_delete, Some(PendingDelete::Group { .. }));
+            self.pending_delete = None;
+            if was_group {
+                self.enter_group_manage()?;
+            } else {
+                self.mode = AppMode::Normal;
+            }
         }
         Ok(())
     }
@@ -591,14 +562,12 @@ impl App {
     }
 
     pub(crate) fn handle_key_confirm_quit(&mut self, key: KeyEvent) -> Result<()> {
-        match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                self.should_quit = true;
-            }
-            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                self.mode = self.pre_quit_mode.take().unwrap_or(AppMode::Normal);
-            }
-            _ => {}
+        if self.is_action(KeyAction::ConfirmYes, &key) {
+            self.should_quit = true;
+        } else if self.is_action(KeyAction::ConfirmNo, &key)
+            || self.is_action(KeyAction::Cancel, &key)
+        {
+            self.mode = self.pre_quit_mode.take().unwrap_or(AppMode::Normal);
         }
         Ok(())
     }
@@ -628,40 +597,40 @@ impl App {
         }
 
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => {
+            _ if self.is_action(KeyAction::Cancel, &key) => {
                 self.keybind_editor = None;
                 self.mode = AppMode::Normal;
             }
-            KeyCode::Char('j') | KeyCode::Down => {
+            _ if self.is_action(KeyAction::MoveDown, &key) => {
                 if let Some(e) = self.keybind_editor.as_mut() {
                     e.selected = (e.selected + 1) % KeyAction::ALL.len();
+                    Self::clamp_keybind_editor_scroll(e);
                 }
             }
-            KeyCode::Char('k') | KeyCode::Up => {
+            _ if self.is_action(KeyAction::MoveUp, &key) => {
                 if let Some(e) = self.keybind_editor.as_mut() {
                     e.selected = (e.selected + KeyAction::ALL.len() - 1) % KeyAction::ALL.len();
+                    Self::clamp_keybind_editor_scroll(e);
                 }
             }
-            // Enter/c: replace with a single new key. a: add another binding.
-            KeyCode::Enter | KeyCode::Char('c') => {
+            _ if self.is_action(KeyAction::Connect, &key) => {
                 if let Some(e) = self.keybind_editor.as_mut() {
                     e.capturing = true;
                     e.append = false;
                 }
             }
-            KeyCode::Char('a') => {
+            _ if self.is_action(KeyAction::AddHost, &key) => {
                 if let Some(e) = self.keybind_editor.as_mut() {
                     e.capturing = true;
                     e.append = true;
                 }
             }
-            KeyCode::Char('r') => {
+            KeyCode::Char('r') if key.modifiers.is_empty() => {
                 let action = KeyAction::ALL[editor.selected];
                 self.config.keybinds.reset_action(action);
                 self.save_config_quietly();
             }
-            KeyCode::Char('x') => {
-                // Unbind the action entirely.
+            KeyCode::Char('x') if key.modifiers.is_empty() => {
                 let action = KeyAction::ALL[editor.selected];
                 self.config.keybinds.set(action, Vec::new());
                 self.save_config_quietly();
@@ -669,6 +638,16 @@ impl App {
             _ => {}
         }
         Ok(())
+    }
+
+    fn clamp_keybind_editor_scroll(editor: &mut KeybindEditor) {
+        // Keep selection visible in a ~16-row viewport.
+        const VIEWPORT: usize = 16;
+        if editor.selected < editor.scroll {
+            editor.scroll = editor.selected;
+        } else if editor.selected >= editor.scroll + VIEWPORT {
+            editor.scroll = editor.selected.saturating_sub(VIEWPORT - 1);
+        }
     }
 
     /// Persist config, surfacing failures as a non-fatal host notice.

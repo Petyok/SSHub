@@ -340,6 +340,11 @@ pub(crate) fn parse_keyspec(spec: &str) -> Option<(KeyCode, KeyModifiers)> {
         "esc" | "escape" => KeyCode::Esc,
         "pageup" => KeyCode::PageUp,
         "pagedown" => KeyCode::PageDown,
+        "up" => KeyCode::Up,
+        "down" => KeyCode::Down,
+        "left" => KeyCode::Left,
+        "right" => KeyCode::Right,
+        "backtab" => KeyCode::BackTab,
         lower => {
             // Function key "F1".."F12"?
             if let Some(n) = lower
@@ -369,6 +374,12 @@ pub(crate) fn keyevent_to_spec(key: &KeyEvent) -> Option<String> {
         KeyCode::Esc => "Esc".to_string(),
         KeyCode::PageUp => "PageUp".to_string(),
         KeyCode::PageDown => "PageDown".to_string(),
+        KeyCode::Up => "Up".to_string(),
+        KeyCode::Down => "Down".to_string(),
+        KeyCode::Left => "Left".to_string(),
+        KeyCode::Right => "Right".to_string(),
+        KeyCode::Tab => "Tab".to_string(),
+        KeyCode::BackTab => "BackTab".to_string(),
         KeyCode::F(n) => format!("F{n}"),
         KeyCode::Char(c) => c.to_ascii_uppercase().to_string(),
         _ => return None,

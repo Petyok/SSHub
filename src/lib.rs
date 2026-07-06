@@ -1,5 +1,6 @@
 pub mod app;
 pub mod config;
+pub mod keybinds;
 pub mod credentials;
 pub mod import;
 pub mod launcher;
@@ -223,6 +224,7 @@ fn run_terminal_loop(app: &mut App, auto_quit: Option<&str>) -> Result<()> {
         poll_keys_and_watcher(app)?;
 
         if app.should_quit {
+            app.shutdown_all();
             break;
         }
     }

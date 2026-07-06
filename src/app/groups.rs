@@ -44,27 +44,20 @@ impl App {
 
         match key.code {
             _ if self.is_action(KeyAction::Quit, &key) => self.request_quit(),
-            KeyCode::Esc | KeyCode::Char('h') if key.modifiers.is_empty() => {
+            _ if self.is_action(KeyAction::Cancel, &key)
+                || self.is_action(KeyAction::TabHosts, &key) =>
+            {
                 self.mode = AppMode::Normal;
             }
-            KeyCode::Char('1') if key.modifiers.is_empty() => {
-                self.mode = AppMode::Normal;
-            }
-            KeyCode::Char('j') | KeyCode::Down if key.modifiers.is_empty() => {
-                self.move_group_manage_selection(1)
-            }
-            KeyCode::Char('k') | KeyCode::Up if key.modifiers.is_empty() => {
-                self.move_group_manage_selection(-1)
-            }
-            KeyCode::Char('a') if key.modifiers.is_empty() => {
-                self.enter_group_form(None)?;
-            }
-            KeyCode::Char('e') if key.modifiers.is_empty() => {
+            _ if self.is_action(KeyAction::MoveDown, &key) => self.move_group_manage_selection(1),
+            _ if self.is_action(KeyAction::MoveUp, &key) => self.move_group_manage_selection(-1),
+            _ if self.is_action(KeyAction::AddHost, &key) => self.enter_group_form(None)?,
+            _ if self.is_action(KeyAction::Edit, &key) => {
                 if let Some(group) = self.groups.get(self.group_manage_selected).cloned() {
                     self.enter_group_form(Some(&group))?;
                 }
             }
-            KeyCode::Char('d') if key.modifiers.is_empty() => {
+            _ if self.is_action(KeyAction::Delete, &key) => {
                 if let Some(group) = self.groups.get(self.group_manage_selected).cloned() {
                     self.pending_delete = Some(PendingDelete::Group {
                         id: group.id,

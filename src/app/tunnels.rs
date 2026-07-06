@@ -10,17 +10,21 @@ impl App {
     pub(crate) fn handle_key_tunnels(&mut self, key: KeyEvent) -> Result<()> {
         self.tunnel_notice = None;
 
+        if self.try_tab_switch(&key)? {
+            return Ok(());
+        }
+
         match key.code {
             _ if self.is_action(KeyAction::Quit, &key) => self.request_quit(),
-            KeyCode::Char('j') | KeyCode::Down => {
+            _ if self.is_action(KeyAction::MoveDown, &key) => {
                 if !self.tunnels.is_empty() {
                     self.tunnel_selected = (self.tunnel_selected + 1).min(self.tunnels.len() - 1);
                 }
             }
-            KeyCode::Char('k') | KeyCode::Up => {
+            _ if self.is_action(KeyAction::MoveUp, &key) => {
                 self.tunnel_selected = self.tunnel_selected.saturating_sub(1);
             }
-            KeyCode::Char('a') if key.modifiers.is_empty() => {
+            _ if self.is_action(KeyAction::AddHost, &key) => {
                 self.tunnel_form = Some(TunnelFormEdit {
                     editing_id: None,
                     tunnel_type: crate::store::TunnelType::Local,
@@ -36,7 +40,7 @@ impl App {
                 });
                 self.mode = AppMode::TunnelForm;
             }
-            KeyCode::Char('e') if key.modifiers.is_empty() => {
+            _ if self.is_action(KeyAction::Edit, &key) => {
                 if let Some(tunnel) = self.tunnels.get(self.tunnel_selected) {
                     self.tunnel_form = Some(TunnelFormEdit {
                         editing_id: Some(tunnel.id),
@@ -54,7 +58,7 @@ impl App {
                     self.mode = AppMode::TunnelForm;
                 }
             }
-            KeyCode::Char('d') if key.modifiers.is_empty() => {
+            _ if self.is_action(KeyAction::Delete, &key) => {
                 if let Some(tunnel) = self.tunnels.get(self.tunnel_selected) {
                     let label = tunnel
                         .label
@@ -67,16 +71,8 @@ impl App {
                     self.mode = AppMode::ConfirmDelete;
                 }
             }
-            KeyCode::Enter => self.toggle_tunnel()?,
-            KeyCode::Char('x') if key.modifiers.is_empty() => self.kill_selected_tunnel()?,
-            KeyCode::Char('1') if key.modifiers.is_empty() => self.active_tab = 0,
-            KeyCode::Char('2') if key.modifiers.is_empty() => self.switch_to_tunnels_tab()?,
-            KeyCode::Char('3') if key.modifiers.is_empty() => self.switch_to_keys_tab()?,
-            KeyCode::Char('4') if key.modifiers.is_empty() => {
-                self.active_tab = 3;
-                self.refresh_audit_events();
-            }
-            KeyCode::Char('h') if key.modifiers.is_empty() => self.active_tab = 0,
+            _ if self.is_action(KeyAction::ToggleTunnel, &key) => self.toggle_tunnel()?,
+            _ if self.is_action(KeyAction::TunnelKill, &key) => self.kill_selected_tunnel()?,
             _ if self.is_action(KeyAction::Help, &key) => {
                 self.pre_help_mode = Some(self.mode);
                 self.mode = AppMode::Help;

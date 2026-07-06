@@ -14,7 +14,8 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
 
     let area = frame.area();
     let popup_w = 60u16.min(area.width.saturating_sub(2));
-    let popup_h = (KeyAction::ALL.len() as u16 + 6).min(area.height.saturating_sub(2));
+    let list_rows = area.height.saturating_sub(8).max(8).min(20);
+    let popup_h = (list_rows + 6).min(area.height.saturating_sub(2));
     let x = area.x + (area.width.saturating_sub(popup_w)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_h)) / 2;
     let popup = Rect::new(x, y, popup_w, popup_h);
@@ -30,10 +31,14 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
 
     let buf = frame.buffer_mut();
     let row_x = popup.x + 2;
-    let val_x = popup.x + 22;
+    let val_x = popup.x + 28;
+    let visible = popup.height.saturating_sub(4) as usize;
+    let total = KeyAction::ALL.len();
+    let scroll = editor.scroll.min(total.saturating_sub(visible));
 
-    for (i, action) in KeyAction::ALL.iter().enumerate() {
-        let ry = popup.y + 1 + i as u16;
+    for (row, i) in (scroll..total).take(visible).enumerate() {
+        let action = KeyAction::ALL[i];
+        let ry = popup.y + 1 + row as u16;
         let is_sel = i == editor.selected;
         if is_sel {
             let blank = " ".repeat(popup.width.saturating_sub(2) as usize);
@@ -52,7 +57,7 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
             label_style,
         );
 
-        let binds = app.config.keybinds.binds(*action).join(", ");
+        let binds = app.config.keybinds.binds(action).join(", ");
         let value = if is_sel && editor.capturing {
             "press a key…".to_string()
         } else {
@@ -65,7 +70,7 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
         } else {
             theme::mute()
         };
-        let avail = popup.width.saturating_sub(24) as usize;
+        let avail = popup.width.saturating_sub(30) as usize;
         buf.set_string(
             val_x,
             ry,
@@ -74,8 +79,12 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
         );
     }
 
-    // Hint line at the bottom.
     let hint_y = popup.y + popup.height.saturating_sub(2);
+    let scroll_hint = if total > visible {
+        format!(" ({}/{})", editor.selected + 1, total)
+    } else {
+        String::new()
+    };
     let hint = if editor.capturing {
         if editor.append {
             "press a key to add  │  Esc: cancel"
@@ -88,7 +97,7 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
     buf.set_string(
         row_x,
         hint_y,
-        crate::tui::text::ellipsize(hint, popup.width.saturating_sub(4) as usize),
+        crate::tui::text::ellipsize(&format!("{hint}{scroll_hint}"), popup.width.saturating_sub(4) as usize),
         theme::dim(),
     );
 }
