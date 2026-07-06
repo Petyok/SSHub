@@ -36,7 +36,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event, KeyCode, KeyEvent, KeyModifiers,
 };
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -137,6 +138,9 @@ fn run_terminal_loop(app: &mut App, auto_quit: Option<&str>) -> Result<()> {
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
     stdout().execute(EnableMouseCapture)?;
+    // Deliver pastes as a single Event::Paste blob instead of per-key events,
+    // so multi-line content doesn't fire Enter mid-field.
+    stdout().execute(EnableBracketedPaste)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
     let _guard = TerminalGuard::new();
     install_panic_hook();
@@ -253,6 +257,7 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
             match event::read()? {
                 Event::Key(key) => app.handle_key(key)?,
                 Event::Mouse(mouse) => app.handle_mouse(mouse)?,
+                Event::Paste(text) => app.handle_paste(&text)?,
                 _ => {}
             }
             if app.should_quit || !event::poll(std::time::Duration::ZERO)? {
@@ -312,6 +317,7 @@ impl TerminalGuard {
 
     fn restore(&mut self) -> Result<()> {
         if self.active {
+            let _ = stdout().execute(DisableBracketedPaste);
             let _ = stdout().execute(DisableMouseCapture);
             disable_raw_mode()?;
             stdout().execute(LeaveAlternateScreen)?;

@@ -788,9 +788,9 @@ impl IdentityFormField {
         match self {
             IdentityFormField::Name => "Name",
             IdentityFormField::Username => "Username",
-            IdentityFormField::PrivateKey => "Private key",
-            IdentityFormField::Certificate => "Certificate",
-            IdentityFormField::Password => "Password",
+            IdentityFormField::PrivateKey => "Private key path",
+            IdentityFormField::Certificate => "Certificate path",
+            IdentityFormField::Password => "Passphrase",
         }
     }
 }
@@ -1378,6 +1378,48 @@ impl App {
     }
 
     /// Handle a keyboard event according to architecture keybindings.
+    /// Handle a bracketed-paste event. Pasted text is delivered as one blob
+    /// (not per-key), so multi-line content — e.g. a private key — no longer
+    /// fires Enter/save mid-field and spills the rest as commands.
+    pub fn handle_paste(&mut self, text: &str) -> Result<()> {
+        // Embedded session: forward the paste straight to the remote PTY.
+        if matches!(self.mode, AppMode::Session | AppMode::Connecting) {
+            if let Some(s) = self.active_session_mut() {
+                let _ = s.write(text.as_bytes());
+            }
+            return Ok(());
+        }
+
+        // Only insert into modes that own a focused text field. Everywhere else
+        // a paste is meaningless and must NOT be run as commands.
+        let text_entry = matches!(
+            self.mode,
+            AppMode::HostForm
+                | AppMode::IdentityForm
+                | AppMode::GroupForm
+                | AppMode::TunnelForm
+                | AppMode::HostDetail
+                | AppMode::Search
+                | AppMode::TagFilter
+                | AppMode::Palette
+                | AppMode::ImportPrompt
+        );
+        if !text_entry {
+            return Ok(());
+        }
+
+        // Feed printable characters through the normal typing path (reusing the
+        // field's insert logic); drop newlines/tabs since all fields are
+        // single-line.
+        for ch in text.chars() {
+            if ch.is_control() {
+                continue;
+            }
+            self.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::empty()))?;
+        }
+        Ok(())
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
         // When an embedded session is active, Ctrl+C inside the terminal must
         // reach the remote shell — not quit sshub. Session mode intercepts all
@@ -5151,6 +5193,44 @@ mod tests {
         assert_eq!(app.config.keybinds.save, vec!["F2", "Ctrl+S"]);
 
         std::env::remove_var("SSHUB_CONFIG_DIR");
+    }
+
+    #[test]
+    fn multiline_paste_into_form_stays_in_field() {
+        let mut app = test_app(vec![("web", host("web"))]);
+        app.active_tab = 2; // keys tab
+        app.enter_identity_form(None).unwrap();
+        assert_eq!(app.mode, AppMode::IdentityForm);
+
+        // Navigate to the Private key path field.
+        while app.identity_form.as_ref().unwrap().field != IdentityFormField::PrivateKey {
+            app.handle_key(key(KeyCode::Down)).unwrap();
+        }
+
+        // Paste a multi-line PEM blob. Previously the newlines fired
+        // Enter/save and the rest ran as commands; now it must all stay put.
+        let key_blob = "-----BEGIN OPENSSH PRIVATE KEY-----\nabc123\ndef456\n-----END OPENSSH PRIVATE KEY-----\n";
+        app.handle_paste(key_blob).unwrap();
+
+        // Still in the form, on the same field, no host connection triggered.
+        assert_eq!(app.mode, AppMode::IdentityForm);
+        assert_eq!(
+            app.identity_form.as_ref().unwrap().field,
+            IdentityFormField::PrivateKey
+        );
+        // Newlines dropped; printable content preserved in the field.
+        let field = &app.identity_form.as_ref().unwrap().private_key;
+        assert!(field.contains("BEGIN OPENSSH PRIVATE KEY"));
+        assert!(!field.contains('\n'));
+    }
+
+    #[test]
+    fn paste_in_normal_mode_is_ignored() {
+        let mut app = test_app(vec![("web", host("web"))]);
+        // A stray paste in Normal must not run commands or change mode.
+        app.handle_paste("adq#/").unwrap();
+        assert_eq!(app.mode, AppMode::Normal);
+        assert!(app.host_form.is_none());
     }
 
     #[test]
