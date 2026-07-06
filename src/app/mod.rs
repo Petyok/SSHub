@@ -1,6 +1,9 @@
 mod audit;
 mod connect;
+mod field_picker;
 mod groups;
+mod host_crud;
+mod host_detail;
 mod host_form;
 mod hostlist;
 mod identities;
