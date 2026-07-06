@@ -157,9 +157,11 @@ impl App {
         }
         self.persist_collapsed_groups();
         self.rebuild_filter();
-        if let Some(pos) = self.nav_rows.iter().position(
-            |r| matches!(r, NavRow::Header(s) if self.group_sections[*s].key() == key),
-        ) {
+        if let Some(pos) = self
+            .nav_rows
+            .iter()
+            .position(|r| matches!(r, NavRow::Header(s) if self.group_sections[*s].key() == key))
+        {
             self.selected = pos;
         }
     }
@@ -366,10 +368,7 @@ impl App {
     }
 
     pub(crate) fn restore_selection_by_name(&mut self, name: &str) {
-        let host_idx = self
-            .hosts
-            .iter()
-            .position(|h| h.name() == name);
+        let host_idx = self.hosts.iter().position(|h| h.name() == name);
         if let Some(hi) = host_idx {
             if let Some(pos) = self
                 .nav_rows

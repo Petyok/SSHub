@@ -18,7 +18,10 @@ pub fn render_help() -> Paragraph<'static> {
     let lines = vec![
         section("navigate"),
         entry("\u{2191}\u{2193} / j k", "Move up / down"),
-        entry("1..4 / h i", "Switch tab (hosts, tunnels, identities, audit)"),
+        entry(
+            "1..4 / h i",
+            "Switch tab (hosts, tunnels, identities, audit)",
+        ),
         entry("Tab", "Toggle detail panel (hosts)"),
         entry("Enter", "Connect / start tunnel"),
         entry("Esc", "Back / close overlay"),
@@ -41,7 +44,10 @@ pub fn render_help() -> Paragraph<'static> {
         entry("d", "Delete tunnel"),
         entry("Enter", "Start / stop tunnel"),
         entry("x", "Kill tunnel process"),
-        entry("Enter/Space", "In form on SSH server: pick host (searchable)"),
+        entry(
+            "Enter/Space",
+            "In form on SSH server: pick host (searchable)",
+        ),
         Line::from(""),
         section("identities (tab 3)"),
         entry("←→ / l", "Move between columns (grid)"),
@@ -60,7 +66,10 @@ pub fn render_help() -> Paragraph<'static> {
         entry("/", "Fuzzy palette (Enter connects to the match)"),
         entry("(typing)", "Any unmatched key opens the palette"),
         entry("#", "Filter hosts by tag (type to narrow the list)"),
-        entry("Space", "In the tag list: toggle a tag (combine several, AND)"),
+        entry(
+            "Space",
+            "In the tag list: toggle a tag (combine several, AND)",
+        ),
         entry("Enter", "In the tag list: toggle highlighted tag and close"),
         entry("", "In the tag list: (all) removes every filter"),
         entry("Esc", "In Normal mode: clear the active tag filter"),
@@ -68,9 +77,15 @@ pub fn render_help() -> Paragraph<'static> {
         Line::from(""),
         section("groups"),
         entry("Space / ←→", "Collapse / expand selected group"),
-        entry("Enter", "On a group header: collapse/expand; on a host: connect"),
+        entry(
+            "Enter",
+            "On a group header: collapse/expand; on a host: connect",
+        ),
         entry("Shift+Z", "Collapse / expand all groups"),
-        entry("Enter", "In host form on Group: open dropdown (+ create new)"),
+        entry(
+            "Enter",
+            "In host form on Group: open dropdown (+ create new)",
+        ),
         entry("Shift+G", "Manage groups"),
         entry("Ctrl+G", "Edit selected group (name + default identity)"),
         entry("e", "On a group header: pick its default identity"),
@@ -97,8 +112,14 @@ pub fn render_help() -> Paragraph<'static> {
         entry("", ""),
         entry("? / Shift+H", "Toggle this help screen"),
         entry("F2 / Ctrl+S", "Save form (rebindable)"),
-        entry("Ctrl+K", "Edit keybindings (save/quit/help/search/add/delete/…)"),
-        entry("q / Ctrl+C", "Quit (asks to confirm; disable via appearance.confirm_quit)"),
+        entry(
+            "Ctrl+K",
+            "Edit keybindings (save/quit/help/search/add/delete/…)",
+        ),
+        entry(
+            "q / Ctrl+C",
+            "Quit (asks to confirm; disable via appearance.confirm_quit)",
+        ),
         Line::from(""),
         Line::from(Span::styled("? / Esc / Enter to close", theme::dim())),
     ];

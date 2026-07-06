@@ -195,7 +195,8 @@ impl Session {
                     had_bytes = true;
                 }
                 PtyEvent::Exited(status) => {
-                    self.diagnostics.push(format!("session: ssh exited ({status})"));
+                    self.diagnostics
+                        .push(format!("session: ssh exited ({status})"));
                     self.phase = SessionPhase::Exited {
                         status,
                         at: Instant::now(),
@@ -247,9 +248,8 @@ impl Session {
             || should_reveal(self.was_armed(), self.secret_sent, elapsed)
         {
             if self.was_armed() && !self.secret_sent && elapsed >= REVEAL_TIMEOUT {
-                self.diagnostics.push(
-                    "auth: no matching prompt within timeout — showing live terminal".into(),
-                );
+                self.diagnostics
+                    .push("auth: no matching prompt within timeout — showing live terminal".into());
             }
             self.phase = SessionPhase::Running {
                 started_at: Instant::now(),

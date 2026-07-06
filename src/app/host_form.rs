@@ -435,7 +435,9 @@ impl App {
             // Single-step model: type straight into the active field.
             // Enter/Tab/Down advance; Enter on the LAST field saves the form
             // (a modifier-free save path; F2/Ctrl+S always work).
-            KeyCode::Enter if field == HostFormField::Group => self.open_field_picker(PickerKind::Group),
+            KeyCode::Enter if field == HostFormField::Group => {
+                self.open_field_picker(PickerKind::Group)
+            }
             KeyCode::Enter if field == HostFormField::Identity => {
                 self.open_field_picker(PickerKind::Identity)
             }
@@ -640,7 +642,12 @@ impl App {
             return Ok(());
         }
         // Reuse an existing group with the same name instead of erroring.
-        let id = match self.store.list_groups()?.into_iter().find(|g| g.name == name) {
+        let id = match self
+            .store
+            .list_groups()?
+            .into_iter()
+            .find(|g| g.name == name)
+        {
             Some(g) => g.id,
             None => {
                 self.store

@@ -326,8 +326,8 @@ fn migrate_legacy_dir(new_dir: &Path, legacy_dir: &Path) {
     }
     let staging = new_dir.with_extension("migrating");
     let _ = fs::remove_dir_all(&staging);
-    let result = copy_dir_recursive(legacy_dir, &staging)
-        .and_then(|()| fs::rename(&staging, new_dir));
+    let result =
+        copy_dir_recursive(legacy_dir, &staging).and_then(|()| fs::rename(&staging, new_dir));
     if let Err(e) = result {
         let _ = fs::remove_dir_all(&staging);
         eprintln!(

@@ -122,9 +122,11 @@ impl App {
                                 if y >= content_y {
                                     let rel = y - content_y;
                                     if let Some(idx) = self.host_row_to_index(rel, body_h) {
-                                        if let Some(pos) = self.nav_rows.iter().position(
-                                            |r| matches!(r, NavRow::Host(i) if *i == idx),
-                                        ) {
+                                        if let Some(pos) = self
+                                            .nav_rows
+                                            .iter()
+                                            .position(|r| matches!(r, NavRow::Host(i) if *i == idx))
+                                        {
                                             self.selected = pos;
                                             if is_double {
                                                 self.connect_selected()?;
@@ -172,9 +174,9 @@ impl App {
                                 let rel_y = y.saturating_sub(areas.body.y);
                                 let row_idx = rel_y / (card_h + 1);
                                 let col_idx = if cards_per_row > 1 {
-                                    let card_w =
-                                        inner_w.saturating_sub((cards_per_row as u16 - 1) * 2)
-                                            / cards_per_row as u16;
+                                    let card_w = inner_w
+                                        .saturating_sub((cards_per_row as u16 - 1) * 2)
+                                        / cards_per_row as u16;
                                     let margin = if areas.body.width >= 132 {
                                         2
                                     } else if areas.body.width >= 80 {

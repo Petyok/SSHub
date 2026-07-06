@@ -103,7 +103,10 @@ fn editing_ssh_config_alias_materializes_and_persists_tags() {
     assert_eq!(app.hosts[0].tags(), &["prod", "db"]);
 
     let store = app.store();
-    let row = store.get_host_by_name("web").unwrap().expect("materialized");
+    let row = store
+        .get_host_by_name("web")
+        .unwrap()
+        .expect("materialized");
     assert_eq!(row.source, sshub::store::HostSource::SshConfig);
     assert_eq!(row.tags, vec!["prod", "db"]);
 }

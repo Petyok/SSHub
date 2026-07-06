@@ -45,7 +45,12 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
             theme::text()
         };
         let marker = if is_sel { "› " } else { "  " };
-        buf.set_string(row_x, ry, format!("{marker}{}", action.label()), label_style);
+        buf.set_string(
+            row_x,
+            ry,
+            format!("{marker}{}", action.label()),
+            label_style,
+        );
 
         let binds = app.config.keybinds.binds(*action).join(", ");
         let value = if is_sel && editor.capturing {

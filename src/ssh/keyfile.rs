@@ -131,9 +131,7 @@ mod tests {
             "  -----BEGIN RSA PRIVATE KEY-----\nabc"
         ));
         assert!(!looks_like_private_key("~/.ssh/id_ed25519"));
-        assert!(!looks_like_private_key(
-            "-----BEGIN CERTIFICATE-----\nabc"
-        ));
+        assert!(!looks_like_private_key("-----BEGIN CERTIFICATE-----\nabc"));
     }
 
     fn ssh_keygen_available() -> bool {
@@ -196,7 +194,11 @@ mod tests {
         // Same content → same file; different content → suffixed file.
         let p2 = write_key_material("work laptop", blob).unwrap();
         assert_eq!(p1, p2);
-        let p3 = write_key_material("work laptop", "-----BEGIN OPENSSH PRIVATE KEY-----\nother\n-----END OPENSSH PRIVATE KEY-----").unwrap();
+        let p3 = write_key_material(
+            "work laptop",
+            "-----BEGIN OPENSSH PRIVATE KEY-----\nother\n-----END OPENSSH PRIVATE KEY-----",
+        )
+        .unwrap();
         assert_ne!(p1, p3);
         assert!(p3.to_string_lossy().contains("sshub_work_laptop-2"));
 

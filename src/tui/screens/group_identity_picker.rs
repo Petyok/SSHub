@@ -15,11 +15,9 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // Row 0 is the "(none)" option; the rest map to identities in order.
     let mut rows: Vec<String> = vec!["(none)".to_string()];
-    rows.extend(app.identities.iter().map(|i| {
-        match &i.username {
-            Some(u) if !u.is_empty() => format!("{}  ({u})", i.name),
-            _ => i.name.clone(),
-        }
+    rows.extend(app.identities.iter().map(|i| match &i.username {
+        Some(u) if !u.is_empty() => format!("{}  ({u})", i.name),
+        _ => i.name.clone(),
     }));
 
     let title = format!(" default identity · {} ", picker.group_name);
@@ -56,7 +54,11 @@ pub fn render(frame: &mut Frame, app: &App) {
     for (i, label) in rows.iter().enumerate().take(max_rows) {
         let ry = popup.y + 1 + i as u16;
         let is_sel = i == picker.selected;
-        let style = if is_sel { theme::selected() } else { theme::text() };
+        let style = if is_sel {
+            theme::selected()
+        } else {
+            theme::text()
+        };
         if is_sel {
             let blank = " ".repeat(popup.width.saturating_sub(2) as usize);
             buf.set_string(popup.x + 1, ry, &blank, theme::selected());

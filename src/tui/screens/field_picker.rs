@@ -89,7 +89,10 @@ pub fn render_field_picker(frame: &mut Frame, app: &App) {
     // Inline "new group name" entry.
     if let Some(name) = picker.creating.as_ref() {
         let iy = popup.y + popup.height.saturating_sub(1);
-        let text = format!("name: {}", crate::text_input::with_cursor(name, picker.cursor));
+        let text = format!(
+            "name: {}",
+            crate::text_input::with_cursor(name, picker.cursor)
+        );
         buf.set_string(
             row_x,
             iy.saturating_sub(1),

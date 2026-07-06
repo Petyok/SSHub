@@ -136,7 +136,13 @@ fn build_import_row(
 
     let meta = metadata.get(name)?;
     let (tags, notes, environment, favorite, last_connected) = match meta {
-        Some(m) => (m.tags, m.description, m.environment, m.favorite, m.last_connected),
+        Some(m) => (
+            m.tags,
+            m.description,
+            m.environment,
+            m.favorite,
+            m.last_connected,
+        ),
         None => (Vec::new(), None, None, false, None),
     };
 

@@ -135,7 +135,12 @@ impl App {
         }
         let selected = group
             .default_identity_id
-            .and_then(|id| self.identities.iter().position(|i| i.id == id).map(|p| p + 1))
+            .and_then(|id| {
+                self.identities
+                    .iter()
+                    .position(|i| i.id == id)
+                    .map(|p| p + 1)
+            })
             .unwrap_or(0);
         self.group_identity_picker = Some(GroupIdentityPicker {
             group_id: group.id,
@@ -302,7 +307,10 @@ impl App {
         };
         let cur = match form.default_identity_id {
             None => 0,
-            Some(id) => ids.iter().position(|&x| x == id).map_or(0, |p| p as i32 + 1),
+            Some(id) => ids
+                .iter()
+                .position(|&x| x == id)
+                .map_or(0, |p| p as i32 + 1),
         };
         let next = (cur + delta).rem_euclid(len);
         form.default_identity_id = if next == 0 {

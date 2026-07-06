@@ -68,8 +68,26 @@ fn quote_shell_word(word: &str) -> String {
             c.is_whitespace()
                 || matches!(
                     c,
-                    '\'' | '"' | '\\' | ';' | '|' | '&' | '$' | '`' | '<' | '>' | '(' | ')' | '*'
-                        | '?' | '[' | ']' | '~' | '#' | '!' | '{' | '}'
+                    '\'' | '"'
+                        | '\\'
+                        | ';'
+                        | '|'
+                        | '&'
+                        | '$'
+                        | '`'
+                        | '<'
+                        | '>'
+                        | '('
+                        | ')'
+                        | '*'
+                        | '?'
+                        | '['
+                        | ']'
+                        | '~'
+                        | '#'
+                        | '!'
+                        | '{'
+                        | '}'
                 )
         });
     if !needs_quoting {
@@ -201,7 +219,10 @@ fn validate_shell_safe_host(host: &SshHost) -> Result<()> {
             host.certificate_file.as_deref().unwrap_or(""),
         ),
         ("proxy_jump", host.proxy_jump.as_deref().unwrap_or("")),
-        ("remote_command", host.remote_command.as_deref().unwrap_or("")),
+        (
+            "remote_command",
+            host.remote_command.as_deref().unwrap_or(""),
+        ),
     ] {
         if value
             .chars()

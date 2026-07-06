@@ -110,7 +110,7 @@ fn create_group_assign_host_visible_in_tree() {
     edit_field(&mut app, "vc-host");
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Port (skip)
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Group
-    // Pickers scroll in place with ←/→ — no edit mode needed.
+                                                 // Pickers scroll in place with ←/→ — no edit mode needed.
     app.handle_key(key(KeyCode::Right)).unwrap();
     app.handle_key(key(KeyCode::F(2))).unwrap(); // save form
 
@@ -241,8 +241,15 @@ fn tag_filter_hides_groups_with_no_matches() {
     app.reload_hosts().unwrap();
 
     // No filter: both groups are visible.
-    let labels: Vec<&str> = app.group_sections.iter().map(|s| s.label.as_str()).collect();
-    assert!(labels.contains(&"prod") && labels.contains(&"dev"), "both groups shown, got {labels:?}");
+    let labels: Vec<&str> = app
+        .group_sections
+        .iter()
+        .map(|s| s.label.as_str())
+        .collect();
+    assert!(
+        labels.contains(&"prod") && labels.contains(&"dev"),
+        "both groups shown, got {labels:?}"
+    );
 
     // Filter by "eu": only "prod" contains a match, so "dev" is hidden.
     app.handle_key(key_char('#')).unwrap();
@@ -250,7 +257,11 @@ fn tag_filter_hides_groups_with_no_matches() {
     app.handle_key(key(KeyCode::Enter)).unwrap();
 
     assert_eq!(app.tag_filters, vec!["eu".to_string()]);
-    let labels: Vec<&str> = app.group_sections.iter().map(|s| s.label.as_str()).collect();
+    let labels: Vec<&str> = app
+        .group_sections
+        .iter()
+        .map(|s| s.label.as_str())
+        .collect();
     assert!(labels.contains(&"prod"), "prod kept, got {labels:?}");
     assert!(!labels.contains(&"dev"), "dev hidden, got {labels:?}");
 }
@@ -459,7 +470,9 @@ fn collapsing_a_group_hides_its_hosts_and_persists() {
     app.handle_key(key_char(' ')).unwrap();
     assert!(app.nav_rows.len() < before, "host hidden after collapse");
     assert!(
-        app.group_sections.iter().any(|s| s.label == "servers" && s.collapsed),
+        app.group_sections
+            .iter()
+            .any(|s| s.label == "servers" && s.collapsed),
         "section marked collapsed"
     );
 
@@ -474,7 +487,9 @@ fn collapsing_a_group_hides_its_hosts_and_persists() {
     // A fresh app over the same DB restores the collapsed state.
     let app2 = app_with_grouped_host(file.path());
     assert!(
-        app2.group_sections.iter().any(|s| s.label == "servers" && s.collapsed),
+        app2.group_sections
+            .iter()
+            .any(|s| s.label == "servers" && s.collapsed),
         "collapse restored on reload"
     );
 

@@ -99,7 +99,9 @@ mod tests {
                 .map(|(_, v)| v.clone())
                 .unwrap();
             path = PathBuf::from(file);
-            assert!(env.iter().any(|(k, v)| k == "SSH_ASKPASS_REQUIRE" && v == "force"));
+            assert!(env
+                .iter()
+                .any(|(k, v)| k == "SSH_ASKPASS_REQUIRE" && v == "force"));
             assert!(path.exists());
             assert_eq!(std::fs::read_to_string(&path).unwrap(), "s3cr3t\n");
 

@@ -1,0 +1,742 @@
+use super::*;
+
+/// Host list sort mode (cycle with `s`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SortMode {
+    #[default]
+    Label,
+    LastConnected,
+    FavoriteFirst,
+    GroupThenLabel,
+    Manual,
+}
+
+impl SortMode {
+    pub const ALL: [SortMode; 5] = [
+        SortMode::Label,
+        SortMode::LastConnected,
+        SortMode::FavoriteFirst,
+        SortMode::GroupThenLabel,
+        SortMode::Manual,
+    ];
+
+    pub fn next(self) -> Self {
+        let idx = Self::ALL.iter().position(|m| *m == self).unwrap_or(0);
+        Self::ALL[(idx + 1) % Self::ALL.len()]
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SortMode::Label => "label",
+            SortMode::LastConnected => "last connected",
+            SortMode::FavoriteFirst => "favorite first",
+            SortMode::GroupThenLabel => "group+label",
+            SortMode::Manual => "manual",
+        }
+    }
+}
+
+/// One section in the group tree (real group or virtual ungrouped bucket).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostGroupSection {
+    pub group: Option<HostGroup>,
+    pub label: String,
+    pub host_indices: Vec<usize>,
+    /// Whether this section is collapsed (host rows hidden).
+    pub collapsed: bool,
+}
+
+impl HostGroupSection {
+    /// Stable collapse-state key: the group id, or [`UNGROUPED_KEY`].
+    pub fn key(&self) -> i64 {
+        self.group.as_ref().map(|g| g.id).unwrap_or(UNGROUPED_KEY)
+    }
+}
+
+/// A selectable row in the hosts tree: either a group header or a host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NavRow {
+    /// Index into `group_sections`.
+    Header(usize),
+    /// Index into `hosts`.
+    Host(usize),
+}
+
+/// A rendered row in the hosts tree (superset of [`NavRow`] with blank
+/// separators). The single source of truth for rendering, scrolling and click
+/// mapping so they never drift apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VisualRow {
+    /// Blank separator between sections.
+    Blank,
+    Header {
+        section: usize,
+        collapsed: bool,
+        selected: bool,
+    },
+    Host {
+        host_idx: usize,
+        selected: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppMode {
+    Normal,
+    Search,
+    TagFilter,
+    HostDetail,
+    HostForm,
+    IdentityForm,
+    GroupForm,
+    GroupManage,
+    /// Dedicated popup for choosing a group's default identity (`e` on a group).
+    GroupIdentityPicker,
+    /// Searchable dropdown for choosing the tunnel form's SSH server.
+    TunnelHostPicker,
+    /// Dropdown over the host form's Group/Identity field.
+    FieldPicker,
+    /// Keybinding editor overlay.
+    KeybindEditor,
+    /// Quit confirmation dialog.
+    ConfirmQuit,
+    TunnelForm,
+    ConfirmDelete,
+    ConfirmDiscard,
+    Help,
+    Palette,
+    ImportPrompt,
+    /// Embedded session is spawning; ConnectScreen visible.
+    Connecting,
+    /// Live embedded SSH session; PTY drives the fullscreen view.
+    Session,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AuditFilter {
+    #[default]
+    All,
+    Ok,
+    Fail,
+}
+
+impl AuditFilter {
+    pub fn next(self) -> Self {
+        match self {
+            AuditFilter::All => AuditFilter::Ok,
+            AuditFilter::Ok => AuditFilter::Fail,
+            AuditFilter::Fail => AuditFilter::All,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            AuditFilter::All => "all",
+            AuditFilter::Ok => "ok",
+            AuditFilter::Fail => "fail",
+        }
+    }
+
+    pub fn sql_status(self) -> Option<&'static str> {
+        match self {
+            AuditFilter::All => None,
+            AuditFilter::Ok => Some("launched"),
+            AuditFilter::Fail => Some("fail"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AuditRange {
+    #[default]
+    All,
+    Today,
+    Week,
+    Month,
+}
+
+impl AuditRange {
+    pub fn next(self) -> Self {
+        match self {
+            AuditRange::All => AuditRange::Today,
+            AuditRange::Today => AuditRange::Week,
+            AuditRange::Week => AuditRange::Month,
+            AuditRange::Month => AuditRange::All,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            AuditRange::All => "all",
+            AuditRange::Today => "24h",
+            AuditRange::Week => "week",
+            AuditRange::Month => "month",
+        }
+    }
+
+    pub fn since_timestamp(self) -> Option<i64> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        match self {
+            AuditRange::All => None,
+            AuditRange::Today => Some(now - 86400),
+            AuditRange::Week => Some(now - 7 * 86400),
+            AuditRange::Month => Some(now - 30 * 86400),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TunnelFormField {
+    Type,
+    LocalPort,
+    RemoteHost,
+    RemotePort,
+    Host,
+    Label,
+}
+
+impl TunnelFormField {
+    const ALL: [TunnelFormField; 6] = [
+        TunnelFormField::Host,
+        TunnelFormField::Type,
+        TunnelFormField::LocalPort,
+        TunnelFormField::RemoteHost,
+        TunnelFormField::RemotePort,
+        TunnelFormField::Label,
+    ];
+
+    pub(crate) fn next(self) -> Self {
+        let idx = Self::ALL.iter().position(|f| *f == self).unwrap_or(0);
+        Self::ALL[(idx + 1) % Self::ALL.len()]
+    }
+
+    pub(crate) fn prev(self) -> Self {
+        let idx = Self::ALL.iter().position(|f| *f == self).unwrap_or(0);
+        Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TunnelFormEdit {
+    pub editing_id: Option<i64>,
+    pub tunnel_type: crate::store::TunnelType,
+    pub local_port: String,
+    pub remote_host: String,
+    pub remote_port: String,
+    pub host_id: Option<i64>,
+    pub label: String,
+    pub active_field: TunnelFormField,
+    pub editing: bool,
+    pub edit_snapshot: String,
+    pub dirty: bool,
+}
+
+/// Item pending confirmation before deletion.
+#[derive(Debug, Clone)]
+pub enum PendingDelete {
+    Host { id: i64, name: String },
+    Identity { id: i64, name: String },
+    Group { id: i64, name: String },
+    Tunnel { id: i64, label: String },
+}
+
+/// Editable metadata field index in [`AppMode::HostDetail`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DetailEditField {
+    #[default]
+    Tags = 0,
+    Description = 1,
+    Environment = 2,
+}
+
+impl DetailEditField {
+    const ALL: [DetailEditField; 3] = [
+        DetailEditField::Tags,
+        DetailEditField::Description,
+        DetailEditField::Environment,
+    ];
+
+    pub(crate) fn next(self) -> Self {
+        let idx = self as usize;
+        Self::ALL[(idx + 1) % Self::ALL.len()]
+    }
+
+    pub(crate) fn prev(self) -> Self {
+        let idx = self as usize;
+        Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+}
+
+/// In-progress metadata edits while in HostDetail mode.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostDetailEdit {
+    pub tags: String,
+    pub description: String,
+    pub environment: String,
+    pub field: DetailEditField,
+    pub cursor: usize,
+}
+
+#[derive(Debug, Clone)]
+pub enum HostEntry {
+    Managed(ManagedHost),
+    Legacy {
+        host: SshHost,
+        meta: crate::metadata::HostMetadata,
+    },
+}
+
+impl HostEntry {
+    pub fn new(host: SshHost) -> Self {
+        let meta = crate::metadata::HostMetadata::new(host.name.clone());
+        Self::Legacy { host, meta }
+    }
+
+    pub fn from_managed(managed: ManagedHost) -> Self {
+        Self::Managed(managed)
+    }
+
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Managed(m) => &m.name,
+            Self::Legacy { host, .. } => &host.name,
+        }
+    }
+
+    pub fn display_name(&self) -> &str {
+        match self {
+            Self::Managed(m) => m.label.as_deref().unwrap_or(&m.name),
+            Self::Legacy { host, .. } => &host.name,
+        }
+    }
+
+    pub fn tags(&self) -> &[String] {
+        match self {
+            Self::Managed(m) => &m.tags,
+            Self::Legacy { meta, .. } => &meta.tags,
+        }
+    }
+
+    pub fn favorite(&self) -> bool {
+        match self {
+            Self::Managed(m) => m.favorite,
+            Self::Legacy { meta, .. } => meta.favorite,
+        }
+    }
+
+    pub fn last_connected(&self) -> Option<i64> {
+        match self {
+            Self::Managed(m) => m.last_connected,
+            Self::Legacy { meta, .. } => meta.last_connected,
+        }
+    }
+
+    pub fn description(&self) -> Option<&str> {
+        match self {
+            Self::Managed(m) => m.notes.as_deref(),
+            Self::Legacy { meta, .. } => meta.description.as_deref(),
+        }
+    }
+
+    pub fn environment(&self) -> Option<&str> {
+        match self {
+            Self::Managed(m) => m.environment.as_deref(),
+            Self::Legacy { meta, .. } => meta.environment.as_deref(),
+        }
+    }
+
+    pub fn source(&self) -> HostSource {
+        match self {
+            Self::Managed(m) => m.source,
+            Self::Legacy { .. } => HostSource::SshConfig,
+        }
+    }
+
+    pub fn is_launcher(&self) -> bool {
+        matches!(self, Self::Managed(_))
+    }
+
+    pub fn managed_id(&self) -> Option<i64> {
+        match self {
+            Self::Managed(m) => Some(m.id),
+            Self::Legacy { .. } => None,
+        }
+    }
+
+    pub fn managed(&self) -> Option<&ManagedHost> {
+        match self {
+            Self::Managed(m) => Some(m),
+            Self::Legacy { .. } => None,
+        }
+    }
+
+    pub fn group_id(&self) -> Option<i64> {
+        match self {
+            Self::Managed(m) => m.group_id,
+            Self::Legacy { .. } => None,
+        }
+    }
+
+    pub fn sort_order(&self) -> i32 {
+        match self {
+            Self::Managed(m) => m.sort_order,
+            Self::Legacy { .. } => i32::MAX,
+        }
+    }
+
+    pub fn ssh_host(&self) -> SshHost {
+        match self {
+            Self::Managed(m) => managed_to_ssh_host(m),
+            Self::Legacy { host, .. } => host.clone(),
+        }
+    }
+
+    pub fn legacy_mut(&mut self) -> Option<(&mut SshHost, &mut crate::metadata::HostMetadata)> {
+        match self {
+            Self::Legacy { host, meta } => Some((host, meta)),
+            Self::Managed(_) => None,
+        }
+    }
+}
+
+/// State of the keybinding editor overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeybindEditor {
+    /// Index into [`KeyAction::ALL`].
+    pub selected: usize,
+    /// When true, the next key press is captured as a binding.
+    pub capturing: bool,
+    /// When capturing, whether to append (`true`) or replace (`false`).
+    pub append: bool,
+}
+
+/// Which host-form field the dropdown is editing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickerKind {
+    Group,
+    Identity,
+}
+
+/// Dropdown overlay for the host form's Group/Identity picker fields.
+///
+/// For `Group`, the last row is a "+ New group…" affordance: selecting it
+/// switches the overlay into inline text entry (`creating`) that creates the
+/// group in the store and selects it — no trip to the group-manage screen.
+#[derive(Debug, Clone)]
+pub struct FieldPicker {
+    pub kind: PickerKind,
+    pub selected: usize,
+    /// `Some(name)` while typing a brand-new group name inline.
+    pub creating: Option<String>,
+    pub cursor: usize,
+}
+
+/// In-progress host form while in [`AppMode::HostForm`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostFormEdit {
+    pub id: Option<i64>,
+    pub address: String,
+    pub username: String,
+    pub label: String,
+    pub name: String,
+    pub port: String,
+    pub group_index: usize,
+    pub identity_index: usize,
+    pub tags: String,
+    pub proxy_jump: String,
+    pub forward_agent: bool,
+    pub remote_command: String,
+    pub os_icon_index: usize,
+    pub password: String,
+    pub has_password: bool,
+    pub field: HostFormField,
+    pub cursor: usize,
+    /// Connection fields (address/name/port) are read-only; only launcher metadata is saved.
+    pub metadata_only: bool,
+    /// When true, a per-field edit popup is open and keystrokes go to it.
+    pub editing: bool,
+    /// Snapshot of field value before editing (for cancel/revert).
+    pub edit_snapshot: String,
+    /// Whether any field has been modified since the form was opened.
+    pub dirty: bool,
+}
+
+/// Editable host form field index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HostFormField {
+    #[default]
+    Address = 0,
+    Label = 1,
+    Name = 2,
+    Port = 3,
+    Group = 4,
+    Identity = 5,
+    Tags = 6,
+    ProxyJump = 7,
+    ForwardAgent = 8,
+    RemoteCommand = 9,
+    OsIcon = 10,
+    Password = 11,
+    Username = 12,
+}
+
+impl HostFormField {
+    pub const ALL: [HostFormField; 13] = [
+        HostFormField::Address,
+        HostFormField::Password,
+        HostFormField::Username,
+        HostFormField::Label,
+        HostFormField::Name,
+        HostFormField::Port,
+        HostFormField::Group,
+        HostFormField::Identity,
+        HostFormField::Tags,
+        HostFormField::ProxyJump,
+        HostFormField::ForwardAgent,
+        HostFormField::RemoteCommand,
+        HostFormField::OsIcon,
+    ];
+
+    pub fn is_connection_field(self) -> bool {
+        matches!(
+            self,
+            HostFormField::Address
+                | HostFormField::Name
+                | HostFormField::Port
+                | HostFormField::ProxyJump
+                | HostFormField::ForwardAgent
+                | HostFormField::RemoteCommand
+                | HostFormField::OsIcon
+        )
+    }
+
+    pub(crate) fn next(self) -> Self {
+        let idx = Self::ALL.iter().position(|&f| f == self).unwrap_or(0);
+        Self::ALL[(idx + 1) % Self::ALL.len()]
+    }
+
+    pub(crate) fn prev(self) -> Self {
+        let idx = Self::ALL.iter().position(|&f| f == self).unwrap_or(0);
+        Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            HostFormField::Address => "Address",
+            HostFormField::Label => "Label",
+            HostFormField::Name => "Name (alias)",
+            HostFormField::Port => "Port",
+            HostFormField::Group => "Group",
+            HostFormField::Identity => "Identity",
+            HostFormField::Tags => "Tags",
+            HostFormField::ProxyJump => "ProxyJump",
+            HostFormField::ForwardAgent => "Agent forward",
+            HostFormField::RemoteCommand => "Startup command",
+            HostFormField::OsIcon => "OS icon",
+            HostFormField::Password => "Password",
+            HostFormField::Username => "Username",
+        }
+    }
+
+    pub(crate) fn is_picker(self) -> bool {
+        matches!(
+            self,
+            HostFormField::Group | HostFormField::Identity | HostFormField::OsIcon
+        )
+    }
+
+    pub(crate) fn is_toggle(self) -> bool {
+        matches!(self, HostFormField::ForwardAgent)
+    }
+}
+
+/// In-progress group form while in [`AppMode::GroupForm`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupFormEdit {
+    pub id: Option<i64>,
+    pub name: String,
+    pub cursor: usize,
+    /// Default identity new hosts in this group inherit. Cycled with ←/→.
+    pub default_identity_id: Option<i64>,
+    /// Return to GroupManage after save/cancel (vs Normal when opened from Ctrl+G shortcut).
+    pub return_to_manage: bool,
+}
+
+/// Dedicated popup to pick a group's default identity ([`AppMode::GroupIdentityPicker`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupIdentityPicker {
+    pub group_id: i64,
+    pub group_name: String,
+    /// Selected row: `0` = "(none)", `1..` = index into `App::identities` + 1.
+    pub selected: usize,
+}
+
+/// Searchable dropdown for choosing the tunnel form's SSH server
+/// ([`AppMode::TunnelHostPicker`]).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TunnelHostPicker {
+    /// Case-insensitive substring filter typed by the user.
+    pub query: String,
+    /// Index into the current filtered match list.
+    pub selected: usize,
+}
+
+/// Single-field path prompt for the Termius CSV import ([`AppMode::ImportPrompt`]).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ImportPromptEdit {
+    /// Path to the Termius export directory (contains `L00t.csv`, `ssh_keys/`).
+    pub path: String,
+    pub cursor: usize,
+    /// Feedback shown inside the popup (e.g. why the last attempt failed).
+    pub error: Option<String>,
+}
+
+/// In-progress identity form while in [`AppMode::IdentityForm`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdentityFormEdit {
+    pub id: Option<i64>,
+    pub name: String,
+    pub username: String,
+    pub private_key: String,
+    pub certificate: String,
+    pub password: String,
+    pub has_password: bool,
+    /// Full key material pasted into the Private key field; written to
+    /// `~/.ssh/sshub_<name>` on save (the path field then points at it).
+    pub pasted_key: Option<String>,
+    pub field: IdentityFormField,
+    pub cursor: usize,
+    pub editing: bool,
+    pub edit_snapshot: String,
+    pub dirty: bool,
+}
+
+/// Editable identity form field index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IdentityFormField {
+    #[default]
+    Name = 0,
+    Username = 1,
+    PrivateKey = 2,
+    Certificate = 3,
+    Password = 4,
+}
+
+impl IdentityFormField {
+    pub const ALL: [IdentityFormField; 5] = [
+        IdentityFormField::Name,
+        IdentityFormField::Username,
+        IdentityFormField::Password,
+        IdentityFormField::PrivateKey,
+        IdentityFormField::Certificate,
+    ];
+
+    pub(crate) fn next(self) -> Self {
+        let idx = Self::ALL.iter().position(|&f| f == self).unwrap_or(0);
+        Self::ALL[(idx + 1) % Self::ALL.len()]
+    }
+
+    pub(crate) fn prev(self) -> Self {
+        let idx = Self::ALL.iter().position(|&f| f == self).unwrap_or(0);
+        Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            IdentityFormField::Name => "Name",
+            IdentityFormField::Username => "Username",
+            IdentityFormField::PrivateKey => "Private key path",
+            IdentityFormField::Certificate => "Certificate path",
+            IdentityFormField::Password => "Passphrase",
+        }
+    }
+}
+
+impl HostFormEdit {
+    pub fn active_field(&self) -> &str {
+        match self.field {
+            HostFormField::Address => &self.address,
+            HostFormField::Username => &self.username,
+            HostFormField::Label => &self.label,
+            HostFormField::Name => &self.name,
+            HostFormField::Port => &self.port,
+            HostFormField::Group | HostFormField::Identity | HostFormField::OsIcon => "",
+            HostFormField::Tags => &self.tags,
+            HostFormField::ProxyJump => &self.proxy_jump,
+            HostFormField::RemoteCommand => &self.remote_command,
+            HostFormField::ForwardAgent => "",
+            HostFormField::Password => &self.password,
+        }
+    }
+
+    pub(crate) fn active_field_mut(&mut self) -> &mut String {
+        match self.field {
+            HostFormField::Address => &mut self.address,
+            HostFormField::Username => &mut self.username,
+            HostFormField::Label => &mut self.label,
+            HostFormField::Name => &mut self.name,
+            HostFormField::Port => &mut self.port,
+            HostFormField::Group | HostFormField::Identity | HostFormField::OsIcon => {
+                &mut self.address
+            }
+            HostFormField::Tags => &mut self.tags,
+            HostFormField::ProxyJump => &mut self.proxy_jump,
+            HostFormField::RemoteCommand => &mut self.remote_command,
+            HostFormField::ForwardAgent => &mut self.address,
+            HostFormField::Password => &mut self.password,
+        }
+    }
+}
+
+impl IdentityFormEdit {
+    pub fn active_field(&self) -> &str {
+        match self.field {
+            IdentityFormField::Name => &self.name,
+            IdentityFormField::Username => &self.username,
+            IdentityFormField::PrivateKey => &self.private_key,
+            IdentityFormField::Certificate => &self.certificate,
+            IdentityFormField::Password => &self.password,
+        }
+    }
+
+    pub(crate) fn active_field_mut(&mut self) -> &mut String {
+        match self.field {
+            IdentityFormField::Name => &mut self.name,
+            IdentityFormField::Username => &mut self.username,
+            IdentityFormField::PrivateKey => &mut self.private_key,
+            IdentityFormField::Certificate => &mut self.certificate,
+            IdentityFormField::Password => &mut self.password,
+        }
+    }
+
+    /// Typing over a pasted key blob discards it (the field reverts to a
+    /// plain path input).
+    pub(crate) fn clear_pasted_key_marker(&mut self) {
+        if self.field == IdentityFormField::PrivateKey && self.pasted_key.is_some() {
+            self.pasted_key = None;
+            self.private_key.clear();
+            self.cursor = 0;
+        }
+    }
+}
+
+impl HostDetailEdit {
+    pub fn active_field(&self) -> &str {
+        match self.field {
+            DetailEditField::Tags => &self.tags,
+            DetailEditField::Description => &self.description,
+            DetailEditField::Environment => &self.environment,
+        }
+    }
+
+    pub(crate) fn active_field_mut(&mut self) -> &mut String {
+        match self.field {
+            DetailEditField::Tags => &mut self.tags,
+            DetailEditField::Description => &mut self.description,
+            DetailEditField::Environment => &mut self.environment,
+        }
+    }
+}

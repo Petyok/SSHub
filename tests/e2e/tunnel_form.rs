@@ -36,8 +36,11 @@ fn key_char(c: char) -> KeyEvent {
 fn app_with_hosts(path: &std::path::Path) -> App {
     let store = Arc::new(LauncherStore::open(path).unwrap());
     if store.get_host_by_name("alpha").unwrap().is_none() {
-        for (name, addr) in [("alpha", "10.0.0.1"), ("bravo", "10.0.0.2"), ("charlie", "10.0.0.3")]
-        {
+        for (name, addr) in [
+            ("alpha", "10.0.0.1"),
+            ("bravo", "10.0.0.2"),
+            ("charlie", "10.0.0.3"),
+        ] {
             store.create_host(&NewHost::launcher(name, addr)).unwrap();
         }
     }
@@ -81,12 +84,7 @@ fn tunnel_host_picker_filters_and_selects() {
     // Enter selects it and returns to the form.
     app.handle_key(key(KeyCode::Enter)).unwrap();
     assert_eq!(app.mode, AppMode::TunnelForm);
-    let charlie_id = app
-        .store()
-        .get_host_by_name("charlie")
-        .unwrap()
-        .unwrap()
-        .id;
+    let charlie_id = app.store().get_host_by_name("charlie").unwrap().unwrap().id;
     assert_eq!(app.tunnel_form.as_ref().unwrap().host_id, Some(charlie_id));
 }
 

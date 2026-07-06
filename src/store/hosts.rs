@@ -34,8 +34,8 @@ impl LauncherStore {
                 "SELECT id, name, sort_order, default_identity_id FROM host_groups WHERE id = ?1",
             )?
             .query_row(params![id], row_to_group)
-                .optional()
-                .map_err(Into::into)
+            .optional()
+            .map_err(Into::into)
         })
     }
 
@@ -806,7 +806,11 @@ mod tests {
             .unwrap();
         assert_eq!(group.default_identity_id, Some(identity_id));
         assert_eq!(
-            store.get_group(group.id).unwrap().unwrap().default_identity_id,
+            store
+                .get_group(group.id)
+                .unwrap()
+                .unwrap()
+                .default_identity_id,
             Some(identity_id)
         );
 
@@ -821,7 +825,11 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            store.get_group(group.id).unwrap().unwrap().default_identity_id,
+            store
+                .get_group(group.id)
+                .unwrap()
+                .unwrap()
+                .default_identity_id,
             None
         );
 
@@ -837,7 +845,11 @@ mod tests {
             .unwrap();
         store.delete_identity(identity_id).unwrap();
         assert_eq!(
-            store.get_group(group.id).unwrap().unwrap().default_identity_id,
+            store
+                .get_group(group.id)
+                .unwrap()
+                .unwrap()
+                .default_identity_id,
             None
         );
     }

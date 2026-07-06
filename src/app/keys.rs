@@ -87,9 +87,10 @@ impl App {
             // Collapse/expand the group under the selection.
             KeyCode::Char(' ') if key.modifiers.is_empty() => self.toggle_selected_group(),
             KeyCode::Left if key.modifiers.is_empty() => {
-                if self.selected_nav_header().is_some_and(|si| {
-                    !self.group_sections[si].collapsed
-                }) {
+                if self
+                    .selected_nav_header()
+                    .is_some_and(|si| !self.group_sections[si].collapsed)
+                {
                     self.toggle_selected_group();
                 }
             }
@@ -108,9 +109,7 @@ impl App {
                 self.set_all_groups_collapsed(!all_collapsed);
             }
             // Enter on a group header toggles it; on a host it connects.
-            KeyCode::Enter if self.selected_nav_header().is_some() => {
-                self.toggle_selected_group()
-            }
+            KeyCode::Enter if self.selected_nav_header().is_some() => self.toggle_selected_group(),
             KeyCode::Enter => self.connect_selected()?,
             _ if self.is_action(KeyAction::AddHost, &key) => self.enter_host_form(None, false)?,
             _ if self.is_action(KeyAction::Delete, &key) => self.delete_selected_host()?,
@@ -585,8 +584,7 @@ impl App {
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 if let Some(e) = self.keybind_editor.as_mut() {
-                    e.selected =
-                        (e.selected + KeyAction::ALL.len() - 1) % KeyAction::ALL.len();
+                    e.selected = (e.selected + KeyAction::ALL.len() - 1) % KeyAction::ALL.len();
                 }
             }
             // Enter/c: replace with a single new key. a: add another binding.

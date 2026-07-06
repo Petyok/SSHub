@@ -415,10 +415,14 @@ mod tests {
         // Both labels present, and "passphrase" isn't glued onto "loaded".
         assert!(row.contains("not loaded"), "row: {row:?}");
         assert!(row.contains("passphrase"), "row: {row:?}");
-        assert!(!row.contains("loaded● passphrase") && !row.contains("loaded●passphrase"),
-            "labels overlap: {row:?}");
-        assert!(row.contains("loaded  ● passphrase") || row.contains("loaded ● passphrase"),
-            "expected a gap before the passphrase marker: {row:?}");
+        assert!(
+            !row.contains("loaded● passphrase") && !row.contains("loaded●passphrase"),
+            "labels overlap: {row:?}"
+        );
+        assert!(
+            row.contains("loaded  ● passphrase") || row.contains("loaded ● passphrase"),
+            "expected a gap before the passphrase marker: {row:?}"
+        );
     }
 
     #[test]
@@ -427,8 +431,17 @@ mod tests {
         let id = identity(None, true);
         render_card(&mut buf, 0, 0, CARD_W, &id, false, None);
 
-        assert!(row_text(&buf, 1, CARD_W).contains("password"), "badge missing");
-        assert!(row_text(&buf, 3, CARD_W).contains("no key"), "row3: expected keyless note");
-        assert!(row_text(&buf, 4, CARD_W).contains("password set"), "row4: expected password status");
+        assert!(
+            row_text(&buf, 1, CARD_W).contains("password"),
+            "badge missing"
+        );
+        assert!(
+            row_text(&buf, 3, CARD_W).contains("no key"),
+            "row3: expected keyless note"
+        );
+        assert!(
+            row_text(&buf, 4, CARD_W).contains("password set"),
+            "row4: expected password status"
+        );
     }
 }

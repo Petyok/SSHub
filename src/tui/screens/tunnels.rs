@@ -365,7 +365,10 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
     // Footer hints
     let hint_y = inner.y + inner.height.saturating_sub(1);
     if hint_y > inner.y + fields.len() as u16 {
-        let hint = format!("type to edit  Tab/\u{2193}: next  {}: save  Esc: close", app.save_key_label());
+        let hint = format!(
+            "type to edit  Tab/\u{2193}: next  {}: save  Esc: close",
+            app.save_key_label()
+        );
         buf.set_string(inner.x + 1, hint_y, hint, theme::dim());
     }
 }
@@ -423,7 +426,11 @@ pub fn render_tunnel_host_picker(frame: &mut Frame, app: &App) {
             let idx = scroll + i;
             let ry = list_top + i as u16;
             let is_sel = idx == picker.selected;
-            let style = if is_sel { theme::selected() } else { theme::text() };
+            let style = if is_sel {
+                theme::selected()
+            } else {
+                theme::text()
+            };
             if is_sel {
                 let blank = " ".repeat(popup.width.saturating_sub(2) as usize);
                 buf.set_string(popup.x + 1, ry, &blank, theme::selected());
