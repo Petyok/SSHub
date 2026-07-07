@@ -23,7 +23,7 @@ path = "src/lib.rs"
 
 [dependencies]
 anyhow = "1"
-crossterm = "0.28"
+crossterm = "0.29"
 # Enable real OS backends. Without a backend feature, keyring 3.x silently
 # falls back to an in-memory mock store: set()/get() work within one process
 # (so a write+read-back check passes) but nothing persists across restarts —
@@ -39,13 +39,13 @@ libc = "0.2"
 notify = "7"
 nucleo = "0.3"
 portable-pty = "0.9"
-ratatui = "0.29"
+ratatui = "0.30"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
-tui-term = "0.2"
-vt100 = "0.15"
+tui-term = "0.3"
+vt100 = "0.16"
 
 [dev-dependencies]
 assert_cmd = "2"
@@ -64,11 +64,3 @@ path = "tests/e2e/mod.rs"
 [[test]]
 name = "config_load"
 path = "tests/smoke/config_load.rs"
-
-# vt100 0.15.2 panics in `Grid::visible_rows` when scrollback_offset exceeds
-# the screen height. Upstream fixed it in 0.16 but ratatui 0.29 pins
-# unicode-width to =0.2.0 while vt100 0.16 needs ^0.2.1, so we can't bump.
-# Vendor 0.15.2 with the 2-line saturating-fix backported. See
-# vendor/vt100/src/grid.rs for the patch.
-[patch.crates-io]
-vt100 = { path = "vendor/vt100" }

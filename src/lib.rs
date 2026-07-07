@@ -113,7 +113,12 @@ fn attach_config_watcher(app: &mut App) -> Result<()> {
 
 fn run_animation<B: ratatui::backend::Backend + std::io::Write>(
     terminal: &mut Terminal<B>,
-) -> Result<()> {
+) -> Result<()>
+where
+    // ratatui 0.30 made Backend::Error an associated type with no auto
+    // bounds; anyhow's `?` needs it Send + Sync + 'static.
+    B::Error: Send + Sync + 'static,
+{
     let size = terminal.size()?;
     let state = tui::animation::AnimationState::new(size.width, size.height);
 

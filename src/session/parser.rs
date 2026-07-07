@@ -17,7 +17,7 @@ impl ParserState {
     }
 
     pub fn set_size(&mut self, rows: u16, cols: u16) {
-        self.inner.set_size(rows, cols);
+        self.inner.screen_mut().set_size(rows, cols);
     }
 
     pub fn screen(&self) -> &vt100::Screen {
@@ -30,10 +30,10 @@ impl ParserState {
     }
 
     pub fn set_scrollback(&mut self, rows: usize) {
-        // vt100 caps the value at `scrollback.len()` internally. Our vendored
-        // 0.15.2 has the saturating-fix backported so any value up to the
-        // full buffer (10k rows) is safe.
-        self.inner.set_scrollback(rows);
+        // vt100 caps the value at `scrollback.len()` internally; the
+        // out-of-range panic that forced our old vendored fork was fixed
+        // upstream in 0.16, so any value up to the full buffer is safe.
+        self.inner.screen_mut().set_scrollback(rows);
     }
 
     /// Bump the scrollback offset up by `rows` (showing older content).
@@ -49,7 +49,7 @@ impl ParserState {
     }
 
     pub fn snap_to_bottom(&mut self) {
-        self.inner.set_scrollback(0);
+        self.inner.screen_mut().set_scrollback(0);
     }
 
     /// Wipe the terminal buffer and scrollback. Used once ssh has
