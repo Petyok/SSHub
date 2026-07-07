@@ -14,6 +14,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::app::{App, AppMode};
 
+/// Panic-safe popup dimension: clamp `desired` into `[min, avail]`, but never
+/// let `min` exceed `avail` (which would make `u16::clamp` assert `min <= max`
+/// and crash the whole TUI on a terminal smaller than the popup's minimum).
+/// On a too-small terminal the popup just shrinks to the available space.
+pub fn fit_popup(desired: u16, min: u16, avail: u16) -> u16 {
+    desired.clamp(min.min(avail), avail)
+}
+
 /// Convert a Unix epoch timestamp to `"HH:MM:SS"` in the local timezone.
 ///
 /// Uses libc `localtime_r` (reentrant, no allocation) so we stay
@@ -655,6 +663,29 @@ mod tests {
         let app = test_app_with_hosts();
         let buffer = render_to_buffer(&app, 120, 38);
         assert!(buffer_contains(&buffer, "web-prod"));
+    }
+
+    #[test]
+    fn overlays_do_not_panic_on_a_tiny_terminal() {
+        // Regression: popup geometry used u16::clamp(min, max) with max derived
+        // from the terminal size, which asserted min<=max and crashed the TUI
+        // when the terminal was smaller than the popup minimum. Every overlay
+        // must render without panicking even at absurdly small sizes.
+        let modes = [
+            AppMode::Palette,
+            AppMode::GroupManage,
+            AppMode::Help,
+            AppMode::KeybindEditor,
+            AppMode::ConfirmQuit,
+        ];
+        for &mode in &modes {
+            for (w, h) in [(1u16, 1u16), (10, 3), (30, 8), (49, 20)] {
+                let mut app = test_app_with_hosts();
+                app.mode = mode;
+                // Must not panic; we don't care about the pixels here.
+                let _ = render_to_buffer(&app, w, h);
+            }
+        }
     }
 
     #[test]

@@ -4,18 +4,94 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Run `ssh-keygen -y -P <passphrase> -f <path>` and classify the outcome.
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static ASKPASS_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// A passphrase staged for `SSH_ASKPASS`: a `0600` secret file plus a tiny
+/// `0700` helper script that just `cat`s it. Both are removed on drop. This
+/// keeps the passphrase out of ssh-keygen's argv (where `ps` would expose it)
+/// and, unlike reusing the app binary as the helper, works in unit tests too.
+struct KeygenAskpass {
+    secret: PathBuf,
+    script: PathBuf,
+}
+
+impl KeygenAskpass {
+    fn new(passphrase: &str) -> std::io::Result<Self> {
+        use std::io::Write;
+        let dir = std::env::temp_dir();
+        let n = ASKPASS_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let stem = format!("sshub-kg-{}-{}", std::process::id(), n);
+        let secret = dir.join(format!("{stem}.secret"));
+        let script = dir.join(format!("{stem}.sh"));
+
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        // ssh strips the trailing newline from the askpass output.
+        writeln!(opts.open(&secret)?, "{passphrase}")?;
+
+        let mut sopts = std::fs::OpenOptions::new();
+        sopts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            sopts.mode(0o700);
+        }
+        // The secret path is passed via env so the script needs no quoting.
+        write!(
+            sopts.open(&script)?,
+            "#!/bin/sh\nexec cat \"$SSHUB_KG_SECRET\"\n"
+        )?;
+
+        Ok(Self { secret, script })
+    }
+
+    fn env(&self) -> Vec<(String, String)> {
+        vec![
+            (
+                "SSH_ASKPASS".into(),
+                self.script.to_string_lossy().into_owned(),
+            ),
+            ("SSH_ASKPASS_REQUIRE".into(), "force".into()),
+            (
+                "SSHUB_KG_SECRET".into(),
+                self.secret.to_string_lossy().into_owned(),
+            ),
+            // Some ssh-keygen builds still consult DISPLAY before askpass.
+            ("DISPLAY".into(), ":0".into()),
+        ]
+    }
+}
+
+impl Drop for KeygenAskpass {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.secret);
+        let _ = std::fs::remove_file(&self.script);
+    }
+}
+
+/// Run `ssh-keygen -y -f <path>` and classify the outcome. The passphrase is
+/// handed to ssh-keygen through `SSH_ASKPASS` rather than as a `-P` command-line
+/// argument, so it never appears in the process argument list where any local
+/// user could read it via `ps`.
+///
 /// Returns `None` when the answer is unknown (ssh-keygen missing, file
 /// unreadable, or an error unrelated to encryption) so callers can fail open.
 fn probe_key(path: &Path, passphrase: &str) -> Option<KeyProbe> {
-    let output = Command::new("ssh-keygen")
-        .arg("-y")
-        .arg("-P")
-        .arg(passphrase)
-        .arg("-f")
-        .arg(path)
-        .output()
-        .ok()?;
+    // Staged files are removed when `_askpass` drops at end of scope.
+    let _askpass = KeygenAskpass::new(passphrase).ok()?;
+    let mut cmd = Command::new("ssh-keygen");
+    cmd.arg("-y").arg("-f").arg(path);
+    for (k, v) in _askpass.env() {
+        cmd.env(k, v);
+    }
+    let output = cmd.output().ok()?;
     if output.status.success() {
         return Some(KeyProbe::Ok);
     }

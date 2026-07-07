@@ -36,16 +36,23 @@ fn render_launcher_hosts(store: &LauncherStore) -> Result<String> {
     Ok(out)
 }
 
+/// Collapse anything that could break out of a single ssh_config line. A field
+/// carrying an embedded newline would otherwise inject arbitrary directives
+/// (e.g. a `Host *` stanza) into the exported file, so flatten CR/LF to spaces.
+fn conf_val(s: &str) -> String {
+    s.replace(['\n', '\r'], " ")
+}
+
 fn render_host_block(host: &ManagedHost) -> String {
-    let mut lines = vec![format!("Host {}", host.name)];
-    lines.push(format!("    HostName {}", host.address));
+    let mut lines = vec![format!("Host {}", conf_val(&host.name))];
+    lines.push(format!("    HostName {}", conf_val(&host.address)));
 
     let user = host
         .username
         .as_deref()
         .or_else(|| host.identity.as_ref().and_then(|i| i.username.as_deref()));
     if let Some(user) = user {
-        lines.push(format!("    User {user}"));
+        lines.push(format!("    User {}", conf_val(user)));
     }
 
     if host.port != 22 {
@@ -53,16 +60,19 @@ fn render_host_block(host: &ManagedHost) -> String {
     }
 
     if let Some(key) = host.identity.as_ref().and_then(|i| i.private_key.as_ref()) {
-        lines.push(format!("    IdentityFile {}", key.to_string_lossy()));
+        lines.push(format!("    IdentityFile {}", conf_val(&key.to_string_lossy())));
     }
 
     if let Some(cert) = host.identity.as_ref().and_then(|i| i.certificate.as_ref()) {
-        lines.push(format!("    CertificateFile {}", cert.to_string_lossy()));
+        lines.push(format!(
+            "    CertificateFile {}",
+            conf_val(&cert.to_string_lossy())
+        ));
     }
 
     if let Some(jump) = &host.proxy_jump {
         if !jump.is_empty() {
-            lines.push(format!("    ProxyJump {jump}"));
+            lines.push(format!("    ProxyJump {}", conf_val(jump)));
         }
     }
 
@@ -74,7 +84,7 @@ fn render_host_block(host: &ManagedHost) -> String {
         if !cmd.is_empty() {
             lines.push(format!(
                 "    {}",
-                crate::ssh::host::format_ssh_config_option("RemoteCommand", cmd)
+                crate::ssh::host::format_ssh_config_option("RemoteCommand", &conf_val(cmd))
             ));
         }
     }

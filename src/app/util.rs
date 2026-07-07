@@ -421,6 +421,15 @@ pub(crate) fn parse_keyspec(spec: &str) -> Option<(KeyCode, KeyModifiers)> {
             {
                 KeyCode::F(n)
             } else if lower.chars().count() == 1 {
+                // A bare uppercase letter with no explicit modifier (e.g. "Y")
+                // means shift+letter; without this it parsed identically to "y"
+                // and never matched a real shifted keypress on terminals that
+                // report the SHIFT modifier. Guard on `mod_parts.is_empty()` so
+                // conventionally-capitalised combos like "Ctrl+S" stay shift-free.
+                let orig = key.chars().next().unwrap();
+                if orig.is_ascii_uppercase() && mod_parts.is_empty() {
+                    mods |= KeyModifiers::SHIFT;
+                }
                 KeyCode::Char(lower.chars().next().unwrap())
             } else {
                 return None;

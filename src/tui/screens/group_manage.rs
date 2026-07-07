@@ -10,10 +10,10 @@ use crate::tui::theme;
 /// over the dashboard so it matches the rest of the app's chrome.
 pub fn render_group_manage_popup(frame: &mut Frame, app: &App) {
     let area = frame.area();
-    let width = (area.width * 60 / 100).clamp(40, area.width.saturating_sub(2));
+    let width = crate::tui::fit_popup(area.width * 60 / 100, 40, area.width.saturating_sub(2));
     // Rows for groups (or the empty hint) + borders + a hint row.
     let rows = app.groups.len().max(1) as u16;
-    let height = (rows + 4).clamp(6, area.height.saturating_sub(2));
+    let height = crate::tui::fit_popup(rows + 4, 6, area.height.saturating_sub(2));
     let x = area.x + (area.width.saturating_sub(width)) / 2;
     let y = area.y + (area.height.saturating_sub(height)) / 2;
     let popup = Rect::new(x, y, width, height);

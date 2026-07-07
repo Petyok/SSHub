@@ -81,7 +81,7 @@ pub fn render_field_picker(frame: &mut Frame, app: &App) {
         buf.set_string(
             row_x,
             ry,
-            crate::tui::text::ellipsize(&format!("{marker}{label}"), (popup.width - 3) as usize),
+            crate::tui::text::ellipsize(&format!("{marker}{label}"), popup.width.saturating_sub(3) as usize),
             style,
         );
     }
@@ -96,7 +96,7 @@ pub fn render_field_picker(frame: &mut Frame, app: &App) {
         buf.set_string(
             row_x,
             iy.saturating_sub(1),
-            crate::tui::text::ellipsize(&text, (popup.width - 3) as usize),
+            crate::tui::text::ellipsize(&text, popup.width.saturating_sub(3) as usize),
             theme::bright(),
         );
     }

@@ -258,7 +258,10 @@ impl App {
                 match self.active_tab {
                     0 => {
                         if x >= areas.col_left.x && x < areas.col_left.x + areas.col_left.width {
-                            let max = self.filtered_indices.len().saturating_sub(1);
+                            // `selected` indexes nav_rows (group headers + hosts),
+                            // not filtered_indices (hosts only) — clamping to the
+                            // shorter list moved the selection up and hid rows.
+                            let max = self.nav_rows.len().saturating_sub(1);
                             self.selected = (self.selected + 3).min(max);
                         } else {
                             self.ssh_log_scroll = self.ssh_log_scroll.saturating_sub(3);
