@@ -62,6 +62,11 @@ pub fn render(frame: &mut Frame, app: &App) {
     let clock = format_utc_clock();
     widgets::header::render_header(frame, areas.header, total, online, slow, down, &clock);
 
+    // Open embedded sessions — visible strip on the top header row so
+    // background SSH tabs aren't hidden behind a footer hint.
+    let session_chips = build_session_chips(app);
+    widgets::header::render_session_strip(frame, areas.header, &session_chips);
+
     // Horizontal rule 1
     let rule1 = row_in(area, areas.header.y + areas.header.height);
     widgets::footer::render_hrule(frame, rule1, false);
@@ -191,6 +196,25 @@ fn row_in(area: Rect, y: u16) -> Rect {
     } else {
         Rect::new(area.x, area.y, area.width, 0)
     }
+}
+
+fn build_session_chips(app: &App) -> Vec<widgets::header::SessionChip> {
+    use crate::session::SessionPhase;
+    use widgets::header::{SessionChip, SessionDot};
+
+    app.sessions
+        .iter()
+        .enumerate()
+        .map(|(i, s)| SessionChip {
+            name: s.display_name.clone(),
+            dot: match s.phase {
+                SessionPhase::Connecting { .. } => SessionDot::Connecting,
+                SessionPhase::Running { .. } => SessionDot::Running,
+                SessionPhase::Exited { .. } => SessionDot::Exited,
+            },
+            active: app.active_session == Some(i),
+        })
+        .collect()
 }
 
 fn compute_header_stats(app: &App) -> (usize, usize, usize, usize) {
@@ -762,6 +786,29 @@ mod tests {
         app.selected = 0;
         app.rebuild_filter();
         app
+    }
+
+    #[test]
+    fn dashboard_shows_open_session_strip() {
+        let mut app = test_app_with_hosts();
+        let config = crate::session::SessionConfig {
+            argv: vec!["true".into()],
+            display_name: "web-prod".into(),
+            meta: crate::session::SessionMeta::default(),
+            pending_secret: None,
+        };
+        let session = crate::session::Session::spawn(config, 24, 80).unwrap();
+        app.sessions.push(session);
+        app.active_session = Some(0);
+        // Stays on the dashboard (Normal), so the strip is what makes the
+        // background session visible.
+        let buffer = render_to_buffer(&app, 120, 38);
+        assert!(buffer_contains(&buffer, "open"));
+        // Host name appears both in the list and in the strip; the strip marker
+        // (●) must be present on the top row.
+        let top: String = (0..120).map(|x| buffer[(x, 0)].symbol()).collect();
+        assert!(top.contains('\u{25cf}'), "session dot missing on top row");
+        assert!(top.contains("web-prod"), "session name missing on top row");
     }
 
     #[test]
