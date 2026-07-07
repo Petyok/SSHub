@@ -31,12 +31,20 @@ pub fn render_group_manage_popup(frame: &mut Frame, app: &App) {
     }
 
     // Reserve the last inner row for the action hint.
-    let list_area = Rect::new(inner.x, inner.y, inner.width, inner.height.saturating_sub(1));
+    let list_area = Rect::new(
+        inner.x,
+        inner.y,
+        inner.width,
+        inner.height.saturating_sub(1),
+    );
     let hint_area = Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1);
 
     if app.groups.is_empty() {
         frame.render_widget(
-            Paragraph::new(Span::styled("No groups yet — press 'a' to add one.", theme::mute())),
+            Paragraph::new(Span::styled(
+                "No groups yet — press 'a' to add one.",
+                theme::mute(),
+            )),
             list_area,
         );
     } else {

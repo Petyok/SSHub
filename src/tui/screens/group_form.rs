@@ -20,7 +20,10 @@ pub fn render_group_field_picker(frame: &mut Frame, app: &App) {
     };
 
     let mut items: Vec<ListItem> = Vec::with_capacity(options.len() + 1);
-    items.push(ListItem::new(Span::styled(format!(" {none_label}"), theme::mute())));
+    items.push(ListItem::new(Span::styled(
+        format!(" {none_label}"),
+        theme::mute(),
+    )));
     items.extend(
         options
             .iter()

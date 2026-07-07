@@ -317,7 +317,11 @@ pub(crate) fn nested_groups_build_tree_and_collapse_subtree() {
 
     // Collapsing the parent hides the child header AND its host.
     app.toggle_group_by_section(0);
-    assert_eq!(app.nav_rows.len(), 1, "only the parent header stays visible");
+    assert_eq!(
+        app.nav_rows.len(),
+        1,
+        "only the parent header stays visible"
+    );
     assert!(matches!(app.nav_rows[0], NavRow::Header(0)));
 
     // A group can't parent itself or a descendant (would cycle).

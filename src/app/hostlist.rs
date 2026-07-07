@@ -106,7 +106,11 @@ impl App {
                         host_idx,
                         selected: self.selected == nav_idx,
                         // Flat (no-group) lists have no headers → depth 0.
-                        depth: if self.groups.is_empty() { 0 } else { cur_host_depth },
+                        depth: if self.groups.is_empty() {
+                            0
+                        } else {
+                            cur_host_depth
+                        },
                     });
                 }
             }
@@ -375,7 +379,11 @@ impl App {
         }
         while let Some(gid) = group {
             changed |= self.collapsed_groups.remove(&gid);
-            group = self.groups.iter().find(|g| g.id == gid).and_then(|g| g.parent_id);
+            group = self
+                .groups
+                .iter()
+                .find(|g| g.id == gid)
+                .and_then(|g| g.parent_id);
         }
         if changed {
             self.persist_collapsed_groups();

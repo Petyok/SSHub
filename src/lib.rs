@@ -1,8 +1,8 @@
 pub mod app;
 pub mod config;
-pub mod keybinds;
 pub mod credentials;
 pub mod import;
+pub mod keybinds;
 pub mod launcher;
 pub mod metadata;
 pub mod ping;

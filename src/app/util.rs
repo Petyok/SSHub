@@ -289,7 +289,15 @@ pub(crate) fn build_group_sections(
     // renders. `depth` drives indentation and subtree collapse. A `visiting`
     // guard defends against a malformed parent cycle in the data.
     let mut visiting = std::collections::HashSet::new();
-    build_group_subtree(hosts, groups, filtered, None, 0, &mut visiting, &mut sections);
+    build_group_subtree(
+        hosts,
+        groups,
+        filtered,
+        None,
+        0,
+        &mut visiting,
+        &mut sections,
+    );
 
     let ungrouped: Vec<usize> = filtered
         .iter()
@@ -361,7 +369,15 @@ fn build_group_subtree(
             collapsed: false,
             depth,
         });
-        build_group_subtree(hosts, groups, filtered, Some(group.id), depth + 1, visiting, out);
+        build_group_subtree(
+            hosts,
+            groups,
+            filtered,
+            Some(group.id),
+            depth + 1,
+            visiting,
+            out,
+        );
         visiting.remove(&group.id);
     }
 }

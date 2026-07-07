@@ -122,35 +122,31 @@ impl App {
             _ if self.is_action(KeyAction::AddHost, &key) => self.enter_host_form(None, false)?,
             _ if self.is_action(KeyAction::Delete, &key) => self.delete_selected_host()?,
             _ if self.is_action(KeyAction::Duplicate, &key) => self.duplicate_selected_host()?,
-            _ if self.is_action(KeyAction::ExportSsh, &key) => {
-                match self.export_ssh_config() {
-                    Ok(path) => {
-                        let count = self
-                            .store
-                            .list_hosts_filtered(Some(HostSource::Launcher))
-                            .map(|h| h.len())
-                            .unwrap_or(0);
-                        self.host_notice =
-                            Some(format!("Exported {count} host(s) to {}", path.display()));
-                    }
-                    Err(e) => self.host_notice = Some(format!("Export failed: {e:#}")),
+            _ if self.is_action(KeyAction::ExportSsh, &key) => match self.export_ssh_config() {
+                Ok(path) => {
+                    let count = self
+                        .store
+                        .list_hosts_filtered(Some(HostSource::Launcher))
+                        .map(|h| h.len())
+                        .unwrap_or(0);
+                    self.host_notice =
+                        Some(format!("Exported {count} host(s) to {}", path.display()));
                 }
-            }
-            _ if self.is_action(KeyAction::ImportSsh, &key) => {
-                match self.import_ssh_config() {
-                    Ok(report) => {
-                        let mut msg = format!(
-                            "Imported {} new, {} updated, {} skipped",
-                            report.inserted, report.updated, report.skipped_launcher
-                        );
-                        if report.failed > 0 {
-                            msg.push_str(&format!(", {} failed", report.failed));
-                        }
-                        self.host_notice = Some(msg);
+                Err(e) => self.host_notice = Some(format!("Export failed: {e:#}")),
+            },
+            _ if self.is_action(KeyAction::ImportSsh, &key) => match self.import_ssh_config() {
+                Ok(report) => {
+                    let mut msg = format!(
+                        "Imported {} new, {} updated, {} skipped",
+                        report.inserted, report.updated, report.skipped_launcher
+                    );
+                    if report.failed > 0 {
+                        msg.push_str(&format!(", {} failed", report.failed));
                     }
-                    Err(e) => self.host_notice = Some(format!("Import failed: {e:#}")),
+                    self.host_notice = Some(msg);
                 }
-            }
+                Err(e) => self.host_notice = Some(format!("Import failed: {e:#}")),
+            },
             _ if self.is_action(KeyAction::ImportTermius, &key) => self.open_import_prompt(),
             _ if self.is_action(KeyAction::Edit, &key) => {
                 if self.selected_nav_header().is_some() {
@@ -189,9 +185,13 @@ impl App {
             }
             _ if self.is_action(KeyAction::SortCycle, &key) => self.cycle_sort_mode(),
             _ if self.is_action(KeyAction::YankLog, &key) => self.yank_ssh_log()?,
-            _ if self.is_action(KeyAction::DeleteGroup, &key) => self.delete_selected_host_group()?,
+            _ if self.is_action(KeyAction::DeleteGroup, &key) => {
+                self.delete_selected_host_group()?
+            }
             _ if self.is_action(KeyAction::GroupsManage, &key) => self.enter_group_manage()?,
-            _ if self.is_action(KeyAction::RenameGroup, &key) => self.rename_selected_host_group()?,
+            _ if self.is_action(KeyAction::RenameGroup, &key) => {
+                self.rename_selected_host_group()?
+            }
             // Unmatched chars open the fuzzy palette instead of legacy search
             KeyCode::Char(c)
                 if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
@@ -539,9 +539,9 @@ impl App {
 
         let current_header_idx = header_positions
             .iter()
-            .position(|&pos| {
-                matches!(self.nav_rows[pos], NavRow::Header(si) if si == current_group)
-            })
+            .position(
+                |&pos| matches!(self.nav_rows[pos], NavRow::Header(si) if si == current_group),
+            )
             .unwrap_or(0);
 
         let len = header_positions.len() as i32;

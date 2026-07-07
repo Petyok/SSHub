@@ -539,10 +539,7 @@ const FAILURE_EXPLANATIONS: &[(&str, &str)] = &[
         "too many authentication failures",
         "Too many authentication failures — the server rejected every key tried.",
     ),
-    (
-        "connection reset",
-        "Connection reset by the remote host.",
-    ),
+    ("connection reset", "Connection reset by the remote host."),
     (
         "connection closed",
         "Connection closed by the remote host before authentication.",
@@ -709,7 +706,9 @@ mod prompt_tests {
         assert!(exited, "child should have exited");
         assert!(!s.is_connected(), "must not latch connected on failure");
         assert!(
-            s.debug_log().to_ascii_lowercase().contains("connection timed out"),
+            s.debug_log()
+                .to_ascii_lowercase()
+                .contains("connection timed out"),
             "failure reason should be in debug_log, got {:?}",
             s.debug_log()
         );

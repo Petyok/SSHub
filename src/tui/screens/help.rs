@@ -109,8 +109,14 @@ pub fn render_help() -> Paragraph<'static> {
         Line::from(""),
         section("tools"),
         entry("", ""),
-        entry("Ctrl+K", "Edit all keybindings (navigation, tabs, session, …)"),
-        entry("", "Defaults listed below; rebind any action in the editor."),
+        entry(
+            "Ctrl+K",
+            "Edit all keybindings (navigation, tabs, session, …)",
+        ),
+        entry(
+            "",
+            "Defaults listed below; rebind any action in the editor.",
+        ),
         entry("[session]", ""),
         entry("Ctrl+T", "New session tab (pick host)"),
         entry("Ctrl+W", "Close session tab"),
@@ -122,10 +128,7 @@ pub fn render_help() -> Paragraph<'static> {
         entry("", ""),
         entry("? / Shift+H", "Toggle this help screen"),
         entry("F2 / Ctrl+S", "Save form (rebindable)"),
-        entry(
-            "Ctrl+K",
-            "Edit keybindings (all actions)",
-        ),
+        entry("Ctrl+K", "Edit keybindings (all actions)"),
         entry(
             "q / Ctrl+C",
             "Quit (asks to confirm; disable via appearance.confirm_quit)",

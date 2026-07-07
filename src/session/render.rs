@@ -193,7 +193,12 @@ fn render_centered_and_tail(
 
     if top_h >= 1 {
         let pad_top = top_h.saturating_sub(center.len() as u16) / 2;
-        let centered = Rect::new(top_area.x, top_area.y + pad_top, top_area.width, top_h - pad_top);
+        let centered = Rect::new(
+            top_area.x,
+            top_area.y + pad_top,
+            top_area.width,
+            top_h - pad_top,
+        );
         frame.render_widget(
             Paragraph::new(center).alignment(ratatui::layout::Alignment::Center),
             centered,
@@ -236,7 +241,10 @@ fn render_failure(frame: &mut Frame, area: Rect, session: &Session) {
             Span::styled(host, Style::default().fg(theme::TEXT)),
         ]),
         Line::raw(""),
-        Line::from(Span::styled(session.failure_reason(), Style::default().fg(theme::TEXT))),
+        Line::from(Span::styled(
+            session.failure_reason(),
+            Style::default().fg(theme::TEXT),
+        )),
         Line::raw(""),
         Line::from(Span::styled("press any key to close", dim)),
     ];

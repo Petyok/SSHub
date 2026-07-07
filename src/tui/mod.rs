@@ -28,9 +28,10 @@ pub fn format_local_time(epoch_secs: i64) -> String {
 
 pub fn render(frame: &mut Frame, app: &App) {
     let session_behind_picker = app.mode == AppMode::SessionHostPicker
-        && app.session_host_picker.as_ref().is_some_and(|p| {
-            matches!(p.return_mode, AppMode::Connecting | AppMode::Session)
-        });
+        && app
+            .session_host_picker
+            .as_ref()
+            .is_some_and(|p| matches!(p.return_mode, AppMode::Connecting | AppMode::Session));
 
     // Embedded session takes over the whole frame — no dashboard chrome.
     if matches!(app.mode, AppMode::Connecting | AppMode::Session) || session_behind_picker {
@@ -706,12 +707,13 @@ mod tests {
 
     #[test]
     fn header_stats_count_unreachable_hosts() {
-        use crate::ping::{PING_UNREACHABLE, PingClass, classify_ping};
+        use crate::ping::{classify_ping, PingClass, PING_UNREACHABLE};
 
         let mut app = test_app_with_many_hosts(3);
         app.ping_data.insert("host-00".into(), vec![50]);
         app.ping_data.insert("host-01".into(), vec![120]);
-        app.ping_data.insert("host-02".into(), vec![PING_UNREACHABLE]);
+        app.ping_data
+            .insert("host-02".into(), vec![PING_UNREACHABLE]);
 
         let (total, online, slow, down) = compute_header_stats(&app);
         assert_eq!(total, 3);
@@ -895,8 +897,7 @@ mod tests {
         for _ in 0..200 {
             app.sessions[0].drain();
             let s = &app.sessions[0];
-            let exited =
-                matches!(s.phase, crate::session::SessionPhase::Exited { .. });
+            let exited = matches!(s.phase, crate::session::SessionPhase::Exited { .. });
             if exited && s.debug_log().to_ascii_lowercase().contains("refused") {
                 break;
             }

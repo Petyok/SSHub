@@ -59,7 +59,10 @@ pub fn render_status_bar(app: &App) -> Paragraph<'static> {
     if !app.sessions.is_empty() {
         let n = app.sessions.len();
         let tab = app.active_session.map(|i| i + 1).unwrap_or(1);
-        line.push_str(&format!(" │ {n} session{} (tab {tab})", if n == 1 { "" } else { "s" }));
+        line.push_str(&format!(
+            " │ {n} session{} (tab {tab})",
+            if n == 1 { "" } else { "s" }
+        ));
     }
     if let Some(notice) = &app.host_notice {
         line.push_str(" │ ");
