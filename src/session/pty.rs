@@ -203,11 +203,11 @@ impl PtyRuntime {
         // Second reader: siphon stderr from the FIFO. Non-blocking + poll so it
         // never wedges and honours the stop flag on drop.
         let stderr_stop = Arc::new(AtomicBool::new(false));
-        let stderr_reader = stderr_fifo.as_ref().map(|fifo| {
-            let mut read = fifo
-                .read
-                .try_clone()
-                .expect("clone fifo read handle should not fail");
+        // The stderr siphon is best-effort: if cloning the FIFO handle or
+        // spawning the reader fails (resource exhaustion), degrade to no
+        // `-v` debug capture rather than panicking the whole connect.
+        let stderr_reader = stderr_fifo.as_ref().and_then(|fifo| {
+            let mut read = fifo.read.try_clone().ok()?;
             let tx = stderr_tx;
             let stop = Arc::clone(&stderr_stop);
             thread::Builder::new()
@@ -233,7 +233,7 @@ impl PtyRuntime {
                         }
                     }
                 })
-                .expect("spawn stderr reader thread")
+                .ok()
         });
 
         Ok(Self {
