@@ -13,6 +13,20 @@ host="${host##*@}"  # strip any user@ prefix for display
 
 here="$(cd "$(dirname "$0")" && pwd)"
 
+# sshub siphons the child's stderr (fd 2) into a side channel to hide ssh's
+# `-v` handshake, and keys its "connecting → connected" header off it. Emit a
+# believable handshake there, including the "Authenticated to" marker sshub
+# looks for, so the session reads as genuinely connected.
+{
+    printf 'OpenSSH_9.6p1 Ubuntu-3ubuntu13, OpenSSL 3.0.13\n'
+    printf 'debug1: Connecting to %s [%s] port 22.\n' "$host" "$host"
+    printf 'debug1: Connection established.\n'
+    printf 'debug1: Server host key: ssh-ed25519 SHA256:9c1a…demo\n'
+    printf 'debug1: Host '\''%s'\'' is known and matches the ED25519 host key.\n' "$host"
+    printf 'debug1: Authenticated to %s ([%s]:22) using "publickey".\n' "$host" "$host"
+    printf 'debug1: channel 0: new session\n'
+} >&2
+
 sleep 0.4
 printf '\n'
 printf 'Welcome to %s — Ubuntu 24.04.1 LTS (GNU/Linux 6.8.0-45-generic x86_64)\n\n' "$host"
@@ -91,4 +105,7 @@ RC
 
 # Clean the temp rcfile up when the session ends.
 trap 'rm -f "$rc"' EXIT
-exec bash --rcfile "$rc" -i
+# Redirect bash's stderr onto the PTY (fd 1): an interactive bash writes its
+# prompt and readline output to stderr, which sshub otherwise siphons off the
+# grid — so without this the prompt would be invisible.
+exec bash --rcfile "$rc" -i 2>&1
