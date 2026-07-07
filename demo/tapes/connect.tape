@@ -7,40 +7,63 @@ Set Theme "Catppuccin Mocha"
 Set TypingSpeed 60ms
 
 Hide
-Type "export SSHUB_CONFIG_DIR=demo/home/.config/sshub SSHUB_DATA_DIR=demo/home/.local/share/sshub SSHUB_SSH_CONFIG=demo/home/ssh_config"
+Type "export SSHUB_CONFIG_DIR=$PWD/demo/home/.config/sshub SSHUB_DATA_DIR=$PWD/demo/home/.local/share/sshub SSHUB_SSH_CONFIG=$PWD/demo/home/ssh_config"
 Enter
 Type "export PATH=$PWD/demo/bin:$PWD/target/release:$PATH"
 Enter
-Type "rm -f demo/home/.local/share/sshub/launcher.db*"
+Type "bash demo/seed-demo.sh"
 Enter
 Type "clear && sshub"
 Enter
 Sleep 1s
-Space
-Sleep 1s
 Show
 
+Sleep 10s
+Space
 Sleep 1.5s
 
-# Pick a host and connect (Enter spawns the demo ssh on a PTY)
+# Connect via fuzzy palette — embedded PTY session
 Type "/"
-Sleep 1.5s
-Type "web-prod-01"
+Sleep 1s
+Type "web-prod"
 Sleep 1.5s
 Enter
-Sleep 1s
+Sleep 3.5s
 
-# The scripted connect animation, then the (faked) remote shell
-Sleep 3s
-
-# Run something silly on the "remote"
-Type `cowsay "SSHub: 100% vibe-coded slop, made with Claude Opus 4.8"`
+Type `cowsay "SSHub: secure shell x undefined behavior"`
 Sleep 800ms
 Enter
 Sleep 3s
 
-# Back out of the session and quit
+# Detach to dashboard; SSH keeps running (session strip in header)
 Ctrl+D
+Sleep 2.5s
+
+# Re-focus the detached session from the dashboard
+Ctrl+Shift+S
+Sleep 2s
+Ctrl+D
+Sleep 2s
+
+# Open a second session tab (host picker)
+Ctrl+T
+Sleep 1.5s
+Type "db-primary"
+Sleep 1.5s
+Enter
+Sleep 3.5s
+
+# Switch between session tabs
+Ctrl+]
+Sleep 2s
+Ctrl+[
+Sleep 2s
+
+Ctrl+D
+Sleep 1.5s
+
+# Close the active session tab from the dashboard
+Ctrl+W
 Sleep 1.5s
 
 Hide

@@ -7,10 +7,9 @@ Set Theme "Catppuccin Mocha"
 Set TypingSpeed 60ms
 
 Hide
-Type "export SSHUB_CONFIG_DIR=demo/home/.config/sshub SSHUB_DATA_DIR=demo/home/.local/share/sshub SSHUB_SSH_CONFIG=demo/home/ssh_config PATH=$PWD/target/release:$PATH"
+Type "export SSHUB_CONFIG_DIR=$PWD/demo/home/.config/sshub SSHUB_DATA_DIR=$PWD/demo/home/.local/share/sshub SSHUB_SSH_CONFIG=$PWD/demo/home/ssh_config PATH=$PWD/target/release:$PATH"
 Enter
-# Start from a clean managed DB so the host we add isn't already present.
-Type "rm -f demo/home/.local/share/sshub/launcher.db*"
+Type "bash demo/seed-demo.sh"
 Enter
 Type "clear && sshub"
 Enter
@@ -33,7 +32,7 @@ Sleep 600ms
 Enter
 Sleep 600ms
 
-# Fill Password
+# Password
 Down
 Enter
 Sleep 600ms
@@ -41,7 +40,7 @@ Type "BlahblahblahPASSWORD!!!"
 Sleep 600ms
 Enter
 
-# Fill Username
+# Username
 Down
 Enter
 Sleep 600ms
@@ -65,15 +64,49 @@ Sleep 600ms
 Type "demo-vm-1"
 Sleep 600ms
 Enter
+Sleep 600ms
+
+# Port (default 22)
+Down
+Enter
+Sleep 600ms
+Enter
+Sleep 600ms
+
+# Group — pick Staging from seeded groups
+Down
+Enter
+Sleep 800ms
+Type "j"
+Sleep 600ms
+Type "j"
+Sleep 600ms
+Enter
+Sleep 800ms
+
+# Identity (keep default)
+Down
+Enter
+Sleep 600ms
+Enter
+Sleep 600ms
+
+# Tags
+Down
+Enter
+Sleep 600ms
+Type "demo, pizza"
+Sleep 800ms
+Enter
 Sleep 800ms
 
 # Save
 Ctrl+S
 Sleep 2s
 
-# Find the new host, then favorite the selected row
+# Find the new host and favorite it
 Type "/"
-Sleep 2s
+Sleep 1.5s
 Type "demo"
 Sleep 2s
 Escape
