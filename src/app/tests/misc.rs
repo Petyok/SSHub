@@ -10,6 +10,19 @@ pub(crate) fn keyevent_to_spec_roundtrips() {
     let spec = keyevent_to_spec(&ctrl_s).unwrap();
     let (code, mods) = parse_keyspec(&spec).unwrap();
     assert!(keyspec_matches(code, mods, &ctrl_s));
+
+    // Regression: a plain (unshifted) letter must serialize lowercase and
+    // round-trip so an editor-captured single-letter binding actually fires.
+    // A bare uppercase spec means shift+letter, so "g" (not "G") is required.
+    let plain_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::empty());
+    assert_eq!(keyevent_to_spec(&plain_g).as_deref(), Some("g"));
+    let (code, mods) = parse_keyspec("g").unwrap();
+    assert!(keyspec_matches(code, mods, &plain_g));
+    // And a bare uppercase spec must require shift, matching only shift+letter.
+    let (code, mods) = parse_keyspec("G").unwrap();
+    let shift_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::SHIFT);
+    assert!(keyspec_matches(code, mods, &shift_g));
+    assert!(!keyspec_matches(code, mods, &plain_g));
 }
 
 #[test]

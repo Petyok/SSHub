@@ -456,6 +456,13 @@ pub(crate) fn keyevent_to_spec(key: &KeyEvent) -> Option<String> {
         KeyCode::Right => "Right".to_string(),
         KeyCode::BackTab => "BackTab".to_string(),
         KeyCode::F(n) => format!("F{n}"),
+        // A *bare* letter (no modifier) must serialize lowercase: a bare
+        // uppercase spec means shift+letter (see parse_keyspec), so emitting
+        // "G" for an unshifted 'g' would make the captured binding parse back
+        // as shift and never match. With a modifier present the letter is
+        // uppercased for the conventional display ("Ctrl+S"), which parses
+        // unambiguously since the explicit modifier suppresses the shift rule.
+        KeyCode::Char(c) if key.modifiers.is_empty() => c.to_ascii_lowercase().to_string(),
         KeyCode::Char(c) => c.to_ascii_uppercase().to_string(),
         _ => return None,
     };
