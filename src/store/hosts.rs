@@ -105,10 +105,16 @@ impl LauncherStore {
 
         let id = self.with_conn(|conn| {
             conn.execute(
+                // sort_order gets the next value after the current max so each
+                // new host is distinct; without this every host defaulted to 0
+                // and manual-mode reordering (which swaps sort_order values) was
+                // a permanent no-op.
                 "INSERT INTO hosts
                     (name, label, address, port, group_id, identity_id, os_icon, tags, notes,
-                     proxy_jump, forward_agent, remote_command, source, has_password, username, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16)",
+                     proxy_jump, forward_agent, remote_command, source, has_password, username,
+                     sort_order, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                     (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM hosts), ?16, ?16)",
                 params![
                     host.name,
                     host.label,
