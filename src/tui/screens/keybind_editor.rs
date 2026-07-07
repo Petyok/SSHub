@@ -31,7 +31,7 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
 
     let buf = frame.buffer_mut();
     let row_x = popup.x + 2;
-    let val_x = popup.x + 28;
+    let val_x = popup.x + 33;
     let visible = popup.height.saturating_sub(4) as usize;
     let total = KeyAction::ALL.len();
     let scroll = editor.scroll.min(total.saturating_sub(visible));
@@ -50,10 +50,12 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
             theme::text()
         };
         let marker = if is_sel { "› " } else { "  " };
+        // Keep the label from bleeding into the value column at `val_x`.
+        let label_avail = (val_x.saturating_sub(row_x + 1)) as usize;
         buf.set_string(
             row_x,
             ry,
-            format!("{marker}{}", action.label()),
+            crate::tui::text::ellipsize(&format!("{marker}{}", action.label()), label_avail),
             label_style,
         );
 
@@ -70,7 +72,7 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
         } else {
             theme::mute()
         };
-        let avail = popup.width.saturating_sub(30) as usize;
+        let avail = popup.x.saturating_add(popup.width).saturating_sub(val_x + 1) as usize;
         buf.set_string(
             val_x,
             ry,
