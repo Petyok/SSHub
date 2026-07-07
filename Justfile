@@ -14,6 +14,18 @@ test:
 build:
     cargo build --release
 
+# Record README GIFs with VHS (requires `vhs` on PATH).
+record-gifs: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export SSHUB_CONFIG_DIR="$PWD/demo/home/.config/sshub"
+    export SSHUB_DATA_DIR="$PWD/demo/home/.local/share/sshub"
+    export SSHUB_SSH_CONFIG="$PWD/demo/home/ssh_config"
+    export PATH="$PWD/demo/bin:$PWD/target/release:$PATH"
+    vhs demo/tapes/overview.tape
+    vhs demo/tapes/connect.tape
+    vhs demo/tapes/add-host.tape
+
 # Run with dry-run (no TUI)
 dry-run:
     cargo run -- --dry-run
