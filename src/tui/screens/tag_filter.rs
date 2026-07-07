@@ -50,7 +50,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         Block::default()
             .borders(Borders::ALL)
             .title(Span::styled(title, theme::heading()))
-            .border_style(theme::border()),
+            .border_style(theme::popup_border()),
         popup,
     );
 

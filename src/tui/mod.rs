@@ -185,7 +185,7 @@ fn render_import_prompt_popup(frame: &mut Frame, app: &App) {
             Block::default()
                 .borders(Borders::ALL)
                 .title(Span::styled(" Import from Termius ", theme::heading()))
-                .border_style(theme::border()),
+                .border_style(theme::popup_border()),
         ),
         popup_area,
     );
@@ -537,7 +537,7 @@ fn render_help_popup(frame: &mut Frame, app: &App) {
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(theme::border())
+            .border_style(theme::popup_border())
             .title(Span::styled(" Help ", theme::heading())),
         popup_area,
     );

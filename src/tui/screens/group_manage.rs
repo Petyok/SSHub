@@ -21,7 +21,7 @@ pub fn render_group_manage_popup(frame: &mut Frame, app: &App) {
     frame.render_widget(Clear, popup);
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(theme::border())
+        .border_style(theme::popup_border())
         .title(Span::styled(" Groups ", theme::heading()));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);

@@ -55,7 +55,7 @@ pub fn render_field_picker(frame: &mut Frame, app: &App) {
         Block::default()
             .borders(Borders::ALL)
             .title(Span::styled(format!(" {title} "), theme::heading()))
-            .border_style(theme::border()),
+            .border_style(theme::popup_border()),
         popup,
     );
 

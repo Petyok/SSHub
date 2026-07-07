@@ -36,7 +36,7 @@ pub fn render_palette(
     // ── outer border ────────────────────────────────────────
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(theme::border())
+        .border_style(theme::popup_border())
         .style(Style::default().bg(theme::BG))
         .title(Span::styled(" quick connect ", theme::heading()));
     let inner = block.inner(popup_area);

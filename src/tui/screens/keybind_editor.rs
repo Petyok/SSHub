@@ -25,7 +25,7 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
         Block::default()
             .borders(Borders::ALL)
             .title(Span::styled(" Keybindings ", theme::heading()))
-            .border_style(theme::border()),
+            .border_style(theme::popup_border()),
         popup,
     );
 

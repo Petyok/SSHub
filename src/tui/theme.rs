@@ -62,6 +62,12 @@ pub fn heading() -> Style {
 pub fn border() -> Style {
     Style::default().fg(BORDER)
 }
+/// Border for modal popups. Brighter than [`border`] so an overlay reads as a
+/// distinct framed dialog against the dashboard behind it, instead of blending
+/// into the near-black panel borders.
+pub fn popup_border() -> Style {
+    Style::default().fg(MUTE)
+}
 pub fn footer_key() -> Style {
     Style::default().fg(BRIGHT)
 }
