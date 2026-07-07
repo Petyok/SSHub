@@ -418,6 +418,26 @@ impl App {
             || self.is_action(KeyAction::Connect, &key)
         {
             self.mode = self.pre_help_mode.take().unwrap_or(AppMode::Normal);
+            self.help_scroll = 0;
+            return Ok(());
+        }
+        let total = crate::tui::screens::help::help_line_count();
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.help_scroll = self.help_scroll.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.help_scroll = (self.help_scroll + 1).min(total.saturating_sub(1));
+            }
+            KeyCode::PageUp => {
+                self.help_scroll = self.help_scroll.saturating_sub(10);
+            }
+            KeyCode::PageDown => {
+                self.help_scroll = (self.help_scroll + 10).min(total.saturating_sub(1));
+            }
+            KeyCode::Home => self.help_scroll = 0,
+            KeyCode::End => self.help_scroll = total.saturating_sub(1),
+            _ => {}
         }
         Ok(())
     }

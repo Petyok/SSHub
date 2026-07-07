@@ -111,6 +111,8 @@ pub struct App {
     pub sort_mode: SortMode,
     pub pending_delete: Option<PendingDelete>,
     pub pre_help_mode: Option<AppMode>,
+    /// Vertical scroll offset (in lines) of the help overlay.
+    pub help_scroll: u16,
     /// Mode to return to if the quit dialog is cancelled.
     pub pre_quit_mode: Option<AppMode>,
     pub group_sections: Vec<HostGroupSection>,
@@ -231,6 +233,7 @@ impl App {
             sort_mode: SortMode::default(),
             pending_delete: None,
             pre_help_mode: None,
+            help_scroll: 0,
             pre_quit_mode: None,
             group_sections: Vec::new(),
             nav_rows: Vec::new(),

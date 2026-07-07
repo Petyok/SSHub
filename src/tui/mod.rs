@@ -136,7 +136,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             render_confirm_discard_popup(frame);
         }
         AppMode::ConfirmDelete => render_confirm_delete_popup(frame, app),
-        AppMode::Help => render_help_popup(frame),
+        AppMode::Help => render_help_popup(frame, app),
         AppMode::KeybindEditor => screens::keybind_editor::render_keybind_editor(frame, app),
         AppMode::ConfirmQuit => render_confirm_quit_popup(frame, app),
         AppMode::ImportPrompt => render_import_prompt_popup(frame, app),
@@ -521,7 +521,7 @@ fn format_utc_clock() -> String {
     format!("{} {:02}:{:02}:{:02} UTC", DAY_NAMES[weekday], h, m, s)
 }
 
-fn render_help_popup(frame: &mut Frame) {
+fn render_help_popup(frame: &mut Frame, app: &App) {
     let area = frame.area();
     let popup_width = (area.width * 70 / 100).max(40).min(area.width);
     let popup_height = (area.height * 60 / 100).max(16).min(area.height);
@@ -530,7 +530,33 @@ fn render_help_popup(frame: &mut Frame) {
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
     frame.render_widget(Clear, popup_area);
-    frame.render_widget(screens::help::render_help(), popup_area);
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme::border())
+            .title(Span::styled(" Help ", theme::heading())),
+        popup_area,
+    );
+
+    // Reserve the last inner row for a fixed footer; scroll only the body.
+    let inner = popup_area.inner(Margin::new(1, 1));
+    let body = Rect::new(
+        inner.x,
+        inner.y,
+        inner.width,
+        inner.height.saturating_sub(1),
+    );
+    let max_scroll = screens::help::help_line_count().saturating_sub(body.height);
+    let scroll = app.help_scroll.min(max_scroll);
+    frame.render_widget(screens::help::render_help(scroll), body);
+
+    let footer_y = inner.y + inner.height.saturating_sub(1);
+    frame.buffer_mut().set_string(
+        inner.x,
+        footer_y,
+        crate::tui::text::ellipsize(screens::help::HELP_FOOTER, inner.width as usize),
+        theme::dim(),
+    );
 }
 
 #[cfg(test)]

@@ -1,7 +1,10 @@
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use crate::tui::theme;
+
+/// Fixed footer hint shown below the scrollable help body.
+pub const HELP_FOOTER: &str = "\u{2191}\u{2193}/PgUp/PgDn scroll  ·  ? / Esc / Enter to close";
 
 fn entry(key: &'static str, desc: &'static str) -> Line<'static> {
     Line::from(vec![
@@ -14,8 +17,13 @@ fn section(title: &'static str) -> Line<'static> {
     Line::from(Span::styled(title, theme::heading()))
 }
 
-pub fn render_help() -> Paragraph<'static> {
-    let lines = vec![
+/// Total number of lines in the help content (for scroll clamping).
+pub fn help_line_count() -> u16 {
+    help_lines().len() as u16
+}
+
+fn help_lines() -> Vec<Line<'static>> {
+    vec![
         section("navigate"),
         entry("\u{2191}\u{2193} / j k", "Move up / down"),
         entry(
@@ -133,14 +141,10 @@ pub fn render_help() -> Paragraph<'static> {
             "q / Ctrl+C",
             "Quit (asks to confirm; disable via appearance.confirm_quit)",
         ),
-        Line::from(""),
-        Line::from(Span::styled("? / Esc / Enter to close", theme::dim())),
-    ];
+    ]
+}
 
-    Paragraph::new(lines).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(theme::border())
-            .title(Span::styled(" Help ", theme::heading())),
-    )
+/// The scrollable help body (no border/footer — the caller frames it).
+pub fn render_help(scroll: u16) -> Paragraph<'static> {
+    Paragraph::new(help_lines()).scroll((scroll, 0))
 }
