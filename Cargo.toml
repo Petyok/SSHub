@@ -1,6 +1,6 @@
 [package]
 name = "sshub"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "SSHub — TUI launcher for SSH hosts"
 license = "MIT"
@@ -8,12 +8,25 @@ repository = "https://github.com/Petyok/SSHub"
 readme = "README.md"
 keywords = ["ssh", "tui", "terminal", "launcher"]
 categories = ["command-line-utilities"]
+# Keep the published crate lean and installable: drop the heavy demo media
+# (README GIFs/screenshots render from GitHub, not the crate) and CI config.
+exclude = [
+    "demo/gifs",
+    "demo/screenshots",
+    "demo/tapes",
+    "demo/home",
+    "demo/bin",
+    "demo/play.sh",
+    ".github",
+]
 
 [[bin]]
 name = "sshub"
 path = "src/main.rs"
 
-[[bin]]
+# A dev/demo fixture seeder — an example (not a bin) so `cargo install sshub`
+# only installs the `sshub` binary, never this helper.
+[[example]]
 name = "seed-demo"
 path = "demo/seed_demo.rs"
 

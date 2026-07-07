@@ -57,3 +57,18 @@ jobs:
           files: sshub-*.tar.gz
           body_path: CHANGELOG.md
           generate_release_notes: false
+
+  publish:
+    name: Publish to crates.io
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install libdbus (keyring backend, needed to compile)
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      # Fails loudly if the tag's version was already published, so a re-run
+      # can't silently no-op. Requires the CARGO_REGISTRY_TOKEN repo secret.
+      - name: cargo publish
+        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
