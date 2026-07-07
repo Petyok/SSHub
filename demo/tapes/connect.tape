@@ -18,14 +18,13 @@ Enter
 Sleep 1s
 Show
 
-Sleep 10s
 Space
-Sleep 1.5s
+Sleep 2.5s
 
 # Connect via fuzzy palette — embedded PTY session
 Type "/"
 Sleep 1s
-Type "Google"
+Type "google"
 Sleep 1.5s
 Enter
 Sleep 3.5s
@@ -36,30 +35,28 @@ Enter
 Sleep 3s
 
 # Detach to dashboard; SSH keeps running (session strip in header)
-Ctrl+D
+Ctrl+Shift+D
 Sleep 2.5s
 
 # Re-focus the detached session from the dashboard
-Ctrl+Shift+S
-Sleep 2s
-Ctrl+D
+Ctrl+Alt+N
 Sleep 2s
 
 # Open a second session tab (host picker)
 Ctrl+T
 Sleep 1.5s
-Type "Postgres"
+Type "quad"
 Sleep 1.5s
 Enter
 Sleep 3.5s
 
 # Switch between session tabs
-Ctrl+]
+Ctrl+A
 Sleep 2s
-Ctrl+[
+Ctrl+D
 Sleep 2s
 
-Ctrl+D
+Ctrl+W
 Sleep 1.5s
 
 # Close the active session tab from the dashboard

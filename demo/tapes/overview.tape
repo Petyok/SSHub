@@ -22,13 +22,15 @@ Enter
 Sleep 2.5s
 
 # Browse the host tree (nested groups).
-Type "j"
+Down
 Sleep 1.1s
-Type "j"
+Down
 Sleep 1.1s
-Type "j"
+Down
 Sleep 1.1s
-Type "k"
+Up
+Sleep 1.5s
+Up
 Sleep 1.5s
 
 # Collapse the group, then expand it again.
@@ -37,16 +39,22 @@ Sleep 2s
 Space
 Sleep 2s
 
-# Detail panel + reachability stats.
-Tab
-Sleep 3s
-Tab
-Sleep 1.5s
-
 # Multi-tag filter: # opens the picker, Space toggles, Enter applies.
 Type "#"
 Sleep 1.8s
-Type "j"
+Down
+Sleep 1s
+Space
+Sleep 1s
+Space
+Sleep 1.8s
+Down
+Sleep 1s
+Space
+Sleep 1.8s
+Down
+Sleep 1.8s
+Down
 Sleep 1s
 Space
 Sleep 2s
@@ -57,37 +65,60 @@ Sleep 1.5s
 
 # Group manager overlay (nested groups).
 Shift+G
-Sleep 3s
-Type "j"
-Sleep 1.5s
-Type "j"
-Sleep 1.5s
+Sleep 1.8s
+Down
+Sleep 1.8s
+Down
+Sleep 1.8s
 Escape
-Sleep 1.5s
+Sleep 1.8s
 
 # Fuzzy host palette.
 Type "/"
-Sleep 1.5s
-Type "db"
-Sleep 2.5s
+Sleep 1.8s
+Type "quad"
+Sleep 1.8s
 Escape
-Sleep 1.5s
+Sleep 1.8s
 
 # Tour the tabs: tunnels, keys, audit, back to hosts.
 Type "2"
-Sleep 3s
+Sleep 1.8s
 Type "3"
-Sleep 3s
+Sleep 1.8s
 Type "4"
-Sleep 3s
+Sleep 1.8s
 Type "1"
 Sleep 2s
 
 # Help screen.
-Type "?"
-Sleep 4s
+Ctrl+K
+Sleep 1s
+Down
+Sleep 800ms
+Down
+Sleep 800ms
+Down
+Sleep 800ms
+Down
+Sleep 800ms
+Down
+Sleep 800ms
+Down
+Sleep 800ms
 Escape
 Sleep 1.5s
+
+Type "="
+Sleep 800ms
+Type "="
+Sleep 800ms
+Type "="
+Sleep 800ms
+Type "-"
+Sleep 800ms
+Type "-"
+Sleep 4s
 
 Hide
 Type "q"
