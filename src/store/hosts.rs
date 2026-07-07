@@ -676,7 +676,7 @@ fn row_to_managed_host(row: &rusqlite::Row<'_>) -> rusqlite::Result<ManagedHost>
     })?;
 
     let source_raw: String = row.get(16)?;
-    let source = HostSource::from_str(&source_raw).unwrap_or(HostSource::Launcher);
+    let source = HostSource::parse(&source_raw).unwrap_or(HostSource::Launcher);
 
     let group = match row.get::<_, Option<i64>>(22)? {
         Some(_) => Some(HostGroup {
@@ -800,7 +800,10 @@ mod tests {
         // A child must immediately follow its parent, not sit under an
         // unrelated root that merely precedes it in sort order.
         let pos = |n: &str| names.iter().position(|x| x == n).unwrap();
-        assert!(pos("itmo") + 1 == pos("itmo-dev"), "child follows its parent: {names:?}");
+        assert!(
+            pos("itmo") + 1 == pos("itmo-dev"),
+            "child follows its parent: {names:?}"
+        );
         assert!(pos("itmo-core") < pos("itmo"), "roots keep sort order");
         let _ = (itmo_core, itmo_dev);
     }

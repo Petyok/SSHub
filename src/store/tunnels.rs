@@ -38,7 +38,7 @@ impl LauncherStore {
                 Ok(Tunnel {
                     id: row.get(0)?,
                     host_id: row.get(1)?,
-                    tunnel_type: TunnelType::from_str(row.get::<_, String>(2)?.as_str()),
+                    tunnel_type: TunnelType::parse_db(row.get::<_, String>(2)?.as_str()),
                     local_port: u16::try_from(row.get::<_, i64>(3)?).unwrap_or(0),
                     remote_host: row.get(4)?,
                     remote_port: u16::try_from(row.get::<_, i64>(5)?).unwrap_or(0),

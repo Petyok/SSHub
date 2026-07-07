@@ -36,7 +36,7 @@ impl HostSource {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "launcher" => Some(HostSource::Launcher),
             "ssh_config" => Some(HostSource::SshConfig),
@@ -252,7 +252,7 @@ impl TunnelType {
         }
     }
 
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_db(s: &str) -> Self {
         match s {
             "R" => TunnelType::Remote,
             "D" => TunnelType::Dynamic,
