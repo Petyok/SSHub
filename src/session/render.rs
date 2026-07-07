@@ -166,17 +166,81 @@ fn render_body(frame: &mut Frame, area: Rect, session: &Session) {
         return;
     }
     // Exited before ever reaching a shell (e.g. unreachable host, auth refused):
-    // the PTY grid is blank, so show the `-v` log instead — it carries the real
-    // failure reason ("Connection timed out", "Permission denied", …).
-    if matches!(session.phase, SessionPhase::Exited { .. })
-        && !session.is_connected()
-        && !session.debug_log().is_empty()
-    {
-        render_full_debug_log(frame, area, session);
+    // the PTY grid is blank, so show a failure marker + plain-language reason
+    // (derived from the `-v` log) with the debug tail underneath.
+    if matches!(session.phase, SessionPhase::Exited { .. }) && !session.is_connected() {
+        render_failure(frame, area, session);
         return;
     }
     let term = PseudoTerminal::new(session.parser.screen());
     frame.render_widget(term, area);
+}
+
+/// Shared connect-screen layout: `center` lines centered in the upper band,
+/// the dim `-v` debug tail filling a bottom band. Used by both the connecting
+/// spinner and the failure screen so they line up visually.
+fn render_centered_and_tail(
+    frame: &mut Frame,
+    area: Rect,
+    session: &Session,
+    center: Vec<Line<'static>>,
+) {
+    let dim = Style::default().fg(theme::DIM);
+    let tail_h = area.height.saturating_sub(1).min(8);
+    let top_h = area.height - tail_h;
+    let top_area = Rect::new(area.x, area.y, area.width, top_h);
+    let tail_area = Rect::new(area.x, area.y + top_h, area.width, tail_h);
+
+    if top_h >= 1 {
+        let pad_top = top_h.saturating_sub(center.len() as u16) / 2;
+        let centered = Rect::new(top_area.x, top_area.y + pad_top, top_area.width, top_h - pad_top);
+        frame.render_widget(
+            Paragraph::new(center).alignment(ratatui::layout::Alignment::Center),
+            centered,
+        );
+    }
+
+    if tail_h >= 1 {
+        let all: Vec<&str> = session.debug_log().lines().collect();
+        let start = all.len().saturating_sub(tail_h as usize);
+        let lines: Vec<Line> = all[start..]
+            .iter()
+            .map(|l| Line::from(Span::styled(truncate(l, area.width as usize), dim)))
+            .collect();
+        frame.render_widget(Paragraph::new(lines), tail_area);
+    }
+}
+
+/// Failure screen: a red ✗, the plain-language reason, and a dismiss hint.
+fn render_failure(frame: &mut Frame, area: Rect, session: &Session) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+    let red = Style::default().fg(theme::RED);
+    let mute = Style::default().fg(theme::MUTE);
+    let dim = Style::default().fg(theme::DIM);
+    let host = session
+        .meta
+        .address
+        .clone()
+        .unwrap_or_else(|| session.display_name.clone());
+
+    let center = vec![
+        Line::from(Span::styled(
+            "\u{2717}",
+            red.add_modifier(ratatui::style::Modifier::BOLD),
+        )),
+        Line::raw(""),
+        Line::from(vec![
+            Span::styled("couldn't connect to ", mute),
+            Span::styled(host, Style::default().fg(theme::TEXT)),
+        ]),
+        Line::raw(""),
+        Line::from(Span::styled(session.failure_reason(), Style::default().fg(theme::TEXT))),
+        Line::raw(""),
+        Line::from(Span::styled("press any key to close", dim)),
+    ];
+    render_centered_and_tail(frame, area, session, center);
 }
 
 /// Render the whole captured `-v` debug log, bottom-anchored and dimmed.
@@ -213,55 +277,27 @@ fn render_connecting(
         return;
     }
 
-    // Bottom band: the last few debug lines, dimmed. Top band: centered spinner.
-    let tail_h = area.height.saturating_sub(1).min(8);
-    let spin_h = area.height - tail_h;
-    let spin_area = Rect::new(area.x, area.y, area.width, spin_h);
-    let tail_area = Rect::new(area.x, area.y + spin_h, area.width, tail_h);
-
-    // ── Spinner + target, vertically centered in the top band ──
     let frame_idx = (elapsed.as_millis() / 90) as usize % SPINNER_FRAMES.len();
     let host = session
         .meta
         .address
         .clone()
         .unwrap_or_else(|| session.display_name.clone());
-    let spinner_line = Line::from(vec![
-        Span::styled(SPINNER_FRAMES[frame_idx], Style::default().fg(theme::GREEN)),
-        Span::raw("  "),
-        Span::styled("connecting to ", mute),
-        Span::styled(host, Style::default().fg(theme::TEXT)),
-    ]);
     let secs = elapsed.as_secs();
-    let hint_line = Line::from(Span::styled(
-        format!("elapsed {secs}s  ·  Ctrl+O expand log  ·  Esc cancel"),
-        dim,
-    ));
-    if spin_h >= 1 {
-        let pad_top = (spin_h.saturating_sub(2)) / 2;
-        let centered = Rect::new(
-            spin_area.x,
-            spin_area.y + pad_top,
-            spin_area.width,
-            spin_h - pad_top,
-        );
-        frame.render_widget(
-            Paragraph::new(vec![spinner_line, Line::raw(""), hint_line])
-                .alignment(ratatui::layout::Alignment::Center),
-            centered,
-        );
-    }
-
-    // ── Debug tail: last `tail_h` non-empty-ish lines of the -v log ──
-    if tail_h >= 1 {
-        let all: Vec<&str> = session.debug_log().lines().collect();
-        let start = all.len().saturating_sub(tail_h as usize);
-        let lines: Vec<Line> = all[start..]
-            .iter()
-            .map(|l| Line::from(Span::styled(truncate(l, area.width as usize), dim)))
-            .collect();
-        frame.render_widget(Paragraph::new(lines), tail_area);
-    }
+    let center = vec![
+        Line::from(vec![
+            Span::styled(SPINNER_FRAMES[frame_idx], Style::default().fg(theme::GREEN)),
+            Span::raw("  "),
+            Span::styled("connecting to ", mute),
+            Span::styled(host, Style::default().fg(theme::TEXT)),
+        ]),
+        Line::raw(""),
+        Line::from(Span::styled(
+            format!("elapsed {secs}s  ·  Ctrl+O expand log  ·  Esc cancel"),
+            dim,
+        )),
+    ];
+    render_centered_and_tail(frame, area, session, center);
 }
 
 /// Clip a line to `max` display columns (byte-safe for ASCII debug output).

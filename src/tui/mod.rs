@@ -789,6 +789,48 @@ mod tests {
     }
 
     #[test]
+    fn failed_connect_shows_x_and_reason() {
+        let mut app = test_app_with_hosts();
+        let config = crate::session::SessionConfig {
+            argv: vec![
+                "sh".into(),
+                "-c".into(),
+                "printf 'ssh: connect to host h port 22: Connection refused' 1>&2; exit 1".into(),
+            ],
+            display_name: "web-prod".into(),
+            meta: crate::session::SessionMeta {
+                address: Some("10.0.0.1".into()),
+                ..Default::default()
+            },
+            pending_secret: None,
+        };
+        let session = crate::session::Session::spawn(config, 24, 80).unwrap();
+        app.sessions.push(session);
+        app.active_session = Some(0);
+        app.mode = AppMode::Connecting;
+
+        // Drive the session to exit and flush its stderr.
+        for _ in 0..200 {
+            app.sessions[0].drain();
+            let s = &app.sessions[0];
+            let exited =
+                matches!(s.phase, crate::session::SessionPhase::Exited { .. });
+            if exited && s.debug_log().to_ascii_lowercase().contains("refused") {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        let buffer = render_to_buffer(&app, 120, 38);
+        assert!(buffer_contains(&buffer, "\u{2717}"), "failure X missing");
+        assert!(buffer_contains(&buffer, "couldn't connect to"));
+        assert!(
+            buffer_contains(&buffer, "nothing is listening"),
+            "plain-language reason missing"
+        );
+    }
+
+    #[test]
     fn connecting_screen_shows_spinner_overlay() {
         let mut app = test_app_with_hosts();
         let config = crate::session::SessionConfig {

@@ -345,6 +345,35 @@ impl Session {
         self.debug_expanded = !self.debug_expanded;
     }
 
+    /// A short, human-readable explanation for a connect that ended without
+    /// ever reaching a shell. Maps the common ssh/network errors (captured on
+    /// stderr) to plain language; falls back to the raw error line, then to the
+    /// child's exit status.
+    pub fn failure_reason(&self) -> String {
+        let log = self.debug_log.to_ascii_lowercase();
+        for (needle, explanation) in FAILURE_EXPLANATIONS {
+            if log.contains(needle) {
+                return (*explanation).to_string();
+            }
+        }
+        // No known pattern — surface the most telling raw line: ssh prints its
+        // fatal error without the `debug1:` prefix, so prefer a non-debug line.
+        if let Some(line) = self
+            .debug_log
+            .lines()
+            .rev()
+            .map(|l| l.trim())
+            .find(|l| !l.is_empty() && !l.starts_with("debug"))
+        {
+            return line.to_string();
+        }
+        // Nothing useful on stderr at all — report how the child died.
+        match &self.phase {
+            SessionPhase::Exited { status, .. } => format!("ssh exited ({status})"),
+            _ => "connection failed".to_string(),
+        }
+    }
+
     /// If the live screen ends with a prompt that matches our stored secret
     /// kind, type it now. Fires at most once per session so a wrong password
     /// doesn't loop the connect.
@@ -466,6 +495,59 @@ const CONNECTED_NEEDLES: &[&str] = &["authenticated to ", "authenticated ("];
 /// Cap on the retained ssh `-v` debug buffer (bytes). Old output past this is
 /// dropped from the front so a long session can't grow it without bound.
 const DEBUG_LOG_CAP: usize = 64 * 1024;
+
+/// Ordered (lowercase needle → plain-language reason) map for failed connects.
+/// First match wins, so keep more specific patterns before generic ones.
+const FAILURE_EXPLANATIONS: &[(&str, &str)] = &[
+    (
+        "could not resolve hostname",
+        "Could not resolve hostname — check the address or your DNS.",
+    ),
+    (
+        "name or service not known",
+        "Could not resolve hostname — check the address or your DNS.",
+    ),
+    (
+        "connection timed out",
+        "Connection timed out — host is unreachable, down, or firewalled.",
+    ),
+    (
+        "operation timed out",
+        "Connection timed out — host is unreachable, down, or firewalled.",
+    ),
+    (
+        "connection refused",
+        "Connection refused — nothing is listening on that port.",
+    ),
+    (
+        "no route to host",
+        "No route to host — the network is unreachable.",
+    ),
+    (
+        "network is unreachable",
+        "Network is unreachable — check your connection or VPN.",
+    ),
+    (
+        "host key verification failed",
+        "Host key verification failed — the server's key changed or is unknown.",
+    ),
+    (
+        "permission denied",
+        "Authentication failed — key or password rejected (permission denied).",
+    ),
+    (
+        "too many authentication failures",
+        "Too many authentication failures — the server rejected every key tried.",
+    ),
+    (
+        "connection reset",
+        "Connection reset by the remote host.",
+    ),
+    (
+        "connection closed",
+        "Connection closed by the remote host before authentication.",
+    ),
+];
 
 /// Substring match across the screen tail. Tolerant to position so prompts
 /// like "deploy@host's password:" or a prompt followed by a trailing space
