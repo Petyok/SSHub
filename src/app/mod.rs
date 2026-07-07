@@ -96,7 +96,6 @@ pub struct App {
     pub field_picker: Option<FieldPicker>,
     pub group_form: Option<GroupFormEdit>,
     /// Dedicated default-identity picker for a group (opened with `e`).
-    pub group_identity_picker: Option<GroupIdentityPicker>,
     pub group_field_picker: Option<GroupFieldPicker>,
     /// Searchable SSH-server picker for the tunnel form.
     pub tunnel_host_picker: Option<TunnelHostPicker>,
@@ -221,7 +220,6 @@ impl App {
             host_form: None,
             field_picker: None,
             group_form: None,
-            group_identity_picker: None,
             group_field_picker: None,
             tunnel_host_picker: None,
             session_host_picker: None,

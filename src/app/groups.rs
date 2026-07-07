@@ -117,61 +117,6 @@ impl App {
         self.enter_group_form(Some(&group))
     }
 
-    pub(crate) fn handle_key_group_identity_picker(&mut self, key: KeyEvent) -> Result<()> {
-        // Ring of options: index 0 = "(none)", then one per identity.
-        let len = self.identities.len() + 1;
-        match key.code {
-            KeyCode::Esc => {
-                self.group_identity_picker = None;
-                self.mode = AppMode::Normal;
-            }
-            KeyCode::Char('j') | KeyCode::Down | KeyCode::Right => {
-                if let Some(p) = self.group_identity_picker.as_mut() {
-                    p.selected = (p.selected + 1) % len;
-                }
-            }
-            KeyCode::Char('k') | KeyCode::Up | KeyCode::Left => {
-                if let Some(p) = self.group_identity_picker.as_mut() {
-                    p.selected = (p.selected + len - 1) % len;
-                }
-            }
-            KeyCode::Enter => self.save_group_identity_picker()?,
-            _ => {}
-        }
-        Ok(())
-    }
-
-    pub(crate) fn save_group_identity_picker(&mut self) -> Result<()> {
-        let Some(picker) = self.group_identity_picker.take() else {
-            self.mode = AppMode::Normal;
-            return Ok(());
-        };
-        let new_id = if picker.selected == 0 {
-            None
-        } else {
-            self.identities.get(picker.selected - 1).map(|i| i.id)
-        };
-        self.store.update_group(
-            picker.group_id,
-            &HostGroupUpdate {
-                default_identity_id: Some(new_id),
-                ..Default::default()
-            },
-        )?;
-        self.reload_hosts()?;
-        let name = self
-            .identities
-            .iter()
-            .find(|i| Some(i.id) == new_id)
-            .map(|i| i.name.clone());
-        self.host_notice = Some(match name {
-            Some(n) => format!("'{}' default identity → {n}", picker.group_name),
-            None => format!("'{}' default identity cleared", picker.group_name),
-        });
-        self.mode = AppMode::Normal;
-        Ok(())
-    }
-
     pub(crate) fn delete_selected_host_group(&mut self) -> Result<()> {
         let Some(group_id) = self.selected_host_group_id() else {
             self.host_notice = Some("Select a host in a group to delete it".into());

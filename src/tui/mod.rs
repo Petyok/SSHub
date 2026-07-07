@@ -117,7 +117,6 @@ pub fn render(frame: &mut Frame, app: &App) {
             render_form_popup(frame, app, FormKind::Group);
             screens::group_form::render_group_field_picker(frame, app);
         }
-        AppMode::GroupIdentityPicker => screens::group_identity_picker::render(frame, app),
         AppMode::TagFilter => screens::tag_filter::render(frame, app),
         AppMode::TunnelForm => screens::tunnels::render_tunnel_form(frame, app),
         AppMode::TunnelHostPicker => {

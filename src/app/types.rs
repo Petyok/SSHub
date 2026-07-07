@@ -97,8 +97,6 @@ pub enum AppMode {
     IdentityForm,
     GroupForm,
     GroupManage,
-    /// Dedicated popup for choosing a group's default identity (`e` on a group).
-    GroupIdentityPicker,
     /// Dropdown over the group form's Parent / Identity field.
     GroupFieldPicker,
     /// Searchable dropdown for choosing the tunnel form's SSH server.
@@ -604,15 +602,6 @@ pub struct GroupFieldPicker {
     /// Which field this dropdown edits (`Parent` or `Identity`).
     pub kind: GroupFormField,
     /// Highlighted row: `0` = the "(none)"/"(top level)" slot, then options.
-    pub selected: usize,
-}
-
-/// Dedicated popup to pick a group's default identity ([`AppMode::GroupIdentityPicker`]).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GroupIdentityPicker {
-    pub group_id: i64,
-    pub group_name: String,
-    /// Selected row: `0` = "(none)", `1..` = index into `App::identities` + 1.
     pub selected: usize,
 }
 

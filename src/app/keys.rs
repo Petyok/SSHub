@@ -46,7 +46,6 @@ impl App {
             AppMode::HostForm => self.handle_key_host_form(key),
             AppMode::IdentityForm => self.handle_key_identity_form(key),
             AppMode::GroupForm => self.handle_key_group_form(key),
-            AppMode::GroupIdentityPicker => self.handle_key_group_identity_picker(key),
             AppMode::GroupFieldPicker => self.handle_key_group_field_picker(key),
             AppMode::TunnelHostPicker => self.handle_key_tunnel_host_picker(key),
             AppMode::SessionHostPicker => self.handle_key_session_host_picker(key),

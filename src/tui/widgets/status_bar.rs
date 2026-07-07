@@ -13,7 +13,6 @@ fn mode_label(mode: AppMode) -> &'static str {
         AppMode::HostForm => "Host form",
         AppMode::IdentityForm => "Identity form",
         AppMode::GroupForm => "Group form",
-        AppMode::GroupIdentityPicker => "Group identity",
         AppMode::GroupFieldPicker => "Select",
         AppMode::TunnelHostPicker => "Select server",
         AppMode::SessionHostPicker => "New session",
