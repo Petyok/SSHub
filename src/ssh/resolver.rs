@@ -47,13 +47,9 @@ impl HostResolver for SshConfigResolver {
         if !self.config_path.exists() {
             return Ok(Vec::new());
         }
-        let content = fs::read_to_string(&self.config_path).with_context(|| {
-            format!(
-                "failed to read SSH config at {}",
-                self.config_path.display()
-            )
-        })?;
-        Ok(parse_host_aliases(&content))
+        let mut hosts = Vec::new();
+        collect_host_aliases(&self.config_path, &mut hosts, 0);
+        Ok(hosts)
     }
 
     fn resolve_host(&self, name: &str) -> Result<SshHost> {
@@ -126,6 +122,107 @@ pub fn parse_host_aliases(config: &str) -> Vec<String> {
         }
     }
     hosts
+}
+
+/// Collect `Host` aliases from `path`, following `Include` directives (the
+/// plain [`parse_host_aliases`] only sees the top-level file). Bounded recursion
+/// guards against Include cycles.
+fn collect_host_aliases(path: &Path, out: &mut Vec<String>, depth: u8) {
+    const MAX_DEPTH: u8 = 16;
+    if depth > MAX_DEPTH {
+        return;
+    }
+    let Ok(content) = fs::read_to_string(path) else {
+        return;
+    };
+    let base_dir = path.parent().unwrap_or_else(|| Path::new("."));
+    for raw in content.lines() {
+        let line = raw.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let mut it = line.splitn(2, |c: char| c.is_whitespace() || c == '=');
+        let keyword = it.next().unwrap_or("");
+        let Some(rest) = it.next() else {
+            continue;
+        };
+        if keyword.eq_ignore_ascii_case("host") {
+            for alias in rest.split_whitespace() {
+                if is_listable_host_alias(alias) {
+                    out.push(alias.to_string());
+                }
+            }
+        } else if keyword.eq_ignore_ascii_case("include") {
+            for token in rest.split_whitespace() {
+                for inc in expand_include_token(token, base_dir) {
+                    collect_host_aliases(&inc, out, depth + 1);
+                }
+            }
+        }
+    }
+}
+
+/// Resolve one `Include` token to concrete file paths: expand `~`, resolve a
+/// relative path against `base_dir`, and expand a `*`/`?` glob in the final
+/// path component (the common `Include config.d/*.conf` shape).
+fn expand_include_token(token: &str, base_dir: &Path) -> Vec<PathBuf> {
+    let expanded = expand_tilde(token);
+    let path = if expanded.is_absolute() {
+        expanded
+    } else {
+        base_dir.join(expanded)
+    };
+
+    let has_glob = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.contains('*') || n.contains('?'));
+    if !has_glob {
+        return vec![path];
+    }
+
+    let (Some(parent), Some(pattern)) = (path.parent(), path.file_name().and_then(|n| n.to_str()))
+    else {
+        return Vec::new();
+    };
+    let Ok(entries) = fs::read_dir(parent) else {
+        return Vec::new();
+    };
+    let mut out: Vec<PathBuf> = entries
+        .flatten()
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .is_some_and(|n| wildcard_match(pattern, n))
+        })
+        .map(|e| e.path())
+        .collect();
+    out.sort();
+    out
+}
+
+/// Minimal shell-style wildcard match supporting `*` (any run) and `?` (one).
+fn wildcard_match(pattern: &str, text: &str) -> bool {
+    let p: Vec<char> = pattern.chars().collect();
+    let t: Vec<char> = text.chars().collect();
+    // DP over (pattern index, text index).
+    let mut dp = vec![vec![false; t.len() + 1]; p.len() + 1];
+    dp[0][0] = true;
+    for i in 1..=p.len() {
+        if p[i - 1] == '*' {
+            dp[i][0] = dp[i - 1][0];
+        }
+    }
+    for i in 1..=p.len() {
+        for j in 1..=t.len() {
+            dp[i][j] = match p[i - 1] {
+                '*' => dp[i - 1][j] || dp[i][j - 1],
+                '?' => dp[i - 1][j - 1],
+                c => dp[i - 1][j - 1] && c == t[j - 1],
+            };
+        }
+    }
+    dp[p.len()][t.len()]
 }
 
 fn is_listable_host_alias(alias: &str) -> bool {
@@ -209,6 +306,37 @@ mod tests {
                 "prod-db-01".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn list_hosts_follows_include_directives_and_globs() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let inc_dir = dir.path().join("config.d");
+        std::fs::create_dir(&inc_dir).unwrap();
+
+        // Top-level config: one direct host + a glob include + a relative include.
+        let top = dir.path().join("config");
+        write!(
+            std::fs::File::create(&top).unwrap(),
+            "Host direct\n    HostName 10.0.0.1\nInclude config.d/*.conf\nInclude extra.conf\n"
+        )
+        .unwrap();
+        write!(
+            std::fs::File::create(inc_dir.join("work.conf")).unwrap(),
+            "Host work\n    HostName 10.0.0.5\n"
+        )
+        .unwrap();
+        write!(
+            std::fs::File::create(dir.path().join("extra.conf")).unwrap(),
+            "Host extra\n    HostName 10.0.0.9\n"
+        )
+        .unwrap();
+
+        let resolver = SshConfigResolver::with_config_path(top);
+        let mut hosts = resolver.list_hosts().unwrap();
+        hosts.sort();
+        assert_eq!(hosts, vec!["direct", "extra", "work"]);
     }
 
     #[test]
