@@ -98,24 +98,44 @@ const HUB_STAGES: [(f64, &str, Style); 4] = [
     ), // ◉
 ];
 
-// ── Wordmark / tagline / parenthetical ──────────────────
+// ── Wordmark / tagline / quip ───────────────────────────
 const WORDMARK: &str = "\u{2500} S S H u b \u{2500}";
 const WORDMARK_ROW: u16 = 18;
 const WORDMARK_COL: u16 = 34;
 const WORDMARK_START: f64 = 5.30;
 const WORDMARK_CPS: f64 = 9.0;
 
-const TAGLINE: &str = "secure shell  \u{00B7}  undefined behavior";
+const TAGLINE: &str = "secure shell x undefined behavior";
 const TAGLINE_ROW: u16 = 20;
-const TAGLINE_COL: u16 = 22;
+const TAGLINE_COL: u16 = 24;
 const TAGLINE_START: f64 = 7.00;
 const TAGLINE_CPS: f64 = 22.0;
 
-const PAREN: &str = "(we don\u{2019}t ship that one)";
-const PAREN_ROW: u16 = 21;
-const PAREN_COL: u16 = 28;
-const PAREN_START: f64 = 8.70;
-const PAREN_CPS: f64 = 22.0;
+const QUIP_ROW: u16 = 21;
+const QUIP_START: f64 = 8.70;
+const QUIP_CPS: f64 = 22.0;
+
+const QUIPS: &[&str] = &[
+    "vibe-coded slop",
+    "i love pizza",
+    "anyone who read this owes me $10",
+    "works on my machine",
+    "ssh but make it fancy",
+    "no warranty express or implied",
+    "your ~/.ssh is in good hands probably",
+];
+
+fn pick_quip() -> &'static str {
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() as usize)
+        .unwrap_or(0);
+    QUIPS[seed % QUIPS.len()]
+}
+
+fn quip_col(quip: &str) -> u16 {
+    (80u16.saturating_sub(quip.chars().count() as u16)) / 2
+}
 
 const PROMPT_TIME: f64 = 9.90;
 const PROMPT_ROW: u16 = 23;
@@ -180,6 +200,8 @@ pub struct AnimationState {
     start: Instant,
     spokes: Vec<Vec<SpokeCell>>,
     too_small: bool,
+    quip: &'static str,
+    quip_col: u16,
 }
 
 impl AnimationState {
@@ -195,10 +217,13 @@ impl AnimationState {
                 .collect()
         };
 
+        let quip = pick_quip();
         Self {
             start: Instant::now(),
             spokes,
             too_small,
+            quip_col: quip_col(quip),
+            quip,
         }
     }
 
@@ -329,14 +354,14 @@ impl AnimationState {
             render_typing_tagline(frame, t, ox, oy);
         }
 
-        // ── Parenthetical ──────────────────────────────
-        if t >= PAREN_START {
-            let chars_visible = ((t - PAREN_START) * PAREN_CPS).floor() as usize;
-            let visible: String = PAREN.chars().take(chars_visible).collect();
+        // ── Random quip ──────────────────────────────
+        if t >= QUIP_START {
+            let chars_visible = ((t - QUIP_START) * QUIP_CPS).floor() as usize;
+            let visible: String = self.quip.chars().take(chars_visible).collect();
             set_str(
                 frame,
-                PAREN_COL + ox,
-                PAREN_ROW + oy,
+                self.quip_col + ox,
+                QUIP_ROW + oy,
                 &visible,
                 Style::default().fg(theme::DIM),
             );
@@ -409,12 +434,7 @@ fn render_typing_wordmark(frame: &mut Frame, t: f64, ox: u16, oy: u16) {
 
 fn render_typing_tagline(frame: &mut Frame, t: f64, ox: u16, oy: u16) {
     let chars_visible = ((t - TAGLINE_START) * TAGLINE_CPS).floor() as usize;
-    // "secure shell  ·  undefined behavior"
-    //  0..15 = "secure shell  · " (16 chars including trailing space) -> mute
-    //  Wait, let's count precisely:
-    //  s e c u r e   s h e l l     ·     u n d e f i n e d   b e h a v i o r
-    //  The mute portion is "secure shell  ·  " (17 chars, indices 0-16)
-    //  The amber portion is "undefined behavior" (18 chars, indices 17-34)
+    // "secure shell x undefined behavior" — mute prefix, amber from "undefined"
     let tagline_chars: Vec<char> = TAGLINE.chars().collect();
     // Find where "undefined" starts
     let amber_start = TAGLINE.find("undefined").unwrap_or(tagline_chars.len());
