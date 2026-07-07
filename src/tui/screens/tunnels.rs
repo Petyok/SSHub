@@ -111,6 +111,7 @@ fn render_table_header(buf: &mut Buffer, x: u16, y: u16, w: u16) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_tunnel_row(
     buf: &mut Buffer,
     x: u16,

@@ -392,12 +392,8 @@ fn render_typing_wordmark(frame: &mut Frame, t: f64, ox: u16, oy: u16) {
         .add_modifier(Modifier::BOLD);
 
     let wordmark_chars: Vec<char> = WORDMARK.chars().collect();
-    let mut col = WORDMARK_COL + ox;
 
-    for (i, &ch) in wordmark_chars.iter().enumerate() {
-        if i >= chars_visible {
-            break;
-        }
+    for (i, &ch) in wordmark_chars.iter().enumerate().take(chars_visible) {
         let style = if i <= 7 {
             bright_bold
         } else if i <= 10 {
@@ -405,9 +401,9 @@ fn render_typing_wordmark(frame: &mut Frame, t: f64, ox: u16, oy: u16) {
         } else {
             bright_bold
         };
+        let col = WORDMARK_COL + ox + i as u16;
         let s = format!("{}", ch);
         set_str(frame, col, WORDMARK_ROW + oy, &s, style);
-        col += 1;
     }
 }
 
@@ -427,19 +423,15 @@ fn render_typing_tagline(frame: &mut Frame, t: f64, ox: u16, oy: u16) {
     let mute_style = Style::default().fg(theme::MUTE);
     let amber_style = Style::default().fg(theme::AMBER);
 
-    let mut col = TAGLINE_COL + ox;
-    for (i, &ch) in tagline_chars.iter().enumerate() {
-        if i >= chars_visible {
-            break;
-        }
+    for (i, &ch) in tagline_chars.iter().enumerate().take(chars_visible) {
         let style = if i < amber_start_idx {
             mute_style
         } else {
             amber_style
         };
+        let col = TAGLINE_COL + ox + i as u16;
         let s = format!("{}", ch);
         set_str(frame, col, TAGLINE_ROW + oy, &s, style);
-        col += 1;
     }
 }
 

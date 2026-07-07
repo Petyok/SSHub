@@ -14,7 +14,7 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
 
     let area = frame.area();
     let popup_w = 60u16.min(area.width.saturating_sub(2));
-    let list_rows = area.height.saturating_sub(8).max(8).min(20);
+    let list_rows = area.height.saturating_sub(8).clamp(8, 20);
     let popup_h = (list_rows + 6).min(area.height.saturating_sub(2));
     let x = area.x + (area.width.saturating_sub(popup_w)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_h)) / 2;
@@ -97,7 +97,10 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
     buf.set_string(
         row_x,
         hint_y,
-        crate::tui::text::ellipsize(&format!("{hint}{scroll_hint}"), popup.width.saturating_sub(4) as usize),
+        crate::tui::text::ellipsize(
+            &format!("{hint}{scroll_hint}"),
+            popup.width.saturating_sub(4) as usize,
+        ),
         theme::dim(),
     );
 }

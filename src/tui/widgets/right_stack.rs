@@ -84,7 +84,7 @@ fn render_recent_panel(buf: &mut Buffer, area: Rect, app: &App) {
             Some((h.display_name(), ts))
         })
         .collect();
-    recents.sort_by(|a, b| b.1.cmp(&a.1));
+    recents.sort_by_key(|&(_, ts)| std::cmp::Reverse(ts));
     recents.truncate(max_display);
 
     let row_count = recents.len();
@@ -265,7 +265,7 @@ fn render_ping_panel(buf: &mut Buffer, area: Rect, app: &App) {
                 }
             }
         }
-        let avg = if count > 0 { (sum / count) as u32 } else { 0 };
+        let avg = sum.checked_div(count).unwrap_or(0) as u32;
         averages.push(avg);
     }
 
@@ -279,7 +279,7 @@ fn render_ping_panel(buf: &mut Buffer, area: Rect, app: &App) {
                 if v == 0 {
                     SPARK_CHARS[0]
                 } else {
-                    let idx = ((v as u64 * 7) / spark_max as u64).min(7) as usize;
+                    let idx = ((v as u64 * 7) / u64::from(spark_max).max(1)).clamp(0, 7) as usize;
                     SPARK_CHARS[idx]
                 }
             })
@@ -291,7 +291,7 @@ fn render_ping_panel(buf: &mut Buffer, area: Rect, app: &App) {
     let info_y = area.y + 2;
     if info_y < area.y + area.height - 1 {
         let loss_pct = if total_samples > 0 {
-            (loss_count * 100 / total_samples) as u32
+            (loss_count * 100) / total_samples.max(1)
         } else {
             0
         };

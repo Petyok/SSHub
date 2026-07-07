@@ -118,7 +118,6 @@ pub fn render_session_strip(frame: &mut Frame, area: Rect, chips: &[SessionChip]
 
     let mut x = put(buf, start_x, y, "open ", theme::mute());
 
-    let mut rendered = 0usize;
     for (i, chip) in chips.iter().enumerate() {
         let dot_style = match chip.dot {
             SessionDot::Connecting => theme::amber(),
@@ -137,7 +136,7 @@ pub fn render_session_strip(frame: &mut Frame, area: Rect, chips: &[SessionChip]
         // Reserve room for a "+N" overflow marker unless this is the last chip.
         let reserve = if remaining > 1 { 4 } else { 0 };
         if x + chip_w as u16 + reserve > end_x {
-            let more = chips.len() - rendered;
+            let more = chips.len() - i;
             let _ = put(buf, x, y, &format!("+{more}"), theme::mute());
             return;
         }
@@ -145,7 +144,6 @@ pub fn render_session_strip(frame: &mut Frame, area: Rect, chips: &[SessionChip]
         x = put(buf, x, y, "\u{25cf} ", dot_style);
         x = put(buf, x, y, &chip.name, name_style);
         x = put(buf, x, y, " ", theme::dim());
-        rendered += 1;
     }
 }
 

@@ -78,7 +78,7 @@ pub fn render_keys(frame: &mut Frame, area: Rect, app: &App) {
     // than fit, scroll by whole card-rows to keep the selected card on screen
     // (roughly centered).
     let row_stride = CARD_H + 1;
-    let cpr = (cards_per_row as usize).max(1);
+    let cpr = cards_per_row.max(1);
     let total_rows = app.identities.len().div_ceil(cpr);
     let visible_rows = ((area.height / row_stride) as usize).max(1);
     let row_offset = app.keys_scroll_row_offset(area.height, cpr, row_stride);

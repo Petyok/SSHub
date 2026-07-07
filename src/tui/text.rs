@@ -18,7 +18,7 @@ pub fn pad_ellipsize(s: &str, width: usize) -> String {
         ellipsize(s, width)
     } else {
         let mut out = s.to_string();
-        out.extend(std::iter::repeat(' ').take(width - len));
+        out.extend(std::iter::repeat_n(' ', width - len));
         out
     }
 }
