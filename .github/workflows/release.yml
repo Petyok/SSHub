@@ -55,4 +55,5 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: sshub-*.tar.gz
-          generate_release_notes: true
+          body_path: CHANGELOG.md
+          generate_release_notes: false
