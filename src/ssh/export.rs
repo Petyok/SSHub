@@ -13,12 +13,17 @@ pub fn exported_conf_path() -> Result<PathBuf> {
     Ok(config::config_dir()?.join("exported.conf"))
 }
 
+/// Write launcher-native hosts to `path` using atomic replace + `.bak` backup.
+pub fn export_launcher_hosts_to(store: &LauncherStore, path: &Path) -> Result<PathBuf> {
+    let content = render_launcher_hosts(store)?;
+    atomic_write_with_backup(path, &content)?;
+    Ok(path.to_path_buf())
+}
+
 /// Write launcher-native hosts to `exported.conf` using atomic replace + `.bak` backup.
 pub fn export_launcher_hosts(store: &LauncherStore) -> Result<PathBuf> {
     let path = exported_conf_path()?;
-    let content = render_launcher_hosts(store)?;
-    atomic_write_with_backup(&path, &content)?;
-    Ok(path)
+    export_launcher_hosts_to(store, &path)
 }
 
 fn render_launcher_hosts(store: &LauncherStore) -> Result<String> {
