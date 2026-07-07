@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::process::{Child, Command};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use anyhow::Result;
@@ -27,6 +28,9 @@ struct TunnelProcess {
     child: Child,
     started_at: Instant,
     status: TunnelStatus,
+    /// Live tail of the child's stderr, drained by a background thread so a
+    /// chatty `ssh -N` can't fill the pipe buffer and stall the forwarding.
+    stderr_tail: Arc<Mutex<String>>,
 }
 
 pub struct TunnelManager {
@@ -107,12 +111,35 @@ impl TunnelManager {
             anyhow::bail!("No host associated with tunnel");
         }
 
-        let child = Command::new(&args[0])
+        let mut child = Command::new(&args[0])
             .args(&args[1..])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
             .spawn()?;
+
+        // Drain stderr continuously on a background thread into a bounded tail.
+        // Reading it only after exit (as before) let the ~64KB pipe buffer fill
+        // and block ssh's writes, freezing a long-lived tunnel.
+        let stderr_tail = Arc::new(Mutex::new(String::new()));
+        if let Some(err) = child.stderr.take() {
+            let buf = Arc::clone(&stderr_tail);
+            let _ = std::thread::Builder::new()
+                .name("sshub-tunnel-stderr".into())
+                .spawn(move || {
+                    use std::io::{BufRead, BufReader};
+                    for line in BufReader::new(err).lines().map_while(Result::ok) {
+                        if let Ok(mut s) = buf.lock() {
+                            s.push_str(&line);
+                            s.push('\n');
+                            if s.len() > 8192 {
+                                let cut = s.len() - 4096;
+                                s.drain(..cut);
+                            }
+                        }
+                    }
+                });
+        }
 
         self.processes.insert(
             tunnel.id,
@@ -120,6 +147,7 @@ impl TunnelManager {
                 child,
                 started_at: Instant::now(),
                 status: TunnelStatus::Up,
+                stderr_tail,
             },
         );
 
@@ -143,13 +171,13 @@ impl TunnelManager {
             }
             match proc.child.try_wait() {
                 Ok(Some(status)) => {
-                    // stderr is piped: capture the ssh error for diagnostics.
-                    let mut detail = String::new();
-                    if let Some(ref mut stderr) = proc.child.stderr {
-                        use std::io::Read;
-                        let _ = stderr.read_to_string(&mut detail);
-                    }
-                    let detail = detail.lines().last().unwrap_or("").trim().to_string();
+                    // The background reader has the ssh error; grab its last line.
+                    let detail = proc
+                        .stderr_tail
+                        .lock()
+                        .ok()
+                        .and_then(|s| s.lines().last().map(|l| l.trim().to_string()))
+                        .unwrap_or_default();
                     proc.status = if status.success() {
                         TunnelStatus::Down
                     } else if detail.is_empty() {
