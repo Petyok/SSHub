@@ -2,7 +2,7 @@
 
 A terminal UI for managing and connecting to SSH hosts. Combines your `~/.ssh/config` with a built-in host database, tunnels, key management, and an audit log -- all in one keyboard-driven interface.
 
-> ⚠️ This project is 100% vibe-coded slop made with dynamic workflows using Claude Opus 4.8. Use at your own risk.
+> ⚠️ This project is 100% vibe-coded slop made with dynamic workflows using Claude Opus 4.8 + Fable 5. Use at your own risk.
 
 ![SSHub demo](demo/gifs/overview.gif)
 
@@ -13,6 +13,23 @@ Connecting to a host — the session runs in an embedded PTY right inside the TU
 Adding a managed host and marking it as a favorite:
 
 ![Add host demo](demo/gifs/add-host.gif)
+
+## Screenshots
+
+The hosts dashboard — nested groups on the left, live agent / latency / ping panels on the right:
+
+![Hosts dashboard](demo/screenshots/hosts.png)
+
+Fuzzy quick-connect palette (`/`) and the multi-tag filter (`#`):
+
+![Quick-connect palette](demo/screenshots/palette.png)
+![Tag filter](demo/screenshots/tags.png)
+
+Add/edit host form, the rebindable keybindings editor (`Ctrl+K`), and the scrollable help overlay (`?`):
+
+![Add host form](demo/screenshots/add-host.png)
+![Keybindings editor](demo/screenshots/keybindings.png)
+![Help overlay](demo/screenshots/help.png)
 
 ## Features
 
