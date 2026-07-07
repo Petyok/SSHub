@@ -113,12 +113,44 @@ pub fn save_config(config: &AppConfig) -> anyhow::Result<()> {
         fs::create_dir_all(parent)?;
         crate::secure_fs::restrict_dir(parent);
     }
-    let toml = toml::to_string_pretty(config)
+    // Merge our fields into the existing document rather than replacing it, so
+    // user comments and any keys we don't model survive a save (which fires on
+    // trivial UI actions like zoom).
+    let generated = toml::to_string_pretty(config)
         .map_err(|e| anyhow::anyhow!("failed to serialize config: {e}"))?;
+    let new_doc: toml_edit::DocumentMut = generated
+        .parse()
+        .map_err(|e| anyhow::anyhow!("failed to parse serialized config: {e}"))?;
+    let mut doc: toml_edit::DocumentMut = fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_default();
+    merge_toml_table(doc.as_table_mut(), new_doc.as_table());
+
     let tmp = path.with_extension("toml.tmp");
-    fs::write(&tmp, toml)?;
+    fs::write(&tmp, doc.to_string())?;
     fs::rename(&tmp, &path)?;
     Ok(())
+}
+
+/// Deep-merge every key of `src` into `dst`, recursing into sub-tables so
+/// unrelated keys (and their comments) in `dst` are left untouched.
+fn merge_toml_table(dst: &mut toml_edit::Table, src: &toml_edit::Table) {
+    for (key, src_item) in src.iter() {
+        match (dst.get_mut(key), src_item) {
+            (Some(toml_edit::Item::Table(dst_sub)), toml_edit::Item::Table(src_sub)) => {
+                merge_toml_table(dst_sub, src_sub);
+            }
+            // Existing key: overwrite only the value, leaving the key's leading
+            // comment/whitespace decor intact.
+            (Some(existing), _) => {
+                *existing = src_item.clone();
+            }
+            (None, _) => {
+                dst.insert(key, src_item.clone());
+            }
+        }
+    }
 }
 
 /// Config directory (`~/.config/sshub` or `SSHUB_CONFIG_DIR`).
@@ -203,6 +235,29 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn save_config_preserves_comments_and_unknown_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("SSHUB_CONFIG_DIR", dir.path());
+        let path = config_file_path().unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            "# my hand-written note\nterminal = \"kitty\"\nfuture_option = true  # keep me\n",
+        )
+        .unwrap();
+
+        let mut config = AppConfig::default();
+        config.terminal = TerminalKind::Ghostty;
+        save_config(&config).unwrap();
+
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(after.contains("# my hand-written note"), "comment lost: {after}");
+        assert!(after.contains("future_option = true"), "unknown key lost: {after}");
+        assert!(after.contains("ghostty"), "our change not written: {after}");
+        std::env::remove_var("SSHUB_CONFIG_DIR");
+    }
 
     #[test]
     fn parse_config_uses_defaults_for_empty_toml() {

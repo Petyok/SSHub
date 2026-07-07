@@ -112,8 +112,13 @@ pub(crate) fn run_migrations(conn: &Connection, launcher_path: &Path) -> Result<
     }
 
     // Runs last so all columns it writes to (e.g. environment) already exist.
+    // Best-effort: a corrupt or locked legacy metadata.db must not abort the
+    // whole migration (which would roll back the schema and, since the version
+    // never advances, brick every subsequent launch too). Skip it and carry on.
     if current == 0 {
-        migrate_legacy_metadata(conn, launcher_path)?;
+        if let Err(e) = migrate_legacy_metadata(conn, launcher_path) {
+            eprintln!("sshub: skipping legacy metadata import: {e:#}");
+        }
     }
 
     set_schema_version(conn, SCHEMA_VERSION)?;

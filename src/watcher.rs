@@ -17,25 +17,39 @@ pub enum WatchEvent {
 pub fn spawn_config_watcher(ssh_config_path: &Path) -> Result<Receiver<WatchEvent>> {
     let config_path = ssh_config_path.to_path_buf();
 
+    // Editors save by writing a temp file and renaming it over the config, which
+    // swaps the inode and silently detaches a watch placed on the file itself.
+    // Watch the *containing directory* instead and filter events down to the
+    // config file, so rename-based saves keep firing. Require the file to exist
+    // up front to preserve the "missing config errors out" contract.
+    if !config_path.exists() {
+        anyhow::bail!("watch SSH config at {}: file not found", config_path.display());
+    }
+    let watch_dir = config_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| Path::new(".").to_path_buf());
+
     let (notify_tx, notify_rx) = mpsc::channel();
     let mut watcher = recommended_watcher(notify_tx).context("create config file watcher")?;
     watcher
-        .watch(&config_path, RecursiveMode::NonRecursive)
+        .watch(&watch_dir, RecursiveMode::NonRecursive)
         .with_context(|| format!("watch SSH config at {}", config_path.display()))?;
 
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        debounce_loop(notify_rx, tx);
+        debounce_loop(notify_rx, tx, &config_path);
         drop(watcher);
     });
 
     Ok(rx)
 }
 
-fn debounce_loop(notify_rx: Receiver<NotifyResult<Event>>, tx: Sender<WatchEvent>) {
+fn debounce_loop(notify_rx: Receiver<NotifyResult<Event>>, tx: Sender<WatchEvent>, config: &Path) {
     loop {
         match notify_rx.recv() {
-            Ok(Ok(event)) if is_config_change(&event) => {}
+            Ok(Ok(event)) if is_config_change(&event, config) => {}
             Ok(Ok(_)) => continue,
             Ok(Err(_)) => continue,
             Err(_) => break,
@@ -48,7 +62,7 @@ fn debounce_loop(notify_rx: Receiver<NotifyResult<Event>>, tx: Sender<WatchEvent
                 break;
             }
             match notify_rx.recv_timeout(remaining) {
-                Ok(Ok(event)) if is_config_change(&event) => continue,
+                Ok(Ok(event)) if is_config_change(&event, config) => continue,
                 Ok(Ok(_)) | Ok(Err(_)) => continue,
                 Err(RecvTimeoutError::Timeout) => break,
                 Err(RecvTimeoutError::Disconnected) => break,
@@ -61,11 +75,20 @@ fn debounce_loop(notify_rx: Receiver<NotifyResult<Event>>, tx: Sender<WatchEvent
     }
 }
 
-fn is_config_change(event: &Event) -> bool {
-    matches!(
+fn is_config_change(event: &Event, config: &Path) -> bool {
+    if !matches!(
         event.kind,
         EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_)
-    )
+    ) {
+        return false;
+    }
+    // We watch the whole directory, so keep only events that touch the config
+    // file (matched by name, since a rename-in swaps the inode/path target).
+    let name = config.file_name();
+    event
+        .paths
+        .iter()
+        .any(|p| p == config || p.file_name() == name)
 }
 
 /// Debounce duration for watcher thread.
