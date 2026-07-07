@@ -1,7 +1,7 @@
 use ratatui::prelude::{Modifier, Style};
 use ratatui::style::Color;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use crate::app::{HostFormEdit, HostFormField, OS_ICON_OPTIONS};
 use crate::store::{HostGroup, Identity};
@@ -158,13 +158,20 @@ pub fn render_host_form(
         ]));
     }
 
+    let hint = Style::default().add_modifier(Modifier::DIM);
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        format!("type to edit │ Tab/↓: next │ Enter: open picker (Group/Identity) │ {save_hint}: save │ Esc: cancel"),
-        Style::default().add_modifier(Modifier::DIM),
+        "Tab/↓: next field    Enter: open picker (Group/Identity)",
+        hint,
+    )));
+    lines.push(Line::from(Span::styled(
+        format!("{save_hint}: save    Esc: cancel"),
+        hint,
     )));
 
-    Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(title))
+    Paragraph::new(lines)
+        .wrap(Wrap { trim: true })
+        .block(Block::default().borders(Borders::ALL).title(title))
 }
 
 fn display_text(value: &str) -> String {
