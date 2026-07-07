@@ -14,21 +14,18 @@ Adding a managed host and marking it as a favorite:
 
 ![Add host demo](demo/gifs/add-host.gif)
 
-Static screenshot:
-
-![SSHub screenshot](shot.png)
-
 ## Features
 
-- **Hosts** -- browse, search, and connect. Fuzzy search with `/`, tag filter with `#`, favorites, groups, manual sort order
-- **Tunnels** -- define and manage SSH tunnels (local/remote/dynamic SOCKS). Start, stop, and monitor from the TUI
-- **Keys** -- identity management with ssh-agent integration. Add/remove keys from agent, see loaded status
-- **Audit** -- log of all connection events with filtering by status (ok/fail) and time range (today/week/month)
-- **Hybrid sources** -- hosts from `~/.ssh/config` (read-only) and launcher-managed (full CRUD) merge without duplicates
-- **Import/Export** -- import from `~/.ssh/config` or Termius backups; export managed hosts back to ssh config format
-- **Hot reload** -- edits to `~/.ssh/config` update the host list live via file watcher
-- **Mouse support** -- click tabs, select rows, scroll panels, double-click to connect
-- **Terminal launchers** -- opens SSH sessions in kitty, ghostty, or a custom terminal command
+- **Embedded SSH sessions** — connect opens an in-TUI PTY; detach with Ctrl+D and return to the dashboard while SSH keeps running; multiple session tabs
+- **Hosts** — browse, search, and connect. Fuzzy search with `/`, multi-tag AND filter with `#`, favorites, nested groups, manual sort order
+- **Tunnels** — define and manage SSH tunnels (local/remote/dynamic SOCKS). Start, stop, and monitor from the TUI
+- **Keys** — identity management with ssh-agent integration. Add/remove keys from agent, see loaded status
+- **Audit** — log of all connection events with filtering by status (ok/fail) and time range (today/week/month)
+- **Hybrid sources** — hosts from `~/.ssh/config` (read-only) and launcher-managed (full CRUD) merge without duplicates
+- **Import/Export** — import from `~/.ssh/config` or Termius backups; export managed hosts back to ssh config format
+- **Hot reload** — edits to `~/.ssh/config` update the host list live via file watcher
+- **Configurable keybindings** — rebind any action via Ctrl+K; stored in `config.toml`
+- **Mouse support** — click tabs, select rows, scroll panels, double-click to connect
 
 ## Install
 
@@ -66,6 +63,7 @@ cp target/release/sshub ~/.local/bin/
 
 ```bash
 sshub              # launch TUI
+sshub --version    # print version
 sshub --dry-run    # exit immediately (CI / scripts)
 sshub --help       # show options
 ```
@@ -91,6 +89,8 @@ Override via environment variables: `SSHUB_CONFIG_DIR`, `SSHUB_DATA_DIR`, `SSHUB
 
 ## Keybindings
 
+Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Press `?` in-app for the full list.
+
 ### Global
 
 | Key              | Action                          |
@@ -98,8 +98,19 @@ Override via environment variables: `SSHUB_CONFIG_DIR`, `SSHUB_DATA_DIR`, `SSHUB
 | `1`..`4`         | Switch tab (hosts/tunnels/keys/audit) |
 | `Tab`            | Toggle detail panel             |
 | `Esc`            | Back / close overlay            |
+| `Ctrl+K`         | Keybind editor                  |
 | `?` / `Shift+H`  | Help screen                     |
 | `q`              | Quit                            |
+
+### Session (embedded PTY)
+
+| Key                    | Action                              |
+|------------------------|-------------------------------------|
+| `Ctrl+T`               | New session tab (host picker)         |
+| `Ctrl+W`               | Close session tab                   |
+| `Ctrl+D`               | Detach to dashboard (SSH keeps running) |
+| `Ctrl+[` / `Ctrl+]`   | Previous / next session tab         |
+| `Ctrl+Shift+S`         | Focus session from dashboard        |
 
 ### Hosts (tab 1)
 
@@ -108,14 +119,14 @@ Override via environment variables: `SSHUB_CONFIG_DIR`, `SSHUB_DATA_DIR`, `SSHUB
 | `j`/`k` or arrows | Navigate                  |
 | `Enter`            | Connect to host           |
 | `a`                | Add host                  |
-| `e`                | Edit host                 |
+| `e`                | Edit host / group identity |
 | `d`                | Delete host               |
 | `D`                | Duplicate host            |
 | `f`                | Toggle favorite           |
 | `s`                | Cycle sort mode           |
 | `/`                | Fuzzy search              |
-| `#`                | Filter by tag             |
-| `Shift+G`          | Manage groups             |
+| `#`                | Filter by tags (AND)      |
+| `Shift+G`          | Manage groups (nested)    |
 | `Shift+I`          | Import from ssh config    |
 | `Shift+E`          | Export to ssh config      |
 | `Shift+T`          | Import from Termius       |
@@ -194,3 +205,7 @@ cargo run -- --dry-run # quick sanity check
 ## License
 
 [MIT](LICENSE)
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md). Current release: **0.2.0**.
