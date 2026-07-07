@@ -8,7 +8,7 @@ use ratatui::Frame;
 
 use crate::app::App;
 use crate::tui::theme;
-use crate::tui::widgets::panel_box::render_panel_box;
+use crate::tui::widgets::panel_box::{put_clamped, render_panel_box};
 
 // ── Panel heights ───────────────────────────────────────
 const RECENT_H: u16 = 8;
@@ -71,6 +71,7 @@ fn render_recent_panel(buf: &mut Buffer, area: Rect, app: &App) {
     render_panel_box(buf, area, "recent sessions", None);
 
     let inner_x = area.x + 2;
+    let inner_w = area.width.saturating_sub(4) as usize;
 
     // Collect hosts with last_connected, sort descending, take top entries.
     let max_rows = (area.height.saturating_sub(3)) as usize;
@@ -92,7 +93,7 @@ fn render_recent_panel(buf: &mut Buffer, area: Rect, app: &App) {
     if recents.is_empty() {
         let y = area.y + 1;
         if y < area.y + area.height - 1 {
-            buf.set_string(inner_x, y, "no sessions yet", theme::dim());
+            put_clamped(buf, inner_x, y, "no sessions yet", theme::dim(), inner_w);
         }
     } else {
         let name_max = (area.width.saturating_sub(12)) as usize;
@@ -127,11 +128,13 @@ fn render_recent_panel(buf: &mut Buffer, area: Rect, app: &App) {
     // Action row — after session rows, with a blank line gap
     let action_y = area.y + 1 + row_count.max(1) as u16 + 1;
     if action_y < area.y + area.height - 1 {
-        buf.set_string(
+        put_clamped(
+            buf,
             inner_x,
             action_y,
             "show full audit log \u{2192}",
             theme::dim(),
+            inner_w,
         );
     }
 }
@@ -142,40 +145,40 @@ fn render_auth_panel(buf: &mut Buffer, area: Rect, app: &App) {
     render_panel_box(buf, area, "auth events", None);
 
     let inner_x = area.x + 2;
+    let inner_w = area.width.saturating_sub(4) as usize;
     let (ok, fail) = app.auth_stats_cache;
     let total = ok + fail;
 
     if total == 0 && app.auth_events_cache.is_empty() {
         let y = area.y + 1;
         if y < area.y + area.height - 1 {
-            buf.set_string(inner_x, y, "no audit data", theme::dim());
+            put_clamped(buf, inner_x, y, "no audit data", theme::dim(), inner_w);
         }
         return;
     }
 
-    // Summary line: ● ok N  ● failed N  rate X%
+    // Summary line: ● ok N  ● failed N  rate X%. Guard every write against the
+    // inner right edge so a narrow (zoomed) column can't spill past the border.
+    let right_lim = inner_x + inner_w as u16;
     let summary_y = area.y + 1;
     if summary_y < area.y + area.height - 1 {
         let mut col = inner_x;
+        let mut put = |buf: &mut Buffer, s: &str, style| {
+            if col < right_lim {
+                col += put_clamped(buf, col, summary_y, s, style, (right_lim - col) as usize);
+            }
+        };
 
-        buf.set_string(col, summary_y, "\u{25cf}", theme::green());
-        col += 2;
-        let ok_text = format!("ok {}  ", ok);
-        buf.set_string(col, summary_y, &ok_text, theme::text());
-        col += ok_text.len() as u16;
-
-        buf.set_string(col, summary_y, "\u{25cf}", theme::red());
-        col += 2;
-        let fail_text = format!("failed {}  ", fail);
-        buf.set_string(col, summary_y, &fail_text, theme::text());
-        col += fail_text.len() as u16;
-
+        put(buf, "\u{25cf} ", theme::green());
+        put(buf, &format!("ok {}  ", ok), theme::text());
+        put(buf, "\u{25cf} ", theme::red());
+        put(buf, &format!("failed {}  ", fail), theme::text());
         let rate_str = if total > 0 {
             format!("rate {}%", ok * 100 / total)
         } else {
             "rate \u{2014}".to_string()
         };
-        buf.set_string(col, summary_y, &rate_str, theme::mute());
+        put(buf, &rate_str, theme::mute());
     }
 
     // Mini log: last 2-3 events
@@ -194,9 +197,13 @@ fn render_auth_panel(buf: &mut Buffer, area: Rect, app: &App) {
         let age_display = format!("{:>6} ", age);
         buf.set_string(col, y, &age_display, theme::mute());
         col += age_display.len() as u16;
-        buf.set_string(col, y, &host, theme::text());
-        col += host.len() as u16 + 1;
-        buf.set_string(col, y, &ev.status, status_style);
+        if col < right_lim {
+            col += put_clamped(buf, col, y, &host, theme::text(), (right_lim - col) as usize);
+            col += 1;
+        }
+        if col < right_lim {
+            put_clamped(buf, col, y, &ev.status, status_style, (right_lim - col) as usize);
+        }
     }
 }
 
@@ -221,7 +228,7 @@ fn render_ping_panel(buf: &mut Buffer, area: Rect, app: &App) {
         }
         let info_y = area.y + 2;
         if info_y < area.y + area.height - 1 {
-            buf.set_string(inner_x, info_y, "waiting for ping data...", theme::dim());
+            put_clamped(buf, inner_x, info_y, "waiting for ping data...", theme::dim(), inner_w);
         }
         return;
     }
@@ -306,6 +313,6 @@ fn render_ping_panel(buf: &mut Buffer, area: Rect, app: &App) {
             format!("{}ms", all_max)
         };
         let stats = format!("min {}  max {}  loss {}%", min_str, max_str, loss_pct);
-        buf.set_string(inner_x, info_y, &stats, theme::mute());
+        put_clamped(buf, inner_x, info_y, &stats, theme::mute(), inner_w);
     }
 }

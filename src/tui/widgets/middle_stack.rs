@@ -6,7 +6,7 @@ use ratatui::Frame;
 
 use crate::app::App;
 use crate::tui::theme;
-use crate::tui::widgets::panel_box::render_panel_box;
+use crate::tui::widgets::panel_box::{put_clamped, render_panel_box};
 
 // ── Panel heights ───────────────────────────────────────
 const AGENT_H: u16 = 6;
@@ -77,7 +77,7 @@ fn render_ssh_log(buf: &mut Buffer, area: Rect, app: &App) {
                 Some(name) => format!("no events for {name} yet — Enter to connect"),
                 None => "select a host to see its log".to_string(),
             };
-            buf.set_string(inner_x, placeholder_y, &msg, theme::dim());
+            put_clamped(buf, inner_x, placeholder_y, &msg, theme::dim(), inner_w);
         }
         return;
     }
@@ -155,7 +155,7 @@ fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
         buf.set_string(inner_x, row2_y, "keys    ", theme::dim());
         let val_x = inner_x + 8;
         let key_str = format!("{} loaded", agent.keys.len());
-        buf.set_string(val_x, row2_y, &key_str, theme::bright());
+        put_clamped(buf, val_x, row2_y, &key_str, theme::bright(), inner_w.saturating_sub(8));
     }
 
     // Row 3: forward agent hosts count
@@ -172,7 +172,7 @@ fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
             })
             .count();
         let fwd_str = format!("{} hosts", fwd_count);
-        buf.set_string(val_x, row3_y, &fwd_str, theme::bright());
+        put_clamped(buf, val_x, row3_y, &fwd_str, theme::bright(), inner_w.saturating_sub(8));
     }
 
     // Row 4: config path
@@ -180,7 +180,7 @@ fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
     if row4_y < area.y + area.height - 1 {
         buf.set_string(inner_x, row4_y, "config  ", theme::dim());
         let val_x = inner_x + 8;
-        buf.set_string(val_x, row4_y, "~/.ssh/config", theme::text());
+        put_clamped(buf, val_x, row4_y, "~/.ssh/config", theme::text(), inner_w.saturating_sub(8));
     }
 }
 
@@ -203,7 +203,7 @@ fn render_tunnels_panel(buf: &mut Buffer, area: Rect, app: &App) {
     if app.tunnels.is_empty() {
         let y = area.y + 1;
         if y < area.y + area.height - 1 {
-            buf.set_string(inner_x, y, "press 2 for tunnels tab", theme::dim());
+            put_clamped(buf, inner_x, y, "press 2 for tunnels tab", theme::dim(), inner_w);
         }
         return;
     }
@@ -285,7 +285,7 @@ fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
         }
         let info_y = area.y + 2;
         if info_y < area.y + area.height - 1 {
-            buf.set_string(inner_x, info_y, "no latency data", theme::dim());
+            put_clamped(buf, inner_x, info_y, "no latency data", theme::dim(), inner_w);
         }
         return;
     }
@@ -332,6 +332,6 @@ fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
     let info_y = area.y + 2;
     if info_y < area.y + area.height - 1 {
         let stats = format!("now {}ms  avg {}ms  peak {}ms", now_val, p50, peak);
-        buf.set_string(inner_x, info_y, &stats, theme::dim());
+        put_clamped(buf, inner_x, info_y, &stats, theme::dim(), inner_w);
     }
 }

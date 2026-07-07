@@ -5,8 +5,22 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Style;
 
+use crate::tui::text::ellipsize;
 use crate::tui::theme;
+
+/// Write `s` at (`x`,`y`), truncated with `…` so it never exceeds `max_w`
+/// display columns — keeps dashboard text inside its panel border even when
+/// the column is narrow (e.g. after a zoom). Returns the columns written.
+pub fn put_clamped(buf: &mut Buffer, x: u16, y: u16, s: &str, style: Style, max_w: usize) -> u16 {
+    if max_w == 0 {
+        return 0;
+    }
+    let text = ellipsize(s, max_w);
+    buf.set_string(x, y, &text, style);
+    text.chars().count() as u16
+}
 
 /// Draw a bordered panel box into `buf`.
 ///
@@ -31,9 +45,13 @@ pub fn render_panel_box(buf: &mut Buffer, area: Rect, title: &str, count: Option
     buf.set_string(x, y, "┌── ", bstyle);
     let mut col = x + 4;
 
-    // Title in BRIGHT
-    buf.set_string(col, y, title, theme::bright());
-    col += title.len() as u16;
+    // Title in BRIGHT — clamp so a long title (or badge) never runs past the
+    // right border. Reserve room for " ── <badge> " + the closing "┐".
+    let right_edge = x + area.width - 1;
+    let reserved = 1 + count.map(|c| c.len() + 4).unwrap_or(0); // "┐" + "── c "
+    let title_budget = (right_edge.saturating_sub(col) as usize).saturating_sub(reserved);
+    let written = put_clamped(buf, col, y, title, theme::bright(), title_budget);
+    col += written;
     buf.set_string(col, y, " ", bstyle);
     col += 1;
 
@@ -47,7 +65,6 @@ pub fn render_panel_box(buf: &mut Buffer, area: Rect, title: &str, count: Option
     }
 
     // Fill remaining top with ─ and close with ┐
-    let right_edge = x + area.width - 1;
     while col < right_edge {
         buf.set_string(col, y, "─", bstyle);
         col += 1;
