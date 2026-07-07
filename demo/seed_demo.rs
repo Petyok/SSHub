@@ -1,108 +1,79 @@
 //! Populate `demo/home/.local/share/sshub/launcher.db` for VHS recordings.
 //! Run via `demo/seed-demo.sh`.
+//!
+//! Hosts are created directly (not imported from ssh_config) so they can have
+//! playful display names. Their addresses are real, pingable public anycast
+//! resolvers (Google / Cloudflare / Quad9 / OpenDNS / Level3) so the demo shows
+//! hosts as *online* — the actual connect is simulated by `demo/bin/ssh`.
 
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use sshub::metadata::MetadataDb;
-use sshub::ssh::{import_ssh_config, SshConfigResolver};
-use sshub::store::{HostUpdate, LauncherStore, NewHostGroup};
+use sshub::store::{HostUpdate, LauncherStore, NewHost, NewHostGroup};
 
 fn main() -> Result<()> {
     let data_dir = std::env::var("SSHUB_DATA_DIR").context("SSHUB_DATA_DIR must be set")?;
-    let ssh_config = std::env::var("SSHUB_SSH_CONFIG").context("SSHUB_SSH_CONFIG must be set")?;
 
-    let db_path = PathBuf::from(&data_dir).join("launcher.db");
-    if db_path.exists() {
-        std::fs::remove_file(&db_path)?;
+    // Wipe every host source so a re-seed is deterministic: the launcher DB and
+    // the legacy metadata DB that migrates into it on open.
+    let dir = PathBuf::from(&data_dir);
+    for base in ["launcher.db", "metadata.db"] {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(dir.join(format!("{base}{suffix}")));
+        }
     }
-    for suffix in ["-wal", "-shm"] {
-        let sidecar = PathBuf::from(format!("{}{suffix}", db_path.display()));
-        let _ = std::fs::remove_file(sidecar);
+
+    let store = LauncherStore::open(dir.join("launcher.db"))?;
+
+    let production = mk_group(&store, "Production", 0, None)?;
+    let web = mk_group(&store, "Web", 0, Some(production))?;
+    let databases = mk_group(&store, "Databases", 1, Some(production))?;
+    let staging = mk_group(&store, "Staging", 1, None)?;
+
+    // (display name, address, user, port, group, tags, favorite, proxy_jump)
+    let hosts: &[(&str, &str, &str, u16, Option<i64>, &[&str], bool, Option<&str>)] = &[
+        ("Real Google DNS (trust me)", "8.8.8.8", "deploy", 22, Some(web), &["prod", "web"], true, None),
+        ("Google DNS: the sequel", "8.8.4.4", "deploy", 22, Some(web), &["prod", "web"], false, None),
+        ("Cloudflare", "1.1.1.1", "postgres", 5432, Some(databases), &["prod", "db"], false, None),
+        ("Cloudflare's server in a mom's garage", "1.0.0.1", "postgres", 5432, Some(databases), &["prod", "db"], false, None),
+        ("Quad9's server in a bunker", "9.9.9.9", "ubuntu", 22, Some(staging), &["staging"], false, None),
+        ("CI runner (OpenDNS)", "208.67.222.222", "runner", 22, None, &["staging", "ci"], false, Some("Bastion (secretly Level3)")),
+        ("Bastion (secretly Level3)", "4.2.2.2", "jump", 22, None, &["prod", "ops"], false, None),
+    ];
+
+    for (name, addr, user, port, group_id, tags, favorite, proxy) in hosts {
+        let host = store.create_host(&NewHost {
+            name: (*name).to_string(),
+            address: (*addr).to_string(),
+            username: Some((*user).to_string()),
+            port: *port,
+            group_id: *group_id,
+            tags: tags.iter().map(|t| (*t).to_string()).collect(),
+            proxy_jump: proxy.map(|p| p.to_string()),
+            ..Default::default()
+        })?;
+        if *favorite {
+            store.update_host(
+                host.id,
+                &HostUpdate {
+                    favorite: Some(true),
+                    ..Default::default()
+                },
+            )?;
+        }
     }
 
-    let store = LauncherStore::open(&db_path)?;
-    let resolver = SshConfigResolver::with_config_path(&ssh_config);
-    let metadata = MetadataDb::default();
-    import_ssh_config(&resolver, &store, &metadata)?;
-
-    let production = store.create_group(&NewHostGroup {
-        name: "Production".into(),
-        sort_order: 0,
-        ..Default::default()
-    })?;
-    let web = store.create_group(&NewHostGroup {
-        name: "Web".into(),
-        sort_order: 0,
-        parent_id: Some(production.id),
-        ..Default::default()
-    })?;
-    let databases = store.create_group(&NewHostGroup {
-        name: "Databases".into(),
-        sort_order: 1,
-        parent_id: Some(production.id),
-        ..Default::default()
-    })?;
-    let staging = store.create_group(&NewHostGroup {
-        name: "Staging".into(),
-        sort_order: 1,
-        ..Default::default()
-    })?;
-
-    tag_group(
-        &store,
-        "web-prod-01",
-        &["prod", "web"],
-        Some(web.id),
-        true,
-    )?;
-    tag_group(&store, "web-prod-02", &["prod", "web"], Some(web.id), false)?;
-    tag_group(
-        &store,
-        "db-primary",
-        &["prod", "db"],
-        Some(databases.id),
-        false,
-    )?;
-    tag_group(
-        &store,
-        "db-replica",
-        &["prod", "db"],
-        Some(databases.id),
-        false,
-    )?;
-    tag_group(
-        &store,
-        "staging-app",
-        &["staging"],
-        Some(staging.id),
-        false,
-    )?;
-    tag_group(&store, "bastion", &["prod", "ops"], None, false)?;
-    tag_group(&store, "ci-runner", &["staging", "ci"], None, false)?;
-
-    eprintln!("seeded {}", db_path.display());
+    eprintln!("seeded {} hosts", hosts.len());
     Ok(())
 }
 
-fn tag_group(
-    store: &LauncherStore,
-    name: &str,
-    tags: &[&str],
-    group_id: Option<i64>,
-    favorite: bool,
-) -> Result<()> {
-    let host = store
-        .get_host_by_name(name)?
-        .with_context(|| format!("host {name} missing after import"))?;
-    store.update_host(
-        host.id,
-        &HostUpdate {
-            tags: Some(tags.iter().map(|t| (*t).to_string()).collect()),
-            group_id: Some(group_id),
-            favorite: Some(favorite),
+fn mk_group(store: &LauncherStore, name: &str, sort_order: i32, parent_id: Option<i64>) -> Result<i64> {
+    Ok(store
+        .create_group(&NewHostGroup {
+            name: name.to_string(),
+            sort_order,
+            parent_id,
             ..Default::default()
-        },
-    )?;
-    Ok(())
+        })?
+        .id)
 }

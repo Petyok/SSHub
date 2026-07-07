@@ -4,7 +4,7 @@ Set FontSize 16
 Set Width 1200
 Set Height 700
 Set Theme "Catppuccin Mocha"
-Set TypingSpeed 60ms
+Set TypingSpeed 100ms
 
 Hide
 Type "export SSHUB_CONFIG_DIR=$PWD/demo/home/.config/sshub SSHUB_DATA_DIR=$PWD/demo/home/.local/share/sshub SSHUB_SSH_CONFIG=$PWD/demo/home/ssh_config PATH=$PWD/target/release:$PATH"
@@ -16,86 +16,78 @@ Enter
 Sleep 1s
 Show
 
-# Splash animation (collab tagline + random quip), then skip
+# Splash animation (collab tagline + random quip), then skip into the app.
 Sleep 13s
-Space
-Sleep 2s
-
-# Browse nested groups (Production → Web / Databases)
-Type "j"
-Sleep 800ms
-Type "j"
-Sleep 800ms
-Type "j"
-Sleep 800ms
-Type "k"
-Sleep 1s
-
-# Collapse / expand the Production subtree
-Space
-Sleep 1.5s
-Space
-Sleep 1s
-
-# Detail panel + reachability stats
-Tab
-Sleep 2.5s
-Tab
-Sleep 1s
-
-# Multi-tag filter (# opens picker; Space toggles; Enter applies)
-Type "#"
-Sleep 1s
-Type "j"
-Sleep 600ms
-Type "j"
-Sleep 600ms
-Space
-Sleep 1.5s
 Enter
-Sleep 2s
-Escape
-Sleep 1s
+Sleep 2.5s
 
-# Group manager overlay (nested groups)
-Shift+G
-Sleep 2s
+# Browse the host tree (nested groups).
 Type "j"
-Sleep 1s
+Sleep 1.1s
 Type "j"
-Sleep 1s
-Escape
-Sleep 1s
-
-# Configurable keybindings editor
-Ctrl+K
-Sleep 2.5s
-Escape
-Sleep 1s
-
-# Fuzzy host palette
-Type "/"
-Sleep 1s
-Type "db"
-Sleep 2s
-Escape
-Sleep 1s
-
-# Tour tabs: tunnels, keys, audit, back to hosts
-Type "2"
-Sleep 2.5s
-Type "3"
-Sleep 2.5s
-Type "4"
-Sleep 2.5s
-Type "1"
+Sleep 1.1s
+Type "j"
+Sleep 1.1s
+Type "k"
 Sleep 1.5s
 
-# Help — session keys, tags, groups
+# Collapse the group, then expand it again.
+Space
+Sleep 2s
+Space
+Sleep 2s
+
+# Detail panel + reachability stats.
+Tab
+Sleep 3s
+Tab
+Sleep 1.5s
+
+# Multi-tag filter: # opens the picker, Space toggles, Enter applies.
+Type "#"
+Sleep 1.8s
+Type "j"
+Sleep 1s
+Space
+Sleep 2s
+Enter
+Sleep 2.5s
+Escape
+Sleep 1.5s
+
+# Group manager overlay (nested groups).
+Shift+G
+Sleep 3s
+Type "j"
+Sleep 1.5s
+Type "j"
+Sleep 1.5s
+Escape
+Sleep 1.5s
+
+# Fuzzy host palette.
+Type "/"
+Sleep 1.5s
+Type "db"
+Sleep 2.5s
+Escape
+Sleep 1.5s
+
+# Tour the tabs: tunnels, keys, audit, back to hosts.
+Type "2"
+Sleep 3s
+Type "3"
+Sleep 3s
+Type "4"
+Sleep 3s
+Type "1"
+Sleep 2s
+
+# Help screen.
 Type "?"
 Sleep 4s
 Escape
-Sleep 1s
+Sleep 1.5s
 
 Hide
 Type "q"

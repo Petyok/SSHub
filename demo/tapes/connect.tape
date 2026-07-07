@@ -4,7 +4,7 @@ Set FontSize 16
 Set Width 1200
 Set Height 700
 Set Theme "Catppuccin Mocha"
-Set TypingSpeed 60ms
+Set TypingSpeed 75ms
 
 Hide
 Type "export SSHUB_CONFIG_DIR=$PWD/demo/home/.config/sshub SSHUB_DATA_DIR=$PWD/demo/home/.local/share/sshub SSHUB_SSH_CONFIG=$PWD/demo/home/ssh_config"
@@ -25,7 +25,7 @@ Sleep 1.5s
 # Connect via fuzzy palette — embedded PTY session
 Type "/"
 Sleep 1s
-Type "web-prod"
+Type "Google"
 Sleep 1.5s
 Enter
 Sleep 3.5s
@@ -48,7 +48,7 @@ Sleep 2s
 # Open a second session tab (host picker)
 Ctrl+T
 Sleep 1.5s
-Type "db-primary"
+Type "Postgres"
 Sleep 1.5s
 Enter
 Sleep 3.5s
