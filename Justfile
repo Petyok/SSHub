@@ -10,7 +10,7 @@ test:
     cargo test --test e2e
     cargo test --test config_load
 
-# Build release binary
+# Build release binary (install depends on this recipe — no cargo in the install script).
 build:
     cargo build --release
 
@@ -20,7 +20,7 @@ dry-run:
 
 # Install the release binary to ~/.local/bin and a launcher entry so sshub
 # shows up in your application launcher (GNOME, rofi, etc). Uses kitty if
-# available, otherwise falls back to xterm.
+# available, otherwise falls back to xterm. Runs `just build` first.
 install: build
     #!/usr/bin/env bash
     set -euo pipefail
