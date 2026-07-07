@@ -378,7 +378,6 @@ pub(crate) fn keyevent_to_spec(key: &KeyEvent) -> Option<String> {
         KeyCode::Down => "Down".to_string(),
         KeyCode::Left => "Left".to_string(),
         KeyCode::Right => "Right".to_string(),
-        KeyCode::Tab => "Tab".to_string(),
         KeyCode::BackTab => "BackTab".to_string(),
         KeyCode::F(n) => format!("F{n}"),
         KeyCode::Char(c) => c.to_ascii_uppercase().to_string(),
