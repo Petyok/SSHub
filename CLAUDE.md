@@ -30,7 +30,7 @@ cargo run -- --dry-run
 
 ## Architecture
 
-**Stack:** ratatui + crossterm (TUI), nucleo (fuzzy search), rusqlite/bundled (SQLite), notify (file watcher), serde + toml (config). No async runtime — synchronous event loop with `crossterm::event::poll` at 50ms intervals. File watcher runs on a separate thread, sends events via `std::sync::mpsc::Receiver`.
+**Stack:** ratatui 0.30 + crossterm (TUI), portable-pty + vt100 (embedded SSH sessions via `tui-term`; upstream vt100 0.16, no vendored fork), nucleo (fuzzy search), rusqlite/bundled (SQLite), notify (file watcher), serde + toml + toml_edit (config). No async runtime — synchronous event loop with `crossterm::event::poll` at 50ms intervals. File watcher runs on a separate thread, sends events via `std::sync::mpsc::Receiver`.
 
 **Entry point:** `src/main.rs` (binary) → `src/lib.rs` (`run_app()`) → `App::new()` + event loop. `AppDeps` struct enables dependency injection for tests (resolver, metadata store, launcher store, terminal launcher).
 
@@ -41,7 +41,7 @@ cargo run -- --dry-run
 | Module | Purpose |
 |--------|---------|
 | `app.rs` | `App` state, `AppMode`, `SortMode`, `HostEntry` enum (Legacy/Managed), key/mouse dispatch, tab routing |
-| `store/` | `LauncherStore` — SQLite v6 with `hosts`, `host_groups`, `identities`, `tunnels`, `auth_events` tables. CRUD + migrations |
+| `store/` | `LauncherStore` — SQLite v10 with `hosts`, `host_groups`, `identities`, `tunnels`, `auth_events` tables. CRUD + migrations |
 | `metadata/` | Legacy `MetadataDb` (MVP). Still used by old code paths; `HostMetadata` struct |
 | `ssh/` | `SshHost`, `HostResolver` trait, `SshConfigResolver` (shells out to `ssh -G`), import/export, agent detection, probe |
 | `tunnel.rs` | `TunnelManager` — spawn/monitor/kill SSH -N -L/-R/-D child processes |
@@ -68,4 +68,4 @@ cargo run -- --dry-run
 - `SSHUB_DRY_RUN` — `run()` exits immediately without TUI
 - `SSHUB_AUTO_QUIT` — `1` = quit after first draw, `q` = send quit key
 
-**SQLite schema (v6):** `hosts` (id, name, label, address, port, group_id FK, identity_id FK, os_icon, tags JSON, notes, proxy_jump, forward_agent, remote_command, sort_order, favorite, last_connected, source, ssh_config_hash, timestamps), `host_groups` (id, name, sort_order), `identities` (id, name, username, private_key, certificate, sort_order), `tunnels` (id, host_id FK, tunnel_type, local_port, remote_host, remote_port, label, auto_connect, timestamps), `auth_events` (id, host_id, host_name, event_type, status, detail, created_at). Legacy `metadata.db` is migrated to `launcher.db` on first open.
+**SQLite schema (v10):** `hosts` (id, name, label, address, port, group_id FK, identity_id FK, os_icon, tags JSON, notes, proxy_jump, forward_agent, remote_command, sort_order, favorite, last_connected, source, ssh_config_hash, timestamps), `host_groups` (id, name, sort_order, parent_id FK — nested groups), `identities` (id, name, username, private_key, certificate, sort_order), `tunnels` (id, host_id FK, tunnel_type, local_port, remote_host, remote_port, label, auto_connect, timestamps), `auth_events` (id, host_id, host_name, event_type, status, detail, created_at). `SCHEMA_VERSION` is the source of truth in `src/store/migrate.rs`; migrations run inside one transaction. Legacy `metadata.db` is migrated to `launcher.db` on first open — best-effort, so a corrupt/locked legacy db is skipped rather than aborting startup.
