@@ -289,6 +289,7 @@ pub struct HostDetailEdit {
     pub cursor: usize,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum HostEntry {
     Managed(ManagedHost),
