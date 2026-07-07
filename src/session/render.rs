@@ -156,12 +156,105 @@ fn tunnel_summary(app: &App, meta: &SessionMeta) -> Option<String> {
 // ── Body ─────────────────────────────────────────────────────
 
 fn render_body(frame: &mut Frame, area: Rect, session: &Session) {
-    // Always render the live PTY grid — including while connecting. ssh runs
-    // with `-v`, so its real handshake (Connecting to…, Authenticated to…,
-    // and any error) streams here verbatim. No scripted animation, nothing
-    // fabricated: the user sees exactly what ssh is doing.
+    // While connecting, ssh's verbose `-v` handshake is siphoned off the PTY
+    // (via a side FIFO) into `debug_log`, so the grid stays clean. Show a
+    // spinner + a dim tail of that log instead of the raw firehose; the user
+    // can expand the full log on demand. Once the shell reveals we switch to
+    // the live PTY grid, which now carries only the post-auth banner + prompt.
+    if let SessionPhase::Connecting { started_at } = &session.phase {
+        render_connecting(frame, area, session, started_at.elapsed());
+        return;
+    }
     let term = PseudoTerminal::new(session.parser.screen());
     frame.render_widget(term, area);
+}
+
+/// Braille spinner frames, advanced by wall-clock so it animates while idle.
+const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+fn render_connecting(
+    frame: &mut Frame,
+    area: Rect,
+    session: &Session,
+    elapsed: std::time::Duration,
+) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+    let dim = Style::default().fg(theme::DIM);
+    let mute = Style::default().fg(theme::MUTE);
+
+    // Expanded: hand the whole body to the raw debug log, bottom-anchored.
+    if session.debug_expanded() {
+        let lines: Vec<Line> = session
+            .debug_log()
+            .lines()
+            .map(|l| Line::from(Span::styled(l.to_string(), dim)))
+            .collect();
+        let total = lines.len() as u16;
+        let scroll = total.saturating_sub(area.height);
+        frame.render_widget(Paragraph::new(lines).scroll((scroll, 0)), area);
+        return;
+    }
+
+    // Bottom band: the last few debug lines, dimmed. Top band: centered spinner.
+    let tail_h = area.height.saturating_sub(1).min(8);
+    let spin_h = area.height - tail_h;
+    let spin_area = Rect::new(area.x, area.y, area.width, spin_h);
+    let tail_area = Rect::new(area.x, area.y + spin_h, area.width, tail_h);
+
+    // ── Spinner + target, vertically centered in the top band ──
+    let frame_idx = (elapsed.as_millis() / 90) as usize % SPINNER_FRAMES.len();
+    let host = session
+        .meta
+        .address
+        .clone()
+        .unwrap_or_else(|| session.display_name.clone());
+    let spinner_line = Line::from(vec![
+        Span::styled(SPINNER_FRAMES[frame_idx], Style::default().fg(theme::GREEN)),
+        Span::raw("  "),
+        Span::styled("connecting to ", mute),
+        Span::styled(host, Style::default().fg(theme::TEXT)),
+    ]);
+    let secs = elapsed.as_secs();
+    let hint_line = Line::from(Span::styled(
+        format!("elapsed {secs}s  ·  Ctrl+O expand log  ·  Esc cancel"),
+        dim,
+    ));
+    if spin_h >= 1 {
+        let pad_top = (spin_h.saturating_sub(2)) / 2;
+        let centered = Rect::new(
+            spin_area.x,
+            spin_area.y + pad_top,
+            spin_area.width,
+            spin_h - pad_top,
+        );
+        frame.render_widget(
+            Paragraph::new(vec![spinner_line, Line::raw(""), hint_line])
+                .alignment(ratatui::layout::Alignment::Center),
+            centered,
+        );
+    }
+
+    // ── Debug tail: last `tail_h` non-empty-ish lines of the -v log ──
+    if tail_h >= 1 {
+        let all: Vec<&str> = session.debug_log().lines().collect();
+        let start = all.len().saturating_sub(tail_h as usize);
+        let lines: Vec<Line> = all[start..]
+            .iter()
+            .map(|l| Line::from(Span::styled(truncate(l, area.width as usize), dim)))
+            .collect();
+        frame.render_widget(Paragraph::new(lines), tail_area);
+    }
+}
+
+/// Clip a line to `max` display columns (byte-safe for ASCII debug output).
+fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        s.chars().take(max.saturating_sub(1)).collect::<String>() + "…"
+    }
 }
 
 // ── Footer ───────────────────────────────────────────────────

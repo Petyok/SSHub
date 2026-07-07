@@ -789,6 +789,28 @@ mod tests {
     }
 
     #[test]
+    fn connecting_screen_shows_spinner_overlay() {
+        let mut app = test_app_with_hosts();
+        let config = crate::session::SessionConfig {
+            argv: vec!["sleep".into(), "1".into()],
+            display_name: "web-prod".into(),
+            meta: crate::session::SessionMeta {
+                address: Some("10.0.0.1".into()),
+                ..Default::default()
+            },
+            pending_secret: None,
+        };
+        let session = crate::session::Session::spawn(config, 24, 80).unwrap();
+        app.sessions.push(session);
+        app.active_session = Some(0);
+        app.mode = AppMode::Connecting;
+        let buffer = render_to_buffer(&app, 120, 38);
+        // The connect overlay replaces the raw PTY dump with a spinner + hint.
+        assert!(buffer_contains(&buffer, "connecting to"));
+        assert!(buffer_contains(&buffer, "expand log"));
+    }
+
+    #[test]
     fn dashboard_shows_open_session_strip() {
         let mut app = test_app_with_hosts();
         let config = crate::session::SessionConfig {

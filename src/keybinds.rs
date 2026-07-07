@@ -300,6 +300,11 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
+    (@fn session_toggle_log $($key:literal),* $(,)?) => {
+        fn default_kb_session_toggle_log() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
     (@fn confirm_yes $($key:literal),* $(,)?) => {
         fn default_kb_confirm_yes() -> Vec<String> {
             vec![$($key.to_string()),*]
@@ -376,6 +381,7 @@ kb_defaults! {
     session_scroll_up => ["PageUp"],
     session_scroll_down => ["PageDown"],
     session_cancel => ["Esc"],
+    session_toggle_log => ["Ctrl+O"],
     confirm_yes => ["y", "Y", "Enter"],
     confirm_no => ["n", "N"],
     cancel => ["Esc"],
@@ -441,6 +447,7 @@ pub enum KeyAction {
     SessionScrollUp,
     SessionScrollDown,
     SessionCancel,
+    SessionToggleLog,
     ConfirmYes,
     ConfirmNo,
     Cancel,
@@ -448,7 +455,7 @@ pub enum KeyAction {
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 61] = [
+    pub const ALL: [KeyAction; 62] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -507,6 +514,7 @@ impl KeyAction {
         KeyAction::SessionScrollUp,
         KeyAction::SessionScrollDown,
         KeyAction::SessionCancel,
+        KeyAction::SessionToggleLog,
         KeyAction::ConfirmYes,
         KeyAction::ConfirmNo,
         KeyAction::Cancel,
@@ -572,6 +580,7 @@ impl KeyAction {
             KeyAction::SessionScrollUp => "Scroll session up",
             KeyAction::SessionScrollDown => "Scroll session down",
             KeyAction::SessionCancel => "Cancel connecting",
+            KeyAction::SessionToggleLog => "Toggle connect debug log",
             KeyAction::ConfirmYes => "Confirm yes",
             KeyAction::ConfirmNo => "Confirm no",
             KeyAction::Cancel => "Cancel / back",
@@ -698,6 +707,8 @@ pub struct KeybindsConfig {
     pub session_scroll_down: Vec<String>,
     #[serde(default = "default_kb_session_cancel")]
     pub session_cancel: Vec<String>,
+    #[serde(default = "default_kb_session_toggle_log")]
+    pub session_toggle_log: Vec<String>,
     #[serde(default = "default_kb_confirm_yes")]
     pub confirm_yes: Vec<String>,
     #[serde(default = "default_kb_confirm_no")]
@@ -767,6 +778,7 @@ impl Default for KeybindsConfig {
             session_scroll_up: default_kb_session_scroll_up(),
             session_scroll_down: default_kb_session_scroll_down(),
             session_cancel: default_kb_session_cancel(),
+            session_toggle_log: default_kb_session_toggle_log(),
             confirm_yes: default_kb_confirm_yes(),
             confirm_no: default_kb_confirm_no(),
             cancel: default_kb_cancel(),
@@ -835,6 +847,7 @@ impl KeybindsConfig {
             KeyAction::SessionScrollUp => default_kb_session_scroll_up(),
             KeyAction::SessionScrollDown => default_kb_session_scroll_down(),
             KeyAction::SessionCancel => default_kb_session_cancel(),
+            KeyAction::SessionToggleLog => default_kb_session_toggle_log(),
             KeyAction::ConfirmYes => default_kb_confirm_yes(),
             KeyAction::ConfirmNo => default_kb_confirm_no(),
             KeyAction::Cancel => default_kb_cancel(),
@@ -906,6 +919,7 @@ impl KeybindsConfig {
             KeyAction::SessionScrollUp => &self.session_scroll_up,
             KeyAction::SessionScrollDown => &self.session_scroll_down,
             KeyAction::SessionCancel => &self.session_cancel,
+            KeyAction::SessionToggleLog => &self.session_toggle_log,
             KeyAction::ConfirmYes => &self.confirm_yes,
             KeyAction::ConfirmNo => &self.confirm_no,
             KeyAction::Cancel => &self.cancel,
@@ -972,6 +986,7 @@ impl KeybindsConfig {
             KeyAction::SessionScrollUp => self.session_scroll_up = binds,
             KeyAction::SessionScrollDown => self.session_scroll_down = binds,
             KeyAction::SessionCancel => self.session_cancel = binds,
+            KeyAction::SessionToggleLog => self.session_toggle_log = binds,
             KeyAction::ConfirmYes => self.confirm_yes = binds,
             KeyAction::ConfirmNo => self.confirm_no = binds,
             KeyAction::Cancel => self.cancel = binds,

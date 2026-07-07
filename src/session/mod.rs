@@ -118,6 +118,13 @@ pub struct Session {
     /// fail-open reveal, so the header never claims "connected" while ssh is
     /// still stuck on the TCP connect.
     connected: bool,
+    /// Accumulated ssh stderr (the `-v` handshake), routed off the PTY via a
+    /// side FIFO. Rendered as the connect spinner's debug tail / expanded log,
+    /// and scanned for the real "authenticated to" connected marker.
+    debug_log: String,
+    /// Whether the connect screen shows the full debug log instead of the
+    /// spinner + tail. Toggled by the user.
+    debug_expanded: bool,
 }
 
 impl Session {
@@ -173,6 +180,8 @@ impl Session {
             _askpass: askpass,
             use_askpass,
             connected: false,
+            debug_log: String::new(),
+            debug_expanded: false,
             config,
         })
     }
@@ -188,11 +197,23 @@ impl Session {
     /// the stored secret exactly once.
     pub fn drain(&mut self) {
         let mut had_bytes = false;
+        let mut had_stderr = false;
         while let Some(event) = self.runtime.try_recv() {
             match event {
                 PtyEvent::Bytes(bytes) => {
                     self.parser.process(&bytes);
                     had_bytes = true;
+                }
+                PtyEvent::Stderr(bytes) => {
+                    // ssh's `-v` handshake — kept off the PTY grid, accumulated
+                    // for the connect spinner's debug view. Cap the buffer so a
+                    // long-lived session can't grow it without bound.
+                    self.debug_log.push_str(&String::from_utf8_lossy(&bytes));
+                    if self.debug_log.len() > DEBUG_LOG_CAP {
+                        let cut = self.debug_log.len() - DEBUG_LOG_CAP;
+                        self.debug_log.drain(..cut);
+                    }
+                    had_stderr = true;
                 }
                 PtyEvent::Exited(status) => {
                     self.runtime.reap_child();
@@ -204,6 +225,11 @@ impl Session {
                     };
                 }
             }
+        }
+        if had_stderr {
+            // The "authenticated to" marker arrives on stderr, so re-check even
+            // when no PTY bytes landed this tick.
+            self.maybe_detect_connected();
         }
         if had_bytes {
             self.maybe_send_pending_secret();
@@ -264,29 +290,47 @@ impl Session {
         self.connected
     }
 
-    /// Whether the current screen is asking to accept an unknown host key.
+    /// Whether we're being asked to accept an unknown host key. ssh prints the
+    /// "authenticity of host" block partly on stderr and the yes/no prompt on
+    /// the tty, so check both the live screen and the captured debug log.
     fn awaiting_host_verification(&self) -> bool {
         let tail = current_screen_tail(self.parser.screen()).to_ascii_lowercase();
-        HOST_VERIFY_NEEDLES.iter().any(|n| tail.contains(n))
+        if HOST_VERIFY_NEEDLES.iter().any(|n| tail.contains(n)) {
+            return true;
+        }
+        let debug = self.debug_log.to_ascii_lowercase();
+        HOST_VERIFY_NEEDLES.iter().any(|n| debug.contains(n))
     }
 
     /// Latch `connected` once ssh's `-v` output shows the real auth-success
     /// marker. This is the only honest "connected" signal — the mere arrival
     /// of bytes doesn't count, since `-v` prints local debug lines before the
-    /// TCP connect even completes.
+    /// TCP connect even completes. The debug stream now lives in `debug_log`
+    /// (siphoned off the PTY), so no screen scrubbing is needed: the PTY only
+    /// ever carries the post-auth shell (banner + prompt).
     fn maybe_detect_connected(&mut self) {
         if self.connected {
             return;
         }
-        let text = full_screen_text(self.parser.screen()).to_ascii_lowercase();
+        let text = self.debug_log.to_ascii_lowercase();
         if CONNECTED_NEEDLES.iter().any(|n| text.contains(n)) {
-            if !self.connected {
-                self.connected = true;
-                // Drop the verbose `-v` handshake from scrollback so the live
-                // shell starts on a clean screen.
-                self.parser.clear_buffer();
-            }
+            self.connected = true;
         }
+    }
+
+    /// The accumulated ssh `-v` debug output (host-key search, kex, auth).
+    pub fn debug_log(&self) -> &str {
+        &self.debug_log
+    }
+
+    /// Whether the connect screen should show the full debug log.
+    pub fn debug_expanded(&self) -> bool {
+        self.debug_expanded
+    }
+
+    /// Flip between the spinner+tail view and the full debug log.
+    pub fn toggle_debug_expanded(&mut self) {
+        self.debug_expanded = !self.debug_expanded;
     }
 
     /// If the live screen ends with a prompt that matches our stored secret
@@ -407,22 +451,9 @@ const HOST_VERIFY_NEEDLES: &[&str] = &[
 /// case only.
 const CONNECTED_NEEDLES: &[&str] = &["authenticated to ", "authenticated ("];
 
-/// Whole visible screen flattened to one lowercase-friendly string.
-fn full_screen_text(screen: &vt100::Screen) -> String {
-    let (rows, cols) = screen.size();
-    let mut out = String::new();
-    for row in 0..rows {
-        for col in 0..cols {
-            if let Some(cell) = screen.cell(row, col) {
-                if cell.has_contents() {
-                    out.push_str(&cell.contents());
-                }
-            }
-        }
-        out.push('\n');
-    }
-    out
-}
+/// Cap on the retained ssh `-v` debug buffer (bytes). Old output past this is
+/// dropped from the front so a long session can't grow it without bound.
+const DEBUG_LOG_CAP: usize = 64 * 1024;
 
 /// Substring match across the screen tail. Tolerant to position so prompts
 /// like "deploy@host's password:" or a prompt followed by a trailing space
@@ -505,6 +536,54 @@ fn current_screen_tail(screen: &vt100::Screen) -> String {
 #[cfg(test)]
 mod prompt_tests {
     use super::*;
+
+    #[test]
+    fn stderr_is_siphoned_off_the_pty() {
+        // stdout must land on the PTY grid; stderr must be routed through the
+        // side FIFO into debug_log — never onto the grid.
+        let config = SessionConfig {
+            argv: vec![
+                "sh".into(),
+                "-c".into(),
+                "printf OUT_MARKER; printf ERR_MARKER 1>&2".into(),
+            ],
+            display_name: "t".into(),
+            meta: SessionMeta::default(),
+            pending_secret: None,
+        };
+        let mut s = Session::spawn(config, 24, 80).unwrap();
+
+        // Pump the reader threads; both writes are tiny and immediate.
+        let mut got_err = false;
+        for _ in 0..200 {
+            s.drain();
+            got_err = s.debug_log().contains("ERR_MARKER");
+            let got_out = s.screen_tail_snippet().contains("OUT_MARKER");
+            if got_err && got_out {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        assert!(
+            got_err,
+            "stderr should be captured in debug_log, got {:?}",
+            s.debug_log()
+        );
+        assert!(
+            s.screen_tail_snippet().contains("OUT_MARKER"),
+            "stdout should be on the PTY grid, tail: {:?}",
+            s.screen_tail_snippet()
+        );
+        assert!(
+            !s.debug_log().contains("OUT_MARKER"),
+            "stdout must not leak into the debug log"
+        );
+        assert!(
+            !s.screen_tail_snippet().contains("ERR_MARKER"),
+            "stderr must not appear on the PTY grid"
+        );
+    }
 
     #[test]
     fn detects_password_prompt() {

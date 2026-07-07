@@ -18,6 +18,19 @@ impl App {
             self.detach_to_dashboard();
             return Ok(());
         }
+        // While connecting, toggle the debug (`-v`) log view. Only meaningful
+        // before the shell reveals, so ignore it once the session is running.
+        if self.is_action(KeyAction::SessionToggleLog, &key)
+            && matches!(
+                self.active_session().map(|s| &s.phase),
+                Some(crate::session::SessionPhase::Connecting { .. })
+            )
+        {
+            if let Some(s) = self.active_session_mut() {
+                s.toggle_debug_expanded();
+            }
+            return Ok(());
+        }
         if self.is_action(KeyAction::SessionTabPrev, &key) {
             self.switch_session(-1);
             return Ok(());
