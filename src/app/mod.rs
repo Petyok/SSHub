@@ -282,8 +282,20 @@ impl App {
     /// Refresh the auth events cache if more than 10 seconds have elapsed.
     pub fn refresh_auth_cache(&mut self) {
         if self.auth_cache_updated.elapsed() > std::time::Duration::from_secs(10) {
-            self.auth_events_cache = self.store.list_auth_events(20).unwrap_or_default();
+            // Respect the audit tab's current filter/range so the periodic
+            // refresh doesn't silently wipe the user's filtered view (it used
+            // to clobber it with 20 unfiltered rows every 10s).
+            let status = self.audit_filter.sql_status();
+            let since = self.audit_range.since_timestamp();
+            self.auth_events_cache = self
+                .store
+                .list_auth_events_filtered(status, since, 500)
+                .unwrap_or_default();
             self.auth_stats_cache = self.store.auth_event_stats(7).unwrap_or((0, 0));
+            // Keep the selection within the refreshed list.
+            if self.audit_selected >= self.auth_events_cache.len() {
+                self.audit_selected = self.auth_events_cache.len().saturating_sub(1);
+            }
             self.auth_cache_updated = std::time::Instant::now();
         }
     }
@@ -305,7 +317,14 @@ impl App {
                 Some((h.name().to_string(), addr))
             })
             .collect();
-        if !hosts.is_empty() {
+        if hosts.is_empty() {
+            // No hosts to ping — drop any existing worker. Dropping its Receiver
+            // makes the old thread exit on its next send instead of leaving it
+            // pinging deleted addresses forever.
+            self.ping_rx = None;
+        } else {
+            // Replacing ping_rx drops the previous Receiver, so any prior worker
+            // also winds down on its next send.
             self.ping_rx = Some(crate::ping::spawn_ping_worker(
                 hosts.clone(),
                 std::time::Duration::from_secs(30),
