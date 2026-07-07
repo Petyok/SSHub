@@ -165,8 +165,31 @@ fn render_body(frame: &mut Frame, area: Rect, session: &Session) {
         render_connecting(frame, area, session, started_at.elapsed());
         return;
     }
+    // Exited before ever reaching a shell (e.g. unreachable host, auth refused):
+    // the PTY grid is blank, so show the `-v` log instead — it carries the real
+    // failure reason ("Connection timed out", "Permission denied", …).
+    if matches!(session.phase, SessionPhase::Exited { .. })
+        && !session.is_connected()
+        && !session.debug_log().is_empty()
+    {
+        render_full_debug_log(frame, area, session);
+        return;
+    }
     let term = PseudoTerminal::new(session.parser.screen());
     frame.render_widget(term, area);
+}
+
+/// Render the whole captured `-v` debug log, bottom-anchored and dimmed.
+fn render_full_debug_log(frame: &mut Frame, area: Rect, session: &Session) {
+    let dim = Style::default().fg(theme::DIM);
+    let lines: Vec<Line> = session
+        .debug_log()
+        .lines()
+        .map(|l| Line::from(Span::styled(l.to_string(), dim)))
+        .collect();
+    let total = lines.len() as u16;
+    let scroll = total.saturating_sub(area.height);
+    frame.render_widget(Paragraph::new(lines).scroll((scroll, 0)), area);
 }
 
 /// Braille spinner frames, advanced by wall-clock so it animates while idle.
@@ -186,14 +209,7 @@ fn render_connecting(
 
     // Expanded: hand the whole body to the raw debug log, bottom-anchored.
     if session.debug_expanded() {
-        let lines: Vec<Line> = session
-            .debug_log()
-            .lines()
-            .map(|l| Line::from(Span::styled(l.to_string(), dim)))
-            .collect();
-        let total = lines.len() as u16;
-        let scroll = total.saturating_sub(area.height);
-        frame.render_widget(Paragraph::new(lines).scroll((scroll, 0)), area);
+        render_full_debug_log(frame, area, session);
         return;
     }
 

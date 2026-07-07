@@ -125,6 +125,12 @@ pub struct Session {
     /// Whether the connect screen shows the full debug log instead of the
     /// spinner + tail. Toggled by the user.
     debug_expanded: bool,
+    /// True once any bytes have landed on the PTY (stdout/tty) — i.e. there is
+    /// real shell/prompt content to show. Gates the connect-timeout fail-open:
+    /// with `-v` debug now off the PTY, revealing a blank grid for a host that
+    /// never answered is useless, so we keep the spinner until either real PTY
+    /// content arrives or the child exits.
+    saw_pty_bytes: bool,
 }
 
 impl Session {
@@ -182,6 +188,7 @@ impl Session {
             connected: false,
             debug_log: String::new(),
             debug_expanded: false,
+            saw_pty_bytes: false,
             config,
         })
     }
@@ -203,6 +210,7 @@ impl Session {
                 PtyEvent::Bytes(bytes) => {
                     self.parser.process(&bytes);
                     had_bytes = true;
+                    self.saw_pty_bytes = true;
                 }
                 PtyEvent::Stderr(bytes) => {
                     // ssh's `-v` handshake — kept off the PTY grid, accumulated
@@ -241,11 +249,15 @@ impl Session {
         self.reveal_on_timeout();
     }
 
-    /// Reveal the live terminal once the connect timeout elapses, regardless of
-    /// whether any bytes arrived.
+    /// Reveal the live terminal once the connect timeout elapses — but only if
+    /// real PTY content has arrived (a prompt/banner/host-key question we might
+    /// have failed to auto-answer). With `-v` debug now siphoned off the PTY, a
+    /// host that never answered has a blank grid, so failing open there would
+    /// just hide the spinner + debug tail behind emptiness. Those sessions stay
+    /// on the spinner until the child exits.
     fn reveal_on_timeout(&mut self) {
         if let SessionPhase::Connecting { started_at } = self.phase {
-            if started_at.elapsed() >= REVEAL_TIMEOUT {
+            if started_at.elapsed() >= REVEAL_TIMEOUT && self.saw_pty_bytes {
                 self.diagnostics
                     .push("auth: connect timed out — showing live terminal".into());
                 self.phase = SessionPhase::Running {
@@ -582,6 +594,42 @@ mod prompt_tests {
         assert!(
             !s.screen_tail_snippet().contains("ERR_MARKER"),
             "stderr must not appear on the PTY grid"
+        );
+    }
+
+    #[test]
+    fn failed_connect_surfaces_reason_in_debug_log() {
+        // Mimic an unreachable host: ssh writes the error to stderr and exits
+        // with nothing on stdout. The reason must end up in debug_log (so the
+        // render layer can show it) and the session must never latch connected.
+        let config = SessionConfig {
+            argv: vec![
+                "sh".into(),
+                "-c".into(),
+                "printf 'connect to host x port 22: Connection timed out' 1>&2; exit 1".into(),
+            ],
+            display_name: "x".into(),
+            meta: SessionMeta::default(),
+            pending_secret: None,
+        };
+        let mut s = Session::spawn(config, 24, 80).unwrap();
+        // The child's exit and its stderr bytes race between the two reader
+        // threads; the main loop keeps draining regardless, so wait for both.
+        let mut exited = false;
+        for _ in 0..200 {
+            s.drain();
+            exited = matches!(s.phase, SessionPhase::Exited { .. });
+            if exited && s.debug_log().to_ascii_lowercase().contains("timed out") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(exited, "child should have exited");
+        assert!(!s.is_connected(), "must not latch connected on failure");
+        assert!(
+            s.debug_log().to_ascii_lowercase().contains("connection timed out"),
+            "failure reason should be in debug_log, got {:?}",
+            s.debug_log()
         );
     }
 
