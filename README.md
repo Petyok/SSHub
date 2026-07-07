@@ -50,12 +50,13 @@ falls back to prompting.
 ```bash
 git clone https://github.com/Petyok/SSHub.git
 cd SSHub
-cargo build --release
+just install    # builds release binary + desktop entry + ~/.local/bin/sshub
 ```
 
-The binary is at `target/release/sshub`. Copy it somewhere in your `PATH`:
+Or build only:
 
 ```bash
+just build
 cp target/release/sshub ~/.local/bin/
 ```
 
@@ -172,10 +173,8 @@ launcher = "kitty"
 ## Development
 
 ```bash
-cargo build            # debug build
-cargo test             # unit tests
+just build             # release binary
 just test              # all tests (unit + smoke + e2e + config)
-cargo clippy           # lint
 cargo run -- --dry-run # quick sanity check
 ```
 
