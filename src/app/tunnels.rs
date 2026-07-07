@@ -379,6 +379,12 @@ impl App {
                 if let Some(existing) = self.tunnels.iter().find(|t| t.id == id) {
                     new.auto_connect = existing.auto_connect;
                 }
+                // Editing recreates the row under a fresh id, so a still-running
+                // child would be orphaned (holding its local port, invisible to
+                // the UI). Stop it first, mirroring the delete path.
+                if self.tunnel_manager.is_running(id) {
+                    self.tunnel_manager.stop(id)?;
+                }
                 self.store.delete_tunnel(id)?;
                 self.store.create_tunnel(&new)?;
                 self.tunnel_notice = Some(format!("Updated tunnel :{local_port}"));
