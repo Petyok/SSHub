@@ -87,13 +87,15 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
                 section,
                 collapsed,
                 selected,
+                depth,
             } => {
                 let section = &app.group_sections[section];
                 let arrow = if collapsed { "\u{25b8}" } else { "\u{25be}" }; // ▸ / ▾
                 let host_count = section.host_indices.len();
                 let count_suffix = format!("({})", host_count);
                 let label = &section.label;
-                let mut col = cx;
+                // Indent nested groups by two columns per level.
+                let mut col = cx + (depth as u16) * 2;
 
                 if selected {
                     let blank = " ".repeat(cw);
@@ -140,6 +142,7 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
             VisualRow::Host {
                 host_idx,
                 selected: is_selected,
+                depth,
             } => {
                 let entry = &app.hosts[host_idx];
 
@@ -149,7 +152,9 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
                     buf.set_string(cx, y, &blank, theme::selected());
                 }
 
-                let mut col = cx + 1; // indent host rows by 1
+                // Indent hosts under their group; two cols per nesting level
+                // (min one col so a flat ssh_config list still indents slightly).
+                let mut col = cx + ((depth as u16) * 2).max(1);
 
                 // Status dot — reflects ping latency.
                 let host_name_for_dot = entry.name();

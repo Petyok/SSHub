@@ -42,8 +42,11 @@ pub struct HostGroupSection {
     pub group: Option<HostGroup>,
     pub label: String,
     pub host_indices: Vec<usize>,
-    /// Whether this section is collapsed (host rows hidden).
+    /// Whether this section is collapsed (its hosts and descendant sections
+    /// are hidden).
     pub collapsed: bool,
+    /// Nesting depth: 0 = top-level group (and the ungrouped bucket).
+    pub depth: usize,
 }
 
 impl HostGroupSection {
@@ -73,10 +76,14 @@ pub enum VisualRow {
         section: usize,
         collapsed: bool,
         selected: bool,
+        /// Nesting depth for indentation (0 = top level).
+        depth: usize,
     },
     Host {
         host_idx: usize,
         selected: bool,
+        /// Indentation depth = the owning section's depth + 1.
+        depth: usize,
     },
 }
 
@@ -565,6 +572,8 @@ pub struct GroupFormEdit {
     pub cursor: usize,
     /// Default identity new hosts in this group inherit. Cycled with ←/→.
     pub default_identity_id: Option<i64>,
+    /// Parent group for nesting (`None` = top level). Cycled with ↑/↓.
+    pub parent_id: Option<i64>,
     /// Return to GroupManage after save/cancel (vs Normal when opened from Ctrl+G shortcut).
     pub return_to_manage: bool,
 }

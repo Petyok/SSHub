@@ -284,19 +284,12 @@ pub(crate) fn build_group_sections(
 ) -> Vec<HostGroupSection> {
     let mut sections = Vec::new();
 
-    for group in groups {
-        let host_indices: Vec<usize> = filtered
-            .iter()
-            .copied()
-            .filter(|&idx| hosts[idx].group_id() == Some(group.id))
-            .collect();
-        sections.push(HostGroupSection {
-            group: Some(group.clone()),
-            label: group.name.clone(),
-            host_indices,
-            collapsed: false,
-        });
-    }
+    // Walk the group forest depth-first: each group is followed by its
+    // children (in list order), so `sections` reads top-to-bottom exactly as it
+    // renders. `depth` drives indentation and subtree collapse. A `visiting`
+    // guard defends against a malformed parent cycle in the data.
+    let mut visiting = std::collections::HashSet::new();
+    build_group_subtree(hosts, groups, filtered, None, 0, &mut visiting, &mut sections);
 
     let ungrouped: Vec<usize> = filtered
         .iter()
@@ -309,10 +302,68 @@ pub(crate) fn build_group_sections(
             label: UNGROUPED_LABEL.to_string(),
             host_indices: ungrouped,
             collapsed: false,
+            depth: 0,
         });
     }
 
     sections
+}
+
+/// For each section (in DFS order), whether its subtree — the section itself
+/// plus its contiguous descendants (depth strictly greater, until depth returns
+/// to `<=`) — contains any hosts. Used to keep empty ancestors of a matching
+/// nested group while filtering.
+pub(crate) fn subtree_has_hosts(sections: &[HostGroupSection]) -> Vec<bool> {
+    let n = sections.len();
+    let mut out = vec![false; n];
+    for i in 0..n {
+        if !sections[i].host_indices.is_empty() {
+            out[i] = true;
+            continue;
+        }
+        let depth = sections[i].depth;
+        let mut j = i + 1;
+        while j < n && sections[j].depth > depth {
+            if !sections[j].host_indices.is_empty() {
+                out[i] = true;
+                break;
+            }
+            j += 1;
+        }
+    }
+    out
+}
+
+/// Append the sections for every group whose parent is `parent_id`, then recurse
+/// into their children. `groups` is already ordered by (sort_order, name).
+fn build_group_subtree(
+    hosts: &[HostEntry],
+    groups: &[HostGroup],
+    filtered: &[usize],
+    parent_id: Option<i64>,
+    depth: usize,
+    visiting: &mut std::collections::HashSet<i64>,
+    out: &mut Vec<HostGroupSection>,
+) {
+    for group in groups.iter().filter(|g| g.parent_id == parent_id) {
+        if !visiting.insert(group.id) {
+            continue; // cycle guard: already on the current path
+        }
+        let host_indices: Vec<usize> = filtered
+            .iter()
+            .copied()
+            .filter(|&idx| hosts[idx].group_id() == Some(group.id))
+            .collect();
+        out.push(HostGroupSection {
+            group: Some(group.clone()),
+            label: group.name.clone(),
+            host_indices,
+            collapsed: false,
+            depth,
+        });
+        build_group_subtree(hosts, groups, filtered, Some(group.id), depth + 1, visiting, out);
+        visiting.remove(&group.id);
+    }
 }
 
 /// Parse a keybinding spec like `"Ctrl+S"`, `"F2"`, `"Alt+Enter"` into a

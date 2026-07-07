@@ -169,6 +169,7 @@ impl App {
                         name: name.clone(),
                         sort_order: self.groups.len() as i32,
                         default_identity_id: None,
+                        parent_id: None,
                     })?
                     .id
             }

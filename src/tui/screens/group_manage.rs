@@ -28,8 +28,11 @@ pub fn render_group_list(app: &App) -> List<'static> {
             let selected = idx == app.group_manage_selected;
             let marker = if selected { "▶ " } else { "  " };
             let count = host_counts[idx];
+            // Indent by nesting depth so subgroups read as a hierarchy.
+            let depth = group_depth(app, group.id);
+            let indent = "  ".repeat(depth);
             let label = format!(
-                "{marker}{} ({count} host{})",
+                "{marker}{indent}{} ({count} host{})",
                 group.name,
                 if count == 1 { "" } else { "s" }
             );
@@ -42,4 +45,24 @@ pub fn render_group_list(app: &App) -> List<'static> {
         })
         .collect();
     List::new(items).block(Block::default().borders(Borders::ALL).title("Groups"))
+}
+
+/// Nesting depth of a group = number of ancestors (0 for top-level). Bounded by
+/// the group count so a stray parent cycle can't loop forever.
+fn group_depth(app: &App, mut id: i64) -> usize {
+    let mut depth = 0;
+    let max = app.groups.len();
+    while let Some(parent) = app
+        .groups
+        .iter()
+        .find(|g| g.id == id)
+        .and_then(|g| g.parent_id)
+    {
+        depth += 1;
+        id = parent;
+        if depth > max {
+            break;
+        }
+    }
+    depth
 }

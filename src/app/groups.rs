@@ -85,6 +85,7 @@ impl App {
                 name: group.name.clone(),
                 cursor: text_input::char_len(&group.name),
                 default_identity_id: group.default_identity_id,
+                parent_id: group.parent_id,
                 return_to_manage,
             }
         } else {
@@ -93,6 +94,7 @@ impl App {
                 name: String::new(),
                 cursor: 0,
                 default_identity_id: None,
+                parent_id: None,
                 return_to_manage,
             }
         };
@@ -246,6 +248,7 @@ impl App {
                     name: Some(name.to_string()),
                     sort_order: None,
                     default_identity_id: Some(form.default_identity_id),
+                    parent_id: Some(form.parent_id),
                 },
             )?;
         } else {
@@ -254,6 +257,7 @@ impl App {
                 name: name.to_string(),
                 sort_order,
                 default_identity_id: form.default_identity_id,
+                parent_id: form.parent_id,
             })?;
         }
 
@@ -278,6 +282,8 @@ impl App {
             _ if self.is_save_key(&key) => self.save_group_form()?,
             KeyCode::Left => self.group_form_cycle_identity(-1),
             KeyCode::Right => self.group_form_cycle_identity(1),
+            KeyCode::Up => self.group_form_cycle_parent(-1),
+            KeyCode::Down => self.group_form_cycle_parent(1),
             KeyCode::Backspace if key.modifiers.is_empty() => self.group_form_backspace(),
             KeyCode::Char(c)
                 if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
@@ -310,6 +316,61 @@ impl App {
             None
         } else {
             Some(ids[(next - 1) as usize])
+        };
+    }
+
+    /// Groups that may serve as `group_id`'s parent: every group except itself
+    /// and its own descendants (which would form a cycle), in list order.
+    pub(crate) fn eligible_parents(&self, group_id: Option<i64>) -> Vec<i64> {
+        let banned = match group_id {
+            Some(id) => {
+                let mut set = self.group_descendants(id);
+                set.insert(id);
+                set
+            }
+            None => std::collections::HashSet::new(),
+        };
+        self.groups
+            .iter()
+            .filter(|g| !banned.contains(&g.id))
+            .map(|g| g.id)
+            .collect()
+    }
+
+    /// All transitive descendants of `group_id` (children, grandchildren, …).
+    pub(crate) fn group_descendants(&self, group_id: i64) -> std::collections::HashSet<i64> {
+        let mut out = std::collections::HashSet::new();
+        let mut stack = vec![group_id];
+        while let Some(cur) = stack.pop() {
+            for g in self.groups.iter().filter(|g| g.parent_id == Some(cur)) {
+                if out.insert(g.id) {
+                    stack.push(g.id);
+                }
+            }
+        }
+        out
+    }
+
+    /// Cycle the group's parent through `[none, <eligible groups>]`.
+    pub(crate) fn group_form_cycle_parent(&mut self, delta: i32) {
+        let self_id = self.group_form.as_ref().and_then(|f| f.id);
+        let options = self.eligible_parents(self_id);
+        let len = options.len() as i32 + 1; // +1 for the "none" slot
+        let Some(form) = self.group_form.as_mut() else {
+            return;
+        };
+        let cur = match form.parent_id {
+            None => 0,
+            Some(id) => options
+                .iter()
+                .position(|&x| x == id)
+                .map_or(0, |p| p as i32 + 1),
+        };
+        let next = (cur + delta).rem_euclid(len);
+        form.parent_id = if next == 0 {
+            None
+        } else {
+            Some(options[(next - 1) as usize])
         };
     }
 

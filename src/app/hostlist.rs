@@ -79,33 +79,38 @@ impl App {
     /// headers and host rows, with per-row selection state. Single source of
     /// truth shared by rendering, scroll math and click mapping.
     pub fn host_visual_rows(&self) -> Vec<VisualRow> {
+        // Driven by `nav_rows` (the single source of truth for what's visible
+        // and navigable), so hidden subtrees never leak host rows. Blank
+        // separators go before each top-level header (except the first row);
+        // nested headers sit flush under their parent. `depth` drives indent.
         let mut rows = Vec::new();
-        let mut nav_idx = 0usize;
-        for (si, section) in self.group_sections.iter().enumerate() {
-            if si > 0 {
-                rows.push(VisualRow::Blank);
-            }
-            let has_header = self
-                .nav_rows
-                .iter()
-                .any(|r| matches!(r, NavRow::Header(s) if *s == si));
-            if has_header {
-                rows.push(VisualRow::Header {
-                    section: si,
-                    collapsed: section.collapsed,
-                    selected: self.selected == nav_idx,
-                });
-                nav_idx += 1;
-            }
-            if !section.collapsed {
-                for &host_idx in &section.host_indices {
+        let mut cur_host_depth = 1usize;
+        let mut first = true;
+        for (nav_idx, row) in self.nav_rows.iter().enumerate() {
+            match *row {
+                NavRow::Header(si) => {
+                    let section = &self.group_sections[si];
+                    if !first && section.depth == 0 {
+                        rows.push(VisualRow::Blank);
+                    }
+                    rows.push(VisualRow::Header {
+                        section: si,
+                        collapsed: section.collapsed,
+                        selected: self.selected == nav_idx,
+                        depth: section.depth,
+                    });
+                    cur_host_depth = section.depth + 1;
+                }
+                NavRow::Host(host_idx) => {
                     rows.push(VisualRow::Host {
                         host_idx,
                         selected: self.selected == nav_idx,
+                        // Flat (no-group) lists have no headers → depth 0.
+                        depth: if self.groups.is_empty() { 0 } else { cur_host_depth },
                     });
-                    nav_idx += 1;
                 }
             }
+            first = false;
         }
         rows
     }
@@ -289,12 +294,14 @@ impl App {
         // moving past a grouped host visually "teleports" to the group at the
         // top of the list and back.
         self.group_sections = build_group_sections(&self.hosts, &self.groups, &filtered);
-        // While a filter is active, drop groups that have no matching hosts so
-        // the list only shows sections that actually contain results.
+        // While a filter is active, drop groups whose whole subtree has no
+        // matching hosts — but keep a parent that itself is empty when a
+        // descendant still matches, so nested results stay reachable.
         let filtering = !self.tag_filters.is_empty() || !self.search_query.is_empty();
         if filtering {
-            self.group_sections
-                .retain(|section| !section.host_indices.is_empty());
+            let keep = subtree_has_hosts(&self.group_sections);
+            let mut it = keep.into_iter();
+            self.group_sections.retain(|_| it.next().unwrap_or(false));
         }
         self.filtered_indices = self
             .group_sections
@@ -304,14 +311,28 @@ impl App {
 
         // Tree mode (navigable, collapsible headers) kicks in only once the
         // user has real groups — a pure ssh_config list stays a flat host list.
+        // Collapsing a group hides its hosts AND its whole descendant subtree;
+        // `hidden_below` tracks the depth of the nearest collapsed ancestor.
         let tree_mode = !self.groups.is_empty();
         let mut nav = Vec::new();
+        let mut hidden_below: Option<usize> = None;
         for (si, section) in self.group_sections.iter_mut().enumerate() {
+            let depth = section.depth;
+            if let Some(cd) = hidden_below {
+                if depth <= cd {
+                    hidden_below = None; // left the collapsed subtree
+                }
+            }
             section.collapsed = tree_mode && self.collapsed_groups.contains(&section.key());
+            if hidden_below.is_some() {
+                continue; // an ancestor is collapsed: skip header and hosts
+            }
             if tree_mode {
                 nav.push(NavRow::Header(si));
             }
-            if !section.collapsed {
+            if section.collapsed {
+                hidden_below = Some(depth);
+            } else {
                 nav.extend(section.host_indices.iter().map(|&h| NavRow::Host(h)));
             }
         }
@@ -345,13 +366,18 @@ impl App {
             self.search_query.clear();
             self.rebuild_filter();
         }
-        // Expand the host's group so its row is navigable.
-        let key = self
-            .hosts
-            .get(idx)
-            .and_then(|h| h.group_id())
-            .unwrap_or(UNGROUPED_KEY);
-        if self.collapsed_groups.remove(&key) {
+        // Expand the host's group AND every ancestor group so its row is
+        // navigable (a collapsed ancestor hides the whole subtree).
+        let mut changed = false;
+        let mut group = self.hosts.get(idx).and_then(|h| h.group_id());
+        if group.is_none() {
+            changed |= self.collapsed_groups.remove(&UNGROUPED_KEY);
+        }
+        while let Some(gid) = group {
+            changed |= self.collapsed_groups.remove(&gid);
+            group = self.groups.iter().find(|g| g.id == gid).and_then(|g| g.parent_id);
+        }
+        if changed {
             self.persist_collapsed_groups();
             self.rebuild_filter();
         }

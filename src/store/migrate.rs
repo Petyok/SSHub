@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: i64 = 9;
+const SCHEMA_VERSION: i64 = 10;
 
 const V2_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS host_groups (
     id           INTEGER PRIMARY KEY,
     name         TEXT NOT NULL UNIQUE,
     sort_order   INTEGER NOT NULL DEFAULT 0,
+    parent_id    INTEGER REFERENCES host_groups(id) ON DELETE SET NULL,
     created_at   INTEGER NOT NULL
 );
 
@@ -104,6 +105,10 @@ pub(crate) fn run_migrations(conn: &Connection, launcher_path: &Path) -> Result<
 
     if current < 9 {
         migrate_v8_to_v9(conn)?;
+    }
+
+    if current < 10 {
+        migrate_v9_to_v10(conn)?;
     }
 
     // Runs last so all columns it writes to (e.g. environment) already exist.
@@ -334,6 +339,23 @@ fn migrate_v8_to_v9(conn: &Connection) -> Result<()> {
             "ALTER TABLE host_groups
                 ADD COLUMN default_identity_id INTEGER
                 REFERENCES identities(id) ON DELETE SET NULL;",
+        )?;
+    }
+    Ok(())
+}
+
+fn migrate_v9_to_v10(conn: &Connection) -> Result<()> {
+    // Groups can nest: a group may name a parent group. Deleting a parent
+    // promotes its children to the top level (ON DELETE SET NULL).
+    let has_col: bool = conn
+        .prepare("SELECT COUNT(*) FROM pragma_table_info('host_groups') WHERE name = 'parent_id'")?
+        .query_row([], |row| row.get::<_, i64>(0))
+        .map(|c| c > 0)?;
+    if !has_col {
+        conn.execute_batch(
+            "ALTER TABLE host_groups
+                ADD COLUMN parent_id INTEGER
+                REFERENCES host_groups(id) ON DELETE SET NULL;",
         )?;
     }
     Ok(())

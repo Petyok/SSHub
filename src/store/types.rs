@@ -7,6 +7,8 @@ pub struct HostGroup {
     pub sort_order: i32,
     /// Identity new hosts in this group inherit by default. `None` = no default.
     pub default_identity_id: Option<i64>,
+    /// Parent group for nesting. `None` = top-level group.
+    pub parent_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,6 +149,7 @@ pub struct NewHostGroup {
     pub name: String,
     pub sort_order: i32,
     pub default_identity_id: Option<i64>,
+    pub parent_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -155,6 +158,8 @@ pub struct HostGroupUpdate {
     pub sort_order: Option<i32>,
     /// Outer `Some` = change the default identity; inner `None` = clear it.
     pub default_identity_id: Option<Option<i64>>,
+    /// Outer `Some` = change the parent; inner `None` = move to top level.
+    pub parent_id: Option<Option<i64>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

@@ -15,15 +15,22 @@ impl LauncherStore {
         let now = now_ts();
         self.with_conn(|conn| {
             conn.execute(
-                "INSERT INTO host_groups (name, sort_order, default_identity_id, created_at)
-                 VALUES (?1, ?2, ?3, ?4)",
-                params![group.name, group.sort_order, group.default_identity_id, now],
+                "INSERT INTO host_groups (name, sort_order, default_identity_id, parent_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    group.name,
+                    group.sort_order,
+                    group.default_identity_id,
+                    group.parent_id,
+                    now
+                ],
             )?;
             Ok(HostGroup {
                 id: conn.last_insert_rowid(),
                 name: group.name.clone(),
                 sort_order: group.sort_order,
                 default_identity_id: group.default_identity_id,
+                parent_id: group.parent_id,
             })
         })
     }
@@ -31,7 +38,7 @@ impl LauncherStore {
     pub fn get_group(&self, id: i64) -> Result<Option<HostGroup>> {
         self.with_conn(|conn| {
             conn.prepare(
-                "SELECT id, name, sort_order, default_identity_id FROM host_groups WHERE id = ?1",
+                "SELECT id, name, sort_order, default_identity_id, parent_id FROM host_groups WHERE id = ?1",
             )?
             .query_row(params![id], row_to_group)
             .optional()
@@ -42,7 +49,7 @@ impl LauncherStore {
     pub fn list_groups(&self) -> Result<Vec<HostGroup>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, name, sort_order, default_identity_id
+                "SELECT id, name, sort_order, default_identity_id, parent_id
                  FROM host_groups ORDER BY sort_order, name",
             )?;
             let rows = stmt.query_map([], row_to_group)?;
@@ -61,12 +68,14 @@ impl LauncherStore {
         let default_identity_id = update
             .default_identity_id
             .unwrap_or(current.default_identity_id);
+        let parent_id = update.parent_id.unwrap_or(current.parent_id);
 
         self.with_conn(|conn| {
             conn.execute(
                 "UPDATE host_groups
-                 SET name = ?1, sort_order = ?2, default_identity_id = ?3 WHERE id = ?4",
-                params![name, sort_order, default_identity_id, id],
+                 SET name = ?1, sort_order = ?2, default_identity_id = ?3, parent_id = ?4
+                 WHERE id = ?5",
+                params![name, sort_order, default_identity_id, parent_id, id],
             )?;
             Ok(())
         })?;
@@ -615,6 +624,7 @@ fn row_to_group(row: &rusqlite::Row<'_>) -> rusqlite::Result<HostGroup> {
         name: row.get(1)?,
         sort_order: row.get(2)?,
         default_identity_id: row.get(3)?,
+        parent_id: row.get(4)?,
     })
 }
 
@@ -636,10 +646,11 @@ fn row_to_managed_host(row: &rusqlite::Row<'_>) -> rusqlite::Result<ManagedHost>
             id: row.get(22)?,
             name: row.get(23)?,
             sort_order: row.get(24)?,
-            // The host-list JOIN doesn't select the group's default identity;
-            // it's only needed when adding a new host, which reads the group
-            // via get_group/list_groups. Leave unset here.
+            // The host-list JOIN doesn't select the group's default identity or
+            // parent; those are only needed when adding a new host or building
+            // the group tree, read via get_group/list_groups. Leave unset here.
             default_identity_id: None,
+            parent_id: None,
         }),
         None => None,
     };
@@ -802,6 +813,7 @@ mod tests {
                 name: "prod".into(),
                 sort_order: 0,
                 default_identity_id: Some(identity_id),
+                parent_id: None,
             })
             .unwrap();
         assert_eq!(group.default_identity_id, Some(identity_id));

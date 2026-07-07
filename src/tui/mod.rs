@@ -402,8 +402,18 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
                         .find(|i| i.id == id)
                         .map(|i| i.name.clone())
                 });
+                let parent_name = form.parent_id.and_then(|id| {
+                    app.groups
+                        .iter()
+                        .find(|g| g.id == id)
+                        .map(|g| g.name.clone())
+                });
                 frame.render_widget(
-                    screens::group_form::render_group_form(form, identity_name.as_deref()),
+                    screens::group_form::render_group_form(
+                        form,
+                        identity_name.as_deref(),
+                        parent_name.as_deref(),
+                    ),
                     popup_area,
                 );
             }
@@ -786,6 +796,77 @@ mod tests {
         app.selected = 0;
         app.rebuild_filter();
         app
+    }
+
+    #[test]
+    fn nested_group_renders_indented() {
+        use crate::store::{NewHost, NewHostGroup};
+        let store = test_store();
+        let parent = store
+            .create_group(&NewHostGroup {
+                name: "prod".into(),
+                sort_order: 0,
+                ..Default::default()
+            })
+            .unwrap();
+        let child = store
+            .create_group(&NewHostGroup {
+                name: "europe".into(),
+                sort_order: 1,
+                parent_id: Some(parent.id),
+                ..Default::default()
+            })
+            .unwrap();
+        store
+            .create_host(&NewHost {
+                name: "p1".into(),
+                address: "10.0.0.1".into(),
+                port: 22,
+                group_id: Some(parent.id),
+                ..Default::default()
+            })
+            .unwrap();
+        store
+            .create_host(&NewHost {
+                name: "e1".into(),
+                address: "10.0.0.2".into(),
+                port: 22,
+                group_id: Some(child.id),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let mut app = App::new_with_deps(
+            AppConfig::default(),
+            AppDeps {
+                resolver: Box::new(EmptyResolver),
+                metadata: Arc::new(MetadataDb::default()),
+                store,
+                launcher: Box::new(NoopLauncher),
+                password_store: Box::new(crate::credentials::NoopPasswordStore),
+            },
+        );
+        app.reload_hosts().unwrap();
+
+        let buffer = render_to_buffer(&app, 120, 38);
+        // Both headers render; the child sits indented under the parent.
+        let indent = |needle: &str| -> Option<usize> {
+            for y in 0..buffer.area.height {
+                let line: String = (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect();
+                if let Some(pos) = line.find(needle) {
+                    return Some(pos);
+                }
+            }
+            None
+        };
+        let parent_col = indent("prod").expect("parent header rendered");
+        let child_col = indent("europe").expect("child header rendered");
+        assert!(
+            child_col > parent_col,
+            "child group should be indented deeper than its parent ({child_col} > {parent_col})"
+        );
     }
 
     #[test]

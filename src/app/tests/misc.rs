@@ -258,6 +258,77 @@ fn key_shift(code: KeyCode) -> KeyEvent {
 }
 
 #[test]
+pub(crate) fn nested_groups_build_tree_and_collapse_subtree() {
+    use crate::store::{NewHost, NewHostGroup};
+
+    let store = test_store();
+    let parent = store
+        .create_group(&NewHostGroup {
+            name: "prod".into(),
+            sort_order: 0,
+            ..Default::default()
+        })
+        .unwrap();
+    let child = store
+        .create_group(&NewHostGroup {
+            name: "eu".into(),
+            sort_order: 1,
+            parent_id: Some(parent.id),
+            ..Default::default()
+        })
+        .unwrap();
+    store
+        .create_host(&NewHost {
+            name: "p1".into(),
+            address: "10.0.0.1".into(),
+            port: 22,
+            group_id: Some(parent.id),
+            ..Default::default()
+        })
+        .unwrap();
+    store
+        .create_host(&NewHost {
+            name: "e1".into(),
+            address: "10.0.0.2".into(),
+            port: 22,
+            group_id: Some(child.id),
+            ..Default::default()
+        })
+        .unwrap();
+
+    let mut app = App::new_with_deps(
+        AppConfig::default(),
+        AppDeps {
+            resolver: Box::new(MockResolver::new(vec![])),
+            metadata: Arc::new(MetadataDb::default()),
+            store,
+            launcher: Box::new(RecordingLauncher::new().0),
+            password_store: Box::new(crate::credentials::NoopPasswordStore),
+        },
+    );
+    app.reload_hosts().unwrap();
+
+    // DFS order: parent header, its host, child header (depth 1), its host.
+    assert_eq!(app.group_sections[0].depth, 0);
+    assert_eq!(app.group_sections[1].depth, 1);
+    assert_eq!(app.nav_rows.len(), 4);
+    assert!(matches!(app.nav_rows[0], NavRow::Header(0)));
+    assert!(matches!(app.nav_rows[2], NavRow::Header(1)));
+
+    // Collapsing the parent hides the child header AND its host.
+    app.toggle_group_by_section(0);
+    assert_eq!(app.nav_rows.len(), 1, "only the parent header stays visible");
+    assert!(matches!(app.nav_rows[0], NavRow::Header(0)));
+
+    // A group can't parent itself or a descendant (would cycle).
+    let eligible = app.eligible_parents(Some(parent.id));
+    assert!(!eligible.contains(&parent.id));
+    assert!(!eligible.contains(&child.id));
+    // The child, however, may still be reparented under unrelated groups.
+    assert!(app.eligible_parents(Some(child.id)).contains(&parent.id));
+}
+
+#[test]
 pub(crate) fn shift_arrow_jumps_between_group_headers() {
     use crate::store::{NewHost, NewHostGroup};
 
