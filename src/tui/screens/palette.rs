@@ -23,10 +23,10 @@ pub fn render_palette(
     let area = frame.area();
 
     // ── popup geometry ──────────────────────────────────────
-    let popup_width = (area.width * 80 / 100).clamp(50, 96.min(area.width));
+    let popup_width = crate::tui::fit_popup(area.width * 80 / 100, 50, 96.min(area.width));
     // 1 border-top + 1 prompt + 1 separator + MAX_VISIBLE_ROWS + 1 separator
     // + 4 detail rows + 1 border-bottom = MAX_VISIBLE_ROWS + 9
-    let popup_height = ((MAX_VISIBLE_ROWS as u16) + 9).clamp(1, area.height);
+    let popup_height = crate::tui::fit_popup((MAX_VISIBLE_ROWS as u16) + 9, 1, area.height);
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);

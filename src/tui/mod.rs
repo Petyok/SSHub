@@ -14,6 +14,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::app::{App, AppMode};
 
+/// Panic-safe popup dimension: clamp `desired` into `[min, avail]`, but never
+/// let `min` exceed `avail` (which would make `u16::clamp` assert `min <= max`
+/// and crash the whole TUI on a terminal smaller than the popup's minimum).
+/// On a too-small terminal the popup just shrinks to the available space.
+pub fn fit_popup(desired: u16, min: u16, avail: u16) -> u16 {
+    desired.clamp(min.min(avail), avail)
+}
+
 /// Convert a Unix epoch timestamp to `"HH:MM:SS"` in the local timezone.
 ///
 /// Uses libc `localtime_r` (reentrant, no allocation) so we stay

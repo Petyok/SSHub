@@ -31,8 +31,8 @@ pub fn render_group_field_picker(frame: &mut Frame, app: &App) {
     );
 
     let area = frame.area();
-    let width = (area.width * 40 / 100).clamp(24, area.width.saturating_sub(2));
-    let height = ((items.len() as u16) + 2).clamp(4, area.height.saturating_sub(2));
+    let width = crate::tui::fit_popup(area.width * 40 / 100, 24, area.width.saturating_sub(2));
+    let height = crate::tui::fit_popup((items.len() as u16) + 2, 4, area.height.saturating_sub(2));
     let x = area.x + (area.width.saturating_sub(width)) / 2;
     let y = area.y + (area.height.saturating_sub(height)) / 2;
     let popup = Rect::new(x, y, width, height);
