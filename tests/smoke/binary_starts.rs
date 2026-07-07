@@ -7,6 +7,16 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 
 #[test]
+fn version_exits_zero() {
+    Command::cargo_bin("sshub")
+        .unwrap()
+        .arg("--version")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(env!("CARGO_PKG_VERSION")));
+}
+
+#[test]
 fn help_exits_zero() {
     Command::cargo_bin("sshub")
         .unwrap()

@@ -17,6 +17,11 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("sshub {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     // Subcommands must be handled before the TUI launch path.
     if args.first().map(String::as_str) == Some("db") {
         return run_db(&args[1..]);
@@ -82,6 +87,7 @@ USAGE:
 
 OPTIONS:
     -h, --help              Print help
+    -V, --version           Print version
         --dry-run           Exit immediately (smoke / CI)
         {CONFIRM_FLAG}   Confirm a destructive command (e.g. db purge)
 
