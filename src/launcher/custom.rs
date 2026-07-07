@@ -224,9 +224,13 @@ fn validate_shell_safe_host(host: &SshHost) -> Result<()> {
             host.remote_command.as_deref().unwrap_or(""),
         ),
     ] {
+        // Must reject every metacharacter `needs_shell` treats as
+        // shell-activating — including the redirection operators `<`/`>` —
+        // or a host field could smuggle a redirection/pipe into the `sh -c`
+        // command and get arbitrary file write / command execution.
         if value
             .chars()
-            .any(|c| matches!(c, ';' | '|' | '&' | '$' | '`' | '\n'))
+            .any(|c| matches!(c, ';' | '|' | '&' | '$' | '`' | '\n' | '<' | '>'))
         {
             bail!("{field} value contains shell metacharacters: {value:?}");
         }
