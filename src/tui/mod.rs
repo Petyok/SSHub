@@ -110,6 +110,13 @@ pub fn render(frame: &mut Frame, app: &App) {
             }
             render_form_popup(frame, app, FormKind::Group);
         }
+        AppMode::GroupFieldPicker => {
+            if app.group_form.as_ref().is_some_and(|f| f.return_to_manage) {
+                screens::group_manage::render_group_manage_popup(frame, app);
+            }
+            render_form_popup(frame, app, FormKind::Group);
+            screens::group_form::render_group_field_picker(frame, app);
+        }
         AppMode::GroupIdentityPicker => screens::group_identity_picker::render(frame, app),
         AppMode::TagFilter => screens::tag_filter::render(frame, app),
         AppMode::TunnelForm => screens::tunnels::render_tunnel_form(frame, app),

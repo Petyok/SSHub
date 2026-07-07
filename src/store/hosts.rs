@@ -47,14 +47,19 @@ impl LauncherStore {
     }
 
     pub fn list_groups(&self) -> Result<Vec<HostGroup>> {
-        self.with_conn(|conn| {
+        let flat: Vec<HostGroup> = self.with_conn(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT id, name, sort_order, default_identity_id, parent_id
                  FROM host_groups ORDER BY sort_order, name",
             )?;
             let rows = stmt.query_map([], row_to_group)?;
             rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
-        })
+        })?;
+        // Return in tree (depth-first) order: each parent is immediately
+        // followed by its children, siblings keeping their sort order. This
+        // makes flat consumers (the group-manage list + its selection index)
+        // line up with the nesting shown in the host tree.
+        Ok(tree_ordered_groups(flat))
     }
 
     pub fn update_group(&self, id: i64, update: &HostGroupUpdate) -> Result<Option<HostGroup>> {
@@ -618,6 +623,38 @@ fn load_host_by_id(conn: &rusqlite::Connection, id: i64) -> Result<Option<Manage
     .map_err(Into::into)
 }
 
+/// Reorder a flat, sort-ordered group list into depth-first tree order: every
+/// parent is immediately followed by its subtree. A `seen` guard both prevents
+/// a malformed parent cycle from looping and rescues any orphan (parent id that
+/// doesn't resolve) by appending it at the end.
+fn tree_ordered_groups(flat: Vec<HostGroup>) -> Vec<HostGroup> {
+    fn push_children(
+        parent: Option<i64>,
+        flat: &[HostGroup],
+        seen: &mut std::collections::HashSet<i64>,
+        out: &mut Vec<HostGroup>,
+    ) {
+        for g in flat.iter().filter(|g| g.parent_id == parent) {
+            if !seen.insert(g.id) {
+                continue;
+            }
+            out.push(g.clone());
+            push_children(Some(g.id), flat, seen, out);
+        }
+    }
+
+    let mut out = Vec::with_capacity(flat.len());
+    let mut seen = std::collections::HashSet::new();
+    push_children(None, &flat, &mut seen, &mut out);
+    // Any group not reached from a root (orphaned/cyclic parent) still shows up.
+    for g in &flat {
+        if seen.insert(g.id) {
+            out.push(g.clone());
+        }
+    }
+    out
+}
+
 fn row_to_group(row: &rusqlite::Row<'_>) -> rusqlite::Result<HostGroup> {
     Ok(HostGroup {
         id: row.get(0)?,
@@ -725,6 +762,48 @@ fn update_changes_connection_fields(update: &HostUpdate) -> bool {
 mod tests {
     use super::*;
     use crate::store::{HostSource, LauncherStore, NewHost, NewHostGroup};
+
+    #[test]
+    fn list_groups_returns_tree_order() {
+        let store = LauncherStore::open_in_memory().unwrap();
+        // Insert so that flat (sort_order) order interleaves a child between
+        // unrelated roots — the bug the tree ordering fixes.
+        let itmo_core = store
+            .create_group(&NewHostGroup {
+                name: "itmo-core".into(),
+                sort_order: 0,
+                ..Default::default()
+            })
+            .unwrap();
+        let itmo = store
+            .create_group(&NewHostGroup {
+                name: "itmo".into(),
+                sort_order: 1,
+                ..Default::default()
+            })
+            .unwrap();
+        let itmo_dev = store
+            .create_group(&NewHostGroup {
+                name: "itmo-dev".into(),
+                sort_order: 2,
+                parent_id: Some(itmo.id),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let names: Vec<String> = store
+            .list_groups()
+            .unwrap()
+            .into_iter()
+            .map(|g| g.name)
+            .collect();
+        // A child must immediately follow its parent, not sit under an
+        // unrelated root that merely precedes it in sort order.
+        let pos = |n: &str| names.iter().position(|x| x == n).unwrap();
+        assert!(pos("itmo") + 1 == pos("itmo-dev"), "child follows its parent: {names:?}");
+        assert!(pos("itmo-core") < pos("itmo"), "roots keep sort order");
+        let _ = (itmo_core, itmo_dev);
+    }
 
     #[test]
     fn auth_stats_count_launched_as_success() {

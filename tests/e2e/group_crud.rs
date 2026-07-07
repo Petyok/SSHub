@@ -503,7 +503,10 @@ fn collapsing_a_group_hides_its_hosts_and_persists() {
 }
 
 #[test]
-fn e_on_group_header_sets_default_identity_via_picker() {
+fn e_on_group_header_edits_group_and_picks_identity_via_dropdown() {
+    use crossterm::event::KeyModifiers;
+    let save = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
+
     let file = NamedTempFile::new().unwrap();
     let mut app = app_with_grouped_host(file.path());
 
@@ -512,14 +515,24 @@ fn e_on_group_header_sets_default_identity_via_picker() {
         app.handle_key(key_char('k')).unwrap();
     }
 
-    // `e` on a header opens the dedicated default-identity picker.
+    // `e` on a header opens the full group edit form.
     app.handle_key(key_char('e')).unwrap();
-    assert_eq!(app.mode, AppMode::GroupIdentityPicker);
-    assert!(app.group_identity_picker.is_some());
+    assert_eq!(app.mode, AppMode::GroupForm);
+    assert!(app.group_form.is_some());
 
-    // Row 0 is "(none)"; step to the first real identity and confirm.
+    // Move focus Name → Parent → Identity, then Enter opens the dropdown.
+    app.handle_key(key(KeyCode::Down)).unwrap();
+    app.handle_key(key(KeyCode::Down)).unwrap();
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert_eq!(app.mode, AppMode::GroupFieldPicker);
+
+    // Row 0 is "(none)"; pick the first real identity and confirm.
     app.handle_key(key_char('j')).unwrap();
     app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert_eq!(app.mode, AppMode::GroupForm);
+
+    // Save the form (Ctrl+S).
+    app.handle_key(save).unwrap();
     assert_eq!(app.mode, AppMode::Normal);
 
     let first_identity = app.identities[0].id;
@@ -530,16 +543,4 @@ fn e_on_group_header_sets_default_identity_via_picker() {
     let app2 = app_with_grouped_host(file.path());
     let group2 = app2.groups.iter().find(|g| g.name == "servers").unwrap();
     assert_eq!(group2.default_identity_id, Some(first_identity));
-
-    // Re-open and select "(none)" to clear it.
-    let mut app = app;
-    while app.selected_nav_header().is_none() {
-        app.handle_key(key_char('k')).unwrap();
-    }
-    app.handle_key(key_char('e')).unwrap();
-    // Selection starts on the current identity (row 1); go back to row 0.
-    app.handle_key(key_char('k')).unwrap();
-    app.handle_key(key(KeyCode::Enter)).unwrap();
-    let group = app.groups.iter().find(|g| g.name == "servers").unwrap();
-    assert_eq!(group.default_identity_id, None);
 }

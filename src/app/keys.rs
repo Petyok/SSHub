@@ -47,6 +47,7 @@ impl App {
             AppMode::IdentityForm => self.handle_key_identity_form(key),
             AppMode::GroupForm => self.handle_key_group_form(key),
             AppMode::GroupIdentityPicker => self.handle_key_group_identity_picker(key),
+            AppMode::GroupFieldPicker => self.handle_key_group_field_picker(key),
             AppMode::TunnelHostPicker => self.handle_key_tunnel_host_picker(key),
             AppMode::SessionHostPicker => self.handle_key_session_host_picker(key),
             AppMode::FieldPicker => self.handle_key_field_picker(key),
@@ -154,7 +155,8 @@ impl App {
             _ if self.is_action(KeyAction::ImportTermius, &key) => self.open_import_prompt(),
             _ if self.is_action(KeyAction::Edit, &key) => {
                 if self.selected_nav_header().is_some() {
-                    self.open_group_identity_picker()?;
+                    // Edit the selected group (name, parent, default identity).
+                    self.rename_selected_host_group()?;
                 } else {
                     self.edit_selected_host()?;
                 }

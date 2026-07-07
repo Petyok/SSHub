@@ -99,6 +99,8 @@ pub enum AppMode {
     GroupManage,
     /// Dedicated popup for choosing a group's default identity (`e` on a group).
     GroupIdentityPicker,
+    /// Dropdown over the group form's Parent / Identity field.
+    GroupFieldPicker,
     /// Searchable dropdown for choosing the tunnel form's SSH server.
     TunnelHostPicker,
     /// Searchable dropdown for opening a new embedded SSH session tab.
@@ -564,18 +566,45 @@ impl HostFormField {
     }
 }
 
+/// Focusable field in the group form. `↑/↓` (or Tab) move between them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupFormField {
+    Name,
+    Parent,
+    Identity,
+}
+
+impl GroupFormField {
+    pub const ALL: [GroupFormField; 3] = [
+        GroupFormField::Name,
+        GroupFormField::Parent,
+        GroupFormField::Identity,
+    ];
+}
+
 /// In-progress group form while in [`AppMode::GroupForm`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupFormEdit {
     pub id: Option<i64>,
     pub name: String,
     pub cursor: usize,
-    /// Default identity new hosts in this group inherit. Cycled with ←/→.
+    /// Default identity new hosts in this group inherit. Picked via a dropdown.
     pub default_identity_id: Option<i64>,
-    /// Parent group for nesting (`None` = top level). Cycled with ↑/↓.
+    /// Parent group for nesting (`None` = top level). Picked via a dropdown.
     pub parent_id: Option<i64>,
+    /// Which field is focused.
+    pub field: GroupFormField,
     /// Return to GroupManage after save/cancel (vs Normal when opened from Ctrl+G shortcut).
     pub return_to_manage: bool,
+}
+
+/// Dropdown list picker for a group-form field ([`AppMode::GroupFieldPicker`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupFieldPicker {
+    /// Which field this dropdown edits (`Parent` or `Identity`).
+    pub kind: GroupFormField,
+    /// Highlighted row: `0` = the "(none)"/"(top level)" slot, then options.
+    pub selected: usize,
 }
 
 /// Dedicated popup to pick a group's default identity ([`AppMode::GroupIdentityPicker`]).

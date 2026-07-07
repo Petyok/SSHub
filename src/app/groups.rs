@@ -86,6 +86,7 @@ impl App {
                 cursor: text_input::char_len(&group.name),
                 default_identity_id: group.default_identity_id,
                 parent_id: group.parent_id,
+                field: GroupFormField::Name,
                 return_to_manage,
             }
         } else {
@@ -95,6 +96,7 @@ impl App {
                 cursor: 0,
                 default_identity_id: None,
                 parent_id: None,
+                field: GroupFormField::Name,
                 return_to_manage,
             }
         };
@@ -113,37 +115,6 @@ impl App {
             return Ok(());
         };
         self.enter_group_form(Some(&group))
-    }
-
-    /// Open the dedicated default-identity picker for the selected group header.
-    pub(crate) fn open_group_identity_picker(&mut self) -> Result<()> {
-        let Some(group) = self
-            .selected_nav_header()
-            .and_then(|si| self.group_sections.get(si))
-            .and_then(|section| section.group.clone())
-        else {
-            self.host_notice = Some("Ungrouped hosts have no default identity.".into());
-            return Ok(());
-        };
-        if self.identities.is_empty() {
-            self.identities = self.store.list_identities()?;
-        }
-        let selected = group
-            .default_identity_id
-            .and_then(|id| {
-                self.identities
-                    .iter()
-                    .position(|i| i.id == id)
-                    .map(|p| p + 1)
-            })
-            .unwrap_or(0);
-        self.group_identity_picker = Some(GroupIdentityPicker {
-            group_id: group.id,
-            group_name: group.name.clone(),
-            selected,
-        });
-        self.mode = AppMode::GroupIdentityPicker;
-        Ok(())
     }
 
     pub(crate) fn handle_key_group_identity_picker(&mut self, key: KeyEvent) -> Result<()> {
@@ -276,17 +247,34 @@ impl App {
             return Ok(());
         }
 
+        let field = self.group_form.as_ref().map(|f| f.field);
         match key.code {
             KeyCode::Esc => self.cancel_group_form()?,
-            KeyCode::Enter => self.save_group_form()?,
             _ if self.is_save_key(&key) => self.save_group_form()?,
-            KeyCode::Left => self.group_form_cycle_identity(-1),
-            KeyCode::Right => self.group_form_cycle_identity(1),
-            KeyCode::Up => self.group_form_cycle_parent(-1),
-            KeyCode::Down => self.group_form_cycle_parent(1),
-            KeyCode::Backspace if key.modifiers.is_empty() => self.group_form_backspace(),
+            // Move focus between fields.
+            KeyCode::Up | KeyCode::BackTab => self.group_form_move_field(-1),
+            KeyCode::Down | KeyCode::Tab => self.group_form_move_field(1),
+            // Enter: save on the name field, open the dropdown on picker fields.
+            KeyCode::Enter => match field {
+                Some(GroupFormField::Name) => self.save_group_form()?,
+                Some(kind) => self.open_group_field_picker(kind),
+                None => {}
+            },
+            // Space also opens the dropdown on picker fields.
+            KeyCode::Char(' ') if field != Some(GroupFormField::Name) => {
+                if let Some(kind) = field {
+                    self.open_group_field_picker(kind);
+                }
+            }
+            KeyCode::Backspace
+                if key.modifiers.is_empty() && field == Some(GroupFormField::Name) =>
+            {
+                self.group_form_backspace()
+            }
+            // Typing only edits the name field.
             KeyCode::Char(c)
-                if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
+                if field == Some(GroupFormField::Name)
+                    && (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
                     && !c.is_control() =>
             {
                 self.group_form_insert(c);
@@ -296,31 +284,127 @@ impl App {
         Ok(())
     }
 
-    /// Cycle the group's default identity through `[none, id0, id1, …]`.
-    pub(crate) fn group_form_cycle_identity(&mut self, delta: i32) {
-        // Build the option ring: index 0 is "none", then each identity.
-        let ids: Vec<i64> = self.identities.iter().map(|i| i.id).collect();
-        let len = ids.len() as i32 + 1;
+    /// Move focus between the group-form fields, wrapping.
+    pub(crate) fn group_form_move_field(&mut self, delta: i32) {
         let Some(form) = self.group_form.as_mut() else {
             return;
         };
-        let cur = match form.default_identity_id {
-            None => 0,
-            Some(id) => ids
-                .iter()
-                .position(|&x| x == id)
-                .map_or(0, |p| p as i32 + 1),
-        };
-        let next = (cur + delta).rem_euclid(len);
-        form.default_identity_id = if next == 0 {
-            None
-        } else {
-            Some(ids[(next - 1) as usize])
-        };
+        let all = GroupFormField::ALL;
+        let cur = all.iter().position(|f| *f == form.field).unwrap_or(0) as i32;
+        let next = (cur + delta).rem_euclid(all.len() as i32) as usize;
+        form.field = all[next];
     }
 
-    /// Groups that may serve as `group_id`'s parent: every group except itself
-    /// and its own descendants (which would form a cycle), in list order.
+    /// Open the dropdown list picker for the group form's Parent or Identity
+    /// field, pre-selecting the current value.
+    pub(crate) fn open_group_field_picker(&mut self, kind: GroupFormField) {
+        if kind == GroupFormField::Name {
+            return;
+        }
+        let Some(form) = self.group_form.as_ref() else {
+            return;
+        };
+        let selected = match kind {
+            GroupFormField::Parent => match form.parent_id {
+                None => 0,
+                Some(id) => self
+                    .eligible_parents(form.id)
+                    .iter()
+                    .position(|&x| x == id)
+                    .map_or(0, |p| p + 1),
+            },
+            GroupFormField::Identity => match form.default_identity_id {
+                None => 0,
+                Some(id) => self
+                    .identities
+                    .iter()
+                    .position(|i| i.id == id)
+                    .map_or(0, |p| p + 1),
+            },
+            GroupFormField::Name => 0,
+        };
+        self.group_field_picker = Some(GroupFieldPicker { kind, selected });
+        self.mode = AppMode::GroupFieldPicker;
+    }
+
+    /// Rows shown in the group-form dropdown: the "(none)" slot first, then
+    /// `(value id, label)` for each option.
+    pub fn group_field_picker_options(&self) -> (String, Vec<(i64, String)>) {
+        let Some(picker) = self.group_field_picker.as_ref() else {
+            return ("(none)".into(), Vec::new());
+        };
+        match picker.kind {
+            GroupFormField::Parent => {
+                let self_id = self.group_form.as_ref().and_then(|f| f.id);
+                let opts = self
+                    .eligible_parents(self_id)
+                    .into_iter()
+                    .filter_map(|id| {
+                        self.groups
+                            .iter()
+                            .find(|g| g.id == id)
+                            .map(|g| (id, g.name.clone()))
+                    })
+                    .collect();
+                ("(top level)".into(), opts)
+            }
+            GroupFormField::Identity => {
+                let opts = self
+                    .identities
+                    .iter()
+                    .map(|i| (i.id, i.name.clone()))
+                    .collect();
+                ("(none)".into(), opts)
+            }
+            GroupFormField::Name => ("(none)".into(), Vec::new()),
+        }
+    }
+
+    pub(crate) fn handle_key_group_field_picker(&mut self, key: KeyEvent) -> Result<()> {
+        let (_, options) = self.group_field_picker_options();
+        let len = options.len() + 1; // +1 for the none slot
+        match key.code {
+            KeyCode::Esc => self.close_group_field_picker(),
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(p) = self.group_field_picker.as_mut() {
+                    p.selected = (p.selected + 1) % len;
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(p) = self.group_field_picker.as_mut() {
+                    p.selected = (p.selected + len - 1) % len;
+                }
+            }
+            KeyCode::Enter => {
+                let (kind, sel) = self
+                    .group_field_picker
+                    .as_ref()
+                    .map(|p| (p.kind, p.selected))
+                    .unwrap_or((GroupFormField::Name, 0));
+                let new_id = if sel == 0 {
+                    None
+                } else {
+                    options.get(sel - 1).map(|(id, _)| *id)
+                };
+                if let Some(form) = self.group_form.as_mut() {
+                    match kind {
+                        GroupFormField::Parent => form.parent_id = new_id,
+                        GroupFormField::Identity => form.default_identity_id = new_id,
+                        GroupFormField::Name => {}
+                    }
+                }
+                self.close_group_field_picker();
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn close_group_field_picker(&mut self) {
+        self.group_field_picker = None;
+        self.mode = AppMode::GroupForm;
+    }
+
     pub(crate) fn eligible_parents(&self, group_id: Option<i64>) -> Vec<i64> {
         let banned = match group_id {
             Some(id) => {
@@ -349,29 +433,6 @@ impl App {
             }
         }
         out
-    }
-
-    /// Cycle the group's parent through `[none, <eligible groups>]`.
-    pub(crate) fn group_form_cycle_parent(&mut self, delta: i32) {
-        let self_id = self.group_form.as_ref().and_then(|f| f.id);
-        let options = self.eligible_parents(self_id);
-        let len = options.len() as i32 + 1; // +1 for the "none" slot
-        let Some(form) = self.group_form.as_mut() else {
-            return;
-        };
-        let cur = match form.parent_id {
-            None => 0,
-            Some(id) => options
-                .iter()
-                .position(|&x| x == id)
-                .map_or(0, |p| p as i32 + 1),
-        };
-        let next = (cur + delta).rem_euclid(len);
-        form.parent_id = if next == 0 {
-            None
-        } else {
-            Some(options[(next - 1) as usize])
-        };
     }
 
     pub(crate) fn group_form_insert(&mut self, ch: char) {
