@@ -41,18 +41,6 @@ pub fn render(frame: &mut Frame, app: &App) {
         return;
     }
 
-    // GroupManage keeps the old layout (will be converted to overlay in Phase 5).
-    if app.mode == AppMode::GroupManage || app.mode == AppMode::GroupForm {
-        render_group_manage_base(frame, app);
-        match app.mode {
-            AppMode::GroupForm => render_form_popup(frame, app, FormKind::Group),
-            AppMode::ConfirmDelete => render_confirm_delete_popup(frame, app),
-            AppMode::Help => render_help_popup(frame),
-            _ => {}
-        }
-        return;
-    }
-
     // ── Dashboard chrome (shared across all tabs) ─────────────
     let area = frame.area();
     let areas = dashboard_layout::dashboard_layout_zoomed(area, app.ui_zoom);
@@ -113,7 +101,15 @@ pub fn render(frame: &mut Frame, app: &App) {
             screens::field_picker::render_field_picker(frame, app);
         }
         AppMode::IdentityForm => render_form_popup(frame, app, FormKind::Identity),
-        AppMode::GroupForm => render_form_popup(frame, app, FormKind::Group),
+        AppMode::GroupManage => screens::group_manage::render_group_manage_popup(frame, app),
+        AppMode::GroupForm => {
+            // Keep the group list behind the form when it was opened from the
+            // group-management popup, for context.
+            if app.group_form.as_ref().is_some_and(|f| f.return_to_manage) {
+                screens::group_manage::render_group_manage_popup(frame, app);
+            }
+            render_form_popup(frame, app, FormKind::Group);
+        }
         AppMode::GroupIdentityPicker => screens::group_identity_picker::render(frame, app),
         AppMode::TagFilter => screens::tag_filter::render(frame, app),
         AppMode::TunnelForm => screens::tunnels::render_tunnel_form(frame, app),
@@ -317,43 +313,6 @@ fn render_keys_body(frame: &mut Frame, areas: &dashboard_layout::DashboardAreas,
 
 fn render_audit_body(frame: &mut Frame, areas: &dashboard_layout::DashboardAreas, app: &App) {
     screens::audit::render_audit(frame, areas.body, app);
-}
-
-fn render_group_manage_base(frame: &mut Frame, app: &App) {
-    let areas = layout::root_layout(frame.area(), false);
-
-    let sidebar_items = vec![
-        ratatui::widgets::ListItem::new("  Hosts").style(theme::bright()),
-        ratatui::widgets::ListItem::new("  Groups").style(theme::mute()),
-    ];
-    frame.render_widget(
-        ratatui::widgets::List::new(sidebar_items).block(Block::default().borders(Borders::RIGHT)),
-        areas.sidebar,
-    );
-
-    frame.render_widget(
-        Paragraph::new("Groups")
-            .style(Style::default().add_modifier(Modifier::BOLD))
-            .block(Block::default().borders(Borders::BOTTOM)),
-        areas.search,
-    );
-
-    frame.render_widget(
-        screens::group_manage::render_group_list(app),
-        areas.group_tree,
-    );
-
-    let notice = app.group_notice.as_deref().or(app.host_notice.as_deref());
-    if let Some(notice) = notice {
-        let notice_area = Rect {
-            height: 1,
-            y: areas.status.y.saturating_sub(1),
-            ..areas.status
-        };
-        frame.render_widget(screens::keychain::render_notice(notice), notice_area);
-    }
-
-    frame.render_widget(widgets::status_bar::render_status_bar(app), areas.status);
 }
 
 enum FormKind {
@@ -796,6 +755,42 @@ mod tests {
         app.selected = 0;
         app.rebuild_filter();
         app
+    }
+
+    #[test]
+    fn group_manage_renders_as_themed_popup() {
+        use crate::store::NewHostGroup;
+        let store = test_store();
+        store
+            .create_group(&NewHostGroup {
+                name: "prod".into(),
+                sort_order: 0,
+                ..Default::default()
+            })
+            .unwrap();
+
+        let mut app = App::new_with_deps(
+            AppConfig::default(),
+            AppDeps {
+                resolver: Box::new(EmptyResolver),
+                metadata: Arc::new(MetadataDb::default()),
+                store,
+                launcher: Box::new(NoopLauncher),
+                password_store: Box::new(crate::credentials::NoopPasswordStore),
+            },
+        );
+        app.reload_hosts().unwrap();
+        app.mode = AppMode::GroupManage;
+
+        let buffer = render_to_buffer(&app, 120, 38);
+        assert!(buffer_contains(&buffer, "Groups"), "popup title missing");
+        assert!(buffer_contains(&buffer, "prod"), "group row missing");
+        assert!(buffer_contains(&buffer, "a add"), "action hint missing");
+        // The scrapped legacy layout had a left "Hosts"/"Groups" sidebar list.
+        assert!(
+            !buffer_contains(&buffer, "  Hosts"),
+            "legacy sidebar should be gone"
+        );
     }
 
     #[test]

@@ -1,9 +1,10 @@
 use ratatui::prelude::{Modifier, Style};
 use ratatui::style::Color;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::app::GroupFormEdit;
+use crate::tui::theme;
 
 pub fn render_group_form(
     form: &GroupFormEdit,
@@ -23,10 +24,6 @@ pub fn render_group_form(
     let identity_display = default_identity.unwrap_or("(none)").to_string();
     let parent_display = parent_group.unwrap_or("(top level)").to_string();
     let lines = vec![
-        Line::from(Span::styled(
-            title,
-            Style::default().add_modifier(Modifier::BOLD),
-        )),
         Line::from(""),
         Line::from(vec![
             Span::styled(
@@ -66,5 +63,10 @@ pub fn render_group_form(
             Style::default().fg(Color::DarkGray),
         )),
     ];
-    Paragraph::new(lines)
+    Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme::border())
+            .title(Span::styled(format!(" {title} "), theme::heading())),
+    )
 }
