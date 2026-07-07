@@ -473,22 +473,26 @@ fn render_confirm_delete_popup(frame: &mut Frame, app: &App) {
         Some(PendingDelete::Tunnel { label, .. }) => format!("Delete tunnel '{label}'?"),
         None => "Delete?".to_string(),
     };
-    let lines = vec![
-        ratatui::text::Line::from(message),
-        ratatui::text::Line::from(""),
-        ratatui::text::Line::from("y: delete │ n/Esc: cancel"),
-    ];
-
     let area = frame.area();
-    let popup_width = 40u16.min(area.width);
-    let popup_height = 6u16.min(area.height);
+    let popup_width = 54u16.min(area.width);
+    // Wrap the message (a host name can be long) and size the box to fit.
+    let inner_w = popup_width.saturating_sub(2).max(1) as usize;
+    let msg_rows = message.chars().count().div_ceil(inner_w).max(1) as u16;
+    let popup_height = (msg_rows + 4).min(area.height);
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
+    let lines = vec![
+        ratatui::text::Line::from(message),
+        ratatui::text::Line::from(""),
+        ratatui::text::Line::from("y: delete    Esc: cancel"),
+    ];
+
     frame.render_widget(Clear, popup_area);
     frame.render_widget(
         Paragraph::new(lines)
+            .wrap(Wrap { trim: true })
             .style(Style::default().fg(Color::Yellow))
             .block(
                 Block::default()
