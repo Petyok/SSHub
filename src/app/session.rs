@@ -405,7 +405,14 @@ impl App {
         if selecting {
             match mouse.kind {
                 MouseEventKind::Down(MouseButton::Left) => session.selection_start(row, col),
-                MouseEventKind::Drag(MouseButton::Left) => session.selection_extend(row, col),
+                MouseEventKind::Drag(MouseButton::Left) => {
+                    // Arm edge autoscroll when the pointer is dragged past the
+                    // top/bottom of the grid, so a selection can extend beyond
+                    // what's currently visible (the poll tick keeps it going).
+                    let dir = crate::session::edge_autoscroll_dir(mouse.row as i32 - 1, rows);
+                    session.set_drag_autoscroll(dir, col);
+                    session.selection_extend(row, col);
+                }
                 MouseEventKind::Up(MouseButton::Left) => {
                     if let Some(text) = session.selection_finish() {
                         let chars = text.chars().count();
