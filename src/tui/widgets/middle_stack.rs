@@ -112,12 +112,21 @@ fn render_ssh_log(buf: &mut Buffer, area: Rect, app: &App) {
         // Timestamp HH:MM:SS (local timezone) — host prefix omitted since
         // the panel title already names the host we're filtering on.
         let time_str = format!("{} ", crate::tui::format_local_time(entry.timestamp));
-        let time_w = time_str.len();
+        let time_w = time_str.chars().count();
         buf.set_string(inner_x, row_y, &time_str, theme::mute());
 
+        // Clamp with `…` (same helper as the rest of the dashboard) so a long
+        // command line stays inside the panel border instead of a hard cut that
+        // reads as overflowing the box.
         let remaining_w = inner_w.saturating_sub(time_w);
-        let display: String = entry.line.chars().take(remaining_w).collect();
-        buf.set_string(inner_x + time_w as u16, row_y, &display, style);
+        put_clamped(
+            buf,
+            inner_x + time_w as u16,
+            row_y,
+            &entry.line,
+            style,
+            remaining_w,
+        );
     }
 }
 
