@@ -5,6 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Workflow rules
 
 - **Commit frequently.** After completing each logical unit of work (a bug fix, a feature, a refactor pass), create a commit immediately. Do not accumulate large uncommitted diffs across multiple tasks.
+- **Branch model.** `main` is stable (releases + tags); `development` is the integration branch; features go on `feature/*` branches cut from `development`. Flow: `feature/* → development → main`. Releases happen by merging `development → main`, bumping the version + CHANGELOG, and pushing a `vX.Y.Z` tag (the release workflow builds binaries and publishes to crates.io).
+- **Delete merged branches.** Immediately after merging a `feature/*` branch, delete it both locally (`git branch -d`) and on the remote (`git push origin --delete`). Do not leave merged branches lingering.
 
 ## Build & test commands
 
