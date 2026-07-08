@@ -66,18 +66,23 @@ impl App {
             return Ok(());
         }
 
-        // Local scrollback navigation. Half a screen per press.
+        // Local scrollback navigation. Half a screen per press. Keep any active
+        // selection anchored to the same text as the view scrolls.
         let half = (body_rows / 2).max(1);
         if scroll_up {
             session.parser.scroll_up(half);
+            session.selection_scroll_shift(half as i32);
             return Ok(());
         }
         if scroll_down {
             session.parser.scroll_down(half);
+            session.selection_scroll_shift(-(half as i32));
             return Ok(());
         }
 
-        // Any other key snaps the view back to live and forwards.
+        // Any other key snaps the view back to live, drops the selection, and
+        // forwards the keystroke.
+        session.selection_clear();
         if session.parser.scrollback() > 0 {
             session.parser.snap_to_bottom();
         }
@@ -384,25 +389,53 @@ impl App {
 
         let mode = session.parser.screen().mouse_protocol_mode();
         let encoding = session.parser.screen().mouse_protocol_encoding();
+        let (rows, cols) = session.parser.screen().size();
 
-        if mode != vt100::MouseProtocolMode::None {
-            // Remote app is consuming mouse — translate to the wire protocol.
-            // Body starts on row 1 (header takes row 0). Translate the global
-            // column / row to body-local coordinates.
-            let local_y = mouse.row.saturating_sub(1);
-            if let Some(bytes) =
-                crate::session::keys::encode_mouse(mouse, mouse.column, local_y, mode, encoding)
-            {
-                let _ = session.write(&bytes);
+        // Body-local grid coordinates (header takes row 0).
+        let row = mouse.row.saturating_sub(1).min(rows.saturating_sub(1));
+        let col = mouse.column.min(cols.saturating_sub(1));
+        let shift = mouse.modifiers.contains(KeyModifiers::SHIFT);
+
+        // Local text selection drives the mouse when the remote app isn't
+        // consuming it (plain shell → just drag to select, no Shift needed);
+        // when the remote wants the mouse (vim/tmux/…), Shift forces a local
+        // selection instead of forwarding the event.
+        let selecting = mode == vt100::MouseProtocolMode::None || shift;
+
+        if selecting {
+            match mouse.kind {
+                MouseEventKind::Down(MouseButton::Left) => session.selection_start(row, col),
+                MouseEventKind::Drag(MouseButton::Left) => session.selection_extend(row, col),
+                MouseEventKind::Up(MouseButton::Left) => {
+                    if let Some(text) = session.selection_finish() {
+                        let chars = text.chars().count();
+                        match write_osc52(&text) {
+                            Ok(()) => session.set_copy_notice(format!("copied {chars} chars")),
+                            Err(e) => session.set_copy_notice(format!("copy failed: {e}")),
+                        }
+                    }
+                }
+                MouseEventKind::ScrollUp => {
+                    session.parser.scroll_up(3);
+                    session.selection_scroll_shift(3);
+                }
+                MouseEventKind::ScrollDown => {
+                    session.parser.scroll_down(3);
+                    session.selection_scroll_shift(-3);
+                }
+                // Any other press clears a pending selection.
+                MouseEventKind::Down(_) => session.selection_clear(),
+                _ => {}
             }
             return;
         }
 
-        // No remote mouse handling — local scroll wheel drives scrollback.
-        match mouse.kind {
-            MouseEventKind::ScrollUp => session.parser.scroll_up(3),
-            MouseEventKind::ScrollDown => session.parser.scroll_down(3),
-            _ => {}
+        // Remote app is consuming mouse — translate to the wire protocol.
+        let local_y = mouse.row.saturating_sub(1);
+        if let Some(bytes) =
+            crate::session::keys::encode_mouse(mouse, mouse.column, local_y, mode, encoding)
+        {
+            let _ = session.write(&bytes);
         }
     }
 }
