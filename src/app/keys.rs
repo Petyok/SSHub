@@ -192,17 +192,6 @@ impl App {
             _ if self.is_action(KeyAction::RenameGroup, &key) => {
                 self.rename_selected_host_group()?
             }
-            // Unmatched chars open the fuzzy palette instead of legacy search
-            KeyCode::Char(c)
-                if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
-                    && !c.is_control() =>
-            {
-                self.palette_query.clear();
-                self.palette_query.push(c);
-                self.palette_selected = 0;
-                self.rebuild_palette_results();
-                self.mode = AppMode::Palette;
-            }
             _ => {}
         }
         Ok(())
@@ -244,6 +233,17 @@ impl App {
                     }
                 }
             }
+            // Plain letters are query text, even ones bound to nav (j/k/l). The
+            // palette is a type-to-search field first; list navigation lives on
+            // the arrow keys (handled below via KeyCode::Up/Down), so typing a
+            // host name like "jira" is never eaten as a movement key.
+            KeyCode::Char(c)
+                if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
+                    && !c.is_control() =>
+            {
+                self.palette_query.push(c);
+                self.rebuild_palette_results();
+            }
             _ if self.is_action(KeyAction::MoveUp, &key) => {
                 if self.palette_selected > 0 {
                     self.palette_selected -= 1;
@@ -256,10 +256,6 @@ impl App {
             }
             KeyCode::Backspace => {
                 self.palette_query.pop();
-                self.rebuild_palette_results();
-            }
-            KeyCode::Char(c) if !c.is_control() => {
-                self.palette_query.push(c);
                 self.rebuild_palette_results();
             }
             _ => {}
@@ -279,18 +275,20 @@ impl App {
     pub(crate) fn handle_key_search(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
             _ if self.is_action(KeyAction::Cancel, &key) => self.exit_search(true),
-            _ if self.is_action(KeyAction::MoveDown, &key) => self.move_selection(1),
-            _ if self.is_action(KeyAction::MoveUp, &key) => self.move_selection(-1),
             _ if self.is_action(KeyAction::Connect, &key) => self.connect_selected()?,
-            KeyCode::Backspace => {
-                self.search_query.pop();
-                self.rebuild_filter();
-            }
+            // Plain letters are query text, even ones bound to nav (j/k/l); list
+            // navigation while searching lives on the arrow keys below.
             KeyCode::Char(c)
                 if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
                     && !c.is_control() =>
             {
                 self.search_query.push(c);
+                self.rebuild_filter();
+            }
+            _ if self.is_action(KeyAction::MoveDown, &key) => self.move_selection(1),
+            _ if self.is_action(KeyAction::MoveUp, &key) => self.move_selection(-1),
+            KeyCode::Backspace => {
+                self.search_query.pop();
                 self.rebuild_filter();
             }
             _ => {}

@@ -148,6 +148,7 @@ fn j_k_navigation_then_quit() {
 #[test]
 fn esc_clears_palette_mode() {
     let (mut app, _launcher) = app_with_hosts();
+    app.handle_key(key_char('/')).unwrap();
     app.handle_key(key_char('w')).unwrap();
     assert_eq!(app.mode, AppMode::Palette);
     assert_eq!(app.palette_query, "w");
