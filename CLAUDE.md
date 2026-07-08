@@ -20,6 +20,8 @@ Odometer scheme — each field rolls 0–9 and carries:
 
 The patch bump is automated by a tracked `pre-commit` hook (`.githooks/pre-commit`) that runs `just bump patch` on every commit **to `development`** (skipped on other branches and during merges). Git hooks aren't shared on clone, so enable them once per checkout: `just setup-hooks` (sets `core.hooksPath .githooks`).
 
+The minor bump + release is one command: **`just release`** (run from a clean `development`). It merges `development → main`, runs `just bump minor`, commits, tags `vX.Y.0`, pushes (the tag triggers the release workflow → binaries + crates.io), then fast-forwards `development` back to the released version so the next cycle starts clean. Pushing to protected `main` relies on the owner's admin bypass.
+
 ## Build & test commands
 
 ```bash
