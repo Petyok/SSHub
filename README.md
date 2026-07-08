@@ -1,35 +1,37 @@
 # SSHub
 
+[![crates.io](https://img.shields.io/crates/v/sshub.svg)](https://crates.io/crates/sshub)
+
 A terminal UI for managing and connecting to SSH hosts. Combines your `~/.ssh/config` with a built-in host database, tunnels, key management, and an audit log -- all in one keyboard-driven interface.
 
 > ⚠️ This project is 100% vibe-coded slop made with dynamic workflows using Claude Opus 4.8 + Fable 5. Use at your own risk.
 
-![SSHub demo](demo/gifs/overview.gif)
+![SSHub demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/overview.gif)
 
 Connecting to a host — the session runs in an embedded PTY right inside the TUI:
 
-![Connect demo](demo/gifs/connect.gif)
+![Connect demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/connect.gif)
 
 Adding a managed host and marking it as a favorite:
 
-![Add host demo](demo/gifs/add-host.gif)
+![Add host demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/add-host.gif)
 
 ## Screenshots
 
 The hosts dashboard — nested groups on the left, live agent / latency / ping panels on the right:
 
-![Hosts dashboard](demo/screenshots/hosts.png)
+![Hosts dashboard](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/hosts.png)
 
 Fuzzy quick-connect palette (`/`) and the multi-tag filter (`#`):
 
-![Quick-connect palette](demo/screenshots/palette.png)
-![Tag filter](demo/screenshots/tags.png)
+![Quick-connect palette](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/palette.png)
+![Tag filter](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/tags.png)
 
 Add/edit host form, the rebindable keybindings editor (`Ctrl+K`), and the scrollable help overlay (`?`):
 
-![Add host form](demo/screenshots/add-host.png)
-![Keybindings editor](demo/screenshots/keybindings.png)
-![Help overlay](demo/screenshots/help.png)
+![Add host form](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/add-host.png)
+![Keybindings editor](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/keybindings.png)
+![Help overlay](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/help.png)
 
 ## Features
 
@@ -46,7 +48,13 @@ Add/edit host form, the rebindable keybindings editor (`Ctrl+K`), and the scroll
 
 ## Install
 
-Requires Rust toolchain (edition 2021) and `ssh` in `PATH`.
+From [crates.io](https://crates.io/crates/sshub):
+
+```bash
+cargo install sshub
+```
+
+Requires a Rust toolchain (edition 2021) and `ssh` in `PATH`.
 
 On Linux, building also needs the D-Bus client library for the keyring
 (Secret Service) backend that stores host passwords and key passphrases:
@@ -59,6 +67,8 @@ sudo dnf install -y dbus-devel pkgconf-pkg-config
 # Arch
 sudo pacman -S --needed dbus
 ```
+
+Prebuilt binaries for Linux and macOS are attached to each [GitHub release](https://github.com/Petyok/SSHub/releases).
 
 At runtime, a Secret Service provider (gnome-keyring, KWallet, …) must be
 running and unlocked for credentials to persist; otherwise SSHub warns and ssh
