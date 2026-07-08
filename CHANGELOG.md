@@ -2,6 +2,12 @@
 
 All notable changes to SSHub are documented in this file.
 
+## [0.3.1] - 2026-07-08
+
+### Changed
+
+- README images use absolute URLs so they render on the crates.io page; added a crates.io version badge and documented `cargo install sshub` plus the prebuilt release binaries. (Docs only — no code changes.)
+
 ## [0.3.0] - 2026-07-08
 
 ### Changed

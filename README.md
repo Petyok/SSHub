@@ -234,4 +234,4 @@ cargo run -- --dry-run # quick sanity check
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md). Current release: **0.3.0**.
+See [CHANGELOG.md](CHANGELOG.md). Current release: **0.3.1**.
