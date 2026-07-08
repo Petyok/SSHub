@@ -350,10 +350,12 @@ impl App {
         }
     }
 
-    /// Drop all SSH log entries for `host_name`. Called once a session has
-    /// authenticated so connect-time debug noise doesn't linger on the dashboard.
+    /// Drop the connect-time SSH debug noise for `host_name` once a session has
+    /// authenticated, but keep the launched command line (`$ ssh …`) so the
+    /// dashboard still shows how the selected host was connected to.
     pub fn clear_ssh_log_for_host(&mut self, host_name: &str) {
-        self.ssh_log.retain(|e| e.host_name != host_name);
+        self.ssh_log
+            .retain(|e| e.host_name != host_name || e.line.starts_with("$ "));
     }
 
     pub fn reload_hosts(&mut self) -> Result<()> {

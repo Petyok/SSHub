@@ -157,6 +157,28 @@ pub(crate) fn palette_types_nav_letters() {
 }
 
 #[test]
+pub(crate) fn clear_ssh_log_keeps_command_line() {
+    use crate::ssh::probe::{LogLevel, SshLogEntry};
+    let mut app = test_app(vec![("web", host("web"))]);
+
+    let mk = |line: &str| SshLogEntry {
+        host_name: "web".into(),
+        line: line.into(),
+        level: LogLevel::Info,
+        timestamp: 0,
+    };
+    app.push_ssh_log(mk("$ ssh web"));
+    app.push_ssh_log(mk("debug1: handshake noise"));
+    app.push_ssh_log(mk("debug1: more noise"));
+
+    // On connect the handshake noise is dropped, but the command line survives
+    // so the dashboard still shows how the host was connected to.
+    app.clear_ssh_log_for_host("web");
+    assert_eq!(app.ssh_log.len(), 1);
+    assert_eq!(app.ssh_log[0].line, "$ ssh web");
+}
+
+#[test]
 pub(crate) fn navigation_wraps_around() {
     let mut app = test_app(vec![("a", host("a")), ("b", host("b"))]);
     assert_eq!(app.selected, 0);
