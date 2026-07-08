@@ -86,6 +86,45 @@ pub struct SessionMeta {
 }
 
 /// One active embedded session.
+/// In-app text selection over the PTY grid, in visible-row coordinates
+/// (row 0 = top of the body). Anchored locally so it survives repaints and
+/// scrolls the way the outer terminal's native (Shift+drag) selection can't.
+#[derive(Debug, Clone, Copy)]
+pub struct Selection {
+    /// Cell where the drag began.
+    pub anchor: (u16, u16),
+    /// Current end cell (moves while dragging).
+    pub cursor: (u16, u16),
+    /// True while the mouse button is held.
+    pub dragging: bool,
+}
+
+impl Selection {
+    /// (start, end) in reading order, so start <= end.
+    pub fn ordered(&self) -> ((u16, u16), (u16, u16)) {
+        if self.anchor <= self.cursor {
+            (self.anchor, self.cursor)
+        } else {
+            (self.cursor, self.anchor)
+        }
+    }
+
+    /// Whether a cell (row, col) falls inside the linear selection span.
+    pub fn contains(&self, row: u16, col: u16) -> bool {
+        let (start, end) = self.ordered();
+        if row < start.0 || row > end.0 {
+            return false;
+        }
+        let lo = if row == start.0 { start.1 } else { 0 };
+        let hi = if row == end.0 { end.1 } else { u16::MAX };
+        col >= lo && col <= hi
+    }
+
+    fn is_empty(&self) -> bool {
+        self.anchor == self.cursor
+    }
+}
+
 pub struct Session {
     pub display_name: String,
     pub meta: SessionMeta,
@@ -131,6 +170,11 @@ pub struct Session {
     /// never answered is useless, so we keep the spinner until either real PTY
     /// content arrives or the child exits.
     saw_pty_bytes: bool,
+    /// Active in-app mouse text selection over the grid, if any.
+    pub selection: Option<Selection>,
+    /// Transient "copied" toast: (message, shown_at). Rendered in a corner for
+    /// a few seconds after a copy-on-select.
+    pub copy_notice: Option<(String, Instant)>,
 }
 
 impl Session {
@@ -189,8 +233,75 @@ impl Session {
             debug_log: String::new(),
             debug_expanded: false,
             saw_pty_bytes: false,
+            selection: None,
+            copy_notice: None,
             config,
         })
+    }
+
+    // ── Text selection ────────────────────────────────────────────
+
+    /// Begin a selection at visible cell (row, col).
+    pub fn selection_start(&mut self, row: u16, col: u16) {
+        self.selection = Some(Selection {
+            anchor: (row, col),
+            cursor: (row, col),
+            dragging: true,
+        });
+    }
+
+    /// Extend the active drag to (row, col).
+    pub fn selection_extend(&mut self, row: u16, col: u16) {
+        if let Some(sel) = self.selection.as_mut() {
+            if sel.dragging {
+                sel.cursor = (row, col);
+            }
+        }
+    }
+
+    /// Finish the drag; return the selected text (trailing spaces trimmed per
+    /// line) if the selection covers anything, else `None`.
+    pub fn selection_finish(&mut self) -> Option<String> {
+        let sel = self.selection.as_mut()?;
+        sel.dragging = false;
+        if sel.is_empty() {
+            self.selection = None;
+            return None;
+        }
+        let (start, end) = sel.ordered();
+        let (_, cols) = self.parser.screen().size();
+        // contents_between's end column is exclusive; +1 to include the cell
+        // under the cursor, clamped to the row width.
+        let end_col = end.1.saturating_add(1).min(cols);
+        let text = self
+            .parser
+            .screen()
+            .contents_between(start.0, start.1, end.0, end_col);
+        if text.is_empty() {
+            None
+        } else {
+            Some(text)
+        }
+    }
+
+    /// Drop any selection (e.g. a plain click or Esc).
+    pub fn selection_clear(&mut self) {
+        self.selection = None;
+    }
+
+    /// Shift the selection vertically so it tracks the same text when the view
+    /// scrolls by `delta` rows (positive = content moved down / scrolled back).
+    pub fn selection_scroll_shift(&mut self, delta: i32) {
+        if let Some(sel) = self.selection.as_mut() {
+            let shift = |v: u16| (v as i32 + delta).clamp(0, u16::MAX as i32) as u16;
+            sel.anchor.0 = shift(sel.anchor.0);
+            sel.cursor.0 = shift(sel.cursor.0);
+        }
+    }
+
+    /// Record a transient "copied" toast.
+    pub fn set_copy_notice(&mut self, msg: String) {
+        self.copy_notice = Some((msg, Instant::now()));
     }
 
     /// Drain accumulated diagnostic strings (e.g. for the SSH log panel).
@@ -622,6 +733,50 @@ fn current_screen_tail(screen: &vt100::Screen) -> String {
         out.push('\n');
     }
     out
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::Selection;
+
+    fn sel(a: (u16, u16), c: (u16, u16)) -> Selection {
+        Selection {
+            anchor: a,
+            cursor: c,
+            dragging: false,
+        }
+    }
+
+    #[test]
+    fn contains_is_reading_order_and_direction_agnostic() {
+        // Selection from (1,3) to (3,2): partial first row, full middle, partial last.
+        let s = sel((1, 3), (3, 2));
+        // First row: only cols >= 3.
+        assert!(!s.contains(1, 2));
+        assert!(s.contains(1, 3));
+        assert!(s.contains(1, 999));
+        // Middle row: everything.
+        assert!(s.contains(2, 0));
+        assert!(s.contains(2, 500));
+        // Last row: only cols <= 2.
+        assert!(s.contains(3, 2));
+        assert!(!s.contains(3, 3));
+        // Outside the row span.
+        assert!(!s.contains(0, 3));
+        assert!(!s.contains(4, 0));
+        // Dragging upward (cursor before anchor) selects the same span.
+        assert!(sel((3, 2), (1, 3)).contains(2, 10));
+    }
+
+    #[test]
+    fn single_row_selection_bounds() {
+        let s = sel((5, 4), (5, 8));
+        assert!(!s.contains(5, 3));
+        assert!(s.contains(5, 4));
+        assert!(s.contains(5, 8));
+        assert!(!s.contains(5, 9));
+        assert!(!s.contains(4, 6));
+    }
 }
 
 #[cfg(test)]

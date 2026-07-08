@@ -30,6 +30,65 @@ record-gifs: build
 dry-run:
     cargo run -- --dry-run
 
+# Bump the version (odometer, each field 0-9; see CLAUDE.md "Versioning").
+#   just bump patch   # every commit to development
+#   just bump minor   # on release (merge development -> main); resets patch
+#   just bump major   # milestone / manual
+# Carries over: 0.4.9 + patch -> 0.5.0, 0.9.9 + patch -> 1.0.0.
+bump kind:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ver=$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "([^"]+)".*/\1/')
+    IFS=. read -r X Y Z <<< "$ver"
+    case "{{kind}}" in
+      patch) Z=$((Z + 1)); if [ "$Z" -gt 9 ]; then Z=0; Y=$((Y + 1)); fi
+             if [ "$Y" -gt 9 ]; then Y=0; X=$((X + 1)); fi ;;
+      minor) Y=$((Y + 1)); Z=0; if [ "$Y" -gt 9 ]; then Y=0; X=$((X + 1)); fi ;;
+      major) X=$((X + 1)); Y=0; Z=0 ;;
+      *) echo "usage: just bump patch|minor|major" >&2; exit 1 ;;
+    esac
+    new="$X.$Y.$Z"
+    sed -i -E "s/^version = \"[^\"]+\"/version = \"$new\"/" Cargo.toml
+    # Update the sshub entry in Cargo.lock too (the version line right after its
+    # name), so no `cargo` invocation is needed — keeps the pre-commit hook fast
+    # and offline.
+    sed -i "/^name = \"sshub\"$/{n;s/^version = .*/version = \"$new\"/}" Cargo.lock
+    echo "bumped $ver -> $new"
+
+# One-time per clone: point git at the tracked hooks in .githooks (enables the
+# auto patch-bump pre-commit hook on the development branch).
+setup-hooks:
+    git config core.hooksPath .githooks
+    @echo "git hooks enabled (core.hooksPath = .githooks)"
+
+# Cut a release: merge development -> main, bump the minor (Y+1, Z->0), tag, and
+# push. The tag triggers the release workflow (binaries + crates.io publish).
+# Development is fast-forwarded back to the released version afterwards so its
+# baseline stays in sync (avoids version-line conflicts on the next release).
+# Run from a clean `development`. Pushing to protected `main` relies on your
+# owner/admin bypass.
+release:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "$(git rev-parse --abbrev-ref HEAD)" = development ] || { echo "run from development" >&2; exit 1; }
+    git diff --quiet && git diff --cached --quiet || { echo "working tree not clean" >&2; exit 1; }
+    git fetch origin --quiet
+    git checkout main
+    git pull --ff-only origin main
+    # main hasn't touched the version since branching, so this takes
+    # development's version cleanly (no conflict), then we bump the minor.
+    git merge --no-ff --no-edit development
+    just bump minor
+    ver=$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "([^"]+)".*/\1/')
+    git commit -am "chore: release v$ver"
+    git tag -a "v$ver" -m "SSHub v$ver"
+    git push origin main --follow-tags
+    # development is an ancestor of main now, so this fast-forwards it to v$ver.
+    git checkout development
+    git merge --ff-only main
+    git push origin development
+    echo "released v$ver — release workflow will build binaries and publish to crates.io"
+
 # Install the release binary to ~/.local/bin and a launcher entry so sshub
 # shows up in your application launcher (GNOME, rofi, etc). Uses kitty if
 # available, otherwise falls back to xterm. Runs `just build` first.
