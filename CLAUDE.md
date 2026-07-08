@@ -8,6 +8,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Branch model.** `main` is stable (releases + tags); `development` is the integration branch; features go on `feature/*` branches cut from `development`. Flow: `feature/* → development → main`. Releases happen by merging `development → main`, bumping the version + CHANGELOG, and pushing a `vX.Y.Z` tag (the release workflow builds binaries and publishes to crates.io).
 - **Delete merged branches.** The repo has "Automatically delete head branches" enabled, so merging a PR on GitHub removes the branch (keep the "Delete branch" box checked). For a local/CLI merge, delete it yourself right after: `git branch -d <branch>` and `git push origin --delete <branch>`. Never leave merged branches lingering.
 
+## Versioning (`vX.Y.Z`)
+
+Odometer scheme — each field rolls 0–9 and carries:
+
+- **Z (patch)** — bump on **every commit to `development`**: `just bump patch`.
+- **Y (minor)** — bump when **merging `development → main`** for a release; this resets Z to 0: `just bump minor`. So `main` release versions are always `X.Y.0`, and Z is just the running commit counter within a dev cycle.
+- **X (major)** — bump **manually** for a milestone, or automatically by carry when the odometer rolls over (`0.9.9 + patch → 1.0.0`): `just bump major`.
+
+`just bump <patch|minor|major>` edits `Cargo.toml` + `Cargo.lock` with carry (`0.4.9 + patch → 0.5.0`). Only versions carried by `main` when a `vX.Y.Z` tag is pushed get published to crates.io (see the release workflow).
+
 ## Build & test commands
 
 ```bash

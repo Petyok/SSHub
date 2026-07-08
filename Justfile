@@ -30,6 +30,28 @@ record-gifs: build
 dry-run:
     cargo run -- --dry-run
 
+# Bump the version (odometer, each field 0-9; see CLAUDE.md "Versioning").
+#   just bump patch   # every commit to development
+#   just bump minor   # on release (merge development -> main); resets patch
+#   just bump major   # milestone / manual
+# Carries over: 0.4.9 + patch -> 0.5.0, 0.9.9 + patch -> 1.0.0.
+bump kind:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ver=$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "([^"]+)".*/\1/')
+    IFS=. read -r X Y Z <<< "$ver"
+    case "{{kind}}" in
+      patch) Z=$((Z + 1)); if [ "$Z" -gt 9 ]; then Z=0; Y=$((Y + 1)); fi
+             if [ "$Y" -gt 9 ]; then Y=0; X=$((X + 1)); fi ;;
+      minor) Y=$((Y + 1)); Z=0; if [ "$Y" -gt 9 ]; then Y=0; X=$((X + 1)); fi ;;
+      major) X=$((X + 1)); Y=0; Z=0 ;;
+      *) echo "usage: just bump patch|minor|major" >&2; exit 1 ;;
+    esac
+    new="$X.$Y.$Z"
+    sed -i -E "s/^version = \"[^\"]+\"/version = \"$new\"/" Cargo.toml
+    cargo update -p sshub --quiet
+    echo "bumped $ver -> $new"
+
 # Install the release binary to ~/.local/bin and a launcher entry so sshub
 # shows up in your application launcher (GNOME, rofi, etc). Uses kitty if
 # available, otherwise falls back to xterm. Runs `just build` first.
