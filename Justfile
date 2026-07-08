@@ -61,33 +61,49 @@ setup-hooks:
     git config core.hooksPath .githooks
     @echo "git hooks enabled (core.hooksPath = .githooks)"
 
-# Cut a release: merge development -> main, bump the minor (Y+1, Z->0), tag, and
-# push. The tag triggers the release workflow (binaries + crates.io publish).
-# Development is fast-forwarded back to the released version afterwards so its
-# baseline stays in sync (avoids version-line conflicts on the next release).
+# Cut a release: merge development -> main, tag, and push. The tag triggers the
+# release workflow (binaries + crates.io publish). Development is
+# fast-forwarded back to the released commit afterwards so both branches share a
+# baseline (avoids version-line conflicts on the next release).
+#
+#   just release          # minor feature release: bump Y (Z->0) -> vX.Y.0
+#   just release minor    # same as above
+#   just release patch    # hotfix: publish the CURRENT vX.Y.Z as-is, no bump
+#
+# `patch` ships whatever version development currently carries (the running
+# odometer Z from the pre-commit hook) straight to main — for hotfixes you don't
+# want to disguise as a new minor. So main is NOT always X.Y.0.
 # Run from a clean `development`. Pushing to protected `main` relies on your
 # owner/admin bypass.
-release:
+release kind="minor":
     #!/usr/bin/env bash
     set -euo pipefail
+    case "{{kind}}" in minor|patch) ;; *) echo "usage: just release [minor|patch]" >&2; exit 1;; esac
     [ "$(git rev-parse --abbrev-ref HEAD)" = development ] || { echo "run from development" >&2; exit 1; }
     git diff --quiet && git diff --cached --quiet || { echo "working tree not clean" >&2; exit 1; }
     git fetch origin --quiet
     git checkout main
     git pull --ff-only origin main
-    # main hasn't touched the version since branching, so this takes
-    # development's version cleanly (no conflict), then we bump the minor.
+    # development is always ahead of main here (main is only ever fast-forwarded
+    # to a released commit), so this merge takes development's version cleanly.
     git merge --no-ff --no-edit development
-    just bump minor
+    # minor: bump Y and reset Z. patch: keep development's current X.Y.Z.
+    [ "{{kind}}" = minor ] && just bump minor || true
     ver=$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "([^"]+)".*/\1/')
-    git commit -am "chore: release v$ver"
+    if git rev-parse "v$ver" >/dev/null 2>&1; then
+      echo "v$ver is already tagged — commit a change on development first (or 'just release minor')" >&2
+      git checkout development; exit 1
+    fi
+    # -a stages the minor bump; --allow-empty covers patch (nothing to commit
+    # beyond the merge) so main always carries a clean "chore: release" commit.
+    git commit -a --allow-empty -m "chore: release v$ver"
     git tag -a "v$ver" -m "SSHub v$ver"
     git push origin main --follow-tags
     # development is an ancestor of main now, so this fast-forwards it to v$ver.
     git checkout development
     git merge --ff-only main
     git push origin development
-    echo "released v$ver — release workflow will build binaries and publish to crates.io"
+    echo "released v$ver ({{kind}}) — release workflow will build binaries and publish to crates.io"
 
 # Install the release binary to ~/.local/bin and a launcher entry so sshub
 # shows up in your application launcher (GNOME, rofi, etc). Uses kitty if
