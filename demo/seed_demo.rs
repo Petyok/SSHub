@@ -31,14 +31,86 @@ fn main() -> Result<()> {
     let staging = mk_group(&store, "Staging", 1, None)?;
 
     // (display name, address, user, port, group, tags, favorite, proxy_jump)
-    let hosts: &[(&str, &str, &str, u16, Option<i64>, &[&str], bool, Option<&str>)] = &[
-        ("Real Google DNS (trust me)", "8.8.8.8", "deploy", 22, Some(web), &["prod", "web"], true, None),
-        ("Google DNS: the sequel", "8.8.4.4", "deploy", 22, Some(web), &["prod", "web"], false, None),
-        ("Cloudflare", "1.1.1.1", "postgres", 5432, Some(databases), &["prod", "db"], false, None),
-        ("Cloudflare's server in a mom's garage", "1.0.0.1", "postgres", 5432, Some(databases), &["prod", "db"], false, None),
-        ("Quad9's server in a bunker", "9.9.9.9", "ubuntu", 22, Some(staging), &["staging"], false, None),
-        ("CI runner (OpenDNS)", "208.67.222.222", "runner", 22, None, &["staging", "ci"], false, Some("Bastion (secretly Level3)")),
-        ("Bastion (secretly Level3)", "4.2.2.2", "jump", 22, None, &["prod", "ops"], false, None),
+    let hosts: &[(
+        &str,
+        &str,
+        &str,
+        u16,
+        Option<i64>,
+        &[&str],
+        bool,
+        Option<&str>,
+    )] = &[
+        (
+            "Real Google DNS (trust me)",
+            "8.8.8.8",
+            "deploy",
+            22,
+            Some(web),
+            &["prod", "web"],
+            true,
+            None,
+        ),
+        (
+            "Google DNS: the sequel",
+            "8.8.4.4",
+            "deploy",
+            22,
+            Some(web),
+            &["prod", "web"],
+            false,
+            None,
+        ),
+        (
+            "Cloudflare",
+            "1.1.1.1",
+            "postgres",
+            5432,
+            Some(databases),
+            &["prod", "db"],
+            false,
+            None,
+        ),
+        (
+            "Cloudflare's server in a mom's garage",
+            "1.0.0.1",
+            "postgres",
+            5432,
+            Some(databases),
+            &["prod", "db"],
+            false,
+            None,
+        ),
+        (
+            "Quad9's server in a bunker",
+            "9.9.9.9",
+            "ubuntu",
+            22,
+            Some(staging),
+            &["staging"],
+            false,
+            None,
+        ),
+        (
+            "CI runner (OpenDNS)",
+            "208.67.222.222",
+            "runner",
+            22,
+            None,
+            &["staging", "ci"],
+            false,
+            Some("Bastion (secretly Level3)"),
+        ),
+        (
+            "Bastion (secretly Level3)",
+            "4.2.2.2",
+            "jump",
+            22,
+            None,
+            &["prod", "ops"],
+            false,
+            None,
+        ),
     ];
 
     for (name, addr, user, port, group_id, tags, favorite, proxy) in hosts {
@@ -67,7 +139,12 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn mk_group(store: &LauncherStore, name: &str, sort_order: i32, parent_id: Option<i64>) -> Result<i64> {
+fn mk_group(
+    store: &LauncherStore,
+    name: &str,
+    sort_order: i32,
+    parent_id: Option<i64>,
+) -> Result<i64> {
     Ok(store
         .create_group(&NewHostGroup {
             name: name.to_string(),

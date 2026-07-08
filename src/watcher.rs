@@ -23,7 +23,10 @@ pub fn spawn_config_watcher(ssh_config_path: &Path) -> Result<Receiver<WatchEven
     // config file, so rename-based saves keep firing. Require the file to exist
     // up front to preserve the "missing config errors out" contract.
     if !config_path.exists() {
-        anyhow::bail!("watch SSH config at {}: file not found", config_path.display());
+        anyhow::bail!(
+            "watch SSH config at {}: file not found",
+            config_path.display()
+        );
     }
     let watch_dir = config_path
         .parent()

@@ -60,7 +60,10 @@ fn render_host_block(host: &ManagedHost) -> String {
     }
 
     if let Some(key) = host.identity.as_ref().and_then(|i| i.private_key.as_ref()) {
-        lines.push(format!("    IdentityFile {}", conf_val(&key.to_string_lossy())));
+        lines.push(format!(
+            "    IdentityFile {}",
+            conf_val(&key.to_string_lossy())
+        ));
     }
 
     if let Some(cert) = host.identity.as_ref().and_then(|i| i.certificate.as_ref()) {

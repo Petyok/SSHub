@@ -198,11 +198,25 @@ fn render_auth_panel(buf: &mut Buffer, area: Rect, app: &App) {
         buf.set_string(col, y, &age_display, theme::mute());
         col += age_display.len() as u16;
         if col < right_lim {
-            col += put_clamped(buf, col, y, &host, theme::text(), (right_lim - col) as usize);
+            col += put_clamped(
+                buf,
+                col,
+                y,
+                &host,
+                theme::text(),
+                (right_lim - col) as usize,
+            );
             col += 1;
         }
         if col < right_lim {
-            put_clamped(buf, col, y, &ev.status, status_style, (right_lim - col) as usize);
+            put_clamped(
+                buf,
+                col,
+                y,
+                &ev.status,
+                status_style,
+                (right_lim - col) as usize,
+            );
         }
     }
 }
@@ -228,7 +242,14 @@ fn render_ping_panel(buf: &mut Buffer, area: Rect, app: &App) {
         }
         let info_y = area.y + 2;
         if info_y < area.y + area.height - 1 {
-            put_clamped(buf, inner_x, info_y, "waiting for ping data...", theme::dim(), inner_w);
+            put_clamped(
+                buf,
+                inner_x,
+                info_y,
+                "waiting for ping data...",
+                theme::dim(),
+                inner_w,
+            );
         }
         return;
     }

@@ -248,13 +248,21 @@ mod tests {
         )
         .unwrap();
 
-        let mut config = AppConfig::default();
-        config.terminal = TerminalKind::Ghostty;
+        let config = AppConfig {
+            terminal: TerminalKind::Ghostty,
+            ..AppConfig::default()
+        };
         save_config(&config).unwrap();
 
         let after = std::fs::read_to_string(&path).unwrap();
-        assert!(after.contains("# my hand-written note"), "comment lost: {after}");
-        assert!(after.contains("future_option = true"), "unknown key lost: {after}");
+        assert!(
+            after.contains("# my hand-written note"),
+            "comment lost: {after}"
+        );
+        assert!(
+            after.contains("future_option = true"),
+            "unknown key lost: {after}"
+        );
         assert!(after.contains("ghostty"), "our change not written: {after}");
         std::env::remove_var("SSHUB_CONFIG_DIR");
     }

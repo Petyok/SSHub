@@ -72,7 +72,10 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
         } else {
             theme::mute()
         };
-        let avail = popup.x.saturating_add(popup.width).saturating_sub(val_x + 1) as usize;
+        let avail = popup
+            .x
+            .saturating_add(popup.width)
+            .saturating_sub(val_x + 1) as usize;
         buf.set_string(
             val_x,
             ry,
