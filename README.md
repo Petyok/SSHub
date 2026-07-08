@@ -230,8 +230,9 @@ cargo run -- --dry-run # quick sanity check
 
 ## License
 
-[MIT](LICENSE)
+[AGPL-3.0-or-later](LICENSE) — a copyleft license: forks and derivatives must
+stay open under the same terms. (Versions ≤ 0.3.1 were released under MIT.)
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md). Current release: **0.3.1**.
+See [CHANGELOG.md](CHANGELOG.md). Current release: **0.4.0**.

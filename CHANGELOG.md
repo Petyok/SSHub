@@ -2,6 +2,12 @@
 
 All notable changes to SSHub are documented in this file.
 
+## [0.4.0] - 2026-07-08
+
+### Changed
+
+- **Relicensed from MIT to AGPL-3.0-or-later** starting this release — a strong copyleft so forks and derivatives must stay open under the same terms. Versions ≤ 0.3.1 remain available under MIT.
+
 ## [0.3.1] - 2026-07-08
 
 ### Changed
