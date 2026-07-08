@@ -9,7 +9,7 @@ impl App {
         // Embedded session: forward the paste straight to the remote PTY.
         if matches!(self.mode, AppMode::Session | AppMode::Connecting) {
             if let Some(s) = self.active_session_mut() {
-                let _ = s.write(text.as_bytes());
+                let _ = s.write_paste(text.as_bytes());
             }
             return Ok(());
         }

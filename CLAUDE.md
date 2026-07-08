@@ -12,15 +12,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Odometer scheme — each field rolls 0–9 and carries:
 
-- **Z (patch)** — bump on **every commit to `development`**: `just bump patch`.
-- **Y (minor)** — bump when **merging `development → main`** for a release; this resets Z to 0: `just bump minor`. So `main` release versions are always `X.Y.0`, and Z is just the running commit counter within a dev cycle.
+- **Z (patch)** — bump on **every commit to `development`**: `just bump patch`. It's the running odometer counter within a dev cycle **and** the version a hotfix release ships as-is.
+- **Y (minor)** — bump when **merging `development → main`** for a feature release; this resets Z to 0: `just bump minor`. A minor release is `X.Y.0`.
 - **X (major)** — bump **manually** for a milestone, or automatically by carry when the odometer rolls over (`0.9.9 + patch → 1.0.0`): `just bump major`.
+
+`main` is **not** always `X.Y.0`: feature releases land as `X.Y.0`, but hotfix (patch) releases publish `development`'s current `X.Y.Z` unchanged (see `just release patch` below).
 
 `just bump <patch|minor|major>` edits `Cargo.toml` + `Cargo.lock` with carry (`0.4.9 + patch → 0.5.0`). Only versions carried by `main` when a `vX.Y.Z` tag is pushed get published to crates.io (see the release workflow).
 
 The patch bump is automated by a tracked `pre-commit` hook (`.githooks/pre-commit`) that runs `just bump patch` on every commit **to `development`** (skipped on other branches and during merges). Git hooks aren't shared on clone, so enable them once per checkout: `just setup-hooks` (sets `core.hooksPath .githooks`).
 
-The minor bump + release is one command: **`just release`** (run from a clean `development`). It merges `development → main`, runs `just bump minor`, commits, tags `vX.Y.0`, pushes (the tag triggers the release workflow → binaries + crates.io), then fast-forwards `development` back to the released version so the next cycle starts clean. Pushing to protected `main` relies on the owner's admin bypass.
+Releasing is one command, run from a clean `development`:
+
+- **`just release`** (or `just release minor`) — feature release. Merges `development → main`, runs `just bump minor`, commits, tags `vX.Y.0`, pushes.
+- **`just release patch`** — **hotfix**. Merges `development → main` and tags/publishes `development`'s **current** `vX.Y.Z` with **no bump**, so a fix can reach `main` + crates.io without pretending to be a new minor.
+
+Both then tag (the tag triggers the release workflow → binaries + crates.io) and fast-forward `development` back to the released commit so both branches share a baseline and the next release merges cleanly. Pushing to protected `main` relies on the owner's admin bypass.
+
+`just release patch` ships **whatever `development` currently holds** — it's the fast path when `development` == what you want on `main`. If `development` carries unreleased work you don't want in the hotfix, land the fix on `development` alone first (or handle the cherry-pick manually) before releasing.
 
 ## Build & test commands
 

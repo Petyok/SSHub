@@ -125,20 +125,57 @@ pub(crate) fn slash_opens_palette_mode() {
 }
 
 #[test]
-pub(crate) fn typing_char_opens_palette() {
+pub(crate) fn bare_char_does_not_open_palette() {
+    // Type-ahead was removed: search is only reachable via '/'. A bare letter in
+    // Normal mode must not open the palette (it stays a normal-mode shortcut / no-op).
     let mut app = test_app(vec![
         ("web-prod", host("web-prod")),
         ("db-staging", host("db-staging")),
     ]);
-    legacy_meta(&mut app.hosts[0]).tags = vec!["prod".into()];
-    legacy_meta(&mut app.hosts[1]).tags = vec!["staging".into()];
     app.rebuild_filter();
 
-    // Typing a character in Normal mode opens the palette
     app.handle_key(key_char('w')).unwrap();
+    assert_ne!(app.mode, AppMode::Palette);
+    assert!(app.palette_query.is_empty());
+}
+
+#[test]
+pub(crate) fn palette_types_nav_letters() {
+    // Regression: j/k are bound to move down/up, but inside the palette they
+    // must be query text, not navigation — otherwise "jira" becomes "ira".
+    let mut app = test_app(vec![("jira", host("jira")), ("kafka", host("kafka"))]);
+    app.rebuild_filter();
+
+    app.handle_key(key_char('/')).unwrap();
     assert_eq!(app.mode, AppMode::Palette);
-    assert_eq!(app.palette_query, "w");
+    for c in "jira".chars() {
+        app.handle_key(key_char(c)).unwrap();
+    }
+    assert_eq!(app.mode, AppMode::Palette);
+    assert_eq!(app.palette_query, "jira");
     assert_eq!(app.palette_results.len(), 1);
+}
+
+#[test]
+pub(crate) fn clear_ssh_log_keeps_command_line() {
+    use crate::ssh::probe::{LogLevel, SshLogEntry};
+    let mut app = test_app(vec![("web", host("web"))]);
+
+    let mk = |line: &str| SshLogEntry {
+        host_name: "web".into(),
+        line: line.into(),
+        level: LogLevel::Info,
+        timestamp: 0,
+    };
+    app.push_ssh_log(mk("$ ssh web"));
+    app.push_ssh_log(mk("debug1: handshake noise"));
+    app.push_ssh_log(mk("debug1: more noise"));
+
+    // On connect the handshake noise is dropped, but the command line survives
+    // so the dashboard still shows how the host was connected to.
+    app.clear_ssh_log_for_host("web");
+    assert_eq!(app.ssh_log.len(), 1);
+    assert_eq!(app.ssh_log[0].line, "$ ssh web");
 }
 
 #[test]
@@ -160,15 +197,22 @@ pub(crate) fn navigation_wraps_around() {
 }
 
 #[test]
-pub(crate) fn j_k_move_selection_in_search_mode() {
+pub(crate) fn j_k_type_into_search_query() {
+    // In Search mode j/k are query text (not navigation) so host names like
+    // "jira"/"kafka" are typeable; list movement is on the arrow keys.
     let mut app = test_app(vec![("a", host("a")), ("b", host("b"))]);
     app.mode = AppMode::Search;
 
     app.handle_key(key_char('j')).unwrap();
-    assert_eq!(app.selected, 1);
-
     app.handle_key(key_char('k')).unwrap();
+    assert_eq!(app.search_query, "jk");
     assert_eq!(app.selected, 0);
+
+    // Arrows still navigate the filtered list.
+    app.search_query.clear();
+    app.rebuild_filter();
+    app.handle_key(key(KeyCode::Down)).unwrap();
+    assert_eq!(app.selected, 1);
 }
 
 #[test]

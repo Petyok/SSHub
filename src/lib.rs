@@ -334,6 +334,12 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
     // Check tunnel health
     app.tunnel_manager.check_health();
 
+    // Drive selection edge-autoscroll: a drag held past the top/bottom edge
+    // keeps scrolling even when the mouse isn't moving (no drag events fire).
+    if let Some(session) = app.active_session_mut() {
+        session.selection_autoscroll_tick();
+    }
+
     // Refresh auth events cache periodically
     app.refresh_auth_cache();
 

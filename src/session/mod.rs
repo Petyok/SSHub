@@ -175,6 +175,12 @@ pub struct Session {
     /// Transient "copied" toast: (message, shown_at). Rendered in a corner for
     /// a few seconds after a copy-on-select.
     pub copy_notice: Option<(String, Instant)>,
+    /// While a selection drag is held past the top/bottom edge, the view keeps
+    /// scrolling on each poll tick so you can select content beyond the
+    /// viewport. `(dir, col)`: dir `+1` scrolls toward newer output (bottom
+    /// edge), `-1` toward older (top edge); `col` is the pointer column to keep
+    /// extending the selection to. `None` = not autoscrolling.
+    drag_autoscroll: Option<(i32, u16)>,
 }
 
 impl Session {
@@ -235,6 +241,7 @@ impl Session {
             saw_pty_bytes: false,
             selection: None,
             copy_notice: None,
+            drag_autoscroll: None,
             config,
         })
     }
@@ -262,6 +269,7 @@ impl Session {
     /// Finish the drag; return the selected text (trailing spaces trimmed per
     /// line) if the selection covers anything, else `None`.
     pub fn selection_finish(&mut self) -> Option<String> {
+        self.drag_autoscroll = None;
         let sel = self.selection.as_mut()?;
         sel.dragging = false;
         if sel.is_empty() {
@@ -287,6 +295,49 @@ impl Session {
     /// Drop any selection (e.g. a plain click or Esc).
     pub fn selection_clear(&mut self) {
         self.selection = None;
+        self.drag_autoscroll = None;
+    }
+
+    /// Arm/disarm edge autoscroll for the in-progress selection drag. Called
+    /// from the mouse handler: `Some(+1)` when the pointer is at/below the
+    /// bottom edge, `Some(-1)` at/above the top edge, `None` when back inside
+    /// the viewport. `col` is the pointer column so the tick keeps growing the
+    /// selection along the edge.
+    pub fn set_drag_autoscroll(&mut self, dir: Option<i32>, col: u16) {
+        self.drag_autoscroll = dir.map(|d| (d.signum(), col));
+    }
+
+    /// Advance edge autoscroll by one row. Call once per poll tick so a drag
+    /// held past an edge keeps scrolling even when the mouse stops moving.
+    /// No-ops unless a drag is active and armed, and stops at the scrollback
+    /// bounds (nothing left to reveal).
+    pub fn selection_autoscroll_tick(&mut self) {
+        let Some((dir, col)) = self.drag_autoscroll else {
+            return;
+        };
+        if !self.selection.as_ref().is_some_and(|s| s.dragging) {
+            self.drag_autoscroll = None;
+            return;
+        }
+        let (rows, _) = self.parser.screen().size();
+        if dir > 0 {
+            // Toward newer output: nothing below once we're at the live bottom.
+            if self.parser.scrollback() == 0 {
+                return;
+            }
+            self.parser.scroll_down(1);
+            self.selection_scroll_shift(-1);
+            self.selection_extend(rows.saturating_sub(1), col);
+        } else {
+            // Toward older output: stop when scrollback can't grow further.
+            let before = self.parser.scrollback();
+            self.parser.scroll_up(1);
+            if self.parser.scrollback() == before {
+                return;
+            }
+            self.selection_scroll_shift(1);
+            self.selection_extend(0, col);
+        }
     }
 
     /// Shift the selection vertically so it tracks the same text when the view
@@ -559,6 +610,48 @@ impl Session {
     pub fn write(&mut self, bytes: &[u8]) -> Result<()> {
         self.runtime.write(bytes)
     }
+
+    /// Forward a clipboard paste to the PTY. When the remote application has
+    /// enabled bracketed-paste mode (DECSET 2004) — as terminal-aware editors
+    /// like vim do — wrap the payload in `ESC[200~ … ESC[201~` so the remote
+    /// treats it as a single paste and disables autoindent / comment
+    /// continuation. Without this, pasting into vim's insert mode re-triggers
+    /// autoindent per line, cascading indentation and repeating the comment
+    /// leader. If the remote hasn't asked for bracketed paste, send raw so the
+    /// markers don't leak in as literal text.
+    pub fn write_paste(&mut self, text: &[u8]) -> Result<()> {
+        let payload = encode_paste(text, self.parser.screen().bracketed_paste());
+        self.runtime.write(&payload)
+    }
+}
+
+/// Map an (unclamped) body-local pointer row to a selection-autoscroll
+/// direction: `Some(1)` at/below the last row (reveal newer output), `Some(-1)`
+/// at/above the first row (reveal older), `None` when inside the viewport.
+/// Pulled out of the mouse handler so the edge decision is unit-testable.
+pub fn edge_autoscroll_dir(raw_row: i32, rows: u16) -> Option<i32> {
+    if raw_row >= rows as i32 - 1 {
+        Some(1)
+    } else if raw_row <= 0 {
+        Some(-1)
+    } else {
+        None
+    }
+}
+
+/// Wrap `text` in bracketed-paste markers when the remote requested that mode,
+/// otherwise return it unchanged. Pulled out of [`Session::write_paste`] so the
+/// framing is unit-testable without a live PTY.
+fn encode_paste(text: &[u8], bracketed: bool) -> Vec<u8> {
+    if bracketed {
+        let mut buf = Vec::with_capacity(text.len() + 12);
+        buf.extend_from_slice(b"\x1b[200~");
+        buf.extend_from_slice(text);
+        buf.extend_from_slice(b"\x1b[201~");
+        buf
+    } else {
+        text.to_vec()
+    }
 }
 
 /// How long an armed session keeps the connect animation up while waiting to
@@ -776,6 +869,42 @@ mod selection_tests {
         assert!(s.contains(5, 8));
         assert!(!s.contains(5, 9));
         assert!(!s.contains(4, 6));
+    }
+}
+
+#[cfg(test)]
+mod autoscroll_tests {
+    use super::edge_autoscroll_dir;
+
+    #[test]
+    fn edge_direction_by_pointer_row() {
+        let rows = 24;
+        // Inside the viewport → no autoscroll.
+        assert_eq!(edge_autoscroll_dir(1, rows), None);
+        assert_eq!(edge_autoscroll_dir(22, rows), None);
+        // At/below the last row → scroll toward newer output.
+        assert_eq!(edge_autoscroll_dir(23, rows), Some(1));
+        assert_eq!(edge_autoscroll_dir(40, rows), Some(1));
+        // At/above the first row (or into the header, negative) → older output.
+        assert_eq!(edge_autoscroll_dir(0, rows), Some(-1));
+        assert_eq!(edge_autoscroll_dir(-3, rows), Some(-1));
+    }
+}
+
+#[cfg(test)]
+mod paste_tests {
+    use super::*;
+
+    #[test]
+    fn wraps_only_when_bracketed_paste_enabled() {
+        let text = b"# header\n    indented\n";
+        // Remote asked for bracketed paste (e.g. vim): wrap in ESC[200~/ESC[201~.
+        assert_eq!(
+            encode_paste(text, true),
+            b"\x1b[200~# header\n    indented\n\x1b[201~".to_vec()
+        );
+        // Remote did not: send raw so markers don't leak in as literal text.
+        assert_eq!(encode_paste(text, false), text.to_vec());
     }
 }
 

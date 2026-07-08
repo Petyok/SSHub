@@ -72,8 +72,7 @@ fn help_lines() -> Vec<Line<'static>> {
         entry("r", "Cycle range (all/24h/week/month)"),
         Line::from(""),
         section("search & tags"),
-        entry("/", "Fuzzy palette (Enter connects to the match)"),
-        entry("(typing)", "Any unmatched key opens the palette"),
+        entry("/", "Fuzzy palette (type to search, Enter connects)"),
         entry("#", "Filter hosts by tag (type to narrow the list)"),
         entry(
             "Space",
