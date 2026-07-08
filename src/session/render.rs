@@ -4,10 +4,12 @@
 //! so the real ssh handshake (`ssh -v`) is shown verbatim with nothing
 //! fabricated. Header / footer match the design tokens in `src/tui/theme.rs`.
 
+use std::time::Duration;
+
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
 use tui_term::widget::PseudoTerminal;
@@ -33,6 +35,36 @@ pub fn render(frame: &mut Frame, app: &App) {
     render_header(frame, chunks[0], session, app);
     render_body(frame, chunks[1], session);
     render_footer(frame, chunks[2], session);
+
+    // Transient "copied" toast in the body's bottom-right corner.
+    if let Some((msg, at)) = &session.copy_notice {
+        if at.elapsed() < Duration::from_millis(3500) {
+            render_copy_toast(frame, chunks[1], msg);
+        }
+    }
+}
+
+/// Small self-dismissing toast (e.g. "✓ copied N chars") in the corner of the
+/// session body. The event loop keeps redrawing, so the time check hides it.
+fn render_copy_toast(frame: &mut Frame, body: Rect, msg: &str) {
+    let text = format!(" \u{2713} {msg} ");
+    let w = (text.chars().count() as u16 + 2).min(body.width);
+    let h = 3u16.min(body.height);
+    if w == 0 || h == 0 {
+        return;
+    }
+    let x = body.x + body.width.saturating_sub(w + 1);
+    let y = body.y + body.height.saturating_sub(h);
+    let rect = Rect::new(x, y, w, h);
+    frame.render_widget(Clear, rect);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(text, theme::green()))).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(theme::popup_border()),
+        ),
+        rect,
+    );
 }
 
 // ── Header ───────────────────────────────────────────────────
@@ -174,6 +206,25 @@ fn render_body(frame: &mut Frame, area: Rect, session: &Session) {
     }
     let term = PseudoTerminal::new(session.parser.screen());
     frame.render_widget(term, area);
+
+    // Overlay the in-app text selection by reversing the selected cells. Done
+    // as a post-pass over the buffer so it survives every repaint (unlike the
+    // outer terminal's native selection, which a redraw wipes).
+    if let Some(sel) = session.selection {
+        let (rows, cols) = session.parser.screen().size();
+        let buf = frame.buffer_mut();
+        for r in 0..rows.min(area.height) {
+            for c in 0..cols.min(area.width) {
+                if sel.contains(r, c) {
+                    let x = area.x + c;
+                    let y = area.y + r;
+                    if let Some(cell) = buf.cell_mut((x, y)) {
+                        cell.modifier.toggle(Modifier::REVERSED);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Shared connect-screen layout: `center` lines centered in the upper band,
@@ -369,8 +420,8 @@ fn render_footer(frame: &mut Frame, area: Rect, session: &Session) {
     ];
 
     // When scrolled back, hint at how to return to live output. Otherwise
-    // surface the one-time discovery hint that Shift+drag escapes mouse
-    // capture for native selection.
+    // surface the selection hint: plain drag selects (and copies) in a shell;
+    // inside a mouse app (vim/tmux) hold Shift.
     let scrollback = session.parser.scrollback();
     if scrollback > 0 {
         spans.push(Span::raw("   "));
@@ -381,7 +432,7 @@ fn render_footer(frame: &mut Frame, area: Rect, session: &Session) {
     } else {
         // Pad to the right edge with the hint.
         let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
-        let hint = "Shift+drag select";
+        let hint = "drag: select+copy · Shift+drag in mouse apps";
         let pad = (area.width as usize).saturating_sub(used + hint.chars().count() + 1);
         spans.push(Span::raw(" ".repeat(pad)));
         spans.push(Span::styled(hint, mute));
