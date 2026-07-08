@@ -18,6 +18,8 @@ Odometer scheme — each field rolls 0–9 and carries:
 
 `just bump <patch|minor|major>` edits `Cargo.toml` + `Cargo.lock` with carry (`0.4.9 + patch → 0.5.0`). Only versions carried by `main` when a `vX.Y.Z` tag is pushed get published to crates.io (see the release workflow).
 
+The patch bump is automated by a tracked `pre-commit` hook (`.githooks/pre-commit`) that runs `just bump patch` on every commit **to `development`** (skipped on other branches and during merges). Git hooks aren't shared on clone, so enable them once per checkout: `just setup-hooks` (sets `core.hooksPath .githooks`).
+
 ## Build & test commands
 
 ```bash

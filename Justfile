@@ -49,8 +49,17 @@ bump kind:
     esac
     new="$X.$Y.$Z"
     sed -i -E "s/^version = \"[^\"]+\"/version = \"$new\"/" Cargo.toml
-    cargo update -p sshub --quiet
+    # Update the sshub entry in Cargo.lock too (the version line right after its
+    # name), so no `cargo` invocation is needed — keeps the pre-commit hook fast
+    # and offline.
+    sed -i "/^name = \"sshub\"$/{n;s/^version = .*/version = \"$new\"/}" Cargo.lock
     echo "bumped $ver -> $new"
+
+# One-time per clone: point git at the tracked hooks in .githooks (enables the
+# auto patch-bump pre-commit hook on the development branch).
+setup-hooks:
+    git config core.hooksPath .githooks
+    @echo "git hooks enabled (core.hooksPath = .githooks)"
 
 # Install the release binary to ~/.local/bin and a launcher entry so sshub
 # shows up in your application launcher (GNOME, rofi, etc). Uses kitty if

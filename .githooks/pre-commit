@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Auto-bump the patch version (Z) on every commit to `development`, per the
+# odometer scheme in CLAUDE.md. Enabled per-clone via `just setup-hooks`
+# (git config core.hooksPath .githooks).
+#
+# Only fires on the development branch, never during a merge/rebase, and no-ops
+# if `just` isn't installed — so it can't block a commit for a contributor who
+# doesn't have the toolchain.
+set -euo pipefail
+
+branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+[ "$branch" = "development" ] || exit 0
+
+# Skip while a merge/rebase/cherry-pick is in progress — those commits shouldn't
+# tick the counter (and pre-commit is usually skipped for them anyway).
+git_dir=$(git rev-parse --git-dir)
+for marker in MERGE_HEAD REBASE_HEAD CHERRY_PICK_HEAD; do
+    [ -e "$git_dir/$marker" ] && exit 0
+done
+
+command -v just >/dev/null 2>&1 || {
+    echo "pre-commit: 'just' not found — skipping version bump" >&2
+    exit 0
+}
+
+just bump patch >&2
+git add Cargo.toml Cargo.lock
