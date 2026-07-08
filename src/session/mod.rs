@@ -559,6 +559,34 @@ impl Session {
     pub fn write(&mut self, bytes: &[u8]) -> Result<()> {
         self.runtime.write(bytes)
     }
+
+    /// Forward a clipboard paste to the PTY. When the remote application has
+    /// enabled bracketed-paste mode (DECSET 2004) — as terminal-aware editors
+    /// like vim do — wrap the payload in `ESC[200~ … ESC[201~` so the remote
+    /// treats it as a single paste and disables autoindent / comment
+    /// continuation. Without this, pasting into vim's insert mode re-triggers
+    /// autoindent per line, cascading indentation and repeating the comment
+    /// leader. If the remote hasn't asked for bracketed paste, send raw so the
+    /// markers don't leak in as literal text.
+    pub fn write_paste(&mut self, text: &[u8]) -> Result<()> {
+        let payload = encode_paste(text, self.parser.screen().bracketed_paste());
+        self.runtime.write(&payload)
+    }
+}
+
+/// Wrap `text` in bracketed-paste markers when the remote requested that mode,
+/// otherwise return it unchanged. Pulled out of [`Session::write_paste`] so the
+/// framing is unit-testable without a live PTY.
+fn encode_paste(text: &[u8], bracketed: bool) -> Vec<u8> {
+    if bracketed {
+        let mut buf = Vec::with_capacity(text.len() + 12);
+        buf.extend_from_slice(b"\x1b[200~");
+        buf.extend_from_slice(text);
+        buf.extend_from_slice(b"\x1b[201~");
+        buf
+    } else {
+        text.to_vec()
+    }
 }
 
 /// How long an armed session keeps the connect animation up while waiting to
@@ -776,6 +804,23 @@ mod selection_tests {
         assert!(s.contains(5, 8));
         assert!(!s.contains(5, 9));
         assert!(!s.contains(4, 6));
+    }
+}
+
+#[cfg(test)]
+mod paste_tests {
+    use super::*;
+
+    #[test]
+    fn wraps_only_when_bracketed_paste_enabled() {
+        let text = b"# header\n    indented\n";
+        // Remote asked for bracketed paste (e.g. vim): wrap in ESC[200~/ESC[201~.
+        assert_eq!(
+            encode_paste(text, true),
+            b"\x1b[200~# header\n    indented\n\x1b[201~".to_vec()
+        );
+        // Remote did not: send raw so markers don't leak in as literal text.
+        assert_eq!(encode_paste(text, false), text.to_vec());
     }
 }
 
