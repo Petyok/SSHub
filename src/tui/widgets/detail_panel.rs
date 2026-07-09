@@ -111,7 +111,7 @@ fn host_detail_view(app: &App, entry: &HostEntry, _host_idx: usize) -> Vec<Line<
 
     let hint_style = Style::default().fg(Color::DarkGray);
 
-    vec![
+    let mut lines = vec![
         detail_line("Host", entry.name().to_string()),
         detail_line("Label", entry.display_name().to_string()),
         detail_line("Address", dash(&ssh.hostname).to_string()),
@@ -150,7 +150,26 @@ fn host_detail_view(app: &App, entry: &HostEntry, _host_idx: usize) -> Vec<Line<
             hint_style,
         )),
         Line::from(Span::styled("[f] toggle favourite", hint_style)),
-    ]
+    ];
+
+    // Prepend the detected OS logo (colored ASCII art) when enabled and the
+    // host's os_icon resolves to a known logo. render_detail_panel returns a
+    // Paragraph, so the logo is composed as colored Lines rather than rendered
+    // into a carved sub-column.
+    if app.config.appearance.os_logo {
+        if let Some(logo) = entry
+            .managed()
+            .and_then(|m| m.os_icon.as_deref())
+            .and_then(crate::osinfo::logo_for)
+        {
+            let mut prefixed = crate::osinfo::widget::logo_to_lines(logo);
+            prefixed.push(Line::from(""));
+            prefixed.extend(lines);
+            lines = prefixed;
+        }
+    }
+
+    lines
 }
 
 fn host_detail_edit(app: &App, entry: &HostEntry, _host_idx: usize) -> Vec<Line<'static>> {

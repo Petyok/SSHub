@@ -5,6 +5,7 @@ pub mod import;
 pub mod keybinds;
 pub mod launcher;
 pub mod metadata;
+pub mod osinfo;
 pub mod ping;
 pub mod search;
 pub mod secure_fs;
@@ -328,6 +329,16 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
         let entries: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
         for entry in entries {
             app.push_ssh_log(entry);
+        }
+    }
+
+    // Drain OS auto-detect results from background worker
+    if let Some(rx) = app.os_detect_rx.as_ref() {
+        // Collect first: `app` is borrowed by `rx` here, so we can't call the
+        // store.update_host + reload_hosts path inline.
+        let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        for ev in events {
+            app.apply_os_detect(ev)?;
         }
     }
 

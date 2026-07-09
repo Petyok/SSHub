@@ -27,6 +27,9 @@ pub struct AppearanceConfig {
     /// with `[` / `]`.
     #[serde(default)]
     pub identity_columns: usize,
+    /// Show the detected OS logo in the host detail view. Default true.
+    #[serde(default = "default_true")]
+    pub os_logo: bool,
 }
 
 fn default_true() -> bool {
@@ -45,6 +48,7 @@ impl Default for AppearanceConfig {
             disable_animation: false,
             confirm_quit: true,
             identity_columns: 0,
+            os_logo: true,
         }
     }
 }

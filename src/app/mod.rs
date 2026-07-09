@@ -59,7 +59,30 @@ pub const NAME_WIDTH_STEP: usize = 8;
 /// Maximum UI zoom level.
 pub const UI_ZOOM_MAX: usize = 3;
 
-pub const OS_ICON_OPTIONS: [&str; 4] = ["(none)", "generic", "ubuntu", "debian"];
+pub const OS_ICON_OPTIONS: [&str; 22] = [
+    "(none)",
+    "arch",
+    "ubuntu",
+    "debian",
+    "alpine",
+    "fedora",
+    "rocky",
+    "rhel",
+    "centos",
+    "opensuse",
+    "linuxmint",
+    "manjaro",
+    "popos",
+    "kali",
+    "gentoo",
+    "void",
+    "nixos",
+    "endeavouros",
+    "freebsd",
+    "macos",
+    "windows",
+    "linux",
+];
 
 /// Injectable dependencies for [`App`].
 pub struct AppDeps {
@@ -129,6 +152,10 @@ pub struct App {
     pub ping_rx: Option<Receiver<crate::ping::PingResult>>,
     pub ping_data: std::collections::HashMap<String, Vec<u32>>,
     pub probe_rx: Option<Receiver<crate::ssh::probe::SshLogEntry>>,
+    pub os_detect_tx: Option<std::sync::mpsc::Sender<crate::osinfo::OsDetectCmd>>,
+    pub os_detect_rx: Option<Receiver<crate::osinfo::OsDetectEvent>>,
+    /// Host ids with an in-flight OS detection probe, to avoid re-probing.
+    pub os_detect_inflight: std::collections::HashSet<i64>,
     pub ssh_log: Vec<crate::ssh::probe::SshLogEntry>,
     pub ssh_log_scroll: usize,
     pub auth_events_cache: Vec<crate::store::AuthEvent>,
@@ -192,6 +219,13 @@ impl App {
         app.refresh_auth_cache();
         app.start_ping_worker();
 
+        // Spawn the OS auto-detect worker here (the on-disk constructor) rather
+        // than in new_with_deps so unit tests that inject deps stay offline and
+        // never leak a live ssh-probing thread.
+        let (os_tx, os_rx) = crate::osinfo::spawn_os_detect_worker();
+        app.os_detect_tx = Some(os_tx);
+        app.os_detect_rx = Some(os_rx);
+
         if first_run && app.hosts.is_empty() {
             app.mode = AppMode::Help;
         }
@@ -246,6 +280,9 @@ impl App {
             ping_rx: None,
             ping_data: std::collections::HashMap::new(),
             probe_rx: None,
+            os_detect_tx: None,
+            os_detect_rx: None,
+            os_detect_inflight: std::collections::HashSet::new(),
             ssh_log: Vec::new(),
             ssh_log_scroll: 0,
             auth_events_cache: Vec::new(),
