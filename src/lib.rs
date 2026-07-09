@@ -9,6 +9,7 @@ pub mod ping;
 pub mod search;
 pub mod secure_fs;
 pub mod session;
+pub mod sftp;
 pub mod ssh;
 pub mod store;
 pub mod text_input;
@@ -320,6 +321,18 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
                     }
                 }
             }
+        }
+    }
+
+    // Drain SFTP worker events. Collect first (borrowing `sftp_rx`), drop the
+    // borrow, then apply — `apply_sftp_event` needs `&mut app`.
+    if app.sftp_rx.is_some() {
+        let events: Vec<crate::sftp::SftpEvent> = {
+            let rx = app.sftp_rx.as_ref().unwrap();
+            std::iter::from_fn(|| rx.try_recv().ok()).collect()
+        };
+        for ev in events {
+            app.apply_sftp_event(ev);
         }
     }
 

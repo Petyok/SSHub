@@ -11,6 +11,7 @@ mod import;
 mod keys;
 mod mouse;
 mod session;
+mod sftp;
 mod tags;
 mod tunnels;
 mod types;
@@ -128,6 +129,9 @@ pub struct App {
     pub palette_results: Vec<usize>,
     pub ping_rx: Option<Receiver<crate::ping::PingResult>>,
     pub ping_data: std::collections::HashMap<String, Vec<u32>>,
+    pub sftp: Option<crate::sftp::model::SftpState>,
+    pub sftp_tx: Option<std::sync::mpsc::Sender<crate::sftp::SftpCommand>>,
+    pub sftp_rx: Option<std::sync::mpsc::Receiver<crate::sftp::SftpEvent>>,
     pub probe_rx: Option<Receiver<crate::ssh::probe::SshLogEntry>>,
     pub ssh_log: Vec<crate::ssh::probe::SshLogEntry>,
     pub ssh_log_scroll: usize,
@@ -245,6 +249,9 @@ impl App {
             palette_results: Vec::new(),
             ping_rx: None,
             ping_data: std::collections::HashMap::new(),
+            sftp: None,
+            sftp_tx: None,
+            sftp_rx: None,
             probe_rx: None,
             ssh_log: Vec::new(),
             ssh_log_scroll: 0,
