@@ -9,7 +9,7 @@ impl App {
     }
 
     pub(crate) fn switch_to_keys_tab(&mut self) -> Result<()> {
-        self.active_tab = 2;
+        self.active_tab = 3;
         self.reload_identities()?;
         self.agent_info_updated = std::time::Instant::now() - std::time::Duration::from_secs(60);
         self.refresh_agent_info();

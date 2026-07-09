@@ -506,8 +506,8 @@ pub(crate) fn optional_field(raw: &str) -> Option<String> {
 pub(crate) fn tab_from_x(x: u16) -> Option<usize> {
     // Tab bar layout (from tab_bar.rs): 1-char left margin, then per tab:
     // 4 chars for number+brackets + label_len + 3 chars gap
-    // Labels: "hosts"(5), "tunnels"(7), "identities"(10), "audit"(5)
-    let labels = [5u16, 7, 10, 5];
+    // Labels: "hosts"(5), "sftp"(4), "tunnels"(7), "identities"(10), "audit"(5)
+    let labels = [5u16, 4, 7, 10, 5];
     let mut cx = 1u16; // 1-char margin
     for (i, label_len) in labels.iter().enumerate() {
         let tab_w = 4 + label_len + 3;
