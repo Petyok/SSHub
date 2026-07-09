@@ -235,4 +235,4 @@ stay open under the same terms. (Versions ≤ 0.3.1 were released under MIT.)
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md). Current release: **0.4.0**.
+See [CHANGELOG.md](CHANGELOG.md).
