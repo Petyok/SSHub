@@ -11,11 +11,11 @@ use crate::tui::theme;
 use crate::tui::widgets::panel_box::{put_clamped, render_panel_box};
 
 // ── Panel heights (sum = 19 to align with the right column) ─
-const HOST_H: u16 = 8;
+const HOST_H: u16 = 9;
 const AGENT_H: u16 = 6;
 #[allow(dead_code)]
 const TUNNELS_H: u16 = 8;
-const LATENCY_H: u16 = 5;
+const LATENCY_H: u16 = 4;
 
 /// Render the three middle-column panels stacked vertically.
 pub fn render_middle_stack(frame: &mut Frame, area: Rect, app: &App) {
