@@ -200,6 +200,11 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
+    (@fn tab_sftp $($key:literal),* $(,)?) => {
+        fn default_kb_tab_sftp() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
     (@fn tab_tunnels $($key:literal),* $(,)?) => {
         fn default_kb_tab_tunnels() -> Vec<String> {
             vec![$($key.to_string()),*]
@@ -361,9 +366,10 @@ kb_defaults! {
     rename_group => ["Ctrl+G"],
     delete_group => ["Ctrl+Shift+G"],
     tab_hosts => ["h", "1"],
-    tab_tunnels => ["2"],
-    tab_keys => ["i", "3"],
-    tab_audit => ["4"],
+    tab_sftp => ["2"],
+    tab_tunnels => ["3"],
+    tab_keys => ["i", "4"],
+    tab_audit => ["5"],
     identity_columns_inc => ["]"],
     identity_columns_dec => ["["],
     add_to_agent => ["p"],
@@ -427,6 +433,7 @@ pub enum KeyAction {
     RenameGroup,
     DeleteGroup,
     TabHosts,
+    TabSftp,
     TabTunnels,
     TabKeys,
     TabAudit,
@@ -455,7 +462,7 @@ pub enum KeyAction {
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 62] = [
+    pub const ALL: [KeyAction; 63] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -494,6 +501,7 @@ impl KeyAction {
         KeyAction::RenameGroup,
         KeyAction::DeleteGroup,
         KeyAction::TabHosts,
+        KeyAction::TabSftp,
         KeyAction::TabTunnels,
         KeyAction::TabKeys,
         KeyAction::TabAudit,
@@ -560,6 +568,7 @@ impl KeyAction {
             KeyAction::RenameGroup => "Edit group",
             KeyAction::DeleteGroup => "Delete group",
             KeyAction::TabHosts => "Hosts tab",
+            KeyAction::TabSftp => "SFTP tab",
             KeyAction::TabTunnels => "Tunnels tab",
             KeyAction::TabKeys => "Identities tab",
             KeyAction::TabAudit => "Audit tab",
@@ -667,6 +676,8 @@ pub struct KeybindsConfig {
     pub delete_group: Vec<String>,
     #[serde(default = "default_kb_tab_hosts")]
     pub tab_hosts: Vec<String>,
+    #[serde(default = "default_kb_tab_sftp")]
+    pub tab_sftp: Vec<String>,
     #[serde(default = "default_kb_tab_tunnels")]
     pub tab_tunnels: Vec<String>,
     #[serde(default = "default_kb_tab_keys")]
@@ -758,6 +769,7 @@ impl Default for KeybindsConfig {
             rename_group: default_kb_rename_group(),
             delete_group: default_kb_delete_group(),
             tab_hosts: default_kb_tab_hosts(),
+            tab_sftp: default_kb_tab_sftp(),
             tab_tunnels: default_kb_tab_tunnels(),
             tab_keys: default_kb_tab_keys(),
             tab_audit: default_kb_tab_audit(),
@@ -827,6 +839,7 @@ impl KeybindsConfig {
             KeyAction::RenameGroup => default_kb_rename_group(),
             KeyAction::DeleteGroup => default_kb_delete_group(),
             KeyAction::TabHosts => default_kb_tab_hosts(),
+            KeyAction::TabSftp => default_kb_tab_sftp(),
             KeyAction::TabTunnels => default_kb_tab_tunnels(),
             KeyAction::TabKeys => default_kb_tab_keys(),
             KeyAction::TabAudit => default_kb_tab_audit(),
@@ -899,6 +912,7 @@ impl KeybindsConfig {
             KeyAction::RenameGroup => &self.rename_group,
             KeyAction::DeleteGroup => &self.delete_group,
             KeyAction::TabHosts => &self.tab_hosts,
+            KeyAction::TabSftp => &self.tab_sftp,
             KeyAction::TabTunnels => &self.tab_tunnels,
             KeyAction::TabKeys => &self.tab_keys,
             KeyAction::TabAudit => &self.tab_audit,
@@ -966,6 +980,7 @@ impl KeybindsConfig {
             KeyAction::RenameGroup => self.rename_group = binds,
             KeyAction::DeleteGroup => self.delete_group = binds,
             KeyAction::TabHosts => self.tab_hosts = binds,
+            KeyAction::TabSftp => self.tab_sftp = binds,
             KeyAction::TabTunnels => self.tab_tunnels = binds,
             KeyAction::TabKeys => self.tab_keys = binds,
             KeyAction::TabAudit => self.tab_audit = binds,
