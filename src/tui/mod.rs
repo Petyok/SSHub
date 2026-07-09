@@ -79,9 +79,10 @@ pub fn render(frame: &mut Frame, app: &App) {
     // ── Tab body dispatch ─────────────────────────────────────
     match app.active_tab {
         0 => render_hosts_body(frame, &areas, app),
-        1 => render_tunnels_body(frame, &areas, app),
-        2 => render_keys_body(frame, &areas, app),
-        3 => render_audit_body(frame, &areas, app),
+        1 => render_sftp_body(frame, &areas, app),
+        2 => render_tunnels_body(frame, &areas, app),
+        3 => render_keys_body(frame, &areas, app),
+        4 => render_audit_body(frame, &areas, app),
         _ => render_hosts_body(frame, &areas, app),
     }
 
@@ -264,6 +265,18 @@ fn footer_keybinds(app: &App) -> Vec<(&'static str, &'static str)> {
         ],
         1 => vec![
             ("\u{2191}\u{2193}", "select"),
+            ("\u{21b5}", "enter/connect"),
+            ("\u{21c6}", "focus"),
+            ("\u{2192}", "download"),
+            ("\u{2190}", "upload"),
+            ("c", "run"),
+            ("u", "unstage"),
+            ("Esc", "back"),
+            ("?", "help"),
+            ("q", "quit"),
+        ],
+        2 => vec![
+            ("\u{2191}\u{2193}", "select"),
             ("\u{21b5}", "start/stop"),
             ("a", "new tunnel"),
             ("e", "edit"),
@@ -272,7 +285,7 @@ fn footer_keybinds(app: &App) -> Vec<(&'static str, &'static str)> {
             ("?", "help"),
             ("q", "quit"),
         ],
-        2 => vec![
+        3 => vec![
             ("\u{2191}\u{2193}\u{2190}\u{2192}", "move"),
             ("[ ]", "columns"),
             ("a", "add"),
@@ -282,7 +295,7 @@ fn footer_keybinds(app: &App) -> Vec<(&'static str, &'static str)> {
             ("?", "help"),
             ("q", "quit"),
         ],
-        3 => vec![
+        4 => vec![
             ("\u{2191}\u{2193}", "select"),
             ("f", "filter"),
             ("r", "range"),
@@ -316,6 +329,10 @@ fn render_hosts_body(frame: &mut Frame, areas: &dashboard_layout::DashboardAreas
         );
         widgets::middle_stack::render_ssh_log_panel(frame, log_area, app);
     }
+}
+
+fn render_sftp_body(frame: &mut Frame, areas: &dashboard_layout::DashboardAreas, app: &App) {
+    screens::sftp::render_sftp(frame, areas.body, app);
 }
 
 fn render_tunnels_body(frame: &mut Frame, areas: &dashboard_layout::DashboardAreas, app: &App) {
@@ -1024,7 +1041,7 @@ mod tests {
         use crate::store::Identity;
 
         let mut app = test_app_with_hosts();
-        app.active_tab = 2;
+        app.active_tab = 3;
         app.identities = (0..30)
             .map(|i| Identity {
                 id: i as i64,
