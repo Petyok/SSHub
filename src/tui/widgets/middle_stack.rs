@@ -1,15 +1,19 @@
-//! Middle column dashboard stack: Agent info, Tunnels summary, Latency sparkline.
+//! Middle column dashboard stack: selected-host card, Agent info, Latency.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::widgets::Widget;
 use ratatui::Frame;
 
 use crate::app::App;
+use crate::osinfo::widget::{logo_dimensions, OsLogoWidget};
 use crate::tui::theme;
 use crate::tui::widgets::panel_box::{put_clamped, render_panel_box};
 
-// ── Panel heights ───────────────────────────────────────
+// ── Panel heights (sum = 19 to align with the right column) ─
+const HOST_H: u16 = 8;
 const AGENT_H: u16 = 6;
+#[allow(dead_code)]
 const TUNNELS_H: u16 = 8;
 const LATENCY_H: u16 = 5;
 
@@ -20,20 +24,20 @@ pub fn render_middle_stack(frame: &mut Frame, area: Rect, app: &App) {
     let mut y = area.y;
     let w = area.width;
 
-    // ── Panel 1: Agent info ─────────────────────────────
-    let agent_area = Rect::new(area.x, y, w, AGENT_H.min(area.height));
-    render_agent_panel(buf, agent_area, app);
-    y += agent_area.height;
+    // ── Panel 1: Selected-host card (OS logo + connection) ─
+    let host_area = Rect::new(area.x, y, w, HOST_H.min(area.height));
+    render_host_panel(buf, host_area, app);
+    y += host_area.height;
 
     if y >= area.y + area.height {
         return;
     }
 
-    // ── Panel 2: Tunnels ────────────────────────────────
+    // ── Panel 2: Agent info ─────────────────────────────
     let remaining = area.y + area.height - y;
-    let tunnels_area = Rect::new(area.x, y, w, TUNNELS_H.min(remaining));
-    render_tunnels_panel(buf, tunnels_area, app);
-    y += tunnels_area.height;
+    let agent_area = Rect::new(area.x, y, w, AGENT_H.min(remaining));
+    render_agent_panel(buf, agent_area, app);
+    y += agent_area.height;
 
     if y >= area.y + area.height {
         return;
@@ -43,6 +47,75 @@ pub fn render_middle_stack(frame: &mut Frame, area: Rect, app: &App) {
     let remaining = area.y + area.height - y;
     let latency_area = Rect::new(area.x, y, w, LATENCY_H.min(remaining));
     render_latency_panel(buf, latency_area, app);
+}
+
+// ── Selected-host card ──────────────────────────────────
+
+/// Render the selected host's card: its colored OS logo on the left and the
+/// name / address / detected OS on the right. The logo is drawn only when the
+/// host's `os_icon` resolves to a known distro (auto-detected on first connect
+/// or set manually in the form); otherwise the card shows just the text.
+fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
+    let entry = app.selected_entry();
+    let title = match entry.as_ref() {
+        Some(e) => format!("host · {}", e.name()),
+        None => "host".to_string(),
+    };
+    render_panel_box(buf, area, &title, None);
+
+    if area.height < 3 || area.width < 6 {
+        return;
+    }
+    let Some(entry) = entry else {
+        return;
+    };
+
+    let inner_x = area.x + 2;
+    let inner_top = area.y + 1;
+    let inner_w = area.width.saturating_sub(4);
+    let inner_h = area.height.saturating_sub(2);
+
+    // Left: OS logo (when the os_icon resolves to a vendored distro logo).
+    let os_id = entry.managed().and_then(|m| m.os_icon.as_deref());
+    let logo = os_id.and_then(crate::osinfo::logo_for);
+    let mut text_x = inner_x;
+    if let Some(logo) = logo {
+        let (lw, lh) = logo_dimensions(logo);
+        let logo_w = lw.min(inner_w.saturating_sub(1));
+        let logo_h = lh.min(inner_h);
+        // Vertically center the logo within the card body.
+        let pad = (inner_h.saturating_sub(logo_h)) / 2;
+        let logo_area = Rect::new(inner_x, inner_top + pad, logo_w, logo_h);
+        OsLogoWidget::new(logo).render(logo_area, buf);
+        text_x = inner_x + logo_w + 2;
+    }
+
+    // Right: name / address:port / OS. Guard each row against the panel height
+    // and the right inner edge.
+    if text_x >= inner_x + inner_w {
+        return;
+    }
+    let text_w = (inner_x + inner_w).saturating_sub(text_x) as usize;
+    let ssh = entry.ssh_host();
+    let addr = ssh
+        .hostname
+        .clone()
+        .unwrap_or_else(|| entry.name().to_string());
+    let port = ssh.port.unwrap_or(22);
+    let os_label = os_id.unwrap_or("—");
+
+    let rows: [(String, ratatui::style::Style); 3] = [
+        (entry.name().to_string(), theme::bright()),
+        (format!("{}:{}", addr, port), theme::text()),
+        (os_label.to_string(), theme::mute()),
+    ];
+    for (i, (s, style)) in rows.iter().enumerate() {
+        let y = inner_top + i as u16;
+        if y >= area.y + area.height - 1 {
+            break;
+        }
+        put_clamped(buf, text_x, y, s, *style, text_w);
+    }
 }
 
 /// Render the SSH log panel (meant to span both middle + right columns).
@@ -216,6 +289,9 @@ fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
 
 // ── Tunnels panel ───────────────────────────────────────
 
+// Retained (not currently stacked) so the tunnels summary is easy to restore;
+// the dedicated tunnels tab covers the same data.
+#[allow(dead_code)]
 fn render_tunnels_panel(buf: &mut Buffer, area: Rect, app: &App) {
     let active = app.tunnel_manager.active_count();
     let total = app.tunnels.len();

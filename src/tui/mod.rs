@@ -666,6 +666,19 @@ mod tests {
     }
 
     #[test]
+    fn render_shows_host_card_and_version() {
+        let app = test_app_with_hosts();
+        let buffer = render_to_buffer(&app, 120, 38);
+        // The selected-host card (middle column) is titled "host · <name>".
+        assert!(buffer_contains(&buffer, "host \u{b7} web-prod"));
+        // Its address:port row is rendered.
+        assert!(buffer_contains(&buffer, "10.0.0.1:22"));
+        // The build version appears in the tab bar.
+        let version = concat!("v", env!("CARGO_PKG_VERSION"));
+        assert!(buffer_contains(&buffer, version));
+    }
+
+    #[test]
     fn overlays_do_not_panic_on_a_tiny_terminal() {
         // Regression: popup geometry used u16::clamp(min, max) with max derived
         // from the terminal size, which asserted min<=max and crashed the TUI
