@@ -86,22 +86,27 @@ pub struct SessionMeta {
 }
 
 /// One active embedded session.
-/// In-app text selection over the PTY grid, in visible-row coordinates
-/// (row 0 = top of the body). Anchored locally so it survives repaints and
-/// scrolls the way the outer terminal's native (Shift+drag) selection can't.
+/// In-app text selection over the PTY grid. Rows are in visible-viewport
+/// coordinates (row 0 = top of the body) but stored as `i32` so a drag that
+/// autoscrolls can carry the anchor *past* the top/bottom of the window
+/// (negative or `>= rows`) without clamping — otherwise everything that scrolls
+/// off the top is forgotten. `selection_finish` walks the scrollback to collect
+/// the full span. Anchored locally so it survives repaints and scrolls the way
+/// the outer terminal's native (Shift+drag) selection can't.
 #[derive(Debug, Clone, Copy)]
 pub struct Selection {
-    /// Cell where the drag began.
-    pub anchor: (u16, u16),
+    /// Cell where the drag began. Row is a signed viewport row (may be
+    /// off-screen after autoscroll).
+    pub anchor: (i32, u16),
     /// Current end cell (moves while dragging).
-    pub cursor: (u16, u16),
+    pub cursor: (i32, u16),
     /// True while the mouse button is held.
     pub dragging: bool,
 }
 
 impl Selection {
     /// (start, end) in reading order, so start <= end.
-    pub fn ordered(&self) -> ((u16, u16), (u16, u16)) {
+    pub fn ordered(&self) -> ((i32, u16), (i32, u16)) {
         if self.anchor <= self.cursor {
             (self.anchor, self.cursor)
         } else {
@@ -109,8 +114,11 @@ impl Selection {
         }
     }
 
-    /// Whether a cell (row, col) falls inside the linear selection span.
+    /// Whether a visible cell (row, col) falls inside the linear selection span.
+    /// `row` is an on-screen viewport row; the off-screen part of the span is
+    /// naturally excluded because those rows aren't rendered.
     pub fn contains(&self, row: u16, col: u16) -> bool {
+        let row = row as i32;
         let (start, end) = self.ordered();
         if row < start.0 || row > end.0 {
             return false;
@@ -251,8 +259,8 @@ impl Session {
     /// Begin a selection at visible cell (row, col).
     pub fn selection_start(&mut self, row: u16, col: u16) {
         self.selection = Some(Selection {
-            anchor: (row, col),
-            cursor: (row, col),
+            anchor: (row as i32, col),
+            cursor: (row as i32, col),
             dragging: true,
         });
     }
@@ -261,7 +269,7 @@ impl Session {
     pub fn selection_extend(&mut self, row: u16, col: u16) {
         if let Some(sel) = self.selection.as_mut() {
             if sel.dragging {
-                sel.cursor = (row, col);
+                sel.cursor = (row as i32, col);
             }
         }
     }
@@ -270,26 +278,78 @@ impl Session {
     /// line) if the selection covers anything, else `None`.
     pub fn selection_finish(&mut self) -> Option<String> {
         self.drag_autoscroll = None;
-        let sel = self.selection.as_mut()?;
-        sel.dragging = false;
-        if sel.is_empty() {
+        let sel = self.selection.as_ref()?;
+        let (start, end) = sel.ordered();
+        let empty = sel.is_empty();
+        if let Some(sel) = self.selection.as_mut() {
+            sel.dragging = false;
+        }
+        if empty {
             self.selection = None;
             return None;
         }
-        let (start, end) = sel.ordered();
-        let (_, cols) = self.parser.screen().size();
+        let (rows, cols) = self.parser.screen().size();
         // contents_between's end column is exclusive; +1 to include the cell
         // under the cursor, clamped to the row width.
         let end_col = end.1.saturating_add(1).min(cols);
-        let text = self
-            .parser
-            .screen()
-            .contents_between(start.0, start.1, end.0, end_col);
+
+        // Fast path: the whole span is within the current visible window, so a
+        // single contents_between (which honours wrapped lines) suffices.
+        let text = if start.0 >= 0 && end.0 < rows as i32 {
+            self.parser
+                .screen()
+                .contents_between(start.0 as u16, start.1, end.0 as u16, end_col)
+        } else {
+            // Slow path: the drag autoscrolled, so part of the span is off the
+            // current window. Walk the scrollback row by row and stitch it up.
+            self.collect_scrolled_selection(start, end, end_col)
+        };
         if text.is_empty() {
             None
         } else {
             Some(text)
         }
+    }
+
+    /// Collect a selection whose rows extend beyond the current visible window
+    /// by scrolling the view so each row becomes addressable, then reading it.
+    /// Restores the original scrollback position afterwards so the view doesn't
+    /// jump. `start`/`end` are ordered signed viewport rows; `end_col` is
+    /// exclusive.
+    fn collect_scrolled_selection(
+        &mut self,
+        start: (i32, u16),
+        end: (i32, u16),
+        end_col: u16,
+    ) -> String {
+        let cur = self.parser.scrollback() as i32;
+        let (rows, cols) = self.parser.screen().size();
+        let mut out = String::new();
+        for r in start.0..=end.0 {
+            // Bring current-frame row `r` on-screen: scrolling to `cur - r`
+            // lands it at visible row 0 (clamped to the real buffer bounds).
+            let want = (cur - r).max(0) as usize;
+            self.parser.set_scrollback(want);
+            let actual = self.parser.scrollback() as i32;
+            let v = r + (actual - cur); // visible row of `r` at this scrollback
+            if (0..rows as i32).contains(&v) {
+                let sc = if r == start.0 { start.1 } else { 0 };
+                let ec = if r == end.0 { end_col } else { cols };
+                if sc < ec {
+                    let line = self
+                        .parser
+                        .screen()
+                        .contents_between(v as u16, sc, v as u16, ec);
+                    out.push_str(&line);
+                }
+            }
+            if r != end.0 {
+                out.push('\n');
+            }
+        }
+        // Snap back to where the user left the view.
+        self.parser.set_scrollback(cur.max(0) as usize);
+        out
     }
 
     /// Drop any selection (e.g. a plain click or Esc).
@@ -342,11 +402,12 @@ impl Session {
 
     /// Shift the selection vertically so it tracks the same text when the view
     /// scrolls by `delta` rows (positive = content moved down / scrolled back).
+    /// Rows are signed and left unclamped so the anchor can travel off-screen
+    /// during an autoscrolling drag without losing its true position.
     pub fn selection_scroll_shift(&mut self, delta: i32) {
         if let Some(sel) = self.selection.as_mut() {
-            let shift = |v: u16| (v as i32 + delta).clamp(0, u16::MAX as i32) as u16;
-            sel.anchor.0 = shift(sel.anchor.0);
-            sel.cursor.0 = shift(sel.cursor.0);
+            sel.anchor.0 += delta;
+            sel.cursor.0 += delta;
         }
     }
 
@@ -832,7 +893,7 @@ fn current_screen_tail(screen: &vt100::Screen) -> String {
 mod selection_tests {
     use super::Selection;
 
-    fn sel(a: (u16, u16), c: (u16, u16)) -> Selection {
+    fn sel(a: (i32, u16), c: (i32, u16)) -> Selection {
         Selection {
             anchor: a,
             cursor: c,
@@ -869,6 +930,19 @@ mod selection_tests {
         assert!(s.contains(5, 8));
         assert!(!s.contains(5, 9));
         assert!(!s.contains(4, 6));
+    }
+
+    #[test]
+    fn anchor_scrolled_above_the_window_still_selects_visible_rows() {
+        // After autoscrolling down, the anchor sits at a negative viewport row
+        // (above the top). Visible rows 0..=cursor must still be highlighted —
+        // the off-screen part is just not rendered, not lost.
+        let s = sel((-5, 2), (3, 6));
+        assert!(s.contains(0, 0)); // top visible row, fully inside
+        assert!(s.contains(2, 40));
+        assert!(s.contains(3, 6));
+        assert!(!s.contains(3, 7)); // past the end column on the last row
+        assert!(!s.contains(4, 0)); // below the selection
     }
 }
 
