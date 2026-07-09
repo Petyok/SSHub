@@ -10,5 +10,6 @@ pub mod keychain;
 pub mod keys;
 pub mod palette;
 pub mod session_host_picker;
+pub mod sftp;
 pub mod tag_filter;
 pub mod tunnels;
