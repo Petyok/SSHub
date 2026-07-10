@@ -90,8 +90,8 @@ fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
         text_x = inner_x + logo_w + 2;
     }
 
-    // Right: name / address:port / OS. Guard each row against the panel height
-    // and the right inner edge.
+    // Right: a compact fact sheet for the selected host. Guard against the
+    // panel height and the right inner edge; skip fields the host doesn't carry.
     if text_x >= inner_x + inner_w {
         return;
     }
@@ -102,13 +102,70 @@ fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
         .clone()
         .unwrap_or_else(|| entry.name().to_string());
     let port = ssh.port.unwrap_or(22);
-    let os_label = os_id.unwrap_or("—");
+    let managed = entry.managed();
 
-    let rows: [(String, ratatui::style::Style); 3] = [
-        (entry.name().to_string(), theme::bright()),
-        (format!("{}:{}", addr, port), theme::text()),
-        (os_label.to_string(), theme::mute()),
-    ];
+    let mut rows: Vec<(String, ratatui::style::Style)> = Vec::new();
+
+    // Name (+ favourite star).
+    let name = if entry.favorite() {
+        format!("{} \u{2605}", entry.name())
+    } else {
+        entry.name().to_string()
+    };
+    rows.push((name, theme::bright()));
+
+    // user@host:port (user omitted when unknown).
+    let hostport = match ssh.user.as_deref() {
+        Some(u) if !u.is_empty() => format!("{}@{}:{}", u, addr, port),
+        _ => format!("{}:{}", addr, port),
+    };
+    rows.push((hostport, theme::text()));
+
+    // OS  ·  latest ping latency (when we have a live sample).
+    let latency = app
+        .ping_data
+        .get(entry.name())
+        .and_then(|v| v.last().copied())
+        .filter(|&v| v > 0 && !crate::ping::is_unreachable(v));
+    let os_line = match (os_id, latency) {
+        (Some(os), Some(ms)) => format!("{os}  \u{b7}  {ms}ms"),
+        (Some(os), None) => os.to_string(),
+        (None, Some(ms)) => format!("\u{b7} {ms}ms"),
+        (None, None) => "unknown os".to_string(),
+    };
+    rows.push((os_line, theme::cyan()));
+
+    // Group / identity / proxy — managed hosts only.
+    if let Some(m) = managed {
+        if let Some(g) = m.group.as_ref() {
+            rows.push((format!("group: {}", g.name), theme::mute()));
+        }
+        if let Some(id) = m.identity.as_ref() {
+            rows.push((format!("key: {}", id.name), theme::mute()));
+        }
+        if let Some(pj) = m.proxy_jump.as_deref().filter(|s| !s.is_empty()) {
+            rows.push((format!("via {pj}"), theme::mute()));
+        }
+    }
+
+    // Tags.
+    if !entry.tags().is_empty() {
+        let tags = entry
+            .tags()
+            .iter()
+            .map(|t| format!("#{t}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        rows.push((tags, theme::dim()));
+    }
+
+    // Last connected (relative).
+    if let Some(ts) = entry.last_connected() {
+        let ago = crate::tui::widgets::right_stack::format_relative_time(ts);
+        rows.push((format!("last: {ago}"), theme::dim()));
+    }
+
+    // Render as many rows as fit, one per line.
     for (i, (s, style)) in rows.iter().enumerate() {
         let y = inner_top + i as u16;
         if y >= area.y + area.height - 1 {
