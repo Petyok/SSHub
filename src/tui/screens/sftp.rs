@@ -1,9 +1,9 @@
 //! SFTP tab body renderer.
 //!
 //! Two sub-states, mirroring `app.sftp`:
-//! - `None` → **picker**: reuse the hosts list + a "connect" hint.
-//! - `Some(state)` → **browser**: two bordered columns (left remote / right
-//!   local), a queue strip, and a progress line while a run is in flight.
+//! - `None` → **picker**: reuse the grouped hosts panel + a "connect" hint.
+//! - `Some(state)` → **browser**: two bordered columns (left local / right
+//!   remote), a queue strip, and a progress line while a run is in flight.
 //!
 //! Signature matches the other screens (`render_<name>(frame, area, app)`);
 //! `tui/mod.rs` wires it through a local `render_sftp_body` wrapper.
@@ -33,14 +33,15 @@ pub fn render_sftp(frame: &mut Frame, area: Rect, app: &App) {
 fn render_picker(frame: &mut Frame, area: Rect, app: &App) {
     let list_h = area.height.saturating_sub(1);
     let list_area = Rect::new(area.x, area.y, area.width, list_h);
-    let list = crate::tui::screens::hosts::render_group_tree(app);
-    frame.render_widget(list, list_area);
+    // Reuse the dashboard hosts panel so the picker shows the full grouped tree
+    // with collapse arrows (▸/▾) and scrolling, identical to the hosts tab.
+    crate::tui::widgets::hosts_panel::render_hosts_panel(frame, list_area, app);
 
     let hint_y = area.y + area.height.saturating_sub(1);
     frame.buffer_mut().set_string(
         area.x + 2,
         hint_y,
-        "Enter to connect · Esc back",
+        "Enter connect (on a group: fold) · Esc back",
         theme::dim(),
     );
 }
@@ -57,24 +58,25 @@ fn render_browser(frame: &mut Frame, area: Rect, state: &SftpState) {
     let foot_h = progress_h + queue_h;
     let panes_h = area.height.saturating_sub(foot_h).max(2);
 
+    // Left = local (your machine), right = remote (the server).
     let half = area.width / 2;
-    let remote_rect = Rect::new(area.x, area.y, half, panes_h);
-    let local_rect = Rect::new(area.x + half, area.y, area.width - half, panes_h);
+    let local_rect = Rect::new(area.x, area.y, half, panes_h);
+    let remote_rect = Rect::new(area.x + half, area.y, area.width - half, panes_h);
 
     let buf = frame.buffer_mut();
-    render_pane(
-        buf,
-        remote_rect,
-        &state.remote,
-        "remote",
-        state.focus == Focus::Remote,
-    );
     render_pane(
         buf,
         local_rect,
         &state.local,
         "local",
         state.focus == Focus::Local,
+    );
+    render_pane(
+        buf,
+        remote_rect,
+        &state.remote,
+        "remote",
+        state.focus == Focus::Remote,
     );
 
     let queue_y = area.y + panes_h;
@@ -171,7 +173,7 @@ fn render_queue(
         buf.set_string(
             x + 2,
             y,
-            "queue: empty  (→ download · ← upload · u remove · c run)",
+            "queue: empty  (← download · → upload · u remove · c run)",
             theme::dim(),
         );
         return;
@@ -185,8 +187,8 @@ fn render_queue(
     for (i, t) in queue.iter().take(4).enumerate() {
         let yy = y + 1 + i as u16;
         let (arrow, label, style) = match t.direction {
-            Direction::Download => ("→", "download", theme::green()),
-            Direction::Upload => ("←", "upload", theme::amber()),
+            Direction::Download => ("←", "download", theme::green()),
+            Direction::Upload => ("→", "upload", theme::amber()),
         };
         let s = format!("{arrow} {label}  {}", t.name);
         let clamped = ellipsize(&s, w.saturating_sub(6) as usize);

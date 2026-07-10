@@ -34,8 +34,39 @@ impl App {
             _ if self.is_action(KeyAction::Cancel, &key) => {
                 self.active_tab = 0;
             }
+            _ if self.is_action(KeyAction::MoveGroupUp, &key) => self.move_selection_by_group(-1),
+            _ if self.is_action(KeyAction::MoveGroupDown, &key) => self.move_selection_by_group(1),
             _ if self.is_action(KeyAction::MoveDown, &key) => self.move_selection(1),
             _ if self.is_action(KeyAction::MoveUp, &key) => self.move_selection(-1),
+            _ if self.is_action(KeyAction::ToggleGroup, &key) => self.toggle_selected_group(),
+            _ if self.is_action(KeyAction::FoldGroupIn, &key) => {
+                if self
+                    .selected_nav_header()
+                    .is_some_and(|si| !self.group_sections[si].collapsed)
+                {
+                    self.toggle_selected_group();
+                }
+            }
+            _ if self.is_action(KeyAction::FoldGroupOut, &key) => {
+                if self
+                    .selected_nav_header()
+                    .is_some_and(|si| self.group_sections[si].collapsed)
+                {
+                    self.toggle_selected_group();
+                }
+            }
+            _ if self.is_action(KeyAction::CollapseAll, &key) => {
+                let all_collapsed = !self.group_sections.is_empty()
+                    && self.group_sections.iter().all(|s| s.collapsed);
+                self.set_all_groups_collapsed(!all_collapsed);
+            }
+            // On a group header, Enter folds the group (matches the hosts tab);
+            // on a host row it connects via SFTP.
+            _ if self.selected_nav_header().is_some()
+                && self.is_action(KeyAction::Connect, &key) =>
+            {
+                self.toggle_selected_group();
+            }
             _ if self.is_action(KeyAction::Connect, &key) => self.sftp_connect_selected()?,
             _ if self.is_action(KeyAction::Help, &key) => {
                 self.pre_help_mode = Some(self.mode);
@@ -83,13 +114,14 @@ impl App {
                     self.sftp_navigate(side, path);
                 }
             }
-            // → stages a download (remote → local); ← stages an upload.
-            KeyCode::Right => {
+            // Panes are left=local, right=remote, so the arrow points at the
+            // destination: ← downloads (remote → local), → uploads (local → remote).
+            KeyCode::Left => {
                 if let Some(s) = self.sftp.as_mut() {
                     let _ = s.stage_download();
                 }
             }
-            KeyCode::Left => {
+            KeyCode::Right => {
                 if let Some(s) = self.sftp.as_mut() {
                     let _ = s.stage_upload();
                 }
