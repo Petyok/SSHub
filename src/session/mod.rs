@@ -558,6 +558,29 @@ impl Session {
         &self.debug_log
     }
 
+    /// True when ssh refused because the server's host key CHANGED versus
+    /// known_hosts (a mismatch), as opposed to a merely-unknown first-time host.
+    /// This is the case worth offering to accept — a changed key can be a
+    /// legitimate server rebuild or a MITM, so the user must opt in.
+    pub fn host_key_changed(&self) -> bool {
+        let log = self.debug_log.to_ascii_lowercase();
+        log.contains("host identification has changed")
+            || (log.contains("host key for") && log.contains("has changed"))
+    }
+
+    /// The known_hosts host spec to purge when accepting a changed key —
+    /// `[addr]:port` for a non-default port, plain `addr` for port 22. `None`
+    /// when the remote address is unknown.
+    pub fn known_hosts_spec(&self) -> Option<String> {
+        let addr = self.meta.address.as_ref()?;
+        let port = self.meta.port.unwrap_or(22);
+        Some(if port == 22 {
+            addr.clone()
+        } else {
+            format!("[{addr}]:{port}")
+        })
+    }
+
     /// Whether the connect screen should show the full debug log.
     pub fn debug_expanded(&self) -> bool {
         self.debug_expanded

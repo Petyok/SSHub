@@ -3,7 +3,7 @@ use super::*;
 #[test]
 pub(crate) fn multiline_paste_into_form_stays_in_field() {
     let mut app = test_app(vec![("web", host("web"))]);
-    app.active_tab = 2; // keys tab
+    app.active_tab = 3; // keys tab
     app.enter_identity_form(None).unwrap();
     assert_eq!(app.mode, AppMode::IdentityForm);
 

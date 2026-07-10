@@ -5,10 +5,12 @@ pub mod import;
 pub mod keybinds;
 pub mod launcher;
 pub mod metadata;
+pub mod osinfo;
 pub mod ping;
 pub mod search;
 pub mod secure_fs;
 pub mod session;
+pub mod sftp;
 pub mod ssh;
 pub mod store;
 pub mod text_input;
@@ -323,11 +325,33 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
         }
     }
 
+    // Drain SFTP worker events. Collect first (borrowing `sftp_rx`), drop the
+    // borrow, then apply — `apply_sftp_event` needs `&mut app`.
+    if app.sftp_rx.is_some() {
+        let events: Vec<crate::sftp::SftpEvent> = {
+            let rx = app.sftp_rx.as_ref().unwrap();
+            std::iter::from_fn(|| rx.try_recv().ok()).collect()
+        };
+        for ev in events {
+            app.apply_sftp_event(ev);
+        }
+    }
+
     // Drain SSH probe log entries from background worker
     if let Some(rx) = app.probe_rx.as_ref() {
         let entries: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
         for entry in entries {
             app.push_ssh_log(entry);
+        }
+    }
+
+    // Drain OS auto-detect results from background worker
+    if let Some(rx) = app.os_detect_rx.as_ref() {
+        // Collect first: `app` is borrowed by `rx` here, so we can't call the
+        // store.update_host + reload_hosts path inline.
+        let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        for ev in events {
+            app.apply_os_detect(ev)?;
         }
     }
 

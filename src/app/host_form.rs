@@ -7,7 +7,7 @@ impl App {
         metadata_only: bool,
     ) -> Result<()> {
         self.host_notice = None;
-        self.groups = self.store.list_groups()?;
+        self.load_groups()?;
         if self.identities.is_empty() {
             self.identities = self.store.list_identities()?;
         }
@@ -19,9 +19,18 @@ impl App {
             .unwrap_or(0);
 
         let form = if let Some(managed) = existing {
+            // Multi-select: pre-check every non-reserved group the host belongs
+            // to (Favorites is excluded — it's toggled via `f`).
+            let group_ids: std::collections::BTreeSet<i64> = managed
+                .groups
+                .iter()
+                .filter(|g| !g.reserved)
+                .map(|g| g.id)
+                .collect();
+            // Highlight the host's primary group's row in the dropdown.
             let group_index = managed
                 .group_id
-                .and_then(|gid| self.groups.iter().position(|g| g.id == gid).map(|i| i + 1))
+                .and_then(|gid| self.groups.iter().position(|g| g.id == gid))
                 .unwrap_or(0);
             let identity_index = managed
                 .identity_id
@@ -51,6 +60,7 @@ impl App {
                 name: managed.name.clone(),
                 port: managed.port.to_string(),
                 group_index,
+                group_ids,
                 identity_index,
                 tags: managed.tags.join(", "),
                 proxy_jump: managed.proxy_jump.clone().unwrap_or_default(),
@@ -69,9 +79,15 @@ impl App {
         } else {
             // Prefill group + identity from the group the user is currently in.
             // A new host added inside a group inherits the group's default identity.
-            let selected_group_id = self.selected_host_group_id();
+            // Only prefill from a real (non-reserved) group; a selection under
+            // Favorites must not pre-check anything.
+            let selected_group_id = self
+                .selected_host_group_id()
+                .filter(|gid| self.groups.iter().any(|g| g.id == *gid));
+            let group_ids: std::collections::BTreeSet<i64> =
+                selected_group_id.into_iter().collect();
             let group_index = selected_group_id
-                .and_then(|gid| self.groups.iter().position(|g| g.id == gid).map(|i| i + 1))
+                .and_then(|gid| self.groups.iter().position(|g| g.id == gid))
                 .unwrap_or(0);
             let identity_index = selected_group_id
                 .and_then(|gid| self.groups.iter().find(|g| g.id == gid))
@@ -87,6 +103,7 @@ impl App {
                 name: String::new(),
                 port: "22".into(),
                 group_index,
+                group_ids,
                 identity_index,
                 tags: String::new(),
                 proxy_jump: String::new(),
@@ -130,11 +147,17 @@ impl App {
             return Ok(());
         };
 
-        let group_id = if form.group_index == 0 {
-            None
-        } else {
-            self.groups.get(form.group_index - 1).map(|g| g.id)
-        };
+        // Multi-select groups: the authoritative set is `form.group_ids`,
+        // ordered here by the group list order. The primary `group_id` (first
+        // one) is still threaded through NewHost/HostUpdate so single-group
+        // reads stay consistent; `set_host_groups` writes the full set below.
+        let group_ids: Vec<i64> = self
+            .groups
+            .iter()
+            .filter(|g| form.group_ids.contains(&g.id))
+            .map(|g| g.id)
+            .collect();
+        let group_id = group_ids.first().copied();
         let identity_id = self.identities.get(form.identity_index).map(|i| i.id);
         let tags = parse_tags(&form.tags);
         let label = optional_field(&form.label);
@@ -172,6 +195,7 @@ impl App {
                     ..Default::default()
                 },
             )?;
+            self.store.set_host_groups(id, &group_ids)?;
             self.mode = AppMode::Normal;
             self.reload_hosts()?;
             self.restore_selection_by_name(&saved_name);
@@ -243,6 +267,7 @@ impl App {
                     ..Default::default()
                 },
             )?;
+            self.store.set_host_groups(id, &group_ids)?;
         } else {
             let created = self.store.create_host(&NewHost {
                 name: name.to_string(),
@@ -261,6 +286,7 @@ impl App {
                 has_password: new_has_password,
                 username,
             })?;
+            self.store.set_host_groups(created.id, &group_ids)?;
             if host_pw_changed {
                 if let Err(e) = self
                     .password_store

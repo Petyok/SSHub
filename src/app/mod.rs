@@ -11,6 +11,7 @@ mod import;
 mod keys;
 mod mouse;
 mod session;
+mod sftp;
 mod tags;
 mod tunnels;
 mod types;
@@ -59,7 +60,30 @@ pub const NAME_WIDTH_STEP: usize = 8;
 /// Maximum UI zoom level.
 pub const UI_ZOOM_MAX: usize = 3;
 
-pub const OS_ICON_OPTIONS: [&str; 4] = ["(none)", "generic", "ubuntu", "debian"];
+pub const OS_ICON_OPTIONS: [&str; 22] = [
+    "(none)",
+    "arch",
+    "ubuntu",
+    "debian",
+    "alpine",
+    "fedora",
+    "rocky",
+    "rhel",
+    "centos",
+    "opensuse",
+    "linuxmint",
+    "manjaro",
+    "popos",
+    "kali",
+    "gentoo",
+    "void",
+    "nixos",
+    "endeavouros",
+    "freebsd",
+    "macos",
+    "windows",
+    "linux",
+];
 
 /// Injectable dependencies for [`App`].
 pub struct AppDeps {
@@ -92,6 +116,10 @@ pub struct App {
     pub identity_form: Option<IdentityFormEdit>,
     pub identity_notice: Option<String>,
     pub groups: Vec<HostGroup>,
+    /// The reserved Favorites group, kept out of `groups` so it never appears in
+    /// the group-manage list or the host-form group selector. Used only when
+    /// building the host tree (favourited hosts show under it).
+    pub favorites_group: Option<HostGroup>,
     pub host_form: Option<HostFormEdit>,
     pub field_picker: Option<FieldPicker>,
     pub group_form: Option<GroupFormEdit>,
@@ -122,13 +150,27 @@ pub struct App {
     pub collapsed_groups: std::collections::HashSet<i64>,
     /// Keybind editor state: `(selected action row, capturing next key)`.
     pub keybind_editor: Option<KeybindEditor>,
+    /// Highlighted row in the Settings overlay.
+    pub settings_selected: usize,
     pub active_tab: usize,
     pub palette_query: String,
     pub palette_selected: usize,
     pub palette_results: Vec<usize>,
     pub ping_rx: Option<Receiver<crate::ping::PingResult>>,
     pub ping_data: std::collections::HashMap<String, Vec<u32>>,
+    pub sftp: Option<crate::sftp::model::SftpState>,
+    pub sftp_tx: Option<std::sync::mpsc::Sender<crate::sftp::SftpCommand>>,
+    pub sftp_rx: Option<std::sync::mpsc::Receiver<crate::sftp::SftpEvent>>,
+    /// Name of the host the live SFTP session is connected to, so the browser
+    /// can open an SSH session back to the same host (completes the round trip).
+    pub sftp_host: Option<String>,
+    /// True while the SFTP picker's host search input is capturing keys.
+    pub sftp_picker_searching: bool,
     pub probe_rx: Option<Receiver<crate::ssh::probe::SshLogEntry>>,
+    pub os_detect_tx: Option<std::sync::mpsc::Sender<crate::osinfo::OsDetectCmd>>,
+    pub os_detect_rx: Option<Receiver<crate::osinfo::OsDetectEvent>>,
+    /// Host ids with an in-flight OS detection probe, to avoid re-probing.
+    pub os_detect_inflight: std::collections::HashSet<i64>,
     pub ssh_log: Vec<crate::ssh::probe::SshLogEntry>,
     pub ssh_log_scroll: usize,
     pub auth_events_cache: Vec<crate::store::AuthEvent>,
@@ -192,6 +234,13 @@ impl App {
         app.refresh_auth_cache();
         app.start_ping_worker();
 
+        // Spawn the OS auto-detect worker here (the on-disk constructor) rather
+        // than in new_with_deps so unit tests that inject deps stay offline and
+        // never leak a live ssh-probing thread.
+        let (os_tx, os_rx) = crate::osinfo::spawn_os_detect_worker();
+        app.os_detect_tx = Some(os_tx);
+        app.os_detect_rx = Some(os_rx);
+
         if first_run && app.hosts.is_empty() {
             app.mode = AppMode::Help;
         }
@@ -219,6 +268,7 @@ impl App {
             identity_form: None,
             identity_notice: None,
             groups: Vec::new(),
+            favorites_group: None,
             host_form: None,
             field_picker: None,
             group_form: None,
@@ -239,13 +289,22 @@ impl App {
             nav_rows: Vec::new(),
             collapsed_groups: std::collections::HashSet::new(),
             keybind_editor: None,
+            settings_selected: 0,
             active_tab: 0,
             palette_query: String::new(),
             palette_selected: 0,
             palette_results: Vec::new(),
             ping_rx: None,
             ping_data: std::collections::HashMap::new(),
+            sftp: None,
+            sftp_tx: None,
+            sftp_rx: None,
+            sftp_host: None,
+            sftp_picker_searching: false,
             probe_rx: None,
+            os_detect_tx: None,
+            os_detect_rx: None,
+            os_detect_inflight: std::collections::HashSet::new(),
             ssh_log: Vec::new(),
             ssh_log_scroll: 0,
             auth_events_cache: Vec::new(),
@@ -405,7 +464,7 @@ impl App {
         }
 
         self.hosts = hosts;
-        self.groups = self.store.list_groups()?;
+        self.load_groups()?;
         self.rebuild_filter();
         if let Some(name) = selected_name {
             self.restore_selection_by_name(&name);
@@ -415,6 +474,26 @@ impl App {
             self.start_ping_worker();
         }
         Ok(())
+    }
+
+    /// Load groups from the store, splitting off the reserved Favorites group so
+    /// `self.groups` only ever holds real, user-managed groups.
+    pub(crate) fn load_groups(&mut self) -> Result<()> {
+        let all = self.store.list_groups()?;
+        self.favorites_group = all.iter().find(|g| g.reserved).cloned();
+        self.groups = all.into_iter().filter(|g| !g.reserved).collect();
+        Ok(())
+    }
+
+    /// Groups for building the host tree: real groups plus the Favorites group
+    /// prepended so it sorts to the very top (when it has members).
+    pub(crate) fn tree_groups(&self) -> Vec<HostGroup> {
+        let mut groups = Vec::with_capacity(self.groups.len() + 1);
+        if let Some(fav) = &self.favorites_group {
+            groups.push(fav.clone());
+        }
+        groups.extend(self.groups.iter().cloned());
+        groups
     }
 
     /// Current host-name column width in chars, driven by [`App::ui_zoom`].

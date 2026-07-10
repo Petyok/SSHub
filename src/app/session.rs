@@ -18,6 +18,10 @@ impl App {
             self.detach_to_dashboard();
             return Ok(());
         }
+        if self.is_action(KeyAction::SessionOpenSftp, &key) {
+            self.open_sftp_for_active_session();
+            return Ok(());
+        }
         // While connecting, toggle the debug (`-v`) log view. Only meaningful
         // before the shell reveals, so ignore it once the session is running.
         if self.is_action(KeyAction::SessionToggleLog, &key)
@@ -38,6 +42,33 @@ impl App {
         if self.is_action(KeyAction::SessionTabNext, &key) {
             self.switch_session(1);
             return Ok(());
+        }
+
+        // Accept-changed-host-key flow: when a session has exited because the
+        // server's host key changed, `a` purges the stale known_hosts entry and
+        // reconnects (which then accept-new's the current key). Any other key
+        // falls through to the normal "press any key to close".
+        if matches!(key.code, KeyCode::Char('a')) {
+            let accept = self.active_session().map(|s| {
+                (
+                    s.phase.is_terminal() && s.host_key_changed(),
+                    s.known_hosts_spec(),
+                    s.display_name.clone(),
+                )
+            });
+            if let Some((true, spec, name)) = accept {
+                self.close_active_session();
+                if let Some(spec) = spec {
+                    let _ = std::process::Command::new("ssh-keygen")
+                        .args(["-R", &spec])
+                        .output();
+                }
+                if let Some(idx) = self.hosts.iter().position(|h| h.name() == name) {
+                    let entry = self.hosts[idx].clone();
+                    self.connect_host_entry(entry)?;
+                }
+                return Ok(());
+            }
         }
 
         // Capture self.terminal_area.height before we take a mutable borrow

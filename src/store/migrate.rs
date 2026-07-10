@@ -3,7 +3,11 @@ use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: i64 = 10;
+const SCHEMA_VERSION: i64 = 11;
+
+/// Name of the reserved, auto-created "Favorites" group. Membership in it is the
+/// source of truth for a host's favourite status.
+pub(crate) const FAVORITES_GROUP_NAME: &str = "Favorites";
 
 const V2_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -109,6 +113,10 @@ pub(crate) fn run_migrations(conn: &Connection, launcher_path: &Path) -> Result<
 
     if current < 10 {
         migrate_v9_to_v10(conn)?;
+    }
+
+    if current < 11 {
+        migrate_v10_to_v11(conn)?;
     }
 
     // Runs last so all columns it writes to (e.g. environment) already exist.
@@ -366,6 +374,82 @@ fn migrate_v9_to_v10(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn migrate_v10_to_v11(conn: &Connection) -> Result<()> {
+    // Hosts can belong to several groups at once. A join table replaces the
+    // single `hosts.group_id` FK as the source of truth (the column is kept for
+    // back-compat but no longer authoritative). "Favorites" becomes a real,
+    // reserved group; membership in it is the favourite flag.
+
+    // 1. Reserved marker on groups (Favorites can't be renamed/deleted).
+    let has_reserved: bool = conn
+        .prepare("SELECT COUNT(*) FROM pragma_table_info('host_groups') WHERE name = 'reserved'")?
+        .query_row([], |row| row.get::<_, i64>(0))
+        .map(|c| c > 0)?;
+    if !has_reserved {
+        conn.execute_batch(
+            "ALTER TABLE host_groups ADD COLUMN reserved INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+
+    // 2. The membership join table.
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS host_group_memberships (
+            host_id  INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+            group_id INTEGER NOT NULL REFERENCES host_groups(id) ON DELETE CASCADE,
+            PRIMARY KEY (host_id, group_id)
+        );",
+    )?;
+
+    // 3. Ensure exactly one reserved Favorites group exists, sorted to the very
+    // top. NEVER repurpose a user's pre-existing group: if the "Favorites" name
+    // is already taken by a normal group, register the reserved group under a
+    // distinct label (the app finds it by the `reserved` flag, not the name).
+    let now = now_ts();
+    let reserved_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM host_groups WHERE reserved = 1",
+        [],
+        |r| r.get(0),
+    )?;
+    let fav_id: i64 = if reserved_count > 0 {
+        conn.query_row(
+            "SELECT id FROM host_groups WHERE reserved = 1 ORDER BY id LIMIT 1",
+            [],
+            |r| r.get(0),
+        )?
+    } else {
+        let mut name = FAVORITES_GROUP_NAME.to_string();
+        let mut suffix = 2;
+        while conn.query_row(
+            "SELECT COUNT(*) FROM host_groups WHERE name = ?1",
+            params![name],
+            |r| r.get::<_, i64>(0),
+        )? > 0
+        {
+            name = format!("{FAVORITES_GROUP_NAME} ({suffix})");
+            suffix += 1;
+        }
+        conn.execute(
+            "INSERT INTO host_groups (name, sort_order, reserved, created_at)
+             VALUES (?1, -1000, 1, ?2)",
+            params![name, now],
+        )?;
+        conn.last_insert_rowid()
+    };
+
+    // 4. Backfill memberships from the legacy single group_id and favourite flag.
+    conn.execute_batch(
+        "INSERT OR IGNORE INTO host_group_memberships (host_id, group_id)
+             SELECT id, group_id FROM hosts WHERE group_id IS NOT NULL;",
+    )?;
+    conn.execute(
+        "INSERT OR IGNORE INTO host_group_memberships (host_id, group_id)
+             SELECT id, ?1 FROM hosts WHERE favorite = 1",
+        params![fav_id],
+    )?;
+
+    Ok(())
+}
+
 pub(crate) fn now_ts() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -521,6 +605,137 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM schema_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn migration_creates_favorites_group_and_membership_table() {
+        let dir = temp_dir();
+        let db_path = dir.path().join("launcher.db");
+        let conn = Connection::open(&db_path).unwrap();
+        run_migrations(&conn, &db_path).unwrap();
+
+        // The reserved Favorites group exists exactly once.
+        let (count, reserved): (i64, i64) = conn
+            .query_row(
+                "SELECT COUNT(*), COALESCE(MAX(reserved), 0) FROM host_groups WHERE name = ?1",
+                params![FAVORITES_GROUP_NAME],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(reserved, 1);
+
+        // The membership join table exists.
+        let table: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'host_group_memberships'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(table, 1);
+    }
+
+    #[test]
+    fn migration_backfills_memberships_from_group_id_and_favorite() {
+        // Simulate a pre-v11 db: run migrations (creates v11), then drop the
+        // membership rows and re-insert legacy-style data, then re-run the v11
+        // backfill by clearing and calling it directly.
+        let dir = temp_dir();
+        let db_path = dir.path().join("launcher.db");
+        let conn = Connection::open(&db_path).unwrap();
+        run_migrations(&conn, &db_path).unwrap();
+
+        let now = now_ts();
+        conn.execute(
+            "INSERT INTO host_groups (name, sort_order, created_at) VALUES ('prod', 0, ?1)",
+            params![now],
+        )
+        .unwrap();
+        let gid: i64 = conn
+            .query_row("SELECT id FROM host_groups WHERE name = 'prod'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        conn.execute(
+            "INSERT INTO hosts (name, address, port, group_id, favorite, created_at, updated_at)
+             VALUES ('h1', '10.0.0.1', 22, ?1, 1, ?2, ?2)",
+            params![gid, now],
+        )
+        .unwrap();
+        let hid: i64 = conn
+            .query_row("SELECT id FROM hosts WHERE name = 'h1'", [], |r| r.get(0))
+            .unwrap();
+
+        // Re-run the backfill (idempotent via INSERT OR IGNORE).
+        migrate_v10_to_v11(&conn).unwrap();
+
+        let groups: Vec<i64> = conn
+            .prepare(
+                "SELECT group_id FROM host_group_memberships WHERE host_id = ?1 ORDER BY group_id",
+            )
+            .unwrap()
+            .query_map(params![hid], |r| r.get(0))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+        let fav_id: i64 = conn
+            .query_row(
+                "SELECT id FROM host_groups WHERE name = ?1",
+                params![FAVORITES_GROUP_NAME],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(groups.contains(&gid), "host should be in its prod group");
+        assert!(
+            groups.contains(&fav_id),
+            "favourite host should be in Favorites"
+        );
+    }
+
+    #[test]
+    fn migration_does_not_hijack_a_user_group_named_favorites() {
+        // A user upgrading from an older schema who already has an ordinary
+        // group literally named "Favorites" must keep it — the reserved group
+        // is created separately under a distinct name.
+        let dir = temp_dir();
+        let db_path = dir.path().join("launcher.db");
+        let conn = Connection::open(&db_path).unwrap();
+        // Build the base tables + advance to v10 so v11 runs against real data.
+        conn.execute_batch(V2_SCHEMA).unwrap();
+        let now = now_ts();
+        conn.execute(
+            "INSERT INTO host_groups (name, sort_order, created_at) VALUES (?1, 5, ?2)",
+            params![FAVORITES_GROUP_NAME, now],
+        )
+        .unwrap();
+        let user_gid: i64 = conn
+            .query_row(
+                "SELECT id FROM host_groups WHERE name = ?1",
+                params![FAVORITES_GROUP_NAME],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        migrate_v10_to_v11(&conn).unwrap();
+
+        // The user's group is untouched (not reserved) …
+        let user_reserved: i64 = conn
+            .query_row(
+                "SELECT reserved FROM host_groups WHERE id = ?1",
+                params![user_gid],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(user_reserved, 0, "user group must not be repurposed");
+        // … and a distinct reserved group exists.
+        let reserved_id: i64 = conn
+            .query_row("SELECT id FROM host_groups WHERE reserved = 1", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_ne!(reserved_id, user_gid);
     }
 
     #[test]

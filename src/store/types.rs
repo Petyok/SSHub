@@ -9,6 +9,8 @@ pub struct HostGroup {
     pub default_identity_id: Option<i64>,
     /// Parent group for nesting. `None` = top-level group.
     pub parent_id: Option<i64>,
+    /// Reserved, app-managed group (e.g. Favorites). Cannot be renamed/deleted.
+    pub reserved: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,6 +57,9 @@ pub struct ManagedHost {
     pub group_id: Option<i64>,
     pub identity_id: Option<i64>,
     pub group: Option<HostGroup>,
+    /// All groups this host belongs to (many-to-many via `host_group_memberships`),
+    /// including the primary group and Favorites. Populated at load.
+    pub groups: Vec<HostGroup>,
     pub identity: Option<Identity>,
     pub os_icon: Option<String>,
     pub tags: Vec<String>,

@@ -110,8 +110,14 @@ fn create_group_assign_host_visible_in_tree() {
     edit_field(&mut app, "vc-host");
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Port (skip)
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Group
-                                                 // Pickers scroll in place with ←/→ — no edit mode needed.
-    app.handle_key(key(KeyCode::Right)).unwrap();
+                                                 // Adding a host while the dev-vcenter header is selected pre-checks that
+                                                 // group. Group is multi-select: Enter opens the checkbox dropdown, Space
+                                                 // toggles the highlighted group, Enter closes back. dev-vcenter is already
+                                                 // checked from the prefill, so just open and close.
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert_eq!(app.mode, AppMode::FieldPicker);
+    app.handle_key(key(KeyCode::Enter)).unwrap(); // close dropdown (dev-vcenter stays checked)
+    assert_eq!(app.mode, AppMode::HostForm);
     app.handle_key(key(KeyCode::F(2))).unwrap(); // save form
 
     assert_eq!(app.mode, AppMode::Normal);
@@ -153,13 +159,12 @@ fn host_form_group_dropdown_creates_group_inline() {
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Port
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Group
 
-    // Enter opens the dropdown; no groups exist yet, so the only rows are
-    // "(none)" and "+ New group…".
+    // Enter opens the dropdown; no groups exist yet, so the only row is
+    // "+ New group…" (already highlighted).
     app.handle_key(key(KeyCode::Enter)).unwrap();
     assert_eq!(app.mode, AppMode::FieldPicker);
 
-    // Move to the "+ New group…" row (index groups.len()+1 == 1 here).
-    app.handle_key(key(KeyCode::Down)).unwrap();
+    // "+ New group…" is the only row (index 0 == create index).
     app.handle_key(key(KeyCode::Enter)).unwrap(); // enter inline create
     type_text(&mut app, "prod");
     app.handle_key(key(KeyCode::Enter)).unwrap(); // create + select
@@ -183,6 +188,65 @@ fn host_form_group_dropdown_creates_group_inline() {
         .find(|g| g.name == "prod")
         .expect("group created inline");
     assert_eq!(host.group_id, Some(group.id));
+}
+
+#[test]
+fn host_form_multi_select_assigns_two_groups() {
+    use sshub::store::NewHostGroup;
+
+    let file = NamedTempFile::new().unwrap();
+    // Seed two groups into the DB the app will open.
+    {
+        let store = LauncherStore::open(file.path()).unwrap();
+        store
+            .create_group(&NewHostGroup {
+                name: "alpha".into(),
+                sort_order: 0,
+                ..Default::default()
+            })
+            .unwrap();
+        store
+            .create_group(&NewHostGroup {
+                name: "beta".into(),
+                sort_order: 1,
+                ..Default::default()
+            })
+            .unwrap();
+    }
+    let mut app = app_with_store(file.path());
+    assert_eq!(app.groups.len(), 2);
+
+    app.handle_key(key_char('a')).unwrap();
+    edit_field(&mut app, "10.0.0.30"); // Address
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Password
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Username
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Label
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Name
+    edit_field(&mut app, "multi-host");
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Port
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Group
+
+    // The alpha header was selected when we pressed `a`, so alpha is pre-checked.
+    // Open the dropdown and additionally check beta, ending with both selected.
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert_eq!(app.mode, AppMode::FieldPicker);
+    app.handle_key(key(KeyCode::Down)).unwrap(); // highlight → beta (alpha already checked)
+    app.handle_key(key(KeyCode::Char(' '))).unwrap(); // check beta
+    app.handle_key(key(KeyCode::Enter)).unwrap(); // close
+    assert_eq!(app.mode, AppMode::HostForm);
+    app.handle_key(key(KeyCode::F(2))).unwrap(); // save
+    assert_eq!(app.mode, AppMode::Normal);
+
+    let store = LauncherStore::open(file.path()).unwrap();
+    let host = store
+        .get_host_by_name("multi-host")
+        .unwrap()
+        .expect("persisted");
+    let names: Vec<&str> = host.groups.iter().map(|g| g.name.as_str()).collect();
+    assert!(
+        names.contains(&"alpha") && names.contains(&"beta"),
+        "host should belong to both groups, got {names:?}"
+    );
 }
 
 #[test]

@@ -115,4 +115,5 @@ mod identity_group;
 mod keybind;
 mod misc;
 mod session;
+mod sftp;
 mod tags;

@@ -23,8 +23,10 @@ Enter
 Sleep 2.5s
 Show
 
-# 1 — Hosts dashboard (groups + live dashboard panels)
-Sleep 800ms
+# 1 — Hosts dashboard: select a host so the card renders its OS logo, fact
+# sheet, and per-host latency panel.
+Down
+Sleep 1s
 Screenshot demo/screenshots/hosts.png
 
 # 2 — Fuzzy host palette
@@ -61,6 +63,13 @@ Sleep 500ms
 Type "?"
 Sleep 1s
 Screenshot demo/screenshots/help.png
+Escape
+Sleep 500ms
+
+# 7 — Settings overlay (Ctrl+H) — toggles incl. opaque background + OS logos
+Ctrl+H
+Sleep 1s
+Screenshot demo/screenshots/settings.png
 Escape
 Sleep 500ms
 

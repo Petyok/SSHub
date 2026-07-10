@@ -17,7 +17,7 @@ impl App {
         self.connect_host_entry(entry)
     }
 
-    fn connect_host_entry(&mut self, entry: HostEntry) -> Result<()> {
+    pub(crate) fn connect_host_entry(&mut self, entry: HostEntry) -> Result<()> {
         // Start each connection with a clean per-host log so a fresh command
         // line and its handshake aren't mixed with a previous attempt's.
         self.ssh_log.retain(|e| e.host_name != entry.name());
@@ -181,6 +181,47 @@ impl App {
         self.auth_cache_updated = std::time::Instant::now() - std::time::Duration::from_secs(60);
         self.refresh_auth_cache();
 
+        // Kick off a background OS auto-detect probe for managed hosts whose
+        // os_icon is still empty. Only Managed hosts carry a stable host_id;
+        // Legacy/ssh_config hosts are skipped. Guarded by the inflight set so a
+        // rapid re-connect doesn't spawn duplicate probes.
+        if let Some(m) = entry.managed() {
+            let empty = m.os_icon.as_deref().is_none_or(|s| s.is_empty());
+            if empty && !self.os_detect_inflight.contains(&m.id) {
+                if let Some(tx) = self.os_detect_tx.as_ref() {
+                    let (secret, _diag) =
+                        resolve_pending_secret(&entry, self.password_store.as_ref());
+                    let argv = ssh_argv_for_entry(&entry);
+                    if tx
+                        .send(crate::osinfo::OsDetectCmd {
+                            host_id: m.id,
+                            argv,
+                            secret,
+                        })
+                        .is_ok()
+                    {
+                        self.os_detect_inflight.insert(m.id);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Apply a background OS auto-detect result: persist the detected os_icon,
+    /// clear the inflight marker, and reload hosts so the UI reflects it.
+    pub fn apply_os_detect(&mut self, ev: crate::osinfo::OsDetectEvent) -> Result<()> {
+        let crate::osinfo::OsDetectEvent::Detected { host_id, os } = ev;
+        self.store.update_host(
+            host_id,
+            &crate::store::HostUpdate {
+                os_icon: Some(Some(os)),
+                ..Default::default()
+            },
+        )?;
+        self.os_detect_inflight.remove(&host_id);
+        self.reload_hosts()?;
         Ok(())
     }
 }

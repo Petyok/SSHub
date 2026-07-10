@@ -16,7 +16,7 @@ impl App {
     }
 
     pub(crate) fn enter_group_manage(&mut self) -> Result<()> {
-        self.groups = self.store.list_groups()?;
+        self.load_groups()?;
         self.group_notice = None;
         self.clamp_group_manage_selected();
         self.mode = AppMode::GroupManage;

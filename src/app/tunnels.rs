@@ -2,7 +2,7 @@ use super::*;
 
 impl App {
     pub(crate) fn switch_to_tunnels_tab(&mut self) -> Result<()> {
-        self.active_tab = 1;
+        self.active_tab = 2;
         self.reload_tunnels()?;
         Ok(())
     }

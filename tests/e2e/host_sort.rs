@@ -107,7 +107,9 @@ fn seed_sort_hosts(store: &LauncherStore) -> (i64, i64, i64) {
         .update_host(
             alpha.id,
             &HostUpdate {
-                favorite: Some(true),
+                // NB: not favourited — favouriting now moves a host into the
+                // reserved Favorites section, which would pull it out of the
+                // flat sort order these tests exercise.
                 sort_order: Some(20),
                 ..Default::default()
             },
@@ -258,20 +260,20 @@ fn sidebar_keys_switch_hosts_and_keychain() {
     let mut app = app_with_store(file.path());
 
     app.handle_key(key_char('2')).unwrap();
-    assert_eq!(app.active_tab, 1); // tunnels tab
+    assert_eq!(app.active_tab, 1); // sftp tab
 
     app.handle_key(key_char('1')).unwrap();
     assert_eq!(app.active_tab, 0); // hosts tab
 
     app.handle_key(key_char('i')).unwrap();
-    assert_eq!(app.active_tab, 2); // keys tab
+    assert_eq!(app.active_tab, 3); // keys tab
 
     app.handle_key(key_char('h')).unwrap();
     assert_eq!(app.active_tab, 0); // hosts tab
 
     app.handle_key(key_char('3')).unwrap();
-    assert_eq!(app.active_tab, 2); // keys tab
+    assert_eq!(app.active_tab, 2); // tunnels tab
 
-    app.handle_key(key_char('4')).unwrap();
-    assert_eq!(app.active_tab, 3); // audit tab
+    app.handle_key(key_char('5')).unwrap();
+    assert_eq!(app.active_tab, 4); // audit tab
 }

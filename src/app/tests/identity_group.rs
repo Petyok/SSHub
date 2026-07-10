@@ -97,7 +97,7 @@ pub(crate) fn keychain_create_edit_delete_flow() {
             password_store: Box::new(crate::credentials::NoopPasswordStore),
         },
     );
-    app.active_tab = 2;
+    app.active_tab = 3;
     app.reload_identities().unwrap();
     app.handle_key(key_char('a')).unwrap();
 

@@ -4,7 +4,8 @@ Set FontSize 16
 Set Width 1200
 Set Height 700
 Set Theme "Catppuccin Mocha"
-Set TypingSpeed 100ms
+Set TypingSpeed 90ms
+Set PlaybackSpeed 0.75
 
 Hide
 Type "export SSHUB_CONFIG_DIR=$PWD/demo/home/.config/sshub SSHUB_DATA_DIR=$PWD/demo/home/.local/share/sshub SSHUB_SSH_CONFIG=$PWD/demo/home/ssh_config PATH=$PWD/target/release:$PATH"
@@ -81,15 +82,27 @@ Sleep 1.8s
 Escape
 Sleep 1.8s
 
-# Tour the tabs: tunnels, keys, audit, back to hosts.
+# Tour the tabs: sftp, tunnels, identities, audit, back to hosts.
 Type "2"
 Sleep 1.8s
 Type "3"
 Sleep 1.8s
 Type "4"
 Sleep 1.8s
+Type "5"
+Sleep 1.8s
 Type "1"
 Sleep 2s
+
+# Settings overlay: opaque background, OS logos, and other toggles (Ctrl+H).
+Ctrl+H
+Sleep 1s
+Down
+Sleep 900ms
+Down
+Sleep 900ms
+Escape
+Sleep 1.5s
 
 # Help screen.
 Ctrl+K

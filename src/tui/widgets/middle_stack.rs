@@ -1,17 +1,21 @@
-//! Middle column dashboard stack: Agent info, Tunnels summary, Latency sparkline.
+//! Middle column dashboard stack: selected-host card, Agent info, Latency.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::widgets::Widget;
 use ratatui::Frame;
 
 use crate::app::App;
+use crate::osinfo::widget::{logo_dimensions, OsLogoWidget};
 use crate::tui::theme;
 use crate::tui::widgets::panel_box::{put_clamped, render_panel_box};
 
-// ── Panel heights ───────────────────────────────────────
+// ── Panel heights (sum = 19 to align with the right column) ─
+const HOST_H: u16 = 9;
 const AGENT_H: u16 = 6;
+#[allow(dead_code)]
 const TUNNELS_H: u16 = 8;
-const LATENCY_H: u16 = 5;
+const LATENCY_H: u16 = 4;
 
 /// Render the three middle-column panels stacked vertically.
 pub fn render_middle_stack(frame: &mut Frame, area: Rect, app: &App) {
@@ -20,20 +24,20 @@ pub fn render_middle_stack(frame: &mut Frame, area: Rect, app: &App) {
     let mut y = area.y;
     let w = area.width;
 
-    // ── Panel 1: Agent info ─────────────────────────────
-    let agent_area = Rect::new(area.x, y, w, AGENT_H.min(area.height));
-    render_agent_panel(buf, agent_area, app);
-    y += agent_area.height;
+    // ── Panel 1: Selected-host card (OS logo + connection) ─
+    let host_area = Rect::new(area.x, y, w, HOST_H.min(area.height));
+    render_host_panel(buf, host_area, app);
+    y += host_area.height;
 
     if y >= area.y + area.height {
         return;
     }
 
-    // ── Panel 2: Tunnels ────────────────────────────────
+    // ── Panel 2: Agent info ─────────────────────────────
     let remaining = area.y + area.height - y;
-    let tunnels_area = Rect::new(area.x, y, w, TUNNELS_H.min(remaining));
-    render_tunnels_panel(buf, tunnels_area, app);
-    y += tunnels_area.height;
+    let agent_area = Rect::new(area.x, y, w, AGENT_H.min(remaining));
+    render_agent_panel(buf, agent_area, app);
+    y += agent_area.height;
 
     if y >= area.y + area.height {
         return;
@@ -43,6 +47,137 @@ pub fn render_middle_stack(frame: &mut Frame, area: Rect, app: &App) {
     let remaining = area.y + area.height - y;
     let latency_area = Rect::new(area.x, y, w, LATENCY_H.min(remaining));
     render_latency_panel(buf, latency_area, app);
+}
+
+// ── Selected-host card ──────────────────────────────────
+
+/// Render the selected host's card: its colored OS logo on the left and the
+/// name / address / detected OS on the right. The logo is drawn only when the
+/// host's `os_icon` resolves to a known distro (auto-detected on first connect
+/// or set manually in the form); otherwise the card shows just the text.
+fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
+    let entry = app.selected_entry();
+    let title = match entry.as_ref() {
+        Some(e) => format!("host · {}", e.name()),
+        None => "host".to_string(),
+    };
+    render_panel_box(buf, area, &title, None);
+
+    if area.height < 3 || area.width < 6 {
+        return;
+    }
+    let Some(entry) = entry else {
+        return;
+    };
+
+    let inner_x = area.x + 2;
+    let inner_top = area.y + 1;
+    let inner_w = area.width.saturating_sub(4);
+    let inner_h = area.height.saturating_sub(2);
+
+    // Left: OS logo (when enabled in Settings and the os_icon resolves to a
+    // vendored distro logo). The OS name still shows in the fact sheet either way.
+    let os_id = entry.managed().and_then(|m| m.os_icon.as_deref());
+    let logo = if app.config.appearance.os_logo {
+        os_id.and_then(crate::osinfo::logo_for)
+    } else {
+        None
+    };
+    let mut text_x = inner_x;
+    if let Some(logo) = logo {
+        let (lw, lh) = logo_dimensions(logo);
+        let logo_w = lw.min(inner_w.saturating_sub(1));
+        let logo_h = lh.min(inner_h);
+        // Vertically center the logo within the card body.
+        let pad = (inner_h.saturating_sub(logo_h)) / 2;
+        let logo_area = Rect::new(inner_x, inner_top + pad, logo_w, logo_h);
+        OsLogoWidget::new(logo).render(logo_area, buf);
+        text_x = inner_x + logo_w + 2;
+    }
+
+    // Right: a compact fact sheet for the selected host. Guard against the
+    // panel height and the right inner edge; skip fields the host doesn't carry.
+    if text_x >= inner_x + inner_w {
+        return;
+    }
+    let text_w = (inner_x + inner_w).saturating_sub(text_x) as usize;
+    let ssh = entry.ssh_host();
+    let addr = ssh
+        .hostname
+        .clone()
+        .unwrap_or_else(|| entry.name().to_string());
+    let port = ssh.port.unwrap_or(22);
+    let managed = entry.managed();
+
+    let mut rows: Vec<(String, ratatui::style::Style)> = Vec::new();
+
+    // Name (+ favourite star).
+    let name = if entry.favorite() {
+        format!("{} \u{2605}", entry.name())
+    } else {
+        entry.name().to_string()
+    };
+    rows.push((name, theme::bright()));
+
+    // user@host:port (user omitted when unknown).
+    let hostport = match ssh.user.as_deref() {
+        Some(u) if !u.is_empty() => format!("{}@{}:{}", u, addr, port),
+        _ => format!("{}:{}", addr, port),
+    };
+    rows.push((hostport, theme::text()));
+
+    // OS  ·  latest ping latency (when we have a live sample).
+    let latency = app
+        .ping_data
+        .get(entry.name())
+        .and_then(|v| v.last().copied())
+        .filter(|&v| v > 0 && !crate::ping::is_unreachable(v));
+    let os_line = match (os_id, latency) {
+        (Some(os), Some(ms)) => format!("{os}  \u{b7}  {ms}ms"),
+        (Some(os), None) => os.to_string(),
+        (None, Some(ms)) => format!("\u{b7} {ms}ms"),
+        (None, None) => "unknown os".to_string(),
+    };
+    rows.push((os_line, theme::cyan()));
+
+    // Group / identity / proxy — managed hosts only.
+    if let Some(m) = managed {
+        if let Some(g) = m.group.as_ref() {
+            rows.push((format!("group: {}", g.name), theme::mute()));
+        }
+        if let Some(id) = m.identity.as_ref() {
+            rows.push((format!("key: {}", id.name), theme::mute()));
+        }
+        if let Some(pj) = m.proxy_jump.as_deref().filter(|s| !s.is_empty()) {
+            rows.push((format!("via {pj}"), theme::mute()));
+        }
+    }
+
+    // Tags.
+    if !entry.tags().is_empty() {
+        let tags = entry
+            .tags()
+            .iter()
+            .map(|t| format!("#{t}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        rows.push((tags, theme::dim()));
+    }
+
+    // Last connected (relative).
+    if let Some(ts) = entry.last_connected() {
+        let ago = crate::tui::widgets::right_stack::format_relative_time(ts);
+        rows.push((format!("last: {ago}"), theme::dim()));
+    }
+
+    // Render as many rows as fit, one per line.
+    for (i, (s, style)) in rows.iter().enumerate() {
+        let y = inner_top + i as u16;
+        if y >= area.y + area.height - 1 {
+            break;
+        }
+        put_clamped(buf, text_x, y, s, *style, text_w);
+    }
 }
 
 /// Render the SSH log panel (meant to span both middle + right columns).
@@ -82,13 +217,39 @@ fn render_ssh_log(buf: &mut Buffer, area: Rect, app: &App) {
         return;
     }
 
-    // Scrollable tail view: ssh_log_scroll=0 means show latest, higher = scroll up
-    let total = filtered.len();
+    // Flatten entries into wrapped visual rows so long command lines stay fully
+    // readable (word-wrapped) instead of truncated. The timestamp prints on the
+    // first row of an entry; continuation rows indent under the message column.
+    struct VRow {
+        time: Option<String>,
+        text: String,
+        style: ratatui::style::Style,
+    }
+    const TIME_W: usize = 9; // "HH:MM:SS " — fixed width
+    let wrap_w = inner_w.saturating_sub(TIME_W).max(1);
+    let mut vrows: Vec<VRow> = Vec::new();
+    for entry in &filtered {
+        let style = match entry.level {
+            crate::ssh::probe::LogLevel::Error => theme::red(),
+            crate::ssh::probe::LogLevel::Success => theme::green(),
+            crate::ssh::probe::LogLevel::Info => theme::dim(),
+        };
+        let time_str = format!("{} ", crate::tui::format_local_time(entry.timestamp));
+        for (j, chunk) in wrap_line(&entry.line, wrap_w).into_iter().enumerate() {
+            vrows.push(VRow {
+                time: if j == 0 { Some(time_str.clone()) } else { None },
+                text: chunk,
+                style,
+            });
+        }
+    }
+
+    // Scrollable tail view over visual rows: scroll=0 shows the latest.
+    let total = vrows.len();
     let scroll = app.ssh_log_scroll.min(total.saturating_sub(max_rows));
     let end = total.saturating_sub(scroll);
     let start = end.saturating_sub(max_rows);
 
-    // Title badge: scroll position
     if scroll > 0 {
         let badge = format!("↑{scroll}");
         let bx = area.x + area.width.saturating_sub(badge.len() as u16 + 3);
@@ -97,37 +258,63 @@ fn render_ssh_log(buf: &mut Buffer, area: Rect, app: &App) {
         }
     }
 
-    for (i, entry) in filtered[start..end].iter().enumerate() {
+    for (i, vr) in vrows[start..end].iter().enumerate() {
         let row_y = area.y + 1 + i as u16;
         if row_y >= area.y + area.height - 1 {
             break;
         }
-
-        let style = match entry.level {
-            crate::ssh::probe::LogLevel::Error => theme::red(),
-            crate::ssh::probe::LogLevel::Success => theme::green(),
-            crate::ssh::probe::LogLevel::Info => theme::dim(),
-        };
-
-        // Timestamp HH:MM:SS (local timezone) — host prefix omitted since
-        // the panel title already names the host we're filtering on.
-        let time_str = format!("{} ", crate::tui::format_local_time(entry.timestamp));
-        let time_w = time_str.chars().count();
-        buf.set_string(inner_x, row_y, &time_str, theme::mute());
-
-        // Clamp with `…` (same helper as the rest of the dashboard) so a long
-        // command line stays inside the panel border instead of a hard cut that
-        // reads as overflowing the box.
-        let remaining_w = inner_w.saturating_sub(time_w);
-        put_clamped(
-            buf,
-            inner_x + time_w as u16,
-            row_y,
-            &entry.line,
-            style,
-            remaining_w,
-        );
+        if let Some(t) = &vr.time {
+            buf.set_string(inner_x, row_y, t, theme::mute());
+        }
+        buf.set_string(inner_x + TIME_W as u16, row_y, &vr.text, vr.style);
     }
+}
+
+/// Greedy word-wrap `s` to `width` columns (char count == display width for the
+/// ASCII log lines here). Words longer than `width` are hard-split so a long
+/// path/flag never overflows. Never returns an empty vec.
+fn wrap_line(s: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![s.to_string()];
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut cur_len = 0usize;
+    for word in s.split(' ') {
+        let wlen = word.chars().count();
+        if wlen > width {
+            if cur_len > 0 {
+                lines.push(std::mem::take(&mut cur));
+                cur_len = 0;
+            }
+            let chars: Vec<char> = word.chars().collect();
+            for chunk in chars.chunks(width) {
+                lines.push(chunk.iter().collect());
+            }
+            continue;
+        }
+        let projected = if cur_len == 0 {
+            wlen
+        } else {
+            cur_len + 1 + wlen
+        };
+        if projected > width {
+            lines.push(std::mem::take(&mut cur));
+            cur = word.to_string();
+            cur_len = wlen;
+        } else {
+            if cur_len > 0 {
+                cur.push(' ');
+                cur_len += 1;
+            }
+            cur.push_str(word);
+            cur_len += wlen;
+        }
+    }
+    if cur_len > 0 || lines.is_empty() {
+        lines.push(cur);
+    }
+    lines
 }
 
 // ── Agent panel ─────────────────────────────────────────
@@ -216,6 +403,9 @@ fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
 
 // ── Tunnels panel ───────────────────────────────────────
 
+// Retained (not currently stacked) so the tunnels summary is easy to restore;
+// the dedicated tunnels tab covers the same data.
+#[allow(dead_code)]
 fn render_tunnels_panel(buf: &mut Buffer, area: Rect, app: &App) {
     let active = app.tunnel_manager.active_count();
     let total = app.tunnels.len();
@@ -297,15 +487,21 @@ const SPARK_CHARS: [char; 8] = [
 ];
 
 fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
-    render_panel_box(buf, area, "latency p50", None);
+    // Per-host latency: the ping timeline of the currently selected host.
+    let selected = app.selected_entry().map(|e| e.name().to_string());
+    let title = match selected.as_deref() {
+        Some(n) => format!("latency \u{b7} {n}"),
+        None => "latency p50".to_string(),
+    };
+    render_panel_box(buf, area, &title, None);
 
     let inner_x = area.x + 2;
     let inner_w = area.width.saturating_sub(4) as usize;
 
-    // Collect all ping samples into a combined timeline
-    let all_samples: Vec<u32> = app
-        .ping_data
-        .values()
+    let samples: Vec<u32> = selected
+        .as_deref()
+        .and_then(|n| app.ping_data.get(n))
+        .into_iter()
         .flat_map(|v| {
             v.iter()
                 .copied()
@@ -313,7 +509,7 @@ fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
         })
         .collect();
 
-    if all_samples.is_empty() {
+    if samples.is_empty() {
         // Empty sparkline — flat baseline
         let spark_y = area.y + 1;
         if spark_y < area.y + area.height - 1 {
@@ -334,35 +530,21 @@ fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
         return;
     }
 
-    // Compute stats
-    let mut sorted = all_samples.clone();
+    // Compute stats over this host's samples.
+    let mut sorted = samples.clone();
     sorted.sort_unstable();
     let p50 = sorted[sorted.len() / 2];
     let peak = *sorted.last().unwrap_or(&0);
-    let now_val = *all_samples.last().unwrap_or(&0);
+    let now_val = *samples.last().unwrap_or(&0);
 
-    // Build sparkline from last 30 combined samples (take tail from each host interleaved)
-    let spark_data: Vec<u32> = {
-        let mut combined: Vec<u32> = Vec::new();
-        for samples in app.ping_data.values() {
-            let start = samples.len().saturating_sub(30);
-            for &v in &samples[start..] {
-                if !crate::ping::is_unreachable(v) {
-                    combined.push(v);
-                }
-            }
-        }
-        let start = combined.len().saturating_sub(30);
-        combined[start..].to_vec()
-    };
-
+    // Sparkline from the last ~30 samples of this host.
     let spark_y = area.y + 1;
-    if spark_y < area.y + area.height - 1 && !spark_data.is_empty() {
-        let max_val = *spark_data.iter().max().unwrap_or(&1);
-        let max_val = max_val.max(1);
-        let spark_len = spark_data.len().min(inner_w);
-        let start = spark_data.len().saturating_sub(spark_len);
-        let sparkline: String = spark_data[start..]
+    if spark_y < area.y + area.height - 1 {
+        let spark_len = samples.len().min(inner_w).min(30);
+        let start = samples.len().saturating_sub(spark_len);
+        let window = &samples[start..];
+        let max_val = (*window.iter().max().unwrap_or(&1)).max(1);
+        let sparkline: String = window
             .iter()
             .map(|&v| {
                 let idx = ((v as u64 * 7) / max_val as u64).min(7) as usize;
@@ -372,10 +554,33 @@ fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
         buf.set_string(inner_x, spark_y, &sparkline, theme::green());
     }
 
-    // Stats row
+    // Stats row (avg = p50 median).
     let info_y = area.y + 2;
     if info_y < area.y + area.height - 1 {
         let stats = format!("now {}ms  avg {}ms  peak {}ms", now_val, p50, peak);
         put_clamped(buf, inner_x, info_y, &stats, theme::dim(), inner_w);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrap_line;
+
+    #[test]
+    fn wraps_on_word_boundaries() {
+        let out = wrap_line("alpha beta gamma", 11);
+        assert_eq!(out, vec!["alpha beta".to_string(), "gamma".to_string()]);
+    }
+
+    #[test]
+    fn hard_splits_overlong_words() {
+        let out = wrap_line("aaaaaaaa", 3);
+        assert_eq!(out, vec!["aaa", "aaa", "aa"]);
+    }
+
+    #[test]
+    fn never_empty_and_short_fits() {
+        assert_eq!(wrap_line("", 10), vec!["".to_string()]);
+        assert_eq!(wrap_line("hi", 10), vec!["hi".to_string()]);
     }
 }

@@ -95,10 +95,11 @@ impl App {
                     if let Some(tab) = tab_from_x(x) {
                         match tab {
                             0 => self.active_tab = 0,
-                            1 => self.switch_to_tunnels_tab()?,
-                            2 => self.switch_to_keys_tab()?,
-                            3 => {
-                                self.active_tab = 3;
+                            1 => self.switch_to_sftp_tab(),
+                            2 => self.switch_to_tunnels_tab()?,
+                            3 => self.switch_to_keys_tab()?,
+                            4 => {
+                                self.active_tab = 4;
                                 self.refresh_audit_events();
                             }
                             _ => {}
@@ -140,6 +141,9 @@ impl App {
                             }
                         }
                         1 => {
+                            // SFTP tab — no body-click interaction yet.
+                        }
+                        2 => {
                             // Tunnels table — account for scroll offset
                             let data_y = areas.body.y + 4;
                             if y >= data_y {
@@ -161,7 +165,7 @@ impl App {
                                 }
                             }
                         }
-                        2 => {
+                        3 => {
                             // Keys cards
                             if !self.identities.is_empty() {
                                 let inner_w =
@@ -201,7 +205,7 @@ impl App {
                                 }
                             }
                         }
-                        3 => {
+                        4 => {
                             // Audit table (mirror the renderer's scroll math)
                             let data_y = areas.body.y + 3;
                             if y >= data_y {
@@ -239,13 +243,14 @@ impl App {
                                 self.ssh_log_scroll = self.ssh_log_scroll.saturating_add(3);
                             }
                         }
-                        1 => {
+                        1 => {}
+                        2 => {
                             self.tunnel_selected = self.tunnel_selected.saturating_sub(1);
                         }
-                        2 => {
+                        3 => {
                             self.identity_selected = self.identity_selected.saturating_sub(1);
                         }
-                        3 => {
+                        4 => {
                             self.audit_selected = self.audit_selected.saturating_sub(1);
                         }
                         _ => {}
@@ -267,15 +272,16 @@ impl App {
                             self.ssh_log_scroll = self.ssh_log_scroll.saturating_sub(3);
                         }
                     }
-                    1 => {
+                    1 => {}
+                    2 => {
                         let max = self.tunnels.len().saturating_sub(1);
                         self.tunnel_selected = (self.tunnel_selected + 1).min(max);
                     }
-                    2 => {
+                    3 => {
                         let max = self.identities.len().saturating_sub(1);
                         self.identity_selected = (self.identity_selected + 1).min(max);
                     }
-                    3 => {
+                    4 => {
                         let max = self.auth_events_cache.len().saturating_sub(1);
                         self.audit_selected = (self.audit_selected + 1).min(max);
                     }

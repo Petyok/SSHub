@@ -6,11 +6,12 @@ use ratatui::Frame;
 use crate::tui::theme;
 
 /// Tab definitions: (number label, display name).
-const TABS: [(&str, &str); 4] = [
+const TABS: [(&str, &str); 5] = [
     ("1", "hosts"),
-    ("2", "tunnels"),
-    ("3", "identities"),
-    ("4", "audit"),
+    ("2", "sftp"),
+    ("3", "tunnels"),
+    ("4", "identities"),
+    ("5", "audit"),
 ];
 
 /// Render the tab bar into a 1-row `area`.
@@ -61,12 +62,20 @@ pub fn render_tab_bar(frame: &mut Frame, area: Rect, active_tab: usize, scope_pa
         x += 3;
     }
 
-    // Scope path — far right
-    let scope_text = format!("scope: {}", scope_path);
-    let scope_len = scope_text.len() as u16;
-    if area.width > scope_len + 2 {
-        let scope_x = area.x + area.width - scope_len - 1;
-        buf.set_string(scope_x, y, "scope: ", theme::dim());
-        buf.set_string(scope_x + 7, y, scope_path, theme::white());
+    // Version + scope path — far right. Version sits at the very edge; the
+    // scope path (when it fits) is placed to its left.
+    let version = concat!("v", env!("CARGO_PKG_VERSION"));
+    let ver_len = version.len() as u16;
+    if area.width > ver_len + 2 {
+        let ver_x = area.x + area.width - ver_len - 1;
+        buf.set_string(ver_x, y, version, theme::green());
+
+        let scope_text = format!("scope: {}  ", scope_path);
+        let scope_len = scope_text.len() as u16;
+        if ver_x > area.x + scope_len + 2 {
+            let scope_x = ver_x - scope_len;
+            buf.set_string(scope_x, y, "scope: ", theme::dim());
+            buf.set_string(scope_x + 7, y, scope_path, theme::white());
+        }
     }
 }

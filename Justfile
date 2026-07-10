@@ -31,23 +31,26 @@ dry-run:
     cargo run -- --dry-run
 
 # Bump the version (odometer, each field 0-9; see CLAUDE.md "Versioning").
-#   just bump patch   # every commit to development
-#   just bump minor   # on release (merge development -> main); resets patch
-#   just bump major   # milestone / manual
+#   just bump patch       # every commit to development
+#   just bump minor       # on release (merge development -> main); resets patch
+#   just bump major       # milestone / manual
+#   just bump set 0.7.0   # set an explicit version (e.g. to jump ahead)
 # Carries over: 0.4.9 + patch -> 0.5.0, 0.9.9 + patch -> 1.0.0.
-bump kind:
+bump kind version="":
     #!/usr/bin/env bash
     set -euo pipefail
     ver=$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "([^"]+)".*/\1/')
     IFS=. read -r X Y Z <<< "$ver"
     case "{{kind}}" in
       patch) Z=$((Z + 1)); if [ "$Z" -gt 9 ]; then Z=0; Y=$((Y + 1)); fi
-             if [ "$Y" -gt 9 ]; then Y=0; X=$((X + 1)); fi ;;
-      minor) Y=$((Y + 1)); Z=0; if [ "$Y" -gt 9 ]; then Y=0; X=$((X + 1)); fi ;;
-      major) X=$((X + 1)); Y=0; Z=0 ;;
-      *) echo "usage: just bump patch|minor|major" >&2; exit 1 ;;
+             if [ "$Y" -gt 9 ]; then Y=0; X=$((X + 1)); fi; new="$X.$Y.$Z" ;;
+      minor) Y=$((Y + 1)); Z=0; if [ "$Y" -gt 9 ]; then Y=0; X=$((X + 1)); fi; new="$X.$Y.$Z" ;;
+      major) X=$((X + 1)); Y=0; Z=0; new="$X.$Y.$Z" ;;
+      set)   new="{{version}}"
+             echo "$new" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' \
+               || { echo "usage: just bump set X.Y.Z" >&2; exit 1; } ;;
+      *) echo "usage: just bump patch|minor|major|set X.Y.Z" >&2; exit 1 ;;
     esac
-    new="$X.$Y.$Z"
     sed -i -E "s/^version = \"[^\"]+\"/version = \"$new\"/" Cargo.toml
     # Update the sshub entry in Cargo.lock too (the version line right after its
     # name), so no `cargo` invocation is needed — keeps the pre-commit hook fast
@@ -69,6 +72,7 @@ setup-hooks:
 #   just release          # minor feature release: bump Y (Z->0) -> vX.Y.0
 #   just release minor    # same as above
 #   just release patch    # hotfix: publish the CURRENT vX.Y.Z as-is, no bump
+#   just release 0.7.0    # release an explicit version (jump ahead)
 #
 # `patch` ships whatever version development currently carries (the running
 # odometer Z from the pre-commit hook) straight to main — for hotfixes you don't
@@ -78,7 +82,7 @@ setup-hooks:
 release kind="minor":
     #!/usr/bin/env bash
     set -euo pipefail
-    case "{{kind}}" in minor|patch) ;; *) echo "usage: just release [minor|patch]" >&2; exit 1;; esac
+    case "{{kind}}" in minor|patch) ;; [0-9]*.[0-9]*.[0-9]*) ;; *) echo "usage: just release [minor|patch|X.Y.Z]" >&2; exit 1;; esac
     [ "$(git rev-parse --abbrev-ref HEAD)" = development ] || { echo "run from development" >&2; exit 1; }
     git diff --quiet && git diff --cached --quiet || { echo "working tree not clean" >&2; exit 1; }
     git fetch origin --quiet
@@ -88,7 +92,13 @@ release kind="minor":
     # to a released commit), so this merge takes development's version cleanly.
     git merge --no-ff --no-edit development
     # minor: bump Y and reset Z. patch: keep development's current X.Y.Z.
-    [ "{{kind}}" = minor ] && just bump minor || true
+    # X.Y.Z: set that exact version. All happen on main, where the pre-commit
+    # patch-bump hook doesn't fire — no --no-verify dance needed.
+    case "{{kind}}" in
+      minor) just bump minor ;;
+      patch) ;;
+      *)     just bump set "{{kind}}" ;;
+    esac
     ver=$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "([^"]+)".*/\1/')
     if git rev-parse "v$ver" >/dev/null 2>&1; then
       echo "v$ver is already tagged — commit a change on development first (or 'just release minor')" >&2

@@ -81,7 +81,7 @@ fn keychain_create_edit_delete_unused_identity() {
     let mut app = app_with_store(path);
 
     app.handle_key(key_char('i')).unwrap();
-    assert_eq!(app.active_tab, 2); // keys tab
+    assert_eq!(app.active_tab, 3); // keys tab
     assert!(app.identities.iter().any(|i| i.name == "Default"));
 
     app.handle_key(key_char('a')).unwrap();

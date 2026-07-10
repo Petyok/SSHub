@@ -87,6 +87,22 @@ pub enum VisualRow {
     },
 }
 
+/// Appearance toggles shown in the Settings overlay, in display order. The
+/// index maps to [`App::setting_value`] / `toggle_setting`. Each entry is
+/// `(label, hint)`.
+pub const SETTINGS_ITEMS: [(&str, &str); 4] = [
+    (
+        "Opaque background",
+        "solid backdrop — fixes unreadable text on transparent terminals",
+    ),
+    ("Show OS logos", "distro logo in the host card"),
+    ("Confirm before quit", "ask before q / Ctrl+C"),
+    (
+        "Disable startup animation",
+        "skip the intro splash (applies next launch)",
+    ),
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppMode {
     Normal,
@@ -107,6 +123,8 @@ pub enum AppMode {
     FieldPicker,
     /// Keybinding editor overlay.
     KeybindEditor,
+    /// Settings overlay: checkbox list of appearance toggles.
+    Settings,
     /// Quit confirmation dialog.
     ConfirmQuit,
     TunnelForm,
@@ -390,6 +408,15 @@ impl HostEntry {
         }
     }
 
+    /// Ids of every group this host belongs to (all memberships, including
+    /// Favorites). Legacy hosts have none.
+    pub fn group_ids(&self) -> Vec<i64> {
+        match self {
+            Self::Managed(m) => m.groups.iter().map(|g| g.id).collect(),
+            Self::Legacy { .. } => Vec::new(),
+        }
+    }
+
     pub fn sort_order(&self) -> i32 {
         match self {
             Self::Managed(m) => m.sort_order,
@@ -455,7 +482,13 @@ pub struct HostFormEdit {
     pub label: String,
     pub name: String,
     pub port: String,
+    /// Highlighted row in the Group multi-select dropdown (0-based over
+    /// `app.groups` then the "+ New group…" row). Selection state itself lives
+    /// in `group_ids`.
     pub group_index: usize,
+    /// Ids of every non-reserved group the host is assigned to (multi-select).
+    /// Favorites is never listed here — it's toggled with `f`.
+    pub group_ids: std::collections::BTreeSet<i64>,
     pub identity_index: usize,
     pub tags: String,
     pub proxy_jump: String,

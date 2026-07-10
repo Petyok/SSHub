@@ -34,7 +34,27 @@ pub fn format_local_time(epoch_secs: i64) -> String {
     format!("{:02}:{:02}:{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec)
 }
 
+/// Frame entry point. Renders the UI, then — when `appearance.opaque_background`
+/// is on — paints a solid backdrop behind every still-transparent cell so text
+/// stays readable on a transparent terminal.
 pub fn render(frame: &mut Frame, app: &App) {
+    render_inner(frame, app);
+    if app.config.appearance.opaque_background {
+        let buf = frame.buffer_mut();
+        let area = buf.area;
+        for y in area.y..area.y + area.height {
+            for x in area.x..area.x + area.width {
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    if cell.bg == ratatui::style::Color::Reset {
+                        cell.bg = theme::BG;
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn render_inner(frame: &mut Frame, app: &App) {
     let session_behind_picker = app.mode == AppMode::SessionHostPicker
         && app
             .session_host_picker
@@ -79,9 +99,10 @@ pub fn render(frame: &mut Frame, app: &App) {
     // ── Tab body dispatch ─────────────────────────────────────
     match app.active_tab {
         0 => render_hosts_body(frame, &areas, app),
-        1 => render_tunnels_body(frame, &areas, app),
-        2 => render_keys_body(frame, &areas, app),
-        3 => render_audit_body(frame, &areas, app),
+        1 => render_sftp_body(frame, &areas, app),
+        2 => render_tunnels_body(frame, &areas, app),
+        3 => render_keys_body(frame, &areas, app),
+        4 => render_audit_body(frame, &areas, app),
         _ => render_hosts_body(frame, &areas, app),
     }
 
@@ -146,6 +167,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         AppMode::ConfirmDelete => render_confirm_delete_popup(frame, app),
         AppMode::Help => render_help_popup(frame, app),
         AppMode::KeybindEditor => screens::keybind_editor::render_keybind_editor(frame, app),
+        AppMode::Settings => screens::settings::render_settings(frame, app),
         AppMode::ConfirmQuit => render_confirm_quit_popup(frame, app),
         AppMode::ImportPrompt => render_import_prompt_popup(frame, app),
         _ => {}
@@ -264,6 +286,21 @@ fn footer_keybinds(app: &App) -> Vec<(&'static str, &'static str)> {
         ],
         1 => vec![
             ("\u{2191}\u{2193}", "select"),
+            ("\u{21b5}", "enter/connect"),
+            ("\u{21c6}", "focus"),
+            ("\u{2190}", "download"),
+            ("\u{2192}", "upload"),
+            ("c", "run"),
+            ("u", "unstage"),
+            ("r", "refresh"),
+            ("s", "ssh"),
+            ("/", "search"),
+            ("Esc", "back"),
+            ("?", "help"),
+            ("q", "quit"),
+        ],
+        2 => vec![
+            ("\u{2191}\u{2193}", "select"),
             ("\u{21b5}", "start/stop"),
             ("a", "new tunnel"),
             ("e", "edit"),
@@ -272,7 +309,7 @@ fn footer_keybinds(app: &App) -> Vec<(&'static str, &'static str)> {
             ("?", "help"),
             ("q", "quit"),
         ],
-        2 => vec![
+        3 => vec![
             ("\u{2191}\u{2193}\u{2190}\u{2192}", "move"),
             ("[ ]", "columns"),
             ("a", "add"),
@@ -282,7 +319,7 @@ fn footer_keybinds(app: &App) -> Vec<(&'static str, &'static str)> {
             ("?", "help"),
             ("q", "quit"),
         ],
-        3 => vec![
+        4 => vec![
             ("\u{2191}\u{2193}", "select"),
             ("f", "filter"),
             ("r", "range"),
@@ -293,6 +330,7 @@ fn footer_keybinds(app: &App) -> Vec<(&'static str, &'static str)> {
     };
     if !app.sessions.is_empty() {
         binds.push(("^D", "detach"));
+        binds.push(("^\u{21e7}F", "sftp"));
         binds.push(("^[/]", "tabs"));
         binds.push(("^T", "new tab"));
     }
@@ -316,6 +354,10 @@ fn render_hosts_body(frame: &mut Frame, areas: &dashboard_layout::DashboardAreas
         );
         widgets::middle_stack::render_ssh_log_panel(frame, log_area, app);
     }
+}
+
+fn render_sftp_body(frame: &mut Frame, areas: &dashboard_layout::DashboardAreas, app: &App) {
+    screens::sftp::render_sftp(frame, areas.body, app);
 }
 
 fn render_tunnels_body(frame: &mut Frame, areas: &dashboard_layout::DashboardAreas, app: &App) {
@@ -663,6 +705,43 @@ mod tests {
         let app = test_app_with_hosts();
         let buffer = render_to_buffer(&app, 120, 38);
         assert!(buffer_contains(&buffer, "web-prod"));
+    }
+
+    #[test]
+    fn opaque_background_fills_every_cell() {
+        use ratatui::style::Color;
+        let mut app = test_app_with_hosts();
+
+        // Off (default): at least one cell is left transparent (Color::Reset).
+        let transparent = render_to_buffer(&app, 120, 38);
+        let a = transparent.area;
+        let any_reset = (a.y..a.y + a.height)
+            .any(|y| (a.x..a.x + a.width).any(|x| transparent[(x, y)].bg == Color::Reset));
+        assert!(
+            any_reset,
+            "expected some transparent cell with the flag off"
+        );
+
+        // On: no cell is transparent — every Reset bg became theme::BG.
+        app.config.appearance.opaque_background = true;
+        let opaque = render_to_buffer(&app, 120, 38);
+        let a = opaque.area;
+        let all_opaque = (a.y..a.y + a.height)
+            .all(|y| (a.x..a.x + a.width).all(|x| opaque[(x, y)].bg != Color::Reset));
+        assert!(all_opaque, "opaque mode left a transparent cell");
+    }
+
+    #[test]
+    fn render_shows_host_card_and_version() {
+        let app = test_app_with_hosts();
+        let buffer = render_to_buffer(&app, 120, 38);
+        // The selected-host card (middle column) is titled "host · <name>".
+        assert!(buffer_contains(&buffer, "host \u{b7} web-prod"));
+        // Its address:port row is rendered.
+        assert!(buffer_contains(&buffer, "10.0.0.1:22"));
+        // The build version appears in the tab bar.
+        let version = concat!("v", env!("CARGO_PKG_VERSION"));
+        assert!(buffer_contains(&buffer, version));
     }
 
     #[test]
@@ -1024,7 +1103,7 @@ mod tests {
         use crate::store::Identity;
 
         let mut app = test_app_with_hosts();
-        app.active_tab = 2;
+        app.active_tab = 3;
         app.identities = (0..30)
             .map(|i| Identity {
                 id: i as i64,

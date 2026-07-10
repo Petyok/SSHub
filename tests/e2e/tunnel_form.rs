@@ -65,7 +65,7 @@ fn tunnel_host_picker_filters_and_selects() {
     let mut app = app_with_hosts(file.path());
 
     // Go to the tunnels tab and open a new tunnel form.
-    app.handle_key(key_char('2')).unwrap();
+    app.handle_key(key_char('3')).unwrap();
     app.handle_key(key_char('a')).unwrap();
     assert_eq!(app.mode, AppMode::TunnelForm);
 
@@ -93,7 +93,7 @@ fn tunnel_host_picker_esc_keeps_previous_selection() {
     let file = NamedTempFile::new().unwrap();
     let mut app = app_with_hosts(file.path());
 
-    app.handle_key(key_char('2')).unwrap();
+    app.handle_key(key_char('3')).unwrap();
     app.handle_key(key_char('a')).unwrap();
 
     // Pick bravo (arrow down once from alpha).
