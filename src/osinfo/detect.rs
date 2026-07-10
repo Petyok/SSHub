@@ -50,12 +50,21 @@ impl ProbeRunner for SshProbeRunner {
         }
 
         // Splice BatchMode-friendly options right after the program name and
-        // append the remote command as the final argument.
+        // append the remote command as the final argument. With no stored
+        // secret there's no askpass to answer a prompt, so force BatchMode=yes:
+        // ssh must fail fast instead of blocking on a /dev/tty password prompt
+        // (which would write over the TUI and hang this single-threaded worker
+        // forever, since ConnectTimeout only bounds the TCP connect).
+        let batchmode = if secret.is_some() {
+            "BatchMode=no"
+        } else {
+            "BatchMode=yes"
+        };
         let mut full: Vec<String> = Vec::with_capacity(argv.len() + 8);
         full.push(argv[0].clone());
         for opt in [
             "-o",
-            "BatchMode=no",
+            batchmode,
             "-o",
             "ConnectTimeout=8",
             "-o",

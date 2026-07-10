@@ -103,8 +103,24 @@ impl LauncherStore {
             }
         }
         let deleted = self.with_conn(|conn| {
+            let tx = conn.unchecked_transaction()?;
             conn.execute("DELETE FROM host_groups WHERE id = ?1", params![id])?;
-            Ok(conn.changes() > 0)
+            let changed = conn.changes() > 0;
+            // The FK nulls hosts.group_id for hosts whose primary was this group,
+            // and CASCADE drops its membership rows — but a host may still belong
+            // to other groups. Recompute the primary from a remaining real
+            // membership so group_id doesn't desync from the membership set.
+            conn.execute(
+                "UPDATE hosts SET group_id = (
+                     SELECT m.group_id FROM host_group_memberships m
+                       JOIN host_groups g ON g.id = m.group_id
+                      WHERE m.host_id = hosts.id AND g.reserved = 0
+                      ORDER BY m.group_id LIMIT 1)
+                   WHERE group_id IS NULL",
+                [],
+            )?;
+            tx.commit()?;
+            Ok(changed)
         })?;
         Ok(deleted)
     }
@@ -113,8 +129,8 @@ impl LauncherStore {
     pub fn favorites_group_id(&self) -> Result<i64> {
         self.with_conn(|conn| {
             conn.query_row(
-                "SELECT id FROM host_groups WHERE reserved = 1 AND name = ?1",
-                params![super::migrate::FAVORITES_GROUP_NAME],
+                "SELECT id FROM host_groups WHERE reserved = 1 ORDER BY id LIMIT 1",
+                [],
                 |row| row.get(0),
             )
             .map_err(Into::into)
@@ -830,8 +846,12 @@ fn primary_group_id(conn: &rusqlite::Connection, host_id: i64) -> Result<Option<
 /// No-op otherwise.
 fn materialize_identity(conn: &rusqlite::Connection, host_id: i64) -> Result<()> {
     use rusqlite::OptionalExtension;
+    // Count only REAL (non-reserved) groups: joining the Favorites group by
+    // favouriting a host must not trigger identity materialization.
     let membership_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM host_group_memberships WHERE host_id = ?1",
+        "SELECT COUNT(*) FROM host_group_memberships m
+           JOIN host_groups g ON g.id = m.group_id
+          WHERE m.host_id = ?1 AND g.reserved = 0",
         params![host_id],
         |row| row.get(0),
     )?;
@@ -1602,6 +1622,61 @@ mod tests {
         assert!(ids.contains(&fav_id));
         // Primary group is still the first non-Favorites membership.
         assert_eq!(loaded.group_id, Some(g1.id));
+    }
+
+    #[test]
+    fn favouriting_does_not_materialize_identity() {
+        // Joining the reserved Favorites group (via the favourite key) must NOT
+        // count as a "second group" and must not concretize the host's identity.
+        let store = LauncherStore::open_in_memory().unwrap();
+        let fav_id = store.favorites_group_id().unwrap();
+        let default_id = store
+            .get_identity_by_name("Default")
+            .unwrap()
+            .expect("Default identity")
+            .id;
+        let g = store
+            .create_group(&NewHostGroup {
+                name: "prod".into(),
+                sort_order: 0,
+                default_identity_id: Some(default_id),
+                ..Default::default()
+            })
+            .unwrap();
+        let host = store
+            .create_host(&NewHost {
+                name: "web".into(),
+                address: "10.0.0.1".into(),
+                port: 22,
+                group_id: Some(g.id),
+                identity_id: None,
+                ..Default::default()
+            })
+            .unwrap();
+
+        store.add_host_to_group(host.id, fav_id).unwrap();
+        let loaded = store.get_host(host.id).unwrap().unwrap();
+        assert!(loaded.favorite);
+        assert_eq!(
+            loaded.identity_id, None,
+            "favouriting must not materialize the identity"
+        );
+
+        // A genuine SECOND real group, however, does materialize it.
+        let g2 = store
+            .create_group(&NewHostGroup {
+                name: "eu".into(),
+                sort_order: 1,
+                ..Default::default()
+            })
+            .unwrap();
+        store.set_host_groups(host.id, &[g.id, g2.id]).unwrap();
+        let loaded = store.get_host(host.id).unwrap().unwrap();
+        assert_eq!(
+            loaded.identity_id,
+            Some(default_id),
+            "a second real group should materialize the inherited identity"
+        );
 
         // Clearing all real groups still keeps Favorites.
         store.set_host_groups(host.id, &[]).unwrap();

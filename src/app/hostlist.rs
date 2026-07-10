@@ -380,20 +380,30 @@ impl App {
             self.search_query.clear();
             self.rebuild_filter();
         }
-        // Expand the host's group AND every ancestor group so its row is
-        // navigable (a collapsed ancestor hides the whole subtree).
+        // Expand EVERY group the host belongs to (including Favorites) plus each
+        // one's ancestor chain, so its row is navigable wherever it lives (a
+        // collapsed ancestor hides the whole subtree). A host with no group
+        // memberships lives in the ungrouped bucket.
         let mut changed = false;
-        let mut group = self.hosts.get(idx).and_then(|h| h.group_id());
-        if group.is_none() {
+        let group_ids = self
+            .hosts
+            .get(idx)
+            .map(|h| h.group_ids())
+            .unwrap_or_default();
+        if group_ids.is_empty() {
             changed |= self.collapsed_groups.remove(&UNGROUPED_KEY);
-        }
-        while let Some(gid) = group {
-            changed |= self.collapsed_groups.remove(&gid);
-            group = self
-                .groups
-                .iter()
-                .find(|g| g.id == gid)
-                .and_then(|g| g.parent_id);
+        } else {
+            for gid in group_ids {
+                let mut group = Some(gid);
+                while let Some(id) = group {
+                    changed |= self.collapsed_groups.remove(&id);
+                    group = self
+                        .groups
+                        .iter()
+                        .find(|g| g.id == id)
+                        .and_then(|g| g.parent_id);
+                }
+            }
         }
         if changed {
             self.persist_collapsed_groups();

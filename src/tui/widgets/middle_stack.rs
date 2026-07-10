@@ -75,9 +75,14 @@ fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
     let inner_w = area.width.saturating_sub(4);
     let inner_h = area.height.saturating_sub(2);
 
-    // Left: OS logo (when the os_icon resolves to a vendored distro logo).
+    // Left: OS logo (when enabled in Settings and the os_icon resolves to a
+    // vendored distro logo). The OS name still shows in the fact sheet either way.
     let os_id = entry.managed().and_then(|m| m.os_icon.as_deref());
-    let logo = os_id.and_then(crate::osinfo::logo_for);
+    let logo = if app.config.appearance.os_logo {
+        os_id.and_then(crate::osinfo::logo_for)
+    } else {
+        None
+    };
     let mut text_x = inner_x;
     if let Some(logo) = logo {
         let (lw, lh) = logo_dimensions(logo);
