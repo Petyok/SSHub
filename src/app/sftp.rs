@@ -142,6 +142,8 @@ impl App {
             }
             // Re-list both panes (pick up files changed on either side).
             KeyCode::Char('r') => self.sftp_refresh_panes(),
+            // Open an SSH session to this same host (SFTP stays in the background).
+            KeyCode::Char('s') => self.open_ssh_for_sftp_host()?,
             // Confirm: run the whole queue sequentially.
             KeyCode::Char('c') => self.sftp_run_queue(),
             _ => {}
@@ -208,7 +210,32 @@ impl App {
         self.sftp = Some(state);
         self.sftp_tx = Some(tx);
         self.sftp_rx = Some(rx);
+        self.sftp_host = Some(entry.name().to_string());
         Ok(())
+    }
+
+    /// Open an SSH session to the host the SFTP browser is connected to (the
+    /// reverse of `open_sftp_for_active_session` — completes the round trip).
+    /// The SFTP session stays live in the background.
+    fn open_ssh_for_sftp_host(&mut self) -> Result<()> {
+        let Some(name) = self.sftp_host.clone() else {
+            return Ok(());
+        };
+        // Re-attach to an existing background session for this host (e.g. the one
+        // we came from via SessionOpenSftp) instead of spawning a duplicate.
+        if let Some(idx) = self.sessions.iter().position(|s| s.display_name == name) {
+            self.active_session = Some(idx);
+            self.focus_active_session();
+            return Ok(());
+        }
+        // No live session for this host → open a fresh SSH session.
+        let Some(entry) = self.hosts.iter().find(|h| h.name() == name).cloned() else {
+            if let Some(s) = self.sftp.as_mut() {
+                s.notice = Some(format!("no saved host '{name}' to open SSH for"));
+            }
+            return Ok(());
+        };
+        self.connect_host_entry(entry)
     }
 
     /// Navigate the focused pane into `path`. Remote listings go through the
@@ -271,6 +298,7 @@ impl App {
         self.sftp = None;
         self.sftp_tx = None;
         self.sftp_rx = None;
+        self.sftp_host = None;
     }
 
     /// Apply one [`SftpEvent`] drained from the worker to the live `sftp` state.

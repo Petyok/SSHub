@@ -272,6 +272,7 @@ fn footer_keybinds(app: &App) -> Vec<(&'static str, &'static str)> {
             ("c", "run"),
             ("u", "unstage"),
             ("r", "refresh"),
+            ("s", "ssh"),
             ("Esc", "back"),
             ("?", "help"),
             ("q", "quit"),

@@ -17,7 +17,7 @@ impl App {
         self.connect_host_entry(entry)
     }
 
-    fn connect_host_entry(&mut self, entry: HostEntry) -> Result<()> {
+    pub(crate) fn connect_host_entry(&mut self, entry: HostEntry) -> Result<()> {
         // Start each connection with a clean per-host log so a fresh command
         // line and its handshake aren't mixed with a previous attempt's.
         self.ssh_log.retain(|e| e.host_name != entry.name());

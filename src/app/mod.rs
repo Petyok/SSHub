@@ -132,6 +132,9 @@ pub struct App {
     pub sftp: Option<crate::sftp::model::SftpState>,
     pub sftp_tx: Option<std::sync::mpsc::Sender<crate::sftp::SftpCommand>>,
     pub sftp_rx: Option<std::sync::mpsc::Receiver<crate::sftp::SftpEvent>>,
+    /// Name of the host the live SFTP session is connected to, so the browser
+    /// can open an SSH session back to the same host (completes the round trip).
+    pub sftp_host: Option<String>,
     pub probe_rx: Option<Receiver<crate::ssh::probe::SshLogEntry>>,
     pub ssh_log: Vec<crate::ssh::probe::SshLogEntry>,
     pub ssh_log_scroll: usize,
@@ -252,6 +255,7 @@ impl App {
             sftp: None,
             sftp_tx: None,
             sftp_rx: None,
+            sftp_host: None,
             probe_rx: None,
             ssh_log: Vec::new(),
             ssh_log_scroll: 0,

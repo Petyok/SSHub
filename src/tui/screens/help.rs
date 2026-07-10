@@ -142,6 +142,7 @@ fn help_lines() -> Vec<Line<'static>> {
         entry("\u{2190} / \u{2192}", "Stage download (remote\u{2192}local) / upload"),
         entry("c / u", "Run queue / remove last queued transfer"),
         entry("r", "Refresh both panes"),
+        entry("s", "Open SSH session for this host (SFTP stays live)"),
         entry("Esc", "Disconnect · back to picker"),
         entry("", ""),
         entry("? / Shift+H", "Toggle this help screen"),
