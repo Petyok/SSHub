@@ -18,6 +18,15 @@ impl App {
     /// dashboard tabs. Then we branch on whether a live browser session exists:
     /// no `app.sftp` → the host **picker**; `Some` → the dual-pane **browser**.
     pub fn handle_key_sftp(&mut self, key: KeyEvent) -> Result<()> {
+        // While a search input is active, capture keys BEFORE try_tab_switch so
+        // typed letters that happen to be tab-switch binds (h, i, 1-5) filter
+        // instead of switching tabs.
+        if self.sftp_picker_searching {
+            return self.handle_key_sftp_picker_search(key);
+        }
+        if self.sftp.as_ref().is_some_and(|s| s.searching) {
+            return self.handle_key_sftp_browser_search(key);
+        }
         if self.try_tab_switch(&key)? {
             return Ok(());
         }
@@ -29,9 +38,6 @@ impl App {
     }
 
     fn handle_key_sftp_picker(&mut self, key: KeyEvent) -> Result<()> {
-        if self.sftp_picker_searching {
-            return self.handle_key_sftp_picker_search(key);
-        }
         match key.code {
             _ if self.is_action(KeyAction::Quit, &key) => self.request_quit(),
             _ if self.is_action(KeyAction::Cancel, &key) => {
@@ -119,9 +125,6 @@ impl App {
     }
 
     fn handle_key_sftp_browser(&mut self, key: KeyEvent) -> Result<()> {
-        if self.sftp.as_ref().is_some_and(|s| s.searching) {
-            return self.handle_key_sftp_browser_search(key);
-        }
         // Esc / Cancel disconnects the live session back to the picker.
         if self.is_action(KeyAction::Cancel, &key) {
             self.sftp_disconnect();
