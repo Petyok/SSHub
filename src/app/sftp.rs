@@ -29,6 +29,9 @@ impl App {
     }
 
     fn handle_key_sftp_picker(&mut self, key: KeyEvent) -> Result<()> {
+        if self.sftp_picker_searching {
+            return self.handle_key_sftp_picker_search(key);
+        }
         match key.code {
             _ if self.is_action(KeyAction::Quit, &key) => self.request_quit(),
             _ if self.is_action(KeyAction::Cancel, &key) => {
@@ -68,6 +71,11 @@ impl App {
                 self.toggle_selected_group();
             }
             _ if self.is_action(KeyAction::Connect, &key) => self.sftp_connect_selected()?,
+            _ if self.is_action(KeyAction::Search, &key) => {
+                self.sftp_picker_searching = true;
+                self.search_query.clear();
+                self.rebuild_filter();
+            }
             _ if self.is_action(KeyAction::Help, &key) => {
                 self.pre_help_mode = Some(self.mode);
                 self.mode = AppMode::Help;
@@ -77,7 +85,43 @@ impl App {
         Ok(())
     }
 
+    fn handle_key_sftp_picker_search(&mut self, key: KeyEvent) -> Result<()> {
+        match key.code {
+            _ if self.is_action(KeyAction::Cancel, &key) => {
+                self.sftp_picker_searching = false;
+                self.search_query.clear();
+                self.rebuild_filter();
+            }
+            _ if self.is_action(KeyAction::Connect, &key) => {
+                self.sftp_picker_searching = false;
+                if self.selected_nav_header().is_some() {
+                    self.toggle_selected_group();
+                } else {
+                    self.sftp_connect_selected()?;
+                }
+            }
+            KeyCode::Char(c)
+                if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
+                    && !c.is_control() =>
+            {
+                self.search_query.push(c);
+                self.rebuild_filter();
+            }
+            KeyCode::Backspace => {
+                self.search_query.pop();
+                self.rebuild_filter();
+            }
+            KeyCode::Up => self.move_selection(-1),
+            KeyCode::Down => self.move_selection(1),
+            _ => {}
+        }
+        Ok(())
+    }
+
     fn handle_key_sftp_browser(&mut self, key: KeyEvent) -> Result<()> {
+        if self.sftp.as_ref().is_some_and(|s| s.searching) {
+            return self.handle_key_sftp_browser_search(key);
+        }
         // Esc / Cancel disconnects the live session back to the picker.
         if self.is_action(KeyAction::Cancel, &key) {
             self.sftp_disconnect();
@@ -140,6 +184,11 @@ impl App {
                     }
                 }
             }
+            KeyCode::Char('/') => {
+                if let Some(s) = self.sftp.as_mut() {
+                    s.start_search();
+                }
+            }
             // Re-list both panes (pick up files changed on either side).
             KeyCode::Char('r') => self.sftp_refresh_panes(),
             // Open an SSH session to this same host (SFTP stays in the background).
@@ -151,7 +200,29 @@ impl App {
         Ok(())
     }
 
+    fn handle_key_sftp_browser_search(&mut self, key: KeyEvent) -> Result<()> {
+        let Some(s) = self.sftp.as_mut() else {
+            return Ok(());
+        };
+        match key.code {
+            KeyCode::Esc => s.search_cancel(),
+            KeyCode::Enter => s.search_confirm(),
+            KeyCode::Char(c)
+                if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
+                    && !c.is_control() =>
+            {
+                s.search_push(c)
+            }
+            KeyCode::Backspace => s.search_backspace(),
+            KeyCode::Up => s.move_selection(-1),
+            KeyCode::Down => s.move_selection(1),
+            _ => {}
+        }
+        Ok(())
+    }
+
     fn sftp_connect_selected(&mut self) -> Result<()> {
+        self.sftp_picker_searching = false;
         let Some(entry) = self.selected_entry().cloned() else {
             return Ok(());
         };

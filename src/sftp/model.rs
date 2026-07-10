@@ -46,6 +46,7 @@ pub struct Pane {
     pub cwd: PathBuf,
     pub entries: Vec<FileEntry>,
     pub selected: usize,
+    pub filter: String,
 }
 
 impl Pane {
@@ -54,25 +55,54 @@ impl Pane {
             cwd,
             entries: Vec::new(),
             selected: 0,
+            filter: String::new(),
         }
+    }
+
+    /// Indices into `entries` matching the current filter (all if the filter is empty).
+    pub fn visible_indices(&self) -> Vec<usize> {
+        if self.filter.is_empty() {
+            return (0..self.entries.len()).collect();
+        }
+        let needle = self.filter.to_lowercase();
+        self.entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.name.to_lowercase().contains(&needle))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Number of entries currently visible under the filter.
+    pub fn visible_len(&self) -> usize {
+        self.visible_indices().len()
+    }
+
+    /// Set the filter text and move the cursor to the top of the filtered view.
+    pub fn set_filter(&mut self, filter: String) {
+        self.filter = filter;
+        self.selected = 0;
     }
 
     /// The entry under the cursor, if any.
     pub fn selected_entry(&self) -> Option<&FileEntry> {
-        self.entries.get(self.selected)
+        let idx = *self.visible_indices().get(self.selected)?;
+        self.entries.get(idx)
     }
 
     /// Replace the listing and clamp the cursor to the new bounds.
     pub fn set_entries(&mut self, entries: Vec<FileEntry>) {
         self.entries = entries;
+        self.filter = String::new();
         self.clamp_selection();
     }
 
     fn clamp_selection(&mut self) {
-        if self.entries.is_empty() {
+        let len = self.visible_len();
+        if len == 0 {
             self.selected = 0;
-        } else if self.selected >= self.entries.len() {
-            self.selected = self.entries.len() - 1;
+        } else if self.selected >= len {
+            self.selected = len - 1;
         }
     }
 }
@@ -115,6 +145,7 @@ pub struct SftpState {
     pub phase: Phase,
     pub progress: Option<Progress>,
     pub notice: Option<String>,
+    pub searching: bool,
 }
 
 impl SftpState {
@@ -128,19 +159,47 @@ impl SftpState {
             phase: Phase::Browsing,
             progress: None,
             notice: None,
+            searching: false,
         }
+    }
+
+    /// Begin filtering the focused pane with a fresh, empty query.
+    pub fn start_search(&mut self) {
+        self.searching = true;
+        self.focused_pane_mut().set_filter(String::new());
+    }
+    /// Append a char to the focused pane's filter.
+    pub fn search_push(&mut self, c: char) {
+        let mut f = self.focused_pane().filter.clone();
+        f.push(c);
+        self.focused_pane_mut().set_filter(f);
+    }
+    /// Delete the last char of the focused pane's filter.
+    pub fn search_backspace(&mut self) {
+        let mut f = self.focused_pane().filter.clone();
+        f.pop();
+        self.focused_pane_mut().set_filter(f);
+    }
+    /// Confirm: leave input mode but keep the filter applied.
+    pub fn search_confirm(&mut self) {
+        self.searching = false;
+    }
+    /// Cancel: clear the filter and leave input mode.
+    pub fn search_cancel(&mut self) {
+        self.searching = false;
+        self.focused_pane_mut().set_filter(String::new());
     }
 
     /// Move the cursor in the focused pane by `delta`, clamped to `[0, len-1]`.
     pub fn move_selection(&mut self, delta: i64) {
         let pane = self.focused_pane_mut();
-        if pane.entries.is_empty() {
+        let len = pane.visible_len();
+        if len == 0 {
             pane.selected = 0;
             return;
         }
-        let max = pane.entries.len() as i64 - 1;
-        let next = (pane.selected as i64 + delta).clamp(0, max);
-        pane.selected = next as usize;
+        let max = len as i64 - 1;
+        pane.selected = (pane.selected as i64 + delta).clamp(0, max) as usize;
     }
 
     /// Swap keyboard focus between the two panes.
@@ -474,6 +533,37 @@ mod tests {
         s.toggle_focus(); // Local
         s.move_selection(1);
         assert_eq!(s.local.selected, 1);
+        assert_eq!(s.remote.selected, 0);
+    }
+
+    #[test]
+    fn filter_limits_visible_and_selection() {
+        let mut s = state_with_entries(); // remote: "docs"(dir), "a.txt"(file)
+        s.remote.set_filter("txt".into());
+        assert_eq!(s.remote.visible_len(), 1);
+        assert_eq!(s.remote.selected, 0);
+        assert_eq!(s.remote.selected_entry().unwrap().name, "a.txt");
+    }
+
+    #[test]
+    fn set_entries_clears_filter() {
+        let mut s = state_with_entries();
+        s.remote.set_filter("txt".into());
+        s.remote.set_entries(vec![FileEntry {
+            name: "z".into(),
+            is_dir: false,
+            size: 1,
+        }]);
+        assert!(s.remote.filter.is_empty());
+        assert_eq!(s.remote.visible_len(), 1);
+    }
+
+    #[test]
+    fn move_selection_clamps_to_visible() {
+        let mut s = state_with_entries();
+        s.focus = Focus::Remote;
+        s.remote.set_filter("txt".into()); // only 1 visible
+        s.move_selection(5);
         assert_eq!(s.remote.selected, 0);
     }
 

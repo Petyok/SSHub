@@ -135,6 +135,8 @@ pub struct App {
     /// Name of the host the live SFTP session is connected to, so the browser
     /// can open an SSH session back to the same host (completes the round trip).
     pub sftp_host: Option<String>,
+    /// True while the SFTP picker's host search input is capturing keys.
+    pub sftp_picker_searching: bool,
     pub probe_rx: Option<Receiver<crate::ssh::probe::SshLogEntry>>,
     pub ssh_log: Vec<crate::ssh::probe::SshLogEntry>,
     pub ssh_log_scroll: usize,
@@ -256,6 +258,7 @@ impl App {
             sftp_tx: None,
             sftp_rx: None,
             sftp_host: None,
+            sftp_picker_searching: false,
             probe_rx: None,
             ssh_log: Vec::new(),
             ssh_log_scroll: 0,

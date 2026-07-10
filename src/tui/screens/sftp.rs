@@ -38,12 +38,19 @@ fn render_picker(frame: &mut Frame, area: Rect, app: &App) {
     crate::tui::widgets::hosts_panel::render_hosts_panel(frame, list_area, app);
 
     let hint_y = area.y + area.height.saturating_sub(1);
-    frame.buffer_mut().set_string(
-        area.x + 2,
-        hint_y,
-        "Enter connect (on a group: fold) · Esc back",
-        theme::dim(),
-    );
+    let hint = if app.sftp_picker_searching {
+        format!("search: {}\u{2581}", app.search_query)
+    } else {
+        "Enter connect (on a group: fold) · / search · Esc back".to_string()
+    };
+    let style = if app.sftp_picker_searching {
+        theme::amber()
+    } else {
+        theme::dim()
+    };
+    frame
+        .buffer_mut()
+        .set_string(area.x + 2, hint_y, &hint, style);
 }
 
 // ── Browser sub-state ────────────────────────────────────────
@@ -70,6 +77,7 @@ fn render_browser(frame: &mut Frame, area: Rect, state: &SftpState) {
         &state.local,
         "local",
         state.focus == Focus::Local,
+        state.searching && state.focus == Focus::Local,
     );
     render_pane(
         buf,
@@ -77,6 +85,7 @@ fn render_browser(frame: &mut Frame, area: Rect, state: &SftpState) {
         &state.remote,
         "remote",
         state.focus == Focus::Remote,
+        state.searching && state.focus == Focus::Remote,
     );
 
     let queue_y = area.y + panes_h;
@@ -95,11 +104,27 @@ fn render_browser(frame: &mut Frame, area: Rect, state: &SftpState) {
     }
 }
 
-fn render_pane(buf: &mut Buffer, rect: Rect, pane: &Pane, title: &str, focused: bool) {
+fn render_pane(
+    buf: &mut Buffer,
+    rect: Rect,
+    pane: &Pane,
+    title: &str,
+    focused: bool,
+    searching: bool,
+) {
     if rect.width < 6 || rect.height < 2 {
         return;
     }
-    let count = format!("{} · {}", pane.cwd.display(), pane.entries.len());
+    let total = pane.entries.len();
+    let vis_n = pane.visible_indices().len();
+    let mut count = if pane.filter.is_empty() {
+        format!("{} · {}", pane.cwd.display(), total)
+    } else {
+        format!("filter '{}' · {}/{}", pane.filter, vis_n, total)
+    };
+    if searching {
+        count.push('\u{2581}'); // cursor
+    }
     render_panel_box(buf, rect, title, Some(&count));
 
     let inner_x = rect.x + 2;
@@ -110,21 +135,31 @@ fn render_pane(buf: &mut Buffer, rect: Rect, pane: &Pane, title: &str, focused: 
         return;
     }
 
-    if pane.entries.is_empty() {
-        buf.set_string(inner_x, top, "(empty)", theme::dim());
+    let vis = pane.visible_indices();
+    if vis.is_empty() {
+        let msg = if pane.filter.is_empty() {
+            "(empty)"
+        } else {
+            "(no matches)"
+        };
+        buf.set_string(inner_x, top, msg, theme::dim());
         return;
     }
 
     // Keep the selection roughly centred (a "camera" that follows), clamped to
     // the list bounds — mirrors the hosts panel's `host_scroll_offset`. Avoids
     // the selection sticking to the bottom edge when scrolling back up.
-    let max_scroll = pane.entries.len().saturating_sub(rows);
-    let scroll = pane.selected.saturating_sub(rows / 2).min(max_scroll);
+    let count_len = vis.len();
+    let scroll = pane
+        .selected
+        .saturating_sub(rows / 2)
+        .min(count_len.saturating_sub(rows));
 
-    for (i, entry) in pane.entries.iter().skip(scroll).take(rows).enumerate() {
-        let idx = scroll + i;
+    for (i, &entry_idx) in vis.iter().skip(scroll).take(rows).enumerate() {
+        let entry = &pane.entries[entry_idx];
+        let pos = scroll + i; // position within the visible list
         let y = top + i as u16;
-        let is_sel = idx == pane.selected;
+        let is_sel = pos == pane.selected;
         let active = is_sel && focused;
 
         // Highlight the whole selected row of the focused pane.
@@ -185,7 +220,12 @@ fn render_queue(
                 theme::dim(),
             ),
         };
-        buf.set_string(x + 2, y, ellipsize(&text, w.saturating_sub(4) as usize), style);
+        buf.set_string(
+            x + 2,
+            y,
+            ellipsize(&text, w.saturating_sub(4) as usize),
+            style,
+        );
         return;
     }
     let header = match notice {
