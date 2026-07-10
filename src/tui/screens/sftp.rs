@@ -117,22 +117,39 @@ fn render_pane(
     }
     let total = pane.entries.len();
     let vis_n = pane.visible_indices().len();
-    let mut count = if pane.filter.is_empty() {
+    // Subtitle makes an *applied* filter obvious even when not actively typing.
+    let count = if pane.filter.is_empty() {
         format!("{} · {}", pane.cwd.display(), total)
     } else {
-        format!("filter '{}' · {}/{}", pane.filter, vis_n, total)
+        format!("filter: {} ({}/{})", pane.filter, vis_n, total)
     };
-    if searching {
-        count.push('\u{2581}'); // cursor
-    }
     render_panel_box(buf, rect, title, Some(&count));
 
     let inner_x = rect.x + 2;
     let inner_w = rect.width.saturating_sub(4) as usize;
-    let top = rect.y + 1;
-    let rows = rect.height.saturating_sub(2) as usize;
+    let mut top = rect.y + 1;
+    let mut rows = rect.height.saturating_sub(2) as usize;
     if rows == 0 {
         return;
+    }
+
+    // Prominent search bar on the top inner row while this focused pane is being
+    // typed into, so it's unmistakable that keystrokes are filtering (not lost).
+    if searching {
+        let bar = Style::default().bg(theme::AMBER).fg(Color::Black);
+        for cx in (rect.x + 1)..(rect.x + rect.width - 1) {
+            if let Some(c) = buf.cell_mut((cx, top)) {
+                c.set_style(bar);
+                c.set_symbol(" ");
+            }
+        }
+        let prompt = format!(" search: {}\u{2581}   Esc clear · Enter keep", pane.filter);
+        buf.set_string(inner_x, top, ellipsize(&prompt, inner_w), bar);
+        top += 1;
+        rows = rows.saturating_sub(1);
+        if rows == 0 {
+            return;
+        }
     }
 
     let vis = pane.visible_indices();
