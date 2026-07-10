@@ -1,0 +1,110 @@
+terminal = "kitty"
+
+[appearance]
+show_detail_panel = true
+date_format = "%Y-%m-%d %H:%M"
+disable_animation = false
+confirm_quit = true
+identity_columns = 0
+os_logo = true
+opaque_background = false
+
+[keybinds]
+save = [
+    "F2",
+    "Ctrl+S",
+]
+quit = ["q"]
+help = [
+    "?",
+    "Shift+H",
+]
+search = ["/"]
+keybind_editor = ["Ctrl+K"]
+force_quit = ["Ctrl+C"]
+connect = ["Enter"]
+add_host = ["a"]
+edit = ["e"]
+delete = ["d"]
+duplicate = ["Shift+D"]
+tag_filter = ["#"]
+favorite = ["f"]
+toggle_group = ["Space"]
+fold_group_in = ["Left"]
+fold_group_out = ["Right"]
+move_up = [
+    "k",
+    "Up",
+]
+move_down = [
+    "j",
+    "Down",
+]
+move_left = ["Left"]
+move_right = [
+    "l",
+    "Right",
+]
+move_group_up = ["Shift+Up"]
+move_group_down = ["Shift+Down"]
+move_host_up = ["Ctrl+Up"]
+move_host_down = ["Ctrl+Down"]
+collapse_all = ["Shift+Z"]
+detail_focus = ["Tab"]
+clear_ssh_log = ["c"]
+sort_cycle = ["s"]
+yank_log = ["y"]
+ui_zoom_in = [
+    "+",
+    "=",
+]
+ui_zoom_out = [
+    "-",
+    "_",
+]
+export_ssh = ["Shift+E"]
+import_ssh = ["Shift+I"]
+import_termius = ["Shift+T"]
+groups_manage = ["Shift+G"]
+rename_group = ["Ctrl+G"]
+delete_group = ["Ctrl+Shift+G"]
+tab_hosts = [
+    "h",
+    "1",
+]
+tab_tunnels = ["3"]
+tab_keys = [
+    "i",
+    "4",
+]
+tab_audit = ["5"]
+identity_columns_inc = ["]"]
+identity_columns_dec = ["["]
+add_to_agent = ["p"]
+remove_from_agent = ["r"]
+tunnel_kill = ["x"]
+toggle_tunnel = ["Enter"]
+audit_filter = ["f"]
+audit_range = ["r"]
+session_new_tab = ["Ctrl+T"]
+session_close_tab = ["Ctrl+W"]
+session_tab_prev = ["Ctrl+Shift+A"]
+session_tab_next = ["Ctrl+Shift+D"]
+session_detach = ["Ctrl+D"]
+session_focus = ["Ctrl+Alt+N"]
+session_scroll_up = ["PageUp"]
+session_scroll_down = ["PageDown"]
+session_cancel = ["Esc"]
+session_toggle_log = ["Ctrl+O"]
+confirm_yes = [
+    "y",
+    "Y",
+    "Enter",
+]
+confirm_no = [
+    "n",
+    "N",
+]
+cancel = ["Esc"]
+tab_sftp = ["2"]
+session_open_sftp = ["Ctrl+Shift+F"]
