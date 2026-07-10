@@ -37,8 +37,19 @@ impl App {
             return Ok(());
         }
 
+        // Settings overlay (Ctrl+,) from the dashboard.
+        if self.mode == AppMode::Normal
+            && key.code == KeyCode::Char(',')
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+        {
+            self.settings_selected = 0;
+            self.mode = AppMode::Settings;
+            return Ok(());
+        }
+
         match self.mode {
             AppMode::KeybindEditor => self.handle_key_keybind_editor(key),
+            AppMode::Settings => self.handle_key_settings(key),
             AppMode::ConfirmQuit => self.handle_key_confirm_quit(key),
             AppMode::Help => self.handle_key_help(key),
             AppMode::ConfirmDiscard => self.handle_key_confirm_discard(key),
@@ -667,6 +678,48 @@ impl App {
         } else if editor.selected >= editor.scroll + VIEWPORT {
             editor.scroll = editor.selected.saturating_sub(VIEWPORT - 1);
         }
+    }
+
+    /// Read the current value of the Settings toggle at row `i` (order matches
+    /// [`SETTINGS_ITEMS`]).
+    pub(crate) fn setting_value(&self, i: usize) -> bool {
+        let a = &self.config.appearance;
+        match i {
+            0 => a.opaque_background,
+            1 => a.os_logo,
+            2 => a.confirm_quit,
+            3 => a.disable_animation,
+            _ => false,
+        }
+    }
+
+    /// Flip the Settings toggle at row `i` and persist immediately.
+    fn toggle_setting(&mut self, i: usize) {
+        let a = &mut self.config.appearance;
+        match i {
+            0 => a.opaque_background = !a.opaque_background,
+            1 => a.os_logo = !a.os_logo,
+            2 => a.confirm_quit = !a.confirm_quit,
+            3 => a.disable_animation = !a.disable_animation,
+            _ => {}
+        }
+        self.save_config_quietly();
+    }
+
+    pub(crate) fn handle_key_settings(&mut self, key: KeyEvent) -> Result<()> {
+        let n = SETTINGS_ITEMS.len();
+        match key.code {
+            _ if self.is_action(KeyAction::Cancel, &key) => self.mode = AppMode::Normal,
+            _ if self.is_action(KeyAction::MoveDown, &key) => {
+                self.settings_selected = (self.settings_selected + 1) % n;
+            }
+            _ if self.is_action(KeyAction::MoveUp, &key) => {
+                self.settings_selected = (self.settings_selected + n - 1) % n;
+            }
+            KeyCode::Char(' ') | KeyCode::Enter => self.toggle_setting(self.settings_selected),
+            _ => {}
+        }
+        Ok(())
     }
 
     /// Persist config, surfacing failures as a non-fatal host notice.

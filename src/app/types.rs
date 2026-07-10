@@ -87,6 +87,22 @@ pub enum VisualRow {
     },
 }
 
+/// Appearance toggles shown in the Settings overlay, in display order. The
+/// index maps to [`App::setting_value`] / `toggle_setting`. Each entry is
+/// `(label, hint)`.
+pub const SETTINGS_ITEMS: [(&str, &str); 4] = [
+    (
+        "Opaque background",
+        "solid backdrop — fixes unreadable text on transparent terminals",
+    ),
+    ("Show OS logos", "distro logo in the host card"),
+    ("Confirm before quit", "ask before q / Ctrl+C"),
+    (
+        "Disable startup animation",
+        "skip the intro splash (applies next launch)",
+    ),
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppMode {
     Normal,
@@ -107,6 +123,8 @@ pub enum AppMode {
     FieldPicker,
     /// Keybinding editor overlay.
     KeybindEditor,
+    /// Settings overlay: checkbox list of appearance toggles.
+    Settings,
     /// Quit confirmation dialog.
     ConfirmQuit,
     TunnelForm,

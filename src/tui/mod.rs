@@ -34,7 +34,27 @@ pub fn format_local_time(epoch_secs: i64) -> String {
     format!("{:02}:{:02}:{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec)
 }
 
+/// Frame entry point. Renders the UI, then — when `appearance.opaque_background`
+/// is on — paints a solid backdrop behind every still-transparent cell so text
+/// stays readable on a transparent terminal.
 pub fn render(frame: &mut Frame, app: &App) {
+    render_inner(frame, app);
+    if app.config.appearance.opaque_background {
+        let buf = frame.buffer_mut();
+        let area = buf.area;
+        for y in area.y..area.y + area.height {
+            for x in area.x..area.x + area.width {
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    if cell.bg == ratatui::style::Color::Reset {
+                        cell.bg = theme::BG;
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn render_inner(frame: &mut Frame, app: &App) {
     let session_behind_picker = app.mode == AppMode::SessionHostPicker
         && app
             .session_host_picker
@@ -146,6 +166,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         AppMode::ConfirmDelete => render_confirm_delete_popup(frame, app),
         AppMode::Help => render_help_popup(frame, app),
         AppMode::KeybindEditor => screens::keybind_editor::render_keybind_editor(frame, app),
+        AppMode::Settings => screens::settings::render_settings(frame, app),
         AppMode::ConfirmQuit => render_confirm_quit_popup(frame, app),
         AppMode::ImportPrompt => render_import_prompt_popup(frame, app),
         _ => {}
@@ -663,6 +684,30 @@ mod tests {
         let app = test_app_with_hosts();
         let buffer = render_to_buffer(&app, 120, 38);
         assert!(buffer_contains(&buffer, "web-prod"));
+    }
+
+    #[test]
+    fn opaque_background_fills_every_cell() {
+        use ratatui::style::Color;
+        let mut app = test_app_with_hosts();
+
+        // Off (default): at least one cell is left transparent (Color::Reset).
+        let transparent = render_to_buffer(&app, 120, 38);
+        let a = transparent.area;
+        let any_reset = (a.y..a.y + a.height)
+            .any(|y| (a.x..a.x + a.width).any(|x| transparent[(x, y)].bg == Color::Reset));
+        assert!(
+            any_reset,
+            "expected some transparent cell with the flag off"
+        );
+
+        // On: no cell is transparent — every Reset bg became theme::BG.
+        app.config.appearance.opaque_background = true;
+        let opaque = render_to_buffer(&app, 120, 38);
+        let a = opaque.area;
+        let all_opaque = (a.y..a.y + a.height)
+            .all(|y| (a.x..a.x + a.width).all(|x| opaque[(x, y)].bg != Color::Reset));
+        assert!(all_opaque, "opaque mode left a transparent cell");
     }
 
     #[test]

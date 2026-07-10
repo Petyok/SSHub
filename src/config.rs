@@ -30,6 +30,10 @@ pub struct AppearanceConfig {
     /// Show the detected OS logo in the host detail view. Default true.
     #[serde(default = "default_true")]
     pub os_logo: bool,
+    /// Paint a solid background behind the whole UI instead of leaving cells
+    /// transparent. Fixes unreadable text on transparent terminals. Default off.
+    #[serde(default)]
+    pub opaque_background: bool,
 }
 
 fn default_true() -> bool {
@@ -49,6 +53,7 @@ impl Default for AppearanceConfig {
             confirm_quit: true,
             identity_columns: 0,
             os_logo: true,
+            opaque_background: false,
         }
     }
 }

@@ -19,6 +19,7 @@ fn mode_label(mode: AppMode) -> &'static str {
         AppMode::GroupManage => "Groups",
         AppMode::FieldPicker => "Select",
         AppMode::KeybindEditor => "Keybindings",
+        AppMode::Settings => "Settings",
         AppMode::ConfirmQuit => "Quit?",
         AppMode::ConfirmDelete => "Confirm delete",
         AppMode::ConfirmDiscard => "Save changes?",

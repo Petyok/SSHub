@@ -145,6 +145,8 @@ pub struct App {
     pub collapsed_groups: std::collections::HashSet<i64>,
     /// Keybind editor state: `(selected action row, capturing next key)`.
     pub keybind_editor: Option<KeybindEditor>,
+    /// Highlighted row in the Settings overlay.
+    pub settings_selected: usize,
     pub active_tab: usize,
     pub palette_query: String,
     pub palette_selected: usize,
@@ -273,6 +275,7 @@ impl App {
             nav_rows: Vec::new(),
             collapsed_groups: std::collections::HashSet::new(),
             keybind_editor: None,
+            settings_selected: 0,
             active_tab: 0,
             palette_query: String::new(),
             palette_selected: 0,
