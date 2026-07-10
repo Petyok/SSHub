@@ -302,7 +302,7 @@ pub(crate) fn build_group_sections(
     let ungrouped: Vec<usize> = filtered
         .iter()
         .copied()
-        .filter(|&idx| hosts[idx].group_id().is_none())
+        .filter(|&idx| hosts[idx].group_ids().is_empty())
         .collect();
     if !ungrouped.is_empty() {
         sections.push(HostGroupSection {
@@ -360,8 +360,14 @@ fn build_group_subtree(
         let host_indices: Vec<usize> = filtered
             .iter()
             .copied()
-            .filter(|&idx| hosts[idx].group_id() == Some(group.id))
+            .filter(|&idx| hosts[idx].group_ids().contains(&group.id))
             .collect();
+        // The reserved Favorites group is auto-created and always present; only
+        // surface it once it actually has members (an empty section is noise).
+        if group.reserved && host_indices.is_empty() {
+            visiting.remove(&group.id);
+            continue;
+        }
         out.push(HostGroupSection {
             group: Some(group.clone()),
             label: group.name.clone(),

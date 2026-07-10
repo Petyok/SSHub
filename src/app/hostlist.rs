@@ -204,16 +204,23 @@ impl App {
         if let HostEntry::Managed(m) = &self.hosts[host_idx] {
             let id = m.id;
             let new_fav = !m.favorite;
-            self.store.update_host(
+            // Favourite status == membership in the reserved Favorites group.
+            let favorites_id = self.store.favorites_group_id()?;
+            if new_fav {
+                self.store.add_host_to_group(id, favorites_id)?;
+            } else {
+                self.store.remove_host_from_group(id, favorites_id)?;
+            }
+            // Keep the legacy column in sync for back-compat (reads come from
+            // membership) and reload so `groups`/`favorite` reflect the change.
+            let _ = self.store.update_host(
                 id,
                 &HostUpdate {
                     favorite: Some(new_fav),
                     ..Default::default()
                 },
-            )?;
-            if let HostEntry::Managed(m) = &mut self.hosts[host_idx] {
-                m.favorite = new_fav;
-            }
+            );
+            self.reload_hosts()?;
             return Ok(());
         }
 
@@ -297,7 +304,7 @@ impl App {
         // the alphabetical list while the screen shows grouped sections, so
         // moving past a grouped host visually "teleports" to the group at the
         // top of the list and back.
-        self.group_sections = build_group_sections(&self.hosts, &self.groups, &filtered);
+        self.group_sections = build_group_sections(&self.hosts, &self.tree_groups(), &filtered);
         // While a filter is active, drop groups whose whole subtree has no
         // matching hosts — but keep a parent that itself is empty when a
         // descendant still matches, so nested results stay reachable.
@@ -313,11 +320,14 @@ impl App {
             .flat_map(|s| s.host_indices.iter().copied())
             .collect();
 
-        // Tree mode (navigable, collapsible headers) kicks in only once the
-        // user has real groups — a pure ssh_config list stays a flat host list.
+        // Tree mode (navigable, collapsible headers) kicks in only once there's
+        // a real group section to show — a pure ssh_config list stays flat. The
+        // always-present reserved Favorites group doesn't count until it has
+        // members (build_group_sections hides it while empty), so we key on the
+        // built sections, not the raw group list.
         // Collapsing a group hides its hosts AND its whole descendant subtree;
         // `hidden_below` tracks the depth of the nearest collapsed ancestor.
-        let tree_mode = !self.groups.is_empty();
+        let tree_mode = self.group_sections.iter().any(|s| s.group.is_some());
         let mut nav = Vec::new();
         let mut hidden_below: Option<usize> = None;
         for (si, section) in self.group_sections.iter_mut().enumerate() {

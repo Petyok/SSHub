@@ -115,6 +115,10 @@ pub struct App {
     pub identity_form: Option<IdentityFormEdit>,
     pub identity_notice: Option<String>,
     pub groups: Vec<HostGroup>,
+    /// The reserved Favorites group, kept out of `groups` so it never appears in
+    /// the group-manage list or the host-form group selector. Used only when
+    /// building the host tree (favourited hosts show under it).
+    pub favorites_group: Option<HostGroup>,
     pub host_form: Option<HostFormEdit>,
     pub field_picker: Option<FieldPicker>,
     pub group_form: Option<GroupFormEdit>,
@@ -255,6 +259,7 @@ impl App {
             identity_form: None,
             identity_notice: None,
             groups: Vec::new(),
+            favorites_group: None,
             host_form: None,
             field_picker: None,
             group_form: None,
@@ -445,7 +450,7 @@ impl App {
         }
 
         self.hosts = hosts;
-        self.groups = self.store.list_groups()?;
+        self.load_groups()?;
         self.rebuild_filter();
         if let Some(name) = selected_name {
             self.restore_selection_by_name(&name);
@@ -455,6 +460,26 @@ impl App {
             self.start_ping_worker();
         }
         Ok(())
+    }
+
+    /// Load groups from the store, splitting off the reserved Favorites group so
+    /// `self.groups` only ever holds real, user-managed groups.
+    pub(crate) fn load_groups(&mut self) -> Result<()> {
+        let all = self.store.list_groups()?;
+        self.favorites_group = all.iter().find(|g| g.reserved).cloned();
+        self.groups = all.into_iter().filter(|g| !g.reserved).collect();
+        Ok(())
+    }
+
+    /// Groups for building the host tree: real groups plus the Favorites group
+    /// prepended so it sorts to the very top (when it has members).
+    pub(crate) fn tree_groups(&self) -> Vec<HostGroup> {
+        let mut groups = Vec::with_capacity(self.groups.len() + 1);
+        if let Some(fav) = &self.favorites_group {
+            groups.push(fav.clone());
+        }
+        groups.extend(self.groups.iter().cloned());
+        groups
     }
 
     /// Current host-name column width in chars, driven by [`App::ui_zoom`].

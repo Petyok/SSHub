@@ -408,6 +408,15 @@ impl HostEntry {
         }
     }
 
+    /// Ids of every group this host belongs to (all memberships, including
+    /// Favorites). Legacy hosts have none.
+    pub fn group_ids(&self) -> Vec<i64> {
+        match self {
+            Self::Managed(m) => m.groups.iter().map(|g| g.id).collect(),
+            Self::Legacy { .. } => Vec::new(),
+        }
+    }
+
     pub fn sort_order(&self) -> i32 {
         match self {
             Self::Managed(m) => m.sort_order,

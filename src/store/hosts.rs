@@ -31,6 +31,7 @@ impl LauncherStore {
                 sort_order: group.sort_order,
                 default_identity_id: group.default_identity_id,
                 parent_id: group.parent_id,
+                reserved: false,
             })
         })
     }
@@ -38,7 +39,7 @@ impl LauncherStore {
     pub fn get_group(&self, id: i64) -> Result<Option<HostGroup>> {
         self.with_conn(|conn| {
             conn.prepare(
-                "SELECT id, name, sort_order, default_identity_id, parent_id FROM host_groups WHERE id = ?1",
+                "SELECT id, name, sort_order, default_identity_id, parent_id, reserved FROM host_groups WHERE id = ?1",
             )?
             .query_row(params![id], row_to_group)
             .optional()
@@ -49,7 +50,7 @@ impl LauncherStore {
     pub fn list_groups(&self) -> Result<Vec<HostGroup>> {
         let flat: Vec<HostGroup> = self.with_conn(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, name, sort_order, default_identity_id, parent_id
+                "SELECT id, name, sort_order, default_identity_id, parent_id, reserved
                  FROM host_groups ORDER BY sort_order, name",
             )?;
             let rows = stmt.query_map([], row_to_group)?;
@@ -67,6 +68,12 @@ impl LauncherStore {
             Some(v) => v,
             None => return Ok(None),
         };
+
+        // Reserved groups (Favorites) are app-managed: refuse renames as a no-op
+        // (returns the group unchanged rather than erroring).
+        if current.reserved && update.name.is_some() {
+            return Ok(Some(current));
+        }
 
         let name = update.name.as_ref().unwrap_or(&current.name);
         let sort_order = update.sort_order.unwrap_or(current.sort_order);
@@ -89,11 +96,84 @@ impl LauncherStore {
     }
 
     pub fn delete_group(&self, id: i64) -> Result<bool> {
+        // Reserved groups (Favorites) can't be deleted.
+        if let Some(g) = self.get_group(id)? {
+            if g.reserved {
+                return Ok(false);
+            }
+        }
         let deleted = self.with_conn(|conn| {
             conn.execute("DELETE FROM host_groups WHERE id = ?1", params![id])?;
             Ok(conn.changes() > 0)
         })?;
         Ok(deleted)
+    }
+
+    /// Id of the reserved Favorites group (auto-created by migrations).
+    pub fn favorites_group_id(&self) -> Result<i64> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                "SELECT id FROM host_groups WHERE reserved = 1 AND name = ?1",
+                params![super::migrate::FAVORITES_GROUP_NAME],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+    }
+
+    /// Replace all group memberships for `host_id` with `group_ids`, and set the
+    /// host's primary `group_id` to the first non-Favorites membership (or NULL).
+    /// Then materialize the inherited identity (see [`materialize_identity`]).
+    pub fn set_host_groups(&self, host_id: i64, group_ids: &[i64]) -> Result<()> {
+        self.with_conn(|conn| {
+            let tx = conn.unchecked_transaction()?;
+            conn.execute(
+                "DELETE FROM host_group_memberships WHERE host_id = ?1",
+                params![host_id],
+            )?;
+            for gid in group_ids {
+                conn.execute(
+                    "INSERT OR IGNORE INTO host_group_memberships (host_id, group_id)
+                     VALUES (?1, ?2)",
+                    params![host_id, gid],
+                )?;
+            }
+            let primary = primary_group_id(conn, host_id)?;
+            conn.execute(
+                "UPDATE hosts SET group_id = ?1, updated_at = ?2 WHERE id = ?3",
+                params![primary, now_ts(), host_id],
+            )?;
+            materialize_identity(conn, host_id)?;
+            tx.commit()?;
+            Ok(())
+        })
+    }
+
+    /// Add `host_id` to `group_id` (idempotent) and materialize the inherited
+    /// identity. Used by the favourite toggle.
+    pub fn add_host_to_group(&self, host_id: i64, group_id: i64) -> Result<()> {
+        self.with_conn(|conn| {
+            let tx = conn.unchecked_transaction()?;
+            conn.execute(
+                "INSERT OR IGNORE INTO host_group_memberships (host_id, group_id)
+                 VALUES (?1, ?2)",
+                params![host_id, group_id],
+            )?;
+            materialize_identity(conn, host_id)?;
+            tx.commit()?;
+            Ok(())
+        })
+    }
+
+    /// Remove `host_id` from `group_id` (idempotent).
+    pub fn remove_host_from_group(&self, host_id: i64, group_id: i64) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "DELETE FROM host_group_memberships WHERE host_id = ?1 AND group_id = ?2",
+                params![host_id, group_id],
+            )?;
+            Ok(())
+        })
     }
 
     // --- hosts ---
@@ -134,7 +214,16 @@ impl LauncherStore {
                     now,
                 ],
             )?;
-            Ok(conn.last_insert_rowid())
+            let id = conn.last_insert_rowid();
+            // Keep the join table consistent for single-group creation.
+            if let Some(gid) = host.group_id {
+                conn.execute(
+                    "INSERT OR IGNORE INTO host_group_memberships (host_id, group_id)
+                     VALUES (?1, ?2)",
+                    params![id, gid],
+                )?;
+            }
+            Ok(id)
         })?;
 
         self.get_host(id)?.context("inserted host missing")
@@ -281,6 +370,32 @@ impl LauncherStore {
                 ],
             )?;
 
+            // Single-group edit path: when the primary group changes, move the
+            // membership too (drop the old primary, add the new one). Other
+            // memberships (Favorites, extra groups) are left untouched. The
+            // multi-select save path uses `set_host_groups` directly instead.
+            if update.group_id.is_some() && group_id != current.group_id {
+                if let Some(old) = current.group_id {
+                    conn.execute(
+                        "DELETE FROM host_group_memberships WHERE host_id = ?1 AND group_id = ?2",
+                        params![id, old],
+                    )?;
+                }
+                if let Some(new) = group_id {
+                    conn.execute(
+                        "INSERT OR IGNORE INTO host_group_memberships (host_id, group_id)
+                         VALUES (?1, ?2)",
+                        params![id, new],
+                    )?;
+                }
+            }
+
+            // Favourite status is stored as Favorites membership (source of
+            // truth for reads); sync it when the caller sets `favorite`.
+            if let Some(fav) = update.favorite {
+                sync_favorite_membership(conn, id, fav)?;
+            }
+
             let updated = load_host_by_id(conn, id)?;
             tx.commit()?;
             Ok(updated)
@@ -387,6 +502,7 @@ impl LauncherStore {
                         existing.id,
                     ],
                 )?;
+                sync_favorite_membership(conn, existing.id, existing.favorite)?;
                 Ok(())
             })?;
             return Ok(UpsertSshConfigOutcome::Updated);
@@ -417,6 +533,10 @@ impl LauncherStore {
                     import.environment,
                 ],
             )?;
+            if import.favorite {
+                let id = conn.last_insert_rowid();
+                sync_favorite_membership(conn, id, true)?;
+            }
             Ok(())
         })?;
         Ok(UpsertSshConfigOutcome::Inserted)
@@ -626,7 +746,119 @@ fn load_host_by_id(conn: &rusqlite::Connection, id: i64) -> Result<Option<Manage
     )?
     .query_row(params![id], row_to_managed_host)
     .optional()
+    .map_err(anyhow::Error::from)
+    .and_then(|opt| match opt {
+        Some(mut host) => {
+            host.groups = load_host_groups(conn, id)?;
+            host.favorite = host.groups.iter().any(|g| g.reserved);
+            Ok(Some(host))
+        }
+        None => Ok(None),
+    })
+}
+
+/// Load every group a host belongs to (via the join table), in tree/sort order.
+fn load_host_groups(conn: &rusqlite::Connection, host_id: i64) -> Result<Vec<HostGroup>> {
+    let mut stmt = conn.prepare(
+        "SELECT g.id, g.name, g.sort_order, g.default_identity_id, g.parent_id, g.reserved
+         FROM host_group_memberships m
+         JOIN host_groups g ON g.id = m.group_id
+         WHERE m.host_id = ?1
+         ORDER BY g.sort_order, g.name",
+    )?;
+    let rows = stmt.query_map(params![host_id], row_to_group)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+/// Id of the reserved Favorites group, looked up on an existing connection
+/// (safe to call inside a `with_conn` closure without re-locking).
+fn favorites_group_id_conn(conn: &rusqlite::Connection) -> Result<i64> {
+    conn.query_row(
+        "SELECT id FROM host_groups WHERE reserved = 1 AND name = ?1",
+        params![super::migrate::FAVORITES_GROUP_NAME],
+        |row| row.get(0),
+    )
     .map_err(Into::into)
+}
+
+/// Add/remove a host's Favorites membership to match `favorite`.
+fn sync_favorite_membership(
+    conn: &rusqlite::Connection,
+    host_id: i64,
+    favorite: bool,
+) -> Result<()> {
+    let fav_id = favorites_group_id_conn(conn)?;
+    if favorite {
+        conn.execute(
+            "INSERT OR IGNORE INTO host_group_memberships (host_id, group_id) VALUES (?1, ?2)",
+            params![host_id, fav_id],
+        )?;
+    } else {
+        conn.execute(
+            "DELETE FROM host_group_memberships WHERE host_id = ?1 AND group_id = ?2",
+            params![host_id, fav_id],
+        )?;
+    }
+    Ok(())
+}
+
+/// First non-reserved (non-Favorites) group id among a host's memberships, in
+/// (sort_order, name) order. `None` if it has no real group.
+fn primary_group_id(conn: &rusqlite::Connection, host_id: i64) -> Result<Option<i64>> {
+    use rusqlite::OptionalExtension;
+    conn.query_row(
+        "SELECT g.id FROM host_group_memberships m
+         JOIN host_groups g ON g.id = m.group_id
+         WHERE m.host_id = ?1 AND g.reserved = 0
+         ORDER BY g.sort_order, g.name
+         LIMIT 1",
+        params![host_id],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+/// Concretise an inherited group identity so it stays stable across membership
+/// changes: if the host now belongs to >1 group and its own `identity_id` is
+/// NULL, copy the primary group's `default_identity_id` (when set) into the host.
+/// No-op otherwise.
+fn materialize_identity(conn: &rusqlite::Connection, host_id: i64) -> Result<()> {
+    use rusqlite::OptionalExtension;
+    let membership_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM host_group_memberships WHERE host_id = ?1",
+        params![host_id],
+        |row| row.get(0),
+    )?;
+    if membership_count <= 1 {
+        return Ok(());
+    }
+    let identity_id: Option<i64> = conn.query_row(
+        "SELECT identity_id FROM hosts WHERE id = ?1",
+        params![host_id],
+        |row| row.get(0),
+    )?;
+    if identity_id.is_some() {
+        return Ok(());
+    }
+    let Some(primary) = primary_group_id(conn, host_id)? else {
+        return Ok(());
+    };
+    let default_identity: Option<i64> = conn
+        .query_row(
+            "SELECT default_identity_id FROM host_groups WHERE id = ?1",
+            params![primary],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten();
+    if let Some(did) = default_identity {
+        conn.execute(
+            "UPDATE hosts SET identity_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![did, now_ts(), host_id],
+        )?;
+    }
+    Ok(())
 }
 
 /// Reorder a flat, sort-ordered group list into depth-first tree order: every
@@ -668,6 +900,7 @@ fn row_to_group(row: &rusqlite::Row<'_>) -> rusqlite::Result<HostGroup> {
         sort_order: row.get(2)?,
         default_identity_id: row.get(3)?,
         parent_id: row.get(4)?,
+        reserved: row.get::<_, i64>(5)? != 0,
     })
 }
 
@@ -694,6 +927,7 @@ fn row_to_managed_host(row: &rusqlite::Row<'_>) -> rusqlite::Result<ManagedHost>
             // the group tree, read via get_group/list_groups. Leave unset here.
             default_identity_id: None,
             parent_id: None,
+            reserved: false,
         }),
         None => None,
     };
@@ -719,6 +953,7 @@ fn row_to_managed_host(row: &rusqlite::Row<'_>) -> rusqlite::Result<ManagedHost>
         group_id: row.get(5)?,
         identity_id: row.get(6)?,
         group,
+        groups: Vec::new(),
         identity,
         os_icon: row.get(7)?,
         tags,
@@ -767,6 +1002,7 @@ fn update_changes_connection_fields(update: &HostUpdate) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::migrate::FAVORITES_GROUP_NAME;
     use crate::store::{HostSource, LauncherStore, NewHost, NewHostGroup};
 
     #[test]
@@ -866,7 +1102,14 @@ mod tests {
             })
             .unwrap();
 
-        let listed = store.list_groups().unwrap();
+        // The reserved Favorites group always exists and sorts first; assert on
+        // the user-created groups only.
+        let listed: Vec<HostGroup> = store
+            .list_groups()
+            .unwrap()
+            .into_iter()
+            .filter(|g| !g.reserved)
+            .collect();
         assert_eq!(listed.len(), 2);
         assert_eq!(listed[0].id, b.id);
         assert_eq!(listed[0].name, "dev");
@@ -888,7 +1131,15 @@ mod tests {
 
         assert!(store.delete_group(b.id).unwrap());
         assert!(store.get_group(b.id).unwrap().is_none());
-        assert_eq!(store.list_groups().unwrap().len(), 1);
+        assert_eq!(
+            store
+                .list_groups()
+                .unwrap()
+                .into_iter()
+                .filter(|g| !g.reserved)
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -1206,6 +1457,161 @@ mod tests {
         assert_eq!(host.tags, vec!["user-tagged"]);
         assert_eq!(host.notes.as_deref(), Some("keep me"));
         assert!(host.favorite);
+    }
+
+    #[test]
+    fn host_loads_all_group_memberships() {
+        let store = LauncherStore::open_in_memory().unwrap();
+        let g1 = store
+            .create_group(&NewHostGroup {
+                name: "prod".into(),
+                sort_order: 0,
+                ..Default::default()
+            })
+            .unwrap();
+        let g2 = store
+            .create_group(&NewHostGroup {
+                name: "eu".into(),
+                sort_order: 1,
+                ..Default::default()
+            })
+            .unwrap();
+        let host = store
+            .create_host(&NewHost {
+                name: "web".into(),
+                address: "10.0.0.1".into(),
+                port: 22,
+                group_id: Some(g1.id),
+                ..Default::default()
+            })
+            .unwrap();
+
+        // create_host inserted the single-group membership.
+        assert_eq!(host.groups.len(), 1);
+
+        store.set_host_groups(host.id, &[g1.id, g2.id]).unwrap();
+        let loaded = store.get_host(host.id).unwrap().unwrap();
+        assert_eq!(loaded.groups.len(), 2);
+        let ids: Vec<i64> = loaded.groups.iter().map(|g| g.id).collect();
+        assert!(ids.contains(&g1.id) && ids.contains(&g2.id));
+        // Primary group is the first non-Favorites membership.
+        assert_eq!(loaded.group_id, Some(g1.id));
+    }
+
+    #[test]
+    fn favorites_membership_sets_favorite_flag() {
+        let store = LauncherStore::open_in_memory().unwrap();
+        let fav_id = store.favorites_group_id().unwrap();
+        let host = store
+            .create_host(&NewHost {
+                name: "web".into(),
+                address: "10.0.0.1".into(),
+                port: 22,
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(!host.favorite);
+
+        store.add_host_to_group(host.id, fav_id).unwrap();
+        let loaded = store.get_host(host.id).unwrap().unwrap();
+        assert!(loaded.favorite);
+        assert!(loaded.groups.iter().any(|g| g.reserved));
+
+        store.remove_host_from_group(host.id, fav_id).unwrap();
+        assert!(!store.get_host(host.id).unwrap().unwrap().favorite);
+    }
+
+    #[test]
+    fn set_host_groups_replaces_memberships() {
+        let store = LauncherStore::open_in_memory().unwrap();
+        let g1 = store
+            .create_group(&NewHostGroup {
+                name: "a".into(),
+                sort_order: 0,
+                ..Default::default()
+            })
+            .unwrap();
+        let g2 = store
+            .create_group(&NewHostGroup {
+                name: "b".into(),
+                sort_order: 1,
+                ..Default::default()
+            })
+            .unwrap();
+        let host = store
+            .create_host(&NewHost {
+                name: "web".into(),
+                address: "10.0.0.1".into(),
+                port: 22,
+                group_id: Some(g1.id),
+                ..Default::default()
+            })
+            .unwrap();
+
+        store.set_host_groups(host.id, &[g2.id]).unwrap();
+        let loaded = store.get_host(host.id).unwrap().unwrap();
+        let ids: Vec<i64> = loaded.groups.iter().map(|g| g.id).collect();
+        assert_eq!(ids, vec![g2.id]);
+        assert_eq!(loaded.group_id, Some(g2.id));
+    }
+
+    #[test]
+    fn set_host_groups_materializes_inherited_identity() {
+        let store = LauncherStore::open_in_memory().unwrap();
+        let identity_id = store.list_identities().unwrap()[0].id;
+        let g1 = store
+            .create_group(&NewHostGroup {
+                name: "a".into(),
+                sort_order: 0,
+                default_identity_id: Some(identity_id),
+                ..Default::default()
+            })
+            .unwrap();
+        let g2 = store
+            .create_group(&NewHostGroup {
+                name: "b".into(),
+                sort_order: 1,
+                ..Default::default()
+            })
+            .unwrap();
+        let host = store
+            .create_host(&NewHost {
+                name: "web".into(),
+                address: "10.0.0.1".into(),
+                port: 22,
+                group_id: Some(g1.id),
+                identity_id: None,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(host.identity_id, None);
+
+        // Gaining a second group with identity still NULL concretises the
+        // primary group's default identity.
+        store.set_host_groups(host.id, &[g1.id, g2.id]).unwrap();
+        let loaded = store.get_host(host.id).unwrap().unwrap();
+        assert_eq!(loaded.identity_id, Some(identity_id));
+    }
+
+    #[test]
+    fn reserved_group_cannot_be_deleted_or_renamed() {
+        let store = LauncherStore::open_in_memory().unwrap();
+        let fav_id = store.favorites_group_id().unwrap();
+
+        assert!(!store.delete_group(fav_id).unwrap());
+        assert!(store.get_group(fav_id).unwrap().is_some());
+
+        let updated = store
+            .update_group(
+                fav_id,
+                &HostGroupUpdate {
+                    name: Some("Renamed".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.name, FAVORITES_GROUP_NAME);
     }
 
     #[test]

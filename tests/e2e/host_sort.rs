@@ -107,7 +107,9 @@ fn seed_sort_hosts(store: &LauncherStore) -> (i64, i64, i64) {
         .update_host(
             alpha.id,
             &HostUpdate {
-                favorite: Some(true),
+                // NB: not favourited — favouriting now moves a host into the
+                // reserved Favorites section, which would pull it out of the
+                // flat sort order these tests exercise.
                 sort_order: Some(20),
                 ..Default::default()
             },

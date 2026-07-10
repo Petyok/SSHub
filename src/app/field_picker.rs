@@ -174,7 +174,7 @@ impl App {
                     .id
             }
         };
-        self.groups = self.store.list_groups()?;
+        self.load_groups()?;
         if let Some(form) = self.host_form.as_mut() {
             // group_index: 0 = (none), 1.. = groups in list order.
             form.group_index = self

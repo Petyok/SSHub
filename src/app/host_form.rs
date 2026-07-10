@@ -7,7 +7,7 @@ impl App {
         metadata_only: bool,
     ) -> Result<()> {
         self.host_notice = None;
-        self.groups = self.store.list_groups()?;
+        self.load_groups()?;
         if self.identities.is_empty() {
             self.identities = self.store.list_identities()?;
         }
