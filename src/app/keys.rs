@@ -37,9 +37,9 @@ impl App {
             return Ok(());
         }
 
-        // Settings overlay (Ctrl+,) from the dashboard.
+        // Settings overlay (Ctrl+H) from the dashboard.
         if self.mode == AppMode::Normal
-            && key.code == KeyCode::Char(',')
+            && key.code == KeyCode::Char('h')
             && key.modifiers.contains(KeyModifiers::CONTROL)
         {
             self.settings_selected = 0;

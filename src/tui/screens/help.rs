@@ -116,7 +116,7 @@ fn help_lines() -> Vec<Line<'static>> {
         Line::from(""),
         section("tools"),
         entry("", ""),
-        entry("Ctrl+,", "Settings (opaque background, OS logos, …)"),
+        entry("Ctrl+H", "Settings (opaque background, OS logos, …)"),
         entry(
             "Ctrl+K",
             "Edit all keybindings (navigation, tabs, session, …)",
