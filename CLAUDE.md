@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Workflow rules
 
 - **Commit frequently.** After completing each logical unit of work (a bug fix, a feature, a refactor pass), create a commit immediately. Do not accumulate large uncommitted diffs across multiple tasks.
-- **Branch model.** `main` is stable (releases + tags); `development` is the integration branch; features go on `feature/*` branches cut from `development`. Flow: `feature/* → development → main`. Releases happen by merging `development → main`, bumping the version + CHANGELOG, and pushing a `vX.Y.Z` tag (the release workflow builds binaries and publishes to crates.io).
+- **Branch model.** `main` is stable (releases + tags); `development` is the integration branch; features go on `feature/*` branches cut from `development`. Flow: `feature/* → development → main`. Releases squash `development`'s tree onto `main` as a single `chore: release vX.Y.Z` commit (so `main` is one commit per release), bump the version + CHANGELOG, and push a `vX.Y.Z` tag (the release workflow builds binaries and publishes to crates.io). `main` and `development` diverge — see the Releasing section.
 - **Delete merged branches.** The repo has "Automatically delete head branches" enabled, so merging a PR on GitHub removes the branch (keep the "Delete branch" box checked). For a local/CLI merge, delete it yourself right after: `git branch -d <branch>` and `git push origin --delete <branch>`. Never leave merged branches lingering.
 
 ## Versioning (`vX.Y.Z`)
@@ -24,10 +24,11 @@ The patch bump is automated by a tracked `pre-commit` hook (`.githooks/pre-commi
 
 Releasing is one command, run from a clean `development`:
 
-- **`just release`** (or `just release minor`) — feature release. Merges `development → main`, runs `just bump minor`, commits, tags `vX.Y.0`, pushes.
-- **`just release patch`** — **hotfix**. Merges `development → main` and tags/publishes `development`'s **current** `vX.Y.Z` with **no bump**, so a fix can reach `main` + crates.io without pretending to be a new minor.
+- **`just release`** (or `just release minor`) — feature release. `just bump minor`, tags `vX.Y.0`.
+- **`just release patch`** — **hotfix**. Tags/publishes `development`'s **current** `vX.Y.Z` with **no bump**, so a fix can reach `main` + crates.io without pretending to be a new minor.
+- **`just release X.Y.Z`** — release an **explicit** version (e.g. `just release 0.7.0` to jump ahead), no `--no-verify` dance needed.
 
-Both then tag (the tag triggers the release workflow → binaries + crates.io) and fast-forward `development` back to the released commit so both branches share a baseline and the next release merges cleanly. Pushing to protected `main` relies on the owner's admin bypass.
+Each **squashes `development`'s tree onto `main` as a single `chore: release vX.Y.Z` commit** (via `git merge --squash -X theirs`), so `main`'s history is one commit per release — not the granular feature commits. It then tags (the tag triggers the release workflow → binaries + crates.io). **`main` and `development` diverge by design**: `main` is a chain of release snapshots, `development` keeps its granular history — there is **no** ff-back into `development`. Pushing to protected `main` relies on the owner's admin bypass.
 
 `just release patch` ships **whatever `development` currently holds** — it's the fast path when `development` == what you want on `main`. If `development` carries unreleased work you don't want in the hotfix, land the fix on `development` alone first (or handle the cherry-pick manually) before releasing.
 

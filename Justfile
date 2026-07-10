@@ -88,12 +88,15 @@ release kind="minor":
     git fetch origin --quiet
     git checkout main
     git pull --ff-only origin main
-    # development is always ahead of main here (main is only ever fast-forwarded
-    # to a released commit), so this merge takes development's version cleanly.
-    git merge --no-ff --no-edit development
+    # Snapshot development's tree onto main as ONE squashed commit, so main
+    # carries a single "chore: release vX.Y.Z" per release instead of every
+    # feature commit. -X theirs resolves the version-line divergence to dev's
+    # value (we set the release version explicitly next). This makes main and
+    # development DIVERGE by design — main is a chain of release snapshots, dev
+    # keeps its granular history — so there is no ff-back into development.
+    git merge --squash -X theirs --no-commit development || true
     # minor: bump Y and reset Z. patch: keep development's current X.Y.Z.
-    # X.Y.Z: set that exact version. All happen on main, where the pre-commit
-    # patch-bump hook doesn't fire — no --no-verify dance needed.
+    # X.Y.Z: set that exact version. On main the pre-commit hook doesn't fire.
     case "{{kind}}" in
       minor) just bump minor ;;
       patch) ;;
@@ -101,19 +104,15 @@ release kind="minor":
     esac
     ver=$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "([^"]+)".*/\1/')
     if git rev-parse "v$ver" >/dev/null 2>&1; then
-      echo "v$ver is already tagged — commit a change on development first (or 'just release minor')" >&2
-      git checkout development; exit 1
+      echo "v$ver is already tagged — pick another version (or 'just release minor')" >&2
+      git checkout -f development; exit 1
     fi
-    # -a stages the minor bump; --allow-empty covers patch (nothing to commit
-    # beyond the merge) so main always carries a clean "chore: release" commit.
-    git commit -a --allow-empty -m "chore: release v$ver"
+    git add -A
+    git commit -m "chore: release v$ver"
     git tag -a "v$ver" -m "SSHub v$ver"
     git push origin main --follow-tags
-    # development is an ancestor of main now, so this fast-forwards it to v$ver.
     git checkout development
-    git merge --ff-only main
-    git push origin development
-    echo "released v$ver ({{kind}}) — release workflow will build binaries and publish to crates.io"
+    echo "released v$ver ({{kind}}) — main now has a single 'chore: release v$ver' commit; the release workflow builds binaries and publishes to crates.io"
 
 # Install the release binary to ~/.local/bin and a launcher entry so sshub
 # shows up in your application launcher (GNOME, rofi, etc). Uses kitty if
