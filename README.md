@@ -16,9 +16,13 @@ Adding a managed host and marking it as a favorite:
 
 ![Add host demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/add-host.gif)
 
+Transferring files over SFTP — a dual-pane browser (remote / local) with a staged transfer queue:
+
+![SFTP demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/sftp.gif)
+
 ## Screenshots
 
-The hosts dashboard — nested groups on the left, live agent / latency / ping panels on the right:
+The hosts dashboard — nested groups on the left; the selected host's card shows its auto-detected OS logo, fact sheet, and per-host latency, with live agent / ping panels alongside:
 
 ![Hosts dashboard](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/hosts.png)
 
@@ -33,13 +37,21 @@ Add/edit host form, the rebindable keybindings editor (`Ctrl+K`), and the scroll
 ![Keybindings editor](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/keybindings.png)
 ![Help overlay](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/help.png)
 
+The settings overlay (`Ctrl+H`) — toggle an opaque background, OS logos, quit confirmation, and the startup animation:
+
+![Settings overlay](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/settings.png)
+
 ## Features
 
 - **Embedded SSH sessions** — connect opens an in-TUI PTY; detach with Ctrl+D and return to the dashboard while SSH keeps running; multiple session tabs
 - **Hosts** — browse, search, and connect. Fuzzy search with `/`, multi-tag AND filter with `#`, favorites, nested groups, manual sort order
+- **SFTP file transfer** — a dual-pane browser (remote / local) with a staged transfer queue: navigate both sides, queue uploads and downloads, and run them with a progress bar
+- **OS auto-detection** — on first connect a background probe detects the remote distro and the host card renders its logo (Braille art in brand colors), just like Termius
+- **Multiple groups & Favorites** — a host can belong to several groups at once; a reserved Favorites group and a ★ marker in the list, toggled with `f`
 - **Tunnels** — define and manage SSH tunnels (local/remote/dynamic SOCKS). Start, stop, and monitor from the TUI
 - **Keys** — identity management with ssh-agent integration. Add/remove keys from agent, see loaded status
 - **Audit** — log of all connection events with filtering by status (ok/fail) and time range (today/week/month)
+- **Settings overlay** (`Ctrl+H`) — toggle an opaque background (for transparent terminals), OS logos, quit confirmation, and the startup animation
 - **Hybrid sources** — hosts from `~/.ssh/config` (read-only) and launcher-managed (full CRUD) merge without duplicates
 - **Import/Export** — import from `~/.ssh/config` or Termius backups; export managed hosts back to ssh config format
 - **Hot reload** — edits to `~/.ssh/config` update the host list live via file watcher
