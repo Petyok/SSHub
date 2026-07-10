@@ -125,13 +125,17 @@ impl App {
     }
 
     fn handle_key_sftp_browser(&mut self, key: KeyEvent) -> Result<()> {
+        let running = self
+            .sftp
+            .as_ref()
+            .is_some_and(|s| s.phase == crate::sftp::model::Phase::Running);
         // Esc / Cancel disconnects the live session back to the picker.
         if self.is_action(KeyAction::Cancel, &key) {
             self.sftp_disconnect();
             return Ok(());
         }
         // Enter descends into the selected directory of the focused pane.
-        if self.is_action(KeyAction::Connect, &key) {
+        if !running && self.is_action(KeyAction::Connect, &key) {
             if let Some((side, path)) = self.sftp.as_ref().and_then(|s| s.enter_dir()) {
                 self.sftp_navigate(side, path);
             }
@@ -162,20 +166,26 @@ impl App {
                 }
             }
             KeyCode::Backspace => {
-                if let Some((side, path)) = self.sftp.as_ref().and_then(|s| s.parent_dir()) {
-                    self.sftp_navigate(side, path);
+                if !running {
+                    if let Some((side, path)) = self.sftp.as_ref().and_then(|s| s.parent_dir()) {
+                        self.sftp_navigate(side, path);
+                    }
                 }
             }
             // Panes are left=local, right=remote, so the arrow points at the
             // destination: ← downloads (remote → local), → uploads (local → remote).
             KeyCode::Left => {
-                if let Some(s) = self.sftp.as_mut() {
-                    let _ = s.stage_download();
+                if !running {
+                    if let Some(s) = self.sftp.as_mut() {
+                        let _ = s.stage_download();
+                    }
                 }
             }
             KeyCode::Right => {
-                if let Some(s) = self.sftp.as_mut() {
-                    let _ = s.stage_upload();
+                if !running {
+                    if let Some(s) = self.sftp.as_mut() {
+                        let _ = s.stage_upload();
+                    }
                 }
             }
             // Remove the most recently staged transfer from the queue.
@@ -226,6 +236,10 @@ impl App {
 
     fn sftp_connect_selected(&mut self) -> Result<()> {
         self.sftp_picker_searching = false;
+        // Picker search reuses the shared host filter; clear it so a leftover
+        // query doesn't silently filter the hosts tab after we connect.
+        self.search_query.clear();
+        self.rebuild_filter();
         let Some(entry) = self.selected_entry().cloned() else {
             return Ok(());
         };
@@ -320,6 +334,9 @@ impl App {
             Side::Remote => {
                 if let Some(s) = self.sftp.as_mut() {
                     s.remote.cwd = path.clone();
+                    // Drop stale entries until the async DirListing arrives, so a
+                    // second navigation can't join the new cwd with an old row.
+                    s.remote.set_entries(Vec::new());
                 }
                 if let Some(tx) = self.sftp_tx.as_ref() {
                     let _ = tx.send(SftpCommand::ListDir(Side::Remote, path));
@@ -336,6 +353,13 @@ impl App {
     }
 
     fn sftp_run_queue(&mut self) {
+        if self
+            .sftp
+            .as_ref()
+            .is_some_and(|s| s.phase == Phase::Running)
+        {
+            return;
+        }
         let queue = match self.sftp.as_ref() {
             Some(s) if !s.queue.is_empty() => s.queue.clone(),
             _ => return,
