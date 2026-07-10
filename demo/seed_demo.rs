@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use sshub::store::{HostUpdate, LauncherStore, NewHost, NewHostGroup};
+use sshub::store::{HostUpdate, LauncherStore, NewHost, NewHostGroup, NewIdentity};
 
 fn main() -> Result<()> {
     let data_dir = std::env::var("SSHUB_DATA_DIR").context("SSHUB_DATA_DIR must be set")?;
@@ -30,7 +30,9 @@ fn main() -> Result<()> {
     let databases = mk_group(&store, "Databases", 1, Some(production))?;
     let staging = mk_group(&store, "Staging", 1, None)?;
 
-    // (display name, address, user, port, group, tags, favorite, proxy_jump)
+    // (display name, address, user, port, group, tags, favorite, proxy_jump,
+    //  os_icon) — os_icon is a canonical distro id so the host card renders its
+    // Braille logo (see src/osinfo/logos.rs), as if auto-detected on connect.
     let hosts: &[(
         &str,
         &str,
@@ -40,6 +42,7 @@ fn main() -> Result<()> {
         &[&str],
         bool,
         Option<&str>,
+        &str,
     )] = &[
         (
             "Real Google DNS (trust me)",
@@ -50,6 +53,7 @@ fn main() -> Result<()> {
             &["prod", "web"],
             true,
             None,
+            "ubuntu",
         ),
         (
             "Google DNS: the sequel",
@@ -60,6 +64,7 @@ fn main() -> Result<()> {
             &["prod", "web"],
             false,
             None,
+            "debian",
         ),
         (
             "Cloudflare",
@@ -70,6 +75,7 @@ fn main() -> Result<()> {
             &["prod", "db"],
             false,
             None,
+            "alpine",
         ),
         (
             "Cloudflare's server in a mom's garage",
@@ -80,6 +86,7 @@ fn main() -> Result<()> {
             &["prod", "db"],
             false,
             None,
+            "arch",
         ),
         (
             "Quad9's server in a bunker",
@@ -90,6 +97,7 @@ fn main() -> Result<()> {
             &["staging"],
             false,
             None,
+            "fedora",
         ),
         (
             "CI runner (OpenDNS)",
@@ -100,6 +108,7 @@ fn main() -> Result<()> {
             &["staging", "ci"],
             false,
             Some("Bastion (secretly Level3)"),
+            "debian",
         ),
         (
             "Bastion (secretly Level3)",
@@ -110,10 +119,11 @@ fn main() -> Result<()> {
             &["prod", "ops"],
             false,
             None,
+            "arch",
         ),
     ];
 
-    for (name, addr, user, port, group_id, tags, favorite, proxy) in hosts {
+    for (name, addr, user, port, group_id, tags, favorite, proxy, os_icon) in hosts {
         let host = store.create_host(&NewHost {
             name: (*name).to_string(),
             address: (*addr).to_string(),
@@ -122,6 +132,7 @@ fn main() -> Result<()> {
             group_id: *group_id,
             tags: tags.iter().map(|t| (*t).to_string()).collect(),
             proxy_jump: proxy.map(|p| p.to_string()),
+            os_icon: Some((*os_icon).to_string()),
             ..Default::default()
         })?;
         if *favorite {
@@ -135,7 +146,41 @@ fn main() -> Result<()> {
         }
     }
 
-    eprintln!("seeded {} hosts", hosts.len());
+    let mut count = hosts.len();
+
+    // A real, locally-reachable SFTP target for the SFTP-browser demo. Unlike
+    // the public-resolver hosts above (whose sessions are faked by
+    // demo/bin/ssh), the SFTP browser speaks native libssh2 and needs an actual
+    // server — demo/sftp-server.sh spins up a rootless sshd on 127.0.0.1:2222
+    // and exports these two env vars. Absent them (e.g. `cargo run` outside the
+    // demo harness) we simply skip this host.
+    if let (Ok(key), Ok(user)) = (
+        std::env::var("SSHUB_DEMO_SFTP_KEY"),
+        std::env::var("SSHUB_DEMO_SFTP_USER"),
+    ) {
+        let identity = store.create_identity(&NewIdentity {
+            name: "demo sftp key".to_string(),
+            username: Some(user.clone()),
+            private_key: Some(PathBuf::from(&key)),
+            ..Default::default()
+        })?;
+        store.create_host(&NewHost {
+            name: "localhost (SFTP demo)".to_string(),
+            address: "127.0.0.1".to_string(),
+            username: Some(user),
+            port: std::env::var("SSHUB_SFTP_DEMO_PORT")
+                .ok()
+                .and_then(|p| p.parse().ok())
+                .unwrap_or(2222),
+            identity_id: Some(identity.id),
+            tags: vec!["demo".to_string(), "sftp".to_string()],
+            os_icon: Some("debian".to_string()),
+            ..Default::default()
+        })?;
+        count += 1;
+    }
+
+    eprintln!("seeded {count} hosts");
     Ok(())
 }
 
