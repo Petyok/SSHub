@@ -208,6 +208,22 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
                     col += name_w as u16 + 1; // + gap
                 }
 
+                // Favorite star. A fixed 2-col slot is reserved on every row so
+                // addresses stay aligned whether or not the host is a favorite.
+                if col < inner_right {
+                    if entry.favorite() {
+                        let star_style = if is_selected {
+                            ratatui::style::Style::default()
+                                .fg(theme::AMBER)
+                                .bg(theme::SEL_BG)
+                        } else {
+                            theme::amber()
+                        };
+                        buf.set_string(col, y, "\u{2605}", star_style);
+                    }
+                    col += 2;
+                }
+
                 // Address — up to 14 chars, only if it still fits.
                 let addr = host_address(entry);
                 let addr_w = (inner_right.saturating_sub(col) as usize).min(14);
