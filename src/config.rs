@@ -106,9 +106,14 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
     let mut config = parse_config_str(&content)?;
     // Migrate keybinds written before the SFTP tab was inserted as tab #2, so
     // upgrading users don't get misrouted digit navigation (see
-    // KeybindsConfig::migrate_pre_sftp_tabs). Applied in-memory each load until
-    // the config is next saved with `tab_sftp` present.
-    config.keybinds.migrate_pre_sftp_tabs(&content);
+    // KeybindsConfig::migrate_pre_sftp_tabs). Persist the migrated config so it
+    // runs exactly once — otherwise a user who deliberately keeps a pre-SFTP
+    // tab digit would have it silently rewritten on every launch.
+    if config.keybinds.migrate_pre_sftp_tabs(&content) {
+        if let Ok(toml) = toml::to_string_pretty(&config) {
+            let _ = fs::write(&path, toml);
+        }
+    }
     Ok(config)
 }
 
