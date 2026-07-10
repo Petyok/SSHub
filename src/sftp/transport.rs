@@ -129,17 +129,40 @@ impl Ssh2Transport {
                 "remote host key changed - possible MITM; verify before connecting"
             )),
             CheckResult::NotFound => {
-                // Trust on first use: record the key and persist it.
-                let fmt = KnownHostKeyFormat::from(key_type);
-                known
-                    .add(host, key, "added by sshub (TOFU)", fmt)
-                    .context("failed to record new host key")?;
+                // Trust on first use. Append the entry ourselves rather than
+                // libssh2 write_file, which rewrites the whole file and would
+                // silently drop lines it can't parse (@cert-authority, @revoked,
+                // certificate entries, unsupported key types).
                 if let Some(parent) = path.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
-                known
-                    .write_file(&path, KnownHostFileKind::OpenSSH)
-                    .with_context(|| format!("failed to write {}", path.display()))?;
+                match keytype_name(key_type) {
+                    Some(kt_name) => {
+                        let hostspec = if port == 22 {
+                            host.to_string()
+                        } else {
+                            format!("[{host}]:{port}")
+                        };
+                        let line = format!("{hostspec} {kt_name} {}\n", b64encode(key));
+                        let mut f = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&path)
+                            .with_context(|| format!("failed to open {}", path.display()))?;
+                        f.write_all(line.as_bytes())
+                            .with_context(|| format!("failed to append to {}", path.display()))?;
+                    }
+                    None => {
+                        // Unknown key type we can't format — fall back to libssh2.
+                        let fmt = KnownHostKeyFormat::from(key_type);
+                        known
+                            .add(host, key, "added by sshub (TOFU)", fmt)
+                            .context("failed to record new host key")?;
+                        known
+                            .write_file(&path, KnownHostFileKind::OpenSSH)
+                            .with_context(|| format!("failed to write {}", path.display()))?;
+                    }
+                }
                 Ok(())
             }
             CheckResult::Failure => Err(anyhow!("host key check failed")),
@@ -168,16 +191,25 @@ impl Ssh2Transport {
                     .userauth_password(&user, pw)
                     .context("password authentication failed")?;
             }
-            // No stored secret: use the agent if one is running, else fail with
-            // a clear message (interactive prompts aren't possible here).
+            // No stored secret: try the ssh-agent, then an unencrypted identity
+            // file, before giving up (interactive prompts aren't possible here).
             None => {
+                let mut ok = false;
                 if self.agent.socket_path.is_some() {
-                    session
-                        .userauth_agent(&user)
-                        .context("ssh-agent authentication failed")?;
-                } else {
+                    ok = session.userauth_agent(&user).is_ok() && session.authenticated();
+                }
+                if !ok {
+                    if let Some(key_path) = self.host.identity_file.as_ref() {
+                        let key_path = crate::app::shellexpand_home(key_path);
+                        ok = session
+                            .userauth_pubkey_file(&user, None, &key_path, None)
+                            .is_ok()
+                            && session.authenticated();
+                    }
+                }
+                if !ok {
                     return Err(anyhow!(
-                        "no credential available: no stored secret and no ssh-agent"
+                        "authentication failed: no stored password/passphrase, ssh-agent, or usable unencrypted key"
                     ));
                 }
             }
@@ -264,26 +296,38 @@ impl SftpTransport for Ssh2Transport {
         if let Some(parent) = local.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let mut out = std::fs::File::create(local)
-            .with_context(|| format!("failed to create local {}", local.display()))?;
-
-        let mut buf = vec![0u8; CHUNK];
-        let mut transferred: u64 = 0;
-        progress(0, total);
-        loop {
-            let n = remote_file
-                .read(&mut buf)
-                .with_context(|| format!("read error on {}", remote.display()))?;
-            if n == 0 {
-                break;
+        // Stream to a sibling temp, then rename over the destination on success —
+        // an aborted/failed transfer never truncates an existing local file.
+        let tmp = temp_sibling(local);
+        let stream = (|| -> Result<()> {
+            let mut out = std::fs::File::create(&tmp)
+                .with_context(|| format!("failed to create local {}", tmp.display()))?;
+            let mut buf = vec![0u8; CHUNK];
+            let mut transferred: u64 = 0;
+            progress(0, total);
+            loop {
+                let n = remote_file
+                    .read(&mut buf)
+                    .with_context(|| format!("read error on {}", remote.display()))?;
+                if n == 0 {
+                    break;
+                }
+                out.write_all(&buf[..n])
+                    .with_context(|| format!("write error on {}", local.display()))?;
+                transferred += n as u64;
+                progress(transferred, total.max(transferred));
             }
-            out.write_all(&buf[..n])
-                .with_context(|| format!("write error on {}", local.display()))?;
-            transferred += n as u64;
-            progress(transferred, total.max(transferred));
+            out.flush().ok();
+            Ok(())
+        })();
+        match stream {
+            Ok(()) => std::fs::rename(&tmp, local)
+                .with_context(|| format!("failed to finalize {}", local.display())),
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp);
+                Err(e)
+            }
         }
-        out.flush().ok();
-        Ok(())
     }
 
     fn upload(
@@ -297,26 +341,91 @@ impl SftpTransport for Ssh2Transport {
         let total = in_file.metadata().map(|m| m.len()).unwrap_or(0);
 
         let sftp = self.sftp_ref()?;
-        let mut remote_file = sftp
-            .create(remote)
-            .with_context(|| format!("failed to create remote {}", remote.display()))?;
-
-        let mut buf = vec![0u8; CHUNK];
-        let mut transferred: u64 = 0;
-        progress(0, total);
-        loop {
-            let n = in_file
-                .read(&mut buf)
-                .with_context(|| format!("read error on {}", local.display()))?;
-            if n == 0 {
-                break;
+        // Upload to a remote sibling temp, then rename over the destination.
+        let tmp = temp_sibling(remote);
+        let stream = (|| -> Result<()> {
+            let mut remote_file = sftp
+                .create(&tmp)
+                .with_context(|| format!("failed to create remote {}", tmp.display()))?;
+            let mut buf = vec![0u8; CHUNK];
+            let mut transferred: u64 = 0;
+            progress(0, total);
+            loop {
+                let n = in_file
+                    .read(&mut buf)
+                    .with_context(|| format!("read error on {}", local.display()))?;
+                if n == 0 {
+                    break;
+                }
+                remote_file
+                    .write_all(&buf[..n])
+                    .with_context(|| format!("write error on {}", remote.display()))?;
+                transferred += n as u64;
+                progress(transferred, total.max(transferred));
             }
-            remote_file
-                .write_all(&buf[..n])
-                .with_context(|| format!("write error on {}", remote.display()))?;
-            transferred += n as u64;
-            progress(transferred, total.max(transferred));
+            Ok(())
+        })();
+        match stream {
+            Ok(()) => sftp
+                .rename(&tmp, remote, Some(ssh2::RenameFlags::OVERWRITE))
+                .with_context(|| format!("failed to finalize remote {}", remote.display())),
+            Err(e) => {
+                let _ = sftp.unlink(&tmp);
+                Err(e)
+            }
         }
-        Ok(())
     }
+}
+
+/// A hidden sibling temp path next to `path`, for atomic write-then-rename.
+fn temp_sibling(path: &Path) -> PathBuf {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "file".to_string());
+    let tmp_name = format!(".{name}.sshub-part");
+    match path.parent() {
+        Some(parent) => parent.join(tmp_name),
+        None => PathBuf::from(tmp_name),
+    }
+}
+
+/// OpenSSH known_hosts key-type token for a libssh2 host-key type, if we can
+/// serialize it ourselves. None → let libssh2 write the file instead.
+fn keytype_name(kt: ssh2::HostKeyType) -> Option<&'static str> {
+    use ssh2::HostKeyType::*;
+    match kt {
+        Rsa => Some("ssh-rsa"),
+        Dss => Some("ssh-dss"),
+        Ecdsa256 => Some("ecdsa-sha2-nistp256"),
+        Ecdsa384 => Some("ecdsa-sha2-nistp384"),
+        Ecdsa521 => Some("ecdsa-sha2-nistp521"),
+        Ed25519 => Some("ssh-ed25519"),
+        _ => None,
+    }
+}
+
+/// Standard base64 (with padding) — enough to serialize a known_hosts key blob.
+fn b64encode(data: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = *chunk.get(1).unwrap_or(&0);
+        let b2 = *chunk.get(2).unwrap_or(&0);
+        let n = ((b0 as u32) << 16) | ((b1 as u32) << 8) | (b2 as u32);
+        out.push(T[((n >> 18) & 63) as usize] as char);
+        out.push(T[((n >> 12) & 63) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            T[((n >> 6) & 63) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            T[(n & 63) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
 }
