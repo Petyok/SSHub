@@ -212,13 +212,39 @@ fn render_ssh_log(buf: &mut Buffer, area: Rect, app: &App) {
         return;
     }
 
-    // Scrollable tail view: ssh_log_scroll=0 means show latest, higher = scroll up
-    let total = filtered.len();
+    // Flatten entries into wrapped visual rows so long command lines stay fully
+    // readable (word-wrapped) instead of truncated. The timestamp prints on the
+    // first row of an entry; continuation rows indent under the message column.
+    struct VRow {
+        time: Option<String>,
+        text: String,
+        style: ratatui::style::Style,
+    }
+    const TIME_W: usize = 9; // "HH:MM:SS " — fixed width
+    let wrap_w = inner_w.saturating_sub(TIME_W).max(1);
+    let mut vrows: Vec<VRow> = Vec::new();
+    for entry in &filtered {
+        let style = match entry.level {
+            crate::ssh::probe::LogLevel::Error => theme::red(),
+            crate::ssh::probe::LogLevel::Success => theme::green(),
+            crate::ssh::probe::LogLevel::Info => theme::dim(),
+        };
+        let time_str = format!("{} ", crate::tui::format_local_time(entry.timestamp));
+        for (j, chunk) in wrap_line(&entry.line, wrap_w).into_iter().enumerate() {
+            vrows.push(VRow {
+                time: if j == 0 { Some(time_str.clone()) } else { None },
+                text: chunk,
+                style,
+            });
+        }
+    }
+
+    // Scrollable tail view over visual rows: scroll=0 shows the latest.
+    let total = vrows.len();
     let scroll = app.ssh_log_scroll.min(total.saturating_sub(max_rows));
     let end = total.saturating_sub(scroll);
     let start = end.saturating_sub(max_rows);
 
-    // Title badge: scroll position
     if scroll > 0 {
         let badge = format!("↑{scroll}");
         let bx = area.x + area.width.saturating_sub(badge.len() as u16 + 3);
@@ -227,37 +253,63 @@ fn render_ssh_log(buf: &mut Buffer, area: Rect, app: &App) {
         }
     }
 
-    for (i, entry) in filtered[start..end].iter().enumerate() {
+    for (i, vr) in vrows[start..end].iter().enumerate() {
         let row_y = area.y + 1 + i as u16;
         if row_y >= area.y + area.height - 1 {
             break;
         }
-
-        let style = match entry.level {
-            crate::ssh::probe::LogLevel::Error => theme::red(),
-            crate::ssh::probe::LogLevel::Success => theme::green(),
-            crate::ssh::probe::LogLevel::Info => theme::dim(),
-        };
-
-        // Timestamp HH:MM:SS (local timezone) — host prefix omitted since
-        // the panel title already names the host we're filtering on.
-        let time_str = format!("{} ", crate::tui::format_local_time(entry.timestamp));
-        let time_w = time_str.chars().count();
-        buf.set_string(inner_x, row_y, &time_str, theme::mute());
-
-        // Clamp with `…` (same helper as the rest of the dashboard) so a long
-        // command line stays inside the panel border instead of a hard cut that
-        // reads as overflowing the box.
-        let remaining_w = inner_w.saturating_sub(time_w);
-        put_clamped(
-            buf,
-            inner_x + time_w as u16,
-            row_y,
-            &entry.line,
-            style,
-            remaining_w,
-        );
+        if let Some(t) = &vr.time {
+            buf.set_string(inner_x, row_y, t, theme::mute());
+        }
+        buf.set_string(inner_x + TIME_W as u16, row_y, &vr.text, vr.style);
     }
+}
+
+/// Greedy word-wrap `s` to `width` columns (char count == display width for the
+/// ASCII log lines here). Words longer than `width` are hard-split so a long
+/// path/flag never overflows. Never returns an empty vec.
+fn wrap_line(s: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![s.to_string()];
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut cur_len = 0usize;
+    for word in s.split(' ') {
+        let wlen = word.chars().count();
+        if wlen > width {
+            if cur_len > 0 {
+                lines.push(std::mem::take(&mut cur));
+                cur_len = 0;
+            }
+            let chars: Vec<char> = word.chars().collect();
+            for chunk in chars.chunks(width) {
+                lines.push(chunk.iter().collect());
+            }
+            continue;
+        }
+        let projected = if cur_len == 0 {
+            wlen
+        } else {
+            cur_len + 1 + wlen
+        };
+        if projected > width {
+            lines.push(std::mem::take(&mut cur));
+            cur = word.to_string();
+            cur_len = wlen;
+        } else {
+            if cur_len > 0 {
+                cur.push(' ');
+                cur_len += 1;
+            }
+            cur.push_str(word);
+            cur_len += wlen;
+        }
+    }
+    if cur_len > 0 || lines.is_empty() {
+        lines.push(cur);
+    }
+    lines
 }
 
 // ── Agent panel ─────────────────────────────────────────
@@ -502,5 +554,28 @@ fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
     if info_y < area.y + area.height - 1 {
         let stats = format!("now {}ms  avg {}ms  peak {}ms", now_val, p50, peak);
         put_clamped(buf, inner_x, info_y, &stats, theme::dim(), inner_w);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrap_line;
+
+    #[test]
+    fn wraps_on_word_boundaries() {
+        let out = wrap_line("alpha beta gamma", 11);
+        assert_eq!(out, vec!["alpha beta".to_string(), "gamma".to_string()]);
+    }
+
+    #[test]
+    fn hard_splits_overlong_words() {
+        let out = wrap_line("aaaaaaaa", 3);
+        assert_eq!(out, vec!["aaa", "aaa", "aa"]);
+    }
+
+    #[test]
+    fn never_empty_and_short_fits() {
+        assert_eq!(wrap_line("", 10), vec!["".to_string()]);
+        assert_eq!(wrap_line("hi", 10), vec!["hi".to_string()]);
     }
 }
