@@ -1075,7 +1075,8 @@ mod tests {
     #[test]
     fn migrate_pre_sftp_shifts_tab_digits() {
         // A pre-SFTP config: old digits, no tab_sftp key.
-        let raw = "[keybinds]\ntab_tunnels = [\"2\"]\ntab_keys = [\"i\", \"3\"]\ntab_audit = [\"4\"]\n";
+        let raw =
+            "[keybinds]\ntab_tunnels = [\"2\"]\ntab_keys = [\"i\", \"3\"]\ntab_audit = [\"4\"]\n";
         let mut kb = KeybindsConfig {
             tab_tunnels: vec!["2".into()],
             tab_keys: vec!["i".into(), "3".into()],
