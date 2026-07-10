@@ -235,12 +235,16 @@ impl App {
     }
 
     fn sftp_connect_selected(&mut self) -> Result<()> {
+        // Read the selection BEFORE touching the filter: clearing the search
+        // query rebuilds the visible list, which would remap the selected index
+        // onto a different (unfiltered) host and connect to the wrong one.
+        let entry = self.selected_entry().cloned();
         self.sftp_picker_searching = false;
         // Picker search reuses the shared host filter; clear it so a leftover
         // query doesn't silently filter the hosts tab after we connect.
         self.search_query.clear();
         self.rebuild_filter();
-        let Some(entry) = self.selected_entry().cloned() else {
+        let Some(entry) = entry else {
             return Ok(());
         };
         self.sftp_connect_to(entry)
