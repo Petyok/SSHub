@@ -1023,6 +1023,41 @@ impl KeybindsConfig {
         }
     }
 
+    /// One-time migration for configs written **before** the SFTP tab was
+    /// inserted as tab #2. Those configs pin the old tab digits (tunnels=2,
+    /// keys=3, audit=4) and have no `tab_sftp` key, so after the reindex the
+    /// digits misroute (2 shadows tunnels, 3→keys, 4→audit) and tunnels becomes
+    /// unreachable. We detect the pre-SFTP layout by the absence of a
+    /// `tab_sftp` entry in the raw config text and shift each tab's digit up by
+    /// one, preserving letter binds (`h`, `i`). Idempotent: once the config is
+    /// re-saved with `tab_sftp` present, this is a no-op. Returns whether it
+    /// changed anything.
+    pub fn migrate_pre_sftp_tabs(&mut self, raw_config: &str) -> bool {
+        // A config that already knows the SFTP tab, or never overrode any tab
+        // binding, needs no migration (bare defaults are already correct).
+        if raw_config.contains("tab_sftp")
+            || !(raw_config.contains("tab_tunnels")
+                || raw_config.contains("tab_keys")
+                || raw_config.contains("tab_audit"))
+        {
+            return false;
+        }
+        let shift = |binds: &mut Vec<String>, from: &str, to: &str| {
+            for b in binds.iter_mut() {
+                if b == from {
+                    *b = to.to_string();
+                }
+            }
+        };
+        shift(&mut self.tab_tunnels, "2", "3");
+        shift(&mut self.tab_keys, "3", "4");
+        shift(&mut self.tab_audit, "4", "5");
+        if self.tab_sftp.is_empty() {
+            self.tab_sftp = vec!["2".to_string()];
+        }
+        true
+    }
+
     /// Append `spec` to an action's bindings unless already present.
     pub fn add(&mut self, action: KeyAction, spec: String) {
         let mut binds = self.binds(action).to_vec();
@@ -1030,5 +1065,45 @@ impl KeybindsConfig {
             binds.push(spec);
             self.set(action, binds);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrate_pre_sftp_shifts_tab_digits() {
+        // A pre-SFTP config: old digits, no tab_sftp key.
+        let raw = "[keybinds]\ntab_tunnels = [\"2\"]\ntab_keys = [\"i\", \"3\"]\ntab_audit = [\"4\"]\n";
+        let mut kb = KeybindsConfig {
+            tab_tunnels: vec!["2".into()],
+            tab_keys: vec!["i".into(), "3".into()],
+            tab_audit: vec!["4".into()],
+            ..KeybindsConfig::default()
+        };
+        assert!(kb.migrate_pre_sftp_tabs(raw));
+        assert_eq!(kb.tab_tunnels, vec!["3"]);
+        assert_eq!(kb.tab_keys, vec!["i", "4"]);
+        assert_eq!(kb.tab_audit, vec!["5"]);
+        assert_eq!(kb.tab_sftp, vec!["2"]);
+    }
+
+    #[test]
+    fn migrate_pre_sftp_is_noop_for_new_configs() {
+        // Config already mentions tab_sftp → already migrated / new.
+        let raw = "[keybinds]\ntab_sftp = [\"2\"]\ntab_tunnels = [\"3\"]\n";
+        let mut kb = KeybindsConfig::default();
+        let before = kb.tab_tunnels.clone();
+        assert!(!kb.migrate_pre_sftp_tabs(raw));
+        assert_eq!(kb.tab_tunnels, before);
+    }
+
+    #[test]
+    fn migrate_pre_sftp_is_noop_without_tab_overrides() {
+        // A config that never customised tab binds needs nothing shifted.
+        let raw = "[keybinds]\nquit = [\"q\"]\n";
+        let mut kb = KeybindsConfig::default();
+        assert!(!kb.migrate_pre_sftp_tabs(raw));
     }
 }
