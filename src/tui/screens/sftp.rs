@@ -116,7 +116,8 @@ fn render_pane(
         return;
     }
     let total = pane.entries.len();
-    let vis_n = pane.visible_indices().len();
+    let vis = pane.visible_indices();
+    let vis_n = vis.len();
     // Subtitle makes an *applied* filter obvious even when not actively typing.
     let count = if pane.filter.is_empty() {
         format!("{} · {}", pane.cwd.display(), total)
@@ -152,7 +153,6 @@ fn render_pane(
         }
     }
 
-    let vis = pane.visible_indices();
     if vis.is_empty() {
         let msg = if pane.filter.is_empty() {
             "(empty)"

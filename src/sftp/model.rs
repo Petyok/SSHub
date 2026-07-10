@@ -75,7 +75,14 @@ impl Pane {
 
     /// Number of entries currently visible under the filter.
     pub fn visible_len(&self) -> usize {
-        self.visible_indices().len()
+        if self.filter.is_empty() {
+            return self.entries.len();
+        }
+        let needle = self.filter.to_lowercase();
+        self.entries
+            .iter()
+            .filter(|e| e.name.to_lowercase().contains(&needle))
+            .count()
     }
 
     /// Set the filter text and move the cursor to the top of the filtered view.
@@ -86,8 +93,14 @@ impl Pane {
 
     /// The entry under the cursor, if any.
     pub fn selected_entry(&self) -> Option<&FileEntry> {
-        let idx = *self.visible_indices().get(self.selected)?;
-        self.entries.get(idx)
+        if self.filter.is_empty() {
+            return self.entries.get(self.selected);
+        }
+        let needle = self.filter.to_lowercase();
+        self.entries
+            .iter()
+            .filter(|e| e.name.to_lowercase().contains(&needle))
+            .nth(self.selected)
     }
 
     /// Replace the listing and clamp the cursor to the new bounds.
