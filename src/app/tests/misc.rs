@@ -31,7 +31,7 @@ pub(crate) fn pasted_key_material_is_written_to_a_file_on_save() {
     std::env::set_var("HOME", dir.path());
 
     let mut app = test_app(vec![("web", host("web"))]);
-    app.active_tab = 2;
+    app.active_tab = 3;
     app.enter_identity_form(None).unwrap();
 
     // Name the identity, then paste key material into the key field.
@@ -65,7 +65,7 @@ pub(crate) fn pasted_key_material_is_written_to_a_file_on_save() {
 #[test]
 pub(crate) fn backspace_discards_pasted_key_blob() {
     let mut app = test_app(vec![("web", host("web"))]);
-    app.active_tab = 2;
+    app.active_tab = 3;
     app.enter_identity_form(None).unwrap();
     while app.identity_form.as_ref().unwrap().field != IdentityFormField::PrivateKey {
         app.handle_key(key(KeyCode::Down)).unwrap();

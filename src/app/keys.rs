@@ -70,9 +70,10 @@ impl App {
             AppMode::TunnelForm => self.handle_key_tunnel_form(key),
             AppMode::Connecting | AppMode::Session => self.handle_key_session(key),
             AppMode::Normal => match self.active_tab {
-                1 => self.handle_key_tunnels(key),
-                2 => self.handle_key_keychain(key),
-                3 => self.handle_key_audit(key),
+                1 => self.handle_key_sftp(key),
+                2 => self.handle_key_tunnels(key),
+                3 => self.handle_key_keychain(key),
+                4 => self.handle_key_audit(key),
                 _ => self.handle_key_normal(key),
             },
         }
@@ -214,6 +215,10 @@ impl App {
             self.active_tab = 0;
             return Ok(true);
         }
+        if self.is_action(KeyAction::TabSftp, key) {
+            self.switch_to_sftp_tab();
+            return Ok(true);
+        }
         if self.is_action(KeyAction::TabTunnels, key) {
             self.switch_to_tunnels_tab()?;
             return Ok(true);
@@ -223,7 +228,7 @@ impl App {
             return Ok(true);
         }
         if self.is_action(KeyAction::TabAudit, key) {
-            self.active_tab = 3;
+            self.active_tab = 4;
             self.refresh_audit_events();
             return Ok(true);
         }

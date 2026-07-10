@@ -6,11 +6,12 @@ use ratatui::Frame;
 use crate::tui::theme;
 
 /// Tab definitions: (number label, display name).
-const TABS: [(&str, &str); 4] = [
+const TABS: [(&str, &str); 5] = [
     ("1", "hosts"),
-    ("2", "tunnels"),
-    ("3", "identities"),
-    ("4", "audit"),
+    ("2", "sftp"),
+    ("3", "tunnels"),
+    ("4", "identities"),
+    ("5", "audit"),
 ];
 
 /// Render the tab bar into a 1-row `area`.

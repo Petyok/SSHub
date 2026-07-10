@@ -11,6 +11,7 @@ mod import;
 mod keys;
 mod mouse;
 mod session;
+mod sftp;
 mod tags;
 mod tunnels;
 mod types;
@@ -157,6 +158,14 @@ pub struct App {
     pub palette_results: Vec<usize>,
     pub ping_rx: Option<Receiver<crate::ping::PingResult>>,
     pub ping_data: std::collections::HashMap<String, Vec<u32>>,
+    pub sftp: Option<crate::sftp::model::SftpState>,
+    pub sftp_tx: Option<std::sync::mpsc::Sender<crate::sftp::SftpCommand>>,
+    pub sftp_rx: Option<std::sync::mpsc::Receiver<crate::sftp::SftpEvent>>,
+    /// Name of the host the live SFTP session is connected to, so the browser
+    /// can open an SSH session back to the same host (completes the round trip).
+    pub sftp_host: Option<String>,
+    /// True while the SFTP picker's host search input is capturing keys.
+    pub sftp_picker_searching: bool,
     pub probe_rx: Option<Receiver<crate::ssh::probe::SshLogEntry>>,
     pub os_detect_tx: Option<std::sync::mpsc::Sender<crate::osinfo::OsDetectCmd>>,
     pub os_detect_rx: Option<Receiver<crate::osinfo::OsDetectEvent>>,
@@ -287,6 +296,11 @@ impl App {
             palette_results: Vec::new(),
             ping_rx: None,
             ping_data: std::collections::HashMap::new(),
+            sftp: None,
+            sftp_tx: None,
+            sftp_rx: None,
+            sftp_host: None,
+            sftp_picker_searching: false,
             probe_rx: None,
             os_detect_tx: None,
             os_detect_rx: None,

@@ -18,6 +18,10 @@ impl App {
             self.detach_to_dashboard();
             return Ok(());
         }
+        if self.is_action(KeyAction::SessionOpenSftp, &key) {
+            self.open_sftp_for_active_session();
+            return Ok(());
+        }
         // While connecting, toggle the debug (`-v`) log view. Only meaningful
         // before the shell reveals, so ignore it once the session is running.
         if self.is_action(KeyAction::SessionToggleLog, &key)

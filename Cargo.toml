@@ -54,6 +54,10 @@ nucleo = "0.3"
 portable-pty = "0.9"
 ratatui = "0.30"
 rusqlite = { version = "0.32", features = ["bundled"] }
+# Native SFTP transport (libssh2). vendored-openssl compiles OpenSSL from source
+# so `cargo install sshub` stays self-contained (same tradeoff as rusqlite
+# "bundled" above — no system OpenSSL/libssh2 needed).
+ssh2 = { version = "0.9", features = ["vendored-openssl"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"

@@ -200,6 +200,11 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
+    (@fn tab_sftp $($key:literal),* $(,)?) => {
+        fn default_kb_tab_sftp() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
     (@fn tab_tunnels $($key:literal),* $(,)?) => {
         fn default_kb_tab_tunnels() -> Vec<String> {
             vec![$($key.to_string()),*]
@@ -277,6 +282,11 @@ macro_rules! kb_defaults {
     };
     (@fn session_detach $($key:literal),* $(,)?) => {
         fn default_kb_session_detach() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
+    (@fn session_open_sftp $($key:literal),* $(,)?) => {
+        fn default_kb_session_open_sftp() -> Vec<String> {
             vec![$($key.to_string()),*]
         }
     };
@@ -361,9 +371,10 @@ kb_defaults! {
     rename_group => ["Ctrl+G"],
     delete_group => ["Ctrl+Shift+G"],
     tab_hosts => ["h", "1"],
-    tab_tunnels => ["2"],
-    tab_keys => ["i", "3"],
-    tab_audit => ["4"],
+    tab_sftp => ["2"],
+    tab_tunnels => ["3"],
+    tab_keys => ["i", "4"],
+    tab_audit => ["5"],
     identity_columns_inc => ["]"],
     identity_columns_dec => ["["],
     add_to_agent => ["p"],
@@ -377,6 +388,7 @@ kb_defaults! {
     session_tab_prev => ["Ctrl+[", "Ctrl+PageUp"],
     session_tab_next => ["Ctrl+]", "Ctrl+PageDown"],
     session_detach => ["Ctrl+D"],
+    session_open_sftp => ["Ctrl+Shift+F"],
     session_focus => ["Ctrl+Shift+S"],
     session_scroll_up => ["PageUp"],
     session_scroll_down => ["PageDown"],
@@ -427,6 +439,7 @@ pub enum KeyAction {
     RenameGroup,
     DeleteGroup,
     TabHosts,
+    TabSftp,
     TabTunnels,
     TabKeys,
     TabAudit,
@@ -443,6 +456,7 @@ pub enum KeyAction {
     SessionTabPrev,
     SessionTabNext,
     SessionDetach,
+    SessionOpenSftp,
     SessionFocus,
     SessionScrollUp,
     SessionScrollDown,
@@ -455,7 +469,7 @@ pub enum KeyAction {
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 62] = [
+    pub const ALL: [KeyAction; 64] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -494,6 +508,7 @@ impl KeyAction {
         KeyAction::RenameGroup,
         KeyAction::DeleteGroup,
         KeyAction::TabHosts,
+        KeyAction::TabSftp,
         KeyAction::TabTunnels,
         KeyAction::TabKeys,
         KeyAction::TabAudit,
@@ -510,6 +525,7 @@ impl KeyAction {
         KeyAction::SessionTabPrev,
         KeyAction::SessionTabNext,
         KeyAction::SessionDetach,
+        KeyAction::SessionOpenSftp,
         KeyAction::SessionFocus,
         KeyAction::SessionScrollUp,
         KeyAction::SessionScrollDown,
@@ -560,6 +576,7 @@ impl KeyAction {
             KeyAction::RenameGroup => "Edit group",
             KeyAction::DeleteGroup => "Delete group",
             KeyAction::TabHosts => "Hosts tab",
+            KeyAction::TabSftp => "SFTP tab",
             KeyAction::TabTunnels => "Tunnels tab",
             KeyAction::TabKeys => "Identities tab",
             KeyAction::TabAudit => "Audit tab",
@@ -576,6 +593,7 @@ impl KeyAction {
             KeyAction::SessionTabPrev => "Previous session tab",
             KeyAction::SessionTabNext => "Next session tab",
             KeyAction::SessionDetach => "Detach to dashboard",
+            KeyAction::SessionOpenSftp => "Open SFTP for this host",
             KeyAction::SessionFocus => "Focus session tab",
             KeyAction::SessionScrollUp => "Scroll session up",
             KeyAction::SessionScrollDown => "Scroll session down",
@@ -667,6 +685,8 @@ pub struct KeybindsConfig {
     pub delete_group: Vec<String>,
     #[serde(default = "default_kb_tab_hosts")]
     pub tab_hosts: Vec<String>,
+    #[serde(default = "default_kb_tab_sftp")]
+    pub tab_sftp: Vec<String>,
     #[serde(default = "default_kb_tab_tunnels")]
     pub tab_tunnels: Vec<String>,
     #[serde(default = "default_kb_tab_keys")]
@@ -699,6 +719,8 @@ pub struct KeybindsConfig {
     pub session_tab_next: Vec<String>,
     #[serde(default = "default_kb_session_detach")]
     pub session_detach: Vec<String>,
+    #[serde(default = "default_kb_session_open_sftp")]
+    pub session_open_sftp: Vec<String>,
     #[serde(default = "default_kb_session_focus")]
     pub session_focus: Vec<String>,
     #[serde(default = "default_kb_session_scroll_up")]
@@ -758,6 +780,7 @@ impl Default for KeybindsConfig {
             rename_group: default_kb_rename_group(),
             delete_group: default_kb_delete_group(),
             tab_hosts: default_kb_tab_hosts(),
+            tab_sftp: default_kb_tab_sftp(),
             tab_tunnels: default_kb_tab_tunnels(),
             tab_keys: default_kb_tab_keys(),
             tab_audit: default_kb_tab_audit(),
@@ -774,6 +797,7 @@ impl Default for KeybindsConfig {
             session_tab_prev: default_kb_session_tab_prev(),
             session_tab_next: default_kb_session_tab_next(),
             session_detach: default_kb_session_detach(),
+            session_open_sftp: default_kb_session_open_sftp(),
             session_focus: default_kb_session_focus(),
             session_scroll_up: default_kb_session_scroll_up(),
             session_scroll_down: default_kb_session_scroll_down(),
@@ -827,6 +851,7 @@ impl KeybindsConfig {
             KeyAction::RenameGroup => default_kb_rename_group(),
             KeyAction::DeleteGroup => default_kb_delete_group(),
             KeyAction::TabHosts => default_kb_tab_hosts(),
+            KeyAction::TabSftp => default_kb_tab_sftp(),
             KeyAction::TabTunnels => default_kb_tab_tunnels(),
             KeyAction::TabKeys => default_kb_tab_keys(),
             KeyAction::TabAudit => default_kb_tab_audit(),
@@ -843,6 +868,7 @@ impl KeybindsConfig {
             KeyAction::SessionTabPrev => default_kb_session_tab_prev(),
             KeyAction::SessionTabNext => default_kb_session_tab_next(),
             KeyAction::SessionDetach => default_kb_session_detach(),
+            KeyAction::SessionOpenSftp => default_kb_session_open_sftp(),
             KeyAction::SessionFocus => default_kb_session_focus(),
             KeyAction::SessionScrollUp => default_kb_session_scroll_up(),
             KeyAction::SessionScrollDown => default_kb_session_scroll_down(),
@@ -899,6 +925,7 @@ impl KeybindsConfig {
             KeyAction::RenameGroup => &self.rename_group,
             KeyAction::DeleteGroup => &self.delete_group,
             KeyAction::TabHosts => &self.tab_hosts,
+            KeyAction::TabSftp => &self.tab_sftp,
             KeyAction::TabTunnels => &self.tab_tunnels,
             KeyAction::TabKeys => &self.tab_keys,
             KeyAction::TabAudit => &self.tab_audit,
@@ -915,6 +942,7 @@ impl KeybindsConfig {
             KeyAction::SessionTabPrev => &self.session_tab_prev,
             KeyAction::SessionTabNext => &self.session_tab_next,
             KeyAction::SessionDetach => &self.session_detach,
+            KeyAction::SessionOpenSftp => &self.session_open_sftp,
             KeyAction::SessionFocus => &self.session_focus,
             KeyAction::SessionScrollUp => &self.session_scroll_up,
             KeyAction::SessionScrollDown => &self.session_scroll_down,
@@ -966,6 +994,7 @@ impl KeybindsConfig {
             KeyAction::RenameGroup => self.rename_group = binds,
             KeyAction::DeleteGroup => self.delete_group = binds,
             KeyAction::TabHosts => self.tab_hosts = binds,
+            KeyAction::TabSftp => self.tab_sftp = binds,
             KeyAction::TabTunnels => self.tab_tunnels = binds,
             KeyAction::TabKeys => self.tab_keys = binds,
             KeyAction::TabAudit => self.tab_audit = binds,
@@ -982,6 +1011,7 @@ impl KeybindsConfig {
             KeyAction::SessionTabPrev => self.session_tab_prev = binds,
             KeyAction::SessionTabNext => self.session_tab_next = binds,
             KeyAction::SessionDetach => self.session_detach = binds,
+            KeyAction::SessionOpenSftp => self.session_open_sftp = binds,
             KeyAction::SessionFocus => self.session_focus = binds,
             KeyAction::SessionScrollUp => self.session_scroll_up = binds,
             KeyAction::SessionScrollDown => self.session_scroll_down = binds,
@@ -993,6 +1023,41 @@ impl KeybindsConfig {
         }
     }
 
+    /// One-time migration for configs written **before** the SFTP tab was
+    /// inserted as tab #2. Those configs pin the old tab digits (tunnels=2,
+    /// keys=3, audit=4) and have no `tab_sftp` key, so after the reindex the
+    /// digits misroute (2 shadows tunnels, 3→keys, 4→audit) and tunnels becomes
+    /// unreachable. We detect the pre-SFTP layout by the absence of a
+    /// `tab_sftp` entry in the raw config text and shift each tab's digit up by
+    /// one, preserving letter binds (`h`, `i`). Idempotent: once the config is
+    /// re-saved with `tab_sftp` present, this is a no-op. Returns whether it
+    /// changed anything.
+    pub fn migrate_pre_sftp_tabs(&mut self, raw_config: &str) -> bool {
+        // A config that already knows the SFTP tab, or never overrode any tab
+        // binding, needs no migration (bare defaults are already correct).
+        if raw_config.contains("tab_sftp")
+            || !(raw_config.contains("tab_tunnels")
+                || raw_config.contains("tab_keys")
+                || raw_config.contains("tab_audit"))
+        {
+            return false;
+        }
+        let shift = |binds: &mut Vec<String>, from: &str, to: &str| {
+            for b in binds.iter_mut() {
+                if b == from {
+                    *b = to.to_string();
+                }
+            }
+        };
+        shift(&mut self.tab_tunnels, "2", "3");
+        shift(&mut self.tab_keys, "3", "4");
+        shift(&mut self.tab_audit, "4", "5");
+        if self.tab_sftp.is_empty() {
+            self.tab_sftp = vec!["2".to_string()];
+        }
+        true
+    }
+
     /// Append `spec` to an action's bindings unless already present.
     pub fn add(&mut self, action: KeyAction, spec: String) {
         let mut binds = self.binds(action).to_vec();
@@ -1000,5 +1065,46 @@ impl KeybindsConfig {
             binds.push(spec);
             self.set(action, binds);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrate_pre_sftp_shifts_tab_digits() {
+        // A pre-SFTP config: old digits, no tab_sftp key.
+        let raw =
+            "[keybinds]\ntab_tunnels = [\"2\"]\ntab_keys = [\"i\", \"3\"]\ntab_audit = [\"4\"]\n";
+        let mut kb = KeybindsConfig {
+            tab_tunnels: vec!["2".into()],
+            tab_keys: vec!["i".into(), "3".into()],
+            tab_audit: vec!["4".into()],
+            ..KeybindsConfig::default()
+        };
+        assert!(kb.migrate_pre_sftp_tabs(raw));
+        assert_eq!(kb.tab_tunnels, vec!["3"]);
+        assert_eq!(kb.tab_keys, vec!["i", "4"]);
+        assert_eq!(kb.tab_audit, vec!["5"]);
+        assert_eq!(kb.tab_sftp, vec!["2"]);
+    }
+
+    #[test]
+    fn migrate_pre_sftp_is_noop_for_new_configs() {
+        // Config already mentions tab_sftp → already migrated / new.
+        let raw = "[keybinds]\ntab_sftp = [\"2\"]\ntab_tunnels = [\"3\"]\n";
+        let mut kb = KeybindsConfig::default();
+        let before = kb.tab_tunnels.clone();
+        assert!(!kb.migrate_pre_sftp_tabs(raw));
+        assert_eq!(kb.tab_tunnels, before);
+    }
+
+    #[test]
+    fn migrate_pre_sftp_is_noop_without_tab_overrides() {
+        // A config that never customised tab binds needs nothing shifted.
+        let raw = "[keybinds]\nquit = [\"q\"]\n";
+        let mut kb = KeybindsConfig::default();
+        assert!(!kb.migrate_pre_sftp_tabs(raw));
     }
 }
