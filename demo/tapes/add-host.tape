@@ -4,7 +4,8 @@ Set FontSize 16
 Set Width 1200
 Set Height 700
 Set Theme "Catppuccin Mocha"
-Set TypingSpeed 75ms
+Set TypingSpeed 90ms
+Set PlaybackSpeed 0.75
 
 Hide
 Type "export SSHUB_CONFIG_DIR=$PWD/demo/home/.config/sshub SSHUB_DATA_DIR=$PWD/demo/home/.local/share/sshub SSHUB_SSH_CONFIG=$PWD/demo/home/ssh_config PATH=$PWD/target/release:$PATH"
@@ -62,14 +63,21 @@ Sleep 800ms
 Down
 Sleep 800ms
 
-# Group — pick Staging from seeded groups
+# Group — open the multi-select checkbox picker, tick a couple of groups
+# (Space toggles, Enter closes). A host can now belong to several groups.
 Down
 Enter
+Sleep 1s
+Down
+Sleep 600ms
+Space
 Sleep 800ms
 Down
-Sleep 800ms
+Sleep 600ms
 Down
-Sleep 800ms
+Sleep 600ms
+Space
+Sleep 900ms
 Enter
 Sleep 800ms
 

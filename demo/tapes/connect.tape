@@ -4,7 +4,8 @@ Set FontSize 16
 Set Width 1200
 Set Height 700
 Set Theme "Catppuccin Mocha"
-Set TypingSpeed 75ms
+Set TypingSpeed 90ms
+Set PlaybackSpeed 0.75
 
 Hide
 Type "export SSHUB_CONFIG_DIR=$PWD/demo/home/.config/sshub SSHUB_DATA_DIR=$PWD/demo/home/.local/share/sshub SSHUB_SSH_CONFIG=$PWD/demo/home/ssh_config"
@@ -35,7 +36,7 @@ Enter
 Sleep 3s
 
 # Detach to dashboard; SSH keeps running (session strip in header)
-Ctrl+Shift+D
+Ctrl+D
 Sleep 2.5s
 
 # Re-focus the detached session from the dashboard
@@ -51,9 +52,9 @@ Enter
 Sleep 3.5s
 
 # Switch between session tabs
-Ctrl+A
+Ctrl+Shift+A
 Sleep 2s
-Ctrl+D
+Ctrl+Shift+D
 Sleep 2s
 
 Ctrl+W
