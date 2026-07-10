@@ -430,15 +430,21 @@ const SPARK_CHARS: [char; 8] = [
 ];
 
 fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
-    render_panel_box(buf, area, "latency p50", None);
+    // Per-host latency: the ping timeline of the currently selected host.
+    let selected = app.selected_entry().map(|e| e.name().to_string());
+    let title = match selected.as_deref() {
+        Some(n) => format!("latency \u{b7} {n}"),
+        None => "latency p50".to_string(),
+    };
+    render_panel_box(buf, area, &title, None);
 
     let inner_x = area.x + 2;
     let inner_w = area.width.saturating_sub(4) as usize;
 
-    // Collect all ping samples into a combined timeline
-    let all_samples: Vec<u32> = app
-        .ping_data
-        .values()
+    let samples: Vec<u32> = selected
+        .as_deref()
+        .and_then(|n| app.ping_data.get(n))
+        .into_iter()
         .flat_map(|v| {
             v.iter()
                 .copied()
@@ -446,7 +452,7 @@ fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
         })
         .collect();
 
-    if all_samples.is_empty() {
+    if samples.is_empty() {
         // Empty sparkline — flat baseline
         let spark_y = area.y + 1;
         if spark_y < area.y + area.height - 1 {
@@ -467,35 +473,21 @@ fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
         return;
     }
 
-    // Compute stats
-    let mut sorted = all_samples.clone();
+    // Compute stats over this host's samples.
+    let mut sorted = samples.clone();
     sorted.sort_unstable();
     let p50 = sorted[sorted.len() / 2];
     let peak = *sorted.last().unwrap_or(&0);
-    let now_val = *all_samples.last().unwrap_or(&0);
+    let now_val = *samples.last().unwrap_or(&0);
 
-    // Build sparkline from last 30 combined samples (take tail from each host interleaved)
-    let spark_data: Vec<u32> = {
-        let mut combined: Vec<u32> = Vec::new();
-        for samples in app.ping_data.values() {
-            let start = samples.len().saturating_sub(30);
-            for &v in &samples[start..] {
-                if !crate::ping::is_unreachable(v) {
-                    combined.push(v);
-                }
-            }
-        }
-        let start = combined.len().saturating_sub(30);
-        combined[start..].to_vec()
-    };
-
+    // Sparkline from the last ~30 samples of this host.
     let spark_y = area.y + 1;
-    if spark_y < area.y + area.height - 1 && !spark_data.is_empty() {
-        let max_val = *spark_data.iter().max().unwrap_or(&1);
-        let max_val = max_val.max(1);
-        let spark_len = spark_data.len().min(inner_w);
-        let start = spark_data.len().saturating_sub(spark_len);
-        let sparkline: String = spark_data[start..]
+    if spark_y < area.y + area.height - 1 {
+        let spark_len = samples.len().min(inner_w).min(30);
+        let start = samples.len().saturating_sub(spark_len);
+        let window = &samples[start..];
+        let max_val = (*window.iter().max().unwrap_or(&1)).max(1);
+        let sparkline: String = window
             .iter()
             .map(|&v| {
                 let idx = ((v as u64 * 7) / max_val as u64).min(7) as usize;
@@ -505,7 +497,7 @@ fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
         buf.set_string(inner_x, spark_y, &sparkline, theme::green());
     }
 
-    // Stats row
+    // Stats row (avg = p50 median).
     let info_y = area.y + 2;
     if info_y < area.y + area.height - 1 {
         let stats = format!("now {}ms  avg {}ms  peak {}ms", now_val, p50, peak);
