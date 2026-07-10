@@ -143,7 +143,17 @@ impl Ssh2Transport {
                         } else {
                             format!("[{host}]:{port}")
                         };
-                        let line = format!("{hostspec} {kt_name} {}\n", b64encode(key));
+                        // Prefix a newline if the existing file doesn't already
+                        // end in one, so we never concatenate onto a prior entry.
+                        let needs_nl = std::fs::read(&path)
+                            .ok()
+                            .map(|b| !b.is_empty() && b.last() != Some(&b'\n'))
+                            .unwrap_or(false);
+                        let line = format!(
+                            "{}{hostspec} {kt_name} {}\n",
+                            if needs_nl { "\n" } else { "" },
+                            b64encode(key)
+                        );
                         let mut f = std::fs::OpenOptions::new()
                             .create(true)
                             .append(true)
@@ -322,6 +332,11 @@ impl SftpTransport for Ssh2Transport {
         })();
         match stream {
             Ok(()) => std::fs::rename(&tmp, local)
+                .map_err(|e| {
+                    // Don't leave the streamed temp behind if the rename fails.
+                    let _ = std::fs::remove_file(&tmp);
+                    e
+                })
                 .with_context(|| format!("failed to finalize {}", local.display())),
             Err(e) => {
                 let _ = std::fs::remove_file(&tmp);
@@ -366,9 +381,20 @@ impl SftpTransport for Ssh2Transport {
             Ok(())
         })();
         match stream {
-            Ok(()) => sftp
-                .rename(&tmp, remote, Some(ssh2::RenameFlags::OVERWRITE))
-                .with_context(|| format!("failed to finalize remote {}", remote.display())),
+            Ok(()) => {
+                // Prefer an atomic overwrite; fall back to unlink+rename for SFTP
+                // servers without the posix-rename/overwrite extension.
+                let renamed = sftp
+                    .rename(&tmp, remote, Some(ssh2::RenameFlags::OVERWRITE))
+                    .or_else(|_| {
+                        let _ = sftp.unlink(remote);
+                        sftp.rename(&tmp, remote, None)
+                    });
+                if renamed.is_err() {
+                    let _ = sftp.unlink(&tmp);
+                }
+                renamed.with_context(|| format!("failed to finalize remote {}", remote.display()))
+            }
             Err(e) => {
                 let _ = sftp.unlink(&tmp);
                 Err(e)

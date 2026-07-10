@@ -110,9 +110,10 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
     // runs exactly once — otherwise a user who deliberately keeps a pre-SFTP
     // tab digit would have it silently rewritten on every launch.
     if config.keybinds.migrate_pre_sftp_tabs(&content) {
-        if let Ok(toml) = toml::to_string_pretty(&config) {
-            let _ = fs::write(&path, toml);
-        }
+        // Persist via save_config so the migration runs once — it merges through
+        // toml_edit (preserving comments + keys we don't model) and writes
+        // atomically, unlike a raw serialize+overwrite.
+        let _ = save_config(&config);
     }
     Ok(config)
 }

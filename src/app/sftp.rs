@@ -332,12 +332,10 @@ impl App {
     fn sftp_navigate(&mut self, side: Side, path: PathBuf) {
         match side {
             Side::Remote => {
-                if let Some(s) = self.sftp.as_mut() {
-                    s.remote.cwd = path.clone();
-                    // Drop stale entries until the async DirListing arrives, so a
-                    // second navigation can't join the new cwd with an old row.
-                    s.remote.set_entries(Vec::new());
-                }
+                // Don't touch cwd/entries optimistically: the DirListing event
+                // applies both atomically. So a second navigation before it
+                // arrives still builds paths from a consistent cwd+entries, and a
+                // failed listing leaves the current directory visible (not blank).
                 if let Some(tx) = self.sftp_tx.as_ref() {
                     let _ = tx.send(SftpCommand::ListDir(Side::Remote, path));
                 }
