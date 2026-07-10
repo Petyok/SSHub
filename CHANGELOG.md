@@ -2,6 +2,54 @@
 
 All notable changes to SSHub are documented in this file.
 
+## [0.7.0] - 2026-07-10
+
+### Added
+
+- **SFTP file transfer** — a new tab with a dual-pane browser (local left / remote right): browse both sides, filter with `/`, stage uploads and downloads into a queue, and run them sequentially with a progress bar. Native libssh2 transport on a background thread, trust-on-first-use host-key verification, atomic temp-file + rename writes. Open it for the current SSH host with `Ctrl+Shift+F`; jump back to that host's session with `s`.
+- **OS auto-detection** — a background probe on first connect detects the remote distro; the host card renders its logo as crisp Braille art in brand colors (font-logos + chafa), like Termius.
+- **Multiple groups per host** — hosts can belong to several groups at once, picked via a multi-select checkbox in the host form. A reserved **Favorites** group with a ★ marker in the list, toggled with `f`. (Schema v11: `host_group_memberships` join table.)
+- **Settings overlay** (`Ctrl+H`) — toggle an opaque background (for transparent terminals), OS logos, quit confirmation, and the startup animation.
+- **Richer host card** — fact sheet with user@host:port, group, key/identity, tags, and last-connected, next to the OS logo.
+- **Accept a changed host key** — when a server's fingerprint changes, a prompt offers to purge the stale `known_hosts` entry and reconnect.
+- **Version shown in the tab bar.**
+
+### Changed
+
+- **Tab order** — SFTP is inserted as the 2nd tab: `1` hosts, `2` sftp, `3` tunnels, `4` identities, `5` audit. Existing custom tab keybinds are migrated on config load.
+- **Latency panel** now reflects the selected host, not an all-hosts aggregate.
+- **ssh log lines wrap** instead of truncating with an ellipsis.
+
+### Fixed
+
+- SFTP picker: connect to the host you filtered to (a stale index could connect to the wrong host once the search cleared); queue re-entry guard; navigation frozen during a running queue; stale remote listings dropped; search input captured before tab-switch so typed letters don't fire tab binds.
+- Keybinds migration persists so it runs exactly once.
+
+## [0.5.7] - 2026-07-09
+
+### Fixed
+
+- Text selection keeps its full range when an autoscrolling drag carries it off-screen
+
+## [0.5.6] - 2026-07-08
+
+### Added
+
+- **Autoscroll while selecting** — extending a selection past the viewport edge scrolls the session
+
+### Fixed
+
+- Long ssh log lines are clamped with an ellipsis so they stay inside the box
+- Clipboard pastes are forwarded into sessions as bracketed paste
+- The connect command stays visible in the ssh log after connecting
+- `j`/`k` can be typed in search and the palette; dropped bare-key type-ahead
+
+## [0.5.0] - 2026-07-08
+
+### Added
+
+- **Mouse text selection** — select text in an embedded session with the mouse and copy on release
+
 ## [0.4.0] - 2026-07-08
 
 ### Changed
