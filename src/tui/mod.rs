@@ -307,6 +307,7 @@ fn footer_keybinds(app: &App) -> Vec<(&'static str, &'static str)> {
     };
     if !app.sessions.is_empty() {
         binds.push(("^D", "detach"));
+        binds.push(("^\u{21e7}F", "sftp"));
         binds.push(("^[/]", "tabs"));
         binds.push(("^T", "new tab"));
     }

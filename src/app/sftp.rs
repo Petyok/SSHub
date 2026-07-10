@@ -149,14 +149,35 @@ impl App {
         Ok(())
     }
 
-    /// Spawn the worker for the selected host and enter the browser. Refuses
-    /// ProxyJump hosts (unsupported by the libssh2 transport in v1) with a
-    /// notice instead of a doomed connection attempt.
     fn sftp_connect_selected(&mut self) -> Result<()> {
         let Some(entry) = self.selected_entry().cloned() else {
             return Ok(());
         };
+        self.sftp_connect_to(entry)
+    }
 
+    /// Detach the active SSH session to the background and open the SFTP tab
+    /// connected to that same host (found by name in the host list). If an SFTP
+    /// session is already live, just switch to the tab and leave it as-is.
+    pub(crate) fn open_sftp_for_active_session(&mut self) {
+        let Some(name) = self.active_session().map(|s| s.display_name.clone()) else {
+            return;
+        };
+        let Some(entry) = self.hosts.iter().find(|h| h.name() == name).cloned() else {
+            self.host_notice = Some(format!("no saved host '{name}' to open SFTP for"));
+            return;
+        };
+        self.detach_to_dashboard();
+        self.active_tab = 1;
+        if self.sftp.is_none() {
+            let _ = self.sftp_connect_to(entry);
+        }
+    }
+
+    /// Spawn the worker for a specific host entry and enter the browser. Refuses
+    /// ProxyJump hosts (unsupported by the libssh2 transport in v1) with a
+    /// notice instead of a doomed connection attempt.
+    fn sftp_connect_to(&mut self, entry: HostEntry) -> Result<()> {
         let ssh_host = match &entry {
             HostEntry::Managed(m) => managed_to_ssh_host(m),
             HostEntry::Legacy { host, .. } => host.clone(),
