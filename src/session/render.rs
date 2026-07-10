@@ -281,7 +281,7 @@ fn render_failure(frame: &mut Frame, area: Rect, session: &Session) {
         .clone()
         .unwrap_or_else(|| session.display_name.clone());
 
-    let center = vec![
+    let mut center = vec![
         Line::from(Span::styled(
             "\u{2717}",
             red.add_modifier(ratatui::style::Modifier::BOLD),
@@ -297,8 +297,25 @@ fn render_failure(frame: &mut Frame, area: Rect, session: &Session) {
             Style::default().fg(theme::TEXT),
         )),
         Line::raw(""),
-        Line::from(Span::styled("press any key to close", dim)),
     ];
+
+    // A changed host key can be accepted (removes the stale known_hosts entry
+    // and reconnects). Highlight the choice; a changed key may be a MITM, so
+    // make the accept explicit rather than automatic.
+    if session.host_key_changed() {
+        center.push(Line::from(Span::styled(
+            "the server's key changed since you last connected",
+            Style::default().fg(theme::AMBER),
+        )));
+        center.push(Line::raw(""));
+        center.push(Line::from(vec![
+            Span::styled("[a]", Style::default().fg(theme::AMBER)),
+            Span::styled(" accept new key & reconnect", mute),
+            Span::styled("   ·   any other key to close", dim),
+        ]));
+    } else {
+        center.push(Line::from(Span::styled("press any key to close", dim)));
+    }
     render_centered_and_tail(frame, area, session, center);
 }
 
