@@ -4,15 +4,15 @@ impl App {
     /// Number of selectable rows in the dropdown (incl. the "+ New group" row).
     pub fn field_picker_len(&self, kind: PickerKind) -> usize {
         match kind {
-            // (none) + groups + "+ New group…"
-            PickerKind::Group => self.groups.len() + 2,
+            // groups (checkboxes) + "+ New group…"
+            PickerKind::Group => self.groups.len() + 1,
             PickerKind::Identity => self.identities.len(),
         }
     }
 
     /// Index of the "+ New group…" row (Group picker only).
     pub(crate) fn field_picker_create_index(&self) -> usize {
-        self.groups.len() + 1
+        self.groups.len()
     }
 
     pub(crate) fn open_field_picker(&mut self, kind: PickerKind) {
@@ -64,10 +64,42 @@ impl App {
                     p.selected = (p.selected + len.saturating_sub(1)) % len.max(1);
                 }
             }
+            KeyCode::Char(' ') if kind == PickerKind::Group && key.modifiers.is_empty() => {
+                self.field_picker_toggle_group();
+            }
             KeyCode::Enter => self.field_picker_confirm()?,
             _ => {}
         }
         Ok(())
+    }
+
+    /// Toggle the highlighted group's membership in the form's `group_ids`
+    /// (Group picker, Space). The "+ New group…" row isn't a group and is a
+    /// no-op here. Toggling a group ON applies its default identity when the
+    /// host has none picked yet.
+    pub(crate) fn field_picker_toggle_group(&mut self) {
+        let Some(picker) = self.field_picker.as_ref() else {
+            return;
+        };
+        let idx = picker.selected;
+        let Some(group) = self.groups.get(idx) else {
+            return; // create row or out of range
+        };
+        let gid = group.id;
+        let default_identity_index = group
+            .default_identity_id
+            .and_then(|iid| self.identities.iter().position(|i| i.id == iid));
+        if let Some(form) = self.host_form.as_mut() {
+            if form.group_ids.contains(&gid) {
+                form.group_ids.remove(&gid);
+            } else {
+                form.group_ids.insert(gid);
+                if let Some(i) = default_identity_index {
+                    form.identity_index = i;
+                }
+            }
+            form.dirty = true;
+        }
     }
 
     pub(crate) fn field_picker_confirm(&mut self) -> Result<()> {
@@ -84,19 +116,12 @@ impl App {
                     }
                     return Ok(());
                 }
+                // Multi-select: Space toggles rows; Enter on a group row just
+                // closes the dropdown back to the form. Remember the highlight
+                // so reopening lands on the same row.
                 let group_index = picker.selected;
-                // Picking a group applies its default identity, if it has one.
-                let default_identity_index = group_index
-                    .checked_sub(1)
-                    .and_then(|gi| self.groups.get(gi))
-                    .and_then(|g| g.default_identity_id)
-                    .and_then(|iid| self.identities.iter().position(|i| i.id == iid));
                 if let Some(form) = self.host_form.as_mut() {
                     form.group_index = group_index;
-                    if let Some(idx) = default_identity_index {
-                        form.identity_index = idx;
-                    }
-                    form.dirty = true;
                 }
             }
             PickerKind::Identity => {
@@ -176,13 +201,9 @@ impl App {
         };
         self.load_groups()?;
         if let Some(form) = self.host_form.as_mut() {
-            // group_index: 0 = (none), 1.. = groups in list order.
-            form.group_index = self
-                .groups
-                .iter()
-                .position(|g| g.id == id)
-                .map(|i| i + 1)
-                .unwrap_or(0);
+            // A freshly created group is added to the selection and highlighted.
+            form.group_ids.insert(id);
+            form.group_index = self.groups.iter().position(|g| g.id == id).unwrap_or(0);
             form.dirty = true;
         }
         self.field_picker = None;
@@ -203,12 +224,9 @@ impl App {
             return;
         }
         match form.field {
-            HostFormField::Group => {
-                let max = self.groups.len();
-                let next = form.group_index as i32 + delta;
-                form.group_index = next.clamp(0, max as i32) as usize;
-                form.dirty = true;
-            }
+            // Group is multi-select — Left/Right no longer cycles a single
+            // value; use Enter to open the checkbox dropdown (Space to toggle).
+            HostFormField::Group => {}
             HostFormField::Identity => {
                 if !self.identities.is_empty() {
                     let max = self.identities.len() - 1;

@@ -73,7 +73,7 @@ pub fn render_host_form(
                     display_text(&form.port)
                 },
             ),
-            HostFormField::Group => ("Group", group_label(form.group_index, groups)),
+            HostFormField::Group => ("Group", group_summary(&form.group_ids, groups)),
             HostFormField::Identity => {
                 ("Identity", identity_label(form.identity_index, identities))
             }
@@ -182,14 +182,17 @@ fn display_text(value: &str) -> String {
     }
 }
 
-fn group_label(index: usize, groups: &[HostGroup]) -> String {
-    if index == 0 {
+/// Comma-separated names of the selected groups, in list order.
+fn group_summary(selected: &std::collections::BTreeSet<i64>, groups: &[HostGroup]) -> String {
+    let names: Vec<&str> = groups
+        .iter()
+        .filter(|g| selected.contains(&g.id))
+        .map(|g| g.name.as_str())
+        .collect();
+    if names.is_empty() {
         "(none)".to_string()
     } else {
-        groups
-            .get(index - 1)
-            .map(|g| g.name.clone())
-            .unwrap_or_else(|| "(none)".to_string())
+        names.join(", ")
     }
 }
 

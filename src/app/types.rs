@@ -482,7 +482,13 @@ pub struct HostFormEdit {
     pub label: String,
     pub name: String,
     pub port: String,
+    /// Highlighted row in the Group multi-select dropdown (0-based over
+    /// `app.groups` then the "+ New group…" row). Selection state itself lives
+    /// in `group_ids`.
     pub group_index: usize,
+    /// Ids of every non-reserved group the host is assigned to (multi-select).
+    /// Favorites is never listed here — it's toggled with `f`.
+    pub group_ids: std::collections::BTreeSet<i64>,
     pub identity_index: usize,
     pub tags: String,
     pub proxy_jump: String,

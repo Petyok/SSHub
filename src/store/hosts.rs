@@ -121,14 +121,19 @@ impl LauncherStore {
         })
     }
 
-    /// Replace all group memberships for `host_id` with `group_ids`, and set the
-    /// host's primary `group_id` to the first non-Favorites membership (or NULL).
+    /// Replace all *non-reserved* group memberships for `host_id` with
+    /// `group_ids`, and set the host's primary `group_id` to the first
+    /// non-Favorites membership (or NULL). Reserved memberships (Favorites) are
+    /// left intact so saving the host form never drops its favourite status.
     /// Then materialize the inherited identity (see [`materialize_identity`]).
     pub fn set_host_groups(&self, host_id: i64, group_ids: &[i64]) -> Result<()> {
         self.with_conn(|conn| {
             let tx = conn.unchecked_transaction()?;
+            // Only clear non-reserved memberships; keep Favorites untouched.
             conn.execute(
-                "DELETE FROM host_group_memberships WHERE host_id = ?1",
+                "DELETE FROM host_group_memberships
+                 WHERE host_id = ?1
+                   AND group_id IN (SELECT id FROM host_groups WHERE reserved = 0)",
                 params![host_id],
             )?;
             for gid in group_ids {
@@ -1553,6 +1558,56 @@ mod tests {
         let ids: Vec<i64> = loaded.groups.iter().map(|g| g.id).collect();
         assert_eq!(ids, vec![g2.id]);
         assert_eq!(loaded.group_id, Some(g2.id));
+    }
+
+    #[test]
+    fn set_host_groups_preserves_favorites_membership() {
+        // The host-form save path calls set_host_groups with only non-reserved
+        // ids; it must never drop an existing Favorites membership.
+        let store = LauncherStore::open_in_memory().unwrap();
+        let fav_id = store.favorites_group_id().unwrap();
+        let g1 = store
+            .create_group(&NewHostGroup {
+                name: "a".into(),
+                sort_order: 0,
+                ..Default::default()
+            })
+            .unwrap();
+        let g2 = store
+            .create_group(&NewHostGroup {
+                name: "b".into(),
+                sort_order: 1,
+                ..Default::default()
+            })
+            .unwrap();
+        let host = store
+            .create_host(&NewHost {
+                name: "web".into(),
+                address: "10.0.0.1".into(),
+                port: 22,
+                group_id: Some(g1.id),
+                ..Default::default()
+            })
+            .unwrap();
+        // Mark it a favourite (adds the reserved membership).
+        store.add_host_to_group(host.id, fav_id).unwrap();
+        assert!(store.get_host(host.id).unwrap().unwrap().favorite);
+
+        // Saving the form assigns two real groups; Favorites must survive.
+        store.set_host_groups(host.id, &[g1.id, g2.id]).unwrap();
+        let loaded = store.get_host(host.id).unwrap().unwrap();
+        assert!(loaded.favorite, "favorite membership must be preserved");
+        let ids: Vec<i64> = loaded.groups.iter().map(|g| g.id).collect();
+        assert!(ids.contains(&g1.id) && ids.contains(&g2.id));
+        assert!(ids.contains(&fav_id));
+        // Primary group is still the first non-Favorites membership.
+        assert_eq!(loaded.group_id, Some(g1.id));
+
+        // Clearing all real groups still keeps Favorites.
+        store.set_host_groups(host.id, &[]).unwrap();
+        let cleared = store.get_host(host.id).unwrap().unwrap();
+        assert!(cleared.favorite, "favorite survives an empty group set");
+        assert_eq!(cleared.group_id, None);
     }
 
     #[test]

@@ -13,10 +13,20 @@ pub fn render_field_picker(frame: &mut Frame, app: &App) {
 
     let (title, mut rows): (&str, Vec<String>) = match picker.kind {
         PickerKind::Group => {
-            let mut rows = vec!["(none)".to_string()];
-            rows.extend(app.groups.iter().map(|g| g.name.clone()));
+            // Checkbox list: each group shows [x]/[ ] for its membership in the
+            // form's selected set; the final row creates a new group inline.
+            let selected = app.host_form.as_ref().map(|f| &f.group_ids);
+            let mut rows: Vec<String> = app
+                .groups
+                .iter()
+                .map(|g| {
+                    let checked = selected.is_some_and(|s| s.contains(&g.id));
+                    let mark = if checked { "[x] " } else { "[ ] " };
+                    format!("{mark}{}", g.name)
+                })
+                .collect();
             rows.push("+ New group…".to_string());
-            ("Select group", rows)
+            ("Select groups (Space toggles)", rows)
         }
         PickerKind::Identity => (
             "Select identity",
