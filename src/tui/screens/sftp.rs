@@ -80,7 +80,14 @@ fn render_browser(frame: &mut Frame, area: Rect, state: &SftpState) {
     );
 
     let queue_y = area.y + panes_h;
-    render_queue(buf, area.x, queue_y, area.width, &state.queue);
+    render_queue(
+        buf,
+        area.x,
+        queue_y,
+        area.width,
+        &state.queue,
+        state.notice.as_deref(),
+    );
 
     if progress_h > 0 {
         let py = area.y + area.height.saturating_sub(1);
@@ -108,11 +115,11 @@ fn render_pane(buf: &mut Buffer, rect: Rect, pane: &Pane, title: &str, focused: 
         return;
     }
 
-    let scroll = if pane.selected >= rows {
-        pane.selected - rows + 1
-    } else {
-        0
-    };
+    // Keep the selection roughly centred (a "camera" that follows), clamped to
+    // the list bounds — mirrors the hosts panel's `host_scroll_offset`. Avoids
+    // the selection sticking to the bottom edge when scrolling back up.
+    let max_scroll = pane.entries.len().saturating_sub(rows);
+    let scroll = pane.selected.saturating_sub(rows / 2).min(max_scroll);
 
     for (i, entry) in pane.entries.iter().skip(scroll).take(rows).enumerate() {
         let idx = scroll + i;
@@ -168,20 +175,27 @@ fn render_queue(
     y: u16,
     w: u16,
     queue: &[crate::sftp::model::QueuedTransfer],
+    notice: Option<&str>,
 ) {
     if queue.is_empty() {
-        buf.set_string(
-            x + 2,
-            y,
-            "queue: empty  (← download · → upload · u remove · c run)",
-            theme::dim(),
-        );
+        let (text, style) = match notice {
+            Some(n) => (format!("⚠ {n}"), theme::amber()),
+            None => (
+                "queue: empty  (← download · → upload · u remove · c run)".to_string(),
+                theme::dim(),
+            ),
+        };
+        buf.set_string(x + 2, y, ellipsize(&text, w.saturating_sub(4) as usize), style);
         return;
     }
+    let header = match notice {
+        Some(n) => format!("queue ({})  c=run  u=remove   ⚠ {n}", queue.len()),
+        None => format!("queue ({})  c=run  u=remove", queue.len()),
+    };
     buf.set_string(
         x + 2,
         y,
-        format!("queue ({})  c=run  u=remove", queue.len()),
+        ellipsize(&header, w.saturating_sub(4) as usize),
         theme::heading(),
     );
     for (i, t) in queue.iter().take(4).enumerate() {

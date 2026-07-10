@@ -208,6 +208,11 @@ impl SftpState {
         }
         let src = self.remote.cwd.join(&entry.name);
         let dst = self.local.cwd.join(&entry.name);
+        if self.queue.iter().any(|q| q.src == src && q.dst == dst) {
+            let msg = format!("{} is already queued", entry.name);
+            self.notice = Some(msg.clone());
+            return Err(msg);
+        }
         self.queue.push(QueuedTransfer {
             direction: Direction::Download,
             src,
@@ -232,6 +237,11 @@ impl SftpState {
         }
         let src = self.local.cwd.join(&entry.name);
         let dst = self.remote.cwd.join(&entry.name);
+        if self.queue.iter().any(|q| q.src == src && q.dst == dst) {
+            let msg = format!("{} is already queued", entry.name);
+            self.notice = Some(msg.clone());
+            return Err(msg);
+        }
         self.queue.push(QueuedTransfer {
             direction: Direction::Upload,
             src,
@@ -400,14 +410,26 @@ mod tests {
     #[test]
     fn unstage_removes() {
         let mut s = state_with_entries();
-        s.remote.selected = 1;
+        s.remote.selected = 1; // a.txt → download
         s.stage_download().unwrap();
-        s.stage_download().unwrap();
+        s.local.selected = 1; // b.bin → upload
+        s.stage_upload().unwrap();
         assert_eq!(s.queue.len(), 2);
         s.unstage(0);
         assert_eq!(s.queue.len(), 1);
         s.unstage(99); // out of range → no-op
         assert_eq!(s.queue.len(), 1);
+    }
+
+    #[test]
+    fn staging_same_file_twice_is_deduped() {
+        let mut s = state_with_entries();
+        s.remote.selected = 1; // a.txt
+        s.stage_download().unwrap();
+        // Second identical stage is rejected (no duplicate queue entry).
+        assert!(s.stage_download().is_err());
+        assert_eq!(s.queue.len(), 1);
+        assert!(s.notice.is_some());
     }
 
     #[test]

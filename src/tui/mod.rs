@@ -271,6 +271,7 @@ fn footer_keybinds(app: &App) -> Vec<(&'static str, &'static str)> {
             ("\u{2192}", "upload"),
             ("c", "run"),
             ("u", "unstage"),
+            ("r", "refresh"),
             ("Esc", "back"),
             ("?", "help"),
             ("q", "quit"),

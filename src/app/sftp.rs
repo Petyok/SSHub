@@ -102,6 +102,11 @@ impl App {
             }
             return Ok(());
         }
+        if self.is_action(KeyAction::Help, &key) {
+            self.pre_help_mode = Some(self.mode);
+            self.mode = AppMode::Help;
+            return Ok(());
+        }
 
         match key.code {
             KeyCode::Tab => {
@@ -135,6 +140,8 @@ impl App {
                     }
                 }
             }
+            // Re-list both panes (pick up files changed on either side).
+            KeyCode::Char('r') => self.sftp_refresh_panes(),
             // Confirm: run the whole queue sequentially.
             KeyCode::Char('c') => self.sftp_run_queue(),
             _ => {}
@@ -221,6 +228,22 @@ impl App {
         }
     }
 
+    /// Re-list both panes: remote via the worker (async `DirListing`), local
+    /// synchronously. Used by the `r` refresh key and after a queue completes.
+    fn sftp_refresh_panes(&mut self) {
+        let (remote_cwd, local_cwd) = match self.sftp.as_ref() {
+            Some(s) => (s.remote.cwd.clone(), s.local.cwd.clone()),
+            None => return,
+        };
+        if let Some(tx) = self.sftp_tx.as_ref() {
+            let _ = tx.send(SftpCommand::ListDir(Side::Remote, remote_cwd));
+        }
+        let entries = read_local_dir(&local_cwd);
+        if let Some(s) = self.sftp.as_mut() {
+            s.local.set_entries(entries);
+        }
+    }
+
     /// Tear down the live session. Dropping the command `Sender` makes the
     /// worker thread self-terminate.
     fn sftp_disconnect(&mut self) {
@@ -282,17 +305,7 @@ impl App {
                     s.queue.clear();
                 }
                 // Refresh both panes so completed transfers show up.
-                let (remote_cwd, local_cwd) = match self.sftp.as_ref() {
-                    Some(s) => (s.remote.cwd.clone(), s.local.cwd.clone()),
-                    None => return,
-                };
-                if let Some(tx) = self.sftp_tx.as_ref() {
-                    let _ = tx.send(SftpCommand::ListDir(Side::Remote, remote_cwd));
-                }
-                let entries = read_local_dir(&local_cwd);
-                if let Some(s) = self.sftp.as_mut() {
-                    s.local.set_entries(entries);
-                }
+                self.sftp_refresh_panes();
             }
             SftpEvent::Error(msg) => {
                 if let Some(s) = self.sftp.as_mut() {
