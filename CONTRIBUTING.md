@@ -103,4 +103,6 @@ Open an issue with:
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the MIT License.
+By contributing, you agree that your contributions will be licensed under
+[AGPL-3.0-or-later](LICENSE) — the project's copyleft license: forks and
+derivatives must stay open under the same terms.

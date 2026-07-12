@@ -1,6 +1,6 @@
 [package]
 name = "sshub"
-version = "0.8.4"
+version = "0.8.5"
 edition = "2021"
 description = "SSHub — TUI launcher for SSH hosts"
 license = "AGPL-3.0-or-later"
