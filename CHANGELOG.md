@@ -4,6 +4,8 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-12
+
 ### Added
 
 - **SFTP file operations** — manage files directly in the browser: delete a
@@ -18,6 +20,15 @@ All notable changes to SSHub are documented in this file.
   Previously the cursor was pinned to the end and only backspace worked.
 - **`SSHUB_VERSION_LABEL`** — override the version shown in the tab bar: set it
   empty to hide the version, or to a custom string. (Unset keeps the build version.)
+
+### Fixed
+
+- **SFTP transfers follow symlinks properly** — a symlink to a file transfers
+  with the target's size (progress no longer overshoots), and symlinks to
+  directories or broken links are skipped instead of failing the whole queue.
+- **Help overlay** — scrolling is clamped to the rendered content, so it no
+  longer overshoots into blank space.
+- **Settings overlay** — the footer hint no longer spills onto the popup border.
 
 ## [0.7.0] - 2026-07-10
 
