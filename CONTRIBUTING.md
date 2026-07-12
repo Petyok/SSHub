@@ -44,6 +44,12 @@ Flow: `feature/* → development → main (release, maintainer-only)`.
   security-sensitive** should say so explicitly in the description; silent
   changes to the security model will be bounced.
 
+## AI involvement
+
+All pull requests and issues in this repo are reviewed and triaged through
+Claude (Opus 4.8 or Fable 5). Comments signed by Claude are written by the
+model on behalf of the maintainer.
+
 ## Code style
 
 - Follow standard Rust conventions (`rustfmt` defaults)
