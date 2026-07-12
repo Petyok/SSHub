@@ -57,10 +57,14 @@ setup-hooks:
     git config core.hooksPath .githooks
     @echo "git hooks enabled (core.hooksPath = .githooks)"
 
-# Cut a release: merge development -> main, tag, and push. The tag triggers the
-# release workflow (binaries + crates.io publish). Development is
-# fast-forwarded back to the released commit afterwards so both branches share a
-# baseline (avoids version-line conflicts on the next release).
+# Cut a release: merge development -> main with a --no-ff merge commit, tag,
+# and push. The tag triggers the release workflow (binaries + crates.io
+# publish). Development is then fast-forwarded to the release merge so both
+# branches point at the same commit and the next release merges cleanly.
+# `git log --first-parent main` shows one entry per release; reverting a whole
+# release is `git revert -m 1 <merge>`, reverting one feature is a revert of
+# its squashed commit (note: after reverting a merge, re-landing the same
+# history needs a revert of the revert).
 #
 #   just release          # minor feature release: bump Y (Z->0) -> vX.Y.0
 #   just release minor    # same as above
@@ -113,24 +117,22 @@ release kind="minor":
     git push origin development
     git checkout main
     git pull --ff-only origin main
-    # Snapshot development's tree onto main as ONE squashed commit, so main
-    # carries a single "chore: release vX.Y.Z" per release instead of every
-    # feature commit (version + changelog are already settled on dev). -X
-    # theirs resolves leftover divergence from earlier releases to dev's side.
-    # This makes main and development DIVERGE by design — main is a chain of
-    # release snapshots, dev keeps its granular history — no ff-back into dev.
-    git merge --squash -X theirs --no-commit development || true
-    git add -A
-    git commit -m "chore: release v$ver"
+    # Real merge (--no-ff): main gets one release merge commit on its
+    # first-parent line, while blame/bisect/revert see the full feature
+    # history (version + changelog are already settled on dev). Merges
+    # cleanly because dev is ff'd to main after every release, so main is
+    # always an ancestor of dev here. If main ever gets a direct commit,
+    # merge main into development first.
+    git merge --no-ff development -m "chore: release v$ver"
     git tag -a "v$ver" -m "SSHub v$ver"
     git push origin main --follow-tags
     git checkout development
-    # Record the release into development's history with an empty merge
-    # (-s ours: dev's tree wins, untouched), so GitHub doesn't show dev as
-    # forever "behind" its own releases and the next squash gets a fresh base.
-    git merge -s ours main -m "chore: sync v$ver release into development history (empty merge, tree untouched)"
+    # Fast-forward development to the release merge: both branches now point
+    # at the same commit, ahead/behind is clean, and the next dev commit
+    # hook-bumps the patch version from the released X.Y.Z.
+    git merge --ff-only main
     git push origin development
-    echo "released v$ver ({{kind}}) — main now has a single 'chore: release v$ver' commit; the release workflow builds binaries and publishes to crates.io"
+    echo "released v$ver ({{kind}}) — 'chore: release v$ver' merged to main; the release workflow builds binaries and publishes to crates.io"
 
 # Install the release binary to ~/.local/bin and a launcher entry so sshub
 # shows up in your application launcher (GNOME, rofi, etc). Uses kitty if
