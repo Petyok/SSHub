@@ -109,6 +109,9 @@ impl App {
             }
             KeyCode::BackTab | KeyCode::Up => self.identity_form_field_prev(),
             KeyCode::Backspace => self.identity_form_backspace(),
+            KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End | KeyCode::Delete => {
+                self.identity_form_cursor_key(key.code)
+            }
             KeyCode::Char(c)
                 if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
                     && !c.is_control() =>
@@ -370,6 +373,28 @@ impl App {
         let c = form.cursor;
         form.cursor = text_input::insert_at(form.active_field_mut(), c, ch);
         form.dirty = true;
+    }
+
+    fn identity_form_cursor_key(&mut self, code: KeyCode) {
+        if let Some(form) = self.identity_form.as_mut() {
+            // Mirror the backspace guard: one Delete on a pasted key blob discards
+            // it whole, rather than mangling the placeholder char-by-char.
+            if code == KeyCode::Delete
+                && form.field == IdentityFormField::PrivateKey
+                && form.pasted_key.is_some()
+            {
+                form.pasted_key = None;
+                form.private_key.clear();
+                form.cursor = 0;
+                return;
+            }
+            let mut cursor = form.cursor;
+            let changed = text_input::handle_cursor_key(code, form.active_field_mut(), &mut cursor);
+            form.cursor = cursor;
+            if changed == Some(true) {
+                form.dirty = true;
+            }
+        }
     }
 
     /// Columns in the identities grid — the exact value the renderer uses.

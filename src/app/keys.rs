@@ -62,6 +62,7 @@ impl App {
             AppMode::SessionHostPicker => self.handle_key_session_host_picker(key),
             AppMode::FieldPicker => self.handle_key_field_picker(key),
             AppMode::ImportPrompt => self.handle_key_import_prompt(key),
+            AppMode::SftpPrompt => self.handle_key_sftp_prompt(key),
             AppMode::GroupManage => self.handle_key_group_manage(key),
             AppMode::Palette => self.handle_key_palette(key),
             AppMode::Search => self.handle_key_search(key),
@@ -435,22 +436,24 @@ impl App {
             self.help_scroll = 0;
             return Ok(());
         }
-        let total = crate::tui::screens::help::help_line_count();
+        // Ceiling = what the renderer can actually show, not the line count:
+        // scrolling past it would silently bank presses that Up must unwind.
+        let max = crate::tui::help_max_scroll(self.terminal_area);
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
                 self.help_scroll = self.help_scroll.saturating_sub(1);
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.help_scroll = (self.help_scroll + 1).min(total.saturating_sub(1));
+                self.help_scroll = (self.help_scroll + 1).min(max);
             }
             KeyCode::PageUp => {
                 self.help_scroll = self.help_scroll.saturating_sub(10);
             }
             KeyCode::PageDown => {
-                self.help_scroll = (self.help_scroll + 10).min(total.saturating_sub(1));
+                self.help_scroll = (self.help_scroll + 10).min(max);
             }
             KeyCode::Home => self.help_scroll = 0,
-            KeyCode::End => self.help_scroll = total.saturating_sub(1),
+            KeyCode::End => self.help_scroll = max,
             _ => {}
         }
         Ok(())
@@ -503,6 +506,12 @@ impl App {
                     self.store.delete_tunnel(id)?;
                     self.tunnel_notice = Some(format!("Tunnel '{label}' deleted"));
                     self.reload_tunnels()?;
+                    self.mode = AppMode::Normal;
+                }
+                Some(PendingDelete::SftpEntry {
+                    side, path, is_dir, ..
+                }) => {
+                    self.sftp_delete_confirmed(side, path, is_dir);
                     self.mode = AppMode::Normal;
                 }
                 None => {

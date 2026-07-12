@@ -1,104 +1,103 @@
-Output demo/gifs/add-host.gif
+Output demo/build/add-host.mp4
 
 Set FontSize 16
 Set Width 1200
 Set Height 700
 Set Theme "Catppuccin Mocha"
-Set TypingSpeed 90ms
-Set PlaybackSpeed 0.75
+Set TypingSpeed 40ms
+Set PlaybackSpeed 1
+Set Framerate 24
 
 Hide
-Type "export SSHUB_CONFIG_DIR=$PWD/demo/home/.config/sshub SSHUB_DATA_DIR=$PWD/demo/home/.local/share/sshub SSHUB_SSH_CONFIG=$PWD/demo/home/ssh_config PATH=$PWD/target/release:$PATH"
+# Boot with the startup animation disabled so we land straight on the app.
+Type "rm -rf /tmp/sshub-add && cp -r $PWD/demo/home/.config/sshub /tmp/sshub-add && sed -i 's/disable_animation = false/disable_animation = true/' /tmp/sshub-add/config.toml"
 Enter
-Type "export PATH=$PWD/demo/bin:$PWD/target/release:$PATH"
+Wait
+Type "export SSHUB_VERSION_LABEL= SSHUB_CONFIG_DIR=/tmp/sshub-add SSHUB_DATA_DIR=$PWD/demo/home/.local/share/sshub SSHUB_SSH_CONFIG=$PWD/demo/home/ssh_config PATH=$PWD/demo/bin:$PWD/target/release:$PATH"
 Enter
+Wait
 Type "bash demo/seed-demo.sh"
 Enter
-Type "clear"
+Wait@120s
+Type "clear && sshub"
 Enter
 Sleep 2s
-Space
-Type "sshub"
-Enter
-Sleep 1s
-Space
 Show
 
-Sleep 1.5s
+Sleep 1s
 
-# Open the add-host form
+# Open the add-host form.
 Type "a"
-Sleep 1.5s
+Sleep 1s
 
-# Address (first field)
-Sleep 800ms
+# Address (first field).
 Type "172.217.21.238"
-Sleep 800ms
+Sleep 400ms
 
-# Password
+# Password.
 Down
-Sleep 800ms
+Sleep 400ms
 Type "BlahblahblahPASSWORD!!!"
-Sleep 800ms
+Sleep 400ms
 
-# Username
+# Username.
 Down
-Sleep 800ms
+Sleep 400ms
 Type "pizza-lover-9000"
-Sleep 800ms
+Sleep 400ms
 
-# Label
+# Label.
 Down
-Sleep 800ms
+Sleep 400ms
 Type "Demo VM"
-Sleep 800ms
+Sleep 400ms
 
-# Name (alias)
+# Name (alias).
 Down
-Sleep 800ms
+Sleep 400ms
 Type "demo-vm-1"
-Sleep 800ms
+Sleep 400ms
 
-# Port (default 22)
+# Port (default 22).
 Down
-Sleep 800ms
+Sleep 400ms
 
 # Group — open the multi-select checkbox picker, tick a couple of groups
-# (Space toggles, Enter closes). A host can now belong to several groups.
+# (Space toggles, Enter closes). A host can belong to several groups.
 Down
 Enter
-Sleep 1s
+Sleep 700ms
 Down
-Sleep 600ms
+Sleep 400ms
 Space
-Sleep 800ms
+Sleep 500ms
 Down
-Sleep 600ms
+Sleep 400ms
 Down
-Sleep 600ms
+Sleep 400ms
 Space
-Sleep 900ms
+Sleep 600ms
 Enter
-Sleep 800ms
+Sleep 500ms
 
-# Identity (keep default)
+# Identity (keep default).
 Down
-Sleep 800ms
+Sleep 400ms
 
-# Tags
+# Tags.
 Down
-Sleep 800ms
+Sleep 400ms
 Type "demo,pizza"
-Sleep 800ms
+Sleep 500ms
 
-# Save
+# Save, then find the new host with the fuzzy palette.
 Ctrl+S
-Sleep 2s
+Sleep 1.5s
 
 Type "/"
-Sleep 2s
+Sleep 800ms
 Type "Demo"
-Sleep 4s
+Sleep 3s
 
 Hide
 Type "q"

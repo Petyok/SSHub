@@ -170,8 +170,60 @@ fn render_inner(frame: &mut Frame, app: &App) {
         AppMode::Settings => screens::settings::render_settings(frame, app),
         AppMode::ConfirmQuit => render_confirm_quit_popup(frame, app),
         AppMode::ImportPrompt => render_import_prompt_popup(frame, app),
+        AppMode::SftpPrompt => render_sftp_prompt_popup(frame, app),
         _ => {}
     }
+}
+
+fn render_sftp_prompt_popup(frame: &mut Frame, app: &App) {
+    let Some(prompt) = app.sftp_prompt.as_ref() else {
+        return;
+    };
+    use crate::app::SftpPromptKind;
+
+    let (title, label) = match prompt.kind {
+        SftpPromptKind::Mkdir => (" New folder ", "New folder name:"),
+        SftpPromptKind::Rename => (" Rename ", "Rename to:"),
+        SftpPromptKind::Chmod => (" Permissions ", "Permissions (octal, e.g. 755):"),
+    };
+
+    let area = frame.area();
+    let popup_width = (area.width * 70 / 100).max(40).min(area.width);
+    let popup_height = if prompt.error.is_some() { 9 } else { 7 }.min(area.height);
+    let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
+    let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    let mut lines = vec![
+        ratatui::text::Line::from(Span::styled(label, theme::text())),
+        ratatui::text::Line::from(Span::styled(
+            crate::text_input::with_cursor(&prompt.value, prompt.cursor),
+            theme::bright(),
+        )),
+        ratatui::text::Line::from(""),
+    ];
+    if let Some(err) = &prompt.error {
+        lines.push(ratatui::text::Line::from(Span::styled(
+            format!("\u{2717} {err}"),
+            Style::default().fg(Color::Red),
+        )));
+        lines.push(ratatui::text::Line::from(""));
+    }
+    lines.push(ratatui::text::Line::from(Span::styled(
+        "Enter: confirm  \u{2502}  Esc: cancel",
+        theme::dim(),
+    )));
+
+    frame.render_widget(Clear, popup_area);
+    frame.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled(title, theme::heading()))
+                .border_style(theme::popup_border()),
+        ),
+        popup_area,
+    );
 }
 
 fn render_import_prompt_popup(frame: &mut Frame, app: &App) {
@@ -292,6 +344,10 @@ fn footer_keybinds(app: &App) -> Vec<(&'static str, &'static str)> {
             ("\u{2192}", "upload"),
             ("c", "run"),
             ("u", "unstage"),
+            ("d", "delete"),
+            ("n", "new dir"),
+            ("R", "rename"),
+            ("M", "chmod"),
             ("r", "refresh"),
             ("s", "ssh"),
             ("/", "search"),
@@ -521,6 +577,13 @@ fn render_confirm_delete_popup(frame: &mut Frame, app: &App) {
         Some(PendingDelete::Identity { name, .. }) => format!("Delete identity '{name}'?"),
         Some(PendingDelete::Group { name, .. }) => format!("Delete group '{name}'?"),
         Some(PendingDelete::Tunnel { label, .. }) => format!("Delete tunnel '{label}'?"),
+        Some(PendingDelete::SftpEntry { name, is_dir, .. }) => {
+            if *is_dir {
+                format!("Delete folder '{name}' and all its contents?")
+            } else {
+                format!("Delete '{name}'?")
+            }
+        }
         None => "Delete?".to_string(),
     };
     let area = frame.area();
@@ -575,6 +638,17 @@ fn format_utc_clock() -> String {
     format!("{} {:02}:{:02}:{:02} UTC", DAY_NAMES[weekday], h, m, s)
 }
 
+/// Scroll ceiling for the help body given the full terminal area — the same
+/// popup geometry as `render_help_popup` (60% height, min 16; borders + fixed
+/// footer row), kept in one place so the key handler can't scroll past what
+/// the renderer will show (the excess would be invisible "debt" that Up has
+/// to unwind before the view moves).
+pub(crate) fn help_max_scroll(area: Rect) -> u16 {
+    let popup_height = (area.height * 60 / 100).max(16).min(area.height);
+    let body_height = popup_height.saturating_sub(3);
+    screens::help::help_line_count().saturating_sub(body_height)
+}
+
 fn render_help_popup(frame: &mut Frame, app: &App) {
     let area = frame.area();
     let popup_width = (area.width * 70 / 100).max(40).min(area.width);
@@ -600,8 +674,7 @@ fn render_help_popup(frame: &mut Frame, app: &App) {
         inner.width,
         inner.height.saturating_sub(1),
     );
-    let max_scroll = screens::help::help_line_count().saturating_sub(body.height);
-    let scroll = app.help_scroll.min(max_scroll);
+    let scroll = app.help_scroll.min(help_max_scroll(area));
     frame.render_widget(screens::help::render_help(scroll), body);
 
     let footer_y = inner.y + inner.height.saturating_sub(1);

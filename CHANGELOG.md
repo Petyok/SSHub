@@ -2,6 +2,23 @@
 
 All notable changes to SSHub are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **SFTP file operations** — manage files directly in the browser: delete a
+  file or folder (`d`, recursive for non-empty directories), create a new folder
+  (`n`), rename/move (`R`), and change permissions (`M`, octal chmod). Remote ops
+  run on the background worker; local ops use the filesystem directly.
+- **Recursive directory transfers** — staging a directory now uploads/downloads
+  the whole tree, with a progress bar over the total bytes.
+- **Cursor navigation in text fields** — `←`/`→` move the edit cursor, `Home`/`End`
+  jump to the edges, and `Delete` removes the character ahead of the cursor, across
+  every form and prompt (host, identity, group, tunnel, SFTP mkdir/rename, import).
+  Previously the cursor was pinned to the end and only backspace worked.
+- **`SSHUB_VERSION_LABEL`** — override the version shown in the tab bar: set it
+  empty to hide the version, or to a custom string. (Unset keeps the build version.)
+
 ## [0.7.0] - 2026-07-10
 
 ### Added

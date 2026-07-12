@@ -208,9 +208,318 @@ impl App {
             KeyCode::Char('s') => self.open_ssh_for_sftp_host()?,
             // Confirm: run the whole queue sequentially.
             KeyCode::Char('c') => self.sftp_run_queue(),
+            // File ops (frozen while a queue runs).
+            KeyCode::Char('d') if !running => self.sftp_arm_delete(),
+            KeyCode::Char('n') if !running => self.sftp_open_prompt(SftpPromptKind::Mkdir),
+            KeyCode::Char('R') if !running => self.sftp_open_prompt(SftpPromptKind::Rename),
+            KeyCode::Char('M') if !running => self.sftp_open_prompt(SftpPromptKind::Chmod),
             _ => {}
         }
         Ok(())
+    }
+
+    /// Arm the delete confirmation for the focused pane's selection. Reuses the
+    /// shared `ConfirmDelete` dialog via a `PendingDelete::SftpEntry`.
+    fn sftp_arm_delete(&mut self) {
+        let Some(s) = self.sftp.as_ref() else { return };
+        let side = s.focused_side();
+        let pane = s.focused_pane();
+        let Some(entry) = pane.selected_entry() else {
+            return;
+        };
+        let path = pane.cwd.join(&entry.name);
+        self.pending_delete = Some(PendingDelete::SftpEntry {
+            side,
+            path,
+            name: entry.name.clone(),
+            is_dir: entry.is_dir,
+        });
+        self.mode = AppMode::ConfirmDelete;
+    }
+
+    /// Open the mkdir / rename text prompt for the focused pane.
+    fn sftp_open_prompt(&mut self, kind: SftpPromptKind) {
+        let Some(s) = self.sftp.as_ref() else { return };
+        let side = s.focused_side();
+        let pane = s.focused_pane();
+        let base = pane.cwd.clone();
+        let (value, old_path) = match kind {
+            SftpPromptKind::Mkdir => (String::new(), None),
+            SftpPromptKind::Rename => {
+                let Some(entry) = pane.selected_entry() else {
+                    return;
+                };
+                (entry.name.clone(), Some(base.join(&entry.name)))
+            }
+            SftpPromptKind::Chmod => {
+                let Some(entry) = pane.selected_entry() else {
+                    return;
+                };
+                // Seed with the current octal permissions so the user edits from
+                // the existing value; default to 644 when unknown.
+                let octal = format!("{:o}", entry.perm.unwrap_or(0o644) & 0o7777);
+                (octal, Some(base.join(&entry.name)))
+            }
+        };
+        let cursor = value.chars().count();
+        self.sftp_prompt = Some(SftpPromptEdit {
+            kind,
+            side,
+            base,
+            old_path,
+            value,
+            cursor,
+            error: None,
+        });
+        self.mode = AppMode::SftpPrompt;
+    }
+
+    fn sftp_prompt_insert(&mut self, ch: char) {
+        if let Some(p) = self.sftp_prompt.as_mut() {
+            p.cursor = text_input::insert_at(&mut p.value, p.cursor, ch);
+            p.error = None;
+        }
+    }
+
+    fn sftp_prompt_backspace(&mut self) {
+        if let Some(p) = self.sftp_prompt.as_mut() {
+            p.cursor = text_input::backspace_at(&mut p.value, p.cursor);
+            p.error = None;
+        }
+    }
+
+    pub(crate) fn handle_key_sftp_prompt(&mut self, key: KeyEvent) -> Result<()> {
+        match key.code {
+            KeyCode::Esc => {
+                self.sftp_prompt = None;
+                self.mode = AppMode::Normal;
+            }
+            KeyCode::Enter => self.sftp_prompt_commit(),
+            KeyCode::Backspace if key.modifiers.is_empty() => self.sftp_prompt_backspace(),
+            KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End | KeyCode::Delete => {
+                if let Some(p) = self.sftp_prompt.as_mut() {
+                    let mut cursor = p.cursor;
+                    text_input::handle_cursor_key(key.code, &mut p.value, &mut cursor);
+                    p.cursor = cursor;
+                    if key.code == KeyCode::Delete {
+                        p.error = None;
+                    }
+                }
+            }
+            KeyCode::Char(c)
+                if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
+                    && !c.is_control() =>
+            {
+                self.sftp_prompt_insert(c);
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Apply the open mkdir / rename prompt. Remote ops are dispatched to the
+    /// worker and the prompt closes immediately (the result surfaces as a pane
+    /// refresh on OpDone or a browser notice on Error — we deliberately do NOT
+    /// keep the prompt waiting on an async event, because OpDone/Error carry no
+    /// op identity and would cross-attribute a concurrent delete's result).
+    /// Local ops use `std::fs`. Rejects empty names / path separators; never
+    /// clobbers an existing target.
+    fn sftp_prompt_commit(&mut self) {
+        let Some(p) = self.sftp_prompt.as_ref() else {
+            return;
+        };
+        // chmod takes an octal mode, not a name — handle it separately.
+        if p.kind == SftpPromptKind::Chmod {
+            self.sftp_chmod_commit();
+            return;
+        }
+        let name = p.value.trim().to_string();
+        if name.is_empty() || name.contains('/') || name == "." || name == ".." {
+            if let Some(p) = self.sftp_prompt.as_mut() {
+                p.error = Some("enter a name without '/'".into());
+            }
+            return;
+        }
+        let kind = p.kind;
+        let side = p.side;
+        let target = p.base.join(&name);
+        let old_path = p.old_path.clone();
+
+        // Rename to the (unchanged) current name is a no-op — close the prompt
+        // instead of dispatching a from==to rename that the clobber guard would
+        // reject or the server would error on.
+        if kind == SftpPromptKind::Rename && old_path.as_ref() == Some(&target) {
+            self.sftp_prompt = None;
+            self.mode = AppMode::Normal;
+            return;
+        }
+
+        match side {
+            Side::Remote => {
+                let cmd = match kind {
+                    SftpPromptKind::Mkdir => crate::sftp::SftpCommand::Mkdir(target),
+                    SftpPromptKind::Rename => {
+                        crate::sftp::SftpCommand::Rename(old_path.unwrap_or_default(), target)
+                    }
+                    SftpPromptKind::Chmod => unreachable!("chmod handled earlier"),
+                };
+                // A missing channel OR a failed send (worker thread dead) means
+                // the op won't run — keep the prompt open with an error rather
+                // than closing it as if it succeeded.
+                let sent = self
+                    .sftp_tx
+                    .as_ref()
+                    .map(|tx| tx.send(cmd).is_ok())
+                    .unwrap_or(false);
+                if sent {
+                    self.sftp_prompt = None;
+                    self.mode = AppMode::Normal;
+                } else if let Some(p) = self.sftp_prompt.as_mut() {
+                    p.error = Some("not connected".into());
+                }
+            }
+            Side::Local => {
+                let result: std::io::Result<()> = match kind {
+                    SftpPromptKind::Mkdir => std::fs::create_dir(&target),
+                    SftpPromptKind::Rename => {
+                        // Refuse to clobber an existing target — matches the
+                        // remote path (rename with None flags). symlink_metadata
+                        // (not exists()) so a dangling symlink at the target still
+                        // counts as present and isn't silently overwritten.
+                        if target.symlink_metadata().is_ok() {
+                            Err(std::io::Error::new(
+                                std::io::ErrorKind::AlreadyExists,
+                                format!("{} already exists", name),
+                            ))
+                        } else {
+                            std::fs::rename(old_path.unwrap_or_default(), &target)
+                        }
+                    }
+                    SftpPromptKind::Chmod => unreachable!("chmod handled earlier"),
+                };
+                match result {
+                    Ok(()) => {
+                        self.sftp_prompt = None;
+                        self.mode = AppMode::Normal;
+                        self.sftp_refresh_panes();
+                    }
+                    Err(e) => {
+                        if let Some(p) = self.sftp_prompt.as_mut() {
+                            p.error = Some(format!("{e}"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Apply the chmod prompt: parse the octal mode and set it on `old_path`
+    /// (remote via the worker, local via `std::fs::set_permissions`).
+    fn sftp_chmod_commit(&mut self) {
+        let Some(p) = self.sftp_prompt.as_ref() else {
+            return;
+        };
+        let mode = match u32::from_str_radix(p.value.trim(), 8) {
+            Ok(m) if m <= 0o7777 => m,
+            _ => {
+                if let Some(p) = self.sftp_prompt.as_mut() {
+                    p.error = Some("enter octal permissions, e.g. 755".into());
+                }
+                return;
+            }
+        };
+        let side = p.side;
+        let Some(path) = p.old_path.clone() else {
+            return;
+        };
+
+        match side {
+            Side::Remote => {
+                let sent = self
+                    .sftp_tx
+                    .as_ref()
+                    .map(|tx| tx.send(crate::sftp::SftpCommand::Chmod(path, mode)).is_ok())
+                    .unwrap_or(false);
+                if sent {
+                    self.sftp_prompt = None;
+                    self.mode = AppMode::Normal;
+                } else if let Some(p) = self.sftp_prompt.as_mut() {
+                    p.error = Some("not connected".into());
+                }
+            }
+            Side::Local => {
+                use std::os::unix::fs::PermissionsExt;
+                match std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)) {
+                    Ok(()) => {
+                        self.sftp_prompt = None;
+                        self.mode = AppMode::Normal;
+                        self.sftp_refresh_panes();
+                    }
+                    Err(e) => {
+                        if let Some(p) = self.sftp_prompt.as_mut() {
+                            p.error = Some(format!("{e}"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Execute a confirmed SFTP delete (called from the ConfirmDelete handler).
+    /// Remote deletes go through the worker; local deletes use `std::fs`.
+    pub(crate) fn sftp_delete_confirmed(&mut self, side: Side, path: PathBuf, is_dir: bool) {
+        match side {
+            Side::Remote => {
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                // Like mkdir/rename: a missing channel or a failed send (dead
+                // worker) means the delete never dispatched — say so instead of
+                // silently returning as if the file were gone.
+                let parent = path.parent().map(Path::to_path_buf);
+                let sent = self
+                    .sftp_tx
+                    .as_ref()
+                    .map(|tx| {
+                        tx.send(crate::sftp::SftpCommand::Remove(path, is_dir))
+                            .is_ok()
+                    })
+                    .unwrap_or(false);
+                if sent {
+                    // Optimistically drop the row so it disappears immediately
+                    // (and can't be re-deleted) before the async OpDone refresh —
+                    // but only if the pane still shows the directory the delete
+                    // targeted: an in-flight listing may have replaced it, and
+                    // remove_named matches by name only.
+                    if let Some(s) = self.sftp.as_mut() {
+                        if parent.as_deref() == Some(s.remote.cwd.as_path()) {
+                            s.remote.remove_named(&name);
+                        }
+                    }
+                } else if let Some(s) = self.sftp.as_mut() {
+                    s.notice = Some("not connected — delete not sent".into());
+                } else {
+                    // Session torn down while the confirm dialog was open: the
+                    // SFTP pane is gone, so surface the failure where the user
+                    // will actually see it.
+                    self.host_notice = Some("SFTP disconnected — delete not sent".into());
+                }
+            }
+            Side::Local => {
+                let res = if is_dir {
+                    std::fs::remove_dir_all(&path)
+                } else {
+                    std::fs::remove_file(&path)
+                };
+                if let Some(s) = self.sftp.as_mut() {
+                    if let Err(e) = res {
+                        s.notice = Some(format!("{e}"));
+                    }
+                }
+                self.sftp_refresh_panes();
+            }
+        }
     }
 
     fn handle_key_sftp_browser_search(&mut self, key: KeyEvent) -> Result<()> {
@@ -456,10 +765,17 @@ impl App {
                 // Refresh both panes so completed transfers show up.
                 self.sftp_refresh_panes();
             }
+            SftpEvent::OpDone => {
+                // A remote remove/mkdir/rename landed — re-list so it shows.
+                self.sftp_refresh_panes();
+            }
             SftpEvent::Error(msg) => {
                 if let Some(s) = self.sftp.as_mut() {
                     s.notice = Some(msg);
                 }
+                // Re-list so optimistic UI changes roll back — e.g. a failed
+                // remote delete restores the row that was dropped up front.
+                self.sftp_refresh_panes();
             }
         }
     }
@@ -473,11 +789,26 @@ fn read_local_dir(path: &Path) -> Vec<FileEntry> {
     if let Ok(rd) = std::fs::read_dir(path) {
         for entry in rd.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            let (is_dir, size) = match entry.metadata() {
-                Ok(m) => (m.is_dir(), m.len()),
-                Err(_) => (false, 0),
-            };
-            out.push(FileEntry { name, is_dir, size });
+            // file_type() does not follow the link (is_symlink detection);
+            // fs::metadata does, so a symlink-to-dir keeps is_dir=true and
+            // stays enterable, and a symlink-to-file shows its target size.
+            // Transfer planning never descends into symlinks regardless.
+            let ftype = entry.file_type().ok();
+            let is_symlink = ftype.map(|t| t.is_symlink()).unwrap_or(false);
+            let meta = std::fs::metadata(entry.path()).ok();
+            let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+            let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+            let perm = meta.as_ref().map(|m| {
+                use std::os::unix::fs::PermissionsExt;
+                m.permissions().mode() & 0o7777
+            });
+            out.push(FileEntry {
+                name,
+                is_dir,
+                size,
+                is_symlink,
+                perm,
+            });
         }
     }
     out.sort_by(|a, b| {

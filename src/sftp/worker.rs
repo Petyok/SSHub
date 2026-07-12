@@ -6,9 +6,11 @@
 //! when an event `send` fails or the command channel closes). All I/O lives
 //! here so the synchronous UI event loop never blocks.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread;
+
+use anyhow::{Context, Result};
 
 use super::model::{QueuedTransfer, Side};
 use super::transport::{SftpTransport, Ssh2Transport};
@@ -26,6 +28,14 @@ pub enum SftpCommand {
     ListDir(Side, PathBuf),
     /// Run the given transfers in order.
     RunQueue(Vec<QueuedTransfer>),
+    /// Delete a remote path (recursively if `is_dir`).
+    Remove(PathBuf, bool),
+    /// Create a remote directory.
+    Mkdir(PathBuf),
+    /// Rename / move a remote path.
+    Rename(PathBuf, PathBuf),
+    /// Set permission bits of a remote path (chmod).
+    Chmod(PathBuf, u32),
     /// Abort a running queue at the next transfer boundary.
     Cancel,
 }
@@ -50,7 +60,10 @@ pub enum SftpEvent {
     TransferDone(usize),
     /// The whole queue finished (or was cancelled).
     QueueDone,
-    /// A recoverable error for the last command (listing/transfer).
+    /// A remote file operation (remove/mkdir/rename) succeeded; the UI should
+    /// refresh its panes.
+    OpDone,
+    /// A recoverable error for the last command (listing/transfer/op).
     Error(String),
 }
 
@@ -108,6 +121,45 @@ fn worker_loop(
                     return;
                 }
             }
+            SftpCommand::Remove(path, is_dir) => {
+                // Op errors name the operation and target: they can surface
+                // long after dispatch (e.g. while a transfer queue is running),
+                // so a bare message would be impossible to attribute.
+                let evt = match transport.remove(&path, is_dir) {
+                    Ok(()) => SftpEvent::OpDone,
+                    Err(e) => SftpEvent::Error(format!("delete {}: {e:#}", path.display())),
+                };
+                if evt_tx.send(evt).is_err() {
+                    return;
+                }
+            }
+            SftpCommand::Mkdir(path) => {
+                let evt = match transport.mkdir(&path) {
+                    Ok(()) => SftpEvent::OpDone,
+                    Err(e) => SftpEvent::Error(format!("mkdir {}: {e:#}", path.display())),
+                };
+                if evt_tx.send(evt).is_err() {
+                    return;
+                }
+            }
+            SftpCommand::Rename(from, to) => {
+                let evt = match transport.rename(&from, &to) {
+                    Ok(()) => SftpEvent::OpDone,
+                    Err(e) => SftpEvent::Error(format!("rename {}: {e:#}", from.display())),
+                };
+                if evt_tx.send(evt).is_err() {
+                    return;
+                }
+            }
+            SftpCommand::Chmod(path, mode) => {
+                let evt = match transport.chmod(&path, mode) {
+                    Ok(()) => SftpEvent::OpDone,
+                    Err(e) => SftpEvent::Error(format!("chmod {}: {e:#}", path.display())),
+                };
+                if evt_tx.send(evt).is_err() {
+                    return;
+                }
+            }
             // A stray Cancel with no queue running is a no-op.
             SftpCommand::Cancel => {}
         }
@@ -135,7 +187,9 @@ fn run_queue(
         let mut last_emit: u64 = 0;
         let mut deliver_err = false;
         let result = {
-            let mut on_progress = |transferred: u64, size: u64| {
+            // Cumulative progress emitter: `transferred`/`size` are totals for
+            // this queue item (a whole directory tree, or a single file).
+            let mut emit = |transferred: u64, size: u64| {
                 if deliver_err {
                     return;
                 }
@@ -158,9 +212,17 @@ fn run_queue(
                     }
                 }
             };
-            match item.direction {
-                Direction::Download => transport.download(&item.src, &item.dst, &mut on_progress),
-                Direction::Upload => transport.upload(&item.src, &item.dst, &mut on_progress),
+            if item.is_dir {
+                transfer_dir(transport, &item, cmd_rx, &mut emit)
+            } else {
+                match item.direction {
+                    Direction::Download => transport
+                        .download(&item.src, &item.dst, &mut emit)
+                        .map(|_| false),
+                    Direction::Upload => transport
+                        .upload(&item.src, &item.dst, &mut emit)
+                        .map(|_| false),
+                }
             }
         };
         if deliver_err {
@@ -168,7 +230,9 @@ fn run_queue(
         }
 
         match result {
-            Ok(()) => {
+            // `true` = a Cancel landed mid-directory → stop the whole queue.
+            Ok(true) => break,
+            Ok(false) => {
                 if evt_tx.send(SftpEvent::TransferDone(index)).is_err() {
                     return Err(());
                 }
@@ -183,6 +247,194 @@ fn run_queue(
 
     if evt_tx.send(SftpEvent::QueueDone).is_err() {
         return Err(());
+    }
+    Ok(())
+}
+
+/// Transfer a whole directory recursively. Plans the file list + total byte
+/// count first (so progress is a real fraction of the tree), then streams each
+/// file, reporting cumulative bytes against the total via `emit`.
+/// Returns `Ok(true)` if a `Cancel` was seen mid-tree (so the caller stops the
+/// queue), `Ok(false)` on normal completion.
+fn transfer_dir(
+    transport: &mut dyn SftpTransport,
+    item: &QueuedTransfer,
+    cmd_rx: &Receiver<SftpCommand>,
+    emit: &mut dyn FnMut(u64, u64),
+) -> Result<bool> {
+    use super::model::Direction;
+
+    let mut files: Vec<(PathBuf, PathBuf, u64)> = Vec::new();
+    let mut total: u64 = 0;
+    // Planning walks the whole tree (potentially slow on a deep remote dir), so
+    // it polls Cancel too — otherwise an abort wouldn't be honoured until the
+    // enumeration finished.
+    let mut cancelled = false;
+    match item.direction {
+        Direction::Download => plan_download(
+            transport,
+            &item.src,
+            &item.dst,
+            &mut files,
+            &mut total,
+            cmd_rx,
+            &mut cancelled,
+        )?,
+        Direction::Upload => plan_upload(
+            transport,
+            &item.src,
+            &item.dst,
+            &mut files,
+            &mut total,
+            cmd_rx,
+            &mut cancelled,
+        )?,
+    }
+    if cancelled {
+        return Ok(true);
+    }
+
+    let mut base: u64 = 0;
+    let mut failed = 0usize;
+    let mut first_err: Option<String> = None;
+    emit(0, total);
+    for (src, dst, size) in files {
+        // Honour Cancel between individual files, not just between queue items —
+        // a directory tree can be thousands of files / many GB.
+        if drain_cancel(cmd_rx) {
+            return Ok(true);
+        }
+        let r = match item.direction {
+            Direction::Download => {
+                transport.download(&src, &dst, &mut |t, _| emit(base + t, total))
+            }
+            Direction::Upload => transport.upload(&src, &dst, &mut |t, _| emit(base + t, total)),
+        };
+        // One unreadable file must not abort the rest of the tree — skip it,
+        // keep going, and report a summary at the end.
+        if let Err(e) = r {
+            failed += 1;
+            if first_err.is_none() {
+                first_err = Some(format!("{e:#}"));
+            }
+        }
+        base += size;
+        emit(base, total);
+    }
+    if let Some(first) = first_err {
+        anyhow::bail!("{failed} file(s) failed (first: {first})");
+    }
+    Ok(false)
+}
+
+/// Walk a remote directory tree, creating the mirrored local directories and
+/// collecting `(remote_file, local_file, size)` for every file. `readdir`
+/// yields file names, so child paths are `dir.join(name)`. Sets `*cancelled`
+/// and returns early if a `Cancel` arrives mid-walk.
+fn plan_download(
+    transport: &mut dyn SftpTransport,
+    remote_dir: &Path,
+    local_dir: &Path,
+    out: &mut Vec<(PathBuf, PathBuf, u64)>,
+    total: &mut u64,
+    cmd_rx: &Receiver<SftpCommand>,
+    cancelled: &mut bool,
+) -> Result<()> {
+    if *cancelled {
+        return Ok(());
+    }
+    if drain_cancel(cmd_rx) {
+        *cancelled = true;
+        return Ok(());
+    }
+    std::fs::create_dir_all(local_dir)
+        .with_context(|| format!("failed to create {}", local_dir.display()))?;
+    for e in transport.list_dir(remote_dir)? {
+        if *cancelled {
+            return Ok(());
+        }
+        let rpath = remote_dir.join(&e.name);
+        let lpath = local_dir.join(&e.name);
+        // A symlink is never descended into (cycle / escape risk). Follow-stat
+        // classifies it instead: a symlink-to-file transfers with the TARGET's
+        // size (the readdir lstat size is just the link text length, which
+        // would skew the progress total); a symlink-to-dir or broken link is
+        // skipped entirely — opening it as a file would fail the whole queue.
+        if e.is_symlink {
+            if let Ok((false, size)) = transport.stat(&rpath) {
+                *total += size;
+                out.push((rpath, lpath, size));
+            }
+        } else if e.is_dir {
+            plan_download(transport, &rpath, &lpath, out, total, cmd_rx, cancelled)?;
+        } else {
+            *total += e.size;
+            out.push((rpath, lpath, e.size));
+        }
+    }
+    Ok(())
+}
+
+/// Walk a local directory tree, creating the mirrored remote directories and
+/// collecting `(local_file, remote_file, size)` for every file. `mkdir` errors
+/// are tolerated only when the directory already exists (verified via
+/// `list_dir`), so a genuinely failed dir creation — e.g. an empty subdir that
+/// has no files to surface the error later — is not swallowed. Polls Cancel.
+fn plan_upload(
+    transport: &mut dyn SftpTransport,
+    local_dir: &Path,
+    remote_dir: &Path,
+    out: &mut Vec<(PathBuf, PathBuf, u64)>,
+    total: &mut u64,
+    cmd_rx: &Receiver<SftpCommand>,
+    cancelled: &mut bool,
+) -> Result<()> {
+    if *cancelled {
+        return Ok(());
+    }
+    if drain_cancel(cmd_rx) {
+        *cancelled = true;
+        return Ok(());
+    }
+    if let Err(e) = transport.mkdir(remote_dir) {
+        // Only tolerate "already exists": if the dir isn't there afterwards,
+        // the mkdir genuinely failed.
+        if transport.list_dir(remote_dir).is_err() {
+            return Err(e)
+                .with_context(|| format!("failed to create remote {}", remote_dir.display()));
+        }
+    }
+    let entries = std::fs::read_dir(local_dir)
+        .with_context(|| format!("failed to read {}", local_dir.display()))?;
+    for entry in entries {
+        if *cancelled {
+            return Ok(());
+        }
+        let entry = entry?;
+        // file_type() does not follow symlinks; same classification as
+        // plan_download — a symlink is never descended into, a symlink-to-file
+        // transfers with the target's size (fs::metadata follows the link),
+        // a symlink-to-dir or broken link is skipped.
+        let ftype = entry.file_type()?;
+        let name = entry.file_name();
+        let lpath = local_dir.join(&name);
+        let rpath = remote_dir.join(&name);
+        if ftype.is_symlink() {
+            match std::fs::metadata(&lpath) {
+                Ok(m) if !m.is_dir() => {
+                    let size = m.len();
+                    *total += size;
+                    out.push((lpath, rpath, size));
+                }
+                _ => {}
+            }
+        } else if ftype.is_dir() {
+            plan_upload(transport, &lpath, &rpath, out, total, cmd_rx, cancelled)?;
+        } else {
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            *total += size;
+            out.push((lpath, rpath, size));
+        }
     }
     Ok(())
 }
@@ -227,15 +479,28 @@ mod tests {
         dst: PathBuf,
     }
 
+    /// A record of one remove/mkdir/rename op the mock was asked to perform.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum OpCall {
+        Remove(PathBuf, bool),
+        Mkdir(PathBuf),
+        Rename(PathBuf, PathBuf),
+        Chmod(PathBuf, u32),
+    }
+
     /// Canned transport: `listings` maps a path → entries; every transfer emits
     /// `progress_bytes` bytes in `PROGRESS_STEP`-sized chunks. Optionally fails
     /// a given transfer index to exercise the recoverable-error path.
     struct MockTransport {
         listings: HashMap<PathBuf, Vec<FileEntry>>,
+        /// Canned follow-stat results for symlink classification.
+        stats: HashMap<PathBuf, (bool, u64)>,
         /// Total "size" every fake transfer reports/moves.
         transfer_size: u64,
         /// Records of every download/upload requested, in order.
         calls: Arc<Mutex<Vec<TransferCall>>>,
+        /// Records of every remove/mkdir/rename requested, in order.
+        ops: Arc<Mutex<Vec<OpCall>>>,
         /// Transfer ordinal (0-based) that should fail, if any.
         fail_on: Option<usize>,
         seen: usize,
@@ -246,8 +511,10 @@ mod tests {
         fn new(transfer_size: u64) -> Self {
             Self {
                 listings: HashMap::new(),
+                stats: HashMap::new(),
                 transfer_size,
                 calls: Arc::new(Mutex::new(Vec::new())),
+                ops: Arc::new(Mutex::new(Vec::new())),
                 fail_on: None,
                 seen: 0,
                 connected: false,
@@ -259,8 +526,17 @@ mod tests {
             self
         }
 
+        fn with_stat(mut self, path: impl Into<PathBuf>, is_dir: bool, size: u64) -> Self {
+            self.stats.insert(path.into(), (is_dir, size));
+            self
+        }
+
         fn calls_handle(&self) -> Arc<Mutex<Vec<TransferCall>>> {
             Arc::clone(&self.calls)
+        }
+
+        fn ops_handle(&self) -> Arc<Mutex<Vec<OpCall>>> {
+            Arc::clone(&self.ops)
         }
 
         /// Common body for both transfer directions: record the call, then emit
@@ -308,6 +584,13 @@ mod tests {
                 .ok_or_else(|| anyhow!("no canned listing for {}", path.display()))
         }
 
+        fn stat(&mut self, path: &Path) -> Result<(bool, u64)> {
+            self.stats
+                .get(path)
+                .copied()
+                .ok_or_else(|| anyhow!("no canned stat for {}", path.display()))
+        }
+
         fn download(
             &mut self,
             remote: &Path,
@@ -325,6 +608,38 @@ mod tests {
         ) -> Result<()> {
             self.fake_transfer(Direction::Upload, local, remote, progress)
         }
+
+        fn remove(&mut self, path: &Path, is_dir: bool) -> Result<()> {
+            self.ops
+                .lock()
+                .unwrap()
+                .push(OpCall::Remove(path.to_path_buf(), is_dir));
+            Ok(())
+        }
+
+        fn mkdir(&mut self, path: &Path) -> Result<()> {
+            self.ops
+                .lock()
+                .unwrap()
+                .push(OpCall::Mkdir(path.to_path_buf()));
+            Ok(())
+        }
+
+        fn rename(&mut self, from: &Path, to: &Path) -> Result<()> {
+            self.ops
+                .lock()
+                .unwrap()
+                .push(OpCall::Rename(from.to_path_buf(), to.to_path_buf()));
+            Ok(())
+        }
+
+        fn chmod(&mut self, path: &Path, mode: u32) -> Result<()> {
+            self.ops
+                .lock()
+                .unwrap()
+                .push(OpCall::Chmod(path.to_path_buf(), mode));
+            Ok(())
+        }
     }
 
     fn entry(name: &str, is_dir: bool) -> FileEntry {
@@ -332,6 +647,8 @@ mod tests {
             name: name.into(),
             is_dir,
             size: if is_dir { 0 } else { 42 },
+            is_symlink: false,
+            perm: None,
         }
     }
 
@@ -345,6 +662,7 @@ mod tests {
                 .unwrap()
                 .to_string_lossy()
                 .into_owned(),
+            is_dir: false,
         }
     }
 
@@ -358,6 +676,7 @@ mod tests {
                 .unwrap()
                 .to_string_lossy()
                 .into_owned(),
+            is_dir: false,
         }
     }
 
@@ -595,5 +914,141 @@ mod tests {
             .iter()
             .any(|e| matches!(e, SftpEvent::TransferDone(_))));
         assert!(matches!(events.last(), Some(SftpEvent::QueueDone)));
+    }
+
+    #[test]
+    fn remote_ops_emit_opdone_and_record() {
+        let mut t = MockTransport::new(0);
+        let ops = t.ops_handle();
+        let events = drive(
+            &mut t,
+            vec![
+                SftpCommand::Mkdir(PathBuf::from("/srv/newdir")),
+                SftpCommand::Rename(PathBuf::from("/srv/a.txt"), PathBuf::from("/srv/b.txt")),
+                SftpCommand::Chmod(PathBuf::from("/srv/x.sh"), 0o755),
+                SftpCommand::Remove(PathBuf::from("/srv/old"), true),
+            ],
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e, SftpEvent::OpDone))
+                .count(),
+            4
+        );
+        let recorded = ops.lock().unwrap().clone();
+        assert_eq!(
+            recorded,
+            vec![
+                OpCall::Mkdir(PathBuf::from("/srv/newdir")),
+                OpCall::Rename(PathBuf::from("/srv/a.txt"), PathBuf::from("/srv/b.txt")),
+                OpCall::Chmod(PathBuf::from("/srv/x.sh"), 0o755),
+                OpCall::Remove(PathBuf::from("/srv/old"), true),
+            ]
+        );
+    }
+
+    #[test]
+    fn recursive_download_transfers_whole_tree() {
+        // Canned nested remote tree; a directory queue item must download every
+        // file to a mirrored local path and create the local subdirectories.
+        let base = std::env::temp_dir().join(format!("sshub-sftp-v2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let dst = base.join("proj");
+
+        let mut t = MockTransport::new(PROGRESS_STEP)
+            .with_listing("/srv/proj", vec![entry("sub", true), entry("a.txt", false)])
+            .with_listing("/srv/proj/sub", vec![entry("b.txt", false)]);
+        let calls = t.calls_handle();
+
+        let item = QueuedTransfer {
+            direction: Direction::Download,
+            src: PathBuf::from("/srv/proj"),
+            dst: dst.clone(),
+            name: "proj".into(),
+            is_dir: true,
+        };
+        let events = drive(&mut t, vec![SftpCommand::RunQueue(vec![item])]);
+
+        let recorded = calls.lock().unwrap().clone();
+        let dl_dsts: Vec<_> = recorded.iter().map(|c| c.dst.clone()).collect();
+        assert_eq!(recorded.len(), 2, "both files in the tree downloaded");
+        assert!(dl_dsts.contains(&dst.join("a.txt")));
+        assert!(dl_dsts.contains(&dst.join("sub").join("b.txt")));
+        assert!(dst.join("sub").is_dir(), "local mirror dir created");
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, SftpEvent::TransferDone(0))));
+        assert!(matches!(events.last(), Some(SftpEvent::QueueDone)));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn recursive_download_classifies_symlinks_via_stat() {
+        // Symlinks are never descended into. Follow-stat classifies them:
+        // "dirlink" (target is a directory) is skipped — downloading it as a
+        // file would fail the queue with an open/EISDIR error; "filelink"
+        // (target is a file) transfers with the TARGET's size, not the lstat
+        // link-text length; "broken" (stat fails) is skipped too.
+        let base = std::env::temp_dir().join(format!("sshub-sftp-v2-sym-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let dst = base.join("proj");
+
+        let sym = |name: &str| FileEntry {
+            name: name.into(),
+            is_dir: false,
+            size: 9, // lstat size: the link text length, must NOT be used
+            is_symlink: true,
+            perm: None,
+        };
+        let mut t = MockTransport::new(PROGRESS_STEP)
+            .with_listing(
+                "/srv/proj",
+                vec![
+                    sym("dirlink"),
+                    sym("filelink"),
+                    sym("broken"),
+                    entry("real.txt", false),
+                ],
+            )
+            .with_stat("/srv/proj/dirlink", true, 0)
+            .with_stat("/srv/proj/filelink", false, 1000);
+        let calls = t.calls_handle();
+
+        let item = QueuedTransfer {
+            direction: Direction::Download,
+            src: PathBuf::from("/srv/proj"),
+            dst: dst.clone(),
+            name: "proj".into(),
+            is_dir: true,
+        };
+        let events = drive(&mut t, vec![SftpCommand::RunQueue(vec![item])]);
+
+        let recorded = calls.lock().unwrap().clone();
+        let dsts: Vec<_> = recorded.iter().map(|c| c.dst.clone()).collect();
+        // Only the file-symlink and the real file transfer; the dir-symlink
+        // and the broken link are skipped, and the dir-symlink target is
+        // never listed (which would error — no canned listing).
+        assert_eq!(recorded.len(), 2);
+        assert!(dsts.contains(&dst.join("filelink")));
+        assert!(dsts.contains(&dst.join("real.txt")));
+        assert!(
+            !events.iter().any(|e| matches!(e, SftpEvent::Error(_))),
+            "no error — symlinks never opened as dirs"
+        );
+        // The planned tree size counts the filelink TARGET size (1000) +
+        // real.txt (42), not the 9-byte link texts.
+        let planned = events
+            .iter()
+            .find_map(|e| match e {
+                SftpEvent::Progress { size, .. } => Some(*size),
+                _ => None,
+            })
+            .expect("progress emitted");
+        assert_eq!(planned, 1042);
+        assert!(matches!(events.last(), Some(SftpEvent::QueueDone)));
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

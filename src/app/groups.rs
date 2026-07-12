@@ -216,6 +216,11 @@ impl App {
             {
                 self.group_form_backspace()
             }
+            KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End | KeyCode::Delete
+                if field == Some(GroupFormField::Name) =>
+            {
+                self.group_form_cursor_key(key.code)
+            }
             // Typing only edits the name field.
             KeyCode::Char(c)
                 if field == Some(GroupFormField::Name)
@@ -392,5 +397,13 @@ impl App {
             return;
         };
         form.cursor = text_input::backspace_at(&mut form.name, form.cursor);
+    }
+
+    fn group_form_cursor_key(&mut self, code: KeyCode) {
+        if let Some(form) = self.group_form.as_mut() {
+            let mut cursor = form.cursor;
+            text_input::handle_cursor_key(code, &mut form.name, &mut cursor);
+            form.cursor = cursor;
+        }
     }
 }

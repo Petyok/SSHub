@@ -29,6 +29,12 @@ pub struct FileEntry {
     pub name: String,
     pub is_dir: bool,
     pub size: u64,
+    /// True if the entry is a symlink. Recursive transfer/delete must NOT
+    /// descend into these (avoids following a link outside the tree or a cycle).
+    pub is_symlink: bool,
+    /// Unix permission bits (the low 12 bits of the mode), if known. Used to
+    /// seed the chmod prompt and could be shown in the row.
+    pub perm: Option<u32>,
 }
 
 /// A transfer staged in the queue but not yet run.
@@ -38,6 +44,8 @@ pub struct QueuedTransfer {
     pub src: PathBuf,
     pub dst: PathBuf,
     pub name: String,
+    /// Whether `src` is a directory — the worker transfers it recursively.
+    pub is_dir: bool,
 }
 
 /// One browsable directory column (remote or local).
@@ -108,6 +116,16 @@ impl Pane {
         self.entries = entries;
         self.filter = String::new();
         self.clamp_selection();
+    }
+
+    /// Drop the entry named `name` (if present) and clamp the cursor. Used for
+    /// optimistic feedback after a delete is dispatched, before the async
+    /// re-listing lands.
+    pub fn remove_named(&mut self, name: &str) {
+        if let Some(i) = self.entries.iter().position(|e| e.name == name) {
+            self.entries.remove(i);
+            self.clamp_selection();
+        }
     }
 
     fn clamp_selection(&mut self) {
@@ -266,18 +284,13 @@ impl SftpState {
     }
 
     /// Stage the focused-remote selection for download into `local.cwd`.
-    /// Directories can't be staged in v1.
+    /// Directories are staged too and transferred recursively by the worker.
     pub fn stage_download(&mut self) -> Result<(), String> {
         let entry = self
             .remote
             .selected_entry()
             .cloned()
             .ok_or_else(|| "nothing selected".to_string())?;
-        if entry.is_dir {
-            let msg = "directories can't be staged in v1".to_string();
-            self.notice = Some(msg.clone());
-            return Err(msg);
-        }
         let src = self.remote.cwd.join(&entry.name);
         let dst = self.local.cwd.join(&entry.name);
         if self.queue.iter().any(|q| q.src == src && q.dst == dst) {
@@ -290,23 +303,19 @@ impl SftpState {
             src,
             dst,
             name: entry.name,
+            is_dir: entry.is_dir,
         });
         Ok(())
     }
 
     /// Stage the focused-local selection for upload into `remote.cwd`.
-    /// Directories can't be staged in v1.
+    /// Directories are staged too and transferred recursively by the worker.
     pub fn stage_upload(&mut self) -> Result<(), String> {
         let entry = self
             .local
             .selected_entry()
             .cloned()
             .ok_or_else(|| "nothing selected".to_string())?;
-        if entry.is_dir {
-            let msg = "directories can't be staged in v1".to_string();
-            self.notice = Some(msg.clone());
-            return Err(msg);
-        }
         let src = self.local.cwd.join(&entry.name);
         let dst = self.remote.cwd.join(&entry.name);
         if self.queue.iter().any(|q| q.src == src && q.dst == dst) {
@@ -319,6 +328,7 @@ impl SftpState {
             src,
             dst,
             name: entry.name,
+            is_dir: entry.is_dir,
         });
         Ok(())
     }
@@ -342,11 +352,15 @@ mod tests {
                 name: "docs".into(),
                 is_dir: true,
                 size: 0,
+                is_symlink: false,
+                perm: None,
             },
             FileEntry {
                 name: "a.txt".into(),
                 is_dir: false,
                 size: 10,
+                is_symlink: false,
+                perm: None,
             },
         ]);
         s.local.set_entries(vec![
@@ -354,11 +368,15 @@ mod tests {
                 name: "photos".into(),
                 is_dir: true,
                 size: 0,
+                is_symlink: false,
+                perm: None,
             },
             FileEntry {
                 name: "b.bin".into(),
                 is_dir: false,
                 size: 20,
+                is_symlink: false,
+                perm: None,
             },
         ]);
         s
@@ -448,16 +466,15 @@ mod tests {
     }
 
     #[test]
-    fn stage_download_directory_refused() {
+    fn stage_download_directory_is_queued_recursively() {
         let mut s = state_with_entries();
         s.remote.selected = 0; // docs (dir)
-        let err = s.stage_download().unwrap_err();
-        assert_eq!(err, "directories can't be staged in v1");
-        assert!(s.queue.is_empty());
-        assert_eq!(
-            s.notice.as_deref(),
-            Some("directories can't be staged in v1")
-        );
+        assert!(s.stage_download().is_ok());
+        assert_eq!(s.queue.len(), 1);
+        let q = &s.queue[0];
+        assert_eq!(q.direction, Direction::Download);
+        assert!(q.is_dir, "a directory stages as a recursive transfer");
+        assert_eq!(q.name, "docs");
     }
 
     #[test]
@@ -472,11 +489,12 @@ mod tests {
     }
 
     #[test]
-    fn stage_upload_directory_refused() {
+    fn stage_upload_directory_is_queued_recursively() {
         let mut s = state_with_entries();
         s.local.selected = 0; // photos (dir)
-        assert!(s.stage_upload().is_err());
-        assert!(s.queue.is_empty());
+        assert!(s.stage_upload().is_ok());
+        assert_eq!(s.queue.len(), 1);
+        assert!(s.queue[0].is_dir);
     }
 
     #[test]
@@ -566,6 +584,8 @@ mod tests {
             name: "z".into(),
             is_dir: false,
             size: 1,
+            is_symlink: false,
+            perm: None,
         }]);
         assert!(s.remote.filter.is_empty());
         assert_eq!(s.remote.visible_len(), 1);
@@ -588,6 +608,8 @@ mod tests {
             name: "only".into(),
             is_dir: false,
             size: 1,
+            is_symlink: false,
+            perm: None,
         }]);
         assert_eq!(s.remote.selected, 0);
     }

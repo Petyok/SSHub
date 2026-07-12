@@ -81,3 +81,29 @@ pub fn render_settings(frame: &mut Frame, app: &App) {
         theme::mute(),
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::app::SETTINGS_ITEMS;
+
+    /// Hints render at the popup bottom with `inner_w = 56 - 4` columns.
+    /// A hint that needs ellipsizing ends flush at the limit, and any
+    /// ambiguous-width char (em dash, middle dot, ellipsis) that a terminal
+    /// draws 2 cells wide then pushes the tail onto the popup border. Keep
+    /// hints short and ASCII so neither can happen.
+    #[test]
+    fn settings_hints_fit_the_popup_without_ellipsizing() {
+        const INNER_W: usize = 56 - 4;
+        for (label, hint) in SETTINGS_ITEMS {
+            assert!(
+                hint.chars().count() <= INNER_W,
+                "hint for '{label}' is {} chars, must be <= {INNER_W}",
+                hint.chars().count()
+            );
+            assert!(
+                hint.is_ascii(),
+                "hint for '{label}' contains a non-ASCII char that may render double-width"
+            );
+        }
+    }
+}

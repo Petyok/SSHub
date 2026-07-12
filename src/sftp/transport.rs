@@ -42,6 +42,24 @@ pub trait SftpTransport {
         remote: &Path,
         progress: &mut dyn FnMut(u64, u64),
     ) -> Result<()>;
+
+    /// Remove a remote path. A file is unlinked; a directory is removed
+    /// recursively (contents first, then the directory itself).
+    /// Follow-symlink stat: `(is_dir, size)` of the resolved target. Transfer
+    /// planning uses it to classify symlinks — a symlink-to-file transfers
+    /// with the target's size, symlink-to-dir and broken links are skipped.
+    fn stat(&mut self, path: &Path) -> Result<(bool, u64)>;
+
+    fn remove(&mut self, path: &Path, is_dir: bool) -> Result<()>;
+
+    /// Create a remote directory (mode 0755).
+    fn mkdir(&mut self, path: &Path) -> Result<()>;
+
+    /// Rename / move a remote path. Fails if `to` already exists.
+    fn rename(&mut self, from: &Path, to: &Path) -> Result<()>;
+
+    /// Set the permission bits of a remote path (chmod).
+    fn chmod(&mut self, path: &Path, mode: u32) -> Result<()>;
 }
 
 /// Chunk size for streaming transfers (also the progress throttle granularity).
@@ -278,6 +296,9 @@ impl SftpTransport for Ssh2Transport {
                     name,
                     is_dir: stat.is_dir(),
                     size: stat.size.unwrap_or(0),
+                    is_symlink: is_symlink(&stat),
+                    // Low 12 bits: permission + setuid/setgid/sticky.
+                    perm: stat.perm.map(|p| p & 0o7777),
                 })
             })
             .collect();
@@ -401,6 +422,85 @@ impl SftpTransport for Ssh2Transport {
             }
         }
     }
+
+    fn stat(&mut self, path: &Path) -> Result<(bool, u64)> {
+        let sftp = self.sftp_ref()?;
+        let st = sftp
+            .stat(path)
+            .with_context(|| format!("failed to stat {}", path.display()))?;
+        Ok((st.is_dir(), st.size.unwrap_or(0)))
+    }
+
+    fn remove(&mut self, path: &Path, is_dir: bool) -> Result<()> {
+        let sftp = self.sftp_ref()?;
+        if is_dir {
+            remove_dir_recursive(sftp, path)
+        } else {
+            sftp.unlink(path)
+                .with_context(|| format!("failed to delete {}", path.display()))
+        }
+    }
+
+    fn mkdir(&mut self, path: &Path) -> Result<()> {
+        let sftp = self.sftp_ref()?;
+        sftp.mkdir(path, 0o755)
+            .with_context(|| format!("failed to create {}", path.display()))
+    }
+
+    fn rename(&mut self, from: &Path, to: &Path) -> Result<()> {
+        let sftp = self.sftp_ref()?;
+        // No flags → the server refuses to clobber an existing target, so a
+        // rename onto an existing name surfaces an error instead of destroying it.
+        sftp.rename(from, to, None)
+            .with_context(|| format!("failed to rename {} to {}", from.display(), to.display()))
+    }
+
+    fn chmod(&mut self, path: &Path, mode: u32) -> Result<()> {
+        let sftp = self.sftp_ref()?;
+        let stat = ssh2::FileStat {
+            size: None,
+            uid: None,
+            gid: None,
+            perm: Some(mode),
+            atime: None,
+            mtime: None,
+        };
+        sftp.setstat(path, stat)
+            .with_context(|| format!("failed to chmod {} to {:o}", path.display(), mode))
+    }
+}
+
+/// S_IFLNK (0o120000) in the file-type bits of the mode. `readdir` returns
+/// lstat-style attributes, so this identifies the link itself, not its target.
+fn is_symlink(stat: &ssh2::FileStat) -> bool {
+    stat.perm.map(|p| p & 0o170000 == 0o120000).unwrap_or(false)
+}
+
+/// Recursively delete a remote directory: contents first (files unlinked,
+/// subdirs recursed), then the now-empty directory via `rmdir`. `readdir`
+/// yields file names, so child paths are rebuilt as `dir.join(name)`.
+fn remove_dir_recursive(sftp: &ssh2::Sftp, dir: &Path) -> Result<()> {
+    let entries = sftp
+        .readdir(dir)
+        .with_context(|| format!("failed to list {}", dir.display()))?;
+    for (p, stat) in entries {
+        let Some(name) = p.file_name() else { continue };
+        let name = name.to_string_lossy();
+        if name.is_empty() || name == "." || name == ".." {
+            continue;
+        }
+        let child = dir.join(name.as_ref());
+        // A symlink (even to a directory) is unlinked, never followed — otherwise
+        // we'd recurse through the link and delete files outside this tree.
+        if stat.is_dir() && !is_symlink(&stat) {
+            remove_dir_recursive(sftp, &child)?;
+        } else {
+            sftp.unlink(&child)
+                .with_context(|| format!("failed to delete {}", child.display()))?;
+        }
+    }
+    sftp.rmdir(dir)
+        .with_context(|| format!("failed to remove directory {}", dir.display()))
 }
 
 /// A hidden sibling temp path next to `path`, for atomic write-then-rename.

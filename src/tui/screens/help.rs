@@ -145,9 +145,12 @@ fn help_lines() -> Vec<Line<'static>> {
         entry("Backspace", "Up one directory"),
         entry(
             "\u{2190} / \u{2192}",
-            "Stage download (remote\u{2192}local) / upload",
+            "Stage download / upload (files or whole folders)",
         ),
         entry("c / u", "Run queue / remove last queued transfer"),
+        entry("d", "Delete selected file/folder (recursive)"),
+        entry("n / R", "New folder / rename in the focused pane"),
+        entry("M", "Change permissions (chmod, octal)"),
         entry("r", "Refresh both panes"),
         entry(
             "/",
