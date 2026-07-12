@@ -11,3 +11,6 @@
 
 # Design artifacts (not part of the release)
 /design_handoff_sshub/
+
+# VHS intermediates (mp4 masters + palettes) produced by demo/record.sh
+/demo/build/

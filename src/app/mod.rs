@@ -130,6 +130,8 @@ pub struct App {
     /// Searchable host picker for a new embedded session tab.
     pub session_host_picker: Option<SessionHostPicker>,
     pub import_prompt: Option<ImportPromptEdit>,
+    /// Open SFTP mkdir / rename text prompt, if any.
+    pub sftp_prompt: Option<SftpPromptEdit>,
     /// UI zoom level (0 = default). Widens the hosts column in the layout and
     /// the host-name column within it.
     pub ui_zoom: usize,
@@ -276,6 +278,7 @@ impl App {
             tunnel_host_picker: None,
             session_host_picker: None,
             import_prompt: None,
+            sftp_prompt: None,
             ui_zoom: 0,
             group_manage_selected: 0,
             group_notice: None,

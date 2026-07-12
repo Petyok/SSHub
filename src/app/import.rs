@@ -45,6 +45,16 @@ impl App {
             }
             KeyCode::Enter | KeyCode::F(2) => self.run_termius_import()?,
             KeyCode::Backspace if key.modifiers.is_empty() => self.import_prompt_backspace(),
+            KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End | KeyCode::Delete => {
+                if let Some(p) = self.import_prompt.as_mut() {
+                    let mut cursor = p.cursor;
+                    text_input::handle_cursor_key(key.code, &mut p.path, &mut cursor);
+                    p.cursor = cursor;
+                    if key.code == KeyCode::Delete {
+                        p.error = None;
+                    }
+                }
+            }
             KeyCode::Char(c)
                 if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
                     && !c.is_control() =>

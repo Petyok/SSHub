@@ -331,6 +331,10 @@ impl App {
             KeyCode::Left if field.is_picker() || field.is_toggle() => {
                 self.host_form_picker_scroll(-1);
             }
+            // Text fields: move the edit cursor within the field.
+            KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End | KeyCode::Delete => {
+                self.host_form_cursor_key(key.code)
+            }
             KeyCode::Char(' ')
                 if key.modifiers.is_empty() && field == HostFormField::ForwardAgent =>
             {
@@ -409,5 +413,22 @@ impl App {
         let c = form.cursor;
         form.cursor = text_input::insert_at(form.active_field_mut(), c, ch);
         form.dirty = true;
+    }
+
+    fn host_form_cursor_key(&mut self, code: KeyCode) {
+        if let Some(form) = self.host_form.as_mut() {
+            if form.field.is_picker() || form.field.is_toggle() {
+                return;
+            }
+            if code == KeyCode::Delete && form.metadata_only && form.field.is_connection_field() {
+                return;
+            }
+            let mut cursor = form.cursor;
+            let changed = text_input::handle_cursor_key(code, form.active_field_mut(), &mut cursor);
+            form.cursor = cursor;
+            if changed == Some(true) {
+                form.dirty = true;
+            }
+        }
     }
 }

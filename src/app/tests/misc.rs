@@ -459,3 +459,27 @@ pub(crate) fn shift_arrow_jumps_between_group_headers() {
     app.handle_key(key_shift(KeyCode::Up)).unwrap();
     assert_eq!(app.selected, 2);
 }
+
+#[test]
+pub(crate) fn help_scroll_stops_at_render_ceiling() {
+    // Regression: Down used to clamp at line_count-1 while the renderer
+    // clamps at line_count - body_height. The gap banked invisible presses
+    // that Up had to unwind before the view moved.
+    let mut app = test_app(vec![("web", host("web"))]);
+    app.terminal_area = ratatui::layout::Rect::new(0, 0, 80, 24);
+    app.handle_key(key_char('?')).unwrap();
+    assert_eq!(app.mode, AppMode::Help);
+
+    let max = crate::tui::help_max_scroll(app.terminal_area);
+    assert!(max > 0, "help content must overflow a 24-row terminal");
+    for _ in 0..500 {
+        app.handle_key(key(KeyCode::Down)).unwrap();
+    }
+    assert_eq!(app.help_scroll, max);
+    // The very next Up must move the view immediately.
+    app.handle_key(key(KeyCode::Up)).unwrap();
+    assert_eq!(app.help_scroll, max - 1);
+    // End lands on the same ceiling.
+    app.handle_key(key(KeyCode::End)).unwrap();
+    assert_eq!(app.help_scroll, max);
+}

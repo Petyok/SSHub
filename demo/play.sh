@@ -7,6 +7,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+export SSHUB_VERSION_LABEL=""
 export SSHUB_CONFIG_DIR="$ROOT/demo/home/.config/sshub"
 export SSHUB_DATA_DIR="${SSHUB_PLAY_DATA_DIR:-$ROOT/demo/home/.local/share/sshub-play}"
 export SSHUB_SSH_CONFIG="$ROOT/demo/home/ssh_config"

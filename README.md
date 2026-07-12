@@ -6,7 +6,11 @@ A terminal UI for managing and connecting to SSH hosts. Combines your `~/.ssh/co
 
 > ⚠️ This project is 100% vibe-coded slop made with dynamic workflows using Claude Opus 4.8 + Fable 5. Use at your own risk.
 
-![SSHub demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/overview.gif)
+![SSHub demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/hero.gif)
+
+Navigating the dashboard — nested host groups, the fuzzy palette (`/`), the group manager (`Shift+G`), and the multi-tag filter (`#`):
+
+![Navigation demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/navigate.gif)
 
 Connecting to a host — the session runs in an embedded PTY right inside the TUI:
 
@@ -45,7 +49,7 @@ The settings overlay (`Ctrl+H`) — toggle an opaque background, OS logos, quit 
 
 - **Embedded SSH sessions** — connect opens an in-TUI PTY; detach with Ctrl+D and return to the dashboard while SSH keeps running; multiple session tabs
 - **Hosts** — browse, search, and connect. Fuzzy search with `/`, multi-tag AND filter with `#`, favorites, nested groups, manual sort order
-- **SFTP file transfer** — a dual-pane browser (remote / local) with a staged transfer queue: navigate both sides, queue uploads and downloads, and run them with a progress bar
+- **SFTP file transfer** — a dual-pane browser (remote / local) with a staged transfer queue: navigate both sides, queue uploads and downloads (files or whole folders, transferred recursively), and run them with a progress bar. Manage files in place too: delete (`d`), new folder (`n`), rename/move (`R`), and change permissions (`M`, octal chmod)
 - **OS auto-detection** — on first connect a background probe detects the remote distro and the host card renders its logo (Braille art in brand colors), just like Termius
 - **Multiple groups & Favorites** — a host can belong to several groups at once; a reserved Favorites group and a ★ marker in the list, toggled with `f`
 - **Tunnels** — define and manage SSH tunnels (local/remote/dynamic SOCKS). Start, stop, and monitor from the TUI
@@ -135,7 +139,7 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 
 | Key              | Action                          |
 |------------------|---------------------------------|
-| `1`..`4`         | Switch tab (hosts/tunnels/keys/audit) |
+| `1`..`5`         | Switch tab (hosts/sftp/tunnels/identities/audit) |
 | `Tab`            | Toggle detail panel             |
 | `Esc`            | Back / close overlay            |
 | `Ctrl+K`         | Keybind editor                  |

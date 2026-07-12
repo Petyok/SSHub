@@ -90,10 +90,15 @@ pub enum VisualRow {
 /// Appearance toggles shown in the Settings overlay, in display order. The
 /// index maps to [`App::setting_value`] / `toggle_setting`. Each entry is
 /// `(label, hint)`.
+///
+/// Hints must fit the 56-wide popup without ellipsizing (enforced by a test
+/// in `tui::screens::settings`) and avoid ambiguous-width chars like the em
+/// dash — some terminals draw those 2 cells wide, pushing the tail of the
+/// line onto the popup border.
 pub const SETTINGS_ITEMS: [(&str, &str); 4] = [
     (
         "Opaque background",
-        "solid backdrop — fixes unreadable text on transparent terminals",
+        "fixes unreadable text on transparent terminals",
     ),
     ("Show OS logos", "distro logo in the host card"),
     ("Confirm before quit", "ask before q / Ctrl+C"),
@@ -133,6 +138,8 @@ pub enum AppMode {
     Help,
     Palette,
     ImportPrompt,
+    /// Single-field text prompt for an SFTP mkdir / rename.
+    SftpPrompt,
     /// Embedded session is spawning; ConnectScreen visible.
     Connecting,
     /// Live embedded SSH session; PTY drives the fullscreen view.
@@ -259,15 +266,61 @@ pub struct TunnelFormEdit {
     pub editing: bool,
     pub edit_snapshot: String,
     pub dirty: bool,
+    /// Edit-cursor position (char index) within the active text field.
+    pub cursor: usize,
+}
+
+impl TunnelFormEdit {
+    /// The active field's text buffer, or `None` for the Type / Host fields
+    /// (which aren't free-text).
+    pub fn active_text_field(&self) -> Option<&str> {
+        match self.active_field {
+            TunnelFormField::LocalPort => Some(&self.local_port),
+            TunnelFormField::RemoteHost => Some(&self.remote_host),
+            TunnelFormField::RemotePort => Some(&self.remote_port),
+            TunnelFormField::Label => Some(&self.label),
+            _ => None,
+        }
+    }
+
+    pub fn active_text_field_mut(&mut self) -> Option<&mut String> {
+        match self.active_field {
+            TunnelFormField::LocalPort => Some(&mut self.local_port),
+            TunnelFormField::RemoteHost => Some(&mut self.remote_host),
+            TunnelFormField::RemotePort => Some(&mut self.remote_port),
+            TunnelFormField::Label => Some(&mut self.label),
+            _ => None,
+        }
+    }
 }
 
 /// Item pending confirmation before deletion.
 #[derive(Debug, Clone)]
 pub enum PendingDelete {
-    Host { id: i64, name: String },
-    Identity { id: i64, name: String },
-    Group { id: i64, name: String },
-    Tunnel { id: i64, label: String },
+    Host {
+        id: i64,
+        name: String,
+    },
+    Identity {
+        id: i64,
+        name: String,
+    },
+    Group {
+        id: i64,
+        name: String,
+    },
+    Tunnel {
+        id: i64,
+        label: String,
+    },
+    /// A file/directory in the SFTP browser (remote via the worker, local via
+    /// `std::fs`). Directories are removed recursively.
+    SftpEntry {
+        side: crate::sftp::model::Side,
+        path: std::path::PathBuf,
+        name: String,
+        is_dir: bool,
+    },
 }
 
 /// Editable metadata field index in [`AppMode::HostDetail`].
@@ -668,6 +721,29 @@ pub struct ImportPromptEdit {
     pub path: String,
     pub cursor: usize,
     /// Feedback shown inside the popup (e.g. why the last attempt failed).
+    pub error: Option<String>,
+}
+
+/// Which SFTP text prompt is open ([`AppMode::SftpPrompt`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SftpPromptKind {
+    Mkdir,
+    Rename,
+    /// Octal-permission input; `old_path` holds the entry being chmod'd.
+    Chmod,
+}
+
+/// Single-field text prompt for an SFTP mkdir / rename ([`AppMode::SftpPrompt`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SftpPromptEdit {
+    pub kind: SftpPromptKind,
+    pub side: crate::sftp::model::Side,
+    /// Directory the name is created/renamed within (the focused pane's cwd).
+    pub base: std::path::PathBuf,
+    /// For `Rename`: the current path being renamed. `None` for `Mkdir`.
+    pub old_path: Option<std::path::PathBuf>,
+    pub value: String,
+    pub cursor: usize,
     pub error: Option<String>,
 }
 

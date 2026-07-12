@@ -337,7 +337,22 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
             theme::text()
         };
 
-        let display = if value.is_empty() && !form.editing {
+        // Render the edit cursor in the active text field (Type/Host aren't text).
+        let cursored = if is_active
+            && matches!(
+                field,
+                TunnelFormField::LocalPort
+                    | TunnelFormField::RemoteHost
+                    | TunnelFormField::RemotePort
+                    | TunnelFormField::Label
+            ) {
+            Some(crate::text_input::with_cursor(value, form.cursor))
+        } else {
+            None
+        };
+        let display = if let Some(c) = &cursored {
+            c.as_str()
+        } else if value.is_empty() && !form.editing {
             "─"
         } else {
             value.as_str()

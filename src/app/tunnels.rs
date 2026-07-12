@@ -37,6 +37,7 @@ impl App {
                     editing: true,
                     edit_snapshot: String::new(),
                     dirty: false,
+                    cursor: 0,
                 });
                 self.mode = AppMode::TunnelForm;
             }
@@ -54,6 +55,7 @@ impl App {
                         editing: true,
                         edit_snapshot: String::new(),
                         dirty: false,
+                        cursor: 0,
                     });
                     self.mode = AppMode::TunnelForm;
                 }
@@ -185,34 +187,66 @@ impl App {
             KeyCode::Enter | KeyCode::Tab | KeyCode::Down if key.modifiers.is_empty() => {
                 if let Some(form) = self.tunnel_form.as_mut() {
                     form.active_field = form.active_field.next();
+                    form.cursor = form
+                        .active_text_field()
+                        .map(text_input::char_len)
+                        .unwrap_or(0);
                 }
             }
             KeyCode::BackTab | KeyCode::Up => {
                 if let Some(form) = self.tunnel_form.as_mut() {
                     form.active_field = form.active_field.prev();
+                    form.cursor = form
+                        .active_text_field()
+                        .map(text_input::char_len)
+                        .unwrap_or(0);
                 }
             }
             KeyCode::Left | KeyCode::Right => {
+                let mut open_picker = false;
                 if let Some(form) = self.tunnel_form.as_mut() {
-                    if form.active_field == TunnelFormField::Type {
-                        form.tunnel_type = form.tunnel_type.next();
-                        form.dirty = true;
-                    } else if form.active_field == TunnelFormField::Host {
+                    match form.active_field {
+                        TunnelFormField::Type => {
+                            form.tunnel_type = form.tunnel_type.next();
+                            form.dirty = true;
+                        }
                         // The server field is chosen via the searchable picker.
-                        self.open_tunnel_host_picker();
+                        TunnelFormField::Host => open_picker = true,
+                        // Text fields: move the edit cursor.
+                        _ => {
+                            let mut cursor = form.cursor;
+                            if let Some(v) = form.active_text_field_mut() {
+                                text_input::handle_cursor_key(key.code, v, &mut cursor);
+                                form.cursor = cursor;
+                            }
+                        }
+                    }
+                }
+                if open_picker {
+                    self.open_tunnel_host_picker();
+                }
+            }
+            KeyCode::Home | KeyCode::End | KeyCode::Delete => {
+                if let Some(form) = self.tunnel_form.as_mut() {
+                    let mut cursor = form.cursor;
+                    let changed = form
+                        .active_text_field_mut()
+                        .and_then(|v| text_input::handle_cursor_key(key.code, v, &mut cursor));
+                    form.cursor = cursor;
+                    if changed == Some(true) {
+                        form.dirty = true;
                     }
                 }
             }
             KeyCode::Backspace => {
                 if let Some(form) = self.tunnel_form.as_mut() {
-                    let field = match form.active_field {
-                        TunnelFormField::LocalPort => &mut form.local_port,
-                        TunnelFormField::RemoteHost => &mut form.remote_host,
-                        TunnelFormField::RemotePort => &mut form.remote_port,
-                        TunnelFormField::Label => &mut form.label,
-                        _ => return Ok(()),
+                    let cursor = form.cursor;
+                    let nc = match form.active_text_field_mut() {
+                        Some(v) => text_input::backspace_at(v, cursor),
+                        None => cursor,
                     };
-                    if field.pop().is_some() {
+                    if nc != cursor {
+                        form.cursor = nc;
                         form.dirty = true;
                     }
                 }
@@ -222,15 +256,14 @@ impl App {
                     && !c.is_control() =>
             {
                 if let Some(form) = self.tunnel_form.as_mut() {
-                    let field = match form.active_field {
-                        TunnelFormField::LocalPort => &mut form.local_port,
-                        TunnelFormField::RemoteHost => &mut form.remote_host,
-                        TunnelFormField::RemotePort => &mut form.remote_port,
-                        TunnelFormField::Label => &mut form.label,
-                        _ => return Ok(()),
-                    };
-                    field.push(c);
-                    form.dirty = true;
+                    let cursor = form.cursor;
+                    let nc = form
+                        .active_text_field_mut()
+                        .map(|v| text_input::insert_at(v, cursor, c));
+                    if let Some(nc) = nc {
+                        form.cursor = nc;
+                        form.dirty = true;
+                    }
                 }
             }
             _ => {}
