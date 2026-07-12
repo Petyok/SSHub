@@ -125,6 +125,11 @@ release kind="minor":
     git tag -a "v$ver" -m "SSHub v$ver"
     git push origin main --follow-tags
     git checkout development
+    # Record the release into development's history with an empty merge
+    # (-s ours: dev's tree wins, untouched), so GitHub doesn't show dev as
+    # forever "behind" its own releases and the next squash gets a fresh base.
+    git merge -s ours main -m "chore: sync v$ver release into development history (empty merge, tree untouched)"
+    git push origin development
     echo "released v$ver ({{kind}}) — main now has a single 'chore: release v$ver' commit; the release workflow builds binaries and publishes to crates.io"
 
 # Install the release binary to ~/.local/bin and a launcher entry so sshub
