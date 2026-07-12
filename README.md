@@ -86,9 +86,7 @@ sudo pacman -S --needed dbus
 
 Prebuilt binaries for Linux and macOS are attached to each [GitHub release](https://github.com/Petyok/SSHub/releases).
 
-At runtime, a Secret Service provider (gnome-keyring, KWallet, …) must be
-running and unlocked for credentials to persist; otherwise SSHub warns and ssh
-falls back to prompting.
+At runtime, a Secret Service provider (gnome-keyring, KWallet, …) is preferred for secure credential storage. If one is not running or unlocked (e.g. in WSL, Docker, or headless SSH sessions), SSHub will fallback to storing credentials in a local owner-only restricted file (`credentials.json`), notifying you in the status bar.
 
 ```bash
 git clone https://github.com/Petyok/SSHub.git
