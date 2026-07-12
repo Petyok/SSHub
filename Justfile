@@ -79,17 +79,11 @@ release kind="minor":
     [ "$(git rev-parse --abbrev-ref HEAD)" = development ] || { echo "run from development" >&2; exit 1; }
     git diff --quiet && git diff --cached --quiet || { echo "working tree not clean" >&2; exit 1; }
     git fetch origin --quiet
-    git checkout main
-    git pull --ff-only origin main
-    # Snapshot development's tree onto main as ONE squashed commit, so main
-    # carries a single "chore: release vX.Y.Z" per release instead of every
-    # feature commit. -X theirs resolves the version-line divergence to dev's
-    # value (we set the release version explicitly next). This makes main and
-    # development DIVERGE by design — main is a chain of release snapshots, dev
-    # keeps its granular history — so there is no ff-back into development.
-    git merge --squash -X theirs --no-commit development || true
+    # Settle the release version ON DEVELOPMENT, so its odometer continues
+    # from the released X.Y.Z instead of going stale (a stale dev version made
+    # the next `just release minor` collide with an existing tag).
     # minor: bump Y and reset Z. patch: keep development's current X.Y.Z.
-    # X.Y.Z: set that exact version. On main the pre-commit hook doesn't fire.
+    # X.Y.Z: set that exact version.
     case "{{kind}}" in
       minor) just bump minor ;;
       patch) ;;
@@ -98,8 +92,34 @@ release kind="minor":
     ver=$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "([^"]+)".*/\1/')
     if git rev-parse "v$ver" >/dev/null 2>&1; then
       echo "v$ver is already tagged — pick another version (or 'just release minor')" >&2
-      git checkout -f development; exit 1
+      git checkout -- Cargo.toml Cargo.lock; exit 1
     fi
+    # Roll the changelog: [Unreleased] becomes [$ver] - <today>, with a fresh
+    # empty [Unreleased] back on top. Skipped if $ver already has a section
+    # (recovery re-run) or there is no [Unreleased] header.
+    if grep -qF "## [$ver]" CHANGELOG.md; then
+      echo "CHANGELOG.md already has a $ver section — skipping the roll"
+    elif grep -q '^## \[Unreleased\]' CHANGELOG.md; then
+      sed -i "0,/^## \[Unreleased\]/s//## [Unreleased]\n\n## [$ver] - $(date +%F)/" CHANGELOG.md
+    else
+      echo "warning: no [Unreleased] section in CHANGELOG.md — skipping the roll" >&2
+    fi
+    # Prep commit on development. --no-verify: the patch-bump pre-commit hook
+    # must not move the version we just settled.
+    if ! git diff --quiet; then
+      git add Cargo.toml Cargo.lock CHANGELOG.md
+      git commit --no-verify -m "chore: prep release v$ver"
+    fi
+    git push origin development
+    git checkout main
+    git pull --ff-only origin main
+    # Snapshot development's tree onto main as ONE squashed commit, so main
+    # carries a single "chore: release vX.Y.Z" per release instead of every
+    # feature commit (version + changelog are already settled on dev). -X
+    # theirs resolves leftover divergence from earlier releases to dev's side.
+    # This makes main and development DIVERGE by design — main is a chain of
+    # release snapshots, dev keeps its granular history — no ff-back into dev.
+    git merge --squash -X theirs --no-commit development || true
     git add -A
     git commit -m "chore: release v$ver"
     git tag -a "v$ver" -m "SSHub v$ver"
