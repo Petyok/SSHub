@@ -11,8 +11,8 @@ Thanks for your interest in contributing. Here's how to get started.
 
 ## Branch model
 
-- `main` holds **release snapshots only** — one squashed `chore: release vX.Y.Z`
-  commit per release. Never target it with a PR.
+- `main` receives **releases only** — one `chore: release vX.Y.Z` merge per
+  release. Never target it with a PR.
 - `development` is the integration branch. All work lands here first.
 - Features/fixes go on `feature/*` branches **cut from `development`**.
 
