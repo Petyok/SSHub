@@ -121,7 +121,9 @@ impl FilePasswordStore {
                 .truncate(true)
                 .mode(0o600)
                 .open(&tmp)
-                .map_err(|e| anyhow::anyhow!("Failed to create secure temp credentials file: {e}"))?;
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to create secure temp credentials file: {e}")
+                })?;
             file.write_all(content.as_bytes())?;
         }
         #[cfg(not(unix))]

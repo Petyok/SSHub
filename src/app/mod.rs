@@ -228,7 +228,9 @@ impl App {
             let _ = crate::credentials::migrate_fallback_to_keyring();
             Box::new(crate::credentials::OsKeyring)
         } else {
-            Box::new(crate::credentials::FilePasswordStore::new(data_dir.join("credentials.json")))
+            Box::new(crate::credentials::FilePasswordStore::new(
+                data_dir.join("credentials.json"),
+            ))
         };
 
         let mut app = Self::new_with_deps(
@@ -243,7 +245,9 @@ impl App {
         );
 
         if !keyring_available {
-            app.host_notice = Some("OS keyring unavailable. Using credentials.json fallback.".into());
+            app.host_notice = Some(
+                "OS keyring unavailable. Using credentials.json fallback.".into(),
+            );
         }
 
         app.reload_hosts()?;
