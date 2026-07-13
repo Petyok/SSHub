@@ -128,6 +128,44 @@ pub fn passphrase_matches(path: &Path, passphrase: &str) -> Option<bool> {
     }
 }
 
+/// Generate a new SSH key pair using `ssh-keygen`.
+/// Uses `KeygenAskpass` to stage the optional passphrase, keeping it off argv.
+pub fn generate_key_pair(
+    key_type: &str,
+    bits: Option<u32>,
+    passphrase: &str,
+    comment: &str,
+    target_path: &Path,
+) -> Result<()> {
+    if let Some(parent) = target_path.parent() {
+        std::fs::create_dir_all(parent).context("create target directory")?;
+    }
+    if target_path.exists() {
+        anyhow::bail!("Key file already exists: {}", target_path.display());
+    }
+
+    let askpass = KeygenAskpass::new(passphrase).context("create askpass helper")?;
+    let mut cmd = Command::new("ssh-keygen");
+    cmd.arg("-t").arg(key_type);
+    if let Some(b) = bits {
+        cmd.arg("-b").arg(b.to_string());
+    }
+    cmd.arg("-C").arg(comment);
+    cmd.arg("-f").arg(target_path);
+
+    for (k, v) in askpass.env() {
+        cmd.env(k, v);
+    }
+
+    let output = cmd.output().context("run ssh-keygen")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("ssh-keygen failed: {}", stderr.trim());
+    }
+    Ok(())
+}
+
+
 /// Does `text` look like pasted private-key material (rather than a path)?
 pub fn looks_like_private_key(text: &str) -> bool {
     let t = text.trim_start();
@@ -280,4 +318,23 @@ mod tests {
 
         std::env::remove_var("HOME");
     }
+
+    #[test]
+    fn generates_key_pairs_correctly() {
+        if !ssh_keygen_available() {
+            eprintln!("skipping: ssh-keygen not available");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("id_ed25519");
+
+        generate_key_pair("ed25519", None, "mypass123", "test_comment", &key_path).unwrap();
+
+        assert!(key_path.exists());
+        assert!(dir.path().join("id_ed25519.pub").exists());
+        assert_eq!(key_is_encrypted(&key_path), Some(true));
+        assert_eq!(passphrase_matches(&key_path, "mypass123"), Some(true));
+        assert_eq!(passphrase_matches(&key_path, "wrong"), Some(false));
+    }
 }
+

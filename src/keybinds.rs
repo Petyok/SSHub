@@ -50,6 +50,11 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
+    (@fn generate_key $($key:literal),* $(,)?) => {
+        fn default_kb_generate_key() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
     (@fn edit $($key:literal),* $(,)?) => {
         fn default_kb_edit() -> Vec<String> {
             vec![$($key.to_string()),*]
@@ -341,6 +346,7 @@ kb_defaults! {
     force_quit => ["Ctrl+C"],
     connect => ["Enter"],
     add_host => ["a"],
+    generate_key => ["g"],
     edit => ["e"],
     delete => ["d"],
     duplicate => ["Shift+D"],
@@ -409,6 +415,7 @@ pub enum KeyAction {
     ForceQuit,
     Connect,
     AddHost,
+    GenerateKey,
     Edit,
     Delete,
     Duplicate,
@@ -469,7 +476,7 @@ pub enum KeyAction {
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 64] = [
+    pub const ALL: [KeyAction; 65] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -478,6 +485,7 @@ impl KeyAction {
         KeyAction::ForceQuit,
         KeyAction::Connect,
         KeyAction::AddHost,
+        KeyAction::GenerateKey,
         KeyAction::Edit,
         KeyAction::Delete,
         KeyAction::Duplicate,
@@ -546,6 +554,7 @@ impl KeyAction {
             KeyAction::ForceQuit => "Force quit",
             KeyAction::Connect => "Connect / confirm",
             KeyAction::AddHost => "Add host / identity / tunnel",
+            KeyAction::GenerateKey => "Generate SSH key",
             KeyAction::Edit => "Edit",
             KeyAction::Delete => "Delete",
             KeyAction::Duplicate => "Duplicate host",
@@ -625,6 +634,8 @@ pub struct KeybindsConfig {
     pub connect: Vec<String>,
     #[serde(default = "default_kb_add_host")]
     pub add_host: Vec<String>,
+    #[serde(default = "default_kb_generate_key")]
+    pub generate_key: Vec<String>,
     #[serde(default = "default_kb_edit")]
     pub edit: Vec<String>,
     #[serde(default = "default_kb_delete")]
@@ -750,6 +761,7 @@ impl Default for KeybindsConfig {
             force_quit: default_kb_force_quit(),
             connect: default_kb_connect(),
             add_host: default_kb_add_host(),
+            generate_key: default_kb_generate_key(),
             edit: default_kb_edit(),
             delete: default_kb_delete(),
             duplicate: default_kb_duplicate(),
@@ -821,6 +833,7 @@ impl KeybindsConfig {
             KeyAction::ForceQuit => default_kb_force_quit(),
             KeyAction::Connect => default_kb_connect(),
             KeyAction::AddHost => default_kb_add_host(),
+            KeyAction::GenerateKey => default_kb_generate_key(),
             KeyAction::Edit => default_kb_edit(),
             KeyAction::Delete => default_kb_delete(),
             KeyAction::Duplicate => default_kb_duplicate(),
@@ -895,6 +908,7 @@ impl KeybindsConfig {
             KeyAction::ForceQuit => &self.force_quit,
             KeyAction::Connect => &self.connect,
             KeyAction::AddHost => &self.add_host,
+            KeyAction::GenerateKey => &self.generate_key,
             KeyAction::Edit => &self.edit,
             KeyAction::Delete => &self.delete,
             KeyAction::Duplicate => &self.duplicate,
@@ -964,6 +978,7 @@ impl KeybindsConfig {
             KeyAction::ForceQuit => self.force_quit = binds,
             KeyAction::Connect => self.connect = binds,
             KeyAction::AddHost => self.add_host = binds,
+            KeyAction::GenerateKey => self.generate_key = binds,
             KeyAction::Edit => self.edit = binds,
             KeyAction::Delete => self.delete = binds,
             KeyAction::Duplicate => self.duplicate = binds,
