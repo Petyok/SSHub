@@ -176,8 +176,8 @@ impl App {
             if form.field == KeygenFormField::KeyType {
                 return;
             }
+            let mut cursor = form.cursor;
             if let Some(field) = form.active_field_mut() {
-                let mut cursor = form.cursor;
                 let changed = text_input::handle_cursor_key(code, field, &mut cursor);
                 form.cursor = cursor;
                 if changed == Some(true) {
