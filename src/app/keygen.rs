@@ -60,13 +60,9 @@ impl App {
             KeygenType::Rsa4096 => Some(4096),
         };
 
-        if let Err(e) = crate::ssh::generate_key_pair(
-            key_type_str,
-            bits,
-            &form.passphrase,
-            &form.comment,
-            path,
-        ) {
+        if let Err(e) =
+            crate::ssh::generate_key_pair(key_type_str, bits, &form.passphrase, &form.comment, path)
+        {
             self.keygen_notice = Some(format!("Generation failed: {e:#}"));
             self.keygen_form = Some(form);
             return Ok(());
@@ -77,7 +73,7 @@ impl App {
             .file_name()
             .map(|f| f.to_string_lossy().into_owned())
             .unwrap_or_else(|| "id_generated".to_string());
-        
+
         let identity_name = if !form.comment.trim().is_empty() {
             form.comment.trim().to_string()
         } else {
@@ -108,7 +104,8 @@ impl App {
                         ));
                     }
                 }
-                self.identity_notice = Some(format!("Generated key and identity '{}'", identity_name));
+                self.identity_notice =
+                    Some(format!("Generated key and identity '{}'", identity_name));
             }
             Err(e) => {
                 self.identity_notice = Some(format!(
@@ -189,20 +186,20 @@ impl App {
         if form.field != KeygenFormField::KeyType {
             return;
         }
-        
+
         let old_type = form.key_type;
         form.key_type = match old_type {
             KeygenType::Ed25519 => KeygenType::Rsa4096,
             KeygenType::Rsa4096 => KeygenType::Ed25519,
         };
-        
+
         // Auto-update path if it's the default path
         if old_type == KeygenType::Ed25519 && form.target_path == "~/.ssh/id_ed25519" {
             form.target_path = "~/.ssh/id_rsa".to_string();
         } else if old_type == KeygenType::Rsa4096 && form.target_path == "~/.ssh/id_rsa" {
             form.target_path = "~/.ssh/id_ed25519".to_string();
         }
-        
+
         form.dirty = true;
     }
 

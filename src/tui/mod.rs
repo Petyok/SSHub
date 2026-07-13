@@ -156,7 +156,9 @@ fn render_inner(frame: &mut Frame, app: &App) {
         }
         AppMode::SessionHostPicker => screens::session_host_picker::render(frame, app),
         AppMode::PushKeyHostPicker => screens::push_key_pickers::render_host_picker(frame, app),
-        AppMode::PushKeyIdentityPicker => screens::push_key_pickers::render_identity_picker(frame, app),
+        AppMode::PushKeyIdentityPicker => {
+            screens::push_key_pickers::render_identity_picker(frame, app)
+        }
         AppMode::ConfirmDiscard => {
             if app.host_form.is_some() {
                 render_form_popup(frame, app, FormKind::Host);

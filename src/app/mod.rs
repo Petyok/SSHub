@@ -7,17 +7,17 @@ mod host_detail;
 mod host_form;
 mod hostlist;
 mod identities;
-mod keygen;
 mod import;
+mod keygen;
 mod keys;
 mod mouse;
+mod push_key;
 mod session;
 mod sftp;
 mod tags;
 mod tunnels;
 mod types;
 mod util;
-mod push_key;
 
 #[cfg(test)]
 mod tests;
@@ -234,7 +234,9 @@ impl App {
             let _ = crate::credentials::migrate_fallback_to_keyring();
             Box::new(crate::credentials::OsKeyring)
         } else {
-            Box::new(crate::credentials::FilePasswordStore::new(data_dir.join("credentials.json")))
+            Box::new(crate::credentials::FilePasswordStore::new(
+                data_dir.join("credentials.json"),
+            ))
         };
 
         let mut app = Self::new_with_deps(
@@ -249,7 +251,8 @@ impl App {
         );
 
         if !keyring_available {
-            app.host_notice = Some("OS keyring unavailable. Using credentials.json fallback.".into());
+            app.host_notice =
+                Some("OS keyring unavailable. Using credentials.json fallback.".into());
         }
 
         app.reload_hosts()?;

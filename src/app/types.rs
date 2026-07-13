@@ -849,7 +849,6 @@ impl KeygenFormField {
     }
 }
 
-
 /// Editable identity form field index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IdentityFormField {
@@ -978,7 +977,6 @@ impl KeygenFormEdit {
         }
     }
 }
-
 
 impl HostDetailEdit {
     pub fn active_field(&self) -> &str {

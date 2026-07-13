@@ -206,7 +206,7 @@ fn keychain_keygen_form_flow() {
     // Navigate to Passphrase
     app.handle_key(key(KeyCode::Down)).unwrap();
     edit_field(&mut app, "secret123");
-    
+
     // Navigate to Comment
     app.handle_key(key(KeyCode::Down)).unwrap();
     edit_field(&mut app, "mycomment");
@@ -246,7 +246,7 @@ fn keychain_keygen_successful_generation() {
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Passphrase
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Comment
     app.handle_key(key(KeyCode::Down)).unwrap(); // → TargetPath
-    
+
     // Replace default target path with our temp path
     let default_len = app.keygen_form.as_ref().unwrap().target_path.len();
     edit_field_replace(&mut app, default_len, &key_path_str);
@@ -256,22 +256,31 @@ fn keychain_keygen_successful_generation() {
 
     // Check we returned to normal mode
     assert_eq!(app.mode, AppMode::Normal);
-    
+
     // Verify files were actually created
     assert!(key_path.exists());
     assert!(dir.path().join("my_new_keygen_key.pub").exists());
 
     // Verify the identity was created in db and matches
     let store = LauncherStore::open(db_path).unwrap();
-    let ident = store.get_identity_by_name("my_new_keygen_key").unwrap().expect("should find identity");
+    let ident = store
+        .get_identity_by_name("my_new_keygen_key")
+        .unwrap()
+        .expect("should find identity");
     assert_eq!(
-        ident.private_key.as_ref().map(|p| p.to_string_lossy().into_owned()),
+        ident
+            .private_key
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned()),
         Some(key_path_str)
     );
     assert_eq!(ident.has_password, false);
 
     // Verify that the new identity is selected in app
-    assert_eq!(app.identities[app.identity_selected].name, "my_new_keygen_key");
+    assert_eq!(
+        app.identities[app.identity_selected].name,
+        "my_new_keygen_key"
+    );
 }
 
 #[test]

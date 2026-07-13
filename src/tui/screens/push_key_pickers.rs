@@ -2,7 +2,7 @@
 
 use ratatui::layout::Rect;
 use ratatui::prelude::*;
-use ratatui::widgets::{Clear, Block, Borders};
+use ratatui::widgets::{Block, Borders, Clear};
 
 use crate::app::App;
 use crate::tui::theme;
@@ -101,7 +101,10 @@ pub fn render_identity_picker(frame: &mut Frame, app: &App) {
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)
-            .title(Span::styled(" select public key to push ", theme::heading()))
+            .title(Span::styled(
+                " select public key to push ",
+                theme::heading(),
+            ))
             .border_style(Style::default().fg(theme::ACCENT)),
         popup,
     );

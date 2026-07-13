@@ -1,7 +1,7 @@
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent};
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 use super::*;
 use crate::store::Identity;
@@ -14,7 +14,8 @@ impl App {
 
         let key_identities = self.push_key_identities();
         if key_identities.is_empty() {
-            self.host_notice = Some("No key identities available — generate or add one first.".into());
+            self.host_notice =
+                Some("No key identities available — generate or add one first.".into());
             return Ok(());
         }
 
@@ -102,7 +103,9 @@ impl App {
             }
             KeyCode::Enter => {
                 let identities = self.push_key_identities();
-                let identity = self.push_key_identity_picker.as_ref()
+                let identity = self
+                    .push_key_identity_picker
+                    .as_ref()
                     .and_then(|p| identities.get(p.selected))
                     .cloned()
                     .cloned();
@@ -155,11 +158,13 @@ impl App {
             }
             KeyCode::Enter => {
                 let matches = self.push_key_host_matches();
-                let host_idx = self.push_key_host_picker.as_ref()
+                let host_idx = self
+                    .push_key_host_picker
+                    .as_ref()
                     .and_then(|p| matches.get(p.selected))
                     .map(|(idx, _)| *idx);
                 let identity = self.selected_identity().cloned();
-                
+
                 self.push_key_host_picker = None;
                 self.mode = AppMode::Normal;
 
@@ -174,14 +179,21 @@ impl App {
         Ok(())
     }
 
-    pub(crate) fn push_public_key_to_host(&mut self, entry: &HostEntry, identity: &Identity) -> Result<()> {
+    pub(crate) fn push_public_key_to_host(
+        &mut self,
+        entry: &HostEntry,
+        identity: &Identity,
+    ) -> Result<()> {
         let Some(ref key_path) = identity.private_key else {
             self.host_notice = Some("Identity does not have a private key path set.".into());
             return Ok(());
         };
 
         let passphrase = if identity.has_password {
-            self.password_store.get(&crate::credentials::identity_key(identity.id)).ok().flatten()
+            self.password_store
+                .get(&crate::credentials::identity_key(identity.id))
+                .ok()
+                .flatten()
         } else {
             None
         };
@@ -192,13 +204,9 @@ impl App {
                 let err_msg = format!("Failed to read public key: {e:#}");
                 self.host_notice = Some(err_msg.clone());
                 let username = entry.managed().and_then(|m| m.username.as_deref());
-                let _ = self.store.log_auth_event(
-                    entry.name(),
-                    username,
-                    "direct",
-                    "fail",
-                    &err_msg,
-                );
+                let _ =
+                    self.store
+                        .log_auth_event(entry.name(), username, "direct", "fail", &err_msg);
                 return Ok(());
             }
         };
@@ -207,7 +215,8 @@ impl App {
         let remote_cmd = format!(
             "umask 077 && mkdir -p ~/.ssh && touch ~/.ssh/authorized_keys && \
              key='{}' && \
-             (grep -qxF \"$key\" ~/.ssh/authorized_keys || echo \"$key\" >> ~/.ssh/authorized_keys)",
+             (grep -qxF \"$key\" ~/.ssh/authorized_keys || \
+              echo \"$key\" >> ~/.ssh/authorized_keys)",
             escaped_key
         );
 
@@ -295,7 +304,7 @@ impl App {
         let rows = self.terminal_area.height.max(3);
         let cols = self.terminal_area.width.max(20);
         let meta = session_meta_for_entry(entry);
-        
+
         let config = crate::session::SessionConfig {
             argv: ssh_argv,
             display_name: display_name.clone(),

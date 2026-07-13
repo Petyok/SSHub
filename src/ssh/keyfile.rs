@@ -166,10 +166,7 @@ pub fn generate_key_pair(
 }
 
 /// Read public key from path.pub, or extract it from private_key_path using ssh-keygen.
-pub fn read_public_key(
-    private_key_path: &Path,
-    passphrase: Option<&str>,
-) -> Result<String> {
+pub fn read_public_key(private_key_path: &Path, passphrase: Option<&str>) -> Result<String> {
     let expanded = crate::ssh::expand_tilde(&private_key_path.to_string_lossy());
     let path = Path::new(&expanded);
 
@@ -196,8 +193,6 @@ pub fn read_public_key(
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
-
-
 
 /// Does `text` look like pasted private-key material (rather than a path)?
 pub fn looks_like_private_key(text: &str) -> bool {

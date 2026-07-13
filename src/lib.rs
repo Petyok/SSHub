@@ -212,17 +212,16 @@ fn run_terminal_loop(app: &mut App, auto_quit: Option<&str>) -> Result<()> {
             let note = if status == "success" {
                 format!("pushed public key '{}' to host", identity_name)
             } else {
-                format!("failed to push public key '{}' to host ({})", identity_name, status)
+                format!(
+                    "failed to push public key '{}' to host ({})",
+                    identity_name, status
+                )
             };
             let username = user.as_deref();
             let via = proxy_jump.as_deref().unwrap_or("direct");
-            let _ = app.store().log_auth_event(
-                &host_name,
-                username,
-                via,
-                db_status,
-                &note,
-            );
+            let _ = app
+                .store()
+                .log_auth_event(&host_name, username, via, db_status, &note);
         }
         for host_name in newly_connected {
             app.clear_ssh_log_for_host(&host_name);

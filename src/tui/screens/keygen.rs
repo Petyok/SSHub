@@ -76,7 +76,7 @@ pub fn render_keygen_form(form: &KeygenFormEdit, save_hint: &str) -> Paragraph<'
         } else {
             Style::default()
         };
-        
+
         lines.push(ratatui::text::Line::from(vec![
             ratatui::text::Span::styled(format!("{prefix}{}: ", field.label()), label_style),
             ratatui::text::Span::styled(display, value_style),
@@ -87,5 +87,9 @@ pub fn render_keygen_form(form: &KeygenFormEdit, save_hint: &str) -> Paragraph<'
         format!("type to edit │ Tab/↓: next │ {save_hint}: save │ Esc: cancel"),
         Style::default().add_modifier(Modifier::DIM),
     )));
-    Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("Generate SSH Key"))
+    Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Generate SSH Key"),
+    )
 }
