@@ -3,6 +3,7 @@ mod export;
 mod host;
 mod import;
 mod keyfile;
+pub mod keygen;
 pub mod probe;
 mod resolver;
 
@@ -17,6 +18,7 @@ pub use import::{
 pub use keyfile::{
     key_is_encrypted, looks_like_private_key, passphrase_matches, write_key_material,
 };
+pub use keygen::{generate_ed25519, KeygenOutcome};
 pub use resolver::{
     expand_tilde, parse_host_aliases, parse_ssh_g_output, ssh_config_path, HostResolver,
     SshConfigResolver,

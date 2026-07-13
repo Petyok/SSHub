@@ -12,13 +12,17 @@ const MAX_VISIBLE_ROWS: usize = 12;
 /// * `query` – current search text typed by the user.
 /// * `hosts` – full host list from `App::hosts`.
 /// * `filtered` – indices into `hosts` for the current fuzzy match set.
-/// * `selected` – which row inside `filtered` is highlighted (0-based).
+/// * `selected` – which row inside `filtered` is highlighted (0-based). When an
+///   ad-hoc target is offered, `selected == filtered.len()` highlights it.
+/// * `adhoc` – optional "connect without saving" target rendered as one extra
+///   row (index `filtered.len()`, one past the last result) beneath the list.
 pub fn render_palette(
     frame: &mut Frame,
     query: &str,
     hosts: &[HostEntry],
     filtered: &[usize],
     selected: usize,
+    adhoc: Option<&crate::app::adhoc::AdhocTarget>,
 ) {
     let area = frame.area();
 
@@ -177,6 +181,49 @@ pub fn render_palette(
                 &user_display,
                 theme::dim().bg(row_style.bg.unwrap_or(theme::BG)),
             );
+        }
+    }
+
+    // ── ad-hoc "connect without saving" row ─────────────────
+    // Rendered as a virtual result at index `filtered.len()` (one past the last
+    // real match), so it sits directly beneath the results and shares the same
+    // scroll window / selection convention.
+    if let Some(adhoc) = adhoc {
+        let virtual_idx = filtered.len();
+        if virtual_idx >= scroll_offset {
+            let vis = virtual_idx - scroll_offset;
+            if vis < MAX_VISIBLE_ROWS {
+                let row_y = list_start_y + vis as u16;
+                if row_y < inner.y + inner.height {
+                    let is_selected = selected == virtual_idx;
+                    let row_style = if is_selected {
+                        theme::selected()
+                    } else {
+                        Style::default()
+                    };
+
+                    let blank = " ".repeat(w);
+                    buf.set_string(inner.x, row_y, &blank, row_style);
+
+                    let mut col = inner.x;
+                    if is_selected {
+                        buf.set_string(col, row_y, " \u{25b8} ", theme::green().bg(theme::SEL_BG));
+                    } else {
+                        buf.set_string(col, row_y, "   ", row_style);
+                    }
+                    col += 3;
+
+                    let text = format!("connect without saving  {}", adhoc.label());
+                    let text_style = if is_selected {
+                        theme::white().bg(theme::SEL_BG)
+                    } else {
+                        theme::green()
+                    };
+                    let avail = w.saturating_sub(3);
+                    let disp = crate::tui::text::pad_ellipsize(&text, avail);
+                    buf.set_string(col, row_y, &disp, text_style);
+                }
+            }
         }
     }
 

@@ -330,6 +330,21 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
+    (@fn local_shell $($key:literal),* $(,)?) => {
+        fn default_kb_local_shell() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
+    (@fn keygen $($key:literal),* $(,)?) => {
+        fn default_kb_keygen() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
+    (@fn copy_id $($key:literal),* $(,)?) => {
+        fn default_kb_copy_id() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
 }
 
 kb_defaults! {
@@ -397,6 +412,9 @@ kb_defaults! {
     confirm_yes => ["y", "Y", "Enter"],
     confirm_no => ["n", "N"],
     cancel => ["Esc"],
+    local_shell => ["Ctrl+Shift+T"],
+    keygen => ["g"],
+    copy_id => ["Shift+C"],
 }
 /// An action whose keybinding is user-configurable and editable in the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -465,11 +483,14 @@ pub enum KeyAction {
     ConfirmYes,
     ConfirmNo,
     Cancel,
+    LocalShell,
+    Keygen,
+    CopyId,
 }
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 64] = [
+    pub const ALL: [KeyAction; 67] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -534,6 +555,9 @@ impl KeyAction {
         KeyAction::ConfirmYes,
         KeyAction::ConfirmNo,
         KeyAction::Cancel,
+        KeyAction::LocalShell,
+        KeyAction::Keygen,
+        KeyAction::CopyId,
     ];
 
     pub fn label(self) -> &'static str {
@@ -602,6 +626,9 @@ impl KeyAction {
             KeyAction::ConfirmYes => "Confirm yes",
             KeyAction::ConfirmNo => "Confirm no",
             KeyAction::Cancel => "Cancel / back",
+            KeyAction::LocalShell => "Open local shell tab",
+            KeyAction::Keygen => "Generate SSH key (ed25519)",
+            KeyAction::CopyId => "Copy SSH id to host",
         }
     }
 }
@@ -737,6 +764,12 @@ pub struct KeybindsConfig {
     pub confirm_no: Vec<String>,
     #[serde(default = "default_kb_cancel")]
     pub cancel: Vec<String>,
+    #[serde(default = "default_kb_local_shell")]
+    pub local_shell: Vec<String>,
+    #[serde(default = "default_kb_keygen")]
+    pub keygen: Vec<String>,
+    #[serde(default = "default_kb_copy_id")]
+    pub copy_id: Vec<String>,
 }
 
 impl Default for KeybindsConfig {
@@ -806,6 +839,9 @@ impl Default for KeybindsConfig {
             confirm_yes: default_kb_confirm_yes(),
             confirm_no: default_kb_confirm_no(),
             cancel: default_kb_cancel(),
+            local_shell: default_kb_local_shell(),
+            keygen: default_kb_keygen(),
+            copy_id: default_kb_copy_id(),
         }
     }
 }
@@ -877,6 +913,9 @@ impl KeybindsConfig {
             KeyAction::ConfirmYes => default_kb_confirm_yes(),
             KeyAction::ConfirmNo => default_kb_confirm_no(),
             KeyAction::Cancel => default_kb_cancel(),
+            KeyAction::LocalShell => default_kb_local_shell(),
+            KeyAction::Keygen => default_kb_keygen(),
+            KeyAction::CopyId => default_kb_copy_id(),
         }
     }
 
@@ -951,6 +990,9 @@ impl KeybindsConfig {
             KeyAction::ConfirmYes => &self.confirm_yes,
             KeyAction::ConfirmNo => &self.confirm_no,
             KeyAction::Cancel => &self.cancel,
+            KeyAction::LocalShell => &self.local_shell,
+            KeyAction::Keygen => &self.keygen,
+            KeyAction::CopyId => &self.copy_id,
         }
     }
 
@@ -1020,6 +1062,9 @@ impl KeybindsConfig {
             KeyAction::ConfirmYes => self.confirm_yes = binds,
             KeyAction::ConfirmNo => self.confirm_no = binds,
             KeyAction::Cancel => self.cancel = binds,
+            KeyAction::LocalShell => self.local_shell = binds,
+            KeyAction::Keygen => self.keygen = binds,
+            KeyAction::CopyId => self.copy_id = binds,
         }
     }
 

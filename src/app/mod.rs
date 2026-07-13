@@ -1,5 +1,10 @@
+pub(crate) mod adhoc;
 mod audit;
 mod connect;
+pub(crate) mod copyid;
+pub(crate) mod keygen;
+mod local_shell;
+mod session_spawn;
 mod field_picker;
 mod groups;
 mod host_crud;
@@ -158,6 +163,9 @@ pub struct App {
     pub palette_query: String,
     pub palette_selected: usize,
     pub palette_results: Vec<usize>,
+    pub palette_adhoc: Option<crate::app::adhoc::AdhocTarget>,
+    pub keygen_form: Option<crate::app::keygen::KeygenForm>,
+    pub copyid_picker: Option<crate::app::copyid::CopyIdHostPicker>,
     pub ping_rx: Option<Receiver<crate::ping::PingResult>>,
     pub ping_data: std::collections::HashMap<String, Vec<u32>>,
     pub sftp: Option<crate::sftp::model::SftpState>,
@@ -297,6 +305,9 @@ impl App {
             palette_query: String::new(),
             palette_selected: 0,
             palette_results: Vec::new(),
+            palette_adhoc: None,
+            keygen_form: None,
+            copyid_picker: None,
             ping_rx: None,
             ping_data: std::collections::HashMap::new(),
             sftp: None,

@@ -25,6 +25,12 @@ impl App {
             return Ok(());
         }
 
+        // Open a local shell tab from any dashboard tab.
+        if matches!(self.mode, AppMode::Normal) && self.is_action(KeyAction::LocalShell, &key) {
+            self.open_local_shell()?;
+            return Ok(());
+        }
+
         // Keybinding editor from the dashboard navigation screens.
         if self.mode == AppMode::Normal && self.is_action(KeyAction::KeybindEditor, &key) {
             self.keybind_editor = Some(KeybindEditor {
@@ -69,6 +75,8 @@ impl App {
             AppMode::TagFilter => self.handle_key_tag_filter(key),
             AppMode::HostDetail => self.handle_key_host_detail(key),
             AppMode::TunnelForm => self.handle_key_tunnel_form(key),
+            AppMode::KeygenForm => self.handle_key_keygen_form(key),
+            AppMode::CopyIdHostPicker => self.handle_key_copyid_host_picker(key),
             AppMode::Connecting | AppMode::Session => self.handle_key_session(key),
             AppMode::Normal => match self.active_tab {
                 1 => self.handle_key_sftp(key),
@@ -135,6 +143,7 @@ impl App {
             _ if self.is_action(KeyAction::AddHost, &key) => self.enter_host_form(None, false)?,
             _ if self.is_action(KeyAction::Delete, &key) => self.delete_selected_host()?,
             _ if self.is_action(KeyAction::Duplicate, &key) => self.duplicate_selected_host()?,
+            _ if self.is_action(KeyAction::CopyId, &key) => self.copy_id_selected_host()?,
             _ if self.is_action(KeyAction::ExportSsh, &key) => match self.export_ssh_config() {
                 Ok(path) => {
                     let count = self
@@ -183,6 +192,7 @@ impl App {
                 self.palette_query.clear();
                 self.palette_selected = 0;
                 self.palette_results = (0..self.hosts.len()).collect();
+                self.palette_adhoc = self.compute_palette_adhoc();
                 self.mode = AppMode::Palette;
             }
             _ if self.is_action(KeyAction::Help, &key) => {
@@ -242,6 +252,12 @@ impl App {
                 self.mode = AppMode::Normal;
             }
             _ if self.is_action(KeyAction::Connect, &key) => {
+                if self.palette_adhoc.is_some()
+                    && self.palette_selected == self.palette_results.len()
+                {
+                    let t = self.palette_adhoc.take().unwrap();
+                    return self.connect_adhoc(t);
+                }
                 let chosen = self.palette_results.get(self.palette_selected).copied();
                 self.mode = AppMode::Normal;
                 if let Some(idx) = chosen {
@@ -267,7 +283,8 @@ impl App {
                 }
             }
             _ if self.is_action(KeyAction::MoveDown, &key) => {
-                if self.palette_selected + 1 < self.palette_results.len() {
+                let total = self.palette_results.len() + self.palette_adhoc.is_some() as usize;
+                if self.palette_selected + 1 < total {
                     self.palette_selected += 1;
                 }
             }
@@ -284,7 +301,9 @@ impl App {
         // nucleo fuzzy match (same engine as list search) — the palette is
         // advertised as fuzzy, so typos and abbreviations must match too.
         self.palette_results = self.search.update_query(&self.hosts, &self.palette_query);
-        if self.palette_selected >= self.palette_results.len() {
+        self.palette_adhoc = self.compute_palette_adhoc();
+        let total = self.palette_results.len() + self.palette_adhoc.is_some() as usize;
+        if total == 0 || self.palette_selected >= total {
             self.palette_selected = 0;
         }
     }
@@ -367,6 +386,8 @@ impl App {
                 self.remove_selected_from_agent()?;
             }
             _ if self.is_action(KeyAction::AddToAgent, &key) => self.add_selected_to_agent()?,
+            _ if self.is_action(KeyAction::Keygen, &key) => self.enter_keygen_form(),
+            _ if self.is_action(KeyAction::CopyId, &key) => self.open_copy_id_host_picker()?,
             _ if self.is_action(KeyAction::Help, &key) => {
                 self.pre_help_mode = Some(self.mode);
                 self.mode = AppMode::Help;

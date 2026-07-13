@@ -6,6 +6,10 @@ impl App {
     /// Session tab keys are user-configurable (see [`KeyAction::SessionNewTab`]
     /// and friends). `PgUp` / `PgDn` without Ctrl navigate scrollback locally.
     pub(crate) fn handle_key_session(&mut self, key: KeyEvent) -> Result<()> {
+        if self.is_action(KeyAction::LocalShell, &key) {
+            self.open_local_shell()?;
+            return Ok(());
+        }
         if self.is_action(KeyAction::SessionNewTab, &key) {
             self.open_session_host_picker();
             return Ok(());
@@ -128,6 +132,10 @@ impl App {
         if self.sessions.is_empty() {
             return false;
         }
+        if self.is_action(KeyAction::LocalShell, key) {
+            self.open_local_shell().ok();
+            return true;
+        }
         if self.is_action(KeyAction::SessionFocus, key) {
             self.focus_active_session();
             return true;
@@ -191,6 +199,15 @@ impl App {
             .as_ref()
             .map(|p| p.return_mode)
             .unwrap_or(AppMode::Normal);
+        // Ctrl+Shift+T works inside the picker too: close it and open a local
+        // shell tab. Handled before the `key.code` match so it isn't swallowed
+        // by the generic Char query-input arm.
+        if self.is_action(KeyAction::LocalShell, &key) {
+            self.session_host_picker = None;
+            self.mode = return_mode;
+            self.open_local_shell()?;
+            return Ok(());
+        }
         let len = self.session_host_matches().len();
         match key.code {
             KeyCode::Esc => {

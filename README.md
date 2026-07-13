@@ -54,6 +54,10 @@ The settings overlay (`Ctrl+H`) — toggle an opaque background, OS logos, quit 
 - **Multiple groups & Favorites** — a host can belong to several groups at once; a reserved Favorites group and a ★ marker in the list, toggled with `f`
 - **Tunnels** — define and manage SSH tunnels (local/remote/dynamic SOCKS). Start, stop, and monitor from the TUI
 - **Keys** — identity management with ssh-agent integration. Add/remove keys from agent, see loaded status
+- **Ad-hoc connect** - in the fuzzy palette (`/`), typing an unknown `[user@]host[:port]` (IPv6 in brackets supported) that matches no saved host offers a "connect without saving" row; Enter opens an embedded ssh session to it. Input is validated and injection-safe (no leading-dash hosts; destination passed after `--`)
+- **Local shell tab** - `Ctrl+Shift+T` opens a session tab running your login shell (`$SHELL`, else `/bin/sh`) with the same detach/close semantics as ssh tabs
+- **Generate ed25519 keys** - on the identities tab, `g` opens a small form (name + optional passphrase) that runs `ssh-keygen -t ed25519`, stores the pair under the app data dir, and registers it as an identity
+- **Copy SSH id** - on a host (hosts tab) or identity (identities tab), `Shift+C` runs `ssh-copy-id -i <key> <user@host>` inside an embedded session tab where you type the password interactively
 - **Audit** — log of all connection events with filtering by status (ok/fail) and time range (today/week/month)
 - **Settings overlay** (`Ctrl+H`) — toggle an opaque background (for transparent terminals), OS logos, quit confirmation, and the startup animation
 - **Hybrid sources** — hosts from `~/.ssh/config` (read-only) and launcher-managed (full CRUD) merge without duplicates
@@ -151,6 +155,7 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | Key                    | Action                              |
 |------------------------|-------------------------------------|
 | `Ctrl+T`               | New session tab (host picker)         |
+| `Ctrl+Shift+T`         | Local shell tab                     |
 | `Ctrl+W`               | Close session tab                   |
 | `Ctrl+D`               | Detach to dashboard (SSH keeps running) |
 | `Ctrl+[` / `Ctrl+]`   | Previous / next session tab         |
@@ -169,6 +174,8 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | `f`                | Toggle favorite           |
 | `s`                | Cycle sort mode           |
 | `/`                | Fuzzy search              |
+| `/` + `[user@]host` | Ad-hoc connect (unknown host, no save) |
+| `Shift+C`          | Copy SSH id to host       |
 | `#`                | Filter by tags (AND)      |
 | `Shift+G`          | Manage groups (nested)    |
 | `Shift+I`          | Import from ssh config    |
@@ -190,6 +197,8 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | Key        | Action                  |
 |------------|--------------------------|
 | `a`        | Add identity             |
+| `g`        | Generate ed25519 key     |
+| `Shift+C`  | Copy SSH id to host      |
 | `e`        | Edit identity            |
 | `d`        | Delete identity          |
 | `r`        | Remove key from agent    |
