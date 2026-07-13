@@ -46,7 +46,6 @@ fn help_lines() -> Vec<Line<'static>> {
         entry("Ctrl+\u{2191}\u{2193}", "Move host up / down (manual sort)"),
         entry("c", "Clear SSH log"),
         entry("y", "Copy SSH log for selected host (clipboard)"),
-        entry("Shift+C", "Copy SSH id to selected host"),
         Line::from(""),
         section("tunnels (tab 3)"),
         entry("a", "Add new tunnel"),
@@ -63,8 +62,6 @@ fn help_lines() -> Vec<Line<'static>> {
         entry("←→ / l", "Move between columns (grid)"),
         entry("[ / ]", "Fewer / more columns (saved)"),
         entry("a", "Add identity (key or user+password)"),
-        entry("g", "Generate ed25519 key"),
-        entry("Shift+C", "Copy SSH id (pick host)"),
         entry("e", "Edit identity"),
         entry("d", "Delete identity"),
         entry("p", "Add key to agent"),
@@ -76,7 +73,10 @@ fn help_lines() -> Vec<Line<'static>> {
         Line::from(""),
         section("search & tags"),
         entry("/", "Fuzzy palette (type to search, Enter connects)"),
-        entry("", "Unknown [user@]host[:port] offers ad-hoc connect (no save)"),
+        entry(
+            "",
+            "Unknown [user@]host[:port] offers ad-hoc connect (no save)",
+        ),
         entry("#", "Filter hosts by tag (type to narrow the list)"),
         entry(
             "Space",

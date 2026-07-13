@@ -1,7 +1,6 @@
 mod adhoc_connect;
 mod config_reload;
 mod connect_managed;
-mod copy_id;
 mod first_run;
 mod group_crud;
 mod host_crud;
@@ -10,7 +9,6 @@ mod host_sort;
 mod hybrid_compat;
 mod import_export;
 mod keychain;
-mod keygen;
 mod local_shell;
 mod metadata_persist;
 mod quick_connect;

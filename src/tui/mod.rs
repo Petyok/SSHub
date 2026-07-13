@@ -172,8 +172,6 @@ fn render_inner(frame: &mut Frame, app: &App) {
         AppMode::ConfirmQuit => render_confirm_quit_popup(frame, app),
         AppMode::ImportPrompt => render_import_prompt_popup(frame, app),
         AppMode::SftpPrompt => render_sftp_prompt_popup(frame, app),
-        AppMode::KeygenForm => screens::keygen_form::render(frame, app),
-        AppMode::CopyIdHostPicker => screens::copyid_picker::render(frame, app),
         _ => {}
     }
 }

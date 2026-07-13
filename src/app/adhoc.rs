@@ -151,11 +151,7 @@ impl App {
         for entry in &self.hosts {
             let name_lc = entry.name().to_lowercase();
             let disp_lc = entry.display_name().to_lowercase();
-            if name_lc == host_lc
-                || disp_lc == host_lc
-                || name_lc == raw_lc
-                || disp_lc == raw_lc
-            {
+            if name_lc == host_lc || disp_lc == host_lc || name_lc == raw_lc || disp_lc == raw_lc {
                 return None;
             }
         }

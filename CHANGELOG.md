@@ -14,11 +14,6 @@ All notable changes to SSHub are documented in this file.
 - **Local shell tab** - `Ctrl+Shift+T` opens a session tab running your login
   shell (`$SHELL`, else `/bin/sh`) with the same detach/close semantics as ssh
   tabs.
-- **Generate ed25519 keys** - on the identities tab, `g` opens a small form
-  (name + optional passphrase) that runs `ssh-keygen -t ed25519`, stores the
-  pair under the app data dir, and registers it as an identity.
-- **Copy SSH id** - `Shift+C` on a host or identity runs `ssh-copy-id` inside an
-  embedded PTY session tab (interactive password), reusing the session machinery.
 
 ## [0.8.0] - 2026-07-12
 

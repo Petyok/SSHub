@@ -1,5 +1,4 @@
 pub mod audit;
-pub mod copyid_picker;
 pub mod field_picker;
 pub mod group_form;
 pub mod group_manage;
@@ -8,7 +7,6 @@ pub mod host_form;
 pub mod hosts;
 pub mod keybind_editor;
 pub mod keychain;
-pub mod keygen_form;
 pub mod keys;
 pub mod palette;
 pub mod session_host_picker;

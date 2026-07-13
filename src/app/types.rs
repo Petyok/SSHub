@@ -124,10 +124,6 @@ pub enum AppMode {
     TunnelHostPicker,
     /// Searchable dropdown for opening a new embedded SSH session tab.
     SessionHostPicker,
-    /// Overlay form for generating a new ed25519 SSH key.
-    KeygenForm,
-    /// Searchable dropdown to pick a host to copy an SSH id to.
-    CopyIdHostPicker,
     /// Dropdown over the host form's Group/Identity field.
     FieldPicker,
     /// Keybinding editor overlay.
