@@ -145,6 +145,8 @@ pub enum AppMode {
     Connecting,
     /// Live embedded SSH session; PTY drives the fullscreen view.
     Session,
+    PushKeyHostPicker,
+    PushKeyIdentityPicker,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -713,6 +715,17 @@ pub struct SessionHostPicker {
     pub selected: usize,
     /// Mode to restore when the picker is dismissed without connecting.
     pub return_mode: AppMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PushKeyHostPicker {
+    pub query: String,
+    pub selected: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PushKeyIdentityPicker {
+    pub selected: usize,
 }
 
 /// Single-field path prompt for the Termius CSV import ([`AppMode::ImportPrompt`]).

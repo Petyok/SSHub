@@ -169,9 +169,26 @@ fn run_terminal_loop(app: &mut App, auto_quit: Option<&str>) -> Result<()> {
         let resized = last_size != Some((sz.width, sz.height));
         let mut diag_entries: Vec<(String, String)> = Vec::new();
         let mut newly_connected: Vec<String> = Vec::new();
+        let mut key_push_events = Vec::new();
         for s in app.sessions.iter_mut() {
             let was_connected = s.is_connected();
             s.drain();
+            if s.phase.is_terminal() && !s.logged_exit {
+                s.logged_exit = true;
+                if let Some(ref identity_name) = s.key_push_identity {
+                    let status = match &s.phase {
+                        crate::session::SessionPhase::Exited { status, .. } => status.clone(),
+                        _ => "fail".to_string(),
+                    };
+                    key_push_events.push((
+                        s.host_name.clone(),
+                        s.meta.user.clone(),
+                        s.meta.proxy_jump.clone(),
+                        identity_name.clone(),
+                        status,
+                    ));
+                }
+            }
             if resized {
                 s.resize(sz.height, sz.width);
             }
@@ -188,6 +205,24 @@ fn run_terminal_loop(app: &mut App, auto_quit: Option<&str>) -> Result<()> {
                     diag_entries.push((s.display_name.clone(), line));
                 }
             }
+        }
+
+        for (host_name, user, proxy_jump, identity_name, status) in key_push_events {
+            let db_status = if status == "success" { "ok" } else { "fail" };
+            let note = if status == "success" {
+                format!("pushed public key '{}' to host", identity_name)
+            } else {
+                format!("failed to push public key '{}' to host ({})", identity_name, status)
+            };
+            let username = user.as_deref();
+            let via = proxy_jump.as_deref().unwrap_or("direct");
+            let _ = app.store().log_auth_event(
+                &host_name,
+                username,
+                via,
+                db_status,
+                &note,
+            );
         }
         for host_name in newly_connected {
             app.clear_ssh_log_for_host(&host_name);

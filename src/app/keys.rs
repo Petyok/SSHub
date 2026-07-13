@@ -61,6 +61,8 @@ impl App {
             AppMode::GroupFieldPicker => self.handle_key_group_field_picker(key),
             AppMode::TunnelHostPicker => self.handle_key_tunnel_host_picker(key),
             AppMode::SessionHostPicker => self.handle_key_session_host_picker(key),
+            AppMode::PushKeyHostPicker => self.handle_key_push_key_host_picker(key),
+            AppMode::PushKeyIdentityPicker => self.handle_key_push_key_identity_picker(key),
             AppMode::FieldPicker => self.handle_key_field_picker(key),
             AppMode::ImportPrompt => self.handle_key_import_prompt(key),
             AppMode::SftpPrompt => self.handle_key_sftp_prompt(key),
@@ -206,6 +208,7 @@ impl App {
             _ if self.is_action(KeyAction::RenameGroup, &key) => {
                 self.rename_selected_host_group()?
             }
+            _ if self.is_action(KeyAction::PushKey, &key) => self.trigger_push_key_from_hosts()?,
             _ => {}
         }
         Ok(())
@@ -369,6 +372,7 @@ impl App {
                 self.remove_selected_from_agent()?;
             }
             _ if self.is_action(KeyAction::AddToAgent, &key) => self.add_selected_to_agent()?,
+            _ if self.is_action(KeyAction::PushKey, &key) => self.trigger_push_key_from_keys()?,
             _ if self.is_action(KeyAction::Help, &key) => {
                 self.pre_help_mode = Some(self.mode);
                 self.mode = AppMode::Help;

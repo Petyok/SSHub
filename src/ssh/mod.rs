@@ -16,7 +16,7 @@ pub use import::{
 };
 pub use keyfile::{
     generate_key_pair, key_is_encrypted, looks_like_private_key, passphrase_matches,
-    write_key_material,
+    read_public_key, write_key_material,
 };
 pub use resolver::{
     expand_tilde, parse_host_aliases, parse_ssh_g_output, ssh_config_path, HostResolver,

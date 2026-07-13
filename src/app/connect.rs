@@ -125,6 +125,8 @@ impl App {
                 display_name,
                 meta,
                 pending_secret: pending_secret.clone(),
+                key_push_identity: None,
+                host_name: entry.name().to_string(),
             };
             match crate::session::Session::spawn(config, rows, cols) {
                 Ok(session) => {

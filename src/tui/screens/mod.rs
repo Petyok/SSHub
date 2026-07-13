@@ -15,3 +15,4 @@ pub mod settings;
 pub mod sftp;
 pub mod tag_filter;
 pub mod tunnels;
+pub mod push_key_pickers;

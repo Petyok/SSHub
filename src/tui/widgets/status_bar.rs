@@ -17,6 +17,8 @@ fn mode_label(mode: AppMode) -> &'static str {
         AppMode::GroupFieldPicker => "Select",
         AppMode::TunnelHostPicker => "Select server",
         AppMode::SessionHostPicker => "New session",
+        AppMode::PushKeyHostPicker => "Push key",
+        AppMode::PushKeyIdentityPicker => "Select key",
         AppMode::GroupManage => "Groups",
         AppMode::FieldPicker => "Select",
         AppMode::KeybindEditor => "Keybindings",
