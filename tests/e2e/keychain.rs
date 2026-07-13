@@ -185,23 +185,23 @@ fn keychain_keygen_form_flow() {
     app.handle_key(key_char('g')).unwrap();
     assert_eq!(app.mode, AppMode::KeygenForm);
 
-    // Default key type is Ed25519, target path ~/.ssh/id_ed25519
+    // Default key type is Ed25519, target path ~/.ssh/id_ed25519_sshub
     let form = app.keygen_form.as_ref().unwrap();
     assert_eq!(form.key_type, sshub::app::KeygenType::Ed25519);
-    assert_eq!(form.target_path, "~/.ssh/id_ed25519");
+    assert_eq!(form.target_path, "~/.ssh/id_ed25519_sshub");
 
     // Cycle key type (from Ed25519 to Rsa4096)
     app.handle_key(key(KeyCode::Right)).unwrap();
     let form = app.keygen_form.as_ref().unwrap();
     assert_eq!(form.key_type, sshub::app::KeygenType::Rsa4096);
-    // Path should auto-update to ~/.ssh/id_rsa
-    assert_eq!(form.target_path, "~/.ssh/id_rsa");
+    // Path should auto-update to ~/.ssh/id_rsa_sshub
+    assert_eq!(form.target_path, "~/.ssh/id_rsa_sshub");
 
     // Cycle back
     app.handle_key(key(KeyCode::Left)).unwrap();
     let form = app.keygen_form.as_ref().unwrap();
     assert_eq!(form.key_type, sshub::app::KeygenType::Ed25519);
-    assert_eq!(form.target_path, "~/.ssh/id_ed25519");
+    assert_eq!(form.target_path, "~/.ssh/id_ed25519_sshub");
 
     // Navigate to Passphrase
     app.handle_key(key(KeyCode::Down)).unwrap();
@@ -224,6 +224,16 @@ fn keychain_keygen_form_flow() {
 
 #[test]
 fn keychain_keygen_successful_generation() {
+    // Mirror the guard from the unit test: skip on machines without ssh-keygen.
+    if std::process::Command::new("ssh-keygen")
+        .arg("-V")
+        .output()
+        .is_err()
+    {
+        eprintln!("ssh-keygen not found — skipping keychain_keygen_successful_generation");
+        return;
+    }
+
     let file = NamedTempFile::new().unwrap();
     let db_path = file.path();
     let mut app = app_with_store(db_path);
@@ -246,7 +256,7 @@ fn keychain_keygen_successful_generation() {
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Passphrase
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Comment
     app.handle_key(key(KeyCode::Down)).unwrap(); // → TargetPath
-    
+
     // Replace default target path with our temp path
     let default_len = app.keygen_form.as_ref().unwrap().target_path.len();
     edit_field_replace(&mut app, default_len, &key_path_str);
@@ -256,22 +266,23 @@ fn keychain_keygen_successful_generation() {
 
     // Check we returned to normal mode
     assert_eq!(app.mode, AppMode::Normal);
-    
+
     // Verify files were actually created
     assert!(key_path.exists());
     assert!(dir.path().join("my_new_keygen_key.pub").exists());
 
     // Verify the identity was created in db and matches
     let store = LauncherStore::open(db_path).unwrap();
-    let ident = store.get_identity_by_name("my_new_keygen_key").unwrap().expect("should find identity");
+    let ident = store
+        .get_identity_by_name("my_new_keygen_key")
+        .unwrap()
+        .expect("should find identity");
     assert_eq!(
         ident.private_key.as_ref().map(|p| p.to_string_lossy().into_owned()),
         Some(key_path_str)
     );
-    assert_eq!(ident.has_password, false);
+    assert!(!ident.has_password);
 
     // Verify that the new identity is selected in app
     assert_eq!(app.identities[app.identity_selected].name, "my_new_keygen_key");
 }
-
-

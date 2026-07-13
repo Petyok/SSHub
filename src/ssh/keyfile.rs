@@ -143,6 +143,13 @@ pub fn generate_key_pair(
     if target_path.exists() {
         anyhow::bail!("Key file already exists: {}", target_path.display());
     }
+    let pub_path = std::path::PathBuf::from(format!("{}.pub", target_path.display()));
+    if pub_path.exists() {
+        anyhow::bail!(
+            "Public key file already exists: {}. Remove it before generating a new key.",
+            pub_path.display()
+        );
+    }
 
     let askpass = KeygenAskpass::new(passphrase).context("create askpass helper")?;
     let mut cmd = Command::new("ssh-keygen");

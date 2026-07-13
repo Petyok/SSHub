@@ -6,11 +6,9 @@ impl App {
             key_type: KeygenType::Ed25519,
             passphrase: String::new(),
             comment: String::new(),
-            target_path: "~/.ssh/id_ed25519".to_string(),
+            target_path: "~/.ssh/id_ed25519_sshub".to_string(),
             field: KeygenFormField::KeyType,
             cursor: 0,
-            editing: true,
-            edit_snapshot: String::new(),
             dirty: false,
         };
         self.keygen_form = Some(form);
@@ -77,7 +75,7 @@ impl App {
             .file_name()
             .map(|f| f.to_string_lossy().into_owned())
             .unwrap_or_else(|| "id_generated".to_string());
-        
+
         let identity_name = if !form.comment.trim().is_empty() {
             form.comment.trim().to_string()
         } else {
@@ -108,7 +106,8 @@ impl App {
                         ));
                     }
                 }
-                self.identity_notice = Some(format!("Generated key and identity '{}'", identity_name));
+                self.identity_notice =
+                    Some(format!("Generated key and identity '{}'", identity_name));
             }
             Err(e) => {
                 self.identity_notice = Some(format!(
@@ -151,8 +150,10 @@ impl App {
         }
         let c = form.cursor;
         if c > 0 {
-            form.cursor = text_input::backspace_at(form.active_field_mut(), c);
-            form.dirty = true;
+            if let Some(field) = form.active_field_mut() {
+                form.cursor = text_input::backspace_at(field, c);
+                form.dirty = true;
+            }
         }
     }
 
@@ -164,8 +165,10 @@ impl App {
             return;
         }
         let c = form.cursor;
-        form.cursor = text_input::insert_at(form.active_field_mut(), c, ch);
-        form.dirty = true;
+        if let Some(field) = form.active_field_mut() {
+            form.cursor = text_input::insert_at(field, c, ch);
+            form.dirty = true;
+        }
     }
 
     fn keygen_form_cursor_key(&mut self, code: KeyCode) {
@@ -173,11 +176,13 @@ impl App {
             if form.field == KeygenFormField::KeyType {
                 return;
             }
-            let mut cursor = form.cursor;
-            let changed = text_input::handle_cursor_key(code, form.active_field_mut(), &mut cursor);
-            form.cursor = cursor;
-            if changed == Some(true) {
-                form.dirty = true;
+            if let Some(field) = form.active_field_mut() {
+                let mut cursor = form.cursor;
+                let changed = text_input::handle_cursor_key(code, field, &mut cursor);
+                form.cursor = cursor;
+                if changed == Some(true) {
+                    form.dirty = true;
+                }
             }
         }
     }
@@ -189,20 +194,20 @@ impl App {
         if form.field != KeygenFormField::KeyType {
             return;
         }
-        
+
         let old_type = form.key_type;
         form.key_type = match old_type {
             KeygenType::Ed25519 => KeygenType::Rsa4096,
             KeygenType::Rsa4096 => KeygenType::Ed25519,
         };
-        
-        // Auto-update path if it's the default path
-        if old_type == KeygenType::Ed25519 && form.target_path == "~/.ssh/id_ed25519" {
-            form.target_path = "~/.ssh/id_rsa".to_string();
-        } else if old_type == KeygenType::Rsa4096 && form.target_path == "~/.ssh/id_rsa" {
-            form.target_path = "~/.ssh/id_ed25519".to_string();
+
+        // Auto-update path if it's still the default path
+        if old_type == KeygenType::Ed25519 && form.target_path == "~/.ssh/id_ed25519_sshub" {
+            form.target_path = "~/.ssh/id_rsa_sshub".to_string();
+        } else if old_type == KeygenType::Rsa4096 && form.target_path == "~/.ssh/id_rsa_sshub" {
+            form.target_path = "~/.ssh/id_ed25519_sshub".to_string();
         }
-        
+
         form.dirty = true;
     }
 

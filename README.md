@@ -185,13 +185,15 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 
 ### Keys (tab 3)
 
-| Key        | Action                  |
+| Key        | Action                   |
 |------------|--------------------------|
 | `a`        | Add identity             |
 | `e`        | Edit identity            |
 | `d`        | Delete identity          |
+| `g`        | Generate SSH key pair    |
 | `r`        | Remove key from agent    |
 | `Shift+A`  | Add key to agent         |
+| `Shift+P`  | Push public key to host  |
 
 ### Audit (tab 4)
 

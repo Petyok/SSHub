@@ -777,12 +777,10 @@ pub struct KeygenFormEdit {
     pub target_path: String,
     pub field: KeygenFormField,
     pub cursor: usize,
-    pub editing: bool,
-    pub edit_snapshot: String,
     pub dirty: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum KeygenType {
     #[default]
     Ed25519,
@@ -835,7 +833,6 @@ impl KeygenFormField {
         }
     }
 }
-
 
 /// Editable identity form field index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -956,16 +953,15 @@ impl KeygenFormEdit {
         }
     }
 
-    pub(crate) fn active_field_mut(&mut self) -> &mut String {
+    pub(crate) fn active_field_mut(&mut self) -> Option<&mut String> {
         match self.field {
-            KeygenFormField::KeyType => &mut self.passphrase, // dummy
-            KeygenFormField::Passphrase => &mut self.passphrase,
-            KeygenFormField::Comment => &mut self.comment,
-            KeygenFormField::TargetPath => &mut self.target_path,
+            KeygenFormField::KeyType => None,
+            KeygenFormField::Passphrase => Some(&mut self.passphrase),
+            KeygenFormField::Comment => Some(&mut self.comment),
+            KeygenFormField::TargetPath => Some(&mut self.target_path),
         }
     }
 }
-
 
 impl HostDetailEdit {
     pub fn active_field(&self) -> &str {
