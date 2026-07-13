@@ -274,4 +274,93 @@ fn keychain_keygen_successful_generation() {
     assert_eq!(app.identities[app.identity_selected].name, "my_new_keygen_key");
 }
 
+#[test]
+fn push_key_host_picker_flow() {
+    let file = NamedTempFile::new().unwrap();
+    let db_path = file.path();
+    let store = LauncherStore::open(db_path).unwrap();
+    store
+        .create_host(&NewHost {
+            name: "test-host".into(),
+            address: "127.0.0.1".into(),
+            ..Default::default()
+        })
+        .unwrap();
 
+    store
+        .create_identity(&sshub::store::NewIdentity {
+            name: "test-key".into(),
+            private_key: Some("/tmp/fake-key".into()),
+            ..Default::default()
+        })
+        .unwrap();
+
+    let mut app = app_with_store(db_path);
+    app.handle_key(key_char('i')).unwrap(); // keys tab
+
+    app.identity_selected = app
+        .identities
+        .iter()
+        .position(|i| i.name == "test-key")
+        .unwrap_or(0);
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('P'), KeyModifiers::SHIFT))
+        .unwrap();
+    assert_eq!(app.mode, AppMode::PushKeyHostPicker);
+
+    let matches_before = app.push_key_host_matches();
+    assert_eq!(matches_before.len(), 1);
+
+    app.handle_key(key_char('x')).unwrap();
+    let matches_after = app.push_key_host_matches();
+    assert_eq!(matches_after.len(), 0);
+
+    app.handle_key(key(KeyCode::Backspace)).unwrap();
+    let matches_after_back = app.push_key_host_matches();
+    assert_eq!(matches_after_back.len(), 1);
+
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert_eq!(app.mode, AppMode::Normal);
+    assert!(app.push_key_host_picker.is_none());
+}
+
+#[test]
+fn push_key_identity_picker_flow() {
+    let file = NamedTempFile::new().unwrap();
+    let db_path = file.path();
+    let store = LauncherStore::open(db_path).unwrap();
+    store
+        .create_host(&NewHost {
+            name: "test-host".into(),
+            address: "127.0.0.1".into(),
+            ..Default::default()
+        })
+        .unwrap();
+
+    store
+        .create_identity(&sshub::store::NewIdentity {
+            name: "test-key".into(),
+            private_key: Some("/tmp/fake-key".into()),
+            ..Default::default()
+        })
+        .unwrap();
+
+    let mut app = app_with_store(db_path);
+    app.reload_identities().unwrap(); // populate self.identities from the store
+    assert_eq!(app.active_tab, 0); // hosts tab
+
+    // Select the host row directly in nav_rows (index 0 for a flat/no-group list)
+    app.selected = app
+        .nav_rows
+        .iter()
+        .position(|r| matches!(r, sshub::app::NavRow::Host(_)))
+        .unwrap_or(0);
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('P'), KeyModifiers::SHIFT))
+        .unwrap();
+    assert_eq!(app.mode, AppMode::PushKeyIdentityPicker);
+
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert_eq!(app.mode, AppMode::Normal);
+    assert!(app.push_key_identity_picker.is_none());
+}

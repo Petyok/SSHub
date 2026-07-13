@@ -172,6 +172,7 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | `Shift+I`          | Import from ssh config    |
 | `Shift+E`          | Export to ssh config      |
 | `Shift+T`          | Import from Termius       |
+| `Shift+P`          | Push public key to host   |
 
 ### Tunnels (tab 2)
 
@@ -192,6 +193,7 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | `d`        | Delete identity          |
 | `r`        | Remove key from agent    |
 | `Shift+A`  | Add key to agent         |
+| `Shift+P`  | Push public key to host   |
 
 ### Audit (tab 4)
 

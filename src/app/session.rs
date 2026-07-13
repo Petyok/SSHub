@@ -158,20 +158,30 @@ impl App {
         let query = self
             .session_host_picker
             .as_ref()
-            .map(|p| p.query.to_lowercase())
+            .map(|p| p.query.clone())
             .unwrap_or_default();
-        self.hosts
-            .iter()
-            .enumerate()
-            .filter(|(_, h)| {
-                if query.is_empty() {
-                    return true;
-                }
-                let name = h.name().to_lowercase();
-                let label = h.display_name().to_lowercase();
-                name.contains(&query) || label.contains(&query)
+        if query.is_empty() {
+            return self
+                .hosts
+                .iter()
+                .enumerate()
+                .map(|(idx, h)| (idx, format!("{}  {}", h.display_name(), h.name())))
+                .collect();
+        }
+        let mut search = crate::search::HostSearch::new();
+        let matched_indices = search.update_query(&self.hosts, &query);
+        matched_indices
+            .into_iter()
+            .map(|idx| {
+                (
+                    idx,
+                    format!(
+                        "{}  {}",
+                        self.hosts[idx].display_name(),
+                        self.hosts[idx].name()
+                    ),
+                )
             })
-            .map(|(idx, h)| (idx, format!("{}  {}", h.display_name(), h.name())))
             .collect()
     }
 

@@ -174,7 +174,7 @@ pub fn read_public_key(
     let path = Path::new(&expanded);
 
     // 1. Try reading the .pub file first
-    let pub_path = path.with_extension("pub");
+    let pub_path = std::path::PathBuf::from(format!("{}.pub", path.display()));
     if pub_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&pub_path) {
             return Ok(content.trim().to_string());
@@ -369,5 +369,17 @@ mod tests {
         assert_eq!(passphrase_matches(&key_path, "mypass123"), Some(true));
         assert_eq!(passphrase_matches(&key_path, "wrong"), Some(false));
     }
-}
 
+    #[test]
+    fn read_public_key_supports_dots_in_filename() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("prod.ed25519");
+        let pub_path = dir.path().join("prod.ed25519.pub");
+
+        let expected_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPxyz test_comment";
+        std::fs::write(&pub_path, expected_key).unwrap();
+
+        let key = read_public_key(&key_path, None).unwrap();
+        assert_eq!(key, expected_key);
+    }
+}
