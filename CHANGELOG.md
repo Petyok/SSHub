@@ -4,6 +4,12 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **File-based password fallback** — if the OS keyring is unavailable (such as in headless D-Bus environments like WSL, Docker, or minimal Linux setups), credentials (passwords and passphrases) will be stored in a local, owner-restricted `credentials.json` file.
+- **Credential migration** — credentials stored in the fallback file are automatically migrated to the OS keyring once it becomes available again.
+- **SSH key generation from the Keys tab** — press `g` on the Keys tab to open the keygen form. Choose between ed25519 (default) and rsa-4096, set an optional passphrase and comment, then confirm the target path (defaults to `~/.ssh/id_ed25519_sshub`). The new key is generated via `ssh-keygen` with the passphrase protected through `SSH_ASKPASS` (never exposed in argv), saved to the database, and immediately focused in the tab.
+
 ## [0.8.0] - 2026-07-12
 
 ### Added

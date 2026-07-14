@@ -7,6 +7,7 @@ pub mod host_form;
 pub mod hosts;
 pub mod keybind_editor;
 pub mod keychain;
+pub mod keygen;
 pub mod keys;
 pub mod palette;
 pub mod session_host_picker;

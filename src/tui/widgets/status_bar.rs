@@ -12,6 +12,7 @@ fn mode_label(mode: AppMode) -> &'static str {
         AppMode::HostDetail => "Detail",
         AppMode::HostForm => "Host form",
         AppMode::IdentityForm => "Identity form",
+        AppMode::KeygenForm => "Keygen form",
         AppMode::GroupForm => "Group form",
         AppMode::GroupFieldPicker => "Select",
         AppMode::TunnelHostPicker => "Select server",
@@ -51,6 +52,8 @@ pub fn render_status_bar(app: &App) -> Paragraph<'static> {
     let action = match app.mode {
         AppMode::HostDetail => "Enter: save",
         AppMode::HostForm => "Enter: save",
+        AppMode::IdentityForm => "Enter: save",
+        AppMode::KeygenForm => "Enter: save",
         AppMode::GroupForm => "Enter: save",
         _ => "Enter: connect",
     };

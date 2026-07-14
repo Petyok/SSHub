@@ -116,6 +116,7 @@ pub enum AppMode {
     HostDetail,
     HostForm,
     IdentityForm,
+    KeygenForm,
     GroupForm,
     GroupManage,
     /// Dropdown over the group form's Parent / Identity field.
@@ -767,6 +768,72 @@ pub struct IdentityFormEdit {
     pub dirty: bool,
 }
 
+/// In-progress SSH key generation form while in [`AppMode::KeygenForm`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeygenFormEdit {
+    pub key_type: KeygenType,
+    pub passphrase: String,
+    pub comment: String,
+    pub target_path: String,
+    pub field: KeygenFormField,
+    pub cursor: usize,
+    pub dirty: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeygenType {
+    #[default]
+    Ed25519,
+    Rsa4096,
+}
+
+impl KeygenType {
+    pub fn label(self) -> &'static str {
+        match self {
+            KeygenType::Ed25519 => "ed25519",
+            KeygenType::Rsa4096 => "rsa-4096",
+        }
+    }
+}
+
+/// Editable key generation form field index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeygenFormField {
+    #[default]
+    KeyType = 0,
+    Passphrase = 1,
+    Comment = 2,
+    TargetPath = 3,
+}
+
+impl KeygenFormField {
+    pub const ALL: [KeygenFormField; 4] = [
+        KeygenFormField::KeyType,
+        KeygenFormField::Passphrase,
+        KeygenFormField::Comment,
+        KeygenFormField::TargetPath,
+    ];
+
+    pub(crate) fn next(self) -> Self {
+        let idx = Self::ALL.iter().position(|&f| f == self).unwrap_or(0);
+        Self::ALL[(idx + 1) % Self::ALL.len()]
+    }
+
+    pub(crate) fn prev(self) -> Self {
+        let idx = Self::ALL.iter().position(|&f| f == self).unwrap_or(0);
+        Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            KeygenFormField::KeyType => "Key type (Left/Right)",
+            KeygenFormField::Passphrase => "Passphrase (optional)",
+            KeygenFormField::Comment => "Comment (optional)",
+            KeygenFormField::TargetPath => "Target path",
+        }
+    }
+}
+
 /// Editable identity form field index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IdentityFormField {
@@ -872,6 +939,26 @@ impl IdentityFormEdit {
             self.pasted_key = None;
             self.private_key.clear();
             self.cursor = 0;
+        }
+    }
+}
+
+impl KeygenFormEdit {
+    pub fn active_field(&self) -> &str {
+        match self.field {
+            KeygenFormField::KeyType => "",
+            KeygenFormField::Passphrase => &self.passphrase,
+            KeygenFormField::Comment => &self.comment,
+            KeygenFormField::TargetPath => &self.target_path,
+        }
+    }
+
+    pub(crate) fn active_field_mut(&mut self) -> Option<&mut String> {
+        match self.field {
+            KeygenFormField::KeyType => None,
+            KeygenFormField::Passphrase => Some(&mut self.passphrase),
+            KeygenFormField::Comment => Some(&mut self.comment),
+            KeygenFormField::TargetPath => Some(&mut self.target_path),
         }
     }
 }
