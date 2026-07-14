@@ -4,6 +4,11 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **File-based password fallback** — if the OS keyring is unavailable (such as in headless D-Bus environments like WSL, Docker, or minimal Linux setups), credentials (passwords and passphrases) will be stored in a local, owner-restricted `credentials.json` file.
+- **Credential migration** — credentials stored in the fallback file are automatically migrated to the OS keyring once it becomes available again.
+
 ## [0.8.0] - 2026-07-12
 
 ### Added
