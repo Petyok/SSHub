@@ -4,6 +4,12 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **File-based password fallback** — if the OS keyring is unavailable (such as in headless D-Bus environments like WSL, Docker, or minimal Linux setups), credentials (passwords and passphrases) will be stored in a local, owner-restricted `credentials.json` file.
+- **Credential migration** — credentials stored in the fallback file are automatically migrated to the OS keyring once it becomes available again.
+- **ssh-copy-id integration** — push public keys directly to remote hosts' `authorized_keys` from the TUI (default binding `Shift+P` in the Hosts or Keys tab), with auto-authentication support and remote deduplication.
+
 ## [0.8.0] - 2026-07-12
 
 ### Added

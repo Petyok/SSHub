@@ -50,6 +50,11 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
+    (@fn generate_key $($key:literal),* $(,)?) => {
+        fn default_kb_generate_key() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
     (@fn edit $($key:literal),* $(,)?) => {
         fn default_kb_edit() -> Vec<String> {
             vec![$($key.to_string()),*]
@@ -240,6 +245,11 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
+    (@fn push_key $($key:literal),* $(,)?) => {
+        fn default_kb_push_key() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
     (@fn tunnel_kill $($key:literal),* $(,)?) => {
         fn default_kb_tunnel_kill() -> Vec<String> {
             vec![$($key.to_string()),*]
@@ -341,6 +351,7 @@ kb_defaults! {
     force_quit => ["Ctrl+C"],
     connect => ["Enter"],
     add_host => ["a"],
+    generate_key => ["g"],
     edit => ["e"],
     delete => ["d"],
     duplicate => ["Shift+D"],
@@ -379,6 +390,7 @@ kb_defaults! {
     identity_columns_dec => ["["],
     add_to_agent => ["p"],
     remove_from_agent => ["r"],
+    push_key => ["Shift+P"],
     tunnel_kill => ["x"],
     toggle_tunnel => ["Enter"],
     audit_filter => ["f"],
@@ -409,6 +421,7 @@ pub enum KeyAction {
     ForceQuit,
     Connect,
     AddHost,
+    GenerateKey,
     Edit,
     Delete,
     Duplicate,
@@ -447,6 +460,7 @@ pub enum KeyAction {
     IdentityColumnsDec,
     AddToAgent,
     RemoveFromAgent,
+    PushKey,
     TunnelKill,
     ToggleTunnel,
     AuditFilter,
@@ -469,7 +483,7 @@ pub enum KeyAction {
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 64] = [
+    pub const ALL: [KeyAction; 66] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -478,6 +492,7 @@ impl KeyAction {
         KeyAction::ForceQuit,
         KeyAction::Connect,
         KeyAction::AddHost,
+        KeyAction::GenerateKey,
         KeyAction::Edit,
         KeyAction::Delete,
         KeyAction::Duplicate,
@@ -516,6 +531,7 @@ impl KeyAction {
         KeyAction::IdentityColumnsDec,
         KeyAction::AddToAgent,
         KeyAction::RemoveFromAgent,
+        KeyAction::PushKey,
         KeyAction::TunnelKill,
         KeyAction::ToggleTunnel,
         KeyAction::AuditFilter,
@@ -546,6 +562,7 @@ impl KeyAction {
             KeyAction::ForceQuit => "Force quit",
             KeyAction::Connect => "Connect / confirm",
             KeyAction::AddHost => "Add host / identity / tunnel",
+            KeyAction::GenerateKey => "Generate SSH key",
             KeyAction::Edit => "Edit",
             KeyAction::Delete => "Delete",
             KeyAction::Duplicate => "Duplicate host",
@@ -584,6 +601,7 @@ impl KeyAction {
             KeyAction::IdentityColumnsDec => "Fewer identity columns",
             KeyAction::AddToAgent => "Add key to agent",
             KeyAction::RemoveFromAgent => "Remove key from agent",
+            KeyAction::PushKey => "Push public key to host",
             KeyAction::TunnelKill => "Kill tunnel",
             KeyAction::ToggleTunnel => "Start / stop tunnel",
             KeyAction::AuditFilter => "Cycle audit filter",
@@ -625,6 +643,8 @@ pub struct KeybindsConfig {
     pub connect: Vec<String>,
     #[serde(default = "default_kb_add_host")]
     pub add_host: Vec<String>,
+    #[serde(default = "default_kb_generate_key")]
+    pub generate_key: Vec<String>,
     #[serde(default = "default_kb_edit")]
     pub edit: Vec<String>,
     #[serde(default = "default_kb_delete")]
@@ -701,6 +721,8 @@ pub struct KeybindsConfig {
     pub add_to_agent: Vec<String>,
     #[serde(default = "default_kb_remove_from_agent")]
     pub remove_from_agent: Vec<String>,
+    #[serde(default = "default_kb_push_key")]
+    pub push_key: Vec<String>,
     #[serde(default = "default_kb_tunnel_kill")]
     pub tunnel_kill: Vec<String>,
     #[serde(default = "default_kb_toggle_tunnel")]
@@ -750,6 +772,7 @@ impl Default for KeybindsConfig {
             force_quit: default_kb_force_quit(),
             connect: default_kb_connect(),
             add_host: default_kb_add_host(),
+            generate_key: default_kb_generate_key(),
             edit: default_kb_edit(),
             delete: default_kb_delete(),
             duplicate: default_kb_duplicate(),
@@ -788,6 +811,7 @@ impl Default for KeybindsConfig {
             identity_columns_dec: default_kb_identity_columns_dec(),
             add_to_agent: default_kb_add_to_agent(),
             remove_from_agent: default_kb_remove_from_agent(),
+            push_key: default_kb_push_key(),
             tunnel_kill: default_kb_tunnel_kill(),
             toggle_tunnel: default_kb_toggle_tunnel(),
             audit_filter: default_kb_audit_filter(),
@@ -821,6 +845,7 @@ impl KeybindsConfig {
             KeyAction::ForceQuit => default_kb_force_quit(),
             KeyAction::Connect => default_kb_connect(),
             KeyAction::AddHost => default_kb_add_host(),
+            KeyAction::GenerateKey => default_kb_generate_key(),
             KeyAction::Edit => default_kb_edit(),
             KeyAction::Delete => default_kb_delete(),
             KeyAction::Duplicate => default_kb_duplicate(),
@@ -859,6 +884,7 @@ impl KeybindsConfig {
             KeyAction::IdentityColumnsDec => default_kb_identity_columns_dec(),
             KeyAction::AddToAgent => default_kb_add_to_agent(),
             KeyAction::RemoveFromAgent => default_kb_remove_from_agent(),
+            KeyAction::PushKey => default_kb_push_key(),
             KeyAction::TunnelKill => default_kb_tunnel_kill(),
             KeyAction::ToggleTunnel => default_kb_toggle_tunnel(),
             KeyAction::AuditFilter => default_kb_audit_filter(),
@@ -895,6 +921,7 @@ impl KeybindsConfig {
             KeyAction::ForceQuit => &self.force_quit,
             KeyAction::Connect => &self.connect,
             KeyAction::AddHost => &self.add_host,
+            KeyAction::GenerateKey => &self.generate_key,
             KeyAction::Edit => &self.edit,
             KeyAction::Delete => &self.delete,
             KeyAction::Duplicate => &self.duplicate,
@@ -933,6 +960,7 @@ impl KeybindsConfig {
             KeyAction::IdentityColumnsDec => &self.identity_columns_dec,
             KeyAction::AddToAgent => &self.add_to_agent,
             KeyAction::RemoveFromAgent => &self.remove_from_agent,
+            KeyAction::PushKey => &self.push_key,
             KeyAction::TunnelKill => &self.tunnel_kill,
             KeyAction::ToggleTunnel => &self.toggle_tunnel,
             KeyAction::AuditFilter => &self.audit_filter,
@@ -964,6 +992,7 @@ impl KeybindsConfig {
             KeyAction::ForceQuit => self.force_quit = binds,
             KeyAction::Connect => self.connect = binds,
             KeyAction::AddHost => self.add_host = binds,
+            KeyAction::GenerateKey => self.generate_key = binds,
             KeyAction::Edit => self.edit = binds,
             KeyAction::Delete => self.delete = binds,
             KeyAction::Duplicate => self.duplicate = binds,
@@ -1002,6 +1031,7 @@ impl KeybindsConfig {
             KeyAction::IdentityColumnsDec => self.identity_columns_dec = binds,
             KeyAction::AddToAgent => self.add_to_agent = binds,
             KeyAction::RemoveFromAgent => self.remove_from_agent = binds,
+            KeyAction::PushKey => self.push_key = binds,
             KeyAction::TunnelKill => self.tunnel_kill = binds,
             KeyAction::ToggleTunnel => self.toggle_tunnel = binds,
             KeyAction::AuditFilter => self.audit_filter = binds,

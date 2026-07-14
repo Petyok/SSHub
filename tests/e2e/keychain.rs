@@ -172,3 +172,204 @@ fn keychain_delete_in_use_identity_shows_notice() {
         .contains("used by 1 host"));
     assert!(store.get_identity_by_name("Default").unwrap().is_some());
 }
+
+#[test]
+fn keychain_keygen_form_flow() {
+    let file = NamedTempFile::new().unwrap();
+    let path = file.path();
+    let mut app = app_with_store(path);
+
+    app.handle_key(key_char('i')).unwrap();
+    assert_eq!(app.active_tab, 3); // keys tab
+
+    app.handle_key(key_char('g')).unwrap();
+    assert_eq!(app.mode, AppMode::KeygenForm);
+
+    // Default key type is Ed25519, target path ~/.ssh/id_ed25519
+    let form = app.keygen_form.as_ref().unwrap();
+    assert_eq!(form.key_type, sshub::app::KeygenType::Ed25519);
+    assert_eq!(form.target_path, "~/.ssh/id_ed25519");
+
+    // Cycle key type (from Ed25519 to Rsa4096)
+    app.handle_key(key(KeyCode::Right)).unwrap();
+    let form = app.keygen_form.as_ref().unwrap();
+    assert_eq!(form.key_type, sshub::app::KeygenType::Rsa4096);
+    // Path should auto-update to ~/.ssh/id_rsa
+    assert_eq!(form.target_path, "~/.ssh/id_rsa");
+
+    // Cycle back
+    app.handle_key(key(KeyCode::Left)).unwrap();
+    let form = app.keygen_form.as_ref().unwrap();
+    assert_eq!(form.key_type, sshub::app::KeygenType::Ed25519);
+    assert_eq!(form.target_path, "~/.ssh/id_ed25519");
+
+    // Navigate to Passphrase
+    app.handle_key(key(KeyCode::Down)).unwrap();
+    edit_field(&mut app, "secret123");
+
+    // Navigate to Comment
+    app.handle_key(key(KeyCode::Down)).unwrap();
+    edit_field(&mut app, "mycomment");
+
+    // Cancel form
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    // Since form is dirty (we typed things), it should show ConfirmDiscard dialog
+    assert_eq!(app.mode, AppMode::ConfirmDiscard);
+
+    // Confirm discard (No)
+    app.handle_key(key_char('n')).unwrap();
+    assert_eq!(app.mode, AppMode::Normal);
+    assert!(app.keygen_form.is_none());
+}
+
+#[test]
+fn keychain_keygen_successful_generation() {
+    let file = NamedTempFile::new().unwrap();
+    let db_path = file.path();
+    let mut app = app_with_store(db_path);
+
+    app.handle_key(key_char('i')).unwrap(); // Go to keys tab
+
+    app.handle_key(key_char('g')).unwrap(); // Open keygen form
+    assert_eq!(app.mode, AppMode::KeygenForm);
+
+    // Create a temporary file path to generate the key into
+    let dir = tempfile::tempdir().unwrap();
+    let key_path = dir.path().join("my_new_keygen_key");
+    let key_path_str = key_path.to_string_lossy().to_string();
+
+    // Fill out the fields:
+    // KeyType: Ed25519 (default, skip)
+    // Passphrase: (empty, skip)
+    // Comment: (empty, skip)
+    // TargetPath:
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Passphrase
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Comment
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → TargetPath
+
+    // Replace default target path with our temp path
+    let default_len = app.keygen_form.as_ref().unwrap().target_path.len();
+    edit_field_replace(&mut app, default_len, &key_path_str);
+
+    // Save/generate (F2)
+    app.handle_key(key(KeyCode::F(2))).unwrap();
+
+    // Check we returned to normal mode
+    assert_eq!(app.mode, AppMode::Normal);
+
+    // Verify files were actually created
+    assert!(key_path.exists());
+    assert!(dir.path().join("my_new_keygen_key.pub").exists());
+
+    // Verify the identity was created in db and matches
+    let store = LauncherStore::open(db_path).unwrap();
+    let ident = store
+        .get_identity_by_name("my_new_keygen_key")
+        .unwrap()
+        .expect("should find identity");
+    assert_eq!(
+        ident
+            .private_key
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned()),
+        Some(key_path_str)
+    );
+    assert_eq!(ident.has_password, false);
+
+    // Verify that the new identity is selected in app
+    assert_eq!(
+        app.identities[app.identity_selected].name,
+        "my_new_keygen_key"
+    );
+}
+
+#[test]
+fn push_key_host_picker_flow() {
+    let file = NamedTempFile::new().unwrap();
+    let db_path = file.path();
+    let store = LauncherStore::open(db_path).unwrap();
+    store
+        .create_host(&NewHost {
+            name: "test-host".into(),
+            address: "127.0.0.1".into(),
+            ..Default::default()
+        })
+        .unwrap();
+
+    store
+        .create_identity(&sshub::store::NewIdentity {
+            name: "test-key".into(),
+            private_key: Some("/tmp/fake-key".into()),
+            ..Default::default()
+        })
+        .unwrap();
+
+    let mut app = app_with_store(db_path);
+    app.handle_key(key_char('i')).unwrap(); // keys tab
+
+    app.identity_selected = app
+        .identities
+        .iter()
+        .position(|i| i.name == "test-key")
+        .unwrap_or(0);
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('P'), KeyModifiers::SHIFT))
+        .unwrap();
+    assert_eq!(app.mode, AppMode::PushKeyHostPicker);
+
+    let matches_before = app.push_key_host_matches();
+    assert_eq!(matches_before.len(), 1);
+
+    app.handle_key(key_char('x')).unwrap();
+    let matches_after = app.push_key_host_matches();
+    assert_eq!(matches_after.len(), 0);
+
+    app.handle_key(key(KeyCode::Backspace)).unwrap();
+    let matches_after_back = app.push_key_host_matches();
+    assert_eq!(matches_after_back.len(), 1);
+
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert_eq!(app.mode, AppMode::Normal);
+    assert!(app.push_key_host_picker.is_none());
+}
+
+#[test]
+fn push_key_identity_picker_flow() {
+    let file = NamedTempFile::new().unwrap();
+    let db_path = file.path();
+    let store = LauncherStore::open(db_path).unwrap();
+    store
+        .create_host(&NewHost {
+            name: "test-host".into(),
+            address: "127.0.0.1".into(),
+            ..Default::default()
+        })
+        .unwrap();
+
+    store
+        .create_identity(&sshub::store::NewIdentity {
+            name: "test-key".into(),
+            private_key: Some("/tmp/fake-key".into()),
+            ..Default::default()
+        })
+        .unwrap();
+
+    let mut app = app_with_store(db_path);
+    app.reload_identities().unwrap(); // populate self.identities from the store
+    assert_eq!(app.active_tab, 0); // hosts tab
+
+    // Select the host row directly in nav_rows (index 0 for a flat/no-group list)
+    app.selected = app
+        .nav_rows
+        .iter()
+        .position(|r| matches!(r, sshub::app::NavRow::Host(_)))
+        .unwrap_or(0);
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('P'), KeyModifiers::SHIFT))
+        .unwrap();
+    assert_eq!(app.mode, AppMode::PushKeyIdentityPicker);
+
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert_eq!(app.mode, AppMode::Normal);
+    assert!(app.push_key_identity_picker.is_none());
+}

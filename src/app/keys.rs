@@ -56,10 +56,13 @@ impl App {
             AppMode::ConfirmDelete => self.handle_key_confirm_delete(key),
             AppMode::HostForm => self.handle_key_host_form(key),
             AppMode::IdentityForm => self.handle_key_identity_form(key),
+            AppMode::KeygenForm => self.handle_key_keygen_form(key),
             AppMode::GroupForm => self.handle_key_group_form(key),
             AppMode::GroupFieldPicker => self.handle_key_group_field_picker(key),
             AppMode::TunnelHostPicker => self.handle_key_tunnel_host_picker(key),
             AppMode::SessionHostPicker => self.handle_key_session_host_picker(key),
+            AppMode::PushKeyHostPicker => self.handle_key_push_key_host_picker(key),
+            AppMode::PushKeyIdentityPicker => self.handle_key_push_key_identity_picker(key),
             AppMode::FieldPicker => self.handle_key_field_picker(key),
             AppMode::ImportPrompt => self.handle_key_import_prompt(key),
             AppMode::SftpPrompt => self.handle_key_sftp_prompt(key),
@@ -205,6 +208,7 @@ impl App {
             _ if self.is_action(KeyAction::RenameGroup, &key) => {
                 self.rename_selected_host_group()?
             }
+            _ if self.is_action(KeyAction::PushKey, &key) => self.trigger_push_key_from_hosts()?,
             _ => {}
         }
         Ok(())
@@ -361,12 +365,14 @@ impl App {
                 self.adjust_identity_columns(-1);
             }
             _ if self.is_action(KeyAction::AddHost, &key) => self.enter_identity_form(None)?,
+            _ if self.is_action(KeyAction::GenerateKey, &key) => self.enter_keygen_form()?,
             _ if self.is_action(KeyAction::Edit, &key) => self.edit_selected_identity()?,
             _ if self.is_action(KeyAction::Delete, &key) => self.delete_selected_identity()?,
             _ if self.is_action(KeyAction::RemoveFromAgent, &key) => {
                 self.remove_selected_from_agent()?;
             }
             _ if self.is_action(KeyAction::AddToAgent, &key) => self.add_selected_to_agent()?,
+            _ if self.is_action(KeyAction::PushKey, &key) => self.trigger_push_key_from_keys()?,
             _ if self.is_action(KeyAction::Help, &key) => {
                 self.pre_help_mode = Some(self.mode);
                 self.mode = AppMode::Help;
@@ -391,6 +397,11 @@ impl App {
                     if self.identity_form.is_some() && self.mode == AppMode::ConfirmDiscard {
                         self.mode = AppMode::IdentityForm;
                     }
+                } else if self.keygen_form.is_some() {
+                    self.save_keygen_form()?;
+                    if self.keygen_form.is_some() && self.mode == AppMode::ConfirmDiscard {
+                        self.mode = AppMode::KeygenForm;
+                    }
                 } else if self.tunnel_form.is_some() {
                     self.save_tunnel_form()?;
                     if self.tunnel_form.is_some() && self.mode == AppMode::ConfirmDiscard {
@@ -404,6 +415,8 @@ impl App {
                     self.discard_host_form()?;
                 } else if self.identity_form.is_some() {
                     self.discard_identity_form()?;
+                } else if self.keygen_form.is_some() {
+                    self.discard_keygen_form()?;
                 } else if self.tunnel_form.is_some() {
                     self.tunnel_form = None;
                     self.mode = AppMode::Normal;
@@ -415,6 +428,8 @@ impl App {
                     self.mode = AppMode::HostForm;
                 } else if self.identity_form.is_some() {
                     self.mode = AppMode::IdentityForm;
+                } else if self.keygen_form.is_some() {
+                    self.mode = AppMode::KeygenForm;
                 } else if self.tunnel_form.is_some() {
                     self.mode = AppMode::TunnelForm;
                 } else {

@@ -8,8 +8,10 @@ mod host_form;
 mod hostlist;
 mod identities;
 mod import;
+mod keygen;
 mod keys;
 mod mouse;
+mod push_key;
 mod session;
 mod sftp;
 mod tags;
@@ -115,6 +117,8 @@ pub struct App {
     pub identity_selected: usize,
     pub identity_form: Option<IdentityFormEdit>,
     pub identity_notice: Option<String>,
+    pub keygen_form: Option<KeygenFormEdit>,
+    pub keygen_notice: Option<String>,
     pub groups: Vec<HostGroup>,
     /// The reserved Favorites group, kept out of `groups` so it never appears in
     /// the group-manage list or the host-form group selector. Used only when
@@ -129,6 +133,8 @@ pub struct App {
     pub tunnel_host_picker: Option<TunnelHostPicker>,
     /// Searchable host picker for a new embedded session tab.
     pub session_host_picker: Option<SessionHostPicker>,
+    pub push_key_host_picker: Option<PushKeyHostPicker>,
+    pub push_key_identity_picker: Option<PushKeyIdentityPicker>,
     pub import_prompt: Option<ImportPromptEdit>,
     /// Open SFTP mkdir / rename text prompt, if any.
     pub sftp_prompt: Option<SftpPromptEdit>,
@@ -222,6 +228,17 @@ impl App {
         let store = Arc::new(LauncherStore::open(launcher_path)?);
         let resolver = Box::new(SshConfigResolver::default());
         let launcher = launcher::launcher_from_config(&config)?;
+
+        let keyring_available = crate::credentials::check_keyring_available();
+        let password_store: Box<dyn crate::credentials::PasswordStore> = if keyring_available {
+            let _ = crate::credentials::migrate_fallback_to_keyring();
+            Box::new(crate::credentials::OsKeyring)
+        } else {
+            Box::new(crate::credentials::FilePasswordStore::new(
+                data_dir.join("credentials.json"),
+            ))
+        };
+
         let mut app = Self::new_with_deps(
             config,
             AppDeps {
@@ -229,9 +246,15 @@ impl App {
                 metadata,
                 store,
                 launcher,
-                password_store: Box::new(crate::credentials::OsKeyring),
+                password_store,
             },
         );
+
+        if !keyring_available {
+            app.host_notice =
+                Some("OS keyring unavailable. Using credentials.json fallback.".into());
+        }
+
         app.reload_hosts()?;
         app.refresh_auth_cache();
         app.start_ping_worker();
@@ -269,6 +292,8 @@ impl App {
             identity_selected: 0,
             identity_form: None,
             identity_notice: None,
+            keygen_form: None,
+            keygen_notice: None,
             groups: Vec::new(),
             favorites_group: None,
             host_form: None,
@@ -277,6 +302,8 @@ impl App {
             group_field_picker: None,
             tunnel_host_picker: None,
             session_host_picker: None,
+            push_key_host_picker: None,
+            push_key_identity_picker: None,
             import_prompt: None,
             sftp_prompt: None,
             ui_zoom: 0,

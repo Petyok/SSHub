@@ -23,6 +23,8 @@ pub(crate) fn enter_starts_embedded_session() {
         display_name: "edge".into(),
         meta: crate::session::SessionMeta::default(),
         pending_secret: None,
+        key_push_identity: None,
+        host_name: "edge".into(),
     };
     let session = crate::session::Session::spawn(config, 24, 80).unwrap();
     app.sessions.push(session);
@@ -70,6 +72,8 @@ pub(crate) fn ctrl_t_opens_host_picker() {
         display_name: "edge".into(),
         meta: crate::session::SessionMeta::default(),
         pending_secret: None,
+        key_push_identity: None,
+        host_name: "edge".into(),
     };
     app.sessions
         .push(crate::session::Session::spawn(cfg, 24, 80).unwrap());
@@ -110,6 +114,8 @@ pub(crate) fn session_tabs_switch_detach_and_focus() {
         display_name: "edge".into(),
         meta: crate::session::SessionMeta::default(),
         pending_secret: None,
+        key_push_identity: None,
+        host_name: "edge".into(),
     };
     for _ in 0..3 {
         app.sessions
@@ -166,6 +172,8 @@ pub(crate) fn shutdown_all_kills_detached_sessions() {
         display_name: "edge".into(),
         meta: crate::session::SessionMeta::default(),
         pending_secret: None,
+        key_push_identity: None,
+        host_name: "edge".into(),
     };
     app.sessions
         .push(crate::session::Session::spawn(cfg, 24, 80).unwrap());
