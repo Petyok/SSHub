@@ -18,6 +18,15 @@ Thanks for your interest in contributing. Here's how to get started.
 
 Flow: `feature/* → development → main (release, maintainer-only)`.
 
+## Claiming an issue
+
+Before implementing an existing issue (roadmap items in #14 included), claim
+it: assign yourself, or leave a comment saying you're taking it if GitHub
+doesn't let you set the assignee. Unclaimed issues are assumed free, and
+unannounced parallel work has already produced duplicate implementations of
+the same feature. A claimed issue with no visible activity for two weeks is
+considered free again.
+
 ## Making changes
 
 1. Create a branch from `development` (not `main`)
