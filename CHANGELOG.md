@@ -18,14 +18,15 @@ All notable changes to SSHub are documented in this file.
 - **Tunnel keep alive** — per-tunnel **Keep alive** toggle in the tunnel form
   (uses existing `auto_connect` column). Enabled tunnels start on app launch and
   automatically reconnect after unexpected exit with exponential backoff, jitter,
-  and a capped retry count on consecutive spawn failures (`[tunnel_reconnect]` in
-  `config.toml`). Manual stop or kill disables the retry loop until the tunnel is
-  started again (until the next app launch for keep-alive auto-start). The Tunnels tab
-  shows `reconnecting` / `gave up` status with attempt counter; audit logs reconnect
-  attempts.
-- **Tunnel reconnect settings** — on the Tunnels tab, press `R` to edit global
-  keep-alive backoff (`max_attempts`, delays, stable time, jitter). Saved to
-  `config.toml` immediately.
+  and a capped retry count (`[tunnel_reconnect]` in `config.toml`, editable on the
+  Tunnels tab with `R`: `max_attempts`, delays in seconds, stable time, jitter).
+  Manual stop or kill disables the retry loop until the tunnel is started again
+  (until the next app launch for keep-alive auto-start). The Tunnels tab shows
+  `starting` / `reconnecting` / `gave up` with attempt counter; audit logs
+  reconnect attempts. A tunnel must stay up for `stable_secs` (default 5s) before
+  it counts as reconnected. Background ssh uses `ServerAliveInterval`,
+  `ServerAliveCountMax`, and `TCPKeepAlive` so dead paths (e.g. VPN dropped) tear
+  down instead of leaving a stale local listener.
 
 ### Fixed
 
@@ -38,15 +39,6 @@ All notable changes to SSHub are documented in this file.
   input). Tunnels use `BatchMode=yes` when no stored credential is available
   (fail fast with an error in the Tunnels tab) and `SSH_ASKPASS` when a host or
   identity password is in the keyring.
-- **Tunnel reconnect stability** — tunnels stay in `starting` / `reconnecting` until
-  the ssh child survives `stable_secs` (default 5s, configurable in the `R` overlay).
-  Brief flaps no longer reset the attempt counter or log a false `reconnected`.
-  `max_attempts` is honored across spawn-and-die loops.
-- **Tunnel reconnect audit spam** — retry attempts log once per reconnect try, not
-  once per UI poll while a proving child is still running.
-- **Tunnel dead-path detection** — background tunnels use `ServerAliveInterval`,
-  `ServerAliveCountMax`, and `TCPKeepAlive` so ssh exits when the remote path dies
-  (e.g. VPN dropped) instead of leaving a stale local listener.
 
 ## [0.8.0] - 2026-07-12
 
