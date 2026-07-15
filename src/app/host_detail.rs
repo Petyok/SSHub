@@ -78,6 +78,7 @@ impl App {
                 environment,
                 favorite,
                 last_connected,
+                ..Default::default()
             };
             self.metadata.upsert(&meta)?;
             if let Some((_, stored_meta)) = self.hosts[host_idx].legacy_mut() {

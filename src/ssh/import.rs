@@ -380,6 +380,7 @@ mod tests {
                 environment: None,
                 favorite: true,
                 last_connected: Some(42),
+                ..Default::default()
             })
             .unwrap();
 
