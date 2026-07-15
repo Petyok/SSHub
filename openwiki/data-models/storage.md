@@ -29,7 +29,7 @@ Core tables (check `src/store/migrate.rs` for exact DDL):
 - `host_group_memberships` — many-to-many join between hosts and groups.
 - `identities` — reusable identity records: `name`, `username`, `private_key`, `certificate`, `sort_order`, `has_password`.
 - `tunnels` — `host_id`, `tunnel_type`, `local_port`, `remote_host`, `remote_port`, `label`, `auto_connect`.
-- `auth_events` — audit log: `host_id`, `host_name`, `event_type`, `status`, `detail`, `created_at`.
+- `auth_events` — audit log: `host_name`, `username`, `via`, `status`, `note`, `log_path`, `created_at`.
 - `ui_state` — key/value UI state such as collapsed group keys.
 
 ## Domain types
@@ -67,13 +67,15 @@ The `has_password` flag in `hosts` / `identities` only records whether a secret 
 
 ## Audit log
 
-`auth_events` records connection attempts. Each event records:
+`auth_events` records connection and tunnel events. Each row stores:
 
-- success/fail status (`launched` or `fail`),
-- `host_name`, `event_type`, `detail`,
+- `host_name`, optional `username`, optional `via` (e.g. `tunnel`, `embedded`),
+- `status` (`launched`, `ok`, `fail`, …),
+- `note` (human-readable detail),
+- optional `log_path` (session log directory for connect events),
 - `created_at` timestamp.
 
-For connect events, when session logging is enabled, the `detail` may include the log directory path. The audit tab filters by status and date range.
+The audit tab shows the selected event's `note` (and log path when present) on a detail line above the table — not in per-row columns. Events sort `ORDER BY created_at DESC, id DESC`. Filters by status and date range.
 
 ## UI state
 

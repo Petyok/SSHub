@@ -95,8 +95,8 @@ Quick reference: where the code for each domain lives. Use this when you need to
 
 | Topic | File | Notes |
 |-------|------|-------|
-| `TunnelManager`, spawn, kill, reconnect | `src/tunnel.rs` | |
-| Tunnels tab app logic | `src/app/tunnels.rs` | |
+| `TunnelManager`, spawn, reconnect, health | `src/tunnel.rs` | `stop_user`, `check_health`, `tick_reconnect` |
+| Tunnels tab app logic + event loop hook | `src/app/tunnels.rs`, `src/lib.rs` | `toggle_tunnel`, `tick_tunnels` |
 | Tunnels tab render | `src/tui/screens/tunnels.rs` | |
 | Reconnect settings overlay | `src/tui/screens/tunnel_reconnect.rs` | NEW |
 

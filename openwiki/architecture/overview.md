@@ -54,8 +54,8 @@ For each tick:
    - `probe_rx` for OS detection / SSH handshake log lines,
    - `os_detect_rx` for OS logo probes,
    - `sftp_rx` for SFTP worker events,
-   - `tunnel_manager.poll()` for tunnel child exit / reconnect timers.
-3. Tick embedded sessions (`Session::tick()` reads PTY bytes and writes user input).
+   - `app.tick_tunnels()` for tunnel health checks and keep-alive reconnect timers (`check_health` + `tick_reconnect`).
+3. Drain embedded sessions (`Session::drain()` reads PTY bytes each frame; user input is written from key handlers).
 4. If the terminal was resized, propagate it to sessions.
 5. Render one frame.
 

@@ -43,7 +43,8 @@ Session-specific keys are parsed separately in `src/session/keys.rs` because the
 ## Rendering hints
 
 - The dashboard footer (`src/tui/widgets/footer.rs`) shows context-sensitive key hints per tab.
-- The session header/footer (`src/session/render.rs`) show configured session keybinds (newly fixed around HEAD `8c30e97`). Hints previously hardcoded now read from `app.config.keybindings` so they stay accurate when the user remaps actions.
+- The session header/footer (`src/session/render.rs`) show configured session keybinds from `app.config.keybindings`, not hardcoded defaults.
+- **Exception:** `R` on the Tunnels tab opens reconnect settings (`src/app/tunnels.rs`) and is not yet a `KeyAction` — it cannot be remapped through the keybind editor.
 - help overlay (`src/tui/screens/help.rs`) lists all actions and their current bindings.
 
 ## What to watch when changing bindings

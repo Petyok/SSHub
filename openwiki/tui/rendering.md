@@ -10,7 +10,7 @@ SSHub uses `ratatui` 0.30 with a synchronous event loop. The UI is split into da
 - If stdout is a terminal, it enters raw mode and alternate screen.
 - `POLL_INTERVAL` is 50 ms. Each tick drains crossterm events, background channels, and redraws.
 
-`src/app/mod.rs` holds `App` state and dispatch. `app.tick()` is called each loop iteration.
+`src/app/mod.rs` holds `App` state and dispatch. Each loop iteration in `src/lib.rs` drains crossterm input (`poll_keys_and_watcher`), drains every session's PTY (`Session::drain()`), then redraws.
 
 ## Frame layout
 

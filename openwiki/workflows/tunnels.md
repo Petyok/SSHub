@@ -31,13 +31,13 @@ Each `TunnelProcess` tracks:
 
 ### Actions
 
-- **Start** — `TunnelManager::start()` builds `ssh -N ... -L/-R/-D <spec>` with `ServerAliveInterval`, `ServerAliveCountMax`, and `TCPKeepAlive` options so dead paths tear down quickly. It stops an existing process first if one exists.
-- **Stop** — `TunnelManager::stop()` kills the child and inserts the id into `user_stopped` so keep-alive does not immediately retry.
-- **Toggle** — `TunnelManager::toggle()` flips between start/stop. A stop on toggle also stops the proving child and cancels any pending reconnect.
-- **Kill** — `TunnelManager::kill()` is the hard emergency stop mapped to `x` in the tunnels tab.
-- **Reconnect settings** — global backoff knobs edited in-app with `R`; stored under `[tunnel_reconnect]` in `config.toml`.
+- **Start** — `TunnelManager::start()` builds `ssh -N ... -L/-R/-D <spec>` with `ServerAliveInterval`, `ServerAliveCountMax`, and `TCPKeepAlive` options so dead paths tear down quickly. It stops an existing process first if one exists. New children start with `proving = true` until `stable_secs` elapses.
+- **Stop (user)** — `TunnelManager::stop_user()` kills the child, inserts the id into `user_stopped`, and clears pending reconnect state.
+- **Toggle** — `App::toggle_tunnel()` in `src/app/tunnels.rs` flips start/stop. Stop path calls `stop_user()`; start path calls `resume_auto_reconnect()` then `start()`. A failed start on a keep-alive tunnel calls `on_auto_start_failed()` so reconnect backoff still applies.
+- **Kill** — `App::kill_selected_tunnel()` hard-stops the selected tunnel (`x` in the tunnels tab); same `stop_user()` semantics as toggle-off.
+- **Reconnect settings** — global backoff knobs edited in-app with `R` (hardcoded today, not yet in `keybinds.rs`); stored under `[tunnel_reconnect]` in `config.toml`. The overlay shows delay fields in **seconds**; TOML still stores `*_ms`.
 
-The app polls `TunnelManager` every event-loop tick. `poll()` checks child exit status, schedules reconnects, and emits `ReconnectEvent::Attempt / Reconnected / GaveUp`.
+Each event-loop tick calls `App::tick_tunnels()` (`src/lib.rs`), which bootstraps `auto_connect` tunnels once, runs `check_health()` for child exit / stable-uptime logic, then `tick_reconnect()` to fire due retries. Events surface as `ReconnectEvent::Attempt / Reconnected / GaveUp`.
 
 ## Keep-alive reconnect semantics
 
@@ -64,7 +64,7 @@ The Tunnels tab (`src/tui/screens/tunnels.rs`) shows each tunnel's:
 - type + port spec,
 - status label: `up`, `down`, `starting`, `reconnecting`, `gave up`, `error`,
 - attempt counter while reconnecting,
-- last error snippet.
+- last error snippet in the detail strip (`error: …`, amber while reconnecting, red for gave up / error).
 
 Footer hints and the global overlay `src/tui/screens/tunnel_reconnect.rs` expose the five tunable backoff fields.
 

@@ -107,3 +107,14 @@ SSHub does not write a centralized application log. Diagnostics come from:
 - The SSH debug panel in the dashboard (ssh `ssh -v` output per connection).
 - Tunnel stderr tails (shown in the Tunnels tab).
 - Session transcript files (when session logging is on).
+
+## OpenWiki automation
+
+`.github/workflows/openwiki-update.yml` runs daily (and on `workflow_dispatch`) to refresh `openwiki/` via `openwiki code --update` and open a PR on branch `openwiki/update`.
+
+Required repository secrets:
+
+- `OPENROUTER_API_KEY` — LLM provider for OpenWiki updates.
+- `LANGSMITH_API_KEY` — optional; enables LangSmith tracing when set.
+
+Manual edits should be reviewed against the codebase; agent output can drift on API names, schema columns, and event-loop details.

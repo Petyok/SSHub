@@ -45,7 +45,7 @@ Logs capture **everything echoed to the terminal**, including passwords or secre
 
 ## Audit integration
 
-When a logged connect succeeds, the audit event detail includes the log directory path. The audit tab shows this path in the event row / notes panel. See `src/app/audit.rs` and `src/app/connect.rs` for the wiring.
+When a logged connect succeeds, the audit event stores the log directory in `log_path` and may also mention it in `note`. The audit tab renders the combined text on the detail line above the table (`src/tui/screens/audit.rs::audit_note`). See `src/app/connect.rs` for the wiring.
 
 ## Schema
 

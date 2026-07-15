@@ -89,7 +89,7 @@ Run `sshub db purge --yes-i-am-stupid` to wipe the launcher database. This remov
 
 ## Recently active areas
 
-The current `development` branch (HEAD `3c566a9`) has been focused on two big features:
+The current `development` branch (HEAD `6dd03c7`, tunnel reconnect merged via PR #20) has been focused on two big features:
 
 1. **Tunnel keep-alive / reconnect** (`src/tunnel.rs`, `src/app/tunnels.rs`, `src/tui/screens/tunnels.rs`, `src/config.rs`):
    - Per-tunnel `auto_connect` column toggles keep-alive.

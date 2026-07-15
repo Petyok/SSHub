@@ -43,7 +43,7 @@ Global keep-alive reconnect backoff:
 - `jitter_ratio` — ± spread; default 0.25.
 - `stable_secs` — uptime required to count as stable; default 5.
 
-These values are edited on the Tunnels tab with `R` and saved back to disk.
+These values are edited on the Tunnels tab with `R` and saved back to disk. The overlay displays delay fields in seconds for readability; `config.toml` still stores millisecond fields (`initial_delay_ms`, `max_delay_ms`).
 
 ### `[keybindings]`
 
