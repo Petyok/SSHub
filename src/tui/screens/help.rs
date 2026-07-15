@@ -116,7 +116,7 @@ fn help_lines() -> Vec<Line<'static>> {
         Line::from(""),
         section("tools"),
         entry("", ""),
-        entry("Ctrl+H", "Settings (opaque background, OS logos, …)"),
+        entry("Ctrl+H", "Settings (session logging, opaque background, …)"),
         entry(
             "Ctrl+K",
             "Edit all keybindings (navigation, tabs, session, …)",
@@ -137,6 +137,10 @@ fn help_lines() -> Vec<Line<'static>> {
         entry("Ctrl+PgUp/PgDn", "Previous / next session tab (alternate)"),
         entry("Ctrl+Shift+S", "Focus session from dashboard"),
         entry("PgUp/PgDn", "Scroll session history"),
+        entry(
+            "",
+            "Session logs (opt-in): ~/.local/share/sshub/logs/<host>/ — captures all PTY output including secrets echoed on screen.",
+        ),
         entry("", ""),
         entry("[sftp]", ""),
         entry("2", "Open the SFTP tab"),
