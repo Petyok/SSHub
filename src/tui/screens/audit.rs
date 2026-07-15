@@ -282,3 +282,45 @@ fn truncate(s: &str, max: usize) -> &str {
         &s[..end]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::AuthEvent;
+
+    fn sample_event(note: Option<&str>, log_path: Option<&str>) -> AuthEvent {
+        AuthEvent {
+            id: 1,
+            host_name: "web".into(),
+            username: Some("deploy".into()),
+            via: Some("direct".into()),
+            status: "launched".into(),
+            note: note.map(str::to_string),
+            log_path: log_path.map(str::to_string),
+            created_at: 0,
+        }
+    }
+
+    #[test]
+    fn audit_note_appends_log_dir_to_session_started() {
+        let dir = "/home/user/.local/share/sshub/logs/web_prod-42";
+        let event = sample_event(Some("session started"), Some(dir));
+        assert_eq!(
+            audit_note(&event),
+            format!("session started (logs in {dir})")
+        );
+    }
+
+    #[test]
+    fn audit_note_uses_path_when_note_empty() {
+        let dir = "/tmp/sshub/logs/web/";
+        let event = sample_event(Some(""), Some(dir));
+        assert_eq!(audit_note(&event), dir);
+    }
+
+    #[test]
+    fn audit_note_note_only_without_log_path() {
+        let event = sample_event(Some("spawn failed"), None);
+        assert_eq!(audit_note(&event), "spawn failed");
+    }
+}

@@ -109,6 +109,7 @@ pub(crate) fn legacy_meta(entry: &mut HostEntry) -> &mut crate::metadata::HostMe
     entry.legacy_mut().expect("legacy host").1
 }
 
+mod host_crud;
 mod host_detail;
 mod host_form;
 mod identity_group;
