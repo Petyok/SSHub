@@ -462,20 +462,33 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
         }
     }
 
-    // Footer hints
-    let hint_y = inner.y + inner.height.saturating_sub(1);
-    if hint_y > inner.y + fields.len() as u16 {
-        let hint = format!(
-            "type to edit  Tab/\u{2193}: next  {}: save  Esc: close",
-            app.save_key_label()
-        );
-        let avail = inner.width.saturating_sub(2) as usize;
+    // Footer hints (two rows so Esc stays visible with long save bindings)
+    let avail = inner.width.saturating_sub(2) as usize;
+    let footer_top = inner.y + inner.height.saturating_sub(2);
+    let footer_bottom = inner.y + inner.height.saturating_sub(1);
+    if footer_top > inner.y + fields.len() as u16 {
         buf.set_string(
             inner.x + 1,
-            hint_y,
-            crate::tui::text::ellipsize(&hint, avail),
+            footer_top,
+            crate::tui::text::ellipsize("type to edit  Tab/\u{2193}: next field", avail),
             theme::dim(),
         );
+        let save_esc = format!("{}: save", app.save_key_label());
+        let esc = "Esc: close";
+        let esc_len = esc.chars().count();
+        let mut line = if save_esc.chars().count() + 2 + esc_len <= avail {
+            format!("{save_esc}  {esc}")
+        } else {
+            let prefix = crate::tui::text::ellipsize(
+                &format!("{save_esc}  "),
+                avail.saturating_sub(esc_len),
+            );
+            format!("{prefix}{esc}")
+        };
+        if line.chars().count() > avail {
+            line = esc.to_string();
+        }
+        buf.set_string(inner.x + 1, footer_bottom, line, theme::dim());
     }
 }
 

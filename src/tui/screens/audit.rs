@@ -31,7 +31,7 @@ pub fn render_audit(frame: &mut Frame, area: Rect, app: &App) {
         app.audit_range,
     );
 
-    let mut body_y = filter_y + 1;
+    let mut body_y = filter_y + 2;
     if let Some(event) = app.auth_events_cache.get(app.audit_selected) {
         let note = audit_note(event);
         if !note.is_empty() {
@@ -41,11 +41,11 @@ pub fn render_audit(frame: &mut Frame, area: Rect, app: &App) {
                 crate::tui::text::ellipsize(&format!("note: {note}"), inner_w as usize),
                 note_detail_style(&event.status),
             );
-            body_y += 1;
+            body_y += 2;
         }
     }
 
-    // Table header (after optional note detail)
+    // Table header (after optional note detail + spacer)
     let header_y = body_y;
     if header_y >= area.y + area.height {
         return;
@@ -233,22 +233,6 @@ fn render_event_row(
         truncate(status_label, (result_w - 2) as usize),
         if selected { base_style } else { theme::text() },
     );
-    cx += result_w - 2;
-
-    // NOTE — short preview; full text on the detail line above
-    let note = audit_note(event);
-    let remaining = (x + w).saturating_sub(cx) as usize;
-    let preview = if remaining < 12 {
-        String::new()
-    } else {
-        crate::tui::text::ellipsize(&note, remaining.min(48))
-    };
-    buf.set_string(
-        cx,
-        y,
-        &preview,
-        if selected { base_style } else { theme::dim() },
-    );
 }
 
 fn note_detail_style(status: &str) -> Style {
@@ -264,20 +248,18 @@ fn table_columns(total_w: u16) -> Vec<(&'static str, u16)> {
     if total_w >= 100 {
         vec![
             ("TIME", 12),
-            ("HOST", 24),
-            ("USER", 12),
-            ("VIA", 14),
-            ("RESULT", 10),
-            ("NOTE", total_w.saturating_sub(72)),
+            ("HOST", 30),
+            ("USER", 14),
+            ("VIA", 16),
+            ("RESULT", total_w.saturating_sub(72)),
         ]
     } else {
         vec![
             ("TIME", 10),
-            ("HOST", 18),
+            ("HOST", 20),
             ("USER", 10),
-            ("VIA", 10),
-            ("RESULT", 8),
-            ("NOTE", total_w.saturating_sub(56)),
+            ("VIA", 12),
+            ("RESULT", total_w.saturating_sub(52)),
         ]
     }
 }
