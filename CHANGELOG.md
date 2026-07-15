@@ -6,6 +6,10 @@ All notable changes to SSHub are documented in this file.
 
 ### Added
 
+- **Mosh transport** — per-host `Transport` field (`ssh` or `mosh`) in the host form
+  and detail panel. Embedded sessions and external terminal launchers use `mosh` when
+  selected; tunnels and SFTP stay ssh-only. Graceful error when `mosh` is not installed.
+  (Schema v13.)
 - **Session logging** — opt-in capture of embedded SSH session PTY output to plain-text
   files under `~/.local/share/sshub/logs/<host-dir>/`, with rotated segment files inside
   (managed hosts use `{sanitized-name}-{id}`). Toggle globally in Settings (`Ctrl+H`) or
