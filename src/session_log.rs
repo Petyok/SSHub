@@ -151,6 +151,7 @@ pub struct SessionLogWriter {
     max_file_bytes: u64,
     retention_files: usize,
     file_serial: u32,
+    closed: bool,
 }
 
 impl SessionLogWriter {
@@ -182,6 +183,7 @@ impl SessionLogWriter {
             max_file_bytes,
             retention_files,
             file_serial: 0,
+            closed: false,
         })
     }
 
@@ -221,13 +223,16 @@ impl SessionLogWriter {
     pub fn close(mut self) -> Result<()> {
         self.writer.flush()?;
         prune_retention(&self.host_dir, self.retention_files)?;
-        std::mem::forget(self);
+        self.closed = true;
         Ok(())
     }
 }
 
 impl Drop for SessionLogWriter {
     fn drop(&mut self) {
+        if self.closed {
+            return;
+        }
         let _ = self.writer.flush();
         let _ = prune_retention(&self.host_dir, self.retention_files);
     }
