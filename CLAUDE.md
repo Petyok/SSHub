@@ -7,6 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Pinned implementation flow: [docs/implementation-flow.md](docs/implementation-flow.md) (issue → claim → branch → verify → adversarial review → PR → merge).
 
 - **GitHub comments from agents** must always end with `_Written by {Model} ({Platform}) on behalf of the maintainer._` — see [implementation-flow § GitHub comments](docs/implementation-flow.md#github-comments-ai-agents).
+- **Lint before push.** Always run `cargo fmt`, `cargo fmt --check`, and `cargo clippy --all-targets` locally before every push — CI runs the same checks; do not skip them.
 
 - **Commit frequently.** After completing each logical unit of work (a bug fix, a feature, a refactor pass), create a commit immediately. Do not accumulate large uncommitted diffs across multiple tasks.
 - **Branch model.** `main` is stable (releases + tags); `development` is the integration branch; features go on `feature/*` branches cut from `development`. Flow: `feature/* → development → main`. Releases merge `development` into `main` with a `--no-ff` merge commit `chore: release vX.Y.Z` (so `git log --first-parent main` shows one entry per release), bump the version + CHANGELOG, and push a `vX.Y.Z` tag (the release workflow builds binaries and publishes to crates.io). `main` and `development` converge at every release — see the Releasing section.
@@ -44,6 +45,11 @@ cargo build
 
 # Run all tests (unit + integration)
 just test
+
+# Lint (required before every push — matches CI)
+cargo fmt
+cargo fmt --check
+cargo clippy --all-targets
 
 # Equivalent manual:
 cargo test                         # unit tests in src/

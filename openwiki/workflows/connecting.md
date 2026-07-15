@@ -72,6 +72,10 @@ Session logging is opt-in and was added in the Unreleased development cycle (sch
 
 **Security warning:** logs capture everything the terminal prints, including passwords if they appear on screen. The feature is off by default and the README and in-app help call this out.
 
+## Mosh transport
+
+Per-host `Transport` in the host form (`ssh` or `mosh`, schema v13). When set to `mosh`, embedded sessions exec `mosh` instead of `ssh`. Tunnels and SFTP always use `ssh`. If `mosh` is missing from `PATH`, connect fails with a clear error in the SSH log panel.
+
 ## What to watch when changing connection code
 
 - `src/app/connect.rs` — secret resolution, argv building, session logging setup, auth event recording.

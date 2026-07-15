@@ -8,6 +8,7 @@ use super::types::{
 };
 use super::LauncherStore;
 use crate::session_log::SessionLoggingOverride;
+use crate::session_transport::SessionTransport;
 
 impl LauncherStore {
     // --- host groups ---
@@ -214,10 +215,10 @@ impl LauncherStore {
                 "INSERT INTO hosts
                     (name, label, address, port, group_id, identity_id, os_icon, tags, notes,
                      proxy_jump, forward_agent, remote_command, source, has_password, username,
-                     session_logging, sort_order, created_at, updated_at)
+                     session_logging, transport, sort_order, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                     ?16,
-                     (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM hosts), ?17, ?17)",
+                     ?16, ?17,
+                     (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM hosts), ?18, ?18)",
                 params![
                     host.name,
                     host.label,
@@ -235,6 +236,7 @@ impl LauncherStore {
                     i64::from(host.has_password),
                     host.username,
                     host.session_logging.to_db(),
+                    host.transport.to_db(),
                     now,
                 ],
             )?;
@@ -364,6 +366,7 @@ impl LauncherStore {
             let session_logging = update
                 .session_logging
                 .unwrap_or(current.session_logging);
+            let transport = update.transport.unwrap_or(current.transport);
             let tags_json = tags_to_json(&tags)?;
             let now = now_ts();
 
@@ -372,7 +375,7 @@ impl LauncherStore {
                  SET name = ?1, label = ?2, address = ?3, port = ?4, group_id = ?5, identity_id = ?6,
                      os_icon = ?7, tags = ?8, notes = ?9, proxy_jump = ?10, forward_agent = ?11,
                      remote_command = ?12, favorite = ?13, sort_order = ?14, has_password = ?15, username = ?16, updated_at = ?17,
-                     environment = ?19, session_logging = ?20
+                     environment = ?19, session_logging = ?20, transport = ?21
                  WHERE id = ?18",
                 params![
                     name,
@@ -395,6 +398,7 @@ impl LauncherStore {
                     id,
                     environment,
                     session_logging.to_db(),
+                    transport.to_db(),
                 ],
             )?;
 
@@ -513,7 +517,7 @@ impl LauncherStore {
                     "UPDATE hosts
                      SET address = ?1, port = ?2, proxy_jump = ?3, forward_agent = ?4,
                          remote_command = ?5, ssh_config_hash = ?6, tags = ?7, notes = ?8,
-                         favorite = ?9, last_connected = ?10, updated_at = ?11
+                         favorite = ?9, last_connected = ?10, updated_at = ?11, transport = ?13
                      WHERE id = ?12",
                     params![
                         import.address,
@@ -528,6 +532,7 @@ impl LauncherStore {
                         existing.last_connected,
                         now,
                         existing.id,
+                        import.transport.to_db(),
                     ],
                 )?;
                 sync_favorite_membership(conn, existing.id, existing.favorite)?;
@@ -543,8 +548,8 @@ impl LauncherStore {
                 "INSERT INTO hosts
                     (name, label, address, port, tags, notes, environment, proxy_jump, forward_agent,
                      remote_command, favorite, last_connected, source, ssh_config_hash,
-                     session_logging, created_at, updated_at)
-                 VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?13, ?6, ?7, ?8, ?9, ?10, 'ssh_config', ?11, ?14, ?12, ?12)",
+                     session_logging, transport, created_at, updated_at)
+                 VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?13, ?6, ?7, ?8, ?9, ?10, 'ssh_config', ?11, ?14, ?15, ?12, ?12)",
                 params![
                     import.name,
                     import.address,
@@ -560,6 +565,7 @@ impl LauncherStore {
                     now,
                     import.environment,
                     import.session_logging.to_db(),
+                    import.transport.to_db(),
                 ],
             )?;
             if import.favorite {
@@ -625,6 +631,7 @@ impl LauncherStore {
             has_password: false,
             username: current.username.clone(),
             session_logging: current.session_logging,
+            transport: current.transport,
         })
         .map(Some)
     }
@@ -771,7 +778,7 @@ fn load_host_by_id(conn: &rusqlite::Connection, id: i64) -> Result<Option<Manage
                 h.has_password, h.created_at, h.updated_at, h.username,
                 g.id, g.name, g.sort_order,
                 i.id, i.name, i.username, i.private_key, i.certificate, i.has_password,
-                h.environment, h.session_logging
+                h.environment, h.session_logging, h.transport
          FROM hosts h
          LEFT JOIN host_groups g ON g.id = h.group_id
          LEFT JOIN identities i ON i.id = h.identity_id
@@ -1007,6 +1014,7 @@ fn row_to_managed_host(row: &rusqlite::Row<'_>) -> rusqlite::Result<ManagedHost>
         has_password: row.get::<_, i64>(18).unwrap_or(0) != 0,
         username: row.get(21)?,
         session_logging: SessionLoggingOverride::from_db(row.get(32).ok()),
+        transport: SessionTransport::from_db(Some(row.get::<_, String>(33)?.as_str())),
         created_at: row.get(19)?,
         updated_at: row.get(20)?,
     })

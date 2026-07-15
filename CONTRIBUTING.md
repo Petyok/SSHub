@@ -40,7 +40,15 @@ platform — see [docs/implementation-flow.md § GitHub comments](docs/implement
    Not just your new test: the whole suite, because unit tests share one
    process and one machine state (see Tests below). CI runs the same suite
    plus `cargo fmt --check` and `cargo clippy --all-targets` on every PR.
-4. Run `cargo fmt` and `cargo clippy` and fix any warnings
+4. **Always run lints locally before push** (agents: every commit, not only at PR time):
+
+   ```bash
+   cargo fmt
+   cargo fmt --check
+   cargo clippy --all-targets
+   ```
+
+   CI fails on `fmt --check` drift — run `cargo fmt` first, then `--check` must exit 0.
 5. Update `CHANGELOG.md` under `[Unreleased]` for any user-visible change
 6. Update `README.md` / the in-app help if behaviour or requirements change
 7. Do **not** bump the version in `Cargo.toml` — versioning is automated

@@ -11,6 +11,7 @@ pub mod search;
 pub mod secure_fs;
 pub mod session;
 pub mod session_log;
+pub mod session_transport;
 pub mod sftp;
 pub mod ssh;
 pub mod store;

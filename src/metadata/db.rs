@@ -80,6 +80,17 @@ fn migrate_metadata_columns(conn: &Connection) -> Result<()> {
     if !has_col {
         conn.execute_batch("ALTER TABLE host_metadata ADD COLUMN session_logging INTEGER;")?;
     }
+    let has_transport: bool = conn
+        .prepare(
+            "SELECT COUNT(*) FROM pragma_table_info('host_metadata') WHERE name = 'transport'",
+        )?
+        .query_row([], |row| row.get::<_, i64>(0))
+        .map(|c| c > 0)?;
+    if !has_transport {
+        conn.execute_batch(
+            "ALTER TABLE host_metadata ADD COLUMN transport TEXT NOT NULL DEFAULT 'ssh';",
+        )?;
+    }
     Ok(())
 }
 
@@ -93,7 +104,7 @@ impl MetadataStore for MetadataDb {
     fn get(&self, host_name: &str) -> Result<Option<HostMetadata>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT host_name, tags, description, environment, favorite, last_connected, session_logging
+                "SELECT host_name, tags, description, environment, favorite, last_connected, session_logging, transport
                  FROM host_metadata WHERE host_name = ?1",
             )?;
             stmt.query_row(params![host_name], row_to_metadata)
@@ -105,7 +116,7 @@ impl MetadataStore for MetadataDb {
     fn get_all(&self) -> Result<Vec<HostMetadata>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT host_name, tags, description, environment, favorite, last_connected, session_logging
+                "SELECT host_name, tags, description, environment, favorite, last_connected, session_logging, transport
                  FROM host_metadata ORDER BY host_name",
             )?;
             let rows = stmt.query_map([], row_to_metadata)?;
@@ -120,15 +131,16 @@ impl MetadataStore for MetadataDb {
         self.with_conn(|conn| {
             conn.execute(
                 "INSERT INTO host_metadata
-                    (host_name, tags, description, environment, favorite, last_connected, session_logging)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                    (host_name, tags, description, environment, favorite, last_connected, session_logging, transport)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                  ON CONFLICT(host_name) DO UPDATE SET
                     tags = excluded.tags,
                     description = excluded.description,
                     environment = excluded.environment,
                     favorite = excluded.favorite,
                     last_connected = excluded.last_connected,
-                    session_logging = excluded.session_logging",
+                    session_logging = excluded.session_logging,
+                    transport = excluded.transport",
                 params![
                     meta.host_name,
                     tags_json,
@@ -137,6 +149,7 @@ impl MetadataStore for MetadataDb {
                     favorite,
                     meta.last_connected,
                     meta.session_logging.to_db(),
+                    meta.transport.to_db(),
                 ],
             )?;
             Ok(())
@@ -238,6 +251,9 @@ fn row_to_metadata(row: &rusqlite::Row<'_>) -> rusqlite::Result<HostMetadata> {
         favorite: row.get::<_, i64>(4)? != 0,
         last_connected: row.get(5)?,
         session_logging: crate::session_log::SessionLoggingOverride::from_db(row.get(6).ok()),
+        transport: crate::session_transport::SessionTransport::from_db(Some(
+            row.get::<_, String>(7)?.as_str(),
+        )),
     })
 }
 

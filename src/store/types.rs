@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crate::session_log::SessionLoggingOverride;
+use crate::session_transport::SessionTransport;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostGroup {
@@ -78,6 +79,7 @@ pub struct ManagedHost {
     pub has_password: bool,
     pub username: Option<String>,
     pub session_logging: SessionLoggingOverride,
+    pub transport: SessionTransport,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -101,6 +103,7 @@ pub struct NewHost {
     pub has_password: bool,
     pub username: Option<String>,
     pub session_logging: SessionLoggingOverride,
+    pub transport: SessionTransport,
 }
 
 impl Default for NewHost {
@@ -128,6 +131,7 @@ impl NewHost {
             has_password: false,
             username: None,
             session_logging: SessionLoggingOverride::Inherit,
+            transport: SessionTransport::Ssh,
         }
     }
 }
@@ -153,6 +157,7 @@ pub struct HostUpdate {
     pub has_password: Option<bool>,
     pub username: Option<Option<String>>,
     pub session_logging: Option<SessionLoggingOverride>,
+    pub transport: Option<SessionTransport>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -225,6 +230,7 @@ pub struct SshConfigHostImport {
     pub favorite: bool,
     pub last_connected: Option<i64>,
     pub session_logging: SessionLoggingOverride,
+    pub transport: SessionTransport,
 }
 
 /// Outcome of upserting one imported ssh config host.

@@ -165,6 +165,46 @@ pub(crate) fn session_meta_for_entry(entry: &HostEntry) -> crate::session::Sessi
     }
 }
 
+/// Build the bare `mosh` argv for a host entry.
+pub fn mosh_argv_for_entry(entry: &HostEntry) -> Vec<String> {
+    match entry {
+        HostEntry::Managed(m) => {
+            let ssh_host = managed_to_ssh_host(m);
+            if m.source == HostSource::SshConfig {
+                crate::ssh::build_mosh_alias_argv(&ssh_host)
+            } else {
+                crate::ssh::build_mosh_argv(&ssh_host)
+            }
+        }
+        HostEntry::Legacy { host, .. } => crate::ssh::build_mosh_alias_argv(host),
+    }
+}
+
+/// Apply connect-time tweaks to a bare session argv: verbose `ssh` logging and
+/// `StrictHostKeyChecking=accept-new` when a stored credential is present.
+pub fn prepare_session_connect_argv(mut argv: Vec<String>, has_stored_secret: bool) -> Vec<String> {
+    match argv.first().map(String::as_str) {
+        Some("ssh") => {
+            argv.insert(1, "-v".into());
+            if has_stored_secret {
+                argv.insert(1, "-o".into());
+                argv.insert(2, "StrictHostKeyChecking=accept-new".into());
+            }
+            argv
+        }
+        Some("mosh") if has_stored_secret => crate::ssh::inject_mosh_ssh_accept_new(argv),
+        _ => argv,
+    }
+}
+
+/// Build session argv (`ssh` or `mosh`) from per-host transport setting.
+pub fn session_argv_for_entry(entry: &HostEntry) -> Vec<String> {
+    match entry.session_transport() {
+        crate::session_transport::SessionTransport::Ssh => ssh_argv_for_entry(entry),
+        crate::session_transport::SessionTransport::Mosh => mosh_argv_for_entry(entry),
+    }
+}
+
 /// Build the bare `ssh` argv for a host entry (no env / askpass prefix).
 ///
 /// - Launcher-managed hosts: full options via `build_ssh_argv` so we don't

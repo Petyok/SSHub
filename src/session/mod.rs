@@ -477,19 +477,21 @@ impl Session {
                 }
             }
         }
+        if had_bytes {
+            self.maybe_send_pending_secret();
+            self.maybe_reveal();
+        }
         if had_stderr {
-            // The "authenticated to" marker arrives on stderr, so re-check even
-            // when no PTY bytes landed this tick.
             self.maybe_detect_connected();
         }
         if had_bytes {
-            self.maybe_send_pending_secret();
             self.maybe_detect_connected();
-            self.maybe_reveal();
         }
         // Safety net: reveal after the timeout even with no output at all, so a
         // session blocked on auth never hangs the connect screen forever.
         self.reveal_on_timeout();
+        // Re-check after reveal/timeout transitions (mosh has no ssh -v marker).
+        self.maybe_detect_connected();
     }
 
     /// Reveal the live terminal once the connect timeout elapses — but only if
@@ -563,14 +565,27 @@ impl Session {
     /// TCP connect even completes. The debug stream now lives in `debug_log`
     /// (siphoned off the PTY), so no screen scrubbing is needed: the PTY only
     /// ever carries the post-auth shell (banner + prompt).
+    ///
+    /// Mosh does not run `ssh -v`, so latch once the live shell is showing
+    /// (`Running` phase) instead.
     fn maybe_detect_connected(&mut self) {
         if self.connected {
+            return;
+        }
+        if self.is_mosh_session() {
+            if matches!(self.phase, SessionPhase::Running { .. }) {
+                self.connected = true;
+            }
             return;
         }
         let text = self.debug_log.to_ascii_lowercase();
         if CONNECTED_NEEDLES.iter().any(|n| text.contains(n)) {
             self.connected = true;
         }
+    }
+
+    fn is_mosh_session(&self) -> bool {
+        self.config.argv.first().map(String::as_str) == Some("mosh")
     }
 
     /// The accumulated ssh `-v` debug output (host-key search, kex, auth).
@@ -1031,6 +1046,24 @@ mod paste_tests {
 #[cfg(test)]
 mod prompt_tests {
     use super::*;
+
+    #[test]
+    fn mosh_reports_connected_when_running() {
+        let config = SessionConfig {
+            argv: vec!["sh".into(), "-c".into(), "sleep 120".into()],
+            display_name: "mosh-host".into(),
+            meta: SessionMeta::default(),
+            pending_secret: None,
+        };
+        let mut s = Session::spawn(config, 10, 40, None).unwrap();
+        s.config.argv = vec!["mosh".into(), "host".into()];
+        s.phase = SessionPhase::Running {
+            started_at: Instant::now(),
+        };
+        assert!(!s.is_connected());
+        s.drain();
+        assert!(s.is_connected());
+    }
 
     #[test]
     fn stderr_is_siphoned_off_the_pty() {

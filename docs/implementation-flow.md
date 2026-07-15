@@ -82,13 +82,16 @@ git checkout -b feature/short-description
 
 ## 4. Verify (required before PR)
 
+**Always run lints locally** — CI will fail if you skip this. Agents must run these commands in the workspace before every push, not only before opening the PR.
+
 ```bash
 just test
 cargo fmt
+cargo fmt --check
 cargo clippy --all-targets
 ```
 
-All must pass. CI runs the same test suite plus `cargo fmt --check` and `cargo clippy --all-targets` on Ubuntu and macOS.
+All must pass. `cargo fmt --check` is what CI runs (not `fmt` alone — run both: `fmt` fixes, `--check` confirms). CI runs the same test suite plus `cargo fmt --check` and `cargo clippy --all-targets` on Ubuntu and macOS.
 
 **Tests:** use fixtures and `tempfile`; never touch real `~/.ssh`, keyring, or user config dirs. See [CONTRIBUTING.md § Tests](../CONTRIBUTING.md#tests).
 

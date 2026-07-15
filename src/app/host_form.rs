@@ -66,6 +66,7 @@ impl App {
                 proxy_jump: managed.proxy_jump.clone().unwrap_or_default(),
                 forward_agent: managed.forward_agent,
                 remote_command: managed.remote_command.clone().unwrap_or_default(),
+                transport: managed.transport,
                 session_logging: managed.session_logging,
                 os_icon_index: os_icon_index_from_option(&managed.os_icon),
                 password: String::new(),
@@ -110,6 +111,7 @@ impl App {
                 proxy_jump: String::new(),
                 forward_agent: false,
                 remote_command: String::new(),
+                transport: crate::session_transport::SessionTransport::Ssh,
                 session_logging: crate::session_log::SessionLoggingOverride::Inherit,
                 os_icon_index: 0,
                 password: String::new(),
@@ -195,6 +197,7 @@ impl App {
                     has_password: Some(new_has_password),
                     username: Some(username.clone()),
                     session_logging: Some(form.session_logging),
+                    transport: Some(form.transport),
                     ..Default::default()
                 },
             )?;
@@ -268,6 +271,7 @@ impl App {
                     has_password: Some(new_has_password),
                     username: Some(username),
                     session_logging: Some(form.session_logging),
+                    transport: Some(form.transport),
                     ..Default::default()
                 },
             )?;
@@ -290,6 +294,7 @@ impl App {
                 has_password: new_has_password,
                 username,
                 session_logging: form.session_logging,
+                transport: form.transport,
             })?;
             self.store.set_host_groups(created.id, &group_ids)?;
             if host_pw_changed {
@@ -343,6 +348,7 @@ impl App {
             KeyCode::Char(' ')
                 if key.modifiers.is_empty()
                     && (field == HostFormField::ForwardAgent
+                        || field == HostFormField::Transport
                         || field == HostFormField::SessionLogging) =>
             {
                 self.host_form_toggle();
@@ -387,6 +393,9 @@ impl App {
         }
         if form.field == HostFormField::ForwardAgent {
             form.forward_agent = !form.forward_agent;
+            form.dirty = true;
+        } else if form.field == HostFormField::Transport {
+            form.transport = form.transport.next();
             form.dirty = true;
         } else if form.field == HostFormField::SessionLogging {
             form.session_logging = form.session_logging.next();
