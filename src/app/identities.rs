@@ -34,6 +34,7 @@ impl App {
                     "agent",
                     "ok",
                     &format!("key removed from agent: {}", key_path.to_string_lossy()),
+                    None,
                 );
                 self.agent_info = None;
                 self.agent_info_updated =
@@ -48,6 +49,7 @@ impl App {
                     "agent",
                     "fail",
                     &format!("remove from agent failed: {e:#}"),
+                    None,
                 );
             }
         }
@@ -72,6 +74,7 @@ impl App {
                     "agent",
                     "launched",
                     &format!("key added to agent: {}", key_path.to_string_lossy()),
+                    None,
                 );
                 self.agent_info = None;
                 self.agent_info_updated =
@@ -86,6 +89,7 @@ impl App {
                     "agent",
                     "fail",
                     &format!("add to agent failed: {e:#}"),
+                    None,
                 );
             }
         }
