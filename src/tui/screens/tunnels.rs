@@ -29,12 +29,17 @@ pub fn render_tunnels(frame: &mut Frame, area: Rect, app: &App) {
     let summary = format!("{total} tunnels  {active} active");
     buf.set_string(inner_x, summary_y, &summary, theme::mute());
 
-    let mut body_y = summary_y + 1;
+    let mut body_y = summary_y + 2;
     if let Some(tunnel) = app.tunnels.get(app.tunnel_selected) {
         let status = app.tunnel_manager.status(tunnel.id);
-        if matches!(status, "gave_up" | "error") {
+        if matches!(status, "gave_up" | "error" | "reconnecting") {
             if let Some(detail) = app.tunnel_manager.error_detail(tunnel.id) {
                 if !detail.is_empty() {
+                    let style = if status == "reconnecting" {
+                        theme::amber()
+                    } else {
+                        theme::red()
+                    };
                     buf.set_string(
                         inner_x,
                         body_y,
@@ -42,9 +47,9 @@ pub fn render_tunnels(frame: &mut Frame, area: Rect, app: &App) {
                             &format!("error: {detail}"),
                             inner_w as usize,
                         ),
-                        theme::red(),
+                        style,
                     );
-                    body_y += 1;
+                    body_y += 2;
                 }
             }
         }
@@ -57,9 +62,8 @@ pub fn render_tunnels(frame: &mut Frame, area: Rect, app: &App) {
         }
     }
 
-    // Row 1: optional error detail for selected tunnel; then blank separator
-    // Row 2: Table header
-    let header_y = body_y + 1;
+    // Optional error detail + spacer, then table header
+    let header_y = body_y;
     if header_y >= area.y + area.height {
         return;
     }

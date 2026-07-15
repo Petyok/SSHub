@@ -240,6 +240,10 @@ impl TunnelManager {
         self.terminal_errors.remove(&tunnel_id);
     }
 
+    pub fn clear_user_stopped(&mut self, tunnel_id: i64) {
+        self.user_stopped.remove(&tunnel_id);
+    }
+
     pub fn is_reconnecting(&self, tunnel_id: i64) -> bool {
         self.reconnect
             .get(&tunnel_id)
@@ -684,6 +688,27 @@ mod tests {
         mgr.resume_auto_reconnect(1);
         assert!(!mgr.user_stopped.contains(&1));
         assert!(!mgr.is_gave_up(1));
+    }
+
+    #[test]
+    fn on_auto_start_failed_gives_up_at_max_attempts() {
+        let mut mgr = TunnelManager::new();
+        let cfg = TunnelReconnectConfig {
+            max_attempts: 2,
+            ..Default::default()
+        };
+        // After one recorded failure (attempt 1), the next start failure exhausts budget.
+        mgr.schedule_reconnect(1, "err1", &cfg, 1);
+        let ev = mgr.on_auto_start_failed(1, "err2", &cfg);
+        assert!(matches!(
+            ev,
+            Some(ReconnectEvent::GaveUp {
+                tunnel_id: 1,
+                attempts: 2,
+                ..
+            })
+        ));
+        assert!(mgr.is_gave_up(1));
     }
 
     #[test]

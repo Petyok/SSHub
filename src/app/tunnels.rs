@@ -137,14 +137,41 @@ impl App {
                 }
                 Err(e) => {
                     self.tunnel_notice = Some(format!("Failed: {e:#}"));
-                    let _ = self.store.log_auth_event(
-                        host_name,
-                        None,
-                        "tunnel",
-                        "fail",
-                        &format!("tunnel failed :{} — {e:#}", tunnel.local_port),
-                        None,
-                    );
+                    if tunnel.auto_connect {
+                        let err = format!("{e:#}");
+                        let gave_up = self.tunnel_manager.on_auto_start_failed(
+                            tunnel.id,
+                            &err,
+                            &self.config.tunnel_reconnect,
+                        );
+                        if let Some(ev) = gave_up {
+                            self.log_tunnel_reconnect_events(
+                                std::slice::from_ref(&ev),
+                                &[tunnel.clone()],
+                            );
+                        } else {
+                            let _ = self.store.log_auth_event(
+                                host_name,
+                                None,
+                                "tunnel",
+                                "fail",
+                                &format!(
+                                    "tunnel start failed :{} {} — {e:#}",
+                                    tunnel.local_port, label
+                                ),
+                                None,
+                            );
+                        }
+                    } else {
+                        let _ = self.store.log_auth_event(
+                            host_name,
+                            None,
+                            "tunnel",
+                            "fail",
+                            &format!("tunnel failed :{} — {e:#}", tunnel.local_port),
+                            None,
+                        );
+                    }
                 }
             }
         }

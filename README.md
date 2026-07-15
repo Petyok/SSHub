@@ -176,15 +176,16 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | `Shift+E`          | Export to ssh config      |
 | `Shift+T`          | Import from Termius       |
 
-### Tunnels (tab 2)
+### Tunnels (tab 3)
 
-| Key       | Action              |
-|-----------|----------------------|
-| `a`       | Add tunnel           |
-| `e`       | Edit tunnel          |
-| `d`       | Delete tunnel        |
-| `Enter`   | Start / stop tunnel  |
-| `x`       | Kill tunnel process  |
+| Key       | Action                           |
+|-----------|----------------------------------|
+| `a`       | Add tunnel                       |
+| `e`       | Edit tunnel                      |
+| `d`       | Delete tunnel                    |
+| `Enter`   | Start / stop / cancel reconnect  |
+| `R`       | Reconnect settings               |
+| `x`       | Kill tunnel process              |
 
 ### Keys (tab 3)
 

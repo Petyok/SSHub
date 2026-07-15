@@ -511,6 +511,7 @@ impl App {
                 }
                 Some(PendingDelete::Tunnel { id, label }) => {
                     let _ = self.tunnel_manager.stop_user(id);
+                    self.tunnel_manager.clear_user_stopped(id);
                     self.store.delete_tunnel(id)?;
                     self.tunnel_notice = Some(format!("Tunnel '{label}' deleted"));
                     self.reload_tunnels()?;
