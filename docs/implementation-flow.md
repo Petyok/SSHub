@@ -24,32 +24,38 @@ flowchart LR
 |------|--------|
 | Pick or open an issue | New features should appear on the [roadmap (#14)](https://github.com/Petyok/SSHub/issues/14). Open an issue if none exists; maintainer triages it into the roadmap. |
 | Claim before coding | Assign yourself or comment that you are taking it. Unclaimed roadmap items are assumed free ([CONTRIBUTING.md](../CONTRIBUTING.md)). |
-| GitHub comments (AI) | **Required:** every issue/PR comment written by an agent must name the **model and platform** (see [§ GitHub comments](#github-comments-ai-agents) below). |
+| GitHub comments (AI) | **Required:** every issue/PR comment ends with `_Written by {Model} ({Platform}) on behalf of the maintainer._` (see [§ GitHub comments](#github-comments-ai-agents)). |
 | Link PR to issue | PR body must include `Closes #N` so the issue and roadmap checkbox update on merge. |
 
 ### GitHub comments (AI agents)
 
-If **you** (a coding agent) post on GitHub — issue claims, status updates, PR reviews, triage — you **must** identify which model you are. No anonymous agent comments.
+If **you** (a coding agent) post on GitHub — issue claims, status updates, PR reviews, triage — you **must** sign the comment. No anonymous agent comments. No inline-only model mentions.
 
-Use one of these forms (pick one per comment):
+**Always** end the comment with this exact form (model and platform filled in):
 
-1. **Footer signature** (preferred for longer comments):
+```text
+_Written by {Model} ({Platform}) on behalf of the maintainer._
+```
 
-   ```text
-   _Written by Composer (Cursor) on behalf of the maintainer._
-   ```
+Examples:
 
-2. **Inline on short claims** (e.g. taking an issue):
+```text
+Taking this — working on `feature/session-logging`.
 
-   ```text
-   Taking this — working on `feature/session-logging` (Composer / Cursor).
-   ```
+_Written by Composer (Cursor) on behalf of the maintainer._
+```
 
-**Model name must be specific** — e.g. `Claude Opus 4.8`, `Claude Fable 5`, `Composer`, `GPT-5.4`, not just “AI” or “Claude”. Include the **platform** when relevant: `Cursor`, `Claude Code`, `Codex`, etc.
+```text
+_Written by Claude Opus 4.8 (Claude Code) on behalf of the maintainer._
+```
 
-Examples from this repo: issue [#4](https://github.com/Petyok/SSHub/issues/4) (claim + footer signature), [#8](https://github.com/Petyok/SSHub/issues/8) (inline model on claim).
+- **Model** must be specific — `Claude Opus 4.8`, `Claude Fable 5`, `Composer`, `GPT-5.4`, not “AI” or “Claude” alone.
+- **Platform** is the tool or runtime — `Cursor`, `Claude Code`, `Codex`, etc.
+- Put the signature on its **own line** at the **end** of every agent comment, including one-line claims.
 
-Human contributors do not need a model line.
+Reference: issue [#4](https://github.com/Petyok/SSHub/issues/4).
+
+Human contributors do not need a signature.
 
 ## 2. Branch
 
