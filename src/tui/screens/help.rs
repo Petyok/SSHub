@@ -139,7 +139,7 @@ fn help_lines() -> Vec<Line<'static>> {
         entry("PgUp/PgDn", "Scroll session history"),
         entry(
             "",
-            "Session logs (opt-in): ~/.local/share/sshub/logs/<host>/ — captures all PTY output including secrets echoed on screen.",
+            "Session logs (opt-in): ~/.local/share/sshub/logs/<host-dir>/ — managed hosts use {name}-{id}; pure ssh_config aliases may share a dir when names sanitize the same. Captures all PTY output including secrets echoed on screen.",
         ),
         entry("", ""),
         entry("[sftp]", ""),
