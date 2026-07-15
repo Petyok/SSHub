@@ -18,6 +18,8 @@ Thanks for your interest in contributing. Here's how to get started.
 
 Flow: `feature/* → development → main (release, maintainer-only)`.
 
+**Full checklist:** [docs/implementation-flow.md](docs/implementation-flow.md) — issue → claim → branch → verify → adversarial review → PR → merge.
+
 ## Claiming an issue
 
 Before implementing an existing issue (roadmap items in #14 included), claim
@@ -40,7 +42,9 @@ considered free again.
 6. Update `README.md` / the in-app help if behaviour or requirements change
 7. Do **not** bump the version in `Cargo.toml` — versioning is automated
    (a pre-commit hook on `development` plus the release process)
-8. Open a pull request against `development`
+8. Run adversarial review on non-trivial changes before opening the PR (see
+   [docs/implementation-flow.md](docs/implementation-flow.md))
+9. Open a pull request against `development`
 
 ## Pull requests
 
