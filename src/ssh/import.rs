@@ -1,6 +1,7 @@
 use anyhow::Result;
 
 use crate::metadata::MetadataStore;
+use crate::session_transport::SessionTransport;
 use crate::ssh::{HostResolver, SshHost};
 use crate::store::{LauncherStore, SshConfigHostImport, UpsertSshConfigOutcome};
 
@@ -101,6 +102,7 @@ fn build_sync_import(
         favorite: existing.favorite,
         last_connected: existing.last_connected,
         session_logging: existing.session_logging,
+        transport: existing.transport,
     }
 }
 
@@ -136,24 +138,27 @@ fn build_import_row(
     let port = resolved.port.unwrap_or(22);
 
     let meta = metadata.get(name)?;
-    let (tags, notes, environment, favorite, last_connected, session_logging) = match meta {
-        Some(m) => (
-            m.tags,
-            m.description,
-            m.environment,
-            m.favorite,
-            m.last_connected,
-            m.session_logging,
-        ),
-        None => (
-            Vec::new(),
-            None,
-            None,
-            false,
-            None,
-            crate::session_log::SessionLoggingOverride::Inherit,
-        ),
-    };
+    let (tags, notes, environment, favorite, last_connected, session_logging, transport) =
+        match meta {
+            Some(m) => (
+                m.tags,
+                m.description,
+                m.environment,
+                m.favorite,
+                m.last_connected,
+                m.session_logging,
+                m.transport,
+            ),
+            None => (
+                Vec::new(),
+                None,
+                None,
+                false,
+                None,
+                crate::session_log::SessionLoggingOverride::Inherit,
+                SessionTransport::Ssh,
+            ),
+        };
 
     Ok(SshConfigHostImport {
         name: name.to_string(),
@@ -169,6 +174,7 @@ fn build_import_row(
         favorite,
         last_connected,
         session_logging,
+        transport,
     })
 }
 
@@ -391,6 +397,7 @@ mod tests {
                 favorite: true,
                 last_connected: Some(42),
                 session_logging: crate::session_log::SessionLoggingOverride::On,
+                transport: SessionTransport::Ssh,
             })
             .unwrap();
 

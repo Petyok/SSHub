@@ -11,6 +11,7 @@ pub struct HostMetadata {
     pub favorite: bool,
     pub last_connected: Option<i64>,
     pub session_logging: crate::session_log::SessionLoggingOverride,
+    pub transport: crate::session_transport::SessionTransport,
 }
 
 impl HostMetadata {
