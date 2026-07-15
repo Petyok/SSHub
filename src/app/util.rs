@@ -180,6 +180,26 @@ pub fn mosh_argv_for_entry(entry: &HostEntry) -> Vec<String> {
     }
 }
 
+/// Apply connect-time tweaks to a bare session argv: verbose `ssh` logging and
+/// `StrictHostKeyChecking=accept-new` when a stored credential is present.
+pub fn prepare_session_connect_argv(
+    mut argv: Vec<String>,
+    has_stored_secret: bool,
+) -> Vec<String> {
+    match argv.first().map(String::as_str) {
+        Some("ssh") => {
+            argv.insert(1, "-v".into());
+            if has_stored_secret {
+                argv.insert(1, "-o".into());
+                argv.insert(2, "StrictHostKeyChecking=accept-new".into());
+            }
+            argv
+        }
+        Some("mosh") if has_stored_secret => crate::ssh::inject_mosh_ssh_accept_new(argv),
+        _ => argv,
+    }
+}
+
 /// Build session argv (`ssh` or `mosh`) from per-host transport setting.
 pub fn session_argv_for_entry(entry: &HostEntry) -> Vec<String> {
     match entry.session_transport() {

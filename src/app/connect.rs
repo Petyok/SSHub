@@ -34,17 +34,10 @@ impl App {
         // host key: otherwise ssh (with SSH_ASKPASS_REQUIRE=force) would ask
         // the askpass helper to confirm the fingerprint, get the password back
         // instead of "yes", and deadlock. Changed keys are still refused.
-        let mut session_argv = session_argv_for_entry(&entry);
-        if session_argv.first().map(String::as_str) == Some("ssh") {
-            // `-v` streams ssh's real handshake into the session terminal, so
-            // the connect screen shows the genuine process instead of a
-            // scripted animation.
-            session_argv.insert(1, "-v".into());
-            if pending_secret.is_some() {
-                session_argv.insert(1, "-o".into());
-                session_argv.insert(2, "StrictHostKeyChecking=accept-new".into());
-            }
-        }
+        let session_argv = prepare_session_connect_argv(
+            session_argv_for_entry(&entry),
+            pending_secret.is_some(),
+        );
 
         // Surface the credential decision so it's visible in the SSH log
         // panel after the session ends.

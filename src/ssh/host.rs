@@ -95,6 +95,33 @@ pub fn build_mosh_alias_argv(host: &SshHost) -> Vec<String> {
     vec!["mosh".into(), host.name.clone()]
 }
 
+const ACCEPT_NEW_SSH_OPT: &str = "StrictHostKeyChecking=accept-new";
+
+/// Inject `-o StrictHostKeyChecking=accept-new` into the inner `ssh` command
+/// used by a `mosh` argv.
+///
+/// - Managed (`--ssh=…`): appends the option to the existing `--ssh=` value.
+/// - Alias (`mosh name`): inserts `--ssh=ssh -o …` before the hostname.
+pub fn inject_mosh_ssh_accept_new(mut argv: Vec<String>) -> Vec<String> {
+    if argv.first().map(String::as_str) != Some("mosh") {
+        return argv;
+    }
+
+    if let Some(idx) = argv.iter().position(|a| a.starts_with("--ssh=")) {
+        let ssh_cmd = &argv[idx]["--ssh=".len()..];
+        argv[idx] = format!("--ssh={ssh_cmd} -o {ACCEPT_NEW_SSH_OPT}");
+        return argv;
+    }
+
+    if argv.len() >= 2 {
+        argv.insert(
+            1,
+            format!("--ssh=ssh -o {ACCEPT_NEW_SSH_OPT}"),
+        );
+    }
+    argv
+}
+
 /// Convert a full `ssh` argv (from [`build_ssh_argv`]) into `mosh` argv.
 pub fn build_mosh_from_ssh_argv(ssh_argv: &[String]) -> Vec<String> {
     if ssh_argv.first().map(String::as_str) != Some("ssh") {
