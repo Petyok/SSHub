@@ -15,6 +15,7 @@ use ratatui::Frame;
 use tui_term::widget::PseudoTerminal;
 
 use crate::app::App;
+use crate::config::{KeyAction, KeybindsConfig};
 use crate::session::{Session, SessionMeta, SessionPhase};
 use crate::tui::theme;
 
@@ -33,7 +34,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         .split(frame.area());
 
     render_header(frame, chunks[0], session, app);
-    render_body(frame, chunks[1], session);
+    render_body(frame, chunks[1], session, &app.config.keybinds);
     render_footer(frame, chunks[2], session);
 
     // Transient "copied" toast in the body's bottom-right corner.
@@ -125,12 +126,8 @@ fn render_header(frame: &mut Frame, area: Rect, session: &Session, app: &App) {
         }
     }
 
-    // Right-side hints for tab management.
-    let hint_text: String = if app.sessions.len() > 1 {
-        "Ctrl+T new  Ctrl+W close  Ctrl+[/] tabs  Ctrl+D detach".into()
-    } else {
-        "Ctrl+T new tab  Ctrl+D detach".into()
-    };
+    // Right-side hints for tab management (from user keybind config).
+    let hint_text = app.config.keybinds.session_header_hints(app.sessions.len() > 1);
     let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
     let pad = (area.width as usize).saturating_sub(used + hint_text.chars().count() + 1);
     spans.push(Span::raw(" ".repeat(pad)));
@@ -187,14 +184,14 @@ fn tunnel_summary(app: &App, meta: &SessionMeta) -> Option<String> {
 
 // ── Body ─────────────────────────────────────────────────────
 
-fn render_body(frame: &mut Frame, area: Rect, session: &Session) {
+fn render_body(frame: &mut Frame, area: Rect, session: &Session, keybinds: &KeybindsConfig) {
     // While connecting, ssh's verbose `-v` handshake is siphoned off the PTY
     // (via a side FIFO) into `debug_log`, so the grid stays clean. Show a
     // spinner + a dim tail of that log instead of the raw firehose; the user
     // can expand the full log on demand. Once the shell reveals we switch to
     // the live PTY grid, which now carries only the post-auth banner + prompt.
     if let SessionPhase::Connecting { started_at } = &session.phase {
-        render_connecting(frame, area, session, started_at.elapsed());
+        render_connecting(frame, area, session, keybinds, started_at.elapsed());
         return;
     }
     // Exited before ever reaching a shell (e.g. unreachable host, auth refused):
@@ -339,6 +336,7 @@ fn render_connecting(
     frame: &mut Frame,
     area: Rect,
     session: &Session,
+    keybinds: &KeybindsConfig,
     elapsed: std::time::Duration,
 ) {
     if area.height == 0 || area.width == 0 {
@@ -360,6 +358,15 @@ fn render_connecting(
         .clone()
         .unwrap_or_else(|| session.display_name.clone());
     let secs = elapsed.as_secs();
+    let toggle = keybinds.primary(KeyAction::SessionToggleLog);
+    let cancel = keybinds.primary(KeyAction::SessionCancel);
+    let mut hint = format!("elapsed {secs}s");
+    if !toggle.is_empty() {
+        hint.push_str(&format!("  ·  {toggle} expand log"));
+    }
+    if !cancel.is_empty() {
+        hint.push_str(&format!("  ·  {cancel} cancel"));
+    }
     let center = vec![
         Line::from(vec![
             Span::styled(SPINNER_FRAMES[frame_idx], Style::default().fg(theme::GREEN)),
@@ -368,10 +375,7 @@ fn render_connecting(
             Span::styled(host, Style::default().fg(theme::TEXT)),
         ]),
         Line::raw(""),
-        Line::from(Span::styled(
-            format!("elapsed {secs}s  ·  Ctrl+O expand log  ·  Esc cancel"),
-            dim,
-        )),
+        Line::from(Span::styled(hint, dim)),
     ];
     render_centered_and_tail(frame, area, session, center);
 }

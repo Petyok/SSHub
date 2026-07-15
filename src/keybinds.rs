@@ -885,6 +885,51 @@ impl KeybindsConfig {
         self.set(action, Self::default_for(action));
     }
 
+    /// First configured key for `action`, or `""` when unbound.
+    pub fn primary(&self, action: KeyAction) -> &str {
+        self.binds(action)
+            .first()
+            .map(String::as_str)
+            .unwrap_or("")
+    }
+
+    /// Right-aligned hints in the fullscreen session header.
+    pub fn session_header_hints(&self, multi_tab: bool) -> String {
+        let mut parts = Vec::new();
+        if multi_tab {
+            push_hint(&mut parts, self.primary(KeyAction::SessionNewTab), "new");
+            push_hint(&mut parts, self.primary(KeyAction::SessionCloseTab), "close");
+            if let Some(tabs) = tab_switch_hint(self) {
+                parts.push(tabs);
+            }
+            push_hint(&mut parts, self.primary(KeyAction::SessionDetach), "detach");
+        } else {
+            push_hint(
+                &mut parts,
+                self.primary(KeyAction::SessionNewTab),
+                "new tab",
+            );
+            push_hint(&mut parts, self.primary(KeyAction::SessionDetach), "detach");
+        }
+        parts.join("  ")
+    }
+
+    /// Dashboard footer hints when embedded sessions are running in background.
+    pub fn session_footer_hints(&self) -> Vec<(String, &'static str)> {
+        let mut out = Vec::new();
+        push_footer_hint(&mut out, self.primary(KeyAction::SessionDetach), "detach");
+        push_footer_hint(
+            &mut out,
+            self.primary(KeyAction::SessionOpenSftp),
+            "sftp",
+        );
+        if let Some(keys) = tab_switch_keys(self) {
+            out.push((keys, "tabs"));
+        }
+        push_footer_hint(&mut out, self.primary(KeyAction::SessionNewTab), "new tab");
+        out
+    }
+
     pub fn binds(&self, action: KeyAction) -> &[String] {
         match action {
             KeyAction::Save => &self.save,
@@ -1068,6 +1113,35 @@ impl KeybindsConfig {
     }
 }
 
+fn push_hint(parts: &mut Vec<String>, key: &str, label: &str) {
+    if !key.is_empty() {
+        parts.push(format!("{key} {label}"));
+    }
+}
+
+fn push_footer_hint(out: &mut Vec<(String, &'static str)>, key: &str, label: &'static str) {
+    if !key.is_empty() {
+        out.push((key.to_string(), label));
+    }
+}
+
+/// `Ctrl+[/]` style key from prev/next tab bindings.
+fn tab_switch_keys(kb: &KeybindsConfig) -> Option<String> {
+    let prev = kb.primary(KeyAction::SessionTabPrev);
+    let next = kb.primary(KeyAction::SessionTabNext);
+    match (prev.is_empty(), next.is_empty()) {
+        (true, true) => None,
+        (false, false) if prev != next => Some(format!("{prev}/{next}")),
+        (false, _) => Some(prev.to_string()),
+        (_, false) => Some(next.to_string()),
+    }
+}
+
+/// `Ctrl+[/] tabs` style hint from prev/next tab bindings.
+fn tab_switch_hint(kb: &KeybindsConfig) -> Option<String> {
+    tab_switch_keys(kb).map(|keys| format!("{keys} tabs"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1098,6 +1172,26 @@ mod tests {
         let before = kb.tab_tunnels.clone();
         assert!(!kb.migrate_pre_sftp_tabs(raw));
         assert_eq!(kb.tab_tunnels, before);
+    }
+
+    #[test]
+    fn session_header_hints_use_configured_binds() {
+        let mut kb = KeybindsConfig::default();
+        kb.session_new_tab = vec!["F9".into()];
+        kb.session_detach = vec!["Ctrl+Shift+D".into()];
+        assert_eq!(
+            kb.session_header_hints(false),
+            "F9 new tab  Ctrl+Shift+D detach"
+        );
+    }
+
+    #[test]
+    fn session_header_hints_multi_tab_pair() {
+        let kb = KeybindsConfig::default();
+        let hints = kb.session_header_hints(true);
+        assert!(hints.contains("Ctrl+T new"));
+        assert!(hints.contains("Ctrl+D detach"));
+        assert!(hints.contains("Ctrl+[/Ctrl+] tabs"));
     }
 
     #[test]
