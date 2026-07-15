@@ -90,6 +90,10 @@ pub fn render_tunnels(frame: &mut Frame, area: Rect, app: &App) {
             status,
             uptime,
             host_name.as_deref(),
+            app.tunnel_manager.reconnect_attempt(tunnel.id),
+            app.tunnel_manager.reconnect_countdown_secs(tunnel.id),
+            app.config.tunnel_reconnect.max_attempts,
+            app.tunnel_manager.error_detail(tunnel.id),
         );
     }
 
@@ -122,6 +126,10 @@ fn render_tunnel_row(
     status: &str,
     uptime: Option<u64>,
     host_name: Option<&str>,
+    reconnect_attempt: Option<u32>,
+    reconnect_countdown: Option<u64>,
+    max_attempts: u32,
+    error_detail: Option<&str>,
 ) {
     let running = status == "up";
     let base_style = if selected {
@@ -146,7 +154,8 @@ fn render_tunnel_row(
     let status_w = cols[0].1;
     let (dot, dot_color) = match status {
         "up" => ("●", theme::GREEN),
-        "error" => ("●", theme::RED),
+        "reconnecting" => ("●", theme::AMBER),
+        "gave_up" | "error" => ("●", theme::RED),
         _ => ("○", theme::DIM),
     };
     let dot_style = if selected {
@@ -156,12 +165,40 @@ fn render_tunnel_row(
     };
     buf.set_string(cx, y, dot, dot_style);
     if running {
-        let label = "up";
         buf.set_string(
             cx + 2,
             y,
-            label,
+            "up",
             if selected { base_style } else { theme::green() },
+        );
+    } else if status == "reconnecting" {
+        let attempt = reconnect_attempt.unwrap_or(0).saturating_add(1);
+        let retry_label = if max_attempts > 0 {
+            format!("retry {attempt}/{max_attempts}")
+        } else {
+            format!("retry {attempt}")
+        };
+        let retry_label = if let Some(secs) = reconnect_countdown {
+            format!("{retry_label} {secs}s")
+        } else {
+            retry_label
+        };
+        buf.set_string(
+            cx + 2,
+            y,
+            truncate(&retry_label, status_w.saturating_sub(2) as usize),
+            if selected {
+                base_style
+            } else {
+                Style::default().fg(theme::AMBER)
+            },
+        );
+    } else if status == "gave_up" {
+        buf.set_string(
+            cx + 2,
+            y,
+            "gave up",
+            if selected { base_style } else { theme::red() },
         );
     } else if status == "error" {
         buf.set_string(
@@ -229,7 +266,7 @@ fn render_tunnel_row(
 
     // LABEL / UPTIME
     let remaining = (x + w).saturating_sub(cx) as usize;
-    let label_str = if let Some(secs) = uptime {
+    let mut label_str = if let Some(secs) = uptime {
         let label_part = tunnel.label.as_deref().unwrap_or("");
         if label_part.is_empty() {
             format_uptime(secs)
@@ -239,6 +276,24 @@ fn render_tunnel_row(
     } else {
         tunnel.label.as_deref().unwrap_or("").to_string()
     };
+    if tunnel.auto_connect {
+        if label_str.is_empty() {
+            label_str = "keep-alive".into();
+        } else {
+            label_str.push_str("  keep-alive");
+        }
+    }
+    if matches!(status, "error" | "gave_up") {
+        if let Some(detail) = error_detail {
+            if !detail.is_empty() {
+                if label_str.is_empty() {
+                    label_str = detail.to_string();
+                } else {
+                    label_str = format!("{label_str}  {detail}");
+                }
+            }
+        }
+    }
     buf.set_string(
         cx,
         y,
@@ -254,7 +309,7 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
 
     let area = frame.area();
     let popup_width = 52u16.min(area.width.saturating_sub(4)).max(40);
-    let popup_height = 14u16.min(area.height.saturating_sub(2));
+    let popup_height = 16u16.min(area.height.saturating_sub(2));
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
@@ -306,6 +361,15 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
             form.remote_port.clone(),
         ),
         (TunnelFormField::Label, "Label", form.label.clone()),
+        (
+            TunnelFormField::AutoConnect,
+            "Keep alive",
+            if form.auto_connect {
+                "on (auto-start + reconnect)".into()
+            } else {
+                "off".into()
+            },
+        ),
     ];
 
     for (i, (field, name, value)) in fields.iter().enumerate() {
@@ -365,11 +429,16 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
         }
 
         // Navigation hints: Type cycles with ←/→; Host opens a picker.
-        if is_active && matches!(field, TunnelFormField::Type | TunnelFormField::Host) {
-            let hint = if *field == TunnelFormField::Host {
-                "Enter: pick"
-            } else {
-                "←/→"
+        if is_active
+            && matches!(
+                field,
+                TunnelFormField::Type | TunnelFormField::Host | TunnelFormField::AutoConnect
+            )
+        {
+            let hint = match field {
+                TunnelFormField::Host => "Enter: pick",
+                TunnelFormField::AutoConnect => "Space: toggle",
+                _ => "←/→",
             };
             let hx = val_x + display.len() as u16 + 1;
             if hx + hint.len() as u16 <= inner.x + inner.width {
