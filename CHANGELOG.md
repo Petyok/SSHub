@@ -24,6 +24,13 @@ All notable changes to SSHub are documented in this file.
   shows `reconnecting` / `gave up` status with attempt counter; audit logs reconnect
   attempts.
 
+### Fixed
+
+- **Session keybind hints** — the connected-session header and dashboard footer
+  now show your configured keybindings (from `config.toml` / the keybind editor)
+  instead of hardcoded `Ctrl+T` / `Ctrl+D` defaults. Connecting-screen hints
+  (`expand log`, `cancel`) follow the same config.
+
 ## [0.8.0] - 2026-07-12
 
 ### Added
