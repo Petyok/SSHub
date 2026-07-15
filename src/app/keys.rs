@@ -509,8 +509,9 @@ impl App {
                     self.enter_group_manage()?;
                 }
                 Some(PendingDelete::Tunnel { id, label }) => {
-                    if self.tunnel_manager.is_running(id) {
-                        self.tunnel_manager.stop(id)?;
+                    if self.tunnel_manager.is_running(id) || self.tunnel_manager.is_reconnecting(id)
+                    {
+                        self.tunnel_manager.stop_user(id)?;
                     }
                     self.store.delete_tunnel(id)?;
                     self.tunnel_notice = Some(format!("Tunnel '{label}' deleted"));

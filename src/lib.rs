@@ -356,8 +356,8 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
         }
     }
 
-    // Check tunnel health
-    app.tunnel_manager.check_health();
+    // Check tunnel health and drive keep-alive reconnects.
+    let _ = app.tick_tunnels();
 
     // Drive selection edge-autoscroll: a drag held past the top/bottom edge
     // keeps scrolling even when the mouse isn't moving (no drag events fire).
