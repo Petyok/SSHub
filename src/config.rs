@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -70,6 +71,69 @@ impl Default for SessionLoggingConfig {
     }
 }
 
+fn default_tunnel_reconnect_max_attempts() -> u32 {
+    12
+}
+
+fn default_tunnel_reconnect_initial_ms() -> u64 {
+    1000
+}
+
+fn default_tunnel_reconnect_max_ms() -> u64 {
+    60_000
+}
+
+fn default_tunnel_reconnect_jitter() -> f64 {
+    0.25
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TunnelReconnectConfig {
+    /// Maximum consecutive reconnect attempts after an unexpected exit (`0` = unlimited).
+    #[serde(default = "default_tunnel_reconnect_max_attempts")]
+    pub max_attempts: u32,
+    #[serde(default = "default_tunnel_reconnect_initial_ms")]
+    pub initial_delay_ms: u64,
+    #[serde(default = "default_tunnel_reconnect_max_ms")]
+    pub max_delay_ms: u64,
+    /// Jitter factor applied around the backoff delay (`0.25` → ±25%).
+    #[serde(default = "default_tunnel_reconnect_jitter")]
+    pub jitter_ratio: f64,
+}
+
+impl Default for TunnelReconnectConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: default_tunnel_reconnect_max_attempts(),
+            initial_delay_ms: default_tunnel_reconnect_initial_ms(),
+            max_delay_ms: default_tunnel_reconnect_max_ms(),
+            jitter_ratio: default_tunnel_reconnect_jitter(),
+        }
+    }
+}
+
+/// Exponential backoff with deterministic jitter for a tunnel reconnect attempt.
+pub fn tunnel_backoff_delay(attempt: u32, tunnel_id: i64, cfg: &TunnelReconnectConfig) -> Duration {
+    use std::time::Duration;
+    let attempt = attempt.max(1);
+    let exp = attempt.saturating_sub(1).min(20);
+    let base = cfg
+        .initial_delay_ms
+        .saturating_mul(1u64 << exp)
+        .min(cfg.max_delay_ms);
+    let jitter = jitter_factor(tunnel_id, attempt, cfg.jitter_ratio);
+    Duration::from_millis(((base as f64) * jitter).max(1.0) as u64)
+}
+
+fn jitter_factor(tunnel_id: i64, attempt: u32, jitter_ratio: f64) -> f64 {
+    let hash = (tunnel_id as u64)
+        .wrapping_mul(31)
+        .wrapping_add(attempt as u64)
+        .wrapping_mul(1_103_515_245);
+    let frac = (hash % 2000) as f64 / 1000.0;
+    1.0 + jitter_ratio * (frac - 1.0)
+}
+
 fn default_date_format() -> String {
     "%Y-%m-%d %H:%M".to_string()
 }
@@ -101,6 +165,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub session_logging: SessionLoggingConfig,
     #[serde(default)]
+    pub tunnel_reconnect: TunnelReconnectConfig,
+    #[serde(default)]
     pub keybinds: KeybindsConfig,
 }
 
@@ -111,6 +177,7 @@ impl Default for AppConfig {
             launch_command: None,
             appearance: AppearanceConfig::default(),
             session_logging: SessionLoggingConfig::default(),
+            tunnel_reconnect: TunnelReconnectConfig::default(),
             keybinds: KeybindsConfig::default(),
         }
     }
@@ -336,6 +403,50 @@ mod tests {
         assert!(!config.session_logging.enabled);
         assert_eq!(config.session_logging.max_file_bytes, 10 * 1024 * 1024);
         assert_eq!(config.session_logging.retention_files, 50);
+    }
+
+    #[test]
+    fn parse_config_tunnel_reconnect_defaults() {
+        let config = parse_config_str("").unwrap();
+        assert_eq!(config.tunnel_reconnect.max_attempts, 12);
+        assert_eq!(config.tunnel_reconnect.initial_delay_ms, 1000);
+        assert_eq!(config.tunnel_reconnect.max_delay_ms, 60_000);
+        assert!((config.tunnel_reconnect.jitter_ratio - 0.25).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn tunnel_backoff_grows_and_caps() {
+        let cfg = TunnelReconnectConfig::default();
+        let d1 = tunnel_backoff_delay(1, 1, &cfg);
+        let d2 = tunnel_backoff_delay(2, 1, &cfg);
+        let d10 = tunnel_backoff_delay(10, 1, &cfg);
+        assert!(d2 >= d1);
+        assert!(d10 <= Duration::from_millis((cfg.max_delay_ms as f64 * 1.26) as u64));
+    }
+
+    #[test]
+    fn tunnel_backoff_jitter_bounded() {
+        let cfg = TunnelReconnectConfig {
+            jitter_ratio: 0.25,
+            ..Default::default()
+        };
+        for attempt in 1..=5 {
+            let d = tunnel_backoff_delay(attempt, 42, &cfg);
+            let base = cfg
+                .initial_delay_ms
+                .saturating_mul(1u64 << (attempt - 1).min(20));
+            let capped = base.min(cfg.max_delay_ms);
+            let min = (capped as f64 * 0.75) as u64;
+            let max = (capped as f64 * 1.25) as u64;
+            assert!(
+                d.as_millis() as u64 >= min.saturating_sub(1),
+                "attempt {attempt}: {d:?} below {min}"
+            );
+            assert!(
+                d.as_millis() as u64 <= max + 1,
+                "attempt {attempt}: {d:?} above {max}"
+            );
+        }
     }
 
     #[test]
