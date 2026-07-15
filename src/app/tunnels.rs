@@ -436,7 +436,10 @@ impl App {
                 // Editing recreates the row under a fresh id, so a still-running
                 // child would be orphaned (holding its local port, invisible to
                 // the UI). Stop it first, mirroring the delete path.
-                if self.tunnel_manager.is_running(id) {
+                if self.tunnel_manager.is_running(id)
+                    || self.tunnel_manager.is_reconnecting(id)
+                    || self.tunnel_manager.is_gave_up(id)
+                {
                     self.tunnel_manager.stop_user(id)?;
                 }
                 self.store.delete_tunnel(id)?;
@@ -482,6 +485,12 @@ impl App {
                     );
                 }
                 Err(e) => {
+                    let err = format!("{e:#}");
+                    self.tunnel_manager.on_auto_start_failed(
+                        tunnel.id,
+                        &err,
+                        &self.config.tunnel_reconnect,
+                    );
                     let _ = self.store.log_auth_event(
                         host_name,
                         None,

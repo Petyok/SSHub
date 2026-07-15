@@ -281,11 +281,24 @@ impl TunnelManager {
                 .find(|t| t.id == id)
                 .is_some_and(|t| t.auto_connect);
             if auto && !self.user_stopped.contains(&id) {
-                self.schedule_reconnect(id, &err, cfg, 0);
+                self.on_auto_start_failed(id, &err, cfg);
             } else if !auto {
                 self.terminal_errors.insert(id, err);
             }
         }
+    }
+
+    /// Schedule reconnect after a keep-alive tunnel failed to start or exited.
+    pub fn on_auto_start_failed(
+        &mut self,
+        tunnel_id: i64,
+        err: &str,
+        cfg: &TunnelReconnectConfig,
+    ) {
+        if self.user_stopped.contains(&tunnel_id) {
+            return;
+        }
+        self.schedule_reconnect(tunnel_id, err, cfg, 0);
     }
 
     fn schedule_reconnect(
@@ -314,6 +327,10 @@ impl TunnelManager {
         resolve_host: impl Fn(i64) -> Option<ManagedHost>,
     ) -> Vec<ReconnectEvent> {
         let now = Instant::now();
+        let live_ids: std::collections::HashSet<i64> = tunnels.iter().map(|t| t.id).collect();
+        self.reconnect.retain(|id, _| live_ids.contains(id));
+        self.terminal_errors.retain(|id, _| live_ids.contains(id));
+
         let due: Vec<i64> = self
             .reconnect
             .iter()
