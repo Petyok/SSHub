@@ -165,6 +165,29 @@ pub(crate) fn session_meta_for_entry(entry: &HostEntry) -> crate::session::Sessi
     }
 }
 
+/// Build the bare `mosh` argv for a host entry.
+pub fn mosh_argv_for_entry(entry: &HostEntry) -> Vec<String> {
+    match entry {
+        HostEntry::Managed(m) => {
+            let ssh_host = managed_to_ssh_host(m);
+            if m.source == HostSource::SshConfig {
+                crate::ssh::build_mosh_alias_argv(&ssh_host)
+            } else {
+                crate::ssh::build_mosh_argv(&ssh_host)
+            }
+        }
+        HostEntry::Legacy { host, .. } => crate::ssh::build_mosh_alias_argv(host),
+    }
+}
+
+/// Build session argv (`ssh` or `mosh`) from per-host transport setting.
+pub fn session_argv_for_entry(entry: &HostEntry) -> Vec<String> {
+    match entry.session_transport() {
+        crate::session_transport::SessionTransport::Ssh => ssh_argv_for_entry(entry),
+        crate::session_transport::SessionTransport::Mosh => mosh_argv_for_entry(entry),
+    }
+}
+
 /// Build the bare `ssh` argv for a host entry (no env / askpass prefix).
 ///
 /// - Launcher-managed hosts: full options via `build_ssh_argv` so we don't

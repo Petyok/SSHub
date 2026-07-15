@@ -34,15 +34,15 @@ impl App {
         // host key: otherwise ssh (with SSH_ASKPASS_REQUIRE=force) would ask
         // the askpass helper to confirm the fingerprint, get the password back
         // instead of "yes", and deadlock. Changed keys are still refused.
-        let mut ssh_argv = ssh_argv_for_entry(&entry);
-        if ssh_argv.first().map(String::as_str) == Some("ssh") {
+        let mut session_argv = session_argv_for_entry(&entry);
+        if session_argv.first().map(String::as_str) == Some("ssh") {
             // `-v` streams ssh's real handshake into the session terminal, so
             // the connect screen shows the genuine process instead of a
             // scripted animation.
-            ssh_argv.insert(1, "-v".into());
+            session_argv.insert(1, "-v".into());
             if pending_secret.is_some() {
-                ssh_argv.insert(1, "-o".into());
-                ssh_argv.insert(2, "StrictHostKeyChecking=accept-new".into());
+                session_argv.insert(1, "-o".into());
+                session_argv.insert(2, "StrictHostKeyChecking=accept-new".into());
             }
         }
 
@@ -66,7 +66,7 @@ impl App {
         }
 
         // Pre-validate: check that the first command binary exists on PATH
-        if let Some(first_cmd) = ssh_argv.first() {
+        if let Some(first_cmd) = session_argv.first() {
             if std::process::Command::new("which")
                 .arg(first_cmd)
                 .output()
@@ -98,7 +98,7 @@ impl App {
             .as_secs() as i64;
         self.push_ssh_log(crate::ssh::probe::SshLogEntry {
             host_name: entry.name().to_string(),
-            line: format!("$ {}", ssh_argv.join(" ")),
+            line: format!("$ {}", session_argv.join(" ")),
             level: crate::ssh::probe::LogLevel::Success,
             timestamp: now_ts_val,
         });
@@ -121,7 +121,7 @@ impl App {
             let cols = self.terminal_area.width.max(20);
             let meta = session_meta_for_entry(&entry);
             let config = crate::session::SessionConfig {
-                argv: ssh_argv.clone(),
+                argv: session_argv.clone(),
                 display_name,
                 meta,
                 pending_secret: pending_secret.clone(),
