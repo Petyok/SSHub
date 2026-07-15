@@ -546,6 +546,7 @@ mod tests {
         }
     }
 
+    #[test]
     fn tunnel_reconnect_display_uses_seconds_for_delays() {
         let cfg = TunnelReconnectConfig::default();
         assert_eq!(cfg.display_field(1), "1 s");

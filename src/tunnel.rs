@@ -514,6 +514,10 @@ impl TunnelManager {
         )
     }
 
+    pub fn has_child(&self, tunnel_id: i64) -> bool {
+        self.processes.contains_key(&tunnel_id)
+    }
+
     pub fn is_running(&self, tunnel_id: i64) -> bool {
         self.processes.get(&tunnel_id).is_some_and(|p| {
             matches!(p.status, TunnelStatus::Up) && !p.proving

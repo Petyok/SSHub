@@ -100,7 +100,10 @@ impl App {
         let host_name = host.as_ref().map(|h| h.name.as_str()).unwrap_or("unknown");
         let label = tunnel.label.as_deref().unwrap_or("");
 
-        if self.tunnel_manager.is_running(tunnel.id) {
+        if self.tunnel_manager.is_running(tunnel.id)
+            || self.tunnel_manager.has_child(tunnel.id)
+            || self.tunnel_manager.is_reconnecting(tunnel.id)
+        {
             self.tunnel_manager.stop_user(tunnel.id)?;
             self.tunnel_notice = Some(format!("Stopped tunnel :{}", tunnel.local_port));
             let _ = self.store.log_auth_event(
@@ -111,12 +114,6 @@ impl App {
                 &format!("tunnel stopped :{} {}", tunnel.local_port, label),
                 None,
             );
-        } else if self.tunnel_manager.is_reconnecting(tunnel.id) {
-            self.tunnel_manager.mark_user_stopped(tunnel.id);
-            self.tunnel_notice = Some(format!(
-                "Cancelled reconnect for tunnel :{}",
-                tunnel.local_port
-            ));
         } else {
             self.tunnel_manager.resume_auto_reconnect(tunnel.id);
             let (secret, _) = host
