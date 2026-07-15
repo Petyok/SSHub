@@ -15,6 +15,13 @@ All notable changes to SSHub are documented in this file.
   row may share a log directory when sanitized host names collide. **Warning:** logs
   capture everything echoed to the terminal, including passwords if they appear on
   screen. (Schema v12.)
+- **Tunnel keep alive** — per-tunnel **Keep alive** toggle in the tunnel form
+  (uses existing `auto_connect` column). Enabled tunnels start on app launch and
+  automatically reconnect after unexpected exit with exponential backoff, jitter,
+  and a capped retry count (`[tunnel_reconnect]` in `config.toml`). Manual stop or
+  kill disables the retry loop until the tunnel is started again. The Tunnels tab
+  shows `reconnecting` / `gave up` status with attempt counter; audit logs
+  reconnect attempts.
 
 ## [0.8.0] - 2026-07-12
 
