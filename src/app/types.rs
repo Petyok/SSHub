@@ -917,7 +917,7 @@ impl HostDetailEdit {
             DetailEditField::Tags => &mut self.tags,
             DetailEditField::Description => &mut self.description,
             DetailEditField::Environment => &mut self.environment,
-            DetailEditField::SessionLogging => &mut self.tags,
+            DetailEditField::SessionLogging => &mut self.environment,
         }
     }
 }

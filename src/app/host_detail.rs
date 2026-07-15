@@ -67,6 +67,7 @@ impl App {
                 tags: Some(tags),
                 notes: Some(description),
                 environment: Some(environment),
+                session_logging: Some(edit.session_logging),
                 ..Default::default()
             };
             if let Some(updated) = self.store.update_host(id, &update)? {
