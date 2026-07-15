@@ -270,13 +270,9 @@ impl TunnelManager {
             if !matches!(proc.status, TunnelStatus::Up) {
                 continue;
             }
-            if proc.proving {
-                if proc.child.try_wait().ok().flatten().is_some() {
-                    // handled in exit pass below
-                } else if proc.started_at.elapsed() >= stable {
-                    proc.proving = false;
-                    stabilized.push(id);
-                }
+            if proc.proving && proc.started_at.elapsed() >= stable {
+                proc.proving = false;
+                stabilized.push(id);
             }
             match proc.child.try_wait() {
                 Ok(Some(status)) => {
@@ -357,9 +353,15 @@ impl TunnelManager {
     }
 
     /// Schedule reconnect after a keep-alive tunnel failed to spawn at bootstrap.
-    pub fn on_auto_start_failed(&mut self, tunnel_id: i64, err: &str, cfg: &TunnelReconnectConfig) {
+    /// Returns a gave-up event when the retry budget is exhausted.
+    pub fn on_auto_start_failed(
+        &mut self,
+        tunnel_id: i64,
+        err: &str,
+        cfg: &TunnelReconnectConfig,
+    ) -> Option<ReconnectEvent> {
         if self.user_stopped.contains(&tunnel_id) {
-            return;
+            return None;
         }
         let current = self.reconnect.get(&tunnel_id).map(|r| r.attempt).unwrap_or(0);
         let next = if self.reconnect.contains_key(&tunnel_id) {
@@ -377,9 +379,14 @@ impl TunnelManager {
                     last_error: err.to_string(),
                 },
             );
-            return;
+            return Some(ReconnectEvent::GaveUp {
+                tunnel_id,
+                attempts: next,
+                error: err.to_string(),
+            });
         }
         self.schedule_reconnect(tunnel_id, err, cfg, next);
+        None
     }
 
     fn schedule_reconnect(

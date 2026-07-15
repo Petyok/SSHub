@@ -161,6 +161,7 @@ impl App {
             .map(|h| h.name)
             .unwrap_or_else(|| "unknown".into());
         if self.tunnel_manager.is_running(tunnel.id)
+            || self.tunnel_manager.has_child(tunnel.id)
             || self.tunnel_manager.is_reconnecting(tunnel.id)
         {
             self.tunnel_manager.stop_user(tunnel.id)?;
@@ -445,6 +446,7 @@ impl App {
                 // child would be orphaned (holding its local port, invisible to
                 // the UI). Stop it first, mirroring the delete path.
                 if self.tunnel_manager.is_running(id)
+                    || self.tunnel_manager.has_child(id)
                     || self.tunnel_manager.is_reconnecting(id)
                     || self.tunnel_manager.is_gave_up(id)
                 {
@@ -471,6 +473,7 @@ impl App {
             .collect();
         for tunnel in tunnels {
             if self.tunnel_manager.is_running(tunnel.id)
+                || self.tunnel_manager.has_child(tunnel.id)
                 || self.tunnel_manager.is_reconnecting(tunnel.id)
             {
                 continue;
@@ -501,22 +504,26 @@ impl App {
                 }
                 Err(e) => {
                     let err = format!("{e:#}");
-                    self.tunnel_manager.on_auto_start_failed(
+                    let gave_up = self.tunnel_manager.on_auto_start_failed(
                         tunnel.id,
                         &err,
                         &self.config.tunnel_reconnect,
                     );
-                    let _ = self.store.log_auth_event(
-                        host_name,
-                        None,
-                        "tunnel",
-                        "fail",
-                        &format!(
-                            "tunnel auto-start failed :{} {} — {e:#}",
-                            tunnel.local_port, label
-                        ),
-                        None,
-                    );
+                    if let Some(ev) = gave_up {
+                        self.log_tunnel_reconnect_events(std::slice::from_ref(&ev), &[tunnel.clone()]);
+                    } else {
+                        let _ = self.store.log_auth_event(
+                            host_name,
+                            None,
+                            "tunnel",
+                            "fail",
+                            &format!(
+                                "tunnel auto-start failed :{} {} — {e:#}",
+                                tunnel.local_port, label
+                            ),
+                            None,
+                        );
+                    }
                 }
             }
         }
