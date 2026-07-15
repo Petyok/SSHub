@@ -334,13 +334,15 @@ pub enum DetailEditField {
     Tags = 0,
     Description = 1,
     Environment = 2,
+    SessionLogging = 3,
 }
 
 impl DetailEditField {
-    const ALL: [DetailEditField; 3] = [
+    const ALL: [DetailEditField; 4] = [
         DetailEditField::Tags,
         DetailEditField::Description,
         DetailEditField::Environment,
+        DetailEditField::SessionLogging,
     ];
 
     pub(crate) fn next(self) -> Self {
@@ -352,6 +354,10 @@ impl DetailEditField {
         let idx = self as usize;
         Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
     }
+
+    pub(crate) fn is_tri_state(self) -> bool {
+        matches!(self, Self::SessionLogging)
+    }
 }
 
 /// In-progress metadata edits while in HostDetail mode.
@@ -360,6 +366,7 @@ pub struct HostDetailEdit {
     pub tags: String,
     pub description: String,
     pub environment: String,
+    pub session_logging: crate::session_log::SessionLoggingOverride,
     pub field: DetailEditField,
     pub cursor: usize,
 }
@@ -901,6 +908,7 @@ impl HostDetailEdit {
             DetailEditField::Tags => &self.tags,
             DetailEditField::Description => &self.description,
             DetailEditField::Environment => &self.environment,
+            DetailEditField::SessionLogging => "",
         }
     }
 
@@ -909,6 +917,7 @@ impl HostDetailEdit {
             DetailEditField::Tags => &mut self.tags,
             DetailEditField::Description => &mut self.description,
             DetailEditField::Environment => &mut self.environment,
+            DetailEditField::SessionLogging => &mut self.tags,
         }
     }
 }
