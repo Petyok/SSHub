@@ -223,12 +223,12 @@ fn render_event_row(
     cx += result_w - 2;
 
     // NOTE
-    let note = event.note.as_deref().unwrap_or("");
+    let note = audit_note(event);
     let remaining = (x + w).saturating_sub(cx) as usize;
     buf.set_string(
         cx,
         y,
-        truncate(note, remaining),
+        truncate(&note, remaining),
         if selected { base_style } else { theme::dim() },
     );
 }
@@ -252,6 +252,16 @@ fn table_columns(total_w: u16) -> Vec<(&'static str, u16)> {
             ("RESULT", 8),
             ("NOTE", total_w.saturating_sub(56)),
         ]
+    }
+}
+
+fn audit_note(event: &crate::store::AuthEvent) -> String {
+    match (&event.note, &event.log_path) {
+        (Some(note), Some(path)) if note.is_empty() => path.clone(),
+        (Some(note), Some(path)) => format!("{note} -> {path}"),
+        (Some(note), None) => note.clone(),
+        (None, Some(path)) => path.clone(),
+        (None, None) => String::new(),
     }
 }
 
