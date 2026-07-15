@@ -703,18 +703,27 @@ impl App {
             1 => a.os_logo,
             2 => a.confirm_quit,
             3 => a.disable_animation,
+            4 => self.config.session_logging.enabled,
             _ => false,
         }
     }
 
     /// Flip the Settings toggle at row `i` and persist immediately.
     fn toggle_setting(&mut self, i: usize) {
-        let a = &mut self.config.appearance;
         match i {
-            0 => a.opaque_background = !a.opaque_background,
-            1 => a.os_logo = !a.os_logo,
-            2 => a.confirm_quit = !a.confirm_quit,
-            3 => a.disable_animation = !a.disable_animation,
+            0 => {
+                self.config.appearance.opaque_background =
+                    !self.config.appearance.opaque_background;
+            }
+            1 => self.config.appearance.os_logo = !self.config.appearance.os_logo,
+            2 => self.config.appearance.confirm_quit = !self.config.appearance.confirm_quit,
+            3 => {
+                self.config.appearance.disable_animation =
+                    !self.config.appearance.disable_animation;
+            }
+            4 => {
+                self.config.session_logging.enabled = !self.config.session_logging.enabled;
+            }
             _ => {}
         }
         self.save_config_quietly();
