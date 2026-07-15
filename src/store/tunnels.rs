@@ -89,4 +89,27 @@ mod tests {
         store.delete_tunnel(id).unwrap();
         assert!(store.list_tunnels().unwrap().is_empty());
     }
+
+    #[test]
+    fn auto_connect_roundtrip() {
+        let store = LauncherStore::open_in_memory().unwrap();
+        let host_id = store
+            .create_host(&crate::store::NewHost::launcher("h1", "10.0.0.1"))
+            .unwrap()
+            .id;
+        let id = store
+            .create_tunnel(&NewTunnel {
+                host_id: Some(host_id),
+                tunnel_type: TunnelType::Local,
+                local_port: 9090,
+                remote_host: "localhost".into(),
+                remote_port: 80,
+                label: Some("db".into()),
+                auto_connect: true,
+            })
+            .unwrap();
+        let listed = store.list_tunnels().unwrap();
+        let t = listed.iter().find(|t| t.id == id).unwrap();
+        assert!(t.auto_connect);
+    }
 }
