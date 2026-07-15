@@ -89,6 +89,40 @@ pub(crate) fn host_detail_save_persists_metadata() {
 }
 
 #[test]
+pub(crate) fn host_detail_save_preserves_session_logging_override() {
+    let metadata: Arc<dyn MetadataStore> = Arc::new(MetadataDb::default());
+    let resolver = MockResolver::new(vec![("web", host("web"))]);
+    let (launcher, _launched) = RecordingLauncher::new();
+    let mut app = App::new_with_deps(
+        AppConfig::default(),
+        AppDeps {
+            resolver: Box::new(resolver),
+            metadata: Arc::clone(&metadata),
+            store: test_store(),
+            launcher: Box::new(launcher),
+            password_store: Box::new(crate::credentials::NoopPasswordStore),
+        },
+    );
+    app.reload_hosts().unwrap();
+    legacy_meta(&mut app.hosts[0]).session_logging = crate::session_log::SessionLoggingOverride::On;
+    metadata.upsert(legacy_meta(&mut app.hosts[0])).unwrap();
+
+    app.enter_host_detail().unwrap();
+    app.handle_key(key_char('x')).unwrap();
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+
+    assert_eq!(
+        app.hosts[0].session_logging_override(),
+        crate::session_log::SessionLoggingOverride::On
+    );
+    let stored = metadata.get("web").unwrap().unwrap();
+    assert_eq!(
+        stored.session_logging,
+        crate::session_log::SessionLoggingOverride::On
+    );
+}
+
+#[test]
 pub(crate) fn host_detail_esc_discards_unsaved_edits() {
     let metadata: Arc<dyn MetadataStore> = Arc::new(MetadataDb::default());
     let resolver = MockResolver::new(vec![("web", host("web"))]);

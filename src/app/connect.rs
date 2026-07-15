@@ -134,21 +134,27 @@ impl App {
             let mut log_writer = None;
             let mut log_path = None;
             if log_enabled {
-                if let Ok(data_dir) = crate::config::data_dir() {
-                    let cfg = &self.config.session_logging;
-                    match crate::session_log::SessionLogWriter::open(
-                        &data_dir,
-                        &host_name,
-                        cfg.max_file_bytes,
-                        cfg.retention_files,
-                    ) {
-                        Ok(w) => {
-                            log_path = Some(w.path().display().to_string());
-                            log_writer = Some(w);
+                match crate::config::data_dir() {
+                    Ok(data_dir) => {
+                        let cfg = &self.config.session_logging;
+                        match crate::session_log::SessionLogWriter::open(
+                            &data_dir,
+                            &host_name,
+                            cfg.max_file_bytes,
+                            cfg.retention_files,
+                        ) {
+                            Ok(w) => {
+                                log_path = Some(w.path().display().to_string());
+                                log_writer = Some(w);
+                            }
+                            Err(e) => {
+                                self.host_notice =
+                                    Some(format!("Session logging unavailable: {e:#}"));
+                            }
                         }
-                        Err(e) => {
-                            self.host_notice = Some(format!("Session logging unavailable: {e:#}"));
-                        }
+                    }
+                    Err(e) => {
+                        self.host_notice = Some(format!("Session logging unavailable: {e:#}"));
                     }
                 }
             }

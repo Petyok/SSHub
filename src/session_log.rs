@@ -1,8 +1,9 @@
 //! PTY session transcript logging to plain-text files under the data directory.
 
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
@@ -83,16 +84,50 @@ pub fn sanitize_host_dir(name: &str) -> String {
     }
 }
 
-fn timestamp_filename(serial: u32) -> String {
-    let secs = SystemTime::now()
+fn timestamp_secs() -> u64 {
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_secs();
+        .as_secs()
+}
+
+static OPEN_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+fn unique_log_filename(serial: u32) -> String {
+    let secs = timestamp_secs();
+    let pid = std::process::id();
+    let open_id = OPEN_COUNTER.fetch_add(1, Ordering::Relaxed);
     if serial == 0 {
-        format!("{secs}.log")
+        format!("{secs}-{pid}-{open_id}.log")
     } else {
-        format!("{secs}-{serial}.log")
+        format!("{secs}-{pid}-{open_id}-{serial}.log")
     }
+}
+
+fn create_unique_log_file(host_dir: &Path, serial: u32) -> Result<(PathBuf, File)> {
+    let base_name = unique_log_filename(serial);
+    for attempt in 0..100u32 {
+        let name = if attempt == 0 {
+            base_name.clone()
+        } else {
+            format!("{}-{}.log", base_name.trim_end_matches(".log"), attempt)
+        };
+        let path = host_dir.join(&name);
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => {
+                secure_fs::restrict_file(&path);
+                return Ok((path, file));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => {
+                return Err(e).with_context(|| format!("create session log {}", path.display()));
+            }
+        }
+    }
+    anyhow::bail!(
+        "could not allocate unique session log filename in {}",
+        host_dir.display()
+    )
 }
 
 /// Append-only session log writer with size-based rotation and retention pruning.
@@ -124,10 +159,7 @@ impl SessionLogWriter {
             .with_context(|| format!("create host log dir {}", host_dir.display()))?;
         secure_fs::restrict_dir(&host_dir);
 
-        let current_path = host_dir.join(timestamp_filename(0));
-        let file = File::create(&current_path)
-            .with_context(|| format!("create session log {}", current_path.display()))?;
-        secure_fs::restrict_file(&current_path);
+        let (current_path, file) = create_unique_log_file(&host_dir, 0)?;
 
         Ok(Self {
             host_dir,
@@ -160,21 +192,26 @@ impl SessionLogWriter {
         self.writer.flush()?;
 
         self.file_serial += 1;
-        let new_path = self.host_dir.join(timestamp_filename(self.file_serial));
-        let file = File::create(&new_path)
-            .with_context(|| format!("rotate session log {}", new_path.display()))?;
-        secure_fs::restrict_file(&new_path);
+        let (new_path, file) = create_unique_log_file(&self.host_dir, self.file_serial)?;
         self.current_path = new_path;
         self.writer = BufWriter::new(file);
         self.bytes_written = 0;
+        prune_retention(&self.host_dir, self.retention_files)?;
         Ok(())
     }
 
     pub fn close(mut self) -> Result<()> {
         self.writer.flush()?;
-        drop(self.writer);
         prune_retention(&self.host_dir, self.retention_files)?;
+        std::mem::forget(self);
         Ok(())
+    }
+}
+
+impl Drop for SessionLogWriter {
+    fn drop(&mut self) {
+        let _ = self.writer.flush();
+        let _ = prune_retention(&self.host_dir, self.retention_files);
     }
 }
 
@@ -185,11 +222,7 @@ pub fn prune_retention(host_dir: &Path, retention_files: usize) -> Result<()> {
     }
     let mut logs: Vec<(PathBuf, std::time::SystemTime)> = fs::read_dir(host_dir)?
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .is_some_and(|ext| ext == "log")
-        })
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "log"))
         .filter_map(|e| {
             let mtime = e.metadata().ok()?.modified().ok()?;
             Some((e.path(), mtime))
@@ -274,6 +307,17 @@ mod tests {
         let second = w.path().to_path_buf();
         assert_ne!(first, second);
         w.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn concurrent_opens_get_distinct_files_same_second() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let w1 = SessionLogWriter::open(tmp.path(), "web", 1024, 10)?;
+        let w2 = SessionLogWriter::open(tmp.path(), "web", 1024, 10)?;
+        assert_ne!(w1.path(), w2.path());
+        drop(w1);
+        drop(w2);
         Ok(())
     }
 }
