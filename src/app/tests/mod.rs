@@ -51,6 +51,7 @@ impl RecordingLauncher {
         )
     }
 
+    #[allow(dead_code)]
     fn take(last: &Arc<std::sync::Mutex<Option<String>>>) -> Option<String> {
         last.lock().ok()?.take()
     }

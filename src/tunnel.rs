@@ -289,12 +289,7 @@ impl TunnelManager {
     }
 
     /// Schedule reconnect after a keep-alive tunnel failed to start or exited.
-    pub fn on_auto_start_failed(
-        &mut self,
-        tunnel_id: i64,
-        err: &str,
-        cfg: &TunnelReconnectConfig,
-    ) {
+    pub fn on_auto_start_failed(&mut self, tunnel_id: i64, err: &str, cfg: &TunnelReconnectConfig) {
         if self.user_stopped.contains(&tunnel_id) {
             return;
         }
@@ -481,8 +476,8 @@ impl Drop for TunnelManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
     use crate::store::TunnelType;
+    use std::time::Duration;
 
     fn sample_tunnel(id: i64, auto_connect: bool) -> Tunnel {
         Tunnel {
