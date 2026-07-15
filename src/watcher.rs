@@ -110,6 +110,21 @@ mod tests {
     use std::sync::mpsc::RecvTimeoutError;
     use tempfile::NamedTempFile;
 
+    /// How long to wait for a debounced `ConfigChanged` after config writes.
+    fn watcher_event_timeout() -> Duration {
+        WATCHER_DEBOUNCE + Duration::from_secs(2)
+    }
+
+    /// After a burst of rapid writes, FSEvents on macOS CI can deliver notifications
+    /// seconds later; each delivery resets debounce, so use a generous bound.
+    fn debounce_burst_timeout() -> Duration {
+        if cfg!(target_os = "macos") {
+            Duration::from_secs(15)
+        } else {
+            watcher_event_timeout()
+        }
+    }
+
     #[test]
     fn spawn_config_watcher_emits_after_write() {
         let mut file = NamedTempFile::new().unwrap();
@@ -120,7 +135,7 @@ mod tests {
         writeln!(file, "Host beta").unwrap();
         file.flush().unwrap();
 
-        match rx.recv_timeout(WATCHER_DEBOUNCE + Duration::from_secs(2)) {
+        match rx.recv_timeout(watcher_event_timeout()) {
             Ok(WatchEvent::ConfigChanged) => {}
             other => panic!("expected ConfigChanged, got {other:?}"),
         }
@@ -133,18 +148,26 @@ mod tests {
         file.flush().unwrap();
 
         let rx = spawn_config_watcher(file.path()).unwrap();
+        // Let the watcher thread subscribe before the write burst.
+        thread::sleep(Duration::from_millis(100));
         for i in 0..5 {
             writeln!(file, "Host line-{i}").unwrap();
             file.flush().unwrap();
+            let _ = file.as_file().sync_all();
             thread::sleep(Duration::from_millis(20));
         }
 
         let first = rx
-            .recv_timeout(WATCHER_DEBOUNCE + Duration::from_secs(2))
+            .recv_timeout(debounce_burst_timeout())
             .expect("first debounced event");
         assert_eq!(first, WatchEvent::ConfigChanged);
 
-        match rx.recv_timeout(WATCHER_DEBOUNCE) {
+        let silence = if cfg!(target_os = "macos") {
+            WATCHER_DEBOUNCE * 2
+        } else {
+            WATCHER_DEBOUNCE
+        };
+        match rx.recv_timeout(silence) {
             Err(RecvTimeoutError::Timeout) => {}
             other => panic!("expected single debounced event, got {other:?}"),
         }

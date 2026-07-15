@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS host_metadata (
     description    TEXT,
     environment    TEXT,
     favorite       INTEGER NOT NULL DEFAULT 0,
-    last_connected INTEGER
+    last_connected INTEGER,
+    session_logging INTEGER
 );
 ";
 
@@ -44,6 +45,7 @@ impl MetadataDb {
         crate::secure_fs::restrict_file(path);
         conn.execute_batch("PRAGMA busy_timeout = 5000;")?;
         conn.execute_batch(SCHEMA)?;
+        migrate_metadata_columns(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -52,6 +54,7 @@ impl MetadataDb {
     fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA)?;
+        migrate_metadata_columns(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -69,6 +72,17 @@ impl MetadataDb {
     }
 }
 
+fn migrate_metadata_columns(conn: &Connection) -> Result<()> {
+    let has_col: bool = conn
+        .prepare("SELECT COUNT(*) FROM pragma_table_info('host_metadata') WHERE name = 'session_logging'")?
+        .query_row([], |row| row.get::<_, i64>(0))
+        .map(|c| c > 0)?;
+    if !has_col {
+        conn.execute_batch("ALTER TABLE host_metadata ADD COLUMN session_logging INTEGER;")?;
+    }
+    Ok(())
+}
+
 impl Default for MetadataDb {
     fn default() -> Self {
         Self::open_in_memory().expect("open in-memory metadata db")
@@ -79,7 +93,7 @@ impl MetadataStore for MetadataDb {
     fn get(&self, host_name: &str) -> Result<Option<HostMetadata>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT host_name, tags, description, environment, favorite, last_connected
+                "SELECT host_name, tags, description, environment, favorite, last_connected, session_logging
                  FROM host_metadata WHERE host_name = ?1",
             )?;
             stmt.query_row(params![host_name], row_to_metadata)
@@ -91,7 +105,7 @@ impl MetadataStore for MetadataDb {
     fn get_all(&self) -> Result<Vec<HostMetadata>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT host_name, tags, description, environment, favorite, last_connected
+                "SELECT host_name, tags, description, environment, favorite, last_connected, session_logging
                  FROM host_metadata ORDER BY host_name",
             )?;
             let rows = stmt.query_map([], row_to_metadata)?;
@@ -106,14 +120,15 @@ impl MetadataStore for MetadataDb {
         self.with_conn(|conn| {
             conn.execute(
                 "INSERT INTO host_metadata
-                    (host_name, tags, description, environment, favorite, last_connected)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                    (host_name, tags, description, environment, favorite, last_connected, session_logging)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                  ON CONFLICT(host_name) DO UPDATE SET
                     tags = excluded.tags,
                     description = excluded.description,
                     environment = excluded.environment,
                     favorite = excluded.favorite,
-                    last_connected = excluded.last_connected",
+                    last_connected = excluded.last_connected,
+                    session_logging = excluded.session_logging",
                 params![
                     meta.host_name,
                     tags_json,
@@ -121,6 +136,7 @@ impl MetadataStore for MetadataDb {
                     meta.environment,
                     favorite,
                     meta.last_connected,
+                    meta.session_logging.to_db(),
                 ],
             )?;
             Ok(())
@@ -221,6 +237,7 @@ fn row_to_metadata(row: &rusqlite::Row<'_>) -> rusqlite::Result<HostMetadata> {
         environment: row.get(3)?,
         favorite: row.get::<_, i64>(4)? != 0,
         last_connected: row.get(5)?,
+        session_logging: crate::session_log::SessionLoggingOverride::from_db(row.get(6).ok()),
     })
 }
 
@@ -248,6 +265,7 @@ mod tests {
             environment: Some("prod".into()),
             favorite: true,
             last_connected: Some(1_700_000_000),
+            ..Default::default()
         };
 
         db.upsert(&meta).unwrap();

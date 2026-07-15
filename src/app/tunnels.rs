@@ -103,6 +103,7 @@ impl App {
                 "tunnel",
                 "ok",
                 &format!("tunnel stopped :{} {}", tunnel.local_port, label),
+                None,
             );
         } else {
             match self.tunnel_manager.start(&tunnel, host.as_ref()) {
@@ -114,6 +115,7 @@ impl App {
                         "tunnel",
                         "launched",
                         &format!("tunnel started :{} {}", tunnel.local_port, label),
+                        None,
                     );
                 }
                 Err(e) => {
@@ -124,6 +126,7 @@ impl App {
                         "tunnel",
                         "fail",
                         &format!("tunnel failed :{} — {e:#}", tunnel.local_port),
+                        None,
                     );
                 }
             }
@@ -149,6 +152,7 @@ impl App {
                 "tunnel",
                 "ok",
                 &format!("tunnel killed :{}", tunnel.local_port),
+                None,
             );
         }
         Ok(())

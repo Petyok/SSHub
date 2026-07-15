@@ -54,8 +54,9 @@ The settings overlay (`Ctrl+H`) — toggle an opaque background, OS logos, quit 
 - **Multiple groups & Favorites** — a host can belong to several groups at once; a reserved Favorites group and a ★ marker in the list, toggled with `f`
 - **Tunnels** — define and manage SSH tunnels (local/remote/dynamic SOCKS). Start, stop, and monitor from the TUI
 - **Keys** — identity management with ssh-agent integration. Add/remove keys from agent, see loaded status
-- **Audit** — log of all connection events with filtering by status (ok/fail) and time range (today/week/month)
-- **Settings overlay** (`Ctrl+H`) — toggle an opaque background (for transparent terminals), OS logos, quit confirmation, and the startup animation
+- **Audit** — log of all connection events with filtering by status (ok/fail) and time range (today/week/month); session connect events record the path to the session log when logging is enabled
+- **Session logging** — opt-in capture of PTY session output to `~/.local/share/sshub/logs/<host-dir>/` (managed hosts use `{name}-{id}`; pure `~/.ssh/config` aliases without a launcher row may share a directory when sanitized names collide). Enable globally in Settings (`Ctrl+H`) or override per host (`inherit` / `on` / `off`). **Logs capture everything echoed to the terminal, including passwords if they appear on screen.**
+- **Settings overlay** (`Ctrl+H`) — toggle session logging, opaque background (for transparent terminals), OS logos, quit confirmation, and the startup animation
 - **Hybrid sources** — hosts from `~/.ssh/config` (read-only) and launcher-managed (full CRUD) merge without duplicates
 - **Import/Export** — import from `~/.ssh/config` or Termius backups; export managed hosts back to ssh config format
 - **Hot reload** — edits to `~/.ssh/config` update the host list live via file watcher
@@ -207,6 +208,11 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 `~/.config/sshub/config.toml`:
 
 ```toml
+[session_logging]
+enabled = false
+max_file_bytes = 10485760   # rotate at 10 MiB
+retention_files = 50        # keep newest 50 logs per host
+
 [terminal]
 # "kitty", "ghostty", or a custom command template
 launcher = "kitty"

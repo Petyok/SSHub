@@ -7,6 +7,7 @@ use super::types::{
     NewHost, NewHostGroup, SshConfigHostImport, UpsertSshConfigOutcome,
 };
 use super::LauncherStore;
+use crate::session_log::SessionLoggingOverride;
 
 impl LauncherStore {
     // --- host groups ---
@@ -213,9 +214,10 @@ impl LauncherStore {
                 "INSERT INTO hosts
                     (name, label, address, port, group_id, identity_id, os_icon, tags, notes,
                      proxy_jump, forward_agent, remote_command, source, has_password, username,
-                     sort_order, created_at, updated_at)
+                     session_logging, sort_order, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                     (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM hosts), ?16, ?16)",
+                     ?16,
+                     (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM hosts), ?17, ?17)",
                 params![
                     host.name,
                     host.label,
@@ -232,6 +234,7 @@ impl LauncherStore {
                     source,
                     i64::from(host.has_password),
                     host.username,
+                    host.session_logging.to_db(),
                     now,
                 ],
             )?;
@@ -358,6 +361,9 @@ impl LauncherStore {
                 Some(v) => v.clone(),
                 None => current.username.clone(),
             };
+            let session_logging = update
+                .session_logging
+                .unwrap_or(current.session_logging);
             let tags_json = tags_to_json(&tags)?;
             let now = now_ts();
 
@@ -366,7 +372,7 @@ impl LauncherStore {
                  SET name = ?1, label = ?2, address = ?3, port = ?4, group_id = ?5, identity_id = ?6,
                      os_icon = ?7, tags = ?8, notes = ?9, proxy_jump = ?10, forward_agent = ?11,
                      remote_command = ?12, favorite = ?13, sort_order = ?14, has_password = ?15, username = ?16, updated_at = ?17,
-                     environment = ?19
+                     environment = ?19, session_logging = ?20
                  WHERE id = ?18",
                 params![
                     name,
@@ -388,6 +394,7 @@ impl LauncherStore {
                     now,
                     id,
                     environment,
+                    session_logging.to_db(),
                 ],
             )?;
 
@@ -536,8 +543,8 @@ impl LauncherStore {
                 "INSERT INTO hosts
                     (name, label, address, port, tags, notes, environment, proxy_jump, forward_agent,
                      remote_command, favorite, last_connected, source, ssh_config_hash,
-                     created_at, updated_at)
-                 VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?13, ?6, ?7, ?8, ?9, ?10, 'ssh_config', ?11, ?12, ?12)",
+                     session_logging, created_at, updated_at)
+                 VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?13, ?6, ?7, ?8, ?9, ?10, 'ssh_config', ?11, ?14, ?12, ?12)",
                 params![
                     import.name,
                     import.address,
@@ -552,6 +559,7 @@ impl LauncherStore {
                     import.ssh_config_hash,
                     now,
                     import.environment,
+                    import.session_logging.to_db(),
                 ],
             )?;
             if import.favorite {
@@ -616,6 +624,7 @@ impl LauncherStore {
             source: HostSource::Launcher,
             has_password: false,
             username: current.username.clone(),
+            session_logging: current.session_logging,
         })
         .map(Some)
     }
@@ -629,13 +638,14 @@ impl LauncherStore {
         via: &str,
         status: &str,
         note: &str,
+        log_path: Option<&str>,
     ) -> Result<()> {
         let now = now_ts();
         self.with_conn(|conn| {
             conn.execute(
-                "INSERT INTO auth_events (host_name, username, via, status, note, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![host_name, username, via, status, note, now],
+                "INSERT INTO auth_events (host_name, username, via, status, note, log_path, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![host_name, username, via, status, note, log_path, now],
             )?;
             Ok(())
         })
@@ -644,7 +654,7 @@ impl LauncherStore {
     pub fn list_auth_events(&self, limit: usize) -> Result<Vec<AuthEvent>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, host_name, username, via, status, note, created_at
+                "SELECT id, host_name, username, via, status, note, log_path, created_at
                  FROM auth_events ORDER BY created_at DESC LIMIT ?1",
             )?;
             let rows = stmt.query_map(params![limit as i64], |row| {
@@ -655,7 +665,8 @@ impl LauncherStore {
                     via: row.get(3)?,
                     status: row.get(4)?,
                     note: row.get(5)?,
-                    created_at: row.get(6)?,
+                    log_path: row.get(6)?,
+                    created_at: row.get(7)?,
                 })
             })?;
             rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -671,7 +682,7 @@ impl LauncherStore {
     ) -> Result<Vec<AuthEvent>> {
         self.with_conn(|conn| {
             let mut sql = String::from(
-                "SELECT id, host_name, username, via, status, note, created_at FROM auth_events",
+                "SELECT id, host_name, username, via, status, note, log_path, created_at FROM auth_events",
             );
             let mut conditions = Vec::new();
             if status_filter.is_some() {
@@ -719,7 +730,8 @@ impl LauncherStore {
                     via: row.get(3)?,
                     status: row.get(4)?,
                     note: row.get(5)?,
-                    created_at: row.get(6)?,
+                    log_path: row.get(6)?,
+                    created_at: row.get(7)?,
                 })
             })?;
             rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -759,7 +771,7 @@ fn load_host_by_id(conn: &rusqlite::Connection, id: i64) -> Result<Option<Manage
                 h.has_password, h.created_at, h.updated_at, h.username,
                 g.id, g.name, g.sort_order,
                 i.id, i.name, i.username, i.private_key, i.certificate, i.has_password,
-                h.environment
+                h.environment, h.session_logging
          FROM hosts h
          LEFT JOIN host_groups g ON g.id = h.group_id
          LEFT JOIN identities i ON i.id = h.identity_id
@@ -994,6 +1006,7 @@ fn row_to_managed_host(row: &rusqlite::Row<'_>) -> rusqlite::Result<ManagedHost>
         ssh_config_hash: row.get(17)?,
         has_password: row.get::<_, i64>(18).unwrap_or(0) != 0,
         username: row.get(21)?,
+        session_logging: SessionLoggingOverride::from_db(row.get(32).ok()),
         created_at: row.get(19)?,
         updated_at: row.get(20)?,
     })
@@ -1079,18 +1092,68 @@ mod tests {
     fn auth_stats_count_launched_as_success() {
         let store = LauncherStore::open_in_memory().unwrap();
         store
-            .log_auth_event("h1", Some("root"), "direct", "launched", "session started")
+            .log_auth_event(
+                "h1",
+                Some("root"),
+                "direct",
+                "launched",
+                "session started",
+                None,
+            )
             .unwrap();
         store
-            .log_auth_event("h2", Some("root"), "direct", "launched", "session started")
+            .log_auth_event(
+                "h2",
+                Some("root"),
+                "direct",
+                "launched",
+                "session started",
+                None,
+            )
             .unwrap();
         store
-            .log_auth_event("h3", None, "direct", "fail", "spawn failed")
+            .log_auth_event("h3", None, "direct", "fail", "spawn failed", None)
             .unwrap();
 
         let (ok, fail) = store.auth_event_stats(7).unwrap();
         assert_eq!(ok, 2, "launched connects must count as ok");
         assert_eq!(fail, 1);
+    }
+
+    #[test]
+    fn auth_event_log_path_roundtrip() {
+        let store = LauncherStore::open_in_memory().unwrap();
+        let path = "/tmp/sshub/logs/web/";
+        store
+            .log_auth_event(
+                "web",
+                Some("root"),
+                "direct",
+                "launched",
+                "session started",
+                Some(path),
+            )
+            .unwrap();
+        let events = store.list_auth_events(1).unwrap();
+        assert_eq!(events[0].log_path.as_deref(), Some(path));
+    }
+
+    #[test]
+    fn auth_event_log_dir_note_format() {
+        let store = LauncherStore::open_in_memory().unwrap();
+        let dir = "/home/user/.local/share/sshub/logs/web_prod-42";
+        store
+            .log_auth_event(
+                "web/prod",
+                Some("deploy"),
+                "direct",
+                "launched",
+                "session started",
+                Some(dir),
+            )
+            .unwrap();
+        let events = store.list_auth_events(1).unwrap();
+        assert_eq!(events[0].log_path.as_deref(), Some(dir));
     }
 
     #[cfg(unix)]

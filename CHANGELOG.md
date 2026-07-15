@@ -4,6 +4,18 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Session logging** — opt-in capture of embedded SSH session PTY output to plain-text
+  files under `~/.local/share/sshub/logs/<host-dir>/`, with rotated segment files inside
+  (managed hosts use `{sanitized-name}-{id}`). Toggle globally in Settings (`Ctrl+H`) or
+  per host in the host form (`inherit` / `on` / `off`). Size-based rotation and per-host
+  retention cap are configurable in `config.toml`. The audit tab shows the log directory
+  path for each connect event. Pure `~/.ssh/config` aliases without a launcher
+  row may share a log directory when sanitized host names collide. **Warning:** logs
+  capture everything echoed to the terminal, including passwords if they appear on
+  screen. (Schema v12.)
+
 ## [0.8.0] - 2026-07-12
 
 ### Added

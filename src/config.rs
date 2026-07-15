@@ -40,6 +40,36 @@ fn default_true() -> bool {
     true
 }
 
+fn default_session_log_max_bytes() -> u64 {
+    10 * 1024 * 1024
+}
+
+fn default_session_log_retention() -> usize {
+    50
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionLoggingConfig {
+    /// When true, embedded SSH sessions write PTY output to log files unless a
+    /// per-host override disables it.
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_session_log_max_bytes")]
+    pub max_file_bytes: u64,
+    #[serde(default = "default_session_log_retention")]
+    pub retention_files: usize,
+}
+
+impl Default for SessionLoggingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_file_bytes: default_session_log_max_bytes(),
+            retention_files: default_session_log_retention(),
+        }
+    }
+}
+
 fn default_date_format() -> String {
     "%Y-%m-%d %H:%M".to_string()
 }
@@ -69,6 +99,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub appearance: AppearanceConfig,
     #[serde(default)]
+    pub session_logging: SessionLoggingConfig,
+    #[serde(default)]
     pub keybinds: KeybindsConfig,
 }
 
@@ -78,6 +110,7 @@ impl Default for AppConfig {
             terminal: TerminalKind::Kitty,
             launch_command: None,
             appearance: AppearanceConfig::default(),
+            session_logging: SessionLoggingConfig::default(),
             keybinds: KeybindsConfig::default(),
         }
     }
@@ -295,6 +328,14 @@ mod tests {
         assert!(config.launch_command.is_none());
         assert!(config.appearance.show_detail_panel);
         assert_eq!(config.appearance.date_format, "%Y-%m-%d %H:%M");
+    }
+
+    #[test]
+    fn parse_config_session_logging_defaults() {
+        let config = parse_config_str("").unwrap();
+        assert!(!config.session_logging.enabled);
+        assert_eq!(config.session_logging.max_file_bytes, 10 * 1024 * 1024);
+        assert_eq!(config.session_logging.retention_files, 50);
     }
 
     #[test]

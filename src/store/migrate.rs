@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: i64 = 11;
+const SCHEMA_VERSION: i64 = 12;
 
 /// Name of the reserved, auto-created "Favorites" group. Membership in it is the
 /// source of truth for a host's favourite status.
@@ -117,6 +117,10 @@ pub(crate) fn run_migrations(conn: &Connection, launcher_path: &Path) -> Result<
 
     if current < 11 {
         migrate_v10_to_v11(conn)?;
+    }
+
+    if current < 12 {
+        migrate_v11_to_v12(conn)?;
     }
 
     // Runs last so all columns it writes to (e.g. environment) already exist.
@@ -446,6 +450,26 @@ fn migrate_v10_to_v11(conn: &Connection) -> Result<()> {
              SELECT id, ?1 FROM hosts WHERE favorite = 1",
         params![fav_id],
     )?;
+
+    Ok(())
+}
+
+fn migrate_v11_to_v12(conn: &Connection) -> Result<()> {
+    let has_hosts_col: bool = conn
+        .prepare("SELECT COUNT(*) FROM pragma_table_info('hosts') WHERE name = 'session_logging'")?
+        .query_row([], |row| row.get::<_, i64>(0))
+        .map(|c| c > 0)?;
+    if !has_hosts_col {
+        conn.execute_batch("ALTER TABLE hosts ADD COLUMN session_logging INTEGER;")?;
+    }
+
+    let has_log_path: bool = conn
+        .prepare("SELECT COUNT(*) FROM pragma_table_info('auth_events') WHERE name = 'log_path'")?
+        .query_row([], |row| row.get::<_, i64>(0))
+        .map(|c| c > 0)?;
+    if !has_log_path {
+        conn.execute_batch("ALTER TABLE auth_events ADD COLUMN log_path TEXT;")?;
+    }
 
     Ok(())
 }

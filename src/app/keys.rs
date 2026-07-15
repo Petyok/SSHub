@@ -317,6 +317,7 @@ impl App {
         if self.detail_edit.is_none() {
             return Ok(());
         }
+        let field = self.detail_edit.as_ref().unwrap().field;
 
         match key.code {
             _ if self.is_action(KeyAction::Cancel, &key) => self.cancel_host_detail()?,
@@ -326,10 +327,18 @@ impl App {
             KeyCode::BackTab => self.detail_edit_field_prev(),
             _ if self.is_action(KeyAction::MoveDown, &key) => self.detail_edit_field_next(),
             _ if self.is_action(KeyAction::MoveUp, &key) => self.detail_edit_field_prev(),
+            KeyCode::Right if field.is_tri_state() => self.detail_edit_cycle_session_logging(1),
+            KeyCode::Left if field.is_tri_state() => self.detail_edit_cycle_session_logging(-1),
+            KeyCode::Char(' ')
+                if key.modifiers.is_empty() && field == DetailEditField::SessionLogging =>
+            {
+                self.detail_edit_cycle_session_logging(1);
+            }
             KeyCode::Backspace if key.modifiers.is_empty() => self.detail_edit_backspace(),
             KeyCode::Char(c)
                 if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
-                    && !c.is_control() =>
+                    && !c.is_control()
+                    && !field.is_tri_state() =>
             {
                 self.detail_edit_insert(c);
             }
@@ -703,18 +712,27 @@ impl App {
             1 => a.os_logo,
             2 => a.confirm_quit,
             3 => a.disable_animation,
+            4 => self.config.session_logging.enabled,
             _ => false,
         }
     }
 
     /// Flip the Settings toggle at row `i` and persist immediately.
     fn toggle_setting(&mut self, i: usize) {
-        let a = &mut self.config.appearance;
         match i {
-            0 => a.opaque_background = !a.opaque_background,
-            1 => a.os_logo = !a.os_logo,
-            2 => a.confirm_quit = !a.confirm_quit,
-            3 => a.disable_animation = !a.disable_animation,
+            0 => {
+                self.config.appearance.opaque_background =
+                    !self.config.appearance.opaque_background;
+            }
+            1 => self.config.appearance.os_logo = !self.config.appearance.os_logo,
+            2 => self.config.appearance.confirm_quit = !self.config.appearance.confirm_quit,
+            3 => {
+                self.config.appearance.disable_animation =
+                    !self.config.appearance.disable_animation;
+            }
+            4 => {
+                self.config.session_logging.enabled = !self.config.session_logging.enabled;
+            }
             _ => {}
         }
         self.save_config_quietly();

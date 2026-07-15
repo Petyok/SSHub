@@ -126,8 +126,42 @@ impl App {
                 meta,
                 pending_secret: pending_secret.clone(),
             };
-            match crate::session::Session::spawn(config, rows, cols) {
-                Ok(session) => {
+
+            let log_enabled = crate::session_log::effective_enabled(
+                self.config.session_logging.enabled,
+                entry.session_logging_override(),
+            );
+
+            match crate::session::Session::spawn(config, rows, cols, None) {
+                Ok(mut session) => {
+                    let mut log_path = None;
+                    if log_enabled {
+                        match crate::config::data_dir() {
+                            Ok(data_dir) => {
+                                let cfg = &self.config.session_logging;
+                                match crate::session_log::SessionLogWriter::open(
+                                    &data_dir,
+                                    &host_name,
+                                    entry.managed_id(),
+                                    cfg.max_file_bytes,
+                                    cfg.retention_files,
+                                ) {
+                                    Ok(w) => {
+                                        log_path = Some(w.host_dir().display().to_string());
+                                        session.set_log(w);
+                                    }
+                                    Err(e) => {
+                                        self.host_notice =
+                                            Some(format!("Session logging unavailable: {e:#}"));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                self.host_notice =
+                                    Some(format!("Session logging unavailable: {e:#}"));
+                            }
+                        }
+                    }
                     self.sessions.push(session);
                     self.active_session = Some(self.sessions.len() - 1);
                     self.mode = AppMode::Connecting;
@@ -137,13 +171,14 @@ impl App {
                         via,
                         "launched",
                         "session started",
+                        log_path.as_deref(),
                     );
                 }
                 Err(e) => {
                     let err_msg = format!("Session spawn failed: {e:#}");
                     let _ = self
                         .store
-                        .log_auth_event(&host_name, username, via, "fail", &err_msg);
+                        .log_auth_event(&host_name, username, via, "fail", &err_msg, None);
                     self.push_ssh_log(crate::ssh::probe::SshLogEntry {
                         host_name: host_name.clone(),
                         line: err_msg.clone(),

@@ -24,7 +24,7 @@ pub(crate) fn enter_starts_embedded_session() {
         meta: crate::session::SessionMeta::default(),
         pending_secret: None,
     };
-    let session = crate::session::Session::spawn(config, 24, 80).unwrap();
+    let session = crate::session::Session::spawn(config, 24, 80, None).unwrap();
     app.sessions.push(session);
     app.active_session = Some(0);
     app.mode = AppMode::Connecting;
@@ -72,7 +72,7 @@ pub(crate) fn ctrl_t_opens_host_picker() {
         pending_secret: None,
     };
     app.sessions
-        .push(crate::session::Session::spawn(cfg, 24, 80).unwrap());
+        .push(crate::session::Session::spawn(cfg, 24, 80, None).unwrap());
     app.active_session = Some(0);
     app.mode = AppMode::Session;
 
@@ -113,7 +113,7 @@ pub(crate) fn session_tabs_switch_detach_and_focus() {
     };
     for _ in 0..3 {
         app.sessions
-            .push(crate::session::Session::spawn(cfg.clone(), 24, 80).unwrap());
+            .push(crate::session::Session::spawn(cfg.clone(), 24, 80, None).unwrap());
     }
     app.active_session = Some(2);
     app.mode = AppMode::Session;
@@ -168,7 +168,7 @@ pub(crate) fn shutdown_all_kills_detached_sessions() {
         pending_secret: None,
     };
     app.sessions
-        .push(crate::session::Session::spawn(cfg, 24, 80).unwrap());
+        .push(crate::session::Session::spawn(cfg, 24, 80, None).unwrap());
     app.active_session = Some(0);
     app.mode = AppMode::Session;
 

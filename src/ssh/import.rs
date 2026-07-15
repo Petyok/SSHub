@@ -100,6 +100,7 @@ fn build_sync_import(
         environment: existing.environment.clone(),
         favorite: existing.favorite,
         last_connected: existing.last_connected,
+        session_logging: existing.session_logging,
     }
 }
 
@@ -135,15 +136,23 @@ fn build_import_row(
     let port = resolved.port.unwrap_or(22);
 
     let meta = metadata.get(name)?;
-    let (tags, notes, environment, favorite, last_connected) = match meta {
+    let (tags, notes, environment, favorite, last_connected, session_logging) = match meta {
         Some(m) => (
             m.tags,
             m.description,
             m.environment,
             m.favorite,
             m.last_connected,
+            m.session_logging,
         ),
-        None => (Vec::new(), None, None, false, None),
+        None => (
+            Vec::new(),
+            None,
+            None,
+            false,
+            None,
+            crate::session_log::SessionLoggingOverride::Inherit,
+        ),
     };
 
     Ok(SshConfigHostImport {
@@ -159,6 +168,7 @@ fn build_import_row(
         environment,
         favorite,
         last_connected,
+        session_logging,
     })
 }
 
@@ -380,6 +390,7 @@ mod tests {
                 environment: None,
                 favorite: true,
                 last_connected: Some(42),
+                session_logging: crate::session_log::SessionLoggingOverride::On,
             })
             .unwrap();
 
@@ -394,5 +405,9 @@ mod tests {
         assert_eq!(imported.notes.as_deref(), Some("Primary"));
         assert!(imported.favorite);
         assert_eq!(imported.last_connected, Some(42));
+        assert_eq!(
+            imported.session_logging,
+            crate::session_log::SessionLoggingOverride::On
+        );
     }
 }
