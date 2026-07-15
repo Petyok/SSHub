@@ -75,7 +75,7 @@ Session logging is opt-in and was added in the Unreleased development cycle (sch
 ## What to watch when changing connection code
 
 - `src/app/connect.rs` — secret resolution, argv building, session logging setup, auth event recording.
-- `src/session/mod.rs` — `Session::spawn`, `Session::tick`, `Session::resize`.
+- `src/session/mod.rs` — `Session::spawn`, `Session::drain`, `Session::resize`.
 - `src/session/pty.rs` — thread safety of PTY reads/writes.
 - `src/session/render.rs` — selection bounds, header/footer hints.
 - `src/session_log.rs` — file lifecycle, rotation, retention; make sure `SessionLogWriter` is dropped or reset between connections.

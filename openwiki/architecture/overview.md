@@ -43,23 +43,24 @@ This is captured in `AppDeps` and enables dependency injection for tests.
 
 ## Event loop
 
-The terminal loop (`src/lib.rs`) polls `crossterm::event::poll(POLL_INTERVAL)` every 50 ms.
+The terminal loop (`run_terminal_loop` in `src/lib.rs`) runs each frame in this order:
 
-For each tick:
+1. **Terminal size** — read `terminal.size()` every frame (not crossterm resize events); update `app.terminal_area` and detect whether dimensions changed.
+2. **Session drain + resize** — for every open session: `Session::drain()` (PTY bytes), then `Session::resize(...)` when the host terminal size changed. Promote `AppMode::Connecting` → `Session` when the active tab's child reaches `Running`.
+3. **Render** — `terminal.draw(|frame| tui::render(frame, app))`.
+4. **Input + background poll** — `poll_keys_and_watcher(app)` (only after render; skipped on the auto-quit frame):
+   - `crossterm::event::poll(POLL_INTERVAL)` (50 ms), then drain queued `Event::Key` / `Event::Mouse` / `Event::Paste` via `app.handle_key`, `app.handle_mouse`, `app.handle_paste` (resize events are ignored).
+   - `watcher_rx` → `reload_hosts()` on config change,
+   - `ping_rx` → latency sparkline data,
+   - `sftp_rx` → `apply_sftp_event`,
+   - `probe_rx` → SSH handshake / verbose log lines (`ssh::probe::SshLogEntry`),
+   - `os_detect_rx` → OS logo auto-detect results (`apply_os_detect`),
+   - `app.tick_tunnels()` → tunnel health (`TunnelManager::check_health`) and keep-alive reconnect (`tick_reconnect`),
+   - `refresh_auth_cache()` — reloads the audit cache from SQLite when **≥10 s** have elapsed since the last refresh (respects the current audit filter/range).
 
-1. Drain crossterm events (key, mouse, resize) and call `app.handle_event(...)`.
-2. Drain background channels:
-   - `watcher_rx` for `~/.ssh/config` changes,
-   - `ping_rx` for latency results,
-   - `probe_rx` for OS detection / SSH handshake log lines,
-   - `os_detect_rx` for OS logo probes,
-   - `sftp_rx` for SFTP worker events,
-   - `app.tick_tunnels()` for tunnel health checks and keep-alive reconnect timers (`check_health` + `tick_reconnect`).
-3. Drain embedded sessions (`Session::drain()` reads PTY bytes each frame; user input is written from key handlers).
-4. If the terminal was resized, propagate it to sessions.
-5. Render one frame.
+`refresh_audit_events()` is separate: it reloads the audit list immediately when the user changes audit filter/range or switches to the audit tab — not on every poll tick.
 
-The headless loop (`run_headless_loop`) does the same without alternate-screen drawing for CI smoke tests.
+The headless path (`run_headless_loop`) draws **one** frame on a `TestBackend` (80×24) and exits; it does not run the full loop. CI smoke uses `--dry-run` or `SSHUB_AUTO_QUIT` instead of a real TTY.
 
 ## Application state
 
@@ -89,11 +90,11 @@ The headless loop (`run_headless_loop`) does the same without alternate-screen d
 
 ## Input dispatch
 
-`src/app/mod.rs` implements `handle_event`. It routes:
+`src/app/keys.rs` implements `handle_key` (plus `handle_mouse` / `handle_paste` in `src/app/mouse.rs`). `handle_key` routes:
 
-- Global actions (quit, help, keybind editor, settings, tab switching, zoom) first.
+- Global actions (quit, help, keybind editor, settings via hardcoded `Ctrl+H`, tab switching, zoom) first.
 - Mode-specific handling next (`handle_key_search`, `handle_key_host_form`, `handle_key_session`, ...).
-- Tab-specific handling last (`handle_key_hosts`, `handle_key_sftp`, `handle_key_tunnels`, `handle_key_keys`, `handle_key_audit`).
+- Tab-specific handling last in `AppMode::Normal`: `handle_key_normal` (tab 0 hosts), `handle_key_sftp` (1), `handle_key_tunnels` (2), `handle_key_keychain` (3 identities), `handle_key_audit` (4).
 
 `src/app/mouse.rs` maps mouse clicks / scrolls to the same actions.
 
@@ -105,7 +106,8 @@ Keybindings are user-remappable: actions are defined in `src/keybinds.rs`, loade
 |-------------------|--------------------------------------|-------------------------|---------|
 | SSH config watcher| `src/watcher.rs`                     | `watcher_rx`            | Detect renames/saves of `~/.ssh/config` and reload hosts. |
 | Ping              | `src/ping.rs`                        | `ping_rx`               | ICMP echo selected/visible hosts for latency sparkline. |
-| OS detection      | `src/osinfo/detect.rs`               | `os_detect_rx`          | SSH into a host once and parse `/etc/os-release` for the logo. |
+| SSH probe log     | `src/ssh/probe.rs`, session connect | `probe_rx` (optional)   | Dashboard SSH log panel (`SshLogEntry`). Primary feed is session handshake diagnostics and `push_ssh_log` from connect; `spawn_ssh_probe` exists but is not wired at startup today. |
+| OS detection      | `src/osinfo/detect.rs`               | `os_detect_rx`          | SSH into a host once and parse `/etc/os-release` for the OS logo. |
 | SFTP              | `src/sftp/worker.rs`, `transport.rs` | `sftp_rx`               | Run libssh2 commands off the UI thread. |
 | Tunnel stderr     | `src/tunnel.rs`                      | internal `Arc<Mutex>`   | Drain `ssh -N` stderr for error diagnostics. |
 

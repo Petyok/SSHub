@@ -18,7 +18,7 @@ Legacy `metadata.db` in the same directory is still supported via `src/metadata/
 
 The canonical schema version is `SCHEMA_VERSION` in `src/store/migrate.rs`. Recent changes:
 
-- **v12** added `session_logging` override for hosts and the session-log audit note path.
+- **v12** added `hosts.session_logging` (per-host tri-state override) and `auth_events.log_path` (session log directory on connect events).
 - **v11** added the `host_group_memberships` join table for multiple groups per host.
 - Earlier versions established `hosts`, `host_groups`, `identities`, `tunnels`, `auth_events`, and `ui_state`.
 

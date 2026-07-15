@@ -1,8 +1,8 @@
 {
-  "updatedAt": "2026-07-15T20:14:50.301Z",
-  "command": "init",
-  "gitHead": "6dd03c7f58cfc2786229409c48ae00738c1ca4cb",
-  "model": "moonshotai/kimi-k2.7-code",
-  "validatedAt": "2026-07-15T20:30:00.000Z",
-  "validatedBy": "manual-review"
+  "updatedAt": "2026-07-15T21:22:00.000Z",
+  "command": "manual-correction",
+  "gitHead": "fd66c88908ce8c728ec884ab50ad356c3aa010d2",
+  "model": null,
+  "validatedAt": "2026-07-15T21:22:00.000Z",
+  "validatedBy": "adversarial-review-fixes"
 }

@@ -8,9 +8,16 @@ SSHub uses `ratatui` 0.30 with a synchronous event loop. The UI is split into da
 
 - `run_app()` loads config and creates `App`.
 - If stdout is a terminal, it enters raw mode and alternate screen.
-- `POLL_INTERVAL` is 50 ms. Each tick drains crossterm events, background channels, and redraws.
+- `POLL_INTERVAL` is 50 ms inside `poll_keys_and_watcher`.
 
-`src/app/mod.rs` holds `App` state and dispatch. Each loop iteration in `src/lib.rs` drains crossterm input (`poll_keys_and_watcher`), drains every session's PTY (`Session::drain()`), then redraws.
+Each frame in `run_terminal_loop` (see `architecture/overview.md` for full detail):
+
+1. `terminal.size()` — resize detection (not crossterm resize events).
+2. Drain every session PTY (`Session::drain()`), resize sessions when the terminal changed.
+3. Render (`tui::render`).
+4. `poll_keys_and_watcher` — drain keys/mouse/paste (`handle_key` / `handle_mouse` / `handle_paste`), then background channels (watcher, ping, SFTP, probe log, OS detect, `tick_tunnels`, `refresh_auth_cache`).
+
+`src/app/mod.rs` holds `App` state; input dispatch lives in `src/app/keys.rs` and `src/app/mouse.rs`. The headless path (`run_headless_loop`) draws one `TestBackend` frame for smoke — not the full loop.
 
 ## Frame layout
 

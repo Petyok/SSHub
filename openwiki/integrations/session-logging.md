@@ -10,7 +10,7 @@ Two levels:
    - `enabled` — master switch (default false).
    - `max_file_bytes` — rotation size (default 10 MB).
    - `retention_files` — number of segments to keep per host (default 50).
-2. **Per-host override** — host form offers `inherit` / `on` / `off`.
+2. **Per-host override** — host form and host detail panel (`DetailEditField::SessionLogging`) offer `inherit` / `on` / `off`.
    - `inherit` follows the global setting.
    - `on` / `off` override it.
 

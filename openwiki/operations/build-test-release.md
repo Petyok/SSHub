@@ -36,7 +36,7 @@ cargo test --test e2e host_crud
 
 ## Format & lint
 
-The project expects `cargo fmt` and `cargo clippy` to pass. Recent commits (e.g. `3c566a9`) are routinely CI-clean; run both before pushing.
+The project expects `cargo fmt` and `cargo clippy` to pass. Run both before pushing.
 
 ## Versioning
 
@@ -93,10 +93,9 @@ Prebuilt Linux/macOS binaries are attached to GitHub releases.
 
 ## CI / headless environment variables
 
-- `SSHUB_DRY_RUN` — exit before TUI.
-- `SSHUB_AUTO_QUIT=1` — render one frame and exit.
-- `SSHUB_AUTO_QUIT=q` — simulate quit key.
-- `SSHUB_CONFIG_DIR`, `SSHUB_DATA_DIR`, `SSHUB_SSH_CONFIG` — override paths.
+- `SSHUB_DRY_RUN` (fallback `SSH_LAUNCHER_DRY_RUN`) — exit before TUI.
+- `SSHUB_AUTO_QUIT` (fallback `SSH_LAUNCHER_AUTO_QUIT`) — `1` = render one frame and exit; `q` = simulate quit key.
+- `SSHUB_CONFIG_DIR` (fallback `SSH_LAUNCHER_CONFIG_DIR`), `SSHUB_DATA_DIR` (fallback `SSH_LAUNCHER_DATA_DIR`), `SSHUB_SSH_CONFIG` (fallback `SSH_LAUNCHER_SSH_CONFIG`) — override paths.
 
 See [`operations/runbook.md`](operations/runbook.md) for path details.
 

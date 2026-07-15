@@ -26,11 +26,11 @@ Many tests use `LauncherStore::open_in_memory()` and `App::test_new(...)` with d
 
 ## E2E / TestBackend
 
-`tests/e2e/mod.rs` creates an `App` with a `TestBackend`, then sends synthetic crossterm key events (and some mouse events) to simulate user interactions. It asserts on frame output or on `App` state after a few ticks.
+`tests/e2e/*.rs` builds an `App` via `App::new_with_deps(...)`, then dispatches synthetic input with `app.handle_key(...)` (and occasionally `handle_mouse` / `handle_paste`). Most scenarios assert on `App` state directly; frame assertions can use `TestBackend` + `terminal.draw(|f| sshub::tui::render(f, &app))` when needed. There is no `tick()` test helper.
 
 Key helpers:
 
-- `App::test_new(...)` in `src/app/util.rs` builds an app with injected mock dependencies.
+- `App::new_with_deps(...)` / `App::test_new(...)` in `src/app/util.rs` builds an app with injected mock dependencies.
 - `FixtureResolver` in `tests/support/` replaces real `ssh -G` calls.
 - `MockLauncher` records external-terminal launch attempts.
 
@@ -44,10 +44,10 @@ These are exercised in `tests/smoke/binary_starts.rs`.
 
 ## Writing a new e2e test
 
-1. Create an `App` through `App::test_new(...)` with the desired fixture resolver.
-2. Set `app.mode` and any pre-conditions directly, or dispatch keys.
-3. Call the rendering function and drain the event loop via `tick()` helpers.
-4. Assert on `app.hosts`, `app.auth_events_cache`, frame output, or captured mock calls.
+1. Create an `App` through `App::new_with_deps(...)` / `App::test_new(...)` with the desired fixture resolver.
+2. Set `app.mode` and any pre-conditions directly, or dispatch keys via `app.handle_key(...)`.
+3. Optionally draw one frame with `TestBackend` when asserting on rendered text.
+4. Assert on `app.hosts`, `app.auth_events_cache`, frame buffer, or captured mock calls.
 
 See `tests/e2e/mod.rs` for patterns around host CRUD, group management, keybindings, and session modes.
 
@@ -60,4 +60,9 @@ See `tests/e2e/mod.rs` for patterns around host CRUD, group management, keybindi
 
 ## CI
 
-GitHub Actions is configured under `.github/workflows/`. It should mirror `just test` plus format/clippy checks.
+GitHub Actions (`.github/workflows/ci.yml`) runs two jobs:
+
+- **test** (ubuntu + macOS): `cargo build --all-targets`, then `cargo test` (all targets — unit tests in `src/` plus `smoke`, `e2e`, `config_load` integration tests).
+- **lint** (ubuntu): `cargo fmt --check` and `cargo clippy --all-targets`.
+
+`just test` is the local convenience wrapper for the test targets; CI does not invoke `just` but runs the same `cargo test` surface.

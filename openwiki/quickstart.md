@@ -83,24 +83,13 @@ The release flow is codified in `Justfile`: `just release` (feature) / `just rel
 | Session logs  | `~/.local/share/sshub/logs/<host-dir>/` (opt-in)                     |
 | SSH config    | `~/.ssh/config` (read-only source + import/export target)            |
 
-Override via environment variables: `SSHUB_CONFIG_DIR`, `SSHUB_DATA_DIR`, `SSHUB_SSH_CONFIG`.
+Override via environment variables: `SSHUB_CONFIG_DIR`, `SSHUB_DATA_DIR`, `SSHUB_SSH_CONFIG`. Legacy `SSH_LAUNCHER_CONFIG_DIR`, `SSH_LAUNCHER_DATA_DIR`, and `SSH_LAUNCHER_SSH_CONFIG` are still accepted as fallbacks (see [`operations/runbook.md`](operations/runbook.md)).
 
 Run `sshub db purge --yes-i-am-stupid` to wipe the launcher database. This removes managed hosts, groups, identities, tunnels, and the audit log but **does not** touch `~/.ssh/config`.
 
 ## Recently active areas
 
-The current `development` branch (HEAD `6dd03c7`, tunnel reconnect merged via PR #20) has been focused on two big features:
-
-1. **Tunnel keep-alive / reconnect** (`src/tunnel.rs`, `src/app/tunnels.rs`, `src/tui/screens/tunnels.rs`, `src/config.rs`):
-   - Per-tunnel `auto_connect` column toggles keep-alive.
-   - Keep-alive tunnels start on app launch and reconnect on unexpected exit.
-   - Exponential backoff, jitter, max attempts, stable-uptime threshold configurable under `[tunnel_reconnect]` in `config.toml` and editable in-app with `R`.
-
-2. **Session logging** (`src/session_log.rs`, `src/session/mod.rs`, `src/app/connect.rs`, `src/store/migrate.rs` schema v12):
-   - Opt-in capture of embedded PTY output to plaintext files.
-   - Global toggle in Settings (`Ctrl+H`) or per-host tri-state `inherit`/`on`/`off`.
-   - Audit connect events show the log directory path.
-   - Logs capture everything echoed to the terminal, **including passwords** — documented as a security warning.
+Recent development has focused on tunnel keep-alive/reconnect and session logging. Last validated commit is recorded in [`openwiki/.last-update.json`](.last-update.json) (`gitHead`, `validatedAt`).
 
 ## Where to go next
 

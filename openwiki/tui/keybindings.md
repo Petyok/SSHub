@@ -44,7 +44,10 @@ Session-specific keys are parsed separately in `src/session/keys.rs` because the
 
 - The dashboard footer (`src/tui/widgets/footer.rs`) shows context-sensitive key hints per tab.
 - The session header/footer (`src/session/render.rs`) show configured session keybinds from `app.config.keybindings`, not hardcoded defaults.
-- **Exception:** `R` on the Tunnels tab opens reconnect settings (`src/app/tunnels.rs`) and is not yet a `KeyAction` — it cannot be remapped through the keybind editor.
+- **Hardcoded exceptions** (not `KeyAction`s — cannot be remapped in the keybind editor):
+  - `Ctrl+H` — opens Settings from the dashboard (`src/app/keys.rs`).
+  - `R` on the Tunnels tab — tunnel reconnect settings (`src/app/tunnels.rs`).
+  - `R` on the SFTP tab — rename selected file/dir (`src/app/sftp.rs`; lowercase `r` refreshes panes).
 - help overlay (`src/tui/screens/help.rs`) lists all actions and their current bindings.
 
 ## What to watch when changing bindings
