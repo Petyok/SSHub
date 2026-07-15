@@ -95,3 +95,13 @@ cargo run -- --dry-run
 - `SSHUB_AUTO_QUIT` — `1` = quit after first draw, `q` = send quit key
 
 **SQLite schema (v10):** `hosts` (id, name, label, address, port, group_id FK, identity_id FK, os_icon, tags JSON, notes, proxy_jump, forward_agent, remote_command, sort_order, favorite, last_connected, source, ssh_config_hash, timestamps), `host_groups` (id, name, sort_order, parent_id FK — nested groups), `identities` (id, name, username, private_key, certificate, sort_order), `tunnels` (id, host_id FK, tunnel_type, local_port, remote_host, remote_port, label, auto_connect, timestamps), `auth_events` (id, host_id, host_name, event_type, status, detail, created_at). `SCHEMA_VERSION` is the source of truth in `src/store/migrate.rs`; migrations run inside one transaction. Legacy `metadata.db` is migrated to `launcher.db` on first open — best-effort, so a corrupt/locked legacy db is skipped rather than aborting startup.
+
+<!-- OPENWIKI:START -->
+
+## OpenWiki
+
+This repository uses OpenWiki for recurring code documentation. Start with `openwiki/quickstart.md`, then follow its links to architecture, workflows, domain concepts, operations, integrations, testing guidance, and source maps.
+
+The scheduled OpenWiki GitHub Actions workflow refreshes the repository wiki. Do not hand-edit generated OpenWiki pages unless explicitly asked; prefer updating source code/docs and letting OpenWiki regenerate.
+
+<!-- OPENWIKI:END -->
