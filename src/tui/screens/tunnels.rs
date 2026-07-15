@@ -43,10 +43,7 @@ pub fn render_tunnels(frame: &mut Frame, area: Rect, app: &App) {
                     buf.set_string(
                         inner_x,
                         body_y,
-                        crate::tui::text::ellipsize(
-                            &format!("error: {detail}"),
-                            inner_w as usize,
-                        ),
+                        crate::tui::text::ellipsize(&format!("error: {detail}"), inner_w as usize),
                         style,
                     );
                     body_y += 2;
@@ -220,14 +217,14 @@ fn render_tunnel_row(
         buf.set_string(
             cx + 2,
             y,
-            &crate::tui::text::ellipsize("gave up", status_w.saturating_sub(2) as usize),
+            crate::tui::text::ellipsize("gave up", status_w.saturating_sub(2) as usize),
             if selected { base_style } else { theme::red() },
         );
     } else if status == "starting" {
         buf.set_string(
             cx + 2,
             y,
-            &crate::tui::text::ellipsize("start", status_w.saturating_sub(2) as usize),
+            crate::tui::text::ellipsize("start", status_w.saturating_sub(2) as usize),
             if selected { base_style } else { theme::amber() },
         );
     } else if status == "error" {
@@ -316,7 +313,7 @@ fn render_tunnel_row(
     buf.set_string(
         cx,
         y,
-        &crate::tui::text::ellipsize(&label_str, remaining),
+        crate::tui::text::ellipsize(&label_str, remaining),
         if selected { base_style } else { theme::dim() },
     );
 }

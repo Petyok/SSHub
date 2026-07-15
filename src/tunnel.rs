@@ -333,9 +333,12 @@ impl TunnelManager {
         if self.user_stopped.contains(&tunnel_id) {
             return Vec::new();
         }
-        let current = self.reconnect.get(&tunnel_id).map(|r| r.attempt).unwrap_or(0);
-        let next =
-            tunnel_failure_attempt(current, uptime.as_secs(), cfg.stable_secs.max(1));
+        let current = self
+            .reconnect
+            .get(&tunnel_id)
+            .map(|r| r.attempt)
+            .unwrap_or(0);
+        let next = tunnel_failure_attempt(current, uptime.as_secs(), cfg.stable_secs.max(1));
         if cfg.max_attempts > 0 && next >= cfg.max_attempts {
             self.reconnect.insert(
                 tunnel_id,
@@ -367,7 +370,11 @@ impl TunnelManager {
         if self.user_stopped.contains(&tunnel_id) {
             return None;
         }
-        let current = self.reconnect.get(&tunnel_id).map(|r| r.attempt).unwrap_or(0);
+        let current = self
+            .reconnect
+            .get(&tunnel_id)
+            .map(|r| r.attempt)
+            .unwrap_or(0);
         let next = if self.reconnect.contains_key(&tunnel_id) {
             tunnel_failure_attempt(current, 0, cfg.stable_secs.max(1))
         } else {
@@ -451,27 +458,20 @@ impl TunnelManager {
                 .map(|r| r.attempt)
                 .unwrap_or(0);
             let attempt = stored.saturating_add(1);
-            let next_on_fail =
-                tunnel_failure_attempt(stored, 0, cfg.stable_secs.max(1));
-            let is_final_try =
-                cfg.max_attempts > 0 && next_on_fail >= cfg.max_attempts;
+            let next_on_fail = tunnel_failure_attempt(stored, 0, cfg.stable_secs.max(1));
+            let is_final_try = cfg.max_attempts > 0 && next_on_fail >= cfg.max_attempts;
 
             if !is_final_try {
                 events.push(ReconnectEvent::Attempt { tunnel_id, attempt });
             }
 
-            let host = tunnel.host_id.and_then(|hid| resolve_host(hid));
-            let secret = host.as_ref().and_then(|h| resolve_secret(h));
+            let host = tunnel.host_id.and_then(&resolve_host);
+            let secret = host.as_ref().and_then(&resolve_secret);
             match self.start(tunnel, host.as_ref(), secret.as_ref()) {
                 Ok(()) => {}
                 Err(e) => {
                     let err = format!("{e:#}");
-                    events.extend(self.record_tunnel_failure(
-                        tunnel_id,
-                        &err,
-                        cfg,
-                        Duration::ZERO,
-                    ));
+                    events.extend(self.record_tunnel_failure(tunnel_id, &err, cfg, Duration::ZERO));
                 }
             }
         }
@@ -538,9 +538,9 @@ impl TunnelManager {
     }
 
     pub fn is_running(&self, tunnel_id: i64) -> bool {
-        self.processes.get(&tunnel_id).is_some_and(|p| {
-            matches!(p.status, TunnelStatus::Up) && !p.proving
-        })
+        self.processes
+            .get(&tunnel_id)
+            .is_some_and(|p| matches!(p.status, TunnelStatus::Up) && !p.proving)
     }
 
     pub fn active_count(&self) -> usize {
@@ -618,23 +618,7 @@ impl Drop for TunnelManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::TunnelType;
     use std::time::Duration;
-
-    fn sample_tunnel(id: i64, auto_connect: bool) -> Tunnel {
-        Tunnel {
-            id,
-            host_id: Some(1),
-            tunnel_type: TunnelType::Local,
-            local_port: 8080,
-            remote_host: "localhost".into(),
-            remote_port: 80,
-            label: Some("test".into()),
-            auto_connect,
-            created_at: 0,
-            updated_at: 0,
-        }
-    }
 
     #[test]
     fn splice_tunnel_ssh_options_forces_batchmode_without_secret() {
@@ -658,8 +642,12 @@ mod tests {
     fn splice_tunnel_ssh_options_includes_keepalive() {
         let mut args = vec!["ssh".into(), "-N".into(), "host".into()];
         splice_tunnel_ssh_options(&mut args, false);
-        assert!(args.windows(2).any(|w| w == ["-o", "ServerAliveInterval=10"]));
-        assert!(args.windows(2).any(|w| w == ["-o", "ServerAliveCountMax=3"]));
+        assert!(args
+            .windows(2)
+            .any(|w| w == ["-o", "ServerAliveInterval=10"]));
+        assert!(args
+            .windows(2)
+            .any(|w| w == ["-o", "ServerAliveCountMax=3"]));
         assert!(args.windows(2).any(|w| w == ["-o", "TCPKeepAlive=yes"]));
     }
 
@@ -725,7 +713,7 @@ mod tests {
         );
         assert_eq!(mgr.status(2), "reconnecting");
         let secs = mgr.reconnect_countdown_secs(2).unwrap();
-        assert!(secs >= 4 && secs <= 5);
+        assert!((4..=5).contains(&secs));
 
         mgr.reconnect.insert(
             2,

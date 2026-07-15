@@ -887,10 +887,7 @@ impl KeybindsConfig {
 
     /// First configured key for `action`, or `""` when unbound.
     pub fn primary(&self, action: KeyAction) -> &str {
-        self.binds(action)
-            .first()
-            .map(String::as_str)
-            .unwrap_or("")
+        self.binds(action).first().map(String::as_str).unwrap_or("")
     }
 
     /// Right-aligned hints in the fullscreen session header.
@@ -898,7 +895,11 @@ impl KeybindsConfig {
         let mut parts = Vec::new();
         if multi_tab {
             push_hint(&mut parts, self.primary(KeyAction::SessionNewTab), "new");
-            push_hint(&mut parts, self.primary(KeyAction::SessionCloseTab), "close");
+            push_hint(
+                &mut parts,
+                self.primary(KeyAction::SessionCloseTab),
+                "close",
+            );
             if let Some(tabs) = tab_switch_hint(self) {
                 parts.push(tabs);
             }
@@ -918,11 +919,7 @@ impl KeybindsConfig {
     pub fn session_footer_hints(&self) -> Vec<(String, &'static str)> {
         let mut out = Vec::new();
         push_footer_hint(&mut out, self.primary(KeyAction::SessionDetach), "detach");
-        push_footer_hint(
-            &mut out,
-            self.primary(KeyAction::SessionOpenSftp),
-            "sftp",
-        );
+        push_footer_hint(&mut out, self.primary(KeyAction::SessionOpenSftp), "sftp");
         if let Some(keys) = tab_switch_keys(self) {
             out.push((keys, "tabs"));
         }
@@ -1176,9 +1173,11 @@ mod tests {
 
     #[test]
     fn session_header_hints_use_configured_binds() {
-        let mut kb = KeybindsConfig::default();
-        kb.session_new_tab = vec!["F9".into()];
-        kb.session_detach = vec!["Ctrl+Shift+D".into()];
+        let kb = KeybindsConfig {
+            session_new_tab: vec!["F9".into()],
+            session_detach: vec!["Ctrl+Shift+D".into()],
+            ..Default::default()
+        };
         assert_eq!(
             kb.session_header_hints(false),
             "F9 new tab  Ctrl+Shift+D detach"

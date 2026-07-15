@@ -127,7 +127,10 @@ fn render_header(frame: &mut Frame, area: Rect, session: &Session, app: &App) {
     }
 
     // Right-side hints for tab management (from user keybind config).
-    let hint_text = app.config.keybinds.session_header_hints(app.sessions.len() > 1);
+    let hint_text = app
+        .config
+        .keybinds
+        .session_header_hints(app.sessions.len() > 1);
     let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
     let pad = (area.width as usize).saturating_sub(used + hint_text.chars().count() + 1);
     spans.push(Span::raw(" ".repeat(pad)));

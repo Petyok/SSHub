@@ -147,7 +147,7 @@ impl App {
                         if let Some(ev) = gave_up {
                             self.log_tunnel_reconnect_events(
                                 std::slice::from_ref(&ev),
-                                &[tunnel.clone()],
+                                std::slice::from_ref(&tunnel),
                             );
                         } else {
                             let _ = self.store.log_auth_event(
@@ -537,7 +537,10 @@ impl App {
                         &self.config.tunnel_reconnect,
                     );
                     if let Some(ev) = gave_up {
-                        self.log_tunnel_reconnect_events(std::slice::from_ref(&ev), &[tunnel.clone()]);
+                        self.log_tunnel_reconnect_events(
+                            std::slice::from_ref(&ev),
+                            std::slice::from_ref(&tunnel),
+                        );
                     } else {
                         let _ = self.store.log_auth_event(
                             host_name,
@@ -626,9 +629,7 @@ impl App {
             &tunnels,
             &cfg,
             |host_id| store.get_host(host_id).ok().flatten(),
-            |host| {
-                resolve_pending_secret_for_managed(host, self.password_store.as_ref()).0
-            },
+            |host| resolve_pending_secret_for_managed(host, self.password_store.as_ref()).0,
         );
         self.log_tunnel_reconnect_events(&events, &tunnels);
         Ok(())
@@ -642,10 +643,9 @@ impl App {
         if self.tunnel_manager.needs_tunnel_list() && self.tunnels.is_empty() {
             self.reload_tunnels()?;
         }
-        let health_events = self.tunnel_manager.check_health(
-            &self.tunnels,
-            &self.config.tunnel_reconnect,
-        );
+        let health_events = self
+            .tunnel_manager
+            .check_health(&self.tunnels, &self.config.tunnel_reconnect);
         self.log_tunnel_reconnect_events(&health_events, &self.tunnels);
         self.tick_tunnel_reconnect()
     }
@@ -659,15 +659,18 @@ impl App {
                 self.tunnel_reconnect_selected = (self.tunnel_reconnect_selected + 1) % n;
             }
             _ if self.is_action(KeyAction::MoveUp, &key) => {
-                self.tunnel_reconnect_selected =
-                    (self.tunnel_reconnect_selected + n - 1) % n;
+                self.tunnel_reconnect_selected = (self.tunnel_reconnect_selected + n - 1) % n;
             }
             KeyCode::Char('+') | KeyCode::Char('=') | KeyCode::Right => {
-                self.config.tunnel_reconnect.adjust_field(self.tunnel_reconnect_selected, 1);
+                self.config
+                    .tunnel_reconnect
+                    .adjust_field(self.tunnel_reconnect_selected, 1);
                 self.save_config_quietly();
             }
             KeyCode::Char('-') | KeyCode::Char('_') | KeyCode::Left => {
-                self.config.tunnel_reconnect.adjust_field(self.tunnel_reconnect_selected, -1);
+                self.config
+                    .tunnel_reconnect
+                    .adjust_field(self.tunnel_reconnect_selected, -1);
                 self.save_config_quietly();
             }
             KeyCode::Char('*') => {
