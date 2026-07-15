@@ -140,11 +140,12 @@ impl App {
                         match crate::session_log::SessionLogWriter::open(
                             &data_dir,
                             &host_name,
+                            entry.managed_id(),
                             cfg.max_file_bytes,
                             cfg.retention_files,
                         ) {
                             Ok(w) => {
-                                log_path = Some(w.path().display().to_string());
+                                log_path = Some(w.host_dir().display().to_string());
                                 log_writer = Some(w);
                             }
                             Err(e) => {

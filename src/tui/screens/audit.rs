@@ -258,7 +258,7 @@ fn table_columns(total_w: u16) -> Vec<(&'static str, u16)> {
 fn audit_note(event: &crate::store::AuthEvent) -> String {
     match (&event.note, &event.log_path) {
         (Some(note), Some(path)) if note.is_empty() => path.clone(),
-        (Some(note), Some(path)) => format!("{note} -> {path}"),
+        (Some(note), Some(path)) => format!("{note} (logs in {path})"),
         (Some(note), None) => note.clone(),
         (None, Some(path)) => path.clone(),
         (None, None) => String::new(),

@@ -1123,7 +1123,7 @@ mod tests {
     #[test]
     fn auth_event_log_path_roundtrip() {
         let store = LauncherStore::open_in_memory().unwrap();
-        let path = "/tmp/sshub/logs/web/123.log";
+        let path = "/tmp/sshub/logs/web/";
         store
             .log_auth_event(
                 "web",
@@ -1136,6 +1136,24 @@ mod tests {
             .unwrap();
         let events = store.list_auth_events(1).unwrap();
         assert_eq!(events[0].log_path.as_deref(), Some(path));
+    }
+
+    #[test]
+    fn auth_event_log_dir_note_format() {
+        let store = LauncherStore::open_in_memory().unwrap();
+        let dir = "/home/user/.local/share/sshub/logs/web_prod-42";
+        store
+            .log_auth_event(
+                "web/prod",
+                Some("deploy"),
+                "direct",
+                "launched",
+                "session started",
+                Some(dir),
+            )
+            .unwrap();
+        let events = store.list_auth_events(1).unwrap();
+        assert_eq!(events[0].log_path.as_deref(), Some(dir));
     }
 
     #[cfg(unix)]

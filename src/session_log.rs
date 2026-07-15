@@ -63,6 +63,18 @@ pub fn effective_enabled(global: bool, host_override: SessionLoggingOverride) ->
     }
 }
 
+/// Build the per-host log directory segment under `logs/`.
+///
+/// Managed hosts include a stable id so colliding sanitized names (e.g.
+/// `web/prod` and `web_prod` both → `web_prod`) stay in separate dirs.
+pub fn host_log_dir_name(host_name: &str, host_id: Option<i64>) -> String {
+    let sanitized = sanitize_host_dir(host_name);
+    match host_id {
+        Some(id) => format!("{sanitized}-{id}"),
+        None => sanitized,
+    }
+}
+
 /// Sanitize a host name for use as a single path segment.
 pub fn sanitize_host_dir(name: &str) -> String {
     let trimmed = name.trim();
@@ -145,6 +157,7 @@ impl SessionLogWriter {
     pub fn open(
         base_dir: impl AsRef<Path>,
         host_name: &str,
+        host_id: Option<i64>,
         max_file_bytes: u64,
         retention_files: usize,
     ) -> Result<Self> {
@@ -154,7 +167,7 @@ impl SessionLogWriter {
             .with_context(|| format!("create session logs dir {}", logs_root.display()))?;
         secure_fs::restrict_dir(&logs_root);
 
-        let host_dir = logs_root.join(sanitize_host_dir(host_name));
+        let host_dir = logs_root.join(host_log_dir_name(host_name, host_id));
         fs::create_dir_all(&host_dir)
             .with_context(|| format!("create host log dir {}", host_dir.display()))?;
         secure_fs::restrict_dir(&host_dir);
@@ -174,6 +187,11 @@ impl SessionLogWriter {
 
     pub fn path(&self) -> &Path {
         &self.current_path
+    }
+
+    /// Directory holding this host's rotated log segments.
+    pub fn host_dir(&self) -> &Path {
+        &self.host_dir
     }
 
     pub fn append(&mut self, bytes: &[u8]) -> Result<()> {
@@ -244,6 +262,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn host_log_dir_name_distinct_for_colliding_sanitized_names() {
+        assert_eq!(host_log_dir_name("web/prod", Some(1)), "web_prod-1");
+        assert_eq!(host_log_dir_name("web_prod", Some(2)), "web_prod-2");
+        assert_ne!(
+            host_log_dir_name("web/prod", Some(1)),
+            host_log_dir_name("web_prod", Some(2))
+        );
+        assert_eq!(host_log_dir_name("legacy", None), "legacy");
+    }
+
+    #[test]
     fn sanitize_host_dir_replaces_unsafe_chars() {
         assert_eq!(sanitize_host_dir("web/prod"), "web_prod");
         assert_eq!(sanitize_host_dir("  my-host  "), "my-host");
@@ -273,7 +302,7 @@ mod tests {
     #[test]
     fn writer_appends_and_prunes_old_logs() -> Result<()> {
         let tmp = tempfile::tempdir()?;
-        let mut w = SessionLogWriter::open(tmp.path(), "web", 1024, 2)?;
+        let mut w = SessionLogWriter::open(tmp.path(), "web", None, 1024, 2)?;
         w.append(b"hello")?;
         let first = w.path().to_path_buf();
         w.close()?;
@@ -284,7 +313,7 @@ mod tests {
         fs::write(host_dir.join("old2.log"), b"x")?;
         std::thread::sleep(std::time::Duration::from_millis(5));
 
-        let mut w2 = SessionLogWriter::open(tmp.path(), "web", 1024, 2)?;
+        let mut w2 = SessionLogWriter::open(tmp.path(), "web", None, 1024, 2)?;
         w2.append(b"world")?;
         w2.close()?;
 
@@ -300,7 +329,7 @@ mod tests {
     #[test]
     fn rotate_on_size_limit() -> Result<()> {
         let tmp = tempfile::tempdir()?;
-        let mut w = SessionLogWriter::open(tmp.path(), "db", 8, 10)?;
+        let mut w = SessionLogWriter::open(tmp.path(), "db", None, 8, 10)?;
         let first = w.path().to_path_buf();
         w.append(b"12345678")?;
         w.append(b"X")?;
@@ -313,9 +342,20 @@ mod tests {
     #[test]
     fn concurrent_opens_get_distinct_files_same_second() -> Result<()> {
         let tmp = tempfile::tempdir()?;
-        let w1 = SessionLogWriter::open(tmp.path(), "web", 1024, 10)?;
-        let w2 = SessionLogWriter::open(tmp.path(), "web", 1024, 10)?;
+        let w1 = SessionLogWriter::open(tmp.path(), "web", None, 1024, 10)?;
+        let w2 = SessionLogWriter::open(tmp.path(), "web", None, 1024, 10)?;
         assert_ne!(w1.path(), w2.path());
+        drop(w1);
+        drop(w2);
+        Ok(())
+    }
+
+    #[test]
+    fn managed_hosts_with_colliding_names_use_distinct_dirs() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let w1 = SessionLogWriter::open(tmp.path(), "web/prod", Some(1), 1024, 10)?;
+        let w2 = SessionLogWriter::open(tmp.path(), "web_prod", Some(2), 1024, 10)?;
+        assert_ne!(w1.host_dir(), w2.host_dir());
         drop(w1);
         drop(w2);
         Ok(())
