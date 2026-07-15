@@ -189,11 +189,18 @@ pub struct Session {
     /// edge), `-1` toward older (top edge); `col` is the pointer column to keep
     /// extending the selection to. `None` = not autoscrolling.
     drag_autoscroll: Option<(i32, u16)>,
+    /// Optional PTY transcript writer; closed on session end.
+    log: Option<crate::session_log::SessionLogWriter>,
 }
 
 impl Session {
     /// Spawn the child on a freshly allocated PTY and start the reader thread.
-    pub fn spawn(config: SessionConfig, rows: u16, cols: u16) -> Result<Self> {
+    pub fn spawn(
+        config: SessionConfig,
+        rows: u16,
+        cols: u16,
+        log: Option<crate::session_log::SessionLogWriter>,
+    ) -> Result<Self> {
         // Reserve 1 row for header + 1 row for footer; ensure non-zero PTY.
         let pty_rows = rows.saturating_sub(2).max(1);
         let pty_cols = cols.max(1);
@@ -251,6 +258,7 @@ impl Session {
             copy_notice: None,
             drag_autoscroll: None,
             config,
+            log,
         })
     }
 
@@ -432,6 +440,13 @@ impl Session {
             match event {
                 PtyEvent::Bytes(bytes) => {
                     self.parser.process(&bytes);
+                    if let Some(log) = self.log.as_mut() {
+                        if log.append(&bytes).is_err() {
+                            self.diagnostics
+                                .push("session log write failed; logging disabled".into());
+                            self.log = None;
+                        }
+                    }
                     had_bytes = true;
                     self.saw_pty_bytes = true;
                 }
@@ -876,6 +891,9 @@ fn line_before_cursor(screen: &vt100::Screen) -> String {
 
 impl Drop for Session {
     fn drop(&mut self) {
+        if let Some(log) = self.log.take() {
+            let _ = log.close();
+        }
         // PtyRuntime::Drop kills the child and joins the reader thread.
     }
 }
@@ -1023,7 +1041,7 @@ mod prompt_tests {
             meta: SessionMeta::default(),
             pending_secret: None,
         };
-        let mut s = Session::spawn(config, 24, 80).unwrap();
+        let mut s = Session::spawn(config, 24, 80, None).unwrap();
 
         // Pump the reader threads; both writes are tiny and immediate.
         let mut got_err = false;
@@ -1072,7 +1090,7 @@ mod prompt_tests {
             meta: SessionMeta::default(),
             pending_secret: None,
         };
-        let mut s = Session::spawn(config, 24, 80).unwrap();
+        let mut s = Session::spawn(config, 24, 80, None).unwrap();
         // The child's exit and its stderr bytes race between the two reader
         // threads; the main loop keeps draining regardless, so wait for both.
         let mut exited = false;

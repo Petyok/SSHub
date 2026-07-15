@@ -1101,7 +1101,7 @@ mod tests {
             },
             pending_secret: None,
         };
-        let session = crate::session::Session::spawn(config, 24, 80).unwrap();
+        let session = crate::session::Session::spawn(config, 24, 80, None).unwrap();
         app.sessions.push(session);
         app.active_session = Some(0);
         app.mode = AppMode::Connecting;
@@ -1138,7 +1138,7 @@ mod tests {
             },
             pending_secret: None,
         };
-        let session = crate::session::Session::spawn(config, 24, 80).unwrap();
+        let session = crate::session::Session::spawn(config, 24, 80, None).unwrap();
         app.sessions.push(session);
         app.active_session = Some(0);
         app.mode = AppMode::Connecting;
@@ -1157,7 +1157,7 @@ mod tests {
             meta: crate::session::SessionMeta::default(),
             pending_secret: None,
         };
-        let session = crate::session::Session::spawn(config, 24, 80).unwrap();
+        let session = crate::session::Session::spawn(config, 24, 80, None).unwrap();
         app.sessions.push(session);
         app.active_session = Some(0);
         // Stays on the dashboard (Normal), so the strip is what makes the
