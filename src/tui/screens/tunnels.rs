@@ -197,8 +197,15 @@ fn render_tunnel_row(
         buf.set_string(
             cx + 2,
             y,
-            "gave up",
+            &crate::tui::text::ellipsize("gave up", status_w.saturating_sub(2) as usize),
             if selected { base_style } else { theme::red() },
+        );
+    } else if status == "starting" {
+        buf.set_string(
+            cx + 2,
+            y,
+            &crate::tui::text::ellipsize("start", status_w.saturating_sub(2) as usize),
+            if selected { base_style } else { theme::amber() },
         );
     } else if status == "error" {
         buf.set_string(
@@ -286,18 +293,18 @@ fn render_tunnel_row(
     if matches!(status, "error" | "gave_up") {
         if let Some(detail) = error_detail {
             if !detail.is_empty() {
-                if label_str.is_empty() {
-                    label_str = detail.to_string();
+                label_str = if label_str.is_empty() {
+                    detail.to_string()
                 } else {
-                    label_str = format!("{label_str}  {detail}");
-                }
+                    format!("{label_str}  {detail}")
+                };
             }
         }
     }
     buf.set_string(
         cx,
         y,
-        truncate(&label_str, remaining),
+        &crate::tui::text::ellipsize(&label_str, remaining),
         if selected { base_style } else { theme::dim() },
     );
 }
@@ -543,21 +550,21 @@ pub fn render_tunnel_host_picker(frame: &mut Frame, app: &App) {
 fn table_columns(total_w: u16) -> Vec<(&'static str, u16)> {
     if total_w >= 100 {
         vec![
-            ("STATUS", 8),
+            ("STATUS", 10),
             ("DIR", 4),
             ("LOCAL", 10),
             ("DEST", 22),
             ("SERVER", 20),
-            ("LABEL", total_w.saturating_sub(64)),
+            ("LABEL", total_w.saturating_sub(66)),
         ]
     } else {
         vec![
-            ("", 6),
+            ("", 8),
             ("DIR", 4),
             ("LOCAL", 8),
             ("DEST", 18),
             ("SERVER", 14),
-            ("LABEL", total_w.saturating_sub(50)),
+            ("LABEL", total_w.saturating_sub(52)),
         ]
     }
 }

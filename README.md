@@ -215,8 +215,9 @@ retention_files = 50        # keep newest 50 logs per host
 
 [tunnel_reconnect]
 max_attempts = 12           # 0 = unlimited retries
-initial_delay_ms = 1000
-max_delay_ms = 60000
+initial_delay_ms = 1000     # 1 s (R overlay edits delays in seconds)
+max_delay_ms = 60000        # 60 s
+stable_secs = 5             # uptime before a spawn counts as up
 jitter_ratio = 0.25
 
 [terminal]

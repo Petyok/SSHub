@@ -53,6 +53,7 @@ fn help_lines() -> Vec<Line<'static>> {
         entry("d", "Delete tunnel"),
         entry("Enter", "Start / stop tunnel (cancels reconnect while retrying)"),
         entry("x", "Kill tunnel process"),
+        entry("R", "Keep-alive reconnect settings (backoff, max retries)"),
         entry(
             "",
             "Keep alive (tunnel form): auto-start on launch + reconnect with backoff after unexpected exit.",

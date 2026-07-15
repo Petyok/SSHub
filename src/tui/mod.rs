@@ -168,6 +168,9 @@ fn render_inner(frame: &mut Frame, app: &App) {
         AppMode::Help => render_help_popup(frame, app),
         AppMode::KeybindEditor => screens::keybind_editor::render_keybind_editor(frame, app),
         AppMode::Settings => screens::settings::render_settings(frame, app),
+        AppMode::TunnelReconnectSettings => {
+            screens::tunnel_reconnect::render_tunnel_reconnect_settings(frame, app);
+        }
         AppMode::ConfirmQuit => render_confirm_quit_popup(frame, app),
         AppMode::ImportPrompt => render_import_prompt_popup(frame, app),
         AppMode::SftpPrompt => render_sftp_prompt_popup(frame, app),
@@ -362,6 +365,7 @@ fn footer_keybinds(app: &App) -> Vec<(String, &'static str)> {
             ("e".into(), "edit"),
             ("d".into(), "delete"),
             ("x".into(), "kill"),
+            ("R".into(), "reconnect"),
             ("?".into(), "help"),
             ("q".into(), "quit"),
         ],

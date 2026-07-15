@@ -50,6 +50,7 @@ impl App {
         match self.mode {
             AppMode::KeybindEditor => self.handle_key_keybind_editor(key),
             AppMode::Settings => self.handle_key_settings(key),
+            AppMode::TunnelReconnectSettings => self.handle_key_tunnel_reconnect_settings(key),
             AppMode::ConfirmQuit => self.handle_key_confirm_quit(key),
             AppMode::Help => self.handle_key_help(key),
             AppMode::ConfirmDiscard => self.handle_key_confirm_discard(key),

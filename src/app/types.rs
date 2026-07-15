@@ -112,6 +112,16 @@ pub const SETTINGS_ITEMS: [(&str, &str); 5] = [
     ),
 ];
 
+/// Global keep-alive reconnect knobs (Tunnels tab, `R`). Row index maps to
+/// [`crate::app::App::tunnel_reconnect_field_display`].
+pub const TUNNEL_RECONNECT_FIELDS: [(&str, &str); 5] = [
+    ("Max attempts", "0 = unlimited retries"),
+    ("Initial delay", "first retry wait (seconds)"),
+    ("Max delay", "backoff cap (seconds)"),
+    ("Stable time", "uptime before a spawn counts as up"),
+    ("Jitter", "random spread around each delay"),
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppMode {
     Normal,
@@ -134,6 +144,8 @@ pub enum AppMode {
     KeybindEditor,
     /// Settings overlay: checkbox list of appearance toggles.
     Settings,
+    /// Keep-alive reconnect backoff settings (Tunnels tab).
+    TunnelReconnectSettings,
     /// Quit confirmation dialog.
     ConfirmQuit,
     TunnelForm,

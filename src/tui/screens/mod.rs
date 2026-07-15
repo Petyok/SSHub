@@ -14,3 +14,4 @@ pub mod settings;
 pub mod sftp;
 pub mod tag_filter;
 pub mod tunnels;
+pub mod tunnel_reconnect;
