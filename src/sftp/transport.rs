@@ -353,10 +353,8 @@ impl SftpTransport for Ssh2Transport {
         })();
         match stream {
             Ok(()) => std::fs::rename(&tmp, local)
-                .map_err(|e| {
-                    // Don't leave the streamed temp behind if the rename fails.
+                .inspect_err(|_| {
                     let _ = std::fs::remove_file(&tmp);
-                    e
                 })
                 .with_context(|| format!("failed to finalize {}", local.display())),
             Err(e) => {

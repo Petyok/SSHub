@@ -112,6 +112,16 @@ pub const SETTINGS_ITEMS: [(&str, &str); 5] = [
     ),
 ];
 
+/// Global keep-alive reconnect knobs (Tunnels tab, `R`). Row index maps to
+/// [`crate::app::App::tunnel_reconnect_field_display`].
+pub const TUNNEL_RECONNECT_FIELDS: [(&str, &str); 5] = [
+    ("Max attempts", "0 = unlimited retries"),
+    ("Initial delay", "first retry wait (seconds)"),
+    ("Max delay", "backoff cap (seconds)"),
+    ("Stable time", "uptime before a spawn counts as up"),
+    ("Jitter", "random spread around each delay"),
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppMode {
     Normal,
@@ -134,6 +144,8 @@ pub enum AppMode {
     KeybindEditor,
     /// Settings overlay: checkbox list of appearance toggles.
     Settings,
+    /// Keep-alive reconnect backoff settings (Tunnels tab).
+    TunnelReconnectSettings,
     /// Quit confirmation dialog.
     ConfirmQuit,
     TunnelForm,
@@ -234,16 +246,18 @@ pub enum TunnelFormField {
     RemotePort,
     Host,
     Label,
+    AutoConnect,
 }
 
 impl TunnelFormField {
-    const ALL: [TunnelFormField; 6] = [
+    const ALL: [TunnelFormField; 7] = [
         TunnelFormField::Host,
         TunnelFormField::Type,
         TunnelFormField::LocalPort,
         TunnelFormField::RemoteHost,
         TunnelFormField::RemotePort,
         TunnelFormField::Label,
+        TunnelFormField::AutoConnect,
     ];
 
     pub(crate) fn next(self) -> Self {
@@ -254,6 +268,10 @@ impl TunnelFormField {
     pub(crate) fn prev(self) -> Self {
         let idx = Self::ALL.iter().position(|f| *f == self).unwrap_or(0);
         Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+
+    pub fn is_toggle(self) -> bool {
+        matches!(self, Self::AutoConnect)
     }
 }
 
@@ -266,6 +284,7 @@ pub struct TunnelFormEdit {
     pub remote_port: String,
     pub host_id: Option<i64>,
     pub label: String,
+    pub auto_connect: bool,
     pub active_field: TunnelFormField,
     pub editing: bool,
     pub edit_snapshot: String,

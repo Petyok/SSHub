@@ -154,6 +154,8 @@ pub struct App {
     pub keybind_editor: Option<KeybindEditor>,
     /// Highlighted row in the Settings overlay.
     pub settings_selected: usize,
+    /// Highlighted row in the tunnel reconnect settings overlay.
+    pub tunnel_reconnect_selected: usize,
     pub active_tab: usize,
     pub palette_query: String,
     pub palette_selected: usize,
@@ -189,6 +191,8 @@ pub struct App {
     pub tunnel_form: Option<TunnelFormEdit>,
     pub tunnel_notice: Option<String>,
     pub tunnel_manager: crate::tunnel::TunnelManager,
+    /// One-shot startup hook for `auto_connect` tunnels.
+    tunnels_auto_started: bool,
     pub terminal_area: ratatui::layout::Rect,
     /// Embedded PTY sessions. Multiple may coexist (Ctrl+T opens a new tab).
     /// Empty when not in `Connecting` / `Session` mode.
@@ -293,6 +297,7 @@ impl App {
             collapsed_groups: std::collections::HashSet::new(),
             keybind_editor: None,
             settings_selected: 0,
+            tunnel_reconnect_selected: 0,
             active_tab: 0,
             palette_query: String::new(),
             palette_selected: 0,
@@ -324,6 +329,7 @@ impl App {
             tunnel_form: None,
             tunnel_notice: None,
             tunnel_manager: crate::tunnel::TunnelManager::new(),
+            tunnels_auto_started: false,
             terminal_area: ratatui::layout::Rect::default(),
             sessions: Vec::new(),
             active_session: None,

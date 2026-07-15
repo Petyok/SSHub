@@ -33,6 +33,7 @@ impl App {
                     remote_port: String::new(),
                     host_id: None,
                     label: String::new(),
+                    auto_connect: false,
                     active_field: TunnelFormField::Host,
                     editing: true,
                     edit_snapshot: String::new(),
@@ -51,6 +52,7 @@ impl App {
                         remote_port: tunnel.remote_port.to_string(),
                         host_id: tunnel.host_id,
                         label: tunnel.label.clone().unwrap_or_default(),
+                        auto_connect: tunnel.auto_connect,
                         active_field: TunnelFormField::Host,
                         editing: true,
                         edit_snapshot: String::new(),
@@ -75,6 +77,10 @@ impl App {
             }
             _ if self.is_action(KeyAction::ToggleTunnel, &key) => self.toggle_tunnel()?,
             _ if self.is_action(KeyAction::TunnelKill, &key) => self.kill_selected_tunnel()?,
+            KeyCode::Char('R') => {
+                self.tunnel_reconnect_selected = 0;
+                self.mode = AppMode::TunnelReconnectSettings;
+            }
             _ if self.is_action(KeyAction::Help, &key) => {
                 self.pre_help_mode = Some(self.mode);
                 self.mode = AppMode::Help;
@@ -94,8 +100,11 @@ impl App {
         let host_name = host.as_ref().map(|h| h.name.as_str()).unwrap_or("unknown");
         let label = tunnel.label.as_deref().unwrap_or("");
 
-        if self.tunnel_manager.is_running(tunnel.id) {
-            self.tunnel_manager.stop(tunnel.id)?;
+        if self.tunnel_manager.is_running(tunnel.id)
+            || self.tunnel_manager.has_child(tunnel.id)
+            || self.tunnel_manager.is_reconnecting(tunnel.id)
+        {
+            self.tunnel_manager.stop_user(tunnel.id)?;
             self.tunnel_notice = Some(format!("Stopped tunnel :{}", tunnel.local_port));
             let _ = self.store.log_auth_event(
                 host_name,
@@ -106,7 +115,15 @@ impl App {
                 None,
             );
         } else {
-            match self.tunnel_manager.start(&tunnel, host.as_ref()) {
+            self.tunnel_manager.resume_auto_reconnect(tunnel.id);
+            let (secret, _) = host
+                .as_ref()
+                .map(|h| resolve_pending_secret_for_managed(h, self.password_store.as_ref()))
+                .unwrap_or((None, String::new()));
+            match self
+                .tunnel_manager
+                .start(&tunnel, host.as_ref(), secret.as_ref())
+            {
                 Ok(()) => {
                     self.tunnel_notice = Some(format!("Started tunnel :{}", tunnel.local_port));
                     let _ = self.store.log_auth_event(
@@ -120,14 +137,41 @@ impl App {
                 }
                 Err(e) => {
                     self.tunnel_notice = Some(format!("Failed: {e:#}"));
-                    let _ = self.store.log_auth_event(
-                        host_name,
-                        None,
-                        "tunnel",
-                        "fail",
-                        &format!("tunnel failed :{} — {e:#}", tunnel.local_port),
-                        None,
-                    );
+                    if tunnel.auto_connect {
+                        let err = format!("{e:#}");
+                        let gave_up = self.tunnel_manager.on_auto_start_failed(
+                            tunnel.id,
+                            &err,
+                            &self.config.tunnel_reconnect,
+                        );
+                        if let Some(ev) = gave_up {
+                            self.log_tunnel_reconnect_events(
+                                std::slice::from_ref(&ev),
+                                std::slice::from_ref(&tunnel),
+                            );
+                        } else {
+                            let _ = self.store.log_auth_event(
+                                host_name,
+                                None,
+                                "tunnel",
+                                "fail",
+                                &format!(
+                                    "tunnel start failed :{} {} — {e:#}",
+                                    tunnel.local_port, label
+                                ),
+                                None,
+                            );
+                        }
+                    } else {
+                        let _ = self.store.log_auth_event(
+                            host_name,
+                            None,
+                            "tunnel",
+                            "fail",
+                            &format!("tunnel failed :{} — {e:#}", tunnel.local_port),
+                            None,
+                        );
+                    }
                 }
             }
         }
@@ -135,16 +179,19 @@ impl App {
     }
 
     pub(crate) fn kill_selected_tunnel(&mut self) -> Result<()> {
-        let Some(tunnel) = self.tunnels.get(self.tunnel_selected) else {
+        let Some(tunnel) = self.tunnels.get(self.tunnel_selected).cloned() else {
             return Ok(());
         };
-        if self.tunnel_manager.is_running(tunnel.id) {
-            let host_name = tunnel
-                .host_id
-                .and_then(|hid| self.store.get_host(hid).ok().flatten())
-                .map(|h| h.name)
-                .unwrap_or_else(|| "unknown".into());
-            self.tunnel_manager.stop(tunnel.id)?;
+        let host_name = tunnel
+            .host_id
+            .and_then(|hid| self.store.get_host(hid).ok().flatten())
+            .map(|h| h.name)
+            .unwrap_or_else(|| "unknown".into());
+        if self.tunnel_manager.is_running(tunnel.id)
+            || self.tunnel_manager.has_child(tunnel.id)
+            || self.tunnel_manager.is_reconnecting(tunnel.id)
+        {
+            self.tunnel_manager.stop_user(tunnel.id)?;
             self.tunnel_notice = Some(format!("Killed tunnel :{}", tunnel.local_port));
             let _ = self.store.log_auth_event(
                 &host_name,
@@ -186,7 +233,14 @@ impl App {
             KeyCode::Enter | KeyCode::Char(' ') if field == TunnelFormField::Host => {
                 self.open_tunnel_host_picker();
             }
+            KeyCode::Char(' ') if field == TunnelFormField::AutoConnect => {
+                if let Some(form) = self.tunnel_form.as_mut() {
+                    form.auto_connect = !form.auto_connect;
+                    form.dirty = true;
+                }
+            }
             // Single-step model: Enter on the last field saves.
+            KeyCode::Enter if field == TunnelFormField::AutoConnect => self.save_tunnel_form()?,
             KeyCode::Enter if field == TunnelFormField::Label => self.save_tunnel_form()?,
             KeyCode::Enter | KeyCode::Tab | KeyCode::Down if key.modifiers.is_empty() => {
                 if let Some(form) = self.tunnel_form.as_mut() {
@@ -212,6 +266,10 @@ impl App {
                     match form.active_field {
                         TunnelFormField::Type => {
                             form.tunnel_type = form.tunnel_type.next();
+                            form.dirty = true;
+                        }
+                        TunnelFormField::AutoConnect => {
+                            form.auto_connect = !form.auto_connect;
                             form.dirty = true;
                         }
                         // The server field is chosen via the searchable picker.
@@ -402,7 +460,7 @@ impl App {
                 Some(form.label)
             },
             // Preserved below when editing an existing tunnel.
-            auto_connect: false,
+            auto_connect: form.auto_connect,
         };
 
         match form.editing_id {
@@ -411,16 +469,15 @@ impl App {
                 self.tunnel_notice = Some(format!("Created tunnel :{local_port}"));
             }
             Some(id) => {
-                // Recreate, carrying over fields the form doesn't expose.
-                let mut new = new;
-                if let Some(existing) = self.tunnels.iter().find(|t| t.id == id) {
-                    new.auto_connect = existing.auto_connect;
-                }
                 // Editing recreates the row under a fresh id, so a still-running
                 // child would be orphaned (holding its local port, invisible to
                 // the UI). Stop it first, mirroring the delete path.
-                if self.tunnel_manager.is_running(id) {
-                    self.tunnel_manager.stop(id)?;
+                if self.tunnel_manager.is_running(id)
+                    || self.tunnel_manager.has_child(id)
+                    || self.tunnel_manager.is_reconnecting(id)
+                    || self.tunnel_manager.is_gave_up(id)
+                {
+                    self.tunnel_manager.stop_user(id)?;
                 }
                 self.store.delete_tunnel(id)?;
                 self.store.create_tunnel(&new)?;
@@ -430,6 +487,200 @@ impl App {
 
         self.reload_tunnels()?;
         self.mode = AppMode::Normal;
+        Ok(())
+    }
+
+    pub(crate) fn bootstrap_auto_connect_tunnels(&mut self) -> Result<()> {
+        self.reload_tunnels()?;
+        let tunnels: Vec<_> = self
+            .tunnels
+            .iter()
+            .filter(|t| t.auto_connect)
+            .cloned()
+            .collect();
+        for tunnel in tunnels {
+            if self.tunnel_manager.is_running(tunnel.id)
+                || self.tunnel_manager.has_child(tunnel.id)
+                || self.tunnel_manager.is_reconnecting(tunnel.id)
+            {
+                continue;
+            }
+            let host = tunnel
+                .host_id
+                .and_then(|hid| self.store.get_host(hid).ok().flatten());
+            let host_name = host.as_ref().map(|h| h.name.as_str()).unwrap_or("unknown");
+            let label = tunnel.label.as_deref().unwrap_or("");
+            self.tunnel_manager.resume_auto_reconnect(tunnel.id);
+            let (secret, _) = host
+                .as_ref()
+                .map(|h| resolve_pending_secret_for_managed(h, self.password_store.as_ref()))
+                .unwrap_or((None, String::new()));
+            match self
+                .tunnel_manager
+                .start(&tunnel, host.as_ref(), secret.as_ref())
+            {
+                Ok(()) => {
+                    let _ = self.store.log_auth_event(
+                        host_name,
+                        None,
+                        "tunnel",
+                        "launched",
+                        &format!("tunnel started (auto) :{} {}", tunnel.local_port, label),
+                        None,
+                    );
+                }
+                Err(e) => {
+                    let err = format!("{e:#}");
+                    let gave_up = self.tunnel_manager.on_auto_start_failed(
+                        tunnel.id,
+                        &err,
+                        &self.config.tunnel_reconnect,
+                    );
+                    if let Some(ev) = gave_up {
+                        self.log_tunnel_reconnect_events(
+                            std::slice::from_ref(&ev),
+                            std::slice::from_ref(&tunnel),
+                        );
+                    } else {
+                        let _ = self.store.log_auth_event(
+                            host_name,
+                            None,
+                            "tunnel",
+                            "fail",
+                            &format!(
+                                "tunnel auto-start failed :{} {} — {e:#}",
+                                tunnel.local_port, label
+                            ),
+                            None,
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn log_tunnel_reconnect_events(
+        &self,
+        events: &[crate::tunnel::ReconnectEvent],
+        tunnels: &[crate::store::Tunnel],
+    ) {
+        for ev in events {
+            let tunnel = tunnels.iter().find(|t| t.id == ev.tunnel_id());
+            let (host_name, port, label) = tunnel
+                .map(|t| {
+                    let name = t
+                        .host_id
+                        .and_then(|hid| self.store.get_host(hid).ok().flatten())
+                        .map(|h| h.name)
+                        .unwrap_or_else(|| "unknown".into());
+                    (name, t.local_port, t.label.clone().unwrap_or_default())
+                })
+                .unwrap_or_else(|| ("unknown".into(), 0, String::new()));
+
+            match ev {
+                crate::tunnel::ReconnectEvent::Attempt { attempt, .. } => {
+                    let _ = self.store.log_auth_event(
+                        &host_name,
+                        None,
+                        "tunnel",
+                        "retry",
+                        &format!("tunnel reconnecting :{} {} attempt {attempt}", port, label),
+                        None,
+                    );
+                }
+                crate::tunnel::ReconnectEvent::Reconnected { .. } => {
+                    let _ = self.store.log_auth_event(
+                        &host_name,
+                        None,
+                        "tunnel",
+                        "launched",
+                        &format!("tunnel reconnected :{} {}", port, label),
+                        None,
+                    );
+                }
+                crate::tunnel::ReconnectEvent::GaveUp {
+                    attempts, error, ..
+                } => {
+                    let _ = self.store.log_auth_event(
+                        &host_name,
+                        None,
+                        "tunnel",
+                        "fail",
+                        &format!(
+                            "tunnel gave up :{} {} after {attempts} attempts — {error}",
+                            port, label
+                        ),
+                        None,
+                    );
+                }
+            }
+        }
+    }
+
+    pub(crate) fn tick_tunnel_reconnect(&mut self) -> Result<()> {
+        if self.should_quit {
+            return Ok(());
+        }
+        let cfg = self.config.tunnel_reconnect.clone();
+        let tunnels = self.tunnels.clone();
+        let store = Arc::clone(&self.store);
+        let events = self.tunnel_manager.tick_reconnect(
+            &tunnels,
+            &cfg,
+            |host_id| store.get_host(host_id).ok().flatten(),
+            |host| resolve_pending_secret_for_managed(host, self.password_store.as_ref()).0,
+        );
+        self.log_tunnel_reconnect_events(&events, &tunnels);
+        Ok(())
+    }
+
+    pub(crate) fn tick_tunnels(&mut self) -> Result<()> {
+        if !self.tunnels_auto_started {
+            self.bootstrap_auto_connect_tunnels()?;
+            self.tunnels_auto_started = true;
+        }
+        if self.tunnel_manager.needs_tunnel_list() && self.tunnels.is_empty() {
+            self.reload_tunnels()?;
+        }
+        let health_events = self
+            .tunnel_manager
+            .check_health(&self.tunnels, &self.config.tunnel_reconnect);
+        self.log_tunnel_reconnect_events(&health_events, &self.tunnels);
+        self.tick_tunnel_reconnect()
+    }
+
+    pub(crate) fn handle_key_tunnel_reconnect_settings(&mut self, key: KeyEvent) -> Result<()> {
+        use crate::app::TUNNEL_RECONNECT_FIELDS;
+        let n = TUNNEL_RECONNECT_FIELDS.len();
+        match key.code {
+            _ if self.is_action(KeyAction::Cancel, &key) => self.mode = AppMode::Normal,
+            _ if self.is_action(KeyAction::MoveDown, &key) => {
+                self.tunnel_reconnect_selected = (self.tunnel_reconnect_selected + 1) % n;
+            }
+            _ if self.is_action(KeyAction::MoveUp, &key) => {
+                self.tunnel_reconnect_selected = (self.tunnel_reconnect_selected + n - 1) % n;
+            }
+            KeyCode::Char('+') | KeyCode::Char('=') | KeyCode::Right => {
+                self.config
+                    .tunnel_reconnect
+                    .adjust_field(self.tunnel_reconnect_selected, 1);
+                self.save_config_quietly();
+            }
+            KeyCode::Char('-') | KeyCode::Char('_') | KeyCode::Left => {
+                self.config
+                    .tunnel_reconnect
+                    .adjust_field(self.tunnel_reconnect_selected, -1);
+                self.save_config_quietly();
+            }
+            KeyCode::Char('*') => {
+                self.config
+                    .tunnel_reconnect
+                    .reset_field(self.tunnel_reconnect_selected);
+                self.save_config_quietly();
+            }
+            _ => {}
+        }
         Ok(())
     }
 }

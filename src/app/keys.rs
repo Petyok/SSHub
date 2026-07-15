@@ -50,6 +50,7 @@ impl App {
         match self.mode {
             AppMode::KeybindEditor => self.handle_key_keybind_editor(key),
             AppMode::Settings => self.handle_key_settings(key),
+            AppMode::TunnelReconnectSettings => self.handle_key_tunnel_reconnect_settings(key),
             AppMode::ConfirmQuit => self.handle_key_confirm_quit(key),
             AppMode::Help => self.handle_key_help(key),
             AppMode::ConfirmDiscard => self.handle_key_confirm_discard(key),
@@ -509,9 +510,8 @@ impl App {
                     self.enter_group_manage()?;
                 }
                 Some(PendingDelete::Tunnel { id, label }) => {
-                    if self.tunnel_manager.is_running(id) {
-                        self.tunnel_manager.stop(id)?;
-                    }
+                    let _ = self.tunnel_manager.stop_user(id);
+                    self.tunnel_manager.clear_user_stopped(id);
                     self.store.delete_tunnel(id)?;
                     self.tunnel_notice = Some(format!("Tunnel '{label}' deleted"));
                     self.reload_tunnels()?;

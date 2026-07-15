@@ -74,6 +74,67 @@ pub fn resolve_pending_secret(
     )
 }
 
+/// Same as [`resolve_pending_secret`] but for a [`ManagedHost`] row (tunnels).
+pub fn resolve_pending_secret_for_managed(
+    managed: &crate::store::ManagedHost,
+    password_store: &dyn crate::credentials::PasswordStore,
+) -> (Option<crate::session::PendingSecret>, String) {
+    if managed.has_password {
+        let key = crate::credentials::host_key(managed.id);
+        return match password_store.get(&key) {
+            Ok(Some(pw)) => (
+                Some(crate::session::PendingSecret::Password(pw)),
+                format!("auth: using stored password ({key})"),
+            ),
+            Ok(None) => (
+                None,
+                format!(
+                    "auth: has_password=true but keyring entry {key} is empty — tunnel cannot prompt"
+                ),
+            ),
+            Err(e) => (
+                None,
+                format!("auth: keyring lookup failed for {key}: {e:#}"),
+            ),
+        };
+    }
+
+    if let Some(identity) = managed.identity.as_ref() {
+        if identity.has_password {
+            let key = crate::credentials::identity_key(identity.id);
+            let has_key = identity.private_key.is_some();
+            return match password_store.get(&key) {
+                Ok(Some(pw)) => (
+                    Some(if has_key {
+                        crate::session::PendingSecret::Passphrase(pw)
+                    } else {
+                        crate::session::PendingSecret::Password(pw)
+                    }),
+                    format!(
+                        "auth: using stored {} ({key})",
+                        if has_key { "passphrase" } else { "password" }
+                    ),
+                ),
+                Ok(None) => (
+                    None,
+                    format!(
+                        "auth: identity has_password=true but keyring entry {key} is empty — tunnel cannot prompt"
+                    ),
+                ),
+                Err(e) => (
+                    None,
+                    format!("auth: keyring lookup failed for {key}: {e:#}"),
+                ),
+            };
+        }
+    }
+
+    (
+        None,
+        "auth: no stored credential — tunnel uses agent / unlocked key only (BatchMode)".into(),
+    )
+}
+
 /// Capture host metadata used by the embedded session header + connect
 /// animation.
 pub(crate) fn session_meta_for_entry(entry: &HostEntry) -> crate::session::SessionMeta {

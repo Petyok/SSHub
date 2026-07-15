@@ -20,6 +20,7 @@ fn mode_label(mode: AppMode) -> &'static str {
         AppMode::FieldPicker => "Select",
         AppMode::KeybindEditor => "Keybindings",
         AppMode::Settings => "Settings",
+        AppMode::TunnelReconnectSettings => "Tunnel reconnect",
         AppMode::ConfirmQuit => "Quit?",
         AppMode::ConfirmDelete => "Confirm delete",
         AppMode::ConfirmDiscard => "Save changes?",

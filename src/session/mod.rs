@@ -885,7 +885,7 @@ fn line_before_cursor(screen: &vt100::Screen) -> String {
     for col in 0..cursor_col {
         if let Some(cell) = screen.cell(row, col) {
             if cell.has_contents() {
-                out.push_str(&cell.contents());
+                out.push_str(cell.contents());
             } else {
                 out.push(' ');
             }
@@ -926,7 +926,7 @@ fn current_screen_tail(screen: &vt100::Screen) -> String {
         for col in 0..cols {
             if let Some(cell) = screen.cell(row, col) {
                 if cell.has_contents() {
-                    out.push_str(&cell.contents());
+                    out.push_str(cell.contents());
                 }
             }
         }

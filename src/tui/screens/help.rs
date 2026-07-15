@@ -51,8 +51,13 @@ fn help_lines() -> Vec<Line<'static>> {
         entry("a", "Add new tunnel"),
         entry("e", "Edit selected tunnel"),
         entry("d", "Delete tunnel"),
-        entry("Enter", "Start / stop tunnel"),
+        entry("Enter", "Start / stop tunnel (cancels reconnect while retrying)"),
         entry("x", "Kill tunnel process"),
+        entry("R", "Keep-alive reconnect settings (backoff, max retries)"),
+        entry(
+            "",
+            "Keep alive (tunnel form): auto-start on launch + reconnect with backoff after unexpected exit.",
+        ),
         entry(
             "Enter/Space",
             "In form on SSH server: pick host (searchable)",

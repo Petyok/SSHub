@@ -119,7 +119,7 @@ mod tests {
     /// seconds later; each delivery resets debounce, so use a generous bound.
     fn debounce_burst_timeout() -> Duration {
         if cfg!(target_os = "macos") {
-            Duration::from_secs(15)
+            Duration::from_secs(60)
         } else {
             watcher_event_timeout()
         }
@@ -148,29 +148,39 @@ mod tests {
         file.flush().unwrap();
 
         let rx = spawn_config_watcher(file.path()).unwrap();
-        // Let the watcher thread subscribe before the write burst.
-        thread::sleep(Duration::from_millis(100));
+        let settle = if cfg!(target_os = "macos") {
+            Duration::from_millis(500)
+        } else {
+            Duration::from_millis(100)
+        };
+        thread::sleep(settle);
         for i in 0..5 {
             writeln!(file, "Host line-{i}").unwrap();
             file.flush().unwrap();
             let _ = file.as_file().sync_all();
-            thread::sleep(Duration::from_millis(20));
+            thread::sleep(Duration::from_millis(50));
         }
 
-        let first = rx
-            .recv_timeout(debounce_burst_timeout())
-            .expect("first debounced event");
-        assert_eq!(first, WatchEvent::ConfigChanged);
-
-        let silence = if cfg!(target_os = "macos") {
-            WATCHER_DEBOUNCE * 2
-        } else {
-            WATCHER_DEBOUNCE
-        };
-        match rx.recv_timeout(silence) {
-            Err(RecvTimeoutError::Timeout) => {}
-            other => panic!("expected single debounced event, got {other:?}"),
+        let window = debounce_burst_timeout();
+        let deadline = Instant::now() + window;
+        let mut events = 0u32;
+        while Instant::now() < deadline {
+            match rx.recv_timeout(Duration::from_millis(200)) {
+                Ok(WatchEvent::ConfigChanged) => {
+                    events += 1;
+                    assert!(
+                        events <= 1,
+                        "expected single debounced event, got at least {events}"
+                    );
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
         }
+        assert_eq!(
+            events, 1,
+            "expected exactly one debounced event within {window:?}"
+        );
     }
 
     #[test]
