@@ -147,12 +147,10 @@ fn host_detail_view(app: &App, entry: &HostEntry, _host_idx: usize) -> Vec<Line<
         detail_line("Last connected", last),
     ];
 
-    if !entry.is_launcher() {
-        lines.push(detail_line(
-            "Session log",
-            entry.session_logging_override().label().to_string(),
-        ));
-    }
+    lines.push(detail_line(
+        "Session log",
+        entry.session_logging_override().label().to_string(),
+    ));
 
     lines.extend([
         Line::from(""),
