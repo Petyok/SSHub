@@ -46,6 +46,7 @@ This wiki is a practical map for engineers working on the codebase. Start here, 
 │   ├── support/            # FixtureResolver, MockLauncher
 │   └── fixtures/           # ssh_config / ssh -G fixtures
 └── docs/
+    ├── implementation-flow.md # canonical dev checklist (issue → PR → merge)
     ├── host-sync-design.md # planned P2P sync feature (not implemented)
     └── termius-export-format.md
 ```

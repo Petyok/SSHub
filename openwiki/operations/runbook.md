@@ -2,6 +2,8 @@
 
 Day-to-day operations for SSHub users and operators.
 
+**Contributor workflow** (issue → PR → merge, GitHub comment rules): [docs/implementation-flow.md](../../docs/implementation-flow.md) on `development`.
+
 ## Data paths
 
 | Resource      | Default path                                              |
