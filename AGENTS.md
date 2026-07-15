@@ -6,6 +6,8 @@ This repository uses OpenWiki for recurring code documentation. Start with `open
 
 Implementation flow (issue → PR → merge): [docs/implementation-flow.md](docs/implementation-flow.md).
 
+When posting GitHub issue/PR comments, identify the model and platform (`_Written by … on behalf of the maintainer._`). See implementation-flow § GitHub comments.
+
 The scheduled OpenWiki GitHub Actions workflow regenerates this wiki by default. After each automated or manual update, validate and correct pages against the codebase before merge — automated output is a starting point, not the source of truth.
 
 <!-- OPENWIKI:END -->

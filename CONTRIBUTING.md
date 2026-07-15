@@ -29,6 +29,9 @@ unannounced parallel work has already produced duplicate implementations of
 the same feature. A claimed issue with no visible activity for two weeks is
 considered free again.
 
+If an **AI agent** leaves the claim comment, it **must** name the model and
+platform — see [docs/implementation-flow.md § GitHub comments](docs/implementation-flow.md#github-comments-ai-agents).
+
 ## Making changes
 
 1. Create a branch from `development` (not `main`)
@@ -59,9 +62,33 @@ considered free again.
 
 ## AI involvement
 
-All pull requests and issues in this repo are reviewed and triaged through
-Claude (Opus 4.8 or Fable 5). Comments signed by Claude are written by the
-model on behalf of the maintainer.
+This repo is heavily agent-assisted. Maintainers and agents triage issues and
+review PRs together.
+
+### GitHub comments — **required for agents**
+
+Any comment on an **issue or pull request** written by a coding agent **must**
+identify the **model and platform**. Examples:
+
+```text
+Taking this — working on `feature/foo`.
+
+_Written by Composer (Cursor) on behalf of the maintainer._
+```
+
+```text
+Taking this issue — implementing tunnel auto-reconnect (Composer / Cursor).
+```
+
+- Use a real model name (`Claude Opus 4.8`, `Claude Fable 5`, `Composer`, …),
+  not “AI” or “the assistant”.
+- Add the tool when relevant (`Cursor`, `Claude Code`, …).
+- Human comments do not need a signature.
+
+Full rules: [docs/implementation-flow.md](docs/implementation-flow.md#github-comments-ai-agents).
+
+PR descriptions may note agent involvement but are not a substitute for signed
+issue/PR **comments** when an agent posts them.
 
 ## Code style
 

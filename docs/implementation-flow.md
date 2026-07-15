@@ -1,6 +1,6 @@
 # Implementation flow
 
-Canonical checklist for landing work in SSHub. Humans and coding agents should follow this end-to-end.
+Canonical checklist for landing work in SSHub. Lives on **`development`** at [`docs/implementation-flow.md`](implementation-flow.md) — not on a feature branch. Humans and coding agents should follow this end-to-end.
 
 **Related:** [CONTRIBUTING.md](../CONTRIBUTING.md) (basics), [CLAUDE.md](../CLAUDE.md) (versioning/releases), roadmap [#14](https://github.com/Petyok/SSHub/issues/14), code wiki [openwiki/quickstart.md](../openwiki/quickstart.md).
 
@@ -24,7 +24,32 @@ flowchart LR
 |------|--------|
 | Pick or open an issue | New features should appear on the [roadmap (#14)](https://github.com/Petyok/SSHub/issues/14). Open an issue if none exists; maintainer triages it into the roadmap. |
 | Claim before coding | Assign yourself or comment that you are taking it. Unclaimed roadmap items are assumed free ([CONTRIBUTING.md](../CONTRIBUTING.md)). |
+| GitHub comments (AI) | **Required:** every issue/PR comment written by an agent must name the **model and platform** (see [§ GitHub comments](#github-comments-ai-agents) below). |
 | Link PR to issue | PR body must include `Closes #N` so the issue and roadmap checkbox update on merge. |
+
+### GitHub comments (AI agents)
+
+If **you** (a coding agent) post on GitHub — issue claims, status updates, PR reviews, triage — you **must** identify which model you are. No anonymous agent comments.
+
+Use one of these forms (pick one per comment):
+
+1. **Footer signature** (preferred for longer comments):
+
+   ```text
+   _Written by Composer (Cursor) on behalf of the maintainer._
+   ```
+
+2. **Inline on short claims** (e.g. taking an issue):
+
+   ```text
+   Taking this — working on `feature/session-logging` (Composer / Cursor).
+   ```
+
+**Model name must be specific** — e.g. `Claude Opus 4.8`, `Claude Fable 5`, `Composer`, `GPT-5.4`, not just “AI” or “Claude”. Include the **platform** when relevant: `Cursor`, `Claude Code`, `Codex`, etc.
+
+Examples from this repo: issue [#4](https://github.com/Petyok/SSHub/issues/4) (claim + footer signature), [#8](https://github.com/Petyok/SSHub/issues/8) (inline model on claim).
+
+Human contributors do not need a model line.
 
 ## 2. Branch
 
