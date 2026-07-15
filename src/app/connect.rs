@@ -34,10 +34,8 @@ impl App {
         // host key: otherwise ssh (with SSH_ASKPASS_REQUIRE=force) would ask
         // the askpass helper to confirm the fingerprint, get the password back
         // instead of "yes", and deadlock. Changed keys are still refused.
-        let session_argv = prepare_session_connect_argv(
-            session_argv_for_entry(&entry),
-            pending_secret.is_some(),
-        );
+        let session_argv =
+            prepare_session_connect_argv(session_argv_for_entry(&entry), pending_secret.is_some());
 
         // Surface the credential decision so it's visible in the SSH log
         // panel after the session ends.

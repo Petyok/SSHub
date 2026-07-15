@@ -114,10 +114,7 @@ pub fn inject_mosh_ssh_accept_new(mut argv: Vec<String>) -> Vec<String> {
     }
 
     if argv.len() >= 2 {
-        argv.insert(
-            1,
-            format!("--ssh=ssh -o {ACCEPT_NEW_SSH_OPT}"),
-        );
+        argv.insert(1, format!("--ssh=ssh -o {ACCEPT_NEW_SSH_OPT}"));
     }
     argv
 }
