@@ -31,9 +31,22 @@ pub fn render_audit(frame: &mut Frame, area: Rect, app: &App) {
         app.audit_range,
     );
 
-    // Row 1: blank separator
-    // Row 2: Table header
-    let header_y = area.y + 2;
+    let mut body_y = filter_y + 1;
+    if let Some(event) = app.auth_events_cache.get(app.audit_selected) {
+        let note = audit_note(event);
+        if !note.is_empty() {
+            buf.set_string(
+                inner_x,
+                body_y,
+                crate::tui::text::ellipsize(&format!("note: {note}"), inner_w as usize),
+                note_detail_style(&event.status),
+            );
+            body_y += 1;
+        }
+    }
+
+    // Table header (after optional note detail)
+    let header_y = body_y;
     if header_y >= area.y + area.height {
         return;
     }
@@ -222,15 +235,29 @@ fn render_event_row(
     );
     cx += result_w - 2;
 
-    // NOTE
+    // NOTE — short preview; full text on the detail line above
     let note = audit_note(event);
     let remaining = (x + w).saturating_sub(cx) as usize;
+    let preview = if remaining < 12 {
+        String::new()
+    } else {
+        crate::tui::text::ellipsize(&note, remaining.min(48))
+    };
     buf.set_string(
         cx,
         y,
-        truncate(&note, remaining),
+        &preview,
         if selected { base_style } else { theme::dim() },
     );
+}
+
+fn note_detail_style(status: &str) -> Style {
+    match status {
+        "fail" => theme::red(),
+        "retry" => theme::amber(),
+        "launched" | "ok" => theme::green(),
+        _ => theme::dim(),
+    }
 }
 
 fn table_columns(total_w: u16) -> Vec<(&'static str, u16)> {

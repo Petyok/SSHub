@@ -434,12 +434,20 @@ impl TunnelManager {
                 continue;
             }
 
-            let attempt = self
+            let stored = self
                 .reconnect
                 .get(&tunnel_id)
-                .map(|r| r.attempt + 1)
-                .unwrap_or(1);
-            events.push(ReconnectEvent::Attempt { tunnel_id, attempt });
+                .map(|r| r.attempt)
+                .unwrap_or(0);
+            let attempt = stored.saturating_add(1);
+            let next_on_fail =
+                tunnel_failure_attempt(stored, 0, cfg.stable_secs.max(1));
+            let is_final_try =
+                cfg.max_attempts > 0 && next_on_fail >= cfg.max_attempts;
+
+            if !is_final_try {
+                events.push(ReconnectEvent::Attempt { tunnel_id, attempt });
+            }
 
             let host = tunnel.host_id.and_then(|hid| resolve_host(hid));
             let secret = host.as_ref().and_then(|h| resolve_secret(h));

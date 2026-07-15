@@ -655,7 +655,7 @@ impl LauncherStore {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT id, host_name, username, via, status, note, log_path, created_at
-                 FROM auth_events ORDER BY created_at DESC LIMIT ?1",
+                 FROM auth_events ORDER BY created_at DESC, id DESC LIMIT ?1",
             )?;
             let rows = stmt.query_map(params![limit as i64], |row| {
                 Ok(AuthEvent {
@@ -699,7 +699,7 @@ impl LauncherStore {
                 sql.push_str(" WHERE ");
                 sql.push_str(&conditions.join(" AND "));
             }
-            sql.push_str(" ORDER BY created_at DESC LIMIT ?");
+            sql.push_str(" ORDER BY created_at DESC, id DESC LIMIT ?");
             // param index for limit
             let limit_idx = 1 + status_filter.is_some() as u8 + since.is_some() as u8;
             sql.push_str(&limit_idx.to_string());

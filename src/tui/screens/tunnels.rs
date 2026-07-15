@@ -29,6 +29,27 @@ pub fn render_tunnels(frame: &mut Frame, area: Rect, app: &App) {
     let summary = format!("{total} tunnels  {active} active");
     buf.set_string(inner_x, summary_y, &summary, theme::mute());
 
+    let mut body_y = summary_y + 1;
+    if let Some(tunnel) = app.tunnels.get(app.tunnel_selected) {
+        let status = app.tunnel_manager.status(tunnel.id);
+        if matches!(status, "gave_up" | "error") {
+            if let Some(detail) = app.tunnel_manager.error_detail(tunnel.id) {
+                if !detail.is_empty() {
+                    buf.set_string(
+                        inner_x,
+                        body_y,
+                        crate::tui::text::ellipsize(
+                            &format!("error: {detail}"),
+                            inner_w as usize,
+                        ),
+                        theme::red(),
+                    );
+                    body_y += 1;
+                }
+            }
+        }
+    }
+
     if let Some(ref notice) = app.tunnel_notice {
         let nx = inner_x + summary.len() as u16 + 3;
         if nx + notice.len() as u16 <= inner_x + inner_w {
@@ -36,9 +57,9 @@ pub fn render_tunnels(frame: &mut Frame, area: Rect, app: &App) {
         }
     }
 
-    // Row 1: blank separator
+    // Row 1: optional error detail for selected tunnel; then blank separator
     // Row 2: Table header
-    let header_y = area.y + 2;
+    let header_y = body_y + 1;
     if header_y >= area.y + area.height {
         return;
     }
@@ -93,7 +114,6 @@ pub fn render_tunnels(frame: &mut Frame, area: Rect, app: &App) {
             app.tunnel_manager.reconnect_attempt(tunnel.id),
             app.tunnel_manager.reconnect_countdown_secs(tunnel.id),
             app.config.tunnel_reconnect.max_attempts,
-            app.tunnel_manager.error_detail(tunnel.id),
         );
     }
 
@@ -129,7 +149,6 @@ fn render_tunnel_row(
     reconnect_attempt: Option<u32>,
     reconnect_countdown: Option<u64>,
     max_attempts: u32,
-    error_detail: Option<&str>,
 ) {
     let running = status == "up";
     let base_style = if selected {
@@ -288,17 +307,6 @@ fn render_tunnel_row(
             label_str = "keep-alive".into();
         } else {
             label_str.push_str("  keep-alive");
-        }
-    }
-    if matches!(status, "error" | "gave_up") {
-        if let Some(detail) = error_detail {
-            if !detail.is_empty() {
-                label_str = if label_str.is_empty() {
-                    detail.to_string()
-                } else {
-                    format!("{label_str}  {detail}")
-                };
-            }
         }
     }
     buf.set_string(
@@ -461,7 +469,13 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
             "type to edit  Tab/\u{2193}: next  {}: save  Esc: close",
             app.save_key_label()
         );
-        buf.set_string(inner.x + 1, hint_y, hint, theme::dim());
+        let avail = inner.width.saturating_sub(2) as usize;
+        buf.set_string(
+            inner.x + 1,
+            hint_y,
+            crate::tui::text::ellipsize(&hint, avail),
+            theme::dim(),
+        );
     }
 }
 
