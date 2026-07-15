@@ -4,6 +4,8 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-16
+
 ### Added
 
 - **Mosh transport** — per-host `Transport` field (`ssh` or `mosh`) in the host form
