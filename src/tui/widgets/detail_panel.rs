@@ -151,6 +151,10 @@ fn host_detail_view(app: &App, entry: &HostEntry, _host_idx: usize) -> Vec<Line<
         "Session log",
         entry.session_logging_override().label().to_string(),
     ));
+    lines.push(detail_line(
+        "Transport",
+        entry.session_transport().label().to_string(),
+    ));
 
     lines.extend([
         Line::from(""),

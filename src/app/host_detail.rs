@@ -82,6 +82,7 @@ impl App {
                 favorite,
                 last_connected,
                 session_logging: edit.session_logging,
+                transport: self.hosts[host_idx].session_transport(),
             };
             self.metadata.upsert(&meta)?;
             if let Some((_, stored_meta)) = self.hosts[host_idx].legacy_mut() {

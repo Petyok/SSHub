@@ -110,6 +110,10 @@ pub fn render_host_form(
                     display_text(&form.remote_command)
                 },
             ),
+            HostFormField::Transport => (
+                "Transport",
+                format!("{} (Space to toggle)", form.transport.label()),
+            ),
             HostFormField::SessionLogging => (
                 "Session log",
                 format!(

@@ -466,6 +466,13 @@ impl HostEntry {
         }
     }
 
+    pub fn session_transport(&self) -> crate::session_transport::SessionTransport {
+        match self {
+            Self::Managed(m) => m.transport,
+            Self::Legacy { meta, .. } => meta.transport,
+        }
+    }
+
     pub fn source(&self) -> HostSource {
         match self {
             Self::Managed(m) => m.source,
@@ -584,6 +591,7 @@ pub struct HostFormEdit {
     pub proxy_jump: String,
     pub forward_agent: bool,
     pub remote_command: String,
+    pub transport: crate::session_transport::SessionTransport,
     pub session_logging: crate::session_log::SessionLoggingOverride,
     pub os_icon_index: usize,
     pub password: String,
@@ -614,14 +622,15 @@ pub enum HostFormField {
     ProxyJump = 7,
     ForwardAgent = 8,
     RemoteCommand = 9,
-    SessionLogging = 10,
-    OsIcon = 11,
-    Password = 12,
-    Username = 13,
+    Transport = 10,
+    SessionLogging = 11,
+    OsIcon = 12,
+    Password = 13,
+    Username = 14,
 }
 
 impl HostFormField {
-    pub const ALL: [HostFormField; 14] = [
+    pub const ALL: [HostFormField; 15] = [
         HostFormField::Address,
         HostFormField::Password,
         HostFormField::Username,
@@ -634,6 +643,7 @@ impl HostFormField {
         HostFormField::ProxyJump,
         HostFormField::ForwardAgent,
         HostFormField::RemoteCommand,
+        HostFormField::Transport,
         HostFormField::SessionLogging,
         HostFormField::OsIcon,
     ];
@@ -673,6 +683,7 @@ impl HostFormField {
             HostFormField::ProxyJump => "ProxyJump",
             HostFormField::ForwardAgent => "Agent forward",
             HostFormField::RemoteCommand => "Startup command",
+            HostFormField::Transport => "Transport",
             HostFormField::SessionLogging => "Session log",
             HostFormField::OsIcon => "OS icon",
             HostFormField::Password => "Password",
@@ -688,7 +699,7 @@ impl HostFormField {
     }
 
     pub(crate) fn is_toggle(self) -> bool {
-        matches!(self, HostFormField::ForwardAgent)
+        matches!(self, HostFormField::ForwardAgent | HostFormField::Transport)
     }
 
     pub(crate) fn is_tri_state(self) -> bool {
@@ -865,7 +876,9 @@ impl HostFormEdit {
             HostFormField::Tags => &self.tags,
             HostFormField::ProxyJump => &self.proxy_jump,
             HostFormField::RemoteCommand => &self.remote_command,
-            HostFormField::ForwardAgent | HostFormField::SessionLogging => "",
+            HostFormField::ForwardAgent
+            | HostFormField::Transport
+            | HostFormField::SessionLogging => "",
             HostFormField::Password => &self.password,
         }
     }
@@ -883,7 +896,9 @@ impl HostFormEdit {
             HostFormField::Tags => &mut self.tags,
             HostFormField::ProxyJump => &mut self.proxy_jump,
             HostFormField::RemoteCommand => &mut self.remote_command,
-            HostFormField::ForwardAgent | HostFormField::SessionLogging => &mut self.address,
+            HostFormField::ForwardAgent
+            | HostFormField::Transport
+            | HostFormField::SessionLogging => &mut self.address,
             HostFormField::Password => &mut self.password,
         }
     }

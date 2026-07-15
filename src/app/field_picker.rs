@@ -223,6 +223,11 @@ impl App {
             form.dirty = true;
             return;
         }
+        if form.field == HostFormField::Transport {
+            form.transport = form.transport.next();
+            form.dirty = true;
+            return;
+        }
         if form.field == HostFormField::SessionLogging {
             form.session_logging = if delta >= 0 {
                 form.session_logging.next()
