@@ -262,6 +262,11 @@ impl Session {
         })
     }
 
+    /// Attach a session log writer after the PTY child is running.
+    pub fn set_log(&mut self, log: crate::session_log::SessionLogWriter) {
+        self.log = Some(log);
+    }
+
     // ── Text selection ────────────────────────────────────────────
 
     /// Begin a selection at visible cell (row, col).

@@ -131,22 +131,30 @@ impl App {
                 self.config.session_logging.enabled,
                 entry.session_logging_override(),
             );
-            let mut log_writer = None;
-            let mut log_path = None;
-            if log_enabled {
-                match crate::config::data_dir() {
-                    Ok(data_dir) => {
-                        let cfg = &self.config.session_logging;
-                        match crate::session_log::SessionLogWriter::open(
-                            &data_dir,
-                            &host_name,
-                            entry.managed_id(),
-                            cfg.max_file_bytes,
-                            cfg.retention_files,
-                        ) {
-                            Ok(w) => {
-                                log_path = Some(w.host_dir().display().to_string());
-                                log_writer = Some(w);
+
+            match crate::session::Session::spawn(config, rows, cols, None) {
+                Ok(mut session) => {
+                    let mut log_path = None;
+                    if log_enabled {
+                        match crate::config::data_dir() {
+                            Ok(data_dir) => {
+                                let cfg = &self.config.session_logging;
+                                match crate::session_log::SessionLogWriter::open(
+                                    &data_dir,
+                                    &host_name,
+                                    entry.managed_id(),
+                                    cfg.max_file_bytes,
+                                    cfg.retention_files,
+                                ) {
+                                    Ok(w) => {
+                                        log_path = Some(w.host_dir().display().to_string());
+                                        session.set_log(w);
+                                    }
+                                    Err(e) => {
+                                        self.host_notice =
+                                            Some(format!("Session logging unavailable: {e:#}"));
+                                    }
+                                }
                             }
                             Err(e) => {
                                 self.host_notice =
@@ -154,14 +162,6 @@ impl App {
                             }
                         }
                     }
-                    Err(e) => {
-                        self.host_notice = Some(format!("Session logging unavailable: {e:#}"));
-                    }
-                }
-            }
-
-            match crate::session::Session::spawn(config, rows, cols, log_writer) {
-                Ok(session) => {
                     self.sessions.push(session);
                     self.active_session = Some(self.sessions.len() - 1);
                     self.mode = AppMode::Connecting;
