@@ -214,7 +214,6 @@ max_file_bytes = 10485760   # rotate at 10 MiB
 retention_files = 50        # keep newest 50 logs per host
 
 [terminal]
-```
 # "kitty", "ghostty", or a custom command template
 launcher = "kitty"
 # custom_command = "alacritty -e ssh {host}"

@@ -227,6 +227,7 @@ mod tests {
                 environment: None,
                 favorite: false,
                 last_connected: None,
+                ..Default::default()
             })
             .unwrap();
 

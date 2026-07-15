@@ -543,8 +543,8 @@ impl LauncherStore {
                 "INSERT INTO hosts
                     (name, label, address, port, tags, notes, environment, proxy_jump, forward_agent,
                      remote_command, favorite, last_connected, source, ssh_config_hash,
-                     created_at, updated_at)
-                 VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?13, ?6, ?7, ?8, ?9, ?10, 'ssh_config', ?11, ?12, ?12)",
+                     session_logging, created_at, updated_at)
+                 VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?13, ?6, ?7, ?8, ?9, ?10, 'ssh_config', ?11, ?14, ?12, ?12)",
                 params![
                     import.name,
                     import.address,
@@ -559,6 +559,7 @@ impl LauncherStore {
                     import.ssh_config_hash,
                     now,
                     import.environment,
+                    import.session_logging.to_db(),
                 ],
             )?;
             if import.favorite {

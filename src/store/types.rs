@@ -224,6 +224,7 @@ pub struct SshConfigHostImport {
     pub environment: Option<String>,
     pub favorite: bool,
     pub last_connected: Option<i64>,
+    pub session_logging: SessionLoggingOverride,
 }
 
 /// Outcome of upserting one imported ssh config host.

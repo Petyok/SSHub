@@ -71,6 +71,7 @@ impl App {
                 self.hosts[host_idx] = HostEntry::Managed(updated);
             }
         } else {
+            let session_logging = self.hosts[host_idx].session_logging_override();
             let meta = crate::metadata::HostMetadata {
                 host_name: host_name.clone(),
                 tags,
@@ -78,7 +79,7 @@ impl App {
                 environment,
                 favorite,
                 last_connected,
-                ..Default::default()
+                session_logging,
             };
             self.metadata.upsert(&meta)?;
             if let Some((_, stored_meta)) = self.hosts[host_idx].legacy_mut() {
