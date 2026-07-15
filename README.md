@@ -4,7 +4,7 @@
 
 A terminal UI for managing and connecting to SSH hosts. Combines your `~/.ssh/config` with a built-in host database, tunnels, key management, and an audit log -- all in one keyboard-driven interface.
 
-> ⚠️ This project is 100% vibe-coded slop made with dynamic workflows using Claude Opus 4.8 + Fable 5. Use at your own risk.
+> ⚠️ This project is 100% vibe-coded slop made with dynamic workflows using Claude Opus 4.8 + Fable 5 + Composer 2.5. Use at your own risk.
 
 ![SSHub demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/hero.gif)
 
@@ -52,10 +52,12 @@ The settings overlay (`Ctrl+H`) — toggle an opaque background, OS logos, quit 
 - **SFTP file transfer** — a dual-pane browser (remote / local) with a staged transfer queue: navigate both sides, queue uploads and downloads (files or whole folders, transferred recursively), and run them with a progress bar. Manage files in place too: delete (`d`), new folder (`n`), rename/move (`R`), and change permissions (`M`, octal chmod)
 - **OS auto-detection** — on first connect a background probe detects the remote distro and the host card renders its logo (Braille art in brand colors), just like Termius
 - **Multiple groups & Favorites** — a host can belong to several groups at once; a reserved Favorites group and a ★ marker in the list, toggled with `f`
-- **Tunnels** — define and manage SSH tunnels (local/remote/dynamic SOCKS). Start, stop, and monitor from the TUI
+- **Tunnels** — define and manage SSH tunnels (local/remote/dynamic SOCKS). Start, stop, and monitor from the TUI. Per-tunnel **keep alive** auto-starts on launch and reconnects dropped forwards with exponential backoff (configurable in `config.toml`).
 - **Keys** — identity management with ssh-agent integration. Add/remove keys from agent, see loaded status
-- **Audit** — log of all connection events with filtering by status (ok/fail) and time range (today/week/month)
-- **Settings overlay** (`Ctrl+H`) — toggle an opaque background (for transparent terminals), OS logos, quit confirmation, and the startup animation
+- **Audit** — log of all connection events with filtering by status (ok/fail) and time range (today/week/month); session connect events record the path to the session log when logging is enabled
+- **Session logging** — opt-in capture of PTY session output to `~/.local/share/sshub/logs/<host-dir>/` (managed hosts use `{name}-{id}`; pure `~/.ssh/config` aliases without a launcher row may share a directory when sanitized names collide). Enable globally in Settings (`Ctrl+H`) or override per host (`inherit` / `on` / `off`). **Logs capture everything echoed to the terminal, including passwords if they appear on screen.**
+- **Mosh transport** — per-host `Transport` field in the host form (`ssh` or `mosh`). Embedded sessions use `mosh` when selected; tunnels and SFTP stay ssh-only.
+- **Settings overlay** (`Ctrl+H`) — toggle session logging, opaque background (for transparent terminals), OS logos, quit confirmation, and the startup animation
 - **Hybrid sources** — hosts from `~/.ssh/config` (read-only) and launcher-managed (full CRUD) merge without duplicates
 - **Import/Export** — import from `~/.ssh/config` or Termius backups; export managed hosts back to ssh config format
 - **Hot reload** — edits to `~/.ssh/config` update the host list live via file watcher
@@ -175,15 +177,16 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | `Shift+E`          | Export to ssh config      |
 | `Shift+T`          | Import from Termius       |
 
-### Tunnels (tab 2)
+### Tunnels (tab 3)
 
-| Key       | Action              |
-|-----------|----------------------|
-| `a`       | Add tunnel           |
-| `e`       | Edit tunnel          |
-| `d`       | Delete tunnel        |
-| `Enter`   | Start / stop tunnel  |
-| `x`       | Kill tunnel process  |
+| Key       | Action                           |
+|-----------|----------------------------------|
+| `a`       | Add tunnel                       |
+| `e`       | Edit tunnel                      |
+| `d`       | Delete tunnel                    |
+| `Enter`   | Start / stop / cancel reconnect  |
+| `R`       | Reconnect settings               |
+| `x`       | Kill tunnel process              |
 
 ### Keys (tab 3)
 
@@ -207,6 +210,18 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 `~/.config/sshub/config.toml`:
 
 ```toml
+[session_logging]
+enabled = false
+max_file_bytes = 10485760   # rotate at 10 MiB
+retention_files = 50        # keep newest 50 logs per host
+
+[tunnel_reconnect]
+max_attempts = 12           # 0 = unlimited retries
+initial_delay_ms = 1000     # 1 s (R overlay edits delays in seconds)
+max_delay_ms = 60000        # 60 s
+stable_secs = 5             # uptime before a spawn counts as up
+jitter_ratio = 0.25
+
 [terminal]
 # "kitty", "ghostty", or a custom command template
 launcher = "kitty"

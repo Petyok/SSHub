@@ -215,11 +215,35 @@ impl App {
         let Some(form) = self.host_form.as_mut() else {
             return;
         };
-        if !form.field.is_picker() && !form.field.is_toggle() {
+        if !form.field.is_picker() && !form.field.is_toggle() && !form.field.is_tri_state() {
             return;
         }
         if form.field == HostFormField::ForwardAgent {
             form.forward_agent = !form.forward_agent;
+            form.dirty = true;
+            return;
+        }
+        if form.field == HostFormField::Transport {
+            form.transport = form.transport.next();
+            form.dirty = true;
+            return;
+        }
+        if form.field == HostFormField::SessionLogging {
+            form.session_logging = if delta >= 0 {
+                form.session_logging.next()
+            } else {
+                match form.session_logging {
+                    crate::session_log::SessionLoggingOverride::Inherit => {
+                        crate::session_log::SessionLoggingOverride::Off
+                    }
+                    crate::session_log::SessionLoggingOverride::On => {
+                        crate::session_log::SessionLoggingOverride::Inherit
+                    }
+                    crate::session_log::SessionLoggingOverride::Off => {
+                        crate::session_log::SessionLoggingOverride::On
+                    }
+                }
+            };
             form.dirty = true;
             return;
         }

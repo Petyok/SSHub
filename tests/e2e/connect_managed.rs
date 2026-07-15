@@ -131,6 +131,7 @@ fn connect_ssh_config_host_uses_alias_mode() {
             environment: None,
             favorite: false,
             last_connected: None,
+            ..Default::default()
         })
         .unwrap();
 

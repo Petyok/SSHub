@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: i64 = 11;
+const SCHEMA_VERSION: i64 = 13;
 
 /// Name of the reserved, auto-created "Favorites" group. Membership in it is the
 /// source of truth for a host's favourite status.
@@ -117,6 +117,14 @@ pub(crate) fn run_migrations(conn: &Connection, launcher_path: &Path) -> Result<
 
     if current < 11 {
         migrate_v10_to_v11(conn)?;
+    }
+
+    if current < 12 {
+        migrate_v11_to_v12(conn)?;
+    }
+
+    if current < 13 {
+        migrate_v12_to_v13(conn)?;
     }
 
     // Runs last so all columns it writes to (e.g. environment) already exist.
@@ -450,6 +458,37 @@ fn migrate_v10_to_v11(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn migrate_v11_to_v12(conn: &Connection) -> Result<()> {
+    let has_hosts_col: bool = conn
+        .prepare("SELECT COUNT(*) FROM pragma_table_info('hosts') WHERE name = 'session_logging'")?
+        .query_row([], |row| row.get::<_, i64>(0))
+        .map(|c| c > 0)?;
+    if !has_hosts_col {
+        conn.execute_batch("ALTER TABLE hosts ADD COLUMN session_logging INTEGER;")?;
+    }
+
+    let has_log_path: bool = conn
+        .prepare("SELECT COUNT(*) FROM pragma_table_info('auth_events') WHERE name = 'log_path'")?
+        .query_row([], |row| row.get::<_, i64>(0))
+        .map(|c| c > 0)?;
+    if !has_log_path {
+        conn.execute_batch("ALTER TABLE auth_events ADD COLUMN log_path TEXT;")?;
+    }
+
+    Ok(())
+}
+
+fn migrate_v12_to_v13(conn: &Connection) -> Result<()> {
+    let has_transport: bool = conn
+        .prepare("SELECT COUNT(*) FROM pragma_table_info('hosts') WHERE name = 'transport'")?
+        .query_row([], |row| row.get::<_, i64>(0))
+        .map(|c| c > 0)?;
+    if !has_transport {
+        conn.execute_batch("ALTER TABLE hosts ADD COLUMN transport TEXT NOT NULL DEFAULT 'ssh';")?;
+    }
+    Ok(())
+}
+
 pub(crate) fn now_ts() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -736,6 +775,28 @@ mod tests {
             })
             .unwrap();
         assert_ne!(reserved_id, user_gid);
+    }
+
+    #[test]
+    fn migration_v13_transport_defaults_ssh() {
+        let dir = temp_dir();
+        let db_path = dir.path().join("launcher.db");
+        let conn = Connection::open(&db_path).unwrap();
+        run_migrations(&conn, &db_path).unwrap();
+        let now = now_ts();
+        conn.execute(
+            "INSERT INTO hosts (name, address, port, source, sort_order, created_at, updated_at)
+             VALUES ('h', '1.2.3.4', 22, 'launcher', 0, ?1, ?1)",
+            params![now],
+        )
+        .unwrap();
+        let transport: String = conn
+            .query_row("SELECT transport FROM hosts WHERE name = 'h'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(transport, "ssh");
+        migrate_v12_to_v13(&conn).unwrap();
     }
 
     #[test]

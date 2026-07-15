@@ -11,7 +11,11 @@ use crate::tui::theme;
 /// `&[("↑↓", "select"), ("↵", "connect"), ("/", "search"), …]`.
 ///
 /// Keys are rendered in BRIGHT, labels in MUTE, with 3 spaces between pairs.
-pub fn render_footer(frame: &mut Frame, area: Rect, keybinds: &[(&str, &str)]) {
+pub fn render_footer<K, L>(frame: &mut Frame, area: Rect, keybinds: &[(K, L)])
+where
+    K: AsRef<str>,
+    L: AsRef<str>,
+{
     if area.height == 0 || area.width == 0 {
         return;
     }
@@ -22,6 +26,8 @@ pub fn render_footer(frame: &mut Frame, area: Rect, keybinds: &[(&str, &str)]) {
     let max_x = area.x + area.width;
 
     for (i, (key, label)) in keybinds.iter().enumerate() {
+        let key = key.as_ref();
+        let label = label.as_ref();
         let key_len = key.chars().count() as u16;
         let label_len = label.chars().count() as u16;
         let pair_len = key_len + 1 + label_len; // key + space + label

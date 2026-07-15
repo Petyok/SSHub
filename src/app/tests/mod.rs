@@ -51,6 +51,7 @@ impl RecordingLauncher {
         )
     }
 
+    #[allow(dead_code)]
     fn take(last: &Arc<std::sync::Mutex<Option<String>>>) -> Option<String> {
         last.lock().ok()?.take()
     }
@@ -109,6 +110,7 @@ pub(crate) fn legacy_meta(entry: &mut HostEntry) -> &mut crate::metadata::HostMe
     entry.legacy_mut().expect("legacy host").1
 }
 
+mod host_crud;
 mod host_detail;
 mod host_form;
 mod identity_group;
@@ -117,3 +119,4 @@ mod misc;
 mod session;
 mod sftp;
 mod tags;
+mod transport;

@@ -441,7 +441,8 @@ fn render_tunnels_panel(buf: &mut Buffer, area: Rect, app: &App) {
             break;
         }
 
-        let running = app.tunnel_manager.is_running(tunnel.id);
+        let running =
+            app.tunnel_manager.is_running(tunnel.id) || app.tunnel_manager.has_child(tunnel.id);
         let (dot, dot_color) = if running {
             ("\u{25cf}", theme::GREEN)
         } else {

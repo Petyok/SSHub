@@ -4,6 +4,48 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-16
+
+### Added
+
+- **Mosh transport** — per-host `Transport` field (`ssh` or `mosh`) in the host form
+  and detail panel. Embedded sessions use `mosh` when selected; tunnels and SFTP stay
+  ssh-only. Graceful error when `mosh` is not installed.
+  (Schema v13.)
+- **Session logging** — opt-in capture of embedded SSH session PTY output to plain-text
+  files under `~/.local/share/sshub/logs/<host-dir>/`, with rotated segment files inside
+  (managed hosts use `{sanitized-name}-{id}`). Toggle globally in Settings (`Ctrl+H`) or
+  per host in the host form (`inherit` / `on` / `off`). Size-based rotation and per-host
+  retention cap are configurable in `config.toml`. The audit tab shows the log directory
+  path for each connect event. Pure `~/.ssh/config` aliases without a launcher
+  row may share a log directory when sanitized host names collide. **Warning:** logs
+  capture everything echoed to the terminal, including passwords if they appear on
+  screen. (Schema v12.)
+- **Tunnel keep alive** — per-tunnel **Keep alive** toggle in the tunnel form
+  (uses existing `auto_connect` column). Enabled tunnels start on app launch and
+  automatically reconnect after unexpected exit with exponential backoff, jitter,
+  and a capped retry count (`[tunnel_reconnect]` in `config.toml`, editable on the
+  Tunnels tab with `R`: `max_attempts`, delays in seconds, stable time, jitter).
+  Manual stop or kill disables the retry loop until the tunnel is started again
+  (until the next app launch for keep-alive auto-start). The Tunnels tab shows
+  `starting` / `reconnecting` / `gave up` with attempt counter; audit logs
+  reconnect attempts. A tunnel must stay up for `stable_secs` (default 5s) before
+  it counts as reconnected. Background ssh uses `ServerAliveInterval`,
+  `ServerAliveCountMax`, and `TCPKeepAlive` so dead paths (e.g. VPN dropped) tear
+  down instead of leaving a stale local listener.
+
+### Fixed
+
+- **Session keybind hints** — the connected-session header and dashboard footer
+  now show your configured keybindings (from `config.toml` / the keybind editor)
+  instead of hardcoded `Ctrl+T` / `Ctrl+D` defaults. Connecting-screen hints
+  (`expand log`, `cancel`) follow the same config.
+- **Tunnel auth on TUI** — background `ssh -N` tunnels no longer open `/dev/tty`
+  for password prompts (which painted over the dashboard and stole mouse/keyboard
+  input). Tunnels use `BatchMode=yes` when no stored credential is available
+  (fail fast with an error in the Tunnels tab) and `SSH_ASKPASS` when a host or
+  identity password is in the keyring.
+
 ## [0.8.0] - 2026-07-12
 
 ### Added

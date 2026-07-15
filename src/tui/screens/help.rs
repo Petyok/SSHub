@@ -51,8 +51,13 @@ fn help_lines() -> Vec<Line<'static>> {
         entry("a", "Add new tunnel"),
         entry("e", "Edit selected tunnel"),
         entry("d", "Delete tunnel"),
-        entry("Enter", "Start / stop tunnel"),
+        entry("Enter", "Start / stop tunnel (cancels reconnect while retrying)"),
         entry("x", "Kill tunnel process"),
+        entry("R", "Keep-alive reconnect settings (backoff, max retries)"),
+        entry(
+            "",
+            "Keep alive (tunnel form): auto-start on launch + reconnect with backoff after unexpected exit.",
+        ),
         entry(
             "Enter/Space",
             "In form on SSH server: pick host (searchable)",
@@ -116,7 +121,7 @@ fn help_lines() -> Vec<Line<'static>> {
         Line::from(""),
         section("tools"),
         entry("", ""),
-        entry("Ctrl+H", "Settings (opaque background, OS logos, …)"),
+        entry("Ctrl+H", "Settings (session logging, opaque background, …)"),
         entry(
             "Ctrl+K",
             "Edit all keybindings (navigation, tabs, session, …)",
@@ -137,6 +142,10 @@ fn help_lines() -> Vec<Line<'static>> {
         entry("Ctrl+PgUp/PgDn", "Previous / next session tab (alternate)"),
         entry("Ctrl+Shift+S", "Focus session from dashboard"),
         entry("PgUp/PgDn", "Scroll session history"),
+        entry(
+            "",
+            "Session logs (opt-in): ~/.local/share/sshub/logs/<host-dir>/ — managed hosts use {name}-{id}; pure ssh_config aliases may share a dir when names sanitize the same. Captures all PTY output including secrets echoed on screen.",
+        ),
         entry("", ""),
         entry("[sftp]", ""),
         entry("2", "Open the SFTP tab"),

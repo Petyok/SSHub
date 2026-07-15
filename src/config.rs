@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -40,6 +41,187 @@ fn default_true() -> bool {
     true
 }
 
+fn default_session_log_max_bytes() -> u64 {
+    10 * 1024 * 1024
+}
+
+fn default_session_log_retention() -> usize {
+    50
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionLoggingConfig {
+    /// When true, embedded SSH sessions write PTY output to log files unless a
+    /// per-host override disables it.
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_session_log_max_bytes")]
+    pub max_file_bytes: u64,
+    #[serde(default = "default_session_log_retention")]
+    pub retention_files: usize,
+}
+
+impl Default for SessionLoggingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_file_bytes: default_session_log_max_bytes(),
+            retention_files: default_session_log_retention(),
+        }
+    }
+}
+
+fn default_tunnel_reconnect_max_attempts() -> u32 {
+    12
+}
+
+fn default_tunnel_reconnect_initial_ms() -> u64 {
+    1000
+}
+
+fn default_tunnel_reconnect_max_ms() -> u64 {
+    60_000
+}
+
+fn default_tunnel_reconnect_jitter() -> f64 {
+    0.25
+}
+
+fn default_tunnel_stable_secs() -> u64 {
+    5
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TunnelReconnectConfig {
+    /// Maximum consecutive reconnect attempts after an unexpected exit (`0` = unlimited).
+    #[serde(default = "default_tunnel_reconnect_max_attempts")]
+    pub max_attempts: u32,
+    #[serde(default = "default_tunnel_reconnect_initial_ms")]
+    pub initial_delay_ms: u64,
+    #[serde(default = "default_tunnel_reconnect_max_ms")]
+    pub max_delay_ms: u64,
+    /// Jitter factor applied around the backoff delay (`0.25` → ±25%).
+    #[serde(default = "default_tunnel_reconnect_jitter")]
+    pub jitter_ratio: f64,
+    /// Child must stay alive this long before a reconnect counts as successful.
+    #[serde(default = "default_tunnel_stable_secs")]
+    pub stable_secs: u64,
+}
+
+impl Default for TunnelReconnectConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: default_tunnel_reconnect_max_attempts(),
+            initial_delay_ms: default_tunnel_reconnect_initial_ms(),
+            max_delay_ms: default_tunnel_reconnect_max_ms(),
+            jitter_ratio: default_tunnel_reconnect_jitter(),
+            stable_secs: default_tunnel_stable_secs(),
+        }
+    }
+}
+
+/// Attempt counter after a tunnel child exits. Short uptimes (flapping spawn)
+/// advance the series; a run longer than `stable_secs` resets the budget.
+pub fn tunnel_failure_attempt(current: u32, uptime_secs: u64, stable_secs: u64) -> u32 {
+    if uptime_secs >= stable_secs {
+        0
+    } else {
+        current.saturating_add(1)
+    }
+}
+
+impl TunnelReconnectConfig {
+    /// Human-readable value for settings row `row` (0..4).
+    pub fn display_field(&self, row: usize) -> String {
+        match row {
+            0 => {
+                if self.max_attempts == 0 {
+                    "unlimited".into()
+                } else {
+                    self.max_attempts.to_string()
+                }
+            }
+            1 => format!("{} s", self.initial_delay_ms / 1000),
+            2 => format!("{} s", self.max_delay_ms / 1000),
+            3 => format!("{} s", self.stable_secs),
+            4 => format!("{:.0}%", self.jitter_ratio * 100.0),
+            _ => String::new(),
+        }
+    }
+
+    /// Nudge field `row` by `delta` sign (`+1` / `-1`). Clamps to sane bounds.
+    pub fn adjust_field(&mut self, row: usize, delta: i32) {
+        match row {
+            0 => {
+                let next = self.max_attempts as i64 + i64::from(delta);
+                self.max_attempts = next.clamp(0, 999) as u32;
+            }
+            1 => {
+                let step = 1_000_i64;
+                let next =
+                    (self.initial_delay_ms as i64 + i64::from(delta) * step).clamp(1_000, 300_000);
+                self.initial_delay_ms = next as u64;
+                if self.initial_delay_ms > self.max_delay_ms {
+                    self.max_delay_ms = self.initial_delay_ms;
+                }
+            }
+            2 => {
+                let step = 5_000_i64;
+                let next =
+                    (self.max_delay_ms as i64 + i64::from(delta) * step).clamp(5_000, 600_000);
+                self.max_delay_ms = next as u64;
+                if self.max_delay_ms < self.initial_delay_ms {
+                    self.initial_delay_ms = self.max_delay_ms;
+                }
+            }
+            3 => {
+                let next = self.stable_secs as i64 + i64::from(delta);
+                self.stable_secs = next.clamp(1, 120) as u64;
+            }
+            4 => {
+                let next = self.jitter_ratio + f64::from(delta) * 0.05;
+                self.jitter_ratio = next.clamp(0.0, 1.0);
+            }
+            _ => {}
+        }
+    }
+
+    /// Restore one settings row to its built-in default.
+    pub fn reset_field(&mut self, row: usize) {
+        let d = Self::default();
+        match row {
+            0 => self.max_attempts = d.max_attempts,
+            1 => self.initial_delay_ms = d.initial_delay_ms,
+            2 => self.max_delay_ms = d.max_delay_ms,
+            3 => self.stable_secs = d.stable_secs,
+            4 => self.jitter_ratio = d.jitter_ratio,
+            _ => {}
+        }
+    }
+}
+
+/// Exponential backoff with deterministic jitter for a tunnel reconnect attempt.
+pub fn tunnel_backoff_delay(attempt: u32, tunnel_id: i64, cfg: &TunnelReconnectConfig) -> Duration {
+    use std::time::Duration;
+    let attempt = attempt.max(1);
+    let exp = attempt.saturating_sub(1).min(20);
+    let base = cfg
+        .initial_delay_ms
+        .saturating_mul(1u64 << exp)
+        .min(cfg.max_delay_ms);
+    let jitter = jitter_factor(tunnel_id, attempt, cfg.jitter_ratio);
+    Duration::from_millis(((base as f64) * jitter).max(1.0) as u64)
+}
+
+fn jitter_factor(tunnel_id: i64, attempt: u32, jitter_ratio: f64) -> f64 {
+    let hash = (tunnel_id as u64)
+        .wrapping_mul(31)
+        .wrapping_add(attempt as u64)
+        .wrapping_mul(1_103_515_245);
+    let frac = (hash % 2000) as f64 / 1000.0;
+    1.0 + jitter_ratio * (frac - 1.0)
+}
+
 fn default_date_format() -> String {
     "%Y-%m-%d %H:%M".to_string()
 }
@@ -69,6 +251,10 @@ pub struct AppConfig {
     #[serde(default)]
     pub appearance: AppearanceConfig,
     #[serde(default)]
+    pub session_logging: SessionLoggingConfig,
+    #[serde(default)]
+    pub tunnel_reconnect: TunnelReconnectConfig,
+    #[serde(default)]
     pub keybinds: KeybindsConfig,
 }
 
@@ -78,6 +264,8 @@ impl Default for AppConfig {
             terminal: TerminalKind::Kitty,
             launch_command: None,
             appearance: AppearanceConfig::default(),
+            session_logging: SessionLoggingConfig::default(),
+            tunnel_reconnect: TunnelReconnectConfig::default(),
             keybinds: KeybindsConfig::default(),
         }
     }
@@ -295,6 +483,91 @@ mod tests {
         assert!(config.launch_command.is_none());
         assert!(config.appearance.show_detail_panel);
         assert_eq!(config.appearance.date_format, "%Y-%m-%d %H:%M");
+    }
+
+    #[test]
+    fn parse_config_session_logging_defaults() {
+        let config = parse_config_str("").unwrap();
+        assert!(!config.session_logging.enabled);
+        assert_eq!(config.session_logging.max_file_bytes, 10 * 1024 * 1024);
+        assert_eq!(config.session_logging.retention_files, 50);
+    }
+
+    #[test]
+    fn parse_config_tunnel_reconnect_defaults() {
+        let config = parse_config_str("").unwrap();
+        assert_eq!(config.tunnel_reconnect.max_attempts, 12);
+        assert_eq!(config.tunnel_reconnect.initial_delay_ms, 1000);
+        assert_eq!(config.tunnel_reconnect.max_delay_ms, 60_000);
+        assert_eq!(config.tunnel_reconnect.stable_secs, 5);
+        assert!((config.tunnel_reconnect.jitter_ratio - 0.25).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn tunnel_failure_attempt_counts_flaps_and_resets_after_stable() {
+        assert_eq!(tunnel_failure_attempt(0, 0, 5), 1);
+        assert_eq!(tunnel_failure_attempt(1, 2, 5), 2);
+        assert_eq!(tunnel_failure_attempt(2, 5, 5), 0);
+        assert_eq!(tunnel_failure_attempt(4, 10, 5), 0);
+    }
+
+    #[test]
+    fn tunnel_backoff_grows_and_caps() {
+        let cfg = TunnelReconnectConfig::default();
+        let d1 = tunnel_backoff_delay(1, 1, &cfg);
+        let d2 = tunnel_backoff_delay(2, 1, &cfg);
+        let d10 = tunnel_backoff_delay(10, 1, &cfg);
+        assert!(d2 >= d1);
+        assert!(d10 <= Duration::from_millis((cfg.max_delay_ms as f64 * 1.26) as u64));
+    }
+
+    #[test]
+    fn tunnel_backoff_jitter_bounded() {
+        let cfg = TunnelReconnectConfig {
+            jitter_ratio: 0.25,
+            ..Default::default()
+        };
+        for attempt in 1..=5 {
+            let d = tunnel_backoff_delay(attempt, 42, &cfg);
+            let base = cfg
+                .initial_delay_ms
+                .saturating_mul(1u64 << (attempt - 1).min(20));
+            let capped = base.min(cfg.max_delay_ms);
+            let min = (capped as f64 * 0.75) as u64;
+            let max = (capped as f64 * 1.25) as u64;
+            assert!(
+                d.as_millis() as u64 >= min.saturating_sub(1),
+                "attempt {attempt}: {d:?} below {min}"
+            );
+            assert!(
+                d.as_millis() as u64 <= max + 1,
+                "attempt {attempt}: {d:?} above {max}"
+            );
+        }
+    }
+
+    #[test]
+    fn tunnel_reconnect_display_uses_seconds_for_delays() {
+        let cfg = TunnelReconnectConfig::default();
+        assert_eq!(cfg.display_field(1), "1 s");
+        assert_eq!(cfg.display_field(2), "60 s");
+    }
+
+    #[test]
+    fn tunnel_reconnect_adjust_keeps_delay_order() {
+        let mut cfg = TunnelReconnectConfig::default();
+        for _ in 0..200 {
+            cfg.adjust_field(1, 1);
+        }
+        assert!(cfg.initial_delay_ms <= cfg.max_delay_ms);
+        for _ in 0..200 {
+            cfg.adjust_field(2, -1);
+        }
+        assert!(cfg.initial_delay_ms <= cfg.max_delay_ms);
+        assert_eq!(cfg.display_field(0), "12");
+        cfg.adjust_field(0, -20);
+        assert_eq!(cfg.max_attempts, 0);
+        assert_eq!(cfg.display_field(0), "unlimited");
     }
 
     #[test]

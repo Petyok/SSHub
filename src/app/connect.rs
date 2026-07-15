@@ -34,17 +34,8 @@ impl App {
         // host key: otherwise ssh (with SSH_ASKPASS_REQUIRE=force) would ask
         // the askpass helper to confirm the fingerprint, get the password back
         // instead of "yes", and deadlock. Changed keys are still refused.
-        let mut ssh_argv = ssh_argv_for_entry(&entry);
-        if ssh_argv.first().map(String::as_str) == Some("ssh") {
-            // `-v` streams ssh's real handshake into the session terminal, so
-            // the connect screen shows the genuine process instead of a
-            // scripted animation.
-            ssh_argv.insert(1, "-v".into());
-            if pending_secret.is_some() {
-                ssh_argv.insert(1, "-o".into());
-                ssh_argv.insert(2, "StrictHostKeyChecking=accept-new".into());
-            }
-        }
+        let session_argv =
+            prepare_session_connect_argv(session_argv_for_entry(&entry), pending_secret.is_some());
 
         // Surface the credential decision so it's visible in the SSH log
         // panel after the session ends.
@@ -66,7 +57,7 @@ impl App {
         }
 
         // Pre-validate: check that the first command binary exists on PATH
-        if let Some(first_cmd) = ssh_argv.first() {
+        if let Some(first_cmd) = session_argv.first() {
             if std::process::Command::new("which")
                 .arg(first_cmd)
                 .output()
@@ -98,7 +89,7 @@ impl App {
             .as_secs() as i64;
         self.push_ssh_log(crate::ssh::probe::SshLogEntry {
             host_name: entry.name().to_string(),
-            line: format!("$ {}", ssh_argv.join(" ")),
+            line: format!("$ {}", session_argv.join(" ")),
             level: crate::ssh::probe::LogLevel::Success,
             timestamp: now_ts_val,
         });
@@ -121,13 +112,47 @@ impl App {
             let cols = self.terminal_area.width.max(20);
             let meta = session_meta_for_entry(&entry);
             let config = crate::session::SessionConfig {
-                argv: ssh_argv.clone(),
+                argv: session_argv.clone(),
                 display_name,
                 meta,
                 pending_secret: pending_secret.clone(),
             };
-            match crate::session::Session::spawn(config, rows, cols) {
-                Ok(session) => {
+
+            let log_enabled = crate::session_log::effective_enabled(
+                self.config.session_logging.enabled,
+                entry.session_logging_override(),
+            );
+
+            match crate::session::Session::spawn(config, rows, cols, None) {
+                Ok(mut session) => {
+                    let mut log_path = None;
+                    if log_enabled {
+                        match crate::config::data_dir() {
+                            Ok(data_dir) => {
+                                let cfg = &self.config.session_logging;
+                                match crate::session_log::SessionLogWriter::open(
+                                    &data_dir,
+                                    &host_name,
+                                    entry.managed_id(),
+                                    cfg.max_file_bytes,
+                                    cfg.retention_files,
+                                ) {
+                                    Ok(w) => {
+                                        log_path = Some(w.host_dir().display().to_string());
+                                        session.set_log(w);
+                                    }
+                                    Err(e) => {
+                                        self.host_notice =
+                                            Some(format!("Session logging unavailable: {e:#}"));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                self.host_notice =
+                                    Some(format!("Session logging unavailable: {e:#}"));
+                            }
+                        }
+                    }
                     self.sessions.push(session);
                     self.active_session = Some(self.sessions.len() - 1);
                     self.mode = AppMode::Connecting;
@@ -137,13 +162,14 @@ impl App {
                         via,
                         "launched",
                         "session started",
+                        log_path.as_deref(),
                     );
                 }
                 Err(e) => {
                     let err_msg = format!("Session spawn failed: {e:#}");
                     let _ = self
                         .store
-                        .log_auth_event(&host_name, username, via, "fail", &err_msg);
+                        .log_auth_event(&host_name, username, via, "fail", &err_msg, None);
                     self.push_ssh_log(crate::ssh::probe::SshLogEntry {
                         host_name: host_name.clone(),
                         line: err_msg.clone(),

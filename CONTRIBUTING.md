@@ -18,6 +18,8 @@ Thanks for your interest in contributing. Here's how to get started.
 
 Flow: `feature/* → development → main (release, maintainer-only)`.
 
+**Full checklist:** [docs/implementation-flow.md](docs/implementation-flow.md) — issue → claim → branch → verify → adversarial review → PR → merge.
+
 ## Claiming an issue
 
 Before implementing an existing issue (roadmap items in #14 included), claim
@@ -27,6 +29,9 @@ unannounced parallel work has already produced duplicate implementations of
 the same feature. A claimed issue with no visible activity for two weeks is
 considered free again.
 
+If an **AI agent** leaves the claim comment, it **must** name the model and
+platform — see [docs/implementation-flow.md § GitHub comments](docs/implementation-flow.md#github-comments-ai-agents).
+
 ## Making changes
 
 1. Create a branch from `development` (not `main`)
@@ -35,12 +40,22 @@ considered free again.
    Not just your new test: the whole suite, because unit tests share one
    process and one machine state (see Tests below). CI runs the same suite
    plus `cargo fmt --check` and `cargo clippy --all-targets` on every PR.
-4. Run `cargo fmt` and `cargo clippy` and fix any warnings
+4. **Always run lints locally before push** (agents: every commit, not only at PR time):
+
+   ```bash
+   cargo fmt
+   cargo fmt --check
+   cargo clippy --all-targets
+   ```
+
+   CI fails on `fmt --check` drift — run `cargo fmt` first, then `--check` must exit 0.
 5. Update `CHANGELOG.md` under `[Unreleased]` for any user-visible change
 6. Update `README.md` / the in-app help if behaviour or requirements change
 7. Do **not** bump the version in `Cargo.toml` — versioning is automated
    (a pre-commit hook on `development` plus the release process)
-8. Open a pull request against `development`
+8. Run adversarial review on non-trivial changes before opening the PR (see
+   [docs/implementation-flow.md](docs/implementation-flow.md))
+9. Open a pull request against `development`
 
 ## Pull requests
 
@@ -55,9 +70,34 @@ considered free again.
 
 ## AI involvement
 
-All pull requests and issues in this repo are reviewed and triaged through
-Claude (Opus 4.8 or Fable 5). Comments signed by Claude are written by the
-model on behalf of the maintainer.
+This repo is heavily agent-assisted. Maintainers and agents triage issues and
+review PRs together.
+
+### GitHub comments — **required for agents**
+
+Any comment on an **issue or pull request** written by a coding agent **must** end with:
+
+```text
+_Written by {Model} ({Platform}) on behalf of the maintainer._
+```
+
+Example:
+
+```text
+Taking this — working on `feature/foo`.
+
+_Written by Composer (Cursor) on behalf of the maintainer._
+```
+
+- Use a real **model** name (`Claude Opus 4.8`, `Claude Fable 5`, `Composer`, …).
+- Use a real **platform** (`Cursor`, `Claude Code`, `Codex`, …).
+- Signature on its own line at the **end** of the comment — always, including short claims.
+- Human comments do not need a signature.
+
+Full rules: [docs/implementation-flow.md](docs/implementation-flow.md#github-comments-ai-agents).
+
+PR descriptions may note agent involvement but are not a substitute for signed
+issue/PR **comments** when an agent posts them.
 
 ## Code style
 

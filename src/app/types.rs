@@ -95,7 +95,7 @@ pub enum VisualRow {
 /// in `tui::screens::settings`) and avoid ambiguous-width chars like the em
 /// dash — some terminals draw those 2 cells wide, pushing the tail of the
 /// line onto the popup border.
-pub const SETTINGS_ITEMS: [(&str, &str); 4] = [
+pub const SETTINGS_ITEMS: [(&str, &str); 5] = [
     (
         "Opaque background",
         "fixes unreadable text on transparent terminals",
@@ -106,6 +106,20 @@ pub const SETTINGS_ITEMS: [(&str, &str); 4] = [
         "Disable startup animation",
         "skip the intro splash (applies next launch)",
     ),
+    (
+        "Session logging",
+        "save PTY output under ~/.local/share/sshub/logs",
+    ),
+];
+
+/// Global keep-alive reconnect knobs (Tunnels tab, `R`). Row index maps to
+/// [`crate::app::App::tunnel_reconnect_field_display`].
+pub const TUNNEL_RECONNECT_FIELDS: [(&str, &str); 5] = [
+    ("Max attempts", "0 = unlimited retries"),
+    ("Initial delay", "first retry wait (seconds)"),
+    ("Max delay", "backoff cap (seconds)"),
+    ("Stable time", "uptime before a spawn counts as up"),
+    ("Jitter", "random spread around each delay"),
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,6 +144,8 @@ pub enum AppMode {
     KeybindEditor,
     /// Settings overlay: checkbox list of appearance toggles.
     Settings,
+    /// Keep-alive reconnect backoff settings (Tunnels tab).
+    TunnelReconnectSettings,
     /// Quit confirmation dialog.
     ConfirmQuit,
     TunnelForm,
@@ -230,16 +246,18 @@ pub enum TunnelFormField {
     RemotePort,
     Host,
     Label,
+    AutoConnect,
 }
 
 impl TunnelFormField {
-    const ALL: [TunnelFormField; 6] = [
+    const ALL: [TunnelFormField; 7] = [
         TunnelFormField::Host,
         TunnelFormField::Type,
         TunnelFormField::LocalPort,
         TunnelFormField::RemoteHost,
         TunnelFormField::RemotePort,
         TunnelFormField::Label,
+        TunnelFormField::AutoConnect,
     ];
 
     pub(crate) fn next(self) -> Self {
@@ -250,6 +268,10 @@ impl TunnelFormField {
     pub(crate) fn prev(self) -> Self {
         let idx = Self::ALL.iter().position(|f| *f == self).unwrap_or(0);
         Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+
+    pub fn is_toggle(self) -> bool {
+        matches!(self, Self::AutoConnect)
     }
 }
 
@@ -262,6 +284,7 @@ pub struct TunnelFormEdit {
     pub remote_port: String,
     pub host_id: Option<i64>,
     pub label: String,
+    pub auto_connect: bool,
     pub active_field: TunnelFormField,
     pub editing: bool,
     pub edit_snapshot: String,
@@ -330,13 +353,15 @@ pub enum DetailEditField {
     Tags = 0,
     Description = 1,
     Environment = 2,
+    SessionLogging = 3,
 }
 
 impl DetailEditField {
-    const ALL: [DetailEditField; 3] = [
+    const ALL: [DetailEditField; 4] = [
         DetailEditField::Tags,
         DetailEditField::Description,
         DetailEditField::Environment,
+        DetailEditField::SessionLogging,
     ];
 
     pub(crate) fn next(self) -> Self {
@@ -348,6 +373,10 @@ impl DetailEditField {
         let idx = self as usize;
         Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
     }
+
+    pub(crate) fn is_tri_state(self) -> bool {
+        matches!(self, Self::SessionLogging)
+    }
 }
 
 /// In-progress metadata edits while in HostDetail mode.
@@ -356,6 +385,7 @@ pub struct HostDetailEdit {
     pub tags: String,
     pub description: String,
     pub environment: String,
+    pub session_logging: crate::session_log::SessionLoggingOverride,
     pub field: DetailEditField,
     pub cursor: usize,
 }
@@ -426,6 +456,20 @@ impl HostEntry {
         match self {
             Self::Managed(m) => m.environment.as_deref(),
             Self::Legacy { meta, .. } => meta.environment.as_deref(),
+        }
+    }
+
+    pub fn session_logging_override(&self) -> crate::session_log::SessionLoggingOverride {
+        match self {
+            Self::Managed(m) => m.session_logging,
+            Self::Legacy { meta, .. } => meta.session_logging,
+        }
+    }
+
+    pub fn session_transport(&self) -> crate::session_transport::SessionTransport {
+        match self {
+            Self::Managed(m) => m.transport,
+            Self::Legacy { meta, .. } => meta.transport,
         }
     }
 
@@ -547,6 +591,8 @@ pub struct HostFormEdit {
     pub proxy_jump: String,
     pub forward_agent: bool,
     pub remote_command: String,
+    pub transport: crate::session_transport::SessionTransport,
+    pub session_logging: crate::session_log::SessionLoggingOverride,
     pub os_icon_index: usize,
     pub password: String,
     pub has_password: bool,
@@ -576,13 +622,15 @@ pub enum HostFormField {
     ProxyJump = 7,
     ForwardAgent = 8,
     RemoteCommand = 9,
-    OsIcon = 10,
-    Password = 11,
-    Username = 12,
+    Transport = 10,
+    SessionLogging = 11,
+    OsIcon = 12,
+    Password = 13,
+    Username = 14,
 }
 
 impl HostFormField {
-    pub const ALL: [HostFormField; 13] = [
+    pub const ALL: [HostFormField; 15] = [
         HostFormField::Address,
         HostFormField::Password,
         HostFormField::Username,
@@ -595,6 +643,8 @@ impl HostFormField {
         HostFormField::ProxyJump,
         HostFormField::ForwardAgent,
         HostFormField::RemoteCommand,
+        HostFormField::Transport,
+        HostFormField::SessionLogging,
         HostFormField::OsIcon,
     ];
 
@@ -633,6 +683,8 @@ impl HostFormField {
             HostFormField::ProxyJump => "ProxyJump",
             HostFormField::ForwardAgent => "Agent forward",
             HostFormField::RemoteCommand => "Startup command",
+            HostFormField::Transport => "Transport",
+            HostFormField::SessionLogging => "Session log",
             HostFormField::OsIcon => "OS icon",
             HostFormField::Password => "Password",
             HostFormField::Username => "Username",
@@ -647,7 +699,11 @@ impl HostFormField {
     }
 
     pub(crate) fn is_toggle(self) -> bool {
-        matches!(self, HostFormField::ForwardAgent)
+        matches!(self, HostFormField::ForwardAgent | HostFormField::Transport)
+    }
+
+    pub(crate) fn is_tri_state(self) -> bool {
+        matches!(self, HostFormField::SessionLogging)
     }
 }
 
@@ -820,7 +876,9 @@ impl HostFormEdit {
             HostFormField::Tags => &self.tags,
             HostFormField::ProxyJump => &self.proxy_jump,
             HostFormField::RemoteCommand => &self.remote_command,
-            HostFormField::ForwardAgent => "",
+            HostFormField::ForwardAgent
+            | HostFormField::Transport
+            | HostFormField::SessionLogging => "",
             HostFormField::Password => &self.password,
         }
     }
@@ -838,7 +896,9 @@ impl HostFormEdit {
             HostFormField::Tags => &mut self.tags,
             HostFormField::ProxyJump => &mut self.proxy_jump,
             HostFormField::RemoteCommand => &mut self.remote_command,
-            HostFormField::ForwardAgent => &mut self.address,
+            HostFormField::ForwardAgent
+            | HostFormField::Transport
+            | HostFormField::SessionLogging => &mut self.address,
             HostFormField::Password => &mut self.password,
         }
     }
@@ -882,6 +942,7 @@ impl HostDetailEdit {
             DetailEditField::Tags => &self.tags,
             DetailEditField::Description => &self.description,
             DetailEditField::Environment => &self.environment,
+            DetailEditField::SessionLogging => "",
         }
     }
 
@@ -890,6 +951,7 @@ impl HostDetailEdit {
             DetailEditField::Tags => &mut self.tags,
             DetailEditField::Description => &mut self.description,
             DetailEditField::Environment => &mut self.environment,
+            DetailEditField::SessionLogging => &mut self.environment,
         }
     }
 }
