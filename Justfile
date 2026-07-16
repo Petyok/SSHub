@@ -134,6 +134,38 @@ release kind="minor":
     git push origin development
     echo "released v$ver ({{kind}}) — 'chore: release v$ver' merged to main; the release workflow builds binaries and publishes to crates.io"
 
+# Sync development -> main WITHOUT cutting a release: no version bump, no
+# CHANGELOG roll, no tag (so the release workflow is NOT triggered). main gets
+# a single `chore: sync development into main` merge commit on its first-parent
+# line, then development is fast-forwarded back so both branches point at the
+# same commit and the next release still merges cleanly. Use this to bring main
+# up to date with dev (e.g. docs/CI fixes) between releases.
+# Run from a clean `development`. Pushing to protected `main` relies on your
+# owner/admin bypass.
+sync:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "$(git rev-parse --abbrev-ref HEAD)" = development ] || { echo "run from development" >&2; exit 1; }
+    git diff --quiet && git diff --cached --quiet || { echo "working tree not clean" >&2; exit 1; }
+    git fetch origin --quiet
+    git push origin development
+    if git merge-base --is-ancestor development main; then
+      echo "main already contains development — nothing to sync"; exit 0
+    fi
+    git checkout main
+    git pull --ff-only origin main
+    # Real merge (--no-ff): main gets one sync merge commit on its first-parent
+    # line. Merges cleanly because dev is ff'd to main after every release/sync,
+    # so main is always an ancestor of dev here.
+    git merge --no-ff development -m "chore: sync development into main"
+    git push origin main
+    git checkout development
+    # Fast-forward development to the sync merge: both branches now point at the
+    # same commit and ahead/behind stays clean.
+    git merge --ff-only main
+    git push origin development
+    echo "synced development -> main (no release; no tag, no version bump)"
+
 # Install the release binary to ~/.local/bin and a launcher entry so sshub
 # shows up in your application launcher (GNOME, rofi, etc). Uses kitty if
 # available, otherwise falls back to xterm. Runs `just build` first.
