@@ -46,9 +46,11 @@ install-completions: build
     echo "  fish -> $fish_dir/sshub.fish"
     echo
     echo "bash: works if bash-completion is enabled (it loads the user dir above)."
-    echo "zsh:  ensure the dir is on fpath, e.g. in ~/.zshrc before compinit:"
-    echo "        fpath=($zsh_dir \$fpath)"
-    echo "        autoload -Uz compinit && compinit"
+    echo "zsh:  simplest is to add this to ~/.zshrc (after compinit runs):"
+    echo "        source <(sshub completions zsh)"
+    echo "      or use the fpath file installed above:"
+    echo "        fpath=($zsh_dir \$fpath)   # before compinit"
+    echo "      then: rm -f ~/.zcompdump*; exec zsh"
     echo "fish: loaded automatically in a new shell."
 
 # Bump the version (odometer, each field 0-9; see CLAUDE.md "Versioning").

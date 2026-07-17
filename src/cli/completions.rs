@@ -381,7 +381,13 @@ _sshub() {{
     esac
 }}
 
-_sshub "$@"
+# Works both ways: as an fpath autoload file (zsh calls the function directly)
+# and when sourced from .zshrc (register it with compdef).
+if [ "$funcstack[1]" = "_sshub" ]; then
+    _sshub "$@"
+else
+    compdef _sshub sshub
+fi
 "#,
         top = TOP_LEVEL.join(" "),
         host_sub = HOST_SUB.join(" "),
