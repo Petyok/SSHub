@@ -112,6 +112,14 @@ fn cmd_add(ctx: &CliContext, args: &[String]) -> Result<i32> {
         None => None,
     };
     let password_stdin = take_flag(&mut rest, "--password-stdin");
+    // Read the secret before creating the row so has_password reflects reality:
+    // an empty piped password must not leave has_password=true with no secret.
+    let password = if password_stdin {
+        let pw = read_password_stdin()?;
+        (!pw.is_empty()).then_some(pw)
+    } else {
+        None
+    };
     let sort_order = ctx.store.list_identities()?.len() as i32;
 
     let created = ctx.store.create_identity(&NewIdentity {
@@ -120,14 +128,11 @@ fn cmd_add(ctx: &CliContext, args: &[String]) -> Result<i32> {
         private_key,
         certificate,
         sort_order,
-        has_password: password_stdin,
+        has_password: password.is_some(),
     })?;
 
-    if password_stdin {
-        let pw = read_password_stdin()?;
-        if !pw.is_empty() {
-            ctx.password_store.set(&identity_key(created.id), &pw)?;
-        }
+    if let Some(pw) = password {
+        ctx.password_store.set(&identity_key(created.id), &pw)?;
     }
 
     println!("created identity '{}'", created.name);
@@ -141,6 +146,11 @@ fn cmd_edit(ctx: &CliContext, args: &[String]) -> Result<i32> {
     let identity = ctx.identity_by_name(&name)?;
 
     let set_name = take_opt(&mut rest, "--set-name");
+    if let Some(n) = &set_name {
+        if n.trim().is_empty() {
+            fail("identity name cannot be empty");
+        }
+    }
     let set_username = if take_flag(&mut rest, "--clear-username") {
         Some(None)
     } else {
