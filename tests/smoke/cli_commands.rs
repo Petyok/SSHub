@@ -126,3 +126,110 @@ fn host_help_shows_per_command_help() {
         .stdout(predicate::str::contains("manage launcher hosts"))
         .stdout(predicate::str::contains("TUI SSH host launcher").not());
 }
+
+#[test]
+fn sync_exits_zero() {
+    let d = dir();
+    sshub(d.path()).arg("sync").assert().success();
+}
+
+#[test]
+fn tags_exits_zero() {
+    let d = dir();
+    sshub(d.path()).arg("tags").assert().success();
+}
+
+#[test]
+fn export_stdout_exits_zero() {
+    let d = dir();
+    sshub(d.path())
+        .args(["export", "--stdout"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn groups_exits_zero() {
+    let d = dir();
+    sshub(d.path()).arg("groups").assert().success();
+}
+
+#[test]
+fn group_list_exits_zero() {
+    let d = dir();
+    sshub(d.path()).args(["group", "list"]).assert().success();
+}
+
+#[test]
+fn identity_list_exits_zero() {
+    let d = dir();
+    sshub(d.path())
+        .args(["identity", "list"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn import_from_fixture_exits_zero() {
+    let d = dir();
+    // Importing from the fixture ssh_config: partial or no failures still exit 0.
+    sshub(d.path()).arg("import").assert().success();
+}
+
+#[test]
+fn completions_bash_prints_non_empty() {
+    let d = dir();
+    sshub(d.path())
+        .args(["completions", "bash"])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty().not());
+}
+
+#[test]
+fn completions_zsh_prints_non_empty() {
+    let d = dir();
+    sshub(d.path())
+        .args(["completions", "zsh"])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty().not());
+}
+
+#[test]
+fn completions_fish_prints_non_empty() {
+    let d = dir();
+    sshub(d.path())
+        .args(["completions", "fish"])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty().not());
+}
+
+#[test]
+fn groups_all_forwards_flag_and_exits_zero() {
+    let d = dir();
+    // `groups --all` aliases to `group list --all`; the reserved-group filter
+    // still exits 0 on an empty database.
+    sshub(d.path()).args(["groups", "--all"]).assert().success();
+}
+
+#[test]
+fn host_delete_without_yes_exits_one() {
+    let d = dir();
+    // `--yes` is required before the host is even looked up, so a missing host
+    // without confirmation still exits 1.
+    sshub(d.path())
+        .args(["host", "delete", "--name", "doesnotexist"])
+        .assert()
+        .code(1);
+}
+
+#[test]
+fn identity_delete_without_yes_exits_one() {
+    let d = dir();
+    sshub(d.path())
+        .args(["identity", "delete", "--name", "nope"])
+        .assert()
+        .code(1);
+}
