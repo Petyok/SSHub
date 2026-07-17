@@ -27,31 +27,40 @@ dry-run:
 man:
     man -l man/sshub.1
 
-# Generate and install shell completions for bash, zsh, and fish into standard
-# user locations. Runs `just build` first.
+# Install shell completions so they work with no manual setup. bash and fish
+# files drop into auto-loaded dirs; zsh gets a sourced line appended to
+# ~/.zshrc (idempotent, marked, removed by `just uninstall`). Included by
+# `just install`; run standalone to (re)install just the completions.
 install-completions: build
     #!/usr/bin/env bash
     set -euo pipefail
     bin=target/release/sshub
     bash_dir="${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions"
-    zsh_dir="${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions"
     fish_dir="${XDG_CONFIG_HOME:-$HOME/.config}/fish/completions"
-    install -d "$bash_dir" "$zsh_dir" "$fish_dir"
+    install -d "$bash_dir" "$fish_dir"
     "$bin" completions bash > "$bash_dir/sshub"
-    "$bin" completions zsh  > "$zsh_dir/_sshub"
     "$bin" completions fish > "$fish_dir/sshub.fish"
-    echo "Installed completions:"
-    echo "  bash -> $bash_dir/sshub"
-    echo "  zsh  -> $zsh_dir/_sshub"
-    echo "  fish -> $fish_dir/sshub.fish"
-    echo
-    echo "bash: works if bash-completion is enabled (it loads the user dir above)."
-    echo "zsh:  simplest is to add this to ~/.zshrc (after compinit runs):"
-    echo "        source <(sshub completions zsh)"
-    echo "      or use the fpath file installed above:"
-    echo "        fpath=($zsh_dir \$fpath)   # before compinit"
-    echo "      then: rm -f ~/.zcompdump*; exec zsh"
-    echo "fish: loaded automatically in a new shell."
+    echo "completions: bash -> $bash_dir/sshub"
+    echo "completions: fish -> $fish_dir/sshub.fish"
+    # zsh has no user dir on the default fpath, so source the completion from
+    # ~/.zshrc (only if it exists) instead. compinit is ensured before compdef.
+    zshrc="$HOME/.zshrc"
+    marker="# >>> sshub completions >>>"
+    if [ -f "$zshrc" ] && grep -qF "$marker" "$zshrc"; then
+      echo "completions: zsh -> ~/.zshrc already wired"
+    elif [ -f "$zshrc" ]; then
+      {
+        echo ""
+        echo "$marker"
+        echo '(( $+functions[compdef] )) || { autoload -Uz compinit && compinit -u; }'
+        echo 'source <(command sshub completions zsh)'
+        echo "# <<< sshub completions <<<"
+      } >> "$zshrc"
+      echo "completions: zsh -> appended sourcing to ~/.zshrc (run: exec zsh)"
+    else
+      echo "completions: zsh -> no ~/.zshrc found; add: source <(sshub completions zsh)"
+    fi
+    echo "bash and fish auto-load in a new shell."
 
 # Bump the version (odometer, each field 0-9; see CLAUDE.md "Versioning").
 #   just bump patch       # every commit to development
@@ -199,7 +208,7 @@ sync:
 # Install the release binary to ~/.local/bin and a launcher entry so sshub
 # shows up in your application launcher (GNOME, rofi, etc). Uses kitty if
 # available, otherwise falls back to xterm. Runs `just build` first.
-install: build
+install: build install-completions
     #!/usr/bin/env bash
     set -euo pipefail
     bin="$HOME/.local/bin/sshub"
@@ -215,8 +224,10 @@ install: build
     echo "Installed $bin, man page, icon and launcher entry (terminal: $term)."
     echo "If it doesn't show up, log out/in or run: update-desktop-database ~/.local/share/applications"
 
-# Remove the installed binary and launcher entry.
+# Remove the installed binary, man page, completions, icon and launcher entry.
 uninstall:
+    #!/usr/bin/env bash
+    set -euo pipefail
     rm -f "$HOME/.local/bin/sshub" \
           "$HOME/.local/share/man/man1/sshub.1" \
           "${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions/sshub" \
@@ -224,4 +235,10 @@ uninstall:
           "${XDG_CONFIG_HOME:-$HOME/.config}/fish/completions/sshub.fish" \
           "$HOME/.local/share/applications/sshub.desktop" \
           "$HOME/.local/share/icons/hicolor/scalable/apps/sshub.svg"
-    @echo "Removed sshub binary, man page, completions, icon and launcher entry."
+    # Strip the sshub completions block from ~/.zshrc if we added it.
+    zshrc="$HOME/.zshrc"
+    if [ -f "$zshrc" ] && grep -qF '# >>> sshub completions >>>' "$zshrc"; then
+      sed -i '/# >>> sshub completions >>>/,/# <<< sshub completions <<</d' "$zshrc"
+      echo "Removed sshub completions block from ~/.zshrc"
+    fi
+    echo "Removed sshub binary, man page, completions, icon and launcher entry."

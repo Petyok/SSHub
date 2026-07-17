@@ -181,9 +181,10 @@ Run `sshub <command> --help` for a per-command usage block, or `man sshub`
 after `just install` (preview the page without installing with `just man`). See
 [openwiki/workflows/cli.md](openwiki/workflows/cli.md) for the full command tree.
 
-Shell completions: `just install-completions` installs bash/zsh/fish
-completions to the standard user locations (or generate one yourself with
-`sshub completions bash|zsh|fish`).
+Shell completions are installed automatically by `just install` (bash and fish
+drop into auto-loaded dirs; zsh gets a sourced line appended to `~/.zshrc`).
+Run `just install-completions` to (re)install only the completions, or generate
+one yourself with `sshub completions bash|zsh|fish`.
 
 ### Data paths
 
