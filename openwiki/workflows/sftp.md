@@ -57,6 +57,16 @@ The queue shows total bytes and a progress bar during transfers.
 
 The main event loop drains all pending `SftpEvent`s each tick, so UI stays responsive even while large transfers run.
 
+## Headless CLI
+
+One-shot SFTP operations run without the TUI:
+`sshub sftp ls|get|put|rm|mkdir|rename|chmod <host> ...`. Each subcommand drives
+the same background worker synchronously and exits. The direct libssh2 transport
+cannot chain a jump, so ProxyJump hosts are rejected up front. A local directory
+passed to `put` transfers recursively; `get` needs `--recursive` to walk a
+remote tree, and `sftp rm` requires `--yes`. See [cli.md](cli.md) for the full
+command reference.
+
 ## What to watch when changing SFTP
 
 - `src/sftp/transport.rs` — any new remote operation must have a matching command/event and handle errors gracefully.

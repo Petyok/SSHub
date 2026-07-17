@@ -168,6 +168,16 @@ fn help_lines() -> Vec<Line<'static>> {
         entry("s", "Open SSH session for this host (SFTP stays live)"),
         entry("Esc", "Disconnect · back to picker"),
         entry("", ""),
+        entry("[cli]", ""),
+        entry(
+            "",
+            "Headless CLI available: run  sshub --help  (or  sshub <cmd> --help)",
+        ),
+        entry(
+            "",
+            "for connect, tunnel, sftp, import/export from scripts (no TUI).",
+        ),
+        entry("", ""),
         entry("? / Shift+H", "Toggle this help screen"),
         entry("F2 / Ctrl+S", "Save form (rebindable)"),
         entry("Ctrl+K", "Edit keybindings (all actions)"),

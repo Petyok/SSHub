@@ -75,6 +75,23 @@ Tunnels run in the background without a terminal. The askpass dance is identical
 - If a stored credential exists, `SSH_ASKPASS` is wired up.
 - If no credential exists, `BatchMode=yes` is set so the tunnel fails fast with an error instead of prompting on `/dev/tty`.
 
+## Headless CLI
+
+Tunnels are also scriptable: `sshub tunnel list|create|start|stop` (plus `show`
+and `delete`). A `<token>` resolves a tunnel by id, label, or local port.
+`sshub tunnel start <token>` spawns a **detached** background `ssh -N`, writes a
+PID file, and prints the pid; `sshub tunnel start <token> --foreground` runs the
+tunnel in the current process with the keep-alive reconnect loop and blocks
+until it stops or gives up.
+
+**Limitation:** CLI-detached tunnels are tracked only through their PID file
+(`src/tunnel/spawn.rs`), so the in-app `TunnelManager` does not see them. A
+tunnel started by `sshub tunnel start` shows up as running via the CLI (through
+`TunnelRuntimeState`) but the TUI Tunnels tab, which only knows the children it
+spawned itself, will report it as down. Likewise a tunnel started inside the TUI
+is not managed by the CLI PID file. Start and stop a given tunnel from the same
+side to avoid confusion. See [cli.md](cli.md) for the full command reference.
+
 ## What to watch when changing tunnels
 
 - `src/tunnel.rs` — any change to child lifecycle, reconnect math, or askpass is high-risk for orphaned processes or port leaks.
