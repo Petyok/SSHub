@@ -26,7 +26,8 @@ pub fn export_launcher_hosts(store: &LauncherStore) -> Result<PathBuf> {
     export_launcher_hosts_to(store, &path)
 }
 
-fn render_launcher_hosts(store: &LauncherStore) -> Result<String> {
+/// Render launcher-native hosts as ssh_config text (no file write).
+pub fn render_launcher_hosts(store: &LauncherStore) -> Result<String> {
     let hosts = store.list_hosts_filtered(Some(HostSource::Launcher))?;
     let mut out = String::from(EXPORT_HEADER);
     for host in hosts {

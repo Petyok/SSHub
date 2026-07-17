@@ -1,6 +1,8 @@
 pub mod app;
+pub mod cli;
 pub mod config;
 pub mod credentials;
+pub mod hosts;
 pub mod import;
 pub mod keybinds;
 pub mod launcher;

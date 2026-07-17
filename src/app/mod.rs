@@ -23,7 +23,6 @@ mod tests;
 pub use types::*;
 pub use util::*;
 
-use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -433,46 +432,11 @@ impl App {
 
         sync_ssh_config_hosts(self.resolver.as_ref(), &self.store)?;
 
-        let launcher_hosts = self.store.list_hosts_filtered(Some(HostSource::Launcher))?;
-        let ssh_config_hosts = self
-            .store
-            .list_hosts_filtered(Some(HostSource::SshConfig))?;
-        let db_names: std::collections::HashSet<String> = launcher_hosts
-            .iter()
-            .chain(ssh_config_hosts.iter())
-            .map(|h| h.name.clone())
-            .collect();
-
-        let mut hosts: Vec<HostEntry> = launcher_hosts
-            .into_iter()
-            .chain(ssh_config_hosts)
-            .map(HostEntry::from_managed)
-            .collect();
-
-        let config_names = self.resolver.list_hosts()?;
-        self.metadata.ensure_defaults(&config_names)?;
-
-        for name in config_names {
-            if db_names.contains(&name) {
-                continue;
-            }
-            let host = match self.resolver.resolve_host(&name) {
-                Ok(host) => host,
-                Err(_) => {
-                    // Can't resolve this alias via `ssh -G`; skip it. We run
-                    // under raw mode, so never write to stderr here (it would
-                    // corrupt the TUI). The host simply won't be listed.
-                    continue;
-                }
-            };
-            let meta = self
-                .metadata
-                .get(&name)?
-                .unwrap_or_else(|| crate::metadata::HostMetadata::new(&name));
-            hosts.push(HostEntry::Legacy { host, meta });
-        }
-
-        self.hosts = hosts;
+        self.hosts = crate::hosts::load_merged_hosts(
+            self.resolver.as_ref(),
+            &self.store,
+            self.metadata.as_ref(),
+        )?;
         self.load_groups()?;
         self.rebuild_filter();
         if let Some(name) = selected_name {

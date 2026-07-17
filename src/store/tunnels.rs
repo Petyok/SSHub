@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 
 use super::migrate::now_ts;
 use super::types::{NewTunnel, Tunnel, TunnelType};
@@ -59,6 +59,57 @@ impl LauncherStore {
             Ok(affected > 0)
         })
     }
+
+    pub fn get_tunnel(&self, id: i64) -> Result<Option<Tunnel>> {
+        self.with_conn(|conn| {
+            conn.prepare(
+                "SELECT id, host_id, tunnel_type, local_port, remote_host, remote_port, label, auto_connect, created_at, updated_at
+                 FROM tunnels WHERE id = ?1",
+            )?
+            .query_row(params![id], row_to_tunnel)
+            .optional()
+            .map_err(Into::into)
+        })
+    }
+
+    pub fn find_tunnels_by_label(&self, label: &str) -> Result<Vec<Tunnel>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, host_id, tunnel_type, local_port, remote_host, remote_port, label, auto_connect, created_at, updated_at
+                 FROM tunnels WHERE label = ?1",
+            )?;
+            let rows = stmt.query_map(params![label], row_to_tunnel)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(Into::into)
+        })
+    }
+
+    pub fn find_tunnels_by_local_port(&self, port: u16) -> Result<Vec<Tunnel>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, host_id, tunnel_type, local_port, remote_host, remote_port, label, auto_connect, created_at, updated_at
+                 FROM tunnels WHERE local_port = ?1",
+            )?;
+            let rows = stmt.query_map(params![port as i64], row_to_tunnel)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(Into::into)
+        })
+    }
+}
+
+fn row_to_tunnel(row: &rusqlite::Row<'_>) -> rusqlite::Result<Tunnel> {
+    Ok(Tunnel {
+        id: row.get(0)?,
+        host_id: row.get(1)?,
+        tunnel_type: TunnelType::parse_db(row.get::<_, String>(2)?.as_str()),
+        local_port: u16::try_from(row.get::<_, i64>(3)?).unwrap_or(0),
+        remote_host: row.get(4)?,
+        remote_port: u16::try_from(row.get::<_, i64>(5)?).unwrap_or(0),
+        label: row.get(6)?,
+        auto_connect: row.get::<_, i64>(7)? != 0,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
+    })
 }
 
 #[cfg(test)]

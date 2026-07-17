@@ -145,7 +145,8 @@ impl App {
                             &self.config.tunnel_reconnect,
                         );
                         if let Some(ev) = gave_up {
-                            self.log_tunnel_reconnect_events(
+                            crate::tunnel::log_tunnel_reconnect_events(
+                                &self.store,
                                 std::slice::from_ref(&ev),
                                 std::slice::from_ref(&tunnel),
                             );
@@ -537,7 +538,8 @@ impl App {
                         &self.config.tunnel_reconnect,
                     );
                     if let Some(ev) = gave_up {
-                        self.log_tunnel_reconnect_events(
+                        crate::tunnel::log_tunnel_reconnect_events(
+                            &self.store,
                             std::slice::from_ref(&ev),
                             std::slice::from_ref(&tunnel),
                         );
@@ -560,64 +562,6 @@ impl App {
         Ok(())
     }
 
-    pub(crate) fn log_tunnel_reconnect_events(
-        &self,
-        events: &[crate::tunnel::ReconnectEvent],
-        tunnels: &[crate::store::Tunnel],
-    ) {
-        for ev in events {
-            let tunnel = tunnels.iter().find(|t| t.id == ev.tunnel_id());
-            let (host_name, port, label) = tunnel
-                .map(|t| {
-                    let name = t
-                        .host_id
-                        .and_then(|hid| self.store.get_host(hid).ok().flatten())
-                        .map(|h| h.name)
-                        .unwrap_or_else(|| "unknown".into());
-                    (name, t.local_port, t.label.clone().unwrap_or_default())
-                })
-                .unwrap_or_else(|| ("unknown".into(), 0, String::new()));
-
-            match ev {
-                crate::tunnel::ReconnectEvent::Attempt { attempt, .. } => {
-                    let _ = self.store.log_auth_event(
-                        &host_name,
-                        None,
-                        "tunnel",
-                        "retry",
-                        &format!("tunnel reconnecting :{} {} attempt {attempt}", port, label),
-                        None,
-                    );
-                }
-                crate::tunnel::ReconnectEvent::Reconnected { .. } => {
-                    let _ = self.store.log_auth_event(
-                        &host_name,
-                        None,
-                        "tunnel",
-                        "launched",
-                        &format!("tunnel reconnected :{} {}", port, label),
-                        None,
-                    );
-                }
-                crate::tunnel::ReconnectEvent::GaveUp {
-                    attempts, error, ..
-                } => {
-                    let _ = self.store.log_auth_event(
-                        &host_name,
-                        None,
-                        "tunnel",
-                        "fail",
-                        &format!(
-                            "tunnel gave up :{} {} after {attempts} attempts — {error}",
-                            port, label
-                        ),
-                        None,
-                    );
-                }
-            }
-        }
-    }
-
     pub(crate) fn tick_tunnel_reconnect(&mut self) -> Result<()> {
         if self.should_quit {
             return Ok(());
@@ -631,7 +575,7 @@ impl App {
             |host_id| store.get_host(host_id).ok().flatten(),
             |host| resolve_pending_secret_for_managed(host, self.password_store.as_ref()).0,
         );
-        self.log_tunnel_reconnect_events(&events, &tunnels);
+        crate::tunnel::log_tunnel_reconnect_events(&self.store, &events, &tunnels);
         Ok(())
     }
 
@@ -646,7 +590,7 @@ impl App {
         let health_events = self
             .tunnel_manager
             .check_health(&self.tunnels, &self.config.tunnel_reconnect);
-        self.log_tunnel_reconnect_events(&health_events, &self.tunnels);
+        crate::tunnel::log_tunnel_reconnect_events(&self.store, &health_events, &self.tunnels);
         self.tick_tunnel_reconnect()
     }
 

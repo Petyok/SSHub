@@ -27,10 +27,24 @@ fn main() -> Result<()> {
         return run_db(&args[1..]);
     }
 
+    if let Some(cmd) = args.first() {
+        if sshub::cli::is_subcommand(cmd) {
+            let code = run_cli(&args)?;
+            std::process::exit(code);
+        }
+    }
+
     if args.iter().any(|a| a == "--dry-run") {
         return Ok(());
     }
     sshub::run()
+}
+
+fn run_cli(args: &[String]) -> Result<i32> {
+    let cmd = args[0].as_str();
+    let rest = &args[1..];
+    let mut ctx = sshub::cli::CliContext::bootstrap()?;
+    sshub::cli::run_subcommand(&mut ctx, cmd, rest)
 }
 
 /// Handle `sshub db <subcommand>`.
@@ -82,19 +96,61 @@ fn print_help() {
         r#"sshub — SSHub TUI SSH host launcher
 
 USAGE:
-    sshub [OPTIONS]
-    sshub db purge [{CONFIRM_FLAG}]
+    sshub [OPTIONS]                         Launch TUI (default)
+    sshub <command> [args]                  Headless CLI subcommands
 
 OPTIONS:
     -h, --help              Print help
     -V, --version           Print version
         --dry-run           Exit immediately (smoke / CI)
-        {CONFIRM_FLAG}   Confirm a destructive command (e.g. db purge)
 
-COMMANDS:
-    db purge                Delete the launcher database (managed hosts, groups,
-                            identities, tunnels, audit log). Irreversible -
-                            requires {CONFIRM_FLAG}. Leaves ~/.ssh/config alone.
+HOST (read/write):
+    sshub host list [--tag TAG]... [--group GROUP] [--sort MODE] [--format plain|json]
+    sshub host show <name> [--format plain|json]
+    sshub host connect <name> [-v|--verbose]
+    sshub host resolve <name> [--format plain|json]
+    sshub host search <query> [--format plain|json]
+    sshub host add|edit|rename|delete|duplicate …
+
+ALIASES:
+    sshub connect <name>                    Same as `host connect`
+    sshub list …                            Same as `host list`
+
+GROUPS:
+    sshub group list [--all] [--format plain|json]
+    sshub group show <name> [--format plain|json]
+    sshub group add --name NAME [--parent GROUP] [--default-identity NAME] [--sort-order N]
+    sshub group edit --name NAME [--set-name …] [--set-parent …] [--clear-parent]
+                     [--set-default-identity …] [--clear-default-identity] [--set-sort-order N]
+    sshub group delete --name NAME --yes
+    sshub groups …                          Alias for `group list` (forwards flags)
+
+IDENTITIES:
+    sshub identity list|show|add|edit|delete|agent-remove …
+    sshub identity agent-remove --name NAME
+
+TUNNELS:
+    sshub tunnel list|show|create|delete|start|stop …
+
+SFTP (one-shot):
+    sshub sftp ls|get|put|rm|mkdir|rename|chmod …
+
+AUDIT:
+    sshub audit list|stats …
+
+INVENTORY / CONFIG:
+    sshub tags [--format plain|json]
+    sshub sync                              Refresh ssh_config rows in DB
+    sshub import                            Import ~/.ssh/config hosts
+    sshub export [--stdout] [-o PATH]       Export launcher hosts to ssh_config snippet
+    sshub db purge [{CONFIRM_FLAG}]
+
+COMPLETIONS:
+    sshub completions bash|zsh|fish [--cache PATH]
+
+DESTRUCTIVE CONFIRMATION:
+    Most delete commands require --yes
+    db purge requires {CONFIRM_FLAG} (irreversible database wipe)
 
 ENVIRONMENT:
     SSHUB_CONFIG_DIR          Override config directory (fallback: SSH_LAUNCHER_CONFIG_DIR)

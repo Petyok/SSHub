@@ -6,8 +6,19 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 
 use crate::config::{tunnel_backoff_delay, tunnel_failure_attempt, TunnelReconnectConfig};
-use crate::session::{askpass, PendingSecret};
-use crate::store::{ManagedHost, Tunnel, TunnelType};
+use crate::session::PendingSecret;
+use crate::store::{ManagedHost, Tunnel};
+
+pub mod audit;
+pub mod spawn;
+
+pub use audit::log_tunnel_reconnect_events;
+pub use spawn::{
+    build_tunnel_argv, ensure_tunnel_pid_dir, is_local_port_bound, is_pid_alive, kill_pid,
+    read_tunnel_pid, remove_tunnel_pid, spawn_detached_tunnel, splice_tunnel_ssh_options,
+    stage_tunnel_askpass, stop_detached_tunnel, tunnel_data_dir, tunnel_pid_path,
+    tunnel_runtime_state, write_tunnel_pid, TunnelRuntimeState,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReconnectEvent {
@@ -73,7 +84,7 @@ struct TunnelProcess {
     /// True until the child survives [`TunnelReconnectConfig::stable_secs`].
     proving: bool,
     stderr_tail: Arc<Mutex<String>>,
-    _askpass: Option<askpass::AskpassSecret>,
+    _askpass: Option<crate::session::askpass::AskpassSecret>,
 }
 
 pub struct TunnelManager {
@@ -110,62 +121,8 @@ impl TunnelManager {
             self.stop_process(tunnel.id)?;
         }
 
-        let mut args: Vec<String> = vec!["ssh".into(), "-N".into()];
-        splice_tunnel_ssh_options(&mut args, secret.is_some());
-
-        let flag = match tunnel.tunnel_type {
-            TunnelType::Local => "-L",
-            TunnelType::Remote => "-R",
-            TunnelType::Dynamic => "-D",
-        };
-
-        let spec = if tunnel.tunnel_type == TunnelType::Dynamic {
-            format!("{}", tunnel.local_port)
-        } else {
-            format!(
-                "{}:{}:{}",
-                tunnel.local_port, tunnel.remote_host, tunnel.remote_port
-            )
-        };
-
-        args.push(flag.into());
-        args.push(spec);
-
-        if let Some(host) = host {
-            if host.port != 22 {
-                args.push("-p".into());
-                args.push(host.port.to_string());
-            }
-            if let Some(ref jump) = host.proxy_jump {
-                if !jump.is_empty() {
-                    args.push("-J".into());
-                    args.push(jump.clone());
-                }
-            }
-            if host.forward_agent {
-                args.push("-A".into());
-            }
-            if let Some(ref identity) = host.identity {
-                if let Some(ref key) = identity.private_key {
-                    args.push("-i".into());
-                    args.push(key.to_string_lossy().into_owned());
-                }
-            }
-            let target = if let Some(ref username) = host.username {
-                format!("{}@{}", username, host.address)
-            } else if let Some(ref identity) = host.identity {
-                if let Some(ref u) = identity.username {
-                    format!("{}@{}", u, host.address)
-                } else {
-                    host.address.clone()
-                }
-            } else {
-                host.address.clone()
-            };
-            args.push(target);
-        } else {
-            anyhow::bail!("No host associated with tunnel");
-        }
+        let host = host.ok_or_else(|| anyhow::anyhow!("No host associated with tunnel"))?;
+        let args = build_tunnel_argv(tunnel, host, secret.is_some())?;
 
         let mut cmd = Command::new(&args[0]);
         cmd.args(&args[1..])
@@ -558,54 +515,6 @@ impl TunnelManager {
     }
 }
 
-/// Insert non-interactive ssh options after the `ssh` argv0. Background tunnels
-/// must never open `/dev/tty` for a password prompt — that writes over the TUI
-/// and steals mouse/keyboard input from crossterm.
-fn splice_tunnel_ssh_options(args: &mut Vec<String>, has_stored_secret: bool) {
-    if args.first().map(String::as_str) != Some("ssh") {
-        return;
-    }
-    let batchmode = if has_stored_secret {
-        "BatchMode=no"
-    } else {
-        "BatchMode=yes"
-    };
-    let mut opts = vec![
-        "-o".to_string(),
-        batchmode.to_string(),
-        "-o".to_string(),
-        "ConnectTimeout=30".to_string(),
-        "-o".to_string(),
-        "ServerAliveInterval=10".to_string(),
-        "-o".to_string(),
-        "ServerAliveCountMax=3".to_string(),
-        "-o".to_string(),
-        "TCPKeepAlive=yes".to_string(),
-    ];
-    if has_stored_secret {
-        opts.push("-o".to_string());
-        opts.push("StrictHostKeyChecking=accept-new".to_string());
-    }
-    for (i, opt) in opts.into_iter().enumerate() {
-        args.insert(1 + i, opt);
-    }
-}
-
-fn stage_tunnel_askpass(
-    cmd: &mut Command,
-    secret: Option<&PendingSecret>,
-) -> Result<Option<askpass::AskpassSecret>> {
-    let Some(secret) = secret else {
-        return Ok(None);
-    };
-    let exe = std::env::current_exe()?;
-    let guard = askpass::AskpassSecret::new(secret.value())?;
-    for (k, v) in guard.env(&exe) {
-        cmd.env(k, v);
-    }
-    Ok(Some(guard))
-}
-
 impl Drop for TunnelManager {
     fn drop(&mut self) {
         for (_, mut proc) in self.processes.drain() {
@@ -619,37 +528,6 @@ impl Drop for TunnelManager {
 mod tests {
     use super::*;
     use std::time::Duration;
-
-    #[test]
-    fn splice_tunnel_ssh_options_forces_batchmode_without_secret() {
-        let mut args = vec!["ssh".into(), "-N".into(), "host".into()];
-        splice_tunnel_ssh_options(&mut args, false);
-        assert!(args.windows(2).any(|w| w == ["-o", "BatchMode=yes"]));
-        assert!(!args.iter().any(|a| a.contains("accept-new")));
-    }
-
-    #[test]
-    fn splice_tunnel_ssh_options_allows_askpass_with_secret() {
-        let mut args = vec!["ssh".into(), "-N".into(), "host".into()];
-        splice_tunnel_ssh_options(&mut args, true);
-        assert!(args.windows(2).any(|w| w == ["-o", "BatchMode=no"]));
-        assert!(args
-            .windows(2)
-            .any(|w| w == ["-o", "StrictHostKeyChecking=accept-new"]));
-    }
-
-    #[test]
-    fn splice_tunnel_ssh_options_includes_keepalive() {
-        let mut args = vec!["ssh".into(), "-N".into(), "host".into()];
-        splice_tunnel_ssh_options(&mut args, false);
-        assert!(args
-            .windows(2)
-            .any(|w| w == ["-o", "ServerAliveInterval=10"]));
-        assert!(args
-            .windows(2)
-            .any(|w| w == ["-o", "ServerAliveCountMax=3"]));
-        assert!(args.windows(2).any(|w| w == ["-o", "TCPKeepAlive=yes"]));
-    }
 
     #[test]
     fn mark_user_stopped_clears_reconnect_state() {
@@ -685,7 +563,6 @@ mod tests {
             max_attempts: 2,
             ..Default::default()
         };
-        // After one recorded failure (attempt 1), the next start failure exhausts budget.
         mgr.schedule_reconnect(1, "err1", &cfg, 1);
         let ev = mgr.on_auto_start_failed(1, "err2", &cfg);
         assert!(matches!(
