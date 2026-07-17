@@ -177,7 +177,8 @@ sshub completions bash
 sshub completions fish
 ```
 
-Run `sshub <command> --help` for a per-command usage block. See
+Run `sshub <command> --help` for a per-command usage block, or `man sshub`
+after `just install` (preview the page without installing with `just man`). See
 [openwiki/workflows/cli.md](openwiki/workflows/cli.md) for the full command tree.
 
 ### Data paths

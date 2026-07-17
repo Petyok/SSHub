@@ -23,6 +23,10 @@ record-gifs *tapes: build
 dry-run:
     cargo run -- --dry-run
 
+# Preview the man page (man/sshub.1) without installing it.
+man:
+    man -l man/sshub.1
+
 # Bump the version (odometer, each field 0-9; see CLAUDE.md "Versioning").
 #   just bump patch       # every commit to development
 #   just bump minor       # on release (merge development -> main); resets patch
@@ -175,18 +179,20 @@ install: build
     bin="$HOME/.local/bin/sshub"
     term="$(command -v kitty || command -v ghostty || command -v alacritty || command -v foot || echo xterm)"
     install -Dm755 target/release/sshub "$bin"
+    install -Dm644 man/sshub.1 "$HOME/.local/share/man/man1/sshub.1"
     install -Dm644 assets/sshub.svg "$HOME/.local/share/icons/hicolor/scalable/apps/sshub.svg"
     mkdir -p "$HOME/.local/share/applications"
     sed -e "s|@TERM@|$term|g" -e "s|@BIN@|$bin|g" \
         assets/sshub.desktop > "$HOME/.local/share/applications/sshub.desktop"
     update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
     gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
-    echo "Installed $bin, icon and launcher entry (terminal: $term)."
+    echo "Installed $bin, man page, icon and launcher entry (terminal: $term)."
     echo "If it doesn't show up, log out/in or run: update-desktop-database ~/.local/share/applications"
 
 # Remove the installed binary and launcher entry.
 uninstall:
     rm -f "$HOME/.local/bin/sshub" \
+          "$HOME/.local/share/man/man1/sshub.1" \
           "$HOME/.local/share/applications/sshub.desktop" \
           "$HOME/.local/share/icons/hicolor/scalable/apps/sshub.svg"
-    @echo "Removed sshub binary, icon and launcher entry."
+    @echo "Removed sshub binary, man page, icon and launcher entry."
