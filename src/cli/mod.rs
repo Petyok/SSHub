@@ -3,6 +3,7 @@ pub mod completions;
 pub mod context;
 pub mod filter;
 pub mod group;
+pub mod help;
 pub mod host;
 pub mod identity;
 pub mod inventory;
@@ -40,6 +41,10 @@ pub fn is_subcommand(cmd: &str) -> bool {
 /// Dispatch a subcommand. `rest` is argv AFTER the subcommand token. main.rs
 /// owns bootstrap and passes `ctx` in; this fn must NOT call CliContext::bootstrap.
 pub fn run_subcommand(ctx: &mut CliContext, cmd: &str, rest: &[String]) -> Result<i32> {
+    if rest.iter().any(|a| a == "--help" || a == "-h") {
+        help::print_command_help(cmd);
+        return Ok(0);
+    }
     match cmd {
         "host" => host::run_host(ctx, rest),
         // aliases:

@@ -12,6 +12,21 @@ fn main() -> Result<()> {
 
     let args: Vec<String> = std::env::args().skip(1).collect();
 
+    // Subcommands must be handled before the global flags and the TUI launch
+    // path, so that `sshub <cmd> --help` reaches the subcommand's own help
+    // (via cli::run_subcommand) instead of the global `--help` below.
+    if args.first().map(String::as_str) == Some("db") {
+        return run_db(&args[1..]);
+    }
+
+    if let Some(cmd) = args.first() {
+        if sshub::cli::is_subcommand(cmd) {
+            let code = run_cli(&args)?;
+            std::process::exit(code);
+        }
+    }
+
+    // Global flags apply only when no subcommand was given.
     if args.iter().any(|a| a == "--help" || a == "-h") {
         print_help();
         return Ok(());
@@ -22,16 +37,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Subcommands must be handled before the TUI launch path.
-    if args.first().map(String::as_str) == Some("db") {
-        return run_db(&args[1..]);
-    }
-
     if let Some(cmd) = args.first() {
-        if sshub::cli::is_subcommand(cmd) {
-            let code = run_cli(&args)?;
-            std::process::exit(code);
-        }
         // A non-flag first arg that is neither `db` nor a known subcommand is a
         // usage error. The TUI takes no positional args, so falling through to
         // it would launch a full-screen app for a typo (and fail without a TTY).
@@ -101,7 +107,7 @@ fn run_db_purge(confirmed: bool) -> Result<()> {
 
 fn print_help() {
     println!(
-        r#"sshub — SSHub TUI SSH host launcher
+        r#"sshub - SSHub TUI SSH host launcher
 
 USAGE:
     sshub [OPTIONS]                         Launch TUI (default)
