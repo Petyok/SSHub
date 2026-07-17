@@ -174,8 +174,42 @@ fn words_csv(items: &[&str]) -> String {
     items.join(" ")
 }
 
-fn names_csv(names: &[String]) -> String {
-    names.join(" ")
+/// Escape a host name for a bash double-quoted context (`local hosts="..."`),
+/// neutralizing string-breakout and command substitution. Host names are not
+/// restricted to a safe charset, and the generated script is sourced, so an
+/// unescaped name like `$(...)` would execute at completion-load time.
+fn bash_dq(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for c in name.chars() {
+        if matches!(c, '\\' | '"' | '`' | '$') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// POSIX single-quote a token for a zsh array literal (`hosts=(...)`).
+fn sq(name: &str) -> String {
+    format!("'{}'", name.replace('\'', "'\\''"))
+}
+
+/// Single-quote a token for fish (`-a '...'`); inside '...' fish only treats
+/// `\'` and `\\` as escapes.
+fn fish_sq(name: &str) -> String {
+    format!("'{}'", name.replace('\\', "\\\\").replace('\'', "\\'"))
+}
+
+fn bash_host_list(names: &[String]) -> String {
+    names
+        .iter()
+        .map(|n| bash_dq(n))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn zsh_host_list(names: &[String]) -> String {
+    names.iter().map(|n| sq(n)).collect::<Vec<_>>().join(" ")
 }
 
 fn render_bash(host_names: &[String]) -> String {
@@ -266,7 +300,7 @@ complete -F _sshub_completions sshub
         audit_sub = words_csv(AUDIT_SUB),
         db_sub = words_csv(DB_SUB),
         completions_sub = words_csv(COMPLETIONS_SUB),
-        hosts = names_csv(host_names),
+        hosts = bash_host_list(host_names),
     )
 }
 
@@ -350,7 +384,7 @@ _sshub "$@"
         audit_sub = AUDIT_SUB.join(" "),
         db_sub = DB_SUB.join(" "),
         completions_sub = COMPLETIONS_SUB.join(" "),
-        hosts = host_names.join(" "),
+        hosts = zsh_host_list(host_names),
     )
 }
 
@@ -406,11 +440,12 @@ fn render_fish(host_names: &[String]) -> String {
     }
 
     for name in host_names {
+        let q = fish_sq(name);
         out.push_str(&format!(
-            "complete -c sshub -n '__fish_seen_subcommand_from host connect; and __fish_seen_subcommand_from connect show resolve delete duplicate' -a '{name}'\n"
+            "complete -c sshub -n '__fish_seen_subcommand_from host connect; and __fish_seen_subcommand_from connect show resolve delete duplicate' -a {q}\n"
         ));
         out.push_str(&format!(
-            "complete -c sshub -n '__fish_seen_subcommand_from sftp; and not __fish_seen_subcommand_from ls get put rm mkdir rename chmod' -a '{name}'\n"
+            "complete -c sshub -n '__fish_seen_subcommand_from sftp; and not __fish_seen_subcommand_from ls get put rm mkdir rename chmod' -a {q}\n"
         ));
     }
 
@@ -437,5 +472,25 @@ mod tests {
         assert!(script.contains("host"));
         assert!(script.contains("group"));
         assert!(script.contains("prod"));
+    }
+
+    #[test]
+    fn host_names_are_shell_escaped() {
+        let names = vec!["x$(id)".to_string(), "q'z".to_string()];
+        let bash = render_bash(&names);
+        assert!(
+            bash.contains("x\\$(id)"),
+            "bash must escape $ in host names: {bash}"
+        );
+        let zsh = render_zsh(&names);
+        assert!(
+            zsh.contains("'q'\\''z'"),
+            "zsh must single-quote-escape host names: {zsh}"
+        );
+        let fish = render_fish(&names);
+        assert!(
+            fish.contains("'q\\'z'"),
+            "fish must escape quotes in host names: {fish}"
+        );
     }
 }
