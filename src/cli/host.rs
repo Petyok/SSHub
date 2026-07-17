@@ -206,14 +206,22 @@ fn cmd_connect(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
         }
     }
 
-    let username = entry.managed().and_then(|m| {
-        m.username
-            .as_deref()
-            .or_else(|| m.identity.as_ref().and_then(|i| i.username.as_deref()))
-    });
+    // For legacy ssh_config hosts entry.managed() is None, so fall back to the
+    // resolved SshHost (User / ProxyJump from ~/.ssh/config) rather than logging
+    // username=None and via=direct.
+    let ssh = entry.ssh_host();
+    let username = entry
+        .managed()
+        .and_then(|m| {
+            m.username
+                .as_deref()
+                .or_else(|| m.identity.as_ref().and_then(|i| i.username.as_deref()))
+        })
+        .or(ssh.user.as_deref());
     let via = entry
         .managed()
         .and_then(|m| m.proxy_jump.as_deref())
+        .or(ssh.proxy_jump.as_deref())
         .unwrap_or("direct");
 
     let program = argv.first().context("empty connect argv")?;
@@ -961,6 +969,7 @@ impl HostEditPatch {
             || self.set_identity.is_some()
             || self.clear_identity
             || self.set_label.is_some()
+            || self.touches_managed_fields()
     }
 
     fn metadata_only(&self) -> bool {
@@ -971,6 +980,18 @@ impl HostEditPatch {
             && self.password.is_none()
             && !self.clear_password
             && self.set_label.is_none()
+            && !self.touches_managed_fields()
+    }
+
+    /// Managed-row fields that `apply_metadata_edit` does not handle, so an edit
+    /// touching them must route through the full-edit path (and materialize a
+    /// legacy host first). Kept out of `changes_connection_fields` so they do
+    /// not trip the ssh_config connection-field read-only guard.
+    fn touches_managed_fields(&self) -> bool {
+        self.set_username.is_some()
+            || self.clear_username
+            || self.set_os_icon.is_some()
+            || self.clear_os_icon
     }
 
     fn changes_connection_fields(&self) -> bool {
@@ -996,4 +1017,44 @@ fn read_password_stdin() -> Result<String> {
 fn host_usage(msg: &str) -> ! {
     eprintln!("sshub: {msg}");
     std::process::exit(2);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn patch(args: &[&str]) -> HostEditPatch {
+        let v: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        HostEditPatch::parse(&v).unwrap()
+    }
+
+    #[test]
+    fn username_only_edit_routes_through_full_path() {
+        // Regression: --set-username alone must NOT be treated as metadata-only
+        // (apply_metadata_edit drops it); it must route to the full-edit path
+        // and materialize a legacy host first.
+        let p = patch(&["--name", "h", "--set-username", "bob"]);
+        assert!(!p.metadata_only());
+        assert!(p.needs_materialize());
+    }
+
+    #[test]
+    fn os_icon_only_edit_routes_through_full_path() {
+        let p = patch(&["--name", "h", "--set-os-icon", "linux"]);
+        assert!(!p.metadata_only());
+        assert!(p.needs_materialize());
+    }
+
+    #[test]
+    fn clear_username_only_edit_routes_through_full_path() {
+        let p = patch(&["--name", "h", "--clear-username"]);
+        assert!(!p.metadata_only());
+        assert!(p.needs_materialize());
+    }
+
+    #[test]
+    fn tags_only_edit_stays_metadata_only() {
+        let p = patch(&["--name", "h", "--set-tags", "a,b"]);
+        assert!(p.metadata_only());
+    }
 }
