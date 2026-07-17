@@ -232,6 +232,13 @@ pub fn tunnel_runtime_state(tunnel_id: i64, local_port: u16, pid_dir: &Path) -> 
 }
 
 /// Spawn a detached tunnel child and record its PID under `data_dir/tunnels/`.
+///
+/// Known limitations (acceptable for the v1 CLI, single-user local use):
+/// - The stale-PID and port-bound checks are best-effort with no advisory
+///   lock, so two near-simultaneous `tunnel start <id>` invocations can race
+///   between the checks and the PID write and leak one ssh child.
+/// - PID liveness is a bare `kill(pid, 0)` with no start-time/identity check,
+///   so a recycled PID could read as alive (see also `stop_detached_tunnel`).
 pub fn spawn_detached_tunnel(
     tunnel: &Tunnel,
     host: &ManagedHost,
@@ -267,6 +274,11 @@ pub fn spawn_detached_tunnel(
 }
 
 /// Stop a CLI-detached tunnel via its PID file. Returns true when a live PID was signalled.
+///
+/// Known limitation: the PID file holds only a bare integer with no start-time
+/// or command identity, so in the rare case the OS recycled the recorded PID to
+/// an unrelated process this would signal that process. A future hardening would
+/// store and verify the process start time (Linux `/proc/<pid>/stat`).
 pub fn stop_detached_tunnel(data_dir: &Path, tunnel_id: i64) -> Result<bool> {
     let pid_dir = ensure_tunnel_pid_dir(data_dir)?;
     let pid_path = tunnel_pid_path(&pid_dir, tunnel_id);

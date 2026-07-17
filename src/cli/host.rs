@@ -155,11 +155,14 @@ fn cmd_connect(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     );
 
     if let Some(cmd) = argv.first() {
+        // Best-effort pre-flight. If `which` itself cannot run (missing from
+        // PATH), fail open (unwrap_or(false)) rather than blocking a valid ssh:
+        // a genuinely missing program is still caught by the spawn error below.
         if Command::new("which")
             .arg(cmd)
             .output()
             .map(|o| !o.status.success())
-            .unwrap_or(true)
+            .unwrap_or(false)
         {
             eprintln!("sshub: command not found: '{cmd}'");
             return Ok(1);
