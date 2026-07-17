@@ -32,6 +32,14 @@ fn main() -> Result<()> {
             let code = run_cli(&args)?;
             std::process::exit(code);
         }
+        // A non-flag first arg that is neither `db` nor a known subcommand is a
+        // usage error. The TUI takes no positional args, so falling through to
+        // it would launch a full-screen app for a typo (and fail without a TTY).
+        if !cmd.starts_with('-') {
+            eprintln!("sshub: unknown command '{cmd}'");
+            eprintln!("       run `sshub --help` for the command list");
+            std::process::exit(2);
+        }
     }
 
     if args.iter().any(|a| a == "--dry-run") {
