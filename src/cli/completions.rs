@@ -237,10 +237,15 @@ _sshub_completions() {{
     fi
 
     case "${{COMP_WORDS[1]}}" in
-        host|connect)
+        host)
             if (( COMP_CWORD == 2 )); then
                 COMPREPLY=( $(compgen -W "$host_sub" -- "$cur") )
             elif (( COMP_CWORD >= 3 )) && [[ "${{COMP_WORDS[2]}}" == @(connect|show|resolve|delete|duplicate) ]]; then
+                COMPREPLY=( $(compgen -W "$hosts" -- "$cur") )
+            fi
+            ;;
+        connect)
+            if (( COMP_CWORD == 2 )); then
                 COMPREPLY=( $(compgen -W "$hosts" -- "$cur") )
             fi
             ;;
@@ -336,12 +341,15 @@ _sshub() {{
             ;;
         args)
             case $words[2] in
-                host|connect)
+                host)
                     if (( CURRENT == 3 )); then
                         _describe 'subcommand' host_cmds
                     elif (( CURRENT >= 4 )) && [[ $words[3] == (connect|show|resolve|delete|duplicate) ]]; then
                         _describe 'host' hosts
                     fi
+                    ;;
+                connect)
+                    (( CURRENT == 3 )) && _describe 'host' hosts
                     ;;
                 groups|group)
                     (( CURRENT == 3 )) && _describe 'subcommand' group_cmds
