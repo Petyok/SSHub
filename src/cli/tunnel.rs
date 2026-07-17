@@ -256,11 +256,23 @@ fn run_foreground(
         );
         log_tunnel_reconnect_events(&store, &reconnect, &tunnels);
 
-        if !mgr.has_child(tunnel.id)
-            && !mgr.is_reconnecting(tunnel.id)
-            && mgr.status(tunnel.id) == "stopped"
-        {
-            break;
+        // Terminal states once the child is gone and no reconnect is pending.
+        // A keep-alive tunnel that exhausts its retries is caught by is_gave_up
+        // above; a non-keep-alive tunnel whose child dies lands in "error" with
+        // no reconnect, so we must exit here (nonzero) or the loop would spin
+        // forever waiting for a "stopped" that never comes.
+        if !mgr.has_child(tunnel.id) && !mgr.is_reconnecting(tunnel.id) {
+            match mgr.status(tunnel.id) {
+                "stopped" => break,
+                "error" => fail_code(
+                    &format!(
+                        "tunnel exited: {}",
+                        mgr.error_detail(tunnel.id).unwrap_or("unknown error")
+                    ),
+                    1,
+                ),
+                _ => {}
+            }
         }
 
         std::thread::sleep(Duration::from_secs(1));
