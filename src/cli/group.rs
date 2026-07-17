@@ -129,6 +129,11 @@ fn cmd_edit(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     let group = ctx.group_by_name(&name)?;
 
     let set_name = take_opt(&mut rest, "--set-name");
+    if let Some(n) = &set_name {
+        if n.trim().is_empty() {
+            fail("group name cannot be empty");
+        }
+    }
     let set_sort = match take_opt(&mut rest, "--set-sort-order") {
         Some(s) => Some(
             s.parse::<i32>()
