@@ -35,12 +35,20 @@ fn print_host() {
         r#"sshub host - manage launcher hosts (read/write)
 
 USAGE:
-    sshub host list [--tag TAG]... [--group GROUP] [--sort MODE] [--format plain|json]
-    sshub host show <name> [--format plain|json]
+    sshub host list    [--tag TAG]... [--group GROUP] [--sort MODE] [--format plain|json]
+    sshub host show    <name> [--format plain|json]
     sshub host connect <name> [-v|--verbose]
     sshub host resolve <name> [--format plain|json]
-    sshub host search <query> [--format plain|json]
-    sshub host add|edit|rename|delete|duplicate ..."#
+    sshub host search  <query> [--format plain|json]
+    sshub host add     --name NAME --address ADDR [--port N] [--username U] [--identity NAME]
+                       [--group NAME] [--tag TAG]... [--proxy-jump SPEC] [--transport ssh|mosh] ...
+    sshub host edit    --name NAME [--set-FIELD ... | --clear-FIELD ...]
+    sshub host rename  --name NAME --new-name NEW [--strict]
+    sshub host delete  --name NAME --yes
+    sshub host duplicate <name>
+
+--sort MODE: label|last-connected|favorite|group|manual. Run `man sshub` for the
+full add/edit flag list."#
     );
 }
 
@@ -90,7 +98,15 @@ fn print_identity() {
         r#"sshub identity - manage SSH identities
 
 USAGE:
-    sshub identity list|show|add|edit|delete|agent-remove ...
+    sshub identity list                  [--format plain|json]
+    sshub identity show   <name>         [--format plain|json]
+    sshub identity add    --name NAME [--username U] [--private-key PATH]
+                          [--certificate PATH] [--password-stdin]
+    sshub identity edit   --name NAME [--set-name ...] [--set-username ...] [--clear-username]
+                          [--set-private-key ...] [--clear-private-key]
+                          [--set-certificate ...] [--clear-certificate]
+                          [--password-stdin] [--clear-password]
+    sshub identity delete --name NAME --yes
     sshub identity agent-remove --name NAME"#
     );
 }
@@ -100,16 +116,34 @@ fn print_tunnel() {
         r#"sshub tunnel - manage SSH tunnels
 
 USAGE:
-    sshub tunnel list|show|create|delete|start|stop ..."#
+    sshub tunnel list                [--format plain|json]
+    sshub tunnel show   <id>         [--format plain|json]
+    sshub tunnel create --host NAME --type local|remote|dynamic --local-port P
+                        [--remote-host H] [--remote-port P] [--label L] [--keep-alive]
+    sshub tunnel start  <id>         [--foreground]
+    sshub tunnel stop   <id>
+    sshub tunnel delete <id> --yes
+
+<id> accepts a tunnel id, label, or local port. Detached tunnels record a PID
+file and are not visible to the TUI tunnel manager (and vice versa)."#
     );
 }
 
 fn print_sftp() {
     println!(
-        r#"sshub sftp - one-shot SFTP file operations
+        r#"sshub sftp - one-shot SFTP file operations (direct hosts only; ProxyJump unsupported)
 
 USAGE:
-    sshub sftp ls|get|put|rm|mkdir|rename|chmod ..."#
+    sshub sftp ls     <host> [remote-path] [--format plain|json]
+    sshub sftp get    <host> <remote-path> [local-path] [--recursive]
+    sshub sftp put    <host> <local-path> [remote-path] [--recursive]
+    sshub sftp rm     <host> <remote-path> [--recursive] --yes
+    sshub sftp mkdir  <host> <remote-path>
+    sshub sftp rename <host> <from> <to>
+    sshub sftp chmod  <host> <octal-mode> <remote-path>
+
+<host> is a saved host name. rm is destructive and requires --yes; --recursive
+descends into directories."#
     );
 }
 
@@ -118,8 +152,10 @@ fn print_audit() {
         r#"sshub audit - inspect the connection audit log
 
 USAGE:
-    sshub audit list [--status STATUS] [--via VIA] [--host HOST] [--limit N] [--days N] [--format plain|json]
-    sshub audit stats [--days N] [--via VIA] [--include-retry] [--format plain|json]"#
+    sshub audit list  [--status all|ok|fail|retry] [--via all|connect|tunnel|agent]
+                      [--host NAME] [--limit N] [--days N] [--format plain|json]
+    sshub audit stats [--days N] [--via all|connect|tunnel|agent] [--include-retry]
+                      [--format plain|json]"#
     );
 }
 

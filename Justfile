@@ -27,6 +27,30 @@ dry-run:
 man:
     man -l man/sshub.1
 
+# Generate and install shell completions for bash, zsh, and fish into standard
+# user locations. Runs `just build` first.
+install-completions: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bin=target/release/sshub
+    bash_dir="${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions"
+    zsh_dir="${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions"
+    fish_dir="${XDG_CONFIG_HOME:-$HOME/.config}/fish/completions"
+    install -d "$bash_dir" "$zsh_dir" "$fish_dir"
+    "$bin" completions bash > "$bash_dir/sshub"
+    "$bin" completions zsh  > "$zsh_dir/_sshub"
+    "$bin" completions fish > "$fish_dir/sshub.fish"
+    echo "Installed completions:"
+    echo "  bash -> $bash_dir/sshub"
+    echo "  zsh  -> $zsh_dir/_sshub"
+    echo "  fish -> $fish_dir/sshub.fish"
+    echo
+    echo "bash: works if bash-completion is enabled (it loads the user dir above)."
+    echo "zsh:  ensure the dir is on fpath, e.g. in ~/.zshrc before compinit:"
+    echo "        fpath=($zsh_dir \$fpath)"
+    echo "        autoload -Uz compinit && compinit"
+    echo "fish: loaded automatically in a new shell."
+
 # Bump the version (odometer, each field 0-9; see CLAUDE.md "Versioning").
 #   just bump patch       # every commit to development
 #   just bump minor       # on release (merge development -> main); resets patch
@@ -193,6 +217,9 @@ install: build
 uninstall:
     rm -f "$HOME/.local/bin/sshub" \
           "$HOME/.local/share/man/man1/sshub.1" \
+          "${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions/sshub" \
+          "${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions/_sshub" \
+          "${XDG_CONFIG_HOME:-$HOME/.config}/fish/completions/sshub.fish" \
           "$HOME/.local/share/applications/sshub.desktop" \
           "$HOME/.local/share/icons/hicolor/scalable/apps/sshub.svg"
-    @echo "Removed sshub binary, man page, icon and launcher entry."
+    @echo "Removed sshub binary, man page, completions, icon and launcher entry."
