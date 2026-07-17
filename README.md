@@ -123,6 +123,63 @@ sshub --help       # show options
 sshub db purge --yes-i-am-stupid
 ```
 
+## Headless CLI
+
+Beyond the TUI, `sshub` exposes a full command-line interface for scripting and
+automation: hosts, groups, identities, tunnels, SFTP, and the audit log, no
+terminal UI required. Add `--format json` to any listing or show command for
+machine-readable output (plain text is the default). Exit codes are stable:
+`0` success, `1` operational failure, `2` usage or bad flags. Destructive
+commands refuse to run without `--yes`.
+
+```bash
+# Hosts
+sshub list                                  # list hosts (alias for `host list`)
+sshub connect prod-web                       # open an SSH session to a host
+sshub host show prod-web --format json       # host details as JSON
+sshub host search web                        # fuzzy search
+sshub host add --name prod-web --address 10.0.0.5 --port 22 \
+    --username deploy --group prod --tags web,prod
+sshub host delete --name prod-web --yes      # destructive: needs --yes
+
+# Groups and identities
+sshub groups                                 # list host groups
+sshub group add --name prod
+sshub identity add --name work --username alice --private-key ~/.ssh/id_ed25519
+sshub identity agent-remove --name work      # ssh-add -d for the identity's key
+
+# Tunnels
+sshub tunnel list
+sshub tunnel create --host prod-web --type local --local-port 8080 \
+    --remote-host localhost --remote-port 80
+sshub tunnel start 3                          # start detached (by id, label, or port)
+sshub tunnel start 3 --foreground             # run in the foreground with keep-alive
+sshub tunnel stop 3
+
+# SFTP (one-shot, over a direct host)
+sshub sftp ls prod-web /var/log
+sshub sftp get prod-web /var/log/app.log ./app.log
+sshub sftp put prod-web ./deploy.tar.gz /tmp/deploy.tar.gz
+sshub sftp rm prod-web /tmp/deploy.tar.gz --yes
+
+# Audit log
+sshub audit list --status fail --days 7
+sshub audit stats --days 7
+
+# Inventory sync with ~/.ssh/config
+sshub import                                  # import hosts from ssh config
+sshub sync                                    # refresh ssh_config rows
+sshub export --stdout                         # print an ssh_config snippet
+
+# Shell completions
+sshub completions zsh > ~/.zsh/completions/_sshub
+sshub completions bash
+sshub completions fish
+```
+
+Run `sshub <command> --help` for a per-command usage block. See
+[openwiki/workflows/cli.md](openwiki/workflows/cli.md) for the full command tree.
+
 ### Data paths
 
 | Resource   | Default path                          |
