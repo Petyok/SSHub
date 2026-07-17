@@ -275,10 +275,7 @@ fn cmd_add(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     let spec = HostAddSpec::parse(args)?;
     let unique_name = ctx.store.unique_host_name(&spec.name, None)?;
     if unique_name != spec.name {
-        eprintln!(
-            "sshub: name '{}' taken — using '{}'",
-            spec.name, unique_name
-        );
+        eprintln!("sshub: name '{}' taken, using '{}'", spec.name, unique_name);
     }
 
     let identity_id = spec
@@ -446,7 +443,7 @@ fn cmd_edit(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     if let Some(ref new_name) = patch.set_name {
         let unique = ctx.store.unique_host_name(new_name, Some(managed.id))?;
         if unique != *new_name {
-            eprintln!("sshub: name taken — using '{unique}'");
+            eprintln!("sshub: name taken, using '{unique}'");
             update.name = Some(unique);
         } else {
             update.name = Some(unique);
