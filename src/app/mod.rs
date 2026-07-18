@@ -138,6 +138,10 @@ pub struct App {
     pub focused_panel: PanelId,
     /// Whether the focused dashboard panel is zoomed to the full body.
     pub panel_zoomed: bool,
+    /// Scroll offset within the zoomed panel (issue #18). Reset on zoom/focus
+    /// change; each zoomed list panel clamps it to its own content via the
+    /// `Cell`'s interior mutability during render.
+    pub panel_scroll: std::cell::Cell<u16>,
     pub group_manage_selected: usize,
     pub group_notice: Option<String>,
     pub host_notice: Option<String>,
@@ -289,6 +293,7 @@ impl App {
             ui_zoom: 0,
             focused_panel: PanelId::default(),
             panel_zoomed: false,
+            panel_scroll: std::cell::Cell::new(0),
             group_manage_selected: 0,
             group_notice: None,
             host_notice: None,

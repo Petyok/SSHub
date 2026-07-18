@@ -94,9 +94,14 @@ pub(crate) fn render_recent_panel(buf: &mut Buffer, area: Rect, app: &App) {
         })
         .collect();
     recents.sort_by_key(|&(_, ts)| std::cmp::Reverse(ts));
-    recents.truncate(max_display);
 
-    let row_count = recents.len();
+    // Scroll offset when zoomed (issue #18); 0 in the compact stack.
+    let off = if app.panel_zoomed {
+        crate::tui::widgets::panel_box::zoom_scroll_offset(app, recents.len(), max_display)
+    } else {
+        0
+    };
+    let row_count = recents.len().saturating_sub(off).min(max_display);
 
     if recents.is_empty() {
         let y = area.y + 1;
@@ -105,7 +110,7 @@ pub(crate) fn render_recent_panel(buf: &mut Buffer, area: Rect, app: &App) {
         }
     } else {
         let name_max = (area.width.saturating_sub(12)) as usize;
-        for (i, (host, ts)) in recents.iter().enumerate() {
+        for (i, (host, ts)) in recents.iter().skip(off).take(max_display).enumerate() {
             let y = area.y + 1 + i as u16;
             if y >= area.y + area.height - 1 {
                 break;
@@ -200,7 +205,22 @@ pub(crate) fn render_auth_panel(buf: &mut Buffer, area: Rect, app: &App) {
     // panel height this still yields ~3 rows.
     let max_events = (area.height.saturating_sub(3)) as usize;
     let name_max = (area.width.saturating_sub(18)) as usize;
-    for (i, ev) in app.auth_events_cache.iter().take(max_events).enumerate() {
+    let off = if app.panel_zoomed {
+        crate::tui::widgets::panel_box::zoom_scroll_offset(
+            app,
+            app.auth_events_cache.len(),
+            max_events,
+        )
+    } else {
+        0
+    };
+    for (i, ev) in app
+        .auth_events_cache
+        .iter()
+        .skip(off)
+        .take(max_events)
+        .enumerate()
+    {
         let y = area.y + 2 + i as u16;
         if y >= area.y + area.height - 1 {
             break;
@@ -441,8 +461,10 @@ fn render_ping_zoomed(buf: &mut Buffer, area: Rect, app: &App, inner_x: u16, inn
         }
     }
 
-    // One row per host, as many as fit under the header.
-    for (i, (name, samples)) in hosts.iter().enumerate() {
+    // One row per host, as many as fit under the header (scrollable, issue #18).
+    let visible = bottom.saturating_sub(area.y + 2) as usize;
+    let off = crate::tui::widgets::panel_box::zoom_scroll_offset(app, hosts.len(), visible);
+    for (i, (name, samples)) in hosts.iter().skip(off).enumerate() {
         let y = area.y + 2 + i as u16;
         if y >= bottom {
             break;

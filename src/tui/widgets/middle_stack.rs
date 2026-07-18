@@ -489,7 +489,10 @@ pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
 
         // One indented row per key: type, bits, full fingerprint, comment.
         let key_w = inner_w.saturating_sub(2);
-        for key in &agent.keys {
+        let visible = bottom_guard.saturating_sub(y) as usize;
+        let off =
+            crate::tui::widgets::panel_box::zoom_scroll_offset(app, agent.keys.len(), visible);
+        for key in agent.keys.iter().skip(off) {
             if y >= bottom_guard {
                 break;
             }

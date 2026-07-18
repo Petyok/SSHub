@@ -102,6 +102,25 @@ impl App {
             _ if self.is_action(KeyAction::MoveUp, &key) => self.move_selection(-1),
             _ if self.is_action(KeyAction::Cancel, &key) && self.panel_zoomed => {
                 self.panel_zoomed = false;
+                self.panel_scroll.set(0);
+            }
+            // Scroll the zoomed panel (except the hosts tree, which keeps its
+            // own selection navigation).
+            _ if self.panel_zoomed
+                && self.focused_panel != PanelId::Hosts
+                && (self.is_action(KeyAction::MoveDown, &key) || key.code == KeyCode::PageDown) =>
+            {
+                let step = if key.code == KeyCode::PageDown { 10 } else { 1 };
+                self.panel_scroll
+                    .set(self.panel_scroll.get().saturating_add(step));
+            }
+            _ if self.panel_zoomed
+                && self.focused_panel != PanelId::Hosts
+                && (self.is_action(KeyAction::MoveUp, &key) || key.code == KeyCode::PageUp) =>
+            {
+                let step = if key.code == KeyCode::PageUp { 10 } else { 1 };
+                self.panel_scroll
+                    .set(self.panel_scroll.get().saturating_sub(step));
             }
             _ if self.is_action(KeyAction::Cancel, &key) && !self.tag_filters.is_empty() => {
                 self.tag_filters.clear();
@@ -181,6 +200,7 @@ impl App {
             }
             _ if self.is_action(KeyAction::TogglePanelZoom, &key) => {
                 self.panel_zoomed = !self.panel_zoomed;
+                self.panel_scroll.set(0);
             }
             _ if self.is_action(KeyAction::FocusPanelLeft, &key) => {
                 self.focus_panel(FocusDir::Left)
@@ -231,6 +251,7 @@ impl App {
     fn focus_panel(&mut self, dir: FocusDir) {
         if let Some(next) = self.focused_panel.neighbor(dir) {
             self.focused_panel = next;
+            self.panel_scroll.set(0);
         }
     }
 
