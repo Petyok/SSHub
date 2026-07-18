@@ -445,7 +445,17 @@ fn footer_keybinds(app: &App) -> Vec<(String, &'static str)> {
         binds.push(("z".into(), if app.panel_zoomed { "unzoom" } else { "zoom" }));
     }
     if app.active_tab == 0 && app.panel_zoomed && app.focused_panel != crate::app::PanelId::Hosts {
-        binds.push(("\u{2191}\u{2193}".into(), "scroll"));
+        let selectable = matches!(
+            app.focused_panel,
+            crate::app::PanelId::Ping | crate::app::PanelId::Recent
+        );
+        binds.push((
+            "\u{2191}\u{2193}".into(),
+            if selectable { "select" } else { "scroll" },
+        ));
+        if selectable {
+            binds.push(("\u{21b5}".into(), "connect"));
+        }
     }
     if app.active_tab == 0 && app.panel_zoomed {
         binds.push(("drag".into(), "copy"));

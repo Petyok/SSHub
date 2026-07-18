@@ -148,6 +148,9 @@ pub struct App {
     /// buffer each frame (interior mutability so the `&App` render pass can fill
     /// it); copied to the clipboard on mouse release.
     pub panel_sel_text: std::cell::RefCell<String>,
+    /// `self.hosts` indices for the rows of a zoomed host-list panel (ping /
+    /// recent), filled by their render so Enter connects the selected row.
+    pub zoomed_host_idx: std::cell::RefCell<Vec<usize>>,
     pub group_manage_selected: usize,
     pub group_notice: Option<String>,
     pub host_notice: Option<String>,
@@ -302,6 +305,7 @@ impl App {
             panel_scroll: std::cell::Cell::new(0),
             panel_sel: None,
             panel_sel_text: std::cell::RefCell::new(String::new()),
+            zoomed_host_idx: std::cell::RefCell::new(Vec::new()),
             group_manage_selected: 0,
             group_notice: None,
             host_notice: None,

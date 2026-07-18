@@ -85,21 +85,26 @@ pub(crate) fn render_recent_panel(buf: &mut Buffer, area: Rect, app: &App) {
     // session; at the default panel height this still yields ~5 rows.
     let max_display = max_rows;
 
-    let mut recents: Vec<(&str, i64)> = app
+    // Keep each recent's `app.hosts` index alongside its display fields so a
+    // zoomed, selectable list (issue #18) can connect the highlighted row.
+    let mut recents: Vec<(usize, &str, i64)> = app
         .hosts
         .iter()
-        .filter_map(|h| {
-            let ts = h.last_connected()?;
-            Some((h.display_name(), ts))
-        })
+        .enumerate()
+        .filter_map(|(i, h)| h.last_connected().map(|ts| (i, h.display_name(), ts)))
         .collect();
-    recents.sort_by_key(|&(_, ts)| std::cmp::Reverse(ts));
+    recents.sort_by_key(|&(_, _, ts)| std::cmp::Reverse(ts));
 
-    // Scroll offset when zoomed (issue #18); 0 in the compact stack.
-    let off = if app.panel_zoomed {
-        crate::tui::widgets::panel_box::zoom_scroll_offset(app, recents.len(), max_display)
+    // Zoomed (issue #18): `panel_scroll` holds the selected row index; the view
+    // follows it and Enter connects the highlighted host. Compact stack: no
+    // selection, no offset, and `zoomed_host_idx` is left untouched.
+    let (off, sel) = if app.panel_zoomed {
+        let (first, sel) =
+            crate::tui::widgets::panel_box::zoom_window(app, recents.len(), max_display);
+        *app.zoomed_host_idx.borrow_mut() = recents.iter().map(|(i, _, _)| *i).collect();
+        (first, Some(sel))
     } else {
-        0
+        (0usize, None)
     };
     let row_count = recents.len().saturating_sub(off).min(max_display);
 
@@ -110,8 +115,8 @@ pub(crate) fn render_recent_panel(buf: &mut Buffer, area: Rect, app: &App) {
         }
     } else {
         let name_max = (area.width.saturating_sub(12)) as usize;
-        for (i, (host, ts)) in recents.iter().skip(off).take(max_display).enumerate() {
-            let y = area.y + 1 + i as u16;
+        for (di, (_i, host, ts)) in recents.iter().enumerate().skip(off).take(max_display) {
+            let y = area.y + 1 + (di - off) as u16;
             if y >= area.y + area.height - 1 {
                 break;
             }
@@ -133,6 +138,15 @@ pub(crate) fn render_recent_panel(buf: &mut Buffer, area: Rect, app: &App) {
                 let age_col = area.x + area.width - needed;
                 if age_col > col {
                     buf.set_string(age_col, y, &age, theme::mute());
+                }
+            }
+
+            // Highlight the selected row when zoomed (issue #18).
+            if Some(di) == sel {
+                for col in inner_x..(inner_x + inner_w as u16) {
+                    if let Some(cell) = buf.cell_mut((col, y)) {
+                        cell.modifier.insert(ratatui::style::Modifier::REVERSED);
+                    }
                 }
             }
         }
@@ -461,11 +475,24 @@ fn render_ping_zoomed(buf: &mut Buffer, area: Rect, app: &App, inner_x: u16, inn
         }
     }
 
-    // One row per host, as many as fit under the header (scrollable, issue #18).
+    // One row per host, as many as fit under the header. Selectable + scrollable
+    // (issue #18): `panel_scroll` holds the selected row index and the view
+    // follows it.
     let visible = bottom.saturating_sub(area.y + 2) as usize;
-    let off = crate::tui::widgets::panel_box::zoom_scroll_offset(app, hosts.len(), visible);
-    for (i, (name, samples)) in hosts.iter().skip(off).enumerate() {
-        let y = area.y + 2 + i as u16;
+    let (first, sel) = crate::tui::widgets::panel_box::zoom_window(app, hosts.len(), visible);
+    // Map each display row (in order) back to its `app.hosts` index so Enter can
+    // connect the selected row.
+    *app.zoomed_host_idx.borrow_mut() = hosts
+        .iter()
+        .map(|(name, _)| {
+            app.hosts
+                .iter()
+                .position(|h| h.name() == name.as_str())
+                .unwrap_or(usize::MAX)
+        })
+        .collect();
+    for (di, (name, samples)) in hosts.iter().enumerate().skip(first).take(visible) {
+        let y = area.y + 2 + (di - first) as u16;
         if y >= bottom {
             break;
         }
@@ -554,6 +581,15 @@ fn render_ping_zoomed(buf: &mut Buffer, area: Rect, app: &App, inner_x: u16, inn
                 theme::mute(),
                 (right_lim - stats_x) as usize,
             );
+        }
+
+        // Highlight the selected row across the panel's inner width (issue #18).
+        if di == sel {
+            for col in inner_x..right_lim {
+                if let Some(cell) = buf.cell_mut((col, y)) {
+                    cell.modifier.insert(ratatui::style::Modifier::REVERSED);
+                }
+            }
         }
     }
 }

@@ -111,3 +111,22 @@ pub(crate) fn zoom_scroll_offset(
     app.panel_scroll.set(off as u16);
     off
 }
+
+/// Selection window for a zoomed *selectable* list panel (issue #18):
+/// `panel_scroll` is the selected row index. Clamp it to `[0, len)`, write it
+/// back, and return `(first_visible, selected)` so the render draws
+/// `items[first .. first + visible]` with `selected` highlighted and always on
+/// screen (the view follows the selection).
+pub(crate) fn zoom_window(app: &crate::app::App, len: usize, visible: usize) -> (usize, usize) {
+    if len == 0 {
+        app.panel_scroll.set(0);
+        return (0, 0);
+    }
+    let sel = (app.panel_scroll.get() as usize).min(len - 1);
+    app.panel_scroll.set(sel as u16);
+    let visible = visible.max(1);
+    let first = sel
+        .saturating_sub(visible - 1)
+        .min(len.saturating_sub(visible));
+    (first, sel)
+}

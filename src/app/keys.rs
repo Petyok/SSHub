@@ -115,6 +115,13 @@ impl App {
                 let step = if key.code == KeyCode::PageUp { 10 } else { 1 };
                 self.scroll_zoomed(false, step);
             }
+            // Connect to the host selected in a zoomed ping/recent panel.
+            _ if self.panel_zoomed
+                && matches!(self.focused_panel, PanelId::Ping | PanelId::Recent)
+                && self.is_action(KeyAction::Connect, &key) =>
+            {
+                self.connect_zoomed_host()?;
+            }
             _ if self.is_action(KeyAction::MoveDown, &key) => self.move_selection(1),
             _ if self.is_action(KeyAction::MoveUp, &key) => self.move_selection(-1),
             _ if self.is_action(KeyAction::Cancel, &key) && self.panel_zoomed => {
@@ -255,6 +262,16 @@ impl App {
             self.panel_scroll.set(0);
             self.panel_sel = None;
         }
+    }
+
+    /// Connect to the host selected in a zoomed ping/recent panel (issue #18).
+    fn connect_zoomed_host(&mut self) -> Result<()> {
+        let idx = self.panel_scroll.get() as usize;
+        let host_idx = self.zoomed_host_idx.borrow().get(idx).copied();
+        if let Some(hi) = host_idx {
+            self.connect_host_at(hi)?;
+        }
+        Ok(())
     }
 
     /// Scroll the focused zoomed panel (issue #18) by `step` rows. `down` moves
