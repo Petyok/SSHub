@@ -100,6 +100,9 @@ impl App {
             _ if self.is_action(KeyAction::MoveGroupDown, &key) => self.move_selection_by_group(1),
             _ if self.is_action(KeyAction::MoveDown, &key) => self.move_selection(1),
             _ if self.is_action(KeyAction::MoveUp, &key) => self.move_selection(-1),
+            _ if self.is_action(KeyAction::Cancel, &key) && self.panel_zoomed => {
+                self.panel_zoomed = false;
+            }
             _ if self.is_action(KeyAction::Cancel, &key) && !self.tag_filters.is_empty() => {
                 self.tag_filters.clear();
                 self.search_query.clear();
@@ -176,6 +179,19 @@ impl App {
             _ if self.is_action(KeyAction::UiZoomOut, &key) => {
                 self.set_ui_zoom(self.ui_zoom.saturating_sub(1));
             }
+            _ if self.is_action(KeyAction::TogglePanelZoom, &key) => {
+                self.panel_zoomed = !self.panel_zoomed;
+            }
+            _ if self.is_action(KeyAction::FocusPanelLeft, &key) => {
+                self.focus_panel(FocusDir::Left)
+            }
+            _ if self.is_action(KeyAction::FocusPanelRight, &key) => {
+                self.focus_panel(FocusDir::Right)
+            }
+            _ if self.is_action(KeyAction::FocusPanelUp, &key) => self.focus_panel(FocusDir::Up),
+            _ if self.is_action(KeyAction::FocusPanelDown, &key) => {
+                self.focus_panel(FocusDir::Down)
+            }
             _ if self.is_action(KeyAction::Favorite, &key) => self.toggle_favorite()?,
             _ if self.is_action(KeyAction::DetailFocus, &key) => {
                 self.detail_focus = !self.detail_focus;
@@ -209,6 +225,13 @@ impl App {
             _ => {}
         }
         Ok(())
+    }
+
+    /// Move dashboard panel focus one step in `dir`; a no-op at a grid edge.
+    fn focus_panel(&mut self, dir: FocusDir) {
+        if let Some(next) = self.focused_panel.neighbor(dir) {
+            self.focused_panel = next;
+        }
     }
 
     /// Switch dashboard tabs when a tab keybinding matches.
