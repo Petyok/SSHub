@@ -27,6 +27,7 @@ pub(crate) fn keyevent_to_spec_roundtrips() {
 
 #[test]
 pub(crate) fn pasted_key_material_is_written_to_a_file_on_save() {
+    let _home = crate::test_env::lock_home();
     let dir = tempfile::tempdir().unwrap();
     std::env::set_var("HOME", dir.path());
 
