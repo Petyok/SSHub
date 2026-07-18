@@ -414,6 +414,24 @@ fn install_panic_hook() {
 }
 
 #[cfg(test)]
+pub(crate) mod test_env {
+    use std::sync::{Mutex, MutexGuard};
+
+    /// Serializes tests that mutate the process-global `$HOME`. Environment
+    /// variables are shared across the whole test binary and cargo runs tests in
+    /// parallel, so concurrent setters corrupted each other's `$HOME` mid-test
+    /// (a flaky `keyfile`/`resolver` failure that surfaced on macOS). Hold the
+    /// returned guard for the entire test body.
+    static HOME_LOCK: Mutex<()> = Mutex::new(());
+
+    pub(crate) fn lock_home() -> MutexGuard<'static, ()> {
+        HOME_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::metadata::MetadataStore;
