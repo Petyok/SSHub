@@ -48,6 +48,14 @@ impl SortMode {
     }
 }
 
+/// An in-progress text selection over a zoomed dashboard panel (issue #18):
+/// terminal-cell coordinates of the drag anchor and the current pointer.
+#[derive(Debug, Clone, Copy)]
+pub struct PanelSel {
+    pub anchor: (u16, u16),
+    pub cur: (u16, u16),
+}
+
 /// Direction for dashboard panel focus movement (issue #18).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusDir {

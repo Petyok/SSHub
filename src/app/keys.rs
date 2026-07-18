@@ -120,6 +120,7 @@ impl App {
             _ if self.is_action(KeyAction::Cancel, &key) && self.panel_zoomed => {
                 self.panel_zoomed = false;
                 self.panel_scroll.set(0);
+                self.panel_sel = None;
             }
             _ if self.is_action(KeyAction::Cancel, &key) && !self.tag_filters.is_empty() => {
                 self.tag_filters.clear();
@@ -200,6 +201,7 @@ impl App {
             _ if self.is_action(KeyAction::TogglePanelZoom, &key) => {
                 self.panel_zoomed = !self.panel_zoomed;
                 self.panel_scroll.set(0);
+                self.panel_sel = None;
             }
             _ if self.is_action(KeyAction::FocusPanelLeft, &key) => {
                 self.focus_panel(FocusDir::Left)
@@ -251,6 +253,7 @@ impl App {
         if let Some(next) = self.focused_panel.neighbor(dir) {
             self.focused_panel = next;
             self.panel_scroll.set(0);
+            self.panel_sel = None;
         }
     }
 

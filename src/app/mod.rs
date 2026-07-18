@@ -142,6 +142,12 @@ pub struct App {
     /// change; each zoomed list panel clamps it to its own content via the
     /// `Cell`'s interior mutability during render.
     pub panel_scroll: std::cell::Cell<u16>,
+    /// In-progress text selection over the zoomed panel (issue #18).
+    pub panel_sel: Option<PanelSel>,
+    /// Text under the current panel selection, extracted from the rendered
+    /// buffer each frame (interior mutability so the `&App` render pass can fill
+    /// it); copied to the clipboard on mouse release.
+    pub panel_sel_text: std::cell::RefCell<String>,
     pub group_manage_selected: usize,
     pub group_notice: Option<String>,
     pub host_notice: Option<String>,
@@ -294,6 +300,8 @@ impl App {
             focused_panel: PanelId::default(),
             panel_zoomed: false,
             panel_scroll: std::cell::Cell::new(0),
+            panel_sel: None,
+            panel_sel_text: std::cell::RefCell::new(String::new()),
             group_manage_selected: 0,
             group_notice: None,
             host_notice: None,

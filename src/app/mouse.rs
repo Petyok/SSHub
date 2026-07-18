@@ -80,6 +80,30 @@ impl App {
             match mouse.kind {
                 MouseEventKind::ScrollDown => self.scroll_zoomed(true, 3),
                 MouseEventKind::ScrollUp => self.scroll_zoomed(false, 3),
+                // Drag to select text over the panel (like the PTY selection);
+                // the rendered buffer text is copied on release.
+                MouseEventKind::Down(MouseButton::Left) => {
+                    self.panel_sel = Some(PanelSel {
+                        anchor: (mouse.column, mouse.row),
+                        cur: (mouse.column, mouse.row),
+                    });
+                }
+                MouseEventKind::Drag(MouseButton::Left) => {
+                    if let Some(sel) = self.panel_sel.as_mut() {
+                        sel.cur = (mouse.column, mouse.row);
+                    }
+                }
+                MouseEventKind::Up(MouseButton::Left) => {
+                    let had_sel = self.panel_sel.take().is_some();
+                    let text = self.panel_sel_text.borrow().clone();
+                    if had_sel && !text.trim().is_empty() {
+                        let chars = text.chars().count();
+                        self.host_notice = Some(match write_osc52(&text) {
+                            Ok(()) => format!("copied {chars} chars to clipboard"),
+                            Err(e) => format!("clipboard copy failed: {e:#}"),
+                        });
+                    }
+                }
                 _ => {}
             }
             return Ok(());

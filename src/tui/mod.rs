@@ -52,6 +52,56 @@ pub fn render(frame: &mut Frame, app: &App) {
             }
         }
     }
+    apply_panel_selection(frame, app);
+}
+
+/// Highlight the zoomed-panel text selection (issue #18) by reversing the
+/// selected cells, and extract the selected text into `app.panel_sel_text` for
+/// copy-on-release. Terminal-style stream selection over the dashboard body.
+fn apply_panel_selection(frame: &mut Frame, app: &App) {
+    if !app.panel_zoomed {
+        return;
+    }
+    let Some(sel) = app.panel_sel else {
+        app.panel_sel_text.borrow_mut().clear();
+        return;
+    };
+    let body = dashboard_layout::dashboard_layout_zoomed(frame.area(), app.ui_zoom).body;
+    // Order anchor/pointer in reading (row-major) order.
+    let (a, b) = (sel.anchor, sel.cur);
+    let (start, end) = if (a.1, a.0) <= (b.1, b.0) {
+        (a, b)
+    } else {
+        (b, a)
+    };
+    let last_row = body.y + body.height.saturating_sub(1);
+    let last_col = body.x + body.width.saturating_sub(1);
+    let y0 = start.1.max(body.y);
+    let y1 = end.1.min(last_row);
+    if y0 > y1 {
+        app.panel_sel_text.borrow_mut().clear();
+        return;
+    }
+    let buf = frame.buffer_mut();
+    let mut text = String::new();
+    for row in y0..=y1 {
+        let x_from = if row == start.1 { start.0 } else { body.x }.max(body.x);
+        let x_to = if row == end.1 { end.0 } else { last_col }.min(last_col);
+        let mut line = String::new();
+        if x_from <= x_to {
+            for col in x_from..=x_to {
+                if let Some(cell) = buf.cell_mut((col, row)) {
+                    cell.modifier.insert(Modifier::REVERSED);
+                    line.push_str(cell.symbol());
+                }
+            }
+        }
+        if row != y0 {
+            text.push('\n');
+        }
+        text.push_str(line.trim_end());
+    }
+    *app.panel_sel_text.borrow_mut() = text;
 }
 
 fn render_inner(frame: &mut Frame, app: &App) {
@@ -396,6 +446,9 @@ fn footer_keybinds(app: &App) -> Vec<(String, &'static str)> {
     }
     if app.active_tab == 0 && app.panel_zoomed && app.focused_panel != crate::app::PanelId::Hosts {
         binds.push(("\u{2191}\u{2193}".into(), "scroll"));
+    }
+    if app.active_tab == 0 && app.panel_zoomed {
+        binds.push(("drag".into(), "copy"));
     }
     if !app.sessions.is_empty() {
         binds.extend(app.config.keybinds.session_footer_hints());
