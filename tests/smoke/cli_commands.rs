@@ -233,3 +233,102 @@ fn identity_delete_without_yes_exits_one() {
         .assert()
         .code(1);
 }
+
+#[test]
+fn import_help_lists_new_sources() {
+    let d = dir();
+    sshub(d.path())
+        .args(["import", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--from"))
+        .stdout(predicate::str::contains("putty"))
+        .stdout(predicate::str::contains("mremoteng"));
+}
+
+#[test]
+fn import_unknown_source_exits_two() {
+    let d = dir();
+    sshub(d.path())
+        .args(["import", "--from", "bogus"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("unknown source"));
+}
+
+#[test]
+fn import_ssh_dry_run_is_rejected() {
+    let d = dir();
+    sshub(d.path())
+        .args(["import", "--dry-run"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("not supported for --from ssh"));
+}
+
+#[test]
+fn import_mremoteng_without_path_exits_one() {
+    let d = dir();
+    sshub(d.path())
+        .args(["import", "--from", "mremoteng"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("needs a PATH"));
+}
+
+#[test]
+fn import_mremoteng_dry_run_previews_without_writing() {
+    let d = dir();
+    let xml = d.path().join("confCons.xml");
+    std::fs::write(
+        &xml,
+        r#"<mrng:Connections><Node Name="smoke-host" Type="Connection" Hostname="10.9.9.9" Protocol="SSH2" Port="22"/></mrng:Connections>"#,
+    )
+    .unwrap();
+
+    // Preview lists the host and says nothing was written.
+    sshub(d.path())
+        .args(["import", "--from", "mremoteng"])
+        .arg(&xml)
+        .arg("--dry-run")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("smoke-host"))
+        .stdout(predicate::str::contains("dry run"));
+
+    // The store is untouched: the host is not listed afterwards.
+    sshub(d.path())
+        .args(["list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("smoke-host").not());
+}
+
+#[test]
+fn import_putty_reg_file_imports_host() {
+    let d = dir();
+    let reg = d.path().join("sessions.reg");
+    std::fs::write(
+        &reg,
+        "Windows Registry Editor Version 5.00\r\n\r\n\
+         [HKEY_CURRENT_USER\\Software\\SimonTatham\\PuTTY\\Sessions\\smokebox]\r\n\
+         \"HostName\"=\"10.8.8.8\"\r\n\
+         \"Protocol\"=\"ssh\"\r\n\
+         \"PortNumber\"=dword:00000016\r\n",
+    )
+    .unwrap();
+
+    sshub(d.path())
+        .args(["import", "--from", "putty"])
+        .arg(&reg)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("imported: 1 host"));
+
+    // The imported host is now listed.
+    sshub(d.path())
+        .args(["list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("smokebox"));
+}
