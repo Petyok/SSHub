@@ -187,9 +187,44 @@ List every tag in the inventory.
 .B sshub sync
 Refresh the ssh_config-derived rows in the database.
 .TP
-.B sshub import
-Import hosts from
-.IR ~/.ssh/config .
+.B sshub import \fR[\fB\-\-from\fR \fBssh\fR|\fBtermius\fR|\fBputty\fR|\fBmremoteng\fR] [\fB\-\-dry\-run\fR] \fR[\fIPATH\fR]
+Import hosts into the launcher from an external source.
+.B \-\-from
+selects the format (default
+.BR ssh ):
+.B ssh
+reads
+.IR ~/.ssh/config ,
+.B termius
+reads a Termius export directory (containing
+.IR L00t.csv ),
+.B putty
+reads a Windows regedit
+.I .reg
+export file or a Unix
+.I ~/.putty/sessions
+directory (the default when
+.I PATH
+is omitted), and
+.B mremoteng
+reads an mRemoteNG
+.I confCons.xml
+file.
+.I PATH
+is required for
+.BR mremoteng ,
+optional for
+.B termius
+and
+.B putty
+(each has a default location), and ignored for
+.BR ssh .
+.B \-\-dry\-run
+parses and previews the hosts without writing them (not supported for
+.BR ssh ).
+Only SSH sessions are imported (non-SSH entries such as RDP, VNC, or telnet are
+skipped), and encrypted mRemoteNG passwords are not decrypted, so imported hosts
+carry no stored secret.
 .TP
 .B sshub export \fR[\fB\-\-stdout\fR | \fB\-o\fR \fIPATH\fR]
 Export launcher hosts to an ssh_config snippet.

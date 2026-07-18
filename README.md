@@ -59,7 +59,7 @@ The settings overlay (`Ctrl+H`) — toggle an opaque background, OS logos, quit 
 - **Mosh transport** — per-host `Transport` field in the host form (`ssh` or `mosh`). Embedded sessions use `mosh` when selected; tunnels and SFTP stay ssh-only.
 - **Settings overlay** (`Ctrl+H`) — toggle session logging, opaque background (for transparent terminals), OS logos, quit confirmation, and the startup animation
 - **Hybrid sources** — hosts from `~/.ssh/config` (read-only) and launcher-managed (full CRUD) merge without duplicates
-- **Import/Export** — import from `~/.ssh/config` or Termius backups; export managed hosts back to ssh config format
+- **Import/Export**: import from `~/.ssh/config`, Termius backups, PuTTY (a Windows regedit `.reg` export or a Unix `~/.putty/sessions` directory), or mRemoteNG (`confCons.xml`); export managed hosts back to ssh config format. Only SSH sessions are imported (RDP/VNC/telnet entries are skipped), and encrypted mRemoteNG passwords are not decrypted (imported hosts carry no stored secret)
 - **Hot reload** — edits to `~/.ssh/config` update the host list live via file watcher
 - **Configurable keybindings** — rebind any action via Ctrl+K; stored in `config.toml`
 - **Mouse support** — click tabs, select rows, scroll panels, double-click to connect
@@ -167,7 +167,12 @@ sshub audit list --status fail --days 7
 sshub audit stats --days 7
 
 # Inventory sync with ~/.ssh/config
-sshub import                                  # import hosts from ssh config
+sshub import                                  # import hosts from ssh config (--from ssh)
+sshub import --from termius ./termius-export  # import a Termius export dir (L00t.csv)
+sshub import --from putty                      # import PuTTY sessions (~/.putty/sessions)
+sshub import --from putty ./sessions.reg       # or a Windows regedit .reg export
+sshub import --from mremoteng ./confCons.xml   # import an mRemoteNG confCons.xml
+sshub import --from putty --dry-run             # preview parsed hosts without writing
 sshub sync                                    # refresh ssh_config rows
 sshub export --stdout                         # print an ssh_config snippet
 
