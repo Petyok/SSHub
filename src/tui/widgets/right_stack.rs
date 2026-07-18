@@ -219,23 +219,24 @@ pub(crate) fn render_auth_panel(buf: &mut Buffer, area: Rect, app: &App) {
     // panel height this still yields ~3 rows.
     let max_events = (area.height.saturating_sub(3)) as usize;
     let name_max = (area.width.saturating_sub(18)) as usize;
-    let off = if app.panel_zoomed {
-        crate::tui::widgets::panel_box::zoom_scroll_offset(
+    let (off, sel) = if app.panel_zoomed {
+        let (first, s) = crate::tui::widgets::panel_box::zoom_window(
             app,
             app.auth_events_cache.len(),
             max_events,
-        )
+        );
+        (first, Some(s))
     } else {
-        0
+        (0, None)
     };
-    for (i, ev) in app
+    for (di, ev) in app
         .auth_events_cache
         .iter()
+        .enumerate()
         .skip(off)
         .take(max_events)
-        .enumerate()
     {
-        let y = area.y + 2 + i as u16;
+        let y = area.y + 2 + (di - off) as u16;
         if y >= area.y + area.height - 1 {
             break;
         }
@@ -266,6 +267,13 @@ pub(crate) fn render_auth_panel(buf: &mut Buffer, area: Rect, app: &App) {
                 status_style,
                 (right_lim - col) as usize,
             );
+        }
+        if Some(di) == sel {
+            for col in inner_x..(inner_x + inner_w as u16) {
+                if let Some(cell) = buf.cell_mut((col, y)) {
+                    cell.modifier.insert(ratatui::style::Modifier::REVERSED);
+                }
+            }
         }
     }
 }

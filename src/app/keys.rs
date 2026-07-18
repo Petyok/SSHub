@@ -122,6 +122,21 @@ impl App {
             {
                 self.connect_zoomed_host()?;
             }
+            // Zoomed auth panel behaves like the Audit tab: cycle status / range.
+            _ if self.panel_zoomed
+                && self.focused_panel == PanelId::Auth
+                && self.is_action(KeyAction::AuditFilter, &key) =>
+            {
+                self.audit_filter = self.audit_filter.next();
+                self.refresh_audit_events();
+            }
+            _ if self.panel_zoomed
+                && self.focused_panel == PanelId::Auth
+                && self.is_action(KeyAction::AuditRange, &key) =>
+            {
+                self.audit_range = self.audit_range.next();
+                self.refresh_audit_events();
+            }
             _ if self.is_action(KeyAction::MoveDown, &key) => self.move_selection(1),
             _ if self.is_action(KeyAction::MoveUp, &key) => self.move_selection(-1),
             _ if self.is_action(KeyAction::Cancel, &key) && self.panel_zoomed => {
