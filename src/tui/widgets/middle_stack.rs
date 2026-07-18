@@ -488,11 +488,12 @@ pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
         }
 
         // One indented row per key: type, bits, full fingerprint, comment.
+        // Selectable (issue #18): the highlighted key is removable with `d`.
         let key_w = inner_w.saturating_sub(2);
         let visible = bottom_guard.saturating_sub(y) as usize;
-        let off =
-            crate::tui::widgets::panel_box::zoom_scroll_offset(app, agent.keys.len(), visible);
-        for key in agent.keys.iter().skip(off) {
+        let (first, sel) =
+            crate::tui::widgets::panel_box::zoom_window(app, agent.keys.len(), visible);
+        for (di, key) in agent.keys.iter().enumerate().skip(first) {
             if y >= bottom_guard {
                 break;
             }
@@ -505,7 +506,12 @@ pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
                 line.push_str("  ");
                 line.push_str(&key.comment);
             }
-            put_clamped(buf, inner_x + 2, y, &line, theme::text(), key_w);
+            let style = if di == sel {
+                theme::text().add_modifier(ratatui::style::Modifier::REVERSED)
+            } else {
+                theme::text()
+            };
+            put_clamped(buf, inner_x + 2, y, &line, style, key_w);
             y += 1;
         }
         return;

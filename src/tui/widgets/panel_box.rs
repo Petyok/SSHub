@@ -96,22 +96,6 @@ pub fn render_panel_box(
     buf.set_string(right_edge, bottom, "┘", bstyle);
 }
 
-/// First item index to render for a scrollable zoomed panel (issue #18).
-///
-/// Clamps the app's `panel_scroll` to `content_len - visible` and writes the
-/// clamped value back (so over-scrolling past the end self-corrects on the next
-/// frame), returning the offset to start rendering from.
-pub(crate) fn zoom_scroll_offset(
-    app: &crate::app::App,
-    content_len: usize,
-    visible: usize,
-) -> usize {
-    let max_off = content_len.saturating_sub(visible);
-    let off = (app.panel_scroll.get() as usize).min(max_off);
-    app.panel_scroll.set(off as u16);
-    off
-}
-
 /// Selection window for a zoomed *selectable* list panel (issue #18):
 /// `panel_scroll` is the selected row index. Clamp it to `[0, len)`, write it
 /// back, and return `(first_visible, selected)` so the render draws

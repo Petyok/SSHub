@@ -137,6 +137,13 @@ impl App {
                 self.audit_range = self.audit_range.next();
                 self.refresh_audit_events();
             }
+            // Zoomed agent panel: remove the selected key from ssh-agent.
+            _ if self.panel_zoomed
+                && self.focused_panel == PanelId::Agent
+                && self.is_action(KeyAction::Delete, &key) =>
+            {
+                self.remove_zoomed_agent_key();
+            }
             _ if self.is_action(KeyAction::MoveDown, &key) => self.move_selection(1),
             _ if self.is_action(KeyAction::MoveUp, &key) => self.move_selection(-1),
             _ if self.is_action(KeyAction::Cancel, &key) && self.panel_zoomed => {
@@ -277,6 +284,29 @@ impl App {
             self.panel_scroll.set(0);
             self.panel_sel = None;
         }
+    }
+
+    /// Best-effort removal of the key selected in a zoomed agent panel (issue
+    /// #18). `ssh-add -d` can only drop a key by file path, and the agent
+    /// listing exposes only the key's comment (usually, but not always, that
+    /// path), so this can fail with a clear notice.
+    fn remove_zoomed_agent_key(&mut self) {
+        let agent = crate::ssh::agent::detect_agent();
+        let idx = self.panel_scroll.get() as usize;
+        let Some(k) = agent.keys.get(idx) else {
+            return;
+        };
+        if k.comment.is_empty() {
+            self.host_notice = Some("can't remove: agent key has no file path".into());
+            return;
+        }
+        self.host_notice = Some(match crate::ssh::agent::remove_key(&k.comment) {
+            Ok(()) => format!("removed {} from agent", k.comment),
+            Err(_) => format!(
+                "couldn't remove {} (ssh-add needs the key file path)",
+                k.comment
+            ),
+        });
     }
 
     /// Connect to the host selected in a zoomed ping/recent panel (issue #18).
