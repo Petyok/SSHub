@@ -98,29 +98,39 @@ impl App {
             _ if self.is_action(KeyAction::MoveHostDown, &key) => self.move_host_manual(1)?,
             _ if self.is_action(KeyAction::MoveGroupUp, &key) => self.move_selection_by_group(-1),
             _ if self.is_action(KeyAction::MoveGroupDown, &key) => self.move_selection_by_group(1),
-            _ if self.is_action(KeyAction::MoveDown, &key) => self.move_selection(1),
-            _ if self.is_action(KeyAction::MoveUp, &key) => self.move_selection(-1),
-            _ if self.is_action(KeyAction::Cancel, &key) && self.panel_zoomed => {
-                self.panel_zoomed = false;
-                self.panel_scroll.set(0);
-            }
-            // Scroll the zoomed panel (except the hosts tree, which keeps its
-            // own selection navigation).
+            // Scroll the zoomed panel (except the hosts tree, which keeps its own
+            // selection navigation). MUST precede the MoveDown/MoveUp arms below,
+            // or those would shadow it and move the hidden host selection instead.
             _ if self.panel_zoomed
                 && self.focused_panel != PanelId::Hosts
                 && (self.is_action(KeyAction::MoveDown, &key) || key.code == KeyCode::PageDown) =>
             {
                 let step = if key.code == KeyCode::PageDown { 10 } else { 1 };
-                self.panel_scroll
-                    .set(self.panel_scroll.get().saturating_add(step));
+                if self.focused_panel == PanelId::SshLog {
+                    // The log scroll counts back from the latest line.
+                    self.ssh_log_scroll = self.ssh_log_scroll.saturating_sub(step as usize);
+                } else {
+                    self.panel_scroll
+                        .set(self.panel_scroll.get().saturating_add(step));
+                }
             }
             _ if self.panel_zoomed
                 && self.focused_panel != PanelId::Hosts
                 && (self.is_action(KeyAction::MoveUp, &key) || key.code == KeyCode::PageUp) =>
             {
                 let step = if key.code == KeyCode::PageUp { 10 } else { 1 };
-                self.panel_scroll
-                    .set(self.panel_scroll.get().saturating_sub(step));
+                if self.focused_panel == PanelId::SshLog {
+                    self.ssh_log_scroll = self.ssh_log_scroll.saturating_add(step as usize);
+                } else {
+                    self.panel_scroll
+                        .set(self.panel_scroll.get().saturating_sub(step));
+                }
+            }
+            _ if self.is_action(KeyAction::MoveDown, &key) => self.move_selection(1),
+            _ if self.is_action(KeyAction::MoveUp, &key) => self.move_selection(-1),
+            _ if self.is_action(KeyAction::Cancel, &key) && self.panel_zoomed => {
+                self.panel_zoomed = false;
+                self.panel_scroll.set(0);
             }
             _ if self.is_action(KeyAction::Cancel, &key) && !self.tag_filters.is_empty() => {
                 self.tag_filters.clear();
