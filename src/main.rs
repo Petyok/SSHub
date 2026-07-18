@@ -155,7 +155,7 @@ AUDIT:
 INVENTORY / CONFIG:
     sshub tags [--format plain|json]
     sshub sync                              Refresh ssh_config rows in DB
-    sshub import                            Import ~/.ssh/config hosts
+    sshub import [--from SRC] [--dry-run]   Import hosts (ssh_config, Termius, PuTTY, mRemoteNG)
     sshub export [--stdout] [-o PATH]       Export launcher hosts to ssh_config snippet
     sshub db purge [{CONFIRM_FLAG}]
 
