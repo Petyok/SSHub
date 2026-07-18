@@ -55,13 +55,19 @@ pub fn render_middle_stack(frame: &mut Frame, area: Rect, app: &App) {
 /// name / address / detected OS on the right. The logo is drawn only when the
 /// host's `os_icon` resolves to a known distro (auto-detected on first connect
 /// or set manually in the form); otherwise the card shows just the text.
-fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
+pub(crate) fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
     let entry = app.selected_entry();
     let title = match entry.as_ref() {
         Some(e) => format!("host · {}", e.name()),
         None => "host".to_string(),
     };
-    render_panel_box(buf, area, &title, None);
+    render_panel_box(
+        buf,
+        area,
+        &title,
+        None,
+        app.focused_panel == crate::app::PanelId::Detail,
+    );
 
     if area.height < 3 || area.width < 6 {
         return;
@@ -193,7 +199,13 @@ fn render_ssh_log(buf: &mut Buffer, area: Rect, app: &App) {
         Some(name) => format!("ssh log · {name}"),
         None => "ssh log".to_string(),
     };
-    render_panel_box(buf, area, &title, None);
+    render_panel_box(
+        buf,
+        area,
+        &title,
+        None,
+        app.focused_panel == crate::app::PanelId::SshLog,
+    );
     let inner_x = area.x + 2;
     let inner_w = area.width.saturating_sub(4) as usize;
     let max_rows = area.height.saturating_sub(2) as usize;
@@ -319,8 +331,14 @@ fn wrap_line(s: &str, width: usize) -> Vec<String> {
 
 // ── Agent panel ─────────────────────────────────────────
 
-fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
-    render_panel_box(buf, area, "agent", None);
+pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
+    render_panel_box(
+        buf,
+        area,
+        "agent",
+        None,
+        app.focused_panel == crate::app::PanelId::Agent,
+    );
 
     let inner_x = area.x + 2;
     let inner_w = area.width.saturating_sub(4) as usize;
@@ -414,7 +432,7 @@ fn render_tunnels_panel(buf: &mut Buffer, area: Rect, app: &App) {
     } else {
         None
     };
-    render_panel_box(buf, area, "tunnels", badge.as_deref());
+    render_panel_box(buf, area, "tunnels", badge.as_deref(), false);
 
     let inner_x = area.x + 2;
     let inner_w = area.width.saturating_sub(4) as usize;
@@ -487,14 +505,20 @@ const SPARK_CHARS: [char; 8] = [
     '\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}', '\u{2587}', '\u{2588}',
 ];
 
-fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
+pub(crate) fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
     // Per-host latency: the ping timeline of the currently selected host.
     let selected = app.selected_entry().map(|e| e.name().to_string());
     let title = match selected.as_deref() {
         Some(n) => format!("latency \u{b7} {n}"),
         None => "latency p50".to_string(),
     };
-    render_panel_box(buf, area, &title, None);
+    render_panel_box(
+        buf,
+        area,
+        &title,
+        None,
+        app.focused_panel == crate::app::PanelId::Latency,
+    );
 
     let inner_x = area.x + 2;
     let inner_w = area.width.saturating_sub(4) as usize;

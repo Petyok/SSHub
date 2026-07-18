@@ -29,7 +29,13 @@ pub fn put_clamped(buf: &mut Buffer, x: u16, y: u16, s: &str, style: Style, max_
 /// Bottom:   `└──...──┘`
 ///
 /// If `count` is `None`, the title fills the top bar alone.
-pub fn render_panel_box(buf: &mut Buffer, area: Rect, title: &str, count: Option<&str>) {
+pub fn render_panel_box(
+    buf: &mut Buffer,
+    area: Rect,
+    title: &str,
+    count: Option<&str>,
+    focused: bool,
+) {
     if area.width < 4 || area.height < 2 {
         return;
     }
@@ -38,7 +44,12 @@ pub fn render_panel_box(buf: &mut Buffer, area: Rect, title: &str, count: Option
     let y = area.y;
     let w = area.width as usize;
     let bottom = area.y + area.height - 1;
-    let bstyle = theme::border();
+    // A focused dashboard panel (issue #18) gets an accent (cyan) border.
+    let bstyle = if focused {
+        theme::cyan()
+    } else {
+        theme::border()
+    };
 
     // ── Top border ──────────────────────────────────────
     // Build: ┌── title ── count ──...──┐

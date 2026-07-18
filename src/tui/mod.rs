@@ -388,6 +388,12 @@ fn footer_keybinds(app: &App) -> Vec<(String, &'static str)> {
         ],
         _ => vec![("q".into(), "quit")],
     };
+    // Issue #18: surface the panel-zoom hint once a panel is focused/zoomed.
+    if app.active_tab == 0
+        && (app.panel_zoomed || app.focused_panel != crate::app::PanelId::default())
+    {
+        binds.push(("z".into(), if app.panel_zoomed { "unzoom" } else { "zoom" }));
+    }
     if !app.sessions.is_empty() {
         binds.extend(app.config.keybinds.session_footer_hints());
     }
@@ -395,6 +401,11 @@ fn footer_keybinds(app: &App) -> Vec<(String, &'static str)> {
 }
 
 fn render_hosts_body(frame: &mut Frame, areas: &dashboard_layout::DashboardAreas, app: &App) {
+    // Issue #18: a zoomed panel takes over the whole dashboard body.
+    if app.panel_zoomed {
+        render_zoomed_panel(frame, areas.body, app);
+        return;
+    }
     widgets::hosts_panel::render_hosts_panel(frame, areas.col_left, app);
     widgets::middle_stack::render_middle_stack(frame, areas.col_mid, app);
     widgets::right_stack::render_right_stack(frame, areas.col_right, app);
@@ -410,6 +421,24 @@ fn render_hosts_body(frame: &mut Frame, areas: &dashboard_layout::DashboardAreas
             log_bottom - log_top,
         );
         widgets::middle_stack::render_ssh_log_panel(frame, log_area, app);
+    }
+}
+
+/// Render just the focused panel into `area` (the full dashboard body) for the
+/// tmux-style zoom (issue #18).
+fn render_zoomed_panel(frame: &mut Frame, area: Rect, app: &App) {
+    use crate::app::PanelId;
+    match app.focused_panel {
+        PanelId::Hosts => widgets::hosts_panel::render_hosts_panel(frame, area, app),
+        PanelId::Detail => widgets::middle_stack::render_host_panel(frame.buffer_mut(), area, app),
+        PanelId::Agent => widgets::middle_stack::render_agent_panel(frame.buffer_mut(), area, app),
+        PanelId::Latency => {
+            widgets::middle_stack::render_latency_panel(frame.buffer_mut(), area, app)
+        }
+        PanelId::Recent => widgets::right_stack::render_recent_panel(frame.buffer_mut(), area, app),
+        PanelId::Auth => widgets::right_stack::render_auth_panel(frame.buffer_mut(), area, app),
+        PanelId::Ping => widgets::right_stack::render_ping_panel(frame.buffer_mut(), area, app),
+        PanelId::SshLog => widgets::middle_stack::render_ssh_log_panel(frame, area, app),
     }
 }
 

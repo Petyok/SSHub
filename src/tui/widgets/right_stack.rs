@@ -67,15 +67,23 @@ pub fn format_relative_time(timestamp: i64) -> String {
     }
 }
 
-fn render_recent_panel(buf: &mut Buffer, area: Rect, app: &App) {
-    render_panel_box(buf, area, "recent sessions", None);
+pub(crate) fn render_recent_panel(buf: &mut Buffer, area: Rect, app: &App) {
+    render_panel_box(
+        buf,
+        area,
+        "recent sessions",
+        None,
+        app.focused_panel == crate::app::PanelId::Recent,
+    );
 
     let inner_x = area.x + 2;
     let inner_w = area.width.saturating_sub(4) as usize;
 
     // Collect hosts with last_connected, sort descending, take top entries.
     let max_rows = (area.height.saturating_sub(3)) as usize;
-    let max_display = max_rows.min(5);
+    // Height-driven so a zoomed panel (issue #18) can show every recent
+    // session; at the default panel height this still yields ~5 rows.
+    let max_display = max_rows;
 
     let mut recents: Vec<(&str, i64)> = app
         .hosts
@@ -141,8 +149,14 @@ fn render_recent_panel(buf: &mut Buffer, area: Rect, app: &App) {
 
 // ── Auth events sparkline panel ─────────────────────────
 
-fn render_auth_panel(buf: &mut Buffer, area: Rect, app: &App) {
-    render_panel_box(buf, area, "auth events", None);
+pub(crate) fn render_auth_panel(buf: &mut Buffer, area: Rect, app: &App) {
+    render_panel_box(
+        buf,
+        area,
+        "auth events",
+        None,
+        app.focused_panel == crate::app::PanelId::Auth,
+    );
 
     let inner_x = area.x + 2;
     let inner_w = area.width.saturating_sub(4) as usize;
@@ -182,8 +196,9 @@ fn render_auth_panel(buf: &mut Buffer, area: Rect, app: &App) {
     }
 
     // Mini log: last 2-3 events
+    // Height-driven so a zoomed panel (issue #18) can show more; at the default
+    // panel height this still yields ~3 rows.
     let max_events = (area.height.saturating_sub(3)) as usize;
-    let max_events = max_events.min(3);
     let name_max = (area.width.saturating_sub(18)) as usize;
     for (i, ev) in app.auth_events_cache.iter().take(max_events).enumerate() {
         let y = area.y + 2 + i as u16;
@@ -228,8 +243,14 @@ const SPARK_CHARS: [char; 8] = [
     '\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}', '\u{2587}', '\u{2588}',
 ];
 
-fn render_ping_panel(buf: &mut Buffer, area: Rect, app: &App) {
-    render_panel_box(buf, area, "ping all hosts", None);
+pub(crate) fn render_ping_panel(buf: &mut Buffer, area: Rect, app: &App) {
+    render_panel_box(
+        buf,
+        area,
+        "ping all hosts",
+        None,
+        app.focused_panel == crate::app::PanelId::Ping,
+    );
 
     let inner_x = area.x + 2;
     let inner_w = area.width.saturating_sub(4) as usize;
