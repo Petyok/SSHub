@@ -43,6 +43,7 @@ fn help_lines() -> Vec<Line<'static>> {
         entry("+ / -", "Zoom: widen / narrow the hosts column"),
         entry("Alt+\u{2190}\u{2192}\u{2191}\u{2193}", "Move dashboard panel focus"),
         entry("z", "Zoom the focused panel to full screen (Esc to exit)"),
+        entry("\u{2191}\u{2193} / PgUp PgDn", "Scroll the zoomed panel"),
         entry("Shift+\u{2191}\u{2193}", "Jump between group headers"),
         entry("s", "Cycle sort mode"),
         entry("Ctrl+\u{2191}\u{2193}", "Move host up / down (manual sort)"),

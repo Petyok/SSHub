@@ -394,6 +394,9 @@ fn footer_keybinds(app: &App) -> Vec<(String, &'static str)> {
     {
         binds.push(("z".into(), if app.panel_zoomed { "unzoom" } else { "zoom" }));
     }
+    if app.active_tab == 0 && app.panel_zoomed && app.focused_panel != crate::app::PanelId::Hosts {
+        binds.push(("\u{2191}\u{2193}".into(), "scroll"));
+    }
     if !app.sessions.is_empty() {
         binds.extend(app.config.keybinds.session_footer_hints());
     }
