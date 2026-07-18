@@ -44,4 +44,4 @@ Best-effort (Unix-only) hardening: data/log/PID directories 0700, secret-bearing
 
 - `src/ssh/export.rs::conf_val` flattens CR/LF in host fields so an exported `exported.conf` can't be used to inject a `Host *` stanza.
 - Imports print nothing to stderr while the TUI is in raw mode (`src/ssh/import.rs`) — a diagnostic would corrupt the UI.
-- `src/cli/resolve` output exposes only `has_stored_secret`, never the secret.
+- the `resolve` CLI subcommand (`cmd_resolve` in `src/cli/host.rs`, JSON shape `HostResolveJson` in `src/cli/output.rs`) exposes only `has_stored_secret`, never the secret.

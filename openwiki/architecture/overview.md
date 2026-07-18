@@ -36,12 +36,12 @@ A headless variant (`run_headless_loop`) renders once on a ratatui `TestBackend`
 | `metadata` | `MetadataStore` | `MetadataDb` (`src/metadata/db.rs`) |
 | `store` | — | `LauncherStore` (`src/store/mod.rs`) |
 | `launcher` | `TerminalLauncher` | kitty/ghostty/custom ([integrations](../integrations/external-terminals.md)) |
-| `passwords` | `PasswordStore` | `OsKeyring` ([secrets](../security/secrets.md)) |
+| `password_store` | `PasswordStore` | `OsKeyring` ([secrets](../security/secrets.md)) |
 
 - **Modes**: `AppMode` (`src/app/types.rs`) has ~26 variants — `Normal`, `Search`, `TagFilter`, `HostDetail`, `HostForm`, `IdentityForm`, `GroupForm`/`GroupManage`, `TunnelForm`, `Palette`, `Settings`, `KeybindEditor`, `Help`, `ConfirmQuit`/`ConfirmDelete`/`ConfirmDiscard`, `Connecting`, `Session`, etc. Overlays are modes; key dispatch lives in `src/app/keys.rs` and per-mode handlers in `src/app/*.rs`.
 - **Tabs are not an enum**: `App.active_tab: usize` (0–4 = hosts, sftp, tunnels, identities, audit). Be careful when adding tabs — there is no type safety here.
 - First run with no hosts drops straight into `Help` mode.
-- The `TerminalLauncher` dependency is retained but effectively dead at runtime now that sessions run in the embedded PTY; it is still exercised by the CLI connect path and tests.
+- The `TerminalLauncher` dependency is retained but dead at runtime: sessions run in the embedded PTY (src/session/), and the CLI `sshub host connect` path spawns ssh/mosh directly via std::process::Command (src/cli/host.rs cmd_connect), bypassing TerminalLauncher entirely. The trait is exercised only by its own module unit tests and test doubles; App.launcher itself is never called from any production code path.
 
 ## Render pipeline (`src/tui/`)
 

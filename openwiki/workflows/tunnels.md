@@ -24,7 +24,7 @@ Tunnels are defined in the TUI (tab 3) or via the [CLI](cli.md) (`sshub tunnel c
 `TunnelManager` owns child processes for the running TUI, capturing a stderr tail for diagnostics and checking health with `try_wait`. Tunnels marked **keep alive** (`auto_connect`) start on launch and reconnect when they drop:
 
 - Backoff: exponential with deterministic jitter via `config::tunnel_backoff_delay`, configured in `[tunnel_reconnect]` — `max_attempts` (0 = unlimited), `initial_delay_ms` (1 s), `max_delay_ms` (60 s), `stable_secs` (uptime that resets the attempt counter; a spawn younger than this counts as failed), `jitter_ratio` (0.25).
-- Lifecycle surfaces as `ReconnectEvent::{Attempt, Reconnected, GaveUp}`; the `R` overlay (`screens/tunnel_reconnect.rs`) edits delays in seconds.
+- Lifecycle surfaces as `ReconnectEvent::{Attempt, Reconnected, GaveUp}`; the `R` overlay (`src/tui/screens/tunnel_reconnect.rs`) edits delays in seconds.
 - A user-initiated stop suppresses reconnect; `x` kills the process.
 - The [event loop](../architecture/overview.md) drives this through `tick_tunnels()` each frame.
 

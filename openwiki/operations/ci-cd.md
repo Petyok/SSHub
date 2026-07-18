@@ -27,14 +27,6 @@ Trigger: tag push `v*` (created by `just release`).
 
 Trigger: `workflow_dispatch` + daily cron `0 8 * * *`. Installs the `openwiki` npm CLI and runs `openwiki code --update --print` (OpenRouter provider, LangSmith tracing), then opens a PR from branch `openwiki/update` via `peter-evans/create-pull-request`.
 
-Uncommitted working-tree changes (present at this wiki generation, not yet in git history):
-
-- Model switched `moonshotai/kimi-k3` → `z-ai/glm-5.2`.
-- `LANGCHAIN_TRACING_V2: "true"` now hardcoded (previously conditional on the secret).
-- The workflow file itself added to the bot PR's `add-paths`, so future model/config changes ride the automated PR.
-
-Companion edits in the same uncommitted diff slim the OpenWiki blocks in `AGENTS.md`/`CLAUDE.md` to a regeneration-only policy: **do not hand-edit generated pages — fix the source and let OpenWiki regenerate**.
-
 ## Secrets used by workflows
 
 `CARGO_REGISTRY_TOKEN` (crates.io publish), OpenRouter/LangSmith keys for the wiki bot (referenced by env name only; see the workflow file for exact variable names). Never commit values.

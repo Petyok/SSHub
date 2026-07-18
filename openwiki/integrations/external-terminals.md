@@ -10,7 +10,7 @@ tags: [integrations, terminal, kitty, ghostty, demo]
 
 ## External terminal launchers (`src/launcher/`)
 
-`TerminalLauncher` (`src/launcher/trait.rs`) is the abstraction for spawning SSH sessions in an external terminal window. `launcher_from_config` picks an implementation from `[terminal].launcher` in `config.toml`:
+`TerminalLauncher` (`src/launcher/trait.rs`) is the abstraction for spawning SSH sessions in an external terminal window. `launcher_from_config` picks an implementation from the top-level `terminal` key in `config.toml` (e.g. `terminal = "kitty"`), with `launch_command` as a sibling top-level key used only when `terminal = "custom"`:
 
 - **Kitty** (`kitty.rs`) — `kitty --class sshub-session --title "SSH: X" --hold -e <argv>`.
 - **Ghostty** (`ghostty.rs`) — `ghostty -e <argv>`.

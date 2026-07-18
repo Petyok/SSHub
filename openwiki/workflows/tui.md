@@ -32,13 +32,13 @@ The TUI is a bento-grid dashboard rendered by `src/tui/` on top of the [App stat
 
 ## Default keybindings (highlights)
 
-Global: `Tab` toggle detail panel, `Esc` back, `q` quit, `?` help, `Ctrl+K` keybind editor.
+Global: `Esc` back, `q` quit, `?` help, `Ctrl+K` keybind editor. `Tab` toggles the detail panel only on the Hosts tab; on SFTP it switches panes, and it has no detail-panel effect on Tunnels/Identities/Audit.
 Hosts: `Enter` connect, `a`/`e`/`d`/`D` add/edit/delete/duplicate, `f` favorite, `s` sort mode, `/` search, `#` tags, `Shift+I`/`Shift+E` import/export ssh config, `Shift+T` Termius import.
 Sessions: `Ctrl+D` detach (SSH keeps running), `Ctrl+W` close tab, `Ctrl+[`/`Ctrl+]` cycle tabs, `Ctrl+Shift+S` focus session from dashboard.
 Tunnels: `Enter` start/stop/cancel-reconnect, `R` reconnect settings, `x` kill process.
 Audit: `f` status filter (all/ok/fail), `r` range (all/today/week/month).
 
-The full binding table lives in `README.md` and `man/sshub.1`; rebinds made in the keybind editor take precedence over these defaults.
+The full binding table lives in `README.md` (`## Keybindings`); rebinds made in the keybind editor take precedence over these defaults. (The man page documents only the CLI subcommands, not TUI keybindings.)
 
 ## Mouse
 

@@ -51,7 +51,7 @@ Hosts, groups, favorites, and identities as user-facing concepts: [domain/hosts-
 
 `~/.config/sshub/config.toml` (created on first run) sections:
 
-- `[terminal]` — `launcher` = `kitty` | `ghostty` | custom command template (see [integrations](../integrations/external-terminals.md))
+- `terminal` (top-level key, not a table) = `kitty` | `ghostty` | `custom`, with `launch_command` (also top-level, e.g. `foot ssh {host}`) supplying the custom template. Note: this only feeds `TerminalLauncher` (src/launcher/), which is dead code at runtime — sessions actually run on an embedded PTY (src/session/, tui-term + vt100); see [integrations](../integrations/external-terminals.md) for the legacy/inactive launcher abstraction.
 - `[appearance]` — opaque background, OS logos, quit confirmation, startup animation
 - `[session_logging]` — `enabled`, `max_file_bytes` (default 10 MiB), `retention_files` (50)
 - `[tunnel_reconnect]` — `max_attempts`, `initial_delay_ms`, `max_delay_ms`, `stable_secs`, `jitter_ratio` (consumed by `config::tunnel_backoff_delay`; see [tunnels](../workflows/tunnels.md))

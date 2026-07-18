@@ -28,9 +28,9 @@ Resolution always goes through `HostResolver` / `SshConfigResolver` (`src/ssh/re
 
 An identity (`src/store/identities.rs`) bundles a display name, username, and private key path; a "Default" identity is seeded. Hosts/groups reference identities for connection defaults. Secrets (key passphrases, host passwords) live in the OS keyring keyed `identity:{id}` / `host:{id}` — see [secrets](../security/secrets.md).
 
-- **ssh-agent** (`src/ssh/agent.rs`) — wrappers over `ssh-add -l` / `-d`; the Keys tab shows loaded status and can add/remove keys (`Shift+A` / `r`; CLI: `sshub identity agent-remove`).
+- **ssh-agent** (`src/ssh/agent.rs`) — wrappers over `ssh-add -l` / `-d`; the Keys tab shows loaded status and can add/remove keys (`p` / `r`; CLI: `sshub identity agent-remove`).
 - **Key files** (`src/ssh/keyfile.rs`) — `ssh-keygen -y` probing detects whether a key needs a passphrase; the passphrase is fed through a staged 0600/0700 askpass script so it never appears in `ps` argv.
-- **Probing** (`src/ssh/probe.rs`) — a background `ssh -v BatchMode` probe classifies stderr lines (auth methods, host-key state) for the detail panel. Per-host `ssh -v` probing was deliberately removed from connect because it "buried the events the user actually cares about" (`src/app/mod.rs`).
+- **Probing** (`src/ssh/probe.rs`) — defines `SshLogEntry`/`LogLevel`, populated by manual log pushes from the connect/session paths. The module’s own background `ssh -v BatchMode` classifier (`spawn_ssh_probe`/`classify_line`), which used to periodically probe every known host, is dead code today (no callers) and was disabled because it "buried the events the user actually cares about" (src/app/mod.rs); there is no live auth-method/host-key display in the detail panel.
 
 ## Termius import (`src/import/termius_csv.rs`)
 

@@ -21,7 +21,7 @@ Parsing is hand-rolled (`src/cli/parse.rs`), output DTOs in `src/cli/output.rs`.
 
 | Command | Subcommands | Notes |
 |---|---|---|
-| `host` (alias `list`, `connect`) | `list show connect resolve search add edit rename delete duplicate` | `add` takes `--name --address --port --username --group --tags`; `connect` opens an embedded/launcher session |
+| `host` (alias `list`, `connect`) | `list show connect resolve search add edit rename delete duplicate` | `add` takes `--name --address --port --username --group --tags`; `connect` runs ssh/mosh as a foreground child process with inherited stdio (Command::spawn + wait), propagating its exit code; it does not use the TUI embedded-PTY session module or the (dead-code) external TerminalLauncher |
 | `group` (alias `groups`) | `list show add edit delete` | Nested groups via parent |
 | `identity` | `list show add edit delete agent-remove` | `add --private-key`, `--password-stdin` for secrets; `agent-remove` = `ssh-add -d` |
 | `tunnel` | `list show create start stop delete` | `start` is detached by default (PID files), `--foreground` runs with keep-alive ([tunnels](tunnels.md)) |
