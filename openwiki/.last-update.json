@@ -1,8 +1,0 @@
-{
-  "updatedAt": "2026-07-15T21:22:00.000Z",
-  "command": "manual-correction",
-  "gitHead": "fd66c88908ce8c728ec884ab50ad356c3aa010d2",
-  "model": null,
-  "validatedAt": "2026-07-15T21:22:00.000Z",
-  "validatedBy": "adversarial-review-fixes"
-}
