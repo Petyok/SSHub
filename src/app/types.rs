@@ -48,6 +48,142 @@ impl SortMode {
     }
 }
 
+/// Direction for dashboard panel focus movement (issue #18).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusDir {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+/// A focusable panel on the hosts dashboard. Focus moves spatially with
+/// `Alt+arrows`; `z` zooms the focused panel to the full dashboard body
+/// (issue #18). The bento grid is: a left column (`Hosts`, one tall panel),
+/// a middle stack (`Detail` / `Agent` / `Latency`), a right stack (`Recent` /
+/// `Auth` / `Ping`), and a `SshLog` strip spanning mid+right along the bottom.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PanelId {
+    #[default]
+    Hosts,
+    Detail,
+    Agent,
+    Latency,
+    Recent,
+    Auth,
+    Ping,
+    SshLog,
+}
+
+impl PanelId {
+    pub fn label(self) -> &'static str {
+        match self {
+            PanelId::Hosts => "hosts",
+            PanelId::Detail => "host detail",
+            PanelId::Agent => "agent",
+            PanelId::Latency => "latency",
+            PanelId::Recent => "recent sessions",
+            PanelId::Auth => "auth events",
+            PanelId::Ping => "ping",
+            PanelId::SshLog => "ssh log",
+        }
+    }
+
+    /// The neighboring panel in `dir`, or `None` to keep focus put (e.g. moving
+    /// off an edge). Hand-written adjacency over the bento grid.
+    pub fn neighbor(self, dir: FocusDir) -> Option<PanelId> {
+        use FocusDir::*;
+        use PanelId::*;
+        match (self, dir) {
+            // Left column (one tall panel).
+            (Hosts, Right) => Some(Detail),
+            (Hosts, _) => None,
+            // Middle stack.
+            (Detail, Left) => Some(Hosts),
+            (Detail, Right) => Some(Recent),
+            (Detail, Down) => Some(Agent),
+            (Detail, Up) => None,
+            (Agent, Left) => Some(Hosts),
+            (Agent, Right) => Some(Auth),
+            (Agent, Up) => Some(Detail),
+            (Agent, Down) => Some(Latency),
+            (Latency, Left) => Some(Hosts),
+            (Latency, Right) => Some(Ping),
+            (Latency, Up) => Some(Agent),
+            (Latency, Down) => Some(SshLog),
+            // Right stack.
+            (Recent, Left) => Some(Detail),
+            (Recent, Down) => Some(Auth),
+            (Recent, _) => None,
+            (Auth, Left) => Some(Agent),
+            (Auth, Up) => Some(Recent),
+            (Auth, Down) => Some(Ping),
+            (Auth, Right) => None,
+            (Ping, Left) => Some(Latency),
+            (Ping, Up) => Some(Auth),
+            (Ping, Down) => Some(SshLog),
+            (Ping, Right) => None,
+            // Bottom strip (spans mid+right).
+            (SshLog, Up) => Some(Latency),
+            (SshLog, Left) => Some(Hosts),
+            (SshLog, _) => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod panel_id_tests {
+    use super::{FocusDir, PanelId};
+
+    #[test]
+    fn neighbor_moves_across_the_bento_grid() {
+        // Columns: hosts ⇄ mid stack ⇄ right stack.
+        assert_eq!(
+            PanelId::Hosts.neighbor(FocusDir::Right),
+            Some(PanelId::Detail)
+        );
+        assert_eq!(
+            PanelId::Detail.neighbor(FocusDir::Left),
+            Some(PanelId::Hosts)
+        );
+        assert_eq!(
+            PanelId::Detail.neighbor(FocusDir::Right),
+            Some(PanelId::Recent)
+        );
+        // Vertical within a stack, down into the shared ssh-log strip.
+        assert_eq!(
+            PanelId::Detail.neighbor(FocusDir::Down),
+            Some(PanelId::Agent)
+        );
+        assert_eq!(
+            PanelId::Latency.neighbor(FocusDir::Down),
+            Some(PanelId::SshLog)
+        );
+        assert_eq!(
+            PanelId::Ping.neighbor(FocusDir::Down),
+            Some(PanelId::SshLog)
+        );
+        assert_eq!(
+            PanelId::SshLog.neighbor(FocusDir::Up),
+            Some(PanelId::Latency)
+        );
+    }
+
+    #[test]
+    fn neighbor_returns_none_at_edges() {
+        assert_eq!(PanelId::Hosts.neighbor(FocusDir::Left), None);
+        assert_eq!(PanelId::Hosts.neighbor(FocusDir::Up), None);
+        assert_eq!(PanelId::Detail.neighbor(FocusDir::Up), None);
+        assert_eq!(PanelId::Recent.neighbor(FocusDir::Right), None);
+        assert_eq!(PanelId::SshLog.neighbor(FocusDir::Down), None);
+    }
+
+    #[test]
+    fn default_focus_is_hosts() {
+        assert_eq!(PanelId::default(), PanelId::Hosts);
+    }
+}
+
 /// One section in the group tree (real group or virtual ungrouped bucket).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostGroupSection {

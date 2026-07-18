@@ -134,6 +134,10 @@ pub struct App {
     /// UI zoom level (0 = default). Widens the hosts column in the layout and
     /// the host-name column within it.
     pub ui_zoom: usize,
+    /// Currently focused dashboard panel (issue #18: focus + tmux-style zoom).
+    pub focused_panel: PanelId,
+    /// Whether the focused dashboard panel is zoomed to the full body.
+    pub panel_zoomed: bool,
     pub group_manage_selected: usize,
     pub group_notice: Option<String>,
     pub host_notice: Option<String>,
@@ -283,6 +287,8 @@ impl App {
             import_prompt: None,
             sftp_prompt: None,
             ui_zoom: 0,
+            focused_panel: PanelId::default(),
+            panel_zoomed: false,
             group_manage_selected: 0,
             group_notice: None,
             host_notice: None,
