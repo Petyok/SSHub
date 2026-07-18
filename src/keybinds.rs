@@ -422,7 +422,7 @@ kb_defaults! {
     confirm_yes => ["y", "Y", "Enter"],
     confirm_no => ["n", "N"],
     cancel => ["Esc"],
-    toggle_panel_zoom => ["z"],
+    toggle_panel_zoom => ["z", "Alt+Enter"],
     focus_panel_left => ["Alt+Left"],
     focus_panel_right => ["Alt+Right"],
     focus_panel_up => ["Alt+Up"],

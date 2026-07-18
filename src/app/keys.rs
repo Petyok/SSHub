@@ -106,25 +106,14 @@ impl App {
                 && (self.is_action(KeyAction::MoveDown, &key) || key.code == KeyCode::PageDown) =>
             {
                 let step = if key.code == KeyCode::PageDown { 10 } else { 1 };
-                if self.focused_panel == PanelId::SshLog {
-                    // The log scroll counts back from the latest line.
-                    self.ssh_log_scroll = self.ssh_log_scroll.saturating_sub(step as usize);
-                } else {
-                    self.panel_scroll
-                        .set(self.panel_scroll.get().saturating_add(step));
-                }
+                self.scroll_zoomed(true, step);
             }
             _ if self.panel_zoomed
                 && self.focused_panel != PanelId::Hosts
                 && (self.is_action(KeyAction::MoveUp, &key) || key.code == KeyCode::PageUp) =>
             {
                 let step = if key.code == KeyCode::PageUp { 10 } else { 1 };
-                if self.focused_panel == PanelId::SshLog {
-                    self.ssh_log_scroll = self.ssh_log_scroll.saturating_add(step as usize);
-                } else {
-                    self.panel_scroll
-                        .set(self.panel_scroll.get().saturating_sub(step));
-                }
+                self.scroll_zoomed(false, step);
             }
             _ if self.is_action(KeyAction::MoveDown, &key) => self.move_selection(1),
             _ if self.is_action(KeyAction::MoveUp, &key) => self.move_selection(-1),
@@ -262,6 +251,28 @@ impl App {
         if let Some(next) = self.focused_panel.neighbor(dir) {
             self.focused_panel = next;
             self.panel_scroll.set(0);
+        }
+    }
+
+    /// Scroll the focused zoomed panel (issue #18) by `step` rows. `down` moves
+    /// toward the end of a list / the latest ssh-log line. Shared by the
+    /// keyboard arms and the mouse wheel.
+    pub(crate) fn scroll_zoomed(&mut self, down: bool, step: u16) {
+        if self.focused_panel == PanelId::SshLog {
+            // The ssh-log offset counts back from the latest line, so scrolling
+            // "down" (toward the latest) decreases it.
+            self.ssh_log_scroll = if down {
+                self.ssh_log_scroll.saturating_sub(step as usize)
+            } else {
+                self.ssh_log_scroll.saturating_add(step as usize)
+            };
+        } else {
+            let cur = self.panel_scroll.get();
+            self.panel_scroll.set(if down {
+                cur.saturating_add(step)
+            } else {
+                cur.saturating_sub(step)
+            });
         }
     }
 

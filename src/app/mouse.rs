@@ -72,6 +72,19 @@ impl App {
             return Ok(());
         }
 
+        // When a dashboard panel is zoomed the whole body is that single panel,
+        // so the 3-column routing below must not run (it would select a host
+        // "through" the panel). Route the wheel to the zoomed panel's scroll and
+        // swallow clicks.
+        if self.panel_zoomed {
+            match mouse.kind {
+                MouseEventKind::ScrollDown => self.scroll_zoomed(true, 3),
+                MouseEventKind::ScrollUp => self.scroll_zoomed(false, 3),
+                _ => {}
+            }
+            return Ok(());
+        }
+
         let areas =
             crate::tui::dashboard_layout::dashboard_layout_zoomed(self.terminal_area, self.ui_zoom);
         let x = mouse.column;
