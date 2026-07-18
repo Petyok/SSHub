@@ -255,6 +255,14 @@ pub(crate) fn render_ping_panel(buf: &mut Buffer, area: Rect, app: &App) {
     let inner_x = area.x + 2;
     let inner_w = area.width.saturating_sub(4) as usize;
 
+    // Zoomed (issue #18): take over the whole dashboard body with a per-host
+    // table instead of the single aggregate sparkline. The non-zoomed path
+    // below is left byte-for-byte unchanged.
+    if app.panel_zoomed {
+        render_ping_zoomed(buf, area, app, inner_x, inner_w);
+        return;
+    }
+
     if app.ping_data.is_empty() {
         let y = area.y + 1;
         if y < area.y + area.height - 1 {
@@ -356,5 +364,174 @@ pub(crate) fn render_ping_panel(buf: &mut Buffer, area: Rect, app: &App) {
         };
         let stats = format!("min {}  max {}  loss {}%", min_str, max_str, loss_pct);
         put_clamped(buf, inner_x, info_y, &stats, theme::mute(), inner_w);
+    }
+}
+
+/// Colour a latency (ms) green/amber/red by how healthy it looks.
+fn ping_latency_style(v: u32) -> ratatui::style::Style {
+    if v < 80 {
+        theme::green()
+    } else if v < 200 {
+        theme::amber()
+    } else {
+        theme::red()
+    }
+}
+
+/// Zoomed ping view: one row per host (sorted by name), height-driven, laid out
+/// as a table — name │ current latency │ per-host sparkline │ min/max/loss.
+fn render_ping_zoomed(buf: &mut Buffer, area: Rect, app: &App, inner_x: u16, inner_w: usize) {
+    let bottom = area.y + area.height - 1; // first row occupied by the border
+    let right_lim = inner_x + inner_w as u16;
+
+    // Empty state — mirror the non-zoomed copy so the panel never looks broken.
+    if app.ping_data.is_empty() {
+        let y = area.y + 1;
+        if y < bottom {
+            put_clamped(
+                buf,
+                inner_x,
+                y,
+                "waiting for ping data...",
+                theme::dim(),
+                inner_w,
+            );
+        }
+        return;
+    }
+
+    // Sort hosts by name for a stable, scannable table.
+    let mut hosts: Vec<(&String, &Vec<u32>)> = app.ping_data.iter().collect();
+    hosts.sort_by(|a, b| a.0.cmp(b.0));
+
+    // Column layout (from the right): stats, sparkline, current latency; the
+    // name column takes whatever is left. Shrink gracefully on narrow widths.
+    let stats_w = 24usize.min(inner_w);
+    let spark_w = 16usize.min(inner_w.saturating_sub(stats_w));
+    let ms_w = 9usize.min(inner_w.saturating_sub(stats_w + spark_w));
+    let gaps = 3usize; // one space between each of the four columns
+    let name_w = inner_w
+        .saturating_sub(stats_w + spark_w + ms_w + gaps)
+        .max(1);
+
+    let name_x = inner_x;
+    let ms_x = name_x + name_w as u16 + 1;
+    let spark_x = ms_x + ms_w as u16 + 1;
+    let stats_x = spark_x + spark_w as u16 + 1;
+
+    // Header row.
+    let header_y = area.y + 1;
+    if header_y < bottom {
+        put_clamped(buf, name_x, header_y, "host", theme::mute(), name_w);
+        if ms_w > 0 {
+            put_clamped(buf, ms_x, header_y, "now", theme::mute(), ms_w);
+        }
+        if spark_w > 0 {
+            put_clamped(buf, spark_x, header_y, "recent", theme::mute(), spark_w);
+        }
+        if stats_w > 0 && stats_x < right_lim {
+            put_clamped(
+                buf,
+                stats_x,
+                header_y,
+                "min / max / loss",
+                theme::mute(),
+                (right_lim - stats_x) as usize,
+            );
+        }
+    }
+
+    // One row per host, as many as fit under the header.
+    for (i, (name, samples)) in hosts.iter().enumerate() {
+        let y = area.y + 2 + i as u16;
+        if y >= bottom {
+            break;
+        }
+
+        // Aggregate this host's samples.
+        let mut h_min: u32 = u32::MAX;
+        let mut h_max: u32 = 0;
+        let mut loss: u64 = 0;
+        let mut total: u64 = 0;
+        for &v in samples.iter() {
+            total += 1;
+            if crate::ping::is_unreachable(v) || v == 0 {
+                loss += 1;
+            } else {
+                if v < h_min {
+                    h_min = v;
+                }
+                if v > h_max {
+                    h_max = v;
+                }
+            }
+        }
+
+        // Host name.
+        put_clamped(buf, name_x, y, name, theme::text(), name_w);
+
+        // Current latency (last sample), coloured by health.
+        if ms_w > 0 {
+            let (cur_str, cur_style) = match samples.last().copied() {
+                None => ("\u{2014}".to_string(), theme::dim()),
+                Some(v) if crate::ping::is_unreachable(v) || v == 0 => {
+                    ("timeout".to_string(), theme::red())
+                }
+                Some(v) => (format!("{}ms", v), ping_latency_style(v)),
+            };
+            // Right-align inside the ms column.
+            let pad = ms_w.saturating_sub(cur_str.chars().count());
+            let cur_col = ms_x + pad as u16;
+            put_clamped(buf, cur_col, y, &cur_str, cur_style, ms_w - pad);
+        }
+
+        // Per-host sparkline over its own most recent samples.
+        if spark_w > 0 && spark_x < right_lim {
+            let take = spark_w.min(samples.len());
+            let recent = &samples[samples.len() - take..];
+            let s_max = recent
+                .iter()
+                .copied()
+                .filter(|&v| !(crate::ping::is_unreachable(v) || v == 0))
+                .max()
+                .unwrap_or(1)
+                .max(1);
+            let spark: String = recent
+                .iter()
+                .map(|&v| {
+                    if crate::ping::is_unreachable(v) || v == 0 {
+                        SPARK_CHARS[0]
+                    } else {
+                        let idx = ((v as u64 * 7) / u64::from(s_max).max(1)).clamp(0, 7) as usize;
+                        SPARK_CHARS[idx]
+                    }
+                })
+                .collect();
+            put_clamped(buf, spark_x, y, &spark, theme::cyan(), spark_w);
+        }
+
+        // min / max / loss stats.
+        if stats_w > 0 && stats_x < right_lim {
+            let min_str = if h_min == u32::MAX {
+                "\u{2014}".to_string()
+            } else {
+                format!("{}ms", h_min)
+            };
+            let max_str = if h_max == 0 {
+                "\u{2014}".to_string()
+            } else {
+                format!("{}ms", h_max)
+            };
+            let loss_pct = (loss * 100).checked_div(total).unwrap_or(0);
+            let stats = format!("{} / {} / {}%", min_str, max_str, loss_pct);
+            put_clamped(
+                buf,
+                stats_x,
+                y,
+                &stats,
+                theme::mute(),
+                (right_lim - stats_x) as usize,
+            );
+        }
     }
 }
