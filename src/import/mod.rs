@@ -1,4 +1,5 @@
 pub mod mremoteng;
+pub mod putty;
 pub mod termius_csv;
 
 /// Result of a third-party host import (mRemoteNG, PuTTY). Kept lean: these
