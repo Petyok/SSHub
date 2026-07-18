@@ -34,6 +34,18 @@ impl SortMode {
             SortMode::Manual => "manual",
         }
     }
+
+    /// Parse CLI `--sort` values (not TUI display labels).
+    pub fn from_cli_str(s: &str) -> Option<Self> {
+        match s {
+            "label" => Some(Self::Label),
+            "last-connected" => Some(Self::LastConnected),
+            "favorite" => Some(Self::FavoriteFirst),
+            "group" => Some(Self::GroupThenLabel),
+            "manual" => Some(Self::Manual),
+            _ => None,
+        }
+    }
 }
 
 /// One section in the group tree (real group or virtual ungrouped bucket).

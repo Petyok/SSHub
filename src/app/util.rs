@@ -180,6 +180,28 @@ pub fn mosh_argv_for_entry(entry: &HostEntry) -> Vec<String> {
     }
 }
 
+/// CLI connect argv: optional verbose logging, accept-new when secret present.
+pub fn prepare_cli_connect_argv(
+    mut argv: Vec<String>,
+    has_stored_secret: bool,
+    verbose: bool,
+) -> Vec<String> {
+    match argv.first().map(String::as_str) {
+        Some("ssh") => {
+            if verbose {
+                argv.insert(1, "-v".into());
+            }
+            if has_stored_secret {
+                argv.insert(1, "-o".into());
+                argv.insert(2, "StrictHostKeyChecking=accept-new".into());
+            }
+            argv
+        }
+        Some("mosh") if has_stored_secret => crate::ssh::inject_mosh_ssh_accept_new(argv),
+        _ => argv,
+    }
+}
+
 /// Apply connect-time tweaks to a bare session argv: verbose `ssh` logging and
 /// `StrictHostKeyChecking=accept-new` when a stored credential is present.
 pub fn prepare_session_connect_argv(mut argv: Vec<String>, has_stored_secret: bool) -> Vec<String> {
@@ -337,7 +359,7 @@ pub(crate) fn parse_tags(raw: &str) -> Vec<String> {
         .collect()
 }
 
-pub(crate) fn sort_host_indices(hosts: &[HostEntry], indices: &mut [usize], mode: SortMode) {
+pub fn sort_host_indices(hosts: &[HostEntry], indices: &mut [usize], mode: SortMode) {
     indices.sort_by(|&a, &b| compare_hosts(&hosts[a], &hosts[b], mode));
 }
 

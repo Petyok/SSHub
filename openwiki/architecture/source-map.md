@@ -11,6 +11,32 @@ Quick reference: where the code for each domain lives. Use this when you need to
 | Config load/save, XDG paths, env overrides | `src/config.rs` | `AppConfig`, `load_config()`, `data_dir()` |
 | Data directory permissions | `src/secure_fs.rs` | `restrict_dir`, `restrict_file` |
 
+## Headless CLI
+
+| Topic | File | Notes |
+|-------|------|-------|
+| Subcommand detection + dispatch | `src/cli/mod.rs` | `is_subcommand`, `run_subcommand` |
+| Shared `CliContext` (store, resolver, config, hosts) | `src/cli/context.rs` | `reload_hosts` |
+| Flag/format parsing, exit-code helpers | `src/cli/parse.rs` | `parse_format`, `usage`, `fail`, `fail_code` |
+| Per-command usage text | `src/cli/help.rs` | mirrors real flags |
+| Plain/JSON output formatting | `src/cli/output.rs` | |
+| Host commands (list/show/connect/resolve/add/edit/...) | `src/cli/host.rs` | script(1) log wrap, audit event |
+| Group commands | `src/cli/group.rs` | |
+| Identity commands | `src/cli/identity.rs` | `agent-remove` |
+| Tunnel commands (list/create/start/stop/...) | `src/cli/tunnel.rs` | detached + `--foreground` |
+| SFTP one-shot commands | `src/cli/sftp.rs` | ls/get/put/rm/mkdir/rename/chmod |
+| Audit list/stats | `src/cli/audit.rs` | |
+| tags / sync / import / export | `src/cli/inventory.rs` | |
+| Shell completions | `src/cli/completions.rs` | static tree + host cache |
+| Shared host filters | `src/cli/filter.rs` | |
+
+## Headless host helpers (shared by TUI + CLI)
+
+| Topic | File | Notes |
+|-------|------|-------|
+| Merged host list loader | `src/hosts/loader.rs` | `load_merged_hosts` (mirrors `App::reload_hosts`) |
+| Legacy-alias -> launcher duplicate, identity match | `src/hosts/crud.rs` | `duplicate_legacy_to_launcher`, `match_identity_for_ssh_host` |
+
 ## Application state & orchestration
 
 | Topic | File | Notes |
@@ -95,7 +121,9 @@ Quick reference: where the code for each domain lives. Use this when you need to
 
 | Topic | File | Notes |
 |-------|------|-------|
-| `TunnelManager`, spawn, reconnect, health | `src/tunnel.rs` | `stop_user`, `check_health`, `tick_reconnect` |
+| `TunnelManager`, reconnect, health, `ReconnectEvent` | `src/tunnel/mod.rs` | `stop_user`, `check_health`, `tick_reconnect` |
+| Tunnel argv build, detached spawn, PID files, runtime state | `src/tunnel/spawn.rs` | `build_tunnel_argv`, `spawn_detached_tunnel`, `tunnel_runtime_state`, `TunnelRuntimeState` |
+| Tunnel reconnect audit logging | `src/tunnel/audit.rs` | `log_tunnel_reconnect_events` |
 | Tunnels tab app logic + event loop hook | `src/app/tunnels.rs`, `src/lib.rs` | `toggle_tunnel`, `tick_tunnels` |
 | Tunnels tab render | `src/tui/screens/tunnels.rs` | |
 | Reconnect settings overlay | `src/tui/screens/tunnel_reconnect.rs` | NEW |

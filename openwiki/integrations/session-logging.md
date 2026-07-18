@@ -51,6 +51,17 @@ When a logged connect succeeds, the audit event stores the log directory in `log
 
 Session logging required database schema v12 (`src/store/migrate.rs`). The `hosts` table gained `session_logging` to persist the per-host override (encoded `None`/`0`/`1` for `Inherit`/`Off`/`On`).
 
+## Headless CLI
+
+`sshub connect <name>` honors the same session-logging configuration as an
+in-TUI connect: the global `[session_logging]` switch and the per-host
+`inherit` / `on` / `off` override are resolved through the same
+`effective_enabled()` path. Because a headless connect has no embedded PTY, the
+CLI captures the transcript by wrapping ssh in `script(1)`. Where `script` is
+unavailable (or for the `mosh` transport, which `script` cannot wrap), logging
+is skipped and a warning is printed instead of failing the connect. See
+[cli.md](cli.md) for the full command reference.
+
 ## What to watch when changing session logging
 
 - `src/session_log.rs` — writer lifecycle, rotation, retention, and directory sanitation are correctness-critical.

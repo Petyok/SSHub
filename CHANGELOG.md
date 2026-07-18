@@ -4,6 +4,23 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Headless CLI** - drive the whole launcher without opening the TUI. New
+  subcommands cover hosts (`list` / `show` / `connect` / `resolve` / `search` /
+  `add` / `edit` / `rename` / `delete` / `duplicate`, with top-level `connect`,
+  `list`, and `groups` aliases), group CRUD, identity CRUD plus `agent-remove`,
+  tunnels (`list` / `show` / `create` / `delete` / `start` / `stop`, and
+  `start --foreground`), one-shot SFTP (`ls` / `get` / `put` / `rm` / `mkdir` /
+  `rename` / `chmod`), the audit log (`list` / `stats`), `tags`, and
+  `sync` / `import` / `export`. Machine-readable output with `--format json`
+  where applicable (plain text stays the default). Exit codes follow a fixed
+  convention: `0` success, `1` operational failure, `2` usage or bad flags.
+  Destructive commands refuse to run without `--yes` (`db purge` keeps its
+  `--yes-i-am-stupid` guard). `sshub completions bash|zsh|fish` emits a shell
+  completion script, optionally caching the host-name list to a file with
+  `--cache PATH` so completion stays fast on large inventories.
+
 ## [0.9.0] - 2026-07-16
 
 ### Added

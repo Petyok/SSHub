@@ -1,0 +1,264 @@
+.\" Manpage for sshub.
+.\" Contributions and corrections welcome at https://github.com/Petyok/SSHub
+.TH SSHUB 1 "2026-07-18" "sshub 0.9.2" "User Commands"
+.SH NAME
+sshub \- keyboard-driven TUI SSH host launcher with a headless CLI
+.SH SYNOPSIS
+.B sshub
+.RI [ OPTIONS ]
+.br
+.B sshub
+.I COMMAND
+.RI [ ARGS ...]
+.SH DESCRIPTION
+.B sshub
+is a terminal UI for managing and connecting to SSH hosts. It merges the
+read-only
+.I ~/.ssh/config
+with a launcher-managed SQLite database and provides nested groups, fuzzy
+search, tags, embedded PTY sessions, SFTP transfers, SSH tunnels, identity
+management, and an audit log.
+.PP
+Run with no command to launch the TUI. Any recognized
+.I COMMAND
+runs headless (no TUI) and is scriptable: output honors
+.B \-\-format
+.RB ( plain
+or
+.BR json )
+where applicable, and the exit status follows the convention in
+.BR "EXIT STATUS" .
+.SH OPTIONS
+.TP
+.BR \-h ", " \-\-help
+Print help. After a command
+.RB ( "sshub " "\fICOMMAND\fR \fB\-\-help\fR" )
+it prints help for that command.
+.TP
+.BR \-V ", " \-\-version
+Print the version and exit.
+.TP
+.B \-\-dry\-run
+Exit immediately without launching the TUI (smoke tests / CI).
+.SH COMMANDS
+.SS Host (read)
+.TP
+.B sshub host list \fR[\fB\-\-tag\fR \fITAG\fR]... [\fB\-\-group\fR \fINAME\fR] [\fB\-\-sort\fR \fIMODE\fR] [\fB\-\-format\fR \fIF\fR]
+List hosts.
+.B \-\-tag
+is repeatable and ANDs; \fB\-\-group\fR filters by exact membership (not the
+subtree). \fIMODE\fR is one of
+.BR label ", " last\-connected ", " favorite ", " group ", " manual .
+.TP
+.B sshub host show \fINAME\fR [\fB\-\-format\fR \fIF\fR]
+Show the full fact sheet for a host.
+.TP
+.B sshub host connect \fINAME\fR \fR[\fB\-v\fR|\fB\-\-verbose\fR]
+Connect over SSH (or mosh, per the host transport). Session logging and audit
+apply as configured. The child exit code is propagated.
+.TP
+.B sshub host resolve \fINAME\fR [\fB\-\-format\fR \fIF\fR]
+Print the resolved connection details and the exact
+.I argv
+that would run, plus whether a stored secret exists (never the secret itself).
+.TP
+.B sshub host search \fIQUERY\fR [\fB\-\-format\fR \fIF\fR]
+Fuzzy-search hosts, best match first.
+.SS Host (write)
+.TP
+.B sshub host add \fB\-\-name\fR \fINAME\fR \fB\-\-address\fR \fIADDR\fR [flags]
+Create a launcher host. Flags include
+.BR \-\-port ", " \-\-username ", " \-\-label ", " \-\-identity ", " \-\-group ", "
+.BR \-\-tag ", " \-\-notes ", " \-\-proxy\-jump ", " \-\-remote\-command ", "
+.BR \-\-forward\-agent ", " \-\-os\-icon ", " \-\-transport ", " \-\-session\-log ", "
+.BR \-\-favorite ", " \-\-password\-stdin .
+.TP
+.B sshub host edit \fB\-\-name\fR \fINAME\fR [\fB\-\-set\-*\fR|\fB\-\-clear\-*\fR ...]
+Edit a host. Each field has a
+.BI \-\-set\- FIELD
+and, where nullable, a
+.BI \-\-clear\- FIELD
+form (e.g.
+.BR \-\-set\-username ", " \-\-clear\-username ", " \-\-set\-os\-icon ,
+.BR \-\-set\-tags ", " \-\-set\-group ", " \-\-set\-identity ", " \-\-set\-transport ).
+.TP
+.B sshub host rename \fB\-\-name\fR \fINAME\fR \fB\-\-new\-name\fR \fINEW\fR [\fB\-\-strict\fR]
+Rename a launcher host.
+.B \-\-strict
+fails instead of de-duplicating a clashing name.
+.TP
+.B sshub host delete \fB\-\-name\fR \fINAME\fR \fB\-\-yes\fR
+Delete a launcher host. Requires
+.BR \-\-yes .
+.TP
+.B sshub host duplicate \fINAME\fR
+Duplicate a host (legacy ssh_config hosts are copied into the launcher).
+.SS Aliases
+.TP
+.B sshub connect \fINAME\fR
+Alias for
+.BR "host connect" .
+.TP
+.B sshub list \fR...
+Alias for
+.BR "host list" .
+.TP
+.B sshub groups \fR...
+Alias for
+.BR "group list" " (forwards flags, e.g. " \-\-all ).
+.SS Groups
+.TP
+.B sshub group list \fR[\fB\-\-all\fR] [\fB\-\-format\fR \fIF\fR]
+.TQ
+.B sshub group show \fINAME\fR [\fB\-\-format\fR \fIF\fR]
+.TQ
+.B sshub group add \fB\-\-name\fR \fINAME\fR \fR[\fB\-\-parent\fR \fIG\fR] [\fB\-\-default\-identity\fR \fIN\fR] [\fB\-\-sort\-order\fR \fIN\fR]
+.TQ
+.B sshub group edit \fB\-\-name\fR \fINAME\fR \fR[\fB\-\-set\-name\fR|\fB\-\-set\-parent\fR|\fB\-\-clear\-parent\fR|\fB\-\-set\-default\-identity\fR|\fB\-\-clear\-default\-identity\fR|\fB\-\-set\-sort\-order\fR ...]
+.TQ
+.B sshub group delete \fB\-\-name\fR \fINAME\fR \fB\-\-yes\fR
+Manage host groups.
+.SS Identities
+.TP
+.B sshub identity list\fR|\fBshow\fR|\fBadd\fR|\fBedit\fR|\fBdelete\fR|\fBagent\-remove \fR...
+Manage SSH identities. Passwords are read from stdin with
+.BR \-\-password\-stdin .
+.B agent\-remove \-\-name \fINAME\fR
+runs
+.B ssh\-add \-d
+for the identity's key.
+.SS Tunnels
+.TP
+.B sshub tunnel list\fR|\fBshow \fR[\fB\-\-format\fR \fIF\fR]
+.TQ
+.B sshub tunnel create \fB\-\-host\fR \fINAME\fR \fB\-\-type\fR \fIT\fR \fB\-\-local\-port\fR \fIP\fR \fR[\fB\-\-remote\-host\fR \fIH\fR] [\fB\-\-remote\-port\fR \fIP\fR] [\fB\-\-label\fR \fIL\fR] [\fB\-\-keep\-alive\fR]
+.TQ
+.B sshub tunnel start \fIID\fR \fR[\fB\-\-foreground\fR]
+.TQ
+.B sshub tunnel stop \fIID\fR
+.TQ
+.B sshub tunnel delete \fIID\fR \fB\-\-yes\fR
+Manage SSH tunnels.
+.I T
+is
+.BR local ", " remote ", or " dynamic .
+By default
+.B start
+detaches and records a PID file under the data directory;
+.B \-\-foreground
+runs in-process with the reconnect loop.
+.IP
+Note: CLI-detached tunnels (PID file) and the TUI's in-process tunnel manager
+are mutually invisible.
+.SS SFTP (one-shot)
+.TP
+.B sshub sftp ls \fIHOST\fR \fR[\fIPATH\fR] [\fB\-\-format\fR \fIF\fR]
+.TQ
+.B sshub sftp get \fIHOST\fR \fIREMOTE\fR \fR[\fILOCAL\fR] [\fB\-\-recursive\fR]
+.TQ
+.B sshub sftp put \fIHOST\fR \fILOCAL\fR \fR[\fIREMOTE\fR] [\fB\-\-recursive\fR]
+.TQ
+.B sshub sftp rm \fIHOST\fR \fIREMOTE\fR \fR[\fB\-\-recursive\fR] \fB\-\-yes\fR
+.TQ
+.B sshub sftp mkdir\fR|\fBrename\fR|\fBchmod \fR...
+One-shot SFTP over a direct host (ProxyJump is not supported).
+.B chmod
+takes an octal mode.
+.B rm
+is destructive and requires
+.BR \-\-yes .
+.SS Audit
+.TP
+.B sshub audit list \fR[\fB\-\-status\fR \fIS\fR] [\fB\-\-via\fR \fIV\fR] [\fB\-\-host\fR \fIN\fR] [\fB\-\-limit\fR \fIN\fR] [\fB\-\-days\fR \fIN\fR] [\fB\-\-format\fR \fIF\fR]
+.TQ
+.B sshub audit stats \fR[\fB\-\-days\fR \fIN\fR] [\fB\-\-via\fR \fIV\fR] [\fB\-\-include\-retry\fR] [\fB\-\-format\fR \fIF\fR]
+Inspect the connection audit log.
+.I S
+is
+.BR all ", " ok ", " fail ", or " retry ;
+.I V
+is
+.BR all ", " connect ", " tunnel ", or " agent .
+.SS Inventory and config
+.TP
+.B sshub tags \fR[\fB\-\-format\fR \fIF\fR]
+List every tag in the inventory.
+.TP
+.B sshub sync
+Refresh the ssh_config-derived rows in the database.
+.TP
+.B sshub import
+Import hosts from
+.IR ~/.ssh/config .
+.TP
+.B sshub export \fR[\fB\-\-stdout\fR | \fB\-o\fR \fIPATH\fR]
+Export launcher hosts to an ssh_config snippet.
+.B \-\-stdout
+and
+.B \-o
+are mutually exclusive.
+.TP
+.B sshub completions \fBbash\fR|\fBzsh\fR|\fBfish\fR \fR[\fB\-\-cache\fR \fIPATH\fR]
+Print a shell completion script.
+.B \-\-cache
+writes/reads a host-name cache for faster dynamic completion.
+.TP
+.B sshub db purge \fR[\fB\-\-yes\-i\-am\-stupid\fR]
+Delete the launcher database (hosts, groups, identities, tunnels, audit log).
+Irreversible; requires
+.BR \-\-yes\-i\-am\-stupid .
+Leaves
+.I ~/.ssh/config
+untouched.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+Operational failure (not found, a destructive command refused without
+.BR \-\-yes ,
+spawn error, non-zero ssh exit, hard import error).
+.TP
+.B 2
+Usage error, bad flags, deleting a non-launcher host, or deleting an identity
+still in use.
+.SH ENVIRONMENT
+.TP
+.B SSHUB_CONFIG_DIR
+Override the config directory (fallback:
+.BR SSH_LAUNCHER_CONFIG_DIR ).
+.TP
+.B SSHUB_DATA_DIR
+Override the data directory (fallback:
+.BR SSH_LAUNCHER_DATA_DIR ).
+.TP
+.B SSHUB_SSH_CONFIG
+Override the SSH config path (fallback:
+.BR SSH_LAUNCHER_SSH_CONFIG ).
+.TP
+.B SSHUB_DRY_RUN
+Exit immediately (fallback:
+.BR SSH_LAUNCHER_DRY_RUN ).
+.SH FILES
+.TP
+.I ~/.local/share/sshub/launcher.db
+The launcher SQLite database (managed hosts, groups, identities, tunnels, audit
+log). Path honors
+.BR SSHUB_DATA_DIR .
+.TP
+.I ~/.ssh/config
+Read-only source of ssh_config hosts merged into the launcher.
+.SH SEE ALSO
+.BR ssh (1),
+.BR ssh_config (5),
+.BR sftp (1),
+.BR ssh\-add (1)
+.PP
+Project home:
+.UR https://github.com/Petyok/SSHub
+.UE
+.SH BUGS
+Report issues at
+.UR https://github.com/Petyok/SSHub/issues
+.UE .

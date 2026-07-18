@@ -76,6 +76,17 @@ Session logging is opt-in and was added in the Unreleased development cycle (sch
 
 Per-host `Transport` in the host form (`ssh` or `mosh`, schema v13). When set to `mosh`, embedded sessions exec `mosh` instead of `ssh`. Tunnels and SFTP always use `ssh`. If `mosh` is missing from `PATH`, connect fails with a clear error in the SSH log panel.
 
+## Headless CLI
+
+The same connect path is reachable without the TUI. `sshub connect <name>` (an
+alias for `sshub host connect <name>`) resolves the host, inherits stdio, and
+returns the child ssh exit code. Pass `-v` / `--verbose` (`sshub host connect
+<name> --verbose`) to inject `ssh -v` just like the connect screen does.
+`sshub host resolve <name>` prints the effective argv and metadata without
+connecting. CLI connect records the same audit event as an in-TUI connect, so
+auth history stays consistent across both entry points. See
+[cli.md](cli.md) for the full command reference.
+
 ## What to watch when changing connection code
 
 - `src/app/connect.rs` — secret resolution, argv building, session logging setup, auth event recording.

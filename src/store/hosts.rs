@@ -748,25 +748,134 @@ impl LauncherStore {
 
     /// Count events by status for the last N days.
     pub fn auth_event_stats(&self, days: i64) -> Result<(i64, i64)> {
+        let (ok, fail, _) = self.auth_event_stats_filtered(days, None, false)?;
+        Ok((ok, fail))
+    }
+
+    /// CLI stats with optional via filter and retry bucket.
+    pub fn auth_event_stats_filtered(
+        &self,
+        days: i64,
+        via: Option<&str>,
+        include_retry: bool,
+    ) -> Result<(i64, i64, i64)> {
         let cutoff = now_ts() - days * 86400;
         self.with_conn(|conn| {
-            // A successful connect is logged as 'launched' (session started);
-            // 'ok' is kept for backward compatibility. Everything else is a
-            // failure.
+            let via_clause = via_filter_sql(via);
             let ok: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM auth_events
-                 WHERE status IN ('ok', 'launched') AND created_at >= ?1",
+                &format!(
+                    "SELECT COUNT(*) FROM auth_events
+                     WHERE status IN ('ok', 'launched') AND created_at >= ?1{via_clause}"
+                ),
                 params![cutoff],
                 |row| row.get(0),
             )?;
             let fail: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM auth_events
-                 WHERE status NOT IN ('ok', 'launched') AND created_at >= ?1",
+                &format!(
+                    "SELECT COUNT(*) FROM auth_events
+                     WHERE status NOT IN ('ok', 'launched', 'retry') AND created_at >= ?1{via_clause}"
+                ),
                 params![cutoff],
                 |row| row.get(0),
             )?;
-            Ok((ok, fail))
+            let retry = if include_retry {
+                conn.query_row(
+                    &format!(
+                        "SELECT COUNT(*) FROM auth_events
+                         WHERE status = 'retry' AND created_at >= ?1{via_clause}"
+                    ),
+                    params![cutoff],
+                    |row| row.get(0),
+                )?
+            } else {
+                0
+            };
+            Ok((ok, fail, retry))
         })
+    }
+
+    /// Extended audit list for CLI (`--via`, `--host`, status buckets).
+    pub fn list_auth_events_cli(
+        &self,
+        status: Option<&str>,
+        since: Option<i64>,
+        via: Option<&str>,
+        host_name: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<AuthEvent>> {
+        self.with_conn(|conn| {
+            let mut sql = String::from(
+                "SELECT id, host_name, username, via, status, note, log_path, created_at FROM auth_events",
+            );
+            let mut conds: Vec<String> = Vec::new();
+            if let Some(s) = status.filter(|s| *s != "all") {
+                conds.push(status_sql(s));
+            }
+            if since.is_some() {
+                conds.push("created_at >= ?".into());
+            }
+            if let Some(v) = via.filter(|v| *v != "all") {
+                match v {
+                    "connect" => conds.push("via NOT IN ('tunnel', 'agent')".into()),
+                    "tunnel" => conds.push("via = 'tunnel'".into()),
+                    "agent" => conds.push("via = 'agent'".into()),
+                    other => conds.push(format!("via = '{other}'")),
+                }
+            }
+            if host_name.is_some() {
+                conds.push("host_name = ?".into());
+            }
+            if !conds.is_empty() {
+                sql.push_str(" WHERE ");
+                sql.push_str(&conds.join(" AND "));
+            }
+            sql.push_str(" ORDER BY created_at DESC, id DESC LIMIT ?");
+
+            let mut bind: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+            if let Some(ts) = since {
+                bind.push(Box::new(ts));
+            }
+            if let Some(h) = host_name {
+                bind.push(Box::new(h.to_string()));
+            }
+            bind.push(Box::new(limit as i64));
+
+            let mut stmt = conn.prepare(&sql)?;
+            let refs: Vec<&dyn rusqlite::types::ToSql> = bind.iter().map(|b| b.as_ref()).collect();
+            let rows = stmt.query_map(refs.as_slice(), |row| {
+                Ok(AuthEvent {
+                    id: row.get(0)?,
+                    host_name: row.get(1)?,
+                    username: row.get(2)?,
+                    via: row.get(3)?,
+                    status: row.get(4)?,
+                    note: row.get(5)?,
+                    log_path: row.get(6)?,
+                    created_at: row.get(7)?,
+                })
+            })?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(Into::into)
+        })
+    }
+}
+
+fn status_sql(status: &str) -> String {
+    match status {
+        "ok" => "status IN ('ok', 'launched')".into(),
+        "fail" => "status NOT IN ('ok', 'launched', 'retry')".into(),
+        "retry" => "status = 'retry'".into(),
+        other => format!("status = '{other}'"),
+    }
+}
+
+fn via_filter_sql(via: Option<&str>) -> String {
+    match via {
+        None | Some("all") => String::new(),
+        Some("connect") => " AND via NOT IN ('tunnel', 'agent')".into(),
+        Some("tunnel") => " AND via = 'tunnel'".into(),
+        Some("agent") => " AND via = 'agent'".into(),
+        Some(v) => format!(" AND via = '{v}'"),
     }
 }
 

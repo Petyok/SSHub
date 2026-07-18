@@ -42,6 +42,19 @@ The resolver output is combined with DB rows in `app/mod.rs::reload_hosts()`. La
 
 `src/ssh/probe.rs` records ssh handshake log lines. If a host key changed, SSHub can prompt the user to purge the stale `known_hosts` entry and reconnect.
 
+## Headless CLI
+
+Import, export, and ssh_config sync are all scriptable:
+
+- `sshub import` imports hosts from `~/.ssh/config` (the `Shift+I` action).
+- `sshub export [--stdout | -o PATH]` writes an ssh_config snippet for managed
+  launcher hosts (the `Shift+E` action); with no flag it writes to the default
+  `exported.conf` in the config dir, `--stdout` prints to stdout, and `-o PATH`
+  targets a file. `--stdout` and `-o` are mutually exclusive.
+- `sshub sync` refreshes the ssh_config rows in the DB without opening the TUI.
+
+See [cli.md](cli.md) for the full command reference.
+
 ## What to watch when changing integration code
 
 - `src/ssh/import.rs` — changes here affect how aliases, `Include` directives, and multi-host blocks are parsed.
