@@ -83,9 +83,15 @@ pub(crate) fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
 
     // Left: OS logo (when enabled in Settings and the os_icon resolves to a
     // vendored distro logo). The OS name still shows in the fact sheet either way.
+    let zoomed = app.panel_zoomed;
     let os_id = entry.managed().and_then(|m| m.os_icon.as_deref());
+    // When zoomed, prefer the large full-colour logo (fastfetch art); fall back
+    // to the small Braille one otherwise.
     let logo = if app.config.appearance.os_logo {
-        os_id.and_then(crate::osinfo::logo_for)
+        let large = zoomed
+            .then(|| os_id.and_then(crate::osinfo::large_logo_for))
+            .flatten();
+        large.or_else(|| os_id.and_then(crate::osinfo::logo_for))
     } else {
         None
     };
@@ -174,6 +180,45 @@ pub(crate) fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
     if let Some(ts) = entry.last_connected() {
         let ago = crate::tui::widgets::right_stack::format_relative_time(ts);
         rows.push((format!("last: {ago}"), theme::dim()));
+    }
+
+    // Zoomed: the card owns the whole dashboard body, so surface the full fact
+    // sheet instead of the compact summary.
+    if zoomed {
+        rows.push((
+            format!("transport: {}", entry.session_transport().label()),
+            theme::mute(),
+        ));
+        rows.push((
+            format!("session log: {}", entry.session_logging_override().label()),
+            theme::mute(),
+        ));
+        if ssh.forward_agent == Some(true) {
+            rows.push(("forward agent: yes".to_string(), theme::mute()));
+        }
+        if let Some(rc) = ssh.remote_command.as_deref().filter(|s| !s.is_empty()) {
+            rows.push((format!("command: {rc}"), theme::mute()));
+        }
+        if let Some(m) = managed {
+            if let Some(id) = m.identity.as_ref() {
+                if let Some(u) = id.username.as_deref().filter(|s| !s.is_empty()) {
+                    rows.push((format!("login: {u}"), theme::mute()));
+                }
+                if let Some(pk) = id.private_key.as_ref() {
+                    rows.push((format!("key file: {}", pk.display()), theme::dim()));
+                }
+            }
+            if m.has_password {
+                rows.push(("password: stored".to_string(), theme::dim()));
+            }
+        }
+        rows.push((format!("source: {}", entry.source().as_str()), theme::dim()));
+        if let Some(env) = entry.environment().filter(|s| !s.is_empty()) {
+            rows.push((format!("env: {env}"), theme::dim()));
+        }
+        if let Some(notes) = entry.description().filter(|s| !s.is_empty()) {
+            rows.push((format!("notes: {notes}"), theme::dim()));
+        }
     }
 
     // Render as many rows as fit, one per line.
