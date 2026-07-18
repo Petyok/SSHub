@@ -179,10 +179,19 @@ USAGE:
 
 fn print_import() {
     println!(
-        r#"sshub import - import hosts from ~/.ssh/config
+        r#"sshub import - import hosts into the launcher
 
 USAGE:
-    sshub import"#
+    sshub import [--from ssh|termius|putty|mremoteng] [--dry-run] [PATH]
+
+SOURCES:
+    ssh        (default) import ~/.ssh/config; PATH ignored, --dry-run unsupported
+    termius    PATH = export directory containing L00t.csv (default: auto-detected)
+    putty      [PATH] = a .reg file or a sessions dir (default: ~/.putty/sessions)
+    mremoteng  PATH = confCons.xml
+
+--dry-run previews the hosts that would be imported without writing anything.
+Only SSH sessions are imported; encrypted mRemoteNG passwords are not decrypted."#
     );
 }
 
