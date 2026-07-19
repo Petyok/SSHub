@@ -18,6 +18,9 @@ impl App {
     /// loop polls at a higher frame rate while this holds so the ~350ms slide
     /// looks smooth instead of stepping at the idle 20fps poll cadence.
     pub(crate) fn animating(&self) -> bool {
+        if !self.motion_enabled() {
+            return false;
+        }
         let now = Instant::now();
         let panel = self
             .broadcast

@@ -370,16 +370,17 @@ pub fn render_broadcast_toasts(frame: &mut Frame, body: Rect, app: &App) {
     let target_x = dock.x;
     let off_right = body.x + body.width; // fully off the right edge
     let now = Instant::now();
+    let motion = app.motion_enabled();
 
     // Anchor: stack grows upward from `stack_bottom`. With the panel present that
     // is just above it (dock.y); once it's gone, the toasts fall down into the
     // freed space (dock.y + dock.height). The transition animates over TOAST_ANIM
-    // from the moment the panel was dismissed.
+    // from the moment the panel was dismissed (skipped under reduced motion).
     let top_anchor = dock.y;
     let low_anchor = dock.y + dock.height;
     let anchor = if app.broadcast.is_some() {
         top_anchor
-    } else if let Some(gone) = app.broadcast_panel_gone_at {
+    } else if let (true, Some(gone)) = (motion, app.broadcast_panel_gone_at) {
         let t = now.saturating_duration_since(gone).as_secs_f32() / TOAST_ANIM.as_secs_f32();
         lerp_u16(top_anchor, low_anchor, ease_out(t.clamp(0.0, 1.0)))
     } else {
@@ -398,8 +399,11 @@ pub fn render_broadcast_toasts(frame: &mut Frame, body: Rect, app: &App) {
 
         // Slide progress from `born`: in for the first TOAST_ANIM, hold, then out
         // once past TOAST_TTL. No stored state — all derived from elapsed time.
+        // Under reduced motion the toast just sits at rest and blinks out at TTL.
         let elapsed = now.saturating_duration_since(toast.born);
-        let x = if elapsed >= TOAST_TTL {
+        let x = if !motion {
+            target_x
+        } else if elapsed >= TOAST_TTL {
             let t = (elapsed - TOAST_TTL).as_secs_f32() / TOAST_ANIM.as_secs_f32();
             lerp_u16(target_x, off_right, ease_out(t.clamp(0.0, 1.0)))
         } else {

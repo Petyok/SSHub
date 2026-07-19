@@ -7,6 +7,15 @@ use std::time::{Duration, Instant};
 
 use ratatui::layout::Rect;
 
+/// Easing curve applied by a [`SlideAnim`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Easing {
+    /// Front-loaded: fast then settling. Good for things flying in.
+    Out,
+    /// Symmetric: eases in and out. Good for A<->B morphs (zoom, tab swap).
+    InOut,
+}
+
 /// A rect slide from `from` to `to`, eased over `dur` starting at `start`.
 #[derive(Debug, Clone, Copy)]
 pub struct SlideAnim {
@@ -14,16 +23,28 @@ pub struct SlideAnim {
     pub to: Rect,
     pub start: Instant,
     pub dur: Duration,
+    pub easing: Easing,
 }
 
 impl SlideAnim {
-    /// Construct a slide whose clock starts now.
+    /// Construct an ease-out slide whose clock starts now.
     pub fn new(from: Rect, to: Rect, dur: Duration) -> Self {
+        Self::with_easing(from, to, dur, Easing::Out)
+    }
+
+    /// Construct an ease-in-out slide (symmetric morph) whose clock starts now.
+    pub fn new_in_out(from: Rect, to: Rect, dur: Duration) -> Self {
+        Self::with_easing(from, to, dur, Easing::InOut)
+    }
+
+    /// Construct a slide with an explicit easing curve, clock starting now.
+    pub fn with_easing(from: Rect, to: Rect, dur: Duration, easing: Easing) -> Self {
         Self {
             from,
             to,
             start: Instant::now(),
             dur,
+            easing,
         }
     }
 
@@ -38,7 +59,11 @@ impl SlideAnim {
             return self.to;
         }
         let t = elapsed.as_secs_f32() / self.dur.as_secs_f32();
-        rect_lerp(self.from, self.to, ease_out(t))
+        let eased = match self.easing {
+            Easing::Out => ease_out(t),
+            Easing::InOut => ease_in_out(t),
+        };
+        rect_lerp(self.from, self.to, eased)
     }
 
     /// True once `dur` has elapsed since `start`.
@@ -47,11 +72,33 @@ impl SlideAnim {
     }
 }
 
+/// Raw (un-eased) progress of a timed animation: `elapsed / dur` clamped to
+/// `[0, 1]`. The shared clock helper for time-driven animations that don't use
+/// a [`SlideAnim`] (e.g. a directional slide computed from an anchor).
+pub fn progress(start: Instant, dur: Duration, now: Instant) -> f32 {
+    if dur.is_zero() {
+        return 1.0;
+    }
+    (now.saturating_duration_since(start).as_secs_f32() / dur.as_secs_f32()).clamp(0.0, 1.0)
+}
+
 /// Cubic ease-out on `t` clamped to `[0, 1]` -> `[0, 1]`: `1 - (1 - t)^3`.
 pub fn ease_out(t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
     let inv = 1.0 - t;
     1.0 - inv * inv * inv
+}
+
+/// Cubic ease-in-out on `t` clamped to `[0, 1]` -> `[0, 1]`: slow at both ends,
+/// fastest in the middle. Symmetric, for A<->B morphs.
+pub fn ease_in_out(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    if t < 0.5 {
+        4.0 * t * t * t
+    } else {
+        let f = -2.0 * t + 2.0;
+        1.0 - f * f * f / 2.0
+    }
 }
 
 /// Per-field linear interpolation of a `Rect` at (already-eased) `t`, rounded.
@@ -116,6 +163,39 @@ mod tests {
     fn ease_out_is_ahead_of_linear() {
         // Ease-out front-loads progress: it should exceed linear in the middle.
         assert!(ease_out(0.5) > 0.5);
+    }
+
+    #[test]
+    fn ease_in_out_endpoints_and_symmetry() {
+        assert_eq!(ease_in_out(0.0), 0.0);
+        assert_eq!(ease_in_out(1.0), 1.0);
+        assert!((ease_in_out(0.5) - 0.5).abs() < 1e-6, "midpoint is 0.5");
+        // Symmetric about (0.5, 0.5).
+        assert!((ease_in_out(0.25) + ease_in_out(0.75) - 1.0).abs() < 1e-6);
+        // Clamps.
+        assert_eq!(ease_in_out(-1.0), 0.0);
+        assert_eq!(ease_in_out(2.0), 1.0);
+    }
+
+    #[test]
+    fn progress_clamps_and_endpoints() {
+        let start = Instant::now();
+        let dur = Duration::from_millis(200);
+        assert_eq!(progress(start, dur, start), 0.0);
+        assert!((progress(start, dur, start + Duration::from_millis(100)) - 0.5).abs() < 1e-3);
+        assert_eq!(progress(start, dur, start + dur), 1.0);
+        assert_eq!(progress(start, dur, start + Duration::from_secs(9)), 1.0);
+        assert_eq!(progress(start, Duration::ZERO, start), 1.0);
+    }
+
+    #[test]
+    fn in_out_slide_reaches_endpoints() {
+        let from = rect(0, 0, 40, 12);
+        let to = rect(60, 20, 20, 6);
+        let dur = Duration::from_millis(200);
+        let anim = SlideAnim::new_in_out(from, to, dur);
+        assert_eq!(anim.rect_at(anim.start), from);
+        assert_eq!(anim.rect_at(anim.start + dur), to);
     }
 
     #[test]

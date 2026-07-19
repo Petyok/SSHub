@@ -236,6 +236,15 @@ pub struct App {
 }
 
 impl App {
+    /// Whether UI motion (slides / morphs / fades) should play. Off when the
+    /// user set `appearance.disable_animation` (the reduced-motion toggle, also
+    /// flipped in Settings). Animation call sites jump straight to the final
+    /// state when this is false; [`App::animating`] also returns false so the
+    /// render loop never bumps to 60fps for nothing.
+    pub(crate) fn motion_enabled(&self) -> bool {
+        !self.config.appearance.disable_animation
+    }
+
     /// Build app with default resolver and on-disk metadata db.
     pub fn new(config: AppConfig) -> Result<Self> {
         let data_dir = config::data_dir()?;

@@ -166,10 +166,11 @@ fn render_inner(frame: &mut Frame, app: &App) {
         if app.panel_zoomed && app.focused_panel == crate::app::PanelId::Broadcast {
             screens::broadcast::render_broadcast_zoomed(frame, body, app);
         } else {
-            let rect = bc
-                .anim
-                .map(|a| a.rect_at(std::time::Instant::now()))
-                .unwrap_or_else(|| screens::broadcast::docked_rect(body));
+            let rect = match bc.anim {
+                Some(a) if app.motion_enabled() => a.rect_at(std::time::Instant::now()),
+                // Reduced motion (or no anim): sit at the resting docked rect.
+                _ => screens::broadcast::docked_rect(body),
+            };
             let focused = app.focused_panel == crate::app::PanelId::Broadcast;
             screens::broadcast::render_broadcast_panel(frame, rect, app, focused);
         }
