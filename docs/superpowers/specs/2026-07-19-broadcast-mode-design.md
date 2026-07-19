@@ -32,9 +32,12 @@ this rides the existing thread + mpsc worker pattern (`ping`, `sftp`, `os-detect
   `ssh_argv_for_entry`, splice `ConnectTimeout` + `BatchMode`, append the remote
   command as the final argv, capture stdout+stderr+exit. Inherits `~/.ssh/config`,
   ProxyJump, agent. **No PTY.**
-- **Auth (v1):** key/agent only (`BatchMode=yes`); hosts needing a password fail
-  fast with a clear reason. Stored-password support (`SSH_ASKPASS` + `PendingSecret`,
-  same path detect uses) is **Phase 2**.
+- **Auth:** key/agent (`BatchMode=yes`) **and stored-password hosts** — the
+  password/passphrase is resolved per host at target-pick time (`resolve_pending_secret`,
+  the same path connect/detect use) and answered via `SSH_ASKPASS` + `PendingSecret`
+  with `BatchMode=no`. Hosts with neither a key/agent nor a stored secret fail fast.
+  (Stored-password was pulled forward from Phase 2 — real fleets are password-based,
+  so key/agent-only made the feature unusable in practice.)
 - **Concurrency:** bounded worker pool, default **8** concurrent; the rest queue.
   A single number, easy to make configurable later.
 - **Audit (lightweight):** each host result is written via the existing
@@ -215,9 +218,10 @@ Purely cosmetic — if `dur` elapsed, the panel is simply at `to`.
 
 ## Phasing
 
-- **Phase 1 (this spec):** menu selection, preview barrier, background pool
-  (key/agent, BatchMode), live docked panel + slide animation + focus/zoom,
-  countdown auto-dismiss, lightweight audit lines, cancel.
-- **Phase 2 (deferred):** stored-password hosts via `SSH_ASKPASS`/`PendingSecret`;
-  optionally full-output audit drill-down (new `broadcast_runs`/`_results`
-  tables) if ephemeral output proves too limiting; configurable concurrency.
+- **Phase 1 (shipped):** menu selection, preview barrier, background pool,
+  live docked panel + slide animation + focus/zoom, countdown auto-dismiss,
+  lightweight audit lines, cancel, and **key/agent + stored-password auth**
+  (SSH_ASKPASS, pulled forward from Phase 2).
+- **Phase 2 (deferred):** optionally full-output audit drill-down (new
+  `broadcast_runs`/`_results` tables) if ephemeral output proves too limiting;
+  configurable concurrency.

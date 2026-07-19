@@ -394,6 +394,10 @@ pub struct BroadcastCandidate {
     pub host_id: i64,
     pub host_name: String,
     pub argv: Vec<String>,
+    /// Stored credential for this host (phase 2), resolved when the target is
+    /// picked; threaded into the run so password hosts authenticate via
+    /// SSH_ASKPASS. `None` => key/agent only.
+    pub secret: Option<crate::session::PendingSecret>,
     pub selected: bool, // toggled in edit-targets
 }
 

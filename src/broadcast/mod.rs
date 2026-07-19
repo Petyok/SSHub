@@ -43,6 +43,10 @@ pub struct BroadcastTask {
     pub host_name: String,
     /// `ssh_argv_for_entry(entry)`; `argv[0] == "ssh"`.
     pub argv: Vec<String>,
+    /// Stored credential answered via `SSH_ASKPASS` (same path a live session
+    /// uses). `Some` => `BatchMode=no`; `None` => key/agent only (`BatchMode=yes`,
+    /// fail fast on a password prompt).
+    pub secret: Option<crate::session::PendingSecret>,
 }
 
 /// Per-host lifecycle state, folded from [`BroadcastEvent`]s by [`apply_event`].
@@ -101,6 +105,7 @@ pub trait CommandRunner: Send + Sync {
         &self,
         argv: &[String],
         command: &str,
+        secret: Option<&crate::session::PendingSecret>,
         cancel: &AtomicBool,
     ) -> Result<(i32, String, String), String>;
 }
@@ -138,6 +143,7 @@ impl CommandRunner for SshCommandRunner {
         &self,
         argv: &[String],
         command: &str,
+        secret: Option<&crate::session::PendingSecret>,
         cancel: &AtomicBool,
     ) -> Result<(i32, String, String), String> {
         if argv.is_empty() {
@@ -147,16 +153,23 @@ impl CommandRunner for SshCommandRunner {
             return Err("cancelled".to_string());
         }
 
-        // Splice BatchMode-friendly options right after the program name and
-        // append the remote command as the final argument. Key/agent only in
-        // v1: force BatchMode=yes so ssh fails fast instead of blocking on a
-        // password prompt (ConnectTimeout only bounds the TCP connect).
+        // Splice non-interactive options right after the program name and append
+        // the remote command as the final argument. With a stored secret we run
+        // BatchMode=no and answer the prompt via SSH_ASKPASS (exactly like a live
+        // session); without one, BatchMode=yes so ssh fails fast instead of
+        // blocking on a /dev/tty password prompt (ConnectTimeout only bounds the
+        // TCP connect).
+        let batchmode = if secret.is_some() {
+            "BatchMode=no"
+        } else {
+            "BatchMode=yes"
+        };
         let connect_timeout = format!("ConnectTimeout={}", self.connect_timeout_secs);
         let mut full: Vec<String> = Vec::with_capacity(argv.len() + 8);
         full.push(argv[0].clone());
         for opt in [
             "-o",
-            "BatchMode=yes",
+            batchmode,
             "-o",
             &connect_timeout,
             "-o",
@@ -167,13 +180,28 @@ impl CommandRunner for SshCommandRunner {
         full.extend(argv[1..].iter().cloned());
         full.push(command.to_string());
 
-        let mut child = Command::new(&full[0])
-            .args(&full[1..])
+        let mut cmd = Command::new(&full[0]);
+        cmd.args(&full[1..])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("spawn ssh: {e}"))?;
+            .stderr(Stdio::piped());
+
+        // Stage the stored secret through SSH_ASKPASS. The guard owns an
+        // owner-only temp file removed on drop, so keep it alive until the child
+        // has exited (i.e. for the whole poll loop below).
+        let mut _askpass = None;
+        if let Some(secret) = secret {
+            if let Ok(exe) = std::env::current_exe() {
+                if let Ok(guard) = crate::session::askpass::AskpassSecret::new(secret.value()) {
+                    for (k, v) in guard.env(&exe) {
+                        cmd.env(k, v);
+                    }
+                    _askpass = Some(guard);
+                }
+            }
+        }
+
+        let mut child = cmd.spawn().map_err(|e| format!("spawn ssh: {e}"))?;
 
         // Drain both pipes on their own threads so a chatty host can't deadlock
         // by filling a pipe buffer while we block on the other.
@@ -341,7 +369,7 @@ fn broadcast_worker(
             return;
         }
 
-        let ev = match runner.run(&task.argv, command, cancel) {
+        let ev = match runner.run(&task.argv, command, task.secret.as_ref(), cancel) {
             Ok((exit, stdout, stderr)) => BroadcastEvent::Finished {
                 host_id: task.host_id,
                 exit,
@@ -434,6 +462,7 @@ mod tests {
             host_id: id,
             host_name: name.to_string(),
             argv: vec!["ssh".to_string(), name.to_string()],
+            secret: None,
         }
     }
 
@@ -464,6 +493,7 @@ mod tests {
             &self,
             argv: &[String],
             command: &str,
+            _secret: Option<&crate::session::PendingSecret>,
             cancel: &AtomicBool,
         ) -> Result<(i32, String, String), String> {
             self.started.fetch_add(1, Ordering::SeqCst);
@@ -673,6 +703,7 @@ mod tests {
                 &self,
                 _argv: &[String],
                 _command: &str,
+                _secret: Option<&crate::session::PendingSecret>,
                 _cancel: &AtomicBool,
             ) -> Result<(i32, String, String), String> {
                 Err("nope".to_string())
@@ -836,7 +867,7 @@ mod tests {
             "definitely-not-a-real-ssh-binary-xyzzy".to_string(),
             "host".to_string(),
         ];
-        let res = runner.run(&argv, "true", &cancel);
+        let res = runner.run(&argv, "true", None, &cancel);
         assert!(res.is_err());
     }
 
@@ -844,7 +875,67 @@ mod tests {
     fn real_runner_short_circuits_on_precancel() {
         let runner = SshCommandRunner::new();
         let cancel = AtomicBool::new(true);
-        let res = runner.run(&["ssh".to_string(), "host".to_string()], "true", &cancel);
+        let res = runner.run(
+            &["ssh".to_string(), "host".to_string()],
+            "true",
+            None,
+            &cancel,
+        );
         assert_eq!(res, Err("cancelled".to_string()));
+    }
+
+    #[test]
+    fn secret_is_threaded_per_task_to_the_runner() {
+        use std::sync::atomic::AtomicUsize;
+
+        // Records how many tasks reached the runner carrying a stored secret.
+        struct SecretSpy {
+            with_secret: Arc<AtomicUsize>,
+        }
+        impl CommandRunner for SecretSpy {
+            fn run(
+                &self,
+                _argv: &[String],
+                _command: &str,
+                secret: Option<&crate::session::PendingSecret>,
+                _cancel: &AtomicBool,
+            ) -> Result<(i32, String, String), String> {
+                if secret.is_some() {
+                    self.with_secret.fetch_add(1, Ordering::SeqCst);
+                }
+                Ok((0, String::new(), String::new()))
+            }
+        }
+
+        let with_secret = Arc::new(AtomicUsize::new(0));
+        let tasks = vec![
+            BroadcastTask {
+                host_id: 1,
+                host_name: "pw-host".into(),
+                argv: vec!["ssh".into(), "pw-host".into()],
+                secret: Some(crate::session::PendingSecret::Password("hunter2".into())),
+            },
+            BroadcastTask {
+                host_id: 2,
+                host_name: "key-host".into(),
+                argv: vec!["ssh".into(), "key-host".into()],
+                secret: None,
+            },
+        ];
+        let rx = spawn_broadcast(
+            tasks,
+            "true".into(),
+            2,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(SecretSpy {
+                with_secret: Arc::clone(&with_secret),
+            }),
+        );
+        let _drained: Vec<_> = rx.iter().collect();
+        assert_eq!(
+            with_secret.load(Ordering::SeqCst),
+            1,
+            "only the host with a stored secret hands one to the runner"
+        );
     }
 }

@@ -58,6 +58,7 @@ fn make_state(
             host_id: *id,
             host_name: name.to_string(),
             argv: vec!["ssh".to_string(), name.to_string()],
+            secret: None,
         })
         .collect();
     let results = crate::broadcast::seed_results(&bcast_tasks);
