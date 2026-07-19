@@ -62,12 +62,13 @@ install-completions: build
     fi
     echo "bash and fish auto-load in a new shell."
 
-# Bump the version (odometer, each field 0-9; see CLAUDE.md "Versioning").
+# Bump the version (odometer; Z 0-9, Y 0-99; see CLAUDE.md "Versioning").
 #   just bump patch       # every commit to development
 #   just bump minor       # on release (merge development -> main); resets patch
 #   just bump major       # milestone / manual
 #   just bump set 0.7.0   # set an explicit version (e.g. to jump ahead)
-# Carries over: 0.4.9 + patch -> 0.5.0, 0.9.9 + patch -> 1.0.0.
+# Carries over: 0.4.9 + patch -> 0.5.0, 0.9.9 + patch -> 0.10.0,
+# 0.99.0 + minor -> 1.0.0, 0.99.9 + patch -> 1.0.0.
 bump kind version="":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -75,8 +76,8 @@ bump kind version="":
     IFS=. read -r X Y Z <<< "$ver"
     case "{{kind}}" in
       patch) Z=$((Z + 1)); if [ "$Z" -gt 9 ]; then Z=0; Y=$((Y + 1)); fi
-             if [ "$Y" -gt 9 ]; then Y=0; X=$((X + 1)); fi; new="$X.$Y.$Z" ;;
-      minor) Y=$((Y + 1)); Z=0; if [ "$Y" -gt 9 ]; then Y=0; X=$((X + 1)); fi; new="$X.$Y.$Z" ;;
+             if [ "$Y" -gt 99 ]; then Y=0; X=$((X + 1)); fi; new="$X.$Y.$Z" ;;
+      minor) Y=$((Y + 1)); Z=0; if [ "$Y" -gt 99 ]; then Y=0; X=$((X + 1)); fi; new="$X.$Y.$Z" ;;
       major) X=$((X + 1)); Y=0; Z=0; new="$X.$Y.$Z" ;;
       set)   new="{{version}}"
              echo "$new" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' \

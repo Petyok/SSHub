@@ -98,8 +98,59 @@ impl App {
             _ if self.is_action(KeyAction::MoveHostDown, &key) => self.move_host_manual(1)?,
             _ if self.is_action(KeyAction::MoveGroupUp, &key) => self.move_selection_by_group(-1),
             _ if self.is_action(KeyAction::MoveGroupDown, &key) => self.move_selection_by_group(1),
+            // Scroll the zoomed panel (except the hosts tree, which keeps its own
+            // selection navigation). MUST precede the MoveDown/MoveUp arms below,
+            // or those would shadow it and move the hidden host selection instead.
+            _ if self.panel_zoomed
+                && self.focused_panel != PanelId::Hosts
+                && (self.is_action(KeyAction::MoveDown, &key) || key.code == KeyCode::PageDown) =>
+            {
+                let step = if key.code == KeyCode::PageDown { 10 } else { 1 };
+                self.scroll_zoomed(true, step);
+            }
+            _ if self.panel_zoomed
+                && self.focused_panel != PanelId::Hosts
+                && (self.is_action(KeyAction::MoveUp, &key) || key.code == KeyCode::PageUp) =>
+            {
+                let step = if key.code == KeyCode::PageUp { 10 } else { 1 };
+                self.scroll_zoomed(false, step);
+            }
+            // Connect to the host selected in a zoomed ping/recent panel.
+            _ if self.panel_zoomed
+                && matches!(self.focused_panel, PanelId::Ping | PanelId::Recent)
+                && self.is_action(KeyAction::Connect, &key) =>
+            {
+                self.connect_zoomed_host()?;
+            }
+            // Zoomed auth panel behaves like the Audit tab: cycle status / range.
+            _ if self.panel_zoomed
+                && self.focused_panel == PanelId::Auth
+                && self.is_action(KeyAction::AuditFilter, &key) =>
+            {
+                self.audit_filter = self.audit_filter.next();
+                self.refresh_audit_events();
+            }
+            _ if self.panel_zoomed
+                && self.focused_panel == PanelId::Auth
+                && self.is_action(KeyAction::AuditRange, &key) =>
+            {
+                self.audit_range = self.audit_range.next();
+                self.refresh_audit_events();
+            }
+            // Zoomed agent panel: remove the selected key from ssh-agent.
+            _ if self.panel_zoomed
+                && self.focused_panel == PanelId::Agent
+                && self.is_action(KeyAction::Delete, &key) =>
+            {
+                self.remove_zoomed_agent_key();
+            }
             _ if self.is_action(KeyAction::MoveDown, &key) => self.move_selection(1),
             _ if self.is_action(KeyAction::MoveUp, &key) => self.move_selection(-1),
+            _ if self.is_action(KeyAction::Cancel, &key) && self.panel_zoomed => {
+                self.panel_zoomed = false;
+                self.panel_scroll.set(0);
+                self.panel_sel = None;
+            }
             _ if self.is_action(KeyAction::Cancel, &key) && !self.tag_filters.is_empty() => {
                 self.tag_filters.clear();
                 self.search_query.clear();
@@ -176,6 +227,21 @@ impl App {
             _ if self.is_action(KeyAction::UiZoomOut, &key) => {
                 self.set_ui_zoom(self.ui_zoom.saturating_sub(1));
             }
+            _ if self.is_action(KeyAction::TogglePanelZoom, &key) => {
+                self.panel_zoomed = !self.panel_zoomed;
+                self.panel_scroll.set(0);
+                self.panel_sel = None;
+            }
+            _ if self.is_action(KeyAction::FocusPanelLeft, &key) => {
+                self.focus_panel(FocusDir::Left)
+            }
+            _ if self.is_action(KeyAction::FocusPanelRight, &key) => {
+                self.focus_panel(FocusDir::Right)
+            }
+            _ if self.is_action(KeyAction::FocusPanelUp, &key) => self.focus_panel(FocusDir::Up),
+            _ if self.is_action(KeyAction::FocusPanelDown, &key) => {
+                self.focus_panel(FocusDir::Down)
+            }
             _ if self.is_action(KeyAction::Favorite, &key) => self.toggle_favorite()?,
             _ if self.is_action(KeyAction::DetailFocus, &key) => {
                 self.detail_focus = !self.detail_focus;
@@ -209,6 +275,75 @@ impl App {
             _ => {}
         }
         Ok(())
+    }
+
+    /// Move dashboard panel focus one step in `dir`; a no-op at a grid edge.
+    fn focus_panel(&mut self, dir: FocusDir) {
+        // A zoomed panel is exclusive (tmux-style): don't move focus while
+        // zoomed, or the zoomed view would swap panels under the user.
+        if self.panel_zoomed {
+            return;
+        }
+        if let Some(next) = self.focused_panel.neighbor(dir) {
+            self.focused_panel = next;
+            self.panel_scroll.set(0);
+            self.panel_sel = None;
+        }
+    }
+
+    /// Best-effort removal of the key selected in a zoomed agent panel (issue
+    /// #18). `ssh-add -d` can only drop a key by file path, and the agent
+    /// listing exposes only the key's comment (usually, but not always, that
+    /// path), so this can fail with a clear notice.
+    fn remove_zoomed_agent_key(&mut self) {
+        let agent = crate::ssh::agent::detect_agent();
+        let idx = self.panel_scroll.get() as usize;
+        let Some(k) = agent.keys.get(idx) else {
+            return;
+        };
+        if k.comment.is_empty() {
+            self.host_notice = Some("can't remove: agent key has no file path".into());
+            return;
+        }
+        self.host_notice = Some(match crate::ssh::agent::remove_key(&k.comment) {
+            Ok(()) => format!("removed {} from agent", k.comment),
+            Err(_) => format!(
+                "couldn't remove {} (ssh-add needs the key file path)",
+                k.comment
+            ),
+        });
+    }
+
+    /// Connect to the host selected in a zoomed ping/recent panel (issue #18).
+    fn connect_zoomed_host(&mut self) -> Result<()> {
+        let idx = self.panel_scroll.get() as usize;
+        let host_idx = self.zoomed_host_idx.borrow().get(idx).copied();
+        if let Some(hi) = host_idx {
+            self.connect_host_at(hi)?;
+        }
+        Ok(())
+    }
+
+    /// Scroll the focused zoomed panel (issue #18) by `step` rows. `down` moves
+    /// toward the end of a list / the latest ssh-log line. Shared by the
+    /// keyboard arms and the mouse wheel.
+    pub(crate) fn scroll_zoomed(&mut self, down: bool, step: u16) {
+        if self.focused_panel == PanelId::SshLog {
+            // The ssh-log offset counts back from the latest line, so scrolling
+            // "down" (toward the latest) decreases it.
+            self.ssh_log_scroll = if down {
+                self.ssh_log_scroll.saturating_sub(step as usize)
+            } else {
+                self.ssh_log_scroll.saturating_add(step as usize)
+            };
+        } else {
+            let cur = self.panel_scroll.get();
+            self.panel_scroll.set(if down {
+                cur.saturating_add(step)
+            } else {
+                cur.saturating_sub(step)
+            });
+        }
     }
 
     /// Switch dashboard tabs when a tab keybinding matches.

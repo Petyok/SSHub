@@ -72,6 +72,43 @@ impl App {
             return Ok(());
         }
 
+        // When a dashboard panel is zoomed the whole body is that single panel,
+        // so the 3-column routing below must not run (it would select a host
+        // "through" the panel). Route the wheel to the zoomed panel's scroll and
+        // swallow clicks.
+        if self.panel_zoomed {
+            match mouse.kind {
+                MouseEventKind::ScrollDown => self.scroll_zoomed(true, 3),
+                MouseEventKind::ScrollUp => self.scroll_zoomed(false, 3),
+                // Drag to select text over the panel (like the PTY selection);
+                // the rendered buffer text is copied on release.
+                MouseEventKind::Down(MouseButton::Left) => {
+                    self.panel_sel = Some(PanelSel {
+                        anchor: (mouse.column, mouse.row),
+                        cur: (mouse.column, mouse.row),
+                    });
+                }
+                MouseEventKind::Drag(MouseButton::Left) => {
+                    if let Some(sel) = self.panel_sel.as_mut() {
+                        sel.cur = (mouse.column, mouse.row);
+                    }
+                }
+                MouseEventKind::Up(MouseButton::Left) => {
+                    let had_sel = self.panel_sel.take().is_some();
+                    let text = self.panel_sel_text.borrow().clone();
+                    if had_sel && !text.trim().is_empty() {
+                        let chars = text.chars().count();
+                        self.host_notice = Some(match write_osc52(&text) {
+                            Ok(()) => format!("copied {chars} chars to clipboard"),
+                            Err(e) => format!("clipboard copy failed: {e:#}"),
+                        });
+                    }
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
+
         let areas =
             crate::tui::dashboard_layout::dashboard_layout_zoomed(self.terminal_area, self.ui_zoom);
         let x = mouse.column;

@@ -238,6 +238,8 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | `D`                | Duplicate host            |
 | `f`                | Toggle favorite           |
 | `s`                | Cycle sort mode           |
+| `Alt`+arrows       | Move dashboard panel focus |
+| `z`                | Zoom focused panel (Esc to exit) |
 | `/`                | Fuzzy search              |
 | `#`                | Filter by tags (AND)      |
 | `Shift+G`          | Manage groups (nested)    |

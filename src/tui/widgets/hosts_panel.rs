@@ -32,7 +32,13 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
     };
     let max_title = (area.width as usize).saturating_sub(12).max(5);
     let title = crate::tui::text::ellipsize(&raw_title, max_title);
-    panel_box::render_panel_box(buf, area, &title, Some(&count_str));
+    panel_box::render_panel_box(
+        buf,
+        area,
+        &title,
+        Some(&count_str),
+        app.focused_panel == crate::app::PanelId::Hosts,
+    );
 
     // Content area inside the panel borders: x+2, y+1, width-4, height-2
     if area.width < 6 || area.height < 4 {

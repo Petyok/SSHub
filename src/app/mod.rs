@@ -134,6 +134,23 @@ pub struct App {
     /// UI zoom level (0 = default). Widens the hosts column in the layout and
     /// the host-name column within it.
     pub ui_zoom: usize,
+    /// Currently focused dashboard panel (issue #18: focus + tmux-style zoom).
+    pub focused_panel: PanelId,
+    /// Whether the focused dashboard panel is zoomed to the full body.
+    pub panel_zoomed: bool,
+    /// Scroll offset within the zoomed panel (issue #18). Reset on zoom/focus
+    /// change; each zoomed list panel clamps it to its own content via the
+    /// `Cell`'s interior mutability during render.
+    pub panel_scroll: std::cell::Cell<u16>,
+    /// In-progress text selection over the zoomed panel (issue #18).
+    pub panel_sel: Option<PanelSel>,
+    /// Text under the current panel selection, extracted from the rendered
+    /// buffer each frame (interior mutability so the `&App` render pass can fill
+    /// it); copied to the clipboard on mouse release.
+    pub panel_sel_text: std::cell::RefCell<String>,
+    /// `self.hosts` indices for the rows of a zoomed host-list panel (ping /
+    /// recent), filled by their render so Enter connects the selected row.
+    pub zoomed_host_idx: std::cell::RefCell<Vec<usize>>,
     pub group_manage_selected: usize,
     pub group_notice: Option<String>,
     pub host_notice: Option<String>,
@@ -283,6 +300,12 @@ impl App {
             import_prompt: None,
             sftp_prompt: None,
             ui_zoom: 0,
+            focused_panel: PanelId::default(),
+            panel_zoomed: false,
+            panel_scroll: std::cell::Cell::new(0),
+            panel_sel: None,
+            panel_sel_text: std::cell::RefCell::new(String::new()),
+            zoomed_host_idx: std::cell::RefCell::new(Vec::new()),
             group_manage_selected: 0,
             group_notice: None,
             host_notice: None,
