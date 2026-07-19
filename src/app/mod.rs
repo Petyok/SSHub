@@ -31,7 +31,6 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::config::{self, AppConfig, KeyAction};
-use crate::launcher::{self, TerminalLauncher};
 use crate::metadata::{MetadataDb, MetadataStore};
 use crate::search::HostSearch;
 use crate::ssh::{
@@ -89,7 +88,6 @@ pub struct AppDeps {
     pub resolver: Box<dyn HostResolver>,
     pub metadata: Arc<dyn MetadataStore>,
     pub store: Arc<LauncherStore>,
-    pub launcher: Box<dyn TerminalLauncher>,
     pub password_store: Box<dyn crate::credentials::PasswordStore>,
 }
 
@@ -219,17 +217,12 @@ pub struct App {
     resolver: Box<dyn HostResolver>,
     metadata: Arc<dyn MetadataStore>,
     store: Arc<LauncherStore>,
-    // Retained for AppDeps compatibility but no longer called now that
-    // sessions run on an embedded PTY. The launcher impls in src/launcher/
-    // stay in the binary but are dead at runtime.
-    #[allow(dead_code)]
-    launcher: Box<dyn TerminalLauncher>,
     password_store: Box<dyn crate::credentials::PasswordStore>,
     search: HostSearch,
 }
 
 impl App {
-    /// Build app with default resolver, on-disk metadata db, and config-derived launcher.
+    /// Build app with default resolver and on-disk metadata db.
     pub fn new(config: AppConfig) -> Result<Self> {
         let data_dir = config::data_dir()?;
         std::fs::create_dir_all(&data_dir)?;
@@ -241,14 +234,12 @@ impl App {
         let metadata = Arc::new(MetadataDb::open(db_path)?);
         let store = Arc::new(LauncherStore::open(launcher_path)?);
         let resolver = Box::new(SshConfigResolver::default());
-        let launcher = launcher::launcher_from_config(&config)?;
         let mut app = Self::new_with_deps(
             config,
             AppDeps {
                 resolver,
                 metadata,
                 store,
-                launcher,
                 password_store: Box::new(crate::credentials::OsKeyring),
             },
         );
@@ -359,7 +350,6 @@ impl App {
             resolver: deps.resolver,
             metadata: deps.metadata,
             store: deps.store,
-            launcher: deps.launcher,
             password_store: deps.password_store,
             search: HostSearch::new(),
         }

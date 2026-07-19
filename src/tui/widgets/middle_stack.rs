@@ -13,8 +13,6 @@ use crate::tui::widgets::panel_box::{put_clamped, render_panel_box};
 // ── Panel heights (sum = 19 to align with the right column) ─
 const HOST_H: u16 = 9;
 const AGENT_H: u16 = 6;
-#[allow(dead_code)]
-const TUNNELS_H: u16 = 8;
 const LATENCY_H: u16 = 4;
 
 /// Render the three middle-column panels stacked vertically.
@@ -587,85 +585,6 @@ pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
             "~/.ssh/config",
             theme::text(),
             inner_w.saturating_sub(8),
-        );
-    }
-}
-
-// ── Tunnels panel ───────────────────────────────────────
-
-// Retained (not currently stacked) so the tunnels summary is easy to restore;
-// the dedicated tunnels tab covers the same data.
-#[allow(dead_code)]
-fn render_tunnels_panel(buf: &mut Buffer, area: Rect, app: &App) {
-    let active = app.tunnel_manager.active_count();
-    let total = app.tunnels.len();
-    let badge = if total > 0 {
-        Some(format!("{active}/{total}"))
-    } else {
-        None
-    };
-    render_panel_box(buf, area, "tunnels", badge.as_deref(), false);
-
-    let inner_x = area.x + 2;
-    let inner_w = area.width.saturating_sub(4) as usize;
-    let max_rows = area.height.saturating_sub(2) as usize;
-
-    if app.tunnels.is_empty() {
-        let y = area.y + 1;
-        if y < area.y + area.height - 1 {
-            put_clamped(
-                buf,
-                inner_x,
-                y,
-                "press 2 for tunnels tab",
-                theme::dim(),
-                inner_w,
-            );
-        }
-        return;
-    }
-
-    for (i, tunnel) in app.tunnels.iter().take(max_rows).enumerate() {
-        let y = area.y + 1 + i as u16;
-        if y >= area.y + area.height - 1 {
-            break;
-        }
-
-        let running =
-            app.tunnel_manager.is_running(tunnel.id) || app.tunnel_manager.has_child(tunnel.id);
-        let (dot, dot_color) = if running {
-            ("\u{25cf}", theme::GREEN)
-        } else {
-            ("\u{25cb}", theme::DIM)
-        };
-        buf.set_string(
-            inner_x,
-            y,
-            dot,
-            ratatui::style::Style::default().fg(dot_color),
-        );
-
-        let dir = match tunnel.tunnel_type {
-            crate::store::TunnelType::Local => "L",
-            crate::store::TunnelType::Remote => "R",
-            crate::store::TunnelType::Dynamic => "D",
-        };
-        buf.set_string(inner_x + 2, y, dir, theme::cyan());
-
-        let label = tunnel.label.as_deref().unwrap_or("");
-        let port_str = format!(":{}", tunnel.local_port);
-        let desc = if label.is_empty() {
-            port_str.clone()
-        } else {
-            format!("{} {}", port_str, label)
-        };
-        let max_desc = inner_w.saturating_sub(4);
-        let truncated: String = desc.chars().take(max_desc).collect();
-        buf.set_string(
-            inner_x + 4,
-            y,
-            &truncated,
-            if running { theme::text() } else { theme::dim() },
         );
     }
 }

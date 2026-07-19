@@ -11,8 +11,6 @@ use tempfile::NamedTempFile;
 #[path = "../support/mod.rs"]
 mod support;
 
-use support::MockLauncher;
-
 struct EmptyResolver;
 
 impl HostResolver for EmptyResolver {
@@ -66,7 +64,6 @@ fn app_with_store(store_path: &std::path::Path) -> App {
             resolver: Box::new(EmptyResolver),
             metadata: Arc::new(MetadataDb::default()),
             store,
-            launcher: Box::new(MockLauncher::new()),
             password_store: Box::new(sshub::credentials::NoopPasswordStore),
         },
     );
@@ -298,7 +295,6 @@ fn tag_filter_hides_groups_with_no_matches() {
             resolver: Box::new(EmptyResolver),
             metadata: Arc::new(MetadataDb::default()),
             store,
-            launcher: Box::new(MockLauncher::new()),
             password_store: Box::new(sshub::credentials::NoopPasswordStore),
         },
     );
@@ -510,7 +506,6 @@ fn app_with_grouped_host(path: &std::path::Path) -> App {
             resolver: Box::new(EmptyResolver),
             metadata: Arc::new(MetadataDb::default()),
             store,
-            launcher: Box::new(MockLauncher::new()),
             password_store: Box::new(sshub::credentials::NoopPasswordStore),
         },
     );

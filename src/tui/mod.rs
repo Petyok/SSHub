@@ -812,7 +812,6 @@ mod tests {
     use super::*;
     use crate::app::{AppDeps, HostEntry};
     use crate::config::AppConfig;
-    use crate::launcher::TerminalLauncher;
     use crate::metadata::{HostMetadata, MetadataDb};
     use crate::ssh::{HostResolver, SshHost};
     use crate::store::LauncherStore;
@@ -836,14 +835,6 @@ mod tests {
         }
     }
 
-    struct NoopLauncher;
-
-    impl TerminalLauncher for NoopLauncher {
-        fn launch_ssh_argv(&self, _ssh_argv: &[String]) -> anyhow::Result<()> {
-            Ok(())
-        }
-    }
-
     fn buffer_contains(buffer: &Buffer, needle: &str) -> bool {
         let area = buffer.area;
         for y in area.y..area.y + area.height {
@@ -864,7 +855,6 @@ mod tests {
                 resolver: Box::new(EmptyResolver),
                 metadata: Arc::new(MetadataDb::default()),
                 store: test_store(),
-                launcher: Box::new(NoopLauncher),
                 password_store: Box::new(crate::credentials::NoopPasswordStore),
             },
         );
@@ -1117,7 +1107,6 @@ mod tests {
                 resolver: Box::new(EmptyResolver),
                 metadata: Arc::new(MetadataDb::default()),
                 store,
-                launcher: Box::new(NoopLauncher),
                 password_store: Box::new(crate::credentials::NoopPasswordStore),
             },
         );
@@ -1179,7 +1168,6 @@ mod tests {
                 resolver: Box::new(EmptyResolver),
                 metadata: Arc::new(MetadataDb::default()),
                 store,
-                launcher: Box::new(NoopLauncher),
                 password_store: Box::new(crate::credentials::NoopPasswordStore),
             },
         );

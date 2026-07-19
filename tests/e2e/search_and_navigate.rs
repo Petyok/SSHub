@@ -13,7 +13,7 @@ use sshub::store::LauncherStore;
 #[path = "../support/mod.rs"]
 mod support;
 
-use support::{FixtureResolver, MockLauncher};
+use support::FixtureResolver;
 
 struct MapResolver {
     hosts: HashMap<String, SshHost>,
@@ -59,9 +59,7 @@ fn key_char(c: char) -> KeyEvent {
     KeyEvent::new(KeyCode::Char(c), KeyModifiers::empty())
 }
 
-fn app_with_hosts() -> (App, MockLauncher) {
-    let launcher = MockLauncher::new();
-    let app_launcher = launcher.clone();
+fn app_with_hosts() -> App {
     let resolver = MapResolver::new(vec![
         ("web-prod", host("web-prod", "10.0.0.1")),
         ("db-staging", host("db-staging", "10.0.0.2")),
@@ -74,17 +72,16 @@ fn app_with_hosts() -> (App, MockLauncher) {
             resolver: Box::new(resolver),
             metadata,
             store: Arc::new(LauncherStore::open_in_memory().unwrap()),
-            launcher: Box::new(app_launcher),
             password_store: Box::new(sshub::credentials::NoopPasswordStore),
         },
     );
     app.reload_hosts().unwrap();
-    (app, launcher)
+    app
 }
 
 #[test]
 fn palette_search_and_connect() {
-    let (mut app, _launcher) = app_with_hosts();
+    let mut app = app_with_hosts();
 
     app.handle_key(key_char('/')).unwrap();
     assert_eq!(app.mode, AppMode::Palette);
@@ -108,14 +105,12 @@ fn palette_search_and_connect() {
 fn fixture_resolver_loads_ssh_config_hosts() {
     let resolver = FixtureResolver::from_manifest_dir();
     let metadata: Arc<dyn sshub::metadata::MetadataStore> = Arc::new(MetadataDb::default());
-    let launcher = MockLauncher::new();
     let mut app = App::new_with_deps(
         AppConfig::default(),
         AppDeps {
             resolver: Box::new(resolver),
             metadata,
             store: Arc::new(LauncherStore::open_in_memory().unwrap()),
-            launcher: Box::new(launcher),
             password_store: Box::new(sshub::credentials::NoopPasswordStore),
         },
     );
@@ -129,7 +124,7 @@ fn fixture_resolver_loads_ssh_config_hosts() {
 
 #[test]
 fn j_k_navigation_then_quit() {
-    let (mut app, _launcher) = app_with_hosts();
+    let mut app = app_with_hosts();
     assert_eq!(app.selected, 0);
 
     app.handle_key(key_char('j')).unwrap();
@@ -147,7 +142,7 @@ fn j_k_navigation_then_quit() {
 
 #[test]
 fn esc_clears_palette_mode() {
-    let (mut app, _launcher) = app_with_hosts();
+    let mut app = app_with_hosts();
     app.handle_key(key_char('/')).unwrap();
     app.handle_key(key_char('w')).unwrap();
     assert_eq!(app.mode, AppMode::Palette);

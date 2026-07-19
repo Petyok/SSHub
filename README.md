@@ -291,11 +291,6 @@ initial_delay_ms = 1000     # 1 s (R overlay edits delays in seconds)
 max_delay_ms = 60000        # 60 s
 stable_secs = 5             # uptime before a spawn counts as up
 jitter_ratio = 0.25
-
-[terminal]
-# "kitty", "ghostty", or a custom command template
-launcher = "kitty"
-# custom_command = "alacritty -e ssh {host}"
 ```
 
 ## Development
