@@ -137,6 +137,10 @@ pub struct App {
     pub focused_panel: PanelId,
     /// Whether the focused dashboard panel is zoomed to the full body.
     pub panel_zoomed: bool,
+    /// Active zoom morph (#35): interpolates the focused panel between its grid
+    /// slot and the full body on `z` / `Alt+Enter`. `None` when at rest or under
+    /// reduced motion.
+    pub zoom_anim: Option<crate::tui::tween::SlideAnim>,
     /// Scroll offset within the zoomed panel (issue #18). Reset on zoom/focus
     /// change; each zoomed list panel clamps it to its own content via the
     /// `Cell`'s interior mutability during render.
@@ -316,6 +320,7 @@ impl App {
             ui_zoom: 0,
             focused_panel: PanelId::default(),
             panel_zoomed: false,
+            zoom_anim: None,
             panel_scroll: std::cell::Cell::new(0),
             panel_sel: None,
             panel_sel_text: std::cell::RefCell::new(String::new()),

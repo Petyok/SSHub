@@ -542,7 +542,13 @@ fn render_hosts_body(frame: &mut Frame, areas: &dashboard_layout::DashboardAreas
     // Broadcast (#3) is a floating panel drawn from render_inner instead, so a
     // zoomed Broadcast must not be handled here (it has no home in the hosts
     // grid) — let render_inner's broadcast block own it.
-    if app.panel_zoomed && app.focused_panel != crate::app::PanelId::Broadcast {
+    let grid_panel = app.focused_panel != crate::app::PanelId::Broadcast;
+    let now = std::time::Instant::now();
+    // A zoom morph (#35) is playing while the anim exists and hasn't finished.
+    let morphing = grid_panel && app.zoom_anim.is_some_and(|a| !a.is_done(now));
+
+    // Fully zoomed, no morph in flight: the panel owns the whole body.
+    if app.panel_zoomed && !morphing && grid_panel {
         render_zoomed_panel(frame, areas.body, app);
         return;
     }
@@ -561,6 +567,42 @@ fn render_hosts_body(frame: &mut Frame, areas: &dashboard_layout::DashboardAreas
             log_bottom - log_top,
         );
         widgets::middle_stack::render_ssh_log_panel(frame, log_area, app);
+    }
+
+    // Zoom morph (#35): overlay the focused panel at the interpolating rect over
+    // the grid, so zoom-in grows out of the slot and zoom-out shrinks back into
+    // it. When the morph finishes, the branch above takes over (full body) or
+    // the plain grid remains.
+    if morphing {
+        if let Some(anim) = app.zoom_anim {
+            let rect = anim.rect_at(now);
+            frame.render_widget(Clear, rect);
+            render_zoomed_panel(frame, rect, app);
+        }
+    }
+}
+
+/// The grid slot a panel morphs out of / back into for the zoom animation
+/// (#35). Approximated by the panel's column (or the log strip), which reads
+/// well without threading every sub-panel's exact rect out of the stacks.
+pub fn panel_zoom_source(
+    areas: &dashboard_layout::DashboardAreas,
+    panel: crate::app::PanelId,
+) -> Rect {
+    use crate::app::PanelId;
+    match panel {
+        PanelId::Hosts => areas.col_left,
+        PanelId::Detail | PanelId::Agent | PanelId::Latency => areas.col_mid,
+        PanelId::Recent | PanelId::Auth | PanelId::Ping => areas.col_right,
+        // SSH log spans the mid+right columns along the bottom of the body.
+        PanelId::SshLog => Rect::new(
+            areas.col_mid.x,
+            areas.col_mid.y,
+            areas.col_mid.width + 1 + areas.col_right.width,
+            areas.body.height,
+        ),
+        // Broadcast morphs from its own docked rect, handled elsewhere.
+        PanelId::Broadcast => screens::broadcast::docked_rect(areas.body),
     }
 }
 

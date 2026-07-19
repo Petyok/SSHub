@@ -41,7 +41,9 @@ impl App {
             && self
                 .broadcast_panel_gone_at
                 .is_some_and(|g| now.saturating_duration_since(g) < crate::broadcast::TOAST_ANIM);
-        panel || toasts || dropping
+        // Panel zoom morph (#35).
+        let zoom = self.zoom_anim.is_some_and(|a| !a.is_done(now));
+        panel || toasts || dropping || zoom
     }
 
     /// Open the broadcast wizard from the hosts tab. Refuses while a run is live

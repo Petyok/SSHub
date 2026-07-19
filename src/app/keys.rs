@@ -254,9 +254,32 @@ impl App {
                 self.set_ui_zoom(self.ui_zoom.saturating_sub(1));
             }
             _ if self.is_action(KeyAction::TogglePanelZoom, &key) => {
-                self.panel_zoomed = !self.panel_zoomed;
+                let to_zoomed = !self.panel_zoomed;
+                self.panel_zoomed = to_zoomed;
                 self.panel_scroll.set(0);
                 self.panel_sel = None;
+                // Morph the panel between its grid slot and the full body (#35).
+                // Broadcast is a floating panel with its own animation path.
+                self.zoom_anim =
+                    if self.motion_enabled() && self.focused_panel != PanelId::Broadcast {
+                        let areas = crate::tui::dashboard_layout::dashboard_layout_zoomed(
+                            self.terminal_area,
+                            self.ui_zoom,
+                        );
+                        let slot = crate::tui::panel_zoom_source(&areas, self.focused_panel);
+                        let (from, to) = if to_zoomed {
+                            (slot, areas.body)
+                        } else {
+                            (areas.body, slot)
+                        };
+                        Some(crate::tui::tween::SlideAnim::new_in_out(
+                            from,
+                            to,
+                            std::time::Duration::from_millis(200),
+                        ))
+                    } else {
+                        None
+                    };
             }
             _ if self.is_action(KeyAction::FocusPanelLeft, &key) => {
                 self.focus_panel(FocusDir::Left)
