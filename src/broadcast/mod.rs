@@ -27,7 +27,7 @@ pub const DEFAULT_CONCURRENCY: usize = 8;
 /// Countdown length before a finished panel auto-dismisses.
 pub const DISMISS: Duration = Duration::from_secs(5);
 /// Entry slide duration (center -> corner).
-pub const ENTRY_ANIM: Duration = Duration::from_millis(250);
+pub const ENTRY_ANIM: Duration = Duration::from_millis(350);
 /// Per-host ssh connect timeout (seconds) and run cap.
 pub const CONNECT_TIMEOUT_SECS: u32 = 8;
 pub const RUN_TIMEOUT: Duration = Duration::from_secs(60);

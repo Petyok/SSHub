@@ -14,6 +14,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 impl App {
+    /// True while the broadcast panel's entry slide is still playing. The main
+    /// loop polls at a higher frame rate while this holds so the ~350ms slide
+    /// looks smooth instead of stepping at the idle 20fps poll cadence.
+    pub(crate) fn animating(&self) -> bool {
+        self.broadcast
+            .as_ref()
+            .and_then(|b| b.anim)
+            .is_some_and(|a| !a.is_done(Instant::now()))
+    }
+
     /// Open the broadcast wizard from the hosts tab. Refuses while a run is live
     /// (one at a time). Builds the target menu from every group plus the sorted,
     /// deduped set of host tags; if there's nothing to target, surfaces a notice
@@ -218,7 +228,8 @@ impl App {
                         }
                     }
                 }
-                KeyCode::Char('e') | KeyCode::Esc => {
+                // "done" — leave edit mode back to the [y]/[e]/[N] barrier.
+                KeyCode::Enter | KeyCode::Char('e') | KeyCode::Esc => {
                     if let Some(s) = self.broadcast_setup.as_mut() {
                         s.edit_targets = false;
                     }
