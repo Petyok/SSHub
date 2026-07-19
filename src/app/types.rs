@@ -372,6 +372,16 @@ pub struct BroadcastState {
     pub audit_written: bool, // guard: log_auth_event fires once at completion
 }
 
+/// A transient error popup (issue #3): one failed host's error text, slides in
+/// from the right above the broadcast panel and auto-expires. Geometry + slide
+/// progress are derived from `born` at render time (no stored anim state).
+#[derive(Debug, Clone)]
+pub struct BroadcastToast {
+    pub host: String,
+    pub text: String,
+    pub born: std::time::Instant,
+}
+
 /// Lifecycle phase of a live broadcast run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BroadcastPhase {

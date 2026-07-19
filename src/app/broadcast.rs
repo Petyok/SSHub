@@ -18,10 +18,21 @@ impl App {
     /// loop polls at a higher frame rate while this holds so the ~350ms slide
     /// looks smooth instead of stepping at the idle 20fps poll cadence.
     pub(crate) fn animating(&self) -> bool {
-        self.broadcast
+        let now = Instant::now();
+        let panel = self
+            .broadcast
             .as_ref()
             .and_then(|b| b.anim)
-            .is_some_and(|a| !a.is_done(Instant::now()))
+            .is_some_and(|a| !a.is_done(now));
+        // A toast is animating during its slide-in (first TOAST_ANIM) or its
+        // slide-out (the TOAST_ANIM after TOAST_TTL).
+        let toasts = self.broadcast_toasts.iter().any(|t| {
+            let e = now.saturating_duration_since(t.born);
+            e < crate::broadcast::TOAST_ANIM
+                || (e >= crate::broadcast::TOAST_TTL
+                    && e < crate::broadcast::TOAST_TTL + crate::broadcast::TOAST_ANIM)
+        });
+        panel || toasts
     }
 
     /// Open the broadcast wizard from the hosts tab. Refuses while a run is live
@@ -374,21 +385,62 @@ impl App {
     /// row table, retire the entry animation, arm the completion countdown,
     /// write the one-shot audit trail, and drive settle/pause/dismiss.
     pub(crate) fn tick_broadcast(&mut self) -> Result<()> {
-        if self.broadcast.is_none() {
-            return Ok(());
-        }
         // Capture the clock before the &mut borrows below (the phase timestamps
         // read it, and the borrow checker won't let us call it mid-borrow).
         let now = Instant::now();
 
+        // Expire error toasts whose slide-out has finished. Runs even with no
+        // live panel — a 10s toast can outlive the 6.5s panel.
+        self.broadcast_toasts.retain(|t| {
+            t.born.elapsed() < crate::broadcast::TOAST_TTL + crate::broadcast::TOAST_ANIM
+        });
+
+        if self.broadcast.is_none() {
+            return Ok(());
+        }
+
         // Drain the worker channel and fold each event into the result rows.
-        // Retire the entry slide once it finishes, and arm the countdown the
-        // first tick every row is terminal.
+        // Retire the entry slide once it finishes, arm the countdown the first
+        // tick every row is terminal, and spawn a toast per failed host.
+        let mut new_toasts: Vec<BroadcastToast> = Vec::new();
         if let Some(bc) = self.broadcast.as_mut() {
             let events: Vec<crate::broadcast::BroadcastEvent> =
                 std::iter::from_fn(|| bc.rx.try_recv().ok()).collect();
             for ev in &events {
                 crate::broadcast::apply_event(&mut bc.results, ev);
+            }
+            for ev in &events {
+                let (host_id, text) = match ev {
+                    crate::broadcast::BroadcastEvent::Finished {
+                        host_id,
+                        exit,
+                        stderr,
+                        ..
+                    } if *exit != 0 => {
+                        let t = stderr
+                            .lines()
+                            .map(str::trim)
+                            .find(|l| !l.is_empty())
+                            .map(str::to_string)
+                            .unwrap_or_else(|| format!("exit {exit}"));
+                        (*host_id, t)
+                    }
+                    crate::broadcast::BroadcastEvent::Failed { host_id, reason } => {
+                        (*host_id, reason.clone())
+                    }
+                    _ => continue,
+                };
+                let host = bc
+                    .results
+                    .iter()
+                    .find(|r| r.host_id == host_id)
+                    .map(|r| r.host_name.clone())
+                    .unwrap_or_default();
+                new_toasts.push(BroadcastToast {
+                    host,
+                    text,
+                    born: now,
+                });
             }
             if bc.anim.as_ref().is_some_and(|a| a.is_done(now)) {
                 bc.anim = None;
@@ -397,6 +449,7 @@ impl App {
                 bc.phase = BroadcastPhase::Settling { done_at: now };
             }
         }
+        self.broadcast_toasts.extend(new_toasts);
 
         // Audit once, at completion. Split the borrow: gather rows while holding
         // &mut self.broadcast, flip the guard, then drop the borrow before
@@ -412,10 +465,13 @@ impl App {
                     let (status, note) = match &r.state {
                         crate::broadcast::HostState::Done { exit } => {
                             let status = if *exit == 0 { "launched" } else { "fail" };
-                            (
-                                status.to_string(),
-                                format!("{} (exit {})", bc.command, exit),
-                            )
+                            // On failure, fold the first stderr line into the note
+                            // so the Audit tab records WHAT broke, not just the code.
+                            let note = match crate::broadcast::error_text(r) {
+                                Some(err) => format!("{} (exit {}: {})", bc.command, exit, err),
+                                None => format!("{} (exit {})", bc.command, exit),
+                            };
+                            (status.to_string(), note)
                         }
                         crate::broadcast::HostState::Failed { reason } => {
                             ("fail".to_string(), format!("{} ({})", bc.command, reason))

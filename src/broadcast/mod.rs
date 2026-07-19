@@ -28,6 +28,10 @@ pub const DEFAULT_CONCURRENCY: usize = 8;
 pub const DISMISS: Duration = Duration::from_millis(6500);
 /// Entry slide duration (center -> corner).
 pub const ENTRY_ANIM: Duration = Duration::from_millis(600);
+/// How long an error toast stays before it slides away.
+pub const TOAST_TTL: Duration = Duration::from_secs(10);
+/// Error-toast slide-in / slide-out duration.
+pub const TOAST_ANIM: Duration = Duration::from_millis(300);
 /// Per-host ssh connect timeout (seconds) and run cap.
 pub const CONNECT_TIMEOUT_SECS: u32 = 8;
 pub const RUN_TIMEOUT: Duration = Duration::from_secs(60);
@@ -454,6 +458,22 @@ pub fn is_failure(r: &HostResult) -> bool {
 /// Number of failed hosts (ssh failure or non-zero exit) in a finished/partial run.
 pub fn failure_count(results: &[HostResult]) -> usize {
     results.iter().filter(|r| is_failure(r)).count()
+}
+
+/// Human-readable error text for a failed result: the ssh failure reason, or the
+/// first non-empty stderr line for a non-zero exit. `None` for a clean/unfinished
+/// row. Shared by the audit note and the error toasts.
+pub fn error_text(r: &HostResult) -> Option<String> {
+    match &r.state {
+        HostState::Failed { reason } => Some(reason.clone()),
+        HostState::Done { exit } if *exit != 0 => r
+            .stderr
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .map(str::to_string),
+        _ => None,
+    }
 }
 
 /// Render-time view ordering (does NOT mutate `results`): indices into

@@ -174,6 +174,12 @@ fn render_inner(frame: &mut Frame, app: &App) {
             screens::broadcast::render_broadcast_panel(frame, rect, app, focused);
         }
     }
+    // Error toasts stack above the docked panel (and can outlive it), so draw
+    // them whenever any exist — not only while the panel is present.
+    if !app.broadcast_toasts.is_empty() {
+        let body = dashboard_layout::dashboard_layout_zoomed(frame.area(), app.ui_zoom).body;
+        screens::broadcast::render_broadcast_toasts(frame, body, app);
+    }
 
     // Horizontal rule 3: above footer (bold)
     let rule3 = row_in(area, areas.footer.y.saturating_sub(1));

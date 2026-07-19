@@ -16,9 +16,12 @@ use ratatui::layout::Rect;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
+use std::time::Instant;
+
 use crate::app::App;
-use crate::broadcast::{done_count, failures_first, HostState, DISMISS};
+use crate::broadcast::{done_count, failures_first, HostState, DISMISS, TOAST_ANIM, TOAST_TTL};
 use crate::tui::theme;
+use crate::tui::tween::ease_out;
 use crate::tui::widgets::panel_box::{put_clamped, render_panel_box, zoom_window};
 
 // ── Per-host row presentation ───────────────────────────────
@@ -348,6 +351,68 @@ pub fn spawn_rect(body: Rect) -> Rect {
     let x = body.x + body.width.saturating_sub(d.width) / 2;
     let y = body.y + body.height.saturating_sub(d.height) / 2;
     Rect::new(x, y, d.width, d.height)
+}
+
+/// Error toasts (issue #3): one small popup per failed host, stacked upward from
+/// just above the docked panel, sliding in from the right and out again after
+/// `TOAST_TTL`. Newest sits closest to the panel; older toasts climb until they
+/// run out of body height (then they're just not drawn).
+pub fn render_broadcast_toasts(frame: &mut Frame, body: Rect, app: &App) {
+    if app.broadcast_toasts.is_empty() {
+        return;
+    }
+    let dock = docked_rect(body);
+    let h: u16 = 3;
+    let w = dock.width;
+    let target_x = dock.x;
+    let off_right = body.x + body.width; // fully off the right edge
+    let now = Instant::now();
+
+    for (k, toast) in app.broadcast_toasts.iter().rev().enumerate() {
+        let top = dock.y as i32 - (k as i32 + 1) * h as i32;
+        if top < body.y as i32 {
+            break; // stack reached the top of the body
+        }
+        let y = top as u16;
+
+        // Slide progress from `born`: in for the first TOAST_ANIM, hold, then out
+        // once past TOAST_TTL. No stored state — all derived from elapsed time.
+        let elapsed = now.saturating_duration_since(toast.born);
+        let x = if elapsed >= TOAST_TTL {
+            let t = (elapsed - TOAST_TTL).as_secs_f32() / TOAST_ANIM.as_secs_f32();
+            lerp_x(target_x, off_right, ease_out(t.clamp(0.0, 1.0)))
+        } else {
+            let t = elapsed.as_secs_f32() / TOAST_ANIM.as_secs_f32();
+            lerp_x(off_right, target_x, ease_out(t.clamp(0.0, 1.0)))
+        };
+        if x >= off_right {
+            continue; // fully off-screen this frame
+        }
+        let vis_w = w.min(off_right - x);
+        if vis_w < 6 {
+            continue;
+        }
+        let rect = Rect::new(x, y, vis_w, h);
+
+        frame.render_widget(Clear, rect);
+        let title =
+            crate::tui::text::ellipsize(&format!(" \u{2717} {} ", toast.host), vis_w as usize);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme::red())
+            .title(Span::styled(title, theme::red()));
+        let inner = block.inner(rect);
+        frame.render_widget(block, rect);
+        let para = Paragraph::new(toast.text.as_str())
+            .style(theme::dim())
+            .wrap(Wrap { trim: true });
+        frame.render_widget(para, inner);
+    }
+}
+
+/// Round a horizontal lerp between two columns.
+fn lerp_x(a: u16, b: u16, t: f32) -> u16 {
+    (a as f32 + (b as f32 - a as f32) * t).round() as u16
 }
 
 // ── Pre-run overlay stages ──────────────────────────────────

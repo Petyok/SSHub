@@ -156,6 +156,9 @@ pub struct App {
     /// Pre-run broadcast wizard state (pick target / command / preview);
     /// `Some` only while an `AppMode::Broadcast*` stage is active.
     pub broadcast_setup: Option<BroadcastSetup>,
+    /// Transient error popups (issue #3), newest last; slide in from the right
+    /// above the broadcast panel and expire after `TOAST_TTL`.
+    pub broadcast_toasts: Vec<BroadcastToast>,
     pub group_manage_selected: usize,
     pub group_notice: Option<String>,
     pub host_notice: Option<String>,
@@ -306,6 +309,7 @@ impl App {
             zoomed_host_idx: std::cell::RefCell::new(Vec::new()),
             broadcast: None,
             broadcast_setup: None,
+            broadcast_toasts: Vec::new(),
             group_manage_selected: 0,
             group_notice: None,
             host_notice: None,
