@@ -475,17 +475,20 @@ fn footer_keybinds(app: &App) -> Vec<(String, &'static str)> {
     binds
 }
 
-/// Draw a transient notice (issue #18) right-aligned over the footer row, used
-/// while a panel is zoomed and the normal status-bar notice surface is hidden.
+/// Draw a transient notice (issue #18) as a floating chip right-aligned on the
+/// row *above* the footer keybinds, used while a panel is zoomed and the normal
+/// status-bar notice surface is hidden. Sits above the hints so it never clips
+/// them.
 fn render_zoom_toast(frame: &mut Frame, footer: Rect, notice: &str) {
     let label = format!(" {notice} ");
     let w = label.chars().count() as u16;
-    if footer.width < w || footer.height == 0 {
+    if footer.width < w || footer.y == 0 {
         return;
     }
     let x = footer.x + footer.width - w;
+    let y = footer.y - 1;
     let style = theme::cyan().add_modifier(Modifier::REVERSED);
-    frame.buffer_mut().set_string(x, footer.y, &label, style);
+    frame.buffer_mut().set_string(x, y, &label, style);
 }
 
 fn render_hosts_body(frame: &mut Frame, areas: &dashboard_layout::DashboardAreas, app: &App) {
