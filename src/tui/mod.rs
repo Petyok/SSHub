@@ -164,6 +164,15 @@ fn render_inner(frame: &mut Frame, app: &App) {
     let keybinds = footer_keybinds(app);
     widgets::footer::render_footer(frame, areas.footer, &keybinds);
 
+    // Issue #18: a zoomed panel hides the normal notice surface (status bar),
+    // so surface transient feedback (e.g. "copied N chars") as a toast pinned
+    // to the right of the footer until the next key press clears it.
+    if app.panel_zoomed {
+        if let Some(notice) = &app.host_notice {
+            render_zoom_toast(frame, areas.footer, notice);
+        }
+    }
+
     // ── Overlay popups ─────────────────────────────────────────
     match app.mode {
         AppMode::Palette => {
@@ -464,6 +473,19 @@ fn footer_keybinds(app: &App) -> Vec<(String, &'static str)> {
         binds.extend(app.config.keybinds.session_footer_hints());
     }
     binds
+}
+
+/// Draw a transient notice (issue #18) right-aligned over the footer row, used
+/// while a panel is zoomed and the normal status-bar notice surface is hidden.
+fn render_zoom_toast(frame: &mut Frame, footer: Rect, notice: &str) {
+    let label = format!(" {notice} ");
+    let w = label.chars().count() as u16;
+    if footer.width < w || footer.height == 0 {
+        return;
+    }
+    let x = footer.x + footer.width - w;
+    let style = theme::cyan().add_modifier(Modifier::REVERSED);
+    frame.buffer_mut().set_string(x, footer.y, &label, style);
 }
 
 fn render_hosts_body(frame: &mut Frame, areas: &dashboard_layout::DashboardAreas, app: &App) {

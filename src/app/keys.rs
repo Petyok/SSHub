@@ -279,6 +279,11 @@ impl App {
 
     /// Move dashboard panel focus one step in `dir`; a no-op at a grid edge.
     fn focus_panel(&mut self, dir: FocusDir) {
+        // A zoomed panel is exclusive (tmux-style): don't move focus while
+        // zoomed, or the zoomed view would swap panels under the user.
+        if self.panel_zoomed {
+            return;
+        }
         if let Some(next) = self.focused_panel.neighbor(dir) {
             self.focused_panel = next;
             self.panel_scroll.set(0);
