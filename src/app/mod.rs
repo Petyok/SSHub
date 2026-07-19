@@ -289,14 +289,18 @@ impl App {
             }
             self.anim_prev_tab = self.active_tab;
         }
-        // Stamp mode-entry time on any change, so popups animate open/close (#35).
+        // Drive popup open/close animations off mode changes (#35). Only a
+        // *fresh* open over the dashboard (non-overlay -> overlay) restarts the
+        // drop-in, and only a full close (overlay -> non-overlay) throws the
+        // snapshot up. Overlay -> overlay (e.g. a form bouncing to its
+        // discard-confirm and back on held Esc) does neither, so it never jumps.
         if self.mode != self.anim_prev_mode {
-            self.mode_entered_at = std::time::Instant::now();
-            if is_overlay_mode(self.mode) {
-                // A fresh open cancels any in-flight close.
+            let now_overlay = is_overlay_mode(self.mode);
+            let prev_overlay = is_overlay_mode(self.anim_prev_mode);
+            if now_overlay && !prev_overlay {
+                self.mode_entered_at = std::time::Instant::now();
                 self.popup_closing_at = None;
-            } else if is_overlay_mode(self.anim_prev_mode) {
-                // A popup just closed: throw its captured snapshot upward.
+            } else if prev_overlay && !now_overlay {
                 self.popup_closing_at = Some(std::time::Instant::now());
             }
             self.anim_prev_mode = self.mode;

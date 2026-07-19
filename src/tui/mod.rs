@@ -615,7 +615,7 @@ fn render_popup_close(frame: &mut Frame, app: &App) {
 pub const TAB_ANIM: std::time::Duration = std::time::Duration::from_millis(220);
 
 /// Duration of a popup's open / close slide (#35).
-pub const POPUP_ANIM: std::time::Duration = std::time::Duration::from_millis(230);
+pub const POPUP_ANIM: std::time::Duration = std::time::Duration::from_millis(260);
 
 /// Shared popup-open animation (#35): given a popup's resting `target` rect,
 /// return where to draw it this frame. It rises into place from slightly below
@@ -634,11 +634,11 @@ pub fn popup_open_rect(target: Rect, app: &App) -> Rect {
     if p >= 1.0 {
         return target;
     }
-    // Drop into place from just above the resting spot. Shifting the top UP
-    // (never down) keeps the popup fully on-screen — its bottom stays at/above
-    // the resting bottom, and `y` saturates at 0 — so a tiny terminal can't push
-    // content off the buffer and panic.
-    let drop = (target.height as f32 * 0.35 + 2.0) * (1.0 - tween::ease_out(p));
+    // Drop in from the top edge down to the resting spot for a clear, visible
+    // slide (small travel read as instant). Shifting the top UP only (never
+    // below rest, `y` saturates at 0) keeps it fully on-screen and panic-safe on
+    // a tiny terminal.
+    let drop = target.y as f32 * (1.0 - tween::ease_out(p));
     Rect {
         y: target.y.saturating_sub(drop.round() as u16),
         ..target
