@@ -417,12 +417,14 @@ impl App {
                         stderr,
                         ..
                     } if *exit != 0 => {
-                        let t = stderr
-                            .lines()
-                            .map(str::trim)
-                            .find(|l| !l.is_empty())
-                            .map(str::to_string)
-                            .unwrap_or_else(|| format!("exit {exit}"));
+                        // Full stderr (trimmed) so the toast can show the whole
+                        // error, not just its first line.
+                        let s = stderr.trim();
+                        let t = if s.is_empty() {
+                            format!("exit {exit}")
+                        } else {
+                            s.to_string()
+                        };
                         (*host_id, t)
                     }
                     crate::broadcast::BroadcastEvent::Failed { host_id, reason } => {

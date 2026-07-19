@@ -353,27 +353,42 @@ pub fn spawn_rect(body: Rect) -> Rect {
     Rect::new(x, y, d.width, d.height)
 }
 
-/// Error toasts (issue #3): one small popup per failed host, stacked upward from
-/// just above the docked panel, sliding in from the right and out again after
-/// `TOAST_TTL`. Newest sits closest to the panel; older toasts climb until they
-/// run out of body height (then they're just not drawn).
+/// Max wrapped text lines a toast shows (older content is clipped by the box).
+const MAX_TOAST_LINES: usize = 6;
+
+/// Error toasts (issue #3): one popup per failed host, sliding in from the right
+/// and out again after `TOAST_TTL`. They stack **up from just above the docked
+/// panel** while it's on screen, and **down into the vacated bottom-right** once
+/// the panel is gone. Each box is sized to wrap its full error text (capped).
 pub fn render_broadcast_toasts(frame: &mut Frame, body: Rect, app: &App) {
     if app.broadcast_toasts.is_empty() {
         return;
     }
     let dock = docked_rect(body);
-    let h: u16 = 3;
     let w = dock.width;
+    let inner_w = w.saturating_sub(2) as usize; // inside the borders
     let target_x = dock.x;
     let off_right = body.x + body.width; // fully off the right edge
     let now = Instant::now();
 
-    for (k, toast) in app.broadcast_toasts.iter().rev().enumerate() {
-        let top = dock.y as i32 - (k as i32 + 1) * h as i32;
-        if top < body.y as i32 {
-            break; // stack reached the top of the body
+    // Anchor: stack grows upward from `stack_bottom`. With the panel present that
+    // is just above it; once it's gone, drop the toasts down to the panel's old
+    // bottom so they fall into the freed space instead of floating high.
+    let panel_present = app.broadcast.is_some();
+    let mut cur_bottom = if panel_present {
+        dock.y
+    } else {
+        dock.y + dock.height
+    };
+
+    for toast in app.broadcast_toasts.iter().rev() {
+        let lines = wrap_line_count(&toast.text, inner_w).clamp(1, MAX_TOAST_LINES);
+        let height = lines as u16 + 2; // borders
+        if cur_bottom < body.y + height {
+            break; // no room left above
         }
-        let y = top as u16;
+        let y = cur_bottom - height;
+        cur_bottom = y; // the next (older) toast sits above this one
 
         // Slide progress from `born`: in for the first TOAST_ANIM, hold, then out
         // once past TOAST_TTL. No stored state — all derived from elapsed time.
@@ -392,7 +407,7 @@ pub fn render_broadcast_toasts(frame: &mut Frame, body: Rect, app: &App) {
         if vis_w < 6 {
             continue;
         }
-        let rect = Rect::new(x, y, vis_w, h);
+        let rect = Rect::new(x, y, vis_w, height);
 
         frame.render_widget(Clear, rect);
         let title =
@@ -413,6 +428,31 @@ pub fn render_broadcast_toasts(frame: &mut Frame, body: Rect, app: &App) {
 /// Round a horizontal lerp between two columns.
 fn lerp_x(a: u16, b: u16, t: f32) -> u16 {
     (a as f32 + (b as f32 - a as f32) * t).round() as u16
+}
+
+/// Greedy word-wrap line count for `text` at `width` (matches `Wrap{trim}` well
+/// enough to size a toast box). Blank input still counts as one line.
+fn wrap_line_count(text: &str, width: usize) -> usize {
+    if width == 0 {
+        return 1;
+    }
+    let mut lines = 0usize;
+    for para in text.split('\n') {
+        let mut col = 0usize;
+        for word in para.split_whitespace() {
+            let wl = word.chars().count();
+            if col == 0 {
+                col = wl;
+            } else if col + 1 + wl <= width {
+                col += 1 + wl;
+            } else {
+                lines += 1;
+                col = wl;
+            }
+        }
+        lines += 1; // the paragraph's final (or only/empty) line
+    }
+    lines.max(1)
 }
 
 // ── Pre-run overlay stages ──────────────────────────────────

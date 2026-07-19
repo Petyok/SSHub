@@ -95,13 +95,22 @@ impl App {
             return Ok(());
         }
 
-        // Broadcast (#3). Route the cancel key to a live run before any other
-        // binding can claim it, then the opener. Cancel works regardless of which
-        // panel is focused (the footer advertises "x cancel" whenever a run is
-        // live, so it must fire everywhere). `open_broadcast` refuses when a run
-        // is already live, so this never starts a second one.
-        if self.broadcast.is_some() && self.is_action(KeyAction::BroadcastCancel, &key) {
-            self.cancel_broadcast();
+        // Broadcast (#3). The cancel key does double duty, claimed before any
+        // other binding: cancel a live run, or (nothing running) clear the error
+        // toasts. Works regardless of focus, matching the always-shown footer
+        // hint. `open_broadcast` refuses a second concurrent run.
+        if self.is_action(KeyAction::BroadcastCancel, &key)
+            && (self.broadcast.is_some() || !self.broadcast_toasts.is_empty())
+        {
+            if self
+                .broadcast
+                .as_ref()
+                .is_some_and(|b| !crate::broadcast::all_terminal(&b.results))
+            {
+                self.cancel_broadcast();
+            } else {
+                self.broadcast_toasts.clear();
+            }
             return Ok(());
         }
         if self.is_action(KeyAction::Broadcast, &key) {

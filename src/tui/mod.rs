@@ -504,6 +504,8 @@ fn footer_keybinds(app: &App) -> Vec<(String, &'static str)> {
         if app.focused_panel == crate::app::PanelId::Broadcast {
             binds.push(("z".into(), "zoom"));
         }
+    } else if !app.broadcast_toasts.is_empty() {
+        binds.push(("x".into(), "clear errors"));
     }
     if matches!(
         app.mode,
