@@ -275,7 +275,7 @@ impl App {
                         Some(crate::tui::tween::SlideAnim::new_in_out(
                             from,
                             to,
-                            std::time::Duration::from_millis(200),
+                            std::time::Duration::from_millis(320),
                         ))
                     } else {
                         None

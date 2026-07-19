@@ -590,16 +590,26 @@ pub fn panel_zoom_source(
     panel: crate::app::PanelId,
 ) -> Rect {
     use crate::app::PanelId;
+    use widgets::middle_stack::{AGENT_H, HOST_H, LATENCY_H};
+    use widgets::right_stack::{AUTH_H, PING_H, RECENT_H};
+    let mid = areas.col_mid;
+    let right = areas.col_right;
+    // Each stacked panel's real slot (same heights the stacks lay out), so the
+    // morph grows/shrinks in both dimensions from the actual box.
     match panel {
         PanelId::Hosts => areas.col_left,
-        PanelId::Detail | PanelId::Agent | PanelId::Latency => areas.col_mid,
-        PanelId::Recent | PanelId::Auth | PanelId::Ping => areas.col_right,
-        // SSH log spans the mid+right columns along the bottom of the body.
+        PanelId::Detail => Rect::new(mid.x, mid.y, mid.width, HOST_H),
+        PanelId::Agent => Rect::new(mid.x, mid.y + HOST_H, mid.width, AGENT_H),
+        PanelId::Latency => Rect::new(mid.x, mid.y + HOST_H + AGENT_H, mid.width, LATENCY_H),
+        PanelId::Recent => Rect::new(right.x, right.y, right.width, RECENT_H),
+        PanelId::Auth => Rect::new(right.x, right.y + RECENT_H, right.width, AUTH_H),
+        PanelId::Ping => Rect::new(right.x, right.y + RECENT_H + AUTH_H, right.width, PING_H),
+        // SSH log spans mid+right along the bottom (see render_hosts_body).
         PanelId::SshLog => Rect::new(
-            areas.col_mid.x,
-            areas.col_mid.y,
-            areas.col_mid.width + 1 + areas.col_right.width,
-            areas.body.height,
+            mid.x,
+            mid.y + 19,
+            mid.width + 1 + right.width,
+            areas.body.height.saturating_sub(19),
         ),
         // Broadcast morphs from its own docked rect, handled elsewhere.
         PanelId::Broadcast => screens::broadcast::docked_rect(areas.body),
