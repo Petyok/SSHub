@@ -595,7 +595,9 @@ fn render_popup_close(frame: &mut Frame, app: &App) {
     let Some((rect, buf)) = snap.as_ref() else {
         return;
     };
-    let off = (tween::ease_out(p) * (rect.height as f32 + 2.0)).round() as u16;
+    // Travel the popup's whole bottom edge to the top, so at p==1 every row has
+    // slid above y==0 and nothing lingers near the top of the screen.
+    let off = (tween::ease_out(p) * rect.bottom() as f32).round() as u16;
     let fb = frame.buffer_mut();
     for y in rect.top()..rect.bottom() {
         let Some(ty) = y.checked_sub(off) else {
