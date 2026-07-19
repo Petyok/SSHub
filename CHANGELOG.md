@@ -6,6 +6,26 @@ All notable changes to SSHub are documented in this file.
 
 ### Added
 
+- **Broadcast mode** - run one command across a whole group or tag at once
+  (issue #3). Pick a target from a menu, type the command, and review a dry-run
+  preview (deselect hosts with `e`, edit the command with `c`) before it runs
+  non-interactively over SSH on every host concurrently with a bounded worker
+  pool (default 8). A live docked panel slides into the bottom-right corner and
+  shows per-host status, exit code, and output with failures first; it joins the
+  dashboard panel focus/zoom (`Alt`+arrows to focus, `z` to zoom for full
+  per-host output), auto-dismisses on a countdown, and can be cancelled with `x`.
+  Each host result is written to the audit log (with the error text on failure),
+  and failed hosts pop animated error toasts. Authenticates with key/agent
+  (`BatchMode`) and stored passwords (via `SSH_ASKPASS`, the same path a live
+  session uses).
+- **Dashboard panel focus + zoom** - focus any dashboard panel with `Alt`+arrows
+  and zoom it to the full body with `z` or `Alt+Enter` (tmux-style), issue #18.
+  Zoomed panels scroll, support drag-to-copy text selection (OSC52), and carry
+  per-panel actions: connect to the selected host from the ping / recent panels,
+  cycle the auth panel's filters, and remove the selected key from ssh-agent.
+- **PuTTY and mRemoteNG import** - import saved sessions from a PuTTY registry
+  export or an mRemoteNG `confCons.xml` into the host store, alongside the
+  existing ssh_config and Termius import (issue #12).
 - **Headless CLI** - drive the whole launcher without opening the TUI. New
   subcommands cover hosts (`list` / `show` / `connect` / `resolve` / `search` /
   `add` / `edit` / `rename` / `delete` / `duplicate`, with top-level `connect`,
@@ -20,6 +40,14 @@ All notable changes to SSHub are documented in this file.
   `--yes-i-am-stupid` guard). `sshub completions bash|zsh|fish` emits a shell
   completion script, optionally caching the host-name list to a file with
   `--cache PATH` so completion stays fast on large inventories.
+
+### Removed
+
+- **External-terminal launcher** - removed the retired `TerminalLauncher`
+  subsystem (Kitty / Ghostty / custom command launchers) and the `terminal` /
+  `launch_command` config keys (issue #30). Embedded PTY sessions have been the
+  only transport for a while, so this was dead code. Old `config.toml` files that
+  still carry those keys keep loading fine; the keys are simply ignored.
 
 ## [0.9.0] - 2026-07-16
 
