@@ -32,7 +32,13 @@ impl App {
                 || (e >= crate::broadcast::TOAST_TTL
                     && e < crate::broadcast::TOAST_TTL + crate::broadcast::TOAST_ANIM)
         });
-        panel || toasts
+        // Toasts falling into the freed space after the panel was dismissed.
+        let dropping = !self.broadcast_toasts.is_empty()
+            && self.broadcast.is_none()
+            && self
+                .broadcast_panel_gone_at
+                .is_some_and(|g| now.saturating_duration_since(g) < crate::broadcast::TOAST_ANIM);
+        panel || toasts || dropping
     }
 
     /// Open the broadcast wizard from the hosts tab. Refuses while a run is live
@@ -348,6 +354,7 @@ impl App {
             audit_written: false,
         });
         self.broadcast_setup = None;
+        self.broadcast_panel_gone_at = None;
         self.mode = AppMode::Normal;
         // Deliberately do NOT focus the panel: it runs in the background and,
         // once finished, the countdown auto-dismisses it. Focusing here would
@@ -526,6 +533,8 @@ impl App {
         }
         if dismiss {
             self.broadcast = None;
+            // Stamp the moment so lingering toasts animate down into the space.
+            self.broadcast_panel_gone_at = Some(now);
             if self.focused_panel == PanelId::Broadcast {
                 self.focused_panel = PanelId::default();
                 self.panel_zoomed = false;

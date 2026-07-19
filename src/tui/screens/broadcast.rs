@@ -372,14 +372,20 @@ pub fn render_broadcast_toasts(frame: &mut Frame, body: Rect, app: &App) {
     let now = Instant::now();
 
     // Anchor: stack grows upward from `stack_bottom`. With the panel present that
-    // is just above it; once it's gone, drop the toasts down to the panel's old
-    // bottom so they fall into the freed space instead of floating high.
-    let panel_present = app.broadcast.is_some();
-    let mut cur_bottom = if panel_present {
-        dock.y
+    // is just above it (dock.y); once it's gone, the toasts fall down into the
+    // freed space (dock.y + dock.height). The transition animates over TOAST_ANIM
+    // from the moment the panel was dismissed.
+    let top_anchor = dock.y;
+    let low_anchor = dock.y + dock.height;
+    let anchor = if app.broadcast.is_some() {
+        top_anchor
+    } else if let Some(gone) = app.broadcast_panel_gone_at {
+        let t = now.saturating_duration_since(gone).as_secs_f32() / TOAST_ANIM.as_secs_f32();
+        lerp_u16(top_anchor, low_anchor, ease_out(t.clamp(0.0, 1.0)))
     } else {
-        dock.y + dock.height
+        low_anchor
     };
+    let mut cur_bottom = anchor;
 
     for toast in app.broadcast_toasts.iter().rev() {
         let lines = wrap_line_count(&toast.text, inner_w).clamp(1, MAX_TOAST_LINES);
@@ -395,10 +401,10 @@ pub fn render_broadcast_toasts(frame: &mut Frame, body: Rect, app: &App) {
         let elapsed = now.saturating_duration_since(toast.born);
         let x = if elapsed >= TOAST_TTL {
             let t = (elapsed - TOAST_TTL).as_secs_f32() / TOAST_ANIM.as_secs_f32();
-            lerp_x(target_x, off_right, ease_out(t.clamp(0.0, 1.0)))
+            lerp_u16(target_x, off_right, ease_out(t.clamp(0.0, 1.0)))
         } else {
             let t = elapsed.as_secs_f32() / TOAST_ANIM.as_secs_f32();
-            lerp_x(off_right, target_x, ease_out(t.clamp(0.0, 1.0)))
+            lerp_u16(off_right, target_x, ease_out(t.clamp(0.0, 1.0)))
         };
         if x >= off_right {
             continue; // fully off-screen this frame
@@ -426,7 +432,7 @@ pub fn render_broadcast_toasts(frame: &mut Frame, body: Rect, app: &App) {
 }
 
 /// Round a horizontal lerp between two columns.
-fn lerp_x(a: u16, b: u16, t: f32) -> u16 {
+fn lerp_u16(a: u16, b: u16, t: f32) -> u16 {
     (a as f32 + (b as f32 - a as f32) * t).round() as u16
 }
 
