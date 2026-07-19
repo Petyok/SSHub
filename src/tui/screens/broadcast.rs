@@ -565,7 +565,7 @@ pub fn render_preview(frame: &mut Frame, app: &App) {
     let hint = if setup.edit_targets {
         "\u{2191}/\u{2193} move \u{00b7} Space toggle \u{00b7} Enter done \u{00b7} Esc cancel"
     } else {
-        "[y] confirm   [e] edit targets   [N] cancel"
+        "[y] confirm   [e] edit targets   [c] edit command   [N] cancel"
     };
     let hint_y = bottom.saturating_sub(1);
     frame.buffer_mut().set_string(

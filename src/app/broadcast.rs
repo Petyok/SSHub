@@ -29,9 +29,19 @@ impl App {
     /// deduped set of host tags; if there's nothing to target, surfaces a notice
     /// and stays put.
     pub(crate) fn open_broadcast(&mut self) {
-        if self.broadcast.is_some() {
+        // Only an actively-running fleet blocks a new one. A finished panel
+        // (settling / paused / leaving) is just dropped so you can fire again.
+        if self
+            .broadcast
+            .as_ref()
+            .is_some_and(|b| !crate::broadcast::all_terminal(&b.results))
+        {
             self.host_notice = Some("A broadcast run is already in progress.".into());
             return;
+        }
+        if self.broadcast.take().is_some() && self.focused_panel == PanelId::Broadcast {
+            self.focused_panel = PanelId::default();
+            self.panel_zoomed = false;
         }
 
         // `self.groups` is the real user-group list (the reserved Favorites
@@ -250,6 +260,13 @@ impl App {
                         s.edit_targets = true;
                     }
                 }
+                // Back to the command prompt to edit the command (targets kept).
+                KeyCode::Char('c') => {
+                    if let Some(s) = self.broadcast_setup.as_mut() {
+                        s.cursor = s.command.chars().count();
+                    }
+                    self.mode = AppMode::BroadcastCommand;
+                }
                 KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
                     self.broadcast_setup = None;
                     self.mode = AppMode::Normal;
@@ -391,8 +408,12 @@ impl App {
         }
 
         // Pause the countdown while the panel is focused (zoom keeps it focused);
-        // resume it when focus leaves; dismiss once it elapses.
+        // resume it when focus leaves; once it elapses, play an exit slide
+        // (dock -> off the right edge) and remove the panel when it finishes.
         let focused = self.focused_panel == PanelId::Broadcast;
+        let body =
+            crate::tui::dashboard_layout::dashboard_layout_zoomed(self.terminal_area, self.ui_zoom)
+                .body;
         let mut dismiss = false;
         if let Some(bc) = self.broadcast.as_mut() {
             match bc.phase {
@@ -400,12 +421,26 @@ impl App {
                     if focused {
                         bc.phase = BroadcastPhase::Paused;
                     } else if done_at.elapsed() >= crate::broadcast::DISMISS {
-                        dismiss = true;
+                        let dock = crate::tui::screens::broadcast::docked_rect(body);
+                        let mut exit = dock;
+                        exit.x = body.x + body.width; // slide fully off to the right
+                        bc.anim = Some(crate::tui::tween::SlideAnim::new(
+                            dock,
+                            exit,
+                            crate::broadcast::ENTRY_ANIM,
+                        ));
+                        bc.phase = BroadcastPhase::Leaving;
                     }
                 }
                 BroadcastPhase::Paused => {
                     if !focused {
                         bc.phase = BroadcastPhase::Settling { done_at: now };
+                    }
+                }
+                BroadcastPhase::Leaving => {
+                    // anim is cleared above once done; remove the panel then.
+                    if bc.anim.is_none() {
+                        dismiss = true;
                     }
                 }
                 BroadcastPhase::Running => {}

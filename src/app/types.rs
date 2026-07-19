@@ -378,6 +378,7 @@ pub enum BroadcastPhase {
     Running,
     Settling { done_at: std::time::Instant }, // countdown armed
     Paused,                                   // focused/zoomed after completion
+    Leaving,                                  // exit slide playing, remove when done
 }
 
 /// A pickable broadcast target (menu row).
