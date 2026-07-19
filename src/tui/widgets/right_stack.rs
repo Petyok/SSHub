@@ -98,7 +98,7 @@ pub(crate) fn render_recent_panel(buf: &mut Buffer, area: Rect, app: &App) {
     // Zoomed (issue #18): `panel_scroll` holds the selected row index; the view
     // follows it and Enter connects the highlighted host. Compact stack: no
     // selection, no offset, and `zoomed_host_idx` is left untouched.
-    let (off, sel) = if app.panel_zoomed && app.focused_panel == crate::app::PanelId::Recent {
+    let (off, sel) = if area.height >= crate::tui::widgets::panel_box::ZOOM_CONTENT_MIN {
         let (first, sel) =
             crate::tui::widgets::panel_box::zoom_window(app, recents.len(), max_display);
         *app.zoomed_host_idx.borrow_mut() = recents.iter().map(|(i, _, _)| *i).collect();
@@ -219,7 +219,7 @@ pub(crate) fn render_auth_panel(buf: &mut Buffer, area: Rect, app: &App) {
     // panel height this still yields ~3 rows.
     let max_events = (area.height.saturating_sub(3)) as usize;
     let name_max = (area.width.saturating_sub(18)) as usize;
-    let (off, sel) = if app.panel_zoomed && app.focused_panel == crate::app::PanelId::Auth {
+    let (off, sel) = if area.height >= crate::tui::widgets::panel_box::ZOOM_CONTENT_MIN {
         let (first, s) = crate::tui::widgets::panel_box::zoom_window(
             app,
             app.auth_events_cache.len(),
@@ -300,7 +300,7 @@ pub(crate) fn render_ping_panel(buf: &mut Buffer, area: Rect, app: &App) {
     // Zoomed (issue #18): take over the whole dashboard body with a per-host
     // table instead of the single aggregate sparkline. The non-zoomed path
     // below is left byte-for-byte unchanged.
-    if app.panel_zoomed && app.focused_panel == crate::app::PanelId::Ping {
+    if area.height >= crate::tui::widgets::panel_box::ZOOM_CONTENT_MIN {
         render_ping_zoomed(buf, area, app, inner_x, inner_w);
         return;
     }

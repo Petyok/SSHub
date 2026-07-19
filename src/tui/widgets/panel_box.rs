@@ -10,6 +10,14 @@ use ratatui::style::Style;
 use crate::tui::text::ellipsize;
 use crate::tui::theme;
 
+/// A dashboard panel switches from its compact grid layout to the richer zoomed
+/// layout once it is drawn at least this tall (#35). Deciding by the panel's
+/// actual box height (not the global zoom flag) means the content only swaps
+/// once the zoom morph has grown the box enough to hold it, instead of popping
+/// the instant `z` is pressed. Above every compact panel height (max 9), below
+/// a full-body zoom, so a grid slot always reads as compact.
+pub const ZOOM_CONTENT_MIN: u16 = 13;
+
 /// Write `s` at (`x`,`y`), truncated with `…` so it never exceeds `max_w`
 /// display columns — keeps dashboard text inside its panel border even when
 /// the column is narrow (e.g. after a zoom). Returns the columns written.

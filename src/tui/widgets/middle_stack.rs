@@ -81,7 +81,7 @@ pub(crate) fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
 
     // Left: OS logo (when enabled in Settings and the os_icon resolves to a
     // vendored distro logo). The OS name still shows in the fact sheet either way.
-    let zoomed = app.panel_zoomed && app.focused_panel == crate::app::PanelId::Detail;
+    let zoomed = area.height >= crate::tui::widgets::panel_box::ZOOM_CONTENT_MIN;
     let os_id = entry.managed().and_then(|m| m.os_icon.as_deref());
     // When zoomed, prefer the large full-colour logo (fastfetch art); fall back
     // to the small Braille one otherwise.
@@ -390,7 +390,7 @@ pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
 
     // Zoomed: keep the socket/forward/config header, then list every loaded key
     // (type, bits, full fingerprint, comment) filling the panel height.
-    if app.panel_zoomed && app.focused_panel == crate::app::PanelId::Agent {
+    if area.height >= crate::tui::widgets::panel_box::ZOOM_CONTENT_MIN {
         let bottom_guard = area.y + area.height - 1;
         let label_style = theme::dim();
         let mut y = area.y + 1;
@@ -655,7 +655,7 @@ pub(crate) fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
 
     // Zoomed: a numeric stat row plus a tall, full-height bar graph of the
     // samples (one bottom-anchored column per sample, coloured by latency).
-    if app.panel_zoomed && app.focused_panel == crate::app::PanelId::Latency {
+    if area.height >= crate::tui::widgets::panel_box::ZOOM_CONTENT_MIN {
         let min = sorted[0];
         let bottom_guard = area.y + area.height - 1;
 
