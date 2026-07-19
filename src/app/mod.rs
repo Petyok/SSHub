@@ -189,6 +189,11 @@ pub struct App {
     /// Highlighted row in the tunnel reconnect settings overlay.
     pub tunnel_reconnect_selected: usize,
     pub active_tab: usize,
+    /// Tab shown on the previous poll tick, so a change can be detected centrally
+    /// (many code paths set `active_tab`) and turned into a slide animation (#35).
+    pub anim_prev_tab: usize,
+    /// In-flight tab-switch slide, or `None` at rest / under reduced motion.
+    pub tab_switch: Option<TabSwitch>,
     pub palette_query: String,
     pub palette_selected: usize,
     pub palette_results: Vec<usize>,
@@ -247,6 +252,21 @@ impl App {
     /// render loop never bumps to 60fps for nothing.
     pub(crate) fn motion_enabled(&self) -> bool {
         !self.config.appearance.disable_animation
+    }
+
+    /// Notice a tab change (from any of the many code paths that set
+    /// `active_tab`) and arm the body slide (#35). Called once per poll tick.
+    pub(crate) fn detect_tab_switch(&mut self) {
+        if self.active_tab != self.anim_prev_tab {
+            if self.motion_enabled() {
+                self.tab_switch = Some(TabSwitch {
+                    from: self.anim_prev_tab,
+                    to: self.active_tab,
+                    at: std::time::Instant::now(),
+                });
+            }
+            self.anim_prev_tab = self.active_tab;
+        }
     }
 
     /// Build app with default resolver and on-disk metadata db.
@@ -344,6 +364,8 @@ impl App {
             settings_selected: 0,
             tunnel_reconnect_selected: 0,
             active_tab: 0,
+            anim_prev_tab: 0,
+            tab_switch: None,
             palette_query: String::new(),
             palette_selected: 0,
             palette_results: Vec::new(),

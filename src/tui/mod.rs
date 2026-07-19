@@ -147,14 +147,15 @@ fn render_inner(frame: &mut Frame, app: &App) {
     let rule2 = row_in(area, areas.tab_bar.y + areas.tab_bar.height);
     widgets::footer::render_hrule(frame, rule2, false);
 
-    // ── Tab body dispatch ─────────────────────────────────────
-    match app.active_tab {
-        0 => render_hosts_body(frame, &areas, app),
-        1 => render_sftp_body(frame, &areas, app),
-        2 => render_tunnels_body(frame, &areas, app),
-        3 => render_keys_body(frame, &areas, app),
-        4 => render_audit_body(frame, &areas, app),
-        _ => render_hosts_body(frame, &areas, app),
+    // ── Tab body dispatch (with slide animation, #35) ─────────
+    let now = std::time::Instant::now();
+    let sliding = app
+        .tab_switch
+        .filter(|s| app.motion_enabled() && now.saturating_duration_since(s.at) < TAB_ANIM);
+    if let Some(sw) = sliding {
+        render_tab_slide(frame, &areas, app, sw, now);
+    } else {
+        render_tab_body(frame, app.active_tab, &areas, app);
     }
 
     // ── Broadcast mode (#3): docked live panel floats over the dashboard ──
@@ -535,6 +536,83 @@ fn render_zoom_toast(frame: &mut Frame, footer: Rect, notice: &str) {
     let y = footer.y - 1;
     let style = theme::cyan().add_modifier(Modifier::REVERSED);
     frame.buffer_mut().set_string(x, y, &label, style);
+}
+
+/// Duration of the tab-switch body slide (#35).
+pub const TAB_ANIM: std::time::Duration = std::time::Duration::from_millis(220);
+
+/// Dispatch a tab index to its body renderer, into `areas`.
+fn render_tab_body(
+    frame: &mut Frame,
+    tab: usize,
+    areas: &dashboard_layout::DashboardAreas,
+    app: &App,
+) {
+    match tab {
+        0 => render_hosts_body(frame, areas, app),
+        1 => render_sftp_body(frame, areas, app),
+        2 => render_tunnels_body(frame, areas, app),
+        3 => render_keys_body(frame, areas, app),
+        4 => render_audit_body(frame, areas, app),
+        _ => render_hosts_body(frame, areas, app),
+    }
+}
+
+/// Copy `areas` with the body region (body + the three columns) shifted right by
+/// `dx` columns, for rendering a tab body mid-slide. Header/tab-bar/footer stay.
+fn shift_body_areas(
+    areas: &dashboard_layout::DashboardAreas,
+    dx: u16,
+) -> dashboard_layout::DashboardAreas {
+    let shift = |r: Rect| Rect::new(r.x.saturating_add(dx), r.y, r.width, r.height);
+    let mut a = *areas;
+    a.body = shift(a.body);
+    a.col_left = shift(a.col_left);
+    a.col_mid = shift(a.col_mid);
+    a.col_right = shift(a.col_right);
+    a
+}
+
+/// Render a tab-switch slide: a static backdrop body plus the moving body
+/// translated right by an eased offset, with a hard edge between them (#35).
+/// `to > from` slides the new tab in from the right; `to < from` slides the old
+/// tab out to the right, revealing the new one beneath.
+fn render_tab_slide(
+    frame: &mut Frame,
+    areas: &dashboard_layout::DashboardAreas,
+    app: &App,
+    sw: crate::app::TabSwitch,
+    now: std::time::Instant,
+) {
+    let p = tween::ease_out(tween::progress(sw.at, TAB_ANIM, now));
+    let bw = areas.body.width;
+    let right = sw.to > sw.from;
+    // The moving layer sits on top starting at `body.x + off`; the backdrop shows
+    // in `[body.x, body.x + off]`. Right: new enters from the right (off: bw->0).
+    // Left: old exits to the right (off: 0->bw).
+    let off = if right {
+        ((1.0 - p) * bw as f32).round() as u16
+    } else {
+        (p * bw as f32).round() as u16
+    };
+    let (backdrop, top) = if right {
+        (sw.from, sw.to)
+    } else {
+        (sw.to, sw.from)
+    };
+
+    render_tab_body(frame, backdrop, areas, app);
+    if off < bw {
+        let clear = Rect::new(
+            areas.body.x + off,
+            areas.body.y,
+            bw - off,
+            areas.body.height,
+        );
+        frame.render_widget(Clear, clear);
+        let shifted = shift_body_areas(areas, off);
+        render_tab_body(frame, top, &shifted, app);
+    }
 }
 
 fn render_hosts_body(frame: &mut Frame, areas: &dashboard_layout::DashboardAreas, app: &App) {

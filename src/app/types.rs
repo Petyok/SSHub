@@ -372,6 +372,16 @@ pub struct BroadcastState {
     pub audit_written: bool, // guard: log_auth_event fires once at completion
 }
 
+/// An in-flight tab-switch slide (#35): the body wipes between the `from` and
+/// `to` tabs. Direction is `to > from` (new slides in from the right) vs
+/// `to < from` (current slides out to the right, revealing the left tab).
+#[derive(Debug, Clone, Copy)]
+pub struct TabSwitch {
+    pub from: usize,
+    pub to: usize,
+    pub at: std::time::Instant,
+}
+
 /// A transient error popup (issue #3): one failed host's error text, slides in
 /// from the right above the broadcast panel and auto-expires. Geometry + slide
 /// progress are derived from `born` at render time (no stored anim state).

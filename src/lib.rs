@@ -301,6 +301,9 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
         }
     }
 
+    // Arm a tab-switch slide if the active tab changed this tick (#35).
+    app.detect_tab_switch();
+
     let mut config_changed = false;
     if let Some(rx) = app.watcher_rx.as_ref() {
         while rx.try_recv().is_ok() {

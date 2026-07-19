@@ -43,7 +43,11 @@ impl App {
                 .is_some_and(|g| now.saturating_duration_since(g) < crate::broadcast::TOAST_ANIM);
         // Panel zoom morph (#35).
         let zoom = self.zoom_anim.is_some_and(|a| !a.is_done(now));
-        panel || toasts || dropping || zoom
+        // Tab-switch body slide (#35).
+        let tab = self
+            .tab_switch
+            .is_some_and(|s| now.saturating_duration_since(s.at) < crate::tui::TAB_ANIM);
+        panel || toasts || dropping || zoom || tab
     }
 
     /// Open the broadcast wizard from the hosts tab. Refuses while a run is live
