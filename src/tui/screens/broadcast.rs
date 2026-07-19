@@ -486,6 +486,8 @@ pub fn render_pick_target(frame: &mut Frame, app: &App) {
     let list_rows = setup.options.len().clamp(1, 12) as u16;
     let popup = popup_rect(frame, 60, 40, list_rows + 4);
 
+    let popup = crate::tui::popup_open_rect(popup, app);
+
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Block::default()
@@ -575,6 +577,8 @@ pub fn render_command_prompt(frame: &mut Frame, app: &App) {
         )),
     ];
 
+    let popup = crate::tui::popup_open_rect(popup, app);
+
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(lines).wrap(Wrap { trim: false }).block(
@@ -597,6 +601,8 @@ pub fn render_preview(frame: &mut Frame, app: &App) {
     let selected_count = setup.candidates.iter().filter(|c| c.selected).count();
     let list_rows = setup.candidates.len().clamp(1, 14) as u16;
     let popup = popup_rect(frame, 74, 50, list_rows + 6);
+
+    let popup = crate::tui::popup_open_rect(popup, app);
 
     frame.render_widget(Clear, popup);
     frame.render_widget(

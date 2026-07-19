@@ -205,6 +205,7 @@ fn render_inner(frame: &mut Frame, app: &App) {
         AppMode::Palette => {
             screens::palette::render_palette(
                 frame,
+                app,
                 &app.palette_query,
                 &app.hosts,
                 &app.palette_results,
@@ -248,7 +249,7 @@ fn render_inner(frame: &mut Frame, app: &App) {
             } else if app.tunnel_form.is_some() {
                 screens::tunnels::render_tunnel_form(frame, app);
             }
-            render_confirm_discard_popup(frame);
+            render_confirm_discard_popup(frame, app);
         }
         AppMode::ConfirmDelete => render_confirm_delete_popup(frame, app),
         AppMode::Help => render_help_popup(frame, app),
@@ -306,6 +307,8 @@ fn render_sftp_prompt_popup(frame: &mut Frame, app: &App) {
         theme::dim(),
     )));
 
+    let popup_area = crate::tui::popup_open_rect(popup_area, app);
+
     frame.render_widget(Clear, popup_area);
     frame.render_widget(
         Paragraph::new(lines).wrap(Wrap { trim: false }).block(
@@ -352,6 +355,8 @@ fn render_import_prompt_popup(frame: &mut Frame, app: &App) {
         "Enter: import  \u{2502}  Esc: cancel",
         theme::dim(),
     )));
+
+    let popup_area = crate::tui::popup_open_rect(popup_area, app);
 
     frame.render_widget(Clear, popup_area);
     frame.render_widget(
@@ -540,6 +545,34 @@ fn render_zoom_toast(frame: &mut Frame, footer: Rect, notice: &str) {
 
 /// Duration of the tab-switch body slide (#35).
 pub const TAB_ANIM: std::time::Duration = std::time::Duration::from_millis(220);
+
+/// Duration of a popup's open slide (#35).
+pub const POPUP_ANIM: std::time::Duration = std::time::Duration::from_millis(140);
+
+/// Shared popup-open animation (#35): given a popup's resting `target` rect,
+/// return where to draw it this frame. It rises into place from slightly below
+/// over [`POPUP_ANIM`] after the mode was entered, so every overlay that runs
+/// its rect through this helper animates its open identically. Returns `target`
+/// unchanged once settled or under reduced motion.
+pub fn popup_open_rect(target: Rect, app: &App) -> Rect {
+    if !app.motion_enabled() {
+        return target;
+    }
+    let now = std::time::Instant::now();
+    let p = tween::progress(app.mode_entered_at, POPUP_ANIM, now);
+    if p >= 1.0 {
+        return target;
+    }
+    // Drop into place from just above the resting spot. Shifting the top UP
+    // (never down) keeps the popup fully on-screen — its bottom stays at/above
+    // the resting bottom, and `y` saturates at 0 — so a tiny terminal can't push
+    // content off the buffer and panic.
+    let drop = (target.height as f32 * 0.35 + 2.0) * (1.0 - tween::ease_out(p));
+    Rect {
+        y: target.y.saturating_sub(drop.round() as u16),
+        ..target
+    }
+}
 
 /// Dispatch a tab index to its body renderer, into `areas`.
 fn render_tab_body(
@@ -743,6 +776,8 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
+    let popup_area = crate::tui::popup_open_rect(popup_area, app);
+
     frame.render_widget(Clear, popup_area);
 
     match kind {
@@ -830,6 +865,8 @@ fn render_confirm_quit_popup(frame: &mut Frame, app: &App) {
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
+    let popup_area = crate::tui::popup_open_rect(popup_area, app);
+
     frame.render_widget(Clear, popup_area);
     frame.render_widget(
         Paragraph::new(format!("{message}\n{hint}"))
@@ -845,7 +882,7 @@ fn render_confirm_quit_popup(frame: &mut Frame, app: &App) {
     );
 }
 
-fn render_confirm_discard_popup(frame: &mut Frame) {
+fn render_confirm_discard_popup(frame: &mut Frame, app: &App) {
     let message = "Save changes?";
     let hint = "y: save \u{2502} n: discard \u{2502} Esc: back";
 
@@ -855,6 +892,8 @@ fn render_confirm_discard_popup(frame: &mut Frame) {
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    let popup_area = crate::tui::popup_open_rect(popup_area, app);
 
     frame.render_widget(Clear, popup_area);
     frame.render_widget(
@@ -902,6 +941,8 @@ fn render_confirm_delete_popup(frame: &mut Frame, app: &App) {
         ratatui::text::Line::from(""),
         ratatui::text::Line::from("y: delete    Esc: cancel"),
     ];
+
+    let popup_area = crate::tui::popup_open_rect(popup_area, app);
 
     frame.render_widget(Clear, popup_area);
     frame.render_widget(
@@ -957,6 +998,8 @@ fn render_help_popup(frame: &mut Frame, app: &App) {
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    let popup_area = crate::tui::popup_open_rect(popup_area, app);
 
     frame.render_widget(Clear, popup_area);
     frame.render_widget(

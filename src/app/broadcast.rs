@@ -47,7 +47,13 @@ impl App {
         let tab = self
             .tab_switch
             .is_some_and(|s| now.saturating_duration_since(s.at) < crate::tui::TAB_ANIM);
-        panel || toasts || dropping || zoom || tab
+        // Popup open slide (#35): any overlay mode within its animation window.
+        let popup = !matches!(
+            self.mode,
+            AppMode::Normal | AppMode::Connecting | AppMode::Session
+        ) && now.saturating_duration_since(self.mode_entered_at)
+            < crate::tui::POPUP_ANIM;
+        panel || toasts || dropping || zoom || tab || popup
     }
 
     /// Open the broadcast wizard from the hosts tab. Refuses while a run is live

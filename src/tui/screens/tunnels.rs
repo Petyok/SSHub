@@ -330,6 +330,8 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
+    let popup_area = crate::tui::popup_open_rect(popup_area, app);
+
     frame.render_widget(Clear, popup_area);
 
     // Border
@@ -508,6 +510,8 @@ pub fn render_tunnel_host_picker(frame: &mut Frame, app: &App) {
     let x = area.x + (area.width.saturating_sub(popup_w)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_h)) / 2;
     let popup = Rect::new(x, y, popup_w, popup_h);
+
+    let popup = crate::tui::popup_open_rect(popup, app);
 
     frame.render_widget(Clear, popup);
     frame.render_widget(

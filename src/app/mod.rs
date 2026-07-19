@@ -194,6 +194,11 @@ pub struct App {
     pub anim_prev_tab: usize,
     /// In-flight tab-switch slide, or `None` at rest / under reduced motion.
     pub tab_switch: Option<TabSwitch>,
+    /// When the current `mode` was entered, so popups can animate their open
+    /// (#35). Updated centrally on any mode change.
+    pub mode_entered_at: std::time::Instant,
+    /// `mode` on the previous poll tick, to detect a change centrally.
+    pub anim_prev_mode: AppMode,
     pub palette_query: String,
     pub palette_selected: usize,
     pub palette_results: Vec<usize>,
@@ -266,6 +271,11 @@ impl App {
                 });
             }
             self.anim_prev_tab = self.active_tab;
+        }
+        // Stamp mode-entry time on any change, so popups animate their open (#35).
+        if self.mode != self.anim_prev_mode {
+            self.mode_entered_at = std::time::Instant::now();
+            self.anim_prev_mode = self.mode;
         }
     }
 
@@ -366,6 +376,8 @@ impl App {
             active_tab: 0,
             anim_prev_tab: 0,
             tab_switch: None,
+            mode_entered_at: std::time::Instant::now(),
+            anim_prev_mode: AppMode::Normal,
             palette_query: String::new(),
             palette_selected: 0,
             palette_results: Vec::new(),

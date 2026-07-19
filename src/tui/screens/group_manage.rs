@@ -18,6 +18,8 @@ pub fn render_group_manage_popup(frame: &mut Frame, app: &App) {
     let y = area.y + (area.height.saturating_sub(height)) / 2;
     let popup = Rect::new(x, y, width, height);
 
+    let popup = crate::tui::popup_open_rect(popup, app);
+
     frame.render_widget(Clear, popup);
     let block = Block::default()
         .borders(Borders::ALL)
