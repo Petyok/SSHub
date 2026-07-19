@@ -1,4 +1,5 @@
 mod audit;
+mod broadcast;
 mod connect;
 mod field_picker;
 mod groups;
@@ -23,7 +24,6 @@ mod tests;
 pub use types::*;
 pub use util::*;
 
-use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -32,7 +32,6 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::config::{self, AppConfig, KeyAction};
-use crate::launcher::{self, TerminalLauncher};
 use crate::metadata::{MetadataDb, MetadataStore};
 use crate::search::HostSearch;
 use crate::ssh::{
@@ -90,7 +89,6 @@ pub struct AppDeps {
     pub resolver: Box<dyn HostResolver>,
     pub metadata: Arc<dyn MetadataStore>,
     pub store: Arc<LauncherStore>,
-    pub launcher: Box<dyn TerminalLauncher>,
     pub password_store: Box<dyn crate::credentials::PasswordStore>,
 }
 
@@ -135,6 +133,36 @@ pub struct App {
     /// UI zoom level (0 = default). Widens the hosts column in the layout and
     /// the host-name column within it.
     pub ui_zoom: usize,
+    /// Currently focused dashboard panel (issue #18: focus + tmux-style zoom).
+    pub focused_panel: PanelId,
+    /// Whether the focused dashboard panel is zoomed to the full body.
+    pub panel_zoomed: bool,
+    /// Scroll offset within the zoomed panel (issue #18). Reset on zoom/focus
+    /// change; each zoomed list panel clamps it to its own content via the
+    /// `Cell`'s interior mutability during render.
+    pub panel_scroll: std::cell::Cell<u16>,
+    /// In-progress text selection over the zoomed panel (issue #18).
+    pub panel_sel: Option<PanelSel>,
+    /// Text under the current panel selection, extracted from the rendered
+    /// buffer each frame (interior mutability so the `&App` render pass can fill
+    /// it); copied to the clipboard on mouse release.
+    pub panel_sel_text: std::cell::RefCell<String>,
+    /// `self.hosts` indices for the rows of a zoomed host-list panel (ping /
+    /// recent), filled by their render so Enter connects the selected row.
+    pub zoomed_host_idx: std::cell::RefCell<Vec<usize>>,
+    /// Live broadcast run (issue #3): `Some` while a fleet command runs or its
+    /// finished panel is settling. Owns the run's mpsc + cancel flag.
+    pub broadcast: Option<BroadcastState>,
+    /// Pre-run broadcast wizard state (pick target / command / preview);
+    /// `Some` only while an `AppMode::Broadcast*` stage is active.
+    pub broadcast_setup: Option<BroadcastSetup>,
+    /// Transient error popups (issue #3), newest last; slide in from the right
+    /// above the broadcast panel and expire after `TOAST_TTL`.
+    pub broadcast_toasts: Vec<BroadcastToast>,
+    /// When the docked panel was dismissed, so lingering toasts can animate
+    /// *down* into the freed space instead of jumping. `None` while a panel is
+    /// present (or before any run).
+    pub broadcast_panel_gone_at: Option<std::time::Instant>,
     pub group_manage_selected: usize,
     pub group_notice: Option<String>,
     pub host_notice: Option<String>,
@@ -203,17 +231,12 @@ pub struct App {
     resolver: Box<dyn HostResolver>,
     metadata: Arc<dyn MetadataStore>,
     store: Arc<LauncherStore>,
-    // Retained for AppDeps compatibility but no longer called now that
-    // sessions run on an embedded PTY. The launcher impls in src/launcher/
-    // stay in the binary but are dead at runtime.
-    #[allow(dead_code)]
-    launcher: Box<dyn TerminalLauncher>,
     password_store: Box<dyn crate::credentials::PasswordStore>,
     search: HostSearch,
 }
 
 impl App {
-    /// Build app with default resolver, on-disk metadata db, and config-derived launcher.
+    /// Build app with default resolver and on-disk metadata db.
     pub fn new(config: AppConfig) -> Result<Self> {
         let data_dir = config::data_dir()?;
         std::fs::create_dir_all(&data_dir)?;
@@ -225,14 +248,12 @@ impl App {
         let metadata = Arc::new(MetadataDb::open(db_path)?);
         let store = Arc::new(LauncherStore::open(launcher_path)?);
         let resolver = Box::new(SshConfigResolver::default());
-        let launcher = launcher::launcher_from_config(&config)?;
         let mut app = Self::new_with_deps(
             config,
             AppDeps {
                 resolver,
                 metadata,
                 store,
-                launcher,
                 password_store: Box::new(crate::credentials::OsKeyring),
             },
         );
@@ -284,6 +305,16 @@ impl App {
             import_prompt: None,
             sftp_prompt: None,
             ui_zoom: 0,
+            focused_panel: PanelId::default(),
+            panel_zoomed: false,
+            panel_scroll: std::cell::Cell::new(0),
+            panel_sel: None,
+            panel_sel_text: std::cell::RefCell::new(String::new()),
+            zoomed_host_idx: std::cell::RefCell::new(Vec::new()),
+            broadcast: None,
+            broadcast_setup: None,
+            broadcast_toasts: Vec::new(),
+            broadcast_panel_gone_at: None,
             group_manage_selected: 0,
             group_notice: None,
             host_notice: None,
@@ -337,7 +368,6 @@ impl App {
             resolver: deps.resolver,
             metadata: deps.metadata,
             store: deps.store,
-            launcher: deps.launcher,
             password_store: deps.password_store,
             search: HostSearch::new(),
         }
@@ -433,46 +463,11 @@ impl App {
 
         sync_ssh_config_hosts(self.resolver.as_ref(), &self.store)?;
 
-        let launcher_hosts = self.store.list_hosts_filtered(Some(HostSource::Launcher))?;
-        let ssh_config_hosts = self
-            .store
-            .list_hosts_filtered(Some(HostSource::SshConfig))?;
-        let db_names: std::collections::HashSet<String> = launcher_hosts
-            .iter()
-            .chain(ssh_config_hosts.iter())
-            .map(|h| h.name.clone())
-            .collect();
-
-        let mut hosts: Vec<HostEntry> = launcher_hosts
-            .into_iter()
-            .chain(ssh_config_hosts)
-            .map(HostEntry::from_managed)
-            .collect();
-
-        let config_names = self.resolver.list_hosts()?;
-        self.metadata.ensure_defaults(&config_names)?;
-
-        for name in config_names {
-            if db_names.contains(&name) {
-                continue;
-            }
-            let host = match self.resolver.resolve_host(&name) {
-                Ok(host) => host,
-                Err(_) => {
-                    // Can't resolve this alias via `ssh -G`; skip it. We run
-                    // under raw mode, so never write to stderr here (it would
-                    // corrupt the TUI). The host simply won't be listed.
-                    continue;
-                }
-            };
-            let meta = self
-                .metadata
-                .get(&name)?
-                .unwrap_or_else(|| crate::metadata::HostMetadata::new(&name));
-            hosts.push(HostEntry::Legacy { host, meta });
-        }
-
-        self.hosts = hosts;
+        self.hosts = crate::hosts::load_merged_hosts(
+            self.resolver.as_ref(),
+            &self.store,
+            self.metadata.as_ref(),
+        )?;
         self.load_groups()?;
         self.rebuild_filter();
         if let Some(name) = selected_name {

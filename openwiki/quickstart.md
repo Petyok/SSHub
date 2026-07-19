@@ -1,116 +1,70 @@
-# SSHub
+---
+type: Product Overview
+title: SSHub — Quickstart
+description: Entry point to the SSHub knowledge base. SSHub is a Rust terminal UI for managing and connecting to SSH hosts, combining ~/.ssh/config with a built-in SQLite host database, embedded PTY sessions, SFTP, tunnels, identities, and an audit log.
+tags: [sshub, tui, ssh, rust, overview]
+---
 
-SSHub is a keyboard-driven Terminal UI for managing and connecting to SSH hosts. It merges your read-only `~/.ssh/config` with a launcher-managed SQLite database, gives you nested groups, fuzzy search, tags, embedded PTY sessions, SFTP transfers, SSH tunnels, identity/key management, and an audit log — all inside one ratatui application.
+# SSHub Quickstart
 
-This wiki is a practical map for engineers working on the codebase. Start here, then follow the section links for deeper dives.
+SSHub (`sshub`, v0.9.3 in `Cargo.toml`) is a keyboard-driven terminal UI for managing and connecting to SSH hosts. It merges your read-only `~/.ssh/config` with a fully managed host database (SQLite), and adds embedded in-TUI SSH sessions, an SFTP file browser, SSH tunnels with keep-alive reconnect, ssh-agent identity management, OS auto-detection with logos, and a connection audit log. It also ships a full headless CLI for scripting. License: AGPL-3.0-or-later.
 
-## What this codebase is
+- Crate: `sshub` on crates.io (`cargo install sshub`); repo: github.com/Petyok/SSHub
+- Stack: Rust 2021, ratatui 0.30 + crossterm (TUI), portable-pty + vt100/tui-term (embedded sessions), rusqlite bundled (SQLite), ssh2/libssh2 with vendored OpenSSL (SFTP), nucleo (fuzzy search), notify (file watcher), keyring (OS secret store). **No async runtime** — a synchronous event loop polls every 50 ms (`src/lib.rs`).
+- Single binary: `src/main.rs` dispatches askpass re-exec → `db` subcommand → headless CLI subcommands → global flags → the TUI.
 
-- A Rust (edition 2021) ratatui + crossterm app with a **synchronous 50 ms event loop** — no async runtime.
-- **Hybrid host model**: hosts come from `~/.ssh/config` (read-only connection fields) and from `launcher.db` (managed in-app, full CRUD). They merge by name without duplicates.
-- **Embedded SSH.** Connections run in an in-app pseudo-TTY (`portable-pty` + `vt100` + `tui-term`). Detach with `Ctrl+D` to return to the dashboard while SSH keeps running; use session tabs (`Ctrl+T`, `Ctrl+[/]`) to manage multiple connections.
-- **Native SFTP** via `libssh2` on a background worker thread, with a dual-pane local/remote browser and staged recursive transfers.
-- **Native SSH tunnels** spawned as `ssh -N -L/-R/-D` children, with a recent keep-alive/reconnect supervisor and configurable exponential backoff.
-- **SQLite persistence**: `launcher.db` holds hosts, groups, identities, tunnels, auth events, and UI state. Schema migrations live in `src/store/migrate.rs`.
-
-## Repository layout
-
-```
-/
-├── Cargo.toml              # crate config, keyring/ssh2 features
-├── Justfile                # build, test, release, install recipes
-├── README.md               # user-facing docs, keybindings, install
-├── CLAUDE.md               # team workflow, versioning, architecture
-├── CHANGELOG.md            # release notes
-├── src/
-│   ├── main.rs             # CLI entry + db purge subcommand
-│   ├── lib.rs              # run(), run_app(), purge_database()
-│   ├── config.rs           # AppConfig, TOML load, XDG/env paths
-│   ├── app/                # App state, input handling, domain logic
-│   ├── app/types.rs        # AppMode, SortMode, HostEntry, settings enums
-│   ├── tui/                # ratatui rendering: screens, widgets, theme
-│   ├── session/            # embedded PTY sessions + askpass
-│   ├── session_log.rs      # opt-in PTY transcript logging
-│   ├── tunnel.rs           # TunnelManager + keep-alive reconnect
-│   ├── sftp/               # SFTP model, transport, worker
-│   ├── ssh/                # ssh config parsing, import/export, agent, probe
-│   ├── store/              # LauncherStore + SQLite migrations
-│   ├── metadata/           # legacy MetadataDb overlay
-│   ├── launcher/           # external-terminal launchers (kitty/ghostty/custom)
-│   ├── watcher.rs          # hot-reload file watcher for ssh config
-│   ├── keybinds.rs         # user-remappable keybindings
-│   └── osinfo/             # remote OS detection + logo widget
-├── tests/
-│   ├── e2e/                # TestBackend TUI scenario tests
-│   ├── smoke/              # binary help/dry-run/config load
-│   ├── support/            # FixtureResolver, MockLauncher
-│   └── fixtures/           # ssh_config / ssh -G fixtures
-└── docs/
-    ├── implementation-flow.md # canonical dev checklist (issue → PR → merge)
-    ├── host-sync-design.md # planned P2P sync feature (not implemented)
-    └── termius-export-format.md
-```
-
-## Build & run
+## Install and run
 
 ```bash
-# Build debug
-cargo build
-
-# Run TUI
-cargo run
-
-# Dry-run / headless CI check
-cargo run -- --dry-run
-
-# Run all tests (unit + integration)
-just test
-
-# Equivalent manual runs
-cargo test
-cargo test --test smoke
-cargo test --test e2e
-cargo test --test config_load
+cargo install sshub          # or: git clone … && just install
+sshub                        # launch TUI
+sshub --help                 # global options (--dry-run, --version)
+sshub list                   # headless CLI (see workflows/cli.md)
 ```
 
-The release flow is codified in `Justfile`: `just release` (feature) / `just release patch` (hotfix). See [`operations/build-test-release.md`](operations/build-test-release.md).
+Linux builds need `libdbus-1-dev` + `pkg-config` (Secret Service keyring backend). At runtime an unlocked Secret Service provider (gnome-keyring, KWallet) is required for password persistence; otherwise SSHub warns and ssh falls back to prompting.
 
 ## Data paths
 
-| Resource      | Default path                                                         |
-|---------------|----------------------------------------------------------------------|
-| Config        | `~/.config/sshub/config.toml`                                        |
-| Database      | `~/.local/share/sshub/launcher.db` (+ `-wal`/`-shm`)                 |
-| Session logs  | `~/.local/share/sshub/logs/<host-dir>/` (opt-in)                     |
-| SSH config    | `~/.ssh/config` (read-only source + import/export target)            |
+| Resource | Default path | Override |
+|---|---|---|
+| Config | `~/.config/sshub/config.toml` | `SSHUB_CONFIG_DIR` |
+| Databases | `~/.local/share/sshub/launcher.db` (+ `metadata.db`) | `SSHUB_DATA_DIR` |
+| SSH config | `~/.ssh/config` | `SSHUB_SSH_CONFIG` |
+| Session logs | `~/.local/share/sshub/logs/<host-dir>/` | — |
 
-Override via environment variables: `SSHUB_CONFIG_DIR`, `SSHUB_DATA_DIR`, `SSHUB_SSH_CONFIG`. Legacy `SSH_LAUNCHER_CONFIG_DIR`, `SSH_LAUNCHER_DATA_DIR`, and `SSH_LAUNCHER_SSH_CONFIG` are still accepted as fallbacks (see [`operations/runbook.md`](operations/runbook.md)).
-
-Run `sshub db purge --yes-i-am-stupid` to wipe the launcher database. This removes managed hosts, groups, identities, tunnels, and the audit log but **does not** touch `~/.ssh/config`.
-
-## Recently active areas
-
-Recent development has focused on tunnel keep-alive/reconnect and session logging. Last validated commit is recorded in [`openwiki/.last-update.json`](.last-update.json) (`gitHead`, `validatedAt`).
+Legacy `SSH_LAUNCHER_*` env vars are still honored as fallbacks, and `~/.config/ssh-launcher` is auto-migrated to `~/.config/sshub` (`src/config.rs`).
 
 ## Where to go next
 
-- [`architecture/overview.md`](architecture/overview.md) — modules, event loop, render loop, dependency injection
-- [`architecture/source-map.md`](architecture/source-map.md) — key files by domain
-- [`workflows/connecting.md`](workflows/connecting.md) — embedded SSH sessions, secrets, session logging
-- [`workflows/tunnels.md`](workflows/tunnels.md) — tunnel types, keep-alive, reconnect supervisor
-- [`workflows/sftp.md`](workflows/sftp.md) — dual-pane SFTP browser, worker thread, file ops
-- [`data-models/storage.md`](data-models/storage.md) — SQLite schema, entities, migrations
-- [`tui/keybindings.md`](tui/keybindings.md) — keybind system and modes
-- [`operations/build-test-release.md`](operations/build-test-release.md) — build, CI, versioning, release
-- [`operations/runbook.md`](operations/runbook.md) — env vars, troubleshooting, DB purge, logs
-- [`integrations/import-export.md`](integrations/import-export.md) — ssh config hot reload, Termius import/export
+### Architecture
+- [Runtime architecture](architecture/overview.md) — the 50 ms synchronous event loop, the `App` state machine (`AppMode` overlays, `active_tab`), the TUI render pipeline, and background workers.
+- [Data model & storage](architecture/data-model.md) — `launcher.db` vs `metadata.db`, schema migrations, the hybrid ssh_config/managed host model, config file, and file watching.
 
-## Navigation conventions
+### Workflows
+- [TUI dashboard](workflows/tui.md) — tabs, overlays, keybindings, and screens.
+- [Sessions & SFTP](workflows/sessions-sftp.md) — embedded PTY sessions, askpass, session logging, mosh, and the dual-pane SFTP browser.
+- [Tunnels](workflows/tunnels.md) — local/remote/dynamic tunnels and keep-alive reconnect with backoff.
+- [Headless CLI](workflows/cli.md) — full command tree, JSON output, exit codes.
 
-- Source paths in this wiki are relative to the repository root.
-- Code references link to the file only; line numbers are intentionally omitted because they drift. Use grep to locate symbols.
-- `CLAUDE.md` and `README.md` are primary source docs; this wiki is a synthesized navigation layer over them.
+### Domain
+- [Hosts, groups & identities](domain/hosts-identities.md) — host sources, nested groups and Favorites, identities, ssh-agent, and Termius import.
+
+### Operations & testing
+- [Build, versioning & release](operations/build-release.md) — Justfile recipes, odometer versioning, pre-commit hook, release flow.
+- [CI & automation](operations/ci-cd.md) — GitHub Actions workflows, including the OpenWiki wiki-update bot.
+- [Testing strategy](testing/strategy.md) — unit / smoke / e2e / config levels, fixtures, and test doubles.
+
+### Integrations & security
+- [External terminal launchers & demo](integrations/external-terminals.md) — kitty/ghostty/custom launchers and the VHS demo pipeline.
+- [Secrets, credentials & file security](security/secrets.md) — OS keyring, askpass staging, TOFU host keys, session-log exposure warning, permission hardening.
+
+## Contributing pointers
+
+Pinned workflow: [docs/implementation-flow.md](../docs/implementation-flow.md) (issue → claim → branch off `development` → verify → adversarial review → PR). Run `cargo fmt`, `cargo fmt --check`, and `cargo clippy --all-targets` before every push — CI enforces the same. See [Build, versioning & release](operations/build-release.md) for the branch model (`feature/* → development → main`).
 
 ## Backlog
 
-- **P2P host sync** — `docs/host-sync-design.md` describes a Shamir-quorum, hash-chained device sync. It is not implemented yet and not referenced in production code.
+- **Demo pipeline details** (`demo/` tapes, `record.sh`, `seed-demo.sh`) — only summarized under [integrations](integrations/external-terminals.md); deferred because it is contributor tooling, not product behavior.
+- **Host-sync design** (`docs/host-sync-design.md`) — P2P sync design for epic #13; not yet implemented, documented only in the design doc.
+- **Detached tunnel PID-file hardening** (`src/tunnel/spawn.rs`) — acknowledged races (no locking, recycled PIDs) noted in [tunnels](workflows/tunnels.md); behavior may change.

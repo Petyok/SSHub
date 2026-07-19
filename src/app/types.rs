@@ -34,6 +34,193 @@ impl SortMode {
             SortMode::Manual => "manual",
         }
     }
+
+    /// Parse CLI `--sort` values (not TUI display labels).
+    pub fn from_cli_str(s: &str) -> Option<Self> {
+        match s {
+            "label" => Some(Self::Label),
+            "last-connected" => Some(Self::LastConnected),
+            "favorite" => Some(Self::FavoriteFirst),
+            "group" => Some(Self::GroupThenLabel),
+            "manual" => Some(Self::Manual),
+            _ => None,
+        }
+    }
+}
+
+/// An in-progress text selection over a zoomed dashboard panel (issue #18):
+/// terminal-cell coordinates of the drag anchor and the current pointer.
+#[derive(Debug, Clone, Copy)]
+pub struct PanelSel {
+    pub anchor: (u16, u16),
+    pub cur: (u16, u16),
+}
+
+/// Direction for dashboard panel focus movement (issue #18).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusDir {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+/// A focusable panel on the hosts dashboard. Focus moves spatially with
+/// `Alt+arrows`; `z` zooms the focused panel to the full dashboard body
+/// (issue #18). The bento grid is: a left column (`Hosts`, one tall panel),
+/// a middle stack (`Detail` / `Agent` / `Latency`), a right stack (`Recent` /
+/// `Auth` / `Ping`), and a `SshLog` strip spanning mid+right along the bottom.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PanelId {
+    #[default]
+    Hosts,
+    Detail,
+    Agent,
+    Latency,
+    Recent,
+    Auth,
+    Ping,
+    SshLog,
+    /// Live broadcast run panel, docked bottom-right (issue #3). Only drawn +
+    /// focusable while `app.broadcast.is_some()`; the `focus_panel` guard in
+    /// `keys.rs` suppresses `neighbor()` hops to it when the run is absent.
+    Broadcast,
+}
+
+impl PanelId {
+    pub fn label(self) -> &'static str {
+        match self {
+            PanelId::Hosts => "hosts",
+            PanelId::Detail => "host detail",
+            PanelId::Agent => "agent",
+            PanelId::Latency => "latency",
+            PanelId::Recent => "recent sessions",
+            PanelId::Auth => "auth events",
+            PanelId::Ping => "ping",
+            PanelId::SshLog => "ssh log",
+            PanelId::Broadcast => "broadcast",
+        }
+    }
+
+    /// The neighboring panel in `dir`, or `None` to keep focus put (e.g. moving
+    /// off an edge). Hand-written adjacency over the bento grid.
+    pub fn neighbor(self, dir: FocusDir) -> Option<PanelId> {
+        use FocusDir::*;
+        use PanelId::*;
+        match (self, dir) {
+            // Left column (one tall panel).
+            (Hosts, Right) => Some(Detail),
+            (Hosts, _) => None,
+            // Middle stack.
+            (Detail, Left) => Some(Hosts),
+            (Detail, Right) => Some(Recent),
+            (Detail, Down) => Some(Agent),
+            (Detail, Up) => None,
+            (Agent, Left) => Some(Hosts),
+            (Agent, Right) => Some(Auth),
+            (Agent, Up) => Some(Detail),
+            (Agent, Down) => Some(Latency),
+            (Latency, Left) => Some(Hosts),
+            (Latency, Right) => Some(Ping),
+            (Latency, Up) => Some(Agent),
+            (Latency, Down) => Some(SshLog),
+            // Right stack.
+            (Recent, Left) => Some(Detail),
+            (Recent, Down) => Some(Auth),
+            (Recent, _) => None,
+            (Auth, Left) => Some(Agent),
+            (Auth, Up) => Some(Recent),
+            (Auth, Down) => Some(Ping),
+            (Auth, Right) => None,
+            (Ping, Left) => Some(Latency),
+            (Ping, Up) => Some(Auth),
+            (Ping, Down) => Some(SshLog),
+            (Ping, Right) => Some(Broadcast),
+            // Bottom strip (spans mid+right).
+            (SshLog, Up) => Some(Latency),
+            (SshLog, Left) => Some(Hosts),
+            (SshLog, Right) => Some(Broadcast),
+            (SshLog, _) => None,
+            // Broadcast docked panel (bottom-right); only live when
+            // app.broadcast.is_some() — the orchestrator's focus_panel guard
+            // suppresses these when it's absent.
+            (Broadcast, Left) => Some(SshLog),
+            (Broadcast, Up) => Some(Ping),
+            (Broadcast, _) => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod panel_id_tests {
+    use super::{FocusDir, PanelId};
+
+    #[test]
+    fn neighbor_moves_across_the_bento_grid() {
+        // Columns: hosts ⇄ mid stack ⇄ right stack.
+        assert_eq!(
+            PanelId::Hosts.neighbor(FocusDir::Right),
+            Some(PanelId::Detail)
+        );
+        assert_eq!(
+            PanelId::Detail.neighbor(FocusDir::Left),
+            Some(PanelId::Hosts)
+        );
+        assert_eq!(
+            PanelId::Detail.neighbor(FocusDir::Right),
+            Some(PanelId::Recent)
+        );
+        // Vertical within a stack, down into the shared ssh-log strip.
+        assert_eq!(
+            PanelId::Detail.neighbor(FocusDir::Down),
+            Some(PanelId::Agent)
+        );
+        assert_eq!(
+            PanelId::Latency.neighbor(FocusDir::Down),
+            Some(PanelId::SshLog)
+        );
+        assert_eq!(
+            PanelId::Ping.neighbor(FocusDir::Down),
+            Some(PanelId::SshLog)
+        );
+        assert_eq!(
+            PanelId::SshLog.neighbor(FocusDir::Up),
+            Some(PanelId::Latency)
+        );
+        // Broadcast docks bottom-right: reachable from the ssh-log strip and
+        // the ping panel, and hops back left/up into the grid.
+        assert_eq!(
+            PanelId::SshLog.neighbor(FocusDir::Right),
+            Some(PanelId::Broadcast)
+        );
+        assert_eq!(
+            PanelId::Ping.neighbor(FocusDir::Right),
+            Some(PanelId::Broadcast)
+        );
+        assert_eq!(
+            PanelId::Broadcast.neighbor(FocusDir::Left),
+            Some(PanelId::SshLog)
+        );
+        assert_eq!(
+            PanelId::Broadcast.neighbor(FocusDir::Up),
+            Some(PanelId::Ping)
+        );
+        assert_eq!(PanelId::Broadcast.neighbor(FocusDir::Right), None);
+    }
+
+    #[test]
+    fn neighbor_returns_none_at_edges() {
+        assert_eq!(PanelId::Hosts.neighbor(FocusDir::Left), None);
+        assert_eq!(PanelId::Hosts.neighbor(FocusDir::Up), None);
+        assert_eq!(PanelId::Detail.neighbor(FocusDir::Up), None);
+        assert_eq!(PanelId::Recent.neighbor(FocusDir::Right), None);
+        assert_eq!(PanelId::SshLog.neighbor(FocusDir::Down), None);
+    }
+
+    #[test]
+    fn default_focus_is_hosts() {
+        assert_eq!(PanelId::default(), PanelId::Hosts);
+    }
 }
 
 /// One section in the group tree (real group or virtual ungrouped bucket).
@@ -160,6 +347,84 @@ pub enum AppMode {
     Connecting,
     /// Live embedded SSH session; PTY drives the fullscreen view.
     Session,
+    /// Broadcast wizard stage 1: pick a target (group / tag menu).
+    BroadcastPickTarget,
+    /// Broadcast wizard stage 2: single-line command input.
+    BroadcastCommand,
+    /// Broadcast wizard stage 3: target preview + [y]/[e]/[N] barrier.
+    BroadcastPreview,
+}
+
+/// Live background-run state; App holds `broadcast: Option<BroadcastState>`.
+///
+/// No derive attribute at all — not even `Debug` — because
+/// `std::sync::mpsc::Receiver` is not `Debug`, and this type is deliberately
+/// neither `Clone` nor `Copy` (it owns the run's channel + cancel flag).
+pub struct BroadcastState {
+    pub target_label: String, // "#prod" / "group: production"
+    pub command: String,
+    pub results: Vec<crate::broadcast::HostResult>,
+    pub rx: std::sync::mpsc::Receiver<crate::broadcast::BroadcastEvent>,
+    pub cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub concurrency: usize,
+    pub phase: BroadcastPhase,
+    pub anim: Option<crate::tui::tween::SlideAnim>, // entry slide; None once settled
+    pub audit_written: bool, // guard: log_auth_event fires once at completion
+}
+
+/// A transient error popup (issue #3): one failed host's error text, slides in
+/// from the right above the broadcast panel and auto-expires. Geometry + slide
+/// progress are derived from `born` at render time (no stored anim state).
+#[derive(Debug, Clone)]
+pub struct BroadcastToast {
+    pub host: String,
+    pub text: String,
+    pub born: std::time::Instant,
+}
+
+/// Lifecycle phase of a live broadcast run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BroadcastPhase {
+    Running,
+    Settling { done_at: std::time::Instant }, // countdown armed
+    Paused,                                   // focused/zoomed after completion
+    Leaving,                                  // exit slide playing, remove when done
+}
+
+/// A pickable broadcast target (menu row).
+#[derive(Debug, Clone)]
+pub enum BroadcastTarget {
+    Group { id: i64, label: String },
+    Tag { name: String },
+}
+
+/// One resolved target host in the preview (managed hosts only; entries with no
+/// managed id are excluded upstream).
+#[derive(Debug, Clone)]
+pub struct BroadcastCandidate {
+    pub host_id: i64,
+    pub host_name: String,
+    pub argv: Vec<String>,
+    /// Stored credential for this host (phase 2), resolved when the target is
+    /// picked; threaded into the run so password hosts authenticate via
+    /// SSH_ASKPASS. `None` => key/agent only.
+    pub secret: Option<crate::session::PendingSecret>,
+    pub selected: bool, // toggled in edit-targets
+}
+
+/// Pre-run wizard state; App holds `broadcast_setup: Option<BroadcastSetup>`.
+/// The active AppMode variant (PickTarget/Command/Preview) names the stage.
+///
+/// No derive attribute at all — deliberately neither `Clone` nor `Copy`.
+pub struct BroadcastSetup {
+    pub options: Vec<BroadcastTarget>,
+    pub menu_selected: usize,
+    pub target_label: String, // filled once a target is chosen
+    pub command: String,
+    pub cursor: usize,
+    pub candidates: Vec<BroadcastCandidate>, // resolved on target pick
+    pub preview_selected: usize,             // highlighted row in edit-targets
+    pub edit_targets: bool,                  // preview [e] entered per-host deselect
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

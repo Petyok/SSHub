@@ -12,8 +12,6 @@ use tempfile::NamedTempFile;
 #[path = "../support/mod.rs"]
 mod support;
 
-use support::MockLauncher;
-
 struct EmptyResolver;
 
 impl HostResolver for EmptyResolver {
@@ -30,7 +28,7 @@ fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::empty())
 }
 
-fn app_with_managed_host(store_path: &std::path::Path) -> (App, MockLauncher) {
+fn app_with_managed_host(store_path: &std::path::Path) -> App {
     let store = Arc::new(LauncherStore::open(store_path).unwrap());
     let identity = store
         .create_identity(&NewIdentity {
@@ -66,29 +64,26 @@ fn app_with_managed_host(store_path: &std::path::Path) -> (App, MockLauncher) {
         .unwrap();
     }
 
-    let launcher = MockLauncher::new();
-    let app_launcher = launcher.clone();
     let mut app = App::new_with_deps(
         AppConfig::default(),
         AppDeps {
             resolver: Box::new(EmptyResolver),
             metadata: Arc::new(MetadataDb::default()),
             store,
-            launcher: Box::new(app_launcher),
             password_store: Box::new(sshub::credentials::NoopPasswordStore),
         },
     );
     app.reload_hosts().unwrap();
     assert_eq!(app.hosts.len(), 1);
     assert!(app.hosts[0].is_launcher());
-    (app, launcher)
+    app
 }
 
 #[test]
 fn connect_managed_host_builds_ssh_argv_and_updates_last_connected() {
     let file = NamedTempFile::new().unwrap();
     let path = file.path();
-    let (app, _launcher) = app_with_managed_host(path);
+    let app = app_with_managed_host(path);
 
     // Argv shape: full options inlined since this host is launcher-managed
     // (not derived from ~/.ssh/config).
@@ -135,15 +130,12 @@ fn connect_ssh_config_host_uses_alias_mode() {
         })
         .unwrap();
 
-    let launcher = MockLauncher::new();
-    let app_launcher = launcher.clone();
     let mut app = App::new_with_deps(
         AppConfig::default(),
         AppDeps {
             resolver: Box::new(EmptyResolver),
             metadata: Arc::new(MetadataDb::default()),
             store,
-            launcher: Box::new(app_launcher),
             password_store: Box::new(sshub::credentials::NoopPasswordStore),
         },
     );

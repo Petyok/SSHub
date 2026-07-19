@@ -15,11 +15,11 @@ Pinned implementation flow: [docs/implementation-flow.md](docs/implementation-fl
 
 ## Versioning (`vX.Y.Z`)
 
-Odometer scheme — each field rolls 0–9 and carries:
+Odometer scheme — **Z (patch)** rolls 0–9, **Y (minor)** rolls 0–99, and they carry:
 
-- **Z (patch)** — bump on **every commit to `development`**: `just bump patch`. It's the running odometer counter within a dev cycle **and** the version a hotfix release ships as-is.
-- **Y (minor)** — bump when **merging `development → main`** for a feature release; this resets Z to 0: `just bump minor`. A minor release is `X.Y.0`.
-- **X (major)** — bump **manually** for a milestone, or automatically by carry when the odometer rolls over (`0.9.9 + patch → 1.0.0`): `just bump major`.
+- **Z (patch)** — bump on **every commit to `development`**: `just bump patch`. It's the running odometer counter within a dev cycle **and** the version a hotfix release ships as-is. Rolls 0–9, carrying into Y.
+- **Y (minor)** — bump when **merging `development → main`** for a feature release; this resets Z to 0: `just bump minor`. A minor release is `X.Y.0`. Rolls 0–99, carrying into X (so `0.99.0 → 1.0.0`).
+- **X (major)** — bump **manually** for a milestone, or automatically by carry when the odometer rolls over (`0.99.0 + minor → 1.0.0`, `0.99.9 + patch → 1.0.0`): `just bump major`.
 
 `main` is **not** always `X.Y.0`: feature releases land as `X.Y.0`, but hotfix (patch) releases publish `development`'s current `X.Y.Z` unchanged (see `just release patch` below).
 
@@ -76,8 +76,6 @@ For current architecture details (tabs, schema, event loop, modules), see `openw
 
 This repository uses OpenWiki for recurring code documentation. Start with `openwiki/quickstart.md`, then follow its links to architecture, workflows, domain concepts, operations, integrations, testing guidance, and source maps.
 
-Implementation flow: [docs/implementation-flow.md](../docs/implementation-flow.md).
-
-The scheduled OpenWiki GitHub Actions workflow regenerates this wiki by default. After each automated or manual update, validate and correct pages against the codebase before merge — automated output is a starting point, not the source of truth.
+The scheduled OpenWiki GitHub Actions workflow refreshes the repository wiki. Do not hand-edit generated OpenWiki pages unless explicitly asked; prefer updating source code/docs and letting OpenWiki regenerate.
 
 <!-- OPENWIKI:END -->

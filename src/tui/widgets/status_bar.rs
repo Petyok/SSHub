@@ -31,6 +31,9 @@ fn mode_label(mode: AppMode) -> &'static str {
         AppMode::SftpPrompt => "SFTP",
         AppMode::Connecting => "Connecting",
         AppMode::Session => "Session",
+        AppMode::BroadcastPickTarget => "Broadcast",
+        AppMode::BroadcastCommand => "Broadcast",
+        AppMode::BroadcastPreview => "Broadcast",
     }
 }
 

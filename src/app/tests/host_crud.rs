@@ -10,7 +10,8 @@ pub(crate) fn duplicate_legacy_preserves_session_logging_override() {
         _ => panic!("expected legacy host"),
     };
 
-    let copy_name = app.duplicate_legacy_to_launcher(&ssh_host, &meta).unwrap();
+    let copy_name =
+        crate::hosts::duplicate_legacy_to_launcher(&app.store, &ssh_host, &meta).unwrap();
     let created = app
         .store
         .get_host_by_name(&copy_name)

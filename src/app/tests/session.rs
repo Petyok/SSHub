@@ -3,7 +3,6 @@ use super::*;
 #[test]
 pub(crate) fn enter_starts_embedded_session() {
     let metadata: Arc<dyn MetadataStore> = Arc::new(MetadataDb::default());
-    let (launcher, _launched) = RecordingLauncher::new();
     let resolver = MockResolver::new(vec![("edge", host("edge"))]);
     let mut app = App::new_with_deps(
         AppConfig::default(),
@@ -11,7 +10,6 @@ pub(crate) fn enter_starts_embedded_session() {
             resolver: Box::new(resolver),
             metadata: Arc::clone(&metadata),
             store: test_store(),
-            launcher: Box::new(launcher),
             password_store: Box::new(crate::credentials::NoopPasswordStore),
         },
     );
@@ -50,7 +48,6 @@ pub(crate) fn enter_starts_embedded_session() {
 #[test]
 pub(crate) fn ctrl_t_opens_host_picker() {
     let metadata: Arc<dyn MetadataStore> = Arc::new(MetadataDb::default());
-    let (launcher, _launched) = RecordingLauncher::new();
     let resolver = MockResolver::new(vec![("edge", host("edge"))]);
     let mut app = App::new_with_deps(
         AppConfig::default(),
@@ -58,7 +55,6 @@ pub(crate) fn ctrl_t_opens_host_picker() {
             resolver: Box::new(resolver),
             metadata,
             store: test_store(),
-            launcher: Box::new(launcher),
             password_store: Box::new(crate::credentials::NoopPasswordStore),
         },
     );
@@ -90,7 +86,6 @@ pub(crate) fn ctrl_t_opens_host_picker() {
 #[test]
 pub(crate) fn session_tabs_switch_detach_and_focus() {
     let metadata: Arc<dyn MetadataStore> = Arc::new(MetadataDb::default());
-    let (launcher, _launched) = RecordingLauncher::new();
     let resolver = MockResolver::new(vec![("edge", host("edge"))]);
     let mut app = App::new_with_deps(
         AppConfig::default(),
@@ -98,7 +93,6 @@ pub(crate) fn session_tabs_switch_detach_and_focus() {
             resolver: Box::new(resolver),
             metadata,
             store: test_store(),
-            launcher: Box::new(launcher),
             password_store: Box::new(crate::credentials::NoopPasswordStore),
         },
     );
@@ -146,7 +140,6 @@ pub(crate) fn session_tabs_switch_detach_and_focus() {
 #[test]
 pub(crate) fn shutdown_all_kills_detached_sessions() {
     let metadata: Arc<dyn MetadataStore> = Arc::new(MetadataDb::default());
-    let (launcher, _launched) = RecordingLauncher::new();
     let resolver = MockResolver::new(vec![("edge", host("edge"))]);
     let mut app = App::new_with_deps(
         AppConfig::default(),
@@ -154,7 +147,6 @@ pub(crate) fn shutdown_all_kills_detached_sessions() {
             resolver: Box::new(resolver),
             metadata,
             store: test_store(),
-            launcher: Box::new(launcher),
             password_store: Box::new(crate::credentials::NoopPasswordStore),
         },
     );

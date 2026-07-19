@@ -1,148 +1,67 @@
-# Architecture overview
+---
+type: Architecture
+title: Runtime Architecture — Event Loop, App State, and TUI
+description: How SSHub runs — a synchronous 50ms event loop in src/lib.rs driving the App state machine (AppMode overlays + active_tab), the ratatui render pipeline in src/tui, and mpsc-based background workers for watcher, ping, SFTP, OS detection, and tunnels.
+resource: src/lib.rs
+tags: [architecture, event-loop, tui, ratatui, app-state]
+---
 
-SSHub is a single-process TUI application with a synchronous event loop and several background worker threads. The design prioritizes determinism and simple threading over an async runtime.
+# Runtime Architecture
 
-## Stack & dependencies
+SSHub has **no async runtime**. Everything is driven by one synchronous event loop in `src/lib.rs` (`run()` → `run_app()`), with concurrency handled by background threads communicating over `std::sync::mpsc` channels.
 
-- **TUI**: `ratatui` 0.30 + `crossterm` 0.29. Renders into the alternate screen, supports mouse, bracketed paste.
-- **PTY sessions**: `portable-pty` spawns `ssh` on a pseudo-TTY; `vt100` emulates the terminal grid; `tui-term` renders it inside ratatui.
-- **Persistence**: `rusqlite` with bundled SQLite in `~/.local/share/sshub/launcher.db`.
-- **Crypto / OS integration**: `keyring` with platform backends (Apple/Windows/Secret Service) for passwords and key passphrases.
-- **SFTP**: `ssh2` with vendored OpenSSL for self-contained builds.
-- **Search**: `nucleo` for fuzzy host / command palette.
-- **Config**: `serde` + `toml`/`toml_edit` to load and preserve comments on save.
-- **File watcher**: `notify` 7 watches the `~/.ssh/config` parent directory.
+## The event loop (`src/lib.rs`)
 
-No async runtime. Cross-thread communication uses `std::sync::mpsc` channels.
+`POLL_INTERVAL = 50ms`. Each frame:
 
-## Lifecycle
+1. **Drain sessions** — every open embedded session's PTY is drained and resized; a `Connecting` session is promoted to `Session` on first output.
+2. **Draw** — `terminal.draw` renders via `tui::render`.
+3. **Drain input** — `poll_keys_and_watcher` drains *all* queued crossterm events per frame (the code notes that draining only one would make "paste into an embedded session crawl at ~20 chars/sec"), then non-blocking `try_recv` drains of every worker channel:
+   - config [file watcher](#file-watcher) → `app.reload_hosts()`
+   - ping worker (30 s interval, ring buffer of 30 samples per host)
+   - SFTP worker events → `apply_sftp_event` (see [sessions & SFTP](../workflows/sessions-sftp.md))
+   - SSH probe logs, OS-detect worker results
+   - `tick_tunnels()` keep-alive (see [tunnels](../workflows/tunnels.md))
+   - auth-events cache refresh (10 s)
 
-```
-src/main.rs
-    maybe_run_askpass()          # SSH_ASKPASS helper short-circuit
-    handle --help / --version / db purge
-    sshub::run()
+A headless variant (`run_headless_loop`) renders once on a ratatui `TestBackend` and quits — used by `SSHUB_AUTO_QUIT`/`--dry-run` and by smoke tests (see [testing strategy](../testing/strategy.md)).
 
-src/lib.rs
-    run_app()
-      config::load_config()
-      App::new(config)
-      attach_config_watcher()    # hot reload of ~/.ssh/config
-      run_terminal_loop() / run_headless_loop()
-```
+## App state machine (`src/app/`)
 
-`App::new()` (in `src/app/mod.rs`) wires together:
+`App` (`src/app/mod.rs`) holds all UI state plus injected dependencies (`AppDeps`), which are the main test seams:
 
-- a host resolver (`ssh::SshConfigResolver` or a test resolver),
-- the SQLite `LauncherStore`,
-- the legacy `MetadataDb`,
-- a `TerminalLauncher` chosen from `config.terminal` (Kitty / Ghostty / Custom),
-- a `PasswordStore` implementation via `credentials.rs`.
+| Dep | Trait | Production impl |
+|---|---|---|
+| `resolver` | `HostResolver` | `SshConfigResolver` (`src/ssh/resolver.rs`) |
+| `metadata` | `MetadataStore` | `MetadataDb` (`src/metadata/db.rs`) |
+| `store` | — | `LauncherStore` (`src/store/mod.rs`) |
+| `launcher` | `TerminalLauncher` | kitty/ghostty/custom ([integrations](../integrations/external-terminals.md)) |
+| `password_store` | `PasswordStore` | `OsKeyring` ([secrets](../security/secrets.md)) |
 
-This is captured in `AppDeps` and enables dependency injection for tests.
+- **Modes**: `AppMode` (`src/app/types.rs`) has ~26 variants — `Normal`, `Search`, `TagFilter`, `HostDetail`, `HostForm`, `IdentityForm`, `GroupForm`/`GroupManage`, `TunnelForm`, `Palette`, `Settings`, `KeybindEditor`, `Help`, `ConfirmQuit`/`ConfirmDelete`/`ConfirmDiscard`, `Connecting`, `Session`, etc. Overlays are modes; key dispatch lives in `src/app/keys.rs` and per-mode handlers in `src/app/*.rs`.
+- **Tabs are not an enum**: `App.active_tab: usize` (0–4 = hosts, sftp, tunnels, identities, audit). Be careful when adding tabs — there is no type safety here.
+- First run with no hosts drops straight into `Help` mode.
+- The `TerminalLauncher` dependency is retained but dead at runtime: sessions run in the embedded PTY (src/session/), and the CLI `sshub host connect` path spawns ssh/mosh directly via std::process::Command (src/cli/host.rs cmd_connect), bypassing TerminalLauncher entirely. The trait is exercised only by its own module unit tests and test doubles; App.launcher itself is never called from any production code path.
 
-## Event loop
+## Render pipeline (`src/tui/`)
 
-The terminal loop (`run_terminal_loop` in `src/lib.rs`) runs each frame in this order:
+`tui::render` (`src/tui/mod.rs`):
 
-1. **Terminal size** — read `terminal.size()` every frame (not crossterm resize events); update `app.terminal_area` and detect whether dimensions changed.
-2. **Session drain + resize** — for every open session: `Session::drain()` (PTY bytes), then `Session::resize(...)` when the host terminal size changed. Promote `AppMode::Connecting` → `Session` when the active tab's child reaches `Running`.
-3. **Render** — `terminal.draw(|frame| tui::render(frame, app))`.
-4. **Input + background poll** — `poll_keys_and_watcher(app)` (only after render; skipped on the auto-quit frame):
-   - `crossterm::event::poll(POLL_INTERVAL)` (50 ms), then drain queued `Event::Key` / `Event::Mouse` / `Event::Paste` via `app.handle_key`, `app.handle_mouse`, `app.handle_paste` (resize events are ignored).
-   - `watcher_rx` → `reload_hosts()` on config change,
-   - `ping_rx` → latency sparkline data,
-   - `sftp_rx` → `apply_sftp_event`,
-   - `probe_rx` → SSH handshake / verbose log lines (`ssh::probe::SshLogEntry`),
-   - `os_detect_rx` → OS logo auto-detect results (`apply_os_detect`),
-   - `app.tick_tunnels()` → tunnel health (`TunnelManager::check_health`) and keep-alive reconnect (`tick_reconnect`),
-   - `refresh_auth_cache()` — reloads the audit cache from SQLite when **≥10 s** have elapsed since the last refresh (respects the current audit filter/range).
+1. Optional opaque-background backfill (Settings toggle for transparent terminals).
+2. `Connecting | Session` modes render the fullscreen session view ([sessions](../workflows/sessions-sftp.md)).
+3. Otherwise the bento-grid dashboard chrome from `src/tui/dashboard_layout.rs`: header, tab bar, three-column body, footer. Tab body is dispatched by `active_tab`. (`src/tui/layout.rs`'s older `root_layout` appears superseded — likely dead code.)
+4. Overlay popups are dispatched on `app.mode`. `fit_popup` clamps popup rects because `u16::clamp` would otherwise panic and "crash the whole TUI on a terminal smaller than the popup".
 
-`refresh_audit_events()` is separate: it reloads the audit list immediately when the user changes audit filter/range or switches to the audit tab — not on every poll tick.
+- **Screens** (`src/tui/screens/`): hosts, sftp, tunnels, keys (identities), audit, help, palette, settings, keybind_editor, host_form, group_form, group_manage, field_picker, session_host_picker, tag_filter, tunnel_reconnect, keychain.
+- **Widgets** (`src/tui/widgets/`): header, footer, tab_bar, status_bar, host_list, hosts_panel, detail_panel, middle_stack (host card / agent / latency + SSH log panel), right_stack (recent hosts, auth sparkline, ping), panel_box.
+- **Theme** (`src/tui/theme.rs`): fixed hex palette (BG `#0b0d10`, green accent `#9ec99b`) with semantic style helpers and a sparkline ramp. Startup animation: `src/tui/animation.rs` (33 ms loop, toggleable in Settings).
 
-The headless path (`run_headless_loop`) draws **one** frame on a `TestBackend` (80×24) and exits; it does not run the full loop. CI smoke uses `--dry-run` or `SSHUB_AUTO_QUIT` instead of a real TTY.
+## File watcher (`src/watcher.rs`)
 
-## Application state
+A `notify` watcher monitors the ssh config's **parent directory**, not the file — editor rename-saves swap inodes and silently detach file-level watches. Events are debounced (300 ms) on a thread and delivered as `WatchEvent::ConfigChanged`, which triggers `app.reload_hosts()` in the event loop. This is the "hot reload" feature.
 
-`App` in `src/app/mod.rs` is the central state bag. It holds:
+## Where to go next
 
-- `hosts`, `filtered_indices`, `selected`: the host list and current selection.
-- `group_sections` / `nav_rows` / `collapsed_groups`: nested group tree structure.
-- `active_tab`: 0 hosts, 1 sftp, 2 tunnels, 3 identities, 4 audit.
-- `mode`: `AppMode` determines rendering and key dispatch (Normal, Search, HostForm, Session, ...).
-- `sessions`: open embedded PTY sessions with a tab strip shown in the header.
-- `sftp`, `tunnel_manager`, `ping_*`, `os_detect_*`: domain-specific runtime state.
-- `config`: the loaded `AppConfig`.
-- `auth_events_cache`, etc.: denormalized UI caches refreshed on demand.
-
-`src/app/types.rs` defines the core mode and data enums: `AppMode`, `SortMode`, `HostEntry`, `HostGroupSection`, `NavRow`, `VisualRow`, `AuditFilter`, `AuditRange`, `SETTINGS_ITEMS`, `TUNNEL_RECONNECT_FIELDS`.
-
-## Rendering
-
-`src/tui/mod.rs::render()` is the single frame entry point.
-
-- Embedded sessions (`Connecting` / `Session` modes) take over the whole frame via `src/session/render.rs`.
-- Otherwise the dashboard chrome is drawn: header, session strip, tab bar, body, footer.
-- The active tab dispatches body rendering to `render_hosts_body`, `render_sftp_body`, `render_tunnels_body`, `render_keys_body`, `render_audit_body`.
-- Overlay popups are rendered on top based on `AppMode`.
-
-`src/tui/theme.rs`, `src/tui/dashboard_layout.rs`, and `src/tui/widgets/*` provide reusable layout + widgets. `src/tui/animation.rs` handles the startup splash.
-
-## Input dispatch
-
-`src/app/keys.rs` implements `handle_key` (plus `handle_mouse` / `handle_paste` in `src/app/mouse.rs`). `handle_key` routes:
-
-- Global actions (quit, help, keybind editor, settings via hardcoded `Ctrl+H`, tab switching, zoom) first.
-- Mode-specific handling next (`handle_key_search`, `handle_key_host_form`, `handle_key_session`, ...).
-- Tab-specific handling last in `AppMode::Normal`: `handle_key_normal` (tab 0 hosts), `handle_key_sftp` (1), `handle_key_tunnels` (2), `handle_key_keychain` (3 identities), `handle_key_audit` (4).
-
-`src/app/mouse.rs` maps mouse clicks / scrolls to the same actions.
-
-Keybindings are user-remappable: actions are defined in `src/keybinds.rs`, loaded/saved to `config.toml`, and parsed in `src/app/util.rs` (`parse_keyspec`).
-
-## Background workers
-
-| Worker            | File(s)                              | Channel into app        | Purpose |
-|-------------------|--------------------------------------|-------------------------|---------|
-| SSH config watcher| `src/watcher.rs`                     | `watcher_rx`            | Detect renames/saves of `~/.ssh/config` and reload hosts. |
-| Ping              | `src/ping.rs`                        | `ping_rx`               | ICMP echo selected/visible hosts for latency sparkline. |
-| SSH probe log     | `src/ssh/probe.rs`, session connect | `probe_rx` (optional)   | Dashboard SSH log panel (`SshLogEntry`). Primary feed is session handshake diagnostics and `push_ssh_log` from connect; `spawn_ssh_probe` exists but is not wired at startup today. |
-| OS detection      | `src/osinfo/detect.rs`               | `os_detect_rx`          | SSH into a host once and parse `/etc/os-release` for the OS logo. |
-| SFTP              | `src/sftp/worker.rs`, `transport.rs` | `sftp_rx`               | Run libssh2 commands off the UI thread. |
-| Tunnel stderr     | `src/tunnel.rs`                      | internal `Arc<Mutex>`   | Drain `ssh -N` stderr for error diagnostics. |
-
-## Module responsibilities
-
-| Module            | What it owns |
-|-------------------|--------------|
-| `src/app/*`       | State, validation, workflows, input handling, tests. |
-| `src/tui/*`       | Pure rendering and layout, no state mutation beyond local UI caches. |
-| `src/session/*`   | Embedded PTY lifecycle, VT100 parsing, askpass secret injection, render. |
-| `src/session_log.rs` | Rotating PTY transcript files under the data dir. |
-| `src/tunnel.rs`   | Spawn/monitor `ssh -N` child processes and reconnect backoff. |
-| `src/sftp/*`      | SFTP model, synchronous libssh2 transport on a worker thread. |
-| `src/ssh/*`       | config parsing/import/export, resolver, agent info, host-key probe, argv builders. |
-| `src/store/*`     | SQLite `LauncherStore`, schema migrations, CRUD. |
-| `src/metadata/*`  | Legacy `MetadataDb`; still used for host metadata overlays. |
-| `src/launcher/*`  | External-terminal launchers (still present; embedded PTY is the default path). |
-| `src/import/*`    | Termius backup importer. |
-| `src/watcher.rs`  | `notify`-based config hot reload. |
-| `src/keybinds.rs` | Remappable keybinding definitions and defaults. |
-| `src/osinfo/*`    | OS detection + Braille/ANSI logos. |
-| `src/text_input.rs`| Cursor-aware text input widget used in forms and prompts. |
-| `src/search.rs`   | `nucleo` fuzzy search wrapper. |
-| `src/ping.rs`     | Host reachability / latency worker. |
-
-## Threading invariants
-
-- The main thread owns `App` and does all rendering and most state mutation.
-- Worker threads own their I/O (`watcher`, `ping`, `os_detect`, `sftp`, tunnel stderr drain, PTY child IO threads).
-- Data flows in via `std::sync::mpsc::Receiver` or shared `Arc<Mutex<...>>` snapshots.
-- The event loop polls/drains each channel every tick, so workers never block UI input.
-
-## Extension points
-
-- Add a tab: bump constants in `app/types.rs`, add rendering in `tui/mod.rs`, add key handling in `app/keys.rs` and `app/mod.rs`, add footer hints in `tui/widgets/footer.rs`.
-- Add a config section: extend `AppConfig` in `src/config.rs`, add defaults, save with `toml_edit`.
-- Add a keybind action: add the action to `keybinds.rs` defaults + `KeyAction` enum, wire it in `app/keys.rs`, and render a hint in the footer/help.
-- Add a migration: append to `src/store/migrate.rs` and bump `SCHEMA_VERSION`.
+- [Data model & storage](data-model.md) — what the event loop loads and persists.
+- [TUI dashboard workflow](../workflows/tui.md) — user-facing tabs, keys, and screens built on this state machine.
+- [Testing strategy](../testing/strategy.md) — how `AppDeps` doubles and `TestBackend` make this loop testable.

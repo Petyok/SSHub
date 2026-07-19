@@ -59,7 +59,7 @@ The settings overlay (`Ctrl+H`) — toggle an opaque background, OS logos, quit 
 - **Mosh transport** — per-host `Transport` field in the host form (`ssh` or `mosh`). Embedded sessions use `mosh` when selected; tunnels and SFTP stay ssh-only.
 - **Settings overlay** (`Ctrl+H`) — toggle session logging, opaque background (for transparent terminals), OS logos, quit confirmation, and the startup animation
 - **Hybrid sources** — hosts from `~/.ssh/config` (read-only) and launcher-managed (full CRUD) merge without duplicates
-- **Import/Export** — import from `~/.ssh/config` or Termius backups; export managed hosts back to ssh config format
+- **Import/Export**: import from `~/.ssh/config`, Termius backups, PuTTY (a Windows regedit `.reg` export or a Unix `~/.putty/sessions` directory), or mRemoteNG (`confCons.xml`); export managed hosts back to ssh config format. Only SSH sessions are imported (RDP/VNC/telnet entries are skipped), and encrypted mRemoteNG passwords are not decrypted (imported hosts carry no stored secret)
 - **Hot reload** — edits to `~/.ssh/config` update the host list live via file watcher
 - **Configurable keybindings** — rebind any action via Ctrl+K; stored in `config.toml`
 - **Mouse support** — click tabs, select rows, scroll panels, double-click to connect
@@ -123,6 +123,74 @@ sshub --help       # show options
 sshub db purge --yes-i-am-stupid
 ```
 
+## Headless CLI
+
+Beyond the TUI, `sshub` exposes a full command-line interface for scripting and
+automation: hosts, groups, identities, tunnels, SFTP, and the audit log, no
+terminal UI required. Add `--format json` to any listing or show command for
+machine-readable output (plain text is the default). Exit codes are stable:
+`0` success, `1` operational failure, `2` usage or bad flags. Destructive
+commands refuse to run without `--yes`.
+
+```bash
+# Hosts
+sshub list                                  # list hosts (alias for `host list`)
+sshub connect prod-web                       # open an SSH session to a host
+sshub host show prod-web --format json       # host details as JSON
+sshub host search web                        # fuzzy search
+sshub host add --name prod-web --address 10.0.0.5 --port 22 \
+    --username deploy --group prod --tags web,prod
+sshub host delete --name prod-web --yes      # destructive: needs --yes
+
+# Groups and identities
+sshub groups                                 # list host groups
+sshub group add --name prod
+sshub identity add --name work --username alice --private-key ~/.ssh/id_ed25519
+sshub identity agent-remove --name work      # ssh-add -d for the identity's key
+
+# Tunnels
+sshub tunnel list
+sshub tunnel create --host prod-web --type local --local-port 8080 \
+    --remote-host localhost --remote-port 80
+sshub tunnel start 3                          # start detached (by id, label, or port)
+sshub tunnel start 3 --foreground             # run in the foreground with keep-alive
+sshub tunnel stop 3
+
+# SFTP (one-shot, over a direct host)
+sshub sftp ls prod-web /var/log
+sshub sftp get prod-web /var/log/app.log ./app.log
+sshub sftp put prod-web ./deploy.tar.gz /tmp/deploy.tar.gz
+sshub sftp rm prod-web /tmp/deploy.tar.gz --yes
+
+# Audit log
+sshub audit list --status fail --days 7
+sshub audit stats --days 7
+
+# Inventory sync with ~/.ssh/config
+sshub import                                  # import hosts from ssh config (--from ssh)
+sshub import --from termius ./termius-export  # import a Termius export dir (L00t.csv)
+sshub import --from putty                      # import PuTTY sessions (~/.putty/sessions)
+sshub import --from putty ./sessions.reg       # or a Windows regedit .reg export
+sshub import --from mremoteng ./confCons.xml   # import an mRemoteNG confCons.xml
+sshub import --from putty --dry-run             # preview parsed hosts without writing
+sshub sync                                    # refresh ssh_config rows
+sshub export --stdout                         # print an ssh_config snippet
+
+# Shell completions
+sshub completions zsh > ~/.zsh/completions/_sshub
+sshub completions bash
+sshub completions fish
+```
+
+Run `sshub <command> --help` for a per-command usage block, or `man sshub`
+after `just install` (preview the page without installing with `just man`). See
+[openwiki/workflows/cli.md](openwiki/workflows/cli.md) for the full command tree.
+
+Shell completions are installed automatically by `just install` (bash and fish
+drop into auto-loaded dirs; zsh gets a sourced line appended to `~/.zshrc`).
+Run `just install-completions` to (re)install only the completions, or generate
+one yourself with `sshub completions bash|zsh|fish`.
+
 ### Data paths
 
 | Resource   | Default path                          |
@@ -170,6 +238,8 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | `D`                | Duplicate host            |
 | `f`                | Toggle favorite           |
 | `s`                | Cycle sort mode           |
+| `Alt`+arrows       | Move dashboard panel focus |
+| `z`                | Zoom focused panel (Esc to exit) |
 | `/`                | Fuzzy search              |
 | `#`                | Filter by tags (AND)      |
 | `Shift+G`          | Manage groups (nested)    |
@@ -221,11 +291,6 @@ initial_delay_ms = 1000     # 1 s (R overlay edits delays in seconds)
 max_delay_ms = 60000        # 60 s
 stable_secs = 5             # uptime before a spawn counts as up
 jitter_ratio = 0.25
-
-[terminal]
-# "kitty", "ghostty", or a custom command template
-launcher = "kitty"
-# custom_command = "alacritty -e ssh {host}"
 ```
 
 ## Development

@@ -4,15 +4,6 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum TerminalKind {
-    #[default]
-    Kitty,
-    Ghostty,
-    Custom,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppearanceConfig {
     #[serde(default = "default_true")]
@@ -243,11 +234,8 @@ impl Default for AppearanceConfig {
 /// User-remappable keybindings. See [`crate::keybinds`].
 pub use crate::keybinds::{KeyAction, KeybindsConfig};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppConfig {
-    #[serde(default)]
-    pub terminal: TerminalKind,
-    pub launch_command: Option<String>,
     #[serde(default)]
     pub appearance: AppearanceConfig,
     #[serde(default)]
@@ -256,19 +244,6 @@ pub struct AppConfig {
     pub tunnel_reconnect: TunnelReconnectConfig,
     #[serde(default)]
     pub keybinds: KeybindsConfig,
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            terminal: TerminalKind::Kitty,
-            launch_command: None,
-            appearance: AppearanceConfig::default(),
-            session_logging: SessionLoggingConfig::default(),
-            tunnel_reconnect: TunnelReconnectConfig::default(),
-            keybinds: KeybindsConfig::default(),
-        }
-    }
 }
 
 /// Path to `config.toml` inside [`config_dir`].
@@ -453,12 +428,15 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             &path,
-            "# my hand-written note\nterminal = \"kitty\"\nfuture_option = true  # keep me\n",
+            "# my hand-written note\nfuture_option = true  # keep me\n\n[appearance]\ndate_format = \"%Y-%m-%d %H:%M\"\n",
         )
         .unwrap();
 
         let config = AppConfig {
-            terminal: TerminalKind::Ghostty,
+            appearance: AppearanceConfig {
+                date_format: "%d/%m/%Y".to_string(),
+                ..AppearanceConfig::default()
+            },
             ..AppConfig::default()
         };
         save_config(&config).unwrap();
@@ -472,15 +450,16 @@ mod tests {
             after.contains("future_option = true"),
             "unknown key lost: {after}"
         );
-        assert!(after.contains("ghostty"), "our change not written: {after}");
+        assert!(
+            after.contains("%d/%m/%Y"),
+            "our change not written: {after}"
+        );
         std::env::remove_var("SSHUB_CONFIG_DIR");
     }
 
     #[test]
     fn parse_config_uses_defaults_for_empty_toml() {
         let config = parse_config_str("").unwrap();
-        assert_eq!(config.terminal, TerminalKind::Kitty);
-        assert!(config.launch_command.is_none());
         assert!(config.appearance.show_detail_panel);
         assert_eq!(config.appearance.date_format, "%Y-%m-%d %H:%M");
     }
@@ -572,6 +551,9 @@ mod tests {
 
     #[test]
     fn parse_config_applies_overrides() {
+        // Old configs may still carry the removed `terminal` / `launch_command`
+        // keys; they must be silently ignored (no deny_unknown_fields) so the
+        // rest of the config still loads.
         let toml = r#"
 terminal = "ghostty"
 launch_command = "foot ssh {host}"
@@ -581,8 +563,6 @@ show_detail_panel = false
 date_format = "%d/%m/%Y"
 "#;
         let config = parse_config_str(toml).unwrap();
-        assert_eq!(config.terminal, TerminalKind::Ghostty);
-        assert_eq!(config.launch_command.as_deref(), Some("foot ssh {host}"));
         assert!(!config.appearance.show_detail_panel);
         assert_eq!(config.appearance.date_format, "%d/%m/%Y");
     }
@@ -591,8 +571,6 @@ date_format = "%d/%m/%Y"
     fn parse_config_fixture_toml() {
         let fixture = include_str!("../tests/fixtures/config.toml");
         let config = parse_config_str(fixture).unwrap();
-        assert_eq!(config.terminal, TerminalKind::Kitty);
-        assert!(config.launch_command.is_none());
         assert!(config.appearance.show_detail_panel);
         assert_eq!(config.appearance.date_format, "%Y-%m-%d %H:%M");
     }
@@ -610,8 +588,6 @@ date_format = "%d/%m/%Y"
     fn default_config_toml_roundtrips() {
         let toml = default_config_toml().unwrap();
         let config = parse_config_str(&toml).unwrap();
-        assert_eq!(config.terminal, TerminalKind::Kitty);
-        assert!(config.launch_command.is_none());
         assert!(config.appearance.show_detail_panel);
         assert_eq!(config.appearance.date_format, "%Y-%m-%d %H:%M");
     }

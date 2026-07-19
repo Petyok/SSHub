@@ -13,7 +13,7 @@ use sshub::watcher::{spawn_config_watcher, WatchEvent, WATCHER_DEBOUNCE};
 #[path = "../support/mod.rs"]
 mod support;
 
-use support::{FixtureResolver, MockLauncher};
+use support::FixtureResolver;
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -56,7 +56,6 @@ fn config_file_change_triggers_reload() {
             resolver: Box::new(resolver),
             metadata,
             store: Arc::new(LauncherStore::open_in_memory().unwrap()),
-            launcher: Box::new(MockLauncher::new()),
             password_store: Box::new(sshub::credentials::NoopPasswordStore),
         },
     );
@@ -99,7 +98,6 @@ fn manual_reload_after_write_updates_host_list() {
             resolver: Box::new(resolver),
             metadata,
             store: Arc::new(LauncherStore::open_in_memory().unwrap()),
-            launcher: Box::new(MockLauncher::new()),
             password_store: Box::new(sshub::credentials::NoopPasswordStore),
         },
     );

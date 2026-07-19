@@ -1,9 +1,11 @@
 pub mod app;
+pub mod broadcast;
+pub mod cli;
 pub mod config;
 pub mod credentials;
+pub mod hosts;
 pub mod import;
 pub mod keybinds;
-pub mod launcher;
 pub mod metadata;
 pub mod osinfo;
 pub mod ping;
@@ -276,7 +278,14 @@ fn apply_auto_quit(app: &mut App, auto_quit: Option<&str>) -> Result<()> {
 }
 
 fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
-    if event::poll(POLL_INTERVAL)? {
+    // While a panel animation is playing, shorten the poll window so the render
+    // loop redraws at ~60fps and the slide is smooth; otherwise idle at 20fps.
+    let poll_window = if app.animating() {
+        std::time::Duration::from_millis(16)
+    } else {
+        POLL_INTERVAL
+    };
+    if event::poll(poll_window)? {
         // Drain everything already queued: one event per 50ms frame makes
         // paste into an embedded session crawl at ~20 chars/sec.
         loop {
@@ -357,6 +366,9 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
         }
     }
 
+    // Drive the live broadcast run (drain worker events, settle/dismiss panel).
+    app.tick_broadcast()?;
+
     // Check tunnel health and drive keep-alive reconnects.
     let _ = app.tick_tunnels();
 
@@ -412,6 +424,24 @@ fn install_panic_hook() {
 }
 
 #[cfg(test)]
+pub(crate) mod test_env {
+    use std::sync::{Mutex, MutexGuard};
+
+    /// Serializes tests that mutate the process-global `$HOME`. Environment
+    /// variables are shared across the whole test binary and cargo runs tests in
+    /// parallel, so concurrent setters corrupted each other's `$HOME` mid-test
+    /// (a flaky `keyfile`/`resolver` failure that surfaced on macOS). Hold the
+    /// returned guard for the entire test body.
+    static HOME_LOCK: Mutex<()> = Mutex::new(());
+
+    pub(crate) fn lock_home() -> MutexGuard<'static, ()> {
+        HOME_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::metadata::MetadataStore;
@@ -461,14 +491,12 @@ mod tests {
             ssh_g_dir: root.join("tests/fixtures/ssh_g"),
         };
         let metadata: Arc<dyn MetadataStore> = Arc::new(metadata::MetadataDb::default());
-        let launcher = launcher::launcher_from_config(&AppConfig::default()).unwrap();
         let mut app = App::new_with_deps(
             AppConfig::default(),
             AppDeps {
                 resolver: Box::new(resolver),
                 metadata: Arc::clone(&metadata),
                 store: Arc::new(LauncherStore::open_in_memory().unwrap()),
-                launcher,
                 password_store: Box::new(crate::credentials::NoopPasswordStore),
             },
         );
@@ -476,8 +504,6 @@ mod tests {
         assert!(!app.hosts.is_empty());
 
         let _: Box<dyn HostResolver> = Box::new(ssh::SshConfigResolver::default());
-        let _: Box<dyn launcher::TerminalLauncher> =
-            launcher::launcher_from_config(&AppConfig::default()).unwrap();
         let _: Box<dyn MetadataStore> = Box::new(metadata::MetadataDb::default());
     }
 
@@ -489,14 +515,6 @@ mod tests {
         }
         fn resolve_host(&self, _name: &str) -> anyhow::Result<crate::ssh::SshHost> {
             anyhow::bail!("no hosts")
-        }
-    }
-
-    // Minimal launcher that does nothing
-    struct NoopLauncher;
-    impl crate::launcher::TerminalLauncher for NoopLauncher {
-        fn launch_ssh_argv(&self, _argv: &[String]) -> anyhow::Result<()> {
-            Ok(())
         }
     }
 
@@ -512,7 +530,6 @@ mod tests {
             resolver: Box::new(NoopResolver),
             metadata,
             store,
-            launcher: Box::new(NoopLauncher),
             password_store: Box::new(crate::credentials::NoopPasswordStore),
         };
         let mut app = crate::app::App::new_with_deps(crate::config::AppConfig::default(), app_deps);

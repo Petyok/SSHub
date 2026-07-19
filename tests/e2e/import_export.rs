@@ -10,7 +10,7 @@ use sshub::store::{HostSource, LauncherStore, NewHost};
 #[path = "../support/mod.rs"]
 mod support;
 
-use support::{FixtureResolver, MockLauncher};
+use support::FixtureResolver;
 
 struct TestEnv {
     _config_dir: tempfile::TempDir,
@@ -33,7 +33,6 @@ impl TestEnv {
                 resolver: Box::new(FixtureResolver::from_manifest_dir()),
                 metadata: Arc::new(MetadataDb::default()),
                 store: Arc::clone(&store),
-                launcher: Box::new(MockLauncher::new()),
                 password_store: Box::new(sshub::credentials::NoopPasswordStore),
             },
         );

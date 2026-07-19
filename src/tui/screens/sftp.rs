@@ -124,7 +124,7 @@ fn render_pane(
     } else {
         format!("filter: {} ({}/{})", pane.filter, vis_n, total)
     };
-    render_panel_box(buf, rect, title, Some(&count));
+    render_panel_box(buf, rect, title, Some(&count), false);
 
     let inner_x = rect.x + 2;
     let inner_w = rect.width.saturating_sub(4) as usize;

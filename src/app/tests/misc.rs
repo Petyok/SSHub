@@ -27,6 +27,7 @@ pub(crate) fn keyevent_to_spec_roundtrips() {
 
 #[test]
 pub(crate) fn pasted_key_material_is_written_to_a_file_on_save() {
+    let _home = crate::test_env::lock_home();
     let dir = tempfile::tempdir().unwrap();
     std::env::set_var("HOME", dir.path());
 
@@ -252,7 +253,6 @@ pub(crate) fn sort_mode_label_orders_by_display_name() {
             resolver: Box::new(MockResolver::new(vec![])),
             metadata: Arc::new(MetadataDb::default()),
             store,
-            launcher: Box::new(RecordingLauncher::new().0),
             password_store: Box::new(crate::credentials::NoopPasswordStore),
         },
     );
@@ -286,7 +286,6 @@ pub(crate) fn reload_hosts_skips_unresolved_and_preserves_selection() {
     }
 
     let metadata: Arc<dyn MetadataStore> = Arc::new(MetadataDb::default());
-    let (launcher, _launched) = RecordingLauncher::new();
     let mut app = App::new_with_deps(
         AppConfig::default(),
         AppDeps {
@@ -295,7 +294,6 @@ pub(crate) fn reload_hosts_skips_unresolved_and_preserves_selection() {
             }),
             metadata,
             store: test_store(),
-            launcher: Box::new(launcher),
             password_store: Box::new(crate::credentials::NoopPasswordStore),
         },
     );
@@ -359,7 +357,6 @@ pub(crate) fn nested_groups_build_tree_and_collapse_subtree() {
             resolver: Box::new(MockResolver::new(vec![])),
             metadata: Arc::new(MetadataDb::default()),
             store,
-            launcher: Box::new(RecordingLauncher::new().0),
             password_store: Box::new(crate::credentials::NoopPasswordStore),
         },
     );
@@ -433,7 +430,6 @@ pub(crate) fn shift_arrow_jumps_between_group_headers() {
             resolver: Box::new(MockResolver::new(vec![])),
             metadata: Arc::new(MetadataDb::default()),
             store,
-            launcher: Box::new(RecordingLauncher::new().0),
             password_store: Box::new(crate::credentials::NoopPasswordStore),
         },
     );

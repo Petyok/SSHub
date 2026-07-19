@@ -238,8 +238,98 @@ impl Drop for SessionLogWriter {
     }
 }
 
-/// Delete oldest `.log` files beyond `retention_files` in `host_dir`.
-pub fn prune_retention(host_dir: &Path, retention_files: usize) -> Result<()> {
+/// Allocate a fresh log file path for external session capture (e.g. `script(1)`).
+pub fn allocate_log_path(
+    base_dir: impl AsRef<Path>,
+    host_name: &str,
+    host_id: Option<i64>,
+) -> Result<PathBuf> {
+    let base_dir = base_dir.as_ref().to_path_buf();
+    let logs_root = base_dir.join("logs");
+    fs::create_dir_all(&logs_root)
+        .with_context(|| format!("create session logs dir {}", logs_root.display()))?;
+    secure_fs::restrict_dir(&logs_root);
+
+    let host_dir = logs_root.join(host_log_dir_name(host_name, host_id));
+    fs::create_dir_all(&host_dir)
+        .with_context(|| format!("create host log dir {}", host_dir.display()))?;
+    secure_fs::restrict_dir(&host_dir);
+
+    let (path, _file) = create_unique_log_file(&host_dir, 0)?;
+    Ok(path)
+}
+
+/// Wrap `inner_argv` in a platform `script(1)` invocation for session logging.
+///
+/// Returns `None` when `script` is unavailable or the OS has no supported wrapper.
+pub fn wrap_script_command(log_path: &Path, inner_argv: &[String]) -> Option<Vec<String>> {
+    if inner_argv.is_empty() {
+        return None;
+    }
+    script_binary()?;
+
+    let log = log_path.to_string_lossy().into_owned();
+
+    #[cfg(target_os = "linux")]
+    {
+        let inner = shell_join(inner_argv);
+        Some(vec![
+            "script".into(),
+            "-q".into(),
+            "-a".into(),
+            log,
+            "-c".into(),
+            inner,
+        ])
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let mut argv = vec!["script".into(), "-q".into(), log];
+        argv.extend(inner_argv.iter().cloned());
+        return Some(argv);
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = log;
+        None
+    }
+}
+
+fn script_binary() -> Option<&'static str> {
+    if std::process::Command::new("which")
+        .arg("script")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        Some("script")
+    } else {
+        None
+    }
+}
+
+fn shell_join(argv: &[String]) -> String {
+    argv.iter()
+        .map(|a| shell_quote(a))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn shell_quote(s: &str) -> String {
+    if s.is_empty() {
+        return "''".into();
+    }
+    if s.chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '/')
+    {
+        return s.to_string();
+    }
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+fn prune_retention(host_dir: &Path, retention_files: usize) -> Result<()> {
     if retention_files == 0 {
         return Ok(());
     }

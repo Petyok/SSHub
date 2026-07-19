@@ -4,6 +4,7 @@ pub mod layout;
 pub mod screens;
 pub mod text;
 pub mod theme;
+pub mod tween;
 pub mod widgets;
 
 use ratatui::layout::Rect;
@@ -52,6 +53,56 @@ pub fn render(frame: &mut Frame, app: &App) {
             }
         }
     }
+    apply_panel_selection(frame, app);
+}
+
+/// Highlight the zoomed-panel text selection (issue #18) by reversing the
+/// selected cells, and extract the selected text into `app.panel_sel_text` for
+/// copy-on-release. Terminal-style stream selection over the dashboard body.
+fn apply_panel_selection(frame: &mut Frame, app: &App) {
+    if !app.panel_zoomed {
+        return;
+    }
+    let Some(sel) = app.panel_sel else {
+        app.panel_sel_text.borrow_mut().clear();
+        return;
+    };
+    let body = dashboard_layout::dashboard_layout_zoomed(frame.area(), app.ui_zoom).body;
+    // Order anchor/pointer in reading (row-major) order.
+    let (a, b) = (sel.anchor, sel.cur);
+    let (start, end) = if (a.1, a.0) <= (b.1, b.0) {
+        (a, b)
+    } else {
+        (b, a)
+    };
+    let last_row = body.y + body.height.saturating_sub(1);
+    let last_col = body.x + body.width.saturating_sub(1);
+    let y0 = start.1.max(body.y);
+    let y1 = end.1.min(last_row);
+    if y0 > y1 {
+        app.panel_sel_text.borrow_mut().clear();
+        return;
+    }
+    let buf = frame.buffer_mut();
+    let mut text = String::new();
+    for row in y0..=y1 {
+        let x_from = if row == start.1 { start.0 } else { body.x }.max(body.x);
+        let x_to = if row == end.1 { end.0 } else { last_col }.min(last_col);
+        let mut line = String::new();
+        if x_from <= x_to {
+            for col in x_from..=x_to {
+                if let Some(cell) = buf.cell_mut((col, row)) {
+                    cell.modifier.insert(Modifier::REVERSED);
+                    line.push_str(cell.symbol());
+                }
+            }
+        }
+        if row != y0 {
+            text.push('\n');
+        }
+        text.push_str(line.trim_end());
+    }
+    *app.panel_sel_text.borrow_mut() = text;
 }
 
 fn render_inner(frame: &mut Frame, app: &App) {
@@ -106,6 +157,30 @@ fn render_inner(frame: &mut Frame, app: &App) {
         _ => render_hosts_body(frame, &areas, app),
     }
 
+    // ── Broadcast mode (#3): docked live panel floats over the dashboard ──
+    // While a broadcast runs it lives in the bottom-right as a floating panel
+    // (or full-body when zoomed + focused). Other panels are not moved, just
+    // covered. The wizard overlays are handled in the mode match below.
+    if let Some(bc) = app.broadcast.as_ref() {
+        let body = dashboard_layout::dashboard_layout_zoomed(frame.area(), app.ui_zoom).body;
+        if app.panel_zoomed && app.focused_panel == crate::app::PanelId::Broadcast {
+            screens::broadcast::render_broadcast_zoomed(frame, body, app);
+        } else {
+            let rect = bc
+                .anim
+                .map(|a| a.rect_at(std::time::Instant::now()))
+                .unwrap_or_else(|| screens::broadcast::docked_rect(body));
+            let focused = app.focused_panel == crate::app::PanelId::Broadcast;
+            screens::broadcast::render_broadcast_panel(frame, rect, app, focused);
+        }
+    }
+    // Error toasts stack above the docked panel (and can outlive it), so draw
+    // them whenever any exist — not only while the panel is present.
+    if !app.broadcast_toasts.is_empty() {
+        let body = dashboard_layout::dashboard_layout_zoomed(frame.area(), app.ui_zoom).body;
+        screens::broadcast::render_broadcast_toasts(frame, body, app);
+    }
+
     // Horizontal rule 3: above footer (bold)
     let rule3 = row_in(area, areas.footer.y.saturating_sub(1));
     widgets::footer::render_hrule(frame, rule3, true);
@@ -113,6 +188,15 @@ fn render_inner(frame: &mut Frame, app: &App) {
     // Footer keybinds (tab-specific)
     let keybinds = footer_keybinds(app);
     widgets::footer::render_footer(frame, areas.footer, &keybinds);
+
+    // Issue #18: a zoomed panel hides the normal notice surface (status bar),
+    // so surface transient feedback (e.g. "copied N chars") as a toast pinned
+    // to the right of the footer until the next key press clears it.
+    if app.panel_zoomed {
+        if let Some(notice) = &app.host_notice {
+            render_zoom_toast(frame, areas.footer, notice);
+        }
+    }
 
     // ── Overlay popups ─────────────────────────────────────────
     match app.mode {
@@ -174,6 +258,9 @@ fn render_inner(frame: &mut Frame, app: &App) {
         AppMode::ConfirmQuit => render_confirm_quit_popup(frame, app),
         AppMode::ImportPrompt => render_import_prompt_popup(frame, app),
         AppMode::SftpPrompt => render_sftp_prompt_popup(frame, app),
+        AppMode::BroadcastPickTarget => screens::broadcast::render_pick_target(frame, app),
+        AppMode::BroadcastCommand => screens::broadcast::render_command_prompt(frame, app),
+        AppMode::BroadcastPreview => screens::broadcast::render_preview(frame, app),
         _ => {}
     }
 }
@@ -388,13 +475,76 @@ fn footer_keybinds(app: &App) -> Vec<(String, &'static str)> {
         ],
         _ => vec![("q".into(), "quit")],
     };
+    // Issue #18: surface the panel-zoom hint once a panel is focused/zoomed.
+    if app.active_tab == 0
+        && (app.panel_zoomed || app.focused_panel != crate::app::PanelId::default())
+    {
+        binds.push(("z".into(), if app.panel_zoomed { "unzoom" } else { "zoom" }));
+    }
+    if app.active_tab == 0 && app.panel_zoomed && app.focused_panel != crate::app::PanelId::Hosts {
+        let selectable = matches!(
+            app.focused_panel,
+            crate::app::PanelId::Ping | crate::app::PanelId::Recent
+        );
+        binds.push((
+            "\u{2191}\u{2193}".into(),
+            if selectable { "select" } else { "scroll" },
+        ));
+        if selectable {
+            binds.push(("\u{21b5}".into(), "connect"));
+        }
+    }
+    if app.active_tab == 0 && app.panel_zoomed {
+        binds.push(("drag".into(), "copy"));
+    }
+    // Broadcast mode (#3): running panel gets a cancel hint (and a zoom hint
+    // once focused); an active wizard step gets next/cancel.
+    if app.broadcast.is_some() {
+        binds.push(("x".into(), "cancel"));
+        if app.focused_panel == crate::app::PanelId::Broadcast {
+            binds.push(("z".into(), "zoom"));
+        }
+    } else if !app.broadcast_toasts.is_empty() {
+        binds.push(("x".into(), "clear errors"));
+    }
+    if matches!(
+        app.mode,
+        AppMode::BroadcastPickTarget | AppMode::BroadcastCommand | AppMode::BroadcastPreview
+    ) {
+        binds.push(("\u{21b5}".into(), "next"));
+        binds.push(("Esc".into(), "cancel"));
+    }
     if !app.sessions.is_empty() {
         binds.extend(app.config.keybinds.session_footer_hints());
     }
     binds
 }
 
+/// Draw a transient notice (issue #18) as a floating chip right-aligned on the
+/// row *above* the footer keybinds, used while a panel is zoomed and the normal
+/// status-bar notice surface is hidden. Sits above the hints so it never clips
+/// them.
+fn render_zoom_toast(frame: &mut Frame, footer: Rect, notice: &str) {
+    let label = format!(" {notice} ");
+    let w = label.chars().count() as u16;
+    if footer.width < w || footer.y == 0 {
+        return;
+    }
+    let x = footer.x + footer.width - w;
+    let y = footer.y - 1;
+    let style = theme::cyan().add_modifier(Modifier::REVERSED);
+    frame.buffer_mut().set_string(x, y, &label, style);
+}
+
 fn render_hosts_body(frame: &mut Frame, areas: &dashboard_layout::DashboardAreas, app: &App) {
+    // Issue #18: a zoomed panel takes over the whole dashboard body.
+    // Broadcast (#3) is a floating panel drawn from render_inner instead, so a
+    // zoomed Broadcast must not be handled here (it has no home in the hosts
+    // grid) — let render_inner's broadcast block own it.
+    if app.panel_zoomed && app.focused_panel != crate::app::PanelId::Broadcast {
+        render_zoomed_panel(frame, areas.body, app);
+        return;
+    }
     widgets::hosts_panel::render_hosts_panel(frame, areas.col_left, app);
     widgets::middle_stack::render_middle_stack(frame, areas.col_mid, app);
     widgets::right_stack::render_right_stack(frame, areas.col_right, app);
@@ -410,6 +560,25 @@ fn render_hosts_body(frame: &mut Frame, areas: &dashboard_layout::DashboardAreas
             log_bottom - log_top,
         );
         widgets::middle_stack::render_ssh_log_panel(frame, log_area, app);
+    }
+}
+
+/// Render just the focused panel into `area` (the full dashboard body) for the
+/// tmux-style zoom (issue #18).
+fn render_zoomed_panel(frame: &mut Frame, area: Rect, app: &App) {
+    use crate::app::PanelId;
+    match app.focused_panel {
+        PanelId::Hosts => widgets::hosts_panel::render_hosts_panel(frame, area, app),
+        PanelId::Detail => widgets::middle_stack::render_host_panel(frame.buffer_mut(), area, app),
+        PanelId::Agent => widgets::middle_stack::render_agent_panel(frame.buffer_mut(), area, app),
+        PanelId::Latency => {
+            widgets::middle_stack::render_latency_panel(frame.buffer_mut(), area, app)
+        }
+        PanelId::Recent => widgets::right_stack::render_recent_panel(frame.buffer_mut(), area, app),
+        PanelId::Auth => widgets::right_stack::render_auth_panel(frame.buffer_mut(), area, app),
+        PanelId::Ping => widgets::right_stack::render_ping_panel(frame.buffer_mut(), area, app),
+        PanelId::SshLog => widgets::middle_stack::render_ssh_log_panel(frame, area, app),
+        PanelId::Broadcast => screens::broadcast::render_broadcast_zoomed(frame, area, app),
     }
 }
 
@@ -692,7 +861,6 @@ mod tests {
     use super::*;
     use crate::app::{AppDeps, HostEntry};
     use crate::config::AppConfig;
-    use crate::launcher::TerminalLauncher;
     use crate::metadata::{HostMetadata, MetadataDb};
     use crate::ssh::{HostResolver, SshHost};
     use crate::store::LauncherStore;
@@ -716,14 +884,6 @@ mod tests {
         }
     }
 
-    struct NoopLauncher;
-
-    impl TerminalLauncher for NoopLauncher {
-        fn launch_ssh_argv(&self, _ssh_argv: &[String]) -> anyhow::Result<()> {
-            Ok(())
-        }
-    }
-
     fn buffer_contains(buffer: &Buffer, needle: &str) -> bool {
         let area = buffer.area;
         for y in area.y..area.y + area.height {
@@ -744,7 +904,6 @@ mod tests {
                 resolver: Box::new(EmptyResolver),
                 metadata: Arc::new(MetadataDb::default()),
                 store: test_store(),
-                launcher: Box::new(NoopLauncher),
                 password_store: Box::new(crate::credentials::NoopPasswordStore),
             },
         );
@@ -997,7 +1156,6 @@ mod tests {
                 resolver: Box::new(EmptyResolver),
                 metadata: Arc::new(MetadataDb::default()),
                 store,
-                launcher: Box::new(NoopLauncher),
                 password_store: Box::new(crate::credentials::NoopPasswordStore),
             },
         );
@@ -1059,7 +1217,6 @@ mod tests {
                 resolver: Box::new(EmptyResolver),
                 metadata: Arc::new(MetadataDb::default()),
                 store,
-                launcher: Box::new(NoopLauncher),
                 password_store: Box::new(crate::credentials::NoopPasswordStore),
             },
         );

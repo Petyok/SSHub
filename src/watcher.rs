@@ -125,7 +125,16 @@ mod tests {
         }
     }
 
+    // Exercises real FSEvents/inotify delivery. On macOS CI, FSEvents delivery
+    // for a temp file is unreliable (events arrive seconds late or not at all in
+    // the sandbox), which made this flake repeatedly despite generous timeouts.
+    // The watcher wiring is deterministically covered on Linux (inotify); skip
+    // the real-delivery assertion on macOS. Run locally with `--ignored`.
     #[test]
+    #[cfg_attr(
+        target_os = "macos",
+        ignore = "FSEvents delivery is unreliable on macOS CI; covered on Linux"
+    )]
     fn spawn_config_watcher_emits_after_write() {
         let mut file = NamedTempFile::new().unwrap();
         writeln!(file, "Host alpha").unwrap();
@@ -141,7 +150,14 @@ mod tests {
         }
     }
 
+    // Same real-FSEvents caveat as spawn_config_watcher_emits_after_write: the
+    // debounce coalescing logic is validated on Linux; macOS CI can't deliver
+    // FSEvents reliably enough to assert "exactly one" within any bound.
     #[test]
+    #[cfg_attr(
+        target_os = "macos",
+        ignore = "FSEvents delivery is unreliable on macOS CI; covered on Linux"
+    )]
     fn debounce_coalesces_rapid_writes() {
         let mut file = NamedTempFile::new().unwrap();
         writeln!(file, "Host one").unwrap();
