@@ -4,8 +4,6 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
-## [0.10.0] - 2026-07-19
-
 ### Added
 
 - **Broadcast mode** - run one command across a whole group or tag at once
