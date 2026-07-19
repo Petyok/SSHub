@@ -48,14 +48,12 @@ pub(crate) fn e_enters_host_detail_with_edit_buffers() {
 pub(crate) fn host_detail_save_persists_metadata() {
     let metadata: Arc<dyn MetadataStore> = Arc::new(MetadataDb::default());
     let resolver = MockResolver::new(vec![("web", host("web"))]);
-    let (launcher, _launched) = RecordingLauncher::new();
     let mut app = App::new_with_deps(
         AppConfig::default(),
         AppDeps {
             resolver: Box::new(resolver),
             metadata: Arc::clone(&metadata),
             store: test_store(),
-            launcher: Box::new(launcher),
             password_store: Box::new(crate::credentials::NoopPasswordStore),
         },
     );
@@ -92,14 +90,12 @@ pub(crate) fn host_detail_save_persists_metadata() {
 pub(crate) fn host_detail_save_preserves_session_logging_override() {
     let metadata: Arc<dyn MetadataStore> = Arc::new(MetadataDb::default());
     let resolver = MockResolver::new(vec![("web", host("web"))]);
-    let (launcher, _launched) = RecordingLauncher::new();
     let mut app = App::new_with_deps(
         AppConfig::default(),
         AppDeps {
             resolver: Box::new(resolver),
             metadata: Arc::clone(&metadata),
             store: test_store(),
-            launcher: Box::new(launcher),
             password_store: Box::new(crate::credentials::NoopPasswordStore),
         },
     );
@@ -126,14 +122,12 @@ pub(crate) fn host_detail_save_preserves_session_logging_override() {
 pub(crate) fn host_detail_session_logging_cycle_and_save() {
     let metadata: Arc<dyn MetadataStore> = Arc::new(MetadataDb::default());
     let resolver = MockResolver::new(vec![("web", host("web"))]);
-    let (launcher, _launched) = RecordingLauncher::new();
     let mut app = App::new_with_deps(
         AppConfig::default(),
         AppDeps {
             resolver: Box::new(resolver),
             metadata: Arc::clone(&metadata),
             store: test_store(),
-            launcher: Box::new(launcher),
             password_store: Box::new(crate::credentials::NoopPasswordStore),
         },
     );
@@ -176,14 +170,12 @@ pub(crate) fn host_detail_managed_save_persists_session_logging() {
         .create_host(&NewHost::launcher("managed", "10.0.0.1"))
         .unwrap();
     let resolver = MockResolver::new(vec![]);
-    let (launcher, _launched) = RecordingLauncher::new();
     let mut app = App::new_with_deps(
         AppConfig::default(),
         AppDeps {
             resolver: Box::new(resolver),
             metadata: Arc::new(MetadataDb::default()),
             store: Arc::clone(&store),
-            launcher: Box::new(launcher),
             password_store: Box::new(crate::credentials::NoopPasswordStore),
         },
     );
@@ -208,14 +200,12 @@ pub(crate) fn host_detail_managed_save_persists_session_logging() {
 pub(crate) fn host_detail_esc_discards_unsaved_edits() {
     let metadata: Arc<dyn MetadataStore> = Arc::new(MetadataDb::default());
     let resolver = MockResolver::new(vec![("web", host("web"))]);
-    let (launcher, _launched) = RecordingLauncher::new();
     let mut app = App::new_with_deps(
         AppConfig::default(),
         AppDeps {
             resolver: Box::new(resolver),
             metadata: Arc::clone(&metadata),
             store: test_store(),
-            launcher: Box::new(launcher),
             password_store: Box::new(crate::credentials::NoopPasswordStore),
         },
     );

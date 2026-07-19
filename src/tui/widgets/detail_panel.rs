@@ -266,7 +266,6 @@ mod tests {
     use super::*;
     use crate::app::{AppDeps, HostDetailEdit};
     use crate::config::AppConfig;
-    use crate::launcher::TerminalLauncher;
     use crate::metadata::MetadataDb;
     use crate::ssh::{HostResolver, SshHost};
     use crate::store::LauncherStore;
@@ -288,14 +287,6 @@ mod tests {
         }
     }
 
-    struct NoopLauncher;
-
-    impl TerminalLauncher for NoopLauncher {
-        fn launch_ssh_argv(&self, _ssh_argv: &[String]) -> anyhow::Result<()> {
-            Ok(())
-        }
-    }
-
     #[test]
     fn format_utc_ymd_hm_known_epoch() {
         // 2024-01-01 00:00:00 UTC
@@ -310,7 +301,6 @@ mod tests {
                 resolver: Box::new(EmptyResolver),
                 metadata: Arc::new(MetadataDb::default()),
                 store: test_store(),
-                launcher: Box::new(NoopLauncher),
                 password_store: Box::new(crate::credentials::NoopPasswordStore),
             },
         );

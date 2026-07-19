@@ -36,55 +36,15 @@ impl HostResolver for MockResolver {
     }
 }
 
-struct RecordingLauncher {
-    last: Arc<std::sync::Mutex<Option<String>>>,
-}
-
-impl RecordingLauncher {
-    fn new() -> (Self, Arc<std::sync::Mutex<Option<String>>>) {
-        let last = Arc::new(std::sync::Mutex::new(None));
-        (
-            Self {
-                last: Arc::clone(&last),
-            },
-            last,
-        )
-    }
-
-    #[allow(dead_code)]
-    fn take(last: &Arc<std::sync::Mutex<Option<String>>>) -> Option<String> {
-        last.lock().ok()?.take()
-    }
-}
-
-impl TerminalLauncher for RecordingLauncher {
-    fn launch(&self, host: &SshHost) -> Result<()> {
-        if let Ok(mut guard) = self.last.lock() {
-            *guard = Some(host.name.clone());
-        }
-        Ok(())
-    }
-
-    fn launch_ssh_argv(&self, ssh_argv: &[String]) -> Result<()> {
-        // Record last argument (the hostname/alias) for test assertions
-        if let Ok(mut guard) = self.last.lock() {
-            *guard = ssh_argv.last().cloned();
-        }
-        Ok(())
-    }
-}
-
 pub(crate) fn test_app(hosts: Vec<(&str, SshHost)>) -> App {
     let resolver = MockResolver::new(hosts);
     let metadata: Arc<dyn MetadataStore> = Arc::new(MetadataDb::default());
-    let (launcher, _launched) = RecordingLauncher::new();
     let mut app = App::new_with_deps(
         AppConfig::default(),
         AppDeps {
             resolver: Box::new(resolver),
             metadata,
             store: test_store(),
-            launcher: Box::new(launcher),
             password_store: Box::new(crate::credentials::NoopPasswordStore),
         },
     );

@@ -456,7 +456,7 @@ fn drain_cancel(cmd_rx: &Receiver<SftpCommand>) -> bool {
 #[cfg(test)]
 mod tests {
     //! Offline worker/reducer tests. A [`MockTransport`] stands in for the
-    //! libssh2 backend (mirrors `tests/support::MockLauncher`): it serves canned
+    //! libssh2 backend: it serves canned
     //! listings and fake transfers that emit progress through the worker's
     //! callback, so the real private `worker_loop` / `run_queue` reducers run
     //! without a network, filesystem, or SSH session.
