@@ -105,7 +105,19 @@ fn draw_host_row(
 /// Header title + count badge shared by the docked and zoomed views.
 fn header_parts(bc: &crate::app::BroadcastState) -> (String, String) {
     let title = format!("cast: {} \u{00b7} {}", bc.command, bc.target_label);
-    let badge = format!("{}/{}", done_count(&bc.results), bc.results.len());
+    let fails = crate::broadcast::failure_count(&bc.results);
+    let badge = if fails > 0 {
+        // Surface the failure count right in the title bar so errors are obvious
+        // at a glance even when the failing rows scroll out of a short panel.
+        format!(
+            "{}/{} \u{00b7} {}\u{2717}",
+            done_count(&bc.results),
+            bc.results.len(),
+            fails
+        )
+    } else {
+        format!("{}/{}", done_count(&bc.results), bc.results.len())
+    };
     (title, badge)
 }
 

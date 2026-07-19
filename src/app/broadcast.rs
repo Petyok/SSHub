@@ -39,9 +39,11 @@ impl App {
             self.host_notice = Some("A broadcast run is already in progress.".into());
             return;
         }
-        if self.broadcast.take().is_some() && self.focused_panel == PanelId::Broadcast {
-            self.focused_panel = PanelId::default();
-            self.panel_zoomed = false;
+        // A finished panel still on screen: send it off with the exit slide
+        // rather than yanking it, then open the wizard over it. tick_broadcast
+        // removes it once the slide ends.
+        if self.broadcast.is_some() {
+            self.slide_broadcast_out();
         }
 
         // `self.groups` is the real user-group list (the reserved Favorites
@@ -343,6 +345,31 @@ impl App {
         // to inspect output, which pauses the countdown as intended.
     }
 
+    /// Send the docked panel off with the exit slide (dock -> off the right
+    /// edge) and mark it `Leaving`; `tick_broadcast` removes it once the slide
+    /// finishes. Used both by the auto-dismiss countdown and by re-opening the
+    /// wizard over a finished panel. No-op if there's no panel.
+    fn slide_broadcast_out(&mut self) {
+        let body =
+            crate::tui::dashboard_layout::dashboard_layout_zoomed(self.terminal_area, self.ui_zoom)
+                .body;
+        if let Some(bc) = self.broadcast.as_mut() {
+            let dock = crate::tui::screens::broadcast::docked_rect(body);
+            let mut exit = dock;
+            exit.x = body.x + body.width; // fully off to the right
+            bc.anim = Some(crate::tui::tween::SlideAnim::new(
+                dock,
+                exit,
+                crate::broadcast::ENTRY_ANIM,
+            ));
+            bc.phase = BroadcastPhase::Leaving;
+        }
+        if self.focused_panel == PanelId::Broadcast {
+            self.focused_panel = PanelId::default();
+            self.panel_zoomed = false;
+        }
+    }
+
     /// Poll-loop step for a live run: drain worker events, fold them into the
     /// row table, retire the entry animation, arm the completion countdown,
     /// write the one-shot audit trail, and drive settle/pause/dismiss.
@@ -408,12 +435,10 @@ impl App {
         }
 
         // Pause the countdown while the panel is focused (zoom keeps it focused);
-        // resume it when focus leaves; once it elapses, play an exit slide
-        // (dock -> off the right edge) and remove the panel when it finishes.
+        // resume it when focus leaves; once it elapses, play the exit slide and
+        // remove the panel when the slide finishes.
         let focused = self.focused_panel == PanelId::Broadcast;
-        let body =
-            crate::tui::dashboard_layout::dashboard_layout_zoomed(self.terminal_area, self.ui_zoom)
-                .body;
+        let mut start_exit = false;
         let mut dismiss = false;
         if let Some(bc) = self.broadcast.as_mut() {
             match bc.phase {
@@ -421,15 +446,7 @@ impl App {
                     if focused {
                         bc.phase = BroadcastPhase::Paused;
                     } else if done_at.elapsed() >= crate::broadcast::DISMISS {
-                        let dock = crate::tui::screens::broadcast::docked_rect(body);
-                        let mut exit = dock;
-                        exit.x = body.x + body.width; // slide fully off to the right
-                        bc.anim = Some(crate::tui::tween::SlideAnim::new(
-                            dock,
-                            exit,
-                            crate::broadcast::ENTRY_ANIM,
-                        ));
-                        bc.phase = BroadcastPhase::Leaving;
+                        start_exit = true;
                     }
                 }
                 BroadcastPhase::Paused => {
@@ -438,13 +455,16 @@ impl App {
                     }
                 }
                 BroadcastPhase::Leaving => {
-                    // anim is cleared above once done; remove the panel then.
+                    // anim is retired above once done; remove the panel then.
                     if bc.anim.is_none() {
                         dismiss = true;
                     }
                 }
                 BroadcastPhase::Running => {}
             }
+        }
+        if start_exit {
+            self.slide_broadcast_out();
         }
         if dismiss {
             self.broadcast = None;

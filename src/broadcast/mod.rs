@@ -427,15 +427,33 @@ pub fn all_terminal(results: &[HostResult]) -> bool {
     results.iter().all(|r| r.state.is_terminal())
 }
 
-/// Render-order rank: Failed(0) < Running(1) < Pending(2) < Done(3), so
-/// failures surface first and unfinished work sits above completed rows.
+/// Render-order rank: failures(0) < Running(1) < Pending(2) < clean exit(3), so
+/// anything that went wrong surfaces first and unfinished work sits above the
+/// clean completions. A **non-zero exit code counts as a failure** — the remote
+/// command ran but reported an error — not just ssh-level failures.
 fn state_rank(state: &HostState) -> u8 {
     match state {
         HostState::Failed { .. } => 0,
+        HostState::Done { exit } if *exit != 0 => 0,
         HostState::Running => 1,
         HostState::Pending => 2,
         HostState::Done { .. } => 3,
     }
+}
+
+/// A host result counts as a failure when ssh itself failed OR the remote
+/// command returned a non-zero exit code.
+pub fn is_failure(r: &HostResult) -> bool {
+    match r.state {
+        HostState::Failed { .. } => true,
+        HostState::Done { exit } => exit != 0,
+        HostState::Pending | HostState::Running => false,
+    }
+}
+
+/// Number of failed hosts (ssh failure or non-zero exit) in a finished/partial run.
+pub fn failure_count(results: &[HostResult]) -> usize {
+    results.iter().filter(|r| is_failure(r)).count()
 }
 
 /// Render-time view ordering (does NOT mutate `results`): indices into
@@ -821,8 +839,27 @@ mod tests {
         ];
         let order = failures_first(&results);
         let ids: Vec<i64> = order.iter().map(|&i| results[i].host_id).collect();
-        // Failed(3,5) < Running(2) < Pending(4) < Done(1,6); ties keep input order.
-        assert_eq!(ids, vec![3, 5, 2, 4, 1, 6]);
+        // Failures first — ssh-failed (3,5) AND non-zero exit (6) — then
+        // Running(2) < Pending(4) < clean exit(1); ties keep input order.
+        assert_eq!(ids, vec![3, 5, 6, 2, 4, 1]);
+    }
+
+    #[test]
+    fn failure_count_includes_nonzero_exits() {
+        let mk = |state| HostResult {
+            host_id: 0,
+            host_name: String::new(),
+            state,
+            stdout: String::new(),
+            stderr: String::new(),
+        };
+        let results = vec![
+            mk(HostState::Done { exit: 0 }),
+            mk(HostState::Done { exit: 1 }),
+            mk(HostState::Failed { reason: "x".into() }),
+            mk(HostState::Running),
+        ];
+        assert_eq!(failure_count(&results), 2); // exit 1 + ssh failure
     }
 
     #[test]
