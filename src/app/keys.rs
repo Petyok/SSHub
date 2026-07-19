@@ -70,6 +70,9 @@ impl App {
             AppMode::TagFilter => self.handle_key_tag_filter(key),
             AppMode::HostDetail => self.handle_key_host_detail(key),
             AppMode::TunnelForm => self.handle_key_tunnel_form(key),
+            AppMode::BroadcastPickTarget => self.handle_key_broadcast_pick(key),
+            AppMode::BroadcastCommand => self.handle_key_broadcast_command(key),
+            AppMode::BroadcastPreview => self.handle_key_broadcast_preview(key),
             AppMode::Connecting | AppMode::Session => self.handle_key_session(key),
             AppMode::Normal => match self.active_tab {
                 1 => self.handle_key_sftp(key),
@@ -89,6 +92,29 @@ impl App {
         }
 
         if self.try_tab_switch(&key)? {
+            return Ok(());
+        }
+
+        // Broadcast (#3). The cancel key does double duty, claimed before any
+        // other binding: cancel a live run, or (nothing running) clear the error
+        // toasts. Works regardless of focus, matching the always-shown footer
+        // hint. `open_broadcast` refuses a second concurrent run.
+        if self.is_action(KeyAction::BroadcastCancel, &key)
+            && (self.broadcast.is_some() || !self.broadcast_toasts.is_empty())
+        {
+            if self
+                .broadcast
+                .as_ref()
+                .is_some_and(|b| !crate::broadcast::all_terminal(&b.results))
+            {
+                self.cancel_broadcast();
+            } else {
+                self.broadcast_toasts.clear();
+            }
+            return Ok(());
+        }
+        if self.is_action(KeyAction::Broadcast, &key) {
+            self.open_broadcast();
             return Ok(());
         }
 
@@ -285,6 +311,12 @@ impl App {
             return;
         }
         if let Some(next) = self.focused_panel.neighbor(dir) {
+            // The Broadcast panel only exists while a run is live (#3); its
+            // neighbor edges are always present in the grid, so skip the move
+            // when there's nothing to focus.
+            if next == PanelId::Broadcast && self.broadcast.is_none() {
+                return;
+            }
             self.focused_panel = next;
             self.panel_scroll.set(0);
             self.panel_sel = None;

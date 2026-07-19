@@ -1,4 +1,5 @@
 mod audit;
+mod broadcast;
 mod connect;
 mod field_picker;
 mod groups;
@@ -149,6 +150,19 @@ pub struct App {
     /// `self.hosts` indices for the rows of a zoomed host-list panel (ping /
     /// recent), filled by their render so Enter connects the selected row.
     pub zoomed_host_idx: std::cell::RefCell<Vec<usize>>,
+    /// Live broadcast run (issue #3): `Some` while a fleet command runs or its
+    /// finished panel is settling. Owns the run's mpsc + cancel flag.
+    pub broadcast: Option<BroadcastState>,
+    /// Pre-run broadcast wizard state (pick target / command / preview);
+    /// `Some` only while an `AppMode::Broadcast*` stage is active.
+    pub broadcast_setup: Option<BroadcastSetup>,
+    /// Transient error popups (issue #3), newest last; slide in from the right
+    /// above the broadcast panel and expire after `TOAST_TTL`.
+    pub broadcast_toasts: Vec<BroadcastToast>,
+    /// When the docked panel was dismissed, so lingering toasts can animate
+    /// *down* into the freed space instead of jumping. `None` while a panel is
+    /// present (or before any run).
+    pub broadcast_panel_gone_at: Option<std::time::Instant>,
     pub group_manage_selected: usize,
     pub group_notice: Option<String>,
     pub host_notice: Option<String>,
@@ -297,6 +311,10 @@ impl App {
             panel_sel: None,
             panel_sel_text: std::cell::RefCell::new(String::new()),
             zoomed_host_idx: std::cell::RefCell::new(Vec::new()),
+            broadcast: None,
+            broadcast_setup: None,
+            broadcast_toasts: Vec::new(),
+            broadcast_panel_gone_at: None,
             group_manage_selected: 0,
             group_notice: None,
             host_notice: None,

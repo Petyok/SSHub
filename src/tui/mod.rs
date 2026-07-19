@@ -4,6 +4,7 @@ pub mod layout;
 pub mod screens;
 pub mod text;
 pub mod theme;
+pub mod tween;
 pub mod widgets;
 
 use ratatui::layout::Rect;
@@ -156,6 +157,30 @@ fn render_inner(frame: &mut Frame, app: &App) {
         _ => render_hosts_body(frame, &areas, app),
     }
 
+    // ── Broadcast mode (#3): docked live panel floats over the dashboard ──
+    // While a broadcast runs it lives in the bottom-right as a floating panel
+    // (or full-body when zoomed + focused). Other panels are not moved, just
+    // covered. The wizard overlays are handled in the mode match below.
+    if let Some(bc) = app.broadcast.as_ref() {
+        let body = dashboard_layout::dashboard_layout_zoomed(frame.area(), app.ui_zoom).body;
+        if app.panel_zoomed && app.focused_panel == crate::app::PanelId::Broadcast {
+            screens::broadcast::render_broadcast_zoomed(frame, body, app);
+        } else {
+            let rect = bc
+                .anim
+                .map(|a| a.rect_at(std::time::Instant::now()))
+                .unwrap_or_else(|| screens::broadcast::docked_rect(body));
+            let focused = app.focused_panel == crate::app::PanelId::Broadcast;
+            screens::broadcast::render_broadcast_panel(frame, rect, app, focused);
+        }
+    }
+    // Error toasts stack above the docked panel (and can outlive it), so draw
+    // them whenever any exist — not only while the panel is present.
+    if !app.broadcast_toasts.is_empty() {
+        let body = dashboard_layout::dashboard_layout_zoomed(frame.area(), app.ui_zoom).body;
+        screens::broadcast::render_broadcast_toasts(frame, body, app);
+    }
+
     // Horizontal rule 3: above footer (bold)
     let rule3 = row_in(area, areas.footer.y.saturating_sub(1));
     widgets::footer::render_hrule(frame, rule3, true);
@@ -233,6 +258,9 @@ fn render_inner(frame: &mut Frame, app: &App) {
         AppMode::ConfirmQuit => render_confirm_quit_popup(frame, app),
         AppMode::ImportPrompt => render_import_prompt_popup(frame, app),
         AppMode::SftpPrompt => render_sftp_prompt_popup(frame, app),
+        AppMode::BroadcastPickTarget => screens::broadcast::render_pick_target(frame, app),
+        AppMode::BroadcastCommand => screens::broadcast::render_command_prompt(frame, app),
+        AppMode::BroadcastPreview => screens::broadcast::render_preview(frame, app),
         _ => {}
     }
 }
@@ -469,6 +497,23 @@ fn footer_keybinds(app: &App) -> Vec<(String, &'static str)> {
     if app.active_tab == 0 && app.panel_zoomed {
         binds.push(("drag".into(), "copy"));
     }
+    // Broadcast mode (#3): running panel gets a cancel hint (and a zoom hint
+    // once focused); an active wizard step gets next/cancel.
+    if app.broadcast.is_some() {
+        binds.push(("x".into(), "cancel"));
+        if app.focused_panel == crate::app::PanelId::Broadcast {
+            binds.push(("z".into(), "zoom"));
+        }
+    } else if !app.broadcast_toasts.is_empty() {
+        binds.push(("x".into(), "clear errors"));
+    }
+    if matches!(
+        app.mode,
+        AppMode::BroadcastPickTarget | AppMode::BroadcastCommand | AppMode::BroadcastPreview
+    ) {
+        binds.push(("\u{21b5}".into(), "next"));
+        binds.push(("Esc".into(), "cancel"));
+    }
     if !app.sessions.is_empty() {
         binds.extend(app.config.keybinds.session_footer_hints());
     }
@@ -493,7 +538,10 @@ fn render_zoom_toast(frame: &mut Frame, footer: Rect, notice: &str) {
 
 fn render_hosts_body(frame: &mut Frame, areas: &dashboard_layout::DashboardAreas, app: &App) {
     // Issue #18: a zoomed panel takes over the whole dashboard body.
-    if app.panel_zoomed {
+    // Broadcast (#3) is a floating panel drawn from render_inner instead, so a
+    // zoomed Broadcast must not be handled here (it has no home in the hosts
+    // grid) — let render_inner's broadcast block own it.
+    if app.panel_zoomed && app.focused_panel != crate::app::PanelId::Broadcast {
         render_zoomed_panel(frame, areas.body, app);
         return;
     }
@@ -530,6 +578,7 @@ fn render_zoomed_panel(frame: &mut Frame, area: Rect, app: &App) {
         PanelId::Auth => widgets::right_stack::render_auth_panel(frame.buffer_mut(), area, app),
         PanelId::Ping => widgets::right_stack::render_ping_panel(frame.buffer_mut(), area, app),
         PanelId::SshLog => widgets::middle_stack::render_ssh_log_panel(frame, area, app),
+        PanelId::Broadcast => screens::broadcast::render_broadcast_zoomed(frame, area, app),
     }
 }
 

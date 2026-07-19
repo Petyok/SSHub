@@ -1,4 +1,5 @@
 pub mod app;
+pub mod broadcast;
 pub mod cli;
 pub mod config;
 pub mod credentials;
@@ -277,7 +278,14 @@ fn apply_auto_quit(app: &mut App, auto_quit: Option<&str>) -> Result<()> {
 }
 
 fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
-    if event::poll(POLL_INTERVAL)? {
+    // While a panel animation is playing, shorten the poll window so the render
+    // loop redraws at ~60fps and the slide is smooth; otherwise idle at 20fps.
+    let poll_window = if app.animating() {
+        std::time::Duration::from_millis(16)
+    } else {
+        POLL_INTERVAL
+    };
+    if event::poll(poll_window)? {
         // Drain everything already queued: one event per 50ms frame makes
         // paste into an embedded session crawl at ~20 chars/sec.
         loop {
@@ -357,6 +365,9 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
             app.apply_os_detect(ev)?;
         }
     }
+
+    // Drive the live broadcast run (drain worker events, settle/dismiss panel).
+    app.tick_broadcast()?;
 
     // Check tunnel health and drive keep-alive reconnects.
     let _ = app.tick_tunnels();

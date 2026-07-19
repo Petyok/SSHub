@@ -355,6 +355,16 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
+    (@fn broadcast $($key:literal),* $(,)?) => {
+        fn default_kb_broadcast() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
+    (@fn broadcast_cancel $($key:literal),* $(,)?) => {
+        fn default_kb_broadcast_cancel() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
 }
 
 kb_defaults! {
@@ -427,6 +437,8 @@ kb_defaults! {
     focus_panel_right => ["Alt+Right"],
     focus_panel_up => ["Alt+Up"],
     focus_panel_down => ["Alt+Down"],
+    broadcast => ["b"],
+    broadcast_cancel => ["x"],
 }
 /// An action whose keybinding is user-configurable and editable in the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -500,11 +512,13 @@ pub enum KeyAction {
     FocusPanelRight,
     FocusPanelUp,
     FocusPanelDown,
+    Broadcast,
+    BroadcastCancel,
 }
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 69] = [
+    pub const ALL: [KeyAction; 71] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -574,6 +588,8 @@ impl KeyAction {
         KeyAction::FocusPanelRight,
         KeyAction::FocusPanelUp,
         KeyAction::FocusPanelDown,
+        KeyAction::Broadcast,
+        KeyAction::BroadcastCancel,
     ];
 
     pub fn label(self) -> &'static str {
@@ -647,6 +663,8 @@ impl KeyAction {
             KeyAction::FocusPanelRight => "Focus panel right",
             KeyAction::FocusPanelUp => "Focus panel up",
             KeyAction::FocusPanelDown => "Focus panel down",
+            KeyAction::Broadcast => "Broadcast command",
+            KeyAction::BroadcastCancel => "Cancel broadcast",
         }
     }
 }
@@ -792,6 +810,10 @@ pub struct KeybindsConfig {
     pub focus_panel_up: Vec<String>,
     #[serde(default = "default_kb_focus_panel_down")]
     pub focus_panel_down: Vec<String>,
+    #[serde(default = "default_kb_broadcast")]
+    pub broadcast: Vec<String>,
+    #[serde(default = "default_kb_broadcast_cancel")]
+    pub broadcast_cancel: Vec<String>,
 }
 
 impl Default for KeybindsConfig {
@@ -866,6 +888,8 @@ impl Default for KeybindsConfig {
             focus_panel_right: default_kb_focus_panel_right(),
             focus_panel_up: default_kb_focus_panel_up(),
             focus_panel_down: default_kb_focus_panel_down(),
+            broadcast: default_kb_broadcast(),
+            broadcast_cancel: default_kb_broadcast_cancel(),
         }
     }
 }
@@ -942,6 +966,8 @@ impl KeybindsConfig {
             KeyAction::FocusPanelRight => default_kb_focus_panel_right(),
             KeyAction::FocusPanelUp => default_kb_focus_panel_up(),
             KeyAction::FocusPanelDown => default_kb_focus_panel_down(),
+            KeyAction::Broadcast => default_kb_broadcast(),
+            KeyAction::BroadcastCancel => default_kb_broadcast_cancel(),
         }
     }
 
@@ -1063,6 +1089,8 @@ impl KeybindsConfig {
             KeyAction::FocusPanelRight => &self.focus_panel_right,
             KeyAction::FocusPanelUp => &self.focus_panel_up,
             KeyAction::FocusPanelDown => &self.focus_panel_down,
+            KeyAction::Broadcast => &self.broadcast,
+            KeyAction::BroadcastCancel => &self.broadcast_cancel,
         }
     }
 
@@ -1137,6 +1165,8 @@ impl KeybindsConfig {
             KeyAction::FocusPanelRight => self.focus_panel_right = binds,
             KeyAction::FocusPanelUp => self.focus_panel_up = binds,
             KeyAction::FocusPanelDown => self.focus_panel_down = binds,
+            KeyAction::Broadcast => self.broadcast = binds,
+            KeyAction::BroadcastCancel => self.broadcast_cancel = binds,
         }
     }
 
