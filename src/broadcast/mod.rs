@@ -25,9 +25,9 @@ use std::time::{Duration, Instant};
 /// Default bounded pool width.
 pub const DEFAULT_CONCURRENCY: usize = 8;
 /// Countdown length before a finished panel auto-dismisses.
-pub const DISMISS: Duration = Duration::from_secs(5);
+pub const DISMISS: Duration = Duration::from_secs(30);
 /// Entry slide duration (center -> corner).
-pub const ENTRY_ANIM: Duration = Duration::from_millis(350);
+pub const ENTRY_ANIM: Duration = Duration::from_millis(600);
 /// Per-host ssh connect timeout (seconds) and run cap.
 pub const CONNECT_TIMEOUT_SECS: u32 = 8;
 pub const RUN_TIMEOUT: Duration = Duration::from_secs(60);

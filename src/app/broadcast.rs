@@ -319,7 +319,11 @@ impl App {
         });
         self.broadcast_setup = None;
         self.mode = AppMode::Normal;
-        self.focused_panel = PanelId::Broadcast;
+        // Deliberately do NOT focus the panel: it runs in the background and,
+        // once finished, the countdown auto-dismisses it. Focusing here would
+        // immediately pause that countdown (focus == "user is reading it"), so
+        // the panel would never leave on its own. The user can Alt+arrow onto it
+        // to inspect output, which pauses the countdown as intended.
     }
 
     /// Poll-loop step for a live run: drain worker events, fold them into the
