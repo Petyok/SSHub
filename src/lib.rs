@@ -1,4 +1,5 @@
 pub mod app;
+pub mod broadcast;
 pub mod cli;
 pub mod config;
 pub mod credentials;
@@ -357,6 +358,9 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
             app.apply_os_detect(ev)?;
         }
     }
+
+    // Drive the live broadcast run (drain worker events, settle/dismiss panel).
+    app.tick_broadcast()?;
 
     // Check tunnel health and drive keep-alive reconnects.
     let _ = app.tick_tunnels();

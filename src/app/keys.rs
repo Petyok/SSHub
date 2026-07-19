@@ -70,6 +70,9 @@ impl App {
             AppMode::TagFilter => self.handle_key_tag_filter(key),
             AppMode::HostDetail => self.handle_key_host_detail(key),
             AppMode::TunnelForm => self.handle_key_tunnel_form(key),
+            AppMode::BroadcastPickTarget => self.handle_key_broadcast_pick(key),
+            AppMode::BroadcastCommand => self.handle_key_broadcast_command(key),
+            AppMode::BroadcastPreview => self.handle_key_broadcast_preview(key),
             AppMode::Connecting | AppMode::Session => self.handle_key_session(key),
             AppMode::Normal => match self.active_tab {
                 1 => self.handle_key_sftp(key),
@@ -89,6 +92,20 @@ impl App {
         }
 
         if self.try_tab_switch(&key)? {
+            return Ok(());
+        }
+
+        // Broadcast (#3). Route the cancel key to a live run before any other
+        // binding can claim it, then the opener. Cancel works regardless of which
+        // panel is focused (the footer advertises "x cancel" whenever a run is
+        // live, so it must fire everywhere). `open_broadcast` refuses when a run
+        // is already live, so this never starts a second one.
+        if self.broadcast.is_some() && self.is_action(KeyAction::BroadcastCancel, &key) {
+            self.cancel_broadcast();
+            return Ok(());
+        }
+        if self.is_action(KeyAction::Broadcast, &key) {
+            self.open_broadcast();
             return Ok(());
         }
 
@@ -285,6 +302,12 @@ impl App {
             return;
         }
         if let Some(next) = self.focused_panel.neighbor(dir) {
+            // The Broadcast panel only exists while a run is live (#3); its
+            // neighbor edges are always present in the grid, so skip the move
+            // when there's nothing to focus.
+            if next == PanelId::Broadcast && self.broadcast.is_none() {
+                return;
+            }
             self.focused_panel = next;
             self.panel_scroll.set(0);
             self.panel_sel = None;

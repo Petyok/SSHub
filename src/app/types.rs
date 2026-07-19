@@ -81,6 +81,10 @@ pub enum PanelId {
     Auth,
     Ping,
     SshLog,
+    /// Live broadcast run panel, docked bottom-right (issue #3). Only drawn +
+    /// focusable while `app.broadcast.is_some()`; the `focus_panel` guard in
+    /// `keys.rs` suppresses `neighbor()` hops to it when the run is absent.
+    Broadcast,
 }
 
 impl PanelId {
@@ -94,6 +98,7 @@ impl PanelId {
             PanelId::Auth => "auth events",
             PanelId::Ping => "ping",
             PanelId::SshLog => "ssh log",
+            PanelId::Broadcast => "broadcast",
         }
     }
 
@@ -130,11 +135,18 @@ impl PanelId {
             (Ping, Left) => Some(Latency),
             (Ping, Up) => Some(Auth),
             (Ping, Down) => Some(SshLog),
-            (Ping, Right) => None,
+            (Ping, Right) => Some(Broadcast),
             // Bottom strip (spans mid+right).
             (SshLog, Up) => Some(Latency),
             (SshLog, Left) => Some(Hosts),
+            (SshLog, Right) => Some(Broadcast),
             (SshLog, _) => None,
+            // Broadcast docked panel (bottom-right); only live when
+            // app.broadcast.is_some() — the orchestrator's focus_panel guard
+            // suppresses these when it's absent.
+            (Broadcast, Left) => Some(SshLog),
+            (Broadcast, Up) => Some(Ping),
+            (Broadcast, _) => None,
         }
     }
 }
@@ -175,6 +187,25 @@ mod panel_id_tests {
             PanelId::SshLog.neighbor(FocusDir::Up),
             Some(PanelId::Latency)
         );
+        // Broadcast docks bottom-right: reachable from the ssh-log strip and
+        // the ping panel, and hops back left/up into the grid.
+        assert_eq!(
+            PanelId::SshLog.neighbor(FocusDir::Right),
+            Some(PanelId::Broadcast)
+        );
+        assert_eq!(
+            PanelId::Ping.neighbor(FocusDir::Right),
+            Some(PanelId::Broadcast)
+        );
+        assert_eq!(
+            PanelId::Broadcast.neighbor(FocusDir::Left),
+            Some(PanelId::SshLog)
+        );
+        assert_eq!(
+            PanelId::Broadcast.neighbor(FocusDir::Up),
+            Some(PanelId::Ping)
+        );
+        assert_eq!(PanelId::Broadcast.neighbor(FocusDir::Right), None);
     }
 
     #[test]
@@ -316,6 +347,69 @@ pub enum AppMode {
     Connecting,
     /// Live embedded SSH session; PTY drives the fullscreen view.
     Session,
+    /// Broadcast wizard stage 1: pick a target (group / tag menu).
+    BroadcastPickTarget,
+    /// Broadcast wizard stage 2: single-line command input.
+    BroadcastCommand,
+    /// Broadcast wizard stage 3: target preview + [y]/[e]/[N] barrier.
+    BroadcastPreview,
+}
+
+/// Live background-run state; App holds `broadcast: Option<BroadcastState>`.
+///
+/// No derive attribute at all — not even `Debug` — because
+/// `std::sync::mpsc::Receiver` is not `Debug`, and this type is deliberately
+/// neither `Clone` nor `Copy` (it owns the run's channel + cancel flag).
+pub struct BroadcastState {
+    pub target_label: String, // "#prod" / "group: production"
+    pub command: String,
+    pub results: Vec<crate::broadcast::HostResult>,
+    pub rx: std::sync::mpsc::Receiver<crate::broadcast::BroadcastEvent>,
+    pub cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub concurrency: usize,
+    pub phase: BroadcastPhase,
+    pub anim: Option<crate::tui::tween::SlideAnim>, // entry slide; None once settled
+    pub audit_written: bool, // guard: log_auth_event fires once at completion
+}
+
+/// Lifecycle phase of a live broadcast run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BroadcastPhase {
+    Running,
+    Settling { done_at: std::time::Instant }, // countdown armed
+    Paused,                                   // focused/zoomed after completion
+}
+
+/// A pickable broadcast target (menu row).
+#[derive(Debug, Clone)]
+pub enum BroadcastTarget {
+    Group { id: i64, label: String },
+    Tag { name: String },
+}
+
+/// One resolved target host in the preview (managed hosts only; entries with no
+/// managed id are excluded upstream).
+#[derive(Debug, Clone)]
+pub struct BroadcastCandidate {
+    pub host_id: i64,
+    pub host_name: String,
+    pub argv: Vec<String>,
+    pub selected: bool, // toggled in edit-targets
+}
+
+/// Pre-run wizard state; App holds `broadcast_setup: Option<BroadcastSetup>`.
+/// The active AppMode variant (PickTarget/Command/Preview) names the stage.
+///
+/// No derive attribute at all — deliberately neither `Clone` nor `Copy`.
+pub struct BroadcastSetup {
+    pub options: Vec<BroadcastTarget>,
+    pub menu_selected: usize,
+    pub target_label: String, // filled once a target is chosen
+    pub command: String,
+    pub cursor: usize,
+    pub candidates: Vec<BroadcastCandidate>, // resolved on target pick
+    pub preview_selected: usize,             // highlighted row in edit-targets
+    pub edit_targets: bool,                  // preview [e] entered per-host deselect
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
