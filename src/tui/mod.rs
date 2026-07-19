@@ -7,6 +7,7 @@ pub mod theme;
 pub mod tween;
 pub mod widgets;
 
+use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
@@ -39,7 +40,13 @@ pub fn format_local_time(epoch_secs: i64) -> String {
 /// is on — paints a solid backdrop behind every still-transparent cell so text
 /// stays readable on a transparent terminal.
 pub fn render(frame: &mut Frame, app: &App) {
+    // Reset the per-frame popup rect; each popup that draws sets it via
+    // `popup_open_rect`, and we snapshot it afterwards for the close slide (#35).
+    app.last_popup_rect.set(None);
     render_inner(frame, app);
+    // Snapshot the popup shown this frame, then throw a just-closed one upward.
+    capture_popup_snapshot(frame, app);
+    render_popup_close(frame, app);
     if app.config.appearance.opaque_background {
         let buf = frame.buffer_mut();
         let area = buf.area;
@@ -543,11 +550,70 @@ fn render_zoom_toast(frame: &mut Frame, footer: Rect, notice: &str) {
     frame.buffer_mut().set_string(x, y, &label, style);
 }
 
+/// Snapshot the popup drawn this frame (opaque cells at `last_popup_rect`) into
+/// `app.popup_snapshot`, so it can be thrown upward when the popup later closes
+/// (#35). No-op when the current mode draws no popup.
+fn capture_popup_snapshot(frame: &mut Frame, app: &App) {
+    if !crate::app::is_overlay_mode(app.mode) {
+        return;
+    }
+    let Some(rect) = app.last_popup_rect.get() else {
+        return;
+    };
+    let rect = rect.intersection(frame.area());
+    if rect.width == 0 || rect.height == 0 {
+        return;
+    }
+    let buf = frame.buffer_mut();
+    let mut snap = Buffer::empty(rect);
+    for y in rect.top()..rect.bottom() {
+        for x in rect.left()..rect.right() {
+            if let (Some(src), Some(dst)) = (buf.cell((x, y)), snap.cell_mut((x, y))) {
+                *dst = src.clone();
+            }
+        }
+    }
+    *app.popup_snapshot.borrow_mut() = Some((rect, snap));
+}
+
+/// Blit a just-closed popup's captured snapshot, sliding it up off the top over
+/// [`POPUP_ANIM`] (#35). The dashboard beneath is already drawn, so the popup
+/// rises away revealing it.
+fn render_popup_close(frame: &mut Frame, app: &App) {
+    if !app.motion_enabled() {
+        return;
+    }
+    let Some(at) = app.popup_closing_at else {
+        return;
+    };
+    let now = std::time::Instant::now();
+    let p = tween::progress(at, POPUP_ANIM, now);
+    if p >= 1.0 {
+        return;
+    }
+    let snap = app.popup_snapshot.borrow();
+    let Some((rect, buf)) = snap.as_ref() else {
+        return;
+    };
+    let off = (tween::ease_out(p) * (rect.height as f32 + 2.0)).round() as u16;
+    let fb = frame.buffer_mut();
+    for y in rect.top()..rect.bottom() {
+        let Some(ty) = y.checked_sub(off) else {
+            continue;
+        };
+        for x in rect.left()..rect.right() {
+            if let (Some(src), Some(dst)) = (buf.cell((x, y)), fb.cell_mut((x, ty))) {
+                *dst = src.clone();
+            }
+        }
+    }
+}
+
 /// Duration of the tab-switch body slide (#35).
 pub const TAB_ANIM: std::time::Duration = std::time::Duration::from_millis(220);
 
-/// Duration of a popup's open slide (#35).
-pub const POPUP_ANIM: std::time::Duration = std::time::Duration::from_millis(140);
+/// Duration of a popup's open / close slide (#35).
+pub const POPUP_ANIM: std::time::Duration = std::time::Duration::from_millis(230);
 
 /// Shared popup-open animation (#35): given a popup's resting `target` rect,
 /// return where to draw it this frame. It rises into place from slightly below
@@ -555,6 +621,9 @@ pub const POPUP_ANIM: std::time::Duration = std::time::Duration::from_millis(140
 /// its rect through this helper animates its open identically. Returns `target`
 /// unchanged once settled or under reduced motion.
 pub fn popup_open_rect(target: Rect, app: &App) -> Rect {
+    // Record the resting rect so the render pass can snapshot it for the close
+    // animation, even under reduced motion (the snapshot is free either way).
+    app.last_popup_rect.set(Some(target));
     if !app.motion_enabled() {
         return target;
     }

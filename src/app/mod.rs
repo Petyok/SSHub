@@ -199,6 +199,14 @@ pub struct App {
     pub mode_entered_at: std::time::Instant,
     /// `mode` on the previous poll tick, to detect a change centrally.
     pub anim_prev_mode: AppMode,
+    /// Resting rect of the popup drawn this frame (set by `popup_open_rect`), so
+    /// the render pass can snapshot it for the close animation (#35).
+    pub last_popup_rect: std::cell::Cell<Option<ratatui::layout::Rect>>,
+    /// Captured cells of the last-rendered popup, thrown upward on close (#35).
+    pub popup_snapshot:
+        std::cell::RefCell<Option<(ratatui::layout::Rect, ratatui::buffer::Buffer)>>,
+    /// When a popup started closing, driving the upward exit of its snapshot.
+    pub popup_closing_at: Option<std::time::Instant>,
     pub palette_query: String,
     pub palette_selected: usize,
     pub palette_results: Vec<usize>,
@@ -249,6 +257,15 @@ pub struct App {
     search: HostSearch,
 }
 
+/// Whether `mode` draws a popup overlay over the dashboard (so its open/close
+/// should animate, #35). Excludes the full-screen session modes.
+pub(crate) fn is_overlay_mode(mode: AppMode) -> bool {
+    !matches!(
+        mode,
+        AppMode::Normal | AppMode::Connecting | AppMode::Session | AppMode::SessionHostPicker
+    )
+}
+
 impl App {
     /// Whether UI motion (slides / morphs / fades) should play. Off when the
     /// user set `appearance.disable_animation` (the reduced-motion toggle, also
@@ -272,10 +289,25 @@ impl App {
             }
             self.anim_prev_tab = self.active_tab;
         }
-        // Stamp mode-entry time on any change, so popups animate their open (#35).
+        // Stamp mode-entry time on any change, so popups animate open/close (#35).
         if self.mode != self.anim_prev_mode {
             self.mode_entered_at = std::time::Instant::now();
+            if is_overlay_mode(self.mode) {
+                // A fresh open cancels any in-flight close.
+                self.popup_closing_at = None;
+            } else if is_overlay_mode(self.anim_prev_mode) {
+                // A popup just closed: throw its captured snapshot upward.
+                self.popup_closing_at = Some(std::time::Instant::now());
+            }
             self.anim_prev_mode = self.mode;
+        }
+        // Retire a finished close slide so its snapshot buffer is freed.
+        if self
+            .popup_closing_at
+            .is_some_and(|at| at.elapsed() >= crate::tui::POPUP_ANIM)
+        {
+            self.popup_closing_at = None;
+            *self.popup_snapshot.borrow_mut() = None;
         }
     }
 
@@ -378,6 +410,9 @@ impl App {
             tab_switch: None,
             mode_entered_at: std::time::Instant::now(),
             anim_prev_mode: AppMode::Normal,
+            last_popup_rect: std::cell::Cell::new(None),
+            popup_snapshot: std::cell::RefCell::new(None),
+            popup_closing_at: None,
             palette_query: String::new(),
             palette_selected: 0,
             palette_results: Vec::new(),
