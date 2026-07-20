@@ -301,9 +301,6 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
         }
     }
 
-    // Arm a tab-switch slide if the active tab changed this tick (#35).
-    app.detect_tab_switch();
-
     let mut config_changed = false;
     if let Some(rx) = app.watcher_rx.as_ref() {
         while rx.try_recv().is_ok() {
@@ -383,6 +380,13 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
 
     // Refresh auth events cache periodically
     app.refresh_auth_cache();
+
+    // Arm tab-switch / popup slides for ANY mode or tab change this tick (#35).
+    // Must run AFTER the background event drains (SFTP / OS-detect / broadcast),
+    // not just after key handling: a mode change from e.g. an SFTP ConnectFailed
+    // event must stamp `mode_entered_at` in the same tick, or the next frame
+    // renders the popup at rest (a center flash) before the open slide starts.
+    app.detect_tab_switch();
 
     Ok(())
 }
