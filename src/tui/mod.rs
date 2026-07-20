@@ -44,8 +44,10 @@ pub fn render(frame: &mut Frame, app: &App) {
     // `popup_open_rect`, and we snapshot it afterwards for the close slide (#35).
     app.last_popup_rect.set(None);
     render_inner(frame, app);
-    // Snapshot the popup shown this frame, then throw a just-closed one upward.
+    // Snapshot the popup shown this frame, slide a fresh one in from the top,
+    // and throw a just-closed one upward.
     capture_popup_snapshot(frame, app);
+    render_popup_open(frame, app);
     render_popup_close(frame, app);
     if app.config.appearance.opaque_background {
         let buf = frame.buffer_mut();
@@ -208,6 +210,11 @@ fn render_inner(frame: &mut Frame, app: &App) {
     }
 
     // ── Overlay popups ─────────────────────────────────────────
+    // Snapshot the dashboard (no popup yet) so the open slide can restore what's
+    // behind the popup and let it drop in from off the top of the screen (#35).
+    if app.motion_enabled() && crate::app::is_overlay_mode(app.mode) {
+        *app.popup_backdrop.borrow_mut() = Some(frame.buffer_mut().clone());
+    }
     match app.mode {
         AppMode::Palette => {
             screens::palette::render_palette(
@@ -576,6 +583,47 @@ fn capture_popup_snapshot(frame: &mut Frame, app: &App) {
     *app.popup_snapshot.borrow_mut() = Some((rect, snap));
 }
 
+/// Slide a freshly-opened popup down into place from off the top of the screen
+/// over [`POPUP_ANIM`] (#35). Restores the dashboard backdrop where the popup
+/// rests, then blits its snapshot shifted up by an easing offset (the whole
+/// popup is above the top at the start), so it truly enters from off-screen.
+fn render_popup_open(frame: &mut Frame, app: &App) {
+    if !app.motion_enabled() || !crate::app::is_overlay_mode(app.mode) {
+        return;
+    }
+    let now = std::time::Instant::now();
+    let p = tween::progress(app.mode_entered_at, POPUP_ANIM, now);
+    if p >= 1.0 {
+        return;
+    }
+    let snap = app.popup_snapshot.borrow();
+    let backdrop = app.popup_backdrop.borrow();
+    let (Some((rect, buf)), Some(bd)) = (snap.as_ref(), backdrop.as_ref()) else {
+        return;
+    };
+    // Off starts a full popup-height above the rest (fully off-screen) and eases
+    // to 0. Restore the dashboard where the popup rests, then blit it shifted up.
+    let off = ((1.0 - tween::ease_out(p)) * rect.bottom() as f32).round() as u16;
+    let fb = frame.buffer_mut();
+    for y in rect.top()..rect.bottom() {
+        for x in rect.left()..rect.right() {
+            if let (Some(src), Some(dst)) = (bd.cell((x, y)), fb.cell_mut((x, y))) {
+                *dst = src.clone();
+            }
+        }
+    }
+    for y in rect.top()..rect.bottom() {
+        let Some(ty) = y.checked_sub(off) else {
+            continue;
+        };
+        for x in rect.left()..rect.right() {
+            if let (Some(src), Some(dst)) = (buf.cell((x, y)), fb.cell_mut((x, ty))) {
+                *dst = src.clone();
+            }
+        }
+    }
+}
+
 /// Blit a just-closed popup's captured snapshot, sliding it up off the top over
 /// [`POPUP_ANIM`] (#35). The dashboard beneath is already drawn, so the popup
 /// rises away revealing it.
@@ -617,32 +665,14 @@ pub const TAB_ANIM: std::time::Duration = std::time::Duration::from_millis(220);
 /// Duration of a popup's open / close slide (#35).
 pub const POPUP_ANIM: std::time::Duration = std::time::Duration::from_millis(260);
 
-/// Shared popup-open animation (#35): given a popup's resting `target` rect,
-/// return where to draw it this frame. It rises into place from slightly below
-/// over [`POPUP_ANIM`] after the mode was entered, so every overlay that runs
-/// its rect through this helper animates its open identically. Returns `target`
-/// unchanged once settled or under reduced motion.
+/// Shared popup rect hook (#35): every overlay runs its resting rect through
+/// this so the render pass can snapshot the popup for its open/close slides.
+/// Returns the rest rect unchanged — the popup always *draws* at rest, and the
+/// slide is a separate blit pass ([`render_popup_open`] / [`render_popup_close`])
+/// that can clip the popup above the top of the screen (a `Rect` cannot).
 pub fn popup_open_rect(target: Rect, app: &App) -> Rect {
-    // Record the resting rect so the render pass can snapshot it for the close
-    // animation, even under reduced motion (the snapshot is free either way).
     app.last_popup_rect.set(Some(target));
-    if !app.motion_enabled() {
-        return target;
-    }
-    let now = std::time::Instant::now();
-    let p = tween::progress(app.mode_entered_at, POPUP_ANIM, now);
-    if p >= 1.0 {
-        return target;
-    }
-    // Drop in from the top edge down to the resting spot for a clear, visible
-    // slide (small travel read as instant). Shifting the top UP only (never
-    // below rest, `y` saturates at 0) keeps it fully on-screen and panic-safe on
-    // a tiny terminal.
-    let drop = target.y as f32 * (1.0 - tween::ease_out(p));
-    Rect {
-        y: target.y.saturating_sub(drop.round() as u16),
-        ..target
-    }
+    target
 }
 
 /// Dispatch a tab index to its body renderer, into `areas`.

@@ -205,6 +205,10 @@ pub struct App {
     /// Captured cells of the last-rendered popup, thrown upward on close (#35).
     pub popup_snapshot:
         std::cell::RefCell<Option<(ratatui::layout::Rect, ratatui::buffer::Buffer)>>,
+    /// Full-frame dashboard snapshot captured just before a popup draws, so the
+    /// open slide can restore what's behind the popup and let it drop in from off
+    /// the top of the screen (#35).
+    pub popup_backdrop: std::cell::RefCell<Option<ratatui::buffer::Buffer>>,
     /// When a popup started closing, driving the upward exit of its snapshot.
     pub popup_closing_at: Option<std::time::Instant>,
     pub palette_query: String,
@@ -412,10 +416,17 @@ impl App {
             active_tab: 0,
             anim_prev_tab: 0,
             tab_switch: None,
-            mode_entered_at: std::time::Instant::now(),
+            // Start "settled" in the past so the initial mode never counts as
+            // just-entered: popups animate only after a real mode change stamps
+            // `mode_entered_at` (via detect_tab_switch in the poll loop), so
+            // direct-mode-set render tests draw popups at rest, not mid-slide.
+            mode_entered_at: std::time::Instant::now()
+                .checked_sub(std::time::Duration::from_secs(3600))
+                .unwrap_or_else(std::time::Instant::now),
             anim_prev_mode: AppMode::Normal,
             last_popup_rect: std::cell::Cell::new(None),
             popup_snapshot: std::cell::RefCell::new(None),
+            popup_backdrop: std::cell::RefCell::new(None),
             popup_closing_at: None,
             palette_query: String::new(),
             palette_selected: 0,
