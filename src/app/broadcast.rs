@@ -53,7 +53,11 @@ impl App {
         let popup_close = self
             .popup_closing_at
             .is_some_and(|at| now.saturating_duration_since(at) < crate::tui::POPUP_ANIM);
-        panel || toasts || dropping || zoom || tab || popup_open || popup_close
+        // Full-screen session enter slide (#35).
+        let session = self
+            .session_enter_at
+            .is_some_and(|at| now.saturating_duration_since(at) < crate::tui::SESSION_ANIM);
+        panel || toasts || dropping || zoom || tab || popup_open || popup_close || session
     }
 
     /// Open the broadcast wizard from the hosts tab. Refuses while a run is live

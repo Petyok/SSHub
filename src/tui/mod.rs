@@ -124,6 +124,11 @@ fn render_inner(frame: &mut Frame, app: &App) {
     // Embedded session takes over the whole frame — no dashboard chrome.
     if matches!(app.mode, AppMode::Connecting | AppMode::Session) || session_behind_picker {
         crate::session::render::render(frame, app);
+        // Slide the freshly-connected session in from the right (#35). Skipped
+        // for the picker-over-session case (no fresh connect happening).
+        if !session_behind_picker {
+            render_session_enter(frame, app);
+        }
         if app.mode == AppMode::SessionHostPicker {
             screens::session_host_picker::render(frame, app);
         }
@@ -701,11 +706,52 @@ fn render_popup_close(frame: &mut Frame, app: &App) {
     }
 }
 
+/// Slide the freshly-rendered full-screen session in from the right edge over
+/// [`SESSION_ANIM`] (#35). Snapshots the session buffer, then blits it shifted
+/// right by an easing offset, leaving the vacated left band blank so the view
+/// reads as pushing in from the right.
+fn render_session_enter(frame: &mut Frame, app: &App) {
+    if !app.motion_enabled() {
+        return;
+    }
+    let Some(at) = app.session_enter_at else {
+        return;
+    };
+    let now = std::time::Instant::now();
+    let p = tween::progress(at, SESSION_ANIM, now);
+    if p >= 1.0 {
+        return;
+    }
+    let area = frame.area();
+    // Off starts a full screen-width to the right (fully off) and eases to 0.
+    let off = ((1.0 - tween::ease_out(p)) * area.width as f32).round() as u16;
+    if off == 0 {
+        return;
+    }
+    let src = frame.buffer_mut().clone();
+    let fb = frame.buffer_mut();
+    for y in area.y..area.y + area.height {
+        // Right-to-left so each destination reads a not-yet-overwritten source.
+        for x in (area.x..area.x + area.width).rev() {
+            if let Some(sx) = x.checked_sub(off).filter(|sx| *sx >= area.x) {
+                if let (Some(s), Some(d)) = (src.cell((sx, y)), fb.cell_mut((x, y))) {
+                    *d = s.clone();
+                }
+            } else if let Some(d) = fb.cell_mut((x, y)) {
+                d.reset();
+            }
+        }
+    }
+}
+
 /// Duration of the tab-switch body slide (#35).
 pub const TAB_ANIM: std::time::Duration = std::time::Duration::from_millis(220);
 
 /// Duration of a popup's open / close slide (#35).
 pub const POPUP_ANIM: std::time::Duration = std::time::Duration::from_millis(260);
+
+/// Duration of the full-screen session-enter slide on connect (#35).
+pub const SESSION_ANIM: std::time::Duration = std::time::Duration::from_millis(280);
 
 /// Shared popup rect hook (#35): every overlay runs its resting rect through
 /// this so the render pass can snapshot the popup for its open/close slides.

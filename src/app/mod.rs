@@ -213,6 +213,10 @@ pub struct App {
     pub popup_backdrop: std::cell::RefCell<Option<ratatui::buffer::Buffer>>,
     /// When a popup started closing, driving the upward exit of its snapshot.
     pub popup_closing_at: Option<std::time::Instant>,
+    /// When a fresh SSH session was launched (mode → Connecting), so the
+    /// full-screen session view can slide in from the right (#35). `None` at rest
+    /// / under reduced motion.
+    pub session_enter_at: Option<std::time::Instant>,
     pub palette_query: String,
     pub palette_selected: usize,
     pub palette_results: Vec<usize>,
@@ -431,6 +435,7 @@ impl App {
             popup_snapshot: std::cell::RefCell::new(None),
             popup_backdrop: std::cell::RefCell::new(None),
             popup_closing_at: None,
+            session_enter_at: None,
             palette_query: String::new(),
             palette_selected: 0,
             palette_results: Vec::new(),
