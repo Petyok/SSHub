@@ -73,6 +73,7 @@ impl App {
             AppMode::BroadcastPickTarget => self.handle_key_broadcast_pick(key),
             AppMode::BroadcastCommand => self.handle_key_broadcast_command(key),
             AppMode::BroadcastPreview => self.handle_key_broadcast_preview(key),
+            AppMode::Notice => self.handle_key_notice(key),
             AppMode::Connecting | AppMode::Session => self.handle_key_session(key),
             AppMode::Normal => match self.active_tab {
                 1 => self.handle_key_sftp(key),
@@ -323,6 +324,14 @@ impl App {
             }
             _ => {}
         }
+        Ok(())
+    }
+
+    /// Modal message popup (`AppMode::Notice`): any key dismisses it back to the
+    /// dashboard. Used e.g. for an SFTP connection error.
+    pub(crate) fn handle_key_notice(&mut self, _key: KeyEvent) -> Result<()> {
+        self.notice_popup = None;
+        self.mode = AppMode::Normal;
         Ok(())
     }
 

@@ -602,6 +602,10 @@ impl App {
         let local_cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
         let mut state = SftpState::new(remote_cwd.clone(), local_cwd.clone());
+        // Show a "connecting…" state (not an empty browser) until the worker
+        // reports Connected. An unreachable host never flashes a blank window —
+        // it fails into the Notice popup instead.
+        state.connecting = true;
         state.local.set_entries(read_local_dir(&local_cwd));
 
         // Kick off the first remote listing; the worker queues it until the
@@ -720,11 +724,20 @@ impl App {
             SftpEvent::Connected => {
                 if let Some(s) = self.sftp.as_mut() {
                     s.notice = None;
+                    s.connecting = false;
                 }
             }
             SftpEvent::ConnectFailed(msg) => {
+                let host = self.sftp_host.clone().unwrap_or_default();
                 self.sftp_disconnect();
-                self.host_notice = Some(format!("SFTP connection failed: {msg}"));
+                // Surface the failure as a modal popup instead of silently
+                // reverting to the picker — an unreachable host is loud, not blank.
+                self.notice_popup = Some(if host.is_empty() {
+                    format!("SFTP connection failed:\n{msg}")
+                } else {
+                    format!("Could not connect to {host}:\n{msg}")
+                });
+                self.mode = AppMode::Notice;
             }
             SftpEvent::DirListing(side, path, entries) => {
                 if let Some(s) = self.sftp.as_mut() {

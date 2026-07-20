@@ -170,6 +170,8 @@ pub struct App {
     pub group_manage_selected: usize,
     pub group_notice: Option<String>,
     pub host_notice: Option<String>,
+    /// Message shown by the modal `AppMode::Notice` popup (e.g. a connect error).
+    pub notice_popup: Option<String>,
     pub sort_mode: SortMode,
     pub pending_delete: Option<PendingDelete>,
     pub pre_help_mode: Option<AppMode>,
@@ -402,6 +404,7 @@ impl App {
             group_manage_selected: 0,
             group_notice: None,
             host_notice: None,
+            notice_popup: None,
             sort_mode: SortMode::default(),
             pending_delete: None,
             pre_help_mode: None,

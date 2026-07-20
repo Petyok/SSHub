@@ -278,8 +278,50 @@ fn render_inner(frame: &mut Frame, app: &App) {
         AppMode::BroadcastPickTarget => screens::broadcast::render_pick_target(frame, app),
         AppMode::BroadcastCommand => screens::broadcast::render_command_prompt(frame, app),
         AppMode::BroadcastPreview => screens::broadcast::render_preview(frame, app),
+        AppMode::Notice => render_notice_popup(frame, app),
         _ => {}
     }
+}
+
+/// Modal message popup (`AppMode::Notice`) — e.g. an SFTP connection error.
+/// Text comes from `App::notice_popup`; any key dismisses it.
+fn render_notice_popup(frame: &mut Frame, app: &App) {
+    let Some(message) = app.notice_popup.as_ref() else {
+        return;
+    };
+    let hint = "press any key to dismiss";
+
+    let area = frame.area();
+    let popup_width = 60u16.min(area.width).max(20.min(area.width));
+    // Rough wrapped-line count so the box grows with the message.
+    let inner_w = popup_width.saturating_sub(2).max(1) as usize;
+    let msg_lines = message
+        .split('\n')
+        .map(|l| (l.chars().count() / inner_w) + 1)
+        .sum::<usize>()
+        .max(1);
+    let popup_height = ((msg_lines as u16) + 4)
+        .min(area.height)
+        .max(5.min(area.height));
+    let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
+    let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    let popup_area = crate::tui::popup_open_rect(popup_area, app);
+
+    frame.render_widget(Clear, popup_area);
+    frame.render_widget(
+        Paragraph::new(format!("{message}\n\n{hint}"))
+            .wrap(Wrap { trim: false })
+            .style(Style::default().fg(Color::Red))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Connection failed ")
+                    .border_style(Style::default().fg(Color::Red)),
+            ),
+        popup_area,
+    );
 }
 
 fn render_sftp_prompt_popup(frame: &mut Frame, app: &App) {

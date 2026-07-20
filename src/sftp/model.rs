@@ -177,6 +177,9 @@ pub struct SftpState {
     pub progress: Option<Progress>,
     pub notice: Option<String>,
     pub searching: bool,
+    /// True from connect until the worker reports `Connected`, so the UI shows a
+    /// "connecting…" state (the picker) instead of an empty browser.
+    pub connecting: bool,
 }
 
 impl SftpState {
@@ -191,6 +194,7 @@ impl SftpState {
             progress: None,
             notice: None,
             searching: false,
+            connecting: false,
         }
     }
 

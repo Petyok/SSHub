@@ -24,8 +24,24 @@ pub fn render_sftp(frame: &mut Frame, area: Rect, app: &App) {
     }
     match app.sftp.as_ref() {
         None => render_picker(frame, area, app),
+        // Still handshaking: show a "connecting…" line, not empty panes. An
+        // unreachable host fails into the Notice popup (never a blank browser).
+        Some(state) if state.connecting => render_connecting(frame, area, app.sftp_host.as_deref()),
         Some(state) => render_browser(frame, area, state),
     }
+}
+
+/// Centered "connecting to <host>…" placeholder shown while the SFTP worker is
+/// still establishing the session.
+fn render_connecting(frame: &mut Frame, area: Rect, host: Option<&str>) {
+    let msg = match host {
+        Some(h) => format!("\u{27F3} Connecting to {h}\u{2026}"),
+        None => "\u{27F3} Connecting\u{2026}".to_string(),
+    };
+    let w = (msg.chars().count() as u16).min(area.width);
+    let x = area.x + (area.width.saturating_sub(w)) / 2;
+    let y = area.y + area.height / 2;
+    frame.buffer_mut().set_string(x, y, &msg, theme::amber());
 }
 
 // ── Picker sub-state ─────────────────────────────────────────

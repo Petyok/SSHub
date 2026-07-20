@@ -353,6 +353,9 @@ pub enum AppMode {
     BroadcastCommand,
     /// Broadcast wizard stage 3: target preview + [y]/[e]/[N] barrier.
     BroadcastPreview,
+    /// A modal message popup (e.g. a connection error). Any key dismisses it;
+    /// the text lives in `App::notice_popup`.
+    Notice,
 }
 
 /// Live background-run state; App holds `broadcast: Option<BroadcastState>`.
