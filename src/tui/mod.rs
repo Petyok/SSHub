@@ -44,6 +44,14 @@ pub fn render(frame: &mut Frame, app: &App) {
     // `popup_open_rect`, and we snapshot it afterwards for the close slide (#35).
     app.last_popup_rect.set(None);
     render_inner(frame, app);
+    // While in the full-screen host view, keep a fresh snapshot so leaving it can
+    // slide the session off to the right (#35). Once exited, render_inner has
+    // drawn the dashboard beneath — blit the snapshot sliding away over it.
+    if crate::app::is_session_mode(app.mode) {
+        *app.session_snapshot.borrow_mut() = Some(frame.buffer_mut().clone());
+    } else {
+        render_session_exit(frame, app);
+    }
     // Snapshot the popup shown this frame, slide a fresh one in from the top,
     // and throw a just-closed one upward.
     capture_popup_snapshot(frame, app);
@@ -739,6 +747,42 @@ fn render_session_enter(frame: &mut Frame, app: &App) {
                 }
             } else if let Some(d) = fb.cell_mut((x, y)) {
                 d.reset();
+            }
+        }
+    }
+}
+
+/// Slide a just-left session's captured snapshot off to the right over
+/// [`SESSION_ANIM`] (#35), revealing the dashboard already drawn beneath. The
+/// mirror of [`render_session_enter`].
+fn render_session_exit(frame: &mut Frame, app: &App) {
+    if !app.motion_enabled() {
+        return;
+    }
+    let Some(at) = app.session_exit_at else {
+        return;
+    };
+    let now = std::time::Instant::now();
+    let p = tween::progress(at, SESSION_ANIM, now);
+    if p >= 1.0 {
+        return;
+    }
+    let snap = app.session_snapshot.borrow();
+    let Some(buf) = snap.as_ref() else {
+        return;
+    };
+    let area = frame.area();
+    // Off eases from 0 to a full screen-width, carrying the session off the right.
+    let off = (tween::ease_out(p) * area.width as f32).round() as u16;
+    if off >= area.width {
+        return;
+    }
+    let fb = frame.buffer_mut();
+    for y in area.y..area.y + area.height {
+        // Left-to-right: each destination x reads source x-off (already passed).
+        for x in (area.x + off)..(area.x + area.width) {
+            if let (Some(s), Some(d)) = (buf.cell((x - off, y)), fb.cell_mut((x, y))) {
+                *d = s.clone();
             }
         }
     }

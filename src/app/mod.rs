@@ -217,6 +217,12 @@ pub struct App {
     /// full-screen session view can slide in from the right (#35). `None` at rest
     /// / under reduced motion.
     pub session_enter_at: Option<std::time::Instant>,
+    /// Full-frame snapshot of the last session view, captured each frame while in
+    /// a session so it can be slid off to the right when the host is left (#35).
+    pub session_snapshot: std::cell::RefCell<Option<ratatui::buffer::Buffer>>,
+    /// When the host view started exiting (session -> dashboard), driving the
+    /// slide-out of `session_snapshot`. `None` at rest / under reduced motion.
+    pub session_exit_at: Option<std::time::Instant>,
     pub palette_query: String,
     pub palette_selected: usize,
     pub palette_results: Vec<usize>,
@@ -276,6 +282,11 @@ pub(crate) fn is_overlay_mode(mode: AppMode) -> bool {
     )
 }
 
+/// Whether `mode` shows the full-screen embedded session (connecting or live).
+pub(crate) fn is_session_mode(mode: AppMode) -> bool {
+    matches!(mode, AppMode::Connecting | AppMode::Session)
+}
+
 impl App {
     /// Whether UI motion (slides / morphs / fades) should play. Off when the
     /// user set `appearance.disable_animation` (the reduced-motion toggle, also
@@ -313,7 +324,25 @@ impl App {
             } else if prev_overlay && !now_overlay {
                 self.popup_closing_at = Some(std::time::Instant::now());
             }
+            // Leaving the full-screen host view back to the dashboard slides the
+            // captured session snapshot off to the right (#35). Only to Normal —
+            // opening the session-host picker over a live session isn't an exit.
+            if is_session_mode(self.anim_prev_mode) && self.mode == AppMode::Normal {
+                if self.motion_enabled() {
+                    self.session_exit_at = Some(std::time::Instant::now());
+                } else {
+                    *self.session_snapshot.borrow_mut() = None;
+                }
+            }
             self.anim_prev_mode = self.mode;
+        }
+        // Retire a finished session-exit slide so its snapshot buffer is freed.
+        if self
+            .session_exit_at
+            .is_some_and(|at| at.elapsed() >= crate::tui::SESSION_ANIM)
+        {
+            self.session_exit_at = None;
+            *self.session_snapshot.borrow_mut() = None;
         }
         // Retire a finished close slide so its snapshot buffer is freed.
         if self
@@ -436,6 +465,8 @@ impl App {
             popup_backdrop: std::cell::RefCell::new(None),
             popup_closing_at: None,
             session_enter_at: None,
+            session_snapshot: std::cell::RefCell::new(None),
+            session_exit_at: None,
             palette_query: String::new(),
             palette_selected: 0,
             palette_results: Vec::new(),
