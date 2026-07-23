@@ -1,9 +1,3 @@
----
-type: Documentation Index
-title: "Operations"
-description: "Files and subdirectories in Operations."
----
-
 # Files
 
 - [Build, Versioning & Release — Justfile recipes, odometer versioning, and release flow](build-release.md) - How to build, test, version, and release SSHub — Justfile recipes, the odometer vX.Y.Z versioning scheme with the pre-commit auto-bump hook, the feature/*→development→main branch model, and the one-command just release flow.
