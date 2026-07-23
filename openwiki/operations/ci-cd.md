@@ -25,7 +25,7 @@ Trigger: tag push `v*` (created by `just release`).
 
 ## `openwiki-update.yml` — wiki bot
 
-Trigger: `workflow_dispatch` + daily cron `0 8 * * *`. Installs the `openwiki` npm CLI and runs `openwiki code --update --print` (OpenRouter provider, LangSmith tracing), then opens a PR from branch `openwiki/update` via `peter-evans/create-pull-request`. The PR path filter includes the workflow file itself, so bot config edits ride along with doc updates.
+Trigger: `workflow_dispatch` + daily cron `0 8 * * *`. Installs the `openwiki` npm CLI and runs `openwiki code --update --print` (OpenRouter provider, model `z-ai/glm-5.2`, LangSmith tracing), then opens a PR from branch `openwiki/update` via `peter-evans/create-pull-request`. The PR path filter includes the workflow file itself, so bot config edits ride along with doc updates.
 
 ## `strix-pentest.yml` — PR security scan
 

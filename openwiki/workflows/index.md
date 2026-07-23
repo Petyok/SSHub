@@ -1,9 +1,3 @@
----
-type: Documentation Index
-title: "Workflows"
-description: "Files and subdirectories in Workflows."
----
-
 # Files
 
 - [Headless CLI — full command tree, JSON output, and exit codes](cli.md) - SSHub's scriptable command-line interface (src/cli) covering hosts, groups, identities, tunnels, SFTP, audit, import/export/sync, and completions, with --format json support and stable exit codes 0/1/2.
