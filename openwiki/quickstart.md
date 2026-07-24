@@ -7,7 +7,7 @@ tags: [sshub, tui, ssh, rust, overview]
 
 # SSHub Quickstart
 
-SSHub (`sshub`, v0.9.3 in `Cargo.toml`) is a keyboard-driven terminal UI for managing and connecting to SSH hosts. It merges your read-only `~/.ssh/config` with a fully managed host database (SQLite), and adds embedded in-TUI SSH sessions, an SFTP file browser, SSH tunnels with keep-alive reconnect, ssh-agent identity management, OS auto-detection with logos, and a connection audit log. It also ships a full headless CLI for scripting. License: AGPL-3.0-or-later.
+SSHub (`sshub`, v0.10.0 in `Cargo.toml`) is a keyboard-driven terminal UI for managing and connecting to SSH hosts. It merges your read-only `~/.ssh/config` with a fully managed host database (SQLite), and adds embedded in-TUI SSH sessions, an SFTP file browser, SSH tunnels with keep-alive reconnect, ssh-agent identity management, OS auto-detection with logos, broadcast mode (run one command across a group or tag at once), and a connection audit log. It also ships a full headless CLI for scripting. License: AGPL-3.0-or-later.
 
 - Crate: `sshub` on crates.io (`cargo install sshub`); repo: github.com/Petyok/SSHub
 - Stack: Rust 2021, ratatui 0.30 + crossterm (TUI), portable-pty + vt100/tui-term (embedded sessions), rusqlite bundled (SQLite), ssh2/libssh2 with vendored OpenSSL (SFTP), nucleo (fuzzy search), notify (file watcher), keyring (OS secret store). **No async runtime** — a synchronous event loop polls every 50 ms (`src/lib.rs`).
@@ -48,7 +48,7 @@ Legacy `SSH_LAUNCHER_*` env vars are still honored as fallbacks, and `~/.config/
 - [Headless CLI](workflows/cli.md) — full command tree, JSON output, exit codes.
 
 ### Domain
-- [Hosts, groups & identities](domain/hosts-identities.md) — host sources, nested groups and Favorites, identities, ssh-agent, and Termius import.
+- [Hosts, groups & identities](domain/hosts-identities.md) — host sources, nested groups and Favorites, identities, ssh-agent, and Termius/PuTTY/mRemoteNG import.
 
 ### Operations & testing
 - [Build, versioning & release](operations/build-release.md) — Justfile recipes, odometer versioning, pre-commit hook, release flow.
@@ -56,7 +56,7 @@ Legacy `SSH_LAUNCHER_*` env vars are still honored as fallbacks, and `~/.config/
 - [Testing strategy](testing/strategy.md) — unit / smoke / e2e / config levels, fixtures, and test doubles.
 
 ### Integrations & security
-- [External terminal launchers & demo](integrations/external-terminals.md) — kitty/ghostty/custom launchers and the VHS demo pipeline.
+- [External integrations & demo](integrations/external-terminals.md) — the VHS demo pipeline and other external touchpoints (the 0.9.x external-terminal launchers were removed in 0.10.0).
 - [Secrets, credentials & file security](security/secrets.md) — OS keyring, askpass staging, TOFU host keys, session-log exposure warning, permission hardening.
 
 ## Contributing pointers
@@ -68,3 +68,4 @@ Pinned workflow: [docs/implementation-flow.md](../docs/implementation-flow.md) (
 - **Demo pipeline details** (`demo/` tapes, `record.sh`, `seed-demo.sh`) — only summarized under [integrations](integrations/external-terminals.md); deferred because it is contributor tooling, not product behavior.
 - **Host-sync design** (`docs/host-sync-design.md`) — P2P sync design for epic #13; not yet implemented, documented only in the design doc.
 - **Detached tunnel PID-file hardening** (`src/tunnel/spawn.rs`) — acknowledged races (no locking, recycled PIDs) noted in [tunnels](workflows/tunnels.md); behavior may change.
+may change.

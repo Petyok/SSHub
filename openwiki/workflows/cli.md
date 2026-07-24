@@ -21,14 +21,14 @@ Parsing is hand-rolled (`src/cli/parse.rs`), output DTOs in `src/cli/output.rs`.
 
 | Command | Subcommands | Notes |
 |---|---|---|
-| `host` (alias `list`, `connect`) | `list show connect resolve search add edit rename delete duplicate` | `add` takes `--name --address --port --username --group --tags`; `connect` runs ssh/mosh as a foreground child process with inherited stdio (Command::spawn + wait), propagating its exit code; it does not use the TUI embedded-PTY session module or the (dead-code) external TerminalLauncher |
+| `host` (alias `list`, `connect`) | `list show connect resolve search add edit rename delete duplicate` | `add` takes `--name --address --port --username --group --tags`; `connect` runs ssh/mosh as a foreground child process with inherited stdio (Command::spawn + wait), propagating its exit code; it does not use the TUI embedded-PTY session module |
 | `group` (alias `groups`) | `list show add edit delete` | Nested groups via parent |
 | `identity` | `list show add edit delete agent-remove` | `add --private-key`, `--password-stdin` for secrets; `agent-remove` = `ssh-add -d` |
 | `tunnel` | `list show create start stop delete` | `start` is detached by default (PID files), `--foreground` runs with keep-alive ([tunnels](tunnels.md)) |
 | `sftp` | `ls get put rm mkdir rename chmod` | One-shot over a direct host; no ProxyJump ([sessions & SFTP](sessions-sftp.md#sftp)) |
 | `audit` | `list stats` | `--status ok|fail`, `--days N` |
 | `tags` | — | List all tags |
-| `import` / `sync` / `export` | — | ssh config import, row refresh, `export --stdout|-o` |
+| `import` / `sync` / `export` | — | `import --from ssh\|termius\|putty\|mremoteng` ([domain](../domain/hosts-identities.md)), row refresh, `export --stdout\|-o` |
 | `completions` | `bash zsh fish` | Installed by `just install-completions` |
 | `db` | `purge` | Deletes `launcher.db` + sidecars only |
 

@@ -20,6 +20,7 @@ SSHub has **no async runtime**. Everything is driven by one synchronous event lo
    - config [file watcher](#file-watcher) → `app.reload_hosts()`
    - ping worker (30 s interval, ring buffer of 30 samples per host)
    - SFTP worker events → `apply_sftp_event` (see [sessions & SFTP](../workflows/sessions-sftp.md))
+   - broadcast worker events → `apply_event` fold into per-host results (see [TUI workflow](../workflows/tui.md#broadcast-mode))
    - SSH probe logs, OS-detect worker results
    - `tick_tunnels()` keep-alive (see [tunnels](../workflows/tunnels.md))
    - auth-events cache refresh (10 s)
@@ -35,13 +36,12 @@ A headless variant (`run_headless_loop`) renders once on a ratatui `TestBackend`
 | `resolver` | `HostResolver` | `SshConfigResolver` (`src/ssh/resolver.rs`) |
 | `metadata` | `MetadataStore` | `MetadataDb` (`src/metadata/db.rs`) |
 | `store` | — | `LauncherStore` (`src/store/mod.rs`) |
-| `launcher` | `TerminalLauncher` | kitty/ghostty/custom ([integrations](../integrations/external-terminals.md)) |
 | `password_store` | `PasswordStore` | `OsKeyring` ([secrets](../security/secrets.md)) |
 
-- **Modes**: `AppMode` (`src/app/types.rs`) has ~26 variants — `Normal`, `Search`, `TagFilter`, `HostDetail`, `HostForm`, `IdentityForm`, `GroupForm`/`GroupManage`, `TunnelForm`, `Palette`, `Settings`, `KeybindEditor`, `Help`, `ConfirmQuit`/`ConfirmDelete`/`ConfirmDiscard`, `Connecting`, `Session`, etc. Overlays are modes; key dispatch lives in `src/app/keys.rs` and per-mode handlers in `src/app/*.rs`.
+- **Modes**: `AppMode` (`src/app/types.rs`) has ~26 variants — `Normal`, `Search`, `TagFilter`, `HostDetail`, `HostForm`, `IdentityForm`, `GroupForm`/`GroupManage`, `TunnelForm`, `Palette`, `Settings`, `KeybindEditor`, `Help`, `ConfirmQuit`/`ConfirmDelete`/`ConfirmDiscard`, `Connecting`, `Session`, etc. The broadcast feature is state held directly on `App` (`self.broadcast: Option<BroadcastState>`) rather than an `AppMode` — see [TUI workflow](../workflows/tui.md#broadcast-mode). Overlays are modes; key dispatch lives in `src/app/keys.rs` and per-mode handlers in `src/app/*.rs`.
 - **Tabs are not an enum**: `App.active_tab: usize` (0–4 = hosts, sftp, tunnels, identities, audit). Be careful when adding tabs — there is no type safety here.
 - First run with no hosts drops straight into `Help` mode.
-- The `TerminalLauncher` dependency is retained but dead at runtime: sessions run in the embedded PTY (src/session/), and the CLI `sshub host connect` path spawns ssh/mosh directly via std::process::Command (src/cli/host.rs cmd_connect), bypassing TerminalLauncher entirely. The trait is exercised only by its own module unit tests and test doubles; App.launcher itself is never called from any production code path.
+- The old `TerminalLauncher` dependency (`AppDeps.launcher`, src/launcher/) was removed in 0.10.0: sessions run in the embedded PTY (src/session/), and the CLI `sshub host connect` path spawns ssh/mosh directly via std::process::Command (src/cli/host.rs cmd_connect). See [integrations](../integrations/external-terminals.md).
 
 ## Render pipeline (`src/tui/`)
 

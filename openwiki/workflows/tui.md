@@ -33,10 +33,18 @@ The TUI is a bento-grid dashboard rendered by `src/tui/` on top of the [App stat
 ## Default keybindings (highlights)
 
 Global: `Esc` back, `q` quit, `?` help, `Ctrl+K` keybind editor. `Tab` toggles the detail panel only on the Hosts tab; on SFTP it switches panes, and it has no detail-panel effect on Tunnels/Identities/Audit.
-Hosts: `Enter` connect, `a`/`e`/`d`/`D` add/edit/delete/duplicate, `f` favorite, `s` sort mode, `/` search, `#` tags, `Shift+I`/`Shift+E` import/export ssh config, `Shift+T` Termius import.
+Hosts: `Enter` connect, `a`/`e`/`d`/`D` add/edit/delete/duplicate, `f` favorite, `s` sort mode, `/` search, `#` tags, `b` broadcast, `Shift+I`/`Shift+E` import/export ssh config, `Shift+T` Termius import.
 Sessions: `Ctrl+D` detach (SSH keeps running), `Ctrl+W` close tab, `Ctrl+[`/`Ctrl+]` cycle tabs, `Ctrl+Shift+S` focus session from dashboard.
 Tunnels: `Enter` start/stop/cancel-reconnect, `R` reconnect settings, `x` kill process.
 Audit: `f` status filter (all/ok/fail), `r` range (all/today/week/month).
+
+## Panel focus & zoom
+
+Dashboard panels can be focused with `Alt`+arrows and zoomed to fill the body with `z` or `Alt+Enter` (tmux-style, issue #18; `App.panel_zoomed`, layout in `src/tui/dashboard_layout.rs::dashboard_layout_zoomed`). Zoomed panels scroll and support drag-to-copy text selection (OSC52), and carry per-panel actions: connect to the selected host from the ping / recent panels, cycle the auth panel's filters, and remove the selected key from ssh-agent.
+
+## Broadcast mode
+
+`b` on the Hosts tab opens the broadcast wizard (`src/app/broadcast.rs` on top of the pure `src/broadcast/` module, issue #3): pick a group or tag, type a command, review a dry-run preview (`e` deselects hosts, `c` edits the command), then the command runs non-interactively over SSH on every host concurrently through a bounded worker pool (`spawn_broadcast`, default concurrency 8, thread + mpsc shape shared with the [ping worker](../architecture/overview.md)). Auth uses key/agent (`BatchMode`) or stored passwords via `SSH_ASKPASS` — the same path a live session uses. A live docked panel slides into the bottom-right showing per-host status/exit code/output (failures first), joins panel focus/zoom (`Alt`+arrows, `z`), auto-dismisses on a countdown, and is cancelled with `x`. Each host result is written to the audit log (with error text on failure); failed hosts pop animated error toasts.
 
 The full binding table lives in `README.md` (`## Keybindings`); rebinds made in the keybind editor take precedence over these defaults. (The man page documents only the CLI subcommands, not TUI keybindings.)
 

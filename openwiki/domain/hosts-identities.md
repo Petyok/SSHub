@@ -1,7 +1,7 @@
 ---
 type: Domain Concept
 title: Hosts, Groups & Identities — host sources, nested groups, Favorites, and ssh-agent identities
-description: Core SSHub domain concepts — hosts from two sources (managed launcher rows and read-only ~/.ssh/config), nested groups with a reserved Favorites group and M:N membership, identities wrapping SSH keys with ssh-agent integration, OS auto-detection, and Termius import.
+description: Core SSHub domain concepts — hosts from two sources (managed launcher rows and read-only ~/.ssh/config), nested groups with a reserved Favorites group and M:N membership, identities wrapping SSH keys with ssh-agent integration, OS auto-detection, and Termius/PuTTY/mRemoteNG import.
 resource: src/store/types.rs
 tags: [domain, hosts, groups, identities, ssh-agent, termius]
 ---
@@ -32,9 +32,19 @@ An identity (`src/store/identities.rs`) bundles a display name, username, and pr
 - **Key files** (`src/ssh/keyfile.rs`) — `ssh-keygen -y` probing detects whether a key needs a passphrase; the passphrase is fed through a staged 0600/0700 askpass script so it never appears in `ps` argv.
 - **Probing** (`src/ssh/probe.rs`) — defines `SshLogEntry`/`LogLevel`, populated by manual log pushes from the connect/session paths. The module’s own background `ssh -v BatchMode` classifier (`spawn_ssh_probe`/`classify_line`), which used to periodically probe every known host, is dead code today (no callers) and was disabled because it "buried the events the user actually cares about" (src/app/mod.rs); there is no live auth-method/host-key display in the detail panel.
 
-## Termius import (`src/import/termius_csv.rs`)
+## Importing hosts (`src/import/`)
 
-Imports Termius backups (`L00t.csv` + `ssh_keys/` directory — format documented in `docs/termius-export-format.md`) as managed hosts and identities. Passwords/passphrases are re-stored into the keyring with **write-verification**; failures surface as `keyring_failures` in the import report rather than silently dropping secrets. TUI: `Shift+T`; covered by `tests/e2e/termius_import.rs`.
+- **Termius** (`termius_csv.rs`) — imports Termius backups (`L00t.csv` + `ssh_keys/` directory — format documented in `docs/termius-export-format.md`) as managed hosts and identities. Passwords/passphrases are re-stored into the keyring with **write-verification**; failures surface as `keyring_failures` in the import report rather than silently dropping secrets. TUI: `Shift+T`; covered by `tests/e2e/termius_import.rs`.
+- **PuTTY** (`putty.rs`) — imports a PuTTY registry export (`.reg`) or a Unix sessions directory (default `~/.putty/sessions`) as managed hosts.
+- **mRemoteNG** (`mremoteng.rs`) — imports a `confCons.xml` connections file as managed hosts.
+
+PuTTY/mRemoteNG imports were added in 0.10.0 (issue #12) and run through the headless CLI (`sshub import --from ssh|termius|putty|mremoteng`, see [CLI](../workflows/cli.md)) alongside the existing ssh_config sync.
+
+## Change guidance
+
+- Host CRUD invariants (dedupe with ssh_config sources, favorite semantics) are pinned by `tests/e2e/host_crud.rs`, `host_sort.rs`, `group_crud.rs`, `hybrid_compat.rs`, `ssh_config_sync.rs`.
+- Import/sync must never overwrite `source=launcher` rows and never write the user's own `~/.ssh/config` (export goes to `exported.conf`).
+import --from ssh|termius|putty|mremoteng`, see [CLI](../workflows/cli.md)) alongside the existing ssh_config sync.
 
 ## Change guidance
 

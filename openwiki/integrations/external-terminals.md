@@ -1,24 +1,16 @@
 ---
 type: Integration
-title: Integrations — external terminal launchers and the demo pipeline
-description: SSHub's external integrations — the TerminalLauncher abstraction for spawning sessions in kitty/ghostty/custom terminals (src/launcher) and the VHS-based demo recording pipeline under demo/ that produces README GIFs and screenshots.
-resource: src/launcher/mod.rs
-tags: [integrations, terminal, kitty, ghostty, demo]
+title: Integrations — demo pipeline and external touchpoints
+description: SSHub's external integrations — the VHS-based demo recording pipeline under demo/ that produces README GIFs and screenshots, plus other external touchpoints (OS keyring, ssh-agent, CI). The 0.9.x external-terminal launcher subsystem (kitty/ghostty/custom) was removed in 0.10.0.
+resource: demo/record.sh
+tags: [integrations, demo, vhs]
 ---
 
 # Integrations
 
-## External terminal launchers (`src/launcher/`)
+## External terminal launchers — removed in 0.10.0
 
-`TerminalLauncher` (`src/launcher/trait.rs`) is the abstraction for spawning SSH sessions in an external terminal window. `launcher_from_config` picks an implementation from the top-level `terminal` key in `config.toml` (e.g. `terminal = "kitty"`), with `launch_command` as a sibling top-level key used only when `terminal = "custom"`:
-
-- **Kitty** (`kitty.rs`) — `kitty --class sshub-session --title "SSH: X" --hold -e <argv>`.
-- **Ghostty** (`ghostty.rs`) — `ghostty -e <argv>`.
-- **Custom** (`custom.rs`) — user command template with whitelisted placeholders (`{host} {user} {hostname} {port} {ssh_command} {ssh_args}`), POSIX-safe quoting; direct-argv fast path, `sh -c` wrapping only when shell operators are present.
-
-The trait's only required method is `launch_ssh_argv`; default methods cover alias launches (`launch`), explicit-argv managed launches (`launch_managed`), and mosh-aware variants (`launch_with_transport`) built on `build_ssh_argv`/`build_mosh_argv` ([hosts](../domain/hosts-identities.md)).
-
-> **Status:** since sessions moved to the [embedded PTY](../workflows/sessions-sftp.md), the launcher is effectively dead at runtime in the TUI (kept as an `AppDeps` seam and exercised by tests/`MockLauncher`). Treat it as a legacy/escape-hatch integration, not the primary connect path — check current usage in `src/app/connect.rs` before extending it.
+The `TerminalLauncher` abstraction (`src/launcher/` — kitty, ghostty, and custom-command launchers configured via the `terminal` / `launch_command` keys in `config.toml`) was **removed in 0.10.0** (issue #30). Embedded PTY sessions had already become the only connect transport, so the subsystem was dead code. Old `config.toml` files that still carry those keys keep loading fine; the keys are simply ignored. Sessions now always run in the [embedded PTY](../workflows/sessions-sftp.md), and the headless [CLI](../workflows/cli.md) `connect` spawns ssh/mosh directly.
 
 ## Demo pipeline (`demo/`)
 
@@ -34,5 +26,5 @@ Design history: `docs/superpowers/specs/2026-07-12-demo-tapes-redesign-design.md
 ## Other external touchpoints
 
 - **OS keyring / Secret Service** — see [secrets](../security/secrets.md).
-- **ssh-agent, ssh -G, ssh-keygen, Termius backups** — see [hosts & identities](../domain/hosts-identities.md).
+- **ssh-agent, ssh -G, ssh-keygen, Termius/PuTTY/mRemoteNG imports** — see [hosts & identities](../domain/hosts-identities.md).
 - **GitHub Actions / crates.io** — see [CI & automation](../operations/ci-cd.md).
