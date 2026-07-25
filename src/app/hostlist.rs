@@ -4,6 +4,10 @@ use super::*;
 /// ~63% of the distance left to its target every `HOST_SCROLL_TAU`.
 const HOST_SCROLL_TAU: f32 = 0.055;
 
+/// Time constant of the header counters' chase (#35), a touch slower than the
+/// list scroll so a jump of a few hosts is legible as it counts.
+const HEADER_STATS_TAU: f32 = 0.09;
+
 impl App {
     /// Map a Y offset (relative to hosts panel content area) to a host index,
     /// accounting for group headers and blank separators.
@@ -300,6 +304,48 @@ impl App {
         {
             self.selected = pos;
         }
+    }
+
+    /// Advance the header counters toward `target` and return what to draw
+    /// (#35). Each counter closes on its real value instead of snapping, so a
+    /// handful of hosts dropping offline reads as the tally moving rather than
+    /// a number blinking. Same chase as the host list's scroll, and likewise
+    /// called once per frame from the render pass.
+    pub(crate) fn header_stats_advance(&self, target: [usize; 4]) -> [usize; 4] {
+        let goal = target.map(|v| v as f32);
+        if !self.motion_enabled() {
+            self.header_stats_pos.set(goal);
+            self.header_stats_moving.set(false);
+            return target;
+        }
+        let now = std::time::Instant::now();
+        let Some(last) = self.header_stats_at.get() else {
+            // First frame: the tally starts where it really is.
+            self.header_stats_pos.set(goal);
+            self.header_stats_at.set(Some(now));
+            self.header_stats_moving.set(false);
+            return target;
+        };
+        self.header_stats_at.set(Some(now));
+        let dt = now.saturating_duration_since(last).as_secs_f32();
+        let k = 1.0 - (-dt / HEADER_STATS_TAU).exp();
+        let mut pos = self.header_stats_pos.get();
+        let mut out = [0usize; 4];
+        let mut moving = false;
+        for i in 0..4 {
+            let dist = goal[i] - pos[i];
+            if dist.abs() < 0.5 {
+                pos[i] = goal[i];
+                out[i] = target[i];
+            } else {
+                pos[i] += dist * k;
+                out[i] = pos[i].round().max(0.0) as usize;
+                moving = true;
+            }
+        }
+        self.header_stats_pos.set(pos);
+        self.header_stats_moving.set(moving);
+        out
     }
 
     /// Notice hosts whose ping class changed since the last tick and stamp

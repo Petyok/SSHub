@@ -686,3 +686,36 @@ fn ping_flash_is_off_under_reduced_motion() {
         crate::tui::theme::GREEN
     );
 }
+
+/// The header tally counts toward its real values instead of snapping (#35),
+/// and lands on them exactly.
+#[test]
+fn header_stats_count_toward_their_target() {
+    let app = test_app(vec![("a", host("a"))]);
+    let tick = |app: &App| {
+        app.header_stats_at.set(Some(
+            std::time::Instant::now() - std::time::Duration::from_millis(16),
+        ));
+    };
+
+    // First frame adopts the tally outright: no counting up from zero on open.
+    assert_eq!(app.header_stats_advance([12, 8, 3, 1]), [12, 8, 3, 1]);
+    assert!(!app.header_stats_moving.get());
+
+    // A jump is approached, not taken in one step.
+    tick(&app);
+    let stepped = app.header_stats_advance([12, 0, 3, 9]);
+    assert!(app.header_stats_moving.get());
+    assert_eq!(stepped[0], 12, "an unchanged counter stays put");
+    assert!(
+        (1..8).contains(&stepped[1]) && (1..9).contains(&stepped[3]),
+        "expected both counters mid-flight, got {stepped:?}"
+    );
+
+    for _ in 0..200 {
+        tick(&app);
+        app.header_stats_advance([12, 0, 3, 9]);
+    }
+    assert_eq!(app.header_stats_advance([12, 0, 3, 9]), [12, 0, 3, 9]);
+    assert!(!app.header_stats_moving.get());
+}

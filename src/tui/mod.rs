@@ -160,7 +160,7 @@ fn render_inner(frame: &mut Frame, app: &App) {
     let areas = dashboard_layout::dashboard_layout_zoomed(area, app.ui_zoom);
 
     // Header stats
-    let (total, online, slow, down) = compute_header_stats(app);
+    let [total, online, slow, down] = app.header_stats_advance(compute_header_stats(app));
     let clock = format_utc_clock();
     widgets::header::render_header(frame, areas.header, total, online, slow, down, &clock);
 
@@ -480,7 +480,7 @@ fn build_session_chips(app: &App) -> Vec<widgets::header::SessionChip> {
         .collect()
 }
 
-fn compute_header_stats(app: &App) -> (usize, usize, usize, usize) {
+fn compute_header_stats(app: &App) -> [usize; 4] {
     use crate::ping::{classify_ping, PingClass};
 
     let total = app.hosts.len();
@@ -495,7 +495,7 @@ fn compute_header_stats(app: &App) -> (usize, usize, usize, usize) {
             PingClass::Unknown => {}
         }
     }
-    (total, online, slow, down)
+    [total, online, slow, down]
 }
 
 fn footer_keybinds(app: &App) -> Vec<(String, &'static str)> {
@@ -1571,7 +1571,7 @@ mod tests {
         app.ping_data
             .insert("host-02".into(), vec![PING_UNREACHABLE]);
 
-        let (total, online, slow, down) = compute_header_stats(&app);
+        let [total, online, slow, down] = compute_header_stats(&app);
         assert_eq!(total, 3);
         assert_eq!(online, 1);
         assert_eq!(slow, 1);

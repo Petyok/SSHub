@@ -223,6 +223,14 @@ pub struct App {
     /// When the host view started exiting (session -> dashboard), driving the
     /// slide-out of `session_snapshot`. `None` at rest / under reduced motion.
     pub session_exit_at: Option<std::time::Instant>,
+    /// Header counters as drawn right now (total / online / slow / down),
+    /// counting toward their real values rather than snapping (#35). `Cell`
+    /// because the render pass owns the frame clock.
+    pub header_stats_pos: std::cell::Cell<[f32; 4]>,
+    /// When the header counters were last advanced. `None` until first drawn.
+    pub header_stats_at: std::cell::Cell<Option<std::time::Instant>>,
+    /// Whether a counter is still counting, so the loop keeps the frame rate up.
+    pub header_stats_moving: std::cell::Cell<bool>,
     /// Ping class per host as of the previous tick, and when it last changed,
     /// so a host going green or red flashes instead of switching silently (#35).
     pub ping_flash: std::collections::HashMap<String, (crate::ping::PingClass, std::time::Instant)>,
@@ -550,6 +558,9 @@ impl App {
             session_snapshot: std::cell::RefCell::new(None),
             session_exit_at: None,
             session_tab_switch: None,
+            header_stats_pos: std::cell::Cell::new([0.0; 4]),
+            header_stats_at: std::cell::Cell::new(None),
+            header_stats_moving: std::cell::Cell::new(false),
             ping_flash: std::collections::HashMap::new(),
             fold_anim: None,
             anim_prev_selected: 0,

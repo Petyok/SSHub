@@ -60,6 +60,8 @@ impl App {
             || self
                 .session_exit_at
                 .is_some_and(|at| now.saturating_duration_since(at) < crate::tui::SESSION_ANIM);
+        // Header counters still counting toward their real values (#35).
+        let stats = self.header_stats_moving.get();
         // A status dot still flashing after its ping class changed (#35).
         let flash = self
             .ping_flash
@@ -103,6 +105,7 @@ impl App {
             || selection
             || fold
             || flash
+            || stats
     }
 
     /// Open the broadcast wizard from the hosts tab. Refuses while a run is live
