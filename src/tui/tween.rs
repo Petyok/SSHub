@@ -82,6 +82,28 @@ pub fn progress(start: Instant, dur: Duration, now: Instant) -> f32 {
     (now.saturating_duration_since(start).as_secs_f32() / dur.as_secs_f32()).clamp(0.0, 1.0)
 }
 
+/// Braille spinner frames for "work in flight" indicators, advanced by a clock
+/// so they animate while the app is otherwise idle.
+pub const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// Milliseconds one spinner frame is held for.
+const SPINNER_STEP_MS: u128 = 90;
+
+/// Spinner frame for a task that has been running for `elapsed`.
+pub fn spinner_frame(elapsed: Duration) -> &'static str {
+    SPINNER_FRAMES[(elapsed.as_millis() / SPINNER_STEP_MS) as usize % SPINNER_FRAMES.len()]
+}
+
+/// Spinner frame driven by the wall clock, for indicators that don't track a
+/// start time of their own. Every such spinner turns in step.
+pub fn spinner_frame_now() -> &'static str {
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    SPINNER_FRAMES[(ms / SPINNER_STEP_MS) as usize % SPINNER_FRAMES.len()]
+}
+
 /// Cubic ease-out on `t` clamped to `[0, 1]` -> `[0, 1]`: `1 - (1 - t)^3`.
 pub fn ease_out(t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
@@ -196,6 +218,21 @@ mod tests {
         let anim = SlideAnim::new_in_out(from, to, dur);
         assert_eq!(anim.rect_at(anim.start), from);
         assert_eq!(anim.rect_at(anim.start + dur), to);
+    }
+
+    #[test]
+    fn spinner_frame_advances_and_wraps() {
+        assert_eq!(spinner_frame(Duration::ZERO), SPINNER_FRAMES[0]);
+        assert_eq!(spinner_frame(Duration::from_millis(89)), SPINNER_FRAMES[0]);
+        assert_eq!(spinner_frame(Duration::from_millis(90)), SPINNER_FRAMES[1]);
+        // A full cycle is back to the first frame, not out of bounds.
+        assert_eq!(spinner_frame(Duration::from_millis(900)), SPINNER_FRAMES[0]);
+        assert_eq!(spinner_frame(Duration::from_secs(9999)), SPINNER_FRAMES[0]);
+    }
+
+    #[test]
+    fn spinner_frame_now_is_one_of_the_frames() {
+        assert!(SPINNER_FRAMES.contains(&spinner_frame_now()));
     }
 
     #[test]

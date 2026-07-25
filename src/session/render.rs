@@ -332,9 +332,6 @@ fn render_full_debug_log(frame: &mut Frame, area: Rect, session: &Session) {
     frame.render_widget(Paragraph::new(lines).scroll((scroll, 0)), area);
 }
 
-/// Braille spinner frames, advanced by wall-clock so it animates while idle.
-const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
 fn render_connecting(
     frame: &mut Frame,
     area: Rect,
@@ -354,7 +351,6 @@ fn render_connecting(
         return;
     }
 
-    let frame_idx = (elapsed.as_millis() / 90) as usize % SPINNER_FRAMES.len();
     let host = session
         .meta
         .address
@@ -372,7 +368,10 @@ fn render_connecting(
     }
     let center = vec![
         Line::from(vec![
-            Span::styled(SPINNER_FRAMES[frame_idx], Style::default().fg(theme::GREEN)),
+            Span::styled(
+                crate::tui::tween::spinner_frame(elapsed),
+                Style::default().fg(theme::GREEN),
+            ),
             Span::raw("  "),
             Span::styled("connecting to ", mute),
             Span::styled(host, Style::default().fg(theme::TEXT)),

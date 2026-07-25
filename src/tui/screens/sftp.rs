@@ -163,9 +163,12 @@ fn snapshot_area(src: &Buffer, area: Rect) -> Buffer {
 /// Centered "connecting to <host>…" placeholder shown while the SFTP worker is
 /// still establishing the session.
 fn render_connecting(buf: &mut Buffer, area: Rect, host: Option<&str>) {
+    // Same braille spinner the session connect screen turns, so a handshake
+    // reads as in flight rather than hung.
+    let spin = tween::spinner_frame_now();
     let msg = match host {
-        Some(h) => format!("\u{27F3} Connecting to {h}\u{2026}"),
-        None => "\u{27F3} Connecting\u{2026}".to_string(),
+        Some(h) => format!("{spin} Connecting to {h}\u{2026}"),
+        None => format!("{spin} Connecting\u{2026}"),
     };
     let w = (msg.chars().count() as u16).min(area.width);
     let x = area.x + (area.width.saturating_sub(w)) / 2;
