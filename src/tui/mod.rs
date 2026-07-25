@@ -797,6 +797,9 @@ pub const POPUP_ANIM: std::time::Duration = std::time::Duration::from_millis(260
 /// Duration of the full-screen session-enter slide on connect (#35).
 pub const SESSION_ANIM: std::time::Duration = std::time::Duration::from_millis(280);
 
+/// Duration of an SFTP tab sub-state slide: picker <-> connecting <-> browser (#35).
+pub const SFTP_ANIM: std::time::Duration = std::time::Duration::from_millis(260);
+
 /// Shared popup rect hook (#35): every overlay runs its resting rect through
 /// this so the render pass can snapshot the popup for its open/close slides.
 /// Returns the rest rect unchanged — the popup always *draws* at rest, and the

@@ -236,6 +236,13 @@ pub struct App {
     pub sftp_host: Option<String>,
     /// True while the SFTP picker's host search input is capturing keys.
     pub sftp_picker_searching: bool,
+    /// In-flight SFTP tab sub-state slide and when it started (#35). `None` at
+    /// rest / under reduced motion.
+    pub sftp_anim: Option<(SftpAnim, std::time::Instant)>,
+    /// Snapshot of the SFTP tab body captured each resting frame while a session
+    /// is live, so leaving it can slide the captured cells away after the state
+    /// itself is gone.
+    pub sftp_snapshot: std::cell::RefCell<Option<ratatui::buffer::Buffer>>,
     pub probe_rx: Option<Receiver<crate::ssh::probe::SshLogEntry>>,
     pub os_detect_tx: Option<std::sync::mpsc::Sender<crate::osinfo::OsDetectCmd>>,
     pub os_detect_rx: Option<Receiver<crate::osinfo::OsDetectEvent>>,
@@ -343,6 +350,18 @@ impl App {
         {
             self.session_exit_at = None;
             *self.session_snapshot.borrow_mut() = None;
+        }
+        // Retire a finished SFTP sub-state slide. Its snapshot is refreshed every
+        // resting frame while a session is live, so only free it once there is
+        // none left to capture.
+        if self
+            .sftp_anim
+            .is_some_and(|(_, at)| at.elapsed() >= crate::tui::SFTP_ANIM)
+        {
+            self.sftp_anim = None;
+            if self.sftp.is_none() {
+                *self.sftp_snapshot.borrow_mut() = None;
+            }
         }
         // Retire a finished close slide so its snapshot buffer is freed.
         if self
@@ -477,6 +496,8 @@ impl App {
             sftp_rx: None,
             sftp_host: None,
             sftp_picker_searching: false,
+            sftp_anim: None,
+            sftp_snapshot: std::cell::RefCell::new(None),
             probe_rx: None,
             os_detect_tx: None,
             os_detect_rx: None,

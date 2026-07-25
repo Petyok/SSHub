@@ -385,6 +385,23 @@ pub struct TabSwitch {
     pub at: std::time::Instant,
 }
 
+/// An in-flight SFTP tab sub-state slide (#35). The tab body swaps between the
+/// host picker, the "connecting…" placeholder and the dual-pane browser, and
+/// each swap moves in the direction it "came from": the placeholder rides in
+/// and out on the right edge, the two browser panes meet in the middle and part
+/// again toward their own edges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SftpAnim {
+    /// Picker -> "connecting…": the placeholder enters from the right.
+    ConnectIn,
+    /// "connecting…" -> picker (failed / aborted handshake): it leaves right.
+    ConnectOut,
+    /// "connecting…" -> browser: the panes slide in from both edges.
+    PanesIn,
+    /// Browser -> picker: the panes part and slide off both edges.
+    PanesOut,
+}
+
 /// A transient error popup (issue #3): one failed host's error text, slides in
 /// from the right above the broadcast panel and auto-expires. Geometry + slide
 /// progress are derived from `born` at render time (no stored anim state).

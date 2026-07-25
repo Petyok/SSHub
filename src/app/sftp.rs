@@ -6,6 +6,14 @@ use crate::sftp::model::{FileEntry, Phase, SftpState, Side};
 use crate::sftp::SftpCommand;
 
 impl App {
+    /// Arm an SFTP tab sub-state slide (#35). A no-op under reduced motion,
+    /// where each sub-state simply appears at rest.
+    fn stamp_sftp_anim(&mut self, kind: SftpAnim) {
+        if self.motion_enabled() {
+            self.sftp_anim = Some((kind, std::time::Instant::now()));
+        }
+    }
+
     /// Switch to the SFTP tab (index 1). Setter mirror of the other
     /// `switch_to_*_tab` helpers; kept dead-simple because the SFTP tab has no
     /// eager data to refresh (the picker just reuses the host list).
@@ -616,6 +624,8 @@ impl App {
         self.sftp_tx = Some(tx);
         self.sftp_rx = Some(rx);
         self.sftp_host = Some(entry.name().to_string());
+        // Slide the "connecting…" layer in from the right over the picker (#35).
+        self.stamp_sftp_anim(SftpAnim::ConnectIn);
         Ok(())
     }
 
@@ -708,6 +718,19 @@ impl App {
     /// Tear down the live session. Dropping the command `Sender` makes the
     /// worker thread self-terminate.
     fn sftp_disconnect(&mut self) {
+        // Mirror the way in (#35): a handshake that never completed carries the
+        // "connecting…" layer off to the right, a live browser parts its panes
+        // toward both edges. Both reveal the picker underneath.
+        let kind = self.sftp.as_ref().map(|s| {
+            if s.connecting {
+                SftpAnim::ConnectOut
+            } else {
+                SftpAnim::PanesOut
+            }
+        });
+        if let Some(kind) = kind {
+            self.stamp_sftp_anim(kind);
+        }
         self.sftp = None;
         self.sftp_tx = None;
         self.sftp_rx = None;
@@ -722,9 +745,14 @@ impl App {
 
         match ev {
             SftpEvent::Connected => {
+                let was_connecting = self.sftp.as_ref().is_some_and(|s| s.connecting);
                 if let Some(s) = self.sftp.as_mut() {
                     s.notice = None;
                     s.connecting = false;
+                }
+                // Handshake done: bring the two panes in from their edges (#35).
+                if was_connecting {
+                    self.stamp_sftp_anim(SftpAnim::PanesIn);
                 }
             }
             SftpEvent::ConnectFailed(msg) => {
