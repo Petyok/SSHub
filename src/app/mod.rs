@@ -283,12 +283,14 @@ pub struct App {
     search: HostSearch,
 }
 
-/// Whether `mode` draws a popup overlay over the dashboard (so its open/close
-/// should animate, #35). Excludes the full-screen session modes.
+/// Whether `mode` draws a popup overlay (so its open/close should animate,
+/// #35). Excludes the full-screen session modes, which are not popups. The
+/// session-host picker counts: it is a popup like any other, drawn over either
+/// the dashboard or a live session, both of which snapshot a backdrop for it.
 pub(crate) fn is_overlay_mode(mode: AppMode) -> bool {
     !matches!(
         mode,
-        AppMode::Normal | AppMode::Connecting | AppMode::Session | AppMode::SessionHostPicker
+        AppMode::Normal | AppMode::Connecting | AppMode::Session
     )
 }
 

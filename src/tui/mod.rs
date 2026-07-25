@@ -144,6 +144,12 @@ fn render_inner(frame: &mut Frame, app: &App) {
             render_session_tab_slide(frame, app);
         }
         if app.mode == AppMode::SessionHostPicker {
+            // Snapshot the session underneath before the picker draws, so its
+            // drop-in can restore what it covers (#35) — the same contract the
+            // dashboard branch honours for every other popup.
+            if app.motion_enabled() {
+                *app.popup_backdrop.borrow_mut() = Some(frame.buffer_mut().clone());
+            }
             screens::session_host_picker::render(frame, app);
         }
         return;
