@@ -132,33 +132,52 @@ impl Pane {
     /// entry in it. It is *not* exempt from the text filter: while searching,
     /// the user is after something specific, and a `..` sitting at the top of
     /// the results would take the cursor `set_filter` parks on row zero.
-    fn is_visible(&self, entry: &FileEntry) -> bool {
+    fn is_visible(&self, entry: &FileEntry, needle: &str) -> bool {
         if entry.is_parent() {
-            return self.filter.is_empty();
+            return needle.is_empty();
         }
         if !self.show_hidden && entry.name.starts_with('.') {
             return false;
         }
-        self.filter.is_empty()
-            || entry
-                .name
-                .to_lowercase()
-                .contains(&self.filter.to_lowercase())
+        needle.is_empty() || entry.name.to_lowercase().contains(needle)
+    }
+
+    /// The text filter, lowercased once per query rather than per entry:
+    /// `visible_indices` runs for both panes on every frame.
+    fn needle(&self) -> String {
+        self.filter.to_lowercase()
     }
 
     /// Indices into `entries` that are currently listed.
     pub fn visible_indices(&self) -> Vec<usize> {
+        let needle = self.needle();
         self.entries
             .iter()
             .enumerate()
-            .filter(|(_, e)| self.is_visible(e))
+            .filter(|(_, e)| self.is_visible(e, &needle))
             .map(|(i, _)| i)
             .collect()
     }
 
     /// Number of entries currently listed.
     pub fn visible_len(&self) -> usize {
-        self.entries.iter().filter(|e| self.is_visible(e)).count()
+        let needle = self.needle();
+        self.entries
+            .iter()
+            .filter(|e| self.is_visible(e, &needle))
+            .count()
+    }
+
+    /// Entries the dotfile filter is currently keeping off screen, so the pane
+    /// can say so instead of looking mysteriously short.
+    pub fn hidden_len(&self) -> usize {
+        if self.show_hidden {
+            return 0;
+        }
+        self.entries
+            .iter()
+            .filter(|e| !e.is_parent() && e.name.starts_with('.'))
+            .count()
     }
 
     /// Set the filter text and move the cursor to the top of the filtered view.
@@ -169,9 +188,10 @@ impl Pane {
 
     /// The entry under the cursor, if any.
     pub fn selected_entry(&self) -> Option<&FileEntry> {
+        let needle = self.needle();
         self.entries
             .iter()
-            .filter(|e| self.is_visible(e))
+            .filter(|e| self.is_visible(e, &needle))
             .nth(self.selected)
     }
 
@@ -453,11 +473,21 @@ impl SftpState {
     /// the new state so the caller can persist it.
     pub fn toggle_hidden(&mut self) -> bool {
         let show = !self.local.show_hidden;
-        self.local.show_hidden = show;
-        self.remote.show_hidden = show;
-        // The cursor was indexing the old listing; keep it inside the new one.
-        self.local.clamp_selection();
-        self.remote.clamp_selection();
+        for pane in [&mut self.local, &mut self.remote] {
+            // `selected` indexes the *visible* listing, so revealing rows above
+            // the cursor would slide it onto a different entry. Re-find the one
+            // it was on instead.
+            let was_on = pane.selected_entry().map(|e| e.name.clone());
+            pane.show_hidden = show;
+            match was_on.and_then(|name| {
+                pane.visible_indices()
+                    .iter()
+                    .position(|i| pane.entries[*i].name == name)
+            }) {
+                Some(pos) => pane.selected = pos,
+                None => pane.clamp_selection(),
+            }
+        }
         show
     }
 
@@ -755,6 +785,54 @@ mod tests {
             "cursor left past the end of the listing"
         );
         assert!(s.remote.selected_entry().is_some());
+    }
+
+    /// Revealing rows above the cursor must not slide it onto a different
+    /// entry: `selected` indexes the visible listing, not `entries`.
+    #[test]
+    fn toggling_hidden_keeps_the_cursor_on_its_entry() {
+        let mut s = with_dotfiles();
+        // Listed: "..", "app.log". Sit on the file.
+        s.remote.selected = 1;
+        assert_eq!(s.remote.selected_entry().unwrap().name, "app.log");
+        // Revealing ".ssh" and ".bashrc" inserts rows above it.
+        s.toggle_hidden();
+        assert_eq!(
+            s.remote.selected_entry().unwrap().name,
+            "app.log",
+            "cursor slid onto another entry"
+        );
+        // And back again.
+        s.toggle_hidden();
+        assert_eq!(s.remote.selected_entry().unwrap().name, "app.log");
+    }
+
+    /// Hiding the entry the cursor is on has to land it somewhere valid.
+    #[test]
+    fn hiding_the_selected_entry_lands_the_cursor_in_range() {
+        let mut s = with_dotfiles();
+        s.toggle_hidden();
+        let idx = s
+            .remote
+            .visible_indices()
+            .iter()
+            .position(|i| s.remote.entries[*i].name == ".bashrc")
+            .unwrap();
+        s.remote.selected = idx;
+        s.toggle_hidden();
+        assert!(s.remote.selected < s.remote.visible_len());
+        assert!(s.remote.selected_entry().is_some());
+    }
+
+    /// The pane reports what it is holding back, so a short listing isn't a
+    /// mystery once the setting has persisted into a later session.
+    #[test]
+    fn hidden_len_counts_what_the_filter_holds_back() {
+        let mut s = with_dotfiles();
+        assert_eq!(s.remote.hidden_len(), 2, ".ssh and .bashrc");
+        assert_eq!(s.local.hidden_len(), 1, ".config");
+        s.toggle_hidden();
+        assert_eq!(s.remote.hidden_len(), 0, "nothing held back when shown");
     }
 
     /// Searching is for finding entries, so the way-out row steps aside --

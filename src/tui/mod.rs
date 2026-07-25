@@ -538,7 +538,14 @@ fn footer_keybinds(app: &App) -> Vec<(String, &'static str)> {
             ("r".into(), "refresh"),
             ("s".into(), "ssh"),
             ("o".into(), "2nd host"),
-            (".".into(), "hidden"),
+            (
+                ".".into(),
+                if app.sftp_show_hidden {
+                    "hide dotfiles"
+                } else {
+                    "show hidden"
+                },
+            ),
             ("/".into(), "search"),
             ("Esc".into(), "back"),
             ("?".into(), "help"),
