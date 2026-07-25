@@ -329,6 +329,9 @@ impl App {
             if self.mode != AppMode::Normal && self.motion_enabled() {
                 self.session_tab_switch = Some(SessionTabSwitch {
                     dir: if next == idx { 1 } else { -1 },
+                    // The closed tab is gone from the strip, so the highlight
+                    // travels from where its neighbour now sits.
+                    from: next,
                     at: std::time::Instant::now(),
                 });
             }
@@ -365,6 +368,7 @@ impl App {
         if next != cur && self.motion_enabled() {
             self.session_tab_switch = Some(SessionTabSwitch {
                 dir: if delta > 0 { 1 } else { -1 },
+                from: cur as usize,
                 at: std::time::Instant::now(),
             });
         }

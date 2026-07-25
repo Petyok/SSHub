@@ -842,7 +842,9 @@ fn render_session_tab_slide(frame: &mut Frame, app: &App) {
     let Some(outgoing) = snap.as_ref() else {
         return;
     };
-    let area = frame.area();
+    // Only the PTY body travels: the header stays put so the tab strip is a
+    // fixed reference while its highlight slides between tabs (#35).
+    let area = crate::session::render::body_rect(frame.area());
     // The new tab is already drawn at rest; lift it so both layers can move.
     let incoming = blit::snapshot(frame.buffer_mut(), area);
     frame.render_widget(Clear, area);

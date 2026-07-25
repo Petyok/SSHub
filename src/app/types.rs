@@ -412,6 +412,9 @@ pub struct FoldAnim {
 #[derive(Debug, Clone, Copy)]
 pub struct SessionTabSwitch {
     pub dir: i8,
+    /// Index of the tab being left, so the header highlight can travel from it
+    /// to the new one instead of jumping.
+    pub from: usize,
     pub at: std::time::Instant,
 }
 
