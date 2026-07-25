@@ -12,6 +12,7 @@ mod import;
 mod keys;
 mod mouse;
 mod session;
+mod session_picker;
 mod sftp;
 mod tags;
 mod tunnels;
@@ -126,7 +127,7 @@ pub struct App {
     /// Searchable SSH-server picker for the tunnel form.
     pub tunnel_host_picker: Option<TunnelHostPicker>,
     /// Searchable host picker for a new embedded session tab.
-    pub session_host_picker: Option<SessionHostPicker>,
+    pub session_picker: Option<SessionPicker>,
     pub import_prompt: Option<ImportPromptEdit>,
     /// Open SFTP mkdir / rename text prompt, if any.
     pub sftp_prompt: Option<SftpPromptEdit>,
@@ -578,7 +579,7 @@ impl App {
             group_form: None,
             group_field_picker: None,
             tunnel_host_picker: None,
-            session_host_picker: None,
+            session_picker: None,
             import_prompt: None,
             sftp_prompt: None,
             ui_zoom: 0,

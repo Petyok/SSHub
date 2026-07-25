@@ -8,10 +8,10 @@ use crate::app::App;
 use crate::tui::theme;
 
 pub fn render(frame: &mut Frame, app: &App) {
-    let Some(picker) = app.session_host_picker.as_ref() else {
+    let Some(picker) = app.session_picker.as_ref() else {
         return;
     };
-    let matches = app.session_host_matches();
+    let matches = app.session_picker_host_matches();
 
     let area = frame.area();
     let popup_w = 48u16.min(area.width.saturating_sub(4)).max(30);

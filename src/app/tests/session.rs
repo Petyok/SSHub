@@ -74,7 +74,7 @@ pub(crate) fn ctrl_t_opens_host_picker() {
 
     app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL))
         .unwrap();
-    assert_eq!(app.mode, AppMode::SessionHostPicker);
+    assert_eq!(app.mode, AppMode::SessionPicker);
     assert_eq!(app.sessions.len(), 1);
 
     app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()))
@@ -201,19 +201,19 @@ pub(crate) fn sftp_left_pane_picker_filters_and_dispatches() {
     app.terminal_area = ratatui::layout::Rect::new(0, 0, 80, 24);
     app.mode = AppMode::Normal;
 
-    app.open_host_picker(crate::app::PickerTarget::SftpLeftPane);
-    assert_eq!(app.mode, AppMode::SessionHostPicker);
+    app.open_session_picker(crate::app::SessionPickerPurpose::SftpLeftPane);
+    assert_eq!(app.mode, AppMode::SessionPicker);
     assert_eq!(
-        app.session_host_picker.as_ref().unwrap().target,
-        crate::app::PickerTarget::SftpLeftPane
+        app.session_picker.as_ref().unwrap().purpose,
+        crate::app::SessionPickerPurpose::SftpLeftPane
     );
-    assert_eq!(app.session_host_matches().len(), 2);
+    assert_eq!(app.session_picker_host_matches().len(), 2);
 
     for c in "bra".chars() {
         app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::empty()))
             .unwrap();
     }
-    let matches = app.session_host_matches();
+    let matches = app.session_picker_host_matches();
     assert_eq!(matches.len(), 1);
     assert!(matches[0].1.contains("bravo"));
 
@@ -221,13 +221,13 @@ pub(crate) fn sftp_left_pane_picker_filters_and_dispatches() {
     app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()))
         .unwrap();
     assert_eq!(app.mode, AppMode::Normal);
-    assert!(app.session_host_picker.is_none());
+    assert!(app.session_picker.is_none());
 
     // Reopen and press Enter: the pick must reach sftp_connect_left_pane. With
     // no SFTP browser connected that call parks a known notice, which proves
     // the dispatch without needing a network.
     app.host_notice = None;
-    app.open_host_picker(crate::app::PickerTarget::SftpLeftPane);
+    app.open_session_picker(crate::app::SessionPickerPurpose::SftpLeftPane);
     for c in "bra".chars() {
         app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::empty()))
             .unwrap();
@@ -238,5 +238,5 @@ pub(crate) fn sftp_left_pane_picker_filters_and_dispatches() {
         app.host_notice.as_deref(),
         Some("connect the SFTP browser first")
     );
-    assert!(app.session_host_picker.is_none());
+    assert!(app.session_picker.is_none());
 }

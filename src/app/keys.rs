@@ -2,8 +2,8 @@ use super::*;
 
 impl App {
     pub fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
-        if self.mode == AppMode::SessionHostPicker {
-            return self.handle_key_session_host_picker(key);
+        if self.mode == AppMode::SessionPicker {
+            return self.handle_key_session_picker(key);
         }
 
         // When an embedded session is active, Ctrl+C inside the terminal must
@@ -60,7 +60,7 @@ impl App {
             AppMode::GroupForm => self.handle_key_group_form(key),
             AppMode::GroupFieldPicker => self.handle_key_group_field_picker(key),
             AppMode::TunnelHostPicker => self.handle_key_tunnel_host_picker(key),
-            AppMode::SessionHostPicker => self.handle_key_session_host_picker(key),
+            AppMode::SessionPicker => self.handle_key_session_picker(key),
             AppMode::FieldPicker => self.handle_key_field_picker(key),
             AppMode::ImportPrompt => self.handle_key_import_prompt(key),
             AppMode::SftpPrompt => self.handle_key_sftp_prompt(key),

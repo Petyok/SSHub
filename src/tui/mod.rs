@@ -137,9 +137,9 @@ fn apply_panel_selection(frame: &mut Frame, app: &App) {
 }
 
 fn render_inner(frame: &mut Frame, app: &App) {
-    let session_behind_picker = app.mode == AppMode::SessionHostPicker
+    let session_behind_picker = app.mode == AppMode::SessionPicker
         && app
-            .session_host_picker
+            .session_picker
             .as_ref()
             .is_some_and(|p| matches!(p.return_mode, AppMode::Connecting | AppMode::Session));
 
@@ -152,14 +152,14 @@ fn render_inner(frame: &mut Frame, app: &App) {
             render_session_enter(frame, app);
             render_session_tab_slide(frame, app);
         }
-        if app.mode == AppMode::SessionHostPicker {
+        if app.mode == AppMode::SessionPicker {
             // Snapshot the session underneath before the picker draws, so its
             // drop-in can restore what it covers (#35) — the same contract the
             // dashboard branch honours for every other popup.
             if app.motion_enabled() {
                 *app.popup_backdrop.borrow_mut() = Some(frame.buffer_mut().clone());
             }
-            screens::session_host_picker::render(frame, app);
+            screens::session_picker::render(frame, app);
         }
         return;
     }
@@ -288,7 +288,7 @@ fn render_inner(frame: &mut Frame, app: &App) {
             screens::tunnels::render_tunnel_form(frame, app);
             screens::tunnels::render_tunnel_host_picker(frame, app);
         }
-        AppMode::SessionHostPicker => screens::session_host_picker::render(frame, app),
+        AppMode::SessionPicker => screens::session_picker::render(frame, app),
         AppMode::ConfirmDiscard => {
             if app.host_form.is_some() {
                 render_form_popup(frame, app, FormKind::Host);

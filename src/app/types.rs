@@ -324,7 +324,7 @@ pub enum AppMode {
     /// Searchable dropdown for choosing the tunnel form's SSH server.
     TunnelHostPicker,
     /// Searchable dropdown for opening a new embedded SSH session tab.
-    SessionHostPicker,
+    SessionPicker,
     /// Dropdown over the host form's Group/Identity field.
     FieldPicker,
     /// Keybinding editor overlay.
@@ -1087,17 +1087,17 @@ pub struct TunnelHostPicker {
 }
 
 /// Searchable dropdown for opening a new SSH session tab
-/// ([`AppMode::SessionHostPicker`]).
+/// ([`AppMode::SessionPicker`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionHostPicker {
+pub struct SessionPicker {
     /// Case-insensitive substring filter typed by the user.
     pub query: String,
     /// Index into the current filtered match list.
     pub selected: usize,
     /// Mode to restore when the picker is dismissed without connecting.
     pub return_mode: AppMode,
-    /// What the picked host is for.
-    pub target: PickerTarget,
+    /// What this picker was opened for.
+    pub purpose: SessionPickerPurpose,
 }
 
 /// A server-to-server transfer in flight, relayed through a local temp file.
@@ -1136,7 +1136,7 @@ pub enum RelayLeg {
 
 /// What a host picked in the shared host picker is wanted for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum PickerTarget {
+pub enum SessionPickerPurpose {
     /// Open a new embedded SSH session tab (Ctrl+T).
     #[default]
     NewSession,

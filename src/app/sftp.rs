@@ -293,7 +293,7 @@ impl App {
             KeyCode::Char('.') => self.sftp_toggle_hidden(),
             // Point the left pane at a second server, or send it back to the
             // local filesystem.
-            KeyCode::Char('o') => self.open_host_picker(PickerTarget::SftpLeftPane),
+            KeyCode::Char('o') => self.open_session_picker(SessionPickerPurpose::SftpLeftPane),
             KeyCode::Char('O') => self.sftp_left_pane_to_local(),
             // Confirm: run the whole queue sequentially.
             KeyCode::Char('c') => self.sftp_run_queue(),

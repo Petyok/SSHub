@@ -10,7 +10,7 @@ pub mod keybind_editor;
 pub mod keychain;
 pub mod keys;
 pub mod palette;
-pub mod session_host_picker;
+pub mod session_picker;
 pub mod settings;
 pub mod sftp;
 pub mod tag_filter;
