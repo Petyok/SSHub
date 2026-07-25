@@ -28,34 +28,115 @@ impl App {
             .collect()
     }
 
+    /// The filtered list the picker currently shows.
+    pub fn session_picker_rows(&self) -> Vec<PickerRow> {
+        let Some(picker) = self.session_picker.as_ref() else {
+            return Vec::new();
+        };
+        if picker.purpose.over_sessions() {
+            self.picker_session_rows(&picker.query.to_lowercase())
+        } else {
+            self.session_picker_host_matches()
+                .into_iter()
+                .map(|(index, name)| PickerRow {
+                    index,
+                    badge: None,
+                    ordinal: None,
+                    name,
+                    endpoint: String::new(),
+                    current: false,
+                })
+                .collect()
+        }
+    }
+
+    fn picker_session_rows(&self, query: &str) -> Vec<PickerRow> {
+        self.sessions
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| {
+                if query.is_empty() {
+                    return true;
+                }
+                let user = s.meta.user.as_deref().unwrap_or_default().to_lowercase();
+                let address = s.meta.address.as_deref().unwrap_or_default().to_lowercase();
+                s.display_name.to_lowercase().contains(query)
+                    || user.contains(query)
+                    || address.contains(query)
+            })
+            .map(|(index, s)| PickerRow {
+                index,
+                badge: Some(match s.phase {
+                    crate::session::SessionPhase::Connecting { .. } => PickerBadge::Connecting,
+                    crate::session::SessionPhase::Running { .. } => PickerBadge::Up,
+                    crate::session::SessionPhase::Exited { .. } => PickerBadge::Exited,
+                }),
+                ordinal: Some(index + 1),
+                name: s.display_name.clone(),
+                endpoint: endpoint_label(&s.meta),
+                current: self.active_session == Some(index),
+            })
+            .collect()
+    }
+
     pub(crate) fn open_new_session_picker(&mut self) {
         self.open_session_picker(SessionPickerPurpose::NewSession);
     }
 
-    /// Open the shared host picker for whatever `purpose` wants a host.
+    /// Open the shared picker for `purpose`. Refuses rather than showing an empty
+    /// or nonsensical overlay: a switcher needs at least one session, and the
+    /// picker is only meaningful over the dashboard or a session.
     pub(crate) fn open_session_picker(&mut self, purpose: SessionPickerPurpose) {
-        let return_mode = self.mode;
+        if purpose.over_sessions() && self.sessions.is_empty() {
+            return;
+        }
+        if !matches!(
+            self.mode,
+            AppMode::Normal | AppMode::Session | AppMode::Connecting
+        ) {
+            return;
+        }
+        // With an empty query the session list is `App::sessions` verbatim, so the
+        // active session's index doubles as its row position. Filter a stale index
+        // rather than trusting it.
+        let selected = if purpose.over_sessions() {
+            self.active_session
+                .filter(|&i| i < self.sessions.len())
+                .unwrap_or(0)
+        } else {
+            0
+        };
         self.session_picker = Some(SessionPicker {
-            query: String::new(),
-            selected: 0,
-            return_mode,
             purpose,
+            query: String::new(),
+            selected,
+            return_mode: self.mode,
         });
         self.mode = AppMode::SessionPicker;
     }
 
-    pub(crate) fn handle_key_session_picker(&mut self, key: KeyEvent) -> Result<()> {
+    /// Dismiss the picker and restore a sensible mode. `return_mode` can be stale:
+    /// a picker opened while a session was still connecting may be dismissed after
+    /// that session started running or died, so the session modes are re-derived
+    /// from the current phase rather than restored verbatim.
+    fn close_session_picker(&mut self) {
         let return_mode = self
             .session_picker
             .as_ref()
             .map(|p| p.return_mode)
             .unwrap_or(AppMode::Normal);
-        let len = self.session_picker_host_matches().len();
+        self.session_picker = None;
+        match return_mode {
+            AppMode::Session | AppMode::Connecting => self.focus_active_session(),
+            other => self.mode = other,
+        }
+    }
+
+    pub(crate) fn handle_key_session_picker(&mut self, key: KeyEvent) -> Result<()> {
+        let rows = self.session_picker_rows();
+        let len = rows.len();
         match key.code {
-            KeyCode::Esc => {
-                self.session_picker = None;
-                self.mode = return_mode;
-            }
+            KeyCode::Esc => self.close_session_picker(),
             KeyCode::Down => {
                 if len > 0 {
                     if let Some(p) = self.session_picker.as_mut() {
@@ -71,19 +152,32 @@ impl App {
                 }
             }
             KeyCode::Enter => {
-                let matches = self.session_picker_host_matches();
                 let picked = self
                     .session_picker
                     .as_ref()
-                    .and_then(|p| matches.get(p.selected).map(|(idx, _)| (*idx, p.purpose)));
-                self.session_picker = None;
-                self.mode = return_mode;
-                match picked {
-                    Some((idx, SessionPickerPurpose::NewSession)) => self.connect_host_at(idx)?,
-                    Some((idx, SessionPickerPurpose::SftpLeftPane)) => {
-                        self.sftp_connect_left_pane(idx)?
+                    .and_then(|p| rows.get(p.selected).map(|r| (r.index, p.purpose)));
+                // Nothing selectable: leave the overlay up so the query can be
+                // corrected, instead of dropping the user out with no feedback.
+                let Some((index, purpose)) = picked else {
+                    return Ok(());
+                };
+                match purpose {
+                    SessionPickerPurpose::SwitchSession => {
+                        // Retarget first, drop the picker, then derive the mode from
+                        // the session we are switching *to* — never from wherever
+                        // the picker happened to be opened.
+                        self.active_session = Some(index);
+                        self.session_picker = None;
+                        self.focus_active_session();
                     }
-                    None => {}
+                    SessionPickerPurpose::NewSession => {
+                        self.close_session_picker();
+                        self.connect_host_at(index)?;
+                    }
+                    SessionPickerPurpose::SftpLeftPane => {
+                        self.close_session_picker();
+                        self.sftp_connect_left_pane(index)?;
+                    }
                 }
             }
             KeyCode::Backspace => {
@@ -104,5 +198,61 @@ impl App {
             _ => {}
         }
         Ok(())
+    }
+}
+
+/// Render a session's endpoint, omitting every part that is not actually known.
+/// Nothing is substituted — no `display_name` standing in for a missing address,
+/// no assumed port 22 — because a guessed endpoint is worse than none when the
+/// whole point of the line is telling two similar sessions apart. IPv6 literals
+/// get bracketed once a port is appended.
+fn endpoint_label(meta: &crate::session::SessionMeta) -> String {
+    let Some(address) = meta.address.as_deref() else {
+        return String::new();
+    };
+    let host = match meta.port {
+        Some(port) if address.contains(':') => format!("[{address}]:{port}"),
+        Some(port) => format!("{address}:{port}"),
+        None => address.to_string(),
+    };
+    match meta.user.as_deref() {
+        Some(user) => format!("{user}@{host}"),
+        None => host,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::session::SessionMeta;
+
+    #[test]
+    fn endpoint_label_omits_every_unknown_part() {
+        let full = SessionMeta {
+            user: Some("micha".into()),
+            address: Some("10.0.0.12".into()),
+            port: Some(22),
+            ..Default::default()
+        };
+        let no_user = SessionMeta {
+            address: Some("10.0.0.12".into()),
+            port: Some(2222),
+            ..Default::default()
+        };
+        let no_port = SessionMeta {
+            user: Some("root".into()),
+            address: Some("example.com".into()),
+            ..Default::default()
+        };
+        let v6 = SessionMeta {
+            address: Some("fe80::1".into()),
+            port: Some(22),
+            ..Default::default()
+        };
+
+        assert_eq!(super::endpoint_label(&full), "micha@10.0.0.12:22");
+        assert_eq!(super::endpoint_label(&no_user), "10.0.0.12:2222");
+        assert_eq!(super::endpoint_label(&no_port), "root@example.com");
+        assert_eq!(super::endpoint_label(&v6), "[fe80::1]:22");
+        assert_eq!(super::endpoint_label(&SessionMeta::default()), "");
     }
 }

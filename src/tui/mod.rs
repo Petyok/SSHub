@@ -230,9 +230,15 @@ fn render_inner(frame: &mut Frame, app: &App) {
     let rule3 = row_in(area, areas.footer.y.saturating_sub(1));
     widgets::footer::render_hrule(frame, rule3, true);
 
-    // Footer keybinds (tab-specific)
-    let keybinds = footer_keybinds(app);
-    widgets::footer::render_footer(frame, areas.footer, &keybinds);
+    // A picker has its own purpose-specific status. The legacy status-bar
+    // widget is otherwise not part of the dashboard render path, so wire it
+    // here instead of leaving every picker labelled like the underlying tab.
+    if app.mode == AppMode::SessionPicker {
+        frame.render_widget(widgets::status_bar::render_status_bar(app), areas.footer);
+    } else {
+        let keybinds = footer_keybinds(app);
+        widgets::footer::render_footer(frame, areas.footer, &keybinds);
+    }
 
     // Issue #18: a zoomed panel hides the normal notice surface (status bar),
     // so surface transient feedback (e.g. "copied N chars") as a toast pinned
@@ -1448,6 +1454,78 @@ mod tests {
         terminal.backend().buffer().clone()
     }
 
+    /// App with three sessions in distinct phases plus an open picker.
+    fn app_with_picker(purpose: crate::app::SessionPickerPurpose, query: &str) -> App {
+        use crate::session::{SessionConfig, SessionMeta, SessionPhase};
+        use std::time::Instant;
+
+        let mut app = test_app_with_hosts();
+        for (name, user, addr) in [
+            ("web-prod", "micha", "10.0.0.11"),
+            ("dev-box", "deploy", "10.0.0.12"),
+            ("db-old", "root", "10.0.0.13"),
+        ] {
+            let cfg = SessionConfig {
+                argv: vec!["true".into()],
+                display_name: name.into(),
+                meta: SessionMeta {
+                    user: Some(user.into()),
+                    address: Some(addr.into()),
+                    port: Some(22),
+                    ..Default::default()
+                },
+                pending_secret: None,
+            };
+            app.sessions
+                .push(crate::session::Session::spawn(cfg, 24, 80, None).unwrap());
+        }
+        app.sessions[1].phase = SessionPhase::Running {
+            started_at: Instant::now(),
+        };
+        app.sessions[2].phase = SessionPhase::Exited {
+            status: "exit 1".into(),
+            at: Instant::now(),
+        };
+        app.active_session = Some(1);
+        app.session_picker = Some(crate::app::SessionPicker {
+            purpose,
+            query: query.into(),
+            selected: 0,
+            return_mode: AppMode::Normal,
+        });
+        app.mode = AppMode::SessionPicker;
+        app
+    }
+
+    fn buffer_text(buf: &ratatui::buffer::Buffer) -> String {
+        buf.content().iter().map(|c| c.symbol()).collect()
+    }
+
+    /// Read `n` cells of row `y` starting at column `x`.
+    fn cells_at(buf: &ratatui::buffer::Buffer, x: u16, y: u16, n: u16) -> String {
+        (x..(x + n).min(buf.area.right()))
+            .map(|i| buf[(i, y)].symbol())
+            .collect()
+    }
+
+    /// Column and row of the picker line carrying lifecycle word `word`.
+    ///
+    /// Matching the dot *plus* the padded word is what makes this unambiguous:
+    /// the dashboard behind the popup draws its own session chips as
+    /// `● <name>`, and a bare `find("up")` would also hit "backup" or "groups".
+    fn picker_row(buf: &ratatui::buffer::Buffer, word: &str) -> (u16, u16) {
+        let needle = format!("\u{25cf} {word:<4} ");
+        let n = needle.chars().count() as u16;
+        for y in buf.area.y..buf.area.bottom() {
+            for x in buf.area.x..buf.area.right() {
+                if cells_at(buf, x, y, n) == needle {
+                    return (x, y);
+                }
+            }
+        }
+        panic!("no picker row for {word:?}");
+    }
+
     #[test]
     fn render_includes_host_name_in_list() {
         let app = test_app_with_hosts();
@@ -1512,6 +1590,173 @@ mod tests {
                 // Must not panic; we don't care about the pixels here.
                 let _ = render_to_buffer(&app, w, h);
             }
+        }
+        for purpose in [
+            crate::app::SessionPickerPurpose::NewSession,
+            crate::app::SessionPickerPurpose::SftpLeftPane,
+            crate::app::SessionPickerPurpose::SwitchSession,
+        ] {
+            for (w, h) in [(1u16, 1u16), (10, 3), (30, 8), (49, 20)] {
+                let app = app_with_picker(purpose, "x");
+                let _ = render_to_buffer(&app, w, h);
+            }
+        }
+    }
+
+    #[test]
+    fn session_picker_renders_title_and_empty_state_per_purpose() {
+        use crate::app::SessionPickerPurpose::{NewSession, SftpLeftPane, SwitchSession};
+
+        for (purpose, title, empty) in [
+            (NewSession, "new session tab", "(no matching hosts)"),
+            (SftpLeftPane, "select left server", "(no matching hosts)"),
+            (SwitchSession, "switch session", "(no matching sessions)"),
+        ] {
+            let app = app_with_picker(purpose, "zzzznope");
+            let text = buffer_text(&render_to_buffer(&app, 80, 24));
+            assert!(text.contains(title), "{purpose:?} title");
+            assert!(text.contains(empty), "{purpose:?} empty state");
+            assert!(text.contains("zzzznope"), "{purpose:?} query echoed");
+        }
+    }
+
+    #[test]
+    fn session_picker_renders_each_lifecycle_with_word_colour_and_ordinal() {
+        let app = app_with_picker(crate::app::SessionPickerPurpose::SwitchSession, "");
+        let buf = render_to_buffer(&app, 80, 24);
+
+        // The word carries the state without colour, the colour without reading.
+        // The ordinal sits at a fixed offset after the badge (BADGE_CELLS = 7)
+        // and must be read there — the endpoints contain digits too, so a plain
+        // `contains('1')` would prove nothing.
+        for (word, colour, ordinal) in [
+            ("conn", theme::AMBER, "1"),
+            ("up", theme::GREEN, "2"),
+            ("exit", theme::RED, "3"),
+        ] {
+            let (x, y) = picker_row(&buf, word);
+            assert_eq!(buf[(x, y)].fg, colour, "{word}: dot colour");
+            assert_eq!(
+                cells_at(&buf, x + 7, y, 3).trim(),
+                ordinal,
+                "{word}: tab ordinal"
+            );
+        }
+
+        let text = buffer_text(&buf);
+        assert!(text.contains("micha@10.0.0.11:22"), "endpoint rendered");
+        assert!(text.contains("current"), "active session marked");
+    }
+
+    #[test]
+    fn session_picker_selection_highlights_without_eating_the_badge() {
+        // selected = 0, i.e. the connecting row.
+        let app = app_with_picker(crate::app::SessionPickerPurpose::SwitchSession, "");
+        let buf = render_to_buffer(&app, 80, 24);
+
+        let (sel_x, sel_y) = picker_row(&buf, "conn");
+        let (other_x, other_y) = picker_row(&buf, "exit");
+
+        assert_eq!(buf[(sel_x, sel_y)].bg, theme::SEL_BG, "selected row");
+        assert_ne!(buf[(other_x, other_y)].bg, theme::SEL_BG, "unselected row");
+        assert_eq!(
+            buf[(sel_x, sel_y)].fg,
+            theme::AMBER,
+            "the highlight must not swallow the lifecycle colour"
+        );
+    }
+
+    #[test]
+    fn session_picker_draws_dashboard_or_session_behind_it() {
+        let mut app = app_with_picker(crate::app::SessionPickerPurpose::SwitchSession, "");
+
+        app.session_picker.as_mut().unwrap().return_mode = AppMode::Normal;
+        let dashboard = buffer_text(&render_to_buffer(&app, 80, 24));
+        assert!(
+            dashboard.contains("q: quit"),
+            "dashboard status bar behind the popup"
+        );
+
+        // Both session-ish origins take over the whole frame. Assert positively
+        // on the session footer's own clock line, which reads "session M:SS":
+        // a negative assert alone would also pass on an empty background, the
+        // header hints get clipped at 80 columns with three tabs open, and a
+        // bare "session " would match the popup title " switch session ".
+        for origin in [AppMode::Session, AppMode::Connecting] {
+            app.session_picker.as_mut().unwrap().return_mode = origin;
+            let text = buffer_text(&render_to_buffer(&app, 80, 24));
+            assert!(
+                text.contains("session 0:"),
+                "{origin:?}: session footer clock behind the popup"
+            );
+            assert!(
+                !text.contains("q: quit"),
+                "{origin:?}: dashboard status bar must be gone"
+            );
+        }
+    }
+
+    #[test]
+    fn session_picker_status_bar_names_the_purpose() {
+        use crate::app::SessionPickerPurpose::{NewSession, SftpLeftPane, SwitchSession};
+
+        for (purpose, label) in [
+            (NewSession, "New session"),
+            (SftpLeftPane, "Select server"),
+            (SwitchSession, "Switch session"),
+        ] {
+            let mut app = app_with_picker(purpose, "");
+            app.session_picker.as_mut().unwrap().return_mode = AppMode::Normal;
+            let text = buffer_text(&render_to_buffer(&app, 80, 24));
+            assert!(text.contains(label), "{purpose:?} status label");
+        }
+    }
+
+    #[test]
+    fn session_picker_survives_narrow_and_wide_glyphs() {
+        use crate::session::{SessionConfig, SessionMeta};
+
+        for w in [1u16, 10, 12, 15, 20, 24, 33, 40, 56, 80] {
+            for h in [1u16, 3, 8, 14, 24] {
+                let app = app_with_picker(crate::app::SessionPickerPurpose::SwitchSession, "");
+                let _ = render_to_buffer(&app, w, h);
+            }
+        }
+
+        // The endpoint must begin after the *terminal-cell width* of the name,
+        // not its scalar count. These three cases independently pin CJK,
+        // emoji, and combining-mark advancement.
+        for (name, expected_offset) in [("日本語の", 21u16), ("🚀", 15u16), ("e\u{0301}dge", 17u16)]
+        {
+            let mut app = test_app_with_hosts();
+            let cfg = SessionConfig {
+                argv: vec!["true".into()],
+                display_name: name.into(),
+                meta: SessionMeta {
+                    address: Some("10.0.0.1".into()),
+                    port: Some(22),
+                    ..Default::default()
+                },
+                pending_secret: None,
+            };
+            app.sessions
+                .push(crate::session::Session::spawn(cfg, 24, 80, None).unwrap());
+            app.active_session = Some(0);
+            app.session_picker = Some(crate::app::SessionPicker {
+                purpose: crate::app::SessionPickerPurpose::SwitchSession,
+                query: String::new(),
+                selected: 0,
+                return_mode: AppMode::Normal,
+            });
+            app.mode = AppMode::SessionPicker;
+
+            let buf = render_to_buffer(&app, 80, 14);
+            let (x, y) = picker_row(&buf, "conn");
+            assert_eq!(
+                cells_at(&buf, x + expected_offset, y, 10),
+                "10.0.0.1:2",
+                "{name:?}: endpoint column"
+            );
         }
     }
 
