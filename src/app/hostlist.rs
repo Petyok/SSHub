@@ -112,6 +112,33 @@ impl App {
         selected_row.saturating_sub(visible_rows / 2).min(max_off)
     }
 
+    /// Advance the identities grid toward `target_lines` and return the line
+    /// offset to draw at (#35). Same chase as the host list, but measured in
+    /// lines rather than card rows, so a card-row jump scrolls through instead
+    /// of teleporting a whole card height.
+    pub(crate) fn keys_scroll_advance(&self, target_lines: usize) -> u16 {
+        let goal = target_lines as f32;
+        if !self.motion_enabled() {
+            self.keys_scroll_pos.set(goal);
+            self.keys_scroll_moving.set(false);
+            return target_lines as u16;
+        }
+        let now = std::time::Instant::now();
+        let last = self.keys_scroll_at.replace(Some(now));
+        let pos = self.keys_scroll_pos.get();
+        let dist = goal - pos;
+        if last.is_none() || dist.abs() < 0.5 {
+            self.keys_scroll_pos.set(goal);
+            self.keys_scroll_moving.set(false);
+            return target_lines as u16;
+        }
+        let dt = now.saturating_duration_since(last.unwrap()).as_secs_f32();
+        let next = pos + dist * (1.0 - (-dt / HOST_SCROLL_TAU).exp());
+        self.keys_scroll_pos.set(next);
+        self.keys_scroll_moving.set(true);
+        next.round().max(0.0) as u16
+    }
+
     /// Map a click at visible row `rel_y` (within a `body_h`-row panel) to the
     /// host index under it, accounting for the current scroll offset.
     pub(crate) fn host_row_to_index(&self, rel_y: u16, body_h: usize) -> Option<usize> {

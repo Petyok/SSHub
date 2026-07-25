@@ -231,6 +231,13 @@ pub struct App {
     pub header_stats_at: std::cell::Cell<Option<std::time::Instant>>,
     /// Whether a counter is still counting, so the loop keeps the frame rate up.
     pub header_stats_moving: std::cell::Cell<bool>,
+    /// Smoothed scroll position of the identities grid, in *lines* (not card
+    /// rows), chasing the target offset each frame (#35).
+    pub keys_scroll_pos: std::cell::Cell<f32>,
+    /// When the identities grid was last advanced. `None` until first drawn.
+    pub keys_scroll_at: std::cell::Cell<Option<std::time::Instant>>,
+    /// Whether the grid is still catching up to its target offset.
+    pub keys_scroll_moving: std::cell::Cell<bool>,
     /// When the dashboard first took the screen, so it can fade up out of the
     /// intro animation instead of replacing it between frames (#35). Set by the
     /// terminal loop once, just before its first draw.
@@ -606,6 +613,9 @@ impl App {
             header_stats_pos: std::cell::Cell::new([0.0; 4]),
             header_stats_at: std::cell::Cell::new(None),
             header_stats_moving: std::cell::Cell::new(false),
+            keys_scroll_pos: std::cell::Cell::new(0.0),
+            keys_scroll_at: std::cell::Cell::new(None),
+            keys_scroll_moving: std::cell::Cell::new(false),
             dashboard_at: None,
             anim_prev_audit: (AuditFilter::default(), AuditRange::default()),
             audit_filter_at: None,

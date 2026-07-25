@@ -60,6 +60,8 @@ impl App {
             || self
                 .session_exit_at
                 .is_some_and(|at| now.saturating_duration_since(at) < crate::tui::SESSION_ANIM);
+        // Identities grid still catching up to its scroll target (#35).
+        let keys = self.keys_scroll_moving.get();
         // The dashboard still fading up out of the intro animation (#35).
         let splash = self
             .dashboard_at
@@ -137,6 +139,7 @@ impl App {
             || nav
             || fade
             || splash
+            || keys
     }
 
     /// Open the broadcast wizard from the hosts tab. Refuses while a run is live

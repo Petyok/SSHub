@@ -1854,8 +1854,16 @@ mod tests {
         let buffer = render_to_buffer(&app, 120, 38);
         assert!(buffer_contains(&buffer, "key-00"));
 
+        // The grid scrolls to the selection over a few frames now (#35), so
+        // run it out with a backdated frame clock before looking.
         app.identity_selected = 28;
-        let buffer = render_to_buffer(&app, 120, 38);
+        let mut buffer = render_to_buffer(&app, 120, 38);
+        for _ in 0..40 {
+            app.keys_scroll_at.set(Some(
+                std::time::Instant::now() - std::time::Duration::from_millis(16),
+            ));
+            buffer = render_to_buffer(&app, 120, 38);
+        }
         assert!(
             buffer_contains(&buffer, "key-28"),
             "selected key card scrolled off-screen"
