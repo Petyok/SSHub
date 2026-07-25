@@ -108,6 +108,9 @@ pub struct Pane {
     pub entries: Vec<FileEntry>,
     pub selected: usize,
     pub filter: String,
+    /// Whether dotfiles are listed. Off by default: in a home directory they
+    /// are most of the listing, and what someone came for sits below them.
+    pub show_hidden: bool,
 }
 
 impl Pane {
@@ -117,32 +120,68 @@ impl Pane {
             entries: Vec::new(),
             selected: 0,
             filter: String::new(),
+            show_hidden: false,
         }
     }
 
-    /// Indices into `entries` matching the current filter (all if the filter is empty).
-    pub fn visible_indices(&self) -> Vec<usize> {
-        if self.filter.is_empty() {
-            return (0..self.entries.len()).collect();
+    /// Whether `entry` is listed right now: it must survive the text filter
+    /// and, unless dotfiles are shown, not be one.
+    ///
+    /// The synthetic `..` row is exempt from the dotfile rule -- its name
+    /// starts with a dot, but it is the way out of the directory rather than an
+    /// entry in it. It is *not* exempt from the text filter: while searching,
+    /// the user is after something specific, and a `..` sitting at the top of
+    /// the results would take the cursor `set_filter` parks on row zero.
+    ///
+    /// A search that *starts with a dot* lifts the hiding: typing `.ssh` is an
+    /// unambiguous request for a dotfile, and answering it with "no matches"
+    /// while the entry sits right there would be obtuse.
+    fn is_visible(&self, entry: &FileEntry, needle: &str) -> bool {
+        if entry.is_parent() {
+            return needle.is_empty();
         }
-        let needle = self.filter.to_lowercase();
+        let asked_for_dotfiles = needle.starts_with('.');
+        if !self.show_hidden && !asked_for_dotfiles && entry.name.starts_with('.') {
+            return false;
+        }
+        needle.is_empty() || entry.name.to_lowercase().contains(needle)
+    }
+
+    /// The text filter, lowercased once per query rather than per entry:
+    /// `visible_indices` runs for both panes on every frame.
+    fn needle(&self) -> String {
+        self.filter.to_lowercase()
+    }
+
+    /// Indices into `entries` that are currently listed.
+    pub fn visible_indices(&self) -> Vec<usize> {
+        let needle = self.needle();
         self.entries
             .iter()
             .enumerate()
-            .filter(|(_, e)| e.name.to_lowercase().contains(&needle))
+            .filter(|(_, e)| self.is_visible(e, &needle))
             .map(|(i, _)| i)
             .collect()
     }
 
-    /// Number of entries currently visible under the filter.
+    /// Number of entries currently listed.
     pub fn visible_len(&self) -> usize {
-        if self.filter.is_empty() {
-            return self.entries.len();
-        }
-        let needle = self.filter.to_lowercase();
+        let needle = self.needle();
         self.entries
             .iter()
-            .filter(|e| e.name.to_lowercase().contains(&needle))
+            .filter(|e| self.is_visible(e, &needle))
+            .count()
+    }
+
+    /// Entries the dotfile filter is currently keeping off screen, so the pane
+    /// can say so instead of looking mysteriously short.
+    pub fn hidden_len(&self) -> usize {
+        if self.show_hidden || self.filter.starts_with('.') {
+            return 0;
+        }
+        self.entries
+            .iter()
+            .filter(|e| !e.is_parent() && e.name.starts_with('.'))
             .count()
     }
 
@@ -154,13 +193,10 @@ impl Pane {
 
     /// The entry under the cursor, if any.
     pub fn selected_entry(&self) -> Option<&FileEntry> {
-        if self.filter.is_empty() {
-            return self.entries.get(self.selected);
-        }
-        let needle = self.filter.to_lowercase();
+        let needle = self.needle();
         self.entries
             .iter()
-            .filter(|e| e.name.to_lowercase().contains(&needle))
+            .filter(|e| self.is_visible(e, &needle))
             .nth(self.selected)
     }
 
@@ -188,7 +224,7 @@ impl Pane {
         }
     }
 
-    fn clamp_selection(&mut self) {
+    pub(crate) fn clamp_selection(&mut self) {
         let len = self.visible_len();
         if len == 0 {
             self.selected = 0;
@@ -437,6 +473,29 @@ impl SftpState {
         Ok(())
     }
 
+    /// Show or hide dotfiles in both panes at once -- they are browsed as a
+    /// pair, so splitting the setting would just be two keys to press. Returns
+    /// the new state so the caller can persist it.
+    pub fn toggle_hidden(&mut self) -> bool {
+        let show = !self.local.show_hidden;
+        for pane in [&mut self.local, &mut self.remote] {
+            // `selected` indexes the *visible* listing, so revealing rows above
+            // the cursor would slide it onto a different entry. Re-find the one
+            // it was on instead.
+            let was_on = pane.selected_entry().map(|e| e.name.clone());
+            pane.show_hidden = show;
+            match was_on.and_then(|name| {
+                pane.visible_indices()
+                    .iter()
+                    .position(|i| pane.entries[*i].name == name)
+            }) {
+                Some(pos) => pane.selected = pos,
+                None => pane.clamp_selection(),
+            }
+        }
+        show
+    }
+
     /// Whether the left pane is browsing a second server rather than the local
     /// filesystem, which decides where its listings and file ops are sent.
     pub fn left_is_remote(&self) -> bool {
@@ -665,6 +724,157 @@ mod tests {
         assert!(s.stage_upload().is_ok());
         assert_eq!(s.queue.len(), 1);
         assert!(s.queue[0].is_dir);
+    }
+
+    fn with_dotfiles() -> SftpState {
+        let mut s = SftpState::new("/srv", "/home/me");
+        let entry = |name: &str| FileEntry {
+            name: name.into(),
+            is_dir: false,
+            size: 1,
+            is_symlink: false,
+            perm: None,
+        };
+        s.remote
+            .set_entries(vec![entry(".ssh"), entry("app.log"), entry(".bashrc")]);
+        s.local
+            .set_entries(vec![entry(".config"), entry("notes.txt")]);
+        s
+    }
+
+    #[test]
+    fn dotfiles_are_hidden_until_toggled() {
+        let mut s = with_dotfiles();
+        // Listed: "..", "app.log". The two dotfiles are filtered out.
+        assert_eq!(s.remote.visible_len(), 2);
+        let names: Vec<&str> = s
+            .remote
+            .visible_indices()
+            .iter()
+            .map(|i| s.remote.entries[*i].name.as_str())
+            .collect();
+        assert_eq!(names, vec![PARENT_ROW, "app.log"]);
+
+        // The toggle applies to both panes at once and reports the new state.
+        assert!(s.toggle_hidden());
+        assert_eq!(s.remote.visible_len(), 4);
+        assert_eq!(s.local.visible_len(), 3);
+        assert!(!s.toggle_hidden());
+        assert_eq!(s.remote.visible_len(), 2);
+    }
+
+    /// The parent row's name starts with a dot but is the way out of the
+    /// directory, not an entry in it: hiding dotfiles must not hide it.
+    #[test]
+    fn parent_row_survives_the_dotfile_filter() {
+        let s = with_dotfiles();
+        assert!(!s.remote.show_hidden);
+        assert!(s.remote.selected_entry().unwrap().is_parent());
+        assert!(s
+            .remote
+            .visible_indices()
+            .iter()
+            .any(|i| s.remote.entries[*i].is_parent()));
+    }
+
+    /// Hiding entries under the cursor must not leave it pointing past the end
+    /// of the listing.
+    #[test]
+    fn toggling_hidden_keeps_the_cursor_in_range() {
+        let mut s = with_dotfiles();
+        s.toggle_hidden();
+        s.remote.selected = 3; // ".bashrc", only reachable while shown
+        s.toggle_hidden();
+        assert!(
+            s.remote.selected < s.remote.visible_len(),
+            "cursor left past the end of the listing"
+        );
+        assert!(s.remote.selected_entry().is_some());
+    }
+
+    /// Revealing rows above the cursor must not slide it onto a different
+    /// entry: `selected` indexes the visible listing, not `entries`.
+    #[test]
+    fn toggling_hidden_keeps_the_cursor_on_its_entry() {
+        let mut s = with_dotfiles();
+        // Listed: "..", "app.log". Sit on the file.
+        s.remote.selected = 1;
+        assert_eq!(s.remote.selected_entry().unwrap().name, "app.log");
+        // Revealing ".ssh" and ".bashrc" inserts rows above it.
+        s.toggle_hidden();
+        assert_eq!(
+            s.remote.selected_entry().unwrap().name,
+            "app.log",
+            "cursor slid onto another entry"
+        );
+        // And back again.
+        s.toggle_hidden();
+        assert_eq!(s.remote.selected_entry().unwrap().name, "app.log");
+    }
+
+    /// Hiding the entry the cursor is on has to land it somewhere valid.
+    #[test]
+    fn hiding_the_selected_entry_lands_the_cursor_in_range() {
+        let mut s = with_dotfiles();
+        s.toggle_hidden();
+        let idx = s
+            .remote
+            .visible_indices()
+            .iter()
+            .position(|i| s.remote.entries[*i].name == ".bashrc")
+            .unwrap();
+        s.remote.selected = idx;
+        s.toggle_hidden();
+        assert!(s.remote.selected < s.remote.visible_len());
+        assert!(s.remote.selected_entry().is_some());
+    }
+
+    /// The pane reports what it is holding back, so a short listing isn't a
+    /// mystery once the setting has persisted into a later session.
+    #[test]
+    fn hidden_len_counts_what_the_filter_holds_back() {
+        let mut s = with_dotfiles();
+        assert_eq!(s.remote.hidden_len(), 2, ".ssh and .bashrc");
+        assert_eq!(s.local.hidden_len(), 1, ".config");
+        s.toggle_hidden();
+        assert_eq!(s.remote.hidden_len(), 0, "nothing held back when shown");
+    }
+
+    /// Searching is for finding entries, so the way-out row steps aside --
+    /// otherwise it would take row zero, where `set_filter` parks the cursor,
+    /// and Enter on a search result would walk up instead.
+    #[test]
+    fn parent_row_steps_aside_while_filtering() {
+        let mut s = with_dotfiles();
+        assert!(s.remote.selected_entry().unwrap().is_parent());
+        s.remote.set_filter("app".into());
+        assert_eq!(s.remote.visible_len(), 1);
+        assert_eq!(s.remote.selected_entry().unwrap().name, "app.log");
+    }
+
+    /// Typing a leading dot is an explicit request for dotfiles, so the hiding
+    /// steps aside rather than answering "no matches" about a file in plain
+    /// sight -- `/` + `.ssh` is the likeliest search in an SSH tool.
+    #[test]
+    fn a_search_starting_with_a_dot_finds_hidden_entries() {
+        let mut s = with_dotfiles();
+        assert!(!s.remote.show_hidden);
+        s.remote.set_filter(".ss".into());
+        assert_eq!(s.remote.visible_len(), 1);
+        assert_eq!(s.remote.selected_entry().unwrap().name, ".ssh");
+        // And nothing is reported as held back, since nothing is.
+        assert_eq!(s.remote.hidden_len(), 0);
+    }
+
+    /// The text filter and the dotfile filter compose rather than override.
+    #[test]
+    fn text_filter_still_respects_hidden() {
+        let mut s = with_dotfiles();
+        s.remote.set_filter("sh".into());
+        // ".ssh" and ".bashrc" both match "sh" but are hidden.
+        assert_eq!(s.remote.visible_len(), 0);
+        s.toggle_hidden();
+        assert_eq!(s.remote.visible_len(), 2);
     }
 
     #[test]

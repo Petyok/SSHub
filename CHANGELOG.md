@@ -34,6 +34,14 @@ All notable changes to SSHub are documented in this file.
 
 ### Changed
 
+- **SFTP hides dotfiles** (issue #44), with `.` to show them - in a home
+  directory they were most of the listing, pushing what you came for below the
+  fold. This changes what an existing install shows on first run, so the pane
+  says how many entries it is holding back, and a search beginning with a dot
+  (`.ssh`) lifts the hiding rather than reporting no matches. The toggle covers
+  both panes and is remembered across restarts. The `..` row is exempt from the
+  hiding, being a way out rather than an entry, but steps aside while searching
+  so the cursor lands on a result.
 - **Smaller release binaries** (issue #42) - release builds had no profile at
   all, so they shipped with the symbol table and without cross-crate
   optimisation. Adding `lto = "thin"`, `codegen-units = 1` and

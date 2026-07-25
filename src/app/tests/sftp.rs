@@ -336,3 +336,66 @@ fn failed_run_does_not_dispatch_another_pass() {
         "a failed run waits for the user rather than dispatching another pass"
     );
 }
+
+/// The dotfile setting survives a restart: it is written to `ui_state` on
+/// toggle and read back when the next session builds its browser.
+#[test]
+fn hidden_setting_round_trips_through_the_store() {
+    use crate::sftp::model::SftpState;
+
+    let store = test_store();
+    let mut app = App::new_with_deps(
+        AppConfig::default(),
+        AppDeps {
+            resolver: Box::new(MockResolver::new(vec![])),
+            metadata: Arc::new(MetadataDb::default()),
+            store: store.clone(),
+            password_store: Box::new(crate::credentials::NoopPasswordStore),
+        },
+    );
+    app.reload_hosts().unwrap();
+    assert!(!app.sftp_show_hidden, "dotfiles start hidden");
+
+    app.sftp = Some(SftpState::new("/srv", "/home/me"));
+    app.active_tab = 1;
+    app.handle_key(key(KeyCode::Char('.'))).unwrap();
+    assert!(app.sftp_show_hidden);
+    assert!(app.sftp.as_ref().unwrap().local.show_hidden);
+    assert!(app.sftp.as_ref().unwrap().remote.show_hidden);
+
+    // A fresh App over the same store comes up with dotfiles shown, and a
+    // browser opened in it inherits that.
+    let mut next = App::new_with_deps(
+        AppConfig::default(),
+        AppDeps {
+            resolver: Box::new(MockResolver::new(vec![])),
+            metadata: Arc::new(MetadataDb::default()),
+            store,
+            password_store: Box::new(crate::credentials::NoopPasswordStore),
+        },
+    );
+    next.reload_hosts().unwrap();
+    assert!(next.sftp_show_hidden, "setting did not survive the restart");
+}
+
+/// Regression: `.` is a toggle in the browser but an ordinary character while
+/// filtering. The search guard sits at the top of the SFTP dispatch and is easy
+/// to lose in a refactor, so pin it.
+#[test]
+fn dot_types_into_the_filter_instead_of_toggling() {
+    use crate::sftp::model::SftpState;
+
+    let mut app = test_app(vec![]);
+    let mut state = SftpState::new("/srv", "/home/me");
+    state.start_search();
+    app.sftp = Some(state);
+    app.active_tab = 1;
+
+    app.handle_key(key(KeyCode::Char('.'))).unwrap();
+    app.handle_key(key(KeyCode::Char('s'))).unwrap();
+    app.handle_key(key(KeyCode::Char('s'))).unwrap();
+
+    let state = app.sftp.as_ref().unwrap();
+    assert_eq!(state.remote.filter, ".ss", "the dot went into the filter");
+    assert!(!app.sftp_show_hidden, "and did not flip the setting");
+}

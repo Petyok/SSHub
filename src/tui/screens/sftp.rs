@@ -272,11 +272,24 @@ fn render_pane(
     let total = pane.entries.len();
     let vis = pane.visible_indices();
     let vis_n = vis.len();
+    // The count has to be of what's on screen: counting entries the dotfile
+    // filter is holding back would leave the pane claiming rows it isn't
+    // drawing. Say how many are held back instead, since the setting persists
+    // and would otherwise be invisible on a later run.
+    let hidden = pane.hidden_len();
+    let hidden_note = if hidden > 0 {
+        format!(" · {hidden} hidden")
+    } else {
+        String::new()
+    };
     // Subtitle makes an *applied* filter obvious even when not actively typing.
     let count = if pane.filter.is_empty() {
-        format!("{} · {}", pane.cwd.display(), total)
+        format!("{} · {}{}", pane.cwd.display(), vis_n, hidden_note)
     } else {
-        format!("filter: {} ({}/{})", pane.filter, vis_n, total)
+        format!(
+            "filter: {} ({}/{}){}",
+            pane.filter, vis_n, total, hidden_note
+        )
     };
     render_panel_box(buf, rect, title, Some(&count), false);
 
@@ -308,12 +321,18 @@ fn render_pane(
     }
 
     if vis.is_empty() {
-        let msg = if pane.filter.is_empty() {
-            "(empty)"
-        } else {
-            "(no matches)"
+        // "(empty)" would be a lie when the only entries are dotfiles being
+        // filtered out -- which is exactly what a root directory of dotfiles
+        // looks like, since it has no ".." row to fall back on.
+        let msg = match (pane.filter.is_empty(), hidden > 0) {
+            (true, true) => "(all hidden — press . to show)".to_string(),
+            (true, false) => "(empty)".to_string(),
+            // A search can come up empty *because* of the dotfile filter; say
+            // so rather than letting the user conclude the entry isn't there.
+            (false, true) => format!("(no matches — {hidden} hidden, . to show)"),
+            (false, false) => "(no matches)".to_string(),
         };
-        buf.set_string(inner_x, top, msg, theme::dim());
+        buf.set_string(inner_x, top, &msg, theme::dim());
         return;
     }
 
@@ -391,7 +410,7 @@ fn render_queue(
         let (text, style) = match notice {
             Some(n) => (format!("⚠ {n}"), theme::amber()),
             None => (
-                "queue: empty  (← download · → upload · u remove · c run · o second host)"
+                "queue: empty  (← download · → upload · c run · . hidden · o second host)"
                     .to_string(),
                 theme::dim(),
             ),

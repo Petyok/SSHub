@@ -163,6 +163,7 @@ fn help_lines() -> Vec<Line<'static>> {
             "o / O",
             "Point the left pane at a second server / back to local files",
         ),
+        entry(".", "Show or hide dotfiles in both panes (remembered)"),
         entry("c / u", "Run queue / remove last queued transfer"),
         entry("d", "Delete selected file/folder (recursive)"),
         entry("n / R", "New folder / rename in the focused pane"),
