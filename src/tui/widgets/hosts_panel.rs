@@ -216,6 +216,8 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
                     crate::ping::PingClass::Unreachable => ("\u{25cf}", theme::RED),
                     crate::ping::PingClass::Unknown => ("\u{25cb}", theme::DIM),
                 };
+                // Flash the dot through white when the class just changed (#35).
+                let dot_color = app.ping_flash_color(host_name_for_dot, dot_color);
                 let dot_style = if is_selected {
                     ratatui::style::Style::default()
                         .fg(dot_color)

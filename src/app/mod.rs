@@ -223,6 +223,9 @@ pub struct App {
     /// When the host view started exiting (session -> dashboard), driving the
     /// slide-out of `session_snapshot`. `None` at rest / under reduced motion.
     pub session_exit_at: Option<std::time::Instant>,
+    /// Ping class per host as of the previous tick, and when it last changed,
+    /// so a host going green or red flashes instead of switching silently (#35).
+    pub ping_flash: std::collections::HashMap<String, (crate::ping::PingClass, std::time::Instant)>,
     /// In-flight group fold / unfold (#35). While a *fold* plays its rows are
     /// still live in `nav_rows`; `collapsed_groups` takes the change when the
     /// animation ends (see [`App::flush_pending_fold`]).
@@ -383,6 +386,7 @@ impl App {
             self.session_exit_at = None;
             *self.session_snapshot.borrow_mut() = None;
         }
+        self.detect_ping_changes();
         // Retire a finished fold, releasing the rows it was replaying.
         if self
             .fold_anim
@@ -546,6 +550,7 @@ impl App {
             session_snapshot: std::cell::RefCell::new(None),
             session_exit_at: None,
             session_tab_switch: None,
+            ping_flash: std::collections::HashMap::new(),
             fold_anim: None,
             anim_prev_selected: 0,
             selection_at: None,

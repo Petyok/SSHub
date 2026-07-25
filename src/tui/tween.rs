@@ -6,6 +6,7 @@
 use std::time::{Duration, Instant};
 
 use ratatui::layout::Rect;
+use ratatui::style::Color;
 
 /// Easing curve applied by a [`SlideAnim`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +81,29 @@ pub fn progress(start: Instant, dur: Duration, now: Instant) -> f32 {
         return 1.0;
     }
     (now.saturating_duration_since(start).as_secs_f32() / dur.as_secs_f32()).clamp(0.0, 1.0)
+}
+
+/// Blend `from` into `to`, `t` of the way (`t` clamped to `[0, 1]`).
+///
+/// The theme is pure RGB, so a status change can fade instead of snapping.
+/// Non-RGB colours (indexed, named, `Reset`) have no meaningful midpoint, so
+/// they switch at the halfway mark rather than pretending to blend.
+pub fn color_lerp(from: Color, to: Color, t: f32) -> Color {
+    let t = t.clamp(0.0, 1.0);
+    match (from, to) {
+        (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2)) => {
+            Color::Rgb(lerp_u8(r1, r2, t), lerp_u8(g1, g2, t), lerp_u8(b1, b2, t))
+        }
+        _ if t < 0.5 => from,
+        _ => to,
+    }
+}
+
+/// Linearly interpolate one colour channel and round to nearest.
+fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
+    (a as f32 + (b as f32 - a as f32) * t)
+        .round()
+        .clamp(0.0, 255.0) as u8
 }
 
 /// Braille spinner frames for "work in flight" indicators, advanced by a clock
@@ -218,6 +242,26 @@ mod tests {
         let anim = SlideAnim::new_in_out(from, to, dur);
         assert_eq!(anim.rect_at(anim.start), from);
         assert_eq!(anim.rect_at(anim.start + dur), to);
+    }
+
+    #[test]
+    fn color_lerp_blends_rgb_channels() {
+        let a = Color::Rgb(0, 0, 0);
+        let b = Color::Rgb(255, 100, 50);
+        assert_eq!(color_lerp(a, b, 0.0), a);
+        assert_eq!(color_lerp(a, b, 1.0), b);
+        assert_eq!(color_lerp(a, b, 0.5), Color::Rgb(128, 50, 25));
+        // Clamped, not extrapolated.
+        assert_eq!(color_lerp(a, b, -1.0), a);
+        assert_eq!(color_lerp(a, b, 2.0), b);
+    }
+
+    #[test]
+    fn color_lerp_switches_non_rgb_at_the_midpoint() {
+        let a = Color::Red;
+        let b = Color::Rgb(0, 0, 0);
+        assert_eq!(color_lerp(a, b, 0.4), a);
+        assert_eq!(color_lerp(a, b, 0.6), b);
     }
 
     #[test]

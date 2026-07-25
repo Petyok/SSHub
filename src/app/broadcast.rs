@@ -60,6 +60,11 @@ impl App {
             || self
                 .session_exit_at
                 .is_some_and(|at| now.saturating_duration_since(at) < crate::tui::SESSION_ANIM);
+        // A status dot still flashing after its ping class changed (#35).
+        let flash = self
+            .ping_flash
+            .values()
+            .any(|(_, at)| now.saturating_duration_since(*at) < crate::tui::PING_FLASH);
         // Group fold / unfold revealing its rows (#35).
         let fold = self
             .fold_anim
@@ -97,6 +102,7 @@ impl App {
             || scroll
             || selection
             || fold
+            || flash
     }
 
     /// Open the broadcast wizard from the hosts tab. Refuses while a run is live

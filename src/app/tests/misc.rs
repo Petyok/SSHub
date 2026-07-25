@@ -618,3 +618,71 @@ fn fold_replays_the_subtree_while_nav_rows_collapse_at_once() {
     app.fold_anim.as_mut().unwrap().at = std::time::Instant::now() - crate::tui::FOLD_ANIM;
     assert_eq!(hosts_shown(&app), 4);
 }
+
+/// A host whose ping class changes flashes on the way to its new colour (#35),
+/// while one seen for the first time is already settled.
+#[test]
+fn ping_class_change_flashes_the_status_dot() {
+    let mut app = test_app(vec![("a", host("a"))]);
+    let settled = crate::tui::theme::GREEN;
+
+    // Nothing known about the host yet: no flash to play.
+    assert_eq!(app.ping_flash_color("a", settled), settled);
+
+    // First samples arrive: the app opening is not a status change.
+    app.ping_data.insert("a".into(), vec![12]);
+    app.detect_ping_changes();
+    assert_eq!(app.ping_flash_color("a", settled), settled);
+
+    // The host goes unreachable: the dot flashes away from its class colour.
+    app.ping_data
+        .insert("a".into(), vec![crate::ping::PING_UNREACHABLE]);
+    app.detect_ping_changes();
+    let flashing = app.ping_flash_color("a", crate::tui::theme::RED);
+    assert_ne!(
+        flashing,
+        crate::tui::theme::RED,
+        "expected the dot mid-flash, not its resting colour"
+    );
+
+    // More samples of the same class don't restart it.
+    let at = app.ping_flash.get("a").unwrap().1;
+    app.ping_data
+        .insert("a".into(), vec![crate::ping::PING_UNREACHABLE; 2]);
+    app.detect_ping_changes();
+    assert_eq!(
+        app.ping_flash.get("a").unwrap().1,
+        at,
+        "flash not restarted"
+    );
+
+    // Once it has run its course the dot is back to its class colour.
+    app.ping_flash.insert(
+        "a".into(),
+        (
+            crate::ping::PingClass::Unreachable,
+            std::time::Instant::now() - crate::tui::PING_FLASH,
+        ),
+    );
+    assert_eq!(
+        app.ping_flash_color("a", crate::tui::theme::RED),
+        crate::tui::theme::RED
+    );
+}
+
+/// Reduced motion never flashes.
+#[test]
+fn ping_flash_is_off_under_reduced_motion() {
+    let mut app = test_app(vec![("a", host("a"))]);
+    app.config.appearance.disable_animation = true;
+    app.ping_data.insert("a".into(), vec![12]);
+    app.detect_ping_changes();
+    app.ping_flash.insert(
+        "a".into(),
+        (crate::ping::PingClass::Online, std::time::Instant::now()),
+    );
+    assert_eq!(
+        app.ping_flash_color("a", crate::tui::theme::GREEN),
+        crate::tui::theme::GREEN
+    );
+}

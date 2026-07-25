@@ -302,6 +302,52 @@ impl App {
         }
     }
 
+    /// Notice hosts whose ping class changed since the last tick and stamp
+    /// them, so their status dot can flash on the way to its new colour (#35).
+    /// A host seen for the first time is stamped as already settled: opening
+    /// the app shouldn't set the whole list flashing.
+    pub(crate) fn detect_ping_changes(&mut self) {
+        let now = std::time::Instant::now();
+        let settled = now.checked_sub(crate::tui::PING_FLASH).unwrap_or(now);
+        for (name, samples) in &self.ping_data {
+            let class = crate::ping::classify_ping(Some(samples));
+            match self.ping_flash.get(name) {
+                Some((prev, _)) if *prev == class => continue,
+                Some(_) => {
+                    self.ping_flash.insert(name.clone(), (class, now));
+                }
+                None => {
+                    self.ping_flash.insert(name.clone(), (class, settled));
+                }
+            }
+        }
+    }
+
+    /// Colour for a host's status dot: its settled class colour, flashed
+    /// through white for [`crate::tui::PING_FLASH`] after the class changes
+    /// (#35), so a host dropping offline catches the eye.
+    pub(crate) fn ping_flash_color(
+        &self,
+        host: &str,
+        settled: ratatui::style::Color,
+    ) -> ratatui::style::Color {
+        if !self.motion_enabled() {
+            return settled;
+        }
+        let Some((_, at)) = self.ping_flash.get(host) else {
+            return settled;
+        };
+        let p = crate::tui::tween::progress(*at, crate::tui::PING_FLASH, std::time::Instant::now());
+        if p >= 1.0 {
+            return settled;
+        }
+        crate::tui::tween::color_lerp(
+            crate::tui::theme::BRIGHT,
+            settled,
+            crate::tui::tween::ease_out(p),
+        )
+    }
+
     /// The visual rows of the group's subtree as it stands right now: what a
     /// fold is about to swallow, captured so it can be replayed on the way out.
     fn subtree_visual_rows(&self, key: i64) -> Vec<VisualRow> {
