@@ -49,7 +49,11 @@ pub fn render(frame: &mut Frame, app: &App) {
     // slide the session off to the right (#35). Once exited, render_inner has
     // drawn the dashboard beneath — blit the snapshot sliding away over it.
     if crate::app::is_session_mode(app.mode) {
-        *app.session_snapshot.borrow_mut() = Some(frame.buffer_mut().clone());
+        // Hold the snapshot still while a tab slide plays: it *is* the tab being
+        // carried off, so refreshing it would feed the slide its own output.
+        if app.session_tab_switch.is_none() {
+            *app.session_snapshot.borrow_mut() = Some(frame.buffer_mut().clone());
+        }
     } else {
         render_session_exit(frame, app);
     }
@@ -137,6 +141,7 @@ fn render_inner(frame: &mut Frame, app: &App) {
         // for the picker-over-session case (no fresh connect happening).
         if !session_behind_picker {
             render_session_enter(frame, app);
+            render_session_tab_slide(frame, app);
         }
         if app.mode == AppMode::SessionHostPicker {
             screens::session_host_picker::render(frame, app);
@@ -787,6 +792,45 @@ fn render_session_exit(frame: &mut Frame, app: &App) {
             }
         }
     }
+}
+
+/// Slide between two embedded session tabs over [`TAB_ANIM`] (#35): the tab
+/// being left is carried off one edge while the new one follows it in from the
+/// other, so `Ctrl`+arrows reads as travel along the strip instead of a swap.
+/// Shares the dashboard tab-switch duration, being the same gesture.
+fn render_session_tab_slide(frame: &mut Frame, app: &App) {
+    if !app.motion_enabled() {
+        return;
+    }
+    let Some(sw) = app.session_tab_switch else {
+        return;
+    };
+    let now = std::time::Instant::now();
+    let p = tween::progress(sw.at, TAB_ANIM, now);
+    if p >= 1.0 {
+        return;
+    }
+    let snap = app.session_snapshot.borrow();
+    let Some(outgoing) = snap.as_ref() else {
+        return;
+    };
+    let area = frame.area();
+    // The new tab is already drawn at rest; lift it so both layers can move.
+    let incoming = blit::snapshot(frame.buffer_mut(), area);
+    frame.render_widget(Clear, area);
+    let e = tween::ease_out(p);
+    let w = area.width as f32;
+    let dir = sw.dir as f32;
+    let fb = frame.buffer_mut();
+    blit::blit(fb, area, area, outgoing, (-dir * e * w).round() as i32, 0);
+    blit::blit(
+        fb,
+        area,
+        area,
+        &incoming,
+        (dir * (1.0 - e) * w).round() as i32,
+        0,
+    );
 }
 
 /// Duration of the tab-switch body slide (#35).

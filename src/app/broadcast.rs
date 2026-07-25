@@ -60,11 +60,24 @@ impl App {
             || self
                 .session_exit_at
                 .is_some_and(|at| now.saturating_duration_since(at) < crate::tui::SESSION_ANIM);
+        // Slide between two embedded session tabs (#35).
+        let session_tab = self
+            .session_tab_switch
+            .is_some_and(|sw| now.saturating_duration_since(sw.at) < crate::tui::TAB_ANIM);
         // SFTP tab sub-state slide (#35).
         let sftp = self
             .sftp_anim
             .is_some_and(|(_, at)| now.saturating_duration_since(at) < crate::tui::SFTP_ANIM);
-        panel || toasts || dropping || zoom || tab || popup_open || popup_close || session || sftp
+        panel
+            || toasts
+            || dropping
+            || zoom
+            || tab
+            || popup_open
+            || popup_close
+            || session
+            || session_tab
+            || sftp
     }
 
     /// Open the broadcast wizard from the hosts tab. Refuses while a run is live

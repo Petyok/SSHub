@@ -322,7 +322,17 @@ impl App {
             self.mode = AppMode::Normal;
         } else {
             // Stay at the same index if possible, else drop back to the new last.
-            self.active_session = Some(idx.min(self.sessions.len() - 1));
+            let next = idx.min(self.sessions.len() - 1);
+            // The tab that takes over sat to the right of the closed one, unless
+            // the closed one was last — then we fall back to its left neighbour
+            // and the slide has to travel the other way (#35).
+            if self.mode != AppMode::Normal && self.motion_enabled() {
+                self.session_tab_switch = Some(SessionTabSwitch {
+                    dir: if next == idx { 1 } else { -1 },
+                    at: std::time::Instant::now(),
+                });
+            }
+            self.active_session = Some(next);
             let phase = &self.sessions[self.active_session.unwrap()].phase;
             self.mode = if self.mode == AppMode::Normal {
                 AppMode::Normal
@@ -349,6 +359,14 @@ impl App {
 
         if self.mode == AppMode::Normal {
             return;
+        }
+        // Carry the tab we're leaving off in the direction of travel (#35). The
+        // strip wraps, so the direction comes from `delta`, not the indices.
+        if next != cur && self.motion_enabled() {
+            self.session_tab_switch = Some(SessionTabSwitch {
+                dir: if delta > 0 { 1 } else { -1 },
+                at: std::time::Instant::now(),
+            });
         }
 
         // Reflect the new active session's phase in app.mode, so render

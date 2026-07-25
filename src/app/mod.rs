@@ -223,6 +223,9 @@ pub struct App {
     /// When the host view started exiting (session -> dashboard), driving the
     /// slide-out of `session_snapshot`. `None` at rest / under reduced motion.
     pub session_exit_at: Option<std::time::Instant>,
+    /// In-flight slide between two embedded session tabs (#35). While it plays,
+    /// `session_snapshot` is held frozen on the tab being left behind.
+    pub session_tab_switch: Option<SessionTabSwitch>,
     pub palette_query: String,
     pub palette_selected: usize,
     pub palette_results: Vec<usize>,
@@ -335,6 +338,9 @@ impl App {
             // captured session snapshot off to the right (#35). Only to Normal —
             // opening the session-host picker over a live session isn't an exit.
             if is_session_mode(self.anim_prev_mode) && self.mode == AppMode::Normal {
+                // Leaving supersedes any tab slide still in flight, and releases
+                // the snapshot it was holding frozen.
+                self.session_tab_switch = None;
                 if self.motion_enabled() {
                     self.session_exit_at = Some(std::time::Instant::now());
                 } else {
@@ -350,6 +356,14 @@ impl App {
         {
             self.session_exit_at = None;
             *self.session_snapshot.borrow_mut() = None;
+        }
+        // Retire a finished session-tab slide, releasing the frozen snapshot of
+        // the tab that was left behind.
+        if self
+            .session_tab_switch
+            .is_some_and(|sw| sw.at.elapsed() >= crate::tui::TAB_ANIM)
+        {
+            self.session_tab_switch = None;
         }
         // Retire a finished SFTP sub-state slide. Its snapshot is refreshed every
         // resting frame while a session is live, so only free it once there is
@@ -486,6 +500,7 @@ impl App {
             session_enter_at: None,
             session_snapshot: std::cell::RefCell::new(None),
             session_exit_at: None,
+            session_tab_switch: None,
             palette_query: String::new(),
             palette_selected: 0,
             palette_results: Vec::new(),

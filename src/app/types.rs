@@ -385,6 +385,16 @@ pub struct TabSwitch {
     pub at: std::time::Instant,
 }
 
+/// An in-flight session-tab slide (#35): moving between embedded sessions
+/// carries the old tab off one edge while the new one follows it in. `dir` is
+/// `+1` for "next" and `-1` for "prev"; it cannot be derived from the tab
+/// indices, which wrap around at both ends of the strip.
+#[derive(Debug, Clone, Copy)]
+pub struct SessionTabSwitch {
+    pub dir: i8,
+    pub at: std::time::Instant,
+}
+
 /// An in-flight SFTP tab sub-state slide (#35). The tab body swaps between the
 /// host picker, the "connecting…" placeholder and the dual-pane browser, and
 /// each swap moves in the direction it "came from": the placeholder rides in
