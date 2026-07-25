@@ -183,3 +183,60 @@ pub(crate) fn tab_toggles_detail_focus() {
     app.handle_key(key(KeyCode::Tab)).unwrap();
     assert!(!app.detail_focus);
 }
+
+#[test]
+pub(crate) fn sftp_left_pane_picker_filters_and_dispatches() {
+    let metadata: Arc<dyn MetadataStore> = Arc::new(MetadataDb::default());
+    let resolver = MockResolver::new(vec![("alpha", host("alpha")), ("bravo", host("bravo"))]);
+    let mut app = App::new_with_deps(
+        AppConfig::default(),
+        AppDeps {
+            resolver: Box::new(resolver),
+            metadata,
+            store: test_store(),
+            password_store: Box::new(crate::credentials::NoopPasswordStore),
+        },
+    );
+    app.reload_hosts().unwrap();
+    app.terminal_area = ratatui::layout::Rect::new(0, 0, 80, 24);
+    app.mode = AppMode::Normal;
+
+    app.open_host_picker(crate::app::PickerTarget::SftpLeftPane);
+    assert_eq!(app.mode, AppMode::SessionHostPicker);
+    assert_eq!(
+        app.session_host_picker.as_ref().unwrap().target,
+        crate::app::PickerTarget::SftpLeftPane
+    );
+    assert_eq!(app.session_host_matches().len(), 2);
+
+    for c in "bra".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::empty()))
+            .unwrap();
+    }
+    let matches = app.session_host_matches();
+    assert_eq!(matches.len(), 1);
+    assert!(matches[0].1.contains("bravo"));
+
+    // Esc returns to the dashboard without dispatching.
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()))
+        .unwrap();
+    assert_eq!(app.mode, AppMode::Normal);
+    assert!(app.session_host_picker.is_none());
+
+    // Reopen and press Enter: the pick must reach sftp_connect_left_pane. With
+    // no SFTP browser connected that call parks a known notice, which proves
+    // the dispatch without needing a network.
+    app.host_notice = None;
+    app.open_host_picker(crate::app::PickerTarget::SftpLeftPane);
+    for c in "bra".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::empty()))
+            .unwrap();
+    }
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()))
+        .unwrap();
+    assert_eq!(
+        app.host_notice.as_deref(),
+        Some("connect the SFTP browser first")
+    );
+    assert!(app.session_host_picker.is_none());
+}
