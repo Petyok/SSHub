@@ -146,7 +146,25 @@ impl App {
         let mut rows = Vec::new();
         let mut cur_host_depth = 1usize;
         let mut first = true;
+        // A fold in flight (#35) shows only part of its group's subtree: the
+        // rows past that point are simply left out, so the list below closes up
+        // behind them a row at a time instead of jumping.
+        let reveal = self.fold_reveal();
+        // (rows still allowed through, depth of the folding header)
+        let mut budget: Option<(usize, usize)> = None;
         for (nav_idx, row) in self.nav_rows.iter().enumerate() {
+            // Leaving the folding group's subtree ends the budget.
+            if let (Some((_, depth)), NavRow::Header(si)) = (budget, *row) {
+                if self.group_sections[si].depth <= depth {
+                    budget = None;
+                }
+            }
+            if let Some((left, _)) = budget.as_mut() {
+                if *left == 0 {
+                    continue;
+                }
+                *left -= 1;
+            }
             match *row {
                 NavRow::Header(si) => {
                     let section = &self.group_sections[si];
@@ -160,6 +178,34 @@ impl App {
                         depth: section.depth,
                     });
                     cur_host_depth = section.depth + 1;
+                    if let Some((anim, shown)) = reveal {
+                        if section.key() == anim.key {
+                            if anim.expanding {
+                                // Unfolding: the subtree is live in `nav_rows`,
+                                // so let a growing prefix of it through.
+                                let total = self
+                                    .nav_rows
+                                    .iter()
+                                    .skip(nav_idx + 1)
+                                    .take_while(|r| match r {
+                                        NavRow::Header(s) => {
+                                            self.group_sections[*s].depth > section.depth
+                                        }
+                                        NavRow::Host(_) => true,
+                                    })
+                                    .count();
+                                budget =
+                                    Some(((total as f32 * shown).round() as usize, section.depth));
+                            } else {
+                                // Folding: the subtree is already gone from
+                                // `nav_rows`, so replay a shrinking prefix of
+                                // what it looked like. These rows are display
+                                // only — nothing navigates to them.
+                                let keep = (anim.rows.len() as f32 * shown).round() as usize;
+                                rows.extend(anim.rows.iter().take(keep).cloned());
+                            }
+                        }
+                    }
                 }
                 NavRow::Host(host_idx) => {
                     rows.push(VisualRow::Host {
@@ -217,11 +263,32 @@ impl App {
     }
 
     pub(crate) fn toggle_group_by_section(&mut self, si: usize) {
+        // Any fold still playing is stale the moment the tree changes again.
+        self.fold_anim = None;
         let Some(section) = self.group_sections.get(si) else {
             return;
         };
         let key = section.key();
-        if !self.collapsed_groups.remove(&key) {
+        let expanding = self.collapsed_groups.contains(&key);
+        // Capture the rows about to disappear *before* collapsing, so the fold
+        // has something to swallow. An unfold needs no capture: its rows are in
+        // `nav_rows` the moment the collapse is lifted.
+        let rows = if expanding {
+            Vec::new()
+        } else {
+            self.subtree_visual_rows(key)
+        };
+        if self.motion_enabled() {
+            self.fold_anim = Some(FoldAnim {
+                key,
+                expanding,
+                at: std::time::Instant::now(),
+                rows,
+            });
+        }
+        if expanding {
+            self.collapsed_groups.remove(&key);
+        } else {
             self.collapsed_groups.insert(key);
         }
         self.persist_collapsed_groups();
@@ -235,8 +302,52 @@ impl App {
         }
     }
 
+    /// The visual rows of the group's subtree as it stands right now: what a
+    /// fold is about to swallow, captured so it can be replayed on the way out.
+    fn subtree_visual_rows(&self, key: i64) -> Vec<VisualRow> {
+        let rows = self.host_visual_rows();
+        let Some(head) = rows.iter().position(|r| {
+            matches!(r, VisualRow::Header { section, .. }
+                if self.group_sections[*section].key() == key)
+        }) else {
+            return Vec::new();
+        };
+        let VisualRow::Header { depth, .. } = rows[head] else {
+            return Vec::new();
+        };
+        rows.into_iter()
+            .skip(head + 1)
+            .take_while(|r| match r {
+                VisualRow::Header { depth: d, .. } => *d > depth,
+                VisualRow::Host { .. } => true,
+                VisualRow::Blank => false,
+            })
+            .collect()
+    }
+
+    /// Fraction of the animating group's subtree that is on screen right now
+    /// (#35): it grows as the group opens and shrinks as it shuts. `None` when
+    /// no fold is playing, or once it has run its course.
+    fn fold_reveal(&self) -> Option<(&FoldAnim, f32)> {
+        let anim = self.fold_anim.as_ref()?;
+        if !self.motion_enabled() {
+            return None;
+        }
+        let p =
+            crate::tui::tween::progress(anim.at, crate::tui::FOLD_ANIM, std::time::Instant::now());
+        if p >= 1.0 {
+            return None;
+        }
+        // Symmetric easing: a fold and the unfold that undoes it should feel
+        // like the same motion run backwards, which an ease-out does not.
+        let e = crate::tui::tween::ease_in_out(p);
+        Some((anim, if anim.expanding { e } else { 1.0 - e }))
+    }
+
     /// Collapse (`false`) or expand (`true`) every group at once.
     pub(crate) fn set_all_groups_collapsed(&mut self, collapsed: bool) {
+        // A per-group fold in flight would fight the bulk change; drop it.
+        self.fold_anim = None;
         if collapsed {
             self.collapsed_groups = self.group_sections.iter().map(|s| s.key()).collect();
         } else {

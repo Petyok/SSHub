@@ -385,6 +385,26 @@ pub struct TabSwitch {
     pub at: std::time::Instant,
 }
 
+/// An in-flight group fold / unfold (#35): the group's subtree is revealed one
+/// row at a time on the way open and swallowed the same way on the way shut,
+/// so the rows below it get pushed rather than teleported.
+///
+/// The collapse itself applies immediately either way, so `nav_rows` stays the
+/// truth about what is visible and navigable. The animation is purely visual:
+/// an unfold reveals a growing prefix of the rows now in `nav_rows`, while a
+/// fold replays a shrinking prefix of `rows`, captured just before they went.
+#[derive(Debug, Clone)]
+pub struct FoldAnim {
+    /// [`HostGroupSection::key`] of the group being folded.
+    pub key: i64,
+    /// `true` while opening, `false` while shutting.
+    pub expanding: bool,
+    pub at: std::time::Instant,
+    /// Subtree rows as they looked before a fold, replayed on the way out.
+    /// Empty for an unfold, whose rows are live in `nav_rows`.
+    pub rows: Vec<VisualRow>,
+}
+
 /// An in-flight session-tab slide (#35): moving between embedded sessions
 /// carries the old tab off one edge while the new one follows it in. `dir` is
 /// `+1` for "next" and `-1` for "prev"; it cannot be derived from the tab

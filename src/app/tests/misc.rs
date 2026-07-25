@@ -546,3 +546,75 @@ fn host_scroll_snaps_under_reduced_motion() {
     assert_eq!(app.host_scroll_advance(body_h), target);
     assert!(!app.host_scroll_moving.get());
 }
+
+/// Folding a group (#35) keeps `nav_rows` authoritative -- the collapse
+/// applies at once -- while the visual rows replay a shrinking prefix of the
+/// subtree, so the list closes up a row at a time instead of jumping.
+#[test]
+fn fold_replays_the_subtree_while_nav_rows_collapse_at_once() {
+    let store = test_store();
+    let group = store
+        .create_group(&NewHostGroup {
+            name: "prod".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    for i in 0..4 {
+        store
+            .create_host(&NewHost {
+                name: format!("p{i}"),
+                address: format!("10.0.0.{i}"),
+                port: 22,
+                group_id: Some(group.id),
+                ..Default::default()
+            })
+            .unwrap();
+    }
+    let mut app = App::new_with_deps(
+        AppConfig::default(),
+        AppDeps {
+            resolver: Box::new(MockResolver::new(vec![])),
+            metadata: Arc::new(MetadataDb::default()),
+            store,
+            password_store: Box::new(crate::credentials::NoopPasswordStore),
+        },
+    );
+    app.reload_hosts().unwrap();
+    let hosts_shown = |app: &App| {
+        app.host_visual_rows()
+            .iter()
+            .filter(|r| matches!(r, VisualRow::Host { .. }))
+            .count()
+    };
+    assert_eq!(hosts_shown(&app), 4);
+
+    // Folding collapses the tree immediately...
+    app.toggle_group_by_section(0);
+    assert_eq!(app.nav_rows.len(), 1, "only the header is navigable");
+    // ...but the rows are still on screen, replayed from the captured subtree.
+    assert_eq!(
+        hosts_shown(&app),
+        4,
+        "full subtree at the start of the fold"
+    );
+
+    // Halfway through the (symmetric) reveal, half of them are left.
+    app.fold_anim.as_mut().unwrap().at = std::time::Instant::now() - crate::tui::FOLD_ANIM / 2;
+    let midway = hosts_shown(&app);
+    assert!(
+        (1..4).contains(&midway),
+        "expected a partial subtree, got {midway}"
+    );
+
+    // Once it has run its course nothing is replayed any more.
+    app.fold_anim.as_mut().unwrap().at = std::time::Instant::now() - crate::tui::FOLD_ANIM;
+    assert_eq!(hosts_shown(&app), 0);
+
+    // Unfolding is the mirror: the rows are live again and revealed over time.
+    app.detect_tab_switch();
+    app.toggle_group_by_section(0);
+    assert_eq!(app.nav_rows.len(), 5, "the subtree is navigable again");
+    assert_eq!(hosts_shown(&app), 0, "nothing revealed yet");
+    app.fold_anim.as_mut().unwrap().at = std::time::Instant::now() - crate::tui::FOLD_ANIM;
+    assert_eq!(hosts_shown(&app), 4);
+}

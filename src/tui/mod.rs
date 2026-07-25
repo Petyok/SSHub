@@ -852,6 +852,9 @@ fn render_session_tab_slide(frame: &mut Frame, app: &App) {
     );
 }
 
+/// Duration of a group's fold / unfold reveal in the host list (#35).
+pub const FOLD_ANIM: std::time::Duration = std::time::Duration::from_millis(180);
+
 /// Duration of the host-list highlight wipe under a moved cursor (#35).
 pub const SELECT_ANIM: std::time::Duration = std::time::Duration::from_millis(120);
 

@@ -60,6 +60,11 @@ impl App {
             || self
                 .session_exit_at
                 .is_some_and(|at| now.saturating_duration_since(at) < crate::tui::SESSION_ANIM);
+        // Group fold / unfold revealing its rows (#35).
+        let fold = self
+            .fold_anim
+            .as_ref()
+            .is_some_and(|f| now.saturating_duration_since(f.at) < crate::tui::FOLD_ANIM);
         // Host-list highlight wiping in under a moved cursor (#35).
         let selection = self
             .selection_at
@@ -91,6 +96,7 @@ impl App {
             || notice
             || scroll
             || selection
+            || fold
     }
 
     /// Open the broadcast wizard from the hosts tab. Refuses while a run is live

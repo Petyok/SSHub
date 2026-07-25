@@ -223,6 +223,10 @@ pub struct App {
     /// When the host view started exiting (session -> dashboard), driving the
     /// slide-out of `session_snapshot`. `None` at rest / under reduced motion.
     pub session_exit_at: Option<std::time::Instant>,
+    /// In-flight group fold / unfold (#35). While a *fold* plays its rows are
+    /// still live in `nav_rows`; `collapsed_groups` takes the change when the
+    /// animation ends (see [`App::flush_pending_fold`]).
+    pub fold_anim: Option<FoldAnim>,
     /// `selected` as of the previous poll tick, so a moved cursor can be
     /// detected centrally and its highlight wiped in (#35).
     pub anim_prev_selected: usize,
@@ -379,6 +383,14 @@ impl App {
             self.session_exit_at = None;
             *self.session_snapshot.borrow_mut() = None;
         }
+        // Retire a finished fold, releasing the rows it was replaying.
+        if self
+            .fold_anim
+            .as_ref()
+            .is_some_and(|f| f.at.elapsed() >= crate::tui::FOLD_ANIM)
+        {
+            self.fold_anim = None;
+        }
         // The cursor moved since the last tick: wipe its highlight in (#35).
         if self.selected != self.anim_prev_selected {
             self.anim_prev_selected = self.selected;
@@ -534,6 +546,7 @@ impl App {
             session_snapshot: std::cell::RefCell::new(None),
             session_exit_at: None,
             session_tab_switch: None,
+            fold_anim: None,
             anim_prev_selected: 0,
             selection_at: None,
             host_scroll_pos: std::cell::Cell::new(0.0),
