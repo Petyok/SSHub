@@ -82,3 +82,21 @@ path = "tests/e2e/mod.rs"
 [[test]]
 name = "config_load"
 path = "tests/smoke/config_load.rs"
+
+# Shipped binaries carry no symbol table and are optimised across crate
+# boundaries: the tarballs from the release workflow, `cargo install sshub`, and
+# anything that repackages them are what users actually download. (Debug info
+# was never in them -- release defaults to `debug = false` -- so what `strip`
+# removes is the symbol table, which leaves `RUST_BACKTRACE` output empty in a
+# shipped build.)
+#
+# `panic` stays on unwind, and not for the reason you might assume: the panic
+# hook runs under `abort` too, so the tty would be restored either way. What
+# abort would cost is (a) every worker thread -- watcher, ping, broadcast, sftp,
+# os-detect -- whose panic currently kills only itself and leaves the TUI alive,
+# and (b) every cleanup `Drop`, including `AskpassSecret`, which removes the
+# file holding a host's password.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
