@@ -32,6 +32,16 @@ All notable changes to SSHub are documented in this file.
 - **SFTP `..` row** - both panes list their parent directory as a selectable
   row, so walking up no longer depends on knowing about `Backspace`.
 
+### Changed
+
+- **Smaller release binaries** - release builds had no profile at all, so they
+  shipped with the symbol table and without cross-crate optimisation. Adding
+  `lto = "thin"`, `codegen-units = 1` and `strip = "symbols"` takes the Linux
+  x86-64 binary from 14.8 MB to 11.6 MB (-21.8%), which every distribution
+  channel carries: the release tarballs, `cargo install`, and anything that
+  repackages them. Release builds take correspondingly longer; `cargo test` and
+  day-to-day `cargo build` are untouched.
+
 ### Fixed
 
 - **SFTP could not leave the login directory** - `Backspace` did nothing on a
