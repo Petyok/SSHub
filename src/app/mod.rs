@@ -231,6 +231,11 @@ pub struct App {
     pub header_stats_at: std::cell::Cell<Option<std::time::Instant>>,
     /// Whether a counter is still counting, so the loop keeps the frame rate up.
     pub header_stats_moving: std::cell::Cell<bool>,
+    /// Audit filter + range as of the previous tick, so a re-filtered table can
+    /// be faded in centrally rather than swapping between frames (#35).
+    pub anim_prev_audit: (AuditFilter, AuditRange),
+    /// When the audit table was last re-filtered.
+    pub audit_filter_at: Option<std::time::Instant>,
     /// Working directories of the two SFTP panes as of the previous tick, so a
     /// directory change can be detected centrally whether it came from the
     /// local filesystem or an async remote listing (#35).
@@ -416,6 +421,11 @@ impl App {
             self.session_exit_at = None;
             *self.session_snapshot.borrow_mut() = None;
         }
+        // The audit table was re-filtered: fade the new rows in (#35).
+        if (self.audit_filter, self.audit_range) != self.anim_prev_audit {
+            self.anim_prev_audit = (self.audit_filter, self.audit_range);
+            self.audit_filter_at = Some(std::time::Instant::now());
+        }
         self.detect_sftp_navigation();
         // A transfer staged since the last tick flies its row in (#35).
         let queued = self.sftp.as_ref().map(|s| s.queue.len()).unwrap_or(0);
@@ -592,6 +602,8 @@ impl App {
             header_stats_pos: std::cell::Cell::new([0.0; 4]),
             header_stats_at: std::cell::Cell::new(None),
             header_stats_moving: std::cell::Cell::new(false),
+            anim_prev_audit: (AuditFilter::default(), AuditRange::default()),
+            audit_filter_at: None,
             anim_prev_cwd: [std::path::PathBuf::new(), std::path::PathBuf::new()],
             sftp_nav: [None, None],
             anim_prev_queue: 0,

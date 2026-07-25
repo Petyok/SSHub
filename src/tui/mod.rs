@@ -852,6 +852,9 @@ fn render_session_tab_slide(frame: &mut Frame, app: &App) {
     );
 }
 
+/// How long a panel's swapped-out content takes to fade in (#35).
+pub const CONTENT_FADE: std::time::Duration = std::time::Duration::from_millis(140);
+
 /// How long an SFTP pane's listing takes to slide to a new directory (#35).
 pub const SFTP_NAV_ANIM: std::time::Duration = std::time::Duration::from_millis(200);
 

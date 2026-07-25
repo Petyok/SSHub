@@ -60,6 +60,10 @@ impl App {
             || self
                 .session_exit_at
                 .is_some_and(|at| now.saturating_duration_since(at) < crate::tui::SESSION_ANIM);
+        // The audit table or a detail panel still fading its new content in (#35).
+        let fade = self
+            .audit_filter_at
+            .is_some_and(|at| now.saturating_duration_since(at) < crate::tui::CONTENT_FADE);
         // An SFTP pane still sliding to its new directory (#35).
         let nav = self
             .sftp_nav
@@ -127,6 +131,7 @@ impl App {
             || progress
             || queue
             || nav
+            || fade
     }
 
     /// Open the broadcast wizard from the hosts tab. Refuses while a run is live

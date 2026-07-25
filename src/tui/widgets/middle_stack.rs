@@ -54,6 +54,9 @@ pub fn render_middle_stack(frame: &mut Frame, area: Rect, app: &App) {
 /// host's `os_icon` resolves to a known distro (auto-detected on first connect
 /// or set manually in the form); otherwise the card shows just the text.
 pub(crate) fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
+    // Everything below the title belongs to whichever host is selected, so a
+    // moved cursor swaps the lot. Fade it up instead of flicking it over (#35).
+    let fade = content_fade(app.selection_at, app.motion_enabled());
     let entry = app.selected_entry();
     let title = match entry.as_ref() {
         Some(e) => format!("host · {}", e.name()),
@@ -227,6 +230,13 @@ pub(crate) fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
         }
         put_clamped(buf, text_x, y, s, *style, text_w);
     }
+
+    // Fade the body only: the box and its title frame the panel and shouldn't
+    // blink along with what they hold.
+    if area.width > 2 && area.height > 2 {
+        let body = Rect::new(area.x + 1, area.y + 1, area.width - 2, area.height - 2);
+        crate::tui::blit::fade(buf, body, fade);
+    }
 }
 
 /// Render the SSH log panel (meant to span both middle + right columns).
@@ -373,6 +383,22 @@ fn wrap_line(s: &str, width: usize) -> Vec<String> {
 }
 
 // ── Agent panel ─────────────────────────────────────────
+
+/// How far swapped-out panel content has faded in, `0.0` to `1.0` (#35).
+/// `1.0` at rest and under reduced motion, where content simply appears.
+pub(crate) fn content_fade(at: Option<std::time::Instant>, motion: bool) -> f32 {
+    if !motion {
+        return 1.0;
+    }
+    match at {
+        Some(at) => crate::tui::tween::ease_out(crate::tui::tween::progress(
+            at,
+            crate::tui::CONTENT_FADE,
+            std::time::Instant::now(),
+        )),
+        None => 1.0,
+    }
+}
 
 pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
     render_panel_box(

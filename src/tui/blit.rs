@@ -1,4 +1,5 @@
-//! Cell-level buffer blitting, the shared primitive behind every slide (#35).
+//! Cell-level buffer effects: the shared primitives behind the slides and
+//! fades (#35).
 //!
 //! A slide draws its layer at rest into a standalone [`Buffer`], then copies
 //! those cells into the frame at an eased offset. Going through cells (instead
@@ -8,6 +9,10 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Color;
+
+use crate::tui::theme;
+use crate::tui::tween::color_lerp;
 
 /// Copy the `region` cells of `src` into `dst` offset by (`dx`, `dy`), dropping
 /// whatever lands outside `clip`.
@@ -44,6 +49,29 @@ pub fn snapshot(src: &Buffer, area: Rect) -> Buffer {
         }
     }
     out
+}
+
+/// Fade the cells of `area` up out of the background, `k` of the way in
+/// (`k >= 1.0` is fully drawn, `0.0` invisible).
+///
+/// Used where a panel's *content* changes under a fixed frame -- a different
+/// host's detail, a re-filtered table -- and sliding it would be a lie about
+/// where it came from, but swapping it outright reads as a flicker.
+pub fn fade(buf: &mut Buffer, area: Rect, k: f32) {
+    if k >= 1.0 {
+        return;
+    }
+    for y in area.top()..area.bottom() {
+        for x in area.left()..area.right() {
+            let Some(c) = buf.cell_mut((x, y)) else {
+                continue;
+            };
+            c.fg = color_lerp(theme::BG, c.fg, k);
+            if c.bg != Color::Reset {
+                c.bg = color_lerp(theme::BG, c.bg, k);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -112,6 +140,28 @@ mod tests {
         let mut dst = Buffer::empty(a);
         blit(&mut dst, a, a, &src, a.width as i32, 0);
         assert_eq!(row(&dst, a, 1), " ".repeat(a.width as usize));
+    }
+
+    #[test]
+    fn fade_at_rest_leaves_the_cells_alone() {
+        let a = area();
+        let mut buf = Buffer::empty(a);
+        buf.cell_mut((2, 1)).unwrap().fg = theme::GREEN;
+        fade(&mut buf, a, 1.0);
+        assert_eq!(buf.cell((2, 1)).unwrap().fg, theme::GREEN);
+    }
+
+    #[test]
+    fn fade_pulls_colours_toward_the_background() {
+        let a = area();
+        let mut buf = Buffer::empty(a);
+        buf.cell_mut((2, 1)).unwrap().fg = theme::GREEN;
+        buf.cell_mut((2, 1)).unwrap().bg = theme::SEL_BG;
+        fade(&mut buf, a, 0.0);
+        assert_eq!(buf.cell((2, 1)).unwrap().fg, theme::BG);
+        assert_eq!(buf.cell((2, 1)).unwrap().bg, theme::BG);
+        // A transparent background stays transparent rather than being painted.
+        assert_eq!(buf.cell((3, 1)).unwrap().bg, Color::Reset);
     }
 
     #[test]
