@@ -30,3 +30,40 @@ pub(crate) fn sftp_picker_search_connects_to_filtered_host() {
 
     assert_eq!(app.sftp_host.as_deref(), Some("charlie"));
 }
+
+/// The SFTP progress bar sweeps toward the worker's chunked figure (#35),
+/// settles on it, and resets outright when the queue moves to the next file.
+#[test]
+fn sftp_progress_bar_chases_the_reported_figure() {
+    let app = test_app(vec![]);
+    let tick = |app: &App| {
+        app.sftp_progress_at.set(Some(
+            std::time::Instant::now() - std::time::Duration::from_millis(16),
+        ));
+    };
+
+    // First frame adopts the figure: the bar doesn't sweep in from empty.
+    assert_eq!(app.sftp_progress_advance(0.4), 0.4);
+    assert!(!app.sftp_progress_moving.get());
+
+    // A chunk lands: the bar closes on it over several frames.
+    tick(&app);
+    let stepped = app.sftp_progress_advance(0.9);
+    assert!(app.sftp_progress_moving.get());
+    assert!(
+        (0.4..0.9).contains(&stepped),
+        "expected a partial sweep, got {stepped}"
+    );
+    for _ in 0..200 {
+        tick(&app);
+        app.sftp_progress_advance(0.9);
+    }
+    assert_eq!(app.sftp_progress_advance(0.9), 0.9);
+    assert!(!app.sftp_progress_moving.get());
+
+    // The next (smaller) file reports less progress: snap back rather than
+    // sweeping backwards.
+    tick(&app);
+    assert_eq!(app.sftp_progress_advance(0.05), 0.05);
+    assert!(!app.sftp_progress_moving.get());
+}

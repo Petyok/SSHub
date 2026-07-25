@@ -55,7 +55,10 @@ fn render_rest(frame: &mut Frame, area: Rect, app: &App) {
         Some(state) if state.connecting => {
             render_connecting(frame.buffer_mut(), area, app.sftp_host.as_deref())
         }
-        Some(state) => render_browser(frame.buffer_mut(), area, state),
+        Some(state) => {
+            let fill = app.sftp_progress_advance(progress_fraction(state));
+            render_browser(frame.buffer_mut(), area, state, fill)
+        }
     }
 }
 
@@ -97,7 +100,12 @@ fn render_slide(frame: &mut Frame, area: Rect, app: &App, kind: SftpAnim, p: f32
             // very line that was reporting the handshake.
             render_connecting(frame.buffer_mut(), area, app.sftp_host.as_deref());
             let mut layer = Buffer::empty(area);
-            render_browser(&mut layer, area, state);
+            render_browser(
+                &mut layer,
+                area,
+                state,
+                app.sftp_progress_advance(progress_fraction(state)),
+            );
             blit_panes(frame.buffer_mut(), area, &layer, 1.0 - e);
             // Same for an Esc landing mid-slide: the panes part from the rest
             // position rather than snapping to it first.
@@ -174,7 +182,7 @@ fn render_picker(frame: &mut Frame, area: Rect, app: &App) {
 
 // ── Browser sub-state ────────────────────────────────────────
 
-fn render_browser(buf: &mut Buffer, area: Rect, state: &SftpState) {
+fn render_browser(buf: &mut Buffer, area: Rect, state: &SftpState, fill: f32) {
     let progress_h: u16 = if state.phase == Phase::Running { 1 } else { 0 };
     let queue_h: u16 = if state.queue.is_empty() {
         1
@@ -218,7 +226,7 @@ fn render_browser(buf: &mut Buffer, area: Rect, state: &SftpState) {
 
     if progress_h > 0 {
         let py = area.y + area.height.saturating_sub(1);
-        render_progress(buf, area.x, py, area.width, state);
+        render_progress(buf, area.x, py, area.width, state, fill);
     }
 }
 
@@ -385,7 +393,22 @@ fn render_queue(
     }
 }
 
-fn render_progress(buf: &mut Buffer, x: u16, y: u16, w: u16, state: &SftpState) {
+/// How far the running transfer has got, `0.0` to `1.0`. Zero when nothing is
+/// running or the size is unknown, which the bar draws as empty.
+fn progress_fraction(state: &SftpState) -> f32 {
+    match state.progress {
+        Some(p) if p.size > 0 => (p.transferred as f32 / p.size as f32).clamp(0.0, 1.0),
+        _ => 0.0,
+    }
+}
+
+/// Eighth-width block glyphs, for a bar that can end part-way through a cell.
+const BAR_PARTIALS: [&str; 7] = ["▏", "▎", "▍", "▌", "▋", "▊", "▉"];
+
+/// Progress line for the running queue: a filled bar under the numbers, drawn
+/// at `fill` (the smoothed figure, #35) so it sweeps between the worker's
+/// chunked updates instead of stepping.
+fn render_progress(buf: &mut Buffer, x: u16, y: u16, w: u16, state: &SftpState, fill: f32) {
     let s = if let Some(p) = state.progress {
         let pct = if p.size > 0 {
             (p.transferred as f64 / p.size as f64 * 100.0) as u32
@@ -403,7 +426,29 @@ fn render_progress(buf: &mut Buffer, x: u16, y: u16, w: u16, state: &SftpState) 
         "running…".to_string()
     };
     let clamped = ellipsize(&s, w.saturating_sub(4) as usize);
+    let label_w = clamped.chars().count() as u16;
     buf.set_string(x + 2, y, clamped, theme::amber());
+
+    // Bar in whatever is left of the line, right of the numbers.
+    let bar_x = x + 3 + label_w;
+    let bar_w = (x + w).saturating_sub(bar_x + 2);
+    if bar_w < 4 {
+        return;
+    }
+    let units = (bar_w as f32 * 8.0 * fill.clamp(0.0, 1.0)).round() as u16;
+    let full = units / 8;
+    let rem = (units % 8) as usize;
+    for i in 0..bar_w {
+        let cell_x = bar_x + i;
+        let (glyph, style) = if i < full {
+            ("█", theme::green())
+        } else if i == full && rem > 0 {
+            (BAR_PARTIALS[rem - 1], theme::green())
+        } else {
+            ("░", theme::dim())
+        };
+        buf.set_string(cell_x, y, glyph, style);
+    }
 }
 
 fn human_size(bytes: u64) -> String {

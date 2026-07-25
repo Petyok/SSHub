@@ -3,6 +3,9 @@ use super::*;
 use std::path::{Path, PathBuf};
 
 use crate::sftp::model::{FileEntry, Phase, SftpState, Side};
+
+/// Time constant of the SFTP progress bar's chase (#35).
+const SFTP_PROGRESS_TAU: f32 = 0.12;
 use crate::sftp::SftpCommand;
 
 impl App {
@@ -12,6 +15,37 @@ impl App {
         if self.motion_enabled() {
             self.sftp_anim = Some((kind, std::time::Instant::now()));
         }
+    }
+
+    /// Advance the SFTP progress bar toward `target` (0.0 to 1.0) and return
+    /// what to draw (#35).
+    ///
+    /// The worker reports progress in chunks, so the raw figure steps; the bar
+    /// closes on it continuously and keeps sweeping between updates. Reset to
+    /// the target outright when it moves backwards, which means the queue has
+    /// moved on to the next (smaller) file rather than made negative progress.
+    /// Called once per frame from the render pass.
+    pub(crate) fn sftp_progress_advance(&self, target: f32) -> f32 {
+        let target = target.clamp(0.0, 1.0);
+        if !self.motion_enabled() {
+            self.sftp_progress_pos.set(target);
+            self.sftp_progress_moving.set(false);
+            return target;
+        }
+        let now = std::time::Instant::now();
+        let last = self.sftp_progress_at.replace(Some(now));
+        let pos = self.sftp_progress_pos.get();
+        let dist = target - pos;
+        if last.is_none() || dist < 0.0 || dist < 0.002 {
+            self.sftp_progress_pos.set(target);
+            self.sftp_progress_moving.set(false);
+            return target;
+        }
+        let dt = now.saturating_duration_since(last.unwrap()).as_secs_f32();
+        let next = pos + dist * (1.0 - (-dt / SFTP_PROGRESS_TAU).exp());
+        self.sftp_progress_pos.set(next);
+        self.sftp_progress_moving.set(true);
+        next
     }
 
     /// Switch to the SFTP tab (index 1). Setter mirror of the other

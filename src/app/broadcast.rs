@@ -60,6 +60,8 @@ impl App {
             || self
                 .session_exit_at
                 .is_some_and(|at| now.saturating_duration_since(at) < crate::tui::SESSION_ANIM);
+        // SFTP progress bar still sweeping toward the reported figure (#35).
+        let progress = self.sftp_progress_moving.get();
         // A fresh sparkline column still growing in (#35).
         let spark = self
             .ping_sample
@@ -112,6 +114,7 @@ impl App {
             || flash
             || stats
             || spark
+            || progress
     }
 
     /// Open the broadcast wizard from the hosts tab. Refuses while a run is live

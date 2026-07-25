@@ -231,6 +231,13 @@ pub struct App {
     pub header_stats_at: std::cell::Cell<Option<std::time::Instant>>,
     /// Whether a counter is still counting, so the loop keeps the frame rate up.
     pub header_stats_moving: std::cell::Cell<bool>,
+    /// Fraction of the running SFTP queue drawn on the progress bar, chasing
+    /// the real figure so the bar sweeps between the worker's updates (#35).
+    pub sftp_progress_pos: std::cell::Cell<f32>,
+    /// When the progress bar was last advanced. `None` until first drawn.
+    pub sftp_progress_at: std::cell::Cell<Option<std::time::Instant>>,
+    /// Whether the bar is still catching up to the real figure.
+    pub sftp_progress_moving: std::cell::Cell<bool>,
     /// Latest ping sample per host and when it landed, so a fresh reading can
     /// grow into the sparkline instead of appearing at full height (#35).
     pub ping_sample: std::collections::HashMap<String, (u32, std::time::Instant)>,
@@ -564,6 +571,9 @@ impl App {
             header_stats_pos: std::cell::Cell::new([0.0; 4]),
             header_stats_at: std::cell::Cell::new(None),
             header_stats_moving: std::cell::Cell::new(false),
+            sftp_progress_pos: std::cell::Cell::new(0.0),
+            sftp_progress_at: std::cell::Cell::new(None),
+            sftp_progress_moving: std::cell::Cell::new(false),
             ping_sample: std::collections::HashMap::new(),
             ping_flash: std::collections::HashMap::new(),
             fold_anim: None,
