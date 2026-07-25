@@ -149,7 +149,16 @@ fn server_to_server_transfer_relays_in_two_legs() {
     app.sftp_run_queue();
     let relay = app.sftp_relay.as_ref().expect("relay armed");
     assert_eq!(relay.leg, RelayLeg::Fetching);
-    let tmp = relay.tmp_dir.join("dump.sql");
+    let scratch = relay.tmp_dir.path().to_path_buf();
+    let tmp = scratch.join("dump.sql");
+    // The scratch directory is owner-only: the files passing through it are the
+    // user's, and /tmp is shared.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&scratch).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700, "scratch dir is not owner-only");
+    }
     match right
         .try_recv()
         .expect("fetch leg dispatched to the source")
@@ -186,6 +195,7 @@ fn server_to_server_transfer_relays_in_two_legs() {
     assert!(state.queue.is_empty(), "the relayed item left the queue");
     assert_eq!(state.phase, crate::sftp::model::Phase::Browsing);
     assert!(!tmp.exists(), "scratch copy cleaned up");
+    assert!(!scratch.exists(), "scratch directory goes with the relay");
 }
 
 /// A failure part-way through a relay stops it and leaves the item queued, so

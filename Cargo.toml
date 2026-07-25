@@ -62,6 +62,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
 toml_edit = "0.22"
+tempfile = "3"
 tui-term = "0.3"
 vt100 = "0.16"
 
@@ -69,7 +70,6 @@ vt100 = "0.16"
 assert_cmd = "2"
 predicates = "3"
 rusqlite = { version = "0.32", features = ["bundled"] }
-tempfile = "3"
 
 [[test]]
 name = "smoke"
