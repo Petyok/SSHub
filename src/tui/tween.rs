@@ -106,6 +106,20 @@ fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
         .clamp(0.0, 255.0) as u8
 }
 
+/// Smooth 0 -> 1 -> 0 wave driven by the wall clock, one full swing per
+/// `period`. For indicators that breathe in place rather than travel; every
+/// such indicator breathes in step.
+pub fn pulse_now(period: Duration) -> f32 {
+    let period_ms = period.as_millis().max(1);
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let t = (ms % period_ms) as f32 / period_ms as f32;
+    // Triangle, then eased so the turning points aren't a visible corner.
+    ease_in_out(if t < 0.5 { t * 2.0 } else { 2.0 - t * 2.0 })
+}
+
 /// Braille spinner frames for "work in flight" indicators, advanced by a clock
 /// so they animate while the app is otherwise idle.
 pub const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -242,6 +256,14 @@ mod tests {
         let anim = SlideAnim::new_in_out(from, to, dur);
         assert_eq!(anim.rect_at(anim.start), from);
         assert_eq!(anim.rect_at(anim.start + dur), to);
+    }
+
+    #[test]
+    fn pulse_stays_in_range() {
+        for _ in 0..16 {
+            let v = pulse_now(Duration::from_millis(900));
+            assert!((0.0..=1.0).contains(&v), "pulse out of range: {v}");
+        }
     }
 
     #[test]

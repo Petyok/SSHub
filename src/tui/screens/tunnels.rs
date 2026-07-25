@@ -6,6 +6,9 @@ use crate::app::App;
 use crate::store::TunnelType;
 use crate::tui::theme;
 
+/// One breath of a reconnecting tunnel's status dot (#35).
+const TUNNEL_PULSE: std::time::Duration = std::time::Duration::from_millis(1100);
+
 pub fn render_tunnels(frame: &mut Frame, area: Rect, app: &App) {
     if area.height < 4 || area.width < 20 {
         return;
@@ -115,6 +118,7 @@ pub fn render_tunnels(frame: &mut Frame, area: Rect, app: &App) {
             app.tunnel_manager.reconnect_attempt(tunnel.id),
             app.tunnel_manager.reconnect_countdown_secs(tunnel.id),
             app.config.tunnel_reconnect.max_attempts,
+            app.motion_enabled(),
         );
     }
 
@@ -150,6 +154,7 @@ fn render_tunnel_row(
     reconnect_attempt: Option<u32>,
     reconnect_countdown: Option<u64>,
     max_attempts: u32,
+    motion: bool,
 ) {
     let running = status == "up";
     let base_style = if selected {
@@ -174,7 +179,20 @@ fn render_tunnel_row(
     let status_w = cols[0].1;
     let (dot, dot_color) = match status {
         "up" => ("●", theme::GREEN),
+        // Retrying: the dot breathes, so a tunnel working its way back reads
+        // as busy rather than parked on amber (#35).
+        "reconnecting" if motion => (
+            "●",
+            crate::tui::tween::color_lerp(
+                theme::AMBER,
+                theme::DIM,
+                crate::tui::tween::pulse_now(TUNNEL_PULSE),
+            ),
+        ),
         "reconnecting" => ("●", theme::AMBER),
+        // Coming up: the same spinner every other in-flight handshake turns.
+        "starting" if motion => (crate::tui::tween::spinner_frame_now(), theme::AMBER),
+        "starting" => ("○", theme::AMBER),
         "gave_up" | "error" => ("●", theme::RED),
         _ => ("○", theme::DIM),
     };
