@@ -391,7 +391,7 @@ fn render_queue(
         let (text, style) = match notice {
             Some(n) => (format!("⚠ {n}"), theme::amber()),
             None => (
-                "queue: empty  (← download · → upload · u remove · c run · o second host)"
+                "queue: empty  (← download · → upload · c run · . hidden · o second host)"
                     .to_string(),
                 theme::dim(),
             ),

@@ -257,6 +257,7 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | `←` / `→`          | Stage the focused pane's selection toward the other  |
 | `c` / `u`          | Run the queue / unstage the last transfer            |
 | `o` / `O`          | Left pane to a second server / back to local files   |
+| `.`                | Show / hide dotfiles in both panes (remembered)      |
 | `d`                | Delete (recursive)                                   |
 | `n` / `R` / `M`    | New folder / rename / chmod                          |
 | `r`                | Refresh both panes                                   |

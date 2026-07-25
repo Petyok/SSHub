@@ -31,6 +31,11 @@ All notable changes to SSHub are documented in this file.
   local pane stays browsable meanwhile.
 - **SFTP `..` row** - both panes list their parent directory as a selectable
   row, so walking up no longer depends on knowing about `Backspace`.
+- **SFTP hides dotfiles** (issue #44), with `.` to show them - in a home
+  directory they were most of the listing, pushing what you came for below the
+  fold. The toggle covers both panes and is remembered across restarts. The
+  `..` row is exempt (it is a way out, not an entry), except while searching,
+  where it steps aside so the cursor lands on a result.
 
 ### Changed
 

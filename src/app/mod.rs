@@ -326,6 +326,9 @@ pub struct App {
     pub sftp_run_failed: bool,
     /// True while the SFTP picker's host search input is capturing keys.
     pub sftp_picker_searching: bool,
+    /// Remembered dotfile visibility for the SFTP panes, restored from
+    /// `ui_state` at startup and applied to each new browser.
+    pub sftp_show_hidden: bool,
     /// In-flight SFTP tab sub-state slide and when it started (#35). `None` at
     /// rest / under reduced motion.
     pub sftp_anim: Option<(SftpAnim, std::time::Instant)>,
@@ -665,6 +668,7 @@ impl App {
             sftp_swallow_done: 0,
             sftp_run_failed: false,
             sftp_picker_searching: false,
+            sftp_show_hidden: false,
             sftp_anim: None,
             sftp_snapshot: std::cell::RefCell::new(None),
             probe_rx: None,
@@ -786,6 +790,7 @@ impl App {
     pub fn reload_hosts(&mut self) -> Result<()> {
         let selected_name = self.selected_entry().map(|e| e.name().to_string());
         self.load_collapsed_groups();
+        self.load_sftp_hidden();
         self.load_ui_zoom();
 
         sync_ssh_config_hosts(self.resolver.as_ref(), &self.store)?;
