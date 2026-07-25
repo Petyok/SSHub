@@ -43,7 +43,9 @@ All notable changes to SSHub are documented in this file.
   `cargo build` are untouched, but every release build now takes noticeably
   longer -- including `just build` and `just install`, which build in release
   mode, and including every dependency, since `codegen-units = 1` applies across
-  the whole graph.
+  the whole graph. One trade to be aware of when reporting a crash: stripping
+  the symbol table leaves `RUST_BACKTRACE` output empty in a released binary,
+  so a backtrace worth sending has to come from a debug build.
 
 ### Fixed
 

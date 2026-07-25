@@ -44,6 +44,15 @@ jobs:
       - name: Smoke-test the built binary
         if: matrix.target != 'x86_64-apple-darwin'
         run: ./target/${{ matrix.target }}/release/sshub --dry-run
+      # The Intel Mac binary can't be executed on an arm64 runner, so check it
+      # structurally instead: a truncated/mangled Mach-O and a signature broken
+      # by `strip` are exactly what this leg would otherwise ship unnoticed.
+      - name: Verify the Intel Mac binary
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: |
+          bin=target/${{ matrix.target }}/release/sshub
+          file "$bin" | grep -q 'Mach-O 64-bit executable x86_64'
+          codesign --verify --strict --verbose=2 "$bin"
       - name: Package
         run: |
           cd target/${{ matrix.target }}/release
