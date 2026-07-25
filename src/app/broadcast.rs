@@ -60,6 +60,12 @@ impl App {
             || self
                 .session_exit_at
                 .is_some_and(|at| now.saturating_duration_since(at) < crate::tui::SESSION_ANIM);
+        // An SFTP pane still sliding to its new directory (#35).
+        let nav = self
+            .sftp_nav
+            .iter()
+            .flatten()
+            .any(|(_, at)| now.saturating_duration_since(*at) < crate::tui::SFTP_NAV_ANIM);
         // A staged transfer's row still flying into the queue strip (#35).
         let queue = self
             .sftp_queue_at
@@ -120,6 +126,7 @@ impl App {
             || spark
             || progress
             || queue
+            || nav
     }
 
     /// Open the broadcast wizard from the hosts tab. Refuses while a run is live

@@ -57,7 +57,14 @@ fn render_rest(frame: &mut Frame, area: Rect, app: &App) {
         }
         Some(state) => {
             let fill = app.sftp_progress_advance(progress_fraction(state));
-            render_browser(frame.buffer_mut(), area, state, fill, staged_fly_in(app))
+            render_browser(
+                frame.buffer_mut(),
+                area,
+                state,
+                fill,
+                staged_fly_in(app),
+                nav_offsets(app, area),
+            )
         }
     }
 }
@@ -106,6 +113,7 @@ fn render_slide(frame: &mut Frame, area: Rect, app: &App, kind: SftpAnim, p: f32
                 state,
                 app.sftp_progress_advance(progress_fraction(state)),
                 staged_fly_in(app),
+                nav_offsets(app, area),
             );
             blit_panes(frame.buffer_mut(), area, &layer, 1.0 - e);
             // Same for an Esc landing mid-slide: the panes part from the rest
@@ -183,7 +191,14 @@ fn render_picker(frame: &mut Frame, area: Rect, app: &App) {
 
 // ── Browser sub-state ────────────────────────────────────────
 
-fn render_browser(buf: &mut Buffer, area: Rect, state: &SftpState, fill: f32, staged: f32) {
+fn render_browser(
+    buf: &mut Buffer,
+    area: Rect,
+    state: &SftpState,
+    fill: f32,
+    staged: f32,
+    nav: [i32; 2],
+) {
     let progress_h: u16 = if state.phase == Phase::Running { 1 } else { 0 };
     let queue_h: u16 = if state.queue.is_empty() {
         1
@@ -214,6 +229,11 @@ fn render_browser(buf: &mut Buffer, area: Rect, state: &SftpState, fill: f32, st
         state.focus == Focus::Remote,
         state.searching && state.focus == Focus::Remote,
     );
+
+    // Slide each pane's listing to its new directory, inside its own border so
+    // the box itself stays put (#35).
+    slide_listing(buf, local_rect, nav[0]);
+    slide_listing(buf, remote_rect, nav[1]);
 
     let queue_y = area.y + panes_h;
     render_queue(
@@ -410,6 +430,48 @@ fn render_queue(
             buf.set_string(x + 4, yy, clamped, style);
         }
     }
+}
+
+/// Shift a pane's listing by `dx` columns within its border, leaving whatever
+/// it vacates blank, so a new directory rides in from the side it came from.
+fn slide_listing(buf: &mut Buffer, pane: Rect, dx: i32) {
+    if dx == 0 || pane.width < 3 || pane.height < 3 {
+        return;
+    }
+    let inner = Rect::new(pane.x + 1, pane.y + 1, pane.width - 2, pane.height - 2);
+    let layer = blit::snapshot(buf, inner);
+    for y in inner.top()..inner.bottom() {
+        for x in inner.left()..inner.right() {
+            if let Some(c) = buf.cell_mut((x, y)) {
+                c.reset();
+            }
+        }
+    }
+    blit::blit(buf, inner, inner, &layer, dx, 0);
+}
+
+/// Column offsets for the two panes' directory slides (#35): the listing
+/// starts a pane-width to one side and eases home. Descending into a child
+/// comes in from the right, stepping back out from the left.
+fn nav_offsets(app: &App, area: Rect) -> [i32; 2] {
+    let half = (area.width / 2) as f32;
+    let now = std::time::Instant::now();
+    std::array::from_fn(|i| {
+        let Some((deeper, at)) = app.sftp_nav[i] else {
+            return 0;
+        };
+        let p = tween::progress(at, crate::tui::SFTP_NAV_ANIM, now);
+        if p >= 1.0 {
+            return 0;
+        }
+        let travel = (1.0 - tween::ease_out(p)) * half;
+        let dx = travel.round() as i32;
+        if deeper {
+            dx
+        } else {
+            -dx
+        }
+    })
 }
 
 /// How far the newest queue row has flown in, `0.0` to `1.0` (#35). `1.0` at

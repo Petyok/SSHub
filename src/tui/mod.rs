@@ -852,6 +852,9 @@ fn render_session_tab_slide(frame: &mut Frame, app: &App) {
     );
 }
 
+/// How long an SFTP pane's listing takes to slide to a new directory (#35).
+pub const SFTP_NAV_ANIM: std::time::Duration = std::time::Duration::from_millis(200);
+
 /// How long a newly staged SFTP transfer takes to fly into the queue (#35).
 pub const SFTP_QUEUE_ANIM: std::time::Duration = std::time::Duration::from_millis(200);
 

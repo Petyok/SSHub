@@ -231,6 +231,13 @@ pub struct App {
     pub header_stats_at: std::cell::Cell<Option<std::time::Instant>>,
     /// Whether a counter is still counting, so the loop keeps the frame rate up.
     pub header_stats_moving: std::cell::Cell<bool>,
+    /// Working directories of the two SFTP panes as of the previous tick, so a
+    /// directory change can be detected centrally whether it came from the
+    /// local filesystem or an async remote listing (#35).
+    pub anim_prev_cwd: [std::path::PathBuf; 2],
+    /// Per-pane directory change: whether it went deeper, and when. Indexed by
+    /// [`crate::sftp::model::Side`] (local, remote).
+    pub sftp_nav: [Option<(bool, std::time::Instant)>; 2],
     /// SFTP queue length as of the previous tick, so a newly staged transfer
     /// can be detected centrally and flown in (#35).
     pub anim_prev_queue: usize,
@@ -409,6 +416,7 @@ impl App {
             self.session_exit_at = None;
             *self.session_snapshot.borrow_mut() = None;
         }
+        self.detect_sftp_navigation();
         // A transfer staged since the last tick flies its row in (#35).
         let queued = self.sftp.as_ref().map(|s| s.queue.len()).unwrap_or(0);
         if queued != self.anim_prev_queue {
@@ -584,6 +592,8 @@ impl App {
             header_stats_pos: std::cell::Cell::new([0.0; 4]),
             header_stats_at: std::cell::Cell::new(None),
             header_stats_moving: std::cell::Cell::new(false),
+            anim_prev_cwd: [std::path::PathBuf::new(), std::path::PathBuf::new()],
+            sftp_nav: [None, None],
             anim_prev_queue: 0,
             sftp_queue_at: None,
             sftp_progress_pos: std::cell::Cell::new(0.0),

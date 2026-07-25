@@ -67,3 +67,42 @@ fn sftp_progress_bar_chases_the_reported_figure() {
     assert_eq!(app.sftp_progress_advance(0.05), 0.05);
     assert!(!app.sftp_progress_moving.get());
 }
+
+/// A pane changing directory is noticed centrally and stamped with the way it
+/// went (#35), whether the change came from the local filesystem or an async
+/// remote listing.
+#[test]
+fn sftp_directory_change_stamps_its_direction() {
+    use crate::sftp::model::SftpState;
+
+    let mut app = test_app(vec![]);
+    app.sftp = Some(SftpState::new("/srv", "/home/me"));
+
+    // The first listing of a session is not a navigation.
+    app.detect_sftp_navigation();
+    assert!(app.sftp_nav.iter().all(|n| n.is_none()));
+
+    // Descending into a child is stamped as going deeper.
+    app.sftp.as_mut().unwrap().local.cwd = "/home/me/work".into();
+    app.detect_sftp_navigation();
+    assert_eq!(app.sftp_nav[0].map(|(deeper, _)| deeper), Some(true));
+    assert!(app.sftp_nav[1].is_none(), "the other pane stays put");
+
+    // Stepping back out goes the other way.
+    app.sftp.as_mut().unwrap().local.cwd = "/home".into();
+    app.detect_sftp_navigation();
+    assert_eq!(app.sftp_nav[0].map(|(deeper, _)| deeper), Some(false));
+
+    // A remote listing landing later is stamped just the same.
+    app.sftp.as_mut().unwrap().remote.cwd = "/srv/www".into();
+    app.detect_sftp_navigation();
+    assert_eq!(app.sftp_nav[1].map(|(deeper, _)| deeper), Some(true));
+
+    // Disconnecting forgets the paths, so reconnecting isn't a navigation.
+    app.sftp = None;
+    app.detect_sftp_navigation();
+    assert!(app.sftp_nav.iter().all(|n| n.is_none()));
+    app.sftp = Some(SftpState::new("/srv", "/home/me"));
+    app.detect_sftp_navigation();
+    assert!(app.sftp_nav.iter().all(|n| n.is_none()));
+}

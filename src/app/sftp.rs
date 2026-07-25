@@ -48,6 +48,36 @@ impl App {
         next
     }
 
+    /// Notice either SFTP pane changing directory and stamp which way it went
+    /// (#35), so its listing can slide in from the matching side. Detected
+    /// centrally because a remote change lands asynchronously, on the worker's
+    /// `DirListing`, rather than when the key was pressed.
+    pub(crate) fn detect_sftp_navigation(&mut self) {
+        let cwds = match self.sftp.as_ref() {
+            Some(s) => [s.local.cwd.clone(), s.remote.cwd.clone()],
+            // No session: forget the old paths so reconnecting doesn't read as
+            // a navigation.
+            None => {
+                self.anim_prev_cwd = [PathBuf::new(), PathBuf::new()];
+                self.sftp_nav = [None, None];
+                return;
+            }
+        };
+        for (i, cwd) in cwds.into_iter().enumerate() {
+            if cwd == self.anim_prev_cwd[i] {
+                continue;
+            }
+            // Descending into a child goes one way, anything else (parent, or a
+            // jump elsewhere) the other. The first listing of a fresh session
+            // has no previous path and doesn't animate.
+            let fresh = self.anim_prev_cwd[i].as_os_str().is_empty();
+            let deeper = cwd.starts_with(&self.anim_prev_cwd[i]);
+            self.anim_prev_cwd[i] = cwd;
+            self.sftp_nav[i] =
+                (!fresh && self.motion_enabled()).then(|| (deeper, std::time::Instant::now()));
+        }
+    }
+
     /// Switch to the SFTP tab (index 1). Setter mirror of the other
     /// `switch_to_*_tab` helpers; kept dead-simple because the SFTP tab has no
     /// eager data to refresh (the picker just reuses the host list).
