@@ -1,5 +1,9 @@
 use super::*;
 
+/// Time constant of the host list's scroll smoothing (#35): the position covers
+/// ~63% of the distance left to its target every `HOST_SCROLL_TAU`.
+const HOST_SCROLL_TAU: f32 = 0.055;
+
 impl App {
     /// Map a Y offset (relative to hosts panel content area) to a host index,
     /// accounting for group headers and blank separators.
@@ -30,6 +34,62 @@ impl App {
         }
     }
 
+    /// Advance the host list's smoothed scroll position toward the target
+    /// offset and return the row offset to draw at (#35).
+    ///
+    /// The list is drawn on whole rows, so the slide can't be a sub-row shift;
+    /// instead the position chases its target exponentially and each frame
+    /// lands on the nearest row, which reads as the list scrolling rather than
+    /// jumping half a panel whenever the selection leaves the window. Called
+    /// once per frame from the render pass (hence `Cell`, not `&mut self`);
+    /// everything else reads [`App::host_scroll_shown`] so click mapping stays
+    /// on the row the user actually sees.
+    pub(crate) fn host_scroll_advance(&self, body_h: usize) -> usize {
+        let target = self.host_scroll_offset(body_h);
+        if !self.motion_enabled() {
+            self.host_scroll_pos.set(target as f32);
+            self.host_scroll_moving.set(false);
+            return target;
+        }
+        let now = std::time::Instant::now();
+        let Some(last) = self.host_scroll_at.get() else {
+            // First frame: start where the list already is, don't scroll in.
+            self.host_scroll_pos.set(target as f32);
+            self.host_scroll_at.set(Some(now));
+            self.host_scroll_moving.set(false);
+            return target;
+        };
+        self.host_scroll_at.set(Some(now));
+        let pos = self.host_scroll_pos.get();
+        let dist = target as f32 - pos;
+        // Within half a row of the target: settle exactly, so the list can come
+        // to rest and stop asking the loop for 60fps.
+        if dist.abs() < 0.5 {
+            self.host_scroll_pos.set(target as f32);
+            self.host_scroll_moving.set(false);
+            return target;
+        }
+        // Exponential approach: covers ~63% of the remaining distance per
+        // HOST_SCROLL_TAU, so a one-row nudge and a half-panel jump both take
+        // about the same (short) time and neither overshoots.
+        let dt = now.saturating_duration_since(last).as_secs_f32();
+        let k = 1.0 - (-dt / HOST_SCROLL_TAU).exp();
+        let next = pos + dist * k;
+        self.host_scroll_pos.set(next);
+        self.host_scroll_moving.set(true);
+        next.round().max(0.0) as usize
+    }
+
+    /// The row offset the host list is currently drawn at. Mirrors whatever
+    /// [`App::host_scroll_advance`] last settled on, so hit-testing agrees with
+    /// what is on screen mid-scroll.
+    pub(crate) fn host_scroll_shown(&self, body_h: usize) -> usize {
+        if !self.motion_enabled() || self.host_scroll_at.get().is_none() {
+            return self.host_scroll_offset(body_h);
+        }
+        self.host_scroll_pos.get().round().max(0.0) as usize
+    }
+
     /// Scroll offset, in whole card-rows, for the keys tab. Keeps the selected
     /// identity card on screen (roughly centered) when the grid overflows.
     /// `card_row_stride` is the height of one card row (card height + gap).
@@ -51,7 +111,7 @@ impl App {
     /// Map a click at visible row `rel_y` (within a `body_h`-row panel) to the
     /// host index under it, accounting for the current scroll offset.
     pub(crate) fn host_row_to_index(&self, rel_y: u16, body_h: usize) -> Option<usize> {
-        let target = rel_y as usize + self.host_scroll_offset(body_h);
+        let target = rel_y as usize + self.host_scroll_shown(body_h);
         match self.host_visual_rows().get(target) {
             Some(VisualRow::Host { host_idx, .. }) => Some(*host_idx),
             _ => None,
@@ -61,7 +121,7 @@ impl App {
     /// Map a click at visible row `rel_y` to a group-header section index (for
     /// click-to-collapse), accounting for the current scroll offset.
     pub(crate) fn host_row_to_header(&self, rel_y: u16, body_h: usize) -> Option<usize> {
-        let target = rel_y as usize + self.host_scroll_offset(body_h);
+        let target = rel_y as usize + self.host_scroll_shown(body_h);
         match self.host_visual_rows().get(target) {
             Some(VisualRow::Header { section, .. }) => Some(*section),
             _ => None,

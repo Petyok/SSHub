@@ -479,3 +479,70 @@ pub(crate) fn help_scroll_stops_at_render_ceiling() {
     app.handle_key(key(KeyCode::End)).unwrap();
     assert_eq!(app.help_scroll, max);
 }
+
+/// The smoothed host-list scroll (#35) must start settled, chase a moved
+/// target across several frames rather than snapping, and eventually land on
+/// it exactly.
+#[test]
+fn host_scroll_chases_its_target_over_several_frames() {
+    let hosts: Vec<(String, SshHost)> = (0..40)
+        .map(|i| (format!("h{i:02}"), host(&format!("h{i:02}"))))
+        .collect();
+    let mut app = test_app(hosts.iter().map(|(n, h)| (n.as_str(), h.clone())).collect());
+    let body_h = 10;
+
+    // First draw adopts the target outright: the list must not scroll in from
+    // row zero when the app opens on a selection halfway down.
+    app.selected = 20;
+    let first = app.host_scroll_advance(body_h);
+    assert_eq!(first, app.host_scroll_offset(body_h));
+    assert!(!app.host_scroll_moving.get());
+
+    // Jump the selection to the end: the next frame moves toward the new
+    // target without reaching it, and reports itself as moving. Frames are
+    // backdated by a 60fps tick, since the chase is driven by wall-clock time
+    // and a test runs its frames back to back.
+    let tick = |app: &App| {
+        app.host_scroll_at.set(Some(
+            std::time::Instant::now() - std::time::Duration::from_millis(16),
+        ));
+    };
+    app.selected = app.nav_rows.len() - 1;
+    let target = app.host_scroll_offset(body_h);
+    tick(&app);
+    let stepped = app.host_scroll_advance(body_h);
+    assert!(app.host_scroll_moving.get(), "should report as moving");
+    assert!(
+        stepped > first && stepped < target,
+        "expected a step between {first} and {target}, got {stepped}"
+    );
+    // Hit-testing agrees with what was drawn, mid-scroll.
+    assert_eq!(app.host_scroll_shown(body_h), stepped);
+
+    // Given enough frames it settles exactly on the target and stops asking
+    // for more of them.
+    for _ in 0..200 {
+        tick(&app);
+        app.host_scroll_advance(body_h);
+    }
+    assert_eq!(app.host_scroll_advance(body_h), target);
+    assert!(!app.host_scroll_moving.get());
+}
+
+/// Reduced motion keeps the list pinned to the target offset, with no chase.
+#[test]
+fn host_scroll_snaps_under_reduced_motion() {
+    let hosts: Vec<(String, SshHost)> = (0..40)
+        .map(|i| (format!("h{i:02}"), host(&format!("h{i:02}"))))
+        .collect();
+    let mut app = test_app(hosts.iter().map(|(n, h)| (n.as_str(), h.clone())).collect());
+    app.config.appearance.disable_animation = true;
+    let body_h = 10;
+
+    app.selected = 0;
+    app.host_scroll_advance(body_h);
+    app.selected = app.nav_rows.len() - 1;
+    let target = app.host_scroll_offset(body_h);
+    assert_eq!(app.host_scroll_advance(body_h), target);
+    assert!(!app.host_scroll_moving.get());
+}

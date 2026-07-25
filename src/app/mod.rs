@@ -223,6 +223,16 @@ pub struct App {
     /// When the host view started exiting (session -> dashboard), driving the
     /// slide-out of `session_snapshot`. `None` at rest / under reduced motion.
     pub session_exit_at: Option<std::time::Instant>,
+    /// Smoothed scroll position of the host list, in visual rows, chasing the
+    /// target offset each frame (#35). `Cell` because the render pass advances
+    /// it through `&App`.
+    pub host_scroll_pos: std::cell::Cell<f32>,
+    /// When the scroll position was last advanced, for the frame delta. `None`
+    /// until the list has been drawn once.
+    pub host_scroll_at: std::cell::Cell<Option<std::time::Instant>>,
+    /// Whether the list is still catching up to its target offset, so the loop
+    /// knows to keep the frame rate up.
+    pub host_scroll_moving: std::cell::Cell<bool>,
     /// `host_notice` as of the previous poll tick, so a fresh one can be
     /// detected centrally (34 code paths set it) and slid in (#35).
     pub anim_prev_notice: Option<String>,
@@ -514,6 +524,9 @@ impl App {
             session_snapshot: std::cell::RefCell::new(None),
             session_exit_at: None,
             session_tab_switch: None,
+            host_scroll_pos: std::cell::Cell::new(0.0),
+            host_scroll_at: std::cell::Cell::new(None),
+            host_scroll_moving: std::cell::Cell::new(false),
             anim_prev_notice: None,
             host_notice_at: None,
             palette_query: String::new(),

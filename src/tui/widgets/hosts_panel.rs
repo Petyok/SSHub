@@ -75,7 +75,7 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let offset = app.host_scroll_offset(body_h);
+    let offset = app.host_scroll_advance(body_h);
     let window_end = offset + body_h;
 
     use crate::app::VisualRow;
