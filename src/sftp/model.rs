@@ -344,6 +344,26 @@ impl SftpState {
         Some((self.focused_side(), parent))
     }
 
+    /// Stage the **focused pane's** selection for transfer toward `target`.
+    ///
+    /// The arrow keys point at the destination pane (left = local, right =
+    /// remote) and the source is always what the cursor is on. Staging used to
+    /// read the remote pane whichever side was focused, so pressing ← while
+    /// browsing locally queued whatever the remote cursor happened to sit on --
+    /// and queued it again after each local `cd`, since the destination path
+    /// had changed and the duplicate guard compares both ends.
+    pub fn stage_toward(&mut self, target: Side) -> Result<(), String> {
+        if self.focused_side() == target {
+            let msg = "that pane is the destination — Tab to pick a source".to_string();
+            self.notice = Some(msg.clone());
+            return Err(msg);
+        }
+        match target {
+            Side::Local => self.stage_download(),
+            Side::Remote => self.stage_upload(),
+        }
+    }
+
     /// Stage the focused-remote selection for download into `local.cwd`.
     /// Directories are staged too and transferred recursively by the worker.
     pub fn stage_download(&mut self) -> Result<(), String> {
@@ -614,6 +634,45 @@ mod tests {
         assert!(s.stage_upload().is_ok());
         assert_eq!(s.queue.len(), 1);
         assert!(s.queue[0].is_dir);
+    }
+
+    #[test]
+    fn stage_toward_takes_the_source_from_the_focused_pane() {
+        let mut s = state_with_entries();
+        // Focused remote, arrow points left: download, as before.
+        s.remote.selected = row(&s.remote, "a.txt");
+        assert!(s.stage_toward(Side::Local).is_ok());
+        assert_eq!(s.queue.len(), 1);
+        assert_eq!(s.queue[0].direction, Direction::Download);
+
+        // Focused remote, arrow points right: that pane is where the cursor
+        // already is, so nothing is staged.
+        assert!(s.stage_toward(Side::Remote).is_err());
+        assert_eq!(s.queue.len(), 1);
+        assert!(s.notice.is_some());
+
+        // Focused local, arrow points right: upload.
+        s.toggle_focus();
+        s.local.selected = row(&s.local, "b.bin");
+        assert!(s.stage_toward(Side::Remote).is_ok());
+        assert_eq!(s.queue[1].direction, Direction::Upload);
+    }
+
+    /// Regression: pressing ← while browsing locally used to queue the remote
+    /// cursor's entry, and re-queue it after every local `cd`, because the
+    /// duplicate guard compares src *and* dst and the dst had moved.
+    #[test]
+    fn browsing_locally_never_queues_the_remote_cursor() {
+        let mut s = state_with_entries();
+        s.toggle_focus(); // Local
+        assert!(s.stage_toward(Side::Local).is_err());
+        assert!(s.queue.is_empty());
+
+        // ...including after walking into another local directory.
+        s.local.cwd = PathBuf::from("/home/me/work");
+        s.local.set_entries(Vec::new());
+        assert!(s.stage_toward(Side::Local).is_err());
+        assert!(s.queue.is_empty());
     }
 
     #[test]

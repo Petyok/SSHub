@@ -245,18 +245,19 @@ impl App {
                 }
             }
             // Panes are left=local, right=remote, so the arrow points at the
-            // destination: ← downloads (remote → local), → uploads (local → remote).
+            // destination pane and the source is the focused one: ← downloads
+            // (remote → local), → uploads (local → remote).
             KeyCode::Left => {
                 if !running {
                     if let Some(s) = self.sftp.as_mut() {
-                        let _ = s.stage_download();
+                        let _ = s.stage_toward(Side::Local);
                     }
                 }
             }
             KeyCode::Right => {
                 if !running {
                     if let Some(s) = self.sftp.as_mut() {
-                        let _ = s.stage_upload();
+                        let _ = s.stage_toward(Side::Remote);
                     }
                 }
             }
