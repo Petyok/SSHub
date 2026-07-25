@@ -60,6 +60,10 @@ impl App {
             || self
                 .session_exit_at
                 .is_some_and(|at| now.saturating_duration_since(at) < crate::tui::SESSION_ANIM);
+        // The dashboard still fading up out of the intro animation (#35).
+        let splash = self
+            .dashboard_at
+            .is_some_and(|at| now.saturating_duration_since(at) < crate::tui::SPLASH_FADE);
         // The audit table or a detail panel still fading its new content in (#35).
         let fade = self
             .audit_filter_at
@@ -132,6 +136,7 @@ impl App {
             || queue
             || nav
             || fade
+            || splash
     }
 
     /// Open the broadcast wizard from the hosts tab. Refuses while a run is live

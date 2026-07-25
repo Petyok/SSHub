@@ -76,6 +76,15 @@ pub fn render(frame: &mut Frame, app: &App) {
         }
     }
     apply_panel_selection(frame, app);
+    // Fade the whole dashboard up on the way out of the intro animation, so the
+    // first frame arrives rather than replacing the splash outright (#35).
+    if let Some(at) = app.dashboard_at.filter(|_| app.motion_enabled()) {
+        let p = tween::progress(at, SPLASH_FADE, std::time::Instant::now());
+        if p < 1.0 {
+            let area = frame.area();
+            blit::fade(frame.buffer_mut(), area, tween::ease_out(p));
+        }
+    }
 }
 
 /// Highlight the zoomed-panel text selection (issue #18) by reversing the
@@ -851,6 +860,9 @@ fn render_session_tab_slide(frame: &mut Frame, app: &App) {
         0,
     );
 }
+
+/// How long the dashboard takes to fade up over the intro animation (#35).
+pub const SPLASH_FADE: std::time::Duration = std::time::Duration::from_millis(360);
 
 /// How long a panel's swapped-out content takes to fade in (#35).
 pub const CONTENT_FADE: std::time::Duration = std::time::Duration::from_millis(140);

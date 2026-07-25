@@ -162,6 +162,9 @@ fn run_terminal_loop(app: &mut App, auto_quit: Option<&str>) -> Result<()> {
         run_animation(&mut terminal)?;
     }
 
+    // The dashboard fades up from here, over the intro animation it replaces.
+    app.dashboard_at = Some(std::time::Instant::now());
+
     let mut last_size: Option<(u16, u16)> = None;
     loop {
         let sz = terminal.size()?;
