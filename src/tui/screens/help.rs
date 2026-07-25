@@ -144,6 +144,7 @@ fn help_lines() -> Vec<Line<'static>> {
         entry("Ctrl+[ / Ctrl+]", "Previous / next session tab"),
         entry("Ctrl+PgUp/PgDn", "Previous / next session tab (alternate)"),
         entry("Ctrl+Shift+S", "Focus session from dashboard"),
+        entry("Alt+S", "Switch to an open session (searchable)"),
         entry("PgUp/PgDn", "Scroll session history"),
         entry(
             "",

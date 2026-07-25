@@ -295,6 +295,11 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
+    (@fn session_switcher $($key:literal),* $(,)?) => {
+        fn default_kb_session_switcher() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
     (@fn session_scroll_up $($key:literal),* $(,)?) => {
         fn default_kb_session_scroll_up() -> Vec<String> {
             vec![$($key.to_string()),*]
@@ -425,6 +430,7 @@ kb_defaults! {
     session_detach => ["Ctrl+D"],
     session_open_sftp => ["Ctrl+Shift+F"],
     session_focus => ["Ctrl+Shift+S"],
+    session_switcher => ["Alt+S"],
     session_scroll_up => ["PageUp"],
     session_scroll_down => ["PageDown"],
     session_cancel => ["Esc"],
@@ -500,6 +506,7 @@ pub enum KeyAction {
     SessionDetach,
     SessionOpenSftp,
     SessionFocus,
+    SessionSwitcher,
     SessionScrollUp,
     SessionScrollDown,
     SessionCancel,
@@ -518,7 +525,7 @@ pub enum KeyAction {
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 71] = [
+    pub const ALL: [KeyAction; 72] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -576,6 +583,7 @@ impl KeyAction {
         KeyAction::SessionDetach,
         KeyAction::SessionOpenSftp,
         KeyAction::SessionFocus,
+        KeyAction::SessionSwitcher,
         KeyAction::SessionScrollUp,
         KeyAction::SessionScrollDown,
         KeyAction::SessionCancel,
@@ -651,6 +659,7 @@ impl KeyAction {
             KeyAction::SessionDetach => "Detach to dashboard",
             KeyAction::SessionOpenSftp => "Open SFTP for this host",
             KeyAction::SessionFocus => "Focus session tab",
+            KeyAction::SessionSwitcher => "Switch to an open session",
             KeyAction::SessionScrollUp => "Scroll session up",
             KeyAction::SessionScrollDown => "Scroll session down",
             KeyAction::SessionCancel => "Cancel connecting",
@@ -786,6 +795,8 @@ pub struct KeybindsConfig {
     pub session_open_sftp: Vec<String>,
     #[serde(default = "default_kb_session_focus")]
     pub session_focus: Vec<String>,
+    #[serde(default = "default_kb_session_switcher")]
+    pub session_switcher: Vec<String>,
     #[serde(default = "default_kb_session_scroll_up")]
     pub session_scroll_up: Vec<String>,
     #[serde(default = "default_kb_session_scroll_down")]
@@ -876,6 +887,7 @@ impl Default for KeybindsConfig {
             session_detach: default_kb_session_detach(),
             session_open_sftp: default_kb_session_open_sftp(),
             session_focus: default_kb_session_focus(),
+            session_switcher: default_kb_session_switcher(),
             session_scroll_up: default_kb_session_scroll_up(),
             session_scroll_down: default_kb_session_scroll_down(),
             session_cancel: default_kb_session_cancel(),
@@ -954,6 +966,7 @@ impl KeybindsConfig {
             KeyAction::SessionDetach => default_kb_session_detach(),
             KeyAction::SessionOpenSftp => default_kb_session_open_sftp(),
             KeyAction::SessionFocus => default_kb_session_focus(),
+            KeyAction::SessionSwitcher => default_kb_session_switcher(),
             KeyAction::SessionScrollUp => default_kb_session_scroll_up(),
             KeyAction::SessionScrollDown => default_kb_session_scroll_down(),
             KeyAction::SessionCancel => default_kb_session_cancel(),
@@ -1003,6 +1016,11 @@ impl KeybindsConfig {
             );
             push_hint(&mut parts, self.primary(KeyAction::SessionDetach), "detach");
         }
+        push_hint(
+            &mut parts,
+            self.primary(KeyAction::SessionSwitcher),
+            "switch",
+        );
         parts.join("  ")
     }
 
@@ -1014,6 +1032,7 @@ impl KeybindsConfig {
         if let Some(keys) = tab_switch_keys(self) {
             out.push((keys, "tabs"));
         }
+        push_footer_hint(&mut out, self.primary(KeyAction::SessionSwitcher), "switch");
         push_footer_hint(&mut out, self.primary(KeyAction::SessionNewTab), "new tab");
         out
     }
@@ -1077,6 +1096,7 @@ impl KeybindsConfig {
             KeyAction::SessionDetach => &self.session_detach,
             KeyAction::SessionOpenSftp => &self.session_open_sftp,
             KeyAction::SessionFocus => &self.session_focus,
+            KeyAction::SessionSwitcher => &self.session_switcher,
             KeyAction::SessionScrollUp => &self.session_scroll_up,
             KeyAction::SessionScrollDown => &self.session_scroll_down,
             KeyAction::SessionCancel => &self.session_cancel,
@@ -1153,6 +1173,7 @@ impl KeybindsConfig {
             KeyAction::SessionDetach => self.session_detach = binds,
             KeyAction::SessionOpenSftp => self.session_open_sftp = binds,
             KeyAction::SessionFocus => self.session_focus = binds,
+            KeyAction::SessionSwitcher => self.session_switcher = binds,
             KeyAction::SessionScrollUp => self.session_scroll_up = binds,
             KeyAction::SessionScrollDown => self.session_scroll_down = binds,
             KeyAction::SessionCancel => self.session_cancel = binds,
@@ -1285,7 +1306,7 @@ mod tests {
         };
         assert_eq!(
             kb.session_header_hints(false),
-            "F9 new tab  Ctrl+Shift+D detach"
+            "F9 new tab  Ctrl+Shift+D detach  Alt+S switch"
         );
     }
 
@@ -1296,6 +1317,51 @@ mod tests {
         assert!(hints.contains("Ctrl+T new"));
         assert!(hints.contains("Ctrl+D detach"));
         assert!(hints.contains("Ctrl+[/Ctrl+] tabs"));
+    }
+
+    #[test]
+    fn session_switcher_defaults_and_roundtrips() {
+        // A config written before this action existed must still load, and pick
+        // up the default rather than an empty bind list.
+        let cfg: KeybindsConfig = toml::from_str("quit = [\"q\"]").unwrap();
+        assert_eq!(cfg.session_switcher, vec!["Alt+S".to_string()]);
+        assert!(KeyAction::ALL.contains(&KeyAction::SessionSwitcher));
+
+        let mut custom = KeybindsConfig::default();
+        custom.set(KeyAction::SessionSwitcher, vec!["F7".into()]);
+        let text = toml::to_string(&custom).unwrap();
+        let back: KeybindsConfig = toml::from_str(&text).unwrap();
+        assert_eq!(back.session_switcher, vec!["F7".to_string()]);
+    }
+
+    #[test]
+    fn alt_s_spec_matches_the_measured_event() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        // "Alt+S" must not pick up SHIFT: the uppercase-means-shift rule only
+        // applies when no modifier was spelled out. The terminal reports
+        // Char('s') + ALT, so that is what the spec has to parse to.
+        let (code, mods) = crate::app::parse_keyspec("Alt+S").unwrap();
+        assert_eq!(code, KeyCode::Char('s'));
+        assert_eq!(mods, KeyModifiers::ALT);
+
+        // The inverse uppercases letters that carry a modifier, so it round
+        // trips to the canonical spelling rather than "Alt+s".
+        let ev = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::ALT);
+        assert_eq!(crate::app::keyevent_to_spec(&ev).as_deref(), Some("Alt+S"));
+    }
+
+    #[test]
+    fn switcher_hotkey_appears_in_both_hint_rows() {
+        let mut kb = KeybindsConfig::default();
+        kb.set(KeyAction::SessionSwitcher, vec!["F7".into()]);
+        // Single tab and multi tab: the switcher is useful either way.
+        assert!(kb.session_header_hints(false).contains("F7"));
+        assert!(kb.session_header_hints(true).contains("F7"));
+        assert!(kb
+            .session_footer_hints()
+            .iter()
+            .any(|(keys, _)| keys.contains("F7")));
     }
 
     #[test]

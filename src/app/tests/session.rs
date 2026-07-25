@@ -523,3 +523,88 @@ pub(crate) fn session_picker_paste_lands_in_the_query() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].index, 0);
 }
+
+#[test]
+pub(crate) fn session_switcher_hotkey_from_dashboard_and_session() {
+    use crate::app::SessionPickerPurpose::{NewSession, SwitchSession};
+
+    let alt_s = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::ALT);
+
+    // Without sessions the hotkey does nothing at all.
+    let mut app = app_with_sessions(&[]);
+    app.handle_key(alt_s).unwrap();
+    assert_eq!(app.mode, AppMode::Normal);
+
+    let mut app = app_with_sessions(&["edge", "other"]);
+
+    // From the dashboard.
+    app.handle_key(alt_s).unwrap();
+    assert_eq!(app.mode, AppMode::SessionPicker);
+    assert_eq!(app.session_picker.as_ref().unwrap().purpose, SwitchSession);
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()))
+        .unwrap();
+
+    // From inside a live session — the 's' must not reach the PTY.
+    app.mode = AppMode::Session;
+    app.handle_key(alt_s).unwrap();
+    assert_eq!(app.mode, AppMode::SessionPicker);
+    assert_eq!(app.session_picker.as_ref().unwrap().purpose, SwitchSession);
+
+    // Ctrl+T inside the switcher is swallowed as ordinary modal input.
+    app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.session_picker.as_ref().unwrap().purpose, SwitchSession);
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()))
+        .unwrap();
+
+    // And the other direction, through the real key dispatch rather than the
+    // opener: Alt+S inside the new-tab picker must leave it untouched.
+    app.mode = AppMode::Normal;
+    app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.session_picker.as_ref().unwrap().purpose, NewSession);
+    app.handle_key(alt_s).unwrap();
+    assert_eq!(
+        app.session_picker.as_ref().unwrap().purpose,
+        NewSession,
+        "Alt+S must not hijack an open new-tab picker"
+    );
+    assert_eq!(app.mode, AppMode::SessionPicker);
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()))
+        .unwrap();
+
+    // A rebind takes effect and the old default stops working.
+    app.config
+        .keybinds
+        .set(KeyAction::SessionSwitcher, vec!["F7".into()]);
+    app.mode = AppMode::Normal;
+    app.handle_key(alt_s).unwrap();
+    assert_ne!(app.mode, AppMode::SessionPicker);
+    app.handle_key(KeyEvent::new(KeyCode::F(7), KeyModifiers::empty()))
+        .unwrap();
+    assert_eq!(app.mode, AppMode::SessionPicker);
+}
+
+#[test]
+pub(crate) fn session_switcher_hotkey_works_from_every_dashboard_tab() {
+    use crate::app::SessionPickerPurpose::SwitchSession;
+
+    let alt_s = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::ALT);
+
+    for active_tab in 0..=4 {
+        let mut app = app_with_sessions(&["edge", "other"]);
+        app.active_tab = active_tab;
+        app.handle_key(alt_s).unwrap();
+
+        assert_eq!(
+            app.mode,
+            AppMode::SessionPicker,
+            "dashboard tab {active_tab}"
+        );
+        assert_eq!(
+            app.session_picker.as_ref().unwrap().purpose,
+            SwitchSession,
+            "dashboard tab {active_tab}"
+        );
+    }
+}

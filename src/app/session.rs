@@ -10,6 +10,10 @@ impl App {
             self.open_new_session_picker();
             return Ok(());
         }
+        if self.is_action(KeyAction::SessionSwitcher, &key) {
+            self.open_session_picker(SessionPickerPurpose::SwitchSession);
+            return Ok(());
+        }
         if self.is_action(KeyAction::SessionCloseTab, &key) {
             self.close_active_session();
             return Ok(());
@@ -127,6 +131,10 @@ impl App {
     pub(crate) fn handle_key_background_sessions(&mut self, key: &KeyEvent) -> bool {
         if self.sessions.is_empty() {
             return false;
+        }
+        if self.is_action(KeyAction::SessionSwitcher, key) {
+            self.open_session_picker(SessionPickerPurpose::SwitchSession);
+            return true;
         }
         if self.is_action(KeyAction::SessionFocus, key) {
             self.focus_active_session();

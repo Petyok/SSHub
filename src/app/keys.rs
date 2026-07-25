@@ -47,6 +47,16 @@ impl App {
             return Ok(());
         }
 
+        // The session strip and its footer hints are shared by every dashboard
+        // tab, so the switcher must be intercepted before tab-specific input.
+        if self.mode == AppMode::Normal
+            && !self.sessions.is_empty()
+            && self.is_action(KeyAction::SessionSwitcher, &key)
+        {
+            self.open_session_picker(SessionPickerPurpose::SwitchSession);
+            return Ok(());
+        }
+
         match self.mode {
             AppMode::KeybindEditor => self.handle_key_keybind_editor(key),
             AppMode::Settings => self.handle_key_settings(key),
