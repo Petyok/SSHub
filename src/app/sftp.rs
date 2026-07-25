@@ -874,13 +874,25 @@ impl App {
         // Two servers: neither worker can talk to the other, so each item is
         // relayed through a local temp file, one leg at a time.
         if self.sftp.as_ref().is_some_and(|s| s.left_is_remote()) {
-            let tmp_dir = std::env::temp_dir().join(format!("sshub-relay-{}", std::process::id()));
-            if let Err(e) = std::fs::create_dir_all(&tmp_dir) {
-                if let Some(s) = self.sftp.as_mut() {
-                    s.notice = Some(format!("no scratch space for the relay: {e}"));
-                }
-                return;
+            // Owner-only from the moment it exists: `DirBuilder::mode` is
+            // applied by the mkdir itself, so there is no window where the
+            // user's files sit in a world-readable directory.
+            let mut builder = tempfile::Builder::new();
+            builder.prefix("sshub-relay-");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                builder.permissions(std::fs::Permissions::from_mode(0o700));
             }
+            let tmp_dir = match builder.tempdir() {
+                Ok(dir) => dir,
+                Err(e) => {
+                    if let Some(s) = self.sftp.as_mut() {
+                        s.notice = Some(format!("no scratch space for the relay: {e}"));
+                    }
+                    return;
+                }
+            };
             if let Some(s) = self.sftp.as_mut() {
                 s.phase = Phase::Running;
                 s.progress = None;
@@ -923,7 +935,7 @@ impl App {
             return;
         };
         let leg = relay.leg;
-        let tmp = relay.tmp_dir.join(&item.name);
+        let tmp = relay.tmp_dir.path().join(&item.name);
         // `Download` means right-to-left, so the source is the right pane.
         let (from, to) = match item.direction {
             Direction::Download => (Side::Remote, Side::Local),
@@ -974,7 +986,7 @@ impl App {
             RelayLeg::Pushing => {
                 // The item is across; drop its temp copy and the queue entry.
                 if let Some(done) = relay.items.pop_front() {
-                    let tmp = relay.tmp_dir.join(&done.name);
+                    let tmp = relay.tmp_dir.path().join(&done.name);
                     let _ = if done.is_dir {
                         std::fs::remove_dir_all(&tmp)
                     } else {
@@ -1038,9 +1050,8 @@ impl App {
     /// Stop a relay part-way with a notice, leaving whatever hasn't moved in
     /// the queue so it can be retried.
     fn sftp_relay_abort(&mut self, msg: &str) {
-        if let Some(relay) = self.sftp_relay.take() {
-            let _ = std::fs::remove_dir_all(&relay.tmp_dir);
-        }
+        // Dropping the relay drops its scratch directory with it.
+        self.sftp_relay = None;
         // The leg that failed still owes us a `QueueDone`; swallow it, and tell
         // both workers to stop in case one is still grinding through a tree.
         self.sftp_swallow_done += 1;
@@ -1060,9 +1071,8 @@ impl App {
 
     /// Every item is across: clear the temp directory and settle the browser.
     fn sftp_relay_finish(&mut self) {
-        if let Some(relay) = self.sftp_relay.take() {
-            let _ = std::fs::remove_dir_all(&relay.tmp_dir);
-        }
+        // Dropping the relay drops its scratch directory with it.
+        self.sftp_relay = None;
         if let Some(s) = self.sftp.as_mut() {
             s.phase = Phase::Browsing;
             s.progress = None;
@@ -1109,9 +1119,8 @@ impl App {
         if let Some(kind) = kind {
             self.stamp_sftp_anim(kind);
         }
-        if let Some(relay) = self.sftp_relay.take() {
-            let _ = std::fs::remove_dir_all(&relay.tmp_dir);
-        }
+        // Dropping the relay drops its scratch directory with it.
+        self.sftp_relay = None;
         self.sftp = None;
         self.sftp_tx = None;
         self.sftp_rx = None;

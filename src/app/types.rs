@@ -1112,8 +1112,15 @@ pub struct SftpRelay {
     pub items: std::collections::VecDeque<crate::sftp::model::QueuedTransfer>,
     /// How many there were, for "relaying i/n".
     pub total: usize,
-    /// Temp directory holding the item currently in flight.
-    pub tmp_dir: std::path::PathBuf,
+    /// Scratch directory holding the item currently in flight.
+    ///
+    /// A [`tempfile::TempDir`], not a path we compose ourselves: the files
+    /// passing through it are the user's, so it needs an unpredictable name and
+    /// owner-only permissions rather than a guessable one under a world-writable
+    /// `/tmp` (where another user could pre-create or symlink it). Dropping it
+    /// removes the directory, so the scratch copies cannot outlive the relay
+    /// even if the app exits mid-transfer.
+    pub tmp_dir: tempfile::TempDir,
     /// Which leg is running.
     pub leg: RelayLeg,
 }
