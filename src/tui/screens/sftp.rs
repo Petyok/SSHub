@@ -325,11 +325,14 @@ fn render_pane(
         // filtered out -- which is exactly what a root directory of dotfiles
         // looks like, since it has no ".." row to fall back on.
         let msg = match (pane.filter.is_empty(), hidden > 0) {
-            (true, true) => "(all hidden — press . to show)",
-            (true, false) => "(empty)",
-            (false, _) => "(no matches)",
+            (true, true) => "(all hidden — press . to show)".to_string(),
+            (true, false) => "(empty)".to_string(),
+            // A search can come up empty *because* of the dotfile filter; say
+            // so rather than letting the user conclude the entry isn't there.
+            (false, true) => format!("(no matches — {hidden} hidden, . to show)"),
+            (false, false) => "(no matches)".to_string(),
         };
-        buf.set_string(inner_x, top, msg, theme::dim());
+        buf.set_string(inner_x, top, &msg, theme::dim());
         return;
     }
 

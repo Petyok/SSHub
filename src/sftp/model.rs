@@ -132,11 +132,16 @@ impl Pane {
     /// entry in it. It is *not* exempt from the text filter: while searching,
     /// the user is after something specific, and a `..` sitting at the top of
     /// the results would take the cursor `set_filter` parks on row zero.
+    ///
+    /// A search that *starts with a dot* lifts the hiding: typing `.ssh` is an
+    /// unambiguous request for a dotfile, and answering it with "no matches"
+    /// while the entry sits right there would be obtuse.
     fn is_visible(&self, entry: &FileEntry, needle: &str) -> bool {
         if entry.is_parent() {
             return needle.is_empty();
         }
-        if !self.show_hidden && entry.name.starts_with('.') {
+        let asked_for_dotfiles = needle.starts_with('.');
+        if !self.show_hidden && !asked_for_dotfiles && entry.name.starts_with('.') {
             return false;
         }
         needle.is_empty() || entry.name.to_lowercase().contains(needle)
@@ -171,7 +176,7 @@ impl Pane {
     /// Entries the dotfile filter is currently keeping off screen, so the pane
     /// can say so instead of looking mysteriously short.
     pub fn hidden_len(&self) -> usize {
-        if self.show_hidden {
+        if self.show_hidden || self.filter.starts_with('.') {
             return 0;
         }
         self.entries
@@ -845,6 +850,20 @@ mod tests {
         s.remote.set_filter("app".into());
         assert_eq!(s.remote.visible_len(), 1);
         assert_eq!(s.remote.selected_entry().unwrap().name, "app.log");
+    }
+
+    /// Typing a leading dot is an explicit request for dotfiles, so the hiding
+    /// steps aside rather than answering "no matches" about a file in plain
+    /// sight -- `/` + `.ssh` is the likeliest search in an SSH tool.
+    #[test]
+    fn a_search_starting_with_a_dot_finds_hidden_entries() {
+        let mut s = with_dotfiles();
+        assert!(!s.remote.show_hidden);
+        s.remote.set_filter(".ss".into());
+        assert_eq!(s.remote.visible_len(), 1);
+        assert_eq!(s.remote.selected_entry().unwrap().name, ".ssh");
+        // And nothing is reported as held back, since nothing is.
+        assert_eq!(s.remote.hidden_len(), 0);
     }
 
     /// The text filter and the dotfile filter compose rather than override.

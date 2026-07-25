@@ -463,6 +463,7 @@ impl App {
             if sent {
                 self.sftp_prompt = None;
                 self.mode = AppMode::Normal;
+                self.note_if_hidden(&name);
             } else if let Some(p) = self.sftp_prompt.as_mut() {
                 p.error = Some("not connected".into());
             }
@@ -495,6 +496,7 @@ impl App {
                         self.sftp_prompt = None;
                         self.mode = AppMode::Normal;
                         self.sftp_refresh_panes();
+                        self.note_if_hidden(&name);
                     }
                     Err(e) => {
                         if let Some(p) = self.sftp_prompt.as_mut() {
@@ -740,6 +742,18 @@ impl App {
     pub(crate) fn load_sftp_hidden(&mut self) {
         if let Ok(Some(raw)) = self.store.get_ui_state(SFTP_HIDDEN_KEY) {
             self.sftp_show_hidden = raw == "1";
+        }
+    }
+
+    /// Warn when an entry just created or renamed lands under the dotfile
+    /// filter: it would otherwise vanish from the listing on success, which
+    /// reads as the operation having failed.
+    fn note_if_hidden(&mut self, name: &str) {
+        if self.sftp_show_hidden || !name.starts_with('.') {
+            return;
+        }
+        if let Some(s) = self.sftp.as_mut() {
+            s.notice = Some(format!("{name} is hidden — press . to show dotfiles"));
         }
     }
 
