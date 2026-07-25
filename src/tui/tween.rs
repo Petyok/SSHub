@@ -6,6 +6,16 @@
 use std::time::{Duration, Instant};
 
 use ratatui::layout::Rect;
+use ratatui::style::Color;
+
+/// Easing curve applied by a [`SlideAnim`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Easing {
+    /// Front-loaded: fast then settling. Good for things flying in.
+    Out,
+    /// Symmetric: eases in and out. Good for A<->B morphs (zoom, tab swap).
+    InOut,
+}
 
 /// A rect slide from `from` to `to`, eased over `dur` starting at `start`.
 #[derive(Debug, Clone, Copy)]
@@ -14,16 +24,28 @@ pub struct SlideAnim {
     pub to: Rect,
     pub start: Instant,
     pub dur: Duration,
+    pub easing: Easing,
 }
 
 impl SlideAnim {
-    /// Construct a slide whose clock starts now.
+    /// Construct an ease-out slide whose clock starts now.
     pub fn new(from: Rect, to: Rect, dur: Duration) -> Self {
+        Self::with_easing(from, to, dur, Easing::Out)
+    }
+
+    /// Construct an ease-in-out slide (symmetric morph) whose clock starts now.
+    pub fn new_in_out(from: Rect, to: Rect, dur: Duration) -> Self {
+        Self::with_easing(from, to, dur, Easing::InOut)
+    }
+
+    /// Construct a slide with an explicit easing curve, clock starting now.
+    pub fn with_easing(from: Rect, to: Rect, dur: Duration, easing: Easing) -> Self {
         Self {
             from,
             to,
             start: Instant::now(),
             dur,
+            easing,
         }
     }
 
@@ -38,7 +60,11 @@ impl SlideAnim {
             return self.to;
         }
         let t = elapsed.as_secs_f32() / self.dur.as_secs_f32();
-        rect_lerp(self.from, self.to, ease_out(t))
+        let eased = match self.easing {
+            Easing::Out => ease_out(t),
+            Easing::InOut => ease_in_out(t),
+        };
+        rect_lerp(self.from, self.to, eased)
     }
 
     /// True once `dur` has elapsed since `start`.
@@ -47,11 +73,92 @@ impl SlideAnim {
     }
 }
 
+/// Raw (un-eased) progress of a timed animation: `elapsed / dur` clamped to
+/// `[0, 1]`. The shared clock helper for time-driven animations that don't use
+/// a [`SlideAnim`] (e.g. a directional slide computed from an anchor).
+pub fn progress(start: Instant, dur: Duration, now: Instant) -> f32 {
+    if dur.is_zero() {
+        return 1.0;
+    }
+    (now.saturating_duration_since(start).as_secs_f32() / dur.as_secs_f32()).clamp(0.0, 1.0)
+}
+
+/// Blend `from` into `to`, `t` of the way (`t` clamped to `[0, 1]`).
+///
+/// The theme is pure RGB, so a status change can fade instead of snapping.
+/// Non-RGB colours (indexed, named, `Reset`) have no meaningful midpoint, so
+/// they switch at the halfway mark rather than pretending to blend.
+pub fn color_lerp(from: Color, to: Color, t: f32) -> Color {
+    let t = t.clamp(0.0, 1.0);
+    match (from, to) {
+        (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2)) => {
+            Color::Rgb(lerp_u8(r1, r2, t), lerp_u8(g1, g2, t), lerp_u8(b1, b2, t))
+        }
+        _ if t < 0.5 => from,
+        _ => to,
+    }
+}
+
+/// Linearly interpolate one colour channel and round to nearest.
+fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
+    (a as f32 + (b as f32 - a as f32) * t)
+        .round()
+        .clamp(0.0, 255.0) as u8
+}
+
+/// Smooth 0 -> 1 -> 0 wave driven by the wall clock, one full swing per
+/// `period`. For indicators that breathe in place rather than travel; every
+/// such indicator breathes in step.
+pub fn pulse_now(period: Duration) -> f32 {
+    let period_ms = period.as_millis().max(1);
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let t = (ms % period_ms) as f32 / period_ms as f32;
+    // Triangle, then eased so the turning points aren't a visible corner.
+    ease_in_out(if t < 0.5 { t * 2.0 } else { 2.0 - t * 2.0 })
+}
+
+/// Braille spinner frames for "work in flight" indicators, advanced by a clock
+/// so they animate while the app is otherwise idle.
+pub const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// Milliseconds one spinner frame is held for.
+const SPINNER_STEP_MS: u128 = 90;
+
+/// Spinner frame for a task that has been running for `elapsed`.
+pub fn spinner_frame(elapsed: Duration) -> &'static str {
+    SPINNER_FRAMES[(elapsed.as_millis() / SPINNER_STEP_MS) as usize % SPINNER_FRAMES.len()]
+}
+
+/// Spinner frame driven by the wall clock, for indicators that don't track a
+/// start time of their own. Every such spinner turns in step.
+pub fn spinner_frame_now() -> &'static str {
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    SPINNER_FRAMES[(ms / SPINNER_STEP_MS) as usize % SPINNER_FRAMES.len()]
+}
+
 /// Cubic ease-out on `t` clamped to `[0, 1]` -> `[0, 1]`: `1 - (1 - t)^3`.
 pub fn ease_out(t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
     let inv = 1.0 - t;
     1.0 - inv * inv * inv
+}
+
+/// Cubic ease-in-out on `t` clamped to `[0, 1]` -> `[0, 1]`: slow at both ends,
+/// fastest in the middle. Symmetric, for A<->B morphs.
+pub fn ease_in_out(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    if t < 0.5 {
+        4.0 * t * t * t
+    } else {
+        let f = -2.0 * t + 2.0;
+        1.0 - f * f * f / 2.0
+    }
 }
 
 /// Per-field linear interpolation of a `Rect` at (already-eased) `t`, rounded.
@@ -116,6 +223,82 @@ mod tests {
     fn ease_out_is_ahead_of_linear() {
         // Ease-out front-loads progress: it should exceed linear in the middle.
         assert!(ease_out(0.5) > 0.5);
+    }
+
+    #[test]
+    fn ease_in_out_endpoints_and_symmetry() {
+        assert_eq!(ease_in_out(0.0), 0.0);
+        assert_eq!(ease_in_out(1.0), 1.0);
+        assert!((ease_in_out(0.5) - 0.5).abs() < 1e-6, "midpoint is 0.5");
+        // Symmetric about (0.5, 0.5).
+        assert!((ease_in_out(0.25) + ease_in_out(0.75) - 1.0).abs() < 1e-6);
+        // Clamps.
+        assert_eq!(ease_in_out(-1.0), 0.0);
+        assert_eq!(ease_in_out(2.0), 1.0);
+    }
+
+    #[test]
+    fn progress_clamps_and_endpoints() {
+        let start = Instant::now();
+        let dur = Duration::from_millis(200);
+        assert_eq!(progress(start, dur, start), 0.0);
+        assert!((progress(start, dur, start + Duration::from_millis(100)) - 0.5).abs() < 1e-3);
+        assert_eq!(progress(start, dur, start + dur), 1.0);
+        assert_eq!(progress(start, dur, start + Duration::from_secs(9)), 1.0);
+        assert_eq!(progress(start, Duration::ZERO, start), 1.0);
+    }
+
+    #[test]
+    fn in_out_slide_reaches_endpoints() {
+        let from = rect(0, 0, 40, 12);
+        let to = rect(60, 20, 20, 6);
+        let dur = Duration::from_millis(200);
+        let anim = SlideAnim::new_in_out(from, to, dur);
+        assert_eq!(anim.rect_at(anim.start), from);
+        assert_eq!(anim.rect_at(anim.start + dur), to);
+    }
+
+    #[test]
+    fn pulse_stays_in_range() {
+        for _ in 0..16 {
+            let v = pulse_now(Duration::from_millis(900));
+            assert!((0.0..=1.0).contains(&v), "pulse out of range: {v}");
+        }
+    }
+
+    #[test]
+    fn color_lerp_blends_rgb_channels() {
+        let a = Color::Rgb(0, 0, 0);
+        let b = Color::Rgb(255, 100, 50);
+        assert_eq!(color_lerp(a, b, 0.0), a);
+        assert_eq!(color_lerp(a, b, 1.0), b);
+        assert_eq!(color_lerp(a, b, 0.5), Color::Rgb(128, 50, 25));
+        // Clamped, not extrapolated.
+        assert_eq!(color_lerp(a, b, -1.0), a);
+        assert_eq!(color_lerp(a, b, 2.0), b);
+    }
+
+    #[test]
+    fn color_lerp_switches_non_rgb_at_the_midpoint() {
+        let a = Color::Red;
+        let b = Color::Rgb(0, 0, 0);
+        assert_eq!(color_lerp(a, b, 0.4), a);
+        assert_eq!(color_lerp(a, b, 0.6), b);
+    }
+
+    #[test]
+    fn spinner_frame_advances_and_wraps() {
+        assert_eq!(spinner_frame(Duration::ZERO), SPINNER_FRAMES[0]);
+        assert_eq!(spinner_frame(Duration::from_millis(89)), SPINNER_FRAMES[0]);
+        assert_eq!(spinner_frame(Duration::from_millis(90)), SPINNER_FRAMES[1]);
+        // A full cycle is back to the first frame, not out of bounds.
+        assert_eq!(spinner_frame(Duration::from_millis(900)), SPINNER_FRAMES[0]);
+        assert_eq!(spinner_frame(Duration::from_secs(9999)), SPINNER_FRAMES[0]);
+    }
+
+    #[test]
+    fn spinner_frame_now_is_one_of_the_frames() {
+        assert!(SPINNER_FRAMES.contains(&spinner_frame_now()));
     }
 
     #[test]

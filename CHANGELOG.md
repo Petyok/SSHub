@@ -4,6 +4,51 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **UI motion pass** (issue #35) - the interface moves instead of cutting
+  between states. Popups drop in from off the top and are thrown back up on
+  close; tab bodies slide; a zoomed panel morphs out of its grid slot; the
+  full-screen host view slides in on connect and off on the way out; the SFTP
+  tab slides between its picker, "connecting…" and browser states, with the two
+  panes meeting in the middle and parting again. The host list scrolls under
+  the cursor rather than jumping half a panel, its highlight wipes in, and a
+  group's rows are revealed one at a time as it folds. Status is legible in
+  motion too: a host's dot flashes when its ping class changes, a reconnecting
+  tunnel's dot breathes, the header tally counts to its new values, a fresh
+  ping reading grows into the latency graph, and the SFTP queue has a progress
+  bar that sweeps between the worker's chunked updates. Everything is gated on
+  the existing `appearance.disable_animation` reduced-motion toggle, and the
+  frame rate only rises while something is actually animating.
+- **SFTP between two servers** - the left pane can be pointed at a second host
+  with `o` (and back to local files with `O`), so two servers sit side by side
+  with their own connections, listings and file operations. Transfers between
+  them are relayed through a local temp file, one leg at a time, since libssh2
+  has no server-to-server copy; an item only leaves the queue once it lands on
+  the far end, so a failure part-way keeps it for a retry.
+- **SFTP queue stays open during a transfer** - files can be staged while the
+  queue runs and roll into the next pass when the current one finishes. The
+  local pane stays browsable meanwhile.
+- **SFTP `..` row** - both panes list their parent directory as a selectable
+  row, so walking up no longer depends on knowing about `Backspace`.
+
+### Fixed
+
+- **SFTP could not leave the login directory** - `Backspace` did nothing on a
+  fresh remote pane, because the parent of the server-resolved `"."` is the
+  empty path, which the server rejects as a listing target.
+- **SFTP staged from the wrong pane** - `←` queued whatever the *remote* cursor
+  sat on whichever pane had focus, so browsing locally and reaching for `←`
+  queued an entry you weren't looking at, and queued it again after every local
+  `cd`. The arrows still point at the destination; the source is now the
+  focused pane.
+- **A failed SFTP transfer retried itself forever** - a worker follows an error
+  with its usual completion event, which the queue's auto-continue read as
+  "start the next pass". Failed runs now stop and wait for the user, and both
+  workers are told to cancel.
+- **An unreachable SFTP host opened a blank browser** - it now fails into a
+  modal popup, with a connect timeout instead of an open-ended wait.
+
 ## [0.10.0] - 2026-07-19
 
 ### Added

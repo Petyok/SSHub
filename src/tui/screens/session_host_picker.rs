@@ -21,6 +21,8 @@ pub fn render(frame: &mut Frame, app: &App) {
     let y = area.y + (area.height.saturating_sub(popup_h)) / 2;
     let popup = Rect::new(x, y, popup_w, popup_h);
 
+    let popup = crate::tui::popup_open_rect(popup, app);
+
     frame.render_widget(Clear, popup);
     frame.render_widget(
         ratatui::widgets::Block::default()

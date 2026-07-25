@@ -10,6 +10,9 @@ pub struct AppearanceConfig {
     pub show_detail_panel: bool,
     #[serde(default = "default_date_format")]
     pub date_format: String,
+    /// Reduced-motion toggle. When true, skip all UI motion (the startup
+    /// splash and every panel/toast slide + morph); surfaces jump straight to
+    /// their final state. Default off. Also flipped in Settings (`Ctrl+H`).
     #[serde(default)]
     pub disable_animation: bool,
     /// Ask for confirmation before quitting (q / Ctrl+C). Default true.

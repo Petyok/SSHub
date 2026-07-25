@@ -162,6 +162,9 @@ fn run_terminal_loop(app: &mut App, auto_quit: Option<&str>) -> Result<()> {
         run_animation(&mut terminal)?;
     }
 
+    // The dashboard fades up from here, over the intro animation it replaces.
+    app.dashboard_at = Some(std::time::Instant::now());
+
     let mut last_size: Option<(u16, u16)> = None;
     loop {
         let sz = terminal.size()?;
@@ -348,6 +351,17 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
         }
     }
 
+    // Drain the left pane's worker, when it is browsing a second server.
+    if app.sftp_rx2.is_some() {
+        let events: Vec<crate::sftp::SftpEvent> = {
+            let rx = app.sftp_rx2.as_ref().unwrap();
+            std::iter::from_fn(|| rx.try_recv().ok()).collect()
+        };
+        for ev in events {
+            app.apply_sftp_event_left(ev);
+        }
+    }
+
     // Drain SSH probe log entries from background worker
     if let Some(rx) = app.probe_rx.as_ref() {
         let entries: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
@@ -380,6 +394,13 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
 
     // Refresh auth events cache periodically
     app.refresh_auth_cache();
+
+    // Arm tab-switch / popup slides for ANY mode or tab change this tick (#35).
+    // Must run AFTER the background event drains (SFTP / OS-detect / broadcast),
+    // not just after key handling: a mode change from e.g. an SFTP ConnectFailed
+    // event must stamp `mode_entered_at` in the same tick, or the next frame
+    // renders the popup at rest (a center flash) before the open slide starts.
+    app.detect_tab_switch();
 
     Ok(())
 }

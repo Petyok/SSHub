@@ -19,6 +19,19 @@ use crate::config::{KeyAction, KeybindsConfig};
 use crate::session::{Session, SessionMeta, SessionPhase};
 use crate::tui::theme;
 
+/// The PTY body's rect: everything between the one-row header and the one-row
+/// footer. Exposed so the tab-switch slide can move the body alone and leave
+/// the header fixed (#35) -- sliding the whole screen, chrome included, made
+/// switching tabs unpleasant to look at.
+pub fn body_rect(area: Rect) -> Rect {
+    Rect::new(
+        area.x,
+        area.y.saturating_add(1),
+        area.width,
+        area.height.saturating_sub(2),
+    )
+}
+
 pub fn render(frame: &mut Frame, app: &App) {
     let Some(session) = app.active_session() else {
         return;
@@ -77,17 +90,29 @@ fn render_header(frame: &mut Frame, area: Rect, session: &Session, app: &App) {
         Span::raw("  "),
     ];
 
+    // Column each tab's label starts at, filled while the strip is built, so
+    // the highlight can travel between them (#35).
+    let mut tab_spans: Vec<(u16, u16)> = Vec::new();
+    let travel = highlight_travel(app);
     if app.sessions.len() > 1 {
         // Multi-tab header: compact tab strip in place of the verbose
         // connection summary. Active tab is reversed; others are mute.
         let active_idx = app.active_session.unwrap_or(0);
+        // The highlight is painted afterwards, over the interpolated rect, so
+        // every label goes down mute here and the moving bar decides which one
+        // reads as active.
+        let mut col: u16 = area.x + spans.iter().map(span_cols).sum::<u16>();
         for (i, s) in app.sessions.iter().enumerate() {
             let label = format!(" {} {} ", i + 1, s.display_name);
-            if i == active_idx {
-                spans.push(Span::styled(label, theme::inv()));
+            let w = label.chars().count() as u16;
+            tab_spans.push((col, w));
+            col += w + 1;
+            let style = if i == active_idx && travel.is_none() {
+                theme::inv()
             } else {
-                spans.push(Span::styled(label, theme::mute()));
-            }
+                theme::mute()
+            };
+            spans.push(Span::styled(label, style));
             spans.push(Span::raw(" "));
         }
     } else {
@@ -137,6 +162,47 @@ fn render_header(frame: &mut Frame, area: Rect, session: &Session, app: &App) {
     spans.push(Span::styled(hint_text, theme::mute()));
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
+
+    // Slide the active-tab highlight from the tab being left to the new one, so
+    // the strip stays put and only the bar under it moves (#35).
+    if let Some(p) = travel {
+        let from = app
+            .session_tab_switch
+            .map(|sw| sw.from.min(tab_spans.len().saturating_sub(1)))
+            .unwrap_or(0);
+        let to = app.active_session.unwrap_or(0);
+        if let (Some(&(fx, fw)), Some(&(tx, tw))) = (tab_spans.get(from), tab_spans.get(to)) {
+            let e = crate::tui::tween::ease_in_out(p);
+            let x = lerp_u16(fx, tx, e);
+            let w = lerp_u16(fw, tw, e);
+            let buf = frame.buffer_mut();
+            for cx in x..x.saturating_add(w).min(area.x + area.width) {
+                if let Some(cell) = buf.cell_mut((cx, area.y)) {
+                    cell.set_style(theme::inv());
+                }
+            }
+        }
+    }
+}
+
+/// Progress of the tab-highlight travel, or `None` when it is at rest (which
+/// is also when the active label paints itself highlighted).
+fn highlight_travel(app: &App) -> Option<f32> {
+    if !app.motion_enabled() {
+        return None;
+    }
+    let sw = app.session_tab_switch?;
+    let p = crate::tui::tween::progress(sw.at, crate::tui::TAB_ANIM, std::time::Instant::now());
+    (p < 1.0).then_some(p)
+}
+
+/// Display columns a span occupies.
+fn span_cols(span: &Span<'static>) -> u16 {
+    span.content.chars().count() as u16
+}
+
+fn lerp_u16(a: u16, b: u16, t: f32) -> u16 {
+    (a as f32 + (b as f32 - a as f32) * t).round().max(0.0) as u16
 }
 
 fn connection_label(meta: &SessionMeta, display_name: &str) -> String {
@@ -332,9 +398,6 @@ fn render_full_debug_log(frame: &mut Frame, area: Rect, session: &Session) {
     frame.render_widget(Paragraph::new(lines).scroll((scroll, 0)), area);
 }
 
-/// Braille spinner frames, advanced by wall-clock so it animates while idle.
-const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
 fn render_connecting(
     frame: &mut Frame,
     area: Rect,
@@ -354,7 +417,6 @@ fn render_connecting(
         return;
     }
 
-    let frame_idx = (elapsed.as_millis() / 90) as usize % SPINNER_FRAMES.len();
     let host = session
         .meta
         .address
@@ -372,7 +434,10 @@ fn render_connecting(
     }
     let center = vec![
         Line::from(vec![
-            Span::styled(SPINNER_FRAMES[frame_idx], Style::default().fg(theme::GREEN)),
+            Span::styled(
+                crate::tui::tween::spinner_frame(elapsed),
+                Style::default().fg(theme::GREEN),
+            ),
             Span::raw("  "),
             Span::styled("connecting to ", mute),
             Span::styled(host, Style::default().fg(theme::TEXT)),

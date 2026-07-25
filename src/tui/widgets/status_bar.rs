@@ -34,6 +34,7 @@ fn mode_label(mode: AppMode) -> &'static str {
         AppMode::BroadcastPickTarget => "Broadcast",
         AppMode::BroadcastCommand => "Broadcast",
         AppMode::BroadcastPreview => "Broadcast",
+        AppMode::Notice => "Notice",
     }
 }
 

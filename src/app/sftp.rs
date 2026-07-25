@@ -2,10 +2,82 @@ use super::*;
 
 use std::path::{Path, PathBuf};
 
-use crate::sftp::model::{FileEntry, Phase, SftpState, Side};
+use crate::sftp::model::{Direction, FileEntry, Phase, QueuedTransfer, SftpState, Side};
+
+/// Time constant of the SFTP progress bar's chase (#35).
+const SFTP_PROGRESS_TAU: f32 = 0.12;
 use crate::sftp::SftpCommand;
 
 impl App {
+    /// Arm an SFTP tab sub-state slide (#35). A no-op under reduced motion,
+    /// where each sub-state simply appears at rest.
+    fn stamp_sftp_anim(&mut self, kind: SftpAnim) {
+        if self.motion_enabled() {
+            self.sftp_anim = Some((kind, std::time::Instant::now()));
+        }
+    }
+
+    /// Advance the SFTP progress bar toward `target` (0.0 to 1.0) and return
+    /// what to draw (#35).
+    ///
+    /// The worker reports progress in chunks, so the raw figure steps; the bar
+    /// closes on it continuously and keeps sweeping between updates. Reset to
+    /// the target outright when it moves backwards, which means the queue has
+    /// moved on to the next (smaller) file rather than made negative progress.
+    /// Called once per frame from the render pass.
+    pub(crate) fn sftp_progress_advance(&self, target: f32) -> f32 {
+        let target = target.clamp(0.0, 1.0);
+        if !self.motion_enabled() {
+            self.sftp_progress_pos.set(target);
+            self.sftp_progress_moving.set(false);
+            return target;
+        }
+        let now = std::time::Instant::now();
+        let last = self.sftp_progress_at.replace(Some(now));
+        let pos = self.sftp_progress_pos.get();
+        let dist = target - pos;
+        if last.is_none() || dist < 0.0 || dist < 0.002 {
+            self.sftp_progress_pos.set(target);
+            self.sftp_progress_moving.set(false);
+            return target;
+        }
+        let dt = now.saturating_duration_since(last.unwrap()).as_secs_f32();
+        let next = pos + dist * (1.0 - (-dt / SFTP_PROGRESS_TAU).exp());
+        self.sftp_progress_pos.set(next);
+        self.sftp_progress_moving.set(true);
+        next
+    }
+
+    /// Notice either SFTP pane changing directory and stamp which way it went
+    /// (#35), so its listing can slide in from the matching side. Detected
+    /// centrally because a remote change lands asynchronously, on the worker's
+    /// `DirListing`, rather than when the key was pressed.
+    pub(crate) fn detect_sftp_navigation(&mut self) {
+        let cwds = match self.sftp.as_ref() {
+            Some(s) => [s.local.cwd.clone(), s.remote.cwd.clone()],
+            // No session: forget the old paths so reconnecting doesn't read as
+            // a navigation.
+            None => {
+                self.anim_prev_cwd = [PathBuf::new(), PathBuf::new()];
+                self.sftp_nav = [None, None];
+                return;
+            }
+        };
+        for (i, cwd) in cwds.into_iter().enumerate() {
+            if cwd == self.anim_prev_cwd[i] {
+                continue;
+            }
+            // Descending into a child goes one way, anything else (parent, or a
+            // jump elsewhere) the other. The first listing of a fresh session
+            // has no previous path and doesn't animate.
+            let fresh = self.anim_prev_cwd[i].as_os_str().is_empty();
+            let deeper = cwd.starts_with(&self.anim_prev_cwd[i]);
+            self.anim_prev_cwd[i] = cwd;
+            self.sftp_nav[i] =
+                (!fresh && self.motion_enabled()).then(|| (deeper, std::time::Instant::now()));
+        }
+    }
+
     /// Switch to the SFTP tab (index 1). Setter mirror of the other
     /// `switch_to_*_tab` helpers; kept dead-simple because the SFTP tab has no
     /// eager data to refresh (the picker just reuses the host list).
@@ -129,13 +201,22 @@ impl App {
             .sftp
             .as_ref()
             .is_some_and(|s| s.phase == crate::sftp::model::Phase::Running);
+        // The local pane stays browsable during a run (its listings are read
+        // straight off the filesystem). The remote one doesn't: the worker
+        // handles commands in order, so a listing queued behind a transfer
+        // would leave the pane looking hung until the transfer finished.
+        let can_navigate = !running
+            || self
+                .sftp
+                .as_ref()
+                .is_some_and(|s| s.focused_side() == Side::Local);
         // Esc / Cancel disconnects the live session back to the picker.
         if self.is_action(KeyAction::Cancel, &key) {
             self.sftp_disconnect();
             return Ok(());
         }
         // Enter descends into the selected directory of the focused pane.
-        if !running && self.is_action(KeyAction::Connect, &key) {
+        if can_navigate && self.is_action(KeyAction::Connect, &key) {
             if let Some((side, path)) = self.sftp.as_ref().and_then(|s| s.enter_dir()) {
                 self.sftp_navigate(side, path);
             }
@@ -166,26 +247,25 @@ impl App {
                 }
             }
             KeyCode::Backspace => {
-                if !running {
+                if can_navigate {
                     if let Some((side, path)) = self.sftp.as_ref().and_then(|s| s.parent_dir()) {
                         self.sftp_navigate(side, path);
                     }
                 }
             }
             // Panes are left=local, right=remote, so the arrow points at the
-            // destination: ← downloads (remote → local), → uploads (local → remote).
+            // destination pane and the source is the focused one: ← downloads
+            // (remote → local), → uploads (local → remote).
+            // Staging stays open while a run is in flight: whatever is added
+            // rolls into the next pass when this one finishes.
             KeyCode::Left => {
-                if !running {
-                    if let Some(s) = self.sftp.as_mut() {
-                        let _ = s.stage_download();
-                    }
+                if let Some(s) = self.sftp.as_mut() {
+                    let _ = s.stage_toward(Side::Local);
                 }
             }
             KeyCode::Right => {
-                if !running {
-                    if let Some(s) = self.sftp.as_mut() {
-                        let _ = s.stage_upload();
-                    }
+                if let Some(s) = self.sftp.as_mut() {
+                    let _ = s.stage_toward(Side::Remote);
                 }
             }
             // Remove the most recently staged transfer from the queue.
@@ -206,6 +286,10 @@ impl App {
             KeyCode::Char('r') => self.sftp_refresh_panes(),
             // Open an SSH session to this same host (SFTP stays in the background).
             KeyCode::Char('s') => self.open_ssh_for_sftp_host()?,
+            // Point the left pane at a second server, or send it back to the
+            // local filesystem.
+            KeyCode::Char('o') => self.open_host_picker(PickerTarget::SftpLeftPane),
+            KeyCode::Char('O') => self.sftp_left_pane_to_local(),
             // Confirm: run the whole queue sequentially.
             KeyCode::Char('c') => self.sftp_run_queue(),
             // File ops (frozen while a queue runs).
@@ -224,7 +308,7 @@ impl App {
         let Some(s) = self.sftp.as_ref() else { return };
         let side = s.focused_side();
         let pane = s.focused_pane();
-        let Some(entry) = pane.selected_entry() else {
+        let Some(entry) = pane.selected_entry().filter(|e| !e.is_parent()) else {
             return;
         };
         let path = pane.cwd.join(&entry.name);
@@ -246,13 +330,13 @@ impl App {
         let (value, old_path) = match kind {
             SftpPromptKind::Mkdir => (String::new(), None),
             SftpPromptKind::Rename => {
-                let Some(entry) = pane.selected_entry() else {
+                let Some(entry) = pane.selected_entry().filter(|e| !e.is_parent()) else {
                     return;
                 };
                 (entry.name.clone(), Some(base.join(&entry.name)))
             }
             SftpPromptKind::Chmod => {
-                let Some(entry) = pane.selected_entry() else {
+                let Some(entry) = pane.selected_entry().filter(|e| !e.is_parent()) else {
                     return;
                 };
                 // Seed with the current octal permissions so the user edits from
@@ -354,30 +438,34 @@ impl App {
             return;
         }
 
-        match side {
-            Side::Remote => {
-                let cmd = match kind {
-                    SftpPromptKind::Mkdir => crate::sftp::SftpCommand::Mkdir(target),
-                    SftpPromptKind::Rename => {
-                        crate::sftp::SftpCommand::Rename(old_path.unwrap_or_default(), target)
-                    }
-                    SftpPromptKind::Chmod => unreachable!("chmod handled earlier"),
-                };
-                // A missing channel OR a failed send (worker thread dead) means
-                // the op won't run — keep the prompt open with an error rather
-                // than closing it as if it succeeded.
-                let sent = self
-                    .sftp_tx
-                    .as_ref()
-                    .map(|tx| tx.send(cmd).is_ok())
-                    .unwrap_or(false);
-                if sent {
-                    self.sftp_prompt = None;
-                    self.mode = AppMode::Normal;
-                } else if let Some(p) = self.sftp_prompt.as_mut() {
-                    p.error = Some("not connected".into());
+        // A pane pointed at a server routes through its worker; only a truly
+        // local pane touches the filesystem here.
+        if self.sftp_channel(side).is_some() {
+            let cmd = match kind {
+                SftpPromptKind::Mkdir => crate::sftp::SftpCommand::Mkdir(target),
+                SftpPromptKind::Rename => {
+                    crate::sftp::SftpCommand::Rename(old_path.unwrap_or_default(), target)
                 }
+                SftpPromptKind::Chmod => unreachable!("chmod handled earlier"),
+            };
+            // A missing channel OR a failed send (worker thread dead) means
+            // the op won't run — keep the prompt open with an error rather
+            // than closing it as if it succeeded.
+            let sent = self
+                .sftp_channel(side)
+                .map(|tx| tx.send(cmd).is_ok())
+                .unwrap_or(false);
+            if sent {
+                self.sftp_prompt = None;
+                self.mode = AppMode::Normal;
+            } else if let Some(p) = self.sftp_prompt.as_mut() {
+                p.error = Some("not connected".into());
             }
+            return;
+        }
+
+        match side {
+            Side::Remote => unreachable!("the remote pane always has a channel"),
             Side::Local => {
                 let result: std::io::Result<()> = match kind {
                     SftpPromptKind::Mkdir => std::fs::create_dir(&target),
@@ -433,20 +521,22 @@ impl App {
             return;
         };
 
-        match side {
-            Side::Remote => {
-                let sent = self
-                    .sftp_tx
-                    .as_ref()
-                    .map(|tx| tx.send(crate::sftp::SftpCommand::Chmod(path, mode)).is_ok())
-                    .unwrap_or(false);
-                if sent {
-                    self.sftp_prompt = None;
-                    self.mode = AppMode::Normal;
-                } else if let Some(p) = self.sftp_prompt.as_mut() {
-                    p.error = Some("not connected".into());
-                }
+        if self.sftp_channel(side).is_some() {
+            let sent = self
+                .sftp_channel(side)
+                .map(|tx| tx.send(crate::sftp::SftpCommand::Chmod(path, mode)).is_ok())
+                .unwrap_or(false);
+            if sent {
+                self.sftp_prompt = None;
+                self.mode = AppMode::Normal;
+            } else if let Some(p) = self.sftp_prompt.as_mut() {
+                p.error = Some("not connected".into());
             }
+            return;
+        }
+
+        match side {
+            Side::Remote => unreachable!("the remote pane always has a channel"),
             Side::Local => {
                 use std::os::unix::fs::PermissionsExt;
                 match std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)) {
@@ -504,6 +594,25 @@ impl App {
                     // SFTP pane is gone, so surface the failure where the user
                     // will actually see it.
                     self.host_notice = Some("SFTP disconnected — delete not sent".into());
+                }
+            }
+            // Left pane on a second server: same worker round trip as the right.
+            Side::Local if self.sftp.as_ref().is_some_and(|s| s.left_is_remote()) => {
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let sent = self
+                    .sftp_tx2
+                    .as_ref()
+                    .map(|tx| tx.send(SftpCommand::Remove(path, is_dir)).is_ok())
+                    .unwrap_or(false);
+                if let Some(s) = self.sftp.as_mut() {
+                    if sent {
+                        s.local.remove_named(&name);
+                    } else {
+                        s.notice = Some("not connected — delete not sent".into());
+                    }
                 }
             }
             Side::Local => {
@@ -602,6 +711,10 @@ impl App {
         let local_cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
         let mut state = SftpState::new(remote_cwd.clone(), local_cwd.clone());
+        // Show a "connecting…" state (not an empty browser) until the worker
+        // reports Connected. An unreachable host never flashes a blank window —
+        // it fails into the Notice popup instead.
+        state.connecting = true;
         state.local.set_entries(read_local_dir(&local_cwd));
 
         // Kick off the first remote listing; the worker queues it until the
@@ -612,7 +725,82 @@ impl App {
         self.sftp_tx = Some(tx);
         self.sftp_rx = Some(rx);
         self.sftp_host = Some(entry.name().to_string());
+        // Slide the "connecting…" layer in from the right over the picker (#35).
+        self.stamp_sftp_anim(SftpAnim::ConnectIn);
         Ok(())
+    }
+
+    /// The worker that owns `side`: the browser's own for the right pane, the
+    /// second one for a left pane pointed at another server, and `None` for a
+    /// left pane showing the local filesystem (which needs no worker).
+    fn sftp_channel(&self, side: Side) -> Option<&std::sync::mpsc::Sender<SftpCommand>> {
+        match side {
+            Side::Remote => self.sftp_tx.as_ref(),
+            Side::Local if self.sftp.as_ref().is_some_and(|s| s.left_is_remote()) => {
+                self.sftp_tx2.as_ref()
+            }
+            Side::Local => None,
+        }
+    }
+
+    /// Point the left pane at a second server, so two remote hosts can be
+    /// browsed side by side (the right pane keeps its own session).
+    ///
+    /// Runs its own worker: libssh2 has no server-to-server copy, so the two
+    /// ends stay independent connections and a transfer between them is
+    /// relayed locally.
+    pub(crate) fn sftp_connect_left_pane(&mut self, host_idx: usize) -> Result<()> {
+        let Some(entry) = self.hosts.get(host_idx).cloned() else {
+            return Ok(());
+        };
+        if self.sftp.is_none() {
+            self.host_notice = Some("connect the SFTP browser first".into());
+            return Ok(());
+        }
+        let ssh_host = match &entry {
+            HostEntry::Managed(m) => managed_to_ssh_host(m),
+            HostEntry::Legacy { host, .. } => host.clone(),
+        };
+        if ssh_host.proxy_jump.is_some() {
+            self.host_notice =
+                Some("SFTP via ProxyJump isn't supported yet — pick a direct host.".into());
+            return Ok(());
+        }
+
+        let (secret, _diag) = resolve_pending_secret(&entry, self.password_store.as_ref());
+        let agent = crate::ssh::agent::detect_agent();
+        let (tx, rx) = crate::sftp::spawn_sftp_worker(ssh_host, secret, agent);
+        let cwd = PathBuf::from(".");
+        // The worker queues the listing until its handshake completes.
+        let _ = tx.send(SftpCommand::ListDir(Side::Remote, cwd.clone()));
+        self.sftp_tx2 = Some(tx);
+        self.sftp_rx2 = Some(rx);
+        if let Some(s) = self.sftp.as_mut() {
+            s.left_host = Some(entry.name().to_string());
+            s.left_connecting = true;
+            s.local.cwd = cwd;
+            s.local.set_entries(Vec::new());
+        }
+        Ok(())
+    }
+
+    /// Send the left pane back to the local filesystem, dropping its server
+    /// connection (the worker self-terminates when its sender goes).
+    pub(crate) fn sftp_left_pane_to_local(&mut self) {
+        // Any relay in flight has one end on the server we're dropping.
+        if self.sftp_relay.is_some() {
+            self.sftp_relay_abort("second host disconnected — transfer stopped");
+        }
+        self.sftp_tx2 = None;
+        self.sftp_rx2 = None;
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let entries = read_local_dir(&cwd);
+        if let Some(s) = self.sftp.as_mut() {
+            s.left_host = None;
+            s.left_connecting = false;
+            s.local.cwd = cwd;
+            s.local.set_entries(entries);
+        }
     }
 
     /// Open an SSH session to the host the SFTP browser is connected to (the
@@ -653,6 +841,13 @@ impl App {
                     let _ = tx.send(SftpCommand::ListDir(Side::Remote, path));
                 }
             }
+            Side::Local if self.sftp.as_ref().is_some_and(|s| s.left_is_remote()) => {
+                // Left pane is a second server: same async path as the right
+                // one, just down the other worker's channel.
+                if let Some(tx) = self.sftp_tx2.as_ref() {
+                    let _ = tx.send(SftpCommand::ListDir(Side::Remote, path));
+                }
+            }
             Side::Local => {
                 let entries = read_local_dir(&path);
                 if let Some(s) = self.sftp.as_mut() {
@@ -663,7 +858,7 @@ impl App {
         }
     }
 
-    fn sftp_run_queue(&mut self) {
+    pub(crate) fn sftp_run_queue(&mut self) {
         if self
             .sftp
             .as_ref()
@@ -675,14 +870,205 @@ impl App {
             Some(s) if !s.queue.is_empty() => s.queue.clone(),
             _ => return,
         };
+        self.sftp_run_failed = false;
+        // Two servers: neither worker can talk to the other, so each item is
+        // relayed through a local temp file, one leg at a time.
+        if self.sftp.as_ref().is_some_and(|s| s.left_is_remote()) {
+            let tmp_dir = std::env::temp_dir().join(format!("sshub-relay-{}", std::process::id()));
+            if let Err(e) = std::fs::create_dir_all(&tmp_dir) {
+                if let Some(s) = self.sftp.as_mut() {
+                    s.notice = Some(format!("no scratch space for the relay: {e}"));
+                }
+                return;
+            }
+            if let Some(s) = self.sftp.as_mut() {
+                s.phase = Phase::Running;
+                s.progress = None;
+                s.running = queue.clone();
+            }
+            self.sftp_relay = Some(SftpRelay {
+                total: queue.len(),
+                items: queue.into_iter().collect(),
+                tmp_dir,
+                leg: RelayLeg::Fetching,
+            });
+            self.sftp_relay_step();
+            return;
+        }
+
+        self.sftp_run_failed = false;
         if let Some(tx) = self.sftp_tx.as_ref() {
-            if tx.send(SftpCommand::RunQueue(queue)).is_ok() {
+            if tx.send(SftpCommand::RunQueue(queue.clone())).is_ok() {
                 if let Some(s) = self.sftp.as_mut() {
                     s.phase = Phase::Running;
                     s.progress = None;
+                    // Remember exactly what went out: anything staged while
+                    // this runs stays queued for the next pass.
+                    s.running = queue;
                 }
             }
         }
+    }
+
+    /// Start (or continue) relaying server-to-server transfers, one leg at a
+    /// time: the source worker pulls an item into a temp directory, then the
+    /// destination worker pushes it up from there.
+    fn sftp_relay_step(&mut self) {
+        let Some(relay) = self.sftp_relay.as_ref() else {
+            return;
+        };
+        let Some(item) = relay.items.front().cloned() else {
+            // Nothing left: tidy up and let the queue finish normally.
+            self.sftp_relay_finish();
+            return;
+        };
+        let leg = relay.leg;
+        let tmp = relay.tmp_dir.join(&item.name);
+        // `Download` means right-to-left, so the source is the right pane.
+        let (from, to) = match item.direction {
+            Direction::Download => (Side::Remote, Side::Local),
+            Direction::Upload => (Side::Local, Side::Remote),
+        };
+        let (side, cmd) = match leg {
+            RelayLeg::Fetching => (
+                from,
+                QueuedTransfer {
+                    direction: Direction::Download,
+                    src: item.src.clone(),
+                    dst: tmp,
+                    name: item.name.clone(),
+                    is_dir: item.is_dir,
+                },
+            ),
+            RelayLeg::Pushing => (
+                to,
+                QueuedTransfer {
+                    direction: Direction::Upload,
+                    src: tmp,
+                    dst: item.dst.clone(),
+                    name: item.name.clone(),
+                    is_dir: item.is_dir,
+                },
+            ),
+        };
+        let sent = self
+            .sftp_channel(side)
+            .map(|tx| tx.send(SftpCommand::RunQueue(vec![cmd])).is_ok())
+            .unwrap_or(false);
+        if !sent {
+            self.sftp_relay_abort("not connected — transfer stopped");
+        }
+    }
+
+    /// Fold a worker's `QueueDone` into the relay: finish the leg, move to the
+    /// next one, or take the completed item off the queue. Returns true when
+    /// the event belonged to a relay (so the normal completion path is skipped).
+    fn sftp_relay_queue_done(&mut self) -> bool {
+        let Some(relay) = self.sftp_relay.as_mut() else {
+            return false;
+        };
+        match relay.leg {
+            RelayLeg::Fetching => {
+                relay.leg = RelayLeg::Pushing;
+            }
+            RelayLeg::Pushing => {
+                // The item is across; drop its temp copy and the queue entry.
+                if let Some(done) = relay.items.pop_front() {
+                    let tmp = relay.tmp_dir.join(&done.name);
+                    let _ = if done.is_dir {
+                        std::fs::remove_dir_all(&tmp)
+                    } else {
+                        std::fs::remove_file(&tmp)
+                    };
+                    if let Some(s) = self.sftp.as_mut() {
+                        s.queue.retain(|q| *q != done);
+                        s.running.retain(|q| *q != done);
+                    }
+                }
+                if let Some(relay) = self.sftp_relay.as_mut() {
+                    relay.leg = RelayLeg::Fetching;
+                }
+            }
+        }
+        self.sftp_relay_step();
+        true
+    }
+
+    /// Report a relay leg's progress against the whole item, so the bar counts
+    /// one file rather than restarting for each leg: the fetch fills the first
+    /// half, the push the second.
+    fn sftp_relay_progress(&mut self, transferred: u64, size: u64) {
+        let Some(relay) = self.sftp_relay.as_ref() else {
+            return;
+        };
+        let done = relay.total.saturating_sub(relay.items.len());
+        let half = if relay.leg == RelayLeg::Fetching {
+            0.0
+        } else {
+            0.5
+        };
+        let leg = if size > 0 {
+            (transferred as f64 / size as f64).clamp(0.0, 1.0) * 0.5
+        } else {
+            0.0
+        };
+        let fraction = half + leg;
+        if let Some(s) = self.sftp.as_mut() {
+            s.progress = Some(crate::sftp::model::Progress {
+                index: done,
+                total: relay.total,
+                // Scaled to a notional 1000 units so the bar can show a
+                // fraction of a single relayed item.
+                transferred: (fraction * 1000.0) as u64,
+                size: 1000,
+            });
+        }
+    }
+
+    /// Consume one owed trailing `QueueDone`, if any. Returns whether this
+    /// event was one of them and should be ignored.
+    fn sftp_take_swallowed_done(&mut self) -> bool {
+        if self.sftp_swallow_done == 0 {
+            return false;
+        }
+        self.sftp_swallow_done -= 1;
+        true
+    }
+
+    /// Stop a relay part-way with a notice, leaving whatever hasn't moved in
+    /// the queue so it can be retried.
+    fn sftp_relay_abort(&mut self, msg: &str) {
+        if let Some(relay) = self.sftp_relay.take() {
+            let _ = std::fs::remove_dir_all(&relay.tmp_dir);
+        }
+        // The leg that failed still owes us a `QueueDone`; swallow it, and tell
+        // both workers to stop in case one is still grinding through a tree.
+        self.sftp_swallow_done += 1;
+        for tx in [self.sftp_tx.as_ref(), self.sftp_tx2.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            let _ = tx.send(SftpCommand::Cancel);
+        }
+        if let Some(s) = self.sftp.as_mut() {
+            s.phase = Phase::Browsing;
+            s.progress = None;
+            s.running.clear();
+            s.notice = Some(msg.to_string());
+        }
+    }
+
+    /// Every item is across: clear the temp directory and settle the browser.
+    fn sftp_relay_finish(&mut self) {
+        if let Some(relay) = self.sftp_relay.take() {
+            let _ = std::fs::remove_dir_all(&relay.tmp_dir);
+        }
+        if let Some(s) = self.sftp.as_mut() {
+            s.phase = Phase::Browsing;
+            s.progress = None;
+            s.running.clear();
+        }
+        self.sftp_refresh_panes();
     }
 
     /// Re-list both panes: remote via the worker (async `DirListing`), local
@@ -695,6 +1081,12 @@ impl App {
         if let Some(tx) = self.sftp_tx.as_ref() {
             let _ = tx.send(SftpCommand::ListDir(Side::Remote, remote_cwd));
         }
+        if self.sftp.as_ref().is_some_and(|s| s.left_is_remote()) {
+            if let Some(tx) = self.sftp_tx2.as_ref() {
+                let _ = tx.send(SftpCommand::ListDir(Side::Remote, local_cwd));
+            }
+            return;
+        }
         let entries = read_local_dir(&local_cwd);
         if let Some(s) = self.sftp.as_mut() {
             s.local.set_entries(entries);
@@ -704,10 +1096,85 @@ impl App {
     /// Tear down the live session. Dropping the command `Sender` makes the
     /// worker thread self-terminate.
     fn sftp_disconnect(&mut self) {
+        // Mirror the way in (#35): a handshake that never completed carries the
+        // "connecting…" layer off to the right, a live browser parts its panes
+        // toward both edges. Both reveal the picker underneath.
+        let kind = self.sftp.as_ref().map(|s| {
+            if s.connecting {
+                SftpAnim::ConnectOut
+            } else {
+                SftpAnim::PanesOut
+            }
+        });
+        if let Some(kind) = kind {
+            self.stamp_sftp_anim(kind);
+        }
+        if let Some(relay) = self.sftp_relay.take() {
+            let _ = std::fs::remove_dir_all(&relay.tmp_dir);
+        }
         self.sftp = None;
         self.sftp_tx = None;
         self.sftp_rx = None;
         self.sftp_host = None;
+        self.sftp_tx2 = None;
+        self.sftp_rx2 = None;
+    }
+
+    /// Apply one [`SftpEvent`] from the *left* pane's worker (the second
+    /// server). The worker speaks in its own terms -- everything it reports is
+    /// `Side::Remote` -- so its listings are folded into the left pane here.
+    pub fn apply_sftp_event_left(&mut self, ev: crate::sftp::SftpEvent) {
+        use crate::sftp::SftpEvent;
+
+        match ev {
+            SftpEvent::Connected => {
+                if let Some(s) = self.sftp.as_mut() {
+                    s.left_connecting = false;
+                    s.notice = None;
+                }
+            }
+            SftpEvent::ConnectFailed(msg) => {
+                let host = self
+                    .sftp
+                    .as_ref()
+                    .and_then(|s| s.left_host.clone())
+                    .unwrap_or_default();
+                // Fall back to the local filesystem rather than leaving the
+                // pane stuck on a server that never answered.
+                self.sftp_left_pane_to_local();
+                self.notice_popup = Some(format!("Could not connect to {host}:\n{msg}"));
+                self.mode = AppMode::Notice;
+            }
+            SftpEvent::DirListing(_, path, entries) => {
+                if let Some(s) = self.sftp.as_mut() {
+                    s.local.cwd = path;
+                    s.local.set_entries(entries);
+                }
+            }
+            SftpEvent::OpDone => self.sftp_refresh_panes(),
+            SftpEvent::Error(msg) if self.sftp_relay.is_some() => {
+                self.sftp_run_failed = true;
+                self.sftp_relay_abort(&msg);
+                self.sftp_refresh_panes();
+            }
+            SftpEvent::Error(msg) => {
+                self.sftp_run_failed = true;
+                if let Some(s) = self.sftp.as_mut() {
+                    s.notice = Some(msg);
+                }
+                self.sftp_refresh_panes();
+            }
+            // This worker only ever runs one leg of a relay at a time.
+            SftpEvent::QueueDone => {
+                if !self.sftp_take_swallowed_done() {
+                    self.sftp_relay_queue_done();
+                }
+            }
+            SftpEvent::Progress {
+                transferred, size, ..
+            } => self.sftp_relay_progress(transferred, size),
+            SftpEvent::TransferDone(_) => {}
+        }
     }
 
     /// Apply one [`SftpEvent`] drained from the worker to the live `sftp` state.
@@ -718,13 +1185,27 @@ impl App {
 
         match ev {
             SftpEvent::Connected => {
+                let was_connecting = self.sftp.as_ref().is_some_and(|s| s.connecting);
                 if let Some(s) = self.sftp.as_mut() {
                     s.notice = None;
+                    s.connecting = false;
+                }
+                // Handshake done: bring the two panes in from their edges (#35).
+                if was_connecting {
+                    self.stamp_sftp_anim(SftpAnim::PanesIn);
                 }
             }
             SftpEvent::ConnectFailed(msg) => {
+                let host = self.sftp_host.clone().unwrap_or_default();
                 self.sftp_disconnect();
-                self.host_notice = Some(format!("SFTP connection failed: {msg}"));
+                // Surface the failure as a modal popup instead of silently
+                // reverting to the picker — an unreachable host is loud, not blank.
+                self.notice_popup = Some(if host.is_empty() {
+                    format!("SFTP connection failed:\n{msg}")
+                } else {
+                    format!("Could not connect to {host}:\n{msg}")
+                });
+                self.mode = AppMode::Notice;
             }
             SftpEvent::DirListing(side, path, entries) => {
                 if let Some(s) = self.sftp.as_mut() {
@@ -741,6 +1222,9 @@ impl App {
                 }
             }
             SftpEvent::Progress {
+                transferred, size, ..
+            } if self.sftp_relay.is_some() => self.sftp_relay_progress(transferred, size),
+            SftpEvent::Progress {
                 index,
                 total,
                 transferred,
@@ -756,20 +1240,38 @@ impl App {
                 }
             }
             SftpEvent::TransferDone(_) => {}
+            SftpEvent::QueueDone if self.sftp_take_swallowed_done() => {}
+            SftpEvent::QueueDone if self.sftp_relay.is_some() => {
+                self.sftp_relay_queue_done();
+            }
             SftpEvent::QueueDone => {
+                let mut more = false;
                 if let Some(s) = self.sftp.as_mut() {
                     s.phase = Phase::Browsing;
                     s.progress = None;
-                    s.queue.clear();
+                    more = s.finish_run();
                 }
                 // Refresh both panes so completed transfers show up.
                 self.sftp_refresh_panes();
+                // Anything staged mid-run rolls straight into the next pass: a
+                // queue you can add to while it works has to keep working. A
+                // run that reported an error stops there instead -- restarting
+                // it would retry the failing transfer forever.
+                if more && !self.sftp_run_failed {
+                    self.sftp_run_queue();
+                }
             }
             SftpEvent::OpDone => {
                 // A remote remove/mkdir/rename landed — re-list so it shows.
                 self.sftp_refresh_panes();
             }
+            SftpEvent::Error(msg) if self.sftp_relay.is_some() => {
+                self.sftp_run_failed = true;
+                self.sftp_relay_abort(&msg);
+                self.sftp_refresh_panes();
+            }
             SftpEvent::Error(msg) => {
+                self.sftp_run_failed = true;
                 if let Some(s) = self.sftp.as_mut() {
                     s.notice = Some(msg);
                 }

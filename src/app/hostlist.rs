@@ -1,5 +1,13 @@
 use super::*;
 
+/// Time constant of the host list's scroll smoothing (#35): the position covers
+/// ~63% of the distance left to its target every `HOST_SCROLL_TAU`.
+const HOST_SCROLL_TAU: f32 = 0.055;
+
+/// Time constant of the header counters' chase (#35), a touch slower than the
+/// list scroll so a jump of a few hosts is legible as it counts.
+const HEADER_STATS_TAU: f32 = 0.09;
+
 impl App {
     /// Map a Y offset (relative to hosts panel content area) to a host index,
     /// accounting for group headers and blank separators.
@@ -30,6 +38,62 @@ impl App {
         }
     }
 
+    /// Advance the host list's smoothed scroll position toward the target
+    /// offset and return the row offset to draw at (#35).
+    ///
+    /// The list is drawn on whole rows, so the slide can't be a sub-row shift;
+    /// instead the position chases its target exponentially and each frame
+    /// lands on the nearest row, which reads as the list scrolling rather than
+    /// jumping half a panel whenever the selection leaves the window. Called
+    /// once per frame from the render pass (hence `Cell`, not `&mut self`);
+    /// everything else reads [`App::host_scroll_shown`] so click mapping stays
+    /// on the row the user actually sees.
+    pub(crate) fn host_scroll_advance(&self, body_h: usize) -> usize {
+        let target = self.host_scroll_offset(body_h);
+        if !self.motion_enabled() {
+            self.host_scroll_pos.set(target as f32);
+            self.host_scroll_moving.set(false);
+            return target;
+        }
+        let now = std::time::Instant::now();
+        let Some(last) = self.host_scroll_at.get() else {
+            // First frame: start where the list already is, don't scroll in.
+            self.host_scroll_pos.set(target as f32);
+            self.host_scroll_at.set(Some(now));
+            self.host_scroll_moving.set(false);
+            return target;
+        };
+        self.host_scroll_at.set(Some(now));
+        let pos = self.host_scroll_pos.get();
+        let dist = target as f32 - pos;
+        // Within half a row of the target: settle exactly, so the list can come
+        // to rest and stop asking the loop for 60fps.
+        if dist.abs() < 0.5 {
+            self.host_scroll_pos.set(target as f32);
+            self.host_scroll_moving.set(false);
+            return target;
+        }
+        // Exponential approach: covers ~63% of the remaining distance per
+        // HOST_SCROLL_TAU, so a one-row nudge and a half-panel jump both take
+        // about the same (short) time and neither overshoots.
+        let dt = now.saturating_duration_since(last).as_secs_f32();
+        let k = 1.0 - (-dt / HOST_SCROLL_TAU).exp();
+        let next = pos + dist * k;
+        self.host_scroll_pos.set(next);
+        self.host_scroll_moving.set(true);
+        next.round().max(0.0) as usize
+    }
+
+    /// The row offset the host list is currently drawn at. Mirrors whatever
+    /// [`App::host_scroll_advance`] last settled on, so hit-testing agrees with
+    /// what is on screen mid-scroll.
+    pub(crate) fn host_scroll_shown(&self, body_h: usize) -> usize {
+        if !self.motion_enabled() || self.host_scroll_at.get().is_none() {
+            return self.host_scroll_offset(body_h);
+        }
+        self.host_scroll_pos.get().round().max(0.0) as usize
+    }
+
     /// Scroll offset, in whole card-rows, for the keys tab. Keeps the selected
     /// identity card on screen (roughly centered) when the grid overflows.
     /// `card_row_stride` is the height of one card row (card height + gap).
@@ -48,10 +112,37 @@ impl App {
         selected_row.saturating_sub(visible_rows / 2).min(max_off)
     }
 
+    /// Advance the identities grid toward `target_lines` and return the line
+    /// offset to draw at (#35). Same chase as the host list, but measured in
+    /// lines rather than card rows, so a card-row jump scrolls through instead
+    /// of teleporting a whole card height.
+    pub(crate) fn keys_scroll_advance(&self, target_lines: usize) -> u16 {
+        let goal = target_lines as f32;
+        if !self.motion_enabled() {
+            self.keys_scroll_pos.set(goal);
+            self.keys_scroll_moving.set(false);
+            return target_lines as u16;
+        }
+        let now = std::time::Instant::now();
+        let last = self.keys_scroll_at.replace(Some(now));
+        let pos = self.keys_scroll_pos.get();
+        let dist = goal - pos;
+        if last.is_none() || dist.abs() < 0.5 {
+            self.keys_scroll_pos.set(goal);
+            self.keys_scroll_moving.set(false);
+            return target_lines as u16;
+        }
+        let dt = now.saturating_duration_since(last.unwrap()).as_secs_f32();
+        let next = pos + dist * (1.0 - (-dt / HOST_SCROLL_TAU).exp());
+        self.keys_scroll_pos.set(next);
+        self.keys_scroll_moving.set(true);
+        next.round().max(0.0) as u16
+    }
+
     /// Map a click at visible row `rel_y` (within a `body_h`-row panel) to the
     /// host index under it, accounting for the current scroll offset.
     pub(crate) fn host_row_to_index(&self, rel_y: u16, body_h: usize) -> Option<usize> {
-        let target = rel_y as usize + self.host_scroll_offset(body_h);
+        let target = rel_y as usize + self.host_scroll_shown(body_h);
         match self.host_visual_rows().get(target) {
             Some(VisualRow::Host { host_idx, .. }) => Some(*host_idx),
             _ => None,
@@ -61,7 +152,7 @@ impl App {
     /// Map a click at visible row `rel_y` to a group-header section index (for
     /// click-to-collapse), accounting for the current scroll offset.
     pub(crate) fn host_row_to_header(&self, rel_y: u16, body_h: usize) -> Option<usize> {
-        let target = rel_y as usize + self.host_scroll_offset(body_h);
+        let target = rel_y as usize + self.host_scroll_shown(body_h);
         match self.host_visual_rows().get(target) {
             Some(VisualRow::Header { section, .. }) => Some(*section),
             _ => None,
@@ -86,7 +177,25 @@ impl App {
         let mut rows = Vec::new();
         let mut cur_host_depth = 1usize;
         let mut first = true;
+        // A fold in flight (#35) shows only part of its group's subtree: the
+        // rows past that point are simply left out, so the list below closes up
+        // behind them a row at a time instead of jumping.
+        let reveal = self.fold_reveal();
+        // (rows still allowed through, depth of the folding header)
+        let mut budget: Option<(usize, usize)> = None;
         for (nav_idx, row) in self.nav_rows.iter().enumerate() {
+            // Leaving the folding group's subtree ends the budget.
+            if let (Some((_, depth)), NavRow::Header(si)) = (budget, *row) {
+                if self.group_sections[si].depth <= depth {
+                    budget = None;
+                }
+            }
+            if let Some((left, _)) = budget.as_mut() {
+                if *left == 0 {
+                    continue;
+                }
+                *left -= 1;
+            }
             match *row {
                 NavRow::Header(si) => {
                     let section = &self.group_sections[si];
@@ -100,6 +209,34 @@ impl App {
                         depth: section.depth,
                     });
                     cur_host_depth = section.depth + 1;
+                    if let Some((anim, shown)) = reveal {
+                        if section.key() == anim.key {
+                            if anim.expanding {
+                                // Unfolding: the subtree is live in `nav_rows`,
+                                // so let a growing prefix of it through.
+                                let total = self
+                                    .nav_rows
+                                    .iter()
+                                    .skip(nav_idx + 1)
+                                    .take_while(|r| match r {
+                                        NavRow::Header(s) => {
+                                            self.group_sections[*s].depth > section.depth
+                                        }
+                                        NavRow::Host(_) => true,
+                                    })
+                                    .count();
+                                budget =
+                                    Some(((total as f32 * shown).round() as usize, section.depth));
+                            } else {
+                                // Folding: the subtree is already gone from
+                                // `nav_rows`, so replay a shrinking prefix of
+                                // what it looked like. These rows are display
+                                // only — nothing navigates to them.
+                                let keep = (anim.rows.len() as f32 * shown).round() as usize;
+                                rows.extend(anim.rows.iter().take(keep).cloned());
+                            }
+                        }
+                    }
                 }
                 NavRow::Host(host_idx) => {
                     rows.push(VisualRow::Host {
@@ -157,11 +294,32 @@ impl App {
     }
 
     pub(crate) fn toggle_group_by_section(&mut self, si: usize) {
+        // Any fold still playing is stale the moment the tree changes again.
+        self.fold_anim = None;
         let Some(section) = self.group_sections.get(si) else {
             return;
         };
         let key = section.key();
-        if !self.collapsed_groups.remove(&key) {
+        let expanding = self.collapsed_groups.contains(&key);
+        // Capture the rows about to disappear *before* collapsing, so the fold
+        // has something to swallow. An unfold needs no capture: its rows are in
+        // `nav_rows` the moment the collapse is lifted.
+        let rows = if expanding {
+            Vec::new()
+        } else {
+            self.subtree_visual_rows(key)
+        };
+        if self.motion_enabled() {
+            self.fold_anim = Some(FoldAnim {
+                key,
+                expanding,
+                at: std::time::Instant::now(),
+                rows,
+            });
+        }
+        if expanding {
+            self.collapsed_groups.remove(&key);
+        } else {
             self.collapsed_groups.insert(key);
         }
         self.persist_collapsed_groups();
@@ -175,8 +333,168 @@ impl App {
         }
     }
 
+    /// Advance the header counters toward `target` and return what to draw
+    /// (#35). Each counter closes on its real value instead of snapping, so a
+    /// handful of hosts dropping offline reads as the tally moving rather than
+    /// a number blinking. Same chase as the host list's scroll, and likewise
+    /// called once per frame from the render pass.
+    pub(crate) fn header_stats_advance(&self, target: [usize; 4]) -> [usize; 4] {
+        let goal = target.map(|v| v as f32);
+        if !self.motion_enabled() {
+            self.header_stats_pos.set(goal);
+            self.header_stats_moving.set(false);
+            return target;
+        }
+        let now = std::time::Instant::now();
+        let Some(last) = self.header_stats_at.get() else {
+            // First frame: the tally starts where it really is.
+            self.header_stats_pos.set(goal);
+            self.header_stats_at.set(Some(now));
+            self.header_stats_moving.set(false);
+            return target;
+        };
+        self.header_stats_at.set(Some(now));
+        let dt = now.saturating_duration_since(last).as_secs_f32();
+        let k = 1.0 - (-dt / HEADER_STATS_TAU).exp();
+        let mut pos = self.header_stats_pos.get();
+        let mut out = [0usize; 4];
+        let mut moving = false;
+        for i in 0..4 {
+            let dist = goal[i] - pos[i];
+            if dist.abs() < 0.5 {
+                pos[i] = goal[i];
+                out[i] = target[i];
+            } else {
+                pos[i] += dist * k;
+                out[i] = pos[i].round().max(0.0) as usize;
+                moving = true;
+            }
+        }
+        self.header_stats_pos.set(pos);
+        self.header_stats_moving.set(moving);
+        out
+    }
+
+    /// Notice hosts whose ping class changed since the last tick and stamp
+    /// them, so their status dot can flash on the way to its new colour (#35).
+    /// A host seen for the first time is stamped as already settled: opening
+    /// the app shouldn't set the whole list flashing.
+    pub(crate) fn detect_ping_changes(&mut self) {
+        let now = std::time::Instant::now();
+        let settled = now.checked_sub(crate::tui::PING_FLASH).unwrap_or(now);
+        for (name, samples) in &self.ping_data {
+            // A new reading grows into the sparkline rather than popping in.
+            if let Some(last) = samples.last().copied() {
+                match self.ping_sample.get(name) {
+                    Some((prev, _)) if *prev == last => {}
+                    Some(_) => {
+                        self.ping_sample.insert(name.clone(), (last, now));
+                    }
+                    None => {
+                        self.ping_sample.insert(name.clone(), (last, settled));
+                    }
+                }
+            }
+            let class = crate::ping::classify_ping(Some(samples));
+            match self.ping_flash.get(name) {
+                Some((prev, _)) if *prev == class => continue,
+                Some(_) => {
+                    self.ping_flash.insert(name.clone(), (class, now));
+                }
+                None => {
+                    self.ping_flash.insert(name.clone(), (class, settled));
+                }
+            }
+        }
+    }
+
+    /// How far a host's newest sparkline column has grown, `0.0` to `1.0`
+    /// (#35). `1.0` at rest, so a settled graph draws at full height.
+    pub(crate) fn ping_grow(&self, host: &str) -> f32 {
+        if !self.motion_enabled() {
+            return 1.0;
+        }
+        let Some((_, at)) = self.ping_sample.get(host) else {
+            return 1.0;
+        };
+        crate::tui::tween::ease_out(crate::tui::tween::progress(
+            *at,
+            crate::tui::PING_FLASH,
+            std::time::Instant::now(),
+        ))
+    }
+
+    /// Colour for a host's status dot: its settled class colour, flashed
+    /// through white for [`crate::tui::PING_FLASH`] after the class changes
+    /// (#35), so a host dropping offline catches the eye.
+    pub(crate) fn ping_flash_color(
+        &self,
+        host: &str,
+        settled: ratatui::style::Color,
+    ) -> ratatui::style::Color {
+        if !self.motion_enabled() {
+            return settled;
+        }
+        let Some((_, at)) = self.ping_flash.get(host) else {
+            return settled;
+        };
+        let p = crate::tui::tween::progress(*at, crate::tui::PING_FLASH, std::time::Instant::now());
+        if p >= 1.0 {
+            return settled;
+        }
+        crate::tui::tween::color_lerp(
+            crate::tui::theme::BRIGHT,
+            settled,
+            crate::tui::tween::ease_out(p),
+        )
+    }
+
+    /// The visual rows of the group's subtree as it stands right now: what a
+    /// fold is about to swallow, captured so it can be replayed on the way out.
+    fn subtree_visual_rows(&self, key: i64) -> Vec<VisualRow> {
+        let rows = self.host_visual_rows();
+        let Some(head) = rows.iter().position(|r| {
+            matches!(r, VisualRow::Header { section, .. }
+                if self.group_sections[*section].key() == key)
+        }) else {
+            return Vec::new();
+        };
+        let VisualRow::Header { depth, .. } = rows[head] else {
+            return Vec::new();
+        };
+        rows.into_iter()
+            .skip(head + 1)
+            .take_while(|r| match r {
+                VisualRow::Header { depth: d, .. } => *d > depth,
+                VisualRow::Host { .. } => true,
+                VisualRow::Blank => false,
+            })
+            .collect()
+    }
+
+    /// Fraction of the animating group's subtree that is on screen right now
+    /// (#35): it grows as the group opens and shrinks as it shuts. `None` when
+    /// no fold is playing, or once it has run its course.
+    fn fold_reveal(&self) -> Option<(&FoldAnim, f32)> {
+        let anim = self.fold_anim.as_ref()?;
+        if !self.motion_enabled() {
+            return None;
+        }
+        let p =
+            crate::tui::tween::progress(anim.at, crate::tui::FOLD_ANIM, std::time::Instant::now());
+        if p >= 1.0 {
+            return None;
+        }
+        // Symmetric easing: a fold and the unfold that undoes it should feel
+        // like the same motion run backwards, which an ease-out does not.
+        let e = crate::tui::tween::ease_in_out(p);
+        Some((anim, if anim.expanding { e } else { 1.0 - e }))
+    }
+
     /// Collapse (`false`) or expand (`true`) every group at once.
     pub(crate) fn set_all_groups_collapsed(&mut self, collapsed: bool) {
+        // A per-group fold in flight would fight the bulk change; drop it.
+        self.fold_anim = None;
         if collapsed {
             self.collapsed_groups = self.group_sections.iter().map(|s| s.key()).collect();
         } else {

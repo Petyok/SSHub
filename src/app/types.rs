@@ -353,6 +353,9 @@ pub enum AppMode {
     BroadcastCommand,
     /// Broadcast wizard stage 3: target preview + [y]/[e]/[N] barrier.
     BroadcastPreview,
+    /// A modal message popup (e.g. a connection error). Any key dismisses it;
+    /// the text lives in `App::notice_popup`.
+    Notice,
 }
 
 /// Live background-run state; App holds `broadcast: Option<BroadcastState>`.
@@ -370,6 +373,66 @@ pub struct BroadcastState {
     pub phase: BroadcastPhase,
     pub anim: Option<crate::tui::tween::SlideAnim>, // entry slide; None once settled
     pub audit_written: bool, // guard: log_auth_event fires once at completion
+}
+
+/// An in-flight tab-switch slide (#35): the body wipes between the `from` and
+/// `to` tabs. Direction is `to > from` (new slides in from the right) vs
+/// `to < from` (current slides out to the right, revealing the left tab).
+#[derive(Debug, Clone, Copy)]
+pub struct TabSwitch {
+    pub from: usize,
+    pub to: usize,
+    pub at: std::time::Instant,
+}
+
+/// An in-flight group fold / unfold (#35): the group's subtree is revealed one
+/// row at a time on the way open and swallowed the same way on the way shut,
+/// so the rows below it get pushed rather than teleported.
+///
+/// The collapse itself applies immediately either way, so `nav_rows` stays the
+/// truth about what is visible and navigable. The animation is purely visual:
+/// an unfold reveals a growing prefix of the rows now in `nav_rows`, while a
+/// fold replays a shrinking prefix of `rows`, captured just before they went.
+#[derive(Debug, Clone)]
+pub struct FoldAnim {
+    /// [`HostGroupSection::key`] of the group being folded.
+    pub key: i64,
+    /// `true` while opening, `false` while shutting.
+    pub expanding: bool,
+    pub at: std::time::Instant,
+    /// Subtree rows as they looked before a fold, replayed on the way out.
+    /// Empty for an unfold, whose rows are live in `nav_rows`.
+    pub rows: Vec<VisualRow>,
+}
+
+/// An in-flight session-tab slide (#35): moving between embedded sessions
+/// carries the old tab off one edge while the new one follows it in. `dir` is
+/// `+1` for "next" and `-1` for "prev"; it cannot be derived from the tab
+/// indices, which wrap around at both ends of the strip.
+#[derive(Debug, Clone, Copy)]
+pub struct SessionTabSwitch {
+    pub dir: i8,
+    /// Index of the tab being left, so the header highlight can travel from it
+    /// to the new one instead of jumping.
+    pub from: usize,
+    pub at: std::time::Instant,
+}
+
+/// An in-flight SFTP tab sub-state slide (#35). The tab body swaps between the
+/// host picker, the "connecting…" placeholder and the dual-pane browser, and
+/// each swap moves in the direction it "came from": the placeholder rides in
+/// and out on the right edge, the two browser panes meet in the middle and part
+/// again toward their own edges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SftpAnim {
+    /// Picker -> "connecting…": the placeholder enters from the right.
+    ConnectIn,
+    /// "connecting…" -> picker (failed / aborted handshake): it leaves right.
+    ConnectOut,
+    /// "connecting…" -> browser: the panes slide in from both edges.
+    PanesIn,
+    /// Browser -> picker: the panes part and slide off both edges.
+    PanesOut,
 }
 
 /// A transient error popup (issue #3): one failed host's error text, slides in
@@ -1033,6 +1096,46 @@ pub struct SessionHostPicker {
     pub selected: usize,
     /// Mode to restore when the picker is dismissed without connecting.
     pub return_mode: AppMode,
+    /// What the picked host is for.
+    pub target: PickerTarget,
+}
+
+/// A server-to-server transfer in flight, relayed through a local temp file.
+///
+/// libssh2 has no server-to-server copy and the two panes are independent
+/// connections, so each item is moved in two legs: the source worker downloads
+/// it into a temp directory, then the destination worker uploads it from there.
+/// The temp copy is deleted as soon as the second leg lands.
+#[derive(Debug)]
+pub struct SftpRelay {
+    /// Items still to move, current one first.
+    pub items: std::collections::VecDeque<crate::sftp::model::QueuedTransfer>,
+    /// How many there were, for "relaying i/n".
+    pub total: usize,
+    /// Temp directory holding the item currently in flight.
+    pub tmp_dir: std::path::PathBuf,
+    /// Which leg is running.
+    pub leg: RelayLeg,
+}
+
+/// Which half of a relayed transfer is currently running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelayLeg {
+    /// Source worker is pulling the item down into the temp directory.
+    Fetching,
+    /// Destination worker is pushing it back up from there.
+    Pushing,
+}
+
+/// What a host picked in the shared host picker is wanted for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PickerTarget {
+    /// Open a new embedded SSH session tab (Ctrl+T).
+    #[default]
+    NewSession,
+    /// Point the SFTP browser's left pane at a second server, so two remote
+    /// hosts can be browsed side by side.
+    SftpLeftPane,
 }
 
 /// Single-field path prompt for the Termius CSV import ([`AppMode::ImportPrompt`]).
