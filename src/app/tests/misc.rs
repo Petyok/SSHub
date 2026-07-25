@@ -719,3 +719,34 @@ fn header_stats_count_toward_their_target() {
     assert_eq!(app.header_stats_advance([12, 0, 3, 9]), [12, 0, 3, 9]);
     assert!(!app.header_stats_moving.get());
 }
+
+/// A fresh ping reading grows into the sparkline (#35): the newest column
+/// starts flat and reaches full height, and a first reading is already there.
+#[test]
+fn fresh_ping_sample_grows_into_the_sparkline() {
+    let mut app = test_app(vec![("a", host("a"))]);
+    assert_eq!(app.ping_grow("a"), 1.0, "no data: nothing to grow");
+
+    // First reading: the graph appearing is not a new sample landing.
+    app.ping_data.insert("a".into(), vec![12]);
+    app.detect_ping_changes();
+    assert_eq!(app.ping_grow("a"), 1.0);
+
+    // A new reading starts the column at the floor.
+    app.ping_data.insert("a".into(), vec![12, 40]);
+    app.detect_ping_changes();
+    assert!(app.ping_grow("a") < 1.0, "expected the column mid-growth");
+
+    // A repeated value is not a new reading.
+    let at = app.ping_sample.get("a").unwrap().1;
+    app.ping_data.insert("a".into(), vec![12, 40, 40]);
+    app.detect_ping_changes();
+    assert_eq!(app.ping_sample.get("a").unwrap().1, at);
+
+    // Grown out, it draws at full height again.
+    app.ping_sample.insert(
+        "a".into(),
+        (40, std::time::Instant::now() - crate::tui::PING_FLASH),
+    );
+    assert_eq!(app.ping_grow("a"), 1.0);
+}

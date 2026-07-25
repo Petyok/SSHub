@@ -668,6 +668,7 @@ pub(crate) fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
 
         // Bar graph fills the rest of the body below the stat row.
         let graph_top = area.y + 2;
+        let grow = selected.as_deref().map(|n| app.ping_grow(n)).unwrap_or(1.0);
         let graph_h = area.height.saturating_sub(3);
         if graph_h >= 1 && inner_w >= 1 {
             let cols = samples.len().min(inner_w);
@@ -689,7 +690,11 @@ pub(crate) fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
                 } else {
                     theme::red()
                 };
-                let level = (((v as u64) * units) / max_val).clamp(1, units);
+                let mut level = (((v as u64) * units) / max_val).clamp(1, units);
+                // The newest column grows in rather than appearing full height.
+                if i + 1 == window.len() {
+                    level = ((level as f32 * grow).round() as u64).clamp(1, units);
+                }
                 let full = (level / 8) as u16;
                 let rem = (level % 8) as usize;
                 // Full block cells from the bottom up.
@@ -719,10 +724,16 @@ pub(crate) fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
         let start = samples.len().saturating_sub(spark_len);
         let window = &samples[start..];
         let max_val = (*window.iter().max().unwrap_or(&1)).max(1);
+        let grow = selected.as_deref().map(|n| app.ping_grow(n)).unwrap_or(1.0);
+        let last = window.len().saturating_sub(1);
         let sparkline: String = window
             .iter()
-            .map(|&v| {
-                let idx = ((v as u64 * 7) / max_val as u64).min(7) as usize;
+            .enumerate()
+            .map(|(i, &v)| {
+                let mut idx = ((v as u64 * 7) / max_val as u64).min(7) as usize;
+                if i == last {
+                    idx = (idx as f32 * grow).round() as usize;
+                }
                 SPARK_CHARS[idx]
             })
             .collect();

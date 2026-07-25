@@ -356,6 +356,18 @@ impl App {
         let now = std::time::Instant::now();
         let settled = now.checked_sub(crate::tui::PING_FLASH).unwrap_or(now);
         for (name, samples) in &self.ping_data {
+            // A new reading grows into the sparkline rather than popping in.
+            if let Some(last) = samples.last().copied() {
+                match self.ping_sample.get(name) {
+                    Some((prev, _)) if *prev == last => {}
+                    Some(_) => {
+                        self.ping_sample.insert(name.clone(), (last, now));
+                    }
+                    None => {
+                        self.ping_sample.insert(name.clone(), (last, settled));
+                    }
+                }
+            }
             let class = crate::ping::classify_ping(Some(samples));
             match self.ping_flash.get(name) {
                 Some((prev, _)) if *prev == class => continue,
@@ -367,6 +379,22 @@ impl App {
                 }
             }
         }
+    }
+
+    /// How far a host's newest sparkline column has grown, `0.0` to `1.0`
+    /// (#35). `1.0` at rest, so a settled graph draws at full height.
+    pub(crate) fn ping_grow(&self, host: &str) -> f32 {
+        if !self.motion_enabled() {
+            return 1.0;
+        }
+        let Some((_, at)) = self.ping_sample.get(host) else {
+            return 1.0;
+        };
+        crate::tui::tween::ease_out(crate::tui::tween::progress(
+            *at,
+            crate::tui::PING_FLASH,
+            std::time::Instant::now(),
+        ))
     }
 
     /// Colour for a host's status dot: its settled class colour, flashed

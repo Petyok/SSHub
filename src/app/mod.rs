@@ -231,6 +231,9 @@ pub struct App {
     pub header_stats_at: std::cell::Cell<Option<std::time::Instant>>,
     /// Whether a counter is still counting, so the loop keeps the frame rate up.
     pub header_stats_moving: std::cell::Cell<bool>,
+    /// Latest ping sample per host and when it landed, so a fresh reading can
+    /// grow into the sparkline instead of appearing at full height (#35).
+    pub ping_sample: std::collections::HashMap<String, (u32, std::time::Instant)>,
     /// Ping class per host as of the previous tick, and when it last changed,
     /// so a host going green or red flashes instead of switching silently (#35).
     pub ping_flash: std::collections::HashMap<String, (crate::ping::PingClass, std::time::Instant)>,
@@ -561,6 +564,7 @@ impl App {
             header_stats_pos: std::cell::Cell::new([0.0; 4]),
             header_stats_at: std::cell::Cell::new(None),
             header_stats_moving: std::cell::Cell::new(false),
+            ping_sample: std::collections::HashMap::new(),
             ping_flash: std::collections::HashMap::new(),
             fold_anim: None,
             anim_prev_selected: 0,
