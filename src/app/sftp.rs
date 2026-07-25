@@ -296,7 +296,7 @@ impl App {
         let Some(s) = self.sftp.as_ref() else { return };
         let side = s.focused_side();
         let pane = s.focused_pane();
-        let Some(entry) = pane.selected_entry() else {
+        let Some(entry) = pane.selected_entry().filter(|e| !e.is_parent()) else {
             return;
         };
         let path = pane.cwd.join(&entry.name);
@@ -318,13 +318,13 @@ impl App {
         let (value, old_path) = match kind {
             SftpPromptKind::Mkdir => (String::new(), None),
             SftpPromptKind::Rename => {
-                let Some(entry) = pane.selected_entry() else {
+                let Some(entry) = pane.selected_entry().filter(|e| !e.is_parent()) else {
                     return;
                 };
                 (entry.name.clone(), Some(base.join(&entry.name)))
             }
             SftpPromptKind::Chmod => {
-                let Some(entry) = pane.selected_entry() else {
+                let Some(entry) = pane.selected_entry().filter(|e| !e.is_parent()) else {
                     return;
                 };
                 // Seed with the current octal permissions so the user edits from

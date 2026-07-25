@@ -7,6 +7,34 @@
 
 use std::path::PathBuf;
 
+/// Name of the synthetic row that walks a pane up to its parent directory.
+pub const PARENT_ROW: &str = "..";
+
+/// The directory one level up from `path`, or `None` at the root.
+///
+/// `Path::parent` alone is wrong for the relative paths the remote pane starts
+/// on: the server resolves the login directory from `"."`, whose `parent()` is
+/// the empty path -- a listing request the server rejects, which is why walking
+/// up from a fresh remote pane did nothing at all. Relative paths therefore
+/// grow a `..` component instead of losing their last one.
+pub fn parent_of(path: &std::path::Path) -> Option<PathBuf> {
+    let last = path.components().next_back();
+    // Already climbing (".", "..", "a/.."): another `..` is the only way up.
+    if matches!(
+        last,
+        Some(std::path::Component::CurDir) | Some(std::path::Component::ParentDir)
+    ) {
+        return Some(path.join(PARENT_ROW));
+    }
+    match path.parent() {
+        // A bare name ("work") sits in the pane's own directory.
+        Some(p) if p.as_os_str().is_empty() => Some(PathBuf::from(".")),
+        Some(p) => Some(p.to_path_buf()),
+        // Filesystem root: nowhere left to go.
+        None => None,
+    }
+}
+
 /// Which of the two panes a path/entry belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Side {
@@ -46,6 +74,26 @@ pub struct QueuedTransfer {
     pub name: String,
     /// Whether `src` is a directory — the worker transfers it recursively.
     pub is_dir: bool,
+}
+
+impl FileEntry {
+    /// The synthetic ".." row. Enterable, but never a transfer or file-op
+    /// target -- see [`FileEntry::is_parent`].
+    pub fn parent_row() -> Self {
+        Self {
+            name: PARENT_ROW.to_string(),
+            is_dir: true,
+            size: 0,
+            is_symlink: false,
+            perm: None,
+        }
+    }
+
+    /// Whether this is the synthetic parent row rather than a real listing
+    /// entry. No real file can be named `..`, so the name is enough.
+    pub fn is_parent(&self) -> bool {
+        self.name == PARENT_ROW
+    }
 }
 
 /// One browsable directory column (remote or local).
@@ -112,8 +160,15 @@ impl Pane {
     }
 
     /// Replace the listing and clamp the cursor to the new bounds.
+    ///
+    /// Prepends the synthetic [`PARENT_ROW`] unless the pane is at the root, so
+    /// walking up is a visible row you can select rather than a keybind you
+    /// have to know about.
     pub fn set_entries(&mut self, entries: Vec<FileEntry>) {
         self.entries = entries;
+        if parent_of(&self.cwd).is_some() {
+            self.entries.insert(0, FileEntry::parent_row());
+        }
         self.filter = String::new();
         self.clamp_selection();
     }
@@ -273,6 +328,9 @@ impl SftpState {
     pub fn enter_dir(&self) -> Option<(Side, PathBuf)> {
         let pane = self.focused_pane();
         let entry = pane.selected_entry()?;
+        if entry.is_parent() {
+            return self.parent_dir();
+        }
         if !entry.is_dir {
             return None;
         }
@@ -282,9 +340,8 @@ impl SftpState {
     /// Compute the parent path of the focused pane's cwd. Returns
     /// `(Side, parent)` or `None` when already at the root. Pure PathBuf math.
     pub fn parent_dir(&self) -> Option<(Side, PathBuf)> {
-        let pane = self.focused_pane();
-        let parent = pane.cwd.parent()?;
-        Some((self.focused_side(), parent.to_path_buf()))
+        let parent = parent_of(&self.focused_pane().cwd)?;
+        Some((self.focused_side(), parent))
     }
 
     /// Stage the focused-remote selection for download into `local.cwd`.
@@ -295,6 +352,9 @@ impl SftpState {
             .selected_entry()
             .cloned()
             .ok_or_else(|| "nothing selected".to_string())?;
+        if entry.is_parent() {
+            return Err("that row just walks up a directory".to_string());
+        }
         let src = self.remote.cwd.join(&entry.name);
         let dst = self.local.cwd.join(&entry.name);
         if self.queue.iter().any(|q| q.src == src && q.dst == dst) {
@@ -320,6 +380,9 @@ impl SftpState {
             .selected_entry()
             .cloned()
             .ok_or_else(|| "nothing selected".to_string())?;
+        if entry.is_parent() {
+            return Err("that row just walks up a directory".to_string());
+        }
         let src = self.local.cwd.join(&entry.name);
         let dst = self.remote.cwd.join(&entry.name);
         if self.queue.iter().any(|q| q.src == src && q.dst == dst) {
@@ -348,6 +411,15 @@ impl SftpState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Index of the row named `name` in `pane`, so tests address rows by name
+    /// and stay honest about the synthetic ".." row sitting at index 0.
+    fn row(pane: &Pane, name: &str) -> usize {
+        pane.entries
+            .iter()
+            .position(|e| e.name == name)
+            .unwrap_or_else(|| panic!("no row named {name}"))
+    }
 
     fn state_with_entries() -> SftpState {
         let mut s = SftpState::new("/srv", "/home/me");
@@ -400,12 +472,13 @@ mod tests {
     #[test]
     fn move_selection_clamps() {
         let mut s = state_with_entries();
+        // "..", "docs", "a.txt"
         s.move_selection(-5);
         assert_eq!(s.remote.selected, 0);
         s.move_selection(1);
         assert_eq!(s.remote.selected, 1);
         s.move_selection(10);
-        assert_eq!(s.remote.selected, 1); // clamped to len-1
+        assert_eq!(s.remote.selected, 2); // clamped to len-1
     }
 
     #[test]
@@ -428,20 +501,62 @@ mod tests {
     #[test]
     fn enter_dir_only_for_directories() {
         let mut s = state_with_entries();
-        // selected 0 = "docs" (dir)
+        s.remote.selected = row(&s.remote, "docs");
         assert_eq!(
             s.enter_dir(),
             Some((Side::Remote, PathBuf::from("/srv/docs")))
         );
-        // selected 1 = "a.txt" (file) → None
-        s.remote.selected = 1;
+        // A file isn't enterable.
+        s.remote.selected = row(&s.remote, "a.txt");
         assert_eq!(s.enter_dir(), None);
+    }
+
+    #[test]
+    fn parent_row_leads_the_listing_and_walks_up() {
+        let mut s = state_with_entries();
+        assert_eq!(s.remote.entries[0].name, PARENT_ROW, "\"..\" comes first");
+        assert!(s.remote.entries[0].is_parent());
+        // Selecting it and entering walks up, rather than into "/srv/..".
+        s.remote.selected = 0;
+        assert_eq!(s.enter_dir(), Some((Side::Remote, PathBuf::from("/"))));
+        // It is never a transfer target.
+        assert!(s.stage_download().is_err());
+        assert!(s.queue.is_empty());
+    }
+
+    #[test]
+    fn parent_row_absent_at_the_root() {
+        let mut s = SftpState::new("/", "/");
+        s.remote.set_entries(vec![FileEntry {
+            name: "etc".into(),
+            is_dir: true,
+            size: 0,
+            is_symlink: false,
+            perm: None,
+        }]);
+        assert_eq!(s.remote.entries[0].name, "etc", "nowhere to walk up to");
+    }
+
+    #[test]
+    fn parent_of_climbs_relative_paths() {
+        use std::path::Path;
+        // The remote pane starts on ".", whose `parent()` is the empty path;
+        // walking up has to grow a "..", not produce an unlistable path.
+        assert_eq!(parent_of(Path::new(".")), Some(PathBuf::from("./..")));
+        assert_eq!(parent_of(Path::new("..")), Some(PathBuf::from("../..")));
+        assert_eq!(parent_of(Path::new("work")), Some(PathBuf::from(".")));
+        assert_eq!(
+            parent_of(Path::new("/srv/www")),
+            Some(PathBuf::from("/srv"))
+        );
+        assert_eq!(parent_of(Path::new("/")), None);
     }
 
     #[test]
     fn enter_dir_respects_focus() {
         let mut s = state_with_entries();
-        s.toggle_focus(); // now Local, selected 0 = "photos"
+        s.toggle_focus(); // now Local
+        s.local.selected = row(&s.local, "photos");
         assert_eq!(
             s.enter_dir(),
             Some((Side::Local, PathBuf::from("/home/me/photos")))
@@ -459,7 +574,7 @@ mod tests {
     #[test]
     fn stage_download_file() {
         let mut s = state_with_entries();
-        s.remote.selected = 1; // a.txt
+        s.remote.selected = row(&s.remote, "a.txt");
         assert!(s.stage_download().is_ok());
         assert_eq!(s.queue.len(), 1);
         let q = &s.queue[0];
@@ -472,7 +587,7 @@ mod tests {
     #[test]
     fn stage_download_directory_is_queued_recursively() {
         let mut s = state_with_entries();
-        s.remote.selected = 0; // docs (dir)
+        s.remote.selected = row(&s.remote, "docs");
         assert!(s.stage_download().is_ok());
         assert_eq!(s.queue.len(), 1);
         let q = &s.queue[0];
@@ -484,7 +599,7 @@ mod tests {
     #[test]
     fn stage_upload_file() {
         let mut s = state_with_entries();
-        s.local.selected = 1; // b.bin
+        s.local.selected = row(&s.local, "b.bin");
         assert!(s.stage_upload().is_ok());
         let q = &s.queue[0];
         assert_eq!(q.direction, Direction::Upload);
@@ -495,7 +610,7 @@ mod tests {
     #[test]
     fn stage_upload_directory_is_queued_recursively() {
         let mut s = state_with_entries();
-        s.local.selected = 0; // photos (dir)
+        s.local.selected = row(&s.local, "photos");
         assert!(s.stage_upload().is_ok());
         assert_eq!(s.queue.len(), 1);
         assert!(s.queue[0].is_dir);
@@ -504,9 +619,9 @@ mod tests {
     #[test]
     fn unstage_removes() {
         let mut s = state_with_entries();
-        s.remote.selected = 1; // a.txt → download
+        s.remote.selected = row(&s.remote, "a.txt"); // download
         s.stage_download().unwrap();
-        s.local.selected = 1; // b.bin → upload
+        s.local.selected = row(&s.local, "b.bin"); // upload
         s.stage_upload().unwrap();
         assert_eq!(s.queue.len(), 2);
         s.unstage(0);
@@ -518,7 +633,7 @@ mod tests {
     #[test]
     fn staging_same_file_twice_is_deduped() {
         let mut s = state_with_entries();
-        s.remote.selected = 1; // a.txt
+        s.remote.selected = row(&s.remote, "a.txt");
         s.stage_download().unwrap();
         // Second identical stage is rejected (no duplicate queue entry).
         assert!(s.stage_download().is_err());
@@ -547,7 +662,7 @@ mod tests {
         // Downloads always land in local.cwd even when focus is on Local.
         let mut s = state_with_entries();
         s.toggle_focus(); // focus Local, but stage_download reads the remote pane
-        s.remote.selected = 1; // a.txt
+        s.remote.selected = row(&s.remote, "a.txt");
         s.stage_download().unwrap();
         assert_eq!(s.queue[0].src, PathBuf::from("/srv/a.txt"));
         assert_eq!(s.queue[0].dst, PathBuf::from("/home/me/a.txt"));
@@ -592,7 +707,8 @@ mod tests {
             perm: None,
         }]);
         assert!(s.remote.filter.is_empty());
-        assert_eq!(s.remote.visible_len(), 1);
+        // The new row, plus the ".." the pane grows below the root.
+        assert_eq!(s.remote.visible_len(), 2);
     }
 
     #[test]
@@ -607,7 +723,7 @@ mod tests {
     #[test]
     fn set_entries_clamps_selection() {
         let mut s = state_with_entries();
-        s.remote.selected = 1;
+        s.remote.selected = 5;
         s.remote.set_entries(vec![FileEntry {
             name: "only".into(),
             is_dir: false,
@@ -615,6 +731,7 @@ mod tests {
             is_symlink: false,
             perm: None,
         }]);
-        assert_eq!(s.remote.selected, 0);
+        // Clamped to the last row of the new listing ("..", "only").
+        assert_eq!(s.remote.selected, 1);
     }
 }

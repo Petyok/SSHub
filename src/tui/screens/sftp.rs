@@ -338,7 +338,10 @@ fn render_pane(
         }
 
         let marker = if active { "▸ " } else { "  " };
-        let size_str = if entry.is_dir {
+        // The ".." row is a way out, not a listing entry: no size badge.
+        let size_str = if entry.is_parent() {
+            String::new()
+        } else if entry.is_dir {
             "<dir>".to_string()
         } else {
             human_size(entry.size)
