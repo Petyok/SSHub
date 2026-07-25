@@ -852,6 +852,9 @@ fn render_session_tab_slide(frame: &mut Frame, app: &App) {
     );
 }
 
+/// Duration of the host-list highlight wipe under a moved cursor (#35).
+pub const SELECT_ANIM: std::time::Duration = std::time::Duration::from_millis(120);
+
 /// Duration of the tab-switch body slide (#35).
 pub const TAB_ANIM: std::time::Duration = std::time::Duration::from_millis(220);
 

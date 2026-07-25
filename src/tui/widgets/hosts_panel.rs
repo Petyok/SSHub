@@ -5,7 +5,40 @@ use ratatui::Frame;
 
 use crate::app::{App, HostEntry};
 use crate::tui::theme;
+use crate::tui::tween;
 use crate::tui::widgets::panel_box;
+
+/// Fraction of the selected row the highlight has filled, left to right (#35).
+/// `1.0` at rest, so a settled cursor draws its full bar. The wipe runs on the
+/// background only: the text under it is already styled for the selection, so a
+/// moved cursor lands on the right row instantly and the bar catches up.
+fn highlight_fill(app: &App) -> f32 {
+    if !app.motion_enabled() {
+        return 1.0;
+    }
+    match app.selection_at {
+        Some(at) => tween::ease_out(tween::progress(
+            at,
+            crate::tui::SELECT_ANIM,
+            std::time::Instant::now(),
+        )),
+        None => 1.0,
+    }
+}
+
+/// Clear the background of the selected row past the point the wipe has
+/// reached, leaving the bar filling in from the left edge of the row.
+fn clip_highlight(buf: &mut ratatui::buffer::Buffer, x: u16, y: u16, w: usize, fill: f32) {
+    if fill >= 1.0 {
+        return;
+    }
+    let filled = (w as f32 * fill).round() as u16;
+    for cx in (x + filled)..(x + w as u16) {
+        if let Some(c) = buf.cell_mut((cx, y)) {
+            c.bg = ratatui::style::Color::Reset;
+        }
+    }
+}
 
 /// Render the hosts panel into the left column of the dashboard bento grid.
 ///
@@ -80,12 +113,17 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
 
     use crate::app::VisualRow;
     let visual = app.host_visual_rows();
+    let fill = highlight_fill(app);
 
     for (vrow, row) in visual.iter().enumerate() {
         if vrow < offset || vrow >= window_end {
             continue;
         }
         let y = cy + (vrow - offset) as u16;
+        let selected_row = matches!(
+            *row,
+            VisualRow::Header { selected: true, .. } | VisualRow::Host { selected: true, .. }
+        );
 
         match *row {
             VisualRow::Blank => {}
@@ -284,6 +322,12 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
                 }
             }
         }
+
+        // The highlight bar fills in from the left under a moved cursor; done
+        // after the row is drawn so it clips the row's own styling too.
+        if selected_row {
+            clip_highlight(buf, cx, y, cw, fill);
+        }
     }
 
     // ── Footer ───────────────────────────────────────────
@@ -314,5 +358,45 @@ fn host_address(entry: &HostEntry) -> String {
         HostEntry::Legacy { host, .. } => {
             host.hostname.clone().unwrap_or_else(|| host.name.clone())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::buffer::Buffer;
+    use ratatui::style::Color;
+
+    fn filled_row(fill: f32) -> Vec<Color> {
+        let area = Rect::new(0, 0, 8, 1);
+        let mut buf = Buffer::empty(area);
+        for x in 0..8 {
+            buf.cell_mut((x, 0)).unwrap().bg = theme::SEL_BG;
+        }
+        clip_highlight(&mut buf, 0, 0, 8, fill);
+        (0..8).map(|x| buf.cell((x, 0)).unwrap().bg).collect()
+    }
+
+    #[test]
+    fn highlight_at_rest_keeps_the_whole_bar() {
+        assert!(filled_row(1.0).iter().all(|c| *c == theme::SEL_BG));
+    }
+
+    #[test]
+    fn highlight_fills_from_the_left() {
+        let bgs = filled_row(0.5);
+        assert!(
+            bgs[..4].iter().all(|c| *c == theme::SEL_BG),
+            "left half stays filled: {bgs:?}"
+        );
+        assert!(
+            bgs[4..].iter().all(|c| *c == Color::Reset),
+            "right half is cleared: {bgs:?}"
+        );
+    }
+
+    #[test]
+    fn highlight_at_zero_clears_the_row() {
+        assert!(filled_row(0.0).iter().all(|c| *c == Color::Reset));
     }
 }

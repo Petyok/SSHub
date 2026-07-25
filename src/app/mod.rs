@@ -223,6 +223,11 @@ pub struct App {
     /// When the host view started exiting (session -> dashboard), driving the
     /// slide-out of `session_snapshot`. `None` at rest / under reduced motion.
     pub session_exit_at: Option<std::time::Instant>,
+    /// `selected` as of the previous poll tick, so a moved cursor can be
+    /// detected centrally and its highlight wiped in (#35).
+    pub anim_prev_selected: usize,
+    /// When the host-list cursor last moved, driving the highlight wipe.
+    pub selection_at: Option<std::time::Instant>,
     /// Smoothed scroll position of the host list, in visual rows, chasing the
     /// target offset each frame (#35). `Cell` because the render pass advances
     /// it through `&App`.
@@ -374,6 +379,11 @@ impl App {
             self.session_exit_at = None;
             *self.session_snapshot.borrow_mut() = None;
         }
+        // The cursor moved since the last tick: wipe its highlight in (#35).
+        if self.selected != self.anim_prev_selected {
+            self.anim_prev_selected = self.selected;
+            self.selection_at = Some(std::time::Instant::now());
+        }
         // A notice that changed since the last tick is a fresh one: stamp it so
         // the zoom toast can slide in from the right edge (#35).
         if self.host_notice != self.anim_prev_notice {
@@ -524,6 +534,8 @@ impl App {
             session_snapshot: std::cell::RefCell::new(None),
             session_exit_at: None,
             session_tab_switch: None,
+            anim_prev_selected: 0,
+            selection_at: None,
             host_scroll_pos: std::cell::Cell::new(0.0),
             host_scroll_at: std::cell::Cell::new(None),
             host_scroll_moving: std::cell::Cell::new(false),

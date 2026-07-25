@@ -60,6 +60,10 @@ impl App {
             || self
                 .session_exit_at
                 .is_some_and(|at| now.saturating_duration_since(at) < crate::tui::SESSION_ANIM);
+        // Host-list highlight wiping in under a moved cursor (#35).
+        let selection = self
+            .selection_at
+            .is_some_and(|at| now.saturating_duration_since(at) < crate::tui::SELECT_ANIM);
         // Host list still catching up to its scroll target (#35).
         let scroll = self.host_scroll_moving.get();
         // Zoom toast riding in from the right edge (#35).
@@ -86,6 +90,7 @@ impl App {
             || sftp
             || notice
             || scroll
+            || selection
     }
 
     /// Open the broadcast wizard from the hosts tab. Refuses while a run is live
