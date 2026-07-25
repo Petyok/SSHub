@@ -20,6 +20,7 @@ use ratatui::prelude::*;
 
 use crate::app::{App, SftpAnim};
 use crate::sftp::model::{Direction, Focus, Pane, Phase, SftpState};
+use crate::tui::blit;
 use crate::tui::text::ellipsize;
 use crate::tui::theme;
 use crate::tui::tween;
@@ -41,7 +42,7 @@ pub fn render_sftp(frame: &mut Frame, area: Rect, app: &App) {
     }
     render_rest(frame, area, app);
     if app.sftp.is_some() && app.motion_enabled() {
-        *app.sftp_snapshot.borrow_mut() = Some(snapshot_area(frame.buffer_mut(), area));
+        *app.sftp_snapshot.borrow_mut() = Some(blit::snapshot(frame.buffer_mut(), area));
     }
 }
 
@@ -76,7 +77,7 @@ fn render_slide(frame: &mut Frame, area: Rect, app: &App, kind: SftpAnim, p: f32
             let mut layer = Buffer::empty(area);
             render_connecting(&mut layer, area, app.sftp_host.as_deref());
             let dx = ((1.0 - e) * area.width as f32).round() as i32;
-            blit_shifted(frame.buffer_mut(), area, area, &layer, dx);
+            blit::blit(frame.buffer_mut(), area, area, &layer, dx, 0);
             // Keep the resting layer around: a host that fails before the slide
             // even lands still has cells to carry back out.
             *app.sftp_snapshot.borrow_mut() = Some(layer);
@@ -85,7 +86,7 @@ fn render_slide(frame: &mut Frame, area: Rect, app: &App, kind: SftpAnim, p: f32
             render_picker(frame, area, app);
             if let Some(src) = app.sftp_snapshot.borrow().as_ref() {
                 let dx = (e * area.width as f32).round() as i32;
-                blit_shifted(frame.buffer_mut(), area, area, src, dx);
+                blit::blit(frame.buffer_mut(), area, area, src, dx, 0);
             }
         }
         SftpAnim::PanesIn => {
@@ -119,45 +120,15 @@ fn blit_panes(dst: &mut Buffer, area: Rect, src: &Buffer, k: f32) {
     let half = area.width / 2;
     let left = Rect::new(area.x, area.y, half, area.height);
     let right = Rect::new(area.x + half, area.y, area.width - half, area.height);
-    blit_shifted(dst, left, area, src, -((half as f32 * k).round() as i32));
-    blit_shifted(
+    blit::blit(dst, left, area, src, -((half as f32 * k).round() as i32), 0);
+    blit::blit(
         dst,
         right,
         area,
         src,
         (right.width as f32 * k).round() as i32,
+        0,
     );
-}
-
-/// Copy the `region` cells of `src` into `dst` shifted `dx` columns, clipped to
-/// `clip`. `src` is always a standalone buffer (never `dst` itself), so the copy
-/// order doesn't matter.
-fn blit_shifted(dst: &mut Buffer, region: Rect, clip: Rect, src: &Buffer, dx: i32) {
-    for y in region.top()..region.bottom() {
-        for x in region.left()..region.right() {
-            let tx = x as i32 + dx;
-            if tx < clip.left() as i32 || tx >= clip.right() as i32 {
-                continue;
-            }
-            if let (Some(s), Some(d)) = (src.cell((x, y)), dst.cell_mut((tx as u16, y))) {
-                *d = s.clone();
-            }
-        }
-    }
-}
-
-/// Clone the `area` cells of `src` into a standalone buffer keeping the same
-/// absolute coordinates, so a later frame can blit them while sliding.
-fn snapshot_area(src: &Buffer, area: Rect) -> Buffer {
-    let mut out = Buffer::empty(area);
-    for y in area.top()..area.bottom() {
-        for x in area.left()..area.right() {
-            if let (Some(s), Some(d)) = (src.cell((x, y)), out.cell_mut((x, y))) {
-                *d = s.clone();
-            }
-        }
-    }
-    out
 }
 
 /// Centered "connecting to <host>…" placeholder shown while the SFTP worker is
@@ -479,29 +450,6 @@ mod tests {
     }
 
     #[test]
-    fn blit_shifted_moves_cells_and_clips_at_the_edges() {
-        let a = area();
-        let src = ruler(a);
-        let mut dst = Buffer::empty(a);
-        blit_shifted(&mut dst, a, a, &src, 3);
-        // Columns 2..4 slid in from off the left edge (nothing wrote them);
-        // the rest carry the source columns three to the right.
-        assert_eq!(row(&dst, a, 1), "   23456");
-        // The three source columns pushed past the right edge are dropped, not
-        // wrapped or written out of bounds.
-        assert_eq!(row(&dst, a, 2), "   23456");
-    }
-
-    #[test]
-    fn blit_shifted_zero_offset_is_a_plain_copy() {
-        let a = area();
-        let src = ruler(a);
-        let mut dst = Buffer::empty(a);
-        blit_shifted(&mut dst, a, a, &src, 0);
-        assert_eq!(row(&dst, a, 1), row(&src, a, 1));
-    }
-
-    #[test]
     fn blit_panes_at_rest_reproduces_the_source() {
         let a = area();
         let src = ruler(a);
@@ -531,14 +479,5 @@ mod tests {
         // the body and the gap they open sits in the middle.
         blit_panes(&mut dst, a, &src, 0.5);
         assert_eq!(row(&dst, a, 1), "45    67");
-    }
-
-    #[test]
-    fn snapshot_area_copies_the_body_verbatim() {
-        let a = area();
-        let src = ruler(a);
-        let snap = snapshot_area(&src, a);
-        assert_eq!(row(&snap, a, 1), row(&src, a, 1));
-        assert_eq!(row(&snap, a, 2), row(&src, a, 2));
     }
 }
