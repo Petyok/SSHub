@@ -60,6 +60,10 @@ impl App {
             || self
                 .session_exit_at
                 .is_some_and(|at| now.saturating_duration_since(at) < crate::tui::SESSION_ANIM);
+        // A staged transfer's row still flying into the queue strip (#35).
+        let queue = self
+            .sftp_queue_at
+            .is_some_and(|at| now.saturating_duration_since(at) < crate::tui::SFTP_QUEUE_ANIM);
         // SFTP progress bar still sweeping toward the reported figure (#35).
         let progress = self.sftp_progress_moving.get();
         // A fresh sparkline column still growing in (#35).
@@ -115,6 +119,7 @@ impl App {
             || stats
             || spark
             || progress
+            || queue
     }
 
     /// Open the broadcast wizard from the hosts tab. Refuses while a run is live

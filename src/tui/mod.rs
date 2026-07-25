@@ -852,6 +852,9 @@ fn render_session_tab_slide(frame: &mut Frame, app: &App) {
     );
 }
 
+/// How long a newly staged SFTP transfer takes to fly into the queue (#35).
+pub const SFTP_QUEUE_ANIM: std::time::Duration = std::time::Duration::from_millis(200);
+
 /// How long a host's status dot flashes after its ping class changes (#35).
 pub const PING_FLASH: std::time::Duration = std::time::Duration::from_millis(420);
 

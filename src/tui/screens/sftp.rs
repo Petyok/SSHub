@@ -57,7 +57,7 @@ fn render_rest(frame: &mut Frame, area: Rect, app: &App) {
         }
         Some(state) => {
             let fill = app.sftp_progress_advance(progress_fraction(state));
-            render_browser(frame.buffer_mut(), area, state, fill)
+            render_browser(frame.buffer_mut(), area, state, fill, staged_fly_in(app))
         }
     }
 }
@@ -105,6 +105,7 @@ fn render_slide(frame: &mut Frame, area: Rect, app: &App, kind: SftpAnim, p: f32
                 area,
                 state,
                 app.sftp_progress_advance(progress_fraction(state)),
+                staged_fly_in(app),
             );
             blit_panes(frame.buffer_mut(), area, &layer, 1.0 - e);
             // Same for an Esc landing mid-slide: the panes part from the rest
@@ -182,7 +183,7 @@ fn render_picker(frame: &mut Frame, area: Rect, app: &App) {
 
 // ── Browser sub-state ────────────────────────────────────────
 
-fn render_browser(buf: &mut Buffer, area: Rect, state: &SftpState, fill: f32) {
+fn render_browser(buf: &mut Buffer, area: Rect, state: &SftpState, fill: f32, staged: f32) {
     let progress_h: u16 = if state.phase == Phase::Running { 1 } else { 0 };
     let queue_h: u16 = if state.queue.is_empty() {
         1
@@ -222,6 +223,7 @@ fn render_browser(buf: &mut Buffer, area: Rect, state: &SftpState, fill: f32) {
         area.width,
         &state.queue,
         state.notice.as_deref(),
+        staged,
     );
 
     if progress_h > 0 {
@@ -354,6 +356,7 @@ fn render_queue(
     w: u16,
     queue: &[crate::sftp::model::QueuedTransfer],
     notice: Option<&str>,
+    staged: f32,
 ) {
     if queue.is_empty() {
         let (text, style) = match notice {
@@ -381,6 +384,7 @@ fn render_queue(
         ellipsize(&header, w.saturating_sub(4) as usize),
         theme::heading(),
     );
+    let last = queue.len().saturating_sub(1);
     for (i, t) in queue.iter().take(4).enumerate() {
         let yy = y + 1 + i as u16;
         let (arrow, label, style) = match t.direction {
@@ -389,7 +393,38 @@ fn render_queue(
         };
         let s = format!("{arrow} {label}  {}", t.name);
         let clamped = ellipsize(&s, w.saturating_sub(6) as usize);
-        buf.set_string(x + 4, yy, clamped, style);
+        // A just-staged row flies in from the side the file is coming from:
+        // a download off the remote pane on the right, an upload off the local
+        // pane on the left (#35).
+        if i == last && staged < 1.0 {
+            let travel = (w as f32 * (1.0 - staged)).round() as i32;
+            let dx = match t.direction {
+                Direction::Download => travel,
+                Direction::Upload => -travel,
+            };
+            let strip = Rect::new(x, yy, w, 1);
+            let mut layer = Buffer::empty(strip);
+            layer.set_string(x + 4, yy, clamped, style);
+            blit::blit(buf, strip, strip, &layer, dx, 0);
+        } else {
+            buf.set_string(x + 4, yy, clamped, style);
+        }
+    }
+}
+
+/// How far the newest queue row has flown in, `0.0` to `1.0` (#35). `1.0` at
+/// rest, so a settled queue draws in place.
+fn staged_fly_in(app: &App) -> f32 {
+    if !app.motion_enabled() {
+        return 1.0;
+    }
+    match app.sftp_queue_at {
+        Some(at) => tween::ease_out(tween::progress(
+            at,
+            crate::tui::SFTP_QUEUE_ANIM,
+            std::time::Instant::now(),
+        )),
+        None => 1.0,
     }
 }
 

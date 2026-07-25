@@ -231,6 +231,11 @@ pub struct App {
     pub header_stats_at: std::cell::Cell<Option<std::time::Instant>>,
     /// Whether a counter is still counting, so the loop keeps the frame rate up.
     pub header_stats_moving: std::cell::Cell<bool>,
+    /// SFTP queue length as of the previous tick, so a newly staged transfer
+    /// can be detected centrally and flown in (#35).
+    pub anim_prev_queue: usize,
+    /// When the last transfer was staged, driving its row's fly-in.
+    pub sftp_queue_at: Option<std::time::Instant>,
     /// Fraction of the running SFTP queue drawn on the progress bar, chasing
     /// the real figure so the bar sweeps between the worker's updates (#35).
     pub sftp_progress_pos: std::cell::Cell<f32>,
@@ -404,6 +409,14 @@ impl App {
             self.session_exit_at = None;
             *self.session_snapshot.borrow_mut() = None;
         }
+        // A transfer staged since the last tick flies its row in (#35).
+        let queued = self.sftp.as_ref().map(|s| s.queue.len()).unwrap_or(0);
+        if queued != self.anim_prev_queue {
+            // Only a fresh entry animates; removing one is the user's own key
+            // press and reads fine as an immediate change.
+            self.sftp_queue_at = (queued > self.anim_prev_queue).then(std::time::Instant::now);
+            self.anim_prev_queue = queued;
+        }
         self.detect_ping_changes();
         // Retire a finished fold, releasing the rows it was replaying.
         if self
@@ -571,6 +584,8 @@ impl App {
             header_stats_pos: std::cell::Cell::new([0.0; 4]),
             header_stats_at: std::cell::Cell::new(None),
             header_stats_moving: std::cell::Cell::new(false),
+            anim_prev_queue: 0,
+            sftp_queue_at: None,
             sftp_progress_pos: std::cell::Cell::new(0.0),
             sftp_progress_at: std::cell::Cell::new(None),
             sftp_progress_moving: std::cell::Cell::new(false),
