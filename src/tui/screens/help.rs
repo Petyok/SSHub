@@ -153,11 +153,15 @@ fn help_lines() -> Vec<Line<'static>> {
         entry("[sftp]", ""),
         entry("2", "Open the SFTP tab"),
         entry("Enter", "Connect to host · descend into dir · fold group"),
-        entry("Tab", "Switch focus between local and remote pane"),
-        entry("Backspace", "Up one directory"),
+        entry("Tab", "Switch focus between the two panes"),
+        entry("Backspace", "Up one directory (or select the \"..\" row)"),
         entry(
             "\u{2190} / \u{2192}",
-            "Stage download / upload (files or whole folders)",
+            "Stage the focused pane's selection toward the other one",
+        ),
+        entry(
+            "o / O",
+            "Point the left pane at a second server / back to local files",
         ),
         entry("c / u", "Run queue / remove last queued transfer"),
         entry("d", "Delete selected file/folder (recursive)"),

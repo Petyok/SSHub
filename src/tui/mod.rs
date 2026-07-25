@@ -537,6 +537,7 @@ fn footer_keybinds(app: &App) -> Vec<(String, &'static str)> {
             ("M".into(), "chmod"),
             ("r".into(), "refresh"),
             ("s".into(), "ssh"),
+            ("o".into(), "2nd host"),
             ("/".into(), "search"),
             ("Esc".into(), "back"),
             ("?".into(), "help"),

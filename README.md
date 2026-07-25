@@ -49,7 +49,7 @@ The settings overlay (`Ctrl+H`) — toggle an opaque background, OS logos, quit 
 
 - **Embedded SSH sessions** — connect opens an in-TUI PTY; detach with Ctrl+D and return to the dashboard while SSH keeps running; multiple session tabs
 - **Hosts** — browse, search, and connect. Fuzzy search with `/`, multi-tag AND filter with `#`, favorites, nested groups, manual sort order
-- **SFTP file transfer** — a dual-pane browser (remote / local) with a staged transfer queue: navigate both sides, queue uploads and downloads (files or whole folders, transferred recursively), and run them with a progress bar. Manage files in place too: delete (`d`), new folder (`n`), rename/move (`R`), and change permissions (`M`, octal chmod)
+- **SFTP file transfer** — a dual-pane browser with a staged transfer queue: navigate both sides, queue uploads and downloads (files or whole folders, transferred recursively), and run them with a progress bar. Files can be staged while the queue runs. The left pane is your local filesystem by default, or point it at a **second server** with `o` (`O` sends it back to local) to move files between two hosts — relayed through a local temp file, since SSH has no server-to-server copy. Manage files in place too: delete (`d`), new folder (`n`), rename/move (`R`), and change permissions (`M`, octal chmod)
 - **OS auto-detection** — on first connect a background probe detects the remote distro and the host card renders its logo (Braille art in brand colors), just like Termius
 - **Multiple groups & Favorites** — a host can belong to several groups at once; a reserved Favorites group and a ★ marker in the list, toggled with `f`
 - **Tunnels** — define and manage SSH tunnels (local/remote/dynamic SOCKS). Start, stop, and monitor from the TUI. Per-tunnel **keep alive** auto-starts on launch and reconnects dropped forwards with exponential backoff (configurable in `config.toml`).
@@ -246,6 +246,23 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | `Shift+I`          | Import from ssh config    |
 | `Shift+E`          | Export to ssh config      |
 | `Shift+T`          | Import from Termius       |
+
+### SFTP (tab 2)
+
+| Key                | Action                                              |
+|--------------------|-----------------------------------------------------|
+| `Enter`            | Connect to host · enter directory (`..` walks up)    |
+| `Tab`              | Switch focus between the panes                       |
+| `Backspace`        | Up one directory                                     |
+| `←` / `→`          | Stage the focused pane's selection toward the other  |
+| `c` / `u`          | Run the queue / unstage the last transfer            |
+| `o` / `O`          | Left pane to a second server / back to local files   |
+| `d`                | Delete (recursive)                                   |
+| `n` / `R` / `M`    | New folder / rename / chmod                          |
+| `r`                | Refresh both panes                                   |
+| `s`                | Open an SSH session to this host                     |
+| `/`                | Filter the focused pane                              |
+| `Esc`              | Disconnect, back to the picker                       |
 
 ### Tunnels (tab 3)
 
