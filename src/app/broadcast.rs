@@ -60,6 +60,10 @@ impl App {
             || self
                 .session_exit_at
                 .is_some_and(|at| now.saturating_duration_since(at) < crate::tui::SESSION_ANIM);
+        // Zoom toast riding in from the right edge (#35).
+        let notice = self
+            .host_notice_at
+            .is_some_and(|at| now.saturating_duration_since(at) < crate::broadcast::TOAST_ANIM);
         // Slide between two embedded session tabs (#35).
         let session_tab = self
             .session_tab_switch
@@ -78,6 +82,7 @@ impl App {
             || session
             || session_tab
             || sftp
+            || notice
     }
 
     /// Open the broadcast wizard from the hosts tab. Refuses while a run is live

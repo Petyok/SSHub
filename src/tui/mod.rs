@@ -230,7 +230,7 @@ fn render_inner(frame: &mut Frame, app: &App) {
     // to the right of the footer until the next key press clears it.
     if app.panel_zoomed {
         if let Some(notice) = &app.host_notice {
-            render_zoom_toast(frame, areas.footer, notice);
+            render_zoom_toast(frame, areas.footer, notice, app);
         }
     }
 
@@ -612,13 +612,26 @@ fn footer_keybinds(app: &App) -> Vec<(String, &'static str)> {
 /// row *above* the footer keybinds, used while a panel is zoomed and the normal
 /// status-bar notice surface is hidden. Sits above the hints so it never clips
 /// them.
-fn render_zoom_toast(frame: &mut Frame, footer: Rect, notice: &str) {
+fn render_zoom_toast(frame: &mut Frame, footer: Rect, notice: &str, app: &App) {
     let label = format!(" {notice} ");
     let w = label.chars().count() as u16;
     if footer.width < w || footer.y == 0 {
         return;
     }
-    let x = footer.x + footer.width - w;
+    let rest_x = footer.x + footer.width - w;
+    // Ride in from off the right edge (#35), like the broadcast toasts. Travel
+    // the distance from the resting slot to the screen edge, so the toast is
+    // fully off-screen at p == 0 and `set_string` clips whatever hangs over.
+    let off = app
+        .host_notice_at
+        .filter(|_| app.motion_enabled())
+        .map(|at| {
+            let p = tween::progress(at, crate::broadcast::TOAST_ANIM, std::time::Instant::now());
+            ((1.0 - tween::ease_out(p)) * frame.area().right().saturating_sub(rest_x) as f32)
+                .round() as u16
+        })
+        .unwrap_or(0);
+    let x = rest_x + off;
     let y = footer.y - 1;
     let style = theme::cyan().add_modifier(Modifier::REVERSED);
     frame.buffer_mut().set_string(x, y, &label, style);

@@ -223,6 +223,11 @@ pub struct App {
     /// When the host view started exiting (session -> dashboard), driving the
     /// slide-out of `session_snapshot`. `None` at rest / under reduced motion.
     pub session_exit_at: Option<std::time::Instant>,
+    /// `host_notice` as of the previous poll tick, so a fresh one can be
+    /// detected centrally (34 code paths set it) and slid in (#35).
+    pub anim_prev_notice: Option<String>,
+    /// When the current `host_notice` appeared, driving the toast slide-in.
+    pub host_notice_at: Option<std::time::Instant>,
     /// In-flight slide between two embedded session tabs (#35). While it plays,
     /// `session_snapshot` is held frozen on the tab being left behind.
     pub session_tab_switch: Option<SessionTabSwitch>,
@@ -358,6 +363,12 @@ impl App {
         {
             self.session_exit_at = None;
             *self.session_snapshot.borrow_mut() = None;
+        }
+        // A notice that changed since the last tick is a fresh one: stamp it so
+        // the zoom toast can slide in from the right edge (#35).
+        if self.host_notice != self.anim_prev_notice {
+            self.anim_prev_notice = self.host_notice.clone();
+            self.host_notice_at = self.host_notice.as_ref().map(|_| std::time::Instant::now());
         }
         // Retire a finished session-tab slide, releasing the frozen snapshot of
         // the tab that was left behind.
@@ -503,6 +514,8 @@ impl App {
             session_snapshot: std::cell::RefCell::new(None),
             session_exit_at: None,
             session_tab_switch: None,
+            anim_prev_notice: None,
+            host_notice_at: None,
             palette_query: String::new(),
             palette_selected: 0,
             palette_results: Vec::new(),
