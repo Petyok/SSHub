@@ -125,7 +125,7 @@ This catches doc drift, wrong API names, regressions, and scope creep that unit 
 | Field | Rule |
 |-------|------|
 | **Target** | `development` only |
-| **Title** | Conventional commits: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:` |
+| **Title** | Conventional commits: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `build:`, `ci:`, `chore:` |
 | **Body** | What changed and why; how you tested; `Closes #N`; security notes if relevant |
 | **Scope** | One logical change set |
 

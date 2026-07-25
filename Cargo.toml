@@ -66,11 +66,13 @@ tempfile = "3"
 tui-term = "0.3"
 vt100 = "0.16"
 
-# Shipped binaries carry no debug symbols and are optimised across crate
+# Shipped binaries carry no symbol table and are optimised across crate
 # boundaries: the tarballs from the release workflow, `cargo install sshub`, and
-# anything that repackages them are what users actually download. `panic` is
-# deliberately left alone -- unwinding is what lets the terminal guard restore
-# the tty and the panic hook print somewhere visible.
+# anything that repackages them are what users actually download. (Debug info
+# was never in them -- release defaults to `debug = false` -- so what `strip`
+# removes here is the symbol/string table backtraces read function names from.)
+# `panic` is deliberately left alone: unwinding is what lets the terminal guard
+# restore the tty and the panic hook print somewhere visible.
 [profile.release]
 lto = "thin"
 codegen-units = 1

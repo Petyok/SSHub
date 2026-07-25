@@ -34,13 +34,16 @@ All notable changes to SSHub are documented in this file.
 
 ### Changed
 
-- **Smaller release binaries** - release builds had no profile at all, so they
-  shipped with the symbol table and without cross-crate optimisation. Adding
-  `lto = "thin"`, `codegen-units = 1` and `strip = "symbols"` takes the Linux
-  x86-64 binary from 14.8 MB to 11.6 MB (-21.8%), which every distribution
-  channel carries: the release tarballs, `cargo install`, and anything that
-  repackages them. Release builds take correspondingly longer; `cargo test` and
-  day-to-day `cargo build` are untouched.
+- **Smaller release binaries** (issue #42) - release builds had no profile at
+  all, so they shipped with the symbol table and without cross-crate
+  optimisation. Adding `lto = "thin"`, `codegen-units = 1` and
+  `strip = "symbols"` takes the Linux x86-64 binary from 14.8 MB to 11.6 MB
+  (-21.8%), which every distribution channel carries: the release tarballs,
+  `cargo install`, and anything that repackages them. `cargo test` and a plain
+  `cargo build` are untouched, but every release build now takes noticeably
+  longer -- including `just build` and `just install`, which build in release
+  mode, and including every dependency, since `codegen-units = 1` applies across
+  the whole graph.
 
 ### Fixed
 
