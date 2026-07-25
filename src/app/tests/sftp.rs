@@ -192,7 +192,7 @@ fn server_to_server_transfer_relays_in_two_legs() {
 /// it can be retried rather than silently vanishing.
 #[test]
 fn failed_relay_leg_stops_and_keeps_the_item() {
-    use crate::sftp::model::{FileEntry, SftpState, Side};
+    use crate::sftp::model::{Direction, FileEntry, QueuedTransfer, SftpState, Side};
     use crate::sftp::SftpCommand;
 
     let mut app = test_app(vec![]);
@@ -228,4 +228,101 @@ fn failed_relay_leg_stops_and_keeps_the_item() {
         .notice
         .as_deref()
         .is_some_and(|n| n.contains("disk full")));
+}
+
+/// Regression: a worker finishes its run with a `QueueDone` even after an
+/// error. Acting on that used to restart the transfer that had just failed --
+/// which failed again, over and over, with the queue stuck on screen.
+#[test]
+fn failed_relay_is_not_restarted_by_the_trailing_completion() {
+    use crate::sftp::model::{FileEntry, SftpState, Side};
+    use crate::sftp::SftpCommand;
+
+    let mut app = test_app(vec![]);
+    let (tx_right, right) = std::sync::mpsc::channel::<SftpCommand>();
+    let (tx_left, _left) = std::sync::mpsc::channel::<SftpCommand>();
+    app.sftp_tx = Some(tx_right);
+    app.sftp_tx2 = Some(tx_left);
+
+    let mut state = SftpState::new("/srv", "/data");
+    state.left_host = Some("second-host".into());
+    state.remote.set_entries(vec![FileEntry {
+        name: "test2.py".into(),
+        is_dir: false,
+        size: 7,
+        is_symlink: false,
+        perm: None,
+    }]);
+    state.remote.selected = 1; // past the ".." row
+    app.sftp = Some(state);
+    app.sftp
+        .as_mut()
+        .unwrap()
+        .stage_toward(Side::Local)
+        .unwrap();
+    app.sftp_run_queue();
+    while right.try_recv().is_ok() {}
+
+    app.apply_sftp_event(crate::sftp::SftpEvent::Error("write error".into()));
+    app.apply_sftp_event(crate::sftp::SftpEvent::QueueDone);
+
+    assert!(app.sftp_relay.is_none(), "no fresh relay armed");
+    assert_eq!(
+        app.sftp.as_ref().unwrap().phase,
+        crate::sftp::model::Phase::Browsing,
+        "the browser settles instead of looking busy forever"
+    );
+    assert_eq!(
+        app.sftp.as_ref().unwrap().queue.len(),
+        1,
+        "the item stays for a manual retry"
+    );
+}
+
+/// A plain (non-relayed) run that reports an error stops there too, instead of
+/// rolling whatever is left into another pass that fails the same way.
+#[test]
+fn failed_run_does_not_dispatch_another_pass() {
+    use crate::sftp::model::{Direction, FileEntry, QueuedTransfer, SftpState, Side};
+    use crate::sftp::SftpCommand;
+
+    let mut app = test_app(vec![]);
+    let (tx, rx) = std::sync::mpsc::channel::<SftpCommand>();
+    app.sftp_tx = Some(tx);
+
+    let mut state = SftpState::new("/srv", "/data");
+    state.remote.set_entries(vec![FileEntry {
+        name: "a.bin".into(),
+        is_dir: false,
+        size: 1,
+        is_symlink: false,
+        perm: None,
+    }]);
+    state.remote.selected = 1; // past the ".." row
+    app.sftp = Some(state);
+    app.sftp
+        .as_mut()
+        .unwrap()
+        .stage_toward(Side::Local)
+        .unwrap();
+    app.sftp_run_queue();
+    assert!(rx.try_recv().is_ok(), "the run went out");
+
+    // Something is staged mid-run, then the run fails.
+    app.sftp.as_mut().unwrap().queue.push(QueuedTransfer {
+        direction: Direction::Download,
+        src: "/srv/b.bin".into(),
+        dst: "/data/b.bin".into(),
+        name: "b.bin".into(),
+        is_dir: false,
+    });
+    app.apply_sftp_event(crate::sftp::SftpEvent::Error("permission denied".into()));
+    app.apply_sftp_event(crate::sftp::SftpEvent::QueueDone);
+    // Re-listing after the failure is expected; a second RunQueue is not.
+    let dispatched_again =
+        std::iter::from_fn(|| rx.try_recv().ok()).any(|c| matches!(c, SftpCommand::RunQueue(_)));
+    assert!(
+        !dispatched_again,
+        "a failed run waits for the user rather than dispatching another pass"
+    );
 }

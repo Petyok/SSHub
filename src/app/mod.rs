@@ -317,6 +317,13 @@ pub struct App {
     /// Server-to-server transfer in flight, relayed leg by leg through a local
     /// temp file. `None` whenever the queue is a plain local transfer.
     pub sftp_relay: Option<SftpRelay>,
+    /// `QueueDone` events still to be swallowed: a worker always finishes its
+    /// run with one, even after an error we already acted on, and acting on it
+    /// twice would restart the very transfer that just failed.
+    pub sftp_swallow_done: usize,
+    /// Whether the run in flight has already reported an error, so its leftover
+    /// queue is left for the user to retry rather than restarted automatically.
+    pub sftp_run_failed: bool,
     /// True while the SFTP picker's host search input is capturing keys.
     pub sftp_picker_searching: bool,
     /// In-flight SFTP tab sub-state slide and when it started (#35). `None` at
@@ -655,6 +662,8 @@ impl App {
             sftp_tx2: None,
             sftp_rx2: None,
             sftp_relay: None,
+            sftp_swallow_done: 0,
+            sftp_run_failed: false,
             sftp_picker_searching: false,
             sftp_anim: None,
             sftp_snapshot: std::cell::RefCell::new(None),

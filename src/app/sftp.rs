@@ -870,6 +870,7 @@ impl App {
             Some(s) if !s.queue.is_empty() => s.queue.clone(),
             _ => return,
         };
+        self.sftp_run_failed = false;
         // Two servers: neither worker can talk to the other, so each item is
         // relayed through a local temp file, one leg at a time.
         if self.sftp.as_ref().is_some_and(|s| s.left_is_remote()) {
@@ -895,6 +896,7 @@ impl App {
             return;
         }
 
+        self.sftp_run_failed = false;
         if let Some(tx) = self.sftp_tx.as_ref() {
             if tx.send(SftpCommand::RunQueue(queue.clone())).is_ok() {
                 if let Some(s) = self.sftp.as_mut() {
@@ -1023,11 +1025,30 @@ impl App {
         }
     }
 
+    /// Consume one owed trailing `QueueDone`, if any. Returns whether this
+    /// event was one of them and should be ignored.
+    fn sftp_take_swallowed_done(&mut self) -> bool {
+        if self.sftp_swallow_done == 0 {
+            return false;
+        }
+        self.sftp_swallow_done -= 1;
+        true
+    }
+
     /// Stop a relay part-way with a notice, leaving whatever hasn't moved in
     /// the queue so it can be retried.
     fn sftp_relay_abort(&mut self, msg: &str) {
         if let Some(relay) = self.sftp_relay.take() {
             let _ = std::fs::remove_dir_all(&relay.tmp_dir);
+        }
+        // The leg that failed still owes us a `QueueDone`; swallow it, and tell
+        // both workers to stop in case one is still grinding through a tree.
+        self.sftp_swallow_done += 1;
+        for tx in [self.sftp_tx.as_ref(), self.sftp_tx2.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            let _ = tx.send(SftpCommand::Cancel);
         }
         if let Some(s) = self.sftp.as_mut() {
             s.phase = Phase::Browsing;
@@ -1132,10 +1153,12 @@ impl App {
             }
             SftpEvent::OpDone => self.sftp_refresh_panes(),
             SftpEvent::Error(msg) if self.sftp_relay.is_some() => {
+                self.sftp_run_failed = true;
                 self.sftp_relay_abort(&msg);
                 self.sftp_refresh_panes();
             }
             SftpEvent::Error(msg) => {
+                self.sftp_run_failed = true;
                 if let Some(s) = self.sftp.as_mut() {
                     s.notice = Some(msg);
                 }
@@ -1143,7 +1166,9 @@ impl App {
             }
             // This worker only ever runs one leg of a relay at a time.
             SftpEvent::QueueDone => {
-                self.sftp_relay_queue_done();
+                if !self.sftp_take_swallowed_done() {
+                    self.sftp_relay_queue_done();
+                }
             }
             SftpEvent::Progress {
                 transferred, size, ..
@@ -1215,6 +1240,7 @@ impl App {
                 }
             }
             SftpEvent::TransferDone(_) => {}
+            SftpEvent::QueueDone if self.sftp_take_swallowed_done() => {}
             SftpEvent::QueueDone if self.sftp_relay.is_some() => {
                 self.sftp_relay_queue_done();
             }
@@ -1228,8 +1254,10 @@ impl App {
                 // Refresh both panes so completed transfers show up.
                 self.sftp_refresh_panes();
                 // Anything staged mid-run rolls straight into the next pass: a
-                // queue you can add to while it works has to keep working.
-                if more {
+                // queue you can add to while it works has to keep working. A
+                // run that reported an error stops there instead -- restarting
+                // it would retry the failing transfer forever.
+                if more && !self.sftp_run_failed {
                     self.sftp_run_queue();
                 }
             }
@@ -1238,10 +1266,12 @@ impl App {
                 self.sftp_refresh_panes();
             }
             SftpEvent::Error(msg) if self.sftp_relay.is_some() => {
+                self.sftp_run_failed = true;
                 self.sftp_relay_abort(&msg);
                 self.sftp_refresh_panes();
             }
             SftpEvent::Error(msg) => {
+                self.sftp_run_failed = true;
                 if let Some(s) = self.sftp.as_mut() {
                     s.notice = Some(msg);
                 }
