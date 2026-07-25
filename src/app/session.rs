@@ -176,11 +176,17 @@ impl App {
     }
 
     pub(crate) fn open_session_host_picker(&mut self) {
+        self.open_host_picker(PickerTarget::NewSession);
+    }
+
+    /// Open the shared host picker for whatever `target` wants a host.
+    pub(crate) fn open_host_picker(&mut self, target: PickerTarget) {
         let return_mode = self.mode;
         self.session_host_picker = Some(SessionHostPicker {
             query: String::new(),
             selected: 0,
             return_mode,
+            target,
         });
         self.mode = AppMode::SessionHostPicker;
     }
@@ -213,15 +219,16 @@ impl App {
             }
             KeyCode::Enter => {
                 let matches = self.session_host_matches();
-                let host_idx = self
+                let picked = self
                     .session_host_picker
                     .as_ref()
-                    .and_then(|p| matches.get(p.selected))
-                    .map(|(idx, _)| *idx);
+                    .and_then(|p| matches.get(p.selected).map(|(idx, _)| (*idx, p.target)));
                 self.session_host_picker = None;
                 self.mode = return_mode;
-                if let Some(idx) = host_idx {
-                    self.connect_host_at(idx)?;
+                match picked {
+                    Some((idx, PickerTarget::NewSession)) => self.connect_host_at(idx)?,
+                    Some((idx, PickerTarget::SftpLeftPane)) => self.sftp_connect_left_pane(idx)?,
+                    None => {}
                 }
             }
             KeyCode::Backspace => {

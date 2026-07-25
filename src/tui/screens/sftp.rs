@@ -213,14 +213,20 @@ fn render_browser(
     let local_rect = Rect::new(area.x, area.y, half, panes_h);
     let remote_rect = Rect::new(area.x + half, area.y, area.width - half, panes_h);
 
+    // The left pane is the local filesystem by default, but can be pointed at
+    // a second server -- in which case it carries that host's name.
+    let left_title = state.left_host.as_deref().unwrap_or("local");
     render_pane(
         buf,
         local_rect,
         &state.local,
-        "local",
+        left_title,
         state.focus == Focus::Local,
         state.searching && state.focus == Focus::Local,
     );
+    if state.left_connecting {
+        render_connecting(buf, local_rect, state.left_host.as_deref());
+    }
     render_pane(
         buf,
         remote_rect,
@@ -385,7 +391,8 @@ fn render_queue(
         let (text, style) = match notice {
             Some(n) => (format!("⚠ {n}"), theme::amber()),
             None => (
-                "queue: empty  (← download · → upload · u remove · c run)".to_string(),
+                "queue: empty  (← download · → upload · u remove · c run · o second host)"
+                    .to_string(),
                 theme::dim(),
             ),
         };

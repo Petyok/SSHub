@@ -310,6 +310,13 @@ pub struct App {
     /// Name of the host the live SFTP session is connected to, so the browser
     /// can open an SSH session back to the same host (completes the round trip).
     pub sftp_host: Option<String>,
+    /// Second SFTP worker, driving the left pane when it browses another server
+    /// instead of the local filesystem. `None` while the left pane is local.
+    pub sftp_tx2: Option<std::sync::mpsc::Sender<crate::sftp::SftpCommand>>,
+    pub sftp_rx2: Option<std::sync::mpsc::Receiver<crate::sftp::SftpEvent>>,
+    /// Server-to-server transfer in flight, relayed leg by leg through a local
+    /// temp file. `None` whenever the queue is a plain local transfer.
+    pub sftp_relay: Option<SftpRelay>,
     /// True while the SFTP picker's host search input is capturing keys.
     pub sftp_picker_searching: bool,
     /// In-flight SFTP tab sub-state slide and when it started (#35). `None` at
@@ -645,6 +652,9 @@ impl App {
             sftp_tx: None,
             sftp_rx: None,
             sftp_host: None,
+            sftp_tx2: None,
+            sftp_rx2: None,
+            sftp_relay: None,
             sftp_picker_searching: false,
             sftp_anim: None,
             sftp_snapshot: std::cell::RefCell::new(None),

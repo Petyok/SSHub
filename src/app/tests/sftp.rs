@@ -106,3 +106,126 @@ fn sftp_directory_change_stamps_its_direction() {
     app.detect_sftp_navigation();
     assert!(app.sftp_nav.iter().all(|n| n.is_none()));
 }
+
+/// A transfer between two servers is relayed in two legs through a local temp
+/// file: the source worker pulls it down, the destination worker pushes it up,
+/// and only then does the item leave the queue.
+#[test]
+fn server_to_server_transfer_relays_in_two_legs() {
+    use crate::sftp::model::{Direction, FileEntry, SftpState, Side};
+    use crate::sftp::SftpCommand;
+    use std::path::PathBuf;
+
+    let mut app = test_app(vec![]);
+    let (tx_right, right) = std::sync::mpsc::channel::<SftpCommand>();
+    let (tx_left, left) = std::sync::mpsc::channel::<SftpCommand>();
+    app.sftp_tx = Some(tx_right);
+    app.sftp_tx2 = Some(tx_left);
+
+    let mut state = SftpState::new("/srv", "/data");
+    state.left_host = Some("second-host".into());
+    state.remote.set_entries(vec![FileEntry {
+        name: "dump.sql".into(),
+        is_dir: false,
+        size: 42,
+        is_symlink: false,
+        perm: None,
+    }]);
+    state.remote.selected = state
+        .remote
+        .entries
+        .iter()
+        .position(|e| e.name == "dump.sql")
+        .unwrap();
+    app.sftp = Some(state);
+
+    // Stage right-to-left and run: the first leg goes to the *source* worker
+    // as a download into scratch space.
+    app.sftp
+        .as_mut()
+        .unwrap()
+        .stage_toward(Side::Local)
+        .unwrap();
+    app.sftp_run_queue();
+    let relay = app.sftp_relay.as_ref().expect("relay armed");
+    assert_eq!(relay.leg, RelayLeg::Fetching);
+    let tmp = relay.tmp_dir.join("dump.sql");
+    match right
+        .try_recv()
+        .expect("fetch leg dispatched to the source")
+    {
+        SftpCommand::RunQueue(q) => {
+            assert_eq!(q[0].direction, Direction::Download);
+            assert_eq!(q[0].src, PathBuf::from("/srv/dump.sql"));
+            assert_eq!(q[0].dst, tmp, "fetched into scratch space");
+        }
+        _ => panic!("expected a queue run"),
+    }
+    assert!(left.try_recv().is_err(), "destination waits its turn");
+
+    // The fetch lands: the push goes to the destination worker, out of scratch
+    // space and into the left pane's directory.
+    app.apply_sftp_event(crate::sftp::SftpEvent::QueueDone);
+    assert_eq!(app.sftp_relay.as_ref().unwrap().leg, RelayLeg::Pushing);
+    match left
+        .try_recv()
+        .expect("push leg dispatched to the destination")
+    {
+        SftpCommand::RunQueue(q) => {
+            assert_eq!(q[0].direction, Direction::Upload);
+            assert_eq!(q[0].src, tmp);
+            assert_eq!(q[0].dst, PathBuf::from("/data/dump.sql"));
+        }
+        _ => panic!("expected a queue run"),
+    }
+
+    // The push lands: the item is done, the relay is over and the queue empty.
+    app.apply_sftp_event_left(crate::sftp::SftpEvent::QueueDone);
+    assert!(app.sftp_relay.is_none(), "relay finished");
+    let state = app.sftp.as_ref().unwrap();
+    assert!(state.queue.is_empty(), "the relayed item left the queue");
+    assert_eq!(state.phase, crate::sftp::model::Phase::Browsing);
+    assert!(!tmp.exists(), "scratch copy cleaned up");
+}
+
+/// A failure part-way through a relay stops it and leaves the item queued, so
+/// it can be retried rather than silently vanishing.
+#[test]
+fn failed_relay_leg_stops_and_keeps_the_item() {
+    use crate::sftp::model::{FileEntry, SftpState, Side};
+    use crate::sftp::SftpCommand;
+
+    let mut app = test_app(vec![]);
+    let (tx_right, _right) = std::sync::mpsc::channel::<SftpCommand>();
+    let (tx_left, _left) = std::sync::mpsc::channel::<SftpCommand>();
+    app.sftp_tx = Some(tx_right);
+    app.sftp_tx2 = Some(tx_left);
+
+    let mut state = SftpState::new("/srv", "/data");
+    state.left_host = Some("second-host".into());
+    state.remote.set_entries(vec![FileEntry {
+        name: "dump.sql".into(),
+        is_dir: false,
+        size: 42,
+        is_symlink: false,
+        perm: None,
+    }]);
+    state.remote.selected = 1; // past the ".." row
+    app.sftp = Some(state);
+    app.sftp
+        .as_mut()
+        .unwrap()
+        .stage_toward(Side::Local)
+        .unwrap();
+    app.sftp_run_queue();
+
+    app.apply_sftp_event(crate::sftp::SftpEvent::Error("disk full".into()));
+    assert!(app.sftp_relay.is_none(), "relay stopped");
+    let state = app.sftp.as_ref().unwrap();
+    assert_eq!(state.queue.len(), 1, "the item stays queued for a retry");
+    assert_eq!(state.phase, crate::sftp::model::Phase::Browsing);
+    assert!(state
+        .notice
+        .as_deref()
+        .is_some_and(|n| n.contains("disk full")));
+}

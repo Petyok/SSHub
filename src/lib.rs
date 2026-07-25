@@ -351,6 +351,17 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
         }
     }
 
+    // Drain the left pane's worker, when it is browsing a second server.
+    if app.sftp_rx2.is_some() {
+        let events: Vec<crate::sftp::SftpEvent> = {
+            let rx = app.sftp_rx2.as_ref().unwrap();
+            std::iter::from_fn(|| rx.try_recv().ok()).collect()
+        };
+        for ev in events {
+            app.apply_sftp_event_left(ev);
+        }
+    }
+
     // Drain SSH probe log entries from background worker
     if let Some(rx) = app.probe_rx.as_ref() {
         let entries: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();

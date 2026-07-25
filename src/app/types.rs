@@ -1096,6 +1096,46 @@ pub struct SessionHostPicker {
     pub selected: usize,
     /// Mode to restore when the picker is dismissed without connecting.
     pub return_mode: AppMode,
+    /// What the picked host is for.
+    pub target: PickerTarget,
+}
+
+/// A server-to-server transfer in flight, relayed through a local temp file.
+///
+/// libssh2 has no server-to-server copy and the two panes are independent
+/// connections, so each item is moved in two legs: the source worker downloads
+/// it into a temp directory, then the destination worker uploads it from there.
+/// The temp copy is deleted as soon as the second leg lands.
+#[derive(Debug)]
+pub struct SftpRelay {
+    /// Items still to move, current one first.
+    pub items: std::collections::VecDeque<crate::sftp::model::QueuedTransfer>,
+    /// How many there were, for "relaying i/n".
+    pub total: usize,
+    /// Temp directory holding the item currently in flight.
+    pub tmp_dir: std::path::PathBuf,
+    /// Which leg is running.
+    pub leg: RelayLeg,
+}
+
+/// Which half of a relayed transfer is currently running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelayLeg {
+    /// Source worker is pulling the item down into the temp directory.
+    Fetching,
+    /// Destination worker is pushing it back up from there.
+    Pushing,
+}
+
+/// What a host picked in the shared host picker is wanted for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PickerTarget {
+    /// Open a new embedded SSH session tab (Ctrl+T).
+    #[default]
+    NewSession,
+    /// Point the SFTP browser's left pane at a second server, so two remote
+    /// hosts can be browsed side by side.
+    SftpLeftPane,
 }
 
 /// Single-field path prompt for the Termius CSV import ([`AppMode::ImportPrompt`]).

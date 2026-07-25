@@ -36,6 +36,11 @@ pub fn parent_of(path: &std::path::Path) -> Option<PathBuf> {
 }
 
 /// Which of the two panes a path/entry belongs to.
+///
+/// `Remote` is the right-hand pane, always a server. `Local` is the left-hand
+/// one, which is the local filesystem by default but can be pointed at a
+/// second server ([`SftpState::left_host`]) -- the name is kept for its default
+/// and because the worker protocol is written in these terms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Side {
     Remote,
@@ -235,6 +240,11 @@ pub struct SftpState {
     /// True from connect until the worker reports `Connected`, so the UI shows a
     /// "connecting…" state (the picker) instead of an empty browser.
     pub connecting: bool,
+    /// Name of the second server the left pane is browsing, or `None` when it
+    /// is showing the local filesystem.
+    pub left_host: Option<String>,
+    /// True from connecting the left pane's server until it reports `Connected`.
+    pub left_connecting: bool,
     /// The transfers handed to the worker for the run in flight. The queue can
     /// be added to while it runs, so completion clears exactly this snapshot
     /// rather than everything staged.
@@ -254,6 +264,8 @@ impl SftpState {
             notice: None,
             searching: false,
             connecting: false,
+            left_host: None,
+            left_connecting: false,
             running: Vec::new(),
         }
     }
@@ -423,6 +435,12 @@ impl SftpState {
             is_dir: entry.is_dir,
         });
         Ok(())
+    }
+
+    /// Whether the left pane is browsing a second server rather than the local
+    /// filesystem, which decides where its listings and file ops are sent.
+    pub fn left_is_remote(&self) -> bool {
+        self.left_host.is_some()
     }
 
     /// Take the transfers just finished out of the queue, leaving anything
