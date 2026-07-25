@@ -201,13 +201,22 @@ impl App {
             .sftp
             .as_ref()
             .is_some_and(|s| s.phase == crate::sftp::model::Phase::Running);
+        // The local pane stays browsable during a run (its listings are read
+        // straight off the filesystem). The remote one doesn't: the worker
+        // handles commands in order, so a listing queued behind a transfer
+        // would leave the pane looking hung until the transfer finished.
+        let can_navigate = !running
+            || self
+                .sftp
+                .as_ref()
+                .is_some_and(|s| s.focused_side() == Side::Local);
         // Esc / Cancel disconnects the live session back to the picker.
         if self.is_action(KeyAction::Cancel, &key) {
             self.sftp_disconnect();
             return Ok(());
         }
         // Enter descends into the selected directory of the focused pane.
-        if !running && self.is_action(KeyAction::Connect, &key) {
+        if can_navigate && self.is_action(KeyAction::Connect, &key) {
             if let Some((side, path)) = self.sftp.as_ref().and_then(|s| s.enter_dir()) {
                 self.sftp_navigate(side, path);
             }
@@ -238,7 +247,7 @@ impl App {
                 }
             }
             KeyCode::Backspace => {
-                if !running {
+                if can_navigate {
                     if let Some((side, path)) = self.sftp.as_ref().and_then(|s| s.parent_dir()) {
                         self.sftp_navigate(side, path);
                     }
@@ -247,18 +256,16 @@ impl App {
             // Panes are left=local, right=remote, so the arrow points at the
             // destination pane and the source is the focused one: ← downloads
             // (remote → local), → uploads (local → remote).
+            // Staging stays open while a run is in flight: whatever is added
+            // rolls into the next pass when this one finishes.
             KeyCode::Left => {
-                if !running {
-                    if let Some(s) = self.sftp.as_mut() {
-                        let _ = s.stage_toward(Side::Local);
-                    }
+                if let Some(s) = self.sftp.as_mut() {
+                    let _ = s.stage_toward(Side::Local);
                 }
             }
             KeyCode::Right => {
-                if !running {
-                    if let Some(s) = self.sftp.as_mut() {
-                        let _ = s.stage_toward(Side::Remote);
-                    }
+                if let Some(s) = self.sftp.as_mut() {
+                    let _ = s.stage_toward(Side::Remote);
                 }
             }
             // Remove the most recently staged transfer from the queue.
@@ -755,10 +762,13 @@ impl App {
             _ => return,
         };
         if let Some(tx) = self.sftp_tx.as_ref() {
-            if tx.send(SftpCommand::RunQueue(queue)).is_ok() {
+            if tx.send(SftpCommand::RunQueue(queue.clone())).is_ok() {
                 if let Some(s) = self.sftp.as_mut() {
                     s.phase = Phase::Running;
                     s.progress = None;
+                    // Remember exactly what went out: anything staged while
+                    // this runs stays queued for the next pass.
+                    s.running = queue;
                 }
             }
         }
@@ -863,13 +873,19 @@ impl App {
             }
             SftpEvent::TransferDone(_) => {}
             SftpEvent::QueueDone => {
+                let mut more = false;
                 if let Some(s) = self.sftp.as_mut() {
                     s.phase = Phase::Browsing;
                     s.progress = None;
-                    s.queue.clear();
+                    more = s.finish_run();
                 }
                 // Refresh both panes so completed transfers show up.
                 self.sftp_refresh_panes();
+                // Anything staged mid-run rolls straight into the next pass: a
+                // queue you can add to while it works has to keep working.
+                if more {
+                    self.sftp_run_queue();
+                }
             }
             SftpEvent::OpDone => {
                 // A remote remove/mkdir/rename landed — re-list so it shows.

@@ -235,6 +235,10 @@ pub struct SftpState {
     /// True from connect until the worker reports `Connected`, so the UI shows a
     /// "connecting…" state (the picker) instead of an empty browser.
     pub connecting: bool,
+    /// The transfers handed to the worker for the run in flight. The queue can
+    /// be added to while it runs, so completion clears exactly this snapshot
+    /// rather than everything staged.
+    pub running: Vec<QueuedTransfer>,
 }
 
 impl SftpState {
@@ -250,6 +254,7 @@ impl SftpState {
             notice: None,
             searching: false,
             connecting: false,
+            running: Vec::new(),
         }
     }
 
@@ -418,6 +423,14 @@ impl SftpState {
             is_dir: entry.is_dir,
         });
         Ok(())
+    }
+
+    /// Take the transfers just finished out of the queue, leaving anything
+    /// staged while the run was in flight. Returns whether work is left.
+    pub fn finish_run(&mut self) -> bool {
+        let done = std::mem::take(&mut self.running);
+        self.queue.retain(|q| !done.contains(q));
+        !self.queue.is_empty()
     }
 
     /// Remove the queued transfer at `idx` (no-op if out of range).
@@ -672,6 +685,33 @@ mod tests {
         s.local.cwd = PathBuf::from("/home/me/work");
         s.local.set_entries(Vec::new());
         assert!(s.stage_toward(Side::Local).is_err());
+        assert!(s.queue.is_empty());
+    }
+
+    #[test]
+    fn finishing_a_run_keeps_what_was_staged_meanwhile() {
+        let mut s = state_with_entries();
+        s.remote.selected = row(&s.remote, "a.txt");
+        s.stage_download().unwrap();
+        // The run goes out with what is queued right now.
+        s.running = s.queue.clone();
+        s.phase = Phase::Running;
+
+        // More work is staged while it runs.
+        s.remote.selected = row(&s.remote, "docs");
+        s.stage_download().unwrap();
+        assert_eq!(s.queue.len(), 2);
+
+        // Completion clears only the snapshot that ran, and reports that there
+        // is more to do.
+        assert!(s.finish_run(), "the mid-run entry is still pending");
+        assert_eq!(s.queue.len(), 1);
+        assert_eq!(s.queue[0].name, "docs");
+        assert!(s.running.is_empty());
+
+        // A run with nothing staged behind it reports itself as the last one.
+        s.running = s.queue.clone();
+        assert!(!s.finish_run());
         assert!(s.queue.is_empty());
     }
 
