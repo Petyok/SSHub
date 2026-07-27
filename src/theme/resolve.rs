@@ -220,7 +220,17 @@ impl<'a> Resolver<'a> {
 
         let semantic = self.resolve_semantic(id);
         let (gradients, gradient_ids) = self.resolve_gradients();
-        let components = self.resolve_components(&semantic, &gradient_ids, &gradients);
+        let components = self.resolve_components(id, &semantic, &gradient_ids, &gradients);
+        self.resolve_unused_palette();
+
+        // Diagnostics are produced in catalogue order, which is not source
+        // order; the presentation contract is the same one `validate` promises.
+        self.diagnostics
+            .sort_by(|a, b| a.sort_key().cmp(&b.sort_key()));
+        // A runaway reference chain is walked once per consumer on purpose (its
+        // failure is not cacheable), so the identical message can be emitted
+        // several times.
+        self.diagnostics.dedup();
 
         let failed = self.diagnostics.iter().any(ThemeDiagnostic::is_error);
         let theme = (!failed).then(|| ResolvedTheme {
@@ -444,6 +454,25 @@ impl<'a> Resolver<'a> {
             }
         }
         ResolvedSemantic::from_slots(slots)
+    }
+
+    /// Resolve every palette entry nothing referenced.
+    ///
+    /// Palette entries resolve lazily, so without this sweep a typo inside an
+    /// entry that happens to be unused would never be reported, while the same
+    /// typo in a used entry is fatal. Gradients are resolved eagerly, and the
+    /// checker must not have that asymmetry.
+    fn resolve_unused_palette(&mut self) {
+        let names: Vec<String> = self.merged.palette.keys().cloned().collect();
+        for name in names {
+            let label = format!("palette.{name}");
+            if self.cache.contains_key(&label) {
+                continue;
+            }
+            let entry = self.merged.palette[&name].clone();
+            let site = entry.site(label.clone());
+            self.resolve_reference(&label, &site);
+        }
     }
 
     fn origin_of(&self, id: &ThemeId) -> ThemeOrigin {
@@ -707,6 +736,7 @@ impl<'a> Resolver<'a> {
 
     fn resolve_components(
         &mut self,
+        id: &ThemeId,
         semantic: &ResolvedSemantic,
         gradient_ids: &BTreeMap<String, GradientId>,
         gradients: &[ResolvedGradient],
@@ -731,7 +761,7 @@ impl<'a> Resolver<'a> {
                 }
                 (RoleRef::Paint(role), RoleFallback::Paint(slot)) => {
                     paints[role as usize] = self
-                        .resolve_role_paint(spec, gradient_ids, gradients)
+                        .resolve_role_paint(id, spec, gradient_ids, gradients)
                         .unwrap_or_else(|| ResolvedPaint::Solid(semantic.slot(slot)));
                 }
                 (RoleRef::Tint(role), RoleFallback::Tint(fallback)) => {
@@ -803,6 +833,7 @@ impl<'a> Resolver<'a> {
 
     fn resolve_role_paint(
         &mut self,
+        theme_id: &ThemeId,
         spec: &crate::theme::catalog::RoleSpec,
         gradient_ids: &BTreeMap<String, GradientId>,
         gradients: &[ResolvedGradient],
@@ -829,9 +860,14 @@ impl<'a> Resolver<'a> {
                 let perimeter = gradients
                     .get(id.index())
                     .is_some_and(|gradient| gradient.direction == GradientDirection::Perimeter);
-                // Task 3 already rejects this pairing when both sides live in
-                // one file; only the inherited case is left to the resolver.
-                if perimeter && !spec.closed_frame && gradient_theme != entry.theme {
+                // Task 3 already rejects this pairing, but only in the file it
+                // is written in — and that file's diagnostics are not part of
+                // *this* outcome unless it is the theme being resolved. So the
+                // only case that may be suppressed here is both halves living
+                // in the theme under resolution.
+                let reported_by_this_files_validator =
+                    gradient_theme == entry.theme && &entry.theme == theme_id;
+                if perimeter && !spec.closed_frame && !reported_by_this_files_validator {
                     self.diagnostics.push(ThemeDiagnostic::error(
                         site.origin.clone(),
                         Some(site.span.clone()),
@@ -996,6 +1032,22 @@ foreground = \"semantic.accent\"
                 "fixture `{raw_id}` is not valid: {:#?}",
                 outcome.diagnostics
             );
+            map.insert(theme, outcome.definition.expect("definition"));
+        }
+        map
+    }
+
+    /// Same, but without the cleanliness assertion — for the one case that has
+    /// to model a *parent* file whose own validator run already found a
+    /// problem, because that run's diagnostics never reach the child's outcome.
+    fn definitions_unchecked<'a>(
+        entries: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> BTreeMap<ThemeId, ThemeDefinition> {
+        let mut map = BTreeMap::new();
+        for (raw_id, source) in entries {
+            let theme = id(raw_id);
+            let origin = ThemeOrigin::User(PathBuf::from(format!("{raw_id}.toml")));
+            let outcome = parse_and_validate(theme.clone(), origin, source, ValidationMode::Strict);
             map.insert(theme, outcome.definition.expect("definition"));
         }
         map
@@ -1348,6 +1400,61 @@ foreground = \"semantic.accent\"
     }
 
     #[test]
+    fn a_dangling_reference_in_an_unreferenced_palette_entry_is_still_reported() {
+        let outcome = resolve_with(
+            "child",
+            vec![(
+                "child",
+                "schema_version = 1\nname = \"Child\"\nextends = \"default\"\n\
+                 [palette]\ndead = \"palette.ghost\"\n",
+            )],
+        );
+        assert_failed_with(&outcome, "unknown colour reference `palette.ghost`");
+    }
+
+    #[test]
+    fn diagnostics_come_back_in_presentation_order() {
+        let outcome = resolve_with(
+            "child",
+            vec![(
+                "child",
+                "schema_version = 1\nname = \"Child\"\nextends = \"default\"\n\
+                 [palette]\ndead = \"palette.ghost\"\n\
+                 [semantic]\naccent = \"palette.nowhere\"\n\
+                 [components.footer.key]\nforeground = \"palette.missing\"\n",
+            )],
+        );
+        assert_eq!(outcome.diagnostics.len(), 3);
+        assert!(
+            outcome
+                .diagnostics
+                .windows(2)
+                .all(|pair| pair[0].sort_key() <= pair[1].sort_key()),
+            "diagnostics are not sorted: {:#?}",
+            outcome
+                .diagnostics
+                .iter()
+                .map(|d| (d.span.clone(), d.message.as_str()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_runaway_reference_chain_is_reported_once_for_all_its_consumers() {
+        // Both semantic slots enter the same over-long chain, and the depth
+        // failure is deliberately not cached — the message must not double.
+        let mut source = palette_chain(16);
+        source.push_str("warning = \"palette.p0\"\n");
+        let outcome = resolve_with("child", vec![("child", source.as_str())]);
+        let depth = outcome
+            .diagnostics
+            .iter()
+            .filter(|d| d.message.contains("nested deeper than 16 entries"))
+            .count();
+        assert_eq!(depth, 1, "{:#?}", outcome.diagnostics);
+    }
+
+    #[test]
     fn the_implicit_mixing_ground_is_the_merged_semantic_background() {
         let theme = resolved(
             "child",
@@ -1492,6 +1599,29 @@ foreground = \"semantic.accent\"
                 ),
             ],
         );
+        assert_failed_with(&outcome, "is not a closed frame");
+    }
+
+    #[test]
+    fn an_ancestor_that_defines_both_halves_still_fails_the_child() {
+        // `b` writes the gradient *and* the offending override, so the two
+        // provenances match — but `b`'s own validator diagnostics are not part
+        // of `c`'s outcome, and a caller gating activation on this outcome
+        // would otherwise ship the seam.
+        // `b` is the one fixture that is deliberately *not* validator-clean.
+        let definitions = definitions_unchecked([
+            ("default", DEFAULT_TEST_THEME),
+            (
+                "b",
+                "schema_version = 1\nname = \"B\"\nextends = \"default\"\n\
+                 [gradients.ring]\ndirection = \"perimeter\"\n\
+                 stops = [{ at = 0.0, color = \"#102030\" }, \
+                 { at = 1.0, color = \"#102030\" }]\n\
+                 [components.separator]\nprimary = { gradient = \"gradients.ring\" }\n",
+            ),
+            ("c", "schema_version = 1\nname = \"C\"\nextends = \"b\"\n"),
+        ]);
+        let outcome = resolve_theme(&id("c"), &definition_refs(&definitions));
         assert_failed_with(&outcome, "is not a closed frame");
     }
 
