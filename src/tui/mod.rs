@@ -45,6 +45,20 @@ pub fn format_local_time(epoch_secs: i64) -> String {
 /// colour, and — when `appearance.opaque_background` is on — with
 /// `semantic.canvas` behind whatever is left.
 pub fn render(frame: &mut Frame, app: &App) {
+    render_at(frame, app, std::time::Instant::now());
+}
+
+/// [`render`] with the frame clock supplied by the caller.
+///
+/// One instant for the whole composed frame. The passes that compose a frame
+/// have to agree about *where* a transition is: the exit slide's blit and the
+/// region protected from theme paint are the same animation frame or they are a
+/// bug, and re-reading the wall clock between them makes them differ by however
+/// long the frame took to draw. Tests inject it to stand still.
+pub fn render_at(frame: &mut Frame, app: &App, now: std::time::Instant) {
+    // Resolved once, before anything is drawn, and then reused by every pass
+    // that composes this frame.
+    let composition = FrameComposition::capture(app, frame.area(), now);
     // Reset the per-frame popup rect; each popup that draws sets it via
     // `popup_open_rect`, and we snapshot it afterwards for the close slide (#35).
     app.last_popup_rect.set(None);
@@ -62,26 +76,25 @@ pub fn render(frame: &mut Frame, app: &App) {
         // Mirror of the above: keep the dashboard fresh so entering a session has
         // something to slide over instead of blank cells.
         *app.dashboard_snapshot.borrow_mut() = Some(frame.buffer_mut().clone());
-        render_session_exit(frame, app);
+        render_session_exit(frame, app, &composition);
     }
     // Snapshot the popup shown this frame, slide a fresh one in from the top,
     // and throw a just-closed one upward.
     capture_popup_snapshot(frame, app);
     render_popup_open(frame, app);
     render_popup_close(frame, app);
-    apply_app_background(frame, app);
+    apply_app_background(frame, app, &composition);
     apply_panel_selection(frame, app);
     // Fade the whole dashboard up on the way out of the intro animation, so the
     // first frame arrives rather than replacing the splash outright (#35).
     if let Some(at) = app.dashboard_at.filter(|_| app.motion_enabled()) {
-        let p = tween::progress(at, SPLASH_FADE, std::time::Instant::now());
+        let p = tween::progress(at, SPLASH_FADE, now);
         if p < 1.0 {
             let area = frame.area();
-            // The same protected regions the background pass uses. This fade is
-            // armed once, when the event loop starts, and only time ends it —
-            // so opening or switching to a session inside its 360 ms window
-            // runs it over a frame full of remote output.
-            let protected = protected_remote_regions(area, app);
+            // The same regions the background pass protects, from the same
+            // capture. This fade is armed once, when the event loop starts, and
+            // only time ends it — so opening or switching to a session inside
+            // its 360 ms window runs it over a frame full of remote output.
             blit::fade(
                 frame.buffer_mut(),
                 area,
@@ -90,7 +103,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                     theme: app.theme(),
                     role: PaintRole::AppBackground,
                     paint_area: area,
-                    exclusions: &protected,
+                    exclusions: &composition.protected,
                 },
             );
         }
@@ -111,17 +124,17 @@ pub fn render(frame: &mut Frame, app: &App) {
 ///
 /// Both passes select on `Color::Reset`, so neither can touch a cell a widget
 /// already coloured.
-fn apply_app_background(frame: &mut Frame, app: &App) {
+fn apply_app_background(frame: &mut Frame, app: &App, composition: &FrameComposition) {
     let theme = app.theme();
     let area = frame.area();
-    let exclusions = protected_remote_regions(area, app);
+    let exclusions = &composition.protected;
     let buf = frame.buffer_mut();
 
     match theme.paint(PaintRole::AppBackground) {
         // `"terminal"`: the theme asked for no ground of its own.
         ResolvedPaint::Solid(Color::Reset) => {}
         ResolvedPaint::Solid(color) => {
-            fill_reset_background(buf, area, *color, &exclusions);
+            fill_reset_background(buf, area, *color, exclusions);
         }
         ResolvedPaint::Gradient(_) => {
             if let Some(gradient) = theme.paint_gradient(PaintRole::AppBackground) {
@@ -131,7 +144,7 @@ fn apply_app_background(frame: &mut Frame, app: &App) {
                     gradient,
                     PaintChannel::Background,
                     CellSelection::Matching(Color::Reset),
-                    &exclusions,
+                    exclusions,
                 );
             }
         }
@@ -142,56 +155,95 @@ fn apply_app_background(frame: &mut Frame, app: &App) {
     }
 }
 
-/// Every region of the **composed** frame that carries remote output.
+/// Everything about this frame's composition that more than one pass must agree
+/// on, resolved once from a single clock reading.
 ///
-/// Both the rect and the decision come from `session::render`, so the protected
-/// region cannot drift from what the `tui_term` widget really covers. The
-/// connecting spinner and the failure screen occupy the same rows but are
-/// SSHub's own chrome, and a theme is allowed to back them.
-///
-/// Two regions, because a frame is composed rather than simply drawn:
-///
-/// 1. the live viewport, while the session view is the frame;
-/// 2. the travelling band of a session-exit slide. That frame's *mode* is
-///    already the dashboard, but `render_session_exit` has just blitted a
-///    still-visible session snapshot over it — including its remote cells, whose
-///    unwritten backgrounds are `Color::Reset` and would otherwise be filled.
-fn protected_remote_regions(area: Rect, app: &App) -> Vec<Rect> {
-    let mut regions = Vec::new();
-
-    if shows_session_view(app) {
-        if let Some(session) = app.active_session() {
-            if crate::session::render::shows_remote_pty(session) {
-                regions.push(crate::session::render::remote_pty_rect(area));
-            }
-        }
-    }
-
-    // A snapshot is a verbatim copy of a session frame and no longer says which
-    // phase produced it, so a slide in flight is protected unconditionally. The
-    // cost of being wrong that way is an unpainted band for 280 ms; the cost of
-    // the other way is the host's own colours overwritten.
-    if let Some(offset) = session_exit_offset(app, area) {
-        let pty = crate::session::render::remote_pty_rect(area);
-        // The slide is horizontal, so the snapshot's remote rows stay put and
-        // only its left edge moves: everything left of the offset is the
-        // dashboard being revealed, and must still be painted.
-        let x = pty.x.saturating_add(offset);
-        if x < area.right() {
-            regions.push(Rect::new(x, pty.y, area.right() - x, pty.height));
-        }
-    }
-
-    regions
+/// A frame is composed, not simply drawn: the dashboard goes down, a session
+/// snapshot may be blitted over it, and only then do the background pass and the
+/// splash fade run. Each of those used to re-read the wall clock, so the slide's
+/// blit and the region protected from theme paint could be a millisecond — and
+/// therefore a column or more — apart, leaving the leading remote columns
+/// exposed. At the end of the slide they could disagree about whether it was
+/// still playing at all.
+struct FrameComposition {
+    /// How far the exit slide has carried its snapshot, if one is playing.
+    exit_offset: Option<u16>,
+    /// Every region of the composed frame that carries remote output, and which
+    /// no theme paint or fade may touch.
+    protected: Vec<Rect>,
 }
 
-/// How far the session-exit slide has carried its snapshot to the right, or
-/// `None` when no slide is playing.
+impl FrameComposition {
+    fn capture(app: &App, area: Rect, now: std::time::Instant) -> Self {
+        let mut protected = Vec::new();
+
+        // 1. The live viewport, while the session view *is* the frame. Both the
+        //    rect and the decision come from `session::render`, so the protected
+        //    region cannot drift from what the `tui_term` widget really covers.
+        //    The connecting spinner and the failure screen occupy the same rows
+        //    but are SSHub's own chrome, and a theme is allowed to back them.
+        if shows_session_view(app) {
+            if let Some(session) = app.active_session() {
+                if crate::session::render::shows_remote_pty(session) {
+                    protected.push(crate::session::render::remote_pty_rect(area));
+                }
+            }
+        }
+
+        // 2. The travelling band of an exit slide. That frame's *mode* is
+        //    already the dashboard, but `render_session_exit` has just blitted a
+        //    still-visible session snapshot over it — including its remote
+        //    cells, whose unwritten backgrounds are `Color::Reset` and would
+        //    otherwise be filled.
+        let exit_offset = session_exit_offset(app, area, now);
+        if let Some(offset) = exit_offset {
+            protected.extend(exit_snapshot_region(app, area, offset));
+        }
+
+        Self {
+            exit_offset,
+            protected,
+        }
+    }
+}
+
+/// Where the exit snapshot's remote cells land in *this* frame.
 ///
-/// The one source of that offset: [`render_session_exit`] blits with it and
-/// [`protected_remote_regions`] protects what it moved. A second expression of
-/// the same easing would be a drift waiting to happen.
-fn session_exit_offset(app: &App, area: Rect) -> Option<u16> {
+/// Derived from the snapshot's own geometry, not from the current frame's. The
+/// terminal can be resized while a slide plays (`crate::run_terminal_loop`
+/// resizes every session live and does not drop the snapshot), so a snapshot
+/// taken at 24 rows can be sliding out of a 20-row frame: rows that were the old
+/// PTY body then land on rows that are now footer or dashboard. Those cells are
+/// still the host's output. The rectangle is therefore taken from the snapshot,
+/// translated by the exact blit offset, and clipped to what the frame shows —
+/// which also keeps a *grown* terminal from having rows the snapshot never
+/// reached carved out of the dashboard.
+///
+/// A snapshot is a verbatim copy of a session frame and no longer says which
+/// phase produced it, so a slide in flight is protected unconditionally. The
+/// cost of being wrong that way is an unpainted band for 280 ms; the cost of the
+/// other way is the host's own colours overwritten.
+fn exit_snapshot_region(app: &App, area: Rect, offset: u16) -> Option<Rect> {
+    let snapshot = app.session_snapshot.borrow();
+    let source = crate::session::render::remote_pty_rect(snapshot.as_ref()?.area);
+    // The slide is horizontal, so the rows stay put and only the left edge
+    // moves: everything left of the offset is the dashboard being revealed, and
+    // must still be painted.
+    let travelled = Rect::new(
+        source.x.saturating_add(offset),
+        source.y,
+        source.width,
+        source.height,
+    );
+    let visible = travelled.intersection(area);
+    (!visible.is_empty()).then_some(visible)
+}
+
+/// How far the session-exit slide has carried its snapshot to the right at
+/// `now`, or `None` when no slide is playing.
+///
+/// Read exactly once per frame, by [`FrameComposition::capture`].
+fn session_exit_offset(app: &App, area: Rect, now: std::time::Instant) -> Option<u16> {
     if !app.motion_enabled() {
         return None;
     }
@@ -199,7 +251,7 @@ fn session_exit_offset(app: &App, area: Rect) -> Option<u16> {
     if app.session_snapshot.borrow().is_none() {
         return None;
     }
-    let p = tween::progress(at, SESSION_ANIM, std::time::Instant::now());
+    let p = tween::progress(at, SESSION_ANIM, now);
     if p >= 1.0 {
         return None;
     }
@@ -1011,11 +1063,11 @@ fn render_session_enter(frame: &mut Frame, app: &App) {
 /// Slide a just-left session's captured snapshot off to the right over
 /// [`SESSION_ANIM`] (#35), revealing the dashboard already drawn beneath. The
 /// mirror of [`render_session_enter`].
-fn render_session_exit(frame: &mut Frame, app: &App) {
+fn render_session_exit(frame: &mut Frame, app: &App, composition: &FrameComposition) {
     let area = frame.area();
-    // Shared with `protected_remote_regions`, which has to know exactly how far
-    // this blit moved the snapshot's remote cells.
-    let Some(off) = session_exit_offset(app, area) else {
+    // The captured offset, never a fresh clock reading: whatever this blit puts
+    // down has to be exactly what `composition.protected` covers.
+    let Some(off) = composition.exit_offset else {
         return;
     };
     let snap = app.session_snapshot.borrow();
@@ -2546,6 +2598,175 @@ mod tests {
         cell.set_symbol("R");
         cell.fg = REMOTE_FG;
         snapshot
+    }
+
+    // ── The exit transition, with time and terminal size controlled ──
+    //
+    // An exit frame is *composed*: the dashboard is drawn, a session snapshot is
+    // blitted over it, and only then does the background pass run. Both the
+    // instant the slide is at and the geometry the snapshot came from have to be
+    // the same for the blit and for the protection, or the leading remote
+    // columns fall outside the exclusion.
+
+    fn render_frame_at(app: &App, width: u16, height: u16, now: std::time::Instant) -> Buffer {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render_at(frame, app, now)).unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    /// A dashboard app mid-exit: `theme_id` live, a session snapshot of
+    /// `snapshot` geometry carrying a remote marker on `marker_row`, and the
+    /// slide armed so that `elapsed` has passed at the injected instant.
+    fn exiting_app(
+        theme_id: &str,
+        snapshot: Rect,
+        marker_row: u16,
+        elapsed: std::time::Duration,
+    ) -> (App, Option<tempfile::TempDir>, std::time::Instant) {
+        let (mut app, dir) = app_on(theme_id);
+        let started = std::time::Instant::now();
+        let mut buffer = Buffer::empty(snapshot);
+        let cell = buffer.cell_mut((snapshot.x, marker_row)).unwrap();
+        cell.set_symbol("R");
+        cell.fg = REMOTE_FG;
+        *app.session_snapshot.borrow_mut() = Some(buffer);
+        app.session_exit_at = Some(started);
+        (app, dir, started + elapsed)
+    }
+
+    /// Where the blit puts a snapshot column at `elapsed` into the slide.
+    fn exit_offset_at(width: u16, elapsed: std::time::Duration) -> u16 {
+        let p = elapsed.as_secs_f32() / SESSION_ANIM.as_secs_f32();
+        (tween::ease_out(p) * width as f32).round() as u16
+    }
+
+    #[test]
+    fn the_exit_slide_protects_the_columns_it_actually_blitted() {
+        // The defect this pins: the blit and the protection each sampled their
+        // own `Instant::now()`, so the protected band could start a column or
+        // more to the right of the cells the blit had already put down.
+        // `elapsed` is picked so the offset lands on a rounding boundary, where
+        // even a fraction of a millisecond between the two samples moves it.
+        let width = 80u16;
+        let area = Rect::new(0, 0, width, 24);
+        let pty = crate::session::render::remote_pty_rect(area);
+        for elapsed_ms in [1u64, 7, 23, 60, 140] {
+            let elapsed = std::time::Duration::from_millis(elapsed_ms);
+            for (theme_id, _) in explicit_background_themes() {
+                let (app, _dir, now) = exiting_app(theme_id, area, pty.y, elapsed);
+                let buffer = render_frame_at(&app, width, 24, now);
+                let expected_x = pty.x + exit_offset_at(width, elapsed);
+                assert_eq!(
+                    buffer[(expected_x, pty.y)].symbol(),
+                    "R",
+                    "{theme_id}: the blit ignored the frame clock at {elapsed_ms}ms"
+                );
+                assert_remote_cell_untouched_by_theme(
+                    &buffer,
+                    (expected_x, pty.y),
+                    allowed_pty_background(&app, false),
+                    &format!("exit at {elapsed_ms}ms, {theme_id}"),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_last_visible_frame_of_the_exit_slide_is_still_protected() {
+        // At the very end of the slide the second clock sample could return
+        // `None` — no slide, no protection — while the blit had just put the
+        // last visible columns down.
+        let width = 80u16;
+        let area = Rect::new(0, 0, width, 24);
+        let pty = crate::session::render::remote_pty_rect(area);
+        let elapsed = SESSION_ANIM - std::time::Duration::from_millis(1);
+        let (app, _dir, now) = exiting_app("fire", area, pty.y, elapsed);
+        let buffer = render_frame_at(&app, width, 24, now);
+        let expected_x = pty.x + exit_offset_at(width, elapsed);
+        if expected_x < width {
+            assert_remote_cell_untouched_by_theme(
+                &buffer,
+                (expected_x, pty.y),
+                allowed_pty_background(&app, false),
+                "exit, last visible frame",
+            );
+        }
+    }
+
+    #[test]
+    fn the_splash_fade_and_the_exit_slide_agree_on_the_same_frame() {
+        // The fade computed the protection a third time. With both running, an
+        // exposed remote cell loses its background *and* its foreground.
+        let width = 80u16;
+        let area = Rect::new(0, 0, width, 24);
+        let pty = crate::session::render::remote_pty_rect(area);
+        let elapsed = std::time::Duration::from_millis(23);
+        for (theme_id, _) in explicit_background_themes() {
+            let (mut app, _dir, now) = exiting_app(theme_id, area, pty.y, elapsed);
+            app.dashboard_at = Some(now);
+            let buffer = render_frame_at(&app, width, 24, now);
+            let expected_x = pty.x + exit_offset_at(width, elapsed);
+            assert_remote_cell_untouched_by_theme(
+                &buffer,
+                (expected_x, pty.y),
+                allowed_pty_background(&app, false),
+                &format!("exit under the splash fade, {theme_id}"),
+            );
+        }
+    }
+
+    #[test]
+    fn an_exit_snapshot_from_a_taller_terminal_is_protected_where_it_lands() {
+        // The terminal can shrink mid-slide: SSHub resizes live and does not
+        // drop the snapshot. Rows that were the old PTY body then land on rows
+        // that are now footer or dashboard — outside the *current* viewport,
+        // and paintable unless the protection comes from the snapshot.
+        let snapshot = Rect::new(0, 0, 80, 24);
+        let old_pty = crate::session::render::remote_pty_rect(snapshot);
+        let shrunk = Rect::new(0, 0, 80, 20);
+        let new_pty = crate::session::render::remote_pty_rect(shrunk);
+        // The last row the shrunk terminal still shows: inside the old PTY body,
+        // but the *new* frame's footer row — so the current viewport does not
+        // cover it and only a snapshot-derived region can.
+        let marker_row = shrunk.bottom() - 1;
+        assert!(
+            marker_row < old_pty.bottom() && marker_row >= new_pty.bottom(),
+            "the marker must be old remote output landing outside the new viewport"
+        );
+        let elapsed = std::time::Duration::from_millis(23);
+
+        for (theme_id, _) in explicit_background_themes() {
+            let (app, _dir, now) = exiting_app(theme_id, snapshot, marker_row, elapsed);
+            let buffer = render_frame_at(&app, shrunk.width, shrunk.height, now);
+            let expected_x = old_pty.x + exit_offset_at(shrunk.width, elapsed);
+            assert_remote_cell_untouched_by_theme(
+                &buffer,
+                (expected_x, marker_row),
+                allowed_pty_background(&app, false),
+                &format!("exit after a shrink, {theme_id}"),
+            );
+        }
+    }
+
+    #[test]
+    fn an_exit_snapshot_from_a_shorter_terminal_protects_only_what_it_covers() {
+        // The mirror case: a grown terminal must not have the rows the snapshot
+        // never reached carved out of the dashboard.
+        let snapshot = Rect::new(0, 0, 80, 20);
+        let grown = Rect::new(0, 0, 80, 24);
+        let old_pty = crate::session::render::remote_pty_rect(snapshot);
+        let elapsed = std::time::Duration::from_millis(23);
+        let (app, _dir, now) = exiting_app("fire", snapshot, old_pty.y, elapsed);
+        let buffer = render_frame_at(&app, grown.width, grown.height, now);
+
+        for row in old_pty.bottom()..grown.height {
+            assert_ne!(
+                buffer[(grown.width - 1, row)].bg,
+                ratatui::style::Color::Reset,
+                "row {row} is below the snapshot and must still be painted"
+            );
+        }
     }
 
     #[test]
