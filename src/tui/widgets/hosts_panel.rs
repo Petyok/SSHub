@@ -76,8 +76,14 @@ impl PanelGround<'_> {
 /// group headers and host rows inside the bordered area.
 pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
     let theme = app.theme();
-    let semantic = theme.semantic();
-    let selection_bg = semantic.selection_bg;
+    // The background the selected row is filled with, taken from the
+    // `selection.active` **role** so the per-span backgrounds on that row (the
+    // dot, the star, the dim address column) follow a theme that retunes the
+    // role rather than only the semantic token behind it.
+    let selection_bg = theme
+        .style(StyleRole::SelectionActive)
+        .bg
+        .unwrap_or(theme.semantic().selection_bg);
     let buf = frame.buffer_mut();
 
     // Total host count for the panel badge.
@@ -159,6 +165,7 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
         role: PaintRole::DashboardHostListBackground,
         area,
     };
+    let match_style = theme.style(StyleRole::DashboardHostListMatch);
 
     for (vrow, row) in visual.iter().enumerate() {
         if vrow < offset || vrow >= window_end {
@@ -190,21 +197,15 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
                     let blank = " ".repeat(cw);
                     buf.set_string(cx, y, &blank, theme.style(StyleRole::SelectionActive));
                 }
-                // A selected group header is the one place whose legacy style
-                // is literally `text_highlight on selection_bg`, i.e. the
-                // frozen value of `host_list.host_selected`; the host rows
-                // below carry `selection.active` (see the task report).
-                let selected_row_style = theme.style(StyleRole::DashboardHostListHostSelected);
+                // The group label is `host_list.group`, on the selection
+                // background when the row is picked. `default` pins the role to
+                // the frozen legacy colour, so parity lives in the theme rather
+                // than in a bypass here.
+                let group = theme.style(StyleRole::DashboardHostListGroup);
                 let (arrow_style, label_style) = if selected {
-                    (selected_row_style, selected_row_style)
+                    (group.bg(selection_bg), group.bg(selection_bg))
                 } else {
-                    (
-                        theme.style(StyleRole::TextMuted),
-                        // No `Style` role resolves to bare `text_highlight`,
-                        // and `host_list.group` resolves to `info` (cyan),
-                        // which the tree has never used for a group label.
-                        Style::default().fg(semantic.text_highlight),
-                    )
+                    (theme.style(StyleRole::TextMuted), group)
                 };
                 let muted = theme.style(StyleRole::TextMuted);
                 let mute_bg = if selected {
@@ -286,9 +287,11 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
                 buf.set_string(col, y, dot_char, dot_style);
                 col += 2; // dot + space
 
-                // Base style for text on this row.
+                // Base style for text on this row. The *name* is what
+                // `host_list.host_selected` names, so it takes that role when
+                // picked; the row fill behind it stays `selection.active`.
                 let name_style = if is_selected {
-                    theme.style(StyleRole::SelectionActive)
+                    theme.style(StyleRole::DashboardHostListHostSelected)
                 } else {
                     theme.style(StyleRole::DashboardHostListHost)
                 };
@@ -308,6 +311,26 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
                 if name_w > 0 {
                     let name_display = crate::tui::text::pad_ellipsize(name, name_w);
                     buf.set_string(col, y, &name_display, name_style);
+                    // Mark the characters the live search actually matched.
+                    // Written over the name, so the row keeps one style and
+                    // only the hits carry `host_list.match`.
+                    if let Some(hits) = app.search_matches.get(&host_idx) {
+                        let matched = match_style.patch(if is_selected {
+                            Style::default().bg(selection_bg)
+                        } else {
+                            Style::default()
+                        });
+                        for (i, ch) in name_display.chars().enumerate() {
+                            if !hits.contains(&(i as u32)) {
+                                continue;
+                            }
+                            let x = col + i as u16;
+                            if x >= inner_right {
+                                break;
+                            }
+                            buf.set_string(x, y, ch.to_string(), matched);
+                        }
+                    }
                     col += name_w as u16 + 1; // + gap
                 }
 
@@ -499,5 +522,171 @@ mod tests {
             bgs[4..].iter().all(|c| *c == Color::Rgb(0x12, 0x34, 0x56)),
             "the wiped half falls back to `host_list.background`: {bgs:?}"
         );
+    }
+
+    use crate::tui::widgets::panel_box::tests::{find_text, frame_at, themed_app};
+
+    /// Every host-list content role, each with a colour nobody else uses.
+    fn host_list_marker_theme() -> ResolvedTheme {
+        resolved_source(
+            "markers",
+            "schema_version = 1\nname = \"Markers\"\nextends = \"default\"\n\n\
+             [components.dashboard.host_list]\n\
+             host = { foreground = \"#ff0000\" }\n\
+             host_selected = { foreground = \"#00ff00\", background = \"#004400\" }\n\
+             group = { foreground = \"#0000ff\" }\n\
+             match = { foreground = \"#ffff00\" }\n\n\
+             [components.selection]\nactive = { foreground = \"#888888\", background = \"#222222\" }\n",
+        )
+    }
+
+    const AREA: Rect = Rect {
+        x: 0,
+        y: 0,
+        width: 46,
+        height: 14,
+    };
+
+    /// The selected host *name* takes `host_list.host_selected`.
+    ///
+    /// It used to take `selection.active`, which is the row fill — so an
+    /// override of the role whose name promises the selected host did nothing.
+    #[test]
+    fn the_selected_host_name_takes_the_host_selected_role() {
+        let app = themed_app(host_list_marker_theme());
+        let buf = frame_at(AREA, |frame| render_hosts_panel(frame, AREA, &app));
+
+        let (x, y) = find_text(&buf, "web-prod");
+        assert_eq!(
+            buf.cell((x, y)).unwrap().fg,
+            Color::Rgb(0x00, 0xff, 0x00),
+            "the selected host name takes `host_selected`, not `selection.active`"
+        );
+        assert_eq!(
+            buf.cell((x, y)).unwrap().bg,
+            Color::Rgb(0x00, 0x44, 0x00),
+            "the name carries `host_selected`'s own background"
+        );
+        // The bar the name sits on is still `selection.active`: a cell at the
+        // far end of the row, past everything the row writes.
+        assert_eq!(
+            buf.cell((AREA.width - 3, y)).unwrap().bg,
+            Color::Rgb(0x22, 0x22, 0x22),
+            "the row fill behind the name stays `selection.active`"
+        );
+    }
+
+    /// An unselected host name takes `host_list.host`.
+    #[test]
+    fn an_unselected_host_name_takes_the_host_role() {
+        let mut app = themed_app(host_list_marker_theme());
+        // Move the cursor off the only host so it renders unselected.
+        app.selected = usize::MAX;
+        let buf = frame_at(AREA, |frame| render_hosts_panel(frame, AREA, &app));
+
+        let (x, y) = find_text(&buf, "web-prod");
+        assert_eq!(
+            buf.cell((x, y)).unwrap().fg,
+            Color::Rgb(0xff, 0x00, 0x00),
+            "an unselected host name takes `host_list.host`"
+        );
+    }
+
+    /// The group label takes `host_list.group`.
+    ///
+    /// It used to be written straight from `semantic.text_highlight`, so the
+    /// published role controlled nothing. Parity now lives in `default`'s own
+    /// override of the role instead.
+    #[test]
+    fn a_group_label_takes_the_group_role() {
+        let group = crate::store::HostGroup {
+            id: 1,
+            name: "production".into(),
+            sort_order: 0,
+            default_identity_id: None,
+            parent_id: None,
+            reserved: false,
+        };
+        let mut app = themed_app(host_list_marker_theme());
+        app.groups = vec![group.clone()];
+        // Group membership lives on a managed host, so the fixture host is
+        // swapped for one that carries the group.
+        app.hosts = vec![crate::app::HostEntry::from_managed(
+            crate::store::ManagedHost {
+                id: 1,
+                name: "web-prod".into(),
+                label: None,
+                address: "10.0.0.1".into(),
+                port: 22,
+                group_id: Some(1),
+                identity_id: None,
+                group: Some(group.clone()),
+                groups: vec![group],
+                identity: None,
+                os_icon: None,
+                tags: Vec::new(),
+                notes: None,
+                proxy_jump: None,
+                forward_agent: false,
+                remote_command: None,
+                environment: None,
+                sort_order: 0,
+                favorite: false,
+                last_connected: None,
+                source: crate::store::HostSource::Launcher,
+                ssh_config_hash: None,
+                has_password: false,
+                username: None,
+                session_logging: crate::session_log::SessionLoggingOverride::Inherit,
+                transport: Default::default(),
+                created_at: 0,
+                updated_at: 0,
+            },
+        )];
+        app.rebuild_filter();
+
+        let buf = frame_at(AREA, |frame| render_hosts_panel(frame, AREA, &app));
+        let (x, y) = find_text(&buf, "production");
+        assert_eq!(
+            buf.cell((x, y)).unwrap().fg,
+            Color::Rgb(0x00, 0x00, 0xff),
+            "the group label takes `host_list.group`"
+        );
+    }
+
+    /// The characters the live search matched take `host_list.match`.
+    ///
+    /// This role had no productive caller at all before: the list drew the name
+    /// in one style and never marked what the query hit.
+    #[test]
+    fn the_searched_characters_take_the_match_role() {
+        let mut app = themed_app(host_list_marker_theme());
+        app.search_query = "prod".into();
+        app.rebuild_filter();
+        assert!(
+            !app.search_matches.is_empty(),
+            "the query must actually match, or this test proves nothing"
+        );
+
+        let buf = frame_at(AREA, |frame| render_hosts_panel(frame, AREA, &app));
+        let (x, y) = find_text(&buf, "web-prod");
+
+        // "web-prod": the query hits columns 4..8, and only those.
+        for (i, ch) in "web-prod".chars().enumerate() {
+            let fg = buf.cell((x + i as u16, y)).unwrap().fg;
+            if i >= 4 {
+                assert_eq!(
+                    fg,
+                    Color::Rgb(0xff, 0xff, 0x00),
+                    "`{ch}` at offset {i} is a match and takes `host_list.match`"
+                );
+            } else {
+                assert_ne!(
+                    fg,
+                    Color::Rgb(0xff, 0xff, 0x00),
+                    "`{ch}` at offset {i} did not match and must keep the row style"
+                );
+            }
+        }
     }
 }

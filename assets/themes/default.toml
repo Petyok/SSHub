@@ -61,3 +61,17 @@ info = "#6fb3b8"
 connecting = "#d6a76b"
 exited = "#c97a7a"
 unknown = "#3d4a44"
+
+# The two host-list roles whose semantic fallback does not reproduce what SSHub
+# actually drew, stated here rather than worked around in the renderer.
+#
+# `host_selected` falls back to `text_highlight on selection_bg`, but the
+# selected *host name* has always been drawn in `selection_fg` — `text_highlight`
+# is the selected *group* label. `group` falls back to `info` (cyan), a colour
+# the tree has never used for a group label.
+#
+# Both are semantic references, so a theme that retunes the core still moves
+# them with it.
+[components.dashboard.host_list]
+host_selected = { foreground = "semantic.selection_fg", background = "semantic.selection_bg" }
+group = { foreground = "semantic.text_highlight" }

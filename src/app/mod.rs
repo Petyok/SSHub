@@ -139,6 +139,10 @@ pub struct AppDeps {
 pub struct App {
     pub hosts: Vec<HostEntry>,
     pub filtered_indices: Vec<usize>,
+    /// Char offsets the live search matched inside each filtered host's
+    /// *display name*, keyed by its `hosts` index. Computed once per filter
+    /// rebuild rather than per frame, and empty whenever no query is active.
+    pub search_matches: std::collections::HashMap<usize, Vec<u32>>,
     pub selected: usize,
     pub search_query: String,
     pub mode: AppMode,
@@ -797,6 +801,7 @@ impl App {
             theme_picker: None,
             hosts: Vec::new(),
             filtered_indices: Vec::new(),
+            search_matches: std::collections::HashMap::new(),
             selected: 0,
             search_query: String::new(),
             mode: AppMode::Normal,

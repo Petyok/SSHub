@@ -364,21 +364,19 @@ fn render_centered_and_tail(
 ) {
     let dim = theme.style(StyleRole::SessionDebugTail);
 
-    // The connecting and failure screens write text only, so without this fill
-    // their body would inherit whatever `app.background` painted and
-    // `session.background` would never reach a cell. No PTY grid exists on
-    // either screen, so filling the whole body cannot recolour remote output.
-    crate::tui::blit::fill_paint(
-        frame.buffer_mut(),
-        area,
-        theme,
-        PaintRole::SessionBackground,
-    );
+    fill_session_background(frame, area, theme);
 
-    let tail_h = area.height.saturating_sub(1).min(8);
+    let tail_h = area.height.saturating_sub(1).min(DEBUG_TAIL_MAX);
     let top_h = area.height - tail_h;
     let top_area = Rect::new(area.x, area.y, area.width, top_h);
     let tail_area = Rect::new(area.x, area.y + top_h, area.width, tail_h);
+
+    // The rule between the centred block and the debug tail is the only chrome
+    // these two screens own, and it is what `session.border` styles. Drawn on
+    // the tail's top row so the layout above it is untouched.
+    if tail_h >= 1 {
+        render_session_rule(frame, Rect::new(area.x, tail_area.y, area.width, 1), theme);
+    }
 
     if top_h >= 1 {
         let pad_top = top_h.saturating_sub(center.len() as u16) / 2;
@@ -394,14 +392,67 @@ fn render_centered_and_tail(
         );
     }
 
-    if tail_h >= 1 {
+    if tail_h >= 2 {
+        let log_area = Rect::new(tail_area.x, tail_area.y + 1, tail_area.width, tail_h - 1);
+        let rows = log_area.height as usize;
         let all: Vec<&str> = session.debug_log().lines().collect();
-        let start = all.len().saturating_sub(tail_h as usize);
+        let start = all.len().saturating_sub(rows);
         let lines: Vec<Line> = all[start..]
             .iter()
             .map(|l| Line::from(Span::styled(truncate(l, area.width as usize), dim)))
             .collect();
-        frame.render_widget(Paragraph::new(lines), tail_area);
+        frame.render_widget(Paragraph::new(lines), log_area);
+    }
+}
+
+/// The height the `-v` debug tail claims at the bottom of a connect screen,
+/// including its `session.border` rule.
+const DEBUG_TAIL_MAX: u16 = 8;
+
+/// Lay `session.background` down under a screen SSHub draws entirely itself.
+///
+/// Both connect screens write text only, so without this fill their body would
+/// inherit whatever `app.background` painted and `session.background` would
+/// never reach a cell. Neither screen hosts a PTY grid (`shows_remote_pty` is
+/// false in both `Connecting` and `Exited`), so filling the whole body cannot
+/// recolour remote output. Goes through `fill_paint`, so a gradient background
+/// is sampled per cell instead of flattened.
+fn fill_session_background(frame: &mut Frame, area: Rect, theme: &ResolvedTheme) {
+    crate::tui::blit::fill_paint(
+        frame.buffer_mut(),
+        area,
+        theme,
+        PaintRole::SessionBackground,
+    );
+}
+
+/// A one-row horizontal rule in `session.border`.
+///
+/// Solid roles are written straight into the cells; a gradient role is drawn
+/// solid first and then recoloured by `paint_gradient_line`, which is the same
+/// solid-then-gradient order the panel frames use. The rule never overlaps the
+/// remote PTY viewport: it exists only on the connecting and failure screens,
+/// neither of which shows one.
+fn render_session_rule(frame: &mut Frame, area: Rect, theme: &ResolvedTheme) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let buf = frame.buffer_mut();
+    let color = crate::tui::blit::line_color(theme, PaintRole::SessionBorder, area);
+    buf.set_string(
+        area.x,
+        area.y,
+        "\u{2500}".repeat(area.width as usize),
+        Style::default().fg(color),
+    );
+    if let Some(gradient) = theme.paint_gradient(PaintRole::SessionBorder) {
+        crate::theme::gradient::paint_gradient_line(
+            buf,
+            area,
+            gradient,
+            crate::theme::gradient::PaintChannel::Foreground,
+            crate::theme::gradient::CellSelection::All,
+        );
     }
 }
 
@@ -484,7 +535,10 @@ fn render_connecting(
     let mute = theme.style(StyleRole::TextMuted);
 
     // Expanded: hand the whole body to the raw debug log, bottom-anchored.
+    // It returns before `render_centered_and_tail`, so it needs the session
+    // background laid down here — it is just as much SSHub-owned chrome.
     if session.debug_expanded() {
+        fill_session_background(frame, area, theme);
         render_full_debug_log(frame, area, session, theme);
         return;
     }
@@ -508,7 +562,7 @@ fn render_connecting(
         Line::from(vec![
             Span::styled(
                 crate::tui::tween::spinner_frame(elapsed),
-                Style::default().fg(theme.color(ColorRole::StatusSuccess)),
+                Style::default().fg(theme.color(ColorRole::SessionConnecting)),
             ),
             Span::raw("  "),
             Span::styled("connecting to ", mute),
@@ -672,72 +726,182 @@ mod tests {
         assert!(shows_remote_pty(&session));
     }
 
-    /// Both `session.background` and `session.title` had no productive call
-    /// site: the connecting and failure screens write text only, so their body
-    /// inherited `app.background` and the host name took the generic primary
-    /// text role. Under `default` all three coincide — only marker colours can
-    /// separate a bound role from an ignored one.
-    #[test]
-    fn the_connecting_screen_binds_the_session_background_and_title_roles() {
-        use crate::tui::widgets::panel_box::tests::resolved_source;
-        use ratatui::backend::TestBackend;
-        use ratatui::style::Color;
-        use ratatui::Terminal;
-
-        let theme = resolved_source(
+    /// A marker theme whose four session roles are all distinct from each other
+    /// *and* from the roles they used to be confused with.
+    fn session_marker_theme() -> ResolvedTheme {
+        crate::tui::widgets::panel_box::tests::resolved_source(
             "markers",
             "schema_version = 1\nname = \"Markers\"\nextends = \"default\"\n\n\
              [components.app]\nbackground = \"#010203\"\n\n\
              [components.session]\n\
              background = \"#123456\"\n\
-             title = { foreground = \"#ff00ff\" }\n\n\
-             [components.text]\nprimary = { foreground = \"#00ff00\" }\n",
-        );
+             border = \"#00ff00\"\n\
+             title = { foreground = \"#ff00ff\" }\n\
+             connecting = \"#ffaa00\"\n\n\
+             [components.status]\nsuccess = \"#00ff88\"\n\n\
+             [components.text]\nprimary = { foreground = \"#0000ff\" }\n",
+        )
+    }
 
+    fn draw(area: Rect, f: impl FnOnce(&mut Frame)) -> ratatui::buffer::Buffer {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal.draw(f).unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    /// The first cell of `needle`, searched row by row.
+    fn find(buf: &ratatui::buffer::Buffer, needle: &str) -> (u16, u16) {
+        let area = buf.area;
+        (area.top()..area.bottom())
+            .find_map(|y| {
+                let line: String = (area.left()..area.right())
+                    .map(|x| buf.cell((x, y)).unwrap().symbol())
+                    .collect();
+                line.find(needle)
+                    .map(|b| (area.left() + line[..b].chars().count() as u16, y))
+            })
+            .unwrap_or_else(|| panic!("`{needle}` is not on the screen"))
+    }
+
+    /// The row the `session.border` rule lands on, derived the same way the
+    /// renderer derives it rather than restated as a literal.
+    fn rule_row(area: Rect) -> u16 {
+        let tail_h = area.height.saturating_sub(1).min(DEBUG_TAIL_MAX);
+        area.y + area.height - tail_h
+    }
+
+    fn connecting_session() -> Session {
         let mut session = spawned_session();
         session.meta.address = Some("10.0.0.1".into());
         session.phase = SessionPhase::Connecting {
             started_at: std::time::Instant::now(),
         };
+        session
+    }
 
+    /// Connecting: background, title, the separator rule from `session.border`,
+    /// and the spinner on `session.connecting` rather than `status.success`.
+    #[test]
+    fn the_connecting_screen_binds_background_title_border_and_connecting() {
+        use ratatui::style::Color;
+
+        let theme = session_marker_theme();
+        let session = connecting_session();
         let area = Rect::new(0, 0, 60, 12);
-        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
-        terminal
-            .draw(|frame| {
-                render_connecting(
-                    frame,
-                    area,
-                    &session,
-                    &KeybindsConfig::default(),
-                    Duration::from_secs(1),
-                    &theme,
-                );
-            })
-            .unwrap();
-        let buf = terminal.backend().buffer().clone();
+        let buf = draw(area, |frame| {
+            render_connecting(
+                frame,
+                area,
+                &session,
+                &KeybindsConfig::default(),
+                Duration::from_secs(1),
+                &theme,
+            );
+        });
 
-        // A cell nothing was written over carries the body's own background.
         assert_eq!(
             buf.cell((0, area.height - 1)).unwrap().bg,
             Color::Rgb(0x12, 0x34, 0x56),
-            "the connecting body sits on `session.background`, not `app.background`"
+            "the body sits on `session.background`, not `app.background`"
         );
 
-        // The host name is the screen's title. Its row depends on how the
-        // centred block is padded, so find the row rather than assume one.
-        let (host_x, host_y) = (0..area.height)
-            .find_map(|y| {
-                let line: String = (0..area.width)
-                    .map(|x| buf.cell((x, y)).unwrap().symbol())
-                    .collect();
-                line.find("10.0.0.1")
-                    .map(|b| (line[..b].chars().count() as u16, y))
-            })
-            .expect("the host name is on the connecting screen");
+        let (hx, hy) = find(&buf, "10.0.0.1");
         assert_eq!(
-            buf.cell((host_x, host_y)).unwrap().fg,
+            buf.cell((hx, hy)).unwrap().fg,
             Color::Rgb(0xff, 0x00, 0xff),
             "the host name takes `session.title`"
+        );
+
+        // The spinner sits at the start of the same line as "connecting to".
+        let (cx, cy) = find(&buf, "connecting to");
+        // The line is `<spinner>  connecting to <host>`: one glyph plus two
+        // spaces sit in front of the label.
+        let spinner = buf.cell((cx - 3, cy)).unwrap();
+        assert_eq!(
+            spinner.fg,
+            Color::Rgb(0xff, 0xaa, 0x00),
+            "the spinner takes `session.connecting`, not `status.success`"
+        );
+
+        // The rule separating the centred block from the debug tail.
+        let rule_y = rule_row(area);
+        assert_eq!(buf.cell((0, rule_y)).unwrap().symbol(), "\u{2500}");
+        assert_eq!(
+            buf.cell((0, rule_y)).unwrap().fg,
+            Color::Rgb(0x00, 0xff, 0x00),
+            "the rule takes `session.border`"
+        );
+    }
+
+    /// The expanded debug log is a fully SSHub-owned screen and returns before
+    /// `render_centered_and_tail`, so it needs its own `session.background`.
+    #[test]
+    fn the_expanded_debug_screen_still_binds_the_session_background() {
+        use ratatui::style::Color;
+
+        let theme = session_marker_theme();
+        let mut session = connecting_session();
+        session.toggle_debug_expanded();
+        assert!(session.debug_expanded(), "the branch under test is active");
+
+        let area = Rect::new(0, 0, 60, 12);
+        let buf = draw(area, |frame| {
+            render_connecting(
+                frame,
+                area,
+                &session,
+                &KeybindsConfig::default(),
+                Duration::from_secs(1),
+                &theme,
+            );
+        });
+
+        assert_eq!(
+            buf.cell((0, 0)).unwrap().bg,
+            Color::Rgb(0x12, 0x34, 0x56),
+            "the expanded debug body sits on `session.background`"
+        );
+    }
+
+    /// The failure screen shares the same chrome and must bind the same roles.
+    #[test]
+    fn the_failure_screen_binds_background_title_and_border() {
+        use ratatui::style::Color;
+
+        let theme = session_marker_theme();
+        let mut session = spawned_session();
+        session.meta.address = Some("10.0.0.1".into());
+        session.phase = SessionPhase::Exited {
+            status: "exit 255".into(),
+            at: std::time::Instant::now(),
+        };
+
+        let area = Rect::new(0, 0, 60, 14);
+        let buf = draw(area, |frame| {
+            render_failure(frame, area, &session, &theme);
+        });
+
+        assert_eq!(
+            buf.cell((0, area.height - 1)).unwrap().bg,
+            Color::Rgb(0x12, 0x34, 0x56),
+            "the failure body sits on `session.background`"
+        );
+
+        let (hx, hy) = find(&buf, "10.0.0.1");
+        assert_eq!(
+            buf.cell((hx, hy)).unwrap().fg,
+            Color::Rgb(0xff, 0x00, 0xff),
+            "the host name takes `session.title`"
+        );
+
+        let rule_y = rule_row(area);
+        assert_eq!(buf.cell((0, rule_y)).unwrap().symbol(), "\u{2500}");
+        assert_eq!(
+            buf.cell((0, rule_y)).unwrap().fg,
+            Color::Rgb(0x00, 0xff, 0x00),
+            "the rule takes `session.border`"
         );
     }
 }

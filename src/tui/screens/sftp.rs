@@ -194,6 +194,21 @@ fn render_picker(frame: &mut Frame, area: Rect, app: &App) {
 
 // ── Browser sub-state ────────────────────────────────────────
 
+/// `render_browser` under a name the widget tests can reach, so the SFTP call
+/// site is proved by the same renderer production uses.
+#[cfg(test)]
+pub(crate) fn render_browser_for_test(
+    buf: &mut Buffer,
+    area: Rect,
+    state: &SftpState,
+    fill: f32,
+    staged: f32,
+    nav: [i32; 2],
+    theme: &ResolvedTheme,
+) {
+    render_browser(buf, area, state, fill, staged, nav, theme);
+}
+
 fn render_browser(
     buf: &mut Buffer,
     area: Rect,
@@ -298,7 +313,7 @@ fn render_pane(
             pane.filter, vis_n, total, hidden_note
         )
     };
-    render_panel_box(buf, rect, title, Some(&count), false, theme, SFTP_PANEL);
+    render_panel_box(buf, rect, title, Some(&count), focused, theme, SFTP_PANEL);
 
     let inner_x = rect.x + 2;
     let inner_w = rect.width.saturating_sub(4) as usize;
@@ -657,5 +672,51 @@ mod tests {
         // the body and the gap they open sits in the middle.
         blit_panes(&mut dst, a, &src, 0.5);
         assert_eq!(row(&dst, a, 1), "45    67");
+    }
+
+    /// `render_browser` computes the focus of both panes, but `render_pane`
+    /// used to hard-code `false` into `render_panel_box` — so
+    /// `components.sftp.panel.border_focused` could never take effect. Two
+    /// distinctly different marker paints, one focus each way.
+    #[test]
+    fn each_sftp_pane_takes_the_focused_border_role_when_it_has_focus() {
+        use crate::tui::widgets::panel_box::tests::resolved_source;
+        use ratatui::style::Color;
+
+        let theme = resolved_source(
+            "markers",
+            "schema_version = 1\nname = \"Markers\"\nextends = \"default\"\n\n\
+             [components.sftp.panel]\n\
+             border = \"#111111\"\n\
+             border_focused = \"#ee00ee\"\n",
+        );
+        let dim = Color::Rgb(0x11, 0x11, 0x11);
+        let lit = Color::Rgb(0xee, 0x00, 0xee);
+
+        let a = Rect::new(0, 0, 40, 10);
+        // `render_browser` splits at `area.width / 2`; the corners of the two
+        // panes are therefore exactly these two columns.
+        let local_x = a.x;
+        let remote_x = a.x + a.width / 2;
+
+        for (focus, expect_local, expect_remote) in
+            [(Focus::Local, lit, dim), (Focus::Remote, dim, lit)]
+        {
+            let mut state = SftpState::new("/remote", "/local");
+            state.focus = focus;
+            let mut buf = Buffer::empty(a);
+            render_browser(&mut buf, a, &state, 0.0, 1.0, [0, 0], &theme);
+
+            assert_eq!(
+                buf.cell((local_x, a.y)).unwrap().fg,
+                expect_local,
+                "local pane border with focus {focus:?}"
+            );
+            assert_eq!(
+                buf.cell((remote_x, a.y)).unwrap().fg,
+                expect_remote,
+                "remote pane border with focus {focus:?}"
+            );
+        }
     }
 }

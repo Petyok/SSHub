@@ -644,3 +644,128 @@ fn render_ping_zoomed(buf: &mut Buffer, area: Rect, app: &App, inner_x: u16, inn
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tui::widgets::panel_box::tests::{
+        buffer_at, find_text, resolved_source, themed_app,
+    };
+    use ratatui::style::Color;
+
+    const AREA: Rect = Rect {
+        x: 0,
+        y: 0,
+        width: 52,
+        height: 10,
+    };
+
+    /// The status and text roles the right column writes with.
+    fn right_marker_theme() -> ResolvedTheme {
+        resolved_source(
+            "markers",
+            "schema_version = 1\nname = \"Markers\"\nextends = \"default\"\n\n\
+             [components.status]\n\
+             success = \"#00ff00\"\n\
+             error = \"#ff0000\"\n\
+             info = \"#0000ff\"\n\n\
+             [components.text]\n\
+             primary = { foreground = \"#ffff00\" }\n\
+             muted = { foreground = \"#ff00ff\" }\n\
+             dim = { foreground = \"#00ffff\" }\n",
+        )
+    }
+
+    /// The recent-sessions placeholder is `text.dim`, and a session row's name
+    /// is `text.primary` with the reconnect glyph on `status.info`.
+    #[test]
+    fn the_recent_panel_takes_its_text_and_status_roles() {
+        let mut app = themed_app(right_marker_theme());
+
+        // Empty state first.
+        let buf = buffer_at(AREA, |buf| render_recent_panel(buf, AREA, &app));
+        let (x, y) = find_text(&buf, "no sessions yet");
+        assert_eq!(
+            buf.cell((x, y)).unwrap().fg,
+            Color::Rgb(0x00, 0xff, 0xff),
+            "the empty state takes `text.dim`"
+        );
+
+        // With a session, the row itself.
+        if let crate::app::HostEntry::Legacy { meta, .. } = &mut app.hosts[0] {
+            meta.last_connected = Some(1_000_000);
+        }
+        let buf = buffer_at(AREA, |buf| render_recent_panel(buf, AREA, &app));
+        let (nx, ny) = find_text(&buf, "web-prod");
+        assert_eq!(
+            buf.cell((nx, ny)).unwrap().fg,
+            Color::Rgb(0xff, 0xff, 0x00),
+            "the session name takes `text.primary`"
+        );
+        assert_eq!(
+            buf.cell((nx - 2, ny)).unwrap().fg,
+            Color::Rgb(0x00, 0x00, 0xff),
+            "the reconnect glyph takes `status.info`"
+        );
+    }
+
+    /// The auth panel's ok/failed dots are the success and error roles, and its
+    /// empty state is `text.dim`.
+    #[test]
+    fn the_auth_panel_takes_its_status_roles() {
+        let mut app = themed_app(right_marker_theme());
+
+        let buf = buffer_at(AREA, |buf| render_auth_panel(buf, AREA, &app));
+        let (x, y) = find_text(&buf, "no audit data");
+        assert_eq!(
+            buf.cell((x, y)).unwrap().fg,
+            Color::Rgb(0x00, 0xff, 0xff),
+            "the empty state takes `text.dim`"
+        );
+
+        app.auth_stats_cache = (3, 1);
+        let buf = buffer_at(AREA, |buf| render_auth_panel(buf, AREA, &app));
+        let (okx, oky) = find_text(&buf, "ok 3");
+        assert_eq!(
+            buf.cell((okx - 2, oky)).unwrap().fg,
+            Color::Rgb(0x00, 0xff, 0x00),
+            "the ok dot takes `status.success`"
+        );
+        let (fx, fy) = find_text(&buf, "failed 1");
+        assert_eq!(
+            buf.cell((fx - 2, fy)).unwrap().fg,
+            Color::Rgb(0xff, 0x00, 0x00),
+            "the failed dot takes `status.error`"
+        );
+        assert_eq!(
+            buf.cell((okx, oky)).unwrap().fg,
+            Color::Rgb(0xff, 0xff, 0x00),
+            "the counts take `text.primary`"
+        );
+    }
+
+    /// The ping panel's aggregate sparkline is `status.info` — the legacy cyan,
+    /// deliberately *not* the metrics green ramp the latency panel uses.
+    #[test]
+    fn the_ping_sparkline_takes_the_info_role() {
+        let mut app = themed_app(right_marker_theme());
+
+        let buf = buffer_at(AREA, |buf| render_ping_panel(buf, AREA, &app));
+        let (x, y) = find_text(&buf, "waiting for ping data");
+        assert_eq!(
+            buf.cell((x, y)).unwrap().fg,
+            Color::Rgb(0x00, 0xff, 0xff),
+            "the empty state takes `text.dim`"
+        );
+
+        app.ping_data
+            .insert("web-prod".into(), vec![10, 40, 90, 20, 60]);
+        let buf = buffer_at(AREA, |buf| render_ping_panel(buf, AREA, &app));
+        // The sparkline occupies the first body row, starting two cols in.
+        assert_eq!(
+            buf.cell((AREA.x + 2, AREA.y + 1)).unwrap().fg,
+            Color::Rgb(0x00, 0x00, 0xff),
+            "the aggregate sparkline takes `status.info`"
+        );
+    }
+}

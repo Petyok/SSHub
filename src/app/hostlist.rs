@@ -445,11 +445,17 @@ impl App {
         // The flash peaks on the *active* theme's brightest text, not the
         // frozen legacy constant — a dark-on-light theme flashes to its own
         // highlight instead of punching a light grey hole in the row.
-        crate::tui::tween::color_lerp(
-            self.theme().semantic().text_bright,
-            settled,
-            crate::tui::tween::ease_out(p),
-        )
+        //
+        // Read from the `text.bright` **role**, not from `semantic.text_bright`:
+        // the two coincide under `default`, but a theme overriding the role has
+        // to reach the flash too. The role's `Style` is only guaranteed a
+        // foreground when it sets one, so the token is the documented fallback.
+        let theme = self.theme();
+        let peak = theme
+            .style(crate::theme::catalog::StyleRole::TextBright)
+            .fg
+            .unwrap_or(theme.semantic().text_bright);
+        crate::tui::tween::color_lerp(peak, settled, crate::tui::tween::ease_out(p))
     }
 
     /// The visual rows of the group's subtree as it stands right now: what a
@@ -640,6 +646,21 @@ impl App {
             .iter()
             .flat_map(|s| s.host_indices.iter().copied())
             .collect();
+
+        // Where the query landed inside each surviving row's display name, so
+        // the list can mark it. Done here, once per rebuild, because the
+        // renderer only holds `&App` and the matcher needs `&mut`.
+        self.search_matches.clear();
+        if !self.search_query.is_empty() {
+            let query = self.search_query.clone();
+            for &idx in &self.filtered_indices {
+                let name = self.hosts[idx].display_name().to_string();
+                let hits = self.search.display_match_indices(&name, &query);
+                if !hits.is_empty() {
+                    self.search_matches.insert(idx, hits);
+                }
+            }
+        }
 
         // Tree mode (navigable, collapsible headers) kicks in only once there's
         // a real group section to show — a pure ssh_config list stays flat. The

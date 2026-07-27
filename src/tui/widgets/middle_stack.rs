@@ -812,7 +812,11 @@ pub(crate) fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
 
 #[cfg(test)]
 mod tests {
-    use super::wrap_line;
+    use super::*;
+    use crate::tui::widgets::panel_box::tests::{
+        buffer_at, find_text, frame_at, resolved_source, themed_app,
+    };
+    use ratatui::style::Color;
 
     #[test]
     fn wraps_on_word_boundaries() {
@@ -830,5 +834,142 @@ mod tests {
     fn never_empty_and_short_fits() {
         assert_eq!(wrap_line("", 10), vec!["".to_string()]);
         assert_eq!(wrap_line("hi", 10), vec!["hi".to_string()]);
+    }
+
+    const AREA: Rect = Rect {
+        x: 0,
+        y: 0,
+        width: 60,
+        height: 14,
+    };
+
+    /// The details, metrics and status roles the middle column writes with,
+    /// each on a colour nobody else uses.
+    fn middle_marker_theme() -> crate::theme::model::ResolvedTheme {
+        resolved_source(
+            "markers",
+            "schema_version = 1\nname = \"Markers\"\nextends = \"default\"\n\n\
+             [components.dashboard.details]\n\
+             label = { foreground = \"#ff0000\" }\n\
+             value = { foreground = \"#00ff00\" }\n\
+             metadata = { foreground = \"#0000ff\" }\n\n\
+             [components.dashboard.metrics]\n\
+             sparkline_low = \"#111100\"\n\
+             sparkline_medium = \"#222200\"\n\
+             sparkline_high = \"#333300\"\n\n\
+             [components.text]\n\
+             bright = { foreground = \"#ffff00\" }\n\
+             dim = { foreground = \"#00ffff\" }\n",
+        )
+    }
+
+    /// `find_text`, but never on the frame's top row — a panel title often
+    /// repeats the very word the body is being checked for.
+    fn find_in_body(buf: &ratatui::buffer::Buffer, needle: &str) -> (u16, u16) {
+        let area = buf.area;
+        (area.top() + 1..area.bottom())
+            .find_map(|y| {
+                let line: String = (area.left()..area.right())
+                    .map(|x| buf.cell((x, y)).unwrap().symbol())
+                    .collect();
+                line.find(needle)
+                    .map(|b| (area.left() + line[..b].chars().count() as u16, y))
+            })
+            .unwrap_or_else(|| panic!("`{needle}` is not in the panel body"))
+    }
+
+    /// The host details card writes value, label and metadata from their own
+    /// three roles rather than from one shared text style.
+    #[test]
+    fn the_details_card_separates_value_label_and_metadata() {
+        let app = themed_app(middle_marker_theme());
+        let buf = buffer_at(AREA, |buf| render_host_panel(buf, AREA, &app));
+
+        // `user@host:port` is the value row.
+        let (x, y) = find_text(&buf, "ubuntu@10.0.0.1:22");
+        assert_eq!(
+            buf.cell((x, y)).unwrap().fg,
+            Color::Rgb(0x00, 0xff, 0x00),
+            "the address row takes `details.value`"
+        );
+
+        // The name row above it is the card's bright headline. Searched in the
+        // body: the panel *title* is `host \u{b7} web-prod` and carries
+        // `details.title` instead.
+        let (nx, ny) = find_in_body(&buf, "web-prod");
+        assert_eq!(
+            buf.cell((nx, ny)).unwrap().fg,
+            Color::Rgb(0xff, 0xff, 0x00),
+            "the host name takes `text.bright`"
+        );
+
+        // The os/latency row is the label role.
+        let (lx, ly) = find_text(&buf, "unknown os");
+        assert_eq!(
+            buf.cell((lx, ly)).unwrap().fg,
+            Color::Rgb(0xff, 0x00, 0x00),
+            "the os row takes `details.label`"
+        );
+    }
+
+    /// The latency bars ramp through the three `metrics.sparkline_*` colours,
+    /// which is the only place those roles reach a cell.
+    #[test]
+    fn the_latency_bars_take_the_three_metrics_sparkline_colours() {
+        let mut app = themed_app(middle_marker_theme());
+        // A spread wide enough that the ramp uses all three bands: the panel
+        // colours each column by its value against the window peak.
+        app.ping_data
+            .insert("web-prod".into(), vec![10, 20, 30, 200, 400, 600, 800, 900]);
+
+        let buf = buffer_at(AREA, |buf| render_latency_panel(buf, AREA, &app));
+
+        let mut seen = std::collections::HashSet::new();
+        for y in AREA.top()..AREA.bottom() {
+            for x in AREA.left()..AREA.right() {
+                seen.insert(buf.cell((x, y)).unwrap().fg);
+            }
+        }
+        for (name, want) in [
+            ("sparkline_low", Color::Rgb(0x11, 0x11, 0x00)),
+            ("sparkline_medium", Color::Rgb(0x22, 0x22, 0x00)),
+            ("sparkline_high", Color::Rgb(0x33, 0x33, 0x00)),
+        ] {
+            assert!(
+                seen.contains(&want),
+                "`metrics.{name}` never reached a cell; saw {seen:?}"
+            );
+        }
+    }
+
+    /// The SSH log's empty state is the dim text role, and the agent panel's
+    /// labels and values are separate roles.
+    #[test]
+    fn the_ssh_log_and_agent_panels_take_their_text_roles() {
+        let app = themed_app(middle_marker_theme());
+
+        let buf = frame_at(AREA, |frame| render_ssh_log_panel(frame, AREA, &app));
+        let (x, y) = find_text(&buf, "no events for");
+        assert_eq!(
+            buf.cell((x, y)).unwrap().fg,
+            Color::Rgb(0x00, 0xff, 0xff),
+            "the ssh-log placeholder takes `text.dim`"
+        );
+
+        // Below `ZOOM_CONTENT_MIN`, so the compact `label  value` rows render.
+        let compact = Rect::new(0, 0, 60, 8);
+        let buf = buffer_at(compact, |buf| render_agent_panel(buf, compact, &app));
+        let (lx, ly) = find_text(&buf, "socket");
+        assert_eq!(
+            buf.cell((lx, ly)).unwrap().fg,
+            Color::Rgb(0x00, 0xff, 0xff),
+            "the agent panel's labels take `text.dim`"
+        );
+        let (kx, ky) = find_text(&buf, "loaded");
+        assert_eq!(
+            buf.cell((kx, ky)).unwrap().fg,
+            Color::Rgb(0xff, 0xff, 0x00),
+            "the agent panel's key count takes `text.bright`"
+        );
     }
 }

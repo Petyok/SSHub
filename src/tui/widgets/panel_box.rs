@@ -312,6 +312,88 @@ pub(crate) mod tests {
             .unwrap_or_else(|| panic!("the test theme resolves: {:#?}", outcome.diagnostics))
     }
 
+    // ── Shared dashboard harness ─────────────────────────────
+    //
+    // Every panel migrated in this task is proved by *invoking its real
+    // renderer* under a marker theme, not by comparing role constants. These
+    // helpers are what make that cheap enough to do for all of them.
+
+    struct NoHosts;
+
+    impl crate::ssh::HostResolver for NoHosts {
+        fn list_hosts(&self) -> anyhow::Result<Vec<String>> {
+            Ok(vec![])
+        }
+        fn resolve_host(&self, name: &str) -> anyhow::Result<crate::ssh::SshHost> {
+            Ok(crate::ssh::SshHost::new(name))
+        }
+    }
+
+    /// An app carrying one host and `theme`, built entirely in memory: no real
+    /// HOME, config, keyring or on-disk database.
+    pub(crate) fn themed_app(theme: crate::theme::model::ResolvedTheme) -> crate::app::App {
+        use crate::app::{AppDeps, HostEntry};
+        use crate::metadata::{HostMetadata, MetadataDb};
+        use crate::ssh::SshHost;
+        use std::sync::Arc;
+
+        let mut app = crate::app::App::new_with_deps(
+            crate::config::AppConfig::default(),
+            AppDeps {
+                resolver: Box::new(NoHosts),
+                metadata: Arc::new(MetadataDb::default()),
+                store: Arc::new(crate::store::LauncherStore::open_in_memory().unwrap()),
+                password_store: Box::new(crate::credentials::NoopPasswordStore),
+            },
+        );
+        let mut web = SshHost::new("web-prod");
+        web.hostname = Some("10.0.0.1".into());
+        web.user = Some("ubuntu".into());
+        app.hosts = vec![HostEntry::Legacy {
+            host: web,
+            meta: HostMetadata {
+                host_name: "web-prod".into(),
+                tags: vec!["prod".into()],
+                favorite: true,
+                ..Default::default()
+            },
+        }];
+        app.rebuild_filter();
+        app.activate_resolved_theme(std::rc::Rc::new(theme));
+        app
+    }
+
+    /// Render into a standalone buffer at the origin, so a test can name
+    /// absolute coordinates.
+    pub(crate) fn buffer_at(area: Rect, draw: impl FnOnce(&mut Buffer)) -> Buffer {
+        let mut buf = Buffer::empty(area);
+        draw(&mut buf);
+        buf
+    }
+
+    /// Same, for the renderers that take a `Frame` rather than a `Buffer`.
+    pub(crate) fn frame_at(area: Rect, draw: impl FnOnce(&mut ratatui::Frame)) -> Buffer {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal.draw(draw).unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    /// The cell where `needle` starts, searched row by row.
+    pub(crate) fn find_text(buf: &Buffer, needle: &str) -> (u16, u16) {
+        let area = buf.area;
+        (area.top()..area.bottom())
+            .find_map(|y| {
+                let line: String = (area.left()..area.right())
+                    .map(|x| buf.cell((x, y)).unwrap().symbol())
+                    .collect();
+                line.find(needle)
+                    .map(|b| (area.left() + line[..b].chars().count() as u16, y))
+            })
+            .unwrap_or_else(|| panic!("`{needle}` is not in the rendered buffer"))
+    }
+
     /// The built-in `default`, resolved in memory.
     pub(crate) fn resolved_default() -> crate::theme::model::ResolvedTheme {
         resolved_source(
@@ -501,48 +583,325 @@ pub(crate) mod tests {
         assert_eq!(focused[(0, 0)].fg, Color::Rgb(0xee, 0x00, 0xee));
     }
 
-    /// The eleven call sites must carry *eleven* bundles, not the same one
-    /// pasted eleven times.
+    /// One theme giving every migrated panel a border, focused border, title,
+    /// count and background nobody else uses.
     ///
-    /// Nothing about wiring `render_panel_box` forces the bundles apart: a
-    /// copy-pasted `HOST_LIST_PANEL` at the latency panel compiles, renders,
-    /// and is invisible under `default` — every dashboard border resolves to
-    /// the same `border` semantic there. This asserts on the role identities
-    /// instead, where the mistake is actually visible.
+    /// `border` and `border_focused` are one hex apart per family on purpose:
+    /// the assertions below name the exact value, so a bundle copy-pasted from
+    /// the neighbouring panel fails on the colour, not on a vague "something
+    /// changed".
+    fn all_panels_marker_theme() -> crate::theme::model::ResolvedTheme {
+        let mut src =
+            String::from("schema_version = 1\nname = \"Panels\"\nextends = \"default\"\n");
+        for (i, family) in PANEL_FAMILIES.iter().enumerate() {
+            let n = i as u32;
+            src.push_str(&format!(
+                "\n[components.{}]\n\
+                 border = \"#{:02x}0000\"\n\
+                 border_focused = \"#{:02x}0001\"\n\
+                 title = {{ foreground = \"#{:02x}0002\" }}\n\
+                 count = {{ foreground = \"#{:02x}0003\" }}\n\
+                 background = \"#{:02x}0004\"\n",
+                family.path,
+                0x11 + n,
+                0x11 + n,
+                0x11 + n,
+                0x11 + n,
+                0x11 + n
+            ));
+        }
+        resolved_source("panels", &src)
+    }
+
+    /// The ten role families behind the eleven call sites (broadcast is used
+    /// twice), in the order their marker colours are generated.
+    ///
+    /// Only the TOML path is needed: what each family's five roles resolve to
+    /// is proved by rendering, not by naming the constants again.
+    const PANEL_FAMILIES: &[PanelFamily] = &[
+        PanelFamily {
+            path: "dashboard.host_list",
+        },
+        PanelFamily {
+            path: "dashboard.details",
+        },
+        PanelFamily {
+            path: "dashboard.ssh_log",
+        },
+        PanelFamily {
+            path: "dashboard.agent",
+        },
+        PanelFamily {
+            path: "dashboard.latency",
+        },
+        PanelFamily {
+            path: "dashboard.recent",
+        },
+        PanelFamily {
+            path: "dashboard.auth",
+        },
+        PanelFamily {
+            path: "dashboard.ping",
+        },
+        PanelFamily { path: "sftp.panel" },
+        PanelFamily {
+            path: "broadcast.panel",
+        },
+    ];
+
+    struct PanelFamily {
+        path: &'static str,
+    }
+
+    fn marker(family_index: usize, slot: u8) -> Color {
+        Color::Rgb(0x11 + family_index as u8, 0x00, slot)
+    }
+
+    /// Assert that whatever `render` drew into `area` carries `family`'s own
+    /// border, title, count and background — at named cells, in a real buffer.
+    fn assert_panel_wears(
+        buf: &Buffer,
+        area: Rect,
+        family_index: usize,
+        focused: bool,
+        title: &str,
+        count: Option<&str>,
+        // `body` is a cell no content is drawn over. The selection bar and the
+        // footer paint their own background, so which cell is free differs per
+        // panel and the caller names it.
+        body: (u16, u16),
+    ) {
+        let path = PANEL_FAMILIES[family_index].path;
+        let border_slot = if focused { 1 } else { 0 };
+        assert_eq!(
+            buf.cell((area.x, area.y)).unwrap().fg,
+            marker(family_index, border_slot),
+            "{path}: top-left border corner (focused = {focused})"
+        );
+        let (tx, ty) = find_text(buf, title);
+        assert_eq!(
+            buf.cell((tx, ty)).unwrap().fg,
+            marker(family_index, 2),
+            "{path}: title `{title}`"
+        );
+        if let Some(c) = count {
+            let (cx, cy) = find_text(buf, c);
+            assert_eq!(
+                buf.cell((cx, cy)).unwrap().fg,
+                marker(family_index, 3),
+                "{path}: count `{c}`"
+            );
+        }
+        assert_eq!(
+            buf.cell(body).unwrap().bg,
+            marker(family_index, 4),
+            "{path}: panel background at {body:?}"
+        );
+    }
+
+    /// Every one of the eleven productive call sites really wears its own
+    /// bundle.
+    ///
+    /// The predecessor of this test only compared the ten `PanelRoles`
+    /// constants to each other. That can never catch a caller that passes the
+    /// right bundle with the wrong *arguments* — which is exactly how the SFTP
+    /// panes came to hard-code `focused = false` and pass review. Every case
+    /// below therefore drives the real renderer and reads real cells.
     #[test]
-    fn every_panel_call_site_names_its_own_five_roles() {
-        let bundles = [
-            ("dashboard.host_list", HOST_LIST_PANEL),
-            ("dashboard.details", DETAILS_PANEL),
-            ("dashboard.ssh_log", SSH_LOG_PANEL),
-            ("dashboard.agent", AGENT_PANEL),
-            ("dashboard.latency", LATENCY_PANEL),
-            ("dashboard.recent", RECENT_PANEL),
-            ("dashboard.auth", AUTH_PANEL),
-            ("dashboard.ping", PING_PANEL),
-            ("sftp.panel", SFTP_PANEL),
-            ("broadcast.panel", BROADCAST_PANEL),
-        ];
+    fn every_panel_call_site_wears_its_own_five_roles() {
+        use crate::app::PanelId;
 
-        for (i, (a_name, a)) in bundles.iter().enumerate() {
-            // Within one bundle the five roles are five different roles.
-            assert_ne!(a.border, a.border_focused, "{a_name}: border == focused");
-            assert_ne!(a.border, a.background, "{a_name}: border == background");
-            assert_ne!(a.title, a.count, "{a_name}: title == count");
+        let theme = all_panels_marker_theme();
 
-            for (b_name, b) in bundles.iter().skip(i + 1) {
-                assert_ne!(a.border, b.border, "{a_name} and {b_name} share a border");
-                assert_ne!(
-                    a.border_focused, b.border_focused,
-                    "{a_name} and {b_name} share a focused border"
-                );
-                assert_ne!(a.title, b.title, "{a_name} and {b_name} share a title");
-                assert_ne!(a.count, b.count, "{a_name} and {b_name} share a count");
-                assert_ne!(
-                    a.background, b.background,
-                    "{a_name} and {b_name} share a background"
-                );
-            }
+        // 1 — hosts panel. The only dashboard panel with a count badge.
+        let mut app = themed_app(theme.clone());
+        app.focused_panel = PanelId::Hosts;
+        let area = Rect::new(0, 0, 46, 12);
+        let buf = frame_at(area, |frame| {
+            crate::tui::widgets::hosts_panel::render_hosts_panel(frame, area, &app);
+        });
+        assert_panel_wears(&buf, area, 0, true, "hosts", Some("1"), (2, 6));
+
+        // 2 — host details, unfocused so `border` (not `border_focused`) shows.
+        app.focused_panel = PanelId::Recent;
+        let buf = buffer_at(area, |buf| {
+            crate::tui::widgets::middle_stack::render_host_panel(buf, area, &app);
+        });
+        assert_panel_wears(
+            &buf,
+            area,
+            1,
+            false,
+            "host \u{b7}",
+            None,
+            (2, area.height - 2),
+        );
+
+        // 3 — SSH log.
+        app.focused_panel = PanelId::SshLog;
+        let buf = frame_at(area, |frame| {
+            crate::tui::widgets::middle_stack::render_ssh_log_panel(frame, area, &app);
+        });
+        assert_panel_wears(&buf, area, 2, true, "ssh log", None, (2, area.height - 2));
+
+        // 4 — agent.
+        app.focused_panel = PanelId::Agent;
+        let buf = buffer_at(area, |buf| {
+            crate::tui::widgets::middle_stack::render_agent_panel(buf, area, &app);
+        });
+        assert_panel_wears(&buf, area, 3, true, "agent", None, (2, area.height - 2));
+
+        // 5 — latency.
+        app.focused_panel = PanelId::Latency;
+        let buf = buffer_at(area, |buf| {
+            crate::tui::widgets::middle_stack::render_latency_panel(buf, area, &app);
+        });
+        assert_panel_wears(&buf, area, 4, true, "latency", None, (2, area.height - 2));
+
+        // 6 — recent sessions.
+        app.focused_panel = PanelId::Recent;
+        let buf = buffer_at(area, |buf| {
+            crate::tui::widgets::right_stack::render_recent_panel(buf, area, &app);
+        });
+        assert_panel_wears(
+            &buf,
+            area,
+            5,
+            true,
+            "recent sessions",
+            None,
+            (2, area.height - 2),
+        );
+
+        // 7 — auth events, unfocused.
+        app.focused_panel = PanelId::Hosts;
+        let buf = buffer_at(area, |buf| {
+            crate::tui::widgets::right_stack::render_auth_panel(buf, area, &app);
+        });
+        assert_panel_wears(
+            &buf,
+            area,
+            6,
+            false,
+            "auth events",
+            None,
+            (2, area.height - 2),
+        );
+
+        // 8 — ping all hosts.
+        app.focused_panel = PanelId::Ping;
+        let buf = buffer_at(area, |buf| {
+            crate::tui::widgets::right_stack::render_ping_panel(buf, area, &app);
+        });
+        assert_panel_wears(
+            &buf,
+            area,
+            7,
+            true,
+            "ping all hosts",
+            None,
+            (2, area.height - 2),
+        );
+    }
+
+    /// The eleventh call site: both broadcast renderers, and the SFTP pane.
+    ///
+    /// Split out because each needs its own state on the app, not because the
+    /// assertion differs.
+    #[test]
+    fn the_sftp_and_broadcast_call_sites_wear_their_own_five_roles() {
+        use crate::sftp::model::{Focus, SftpState};
+
+        let theme = all_panels_marker_theme();
+
+        // 9 — the SFTP local pane, focused. `render_browser` splits the body in
+        // half, so the pane is its own rect and the assertion names it.
+        let area = Rect::new(0, 0, 60, 12);
+        let mut state = SftpState::new("/remote", "/local");
+        state.focus = Focus::Local;
+        let buf = buffer_at(area, |buf| {
+            crate::tui::screens::sftp::render_browser_for_test(
+                buf,
+                area,
+                &state,
+                0.0,
+                1.0,
+                [0, 0],
+                &theme,
+            );
+        });
+        let pane = Rect::new(area.x, area.y, area.width / 2, buf.area.height);
+        assert_eq!(
+            buf.cell((pane.x, pane.y)).unwrap().fg,
+            marker(8, 1),
+            "sftp.panel: the focused pane takes `border_focused`"
+        );
+        assert_eq!(
+            buf.cell((pane.x + 2, pane.y + 1)).unwrap().bg,
+            marker(8, 4),
+            "sftp.panel: panel background"
+        );
+        let (tx, ty) = find_text(&buf, "local");
+        assert_eq!(
+            buf.cell((tx, ty)).unwrap().fg,
+            marker(8, 2),
+            "sftp.panel: title"
+        );
+
+        // 10 & 11 — both broadcast callers share one bundle, and both must
+        // actually wear it.
+        let mut app = themed_app(theme);
+        app.broadcast = Some(broadcast_state());
+
+        let area = Rect::new(0, 0, 60, 12);
+        let buf = frame_at(area, |frame| {
+            crate::tui::screens::broadcast::render_broadcast_panel(frame, area, &app, true);
+        });
+        assert_panel_wears(
+            &buf,
+            area,
+            9,
+            true,
+            "cast",
+            Some("0/1"),
+            (2, area.height - 2),
+        );
+
+        let buf = frame_at(area, |frame| {
+            crate::tui::screens::broadcast::render_broadcast_zoomed(frame, area, &app);
+        });
+        assert_panel_wears(
+            &buf,
+            area,
+            9,
+            true,
+            "cast",
+            Some("0/1"),
+            (2, area.height - 2),
+        );
+    }
+
+    /// A live broadcast run with one pending host, enough for the panel to draw.
+    fn broadcast_state() -> crate::app::BroadcastState {
+        use crate::app::BroadcastPhase;
+        use crate::broadcast::BroadcastTask;
+        let tasks = vec![BroadcastTask {
+            host_id: 1,
+            host_name: "web-prod".into(),
+            argv: vec!["ssh".into(), "web-prod".into()],
+            secret: None,
+        }];
+        let (_tx, rx) = std::sync::mpsc::channel();
+        crate::app::BroadcastState {
+            target_label: "group: prod".into(),
+            command: "uptime".into(),
+            results: crate::broadcast::seed_results(&tasks),
+            rx,
+            cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            concurrency: 2,
+            phase: BroadcastPhase::Running,
+            anim: None,
+            audit_written: false,
         }
     }
 }

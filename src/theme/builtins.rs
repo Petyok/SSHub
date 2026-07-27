@@ -262,6 +262,15 @@ mod tests {
         }
     }
 
+    /// The roles `default` overrides on purpose, because their semantic
+    /// fallback does not reproduce what SSHub drew. Skipped by the blanket
+    /// fallback loop and asserted individually instead — the list is short by
+    /// design, and every entry has to earn its place.
+    const DEFAULT_PARITY_OVERRIDES: &[&str] = &[
+        "components.dashboard.host_list.host_selected",
+        "components.dashboard.host_list.group",
+    ];
+
     /// Assert that `theme` reproduces the frozen pre-theme-system appearance for
     /// the whole semantic core and for **every** row of [`ROLE_SPECS`].
     fn assert_default_role_parity(theme: &ResolvedTheme) {
@@ -275,6 +284,13 @@ mod tests {
         }
 
         for spec in ROLE_SPECS {
+            // `default` carries exactly two deliberate component overrides,
+            // asserted explicitly below against the legacy surface each one
+            // reproduces. Their semantic fallback is *not* what SSHub drew,
+            // which is precisely why the override exists.
+            if DEFAULT_PARITY_OVERRIDES.contains(&spec.path) {
+                continue;
+            }
             match (spec.role, spec.fallback) {
                 (RoleRef::Color(role), RoleFallback::Color(slot)) => {
                     assert_eq!(theme.color(role), legacy_semantic(slot), "{}", spec.path)
@@ -310,13 +326,22 @@ mod tests {
         assert_eq!(theme.semantic.text_inverse, legacy::BG_DEEP);
         assert_ne!(theme.semantic.text_inverse, theme.semantic.text_bright);
 
-        // Two different whites on the same selection background: the dashboard
-        // and command palette highlight with WHITE, the pickers with SEL_FG.
+        // The two documented `default` overrides, against the exact legacy
+        // helper each replaces. The selected *host name* was `theme::selected()`
+        // (SEL_FG); `text_highlight` (WHITE) is the selected *group* label, and
+        // the two are not interchangeable.
         assert_ne!(legacy::WHITE, legacy::SEL_FG);
         assert_eq!(
             theme.style(StyleRole::DashboardHostListHostSelected),
-            Style::default().fg(legacy::WHITE).bg(legacy::SEL_BG)
+            legacy::selected(),
+            "the selected host name"
         );
+        assert_eq!(
+            theme.style(StyleRole::DashboardHostListGroup),
+            legacy::white(),
+            "the group label"
+        );
+
         assert_eq!(
             theme.style(StyleRole::CommandPaletteRowSelected),
             Style::default().fg(legacy::WHITE).bg(legacy::SEL_BG)
