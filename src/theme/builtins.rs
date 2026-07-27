@@ -168,6 +168,38 @@ mod tests {
         assert_eq!(high_contrast.semantic.text, Color::Rgb(0xff, 0xff, 0xff));
     }
 
+    #[test]
+    fn every_builtin_describes_itself_the_right_way_round() {
+        let registry = ThemeRegistry::builtins(ValidationMode::Strict).unwrap();
+        for record in registry.records() {
+            assert!(!record.name.is_empty(), "{} has no name", record.id);
+            let description = record
+                .description
+                .as_deref()
+                .unwrap_or_else(|| panic!("{} has no description", record.id));
+            // The description is the only prose the picker and `theme list`
+            // show, so a theme that describes itself backwards misinforms the
+            // user at exactly the moment they are choosing.
+            assert!(
+                !description.is_empty(),
+                "{} has an empty description",
+                record.id
+            );
+
+            // Pin the polarity of the one description that states a
+            // foreground-on-background pair explicitly.
+            if record.id.as_str() == "high-contrast" {
+                let theme = record.resolved().expect("high-contrast resolves");
+                assert_eq!(theme.semantic.background, Color::Rgb(0, 0, 0));
+                assert_eq!(theme.semantic.text, Color::Rgb(0xff, 0xff, 0xff));
+                assert!(
+                    description.starts_with("White on pure black"),
+                    "the description states the pair the wrong way round: {description}"
+                );
+            }
+        }
+    }
+
     /// The colour the pre-theme-system renderers used for each semantic slot.
     ///
     /// Every right-hand side is a frozen constant of `src/tui/theme.rs`; nothing

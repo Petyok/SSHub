@@ -11,7 +11,7 @@
 schema_version = 1
 extends = "default"
 name = "High Contrast"
-description = "Pure black on white with saturated status colours and no decorative gradients."
+description = "White on pure black with saturated status colours and no decorative gradients."
 
 [semantic]
 background = "#000000"

@@ -624,6 +624,46 @@ mod tests {
             .all(|spec| spec.fallback.is_type_compatible(spec.role)));
     }
 
+    /// The frozen role → semantic-fallback matrix, one line per role.
+    ///
+    /// The default-parity test compares each role against the fallback its own
+    /// catalogue row names, which proves resolution honours the catalogue but
+    /// cannot notice a row whose *mapping* was changed — flipping
+    /// `TunnelRunning` from `Success` to `Error` would still pass. This snapshot
+    /// is that guard: any edit to the frozen V1 matrix shows up as an explicit
+    /// diff to be reviewed against the spec's role tables.
+    ///
+    /// Regenerate it deliberately when the contract really changes, never to
+    /// silence a failing test.
+    const FROZEN_ROLE_MATRIX: &str = include_str!("role_matrix.snapshot");
+
+    #[test]
+    fn the_role_to_fallback_matrix_matches_its_frozen_snapshot() {
+        let actual: Vec<String> = ROLE_SPECS
+            .iter()
+            .map(|spec| format!("{} = {:?}", spec.path, spec.fallback))
+            .collect();
+        let frozen: Vec<&str> = FROZEN_ROLE_MATRIX.lines().collect();
+
+        // Report only the rows that moved: dumping 230 lines twice would bury
+        // the one change the reviewer has to look at.
+        let changed: Vec<String> = frozen
+            .iter()
+            .zip(actual.iter())
+            .filter(|(was, now)| was != now)
+            .map(|(was, now)| format!("{was}  ->  {now}"))
+            .collect();
+        assert!(
+            changed.is_empty() && frozen.len() == actual.len(),
+            "the frozen V1 role → fallback matrix changed ({} rows frozen, {} now).\n{}\n\
+             Check every difference against the spec's role catalogue before \
+             updating src/theme/role_matrix.snapshot.",
+            frozen.len(),
+            actual.len(),
+            changed.join("\n")
+        );
+    }
+
     #[test]
     fn role_counts_cover_every_spec() {
         assert_eq!(

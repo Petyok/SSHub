@@ -402,13 +402,29 @@ fn read_user_directory(
             source,
         })?;
         let path = entry.path();
+        // Anything not named `*.toml` is not a theme and is not the loader's
+        // business — no diagnostic, however odd it looks.
+        if path.extension().and_then(|ext| ext.to_str()) != Some("toml") {
+            continue;
+        }
         // `is_file` follows symlinks on purpose: symlinking one theme file into
         // several machines' config directories is a normal way to share it.
         // Subdirectories are ignored — discovery is one level deep.
         if !path.is_file() {
-            continue;
-        }
-        if path.extension().and_then(|ext| ext.to_str()) != Some("toml") {
+            // A directory or a dangling symlink named `*.toml` still looks like
+            // an installed theme to whoever put it there, so skipping it in
+            // silence leaves "my theme disappeared from the list" unexplained.
+            diagnostics.push(
+                ThemeDiagnostic::warning(
+                    ThemeOrigin::User(path.clone()),
+                    None,
+                    "not a readable theme file, so it was skipped".to_string(),
+                )
+                .with_help(
+                    "a theme is a single `.toml` file; check whether this is a directory or a \
+                     symlink whose target no longer exists",
+                ),
+            );
             continue;
         }
         files.push(path);
@@ -696,6 +712,73 @@ mod tests {
             .diagnostics()
             .iter()
             .any(|d| d.message.contains("256")));
+    }
+
+    #[test]
+    fn a_theme_file_of_exactly_one_mebibyte_is_accepted() {
+        // The published limit is inclusive. Without this the `>` in the loader
+        // could become `>=` and quietly tighten a documented boundary.
+        let dir = tempfile::tempdir().unwrap();
+        let head = "schema_version = 1\nname = \"Exact\"\n# ";
+        let mut body = String::from(head);
+        body.push_str(&"p".repeat(MAX_THEME_FILE_BYTES as usize - head.len() - 1));
+        body.push('\n');
+        assert_eq!(body.len() as u64, MAX_THEME_FILE_BYTES);
+        write(dir.path(), "exact.toml", &body);
+
+        let registry =
+            ThemeRegistry::load_installed(dir.path(), ValidationMode::Compatible).unwrap();
+        assert_eq!(user_ids(&registry), ["exact"]);
+        assert_eq!(registry.get("exact").unwrap().status, ThemeStatus::Valid);
+        assert!(registry.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn exactly_the_file_limit_of_themes_loads_untruncated() {
+        // Same boundary on the count: 256 files are loaded, and only the 257th
+        // would be dropped.
+        let dir = tempfile::tempdir().unwrap();
+        for index in 0..MAX_USER_THEME_FILES {
+            write(dir.path(), &format!("t{index:04}.toml"), &minimal("T"));
+        }
+
+        let registry =
+            ThemeRegistry::load_installed(dir.path(), ValidationMode::Compatible).unwrap();
+        assert_eq!(user_ids(&registry).len(), MAX_USER_THEME_FILES);
+        assert!(registry.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn a_toml_path_that_is_not_a_readable_file_is_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "usable.toml", &minimal("Usable"));
+        // A directory that looks like a theme.
+        fs::create_dir(dir.path().join("bundle.toml")).unwrap();
+        // Not a theme and not the loader's business: no diagnostic for this one.
+        fs::create_dir(dir.path().join("backup")).unwrap();
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(dir.path().join("gone.toml"), dir.path().join("ghost.toml"))
+            .unwrap();
+        #[cfg(unix)]
+        let expected = 2;
+        #[cfg(not(unix))]
+        let expected = 1;
+
+        let registry =
+            ThemeRegistry::load_installed(dir.path(), ValidationMode::Compatible).unwrap();
+        assert_eq!(user_ids(&registry), ["usable"]);
+
+        let skipped: Vec<_> = registry
+            .diagnostics()
+            .iter()
+            .filter(|d| d.message.contains("not a readable theme file"))
+            .collect();
+        assert_eq!(skipped.len(), expected, "{skipped:#?}");
+        assert!(skipped.iter().all(|d| d.is_warning()));
+        assert!(skipped
+            .iter()
+            .any(|d| d.origin.label().ends_with("bundle.toml")));
     }
 
     #[test]
