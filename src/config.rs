@@ -29,10 +29,20 @@ pub struct AppearanceConfig {
     /// transparent. Fixes unreadable text on transparent terminals. Default off.
     #[serde(default)]
     pub opaque_background: bool,
+    /// Id of the runtime theme to activate at start-up — a built-in or the file
+    /// stem of `themes/<id>.toml`. A missing or broken id falls back to
+    /// `default` with a non-fatal hint and never rewrites this file, so the
+    /// user's choice survives a temporarily unreadable theme.
+    #[serde(default = "default_active_theme")]
+    pub active_theme: String,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_active_theme() -> String {
+    "default".to_string()
 }
 
 fn default_session_log_max_bytes() -> u64 {
@@ -230,6 +240,7 @@ impl Default for AppearanceConfig {
             identity_columns: 0,
             os_logo: true,
             opaque_background: false,
+            active_theme: default_active_theme(),
         }
     }
 }
@@ -300,24 +311,28 @@ pub fn save_config(config: &AppConfig) -> anyhow::Result<()> {
         fs::create_dir_all(parent)?;
         crate::secure_fs::restrict_dir(parent);
     }
-    // Merge our fields into the existing document rather than replacing it, so
-    // user comments and any keys we don't model survive a save (which fires on
-    // trivial UI actions like zoom).
+    let existing = fs::read_to_string(&path).unwrap_or_default();
+    let merged = merge_config_document(&existing, config)?;
+
+    let tmp = path.with_extension("toml.tmp");
+    fs::write(&tmp, merged)?;
+    fs::rename(&tmp, &path)?;
+    Ok(())
+}
+
+/// Merge our fields into `existing` rather than replacing it, so user comments
+/// and any keys we don't model survive a save (which fires on trivial UI
+/// actions like zoom). An `existing` that does not parse is treated as empty —
+/// a corrupt file must not block writing a valid one.
+fn merge_config_document(existing: &str, config: &AppConfig) -> anyhow::Result<String> {
     let generated = toml::to_string_pretty(config)
         .map_err(|e| anyhow::anyhow!("failed to serialize config: {e}"))?;
     let new_doc: toml_edit::DocumentMut = generated
         .parse()
         .map_err(|e| anyhow::anyhow!("failed to parse serialized config: {e}"))?;
-    let mut doc: toml_edit::DocumentMut = fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or_default();
+    let mut doc: toml_edit::DocumentMut = existing.parse().unwrap_or_default();
     merge_toml_table(doc.as_table_mut(), new_doc.as_table());
-
-    let tmp = path.with_extension("toml.tmp");
-    fs::write(&tmp, doc.to_string())?;
-    fs::rename(&tmp, &path)?;
-    Ok(())
+    Ok(doc.to_string())
 }
 
 /// Deep-merge every key of `src` into `dst`, recursing into sub-tables so
@@ -479,6 +494,33 @@ mod tests {
         });
     }
 
+    /// The pure half of [`save_config`]: what would be written for `config`
+    /// given `original` as the file on disk. Keeps the round-trip tests off the
+    /// filesystem (and off the process-wide `SSHUB_CONFIG_DIR`).
+    fn merge_config_for_test(original: &str, config: &AppConfig) -> anyhow::Result<String> {
+        merge_config_document(original, config)
+    }
+
+    #[test]
+    fn parse_config_theme_defaults_to_default() {
+        let config = parse_config_str("").unwrap();
+        assert_eq!(config.appearance.active_theme, "default");
+    }
+
+    #[test]
+    fn active_theme_roundtrips_without_removing_unknown_config() {
+        let original = "# keep\n[appearance]\nactive_theme = \"aqua\"\nfuture = 7\n";
+        let mut config = parse_config_str(original).unwrap();
+        config.appearance.active_theme = "fire".into();
+        let saved = merge_config_for_test(original, &config).unwrap();
+        assert!(saved.contains("# keep"), "comment lost: {saved}");
+        assert!(saved.contains("future = 7"), "unknown key lost: {saved}");
+        assert!(
+            saved.contains("active_theme = \"fire\""),
+            "our change not written: {saved}"
+        );
+    }
+
     #[test]
     fn parse_config_uses_defaults_for_empty_toml() {
         let config = parse_config_str("").unwrap();
@@ -595,6 +637,10 @@ date_format = "%d/%m/%Y"
         let config = parse_config_str(fixture).unwrap();
         assert!(config.appearance.show_detail_panel);
         assert_eq!(config.appearance.date_format, "%Y-%m-%d %H:%M");
+        // The fixture predates `active_theme`, which is exactly the spec's
+        // backwards-compatibility case: an older config.toml must still load
+        // and simply get `default`.
+        assert_eq!(config.appearance.active_theme, "default");
     }
 
     #[test]
@@ -609,8 +655,13 @@ date_format = "%d/%m/%Y"
     #[test]
     fn default_config_toml_roundtrips() {
         let toml = default_config_toml().unwrap();
+        assert!(
+            toml.contains("active_theme = \"default\""),
+            "active_theme missing from the generated default config: {toml}"
+        );
         let config = parse_config_str(&toml).unwrap();
         assert!(config.appearance.show_detail_panel);
         assert_eq!(config.appearance.date_format, "%Y-%m-%d %H:%M");
+        assert_eq!(config.appearance.active_theme, "default");
     }
 }

@@ -141,4 +141,5 @@ mod misc;
 mod session;
 mod sftp;
 mod tags;
+mod theme_picker;
 mod transport;

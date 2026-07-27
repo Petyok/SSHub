@@ -30,6 +30,7 @@ mod tests;
 pub use types::*;
 pub use util::*;
 
+use std::path::Path;
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -49,6 +50,9 @@ use crate::store::{
     IdentityUpdate, LauncherStore, ManagedHost, NewHost, NewHostGroup, NewIdentity,
 };
 use crate::text_input;
+use crate::theme::manager::ThemeManager;
+use crate::theme::model::{ResolvedTheme, ThemeDiagnostic, ValidationMode};
+use crate::theme::registry::ThemeRegistry;
 use crate::watcher::WatchEvent;
 
 /// Virtual group label for hosts without a DB group.
@@ -90,6 +94,37 @@ pub const OS_ICON_OPTIONS: [&str; 22] = [
     "linux",
 ];
 
+/// A one-line, non-fatal summary of the theme start-up diagnostics, or `None`
+/// when everything loaded cleanly.
+///
+/// Both diagnostic lists the manager collected are eligible. The directory-level
+/// warnings — an unusable file name, an unreadable `*.toml` path, the 256-file
+/// cut — are *not* filtered out: they are exactly what explains a theme missing
+/// from the picker, so hiding them would leave the user with no clue at all.
+/// Errors are reported first because an unusable active theme is the thing that
+/// actually changed what is on screen.
+fn theme_startup_notice(manager: &ThemeManager, load_error: Option<&str>) -> Option<String> {
+    let mut messages: Vec<&str> = Vec::new();
+    if let Some(error) = load_error {
+        messages.push(error);
+    }
+    let diagnostics = manager.startup_diagnostics();
+    let (errors, warnings): (Vec<&ThemeDiagnostic>, Vec<&ThemeDiagnostic>) =
+        diagnostics.iter().partition(|d| d.is_error());
+    messages.extend(
+        errors
+            .iter()
+            .chain(warnings.iter())
+            .map(|d| d.message.as_str()),
+    );
+
+    let first = messages.first()?;
+    Some(match messages.len() {
+        1 => format!("Theme: {first}"),
+        n => format!("Theme: {first} (+{} more)", n - 1),
+    })
+}
+
 /// Injectable dependencies for [`App`].
 pub struct AppDeps {
     pub resolver: Box<dyn HostResolver>,
@@ -106,6 +141,10 @@ pub struct App {
     pub search_query: String,
     pub mode: AppMode,
     pub config: AppConfig,
+    /// The active runtime theme and the registry it came from. `App` owns it —
+    /// there is no global mutable theme state, so renderers take `app.theme()`
+    /// (or an explicit `&ResolvedTheme`) and tests stay deterministic.
+    pub theme_manager: ThemeManager,
     /// Active tag filters. A host matches when it carries every selected tag
     /// (AND). Empty means no tag filtering.
     pub tag_filters: Vec<String>,
@@ -554,6 +593,42 @@ impl App {
         }
     }
 
+    /// The theme every renderer paints with.
+    pub fn theme(&self) -> &ResolvedTheme {
+        self.theme_manager.theme()
+    }
+
+    /// Load the user's themes from `themes_dir` and activate
+    /// `appearance.active_theme`.
+    ///
+    /// Deliberately infallible. A `ThemeRegistryError` — an unreadable themes
+    /// directory, say — degrades to the embedded built-ins plus a non-fatal
+    /// hint rather than propagating, so a broken `themes/` can never stop SSHub
+    /// from starting. A missing or invalid theme id likewise falls back to
+    /// `default` while `saved_id` keeps the configured value, and `config.toml`
+    /// is never rewritten: repairing the theme file is enough to get it back.
+    pub fn load_themes_from(&mut self, themes_dir: &Path) {
+        let saved_id = self.config.appearance.active_theme.clone();
+        let load_error = match ThemeRegistry::load_installed(themes_dir, ValidationMode::Compatible)
+        {
+            Ok(registry) => {
+                self.theme_manager =
+                    ThemeManager::from_registry(registry, themes_dir.to_path_buf(), saved_id);
+                None
+            }
+            Err(e) => {
+                self.theme_manager = ThemeManager::builtins(saved_id);
+                Some(format!(
+                    "{} could not be read ({e}); using the built-in themes",
+                    themes_dir.display()
+                ))
+            }
+        };
+        if let Some(notice) = theme_startup_notice(&self.theme_manager, load_error.as_deref()) {
+            self.host_notice = Some(notice);
+        }
+    }
+
     /// Build app with default resolver and on-disk metadata db.
     pub fn new(config: AppConfig) -> Result<Self> {
         let data_dir = config::data_dir()?;
@@ -585,10 +660,23 @@ impl App {
                 password_store,
             },
         );
-
         if !keyring_available {
             app.host_notice =
                 Some("OS keyring unavailable. Using credentials.json fallback.".into());
+        }
+
+        // Themes load before the hosts so a start-up theme hint is already in
+        // place when the first frame draws. Non-fatal by construction: no
+        // branch here may `?`, because `default` is embedded and SSHub must
+        // start even with a broken themes directory.
+        match config::config_dir() {
+            Ok(dir) => app.load_themes_from(&dir.join("themes")),
+            Err(e) => {
+                app.host_notice = Some(format!(
+                    "Theme: no config directory ({e}); using the built-in themes"
+                ))
+            }
+        }
         }
 
         app.reload_hosts()?;
@@ -611,7 +699,12 @@ impl App {
 
     /// Build app from explicit dependencies (tests inject mocks here).
     pub fn new_with_deps(config: AppConfig, deps: AppDeps) -> Self {
+        // Built-ins only: no config directory is read here, so the many tests
+        // that inject deps stay offline and `AppDeps` gains no new field.
+        // `App::new` swaps this for the installed registry.
+        let theme_manager = ThemeManager::builtins(config.appearance.active_theme.clone());
         Self {
+            theme_manager,
             hosts: Vec::new(),
             filtered_indices: Vec::new(),
             selected: 0,
