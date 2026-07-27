@@ -19,6 +19,14 @@ fn main() -> Result<()> {
         return run_db(&args[1..]);
     }
 
+    // The theme commands are headless by contract: dispatched before
+    // `is_subcommand`/`CliContext::bootstrap` so that validating a draft theme
+    // never opens the launcher and metadata databases.
+    if args.first().map(String::as_str) == Some("theme") {
+        let code = sshub::cli::theme::run(&args[1..])?;
+        std::process::exit(code);
+    }
+
     if let Some(cmd) = args.first() {
         if sshub::cli::is_subcommand(cmd) {
             let code = run_cli(&args)?;
@@ -151,6 +159,11 @@ SFTP (one-shot):
 
 AUDIT:
     sshub audit list|stats …
+
+THEMES (headless; no database):
+    sshub theme check <file> [--format plain|json]
+    sshub theme list         [--format plain|json]
+    sshub theme show  <id>   [--resolved] [--format toml|json]
 
 INVENTORY / CONFIG:
     sshub tags [--format plain|json]

@@ -749,6 +749,12 @@ pub struct ResolvedTheme {
     pub(crate) description: Option<String>,
     pub(crate) semantic: ResolvedSemantic,
     pub(crate) gradients: Vec<ResolvedGradient>,
+    /// The authored name of each gradient, parallel to `gradients`.
+    ///
+    /// Rendering never needs it — a [`GradientId`] is an index. `theme show
+    /// --resolved` does: a dump that says `gradients[0]` where the source says
+    /// `[gradients.reef_ring]` is not the copyable document the spec asks for.
+    pub(crate) gradient_names: Vec<String>,
     pub(crate) components: ResolvedComponents,
 }
 
@@ -780,6 +786,12 @@ impl ResolvedTheme {
     /// another theme.
     pub fn gradient(&self, id: GradientId) -> Option<&ResolvedGradient> {
         self.gradients.get(id.index())
+    }
+
+    /// The name the theme file gave a gradient. Reading only — an export needs
+    /// to reference `gradients.<name>` the way the author wrote it.
+    pub fn gradient_name(&self, id: GradientId) -> Option<&str> {
+        self.gradient_names.get(id.index()).map(String::as_str)
     }
 
     pub fn color(&self, role: ColorRole) -> Color {

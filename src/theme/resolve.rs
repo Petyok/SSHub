@@ -219,7 +219,7 @@ impl<'a> Resolver<'a> {
         }
 
         let semantic = self.resolve_semantic(id);
-        let (gradients, gradient_ids) = self.resolve_gradients();
+        let (gradients, gradient_names, gradient_ids) = self.resolve_gradients();
         let components = self.resolve_components(id, &semantic, &gradient_ids, &gradients);
         self.resolve_unused_palette();
 
@@ -239,6 +239,7 @@ impl<'a> Resolver<'a> {
             description: self.merged.description.clone(),
             semantic,
             gradients,
+            gradient_names,
             components,
         });
         ResolveOutcome {
@@ -654,7 +655,16 @@ impl<'a> Resolver<'a> {
 
     // -- gradients --------------------------------------------------------
 
-    fn resolve_gradients(&mut self) -> (Vec<ResolvedGradient>, BTreeMap<String, GradientId>) {
+    /// Resolve every gradient, returning the table, the parallel name list and
+    /// the name → id map. The names travel with the theme because only they
+    /// let an export write `gradients.<name>` again.
+    fn resolve_gradients(
+        &mut self,
+    ) -> (
+        Vec<ResolvedGradient>,
+        Vec<String>,
+        BTreeMap<String, GradientId>,
+    ) {
         let names: Vec<String> = self.merged.gradients.keys().cloned().collect();
         let mut gradients = Vec::with_capacity(names.len());
         let mut ids = BTreeMap::new();
@@ -729,7 +739,7 @@ impl<'a> Resolver<'a> {
 
             gradients.push(ResolvedGradient { direction, stops });
         }
-        (gradients, ids)
+        (gradients, names, ids)
     }
 
     // -- components -------------------------------------------------------

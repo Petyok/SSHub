@@ -22,6 +22,7 @@ pub fn print_command_help(cmd: &str) {
         "import" => print_import(),
         "export" => print_export(),
         "completions" => print_completions(),
+        "theme" => print_theme_help(None),
         other => {
             println!(
                 "sshub: no per-command help for '{other}'; run `sshub --help` for the command list"
@@ -202,6 +203,68 @@ fn print_export() {
 USAGE:
     sshub export [--stdout] [-o PATH]"#
     );
+}
+
+/// Help for `sshub theme`, optionally narrowed to one of its subcommands.
+///
+/// `theme` is dispatched before the database-backed CLI, so this is printed
+/// without ever constructing a `CliContext`.
+pub fn print_theme_help(sub: Option<&str>) {
+    match sub {
+        Some("check") => println!(
+            r#"sshub theme check - validate a theme file without installing it
+
+USAGE:
+    sshub theme check <file> [--format plain|json]
+
+The file's own directory stands in for the themes directory, so a portable
+package whose child inherits from a sibling can be checked as the package it
+is; a bare file name means the working directory. Unrelated *.toml files there
+are read as candidate themes. A parent that came from a sibling is reported as
+a warning, because installing the child alone would leave it unresolvable.
+
+EXIT CODES:
+    0  valid, possibly with warnings
+    1  validation or file error
+    2  wrong usage"#
+        ),
+        Some("list") => println!(
+            r#"sshub theme list - list built-in and installed themes
+
+USAGE:
+    sshub theme list [--format plain|json]
+
+Lists every theme the app knows, including invalid ones and user files that
+collide with a reserved built-in id, each with its state and reason. A readable
+themes directory always exits 0; an unreadable one exits 1."#
+        ),
+        Some("show") => println!(
+            r#"sshub theme show - print a theme's source or its resolved form
+
+USAGE:
+    sshub theme show <id> [--resolved] [--format toml|json]
+
+Without --resolved the theme file is printed verbatim, comments included, which
+is the documented copy workflow:
+
+    sshub theme show aqua > ~/.config/sshub/themes/aqua-custom.toml
+    sshub theme check ~/.config/sshub/themes/aqua-custom.toml
+
+--resolved writes a standalone document instead: no inheritance, no references,
+every value spelled out. An unknown id exits 1."#
+        ),
+        _ => println!(
+            r#"sshub theme - inspect and validate themes (headless; no database)
+
+USAGE:
+    sshub theme check <file> [--format plain|json]
+    sshub theme list         [--format plain|json]
+    sshub theme show  <id>   [--resolved] [--format toml|json]
+
+User themes live in ~/.config/sshub/themes/*.toml; the file stem is the theme
+id. Run `sshub theme <subcommand> --help` for details."#
+        ),
+    }
 }
 
 fn print_completions() {
