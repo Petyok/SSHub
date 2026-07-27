@@ -1,16 +1,26 @@
-//! Theme data model: identifiers and the fully resolved runtime theme.
+//! Theme data model: identifiers, span-carrying definitions and the fully
+//! resolved runtime theme.
 //!
-//! A [`ResolvedTheme`] is the end state of the pipeline (parse → validate →
-//! inherit → resolve). It carries no optional values and no unresolved
-//! strings: every semantic slot and every component role is a concrete
-//! ratatui value, so renderers never fall back at draw time.
+//! The file has two halves that must not be mixed up:
+//!
+//! * the *definition* side ([`ThemeDefinition`] and friends) is what a theme
+//!   file literally says, with the byte range of every value kept so that a
+//!   diagnostic can point at `file:line:column`. Nothing here is resolved,
+//!   range-checked or merged.
+//! * the *resolved* side ([`ResolvedTheme`]) is the end state of the pipeline
+//!   (parse → validate → inherit → resolve). It carries no optional values and
+//!   no unresolved strings: every semantic slot and every component role is a
+//!   concrete ratatui value, so renderers never fall back at draw time.
 
+use std::borrow::Cow;
 use std::fmt;
+use std::ops::Range;
+use std::path::PathBuf;
 
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 
-use crate::theme::catalog::{ColorRole, PaintRole, StyleRole, TintRole};
+use crate::theme::catalog::{ColorRole, PaintRole, SemanticSlot, StyleRole, TintRole};
 
 /// Technical identifier of a theme.
 ///
@@ -80,6 +90,344 @@ pub enum ValidationMode {
     Compatible,
 }
 
+// ---------------------------------------------------------------------------
+// Definition side — the theme file as written, with source spans.
+// ---------------------------------------------------------------------------
+
+/// Where a theme definition came from.
+///
+/// Diagnostics carry this so a message can name the offending file, and so
+/// diagnostics collected from several themes still sort deterministically.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ThemeOrigin {
+    /// One of the theme assets compiled into the binary.
+    BuiltIn,
+    /// A file below `config_dir()/themes`.
+    User(PathBuf),
+}
+
+impl ThemeOrigin {
+    /// Stable label used in diagnostics and as the primary sort key.
+    pub fn label(&self) -> Cow<'_, str> {
+        match self {
+            Self::BuiltIn => Cow::Borrowed("<built-in>"),
+            Self::User(path) => path.to_string_lossy(),
+        }
+    }
+}
+
+/// A value plus the byte range it occupies in the source it was parsed from.
+///
+/// Ranges are byte offsets into the original file text, which is what
+/// `toml_edit` reports and what a `line:column` renderer needs.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Spanned<T> {
+    pub value: T,
+    pub span: Range<usize>,
+}
+
+impl<T> Spanned<T> {
+    pub fn new(value: T, span: Range<usize>) -> Self {
+        Self { value, span }
+    }
+}
+
+/// The two halves of a qualified colour reference.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReferenceScope {
+    Palette,
+    Semantic,
+}
+
+impl ReferenceScope {
+    pub fn prefix(self) -> &'static str {
+        match self {
+            Self::Palette => "palette",
+            Self::Semantic => "semantic",
+        }
+    }
+}
+
+/// A `palette.<name>` or `semantic.<name>` reference, still unresolved.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ColorReference {
+    pub scope: ReferenceScope,
+    pub name: String,
+}
+
+/// The base of a colour value, before brightness and opacity are applied.
+///
+/// `Rgb` keeps the raw integers: range checking is the validator's job, and
+/// it needs the per-channel span to point at the offending number.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ColorBase {
+    /// The `"terminal"` sentinel — the emulator's own default colour.
+    Terminal,
+    /// `#RRGGBB`.
+    Hex([u8; 3]),
+    /// `rgb = [r, g, b]`, unchecked.
+    Rgb([Spanned<i64>; 3]),
+    Reference(ColorReference),
+}
+
+/// A colour as written in a theme file.
+///
+/// The transforms stay separate and unevaluated so the validator can reject
+/// combinations the spec forbids (brightness on `"terminal"`, `over` without
+/// `opacity`) while still pointing at the exact field.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ColorValue {
+    pub base: ColorBase,
+    /// Span of the base alone — the bare string, or the `rgb`/`color` value.
+    pub base_span: Range<usize>,
+    pub brightness: Option<Spanned<f64>>,
+    pub opacity: Option<Spanned<f64>>,
+    pub over: Option<Box<Spanned<ColorValue>>>,
+}
+
+/// One `[palette]` entry.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PaletteEntry {
+    pub name: Spanned<String>,
+    pub value: Spanned<ColorValue>,
+}
+
+/// One `[semantic]` entry that names a known slot.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SemanticEntry {
+    pub slot: SemanticSlot,
+    pub key: Spanned<String>,
+    pub value: Spanned<ColorValue>,
+}
+
+/// One stop of a `[gradients.<name>]` definition.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GradientStopDefinition {
+    pub at: Option<Spanned<f64>>,
+    pub color: Option<Spanned<ColorValue>>,
+    pub span: Range<usize>,
+}
+
+/// A named gradient as written.
+///
+/// `direction` stays a raw string: an unknown direction has to survive parsing
+/// so the validator can suggest the closest supported one.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GradientDefinition {
+    pub name: Spanned<String>,
+    pub direction: Option<Spanned<String>>,
+    pub stops: Vec<GradientStopDefinition>,
+    /// Span of the `stops` array, or of the gradient table when absent.
+    pub stops_span: Range<usize>,
+    pub span: Range<usize>,
+}
+
+/// A `Color` role's value: a colour or the `"auto"` reset sentinel.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ColorSlot {
+    Auto,
+    Color(ColorValue),
+}
+
+/// A `Paint` role's value.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PaintSlot {
+    Auto,
+    Color(ColorValue),
+    /// `{ gradient = "gradients.<name>" }`; the span covers the reference.
+    Gradient(Spanned<String>),
+}
+
+/// A `Tint` role's value. `Native` keeps an asset's own colours.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TintSlot {
+    Auto,
+    Native,
+    Color(ColorValue),
+}
+
+/// The `modifiers` field of a style. `Auto` restores the inherited list,
+/// an empty `List` clears it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ModifierList {
+    Auto,
+    List(Vec<Spanned<String>>),
+}
+
+/// A `Style` role's value. Every field is optional so a theme can override a
+/// single half of an inherited style.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StyleValue {
+    /// `{ auto = true }` — reset the whole role to its semantic fallback.
+    pub auto: Option<Spanned<bool>>,
+    pub foreground: Option<Spanned<ColorSlot>>,
+    pub background: Option<Spanned<ColorSlot>>,
+    pub modifiers: Option<Spanned<ModifierList>>,
+}
+
+/// The value of one `components.*` assignment, typed by its catalogue role.
+///
+/// A role this build does not know cannot be typed, so it is kept as
+/// [`ComponentValue::Unknown`]. The parser never decides whether that is an
+/// error — that is the validator's `Strict` vs `Compatible` policy.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ComponentValue {
+    Color {
+        role: ColorRole,
+        value: Spanned<ColorSlot>,
+    },
+    /// Boxed because a partial style is by far the largest component value and
+    /// would otherwise set the size of every entry in the definition.
+    Style {
+        role: StyleRole,
+        value: Box<Spanned<StyleValue>>,
+    },
+    Paint {
+        role: PaintRole,
+        value: Spanned<PaintSlot>,
+    },
+    Tint {
+        role: TintRole,
+        value: Spanned<TintSlot>,
+    },
+    Unknown {
+        value_span: Range<usize>,
+    },
+}
+
+/// One assignment below `[components]`, addressed by its full role path.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ComponentEntry {
+    /// Full literal path, e.g. `components.footer.key`. The span covers the
+    /// key that completed the path, not the whole path.
+    pub path: Spanned<String>,
+    pub value: ComponentValue,
+}
+
+impl ComponentEntry {
+    /// Whether this build's catalogue knows the role.
+    pub fn is_known(&self) -> bool {
+        !matches!(self.value, ComponentValue::Unknown { .. })
+    }
+}
+
+/// A key the schema does not define, kept verbatim.
+///
+/// Retaining these is what lets the validator apply its mode policy and offer
+/// a spelling suggestion instead of the parser silently dropping the key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UnknownField {
+    /// Full dotted path of the key, e.g. `semantic.accnt`.
+    pub path: Spanned<String>,
+    pub value_span: Range<usize>,
+}
+
+/// A theme file turned into data, with every value still traceable to source.
+///
+/// Ordering of the vectors follows the file, so diagnostics and `theme show`
+/// stay stable.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ThemeDefinition {
+    pub id: ThemeId,
+    pub origin: ThemeOrigin,
+    /// `None` when the key is missing or not an integer; the exact value is
+    /// checked by the validator, which must reject anything but `1`.
+    pub schema_version: Option<Spanned<i64>>,
+    /// Required. A missing `name` is reported by the parser and leaves an
+    /// empty value with an empty span behind.
+    pub name: Spanned<String>,
+    pub extends: Option<Spanned<String>>,
+    pub description: Option<Spanned<String>>,
+    pub author: Option<Spanned<String>>,
+    pub palette: Vec<PaletteEntry>,
+    pub semantic: Vec<SemanticEntry>,
+    pub gradients: Vec<GradientDefinition>,
+    pub components: Vec<ComponentEntry>,
+    pub unknown_fields: Vec<UnknownField>,
+}
+
+/// How bad a diagnostic is. Only errors stop a theme from being used.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DiagnosticSeverity {
+    Error,
+    Warning,
+}
+
+/// One problem found in a theme file.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ThemeDiagnostic {
+    pub severity: DiagnosticSeverity,
+    pub message: String,
+    pub help: Option<String>,
+    /// `None` for problems that belong to the file as a whole.
+    pub span: Option<Range<usize>>,
+    pub origin: ThemeOrigin,
+}
+
+impl ThemeDiagnostic {
+    pub fn error(
+        origin: ThemeOrigin,
+        span: Option<Range<usize>>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            severity: DiagnosticSeverity::Error,
+            message: message.into(),
+            help: None,
+            span,
+            origin,
+        }
+    }
+
+    pub fn warning(
+        origin: ThemeOrigin,
+        span: Option<Range<usize>>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            severity: DiagnosticSeverity::Warning,
+            message: message.into(),
+            help: None,
+            span,
+            origin,
+        }
+    }
+
+    pub fn with_help(mut self, help: impl Into<String>) -> Self {
+        self.help = Some(help.into());
+        self
+    }
+
+    pub fn is_error(&self) -> bool {
+        self.severity == DiagnosticSeverity::Error
+    }
+
+    pub fn is_warning(&self) -> bool {
+        self.severity == DiagnosticSeverity::Warning
+    }
+
+    /// Total order used to present diagnostics: by file, then by source
+    /// position, then errors before warnings, then by message. File-wide
+    /// diagnostics (no span) sort to the top of their file.
+    pub fn sort_key(&self) -> (Cow<'_, str>, usize, usize, DiagnosticSeverity, &str) {
+        let (start, end) = match &self.span {
+            Some(span) => (span.start, span.end),
+            None => (0, 0),
+        };
+        (
+            self.origin.label(),
+            start,
+            end,
+            self.severity,
+            self.message.as_str(),
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Resolved side — the immutable runtime theme.
+// ---------------------------------------------------------------------------
+
 /// Index of a resolved gradient inside [`ResolvedTheme::gradients`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GradientId(usize);
@@ -102,6 +450,28 @@ pub enum GradientDirection {
     DiagonalDown,
     DiagonalUp,
     Perimeter,
+}
+
+impl GradientDirection {
+    /// The five V1 directions, keyed by their literal spelling in a theme file.
+    pub const KEYS: [&'static str; 5] = [
+        "horizontal",
+        "vertical",
+        "diagonal_down",
+        "diagonal_up",
+        "perimeter",
+    ];
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        match key {
+            "horizontal" => Some(Self::Horizontal),
+            "vertical" => Some(Self::Vertical),
+            "diagonal_down" => Some(Self::DiagonalDown),
+            "diagonal_up" => Some(Self::DiagonalUp),
+            "perimeter" => Some(Self::Perimeter),
+            _ => None,
+        }
+    }
 }
 
 /// A paint role's resolved value: a single colour or a named gradient.
