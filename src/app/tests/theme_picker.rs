@@ -732,8 +732,10 @@ fn arrow_keys_wrap_and_home_end_jump_to_the_edges() {
     let mut app = app_with_themes(["default"]);
     app.mode = AppMode::Settings;
     app.settings_selected = theme_setting_index();
-    // Paging is sized from the terminal, so give the app a real one.
-    app.terminal_area = ratatui::layout::Rect::new(0, 0, 80, 24);
+    // Paging is sized from the terminal, so give the app a real one — and one
+    // big enough that a page covers this short list, which is what lets the
+    // PageDown/PageUp assertions below name the first and last row exactly.
+    app.terminal_area = ratatui::layout::Rect::new(0, 0, 120, 40);
     app.handle_key(key(KeyCode::Enter)).unwrap();
     let last = app.theme_picker_rows().len() - 1;
 

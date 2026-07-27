@@ -20,9 +20,9 @@ use ratatui::widgets::{Block, Borders, Clear};
 use crate::app::{App, ThemeRow, ThemeRowStatus};
 use crate::theme::catalog::{ColorRole, PaintRole, StyleRole};
 use crate::theme::gradient::{
-    paint_gradient_line, paint_gradient_ring, CellSelection, PaintChannel,
+    paint_gradient_area, paint_gradient_line, paint_gradient_ring, CellSelection, PaintChannel,
 };
-use crate::theme::model::ResolvedTheme;
+use crate::theme::model::{ResolvedPaint, ResolvedTheme};
 use crate::tui::text::ellipsize;
 use crate::tui::theme;
 
@@ -40,8 +40,25 @@ const MIN_PREVIEW_W: u16 = 34;
 const MIN_LIST_W: u16 = 24;
 /// Rows the preview needs: the top box, one background strip, the bottom box.
 const MIN_PREVIEW_H: u16 = TOP_BOX_H + 1 + BOTTOM_BOX_H;
-/// Rows the list keeps for itself before the stacked preview may appear.
-const MIN_STACKED_LIST_H: u16 = 3;
+/// Rows the list keeps for itself before *any* preview may appear.
+///
+/// One, the same rule the footer chrome is carved with. A higher floor here
+/// would make the stacked (narrow) regime cost more vertical space than the
+/// side-by-side (wide) one, so the fallback for a cramped terminal would be the
+/// hardest layout to reach — see [`PREVIEW_POPUP_H`], which is where a *usable*
+/// list is asked for instead.
+const MIN_STACKED_LIST_H: u16 = 1;
+/// List rows the popup grows to make room for once a preview fits at all.
+const PREFERRED_LIST_H: u16 = 3;
+/// Rows the footer chrome claims: legend, path and the diagnostics area.
+const FOOTER_H: u16 = 2 + MAX_DIAGNOSTIC_ROWS;
+/// How tall the popup asks to be so that the preview can actually appear.
+///
+/// The picker is an overlay — nothing else competes for these rows — and a
+/// preview nobody ever sees is the one outcome this screen cannot afford. A
+/// flat 60% of the terminal put the two-box preview out of reach on an 80x24
+/// terminal, which is the size most people still run.
+const PREVIEW_POPUP_H: u16 = 2 + FOOTER_H + PREFERRED_LIST_H + MIN_PREVIEW_H;
 /// One blank column between list and preview so the two never touch.
 const PREVIEW_GAP: u16 = 1;
 /// Frame plus four content rows: text sampler, divider, tabs, statuses.
@@ -79,10 +96,14 @@ pub(crate) struct ThemePickerLayout {
     pub legend: Option<Rect>,
 }
 
-/// Popup geometry — 70% x 60% of the terminal, clamped so it never exceeds it.
+/// Popup geometry — 70% x 60% of the terminal, but never shorter than the rows
+/// the preview needs, and always clamped so it never exceeds the terminal.
 pub(crate) fn popup_rect(area: Rect) -> Rect {
     let width = (area.width * 70 / 100).max(48).min(area.width);
-    let height = (area.height * 60 / 100).max(16).min(area.height);
+    let height = (area.height * 60 / 100)
+        .max(16)
+        .max(PREVIEW_POPUP_H)
+        .min(area.height);
     let x = area.x + (area.width.saturating_sub(width)) / 2;
     let y = area.y + (area.height.saturating_sub(height)) / 2;
     Rect::new(x, y, width, height)
@@ -352,15 +373,46 @@ fn footer_samples(theme: &ResolvedTheme) -> [(u16, &'static str, Style); 2] {
     ]
 }
 
-fn fill(buf: &mut Buffer, area: Rect, color: Color) {
+/// Blank every cell of `area`, optionally with a background colour.
+fn blank(buf: &mut Buffer, area: Rect, style: Style) {
     let width = area.width as usize;
     if width == 0 {
         return;
     }
-    let blank = " ".repeat(width);
-    let style = Style::default().bg(color);
+    let spaces = " ".repeat(width);
     for y in area.y..area.bottom() {
-        buf.set_stringn(area.x, y, &blank, width, style);
+        buf.set_stringn(area.x, y, &spaces, width, style);
+    }
+}
+
+/// Fill `area` with a paint role, gradient included.
+///
+/// A gradient background goes through [`paint_gradient_area`] so every cell is
+/// sampled at its own position; reading one colour with
+/// `ResolvedTheme::paint_color_at` would flatten the whole surface to whatever
+/// the top-left corner happened to be. Solid roles never reach the painter, so
+/// the common case stays a plain blanking pass.
+///
+/// The painter is handed no exclusions because the picker overlay never
+/// overlaps a remote PTY viewport — a background pass that can reach one must
+/// pass the shared protected-PTY rect instead.
+fn fill_paint(buf: &mut Buffer, area: Rect, theme: &ResolvedTheme, role: PaintRole) {
+    match theme.paint(role) {
+        ResolvedPaint::Solid(color) => blank(buf, area, Style::default().bg(*color)),
+        ResolvedPaint::Gradient(_) => {
+            // Blank first: the painter recolours cells, it does not clear them.
+            blank(buf, area, Style::default());
+            if let Some(gradient) = theme.paint_gradient(role) {
+                paint_gradient_area(
+                    buf,
+                    area,
+                    gradient,
+                    PaintChannel::Background,
+                    CellSelection::All,
+                    &[],
+                );
+            }
+        }
     }
 }
 
@@ -422,11 +474,7 @@ fn render_preview_box(
     if area.width < 2 || area.height < 2 {
         return;
     }
-    fill(
-        buf,
-        area,
-        theme.paint_color_at(background, area, area.x, area.y),
-    );
+    fill_paint(buf, area, theme, background);
     let solid = theme.paint_color_at(border, area, area.x, area.y);
     draw_frame(buf, area, Style::default().fg(solid));
     // Solid-colour themes never reach the painter at all — `default` and
@@ -497,11 +545,7 @@ fn render_preview_hosts(buf: &mut Buffer, content: Rect, theme: &ResolvedTheme) 
 fn render_theme_preview(buf: &mut Buffer, area: Rect, theme: &ResolvedTheme) {
     // The whole surface is the app background; the boxes sit on top of it, so
     // the strip between them is where that colour stays visible.
-    fill(
-        buf,
-        area,
-        theme.paint_color_at(PaintRole::AppBackground, area, area.x, area.y),
-    );
+    fill_paint(buf, area, theme, PaintRole::AppBackground);
     let boxes = plan_preview_boxes(area);
     render_preview_box(
         buf,
@@ -731,25 +775,50 @@ mod tests {
     /// come from a file, and the directory has to outlive the render. Nothing
     /// outside it is touched.
     fn warning_picker_app() -> (App, TempDir) {
-        let root = tempfile::tempdir().unwrap();
-        let themes = root.path().join("themes");
-        std::fs::create_dir(&themes).unwrap();
-        std::fs::write(
-            themes.join("warned.toml"),
+        user_theme_app(
+            "warned",
             // An unknown role inside a *known* family: the validator reports
             // the full path, which is the string the user has to go and fix.
             "schema_version = 1\nname = \"Warned\"\nextends = \"default\"\n\n\
              [components.footer]\nglow = \"semantic.accent\"\n",
         )
-        .unwrap();
+    }
+
+    /// A picker previewing a user theme whose *backgrounds* are gradients.
+    ///
+    /// None of the five built-ins does that, so this is the only way to catch a
+    /// fill that samples one colour instead of running the painter.
+    fn gradient_background_app() -> (App, TempDir) {
+        let (app, dir) = user_theme_app(
+            "washed",
+            "schema_version = 1\nname = \"Washed\"\nextends = \"default\"\n\n\
+             [gradients.wash]\ndirection = \"horizontal\"\n\
+             stops = [ { at = 0.0, color = \"#000000\" }, { at = 1.0, color = \"#ffffff\" } ]\n\n\
+             [components.app]\nbackground = { gradient = \"gradients.wash\" }\n\n\
+             [components.dashboard.host_list]\nbackground = { gradient = \"gradients.wash\" }\n",
+        );
+        assert_eq!(
+            app.theme().id().as_str(),
+            "washed",
+            "the preview must be live"
+        );
+        (app, dir)
+    }
+
+    /// A picker with exactly one user theme file, already selected.
+    fn user_theme_app(id: &str, body: &str) -> (App, TempDir) {
+        let root = tempfile::tempdir().unwrap();
+        let themes = root.path().join("themes");
+        std::fs::create_dir(&themes).unwrap();
+        std::fs::write(themes.join(format!("{id}.toml")), body).unwrap();
         let mut app = base_app();
         app.load_themes_from(&themes);
         open_picker(&mut app);
         let index = app
             .theme_picker_rows()
             .iter()
-            .position(|row| row.id == "warned")
-            .expect("the user theme is listed");
+            .position(|row| row.id == id)
+            .unwrap_or_else(|| panic!("`{id}` is not listed"));
         app.select_theme_row(index);
         (app, root)
     }
@@ -1283,9 +1352,12 @@ mod tests {
     #[test]
     fn the_list_starts_with_the_built_ins_in_order() {
         let app = picker_app();
-        let buffer = draw(&app, 80, 24);
-        let areas = plan_theme_picker_layout(Rect::new(0, 0, 80, 24));
+        // Big enough that all five built-ins are on screen at once: on a
+        // stacked layout the list is deliberately short.
+        let buffer = draw(&app, 120, 40);
+        let areas = plan_theme_picker_layout(Rect::new(0, 0, 120, 40));
         let list = areas.list;
+        assert!(list.height >= 5, "the list must show all five built-ins");
         let names = ["Default", "Summer", "Aqua", "Fire", "High Contrast"];
         for (i, _) in names.iter().enumerate() {
             let cell = row_text(&buffer, list, list.y + i as u16);
@@ -1321,6 +1393,101 @@ mod tests {
         // than pointing at the working directory.
         let path = line(&buffer, areas.path.unwrap().y, 80);
         assert!(path.contains("no themes directory"), "{path:?}");
+    }
+
+    // ----------------------------------------------------- reachable geometry
+
+    /// The size most people still run. The two-box preview is the whole point
+    /// of this screen, so it may not be the one terminal that never sees it.
+    #[test]
+    fn the_default_eighty_by_twentyfour_terminal_gets_a_preview() {
+        let areas = plan_theme_picker_layout(Rect::new(0, 0, 80, 24));
+        assert_ne!(
+            areas.mode,
+            ThemePickerLayoutMode::ListOnly,
+            "80x24 must show the preview"
+        );
+        assert!(areas.preview.is_some());
+        assert!(
+            areas.list.height >= PREFERRED_LIST_H,
+            "the list stays usable"
+        );
+    }
+
+    /// The thresholds pinned at the sizes that matter, so they stay a decision
+    /// rather than a side effect of the popup percentage.
+    #[test]
+    fn common_terminal_sizes_get_the_mode_they_should() {
+        for (w, h, expected) in [
+            (80, 24, ThemePickerLayoutMode::Stacked),
+            (40, 20, ThemePickerLayoutMode::Stacked),
+            (60, 36, ThemePickerLayoutMode::Stacked),
+            (100, 30, ThemePickerLayoutMode::SideBySide),
+            (120, 40, ThemePickerLayoutMode::SideBySide),
+            (120, 36, ThemePickerLayoutMode::SideBySide),
+            // Genuinely too small: 32 interior columns cannot hold the preview,
+            // and four body rows cannot hold either box.
+            (34, 14, ThemePickerLayoutMode::ListOnly),
+            (40, 10, ThemePickerLayoutMode::ListOnly),
+            (30, 8, ThemePickerLayoutMode::ListOnly),
+        ] {
+            let areas = plan_theme_picker_layout(Rect::new(0, 0, w, h));
+            assert_eq!(areas.mode, expected, "{w}x{h}");
+        }
+    }
+
+    /// Stacking is the *fallback* for a cramped terminal, so it must not cost
+    /// more vertical space than the wide layout it falls back from.
+    ///
+    /// One extra row is structural — the stacked list needs a row of its own —
+    /// and anything beyond that would make the fallback the harder regime to
+    /// reach, which is exactly backwards.
+    #[test]
+    fn stacking_never_costs_more_height_than_side_by_side() {
+        let first_preview_at = |width: u16| {
+            (1..80u16)
+                .find(|h| {
+                    plan_theme_picker_layout(Rect::new(0, 0, width, *h)).mode
+                        != ThemePickerLayoutMode::ListOnly
+                })
+                .expect("some height shows a preview")
+        };
+        let wide = first_preview_at(120);
+        let narrow = first_preview_at(60);
+        assert!(
+            narrow <= wide + 1,
+            "narrow needs {narrow} rows but wide only {wide}"
+        );
+    }
+
+    /// A gradient background must be sampled per cell by the Task 6 painter.
+    /// Reading one colour at the rect's corner would flatten it.
+    #[test]
+    fn a_gradient_background_is_sampled_per_cell_not_flattened() {
+        let (app, _dir) = gradient_background_app();
+        let buffer = draw(&app, 100, 30);
+        let (preview, boxes) = preview_of(100, 30);
+
+        let content = preview_content(boxes.top);
+        let fills: Vec<_> = (content.x..content.right())
+            .map(|x| buffer[(x, content.y)].bg)
+            .collect();
+        assert!(
+            fills.windows(2).any(|pair| pair[0] != pair[1]),
+            "the box fill is flat: {fills:?}"
+        );
+
+        // The strip between the boxes is the app background, and it carries a
+        // gradient in this theme too.
+        let strip_y = boxes.top.bottom();
+        assert!(strip_y < boxes.bottom.y, "the boxes must leave a strip");
+        let strip: Vec<_> = (preview.x..preview.right())
+            .map(|x| buffer[(x, strip_y)].bg)
+            .collect();
+        assert!(
+            strip.windows(2).any(|pair| pair[0] != pair[1]),
+            "the app background is flat: {strip:?}"
+        );
     }
 
     /// `scroll_offset` keeps the selection visible without over-scrolling.
