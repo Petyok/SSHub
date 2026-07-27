@@ -746,19 +746,49 @@ impl ResolvedTheme {
     /// Solid paints ignore the position; gradients are sampled with the
     /// direction semantics of the V1 spec, where coordinates are always
     /// relative to the component rect rather than the screen.
+    ///
+    /// This method is **total**: every coordinate yields a colour, which is
+    /// what a caller filling cells one at a time needs. Two cases therefore
+    /// have deliberate anchoring rather than "no colour" — see
+    /// [`anchored_position`]:
+    ///
+    /// - a coordinate **outside `area`** is clamped to the nearest cell inside
+    ///   it, so overshooting a rect continues the edge colour;
+    /// - an **interior cell of a `perimeter`** gradient, which lies off the
+    ///   ring entirely, resolves to the ring's seam colour.
+    ///
+    /// The painters in [`crate::theme::gradient`] deliberately do the opposite
+    /// and **skip** both kinds of cell. Prefer them for filling a region: a
+    /// `perimeter` role is a frame, so painting its interior with this method
+    /// gives a flat block of the seam colour, not a fallback.
     pub fn paint_color_at(&self, role: PaintRole, area: Rect, x: u16, y: u16) -> Color {
         match self.paint(role) {
             ResolvedPaint::Solid(color) => *color,
             ResolvedPaint::Gradient(id) => match self.gradients.get(id.index()) {
-                // Cells with no position on this gradient — outside `area`, or
-                // off the ring of a `perimeter` — anchor at the start so a
-                // caller that asks too broadly still gets a defined colour.
-                Some(gradient) => gradient
-                    .sample(gradient_position(gradient.direction, area, x, y).unwrap_or(0.0)),
+                Some(gradient) => {
+                    gradient.sample(anchored_position(gradient.direction, area, x, y))
+                }
                 None => Color::Reset,
             },
         }
     }
+}
+
+/// [`gradient_position`] made total, for callers that must have a colour for
+/// every coordinate.
+///
+/// Clamping into the rect (rather than falling back to `0.0`) keeps a cell just
+/// past an edge the same colour as the edge itself; anchoring a perimeter's
+/// interior at `0.0` puts it on the seam, where the resolver guarantees the
+/// first and last stop are the same colour, so the choice is not visible as an
+/// arbitrary end of the ramp.
+fn anchored_position(direction: GradientDirection, area: Rect, x: u16, y: u16) -> f32 {
+    if area.is_empty() {
+        return 0.0;
+    }
+    let x = x.clamp(area.x, area.right() - 1);
+    let y = y.clamp(area.y, area.bottom() - 1);
+    gradient_position(direction, area, x, y).unwrap_or(0.0)
 }
 
 #[cfg(test)]
@@ -773,5 +803,102 @@ mod tests {
         for invalid in ["", "Aqua", "two words", "../aqua", "aqua.toml"] {
             assert!(ThemeId::parse(invalid).is_err(), "{invalid}");
         }
+    }
+
+    #[test]
+    fn paint_color_at_clamps_coordinates_outside_the_component_rect() {
+        let area = Rect::new(10, 10, 8, 4);
+        // Off every edge, the nearest cell inside the rect defines the colour,
+        // so a caller that overshoots gets edge continuity rather than a jump
+        // back to the start of the ramp.
+        for direction in [GradientDirection::Horizontal, GradientDirection::Vertical] {
+            assert_eq!(
+                anchored_position(direction, area, 99, 99),
+                anchored_position(direction, area, 17, 13),
+                "{direction:?} past the bottom-right corner"
+            );
+            assert_eq!(
+                anchored_position(direction, area, 0, 0),
+                anchored_position(direction, area, 10, 10),
+                "{direction:?} before the top-left corner"
+            );
+        }
+        assert_eq!(
+            anchored_position(GradientDirection::Horizontal, area, 99, 11),
+            1.0
+        );
+        assert_eq!(
+            anchored_position(GradientDirection::Vertical, area, 11, 99),
+            1.0
+        );
+    }
+
+    #[test]
+    fn paint_color_at_anchors_perimeter_interiors_at_the_seam() {
+        let area = Rect::new(0, 0, 5, 4);
+        // Interior cells are not on the ring at all; they resolve to the seam,
+        // where a perimeter's first and last stop are the same colour.
+        assert_eq!(
+            anchored_position(GradientDirection::Perimeter, area, 2, 1),
+            0.0
+        );
+        assert_eq!(
+            anchored_position(GradientDirection::Perimeter, area, 0, 0),
+            0.0
+        );
+    }
+
+    #[test]
+    fn paint_color_at_survives_an_empty_rect() {
+        for empty in [Rect::new(0, 0, 0, 4), Rect::new(0, 0, 4, 0)] {
+            for direction in [
+                GradientDirection::Horizontal,
+                GradientDirection::Vertical,
+                GradientDirection::DiagonalDown,
+                GradientDirection::DiagonalUp,
+                GradientDirection::Perimeter,
+            ] {
+                assert_eq!(anchored_position(direction, empty, 7, 7), 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn paint_color_at_returns_the_documented_colors_for_a_real_perimeter_theme() {
+        use crate::theme::registry::ThemeRegistry;
+
+        let registry = ThemeRegistry::builtins(ValidationMode::Compatible).expect("built-ins load");
+        let aqua = registry
+            .resolved(&ThemeId::parse("aqua").expect("valid id"))
+            .expect("aqua resolves");
+        let ring = aqua
+            .paint_gradient(PaintRole::PopupBorder)
+            .expect("aqua rings its popup border");
+        assert_eq!(ring.direction, GradientDirection::Perimeter);
+        let seam = ring.stops.first().expect("a stop").color;
+        let area = Rect::new(4, 4, 6, 5);
+
+        // Ring cells carry their walk position; the top-left corner is the seam.
+        assert_eq!(
+            aqua.paint_color_at(PaintRole::PopupBorder, area, 4, 4),
+            seam
+        );
+        // An interior cell and any out-of-rect cell stay defined, never panic,
+        // and never return `Color::Reset`.
+        let interior = aqua.paint_color_at(PaintRole::PopupBorder, area, 6, 6);
+        assert_eq!(interior, seam);
+        let far_away = aqua.paint_color_at(PaintRole::PopupBorder, area, 400, 400);
+        assert_eq!(
+            far_away,
+            aqua.paint_color_at(PaintRole::PopupBorder, area, 9, 8)
+        );
+        assert_ne!(far_away, Color::Reset);
+
+        // A solid role ignores the position entirely.
+        let solid = aqua.paint_color_at(PaintRole::AppBackground, area, 0, 0);
+        assert_eq!(
+            solid,
+            aqua.paint_color_at(PaintRole::AppBackground, area, 9, 9)
+        );
     }
 }

@@ -187,6 +187,13 @@ fn perimeter_position(area: Rect, x: u16, y: u16) -> Option<f32> {
 ///
 /// Foreground only, and the glyphs stay exactly where ratatui put them — this
 /// runs *after* the block drew its borders with the solid fallback colour.
+///
+/// The ring is a **geometric** restriction: cells are still sampled with the
+/// gradient's own direction. `perimeter` is the direction a closed-frame role
+/// normally carries and the only one that walks the ring, so with any other
+/// direction the frame simply shows that direction's colours where the ring
+/// crosses them — a `horizontal` gradient, for instance, paints each vertical
+/// edge as a flat block of the left/right colour.
 pub fn paint_gradient_ring(buf: &mut Buffer, area: Rect, gradient: &ResolvedGradient) {
     paint(
         buf,
@@ -515,6 +522,21 @@ mod tests {
     }
 
     #[test]
+    fn ring_painter_restricts_geometrically_and_keeps_the_gradients_direction() {
+        // A non-perimeter direction is legal and documented: the ring shows that
+        // direction's colours where it crosses them, so a horizontal gradient
+        // leaves each vertical edge a flat block.
+        let area = Rect::new(0, 0, 4, 3);
+        let mut buffer = Buffer::empty(area);
+        paint_gradient_ring(&mut buffer, area, &ramp(Horizontal));
+        for y in 0..3 {
+            assert_eq!(buffer[(0, y)].fg, rgb(0, 0, 0), "left edge at {y}");
+            assert_eq!(buffer[(3, y)].fg, rgb(255, 255, 255), "right edge at {y}");
+        }
+        assert_eq!(buffer[(1, 1)].fg, Color::Reset, "interior stays untouched");
+    }
+
+    #[test]
     fn ring_painter_treats_flat_rects_as_a_single_line() {
         let area = Rect::new(0, 0, 4, 1);
         let mut buffer = Buffer::empty(area);
@@ -663,62 +685,7 @@ mod tests {
     // Structural proof: sampling and painting allocate nothing.
     // -----------------------------------------------------------------------
 
-    /// Passthrough allocator that counts allocations made by the *current*
-    /// thread while [`ALLOC_ARMED`] is set. Counting per thread keeps the proof
-    /// valid even though the test binary runs its cases in parallel.
-    struct CountingAllocator;
-
-    thread_local! {
-        static ALLOC_ARMED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-        static ALLOC_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    }
-
-    fn note_allocation() {
-        // `try_with` because TLS is gone during thread teardown, where an
-        // allocation is none of this test's business anyway.
-        let armed = ALLOC_ARMED.try_with(|armed| armed.get()).unwrap_or(false);
-        if armed {
-            let _ = ALLOC_COUNT.try_with(|count| count.set(count.get() + 1));
-        }
-    }
-
-    unsafe impl std::alloc::GlobalAlloc for CountingAllocator {
-        unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
-            note_allocation();
-            unsafe { std::alloc::System.alloc(layout) }
-        }
-
-        unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
-            unsafe { std::alloc::System.dealloc(ptr, layout) }
-        }
-
-        unsafe fn realloc(
-            &self,
-            ptr: *mut u8,
-            layout: std::alloc::Layout,
-            new_size: usize,
-        ) -> *mut u8 {
-            note_allocation();
-            unsafe { std::alloc::System.realloc(ptr, layout, new_size) }
-        }
-
-        unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {
-            note_allocation();
-            unsafe { std::alloc::System.alloc_zeroed(layout) }
-        }
-    }
-
-    #[global_allocator]
-    static ALLOCATOR: CountingAllocator = CountingAllocator;
-
-    /// Allocations this thread made while running `body`.
-    fn allocations_during(body: impl FnOnce()) -> usize {
-        ALLOC_COUNT.with(|count| count.set(0));
-        ALLOC_ARMED.with(|armed| armed.set(true));
-        body();
-        ALLOC_ARMED.with(|armed| armed.set(false));
-        ALLOC_COUNT.with(|count| count.get())
-    }
+    use crate::test_alloc::allocations_during;
 
     #[test]
     fn sampling_and_painting_allocate_nothing_per_cell() {

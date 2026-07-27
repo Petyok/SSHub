@@ -17,6 +17,10 @@ pub mod session_transport;
 pub mod sftp;
 pub mod ssh;
 pub mod store;
+/// Shared allocation counter for tests; only one `#[global_allocator]` may
+/// exist per binary, so every allocation-free proof shares this module.
+#[cfg(test)]
+pub(crate) mod test_alloc;
 pub mod text_input;
 pub mod theme;
 pub mod tui;
