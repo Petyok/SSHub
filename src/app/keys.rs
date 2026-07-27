@@ -64,6 +64,7 @@ impl App {
         match self.mode {
             AppMode::KeybindEditor => self.handle_key_keybind_editor(key),
             AppMode::Settings => self.handle_key_settings(key),
+            AppMode::ThemePicker => self.handle_key_theme_picker(key),
             AppMode::TunnelReconnectSettings => self.handle_key_tunnel_reconnect_settings(key),
             AppMode::ConfirmQuit => self.handle_key_confirm_quit(key),
             AppMode::Help => self.handle_key_help(key),
@@ -1122,15 +1123,46 @@ impl App {
             _ if self.is_action(KeyAction::MoveUp, &key) => {
                 self.settings_selected = (self.settings_selected + n - 1) % n;
             }
+            KeyCode::Enter
+                if matches!(
+                    SETTINGS_ITEMS.get(self.settings_selected).map(|d| d.item),
+                    Some(SettingItem::Theme)
+                ) =>
+            {
+                self.open_theme_picker();
+            }
             KeyCode::Char(' ') | KeyCode::Enter => {
-                // Action rows ignore both keys here (nothing flips, nothing is
-                // written); the theme picker Enter wiring arrives with
-                // `AppMode::ThemePicker`.
+                // Action rows ignore both keys here: nothing flips, nothing is
+                // written. Space on the Theme row stays a deliberate no-op —
+                // only Enter opens the picker.
                 let item = SETTINGS_ITEMS.get(self.settings_selected).map(|d| d.item);
                 if item.is_some_and(|item| self.toggle_setting(item)) {
                     self.save_config_quietly();
                 }
             }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Theme picker keys (spec, "Theme-Picker / Interaktion"). Nothing here
+    /// writes to disk except `Enter`.
+    pub(crate) fn handle_key_theme_picker(&mut self, key: KeyEvent) -> Result<()> {
+        // The page step is what the renderer can actually show, taken from the
+        // same pure geometry function the renderer uses, so a page never jumps
+        // further than the eye can follow.
+        let page = crate::tui::screens::theme_picker::visible_rows(self.terminal_area).max(1);
+        let last = self.theme_picker_rows().len().saturating_sub(1);
+        match key.code {
+            _ if self.is_action(KeyAction::Cancel, &key) => self.cancel_theme_picker(),
+            KeyCode::Enter => self.commit_theme_picker(),
+            KeyCode::Char('r') => self.reload_theme_picker(),
+            KeyCode::Home => self.select_theme_row(0),
+            KeyCode::End => self.select_theme_row(last),
+            KeyCode::PageUp => self.page_theme_selection(-(page as isize)),
+            KeyCode::PageDown => self.page_theme_selection(page as isize),
+            _ if self.is_action(KeyAction::MoveDown, &key) => self.move_theme_selection(1),
+            _ if self.is_action(KeyAction::MoveUp, &key) => self.move_theme_selection(-1),
             _ => {}
         }
         Ok(())

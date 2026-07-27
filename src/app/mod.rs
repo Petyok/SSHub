@@ -20,6 +20,7 @@ mod session_picker;
 mod session_spawn;
 mod sftp;
 mod tags;
+mod theme_picker;
 mod tunnels;
 mod types;
 mod util;
@@ -27,6 +28,7 @@ mod util;
 #[cfg(test)]
 mod tests;
 
+pub use theme_picker::{ThemePickerState, ThemeRecordSummary, ThemeRow, ThemeRowStatus};
 pub use types::*;
 pub use util::*;
 
@@ -145,6 +147,9 @@ pub struct App {
     /// there is no global mutable theme state, so renderers take `app.theme()`
     /// (or an explicit `&ResolvedTheme`) and tests stay deterministic.
     pub theme_manager: ThemeManager,
+    /// Live theme-picker state; `Some` exactly while `mode` is
+    /// [`AppMode::ThemePicker`].
+    pub theme_picker: Option<ThemePickerState>,
     /// Active tag filters. A host matches when it carries every selected tag
     /// (AND). Empty means no tag filtering.
     pub tag_filters: Vec<String>,
@@ -708,6 +713,7 @@ impl App {
         let theme_manager = ThemeManager::builtins(config.appearance.active_theme.clone());
         Self {
             theme_manager,
+            theme_picker: None,
             hosts: Vec::new(),
             filtered_indices: Vec::new(),
             selected: 0,

@@ -385,6 +385,9 @@ pub enum AppMode {
     KeybindEditor,
     /// Settings overlay: checkbox list of appearance toggles.
     Settings,
+    /// Theme picker overlay, opened with `Enter` on the Settings Theme row.
+    /// Navigation previews a theme on the whole UI; only `Enter` persists.
+    ThemePicker,
     /// Keep-alive reconnect backoff settings (Tunnels tab).
     TunnelReconnectSettings,
     /// Quit confirmation dialog.

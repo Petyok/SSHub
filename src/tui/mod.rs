@@ -323,6 +323,7 @@ fn render_inner(frame: &mut Frame, app: &App) {
         AppMode::Help => render_help_popup(frame, app),
         AppMode::KeybindEditor => screens::keybind_editor::render_keybind_editor(frame, app),
         AppMode::Settings => screens::settings::render_settings(frame, app),
+        AppMode::ThemePicker => screens::theme_picker::render(frame, app),
         AppMode::TunnelReconnectSettings => {
             screens::tunnel_reconnect::render_tunnel_reconnect_settings(frame, app);
         }

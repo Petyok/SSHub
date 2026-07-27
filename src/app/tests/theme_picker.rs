@@ -6,7 +6,9 @@
 
 use super::*;
 use crate::theme::manager::ThemeManager;
+use std::cell::{Cell, RefCell};
 use std::fs;
+use std::rc::Rc;
 use tempfile::TempDir;
 
 /// A syntactically valid user theme that extends `default`.
@@ -308,4 +310,479 @@ fn theme_row_is_an_action_and_space_does_not_toggle_it() {
         None,
         "the Theme row is an action, not a boolean"
     );
+}
+
+// ── Theme picker ───────────────────────────────────────────────────────────
+//
+// The picker is a pure state machine over the registry plus one injected
+// persist closure, so every test below runs entirely inside a `tempfile`
+// themes directory and the only writes that can happen are the ones a test
+// explicitly counts.
+
+thread_local! {
+    /// Keeps every temp themes directory alive for the whole test thread.
+    /// The brief's test bodies hand back a bare `App`, so the `TempDir` has
+    /// nowhere else to live; parking it here means the directory is unlinked
+    /// when the thread ends rather than at the end of the constructor.
+    static THEME_DIRS: RefCell<Vec<TempDir>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A theme that is valid but carries an unknown component section, i.e.
+/// `warning` in Compatible mode: previewable and savable, but flagged.
+fn warning_theme(name: &str) -> String {
+    format!(
+        "{}\n[components.not_a_real_section_v2]\nborder = \"semantic.accent\"\n",
+        user_theme(name)
+    )
+}
+
+/// A theme that is fatally invalid in both validation modes.
+fn invalid_theme(name: &str) -> String {
+    format!("schema_version = 99\nname = \"{name}\"\n")
+}
+
+/// An app whose themes directory holds exactly `files`, already loaded.
+fn app_with_files(files: &[(&str, &str)]) -> App {
+    let root = themes_dir_with(files);
+    let mut app = app_wanting("default");
+    app.load_themes_from(&themes_path(&root));
+    THEME_DIRS.with(|dirs| dirs.borrow_mut().push(root));
+    app
+}
+
+/// An app that knows `ids`; built-in ids are already embedded, every other id
+/// becomes a valid user theme file of the same name.
+fn app_with_themes<const N: usize>(ids: [&str; N]) -> App {
+    let owned: Vec<(String, String)> = ids
+        .iter()
+        .filter(|id| !crate::theme::builtins::is_reserved(id))
+        .map(|id| ((*id).to_string(), user_theme(id)))
+        .collect();
+    let files: Vec<(&str, &str)> = owned
+        .iter()
+        .map(|(id, body)| (id.as_str(), body.as_str()))
+        .collect();
+    app_with_files(&files)
+}
+
+/// A fingerprint of everything under `root`, so a test can prove that an
+/// operation wrote nothing at all rather than merely that it wrote nothing
+/// *visible*.
+fn fingerprint(root: &std::path::Path) -> Vec<(String, u64, Option<std::time::SystemTime>)> {
+    let mut out = Vec::new();
+    let Ok(entries) = fs::read_dir(root) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let meta = entry.metadata().unwrap();
+        out.push((
+            entry.file_name().to_string_lossy().into_owned(),
+            meta.len(),
+            meta.modified().ok(),
+        ));
+        if meta.is_dir() {
+            out.extend(fingerprint(&entry.path()));
+        }
+    }
+    out.sort();
+    out
+}
+
+impl App {
+    /// The themes directory a test's app was built around.
+    fn test_themes_dir(&self) -> std::path::PathBuf {
+        self.theme_manager
+            .themes_dir()
+            .expect("test apps always own a themes directory")
+            .to_path_buf()
+    }
+
+    /// Delete a user theme file behind the picker's back and reload, which is
+    /// exactly what a user does in another terminal while the picker is open.
+    fn remove_user_theme_and_reload(&mut self, id: &str) {
+        fs::remove_file(self.test_themes_dir().join(format!("{id}.toml"))).unwrap();
+        self.reload_theme_picker();
+    }
+
+    /// Index of the row for `id` in the picker's current list.
+    fn theme_row_index(&self, id: &str) -> usize {
+        self.theme_picker_rows()
+            .iter()
+            .position(|row| row.id == id)
+            .unwrap_or_else(|| panic!("no picker row for `{id}`"))
+    }
+}
+
+#[test]
+fn escape_restores_the_captured_rc_when_original_file_disappears() {
+    let mut app = app_with_themes(["default", "ocean"]);
+    app.activate_theme("ocean");
+    let original = app.theme_manager.active_rc();
+    app.open_theme_picker();
+    app.remove_user_theme_and_reload("ocean");
+    app.cancel_theme_picker();
+    assert!(Rc::ptr_eq(&original, &app.theme_manager.active_rc()));
+    assert_eq!(app.mode, AppMode::Settings);
+}
+
+#[test]
+fn enter_on_theme_setting_opens_the_picker() {
+    let mut app = test_app(vec![]);
+    app.mode = AppMode::Settings;
+    app.settings_selected = theme_setting_index();
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert_eq!(app.mode, AppMode::ThemePicker);
+    assert!(app.theme_picker.is_some());
+}
+
+#[test]
+fn failed_save_keeps_preview_active_and_saved_id_unchanged() {
+    let mut app = app_with_themes(["default", "fire"]);
+    app.open_theme_picker();
+    app.preview_theme("fire");
+    app.commit_theme_picker_with(|_| anyhow::bail!("read only"));
+    assert_eq!(app.theme_manager.active_id(), "fire");
+    assert_eq!(app.theme_manager.saved_id(), "default");
+    assert_eq!(app.mode, AppMode::ThemePicker);
+    assert!(app.theme_picker.as_ref().unwrap().error.is_some());
+}
+
+#[test]
+fn opening_the_picker_captures_the_active_theme_without_activating_anything() {
+    let mut app = app_with_themes(["default", "ocean"]);
+    app.activate_theme("ocean");
+    let before = app.theme_manager.active_rc();
+
+    app.open_theme_picker();
+
+    let state = app.theme_picker.as_ref().expect("picker opened");
+    assert_eq!(state.original_id, "ocean");
+    assert_eq!(state.preview_id, "ocean");
+    assert!(Rc::ptr_eq(&state.original_theme, &before));
+    assert!(
+        Rc::ptr_eq(&before, &app.theme_manager.active_rc()),
+        "opening must not re-resolve the live theme"
+    );
+    assert_eq!(
+        app.theme_picker_rows()[state.selected].id,
+        "ocean",
+        "the picker must land on the theme that is actually active"
+    );
+}
+
+#[test]
+fn navigation_previews_valid_and_warning_themes_but_never_invalid_ones() {
+    let mut app = app_with_files(&[
+        ("nice", &user_theme("Nice")),
+        ("odd", &warning_theme("Odd")),
+        ("broken", &invalid_theme("Broken")),
+    ]);
+    app.open_theme_picker();
+
+    // valid
+    app.select_theme_row(app.theme_row_index("nice"));
+    assert_eq!(app.theme_manager.active_id(), "nice");
+    assert_eq!(app.theme_picker.as_ref().unwrap().preview_id, "nice");
+
+    // warning: still previewable, and flagged
+    let odd = app.theme_row_index("odd");
+    app.select_theme_row(odd);
+    assert_eq!(app.theme_manager.active_id(), "odd");
+    assert_eq!(app.theme_picker_rows()[odd].status, ThemeRowStatus::Warning);
+
+    // invalid: listed, selectable, but the runtime theme does not move
+    let broken = app.theme_row_index("broken");
+    let live = app.theme_manager.active_rc();
+    app.select_theme_row(broken);
+    assert_eq!(
+        app.theme_picker_rows()[broken].status,
+        ThemeRowStatus::Invalid
+    );
+    assert_eq!(app.theme_picker.as_ref().unwrap().selected, broken);
+    assert_eq!(app.theme_manager.active_id(), "odd");
+    assert!(
+        Rc::ptr_eq(&live, &app.theme_manager.active_rc()),
+        "an invalid row must never be activated"
+    );
+    assert_eq!(app.theme_picker.as_ref().unwrap().preview_id, "odd");
+}
+
+#[test]
+fn reload_adopts_a_repaired_theme_file() {
+    let mut app = app_with_files(&[("mine", &invalid_theme("Mine"))]);
+    app.open_theme_picker();
+    let mine = app.theme_row_index("mine");
+    app.select_theme_row(mine);
+    assert_eq!(app.theme_manager.active_id(), "default");
+
+    fs::write(
+        app.test_themes_dir().join("mine.toml"),
+        user_theme("Repaired"),
+    )
+    .unwrap();
+    app.reload_theme_picker();
+
+    let mine = app.theme_row_index("mine");
+    assert_eq!(app.theme_picker_rows()[mine].status, ThemeRowStatus::Valid);
+    assert_eq!(app.theme_picker.as_ref().unwrap().selected, mine);
+    assert_eq!(
+        app.theme_manager.active_id(),
+        "mine",
+        "a repaired file must become the live preview immediately"
+    );
+}
+
+#[test]
+fn reload_after_deleting_the_preview_keeps_the_theme_and_leaves_a_tombstone() {
+    let mut app = app_with_themes(["default", "ocean"]);
+    app.open_theme_picker();
+    let ocean = app.theme_row_index("ocean");
+    app.select_theme_row(ocean);
+    let previewed = app.theme_manager.active_rc();
+
+    app.remove_user_theme_and_reload("ocean");
+
+    let state = app.theme_picker.as_ref().unwrap();
+    assert_eq!(
+        state.tombstone.as_ref().map(|t| t.id.as_str()),
+        Some("ocean"),
+        "the removed entry must keep its slot"
+    );
+    assert_eq!(state.selected, ocean);
+    let rows = app.theme_picker_rows();
+    assert_eq!(rows[ocean].id, "ocean");
+    assert_eq!(rows[ocean].status, ThemeRowStatus::Invalid);
+    assert!(
+        Rc::ptr_eq(&previewed, &app.theme_manager.active_rc()),
+        "the last valid runtime theme stays active"
+    );
+}
+
+#[test]
+fn a_failed_reload_keeps_the_active_theme_and_explains_itself() {
+    let mut app = app_with_themes(["default", "ocean"]);
+    app.open_theme_picker();
+    app.preview_theme("ocean");
+    let live = app.theme_manager.active_rc();
+
+    // Replace the directory with a regular file: `read_dir` now fails with
+    // ENOTDIR, deterministically and even as root.
+    let dir = app.test_themes_dir();
+    fs::remove_dir_all(&dir).unwrap();
+    fs::write(&dir, "not a directory").unwrap();
+    app.reload_theme_picker();
+
+    assert!(Rc::ptr_eq(&live, &app.theme_manager.active_rc()));
+    assert_eq!(app.theme_manager.active_id(), "ocean");
+    assert_eq!(app.mode, AppMode::ThemePicker);
+    let error = app.theme_picker.as_ref().unwrap().error.as_deref();
+    assert!(
+        error.is_some_and(|e| e.contains("could not be read")),
+        "a failed reload must explain itself: {error:?}"
+    );
+    assert!(
+        app.theme_picker_rows().iter().any(|row| row.id == "ocean"),
+        "a failed reload must not drop the list it could not replace"
+    );
+}
+
+#[test]
+fn reload_without_a_themes_directory_is_a_no_op() {
+    // `new_with_deps` builds a manager that belongs to no directory at all.
+    // A reload there must do nothing — and above all must never read the
+    // working directory, which an empty `PathBuf` would have meant.
+    let mut app = test_app(vec![]);
+    assert_eq!(app.theme_manager.themes_dir(), None);
+    app.open_theme_picker();
+    let live = app.theme_manager.active_rc();
+
+    app.reload_theme_picker();
+
+    assert!(Rc::ptr_eq(&live, &app.theme_manager.active_rc()));
+    assert_eq!(app.mode, AppMode::ThemePicker);
+    assert_eq!(app.theme_picker.as_ref().unwrap().tombstone, None);
+    assert_eq!(app.theme_picker_rows().len(), 5, "the built-ins remain");
+}
+
+#[test]
+fn enter_on_an_invalid_theme_writes_nothing_and_keeps_the_picker_open() {
+    let mut app = app_with_files(&[("broken", &invalid_theme("Broken"))]);
+    app.open_theme_picker();
+    app.select_theme_row(app.theme_row_index("broken"));
+
+    let writes = Cell::new(0usize);
+    app.commit_theme_picker_with(|_| {
+        writes.set(writes.get() + 1);
+        Ok(())
+    });
+
+    assert_eq!(writes.get(), 0, "an invalid theme must never be persisted");
+    assert_eq!(app.mode, AppMode::ThemePicker);
+    assert_eq!(app.theme_manager.active_id(), "default");
+    assert_eq!(app.theme_manager.saved_id(), "default");
+    assert!(app.theme_picker.as_ref().unwrap().error.is_some());
+}
+
+#[test]
+fn a_successful_commit_writes_exactly_once_and_closes_the_picker() {
+    let mut app = app_with_themes(["default", "ocean"]);
+    app.open_theme_picker();
+    app.preview_theme("ocean");
+
+    let writes = Cell::new(0usize);
+    let saved = RefCell::new(String::new());
+    app.commit_theme_picker_with(|config| {
+        writes.set(writes.get() + 1);
+        saved.replace(config.appearance.active_theme.clone());
+        Ok(())
+    });
+
+    assert_eq!(writes.get(), 1, "a commit must persist exactly once");
+    assert_eq!(saved.into_inner(), "ocean");
+    assert_eq!(app.config.appearance.active_theme, "ocean");
+    assert_eq!(app.theme_manager.active_id(), "ocean");
+    assert_eq!(app.theme_manager.saved_id(), "ocean");
+    assert_eq!(app.mode, AppMode::Settings);
+    assert!(app.theme_picker.is_none());
+}
+
+#[test]
+fn open_navigation_reload_and_escape_never_write() {
+    let mut app = app_with_files(&[
+        ("ocean", &user_theme("Ocean")),
+        ("broken", &invalid_theme("Broken")),
+    ]);
+    let dir = app.test_themes_dir();
+    let root = dir.parent().unwrap().to_path_buf();
+    let before = fingerprint(&root);
+
+    app.open_theme_picker();
+    app.select_theme_row(app.theme_row_index("ocean"));
+    app.select_theme_row(app.theme_row_index("broken"));
+    app.move_theme_selection(1);
+    app.move_theme_selection(-1);
+    app.reload_theme_picker();
+    app.cancel_theme_picker();
+
+    assert_eq!(
+        before,
+        fingerprint(&root),
+        "opening, navigating, reloading and cancelling must not touch the disk"
+    );
+    assert!(!root.join("config.toml").exists());
+    assert_eq!(app.theme_manager.saved_id(), "default");
+    assert_eq!(app.mode, AppMode::Settings);
+}
+
+#[test]
+fn a_user_file_squatting_a_reserved_id_is_listed_as_invalid() {
+    // The exact file a confused user needs explained. `registry.get("aqua")`
+    // answers with the built-in, so the picker must enumerate `records()`.
+    let mut app = app_with_files(&[("aqua", &user_theme("Not Really Aqua"))]);
+    app.open_theme_picker();
+
+    let rows = app.theme_picker_rows();
+    let squatter = rows
+        .iter()
+        .find(|row| row.id == "aqua" && !row.builtin)
+        .expect("the squatting user file must be listed");
+    assert_eq!(squatter.status, ThemeRowStatus::Invalid);
+    assert!(
+        squatter.path.is_some(),
+        "a user row must show where the file lives"
+    );
+    assert!(
+        !squatter.diagnostics.is_empty(),
+        "the picker must be able to say why it is unusable"
+    );
+    assert!(
+        rows.iter().any(|row| row.id == "aqua" && row.builtin),
+        "the built-in must still be listed and usable"
+    );
+}
+
+#[test]
+fn built_ins_are_listed_first_in_their_frozen_order_then_user_themes() {
+    let app = app_with_files(&[
+        ("zulu", &user_theme("Alpha")),
+        ("alpha", &user_theme("Zulu")),
+    ]);
+    let rows = app.theme_picker_rows();
+    let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            "default",
+            "summer",
+            "aqua",
+            "fire",
+            "high-contrast",
+            // User themes sort by display name first, id second — `zulu.toml`
+            // is named "Alpha", so it leads.
+            "zulu",
+            "alpha",
+        ]
+    );
+    assert!(rows[..5].iter().all(|row| row.builtin));
+    assert!(rows[5..].iter().all(|row| !row.builtin));
+}
+
+#[test]
+fn arrow_keys_wrap_and_home_end_jump_to_the_edges() {
+    let mut app = app_with_themes(["default"]);
+    app.mode = AppMode::Settings;
+    app.settings_selected = theme_setting_index();
+    // Paging is sized from the terminal, so give the app a real one.
+    app.terminal_area = ratatui::layout::Rect::new(0, 0, 80, 24);
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    let last = app.theme_picker_rows().len() - 1;
+
+    assert_eq!(app.theme_picker.as_ref().unwrap().selected, 0);
+    app.handle_key(key(KeyCode::Up)).unwrap();
+    assert_eq!(app.theme_picker.as_ref().unwrap().selected, last);
+    app.handle_key(key(KeyCode::Down)).unwrap();
+    assert_eq!(app.theme_picker.as_ref().unwrap().selected, 0);
+    app.handle_key(key(KeyCode::End)).unwrap();
+    assert_eq!(app.theme_picker.as_ref().unwrap().selected, last);
+    app.handle_key(key(KeyCode::Home)).unwrap();
+    assert_eq!(app.theme_picker.as_ref().unwrap().selected, 0);
+    app.handle_key(key(KeyCode::PageDown)).unwrap();
+    assert_eq!(app.theme_picker.as_ref().unwrap().selected, last);
+    app.handle_key(key(KeyCode::PageUp)).unwrap();
+    assert_eq!(app.theme_picker.as_ref().unwrap().selected, 0);
+}
+
+#[test]
+fn escape_closes_the_picker_back_to_settings_and_restores_the_theme() {
+    let mut app = app_with_themes(["default", "ocean"]);
+    app.open_theme_picker();
+    let original = app.theme_manager.active_rc();
+    app.preview_theme("ocean");
+    assert_eq!(app.theme_manager.active_id(), "ocean");
+
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+
+    assert_eq!(app.mode, AppMode::Settings);
+    assert!(app.theme_picker.is_none());
+    assert_eq!(app.theme_manager.active_id(), "default");
+    assert!(
+        Rc::ptr_eq(&original, &app.theme_manager.active_rc()),
+        "the theme that was live when the picker opened must be back"
+    );
+}
+
+#[test]
+fn the_reload_key_is_wired_to_the_picker() {
+    let mut app = app_with_files(&[("mine", &invalid_theme("Mine"))]);
+    app.open_theme_picker();
+    app.select_theme_row(app.theme_row_index("mine"));
+    fs::write(
+        app.test_themes_dir().join("mine.toml"),
+        user_theme("Repaired"),
+    )
+    .unwrap();
+
+    app.handle_key(key_char('r')).unwrap();
+
+    assert_eq!(app.theme_manager.active_id(), "mine");
 }

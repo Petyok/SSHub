@@ -16,5 +16,6 @@ pub mod session_picker;
 pub mod settings;
 pub mod sftp;
 pub mod tag_filter;
+pub mod theme_picker;
 pub mod tunnel_reconnect;
 pub mod tunnels;
