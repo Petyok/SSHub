@@ -70,7 +70,7 @@ pub fn render_settings(frame: &mut Frame, app: &App) {
                 buf.set_string(label_x, ry, &label, label_style);
                 let used = label.chars().count() + 1;
                 let value = crate::tui::text::ellipsize(
-                    app.theme_manager.active_id(),
+                    app.active_theme_id(),
                     label_w.saturating_sub(used),
                 );
                 buf.set_string(

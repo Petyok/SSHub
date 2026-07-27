@@ -273,8 +273,7 @@ fn diagnostic_lines(app: &App, selected: Option<&ThemeRow>) -> Vec<String> {
         lines.extend(row.diagnostics.iter().map(|d| d.message.clone()));
     }
     lines.extend(
-        app.theme_manager
-            .registry()
+        app.theme_registry()
             .diagnostics()
             .iter()
             .map(|d| d.message.clone()),
@@ -656,7 +655,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         // themes directory itself.
         let text = match selected_row.and_then(|row| row.path.as_ref()) {
             Some(path) => path.display().to_string(),
-            None => match app.theme_manager.themes_dir() {
+            None => match app.themes_dir() {
                 Some(dir) => dir.display().to_string(),
                 None => "no themes directory".to_string(),
             },

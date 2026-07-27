@@ -146,7 +146,15 @@ pub struct App {
     /// The active runtime theme and the registry it came from. `App` owns it —
     /// there is no global mutable theme state, so renderers take `app.theme()`
     /// (or an explicit `&ResolvedTheme`) and tests stay deterministic.
-    pub theme_manager: ThemeManager,
+    ///
+    /// **Private on purpose.** Every change to what is painted has to invalidate
+    /// the buffer snapshots captured under the old theme, and a public field
+    /// would put `ThemeManager::activate_resolved` — and a wholesale
+    /// replacement — within reach of any caller, skipping that entirely. The
+    /// two mutation paths are [`App::activate_resolved_theme`] and
+    /// [`App::replace_theme_manager`]; reading goes through the accessors
+    /// below.
+    theme_manager: ThemeManager,
     /// Live theme-picker state; `Some` exactly while `mode` is
     /// [`AppMode::ThemePicker`].
     pub theme_picker: Option<ThemePickerState>,
@@ -603,6 +611,41 @@ impl App {
         self.theme_manager.theme()
     }
 
+    /// Id of the theme currently painting — which during a picker preview is
+    /// not the saved one.
+    pub fn active_theme_id(&self) -> &str {
+        self.theme_manager.active_id()
+    }
+
+    /// Id `config.toml` holds, i.e. what the next start would load.
+    pub fn saved_theme_id(&self) -> &str {
+        self.theme_manager.saved_id()
+    }
+
+    /// Every theme that was found, valid or not — what the picker lists.
+    pub fn theme_registry(&self) -> &ThemeRegistry {
+        self.theme_manager.registry()
+    }
+
+    /// The directory user themes were loaded from, or `None` for a manager that
+    /// belongs to no directory (tests, or no config directory).
+    pub fn themes_dir(&self) -> Option<&Path> {
+        self.theme_manager.themes_dir()
+    }
+
+    /// Swap the whole theme manager, invalidating what the old theme painted.
+    ///
+    /// The *other* half of the seam. [`App::activate_resolved_theme`] moves the
+    /// active theme within one manager; this replaces the manager itself
+    /// (registry, saved id and start-up diagnostics), which activation cannot
+    /// express. Both end in [`App::invalidate_theme_visual_state`], and with
+    /// `theme_manager` private they are the only two ways the painted theme can
+    /// change at all.
+    fn replace_theme_manager(&mut self, manager: ThemeManager) {
+        self.theme_manager = manager;
+        self.invalidate_theme_visual_state();
+    }
+
     /// Drop every buffer snapshot and in-flight slide that was captured under
     /// the theme being replaced.
     ///
@@ -647,34 +690,30 @@ impl App {
     /// from starting. A missing or invalid theme id likewise falls back to
     /// `default` while `saved_id` keeps the configured value, and `config.toml`
     /// is never rewritten: repairing the theme file is enough to get it back.
-    pub fn load_themes_from(&mut self, themes_dir: &Path) {
+    ///
+    /// `pub(crate)`, not `pub`: it changes what is painted, so it goes through
+    /// [`App::replace_theme_manager`] and must not be an entry point an outside
+    /// caller can reach around the invalidation with.
+    pub(crate) fn load_themes_from(&mut self, themes_dir: &Path) {
         let saved_id = self.config.appearance.active_theme.clone();
-        let load_error = match ThemeRegistry::load_installed(themes_dir, ValidationMode::Compatible)
-        {
-            Ok(registry) => {
-                self.theme_manager =
-                    ThemeManager::from_registry(registry, themes_dir.to_path_buf(), saved_id);
-                None
-            }
-            Err(e) => {
-                // `builtins_at`, not `builtins`: the degraded manager must keep
-                // pointing at the directory that failed, or a reload after the
-                // user repairs it has nowhere to look.
-                self.theme_manager = ThemeManager::builtins_at(saved_id, themes_dir.to_path_buf());
-                Some(format!(
-                    "{} could not be read ({e}); using the built-in themes",
-                    themes_dir.display()
-                ))
-            }
-        };
-        // This is the one place besides `activate_resolved_theme` that changes
-        // what is painted: it swaps the whole manager (registry, saved id and
-        // start-up diagnostics), which the activation seam cannot express. It
-        // therefore runs the same invalidation directly rather than routing a
-        // no-op activation through the seam — today it only runs before the
-        // first frame, but an in-app reload must not be able to paint over a
-        // snapshot taken under the previous theme.
-        self.invalidate_theme_visual_state();
+        let (manager, load_error) =
+            match ThemeRegistry::load_installed(themes_dir, ValidationMode::Compatible) {
+                Ok(registry) => (
+                    ThemeManager::from_registry(registry, themes_dir.to_path_buf(), saved_id),
+                    None,
+                ),
+                Err(e) => (
+                    // `builtins_at`, not `builtins`: the degraded manager must
+                    // keep pointing at the directory that failed, or a reload
+                    // after the user repairs it has nowhere to look.
+                    ThemeManager::builtins_at(saved_id, themes_dir.to_path_buf()),
+                    Some(format!(
+                        "{} could not be read ({e}); using the built-in themes",
+                        themes_dir.display()
+                    )),
+                ),
+            };
+        self.replace_theme_manager(manager);
         if let Some(notice) = theme_startup_notice(&self.theme_manager, load_error.as_deref()) {
             self.host_notice = Some(notice);
         }

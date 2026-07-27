@@ -869,47 +869,85 @@ fn theme_activation_settles_the_popup_open_slide() {
 }
 
 #[test]
-fn every_picker_transition_invalidates_the_old_theme_state() {
-    // Preview, rollback and commit all reach `activate_resolved_theme`; this
-    // pins that none of them can grow a path around the invalidation.
-    let mut app = app_with_themes(["default", "ocean"]);
-    app.open_theme_picker();
-
+fn every_path_that_changes_the_painted_theme_invalidates_it() {
+    // `theme_manager` is private, so the painted theme can only move through
+    // `activate_resolved_theme` (activation within one manager) or
+    // `replace_theme_manager` (a new manager). This walks every caller of both
+    // and asserts each one arrives at the invalidation — the guarantee the
+    // frame pipeline's `Matching(Color::Reset)` painters depend on.
     let dirty = |app: &mut App| {
         *app.session_snapshot.borrow_mut() = Some(ratatui::buffer::Buffer::empty(
             ratatui::layout::Rect::new(0, 0, 8, 4),
         ))
     };
 
+    // ── activation within one manager ────────────────────────
+    let mut app = app_with_files(&[("ocean", &user_theme("Ocean"))]);
+    app.open_theme_picker();
+
+    dirty(&mut app);
+    assert!(app.activate_theme("fire"), "direct activation");
+    assert!(app.session_snapshot.borrow().is_none(), "activate_theme");
+
     dirty(&mut app);
     app.preview_theme("ocean");
     assert!(app.session_snapshot.borrow().is_none(), "preview");
 
     dirty(&mut app);
+    app.reload_theme_picker();
+    assert!(app.session_snapshot.borrow().is_none(), "reload");
+
+    dirty(&mut app);
     app.commit_theme_picker_with(|_| Ok(()));
     assert!(app.session_snapshot.borrow().is_none(), "commit");
 
+    // ── rollback ─────────────────────────────────────────────
     app.open_theme_picker();
     app.preview_theme("default");
     dirty(&mut app);
     app.cancel_theme_picker();
     assert!(app.session_snapshot.borrow().is_none(), "rollback");
+
+    // ── replacing the manager wholesale ──────────────────────
+    let root = themes_dir_with(&[("mine", &user_theme("Mine"))]);
+    let mut app = app_wanting("mine");
+    dirty(&mut app);
+    app.load_themes_from(&themes_path(&root));
+    assert_eq!(app.active_theme_id(), "mine");
+    assert!(app.session_snapshot.borrow().is_none(), "load_themes_from");
+
+    // Even the degraded path — an unreadable directory falling back to the
+    // built-ins — is a manager replacement, and invalidates too.
+    let broken = tempfile::tempdir().unwrap();
+    let not_a_dir = broken.path().join("themes");
+    fs::write(&not_a_dir, "not a directory").unwrap();
+    dirty(&mut app);
+    app.load_themes_from(&not_a_dir);
+    assert!(
+        app.session_snapshot.borrow().is_none(),
+        "load_themes_from (degraded)"
+    );
 }
 
 #[test]
-fn loading_a_themes_directory_invalidates_the_old_theme_state() {
-    // `load_themes_from` replaces the whole manager, so it changes the painted
-    // theme without passing `activate_resolved_theme`. Today it only runs
-    // before the first frame, but an in-app reload must not be able to paint
-    // over a snapshot taken under the previous theme.
+fn the_theme_accessors_report_what_the_manager_holds() {
+    // With the field private these read-only accessors are the whole outside
+    // view of the theme state, so they have to keep agreeing with it.
     let root = themes_dir_with(&[("mine", &user_theme("Mine"))]);
     let mut app = app_wanting("mine");
-    *app.session_snapshot.borrow_mut() = Some(ratatui::buffer::Buffer::empty(
-        ratatui::layout::Rect::new(0, 0, 8, 4),
-    ));
-
     app.load_themes_from(&themes_path(&root));
 
-    assert_eq!(app.theme_manager.active_id(), "mine");
-    assert!(app.session_snapshot.borrow().is_none());
+    assert_eq!(app.active_theme_id(), "mine");
+    assert_eq!(app.saved_theme_id(), "mine");
+    assert_eq!(app.theme().id().as_str(), "mine");
+    assert!(app.theme_registry().get("default").is_some());
+    assert_eq!(app.themes_dir(), Some(themes_path(&root).as_path()));
+
+    // A preview moves `active` and leaves `saved` where it was — the
+    // distinction the picker is built on.
+    app.open_theme_picker();
+    app.preview_theme("fire");
+    assert_eq!(app.active_theme_id(), "fire");
+    assert_eq!(app.saved_theme_id(), "mine");
+    assert_eq!(app.theme().id().as_str(), "fire");
 }
