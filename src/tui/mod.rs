@@ -45,17 +45,25 @@ pub fn format_local_time(epoch_secs: i64) -> String {
 /// colour, and — when `appearance.opaque_background` is on — with
 /// `semantic.canvas` behind whatever is left.
 pub fn render(frame: &mut Frame, app: &App) {
-    render_at(frame, app, std::time::Instant::now());
+    render_with_transition_clock(frame, app, std::time::Instant::now());
 }
 
-/// [`render`] with the frame clock supplied by the caller.
+/// [`render`] with the transition clock supplied by the caller.
 ///
-/// One instant for the whole composed frame. The passes that compose a frame
-/// have to agree about *where* a transition is: the exit slide's blit and the
-/// region protected from theme paint are the same animation frame or they are a
-/// bug, and re-reading the wall clock between them makes them differ by however
-/// long the frame took to draw. Tests inject it to stand still.
-pub fn render_at(frame: &mut Frame, app: &App, now: std::time::Instant) {
+/// `now` drives exactly two things: the [`FrameComposition`] captured below —
+/// the exit slide's offset and the regions protected from theme paint — and the
+/// splash fade's progress. Those are the passes that must agree with each other
+/// about where a transition is, because the slide's blit and the protection of
+/// what it blitted are one animation frame or they are a bug.
+///
+/// Every other animation still reads its own clock (`render_inner`, the popup
+/// and tab slides, the toasts, the scroll chases). That is sound, and
+/// deliberately left alone: none of them recomputes geometry that a later paint
+/// pass depends on. This is not a deterministic whole-frame renderer, and the
+/// name does not claim to be one.
+///
+/// Private: the only caller besides [`render`] is this module's own test child.
+fn render_with_transition_clock(frame: &mut Frame, app: &App, now: std::time::Instant) {
     // Resolved once, before anything is drawn, and then reused by every pass
     // that composes this frame.
     let composition = FrameComposition::capture(app, frame.area(), now);
@@ -2611,7 +2619,9 @@ mod tests {
     fn render_frame_at(app: &App, width: u16, height: u16, now: std::time::Instant) -> Buffer {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|frame| render_at(frame, app, now)).unwrap();
+        terminal
+            .draw(|frame| render_with_transition_clock(frame, app, now))
+            .unwrap();
         terminal.backend().buffer().clone()
     }
 
@@ -2673,24 +2683,93 @@ mod tests {
     }
 
     #[test]
-    fn the_last_visible_frame_of_the_exit_slide_is_still_protected() {
-        // At the very end of the slide the second clock sample could return
-        // `None` — no slide, no protection — while the blit had just put the
-        // last visible columns down.
+    fn the_exit_slide_is_protected_across_its_last_half_column_step() {
+        // The rounding contract, stood on the actual threshold. Cubic ease-out
+        // over 280 ms on an 80-column frame puts the last half-column step
+        // between 228 ms (raw 79.4876 -> 79, the last visible column) and
+        // 229 ms (raw 79.5166 -> 80, one past the right edge). Both facts are
+        // asserted before anything is claimed about protection, so this test
+        // cannot quietly stop straddling the boundary the way a curve change
+        // would otherwise let it.
         let width = 80u16;
         let area = Rect::new(0, 0, width, 24);
         let pty = crate::session::render::remote_pty_rect(area);
-        let elapsed = SESSION_ANIM - std::time::Duration::from_millis(1);
-        let (app, _dir, now) = exiting_app("fire", area, pty.y, elapsed);
-        let buffer = render_frame_at(&app, width, 24, now);
-        let expected_x = pty.x + exit_offset_at(width, elapsed);
-        if expected_x < width {
+        let last_visible = std::time::Duration::from_millis(228);
+        let first_gone = std::time::Duration::from_millis(229);
+
+        let off_visible = exit_offset_at(width, last_visible);
+        let off_gone = exit_offset_at(width, first_gone);
+        assert_ne!(
+            off_visible, off_gone,
+            "228ms and 229ms must land on opposite sides of a half-column step"
+        );
+        assert_eq!(off_visible, width - 1, "228ms is the last visible column");
+        assert_eq!(off_gone, width, "229ms has left the frame");
+
+        // The last frame that genuinely blits something — asserted
+        // unconditionally, because a guarded assertion here is how the previous
+        // version of this test came to check nothing at all.
+        for (theme_id, _) in explicit_background_themes() {
+            let (app, _dir, now) = exiting_app(theme_id, area, pty.y, last_visible);
+            let buffer = render_frame_at(&app, width, 24, now);
             assert_remote_cell_untouched_by_theme(
                 &buffer,
-                (expected_x, pty.y),
+                (pty.x + off_visible, pty.y),
                 allowed_pty_background(&app, false),
-                "exit, last visible frame",
+                &format!("exit, last visible column, {theme_id}"),
             );
+        }
+
+        // One millisecond later the slide has left the screen: nothing remote is
+        // on the frame, and the band that was protected must be painted again
+        // rather than left carved out of the dashboard.
+        for (theme_id, _) in explicit_background_themes() {
+            let (app, _dir, now) = exiting_app(theme_id, area, pty.y, first_gone);
+            let buffer = render_frame_at(&app, width, 24, now);
+            assert_no_remote_cells(&buffer, theme_id);
+            assert_band_is_painted(&buffer, pty, theme_id);
+        }
+    }
+
+    #[test]
+    fn a_finished_exit_slide_leaves_no_protected_band_behind() {
+        // Past `SESSION_ANIM` there is no slide at all: no blit, no exclusion.
+        let width = 80u16;
+        let area = Rect::new(0, 0, width, 24);
+        let pty = crate::session::render::remote_pty_rect(area);
+        for (theme_id, _) in explicit_background_themes() {
+            let (app, _dir, now) = exiting_app(theme_id, area, pty.y, SESSION_ANIM);
+            let buffer = render_frame_at(&app, width, 24, now);
+            assert_no_remote_cells(&buffer, theme_id);
+            assert_band_is_painted(&buffer, pty, theme_id);
+        }
+    }
+
+    /// No cell anywhere carries the remote marker's colour.
+    fn assert_no_remote_cells(buffer: &Buffer, what: &str) {
+        let a = buffer.area;
+        for y in a.y..a.bottom() {
+            for x in a.x..a.right() {
+                assert_ne!(
+                    buffer[(x, y)].fg,
+                    REMOTE_FG,
+                    "{what}: remote output is still on screen at ({x}, {y})"
+                );
+            }
+        }
+    }
+
+    /// Every cell of `band` got a background — i.e. no stale exclusion is
+    /// keeping the theme off a region the slide no longer covers.
+    fn assert_band_is_painted(buffer: &Buffer, band: Rect, what: &str) {
+        for y in band.y..band.bottom() {
+            for x in band.x..band.right() {
+                assert_ne!(
+                    buffer[(x, y)].bg,
+                    ratatui::style::Color::Reset,
+                    "{what}: ({x}, {y}) was left unpainted after the slide ended"
+                );
+            }
         }
     }
 
