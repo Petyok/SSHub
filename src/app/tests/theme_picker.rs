@@ -7,7 +7,6 @@
 use super::*;
 use crate::theme::manager::ThemeManager;
 use std::fs;
-use std::path::Path;
 use tempfile::TempDir;
 
 /// A syntactically valid user theme that extends `default`.
@@ -47,7 +46,7 @@ fn new_with_deps_starts_on_the_built_ins_without_touching_the_filesystem() {
     assert_eq!(app.theme_manager.active_id(), "default");
     assert_eq!(
         app.theme_manager.themes_dir(),
-        Path::new(""),
+        None,
         "the test constructor must not point at any themes directory"
     );
     assert!(app.theme_manager.startup_diagnostics().is_empty());
@@ -216,4 +215,37 @@ fn a_builtins_manager_can_be_installed_without_any_path() {
     app.theme_manager = ThemeManager::builtins("fire");
     assert_eq!(app.theme_manager.active_id(), "fire");
     assert_eq!(app.theme().id.as_str(), "fire");
+}
+
+#[test]
+fn a_failed_theme_directory_is_still_the_reload_target() {
+    // `themes` is a regular file, so the directory cannot be read at all.
+    let root = tempfile::tempdir().unwrap();
+    let themes = themes_path(&root);
+    fs::write(&themes, "not a directory").unwrap();
+
+    let mut app = app_wanting("mine");
+    app.load_themes_from(&themes);
+
+    // Degraded as designed: built-ins active, configured id preserved, notice
+    // shown — but the manager must still know *which* directory failed.
+    assert_eq!(app.theme_manager.active_id(), "default");
+    assert_eq!(app.theme_manager.saved_id(), "mine");
+    assert!(app.host_notice.is_some());
+    assert_eq!(
+        app.theme_manager.themes_dir(),
+        Some(themes.as_path()),
+        "a degraded manager must keep the directory a reload has to retry"
+    );
+
+    // Repairing the directory and reloading through that same path restores the
+    // user's choice — the reload-after-repair Task 10 depends on.
+    let reload_target = app.theme_manager.themes_dir().unwrap().to_path_buf();
+    fs::remove_file(&themes).unwrap();
+    fs::create_dir(&themes).unwrap();
+    fs::write(themes.join("mine.toml"), user_theme("Mine")).unwrap();
+    app.load_themes_from(&reload_target);
+
+    assert_eq!(app.theme_manager.active_id(), "mine");
+    assert_eq!(app.theme_manager.themes_dir(), Some(themes.as_path()));
 }

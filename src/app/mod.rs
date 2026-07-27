@@ -617,7 +617,10 @@ impl App {
                 None
             }
             Err(e) => {
-                self.theme_manager = ThemeManager::builtins(saved_id);
+                // `builtins_at`, not `builtins`: the degraded manager must keep
+                // pointing at the directory that failed, or a reload after the
+                // user repairs it has nowhere to look.
+                self.theme_manager = ThemeManager::builtins_at(saved_id, themes_dir.to_path_buf());
                 Some(format!(
                     "{} could not be read ({e}); using the built-in themes",
                     themes_dir.display()

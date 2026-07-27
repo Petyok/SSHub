@@ -29,22 +29,37 @@ pub struct ThemeManager {
     /// What is actually painting right now.
     active_id: String,
     active: Rc<ResolvedTheme>,
-    themes_dir: PathBuf,
+    /// The user theme directory this manager belongs to, or `None` when there
+    /// genuinely is none (tests, or a config directory that could not be
+    /// resolved). A *degraded* manager keeps the path that failed, because a
+    /// reload after the user repairs the directory has nowhere else to look.
+    /// An empty `PathBuf` cannot express this: as a `Path` it means the working
+    /// directory.
+    themes_dir: Option<PathBuf>,
     startup_diagnostics: Vec<ThemeDiagnostic>,
 }
 
 impl ThemeManager {
-    /// Built-ins only — no filesystem access at all.
+    /// Built-ins only, belonging to no directory — no filesystem access at all.
     ///
     /// This is what `App::new_with_deps` hands tests, and the degraded state
-    /// when there is no usable config directory.
+    /// when there is no usable config directory to point at.
     pub fn builtins(saved_id: impl Into<String>) -> Self {
-        let registry = ThemeRegistry::builtins(ValidationMode::Compatible)
+        Self::from_parts(Self::builtin_registry(), None, saved_id)
+    }
+
+    /// Built-ins only, but still pointed at the user directory that failed to
+    /// load. Reloading after a repair is the whole reason the path is kept.
+    pub fn builtins_at(saved_id: impl Into<String>, themes_dir: PathBuf) -> Self {
+        Self::from_parts(Self::builtin_registry(), Some(themes_dir), saved_id)
+    }
+
+    fn builtin_registry() -> ThemeRegistry {
+        ThemeRegistry::builtins(ValidationMode::Compatible)
             // The embedded assets are a build invariant, proven by
             // `theme::builtins::tests` — `builtins()` performs no I/O and has
             // no failure mode left at runtime.
-            .expect("built-in themes must always load");
-        Self::from_registry(registry, PathBuf::new(), saved_id)
+            .expect("built-in themes must always load")
     }
 
     /// Activate `saved_id` against `registry`, falling back to `default`.
@@ -54,6 +69,14 @@ impl ThemeManager {
     pub fn from_registry(
         registry: ThemeRegistry,
         themes_dir: PathBuf,
+        saved_id: impl Into<String>,
+    ) -> Self {
+        Self::from_parts(registry, Some(themes_dir), saved_id)
+    }
+
+    fn from_parts(
+        registry: ThemeRegistry,
+        themes_dir: Option<PathBuf>,
         saved_id: impl Into<String>,
     ) -> Self {
         let saved_id = saved_id.into();
@@ -121,9 +144,10 @@ impl ThemeManager {
         &self.registry
     }
 
-    /// Where user themes live. Empty for a built-ins-only manager.
-    pub fn themes_dir(&self) -> &Path {
-        &self.themes_dir
+    /// Where user themes live, and therefore where a reload reads from.
+    /// `None` only when this manager belongs to no directory at all.
+    pub fn themes_dir(&self) -> Option<&Path> {
+        self.themes_dir.as_deref()
     }
 
     /// Activate `id` if it resolves. Returns `false` and changes **nothing**
@@ -132,7 +156,7 @@ impl ThemeManager {
     pub fn activate(&mut self, id: &str) -> bool {
         match Self::lookup(&self.registry, id) {
             Some(theme) => {
-                self.activate_resolved(id.to_string(), theme);
+                self.activate_resolved(theme);
                 true
             }
             None => false,
@@ -144,16 +168,23 @@ impl ThemeManager {
     /// The single mutation point every preview / reload / rollback / commit
     /// runs through, so callers that must invalidate buffer snapshots have one
     /// place to hook.
-    pub fn activate_resolved(&mut self, id: String, theme: Rc<ResolvedTheme>) {
-        self.active_id = id;
+    ///
+    /// The id is **derived** from the theme rather than passed alongside it. A
+    /// second free parameter let a caller activate Aqua under the id `fire`:
+    /// the renderers follow the theme and the picker and the config commit
+    /// follow the id, so a preview could visibly show one theme while saving
+    /// another. There is no signature here that can express that state.
+    pub fn activate_resolved(&mut self, theme: Rc<ResolvedTheme>) {
+        self.active_id = theme.id().as_str().to_string();
         self.active = theme;
     }
 
     /// Put back a snapshot taken before a preview. Same mechanics as
     /// [`Self::activate_resolved`]; named separately so the call sites read as
-    /// what they are.
-    pub fn restore_snapshot(&mut self, id: String, theme: Rc<ResolvedTheme>) {
-        self.activate_resolved(id, theme);
+    /// what they are. The snapshot's `Rc` carries its own id, so rollback needs
+    /// nothing else.
+    pub fn restore_snapshot(&mut self, theme: Rc<ResolvedTheme>) {
+        self.activate_resolved(theme);
     }
 
     /// Swap in a freshly loaded registry (a reload). The active theme is left
@@ -163,9 +194,14 @@ impl ThemeManager {
         self.registry = registry;
     }
 
-    /// Record that `config.toml` now holds `id`.
-    pub fn mark_saved(&mut self, id: String) {
-        self.saved_id = id;
+    /// Record that `config.toml` now holds the active theme's id.
+    ///
+    /// Called *after* a successful persist. It adopts `active_id` rather than
+    /// taking an id of its own, for the same reason [`Self::activate_resolved`]
+    /// derives one: a free parameter here could record a theme that was never
+    /// activated.
+    pub fn mark_saved(&mut self) {
+        self.saved_id = self.active_id.clone();
     }
 
     /// Registry-level and active-record diagnostics collected at construction,
@@ -357,7 +393,7 @@ mod tests {
             "mine",
             "activating must not pretend config.toml changed"
         );
-        manager.mark_saved("aqua".to_string());
+        manager.mark_saved();
         assert_eq!(manager.saved_id(), "aqua");
     }
 
@@ -368,7 +404,7 @@ mod tests {
         let before = manager.active_rc();
         assert!(manager.activate("fire"));
         assert!(!Rc::ptr_eq(&before, &manager.active_rc()));
-        manager.restore_snapshot(before_id.clone(), Rc::clone(&before));
+        manager.restore_snapshot(Rc::clone(&before));
         assert_eq!(manager.active_id(), before_id);
         assert!(Rc::ptr_eq(&before, &manager.active_rc()));
     }
@@ -402,10 +438,27 @@ mod tests {
     }
 
     #[test]
+    fn a_degraded_manager_remembers_the_directory_that_failed() {
+        // `builtins` and `builtins_at` differ in exactly one thing: whether the
+        // manager still knows where a reload has to look.
+        let dir = tempfile::tempdir().unwrap();
+        let degraded = ThemeManager::builtins_at("mine", dir.path().to_path_buf());
+        assert_eq!(degraded.themes_dir(), Some(dir.path()));
+        assert_eq!(degraded.active_id(), "default");
+        assert_eq!(degraded.saved_id(), "mine");
+
+        assert_eq!(
+            ThemeManager::builtins("mine").themes_dir(),
+            None,
+            "only a genuinely path-less manager may report None"
+        );
+    }
+
+    #[test]
     fn builtins_only_manager_touches_no_directory() {
         let manager = ThemeManager::builtins("default");
         assert_eq!(manager.active_id(), "default");
-        assert_eq!(manager.themes_dir(), Path::new(""));
+        assert_eq!(manager.themes_dir(), None);
         assert!(manager.startup_diagnostics().is_empty());
         // All five embedded themes are reachable without any filesystem access.
         for id in ["default", "summer", "aqua", "fire", "high-contrast"] {
@@ -414,5 +467,46 @@ mod tests {
                 "built-in `{id}` missing"
             );
         }
+    }
+    /// The invariant the two-argument `activate_resolved` could break: a caller
+    /// used to be able to activate one theme under another theme's id, leaving
+    /// the renderers painting Aqua while the picker and the config commit both
+    /// read `fire`. Every mutation entry point must keep the two in step.
+    #[test]
+    fn the_active_id_always_names_the_active_theme() {
+        let (_dir, mut manager) = manager_with_user_themes();
+        let assert_in_step = |manager: &ThemeManager| {
+            assert_eq!(
+                manager.active_id(),
+                manager.theme().id().as_str(),
+                "the active id and the active theme disagree"
+            );
+        };
+        assert_in_step(&manager);
+
+        // via `activate`
+        assert!(manager.activate("aqua"));
+        assert_eq!(manager.active_id(), "aqua");
+        assert_in_step(&manager);
+
+        // via `activate_resolved` — the id can only come from the theme itself.
+        let fire = ThemeManager::lookup(manager.registry(), "fire").expect("fire resolves");
+        manager.activate_resolved(Rc::clone(&fire));
+        assert_eq!(manager.active_id(), "fire");
+        assert_in_step(&manager);
+
+        // via `restore_snapshot`
+        let snapshot = manager.active_rc();
+        assert!(manager.activate("mine"));
+        manager.restore_snapshot(Rc::clone(&snapshot));
+        assert_eq!(manager.active_id(), "fire");
+        assert!(Rc::ptr_eq(&snapshot, &manager.active_rc()));
+        assert_in_step(&manager);
+
+        // A persist records what is actually active, not a second free id.
+        assert_eq!(manager.saved_id(), "mine");
+        manager.mark_saved();
+        assert_eq!(manager.saved_id(), "fire");
+        assert_eq!(manager.saved_id(), manager.theme().id().as_str());
     }
 }
