@@ -180,6 +180,11 @@ pub struct ColorValue {
     pub base: ColorBase,
     /// Span of the base alone — the bare string, or the `rgb`/`color` value.
     pub base_span: Range<usize>,
+    /// Whether the base was written as `color = …` rather than as a bare value
+    /// or `rgb = …`. The spec restricts `color` to qualified references, and
+    /// that rule cannot be recovered from the parsed value alone: a hex base
+    /// looks the same either way.
+    pub base_from_color_key: bool,
     pub brightness: Option<Spanned<f64>>,
     pub opacity: Option<Spanned<f64>>,
     pub over: Option<Box<Spanned<ColorValue>>>,

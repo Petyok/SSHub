@@ -688,6 +688,7 @@ impl DefinitionParser {
                 ColorValue {
                     base,
                     base_span: span.clone(),
+                    base_from_color_key: false,
                     brightness: None,
                     opacity: None,
                     over: None,
@@ -773,6 +774,7 @@ impl DefinitionParser {
             ColorValue {
                 base: base?,
                 base_span,
+                base_from_color_key: saw_color,
                 brightness,
                 opacity,
                 over,

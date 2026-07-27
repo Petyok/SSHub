@@ -101,10 +101,21 @@ fn sort_diagnostics(diagnostics: &mut [ThemeDiagnostic]) {
     diagnostics.sort_by(|left, right| left.sort_key().cmp(&right.sort_key()));
 }
 
+/// The parser's message for a string that is not part of the colour grammar.
+/// Only those diagnostics may have their help rewritten by [`suggest_sentinels`].
+const NOT_A_COLOUR_VALUE: &str = "is not a colour value";
+
 /// Replace the parser's generic colour help with a sentinel suggestion when the
 /// rejected string is a near miss of `"auto"`, `"native"` or `"terminal"`.
+///
+/// Scoped to the one parser message this is about: the pass reads raw source at
+/// a diagnostic's span, so letting it touch type errors or the TOML syntax
+/// diagnostic would make an unrelated future message able to trigger a rewrite.
 fn suggest_sentinels(source: &str, diagnostics: &mut [ThemeDiagnostic]) {
     for diagnostic in diagnostics {
+        if !diagnostic.message.contains(NOT_A_COLOUR_VALUE) {
+            continue;
+        }
         let Some(span) = &diagnostic.span else {
             continue;
         };
@@ -142,10 +153,58 @@ fn suggest<'a>(input: &str, candidates: impl IntoIterator<Item = &'a str>) -> Op
         }
     }
     let (distance, candidate) = best?;
-    // Two edits are a typo at any length; longer names get a proportional
-    // budget so `forgrnd` still finds `foreground` while `zzz` finds nothing.
+    is_near_miss(distance, input, candidate).then_some(candidate)
+}
+
+/// Whether `distance` edits are close enough to be a typo rather than a
+/// different word.
+///
+/// Two edits are a typo at any length; longer names get a proportional budget
+/// so `forgrnd` still finds `foreground` while `zzz` finds nothing.
+fn is_near_miss(distance: usize, input: &str, candidate: &str) -> bool {
     let longest = input.len().max(candidate.len());
-    (distance > 0 && (distance <= 2 || distance * 3 <= longest)).then_some(candidate)
+    distance > 0 && (distance <= 2 || distance * 3 <= longest)
+}
+
+/// The catalogue role closest to an unknown `path`.
+///
+/// Scored on the diverging tail only: every role path starts with
+/// `components.`, and most share several more segments, so comparing full paths
+/// would inflate the proportional budget until a six-edit difference counts as a
+/// near miss — the checker would then confidently suggest an unrelated role.
+fn suggest_role_path(path: &str) -> Option<&'static str> {
+    let mut best: Option<(usize, &'static str)> = None;
+    for spec in ROLE_SPECS {
+        let (input, candidate) = diverging_tails(path, spec.path);
+        let distance = levenshtein(input, candidate);
+        if !is_near_miss(distance, input, candidate) {
+            continue;
+        }
+        // Ties break on the full path so the advice is stable regardless of
+        // catalogue order.
+        let better = best.is_none_or(|(best_distance, best_path)| {
+            distance < best_distance || (distance == best_distance && spec.path < best_path)
+        });
+        if better {
+            best = Some((distance, spec.path));
+        }
+    }
+    best.map(|(_, path)| path)
+}
+
+/// Both paths with their common leading dot-segments removed.
+fn diverging_tails<'a>(left: &'a str, right: &'static str) -> (&'a str, &'static str) {
+    let mut offset = 0;
+    loop {
+        let next = match (left[offset..].find('.'), right[offset..].find('.')) {
+            (Some(a), Some(b)) if a == b => offset + a + 1,
+            _ => return (&left[offset..], &right[offset..]),
+        };
+        if left[offset..next] != right[offset..next] {
+            return (&left[offset..], &right[offset..]);
+        }
+        offset = next;
+    }
 }
 
 /// Attach a `did you mean` help when a suggestion exists.
@@ -351,11 +410,7 @@ fn validate_color(
         }
     }
 
-    // A base span narrower than the value means the base came from a key, and
-    // the only key that yields a hex or sentinel base is `color`.
-    if value.base_span != color.span
-        && matches!(value.base, ColorBase::Hex(_) | ColorBase::Terminal)
-    {
+    if value.base_from_color_key && matches!(value.base, ColorBase::Hex(_) | ColorBase::Terminal) {
         out.push(
             ThemeDiagnostic::error(
                 origin.clone(),
@@ -733,11 +788,10 @@ fn validate_unknown_role(
             ThemeDiagnostic::warning(origin.clone(), Some(value_span.clone()), message)
         }
     };
-    out.push(with_suggestion(
-        diagnostic,
-        path,
-        ROLE_SPECS.iter().map(|spec| spec.path),
-    ));
+    out.push(match suggest_role_path(path) {
+        Some(suggestion) => diagnostic.with_help(format!("did you mean `{suggestion}`?")),
+        None => diagnostic,
+    });
 }
 
 /// `perimeter` runs a seamless ring, which only makes sense on a closed frame.
@@ -1266,6 +1320,48 @@ mod tests {
         assert_help(
             &diagnostics,
             "did you mean `components.dashboard.host_list.border`?",
+        );
+    }
+
+    #[test]
+    fn a_genuinely_new_role_gets_no_suggestion() {
+        // Role paths share long prefixes, so a suggestion must be scored on the
+        // diverging tail — otherwise `future` is "close" to any role at all.
+        for body in [
+            "[components.future]\nglow = \"#ffffff\"\n",
+            "[components.sftp]\nzzzzz = \"#ffffff\"\n",
+            "[components]\nquantum_flux_capacitor = { x = 1 }\n",
+        ] {
+            let diagnostics = validate_source(&header(body), ValidationMode::Strict);
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|d| d.message.starts_with("unknown component role")),
+                "{body}: {:?}",
+                messages(&diagnostics)
+            );
+            assert!(
+                diagnostics.iter().all(|d| d.help.is_none()),
+                "{body}: {:?}",
+                helps(&diagnostics)
+            );
+        }
+    }
+
+    #[test]
+    fn the_sentinel_pass_only_touches_colour_string_diagnostics() {
+        // `natiev` sits in a value the parser rejects on type, not on grammar;
+        // its help must stay the parser's own.
+        let diagnostics = validate_source(
+            &header("[components.footer.key]\nmodifiers = \"natiev\"\n"),
+            ValidationMode::Strict,
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .all(|d| d.help.as_deref() != Some("did you mean `native`?")),
+            "{:?}",
+            helps(&diagnostics)
         );
     }
 
