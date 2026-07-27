@@ -145,13 +145,13 @@ fn inline_entries(table: &InlineTable) -> Vec<(&Key, Node<'_>)> {
 }
 
 /// Catalogue lookup of a full role path such as `components.footer.key`.
-fn role_by_path(path: &str) -> Option<&'static RoleSpec> {
+pub(crate) fn role_by_path(path: &str) -> Option<&'static RoleSpec> {
     ROLE_SPECS.iter().find(|spec| spec.path == path)
 }
 
 /// Whether `path` is a proper prefix of a known role, i.e. a section that has
 /// to be descended into rather than reported as an unknown role.
-fn is_role_prefix(path: &str) -> bool {
+pub(crate) fn is_role_prefix(path: &str) -> bool {
     ROLE_SPECS.iter().any(|spec| {
         spec.path.len() > path.len()
             && spec.path.as_bytes()[path.len()] == b'.'
@@ -491,12 +491,17 @@ impl DefinitionParser {
             return;
         }
         if is_role_prefix(&path) {
-            if let Some(entries) = node.entries() {
-                for (name, value) in entries {
-                    self.walk_component(format!("{path}.{}", name.get()), name, value);
+            match node.entries() {
+                Some(entries) => {
+                    for (name, value) in entries {
+                        self.walk_component(format!("{path}.{}", name.get()), name, value);
+                    }
                 }
-                return;
+                // A known section holding a scalar is a wrong shape, not an
+                // unknown role — it must stay fatal in `Compatible` mode too.
+                None => self.type_error(&path, node, "a table of roles"),
             }
+            return;
         }
         self.push_unknown_role(path, key, node);
     }
@@ -568,6 +573,17 @@ impl DefinitionParser {
         // recognised before the colour grammar gets a chance to reject it.
         if let Some(entries) = node.entries() {
             if entries.iter().any(|(key, _)| key.get() == "gradient") {
+                if entries
+                    .iter()
+                    .any(|(key, _)| matches!(key.get(), "color" | "rgb"))
+                {
+                    self.error_with_help(
+                        node.span(),
+                        format!("`{path}` sets both `gradient` and a colour base"),
+                        "a paint has exactly one base: either `{ gradient = \"gradients.<name>\" }` or a colour",
+                    );
+                    return None;
+                }
                 let mut reference = None;
                 for (key, value) in entries {
                     match key.get() {
@@ -689,6 +705,7 @@ impl DefinitionParser {
         let mut base_span = span.clone();
         let mut saw_rgb = false;
         let mut saw_color = false;
+        let mut saw_gradient = false;
         let mut brightness = None;
         let mut opacity = None;
         let mut over = None;
@@ -719,10 +736,22 @@ impl DefinitionParser {
                 "brightness" => brightness = self.expect_number(&field_path, value),
                 "opacity" => opacity = self.expect_number(&field_path, value),
                 "over" => over = self.parse_color(&field_path, value).map(Box::new),
+                // Recognised only to be rejected: a gradient here means the
+                // author picked a role that cannot take one, and that is worth
+                // saying instead of "no colour base".
+                "gradient" => saw_gradient = true,
                 other => self.push_unknown_field(format!("{path}.{other}"), key, value),
             }
         }
 
+        if saw_gradient {
+            self.error_with_help(
+                Some(span.clone()),
+                format!("`{path}` does not support gradients"),
+                "gradients are only valid on paint roles such as borders and backgrounds",
+            );
+            return None;
+        }
         if saw_rgb && saw_color {
             self.error_with_help(
                 Some(span.clone()),
@@ -1168,6 +1197,103 @@ mod tests {
             panic!("unknown value");
         };
         assert_eq!(&source[value_span.clone()], "\"#ffffff\"");
+    }
+
+    #[test]
+    fn scalar_under_a_known_section_is_a_shape_error() {
+        // Known sections holding a scalar must not be downgraded to "unknown
+        // role", which `Compatible` mode would silently ignore.
+        let parsed = parse_user(&header("[components]\nfooter = 5\ndashboard = \"x\"\n"));
+        let errors: Vec<_> = parsed.diagnostics.iter().filter(|d| d.is_error()).collect();
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        assert!(
+            errors[0].message.contains("components.footer"),
+            "{errors:?}"
+        );
+        let definition = parsed.definition.expect("definition");
+        assert!(definition.components.is_empty());
+        assert!(definition.unknown_fields.is_empty());
+    }
+
+    #[test]
+    fn gradient_on_a_non_paint_role_names_the_real_problem() {
+        let parsed = parse_user(&header(
+            "[components.footer.key]\nforeground = { gradient = \"gradients.g\" }\n\
+             [components.os_logo]\nfallback = { gradient = \"gradients.g\" }\n",
+        ));
+        let errors: Vec<_> = parsed.diagnostics.iter().filter(|d| d.is_error()).collect();
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        assert!(
+            errors
+                .iter()
+                .all(|d| d.message.contains("does not support gradients")),
+            "{errors:?}"
+        );
+        let definition = parsed.definition.expect("definition");
+        assert!(definition.unknown_fields.is_empty());
+        // The colour role is dropped; the style survives without a foreground.
+        let paths: Vec<_> = definition
+            .components
+            .iter()
+            .map(|entry| entry.path.value.as_str())
+            .collect();
+        assert_eq!(paths, vec!["components.footer.key"]);
+        let ComponentValue::Style { value, .. } =
+            &component(&definition, "components.footer.key").value
+        else {
+            panic!("style value");
+        };
+        assert!(value.value.foreground.is_none());
+    }
+
+    #[test]
+    fn gradient_and_colour_base_on_a_paint_role_conflict() {
+        let parsed = parse_user(&header(
+            "[components.dashboard.host_list]\n\
+             border = { gradient = \"gradients.g\", color = \"semantic.accent\" }\n",
+        ));
+        let errors: Vec<_> = parsed.diagnostics.iter().filter(|d| d.is_error()).collect();
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0]
+                .message
+                .contains("sets both `gradient` and a colour base"),
+            "{errors:?}"
+        );
+        let definition = parsed.definition.expect("definition");
+        assert!(definition.components.is_empty());
+        assert!(definition.unknown_fields.is_empty());
+    }
+
+    #[test]
+    fn spans_survive_non_ascii_content() {
+        // Spans are byte ranges, so multi-byte characters ahead of a value
+        // must shift it by bytes rather than by characters.
+        let source = "schema_version = 1\nname = \"Océan ✨\"\ndescription = \"Tiefsee — grün\"\n\
+                      [palette]\naccent = \"#0a1b2c\"\n";
+        let definition = definition_of(source);
+        assert_eq!(definition.name.value, "Océan ✨");
+        assert_eq!(&source[definition.name.span.clone()], "\"Océan ✨\"");
+        let description = definition.description.as_ref().unwrap();
+        assert_eq!(&source[description.span.clone()], "\"Tiefsee — grün\"");
+        let entry = &definition.palette[0];
+        assert_eq!(&source[entry.name.span.clone()], "accent");
+        assert_eq!(&source[entry.value.span.clone()], "\"#0a1b2c\"");
+        assert_eq!(&source[entry.value.value.base_span.clone()], "\"#0a1b2c\"");
+    }
+
+    #[test]
+    fn spans_survive_crlf_line_endings() {
+        let source = "schema_version = 1\r\nname = \"Ocean\"\r\n[semantic]\r\n\
+                      accent = \"palette.x\"\r\ntext = \"nope\"\r\n";
+        let parsed = parse_user(source);
+        let definition = parsed.definition.expect("definition");
+        assert_eq!(&source[definition.name.span.clone()], "\"Ocean\"");
+        let accent = &definition.semantic[0];
+        assert_eq!(&source[accent.key.span.clone()], "accent");
+        assert_eq!(&source[accent.value.span.clone()], "\"palette.x\"");
+        let span = parsed.diagnostics[0].span.clone().expect("span");
+        assert_eq!(&source[span], "\"nope\"");
     }
 
     #[test]
