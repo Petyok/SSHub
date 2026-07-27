@@ -436,16 +436,21 @@ impl ThemeDiagnostic {
 // Resolved side — the immutable runtime theme.
 // ---------------------------------------------------------------------------
 
-/// Index of a resolved gradient inside [`ResolvedTheme::gradients`].
+/// Index of a resolved gradient inside a theme's gradient table.
+///
+/// Minting one is the resolver's privilege: an id built from an arbitrary
+/// number would name a gradient that does not exist, and every reader of a
+/// [`ResolvedTheme`] is entitled to assume it does. Outside the crate, use
+/// [`ResolvedTheme::gradient`] or [`ResolvedTheme::paint_gradient`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GradientId(usize);
 
 impl GradientId {
-    pub fn new(index: usize) -> Self {
+    pub(crate) fn new(index: usize) -> Self {
         Self(index)
     }
 
-    pub fn index(self) -> usize {
+    pub(crate) fn index(self) -> usize {
         self.0
     }
 }
@@ -523,19 +528,42 @@ pub enum ResolvedTint {
     Color(Color),
 }
 
+/// One stop of a resolved gradient: an ordered position in `0.0..=1.0` and a
+/// concrete colour. Both guarantees come from validation, so the fields are
+/// readable but not writable from outside.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedGradientStop {
-    pub position: f32,
-    pub color: Color,
+    pub(crate) position: f32,
+    pub(crate) color: Color,
 }
 
+impl ResolvedGradientStop {
+    pub fn position(&self) -> f32 {
+        self.position
+    }
+
+    pub fn color(&self) -> Color {
+        self.color
+    }
+}
+
+/// A gradient with at least two stops, sorted by position.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedGradient {
-    pub direction: GradientDirection,
-    pub stops: Vec<ResolvedGradientStop>,
+    pub(crate) direction: GradientDirection,
+    pub(crate) stops: Vec<ResolvedGradientStop>,
 }
 
 impl ResolvedGradient {
+    pub fn direction(&self) -> GradientDirection {
+        self.direction
+    }
+
+    /// The stops in ascending position order.
+    pub fn stops(&self) -> &[ResolvedGradientStop] {
+        &self.stops
+    }
+
     /// Colour at relative position `t`, clamped to `0.0..=1.0`.
     ///
     /// Channels are interpolated in sRGB and rounded per the V1 colour rules,
@@ -549,31 +577,35 @@ impl ResolvedGradient {
 ///
 /// Component fallbacks only ever reference these names, so overriding one
 /// semantic slot re-tints every component that inherits from it.
+///
+/// The slots are filled together or not at all, which is why they are not
+/// writable from outside; [`ResolvedSemantic::slot`] reads any of them by its
+/// catalogue slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ResolvedSemantic {
-    pub background: Color,
-    pub canvas: Color,
-    pub surface: Color,
-    pub surface_raised: Color,
-    pub border: Color,
-    pub border_focus: Color,
-    pub border_popup: Color,
-    pub text: Color,
-    pub text_bright: Color,
-    pub text_highlight: Color,
-    pub text_muted: Color,
-    pub text_dim: Color,
-    pub text_inverse: Color,
-    pub accent: Color,
-    pub selection_bg: Color,
-    pub selection_fg: Color,
-    pub success: Color,
-    pub warning: Color,
-    pub error: Color,
-    pub info: Color,
-    pub connecting: Color,
-    pub exited: Color,
-    pub unknown: Color,
+    pub(crate) background: Color,
+    pub(crate) canvas: Color,
+    pub(crate) surface: Color,
+    pub(crate) surface_raised: Color,
+    pub(crate) border: Color,
+    pub(crate) border_focus: Color,
+    pub(crate) border_popup: Color,
+    pub(crate) text: Color,
+    pub(crate) text_bright: Color,
+    pub(crate) text_highlight: Color,
+    pub(crate) text_muted: Color,
+    pub(crate) text_dim: Color,
+    pub(crate) text_inverse: Color,
+    pub(crate) accent: Color,
+    pub(crate) selection_bg: Color,
+    pub(crate) selection_fg: Color,
+    pub(crate) success: Color,
+    pub(crate) warning: Color,
+    pub(crate) error: Color,
+    pub(crate) info: Color,
+    pub(crate) connecting: Color,
+    pub(crate) exited: Color,
+    pub(crate) unknown: Color,
 }
 
 /// Number of slots in the fixed semantic core, derived from the catalogue so a
@@ -586,7 +618,7 @@ impl ResolvedSemantic {
     /// The resolver works on an indexed array (it fills slots by catalogue
     /// order), while renderers want named fields; this is the single crossing
     /// point between the two views.
-    pub fn from_slots(slots: [Color; SEMANTIC_SLOT_COUNT]) -> Self {
+    pub(crate) fn from_slots(slots: [Color; SEMANTIC_SLOT_COUNT]) -> Self {
         Self {
             background: slots[SemanticSlot::Background as usize],
             canvas: slots[SemanticSlot::Canvas as usize],
@@ -687,8 +719,9 @@ pub struct ResolvedComponents {
 
 impl ResolvedComponents {
     /// Build the component table. Consuming the arrays is what keeps a
-    /// resolved theme immutable: there is no other way in or out.
-    pub fn new(
+    /// resolved theme immutable: there is no other way in or out, and only the
+    /// resolver may go in.
+    pub(crate) fn new(
         colors: [Color; ColorRole::COUNT],
         styles: [Style; StyleRole::COUNT],
         paints: [ResolvedPaint; PaintRole::COUNT],
@@ -704,17 +737,51 @@ impl ResolvedComponents {
 }
 
 /// A validated, fully inherited theme ready to render with.
+///
+/// "Validated, fully inherited" is a property of the type, not a habit of the
+/// resolver: the fields are crate-private, so the only way to obtain one is to
+/// resolve a theme. Everything a renderer or an export needs to read is
+/// available through the accessors below.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedTheme {
-    pub id: ThemeId,
-    pub name: String,
-    pub description: Option<String>,
-    pub semantic: ResolvedSemantic,
-    pub gradients: Vec<ResolvedGradient>,
-    pub components: ResolvedComponents,
+    pub(crate) id: ThemeId,
+    pub(crate) name: String,
+    pub(crate) description: Option<String>,
+    pub(crate) semantic: ResolvedSemantic,
+    pub(crate) gradients: Vec<ResolvedGradient>,
+    pub(crate) components: ResolvedComponents,
 }
 
 impl ResolvedTheme {
+    pub fn id(&self) -> &ThemeId {
+        &self.id
+    }
+
+    /// The display name from the theme file.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    /// The 23 semantic slots every component fallback is built from.
+    pub fn semantic(&self) -> &ResolvedSemantic {
+        &self.semantic
+    }
+
+    /// The theme's gradients, in the order the resolver numbered them.
+    pub fn gradients(&self) -> &[ResolvedGradient] {
+        &self.gradients
+    }
+
+    /// The gradient an id names. `None` only ever means the id came from
+    /// another theme.
+    pub fn gradient(&self, id: GradientId) -> Option<&ResolvedGradient> {
+        self.gradients.get(id.index())
+    }
+
     pub fn color(&self, role: ColorRole) -> Color {
         self.components.colors[role as usize]
     }
@@ -737,8 +804,26 @@ impl ResolvedTheme {
     pub fn paint_gradient(&self, role: PaintRole) -> Option<&ResolvedGradient> {
         match self.paint(role) {
             ResolvedPaint::Solid(_) => None,
-            ResolvedPaint::Gradient(id) => self.gradients.get(id.index()),
+            ResolvedPaint::Gradient(id) => self.checked_gradient(*id),
         }
+    }
+
+    /// A gradient this theme's own paint role points at.
+    ///
+    /// Missing it is a resolver bug rather than a theme the user could write,
+    /// so it aborts a debug build instead of quietly discolouring a frame;
+    /// release builds still fall back, because a wrong colour beats a crash in
+    /// front of a user.
+    fn checked_gradient(&self, id: GradientId) -> Option<&ResolvedGradient> {
+        let gradient = self.gradients.get(id.index());
+        debug_assert!(
+            gradient.is_some(),
+            "theme `{}` paints with gradient {} of {}",
+            self.id,
+            id.index(),
+            self.gradients.len()
+        );
+        gradient
     }
 
     /// Colour of a paint role at one cell of `area`.
@@ -764,7 +849,7 @@ impl ResolvedTheme {
     pub fn paint_color_at(&self, role: PaintRole, area: Rect, x: u16, y: u16) -> Color {
         match self.paint(role) {
             ResolvedPaint::Solid(color) => *color,
-            ResolvedPaint::Gradient(id) => match self.gradients.get(id.index()) {
+            ResolvedPaint::Gradient(id) => match self.checked_gradient(*id) {
                 Some(gradient) => {
                     gradient.sample(anchored_position(gradient.direction, area, x, y))
                 }
@@ -786,8 +871,12 @@ fn anchored_position(direction: GradientDirection, area: Rect, x: u16, y: u16) -
     if area.is_empty() {
         return 0.0;
     }
-    let x = x.clamp(area.x, area.right() - 1);
-    let y = y.clamp(area.y, area.bottom() - 1);
+    // `right()`/`bottom()` saturate, so a rect touching the end of the
+    // coordinate space can report a last cell *before* its own origin. No
+    // layout builds such a rect, but `Rect`'s fields are public and this
+    // method is public, so the clamp must not be able to invert.
+    let x = x.clamp(area.x, area.right().saturating_sub(1).max(area.x));
+    let y = y.clamp(area.y, area.bottom().saturating_sub(1).max(area.y));
     gradient_position(direction, area, x, y).unwrap_or(0.0)
 }
 
@@ -859,6 +948,93 @@ mod tests {
                 GradientDirection::Perimeter,
             ] {
                 assert_eq!(anchored_position(direction, empty, 7, 7), 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn a_resolved_theme_is_fully_readable_through_public_accessors() {
+        // The fields are crate-private so nothing outside can build a theme
+        // that breaks its own invariants; everything a CLI export or a renderer
+        // reads has to stay reachable without them.
+        use crate::theme::registry::{ThemeRegistry, ThemeSource};
+
+        let registry = ThemeRegistry::builtins(ValidationMode::Compatible).expect("built-ins load");
+        let record = registry.get("aqua").expect("aqua is built in");
+        assert_eq!(record.source, ThemeSource::BuiltIn);
+        let aqua = record.resolved().expect("aqua resolves").clone();
+
+        assert_eq!(aqua.id().as_str(), "aqua");
+        assert_eq!(aqua.name(), record.name);
+        assert_eq!(aqua.description(), record.description.as_deref());
+        assert_eq!(
+            aqua.semantic().accent,
+            aqua.semantic().slot(SemanticSlot::Accent)
+        );
+
+        let ring = aqua
+            .paint_gradient(PaintRole::PopupBorder)
+            .expect("aqua rings its popup border");
+        let ResolvedPaint::Gradient(id) = aqua.paint(PaintRole::PopupBorder) else {
+            panic!("the popup border is a gradient");
+        };
+        assert_eq!(aqua.gradient(*id), Some(ring));
+        assert!(aqua.gradients().contains(ring));
+        assert_eq!(ring.direction(), GradientDirection::Perimeter);
+        let stops = ring.stops();
+        assert_eq!(stops.len(), ring.stops.len());
+        assert_eq!(stops[0].position(), 0.0);
+        assert_eq!(stops[0].color(), ring.sample(0.0));
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "gradient")]
+    fn a_gradient_index_that_points_nowhere_trips_a_debug_assertion() {
+        // Only reachable by corrupting a theme from inside the crate: a paint
+        // role pointing past the gradient table is a resolver bug, not a theme
+        // the user can write, so release builds still fall back rather than
+        // abort a render.
+        use crate::theme::registry::ThemeRegistry;
+
+        let registry = ThemeRegistry::builtins(ValidationMode::Compatible).expect("built-ins load");
+        let mut aqua = (*registry
+            .resolved(&ThemeId::parse("aqua").expect("valid id"))
+            .expect("aqua resolves"))
+        .clone();
+        aqua.gradients.clear();
+        let _ = aqua.paint_color_at(PaintRole::PopupBorder, Rect::new(0, 0, 4, 4), 0, 0);
+    }
+
+    #[test]
+    fn paint_color_at_survives_a_rect_whose_edge_saturates() {
+        // `Rect`'s fields are public, so a rect reaching the end of the
+        // coordinate space is constructible even though no layout produces one.
+        // `right()`/`bottom()` saturate there, which would put the clamp's
+        // upper bound below its lower bound.
+        for area in [
+            Rect {
+                x: u16::MAX,
+                y: 0,
+                width: 5,
+                height: 5,
+            },
+            Rect {
+                x: 0,
+                y: u16::MAX,
+                width: 5,
+                height: 5,
+            },
+        ] {
+            for direction in [
+                GradientDirection::Horizontal,
+                GradientDirection::Vertical,
+                GradientDirection::DiagonalDown,
+                GradientDirection::DiagonalUp,
+                GradientDirection::Perimeter,
+            ] {
+                let position = anchored_position(direction, area, 0, 0);
+                assert!((0.0..=1.0).contains(&position), "{direction:?}: {position}");
             }
         }
     }

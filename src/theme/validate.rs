@@ -714,6 +714,23 @@ fn validate_components(
             },
             ComponentValue::Style { value, .. } => {
                 let style = &value.value;
+                // `auto` is the whole-style reset, so `false` is not its
+                // opposite — it is a line the resolver ignores. Rejecting it
+                // keeps the checker's promise that a valid file does what it
+                // reads like.
+                if let Some(auto) = style.auto.as_ref().filter(|auto| !auto.value) {
+                    out.push(
+                        ThemeDiagnostic::error(
+                            origin.clone(),
+                            Some(auto.span.clone()),
+                            format!("`{path}.auto` must be `true` when present"),
+                        )
+                        .with_help(
+                            "`auto` resets the role to its inherited style; drop the line to \
+                             leave the role as it is",
+                        ),
+                    );
+                }
                 for (field, slot) in [
                     ("foreground", style.foreground.as_ref()),
                     ("background", style.background.as_ref()),
@@ -1403,6 +1420,41 @@ mod tests {
             spans.windows(2).all(|pair| pair[0].start <= pair[1].start),
             "{spans:?}"
         );
+    }
+
+    #[test]
+    fn a_style_reset_written_as_false_is_rejected_in_both_modes() {
+        // `{ auto = false }` parses, but the spec gives it no meaning: the
+        // resolver only acts on `true`, so accepting it would let a checker
+        // bless a line that does nothing.
+        let source = header("[components.footer.key]\nauto = false\n");
+        for mode in [ValidationMode::Strict, ValidationMode::Compatible] {
+            let diagnostics = validate_source(&source, mode);
+            assert!(
+                diagnostics.iter().any(ThemeDiagnostic::is_error),
+                "{mode:?}: {:?}",
+                messages(&diagnostics)
+            );
+            assert_contains(
+                &diagnostics,
+                "`components.footer.key.auto` must be `true` when present",
+            );
+            let span = diagnostics
+                .iter()
+                .find(|d| d.message.contains("must be `true`"))
+                .and_then(|d| d.span.clone())
+                .expect("the error points at the offending value");
+            assert_eq!(&source[span], "false");
+        }
+    }
+
+    #[test]
+    fn a_style_reset_written_as_true_stays_valid_next_to_concrete_fields() {
+        let diagnostics = validate_source(
+            &header("[components.footer.key]\nauto = true\nforeground = \"#ff0000\"\n"),
+            ValidationMode::Strict,
+        );
+        assert!(diagnostics.is_empty(), "{:?}", messages(&diagnostics));
     }
 
     #[test]

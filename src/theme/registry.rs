@@ -75,11 +75,18 @@ pub struct ThemeRecord {
     /// merged into one presentation-ordered list.
     pub diagnostics: Vec<ThemeDiagnostic>,
     resolved: Option<Rc<ResolvedTheme>>,
+    inheritance_chain: Vec<ThemeId>,
 }
 
 impl ThemeRecord {
     pub fn resolved(&self) -> Option<&Rc<ResolvedTheme>> {
         self.resolved.as_ref()
+    }
+
+    /// The themes that were merged into this one, child first and root last.
+    /// Empty when the record never reached resolution.
+    pub fn inheritance_chain(&self) -> &[ThemeId] {
+        &self.inheritance_chain
     }
 
     pub fn is_valid(&self) -> bool {
@@ -167,10 +174,15 @@ impl ThemeRegistry {
         Ok(Self::build(candidates, diagnostics, mode))
     }
 
-    /// One explicitly named file, checked against the built-ins.
+    /// One explicitly named file, checked against the built-ins and against
+    /// the other themes lying next to it.
     ///
     /// The file need not live in the themes directory, which is the point:
-    /// `theme check` runs on a draft before it is installed.
+    /// `theme check` runs on a draft before it is installed. Its own directory
+    /// stands in for the installed one, so a portable package whose child
+    /// extends a sibling can be checked as the package it is; a parent that
+    /// actually came from a sibling is reported, because installing the child
+    /// alone would leave it unresolvable.
     pub fn load_check_target(
         file: &Path,
         mode: ValidationMode,
@@ -210,6 +222,25 @@ impl ThemeRegistry {
             .into_iter()
             .filter(|candidate| candidate.id != id)
             .collect();
+        // The neighbourhood is read with the loader's own limits and order, so
+        // a package behaves here exactly as it will once installed. Its
+        // directory-level problems are dropped on purpose: they belong to files
+        // this command was not asked about, and a parent lost to one of them
+        // still surfaces as `unknown parent theme` on the target itself.
+        let mut neighbourhood = Vec::new();
+        let target_key = same_file_key(file);
+        candidates.extend(
+            read_user_directory(dir_of(file), &mut neighbourhood)
+                .unwrap_or_default()
+                .into_iter()
+                // The explicit target is the check target, whatever its
+                // directory also calls it; reading it twice would only make it
+                // collide with itself.
+                .filter(|candidate| match &candidate.source {
+                    ThemeSource::User(path) => same_file_key(path) != target_key,
+                    ThemeSource::BuiltIn => true,
+                }),
+        );
         candidates.push(Candidate {
             id: id.clone(),
             source: ThemeSource::User(file.to_path_buf()),
@@ -218,6 +249,7 @@ impl ThemeRegistry {
         });
 
         let mut registry = Self::build(candidates, Vec::new(), mode);
+        registry.warn_about_sibling_parents(&id, file);
         if reserved {
             if let Some(&index) = registry.canonical.get(&id) {
                 let record = &mut registry.records[index];
@@ -236,6 +268,56 @@ impl ThemeRegistry {
             }
         }
         Ok(registry)
+    }
+
+    /// Flag every parent of the check target that was supplied by a file next
+    /// to it rather than by a built-in.
+    ///
+    /// The chain is authoritative here: only what resolution actually merged
+    /// counts, so a sibling that merely exists is never reported.
+    fn warn_about_sibling_parents(&mut self, target: &ThemeId, file: &Path) {
+        let Some(&index) = self.canonical.get(target) else {
+            return;
+        };
+        let target_key = same_file_key(file);
+        let child = file
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| target.to_string());
+        let warnings: Vec<ThemeDiagnostic> = self.records[index]
+            .inheritance_chain
+            .iter()
+            .filter(|ancestor| *ancestor != target)
+            .filter_map(|ancestor| {
+                let &parent_index = self.canonical.get(ancestor)?;
+                let ThemeSource::User(path) = &self.records[parent_index].source else {
+                    return None;
+                };
+                if same_file_key(path) == target_key {
+                    return None;
+                }
+                let sibling = path.file_name()?.to_string_lossy().into_owned();
+                Some(
+                    ThemeDiagnostic::warning(
+                        ThemeOrigin::User(file.to_path_buf()),
+                        None,
+                        format!(
+                            "parent theme `{ancestor}` comes from the sibling file `{sibling}`"
+                        ),
+                    )
+                    .with_help(format!(
+                        "install `{sibling}` together with `{child}`; on its own `{target}` cannot \
+                         resolve"
+                    )),
+                )
+            })
+            .collect();
+        if warnings.is_empty() {
+            return;
+        }
+        let record = &mut self.records[index];
+        record.diagnostics.extend(warnings);
+        sort_diagnostics(&mut record.diagnostics);
     }
 
     /// Every known theme: built-ins in registration order, then user themes in
@@ -324,6 +406,7 @@ impl ThemeRegistry {
                 },
                 diagnostics: record_diagnostics,
                 resolved: None,
+                inheritance_chain: Vec::new(),
             });
         }
 
@@ -343,6 +426,7 @@ impl ThemeRegistry {
             let outcome = resolve_theme(id, &view);
             let record = &mut records[index];
             record.diagnostics.extend(outcome.diagnostics);
+            record.inheritance_chain = outcome.inheritance_chain;
             sort_diagnostics(&mut record.diagnostics);
             match outcome.theme {
                 Some(theme) => {
@@ -360,6 +444,23 @@ impl ThemeRegistry {
             diagnostics,
         }
     }
+}
+
+/// The directory a check target's neighbourhood is read from. A bare file name
+/// has no parent component, and its neighbourhood is the working directory.
+fn dir_of(file: &Path) -> &Path {
+    match file.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    }
+}
+
+/// Identity of a file for "is this the same file", tolerant of the target being
+/// named relatively while the directory walk yields joined paths. Canonicalising
+/// can fail on a dangling symlink, where the literal path is the best answer
+/// available.
+fn same_file_key(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// The embedded themes as loader input, in registration order.
@@ -863,6 +964,166 @@ mod tests {
                 .semantic
                 .accent,
             Color::Rgb(0, 0xff, 0)
+        );
+    }
+
+    #[test]
+    fn a_check_target_resolves_a_sibling_parent_and_warns_about_installing_it() {
+        // A portable theme package is checked as a package: the target's own
+        // directory is the user registry. Both orders are exercised because the
+        // parent may sort before or after the child.
+        for parent in ["aaa", "zzz"] {
+            let dir = tempfile::tempdir().unwrap();
+            write(
+                dir.path(),
+                &format!("{parent}.toml"),
+                "schema_version = 1\nname = \"Parent\"\n\n[semantic]\naccent = \"#ff0000\"\n",
+            );
+            let file = dir.path().join("mid.toml");
+            fs::write(
+                &file,
+                format!("schema_version = 1\nname = \"Child\"\nextends = \"{parent}\"\n"),
+            )
+            .unwrap();
+
+            let registry = ThemeRegistry::load_check_target(&file, ValidationMode::Strict).unwrap();
+            let target = registry.get("mid").unwrap();
+            assert_eq!(target.status, ThemeStatus::Valid, "{parent}");
+            assert_eq!(
+                registry
+                    .resolved(&ThemeId::parse("mid").unwrap())
+                    .expect("the target resolves through its sibling")
+                    .semantic
+                    .accent,
+                Color::Rgb(0xff, 0, 0)
+            );
+            let warning = target
+                .diagnostics
+                .iter()
+                .find(|d| d.is_warning() && d.message.contains("sibling file"))
+                .unwrap_or_else(|| panic!("{parent}: {:#?}", target.diagnostics));
+            assert!(warning.message.contains(parent), "{warning:#?}");
+            assert!(
+                warning
+                    .help
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains(&format!("{parent}.toml")),
+                "{warning:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_check_target_inside_its_own_directory_is_read_exactly_once() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "solo.toml", &minimal("Solo"));
+        let file = dir.path().join("solo.toml");
+
+        let registry = ThemeRegistry::load_check_target(&file, ValidationMode::Strict).unwrap();
+        assert_eq!(user_ids(&registry), ["solo"]);
+        assert_eq!(registry.get("solo").unwrap().status, ThemeStatus::Valid);
+    }
+
+    #[test]
+    fn a_check_target_extending_a_builtin_is_not_reported_as_a_sibling() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("draft.toml");
+        fs::write(
+            &file,
+            "schema_version = 1\nname = \"Draft\"\nextends = \"aqua\"\n",
+        )
+        .unwrap();
+
+        let registry = ThemeRegistry::load_check_target(&file, ValidationMode::Strict).unwrap();
+        let target = registry.get("draft").unwrap();
+        assert_eq!(target.status, ThemeStatus::Valid);
+        assert!(
+            !target
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("sibling")),
+            "{:#?}",
+            target.diagnostics
+        );
+    }
+
+    #[test]
+    fn a_sibling_of_the_check_target_cannot_shadow_a_builtin() {
+        // Only the target itself may stand in for a built-in of the same id;
+        // an ordinary neighbour is the collision it would be once installed.
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "aqua.toml", &minimal("Fake Aqua"));
+        let file = dir.path().join("draft.toml");
+        fs::write(
+            &file,
+            "schema_version = 1\nname = \"Draft\"\nextends = \"aqua\"\n",
+        )
+        .unwrap();
+
+        let registry = ThemeRegistry::load_check_target(&file, ValidationMode::Strict).unwrap();
+        assert_eq!(registry.get("aqua").unwrap().source, ThemeSource::BuiltIn);
+        assert!(registry
+            .records()
+            .iter()
+            .any(|r| r.name == "Fake Aqua" && r.status == ThemeStatus::Invalid));
+        // The target inherits the built-in, so it stays valid and is not told
+        // to ship a sibling that could never be installed.
+        assert_eq!(registry.get("draft").unwrap().status, ThemeStatus::Valid);
+        assert!(!registry
+            .get("draft")
+            .unwrap()
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("sibling")));
+    }
+
+    #[test]
+    fn a_broken_sibling_does_not_invalidate_the_check_target() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "broken.toml", "schema_version = 2\nname = 4\n");
+        let file = dir.path().join("draft.toml");
+        fs::write(&file, minimal("Draft")).unwrap();
+
+        let registry = ThemeRegistry::load_check_target(&file, ValidationMode::Strict).unwrap();
+        let target = registry.get("draft").unwrap();
+        assert_eq!(target.status, ThemeStatus::Valid);
+        assert!(target.diagnostics.is_empty(), "{:#?}", target.diagnostics);
+        assert_eq!(registry.get("broken").unwrap().status, ThemeStatus::Invalid);
+    }
+
+    #[test]
+    fn a_check_target_with_a_reserved_id_may_still_parent_a_sibling_check() {
+        // Checking a copy of a built-in keeps displacing that built-in, and the
+        // displacement must not leak into how a sibling of the target resolves.
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            "leaf.toml",
+            "schema_version = 1\nname = \"Leaf\"\nextends = \"aqua\"\n",
+        );
+        let file = dir.path().join("aqua.toml");
+        fs::write(
+            &file,
+            "schema_version = 1\nname = \"Draft Aqua\"\n\n[semantic]\naccent = \"#0000ff\"\n",
+        )
+        .unwrap();
+
+        let registry = ThemeRegistry::load_check_target(&file, ValidationMode::Strict).unwrap();
+        let target = registry.get("aqua").unwrap();
+        assert_ne!(target.source, ThemeSource::BuiltIn);
+        assert_eq!(target.status, ThemeStatus::Valid);
+        assert!(target
+            .diagnostics
+            .iter()
+            .any(|d| d.is_warning() && d.help.as_deref().unwrap_or("").contains("aqua-custom")));
+        assert_eq!(
+            registry
+                .resolved(&ThemeId::parse("leaf").unwrap())
+                .expect("the sibling resolves against the checked draft")
+                .semantic
+                .accent,
+            Color::Rgb(0, 0, 0xff)
         );
     }
 
