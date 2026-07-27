@@ -1,0 +1,110 @@
+# SSHub — "Aqua": deep water.
+#
+# What this theme demonstrates:
+#   * a dark theme with a *painted* background instead of `default`'s
+#     transparent one
+#   * a `perimeter` gradient — the one direction that runs a closed ring around
+#     a frame, so it may only be used on roles that draw a closed frame
+#   * a horizontal gradient reused by several roles
+#   * `over` as an explicit mixing ground for `opacity`
+
+schema_version = 1
+extends = "default"
+name = "Aqua"
+description = "Deep-water blues with cyan and turquoise accents, and a ring-lit focus frame."
+
+[palette]
+abyss = "#04141c"
+deep = "#08202a"
+shelf = "#0d3040"
+shoal = "#12455a"
+turquoise = "#2fd0c5"
+cyan = "#6fd8e8"
+foam = "#d3f4f7"
+kelp = "#4fbf8f"
+coral = "#e8746a"
+amber = "#e0a95c"
+slate = "#5b7f8c"
+slate_dim = "#2b4954"
+
+[semantic]
+background = "palette.abyss"
+canvas = "palette.abyss"
+surface = "palette.deep"
+surface_raised = "palette.shelf"
+
+border = "palette.slate_dim"
+border_focus = "palette.turquoise"
+border_popup = "palette.slate"
+
+text = "#c6e6ec"
+text_bright = "palette.foam"
+text_highlight = "#ffffff"
+text_muted = "palette.slate"
+text_dim = "palette.slate_dim"
+text_inverse = "palette.abyss"
+
+accent = "palette.cyan"
+selection_bg = "palette.shoal"
+selection_fg = "palette.foam"
+
+success = "palette.kelp"
+warning = "palette.amber"
+error = "palette.coral"
+info = "palette.cyan"
+connecting = "palette.turquoise"
+exited = "palette.coral"
+unknown = "palette.slate_dim"
+
+# A horizontal sweep across the width of whatever it paints.
+[gradients.tide]
+direction = "horizontal"
+stops = [
+  { at = 0.0, color = "palette.shoal" },
+  { at = 0.5, color = "palette.turquoise" },
+  { at = 1.0, color = "palette.cyan" },
+]
+
+# `perimeter` walks clockwise around the outer ring of a frame starting at its
+# top-left corner. Because the ring closes, the first and the last stop must
+# resolve to the *same* colour — otherwise the frame would show a seam. Using
+# this direction on a role that does not draw a closed frame is an error.
+[gradients.reef_ring]
+direction = "perimeter"
+stops = [
+  { at = 0.0, color = "palette.turquoise" },
+  { at = 0.35, color = "palette.cyan" },
+  { at = 0.65, color = "palette.foam" },
+  { at = 1.0, color = "palette.turquoise" },
+]
+
+# Focused frames get the ring; unfocused frames stay solid so focus still reads
+# at a glance.
+[components.dashboard.host_list]
+border_focused = { gradient = "gradients.reef_ring" }
+
+[components.dashboard.details]
+border_focused = { gradient = "gradients.reef_ring" }
+
+[components.sftp.panel]
+border_focused = { gradient = "gradients.reef_ring" }
+
+[components.popup]
+border = { gradient = "gradients.reef_ring" }
+
+# Open (non-framing) roles take the horizontal sweep.
+[components.header]
+background = { gradient = "gradients.tide" }
+separator = { gradient = "gradients.tide" }
+
+[components.separator]
+primary = { gradient = "gradients.tide" }
+
+# An explicit `over` names the opaque colour the translucent value is mixed
+# into. Without it the ground would be `semantic.background`, which works here
+# but would fail on a theme that left the background at "terminal".
+[components.footer]
+background = { color = "palette.turquoise", opacity = 0.18, over = "palette.deep" }
+
+[components.status_bar]
+background = { color = "palette.turquoise", opacity = 0.18, over = "palette.deep" }
