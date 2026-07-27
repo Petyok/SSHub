@@ -18,7 +18,7 @@ use std::ops::Range;
 use std::path::PathBuf;
 
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 
 use crate::theme::catalog::{ColorRole, PaintRole, SemanticSlot, StyleRole, TintRole};
 
@@ -471,6 +471,33 @@ impl GradientDirection {
             "perimeter" => Some(Self::Perimeter),
             _ => None,
         }
+    }
+}
+
+/// The six text modifiers a theme may name, in the order the spec lists them.
+///
+/// Kept next to [`GradientDirection::KEYS`] for the same reason: the validator
+/// needs the literal spellings to suggest a correction, and the resolver needs
+/// the mapping — neither may keep its own copy of the list.
+pub const MODIFIER_KEYS: [&str; 6] = [
+    "bold",
+    "dim",
+    "italic",
+    "underlined",
+    "reversed",
+    "crossed_out",
+];
+
+/// The [`Modifier`] a theme file's modifier name stands for.
+pub fn modifier_from_key(key: &str) -> Option<Modifier> {
+    match key {
+        "bold" => Some(Modifier::BOLD),
+        "dim" => Some(Modifier::DIM),
+        "italic" => Some(Modifier::ITALIC),
+        "underlined" => Some(Modifier::UNDERLINED),
+        "reversed" => Some(Modifier::REVERSED),
+        "crossed_out" => Some(Modifier::CROSSED_OUT),
+        _ => None,
     }
 }
 
