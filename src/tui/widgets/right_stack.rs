@@ -79,10 +79,9 @@ pub(crate) fn render_recent_panel(buf: &mut Buffer, area: Rect, app: &App) {
         buf,
         area,
         "recent sessions",
-        None,
+        RECENT_PANEL.plain(),
         app.focused_panel == crate::app::PanelId::Recent,
         theme,
-        RECENT_PANEL,
     );
 
     let inner_x = area.x + 2;
@@ -205,10 +204,9 @@ pub(crate) fn render_auth_panel(buf: &mut Buffer, area: Rect, app: &App) {
         buf,
         area,
         "auth events",
-        None,
+        AUTH_PANEL.plain(),
         app.focused_panel == crate::app::PanelId::Auth,
         theme,
-        AUTH_PANEL,
     );
 
     let inner_x = area.x + 2;
@@ -320,10 +318,9 @@ pub(crate) fn render_ping_panel(buf: &mut Buffer, area: Rect, app: &App) {
         buf,
         area,
         "ping all hosts",
-        None,
+        PING_PANEL.plain(),
         app.focused_panel == crate::app::PanelId::Ping,
         theme,
-        PING_PANEL,
     );
 
     let inner_x = area.x + 2;

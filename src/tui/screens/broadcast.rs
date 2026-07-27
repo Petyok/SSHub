@@ -146,10 +146,9 @@ pub fn render_broadcast_panel(frame: &mut Frame, area: Rect, app: &App, focused:
         frame.buffer_mut(),
         area,
         &title,
-        BROADCAST_PANEL.badge(&badge),
+        BROADCAST_PANEL.with_badge(&badge),
         focused,
         app.theme(),
-        BROADCAST_PANEL,
     );
 
     let inner_x = area.x + 2;
@@ -212,10 +211,9 @@ pub fn render_broadcast_zoomed(frame: &mut Frame, area: Rect, app: &App) {
         frame.buffer_mut(),
         area,
         &title,
-        BROADCAST_PANEL.badge(&badge),
+        BROADCAST_PANEL.with_badge(&badge),
         true,
         app.theme(),
-        BROADCAST_PANEL,
     );
 
     let inner_x = area.x + 2;

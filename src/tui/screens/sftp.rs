@@ -302,10 +302,9 @@ fn render_pane(
         buf,
         rect,
         title,
-        SFTP_PANEL.badge(&count),
+        SFTP_PANEL.with_badge(&count),
         focused,
         theme,
-        SFTP_PANEL,
     );
 
     let inner_x = rect.x + 2;

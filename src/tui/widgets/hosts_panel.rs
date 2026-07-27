@@ -108,10 +108,9 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
         buf,
         area,
         &title,
-        panel_box::HOST_LIST_PANEL.badge(&count_str),
+        panel_box::HOST_LIST_PANEL.with_badge(&count_str),
         app.focused_panel == crate::app::PanelId::Hosts,
         theme,
-        panel_box::HOST_LIST_PANEL,
     );
 
     // Content area inside the panel borders: x+2, y+1, width-4, height-2

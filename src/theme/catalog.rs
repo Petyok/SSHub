@@ -704,6 +704,80 @@ mod tests {
         changed
     }
 
+    /// Every diagnostic class `matrix_diff` can emit, triggered once.
+    ///
+    /// The pure function exists precisely so these can be reached: the real
+    /// snapshot cannot produce a duplicate or a remap, so without a table like
+    /// this those branches would ship untested and a broken one would only
+    /// surface the day the contract actually changed.
+    #[test]
+    fn every_diagnostic_class_is_reported() {
+        struct Case {
+            name: &'static str,
+            frozen: &'static [&'static str],
+            actual: &'static [&'static str],
+            expect: &'static str,
+        }
+
+        const CASES: &[Case] = &[
+            Case {
+                name: "duplicate in the frozen snapshot",
+                frozen: &[
+                    "components.a = Style(Text)",
+                    "components.a = Style(Text)",
+                    "components.b = Style(Text)",
+                ],
+                actual: &["components.a = Style(Text)", "components.b = Style(Text)"],
+                expect: "the frozen snapshot has 3 rows but only 2 distinct role paths",
+            },
+            Case {
+                name: "duplicate in the catalogue",
+                frozen: &["components.a = Style(Text)", "components.b = Style(Text)"],
+                actual: &[
+                    "components.a = Style(Text)",
+                    "components.a = Style(Text)",
+                    "components.b = Style(Text)",
+                ],
+                expect: "the catalogue has 3 rows but only 2 distinct role paths",
+            },
+            Case {
+                name: "row count moved",
+                frozen: &["components.a = Style(Text)", "components.b = Style(Text)"],
+                actual: &["components.a = Style(Text)"],
+                expect: "! row count moved: 2 frozen, 1 now",
+            },
+            Case {
+                name: "removal",
+                frozen: &["components.a = Style(Text)", "components.b = Style(Text)"],
+                actual: &["components.a = Style(Text)"],
+                expect: "- removed:  components.b = Style(Text)",
+            },
+            Case {
+                name: "addition",
+                frozen: &["components.a = Style(Text)"],
+                actual: &["components.a = Style(Text)", "components.b = Style(Text)"],
+                expect: "+ added:    components.b = Style(Text)",
+            },
+            Case {
+                name: "remap",
+                frozen: &["components.a = Style(Text)"],
+                actual: &["components.a = Style(Error)"],
+                expect: "~ remapped: components.a = Style(Text)  ->  components.a = Style(Error)",
+            },
+        ];
+
+        for case in CASES {
+            let actual: Vec<String> = case.actual.iter().map(|row| row.to_string()).collect();
+            let report = matrix_diff(case.frozen, &actual);
+            assert!(
+                report.iter().any(|row| row.contains(case.expect)),
+                "`{}` should report `{}`, got {report:#?}",
+                case.name,
+                case.expect
+            );
+        }
+    }
+
     /// A duplicated frozen line must not buy the catalogue a free removal.
     ///
     /// Keying by role path collapses duplicates, so without an explicit length

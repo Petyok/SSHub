@@ -35,23 +35,53 @@ pub struct PanelRoles {
 
 /// A count badge: its text and the role that styles it, inseparably.
 ///
-/// This is one value rather than two independent options on purpose. When
-/// `render_panel_box` took `count: Option<&str>` and read the role from a
-/// second `Option`, the two could disagree: a badge-less family handed a text
-/// reserved blank cells in the frame and truncated the title to make room for a
-/// badge that was then never drawn. Pairing them makes that state
-/// unrepresentable — the slot is reserved from the same value that fills it.
+/// The fields are private and there is no public constructor, so a badge can
+/// only ever be built by [`PanelRoles::with_badge`] — which takes the role from
+/// the same family it is building the frame for. A badge naming a *different*
+/// family's count role is therefore not expressible.
 #[derive(Clone, Copy)]
 pub struct PanelBadge<'a> {
-    pub text: &'a str,
-    pub role: StyleRole,
+    text: &'a str,
+    role: StyleRole,
+}
+
+/// Everything one call to [`render_panel_box`] paints from: a family's roles
+/// and, at most, that same family's badge.
+///
+/// This exists so the two cannot be mixed. While the badge and the role bundle
+/// were separate arguments, `HOST_LIST_PANEL.badge("12")` could be passed
+/// alongside `DETAILS_PANEL` and compile — a panel drawn in one family's colours
+/// with another family's badge. Travelling as one value makes that
+/// unrepresentable, and the private fields keep it that way: outside this module
+/// a `PanelFrame` can only come from [`PanelRoles::plain`] or
+/// [`PanelRoles::with_badge`].
+#[derive(Clone, Copy)]
+pub struct PanelFrame<'a> {
+    roles: PanelRoles,
+    badge: Option<PanelBadge<'a>>,
 }
 
 impl PanelRoles {
-    /// The badge for `text`, or `None` when this family publishes no count
-    /// role — in which case nothing is reserved and nothing is drawn.
-    pub(crate) fn badge<'a>(&self, text: &'a str) -> Option<PanelBadge<'a>> {
-        self.count.map(|role| PanelBadge { text, role })
+    /// A frame with no count badge.
+    pub(crate) fn plain(self) -> PanelFrame<'static> {
+        PanelFrame {
+            roles: self,
+            badge: None,
+        }
+    }
+
+    /// A frame whose badge reads `text`, styled by *this* family's count role.
+    ///
+    /// A family that publishes no count role yields a frame with no badge, so
+    /// the slot is neither reserved nor drawn and the result is identical to
+    /// [`PanelRoles::plain`]. That is the only sane reading: a badge cannot be
+    /// styled by a role that does not exist, and silently reserving space for
+    /// one is the bug this whole type exists to prevent.
+    pub(crate) fn with_badge(self, text: &str) -> PanelFrame<'_> {
+        PanelFrame {
+            roles: self,
+            badge: self.count.map(|role| PanelBadge { text, role }),
+        }
     }
 }
 
@@ -198,11 +228,11 @@ pub fn render_panel_box(
     buf: &mut Buffer,
     area: Rect,
     title: &str,
-    badge: Option<PanelBadge<'_>>,
+    frame: PanelFrame<'_>,
     focused: bool,
     theme: &ResolvedTheme,
-    roles: PanelRoles,
 ) {
+    let PanelFrame { roles, badge } = frame;
     if area.width < 4 || area.height < 2 {
         return;
     }
@@ -350,10 +380,9 @@ mod tests {
             &mut buf,
             area,
             "Hosts",
-            roles.badge("12"),
+            roles.with_badge("12"),
             focused,
             theme,
-            roles,
         );
         buf
     }
@@ -546,31 +575,19 @@ mod tests {
                 roles.count.is_none(),
                 "`{name}` never passes a badge, so it must publish no count role"
             );
-            assert!(
-                roles.badge("12").is_none(),
-                "`{name}` cannot build a badge at all"
-            );
 
             let theme = resolved_default();
             // Narrow enough that a wrongly reserved four-cell slot would have to
             // eat into the title.
             let area = Rect::new(0, 0, 20, 4);
-            let render = |badge| {
+            let render = |frame| {
                 let mut buf = Buffer::empty(area);
-                render_panel_box(
-                    &mut buf,
-                    area,
-                    "A rather long title",
-                    badge,
-                    false,
-                    &theme,
-                    roles,
-                );
+                render_panel_box(&mut buf, area, "A rather long title", frame, false, &theme);
                 buf
             };
 
-            let with_badge = render(roles.badge("12"));
-            let without = render(None);
+            let with_badge = render(roles.with_badge("12"));
+            let without = render(roles.plain());
             assert_eq!(
                 with_badge, without,
                 "`{name}` must render identically with and without a badge argument"
@@ -600,14 +617,52 @@ mod tests {
             &mut buf,
             area,
             "Hosts",
-            HOST_LIST_PANEL.badge("12"),
+            HOST_LIST_PANEL.with_badge("12"),
             false,
             &theme,
-            HOST_LIST_PANEL,
         );
         assert_eq!(
             style_at_text(&buf, "12").fg,
             Some(Color::Rgb(0x00, 0xff, 0xff))
         );
+    }
+
+    /// A frame's badge always carries *its own* family's count role.
+    ///
+    /// The property this pins is the one the types now enforce: the badge role
+    /// is read from the same `PanelRoles` the frame is built from, so a panel
+    /// can never be drawn in one family's colours with another family's badge.
+    /// Both ways of writing that mismatch are compile errors now — `PanelBadge`
+    /// and `PanelFrame` have private fields and no public constructor, and
+    /// `render_panel_box` takes the frame alone — so what is left to check at
+    /// runtime is that each family really reaches for its own role.
+    #[test]
+    fn a_frames_badge_always_uses_its_own_familys_count_role() {
+        use crate::test_support::{panel_marker, panel_marker_theme, PanelFamily};
+
+        let theme = panel_marker_theme();
+        let area = Rect::new(0, 0, 30, 6);
+
+        for (family, roles) in [
+            (PanelFamily::HostList, HOST_LIST_PANEL),
+            (PanelFamily::Sftp, SFTP_PANEL),
+            (PanelFamily::Broadcast, BROADCAST_PANEL),
+        ] {
+            let mut buf = Buffer::empty(area);
+            render_panel_box(
+                &mut buf,
+                area,
+                "Title",
+                roles.with_badge("12"),
+                false,
+                &theme,
+            );
+            assert_eq!(
+                style_at_text(&buf, "12").fg,
+                Some(panel_marker(family, 3)),
+                "{} drew its badge from another family's count role",
+                family.path()
+            );
+        }
     }
 }

@@ -70,10 +70,9 @@ pub(crate) fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
         buf,
         area,
         &title,
-        None,
+        DETAILS_PANEL.plain(),
         app.focused_panel == crate::app::PanelId::Detail,
         theme,
-        DETAILS_PANEL,
     );
 
     if area.height < 3 || area.width < 6 {
@@ -278,10 +277,9 @@ fn render_ssh_log(buf: &mut Buffer, area: Rect, app: &App) {
         buf,
         area,
         &title,
-        None,
+        SSH_LOG_PANEL.plain(),
         app.focused_panel == crate::app::PanelId::SshLog,
         theme,
-        SSH_LOG_PANEL,
     );
     let inner_x = area.x + 2;
     let inner_w = area.width.saturating_sub(4) as usize;
@@ -445,10 +443,9 @@ pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
         buf,
         area,
         "agent",
-        None,
+        AGENT_PANEL.plain(),
         app.focused_panel == crate::app::PanelId::Agent,
         theme,
-        AGENT_PANEL,
     );
 
     let inner_x = area.x + 2;
@@ -667,10 +664,9 @@ pub(crate) fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
         buf,
         area,
         &title,
-        None,
+        LATENCY_PANEL.plain(),
         app.focused_panel == crate::app::PanelId::Latency,
         theme,
-        LATENCY_PANEL,
     );
 
     let inner_x = area.x + 2;
