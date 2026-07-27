@@ -16,7 +16,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::app::{App, AppMode};
-use crate::theme::catalog::PaintRole;
+use crate::theme::catalog::{PaintRole, StyleRole};
 use crate::theme::gradient::{paint_gradient_area, CellSelection, PaintChannel};
 use crate::theme::model::ResolvedPaint;
 
@@ -26,6 +26,20 @@ use crate::theme::model::ResolvedPaint;
 /// On a too-small terminal the popup just shrinks to the available space.
 pub fn fit_popup(desired: u16, min: u16, avail: u16) -> u16 {
     desired.clamp(min.min(avail), avail)
+}
+
+/// The foreground a popup frame is drawn in.
+///
+/// `components.popup.border` is a `Paint` role, so it may carry a gradient —
+/// but a popup can float over a live session and `paint_gradient_ring` takes no
+/// exclusions. Sampling the role's solid fallback keeps a themed border colour
+/// without ever handing the ring painter a rect that overlaps the remote PTY
+/// viewport.
+pub(crate) fn popup_border_style(
+    theme: &crate::theme::model::ResolvedTheme,
+    area: Rect,
+) -> ratatui::style::Style {
+    ratatui::style::Style::default().fg(blit::line_color(theme, PaintRole::PopupBorder, area))
 }
 
 /// Convert a Unix epoch timestamp to `"HH:MM:SS"` in the local timezone.
@@ -582,17 +596,19 @@ fn render_notice_popup(frame: &mut Frame, app: &App) {
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
     let popup_area = crate::tui::popup_open_rect(popup_area, app);
+    let theme = app.theme();
+    let error = theme.style(StyleRole::PopupError);
 
     frame.render_widget(Clear, popup_area);
     frame.render_widget(
         Paragraph::new(format!("{message}\n\n{hint}"))
             .wrap(Wrap { trim: false })
-            .style(Style::default().fg(Color::Red))
+            .style(error)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(" Connection failed ")
-                    .border_style(Style::default().fg(Color::Red)),
+                    .title(Span::styled(" Connection failed ", error))
+                    .border_style(error),
             ),
         popup_area,
     );
@@ -617,24 +633,25 @@ fn render_sftp_prompt_popup(frame: &mut Frame, app: &App) {
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
+    let theme = app.theme();
     let mut lines = vec![
-        ratatui::text::Line::from(Span::styled(label, theme::text())),
+        ratatui::text::Line::from(Span::styled(label, theme.style(StyleRole::TextPrimary))),
         ratatui::text::Line::from(Span::styled(
             crate::text_input::with_cursor(&prompt.value, prompt.cursor),
-            theme::bright(),
+            theme.style(StyleRole::FormInput),
         )),
         ratatui::text::Line::from(""),
     ];
     if let Some(err) = &prompt.error {
         lines.push(ratatui::text::Line::from(Span::styled(
             format!("\u{2717} {err}"),
-            Style::default().fg(Color::Red),
+            theme.style(StyleRole::PopupError),
         )));
         lines.push(ratatui::text::Line::from(""));
     }
     lines.push(ratatui::text::Line::from(Span::styled(
         "Enter: confirm  \u{2502}  Esc: cancel",
-        theme::dim(),
+        theme.style(StyleRole::PopupHint),
     )));
 
     let popup_area = crate::tui::popup_open_rect(popup_area, app);
@@ -644,8 +661,8 @@ fn render_sftp_prompt_popup(frame: &mut Frame, app: &App) {
         Paragraph::new(lines).wrap(Wrap { trim: false }).block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(Span::styled(title, theme::heading()))
-                .border_style(theme::popup_border()),
+                .title(Span::styled(title, theme.style(StyleRole::PopupTitle)))
+                .border_style(popup_border_style(theme, popup_area)),
         ),
         popup_area,
     );
@@ -663,27 +680,28 @@ fn render_import_prompt_popup(frame: &mut Frame, app: &App) {
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
+    let theme = app.theme();
     let mut lines = vec![
         ratatui::text::Line::from(Span::styled(
             "Path to Termius export folder (contains L00t.csv, ssh_keys/):",
-            theme::text(),
+            theme.style(StyleRole::TextPrimary),
         )),
         ratatui::text::Line::from(Span::styled(
             crate::text_input::with_cursor(&prompt.path, prompt.cursor),
-            theme::bright(),
+            theme.style(StyleRole::FormInput),
         )),
         ratatui::text::Line::from(""),
     ];
     if let Some(err) = &prompt.error {
         lines.push(ratatui::text::Line::from(Span::styled(
             format!("\u{2717} {err}"),
-            Style::default().fg(Color::Red),
+            theme.style(StyleRole::PopupError),
         )));
         lines.push(ratatui::text::Line::from(""));
     }
     lines.push(ratatui::text::Line::from(Span::styled(
         "Enter: import  \u{2502}  Esc: cancel",
-        theme::dim(),
+        theme.style(StyleRole::PopupHint),
     )));
 
     let popup_area = crate::tui::popup_open_rect(popup_area, app);
@@ -693,8 +711,11 @@ fn render_import_prompt_popup(frame: &mut Frame, app: &App) {
         Paragraph::new(lines).wrap(Wrap { trim: false }).block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(Span::styled(" Import from Termius ", theme::heading()))
-                .border_style(theme::popup_border()),
+                .title(Span::styled(
+                    " Import from Termius ",
+                    theme.style(StyleRole::PopupTitle),
+                ))
+                .border_style(popup_border_style(theme, popup_area)),
         ),
         popup_area,
     );
@@ -1388,6 +1409,8 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
     let popup_area = crate::tui::popup_open_rect(popup_area, app);
 
     frame.render_widget(Clear, popup_area);
+    let theme = app.theme();
+    let border = popup_border_style(theme, popup_area);
 
     match kind {
         FormKind::Host => {
@@ -1399,6 +1422,8 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
                         &app.identities,
                         &app.save_key_label(),
                         &app.config.keybinds.secret_field_hints(),
+                        theme,
+                        border,
                     ),
                     popup_area,
                 );
@@ -1411,6 +1436,8 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
                         form,
                         &app.save_key_label(),
                         &app.config.keybinds.secret_field_hints(),
+                        theme,
+                        border,
                     ),
                     popup_area,
                 );
@@ -1443,6 +1470,8 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
                         form,
                         identity_name.as_deref(),
                         parent_name.as_deref(),
+                        theme,
+                        border,
                     ),
                     popup_area,
                 );
@@ -1462,12 +1491,10 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
         let y = popup_area.y + popup_area.height.saturating_sub(2);
         if y > popup_area.y && popup_area.width > 4 {
             let msg = text::ellipsize(notice, popup_area.width as usize - 4);
-            frame.buffer_mut().set_string(
-                popup_area.x + 2,
-                y,
-                &msg,
-                Style::default().fg(Color::Red),
-            );
+            let error = app.theme().style(StyleRole::FormError);
+            frame
+                .buffer_mut()
+                .set_string(popup_area.x + 2, y, &msg, error);
         }
     }
 }
@@ -1489,17 +1516,19 @@ fn render_confirm_quit_popup(frame: &mut Frame, app: &App) {
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
     let popup_area = crate::tui::popup_open_rect(popup_area, app);
+    // Quitting is reversible ("n: stay"), so the whole dialog is a warning.
+    let warning = app.theme().style(StyleRole::PopupWarning);
 
     frame.render_widget(Clear, popup_area);
     frame.render_widget(
         Paragraph::new(format!("{message}\n{hint}"))
             .wrap(Wrap { trim: false })
-            .style(Style::default().fg(Color::Yellow))
+            .style(warning)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title("Confirm quit")
-                    .border_style(Style::default().fg(Color::Yellow)),
+                    .title(Span::styled("Confirm quit", warning))
+                    .border_style(warning),
             ),
         popup_area,
     );
@@ -1517,17 +1546,19 @@ fn render_confirm_discard_popup(frame: &mut Frame, app: &App) {
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
     let popup_area = crate::tui::popup_open_rect(popup_area, app);
+    // Nothing is lost either way — a warning, not an error.
+    let warning = app.theme().style(StyleRole::PopupWarning);
 
     frame.render_widget(Clear, popup_area);
     frame.render_widget(
         Paragraph::new(format!("{message}\n{hint}"))
             .wrap(Wrap { trim: false })
-            .style(Style::default().fg(Color::Yellow))
+            .style(warning)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title("Unsaved changes")
-                    .border_style(Style::default().fg(Color::Yellow)),
+                    .title(Span::styled("Unsaved changes", warning))
+                    .border_style(warning),
             ),
         popup_area,
     );
@@ -1566,17 +1597,22 @@ fn render_confirm_delete_popup(frame: &mut Frame, app: &App) {
     ];
 
     let popup_area = crate::tui::popup_open_rect(popup_area, app);
+    // A delete cannot be undone: the frame is the error role, while the
+    // question itself stays a warning — the two were red and yellow before.
+    let theme = app.theme();
+    let error = theme.style(StyleRole::PopupError);
+    let warning = theme.style(StyleRole::PopupWarning);
 
     frame.render_widget(Clear, popup_area);
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: true })
-            .style(Style::default().fg(Color::Yellow))
+            .style(warning)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title("Confirm")
-                    .border_style(Style::default().fg(Color::Red)),
+                    .title(Span::styled("Confirm", error))
+                    .border_style(error),
             ),
         popup_area,
     );
@@ -1623,13 +1659,14 @@ fn render_help_popup(frame: &mut Frame, app: &App) {
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
     let popup_area = crate::tui::popup_open_rect(popup_area, app);
+    let theme = app.theme();
 
     frame.render_widget(Clear, popup_area);
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(theme::popup_border())
-            .title(Span::styled(" Help ", theme::heading())),
+            .border_style(popup_border_style(theme, popup_area))
+            .title(Span::styled(" Help ", theme.style(StyleRole::PopupTitle))),
         popup_area,
     );
 
@@ -1640,7 +1677,7 @@ fn render_help_popup(frame: &mut Frame, app: &App) {
         inner.x,
         inner.y,
         crate::tui::text::ellipsize(&query_line, inner.width as usize),
-        theme::bright(),
+        theme.style(StyleRole::TextBright),
     );
 
     let body = Rect::new(
@@ -1650,14 +1687,17 @@ fn render_help_popup(frame: &mut Frame, app: &App) {
         inner.height.saturating_sub(2),
     );
     let scroll = app.help_scroll.min(help_max_scroll(area, &app.help_query));
-    frame.render_widget(screens::help::render_help(scroll, &app.help_query), body);
+    frame.render_widget(
+        screens::help::render_help(scroll, &app.help_query, theme),
+        body,
+    );
 
     let footer_y = inner.y + inner.height.saturating_sub(1);
     frame.buffer_mut().set_string(
         inner.x,
         footer_y,
         crate::tui::text::ellipsize(screens::help::HELP_FOOTER, inner.width as usize),
-        theme::dim(),
+        theme.style(StyleRole::PopupHint),
     );
 }
 
@@ -1814,7 +1854,7 @@ mod tests {
                     theme,
                 );
                 let chips = build_session_chips(app);
-                widgets::header::render_session_strip(frame, areas.header, &chips, theme);
+                widgets::header::render_session_strip(frame, areas.header, &chips, None, theme);
 
                 let rule1 = row_in(area, areas.header.y + areas.header.height);
                 widgets::footer::render_hrule(
@@ -1844,8 +1884,8 @@ mod tests {
                     theme,
                     PaintRole::FooterSeparator,
                 );
-                let keybinds = footer_keybinds(app);
-                widgets::footer::render_footer(frame, areas.footer, &keybinds, theme);
+                let (keybinds, pinned) = footer_keybinds(app);
+                widgets::footer::render_footer(frame, areas.footer, &keybinds, pinned, theme);
             })
             .unwrap();
 
@@ -2351,6 +2391,8 @@ mod tests {
                 ..Default::default()
             },
             pending_secret: None,
+            key_push_identity: None,
+            host_name: "web-prod".into(),
         };
         let mut session = crate::session::Session::spawn(cfg, 24, 80, None).unwrap();
         session.phase = SessionPhase::Running {
@@ -3014,17 +3056,26 @@ mod tests {
 
     #[test]
     fn session_picker_renders_each_lifecycle_with_word_colour_and_ordinal() {
-        let app = app_with_picker(crate::app::SessionPickerPurpose::SwitchSession, "");
-        let buf = render_to_buffer(&app, 80, 24);
-
         // The word carries the state without colour, the colour without reading.
         // The ordinal sits at a fixed offset after the badge (BADGE_CELLS = 7)
         // and must be read there — the endpoints contain digits too, so a plain
         // `contains('1')` would prove nothing.
+        //
+        // Marker colours, not `default` parity: an unbound badge role would
+        // reproduce the legacy colour just as faithfully as a bound one.
+        let mut app = app_with_picker(crate::app::SessionPickerPurpose::SwitchSession, "");
+        wear(
+            &mut app,
+            "[components.picker]\n\
+             badge_success = \"#ff4001\"\n\
+             badge_warning = \"#ff4002\"\n\
+             badge_error = \"#ff4003\"\n",
+        );
+        let buf = render_to_buffer(&app, 80, 24);
         for (word, colour, ordinal) in [
-            ("conn", theme::AMBER, "1"),
-            ("up", theme::GREEN, "2"),
-            ("exit", theme::RED, "3"),
+            ("conn", Color::Rgb(0xff, 0x40, 0x02), "1"),
+            ("up", Color::Rgb(0xff, 0x40, 0x01), "2"),
+            ("exit", Color::Rgb(0xff, 0x40, 0x03), "3"),
         ] {
             let (x, y) = picker_row(&buf, word);
             assert_eq!(buf[(x, y)].fg, colour, "{word}: dot colour");
@@ -3043,19 +3094,74 @@ mod tests {
     #[test]
     fn session_picker_selection_highlights_without_eating_the_badge() {
         // selected = 0, i.e. the connecting row.
-        let app = app_with_picker(crate::app::SessionPickerPurpose::SwitchSession, "");
+        let mut app = app_with_picker(crate::app::SessionPickerPurpose::SwitchSession, "");
+        wear(
+            &mut app,
+            "[components.picker]\n\
+             row_selected = { foreground = \"#ff5001\", background = \"#005001\" }\n\
+             badge_warning = \"#ff4002\"\n",
+        );
         let buf = render_to_buffer(&app, 80, 24);
 
         let (sel_x, sel_y) = picker_row(&buf, "conn");
         let (other_x, other_y) = picker_row(&buf, "exit");
 
-        assert_eq!(buf[(sel_x, sel_y)].bg, theme::SEL_BG, "selected row");
-        assert_ne!(buf[(other_x, other_y)].bg, theme::SEL_BG, "unselected row");
+        let bar = Color::Rgb(0x00, 0x50, 0x01);
+        assert_eq!(buf[(sel_x, sel_y)].bg, bar, "selected row");
+        assert_ne!(buf[(other_x, other_y)].bg, bar, "unselected row");
+        // The badge style is foreground-only, so the bar underneath survives it.
         assert_eq!(
             buf[(sel_x, sel_y)].fg,
-            theme::AMBER,
+            Color::Rgb(0xff, 0x40, 0x02),
             "the highlight must not swallow the lifecycle colour"
         );
+    }
+
+    /// All three picker purposes keep their title, their empty state and the
+    /// popup roles that frame them — under markers, not under `default`.
+    #[test]
+    fn session_picker_purposes_keep_their_chrome_under_a_theme() {
+        use crate::app::SessionPickerPurpose::{NewSession, SftpLeftPane, SwitchSession};
+
+        const MARKERS: &str = "[components.popup]\n\
+             border = \"#ff6001\"\n\
+             title = { foreground = \"#ff6002\" }\n\
+             legend = { foreground = \"#ff6003\" }\n\
+             [components.picker]\n\
+             query = { foreground = \"#ff6004\" }\n";
+
+        for (purpose, title, empty) in [
+            (NewSession, "new session tab", "(no matching hosts)"),
+            (SftpLeftPane, "select left server", "(no matching hosts)"),
+            (SwitchSession, "switch session", "(no matching sessions)"),
+        ] {
+            let mut app = app_with_picker(purpose, "zzzznope");
+            app.session_picker.as_mut().unwrap().return_mode = AppMode::Normal;
+            wear(&mut app, MARKERS);
+            let buf = render_to_buffer(&app, 80, 24);
+            let popup = app.last_popup_rect.get().expect("the picker drew");
+
+            assert_eq!(
+                buf[(popup.x, popup.y)].fg,
+                Color::Rgb(0xff, 0x60, 0x01),
+                "{purpose:?}: the frame is components.popup.border"
+            );
+            assert_eq!(
+                style_at_text_in(&buf, popup, title).fg,
+                Some(Color::Rgb(0xff, 0x60, 0x02)),
+                "{purpose:?}: the title is components.popup.title"
+            );
+            assert_eq!(
+                style_at_text_in(&buf, popup, empty).fg,
+                Some(Color::Rgb(0xff, 0x60, 0x03)),
+                "{purpose:?}: the empty state is components.popup.legend"
+            );
+            assert_eq!(
+                style_at_text_in(&buf, popup, "zzzznope").fg,
+                Some(Color::Rgb(0xff, 0x60, 0x04)),
+                "{purpose:?}: the query is components.picker.query"
+            );
+        }
     }
 
     #[test]
@@ -3571,8 +3677,418 @@ mod tests {
         assert!(buffer_contains(&buffer, "› quit"));
         assert!(buffer_contains(&buffer, "Quit"));
         assert!(buffer_contains(&buffer, "type to filter"));
-        // Save form is ALL[0]; under "quit" it must not be the selected row content
-        // unless its binds somehow match — label "Save form" does not.
         assert!(!buffer_contains(&buffer, "Save form"));
+    }
+
+    /// Every overlay list highlights its selected row through the role the
+    /// catalogue publishes for *that* list. Each family gets its own marker, so
+    /// a screen reaching for a neighbour's role fails on an exact colour rather
+    /// than looking plausible under `default`.
+    #[test]
+    fn overlay_selected_rows_use_their_own_row_roles() {
+        const MARKERS: &str = "[components.command_palette]\n\
+             row_selected = { foreground = \"#ff1001\", background = \"#001001\" }\n\
+             [components.settings]\n\
+             row_selected = { foreground = \"#ff1002\", background = \"#001002\" }\n\
+             [components.keybind]\n\
+             row_selected = { foreground = \"#ff1003\", background = \"#001003\" }\n\
+             row = { foreground = \"#ff1004\" }\n";
+
+        // Command palette: the selected host name, and a second row that must
+        // not be highlighted.
+        let mut app = test_app_with_many_hosts(6);
+        app.mode = AppMode::Palette;
+        app.palette_query.clear();
+        app.palette_results = (0..app.hosts.len()).collect();
+        app.palette_selected = 0;
+        wear(&mut app, MARKERS);
+        let buf = render_to_buffer(&app, 120, 38);
+        let popup = app.last_popup_rect.get().expect("the palette drew");
+        assert_eq!(
+            style_at_text_in(&buf, popup, "host-00").bg,
+            Some(ratatui::style::Color::Rgb(0x00, 0x10, 0x01)),
+            "the palette highlights with components.command_palette.row_selected"
+        );
+        assert_ne!(
+            style_at_text_in(&buf, popup, "host-01").bg,
+            Some(ratatui::style::Color::Rgb(0x00, 0x10, 0x01)),
+            "an unselected palette row keeps the popup ground"
+        );
+
+        // Settings: row 1 selected, row 0 not.
+        let mut app = test_app_with_hosts();
+        app.mode = AppMode::Settings;
+        app.settings_selected = 1;
+        wear(&mut app, MARKERS);
+        let buf = render_to_buffer(&app, 120, 38);
+        let selected = crate::app::SETTINGS_ITEMS[1].label;
+        let other = crate::app::SETTINGS_ITEMS[0].label;
+        assert_eq!(
+            style_at_text(&buf, selected).bg,
+            Some(ratatui::style::Color::Rgb(0x00, 0x10, 0x02)),
+            "settings highlight with components.settings.row_selected"
+        );
+        assert_ne!(
+            style_at_text(&buf, other).bg,
+            Some(ratatui::style::Color::Rgb(0x00, 0x10, 0x02)),
+            "an unselected settings row is not highlighted"
+        );
+
+        // Keybind editor: both roles of the pair, in one render.
+        let mut app = test_app_with_hosts();
+        app.mode = AppMode::KeybindEditor;
+        app.keybind_editor = Some(crate::app::KeybindEditor {
+            selected: 0,
+            scroll: 0,
+            capturing: false,
+            append: false,
+            query: String::new(),
+        });
+        wear(&mut app, MARKERS);
+        let buf = render_to_buffer(&app, 120, 38);
+        let first = crate::config::KeyAction::ALL[0].label();
+        let second = crate::config::KeyAction::ALL[1].label();
+        assert_eq!(
+            style_at_text(&buf, first).bg,
+            Some(ratatui::style::Color::Rgb(0x00, 0x10, 0x03)),
+            "the highlighted binding wears components.keybind.row_selected"
+        );
+        assert_eq!(
+            style_at_text(&buf, second).fg,
+            Some(ratatui::style::Color::Rgb(0xff, 0x10, 0x04)),
+            "every other binding wears components.keybind.row"
+        );
+    }
+
+    /// The keybind catalogue keeps `text_highlight` where the keychain keeps
+    /// `selection_fg`; the two differ on purpose and must not converge.
+    #[test]
+    fn keybind_and_keychain_selections_stay_distinct() {
+        let theme = crate::test_support::resolved_default();
+        assert_eq!(
+            theme.style(StyleRole::KeybindRowSelected).fg,
+            Some(theme.semantic().text_highlight)
+        );
+        assert_eq!(
+            theme.style(StyleRole::KeychainRowSelected).fg,
+            Some(theme.semantic().selection_fg)
+        );
+        assert_ne!(
+            theme.style(StyleRole::KeybindRowSelected),
+            theme.style(StyleRole::KeychainRowSelected)
+        );
+    }
+
+    /// The active-field marker is `components.focus.indicator` and nothing
+    /// else. Both halves of the label pair are rendered, so neither the focused
+    /// nor the editing role can pass by never being drawn.
+    #[test]
+    fn form_labels_and_focus_indicator_are_independently_themed() {
+        const MARKERS: &str = "[components.focus]\n\
+             indicator = { foreground = \"#ff2001\" }\n\
+             [components.form]\n\
+             label = { foreground = \"#ff2002\" }\n\
+             label_focused = { foreground = \"#ff2003\" }\n\
+             label_editing = { foreground = \"#ff2004\" }\n\
+             input_editing = { foreground = \"#ff2005\" }\n";
+        let focus = Some(ratatui::style::Color::Rgb(0xff, 0x20, 0x01));
+
+        for (editing, marker, label_fg) in [
+            (false, "> ", ratatui::style::Color::Rgb(0xff, 0x20, 0x03)),
+            (
+                true,
+                "\u{25b8} ",
+                ratatui::style::Color::Rgb(0xff, 0x20, 0x04),
+            ),
+        ] {
+            let mut app = test_app_with_hosts();
+            app.enter_host_form(None, false).unwrap();
+            let form = app.host_form.as_mut().unwrap();
+            form.field = crate::app::HostFormField::Address;
+            form.editing = editing;
+            wear(&mut app, MARKERS);
+            let buf = render_to_buffer(&app, 120, 38);
+
+            let (mx, my) = crate::test_support::find_text(&buf, &format!("{marker}Address"));
+            assert_eq!(
+                Some(buf[(mx, my)].fg),
+                focus,
+                "editing={editing}: the marker is the focus indicator"
+            );
+            assert_eq!(
+                style_at_text(&buf, "Address:").fg,
+                Some(label_fg),
+                "editing={editing}: the label is themed apart from the marker"
+            );
+            // A field that is neither focused nor editing keeps the plain role.
+            assert_eq!(
+                style_at_text(&buf, "Port:").fg,
+                Some(ratatui::style::Color::Rgb(0xff, 0x20, 0x02)),
+                "editing={editing}: an idle label wears components.form.label"
+            );
+        }
+    }
+
+    /// The keychain's own list and notice roles, driven through the widgets
+    /// that own them.
+    ///
+    /// These two builders have no call site in the running app any more — the
+    /// identity grid in `screens/keys.rs` replaced them — so this is a unit
+    /// proof of the widget, not of a rendered frame.
+    #[test]
+    fn keychain_list_and_notices_wear_the_keychain_roles() {
+        let theme = overlay_theme(
+            "[components.keychain]\n\
+             row = { foreground = \"#ff3001\" }\n\
+             row_selected = { foreground = \"#ff3002\", background = \"#003002\" }\n\
+             notice_success = { foreground = \"#ff3003\" }\n\
+             notice_error = { foreground = \"#ff3004\" }\n",
+        );
+        let mut app = test_app_with_hosts();
+        app.identities = vec![
+            crate::store::Identity {
+                id: 1,
+                name: "alpha".into(),
+                username: None,
+                private_key: None,
+                certificate: None,
+                has_password: false,
+            },
+            crate::store::Identity {
+                id: 2,
+                name: "beta".into(),
+                username: None,
+                private_key: None,
+                certificate: None,
+                has_password: false,
+            },
+        ];
+        app.identity_selected = 0;
+        wear(
+            &mut app,
+            "[components.keychain]\n\
+             row = { foreground = \"#ff3001\" }\n\
+             row_selected = { foreground = \"#ff3002\", background = \"#003002\" }\n",
+        );
+
+        let list = screens::keychain::render_identity_list(&app);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 30, 4));
+        ratatui::widgets::Widget::render(list, buf.area, &mut buf);
+        assert_eq!(
+            buf[(0, 0)].bg,
+            ratatui::style::Color::Rgb(0x00, 0x30, 0x02),
+            "the selected identity row wears components.keychain.row_selected"
+        );
+        assert_eq!(
+            buf[(0, 1)].fg,
+            ratatui::style::Color::Rgb(0xff, 0x30, 0x01),
+            "every other row wears components.keychain.row"
+        );
+
+        for (notice, expected) in [
+            ("Saved", ratatui::style::Color::Rgb(0xff, 0x30, 0x03)),
+            ("Error: nope", ratatui::style::Color::Rgb(0xff, 0x30, 0x04)),
+        ] {
+            let mut buf = Buffer::empty(Rect::new(0, 0, 20, 1));
+            ratatui::widgets::Widget::render(
+                screens::keychain::render_notice(notice, &theme),
+                buf.area,
+                &mut buf,
+            );
+            assert_eq!(buf[(0, 0)].fg, expected, "notice {notice:?}");
+        }
+    }
+
+    /// Every overlay must clip rather than write outside the buffer when the
+    /// terminal is smaller than the popup's own minimum.
+    #[test]
+    fn tiny_terminals_clip_every_overlay() {
+        let modes = [
+            AppMode::Palette,
+            AppMode::HostForm,
+            AppMode::GroupManage,
+            AppMode::TagFilter,
+            AppMode::Settings,
+            AppMode::KeybindEditor,
+            AppMode::TunnelReconnectSettings,
+            AppMode::ConfirmQuit,
+            AppMode::ConfirmDiscard,
+            AppMode::ConfirmDelete,
+            AppMode::Help,
+            AppMode::Notice,
+        ];
+        for mode in modes {
+            for (w, h) in [(1u16, 1u16), (3, 2), (8, 4), (20, 6), (40, 10)] {
+                let mut app = test_app_with_hosts();
+                app.enter_host_form(None, false).unwrap();
+                app.notice_popup = Some("boom".into());
+                app.keybind_editor = Some(crate::app::KeybindEditor {
+                    selected: 0,
+                    scroll: 0,
+                    capturing: false,
+                    append: false,
+                    query: String::new(),
+                });
+                app.pending_delete = Some(crate::app::PendingDelete::Host {
+                    id: 1,
+                    name: "web-prod".into(),
+                });
+                app.mode = mode;
+                let buf = render_to_buffer(&app, w, h);
+                assert_eq!(buf.area.width, w, "{mode:?} at {w}x{h}");
+                assert_eq!(buf.area.height, h, "{mode:?} at {w}x{h}");
+            }
+        }
+    }
+
+    // ── Overlay role markers ─────────────────────────────────
+    //
+    // Default parity can never prove that a role is *read*: an unbound role and
+    // a correctly bound one both produce the legacy colour under `default`. So
+    // every overlay role gets a colour no other role uses, is driven through
+    // the real production renderer, and is read back at a named cell.
+
+    /// `default` plus `body`, resolved in memory. No filesystem, no HOME.
+    pub(crate) fn overlay_theme(body: &str) -> crate::theme::model::ResolvedTheme {
+        crate::test_support::resolved_source(
+            "overlay-markers",
+            &format!("schema_version = 1\nname = \"Markers\"\nextends = \"default\"\n{body}"),
+        )
+    }
+
+    /// Give `app` a marker theme written as `[components.*]` TOML.
+    pub(crate) fn wear(app: &mut App, body: &str) {
+        app.activate_resolved_theme(std::rc::Rc::new(overlay_theme(body)));
+    }
+
+    /// The style of the cell where `needle` starts.
+    pub(crate) fn style_at_text(buf: &Buffer, needle: &str) -> ratatui::style::Style {
+        let (x, y) = crate::test_support::find_text(buf, needle);
+        cell_style(buf, x, y)
+    }
+
+    /// The style of the cell where `needle` starts *inside `rect`*.
+    ///
+    /// Overlays float over a dashboard that draws the same host names, so a
+    /// whole-buffer search would happily read the wrong surface.
+    pub(crate) fn style_at_text_in(
+        buf: &Buffer,
+        rect: Rect,
+        needle: &str,
+    ) -> ratatui::style::Style {
+        for y in rect.y..rect.bottom() {
+            let line: String = (rect.x..rect.right())
+                .map(|x| buf[(x, y)].symbol())
+                .collect();
+            if let Some(byte) = line.find(needle) {
+                return cell_style(buf, rect.x + line[..byte].chars().count() as u16, y);
+            }
+        }
+        panic!("`{needle}` is not inside {rect:?}");
+    }
+
+    fn cell_style(buf: &Buffer, x: u16, y: u16) -> ratatui::style::Style {
+        let cell = &buf[(x, y)];
+        ratatui::style::Style::default()
+            .fg(cell.fg)
+            .bg(cell.bg)
+            .add_modifier(cell.modifier)
+    }
+
+    /// The identities tab with one selected identity and `body`'s markers.
+    fn identities_app(body: &str) -> App {
+        let mut app = test_app_with_hosts();
+        app.identities = vec![crate::store::Identity {
+            id: 1,
+            name: "prod-key".into(),
+            username: Some("root".into()),
+            private_key: Some(std::path::PathBuf::from("/home/u/.ssh/id_ed25519")),
+            certificate: None,
+            has_password: false,
+        }];
+        app.identity_selected = 0;
+        app.active_tab = 3;
+        wear(&mut app, body);
+        app
+    }
+
+    /// The identity cards own `components.identities.*`. A migration that
+    /// reached for the generic table roles instead would still look right under
+    /// `default`, so both families are marked and only one may land.
+    #[test]
+    fn selected_identity_card_uses_identity_selection_not_table_highlight() {
+        let app = identities_app(
+            "[components.identities.card]\n\
+             selection = { foreground = \"#ff0001\", background = \"#000101\" }\n\
+             name = { foreground = \"#ff0002\" }\n\
+             [components.table]\n\
+             row_selected = { foreground = \"#00ff01\", background = \"#001100\" }\n",
+        );
+        let buf = render_to_buffer(&app, 120, 38);
+
+        let name = style_at_text(&buf, "prod-key");
+        assert_eq!(
+            name.fg,
+            Some(ratatui::style::Color::Rgb(0xff, 0x00, 0x02)),
+            "the card name wears components.identities.card.name"
+        );
+        assert_eq!(
+            name.bg,
+            Some(ratatui::style::Color::Rgb(0x00, 0x01, 0x01)),
+            "a selected card is backed by components.identities.card.selection"
+        );
+        assert_ne!(
+            name.bg,
+            Some(ratatui::style::Color::Rgb(0x00, 0x11, 0x00)),
+            "the identity cards must not borrow components.table.row_selected"
+        );
+    }
+
+    /// The confirm popups used to hard-code ANSI red and yellow. They now carry
+    /// the popup's own semantic roles, and the two are marked apart so a single
+    /// shared role cannot satisfy both.
+    #[test]
+    fn confirm_error_and_warning_use_popup_semantic_roles() {
+        const MARKERS: &str = "[components.popup]\n\
+             error = { foreground = \"#ff0003\" }\n\
+             warning = { foreground = \"#ff0004\" }\n";
+        let error_fg = Some(ratatui::style::Color::Rgb(0xff, 0x00, 0x03));
+        let warning_fg = Some(ratatui::style::Color::Rgb(0xff, 0x00, 0x04));
+
+        let mut app = test_app_with_hosts();
+        app.pending_delete = Some(crate::app::PendingDelete::Host {
+            id: 1,
+            name: "web-prod".into(),
+        });
+        app.mode = AppMode::ConfirmDelete;
+        wear(&mut app, MARKERS);
+        let deleting = render_to_buffer(&app, 120, 38);
+        let popup = app.last_popup_rect.get().expect("the delete popup drew");
+        assert_eq!(
+            Some(deleting[(popup.x, popup.y)].fg),
+            error_fg,
+            "a destructive confirm is framed by components.popup.error"
+        );
+        assert_eq!(
+            style_at_text(&deleting, "Delete host").fg,
+            warning_fg,
+            "its question is components.popup.warning"
+        );
+
+        let mut app = test_app_with_hosts();
+        app.mode = AppMode::ConfirmQuit;
+        wear(&mut app, MARKERS);
+        let quitting = render_to_buffer(&app, 120, 38);
+        let popup = app.last_popup_rect.get().expect("the quit popup drew");
+        assert_eq!(
+            Some(quitting[(popup.x, popup.y)].fg),
+            warning_fg,
+            "a reversible confirm is framed by components.popup.warning"
+        );
+        assert_eq!(
+            style_at_text(&quitting, "Quit sshub").fg,
+            warning_fg,
+            "its question is components.popup.warning too"
+        );
     }
 }

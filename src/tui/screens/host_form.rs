@@ -1,11 +1,12 @@
-use ratatui::prelude::{Modifier, Style};
-use ratatui::style::Color;
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use crate::app::{HostFormEdit, HostFormField, OS_ICON_OPTIONS};
 use crate::store::{HostGroup, Identity};
 use crate::text_input;
+use crate::theme::catalog::StyleRole;
+use crate::theme::model::ResolvedTheme;
 
 pub fn render_host_form(
     form: &HostFormEdit,
@@ -13,6 +14,8 @@ pub fn render_host_form(
     identities: &[Identity],
     save_hint: &str,
     secret_hints: &str,
+    theme: &ResolvedTheme,
+    border: Style,
 ) -> Paragraph<'static> {
     let title = if form.metadata_only {
         "Edit metadata (ssh_config)"
@@ -22,11 +25,17 @@ pub fn render_host_form(
         "New host"
     };
 
+    let help = theme.style(StyleRole::FormHelp);
+    // The `▸`/`>` glyph in front of the current field is the focus indicator,
+    // and it carries its own role: a theme may mark focus without recolouring
+    // the label the marker sits next to.
+    let focus = theme.style(StyleRole::FocusIndicator);
+
     let mut lines = Vec::with_capacity(HostFormField::ALL.len() + 2);
     if form.metadata_only {
         lines.push(Line::from(Span::styled(
             "Connection fields are read-only (from ~/.ssh/config). Edit launcher metadata below.",
-            Style::default().add_modifier(Modifier::DIM),
+            help,
         )));
         lines.push(Line::from(""));
     }
@@ -150,52 +159,47 @@ pub fn render_host_form(
         };
         let suffix = if read_only { " (read-only)" } else { "" };
         let label_style = if editing {
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD)
+            theme.style(StyleRole::FormLabelEditing)
         } else if active {
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD)
+            theme.style(StyleRole::FormLabelFocused)
         } else {
-            Style::default().fg(Color::DarkGray)
+            theme.style(StyleRole::FormLabel)
         };
         let value_style = if editing {
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+            theme.style(StyleRole::FormInputEditing)
         } else if active {
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD)
+            theme.style(StyleRole::FormInputFocused)
         } else {
-            Style::default()
+            theme.style(StyleRole::FormValue)
         };
+        let prefix_style = if active { focus } else { label_style };
         lines.push(Line::from(vec![
-            Span::styled(prefix, label_style),
+            Span::styled(prefix, prefix_style),
             Span::styled(format!("{label}{suffix}: "), label_style),
             Span::styled(display, value_style),
         ]));
     }
 
-    let hint = Style::default().add_modifier(Modifier::DIM);
     lines.push(Line::from(""));
     if form.field == HostFormField::Password && !secret_hints.is_empty() {
         // See the identity form: a masked value needs its binds said out loud.
-        lines.push(Line::from(Span::styled(secret_hints.to_string(), hint)));
+        lines.push(Line::from(Span::styled(secret_hints.to_string(), help)));
     }
     lines.push(Line::from(Span::styled(
         "Tab/↓: next field    Enter: open picker (Group/Identity)",
-        hint,
+        help,
     )));
     lines.push(Line::from(Span::styled(
         format!("{save_hint}: save    Esc: cancel"),
-        hint,
+        help,
     )));
 
-    Paragraph::new(lines)
-        .wrap(Wrap { trim: true })
-        .block(Block::default().borders(Borders::ALL).title(title))
+    Paragraph::new(lines).wrap(Wrap { trim: true }).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(border)
+            .title(Span::styled(title, theme.style(StyleRole::PopupTitle))),
+    )
 }
 
 fn display_text(value: &str) -> String {

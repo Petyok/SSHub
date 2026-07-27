@@ -3,7 +3,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear};
 
 use crate::app::{App, SettingItem, SETTINGS_ITEMS};
-use crate::tui::theme;
+use crate::theme::catalog::{ColorRole, StyleRole};
 
 /// Settings overlay: one row per [`SETTINGS_ITEMS`] entry — the Theme action
 /// row showing the active theme id, then the appearance checkboxes. Space/Enter
@@ -18,14 +18,29 @@ pub fn render_settings(frame: &mut Frame, app: &App) {
 
     let popup = crate::tui::popup_open_rect(popup, app);
 
+    let theme = app.theme();
+    let selection = theme.style(StyleRole::SettingsRowSelected);
+    let row = theme.style(StyleRole::TableRow);
+    let legend = theme.style(StyleRole::PopupLegend);
+
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)
-            .title(Span::styled(" Settings ", theme::heading()))
-            .border_style(theme::popup_border()),
+            .title(Span::styled(
+                " Settings ",
+                theme.style(StyleRole::PopupTitle),
+            ))
+            .border_style(crate::tui::popup_border_style(theme, popup)),
         popup,
     );
+
+    // Everything below writes into the buffer directly. `set_string` clips
+    // columns on its own, but an out-of-range *row* panics — and `fit_popup`
+    // only keeps the outer box legal, not its inner rows.
+    if popup.width < 4 || popup.height < 4 {
+        return;
+    }
 
     let buf = frame.buffer_mut();
     let row_x = popup.x + 2;
@@ -37,25 +52,26 @@ pub fn render_settings(frame: &mut Frame, app: &App) {
 
     for (i, desc) in SETTINGS_ITEMS.iter().enumerate() {
         let ry = popup.y + 1 + i as u16;
-        if ry >= popup.y + popup.height - 2 {
+        if ry >= popup.y + popup.height.saturating_sub(2) {
             break;
         }
         let is_sel = i == app.settings_selected;
         if is_sel {
             let blank = " ".repeat(popup.width.saturating_sub(2) as usize);
-            buf.set_string(popup.x + 1, ry, &blank, theme::selected());
+            buf.set_string(popup.x + 1, ry, &blank, selection);
         }
-        let label_style = if is_sel {
-            theme::white().bg(theme::SEL_BG)
-        } else {
-            theme::text()
-        };
-        let styled = |s: Style| if is_sel { s.bg(theme::SEL_BG) } else { s };
+        let label_style = if is_sel { selection } else { row };
+        // Everything drawn on a selected row is foreground-only: the bar above
+        // already carries the background.
 
         match app.setting_value(desc.item) {
             Some(on) => {
                 let check = if on { "[x] " } else { "[ ] " };
-                let check_style = styled(if on { theme::green() } else { theme::mute() });
+                let check_style = if on {
+                    Style::default().fg(theme.color(ColorRole::StatusSuccess))
+                } else {
+                    legend
+                };
                 buf.set_string(row_x, ry, check, check_style);
                 buf.set_string(
                     label_x,
@@ -77,7 +93,7 @@ pub fn render_settings(frame: &mut Frame, app: &App) {
                     label_x + used as u16,
                     ry,
                     value,
-                    styled(Style::default().fg(theme::ACCENT)),
+                    theme.style(StyleRole::PickerMatch),
                 );
             }
         }
@@ -86,25 +102,25 @@ pub fn render_settings(frame: &mut Frame, app: &App) {
     // Footer: the hint for the highlighted row + key legend.
     let selected = SETTINGS_ITEMS.get(app.settings_selected);
     let hint = selected.map(|d| d.hint).unwrap_or("");
-    let hint_y = popup.y + popup.height - 3;
+    let hint_y = popup.y + popup.height.saturating_sub(3);
     buf.set_string(
         row_x,
         hint_y,
         crate::tui::text::ellipsize(hint, inner_w),
-        theme::dim(),
+        theme.style(StyleRole::PopupHint),
     );
     let action = matches!(selected.map(|d| &d.item), Some(SettingItem::Theme));
-    let legend = if action {
+    let legend_text = if action {
         "Enter choose \u{b7} \u{2191}\u{2193} move \u{b7} Esc close"
     } else {
         "Space toggle \u{b7} \u{2191}\u{2193} move \u{b7} Esc close"
     };
-    let legend_y = popup.y + popup.height - 2;
+    let legend_y = popup.y + popup.height.saturating_sub(2);
     buf.set_string(
         row_x,
         legend_y,
-        crate::tui::text::ellipsize(legend, inner_w),
-        theme::mute(),
+        crate::tui::text::ellipsize(legend_text, inner_w),
+        legend,
     );
 }
 

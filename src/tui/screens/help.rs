@@ -1,11 +1,39 @@
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::tui::theme;
+use crate::theme::catalog::StyleRole;
+use crate::theme::model::ResolvedTheme;
 
 /// Fixed footer hint shown below the scrollable help body.
 pub const HELP_FOOTER: &str =
     "type to filter  ·  \u{2191}\u{2193}/PgUp/PgDn scroll  ·  Esc clear/close  ·  Enter close";
+
+#[derive(Clone, Copy)]
+struct HelpStyles {
+    section: Style,
+    key: Style,
+    description: Style,
+}
+
+impl HelpStyles {
+    fn of(theme: &ResolvedTheme) -> Self {
+        Self {
+            section: theme.style(StyleRole::HelpSection),
+            key: theme.style(StyleRole::HelpKey),
+            description: theme.style(StyleRole::HelpDescription),
+        }
+    }
+
+    #[cfg(test)]
+    fn blank() -> Self {
+        Self {
+            section: Style::default(),
+            key: Style::default(),
+            description: Style::default(),
+        }
+    }
+}
 
 /// One row of the help overlay before it is turned into a styled [`Line`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -458,21 +486,21 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
 ];
 
-fn entry_line(key: &'static str, desc: &'static str) -> Line<'static> {
+fn entry_line(styles: HelpStyles, key: &'static str, desc: &'static str) -> Line<'static> {
     Line::from(vec![
-        Span::styled(format!("{:<16}", key), theme::bright()),
-        Span::styled(desc, theme::text()),
+        Span::styled(format!("{:<16}", key), styles.key),
+        Span::styled(desc, styles.description),
     ])
 }
 
-fn section_line(title: &'static str) -> Line<'static> {
-    Line::from(Span::styled(title, theme::heading()))
+fn section_line(styles: HelpStyles, title: &'static str) -> Line<'static> {
+    Line::from(Span::styled(title, styles.section))
 }
 
-fn item_to_line(item: HelpItem) -> Line<'static> {
+fn item_to_line(styles: HelpStyles, item: HelpItem) -> Line<'static> {
     match item {
-        HelpItem::Section(title) => section_line(title),
-        HelpItem::Entry { key, desc } => entry_line(key, desc),
+        HelpItem::Section(title) => section_line(styles, title),
+        HelpItem::Entry { key, desc } => entry_line(styles, key, desc),
         HelpItem::Blank => Line::from(""),
     }
 }
@@ -518,10 +546,10 @@ pub fn filtered_help_items(query: &str) -> Vec<HelpItem> {
     out
 }
 
-fn help_lines(query: &str) -> Vec<Line<'static>> {
+fn help_lines(query: &str, styles: HelpStyles) -> Vec<Line<'static>> {
     filtered_help_items(query)
         .into_iter()
-        .map(item_to_line)
+        .map(|item| item_to_line(styles, item))
         .collect()
 }
 
@@ -531,8 +559,8 @@ pub fn help_line_count(query: &str) -> u16 {
 }
 
 /// The scrollable help body (no border/footer — the caller frames it).
-pub fn render_help(scroll: u16, query: &str) -> Paragraph<'static> {
-    Paragraph::new(help_lines(query)).scroll((scroll, 0))
+pub fn render_help(scroll: u16, query: &str, theme: &ResolvedTheme) -> Paragraph<'static> {
+    Paragraph::new(help_lines(query, HelpStyles::of(theme))).scroll((scroll, 0))
 }
 
 #[cfg(test)]
@@ -604,13 +632,14 @@ mod tests {
 
     #[test]
     fn empty_query_lines_match_pre_filter_shape() {
-        let lines = help_lines("");
+        let styles = HelpStyles::blank();
+        let lines = help_lines("", styles);
         assert_eq!(lines.len(), HELP_ITEMS.len());
         // Spot-check first section + entry styling payload.
-        assert_eq!(lines[0], section_line("navigate"));
+        assert_eq!(lines[0], section_line(styles, "navigate"));
         assert_eq!(
             lines[1],
-            entry_line("\u{2191}\u{2193} / j k", "Move up / down")
+            entry_line(styles, "\u{2191}\u{2193} / j k", "Move up / down")
         );
         assert_eq!(lines[6], Line::from(""));
     }

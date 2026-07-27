@@ -2,7 +2,8 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear};
 
 use crate::app::{App, HostEntry};
-use crate::tui::theme;
+use crate::theme::catalog::{ColorRole, PaintRole, StyleRole};
+use crate::theme::model::{ResolvedPaint, ResolvedTheme};
 
 /// Maximum number of result rows visible in the palette list.
 const MAX_VISIBLE_ROWS: usize = 12;
@@ -39,14 +40,56 @@ pub fn render_palette(
 
     frame.render_widget(Clear, popup_area);
 
+    let theme = app.theme();
+    // The palette is the one overlay that has always been opaque. Its fill goes
+    // through the paint role rather than a widget style so a gradient can reach
+    // it; the rows drawn afterwards leave `bg` unset and let it show through.
+    crate::tui::blit::fill_paint(
+        frame.buffer_mut(),
+        popup_area,
+        theme,
+        PaintRole::PopupBackground,
+    );
+    // `popup.background` is transparent in `default`, as every surface role is.
+    // Where it resolves to the terminal's own ground, the opaque companion
+    // `semantic.canvas` stands in — the same substitution the fade pass makes,
+    // and under `default` it is literally the colour this used to hard-code.
+    if *theme.paint(PaintRole::PopupBackground) == ResolvedPaint::Solid(Color::Reset) {
+        frame.render_widget(
+            Block::default().style(Style::default().bg(theme.semantic().canvas)),
+            popup_area,
+        );
+    }
+
     // ── outer border ────────────────────────────────────────
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(theme::popup_border())
-        .style(Style::default().bg(theme::BG))
-        .title(Span::styled(" quick connect ", theme::heading()));
+        .border_style(crate::tui::popup_border_style(theme, popup_area))
+        .title(Span::styled(
+            " quick connect ",
+            theme.style(StyleRole::PopupTitle),
+        ));
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
+    // Below this the palette writes into the buffer directly. `set_string`
+    // clips horizontally, but an out-of-range *row* panics — and on a terminal
+    // narrower or shorter than the popup's own minimum the frame alone can eat
+    // every inner cell.
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    let prompt = Style::default().fg(theme.color(ColorRole::StatusSuccess));
+    let row_selected = theme.style(StyleRole::CommandPaletteRowSelected);
+    let separator = Style::default().fg(crate::tui::blit::line_color(
+        theme,
+        PaintRole::SeparatorPrimary,
+        inner,
+    ));
+    let legend = theme.style(StyleRole::PopupLegend);
+    let hint = theme.style(StyleRole::PopupHint);
+    let theme_query = theme.style(StyleRole::PickerQuery);
+    let detail = DetailStyles::of(theme);
 
     // We'll write directly into the buffer for fine-grained control.
     let buf = frame.buffer_mut();
@@ -58,27 +101,29 @@ pub fn render_palette(
         let mut col = inner.x;
 
         // prompt marker
-        buf.set_string(col, row_y, " \u{276f} ", theme::green());
+        buf.set_string(col, row_y, " \u{276f} ", prompt);
         col += 4;
 
         // query text
-        buf.set_string(col, row_y, query, theme::white());
+        buf.set_string(col, row_y, query, theme_query);
         col += query.len() as u16;
 
         // blinking caret
-        buf.set_string(col, row_y, "\u{2588}", theme::green());
+        buf.set_string(col, row_y, "\u{2588}", prompt);
 
         // right-aligned match count: "<matches>/<total>"
         let counter = format!("{}/{}", filtered.len(), hosts.len());
         let counter_x = inner.x + inner.width.saturating_sub(counter.len() as u16 + 1);
-        buf.set_string(counter_x, row_y, &counter, theme::mute());
+        buf.set_string(counter_x, row_y, &counter, legend);
     }
 
     // ── separator line (row 1) ──────────────────────────────
     {
         let sep_y = inner.y + 1;
-        let line = "\u{2500}".repeat(w);
-        buf.set_string(inner.x, sep_y, &line, theme::border());
+        if sep_y < inner.bottom() {
+            let line = "\u{2500}".repeat(w);
+            buf.set_string(inner.x, sep_y, &line, separator);
+        }
     }
 
     // ── result rows (rows 2 .. 2+MAX_VISIBLE_ROWS) ─────────
@@ -129,7 +174,7 @@ pub fn render_palette(
             .unwrap_or("");
 
         let row_style = if is_selected {
-            theme::selected()
+            row_selected
         } else {
             Style::default()
         };
@@ -142,7 +187,8 @@ pub fn render_palette(
 
         // selection marker
         if is_selected {
-            buf.set_string(col, row_y, " \u{25b8} ", theme::green().bg(theme::SEL_BG));
+            // Foreground only: the row fill above already set the background.
+            buf.set_string(col, row_y, " \u{25b8} ", prompt);
         } else {
             buf.set_string(col, row_y, "   ", row_style);
         }
@@ -153,9 +199,9 @@ pub fn render_palette(
         let name_display = crate::tui::text::pad_ellipsize(name, name_width);
 
         let name_style = if is_selected {
-            theme::white().bg(theme::SEL_BG)
+            row_selected
         } else {
-            theme::bright()
+            theme.style(StyleRole::TextBright)
         };
         buf.set_string(col, row_y, &name_display, name_style);
         col += name_width as u16 + 1;
@@ -164,12 +210,7 @@ pub fn render_palette(
         if col < inner.x + inner.width {
             let group_width = 14.min((inner.x + inner.width - col) as usize);
             let group_display = crate::tui::text::pad_ellipsize(group_name, group_width);
-            buf.set_string(
-                col,
-                row_y,
-                &group_display,
-                theme::mute().bg(row_style.bg.unwrap_or(theme::BG)),
-            );
+            buf.set_string(col, row_y, &group_display, legend);
             col += group_width as u16 + 1;
         }
 
@@ -177,12 +218,7 @@ pub fn render_palette(
         if col < inner.x + inner.width {
             let user_width = 14.min((inner.x + inner.width - col) as usize);
             let user_display = crate::tui::text::pad_ellipsize(user, user_width);
-            buf.set_string(
-                col,
-                row_y,
-                &user_display,
-                theme::dim().bg(row_style.bg.unwrap_or(theme::BG)),
-            );
+            buf.set_string(col, row_y, &user_display, hint);
         }
     }
 
@@ -199,7 +235,7 @@ pub fn render_palette(
                 if row_y < inner.y + inner.height {
                     let is_selected = selected == virtual_idx;
                     let row_style = if is_selected {
-                        theme::selected()
+                        row_selected
                     } else {
                         Style::default()
                     };
@@ -209,18 +245,19 @@ pub fn render_palette(
 
                     let mut col = inner.x;
                     if is_selected {
-                        buf.set_string(col, row_y, " \u{25b8} ", theme::green().bg(theme::SEL_BG));
+                        buf.set_string(
+                            col,
+                            row_y,
+                            " \u{25b8} ",
+                            prompt.bg(row_selected.bg.unwrap_or(theme.semantic().selection_bg)),
+                        );
                     } else {
                         buf.set_string(col, row_y, "   ", row_style);
                     }
                     col += 3;
 
                     let text = format!("connect without saving  {}", adhoc.label());
-                    let text_style = if is_selected {
-                        theme::white().bg(theme::SEL_BG)
-                    } else {
-                        theme::green()
-                    };
+                    let text_style = if is_selected { row_selected } else { prompt };
                     let avail = w.saturating_sub(3);
                     let disp = crate::tui::text::pad_ellipsize(&text, avail);
                     buf.set_string(col, row_y, &disp, text_style);
@@ -230,10 +267,10 @@ pub fn render_palette(
     }
 
     // ── separator before detail block ───────────────────────
-    let detail_sep_y = list_start_y + MAX_VISIBLE_ROWS as u16;
-    if detail_sep_y < inner.y + inner.height {
+    let detail_sep_y = list_start_y.saturating_add(MAX_VISIBLE_ROWS as u16);
+    if detail_sep_y < inner.bottom() {
         let line = "\u{2500}".repeat(w);
-        buf.set_string(inner.x, detail_sep_y, &line, theme::border());
+        buf.set_string(inner.x, detail_sep_y, &line, separator);
     }
 
     // ── detail block (4 rows) ───────────────────────────────
@@ -289,13 +326,37 @@ pub fn render_palette(
 
         // Row 0: host + user
         let half = (w / 2) as u16;
-        render_detail_kv(buf, inner.x, detail_y, half, "host", &host_addr);
-        render_detail_kv(buf, inner.x + half, detail_y, half, "user", &user_addr);
+        render_detail_kv(buf, inner.x, detail_y, half, "host", &host_addr, detail);
+        render_detail_kv(
+            buf,
+            inner.x + half,
+            detail_y,
+            half,
+            "user",
+            &user_addr,
+            detail,
+        );
 
         // Row 1: identity + jump
         if detail_y + 1 < inner.y + inner.height {
-            render_detail_kv(buf, inner.x, detail_y + 1, half, "identity", &identity_path);
-            render_detail_kv(buf, inner.x + half, detail_y + 1, half, "jump", jump_host);
+            render_detail_kv(
+                buf,
+                inner.x,
+                detail_y + 1,
+                half,
+                "identity",
+                &identity_path,
+                detail,
+            );
+            render_detail_kv(
+                buf,
+                inner.x + half,
+                detail_y + 1,
+                half,
+                "jump",
+                jump_host,
+                detail,
+            );
         }
 
         // Row 2: tags
@@ -307,6 +368,7 @@ pub fn render_palette(
                 inner.width,
                 "tags",
                 &tags_display,
+                detail,
             );
         }
     }
@@ -316,16 +378,40 @@ pub fn render_palette(
     if hint_y < area.height {
         let hint = " \u{21b5} connect   esc cancel";
         let hint_x = popup_area.x + (popup_area.width.saturating_sub(hint.len() as u16)) / 2;
-        buf.set_string(hint_x, hint_y, hint, theme::mute());
+        buf.set_string(hint_x, hint_y, hint, legend);
     }
 }
 
-/// Render a "key  value" pair at the given position, with the key in MUTE and value in TEXT.
-fn render_detail_kv(buf: &mut Buffer, x: u16, y: u16, max_width: u16, key: &str, value: &str) {
+/// The two roles one `key  value` detail pair is drawn from.
+#[derive(Clone, Copy)]
+struct DetailStyles {
+    key: Style,
+    value: Style,
+}
+
+impl DetailStyles {
+    fn of(theme: &ResolvedTheme) -> Self {
+        Self {
+            key: theme.style(StyleRole::PopupLegend),
+            value: theme.style(StyleRole::TextPrimary),
+        }
+    }
+}
+
+/// Render a "key  value" pair at the given position.
+fn render_detail_kv(
+    buf: &mut Buffer,
+    x: u16,
+    y: u16,
+    max_width: u16,
+    key: &str,
+    value: &str,
+    styles: DetailStyles,
+) {
     let label = format!(" {:<10}", key);
-    buf.set_string(x, y, &label, theme::mute());
+    buf.set_string(x, y, &label, styles.key);
     let val_x = x + label.len() as u16;
     let avail = max_width.saturating_sub(label.len() as u16) as usize;
     let truncated = crate::tui::text::ellipsize(value, avail);
-    buf.set_string(val_x, y, &truncated, theme::text());
+    buf.set_string(val_x, y, &truncated, styles.value);
 }

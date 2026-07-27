@@ -3,7 +3,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear};
 
 use crate::app::{App, TUNNEL_RECONNECT_FIELDS};
-use crate::tui::theme;
+use crate::theme::catalog::{ColorRole, StyleRole};
 
 /// Keep-alive reconnect settings overlay (Tunnels tab). `+`/`-` adjust the
 /// highlighted row; changes persist to `config.toml` immediately.
@@ -17,14 +17,29 @@ pub fn render_tunnel_reconnect_settings(frame: &mut Frame, app: &App) {
 
     let popup = crate::tui::popup_open_rect(popup, app);
 
+    let theme = app.theme();
+    let selection = theme.style(StyleRole::SettingsRowSelected);
+    let hint_style = theme.style(StyleRole::PopupHint);
+    let focus = theme.style(StyleRole::FocusIndicator);
+
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)
-            .title(Span::styled(" Tunnel reconnect ", theme::heading()))
-            .border_style(theme::popup_border()),
+            .title(Span::styled(
+                " Tunnel reconnect ",
+                theme.style(StyleRole::PopupTitle),
+            ))
+            .border_style(crate::tui::popup_border_style(theme, popup)),
         popup,
     );
+
+    // Everything below writes into the buffer directly. `set_string` clips
+    // columns on its own, but an out-of-range *row* panics — and `fit_popup`
+    // only keeps the outer box legal, not its inner rows.
+    if popup.width < 4 || popup.height < 4 {
+        return;
+    }
 
     let buf = frame.buffer_mut();
     let row_x = popup.x + 2;
@@ -38,38 +53,44 @@ pub fn render_tunnel_reconnect_settings(frame: &mut Frame, app: &App) {
             "Keep-alive tunnels only (per-tunnel toggle in form)",
             inner_w,
         ),
-        theme::dim(),
+        hint_style,
     );
 
     for (i, (label, _hint)) in TUNNEL_RECONNECT_FIELDS.iter().enumerate() {
         let ry = popup.y + 3 + i as u16;
-        if ry >= popup.y + popup.height - 3 {
+        if ry >= popup.y + popup.height.saturating_sub(3) {
             break;
         }
         let is_sel = i == app.tunnel_reconnect_selected;
         if is_sel {
             let blank = " ".repeat(popup.width.saturating_sub(2) as usize);
-            buf.set_string(popup.x + 1, ry, &blank, theme::selected());
+            buf.set_string(popup.x + 1, ry, &blank, selection);
         }
         let label_style = if is_sel {
-            theme::white().bg(theme::SEL_BG)
+            selection
         } else {
-            theme::text()
+            theme.style(StyleRole::TableRow)
         };
-        let marker = if is_sel { "> " } else { "  " };
         let label_avail = (val_x.saturating_sub(row_x + 1)) as usize;
+        // Foreground-only marker over the selection bar drawn above.
         buf.set_string(
             row_x,
             ry,
-            crate::tui::text::ellipsize(&format!("{marker}{label}"), label_avail),
+            if is_sel { "> " } else { "  " },
+            if is_sel { focus } else { label_style },
+        );
+        buf.set_string(
+            row_x + 2,
+            ry,
+            crate::tui::text::ellipsize(label, label_avail.saturating_sub(2)),
             label_style,
         );
 
         let value = app.config.tunnel_reconnect.display_field(i);
         let val_style = if is_sel {
-            theme::green().bg(theme::SEL_BG)
+            Style::default().fg(theme.color(ColorRole::StatusSuccess))
         } else {
-            theme::mute()
+            theme.style(StyleRole::PopupLegend)
         };
         let avail = popup
             .x
@@ -87,19 +108,19 @@ pub fn render_tunnel_reconnect_settings(frame: &mut Frame, app: &App) {
         .get(app.tunnel_reconnect_selected)
         .map(|(_, h)| *h)
         .unwrap_or("");
-    let hint_y = popup.y + popup.height - 3;
+    let hint_y = popup.y + popup.height.saturating_sub(3);
     buf.set_string(
         row_x,
         hint_y,
         crate::tui::text::ellipsize(hint, inner_w),
-        theme::dim(),
+        hint_style,
     );
     let legend = "+/- adjust  * reset row  Esc close";
-    let legend_y = popup.y + popup.height - 2;
+    let legend_y = popup.y + popup.height.saturating_sub(2);
     buf.set_string(
         row_x,
         legend_y,
         crate::tui::text::ellipsize(legend, inner_w),
-        theme::mute(),
+        theme.style(StyleRole::PopupLegend),
     );
 }

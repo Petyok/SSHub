@@ -255,6 +255,7 @@ mod tests {
                         dot: SessionDot::Running,
                         active: false,
                     }],
+                    None,
                     &theme,
                 );
             })

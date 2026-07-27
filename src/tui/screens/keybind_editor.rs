@@ -3,7 +3,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear};
 
 use crate::app::App;
-use crate::tui::theme;
+use crate::theme::catalog::StyleRole;
 
 /// Keybinding editor overlay: one row per configurable action.
 pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
@@ -22,14 +22,30 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
 
     let popup = crate::tui::popup_open_rect(popup, app);
 
+    let theme = app.theme();
+    // The catalogue gives the keybind list `text_highlight` on the selection
+    // background, deliberately unlike the keychain's `selection_fg`.
+    let selection = theme.style(StyleRole::KeybindRowSelected);
+    let focus = theme.style(StyleRole::FocusIndicator);
+
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)
-            .title(Span::styled(" Keybindings ", theme::heading()))
-            .border_style(theme::popup_border()),
+            .title(Span::styled(
+                " Keybindings ",
+                theme.style(StyleRole::PopupTitle),
+            ))
+            .border_style(crate::tui::popup_border_style(theme, popup)),
         popup,
     );
+
+    // Everything below writes into the buffer directly. `set_string` clips
+    // columns on its own, but an out-of-range *row* panics — and `fit_popup`
+    // only keeps the outer box legal, not its inner rows.
+    if popup.width < 4 || popup.height < 4 {
+        return;
+    }
 
     let buf = frame.buffer_mut();
     let row_x = popup.x + 2;
@@ -41,7 +57,7 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
         row_x,
         popup.y + 1,
         crate::tui::text::ellipsize(&query_line, content_w),
-        theme::bright(),
+        theme.style(StyleRole::TextBright),
     );
 
     let visible = popup.height.saturating_sub(5) as usize;
@@ -59,20 +75,26 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
         let is_sel = i == selected;
         if is_sel {
             let blank = " ".repeat(popup.width.saturating_sub(2) as usize);
-            buf.set_string(popup.x + 1, ry, &blank, theme::selected());
+            buf.set_string(popup.x + 1, ry, &blank, selection);
         }
         let label_style = if is_sel {
-            theme::white().bg(theme::SEL_BG)
+            selection
         } else {
-            theme::text()
+            theme.style(StyleRole::KeybindRow)
         };
-        let marker = if is_sel { "› " } else { "  " };
         // Keep the label from bleeding into the value column at `val_x`.
         let label_avail = (val_x.saturating_sub(row_x + 1)) as usize;
+        // Foreground-only marker over the selection bar drawn above.
         buf.set_string(
             row_x,
             ry,
-            crate::tui::text::ellipsize(&format!("{marker}{}", action.label()), label_avail),
+            if is_sel { "› " } else { "  " },
+            if is_sel { focus } else { label_style },
+        );
+        buf.set_string(
+            row_x + 2,
+            ry,
+            crate::tui::text::ellipsize(action.label(), label_avail.saturating_sub(2)),
             label_style,
         );
 
@@ -83,11 +105,11 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
             binds
         };
         let val_style = if is_sel && editor.capturing {
-            theme::amber().bg(theme::SEL_BG)
+            theme.style(StyleRole::KeybindValueCapturing)
         } else if is_sel {
-            theme::green().bg(theme::SEL_BG)
+            theme.style(StyleRole::KeybindValueBound)
         } else {
-            theme::mute()
+            theme.style(StyleRole::KeybindValue)
         };
         let avail = popup
             .x
@@ -123,6 +145,6 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
             &format!("{hint}{scroll_hint}"),
             popup.width.saturating_sub(4) as usize,
         ),
-        theme::dim(),
+        theme.style(StyleRole::PopupHint),
     );
 }

@@ -6,7 +6,8 @@ use ratatui::prelude::*;
 use ratatui::widgets::Clear;
 
 use crate::app::{App, PickerBadge, PickerRow};
-use crate::tui::theme;
+use crate::theme::catalog::{ColorRole, StyleRole};
+use crate::theme::model::ResolvedTheme;
 
 /// Widest the popup ever gets. Session rows carry more than host rows, so this
 /// is roomier than the old host-only picker needed.
@@ -71,13 +72,17 @@ pub fn render(frame: &mut Frame, app: &App) {
     let x = area.x + (area.width.saturating_sub(popup_w)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_h)) / 2;
     let popup = crate::tui::popup_open_rect(Rect::new(x, y, popup_w, popup_h), app);
+    let theme = app.theme();
 
     frame.render_widget(Clear, popup);
     frame.render_widget(
         ratatui::widgets::Block::default()
             .borders(ratatui::widgets::Borders::ALL)
-            .title(Span::styled(picker.purpose.title(), theme::heading()))
-            .border_style(Style::default().fg(theme::ACCENT)),
+            .title(Span::styled(
+                picker.purpose.title(),
+                theme.style(StyleRole::PopupTitle),
+            ))
+            .border_style(crate::tui::popup_border_style(theme, popup)),
         popup,
     );
 
@@ -95,10 +100,24 @@ pub fn render(frame: &mut Frame, app: &App) {
     let buf = frame.buffer_mut();
 
     let query_line = format!("/ {}\u{2588}", picker.query);
-    buf.set_stringn(inner.x, inner.y, &query_line, inner_w, theme::bright());
+    buf.set_stringn(
+        inner.x,
+        inner.y,
+        &query_line,
+        inner_w,
+        theme.style(StyleRole::PickerQuery),
+    );
 
+    // The rule is written as text rather than painted: this popup can float
+    // over a live session, and the gradient line painter takes no exclusions.
     let sep: String = std::iter::repeat_n('\u{2500}', inner_w).collect();
-    buf.set_stringn(inner.x, inner.y + 1, &sep, inner_w, theme::dim());
+    buf.set_stringn(
+        inner.x,
+        inner.y + 1,
+        &sep,
+        inner_w,
+        theme.style(StyleRole::PopupHint),
+    );
 
     // Keep the last inner row for the key hint whenever there is room.
     let list_top = inner.y + 2;
@@ -111,7 +130,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             list_top,
             picker.purpose.empty_text(),
             inner_w,
-            theme::mute(),
+            theme.style(StyleRole::PopupLegend),
         );
     } else {
         let scroll = picker.selected.saturating_sub(visible.saturating_sub(1));
@@ -122,6 +141,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                 list_top + i as u16,
                 row,
                 scroll + i == picker.selected,
+                theme,
             );
         }
     }
@@ -132,17 +152,21 @@ pub fn render(frame: &mut Frame, app: &App) {
             inner.y + inner.height - 1,
             "type to filter · \u{2191}/\u{2193} · Enter · Esc",
             inner_w,
-            theme::mute(),
+            theme.style(StyleRole::PopupLegend),
         );
     }
 }
 
-fn badge_style(badge: PickerBadge) -> Style {
-    match badge {
-        PickerBadge::Up => theme::green(),
-        PickerBadge::Connecting => theme::amber(),
-        PickerBadge::Exited => theme::red(),
-    }
+/// Lifecycle badges are foreground-only on purpose: the selection bar is
+/// painted first, and a badge that carried its own background would punch a
+/// hole in it.
+fn badge_style(badge: PickerBadge, theme: &ResolvedTheme) -> Style {
+    let role = match badge {
+        PickerBadge::Up => ColorRole::PickerBadgeSuccess,
+        PickerBadge::Connecting => ColorRole::PickerBadgeWarning,
+        PickerBadge::Exited => ColorRole::PickerBadgeError,
+    };
+    Style::default().fg(theme.color(role))
 }
 
 /// Draw one row.
@@ -156,19 +180,27 @@ fn badge_style(badge: PickerBadge) -> Style {
 /// name and endpoint are written as a single string, so a narrow popup eats the
 /// endpoint first. The fixed prefix is all-or-nothing — half a badge is worse
 /// than none — and `current` is dropped entirely rather than shortened.
-fn draw_row(buf: &mut Buffer, inner: Rect, y: u16, row: &PickerRow, selected: bool) {
+fn draw_row(
+    buf: &mut Buffer,
+    inner: Rect,
+    y: u16,
+    row: &PickerRow,
+    selected: bool,
+    theme: &ResolvedTheme,
+) {
     if y >= inner.bottom() {
         return;
     }
     let layout = plan_row(inner.width, row.badge.is_some(), row.current);
+    let selection = theme.style(StyleRole::PickerRowSelected);
     let body_style = if selected {
-        theme::selected()
+        selection
     } else {
-        theme::text()
+        theme.style(StyleRole::PickerRow)
     };
     if selected {
         let blank = " ".repeat(inner.width as usize);
-        buf.set_stringn(inner.x, y, &blank, inner.width as usize, theme::selected());
+        buf.set_stringn(inner.x, y, &blank, inner.width as usize, selection);
     }
 
     let end = inner.right();
@@ -184,7 +216,7 @@ fn draw_row(buf: &mut Buffer, inner: Rect, y: u16, row: &PickerRow, selected: bo
             y,
             end,
             &format!("\u{25cf} {:<4} ", badge.word()),
-            badge_style(badge),
+            badge_style(badge, theme),
         );
         x = put(
             buf,
@@ -206,7 +238,14 @@ fn draw_row(buf: &mut Buffer, inner: Rect, y: u16, row: &PickerRow, selected: bo
     }
 
     if layout.current {
-        put(buf, end - CURRENT_CELLS, y, end, "  current", theme::mute());
+        put(
+            buf,
+            end - CURRENT_CELLS,
+            y,
+            end,
+            "  current",
+            theme.style(StyleRole::PopupLegend),
+        );
     }
 }
 

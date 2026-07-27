@@ -1,9 +1,10 @@
-use ratatui::prelude::{Modifier, Style};
-use ratatui::style::Color;
+use ratatui::style::Style;
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 
 use crate::app::{App, AppMode, IdentityFormEdit, IdentityFormField};
 use crate::text_input;
+use crate::theme::catalog::StyleRole;
+use crate::theme::model::ResolvedTheme;
 
 pub fn render_keychain(app: &App) -> Paragraph<'static> {
     let title = if app.mode == AppMode::IdentityForm {
@@ -15,7 +16,7 @@ pub fn render_keychain(app: &App) -> Paragraph<'static> {
     } else {
         "Keychain"
     };
-    Paragraph::new(title).style(Style::default().add_modifier(Modifier::BOLD))
+    Paragraph::new(title).style(app.theme().style(StyleRole::PopupTitle))
 }
 
 pub fn render_identity_list(app: &App) -> List<'static> {
@@ -33,9 +34,9 @@ pub fn render_identity_list(app: &App) -> List<'static> {
                 .unwrap_or_default();
             let label = format!("{marker}{}{user}", identity.name);
             let style = if selected {
-                Style::default().bg(Color::DarkGray).fg(Color::White)
+                app.theme().style(StyleRole::KeychainRowSelected)
             } else {
-                Style::default()
+                app.theme().style(StyleRole::KeychainRow)
             };
             ListItem::new(label).style(style)
         })
@@ -47,7 +48,12 @@ pub fn render_identity_form(
     form: &IdentityFormEdit,
     save_hint: &str,
     secret_hints: &str,
+    theme: &ResolvedTheme,
+    border: Style,
 ) -> Paragraph<'static> {
+    // Same contract as the host form: the marker in front of the current field
+    // is the focus indicator and is themed apart from the label beside it.
+    let focus = theme.style(StyleRole::FocusIndicator);
     let mut lines = Vec::with_capacity(IdentityFormField::ALL.len() + 2);
     for field in IdentityFormField::ALL {
         let active = form.field == field;
@@ -96,27 +102,20 @@ pub fn render_identity_form(
             }
         };
         let label_style = if editing {
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD)
+            theme.style(StyleRole::FormLabelEditing)
         } else if active {
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD)
+            theme.style(StyleRole::FormLabelFocused)
         } else {
-            Style::default().fg(Color::DarkGray)
+            theme.style(StyleRole::FormLabel)
         };
         let value_style = if editing {
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+            theme.style(StyleRole::FormInputEditing)
         } else if active {
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD)
+            theme.style(StyleRole::FormInputFocused)
         } else {
-            Style::default()
+            theme.style(StyleRole::FormValue)
         };
+        let prefix_style = if active { focus } else { label_style };
         // The secret field is a key passphrase when a key is set, otherwise a
         // shared login password reused across hosts.
         let has_key = !form.private_key.is_empty() || form.pasted_key.is_some();
@@ -126,7 +125,8 @@ pub fn render_identity_form(
             field.label()
         };
         lines.push(ratatui::text::Line::from(vec![
-            ratatui::text::Span::styled(format!("{prefix}{label}: "), label_style),
+            ratatui::text::Span::styled(prefix, prefix_style),
+            ratatui::text::Span::styled(format!("{label}: "), label_style),
             ratatui::text::Span::styled(display, value_style),
         ]));
     }
@@ -141,17 +141,24 @@ pub fn render_identity_form(
     };
     lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
         hint,
-        Style::default().add_modifier(Modifier::DIM),
+        theme.style(StyleRole::FormHelp),
     )));
-    Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("Identity"))
+    Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(border)
+            .title(ratatui::text::Span::styled(
+                "Identity",
+                theme.style(StyleRole::PopupTitle),
+            )),
+    )
 }
 
-pub fn render_notice(notice: &str) -> Paragraph<'static> {
-    let color = if notice.starts_with("Error") || notice.starts_with("error") {
-        Color::Red
+pub fn render_notice(notice: &str, theme: &ResolvedTheme) -> Paragraph<'static> {
+    let role = if notice.starts_with("Error") || notice.starts_with("error") {
+        StyleRole::KeychainNoticeError
     } else {
-        Color::Green
+        StyleRole::KeychainNoticeSuccess
     };
-    Paragraph::new(notice.to_string())
-        .style(Style::default().fg(color).add_modifier(Modifier::ITALIC))
+    Paragraph::new(notice.to_string()).style(theme.style(role))
 }

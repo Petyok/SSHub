@@ -698,6 +698,8 @@ mod tests {
             display_name: "web-prod".into(),
             meta: SessionMeta::default(),
             pending_secret: None,
+            key_push_identity: None,
+            host_name: "web-prod".into(),
         };
         Session::spawn(cfg, 24, 80, None).unwrap()
     }
