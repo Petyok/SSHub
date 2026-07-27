@@ -249,3 +249,63 @@ fn a_failed_theme_directory_is_still_the_reload_target() {
     assert_eq!(app.theme_manager.active_id(), "mine");
     assert_eq!(app.theme_manager.themes_dir(), Some(themes.as_path()));
 }
+
+/// Row index of the Theme action in [`SETTINGS_ITEMS`]. The spec puts it first,
+/// above the boolean toggles, so this is a constant rather than a search — a
+/// search would make the "Theme is the first row" assertion below tautological.
+fn theme_setting_index() -> usize {
+    0
+}
+
+/// Flipping a row is pure — `handle_key_settings` is what persists — so these
+/// tests never write a config file and need no filesystem isolation.
+#[test]
+fn typed_settings_preserve_every_existing_toggle() {
+    let mut app = test_app(vec![]);
+    for item in [
+        SettingToggle::OpaqueBackground,
+        SettingToggle::OsLogo,
+        SettingToggle::ConfirmQuit,
+        SettingToggle::DisableAnimation,
+        SettingToggle::SessionLogging,
+    ] {
+        let before = app.setting_value(item);
+        app.toggle_setting(item);
+        assert_ne!(app.setting_value(item), before);
+    }
+}
+
+#[test]
+fn theme_row_is_an_action_and_space_does_not_toggle_it() {
+    let mut app = test_app(vec![]);
+    app.mode = AppMode::Settings;
+    app.settings_selected = theme_setting_index();
+    let before = (
+        app.config.appearance.opaque_background,
+        app.config.appearance.os_logo,
+        app.config.appearance.confirm_quit,
+        app.config.appearance.disable_animation,
+        app.config.session_logging.enabled,
+    );
+    app.handle_key(key_char(' ')).unwrap();
+    assert_eq!(app.mode, AppMode::Settings);
+    assert_eq!(
+        (
+            app.config.appearance.opaque_background,
+            app.config.appearance.os_logo,
+            app.config.appearance.confirm_quit,
+            app.config.appearance.disable_animation,
+            app.config.session_logging.enabled,
+        ),
+        before
+    );
+    assert!(matches!(
+        SETTINGS_ITEMS[theme_setting_index()].item,
+        SettingItem::Theme
+    ));
+    assert_eq!(
+        app.setting_value(SettingItem::Theme),
+        None,
+        "the Theme row is an action, not a boolean"
+    );
+}

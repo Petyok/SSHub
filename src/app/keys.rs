@@ -1064,39 +1064,52 @@ impl App {
         }
     }
 
-    /// Read the current value of the Settings toggle at row `i` (order matches
-    /// [`SETTINGS_ITEMS`]).
-    pub(crate) fn setting_value(&self, i: usize) -> bool {
+    /// Current value of a Settings row: `Some` for a boolean toggle, `None`
+    /// for an action row like [`SettingItem::Theme`], which has no value.
+    pub(crate) fn setting_value(&self, item: impl Into<SettingItem>) -> Option<bool> {
         let a = &self.config.appearance;
-        match i {
-            0 => a.opaque_background,
-            1 => a.os_logo,
-            2 => a.confirm_quit,
-            3 => a.disable_animation,
-            4 => self.config.session_logging.enabled,
-            _ => false,
+        match item.into() {
+            SettingItem::Theme => None,
+            SettingItem::Toggle(t) => Some(match t {
+                SettingToggle::OpaqueBackground => a.opaque_background,
+                SettingToggle::OsLogo => a.os_logo,
+                SettingToggle::ConfirmQuit => a.confirm_quit,
+                SettingToggle::DisableAnimation => a.disable_animation,
+                SettingToggle::SessionLogging => self.config.session_logging.enabled,
+            }),
         }
     }
 
-    /// Flip the Settings toggle at row `i` and persist immediately.
-    fn toggle_setting(&mut self, i: usize) {
-        match i {
-            0 => {
+    /// Flip a boolean Settings row, reporting whether anything changed. Action
+    /// rows such as [`SettingItem::Theme`] are a no-op and return `false`.
+    ///
+    /// Persisting is the caller's job (see [`App::handle_key_settings`]): a
+    /// pure flip keeps the row semantics testable without writing a config
+    /// file, and it keeps an action row from touching config.toml at all.
+    pub(crate) fn toggle_setting(&mut self, item: impl Into<SettingItem>) -> bool {
+        let SettingItem::Toggle(toggle) = item.into() else {
+            return false;
+        };
+        match toggle {
+            SettingToggle::OpaqueBackground => {
                 self.config.appearance.opaque_background =
                     !self.config.appearance.opaque_background;
             }
-            1 => self.config.appearance.os_logo = !self.config.appearance.os_logo,
-            2 => self.config.appearance.confirm_quit = !self.config.appearance.confirm_quit,
-            3 => {
+            SettingToggle::OsLogo => {
+                self.config.appearance.os_logo = !self.config.appearance.os_logo
+            }
+            SettingToggle::ConfirmQuit => {
+                self.config.appearance.confirm_quit = !self.config.appearance.confirm_quit
+            }
+            SettingToggle::DisableAnimation => {
                 self.config.appearance.disable_animation =
                     !self.config.appearance.disable_animation;
             }
-            4 => {
+            SettingToggle::SessionLogging => {
                 self.config.session_logging.enabled = !self.config.session_logging.enabled;
             }
-            _ => {}
         }
-        self.save_config_quietly();
+        true
     }
 
     pub(crate) fn handle_key_settings(&mut self, key: KeyEvent) -> Result<()> {
@@ -1109,7 +1122,15 @@ impl App {
             _ if self.is_action(KeyAction::MoveUp, &key) => {
                 self.settings_selected = (self.settings_selected + n - 1) % n;
             }
-            KeyCode::Char(' ') | KeyCode::Enter => self.toggle_setting(self.settings_selected),
+            KeyCode::Char(' ') | KeyCode::Enter => {
+                // Action rows ignore both keys here (nothing flips, nothing is
+                // written); the theme picker Enter wiring arrives with
+                // `AppMode::ThemePicker`.
+                let item = SETTINGS_ITEMS.get(self.settings_selected).map(|d| d.item);
+                if item.is_some_and(|item| self.toggle_setting(item)) {
+                    self.save_config_quietly();
+                }
+            }
             _ => {}
         }
         Ok(())

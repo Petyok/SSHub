@@ -274,29 +274,78 @@ pub enum VisualRow {
     },
 }
 
-/// Appearance toggles shown in the Settings overlay, in display order. The
-/// index maps to [`App::setting_value`] / `toggle_setting`. Each entry is
-/// `(label, hint)`.
+/// A boolean row of the Settings overlay. Identifies the config field the row
+/// reads and flips, so neither key handling nor rendering depends on the row's
+/// position in [`SETTINGS_ITEMS`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingToggle {
+    OpaqueBackground,
+    OsLogo,
+    ConfirmQuit,
+    DisableAnimation,
+    SessionLogging,
+}
+
+/// What a Settings row *is*: an action that opens something, or a boolean.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingItem {
+    /// Opens the theme picker. Renders the active theme id instead of a
+    /// checkbox; `Space` must not do anything to it.
+    Theme,
+    Toggle(SettingToggle),
+}
+
+impl From<SettingToggle> for SettingItem {
+    fn from(toggle: SettingToggle) -> Self {
+        SettingItem::Toggle(toggle)
+    }
+}
+
+/// One row of the Settings overlay.
+pub struct SettingDescriptor {
+    pub item: SettingItem,
+    pub label: &'static str,
+    pub hint: &'static str,
+}
+
+/// Rows of the Settings overlay, in display order. The Theme action leads;
+/// the boolean toggles keep their historical relative order.
 ///
-/// Hints must fit the 56-wide popup without ellipsizing (enforced by a test
-/// in `tui::screens::settings`) and avoid ambiguous-width chars like the em
-/// dash — some terminals draw those 2 cells wide, pushing the tail of the
-/// line onto the popup border.
-pub const SETTINGS_ITEMS: [(&str, &str); 5] = [
-    (
-        "Opaque background",
-        "fixes unreadable text on transparent terminals",
-    ),
-    ("Show OS logos", "distro logo in the host card"),
-    ("Confirm before quit", "ask before q / Ctrl+C"),
-    (
-        "Disable startup animation",
-        "skip the intro splash (applies next launch)",
-    ),
-    (
-        "Session logging",
-        "save PTY output under ~/.local/share/sshub/logs",
-    ),
+/// Labels and hints must fit the 56-wide popup without ellipsizing (enforced
+/// by a test in `tui::screens::settings`) and avoid ambiguous-width chars like
+/// the em dash or `…` — some terminals draw those 2 cells wide, pushing the
+/// tail of the line onto the popup border.
+pub const SETTINGS_ITEMS: [SettingDescriptor; 6] = [
+    SettingDescriptor {
+        item: SettingItem::Theme,
+        label: "Theme...",
+        hint: "pick the active color theme",
+    },
+    SettingDescriptor {
+        item: SettingItem::Toggle(SettingToggle::OpaqueBackground),
+        label: "Opaque background",
+        hint: "fixes unreadable text on transparent terminals",
+    },
+    SettingDescriptor {
+        item: SettingItem::Toggle(SettingToggle::OsLogo),
+        label: "Show OS logos",
+        hint: "distro logo in the host card",
+    },
+    SettingDescriptor {
+        item: SettingItem::Toggle(SettingToggle::ConfirmQuit),
+        label: "Confirm before quit",
+        hint: "ask before q / Ctrl+C",
+    },
+    SettingDescriptor {
+        item: SettingItem::Toggle(SettingToggle::DisableAnimation),
+        label: "Disable startup animation",
+        hint: "skip the intro splash (applies next launch)",
+    },
+    SettingDescriptor {
+        item: SettingItem::Toggle(SettingToggle::SessionLogging),
+        label: "Session logging",
+        hint: "save PTY output under ~/.local/share/sshub/logs",
+    },
 ];
 
 /// Global keep-alive reconnect knobs (Tunnels tab, `R`). Row index maps to
