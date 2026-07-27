@@ -23,6 +23,7 @@ use ratatui::style::{Color, Modifier, Style};
 use crate::theme::catalog::{
     ColorRole, PaintRole, SemanticSlot, SemanticStyle, StyleRole, TintRole, SEMANTIC_SPECS,
 };
+use crate::theme::gradient::{gradient_position, sample_stops};
 
 /// Technical identifier of a theme.
 ///
@@ -540,39 +541,8 @@ impl ResolvedGradient {
     /// Channels are interpolated in sRGB and rounded per the V1 colour rules,
     /// so a gradient renders identically on every platform.
     pub fn sample(&self, t: f32) -> Color {
-        let Some(first) = self.stops.first() else {
-            return Color::Reset;
-        };
-        let t = t.clamp(0.0, 1.0);
-        let mut lower = first;
-        for stop in &self.stops {
-            if stop.position <= t {
-                lower = stop;
-            } else {
-                let span = stop.position - lower.position;
-                let local = if span <= f32::EPSILON {
-                    0.0
-                } else {
-                    (t - lower.position) / span
-                };
-                return mix_srgb(lower.color, stop.color, local);
-            }
-        }
-        lower.color
+        sample_stops(&self.stops, t.clamp(0.0, 1.0))
     }
-}
-
-/// Linear per-channel sRGB mix; non-RGB endpoints cannot be interpolated and
-/// snap to the nearer end instead of silently producing black.
-fn mix_srgb(from: Color, to: Color, t: f32) -> Color {
-    let (Color::Rgb(r0, g0, b0), Color::Rgb(r1, g1, b1)) = (from, to) else {
-        return if t < 0.5 { from } else { to };
-    };
-    let channel = |a: u8, b: u8| -> u8 {
-        let value = a as f32 + (b as f32 - a as f32) * t;
-        value.clamp(0.0, 255.0).round() as u8
-    };
-    Color::Rgb(channel(r0, r1), channel(g0, g1), channel(b0, b1))
 }
 
 /// The fixed semantic core of schema version 1 — exactly 23 slots.
@@ -780,83 +750,15 @@ impl ResolvedTheme {
         match self.paint(role) {
             ResolvedPaint::Solid(color) => *color,
             ResolvedPaint::Gradient(id) => match self.gradients.get(id.index()) {
-                Some(gradient) => {
-                    gradient.sample(gradient_position(gradient.direction, area, x, y))
-                }
+                // Cells with no position on this gradient — outside `area`, or
+                // off the ring of a `perimeter` — anchor at the start so a
+                // caller that asks too broadly still gets a defined colour.
+                Some(gradient) => gradient
+                    .sample(gradient_position(gradient.direction, area, x, y).unwrap_or(0.0)),
                 None => Color::Reset,
             },
         }
     }
-}
-
-/// Relative sample position of cell `(x, y)` within `area`.
-fn gradient_position(direction: GradientDirection, area: Rect, x: u16, y: u16) -> f32 {
-    let norm = |value: u16, origin: u16, len: u16| -> f32 {
-        if len <= 1 {
-            0.0
-        } else {
-            (value.saturating_sub(origin)) as f32 / (len - 1) as f32
-        }
-    };
-    let hx = norm(x, area.x, area.width);
-    let vy = norm(y, area.y, area.height);
-    let flat_x = area.height <= 1;
-    let flat_y = area.width <= 1;
-
-    match direction {
-        GradientDirection::Horizontal => hx,
-        GradientDirection::Vertical => vy,
-        GradientDirection::DiagonalDown => match (flat_x, flat_y) {
-            (true, true) => 0.0,
-            (true, false) => hx,
-            (false, true) => vy,
-            (false, false) => (hx + vy) / 2.0,
-        },
-        GradientDirection::DiagonalUp => match (flat_x, flat_y) {
-            (true, true) => 0.0,
-            (true, false) => hx,
-            (false, true) => 1.0 - vy,
-            (false, false) => (hx + (1.0 - vy)) / 2.0,
-        },
-        GradientDirection::Perimeter => perimeter_position(area, x, y),
-    }
-}
-
-/// Position along the clockwise outer ring of `area`, starting at its top-left
-/// corner. Degenerate rects fall back to their natural single-line direction.
-fn perimeter_position(area: Rect, x: u16, y: u16) -> f32 {
-    if area.width <= 1 && area.height <= 1 {
-        return 0.0;
-    }
-    if area.height <= 1 {
-        return (x.saturating_sub(area.x)) as f32 / (area.width - 1) as f32;
-    }
-    if area.width <= 1 {
-        return (y.saturating_sub(area.y)) as f32 / (area.height - 1) as f32;
-    }
-
-    let w = area.width as u32;
-    let h = area.height as u32;
-    let dx = x.saturating_sub(area.x) as u32;
-    let dy = y.saturating_sub(area.y) as u32;
-    let last_x = w - 1;
-    let last_y = h - 1;
-
-    let index = if dy == 0 {
-        dx
-    } else if dx == last_x {
-        last_x + dy
-    } else if dy == last_y {
-        last_x + last_y + (last_x - dx)
-    } else if dx == 0 {
-        2 * last_x + last_y + (last_y - dy)
-    } else {
-        // Interior cells are not on the ring; anchor them at the start so a
-        // caller that paints too much still gets a defined colour.
-        0
-    };
-    let length = 2 * w + 2 * h - 4;
-    index as f32 / (length - 1) as f32
 }
 
 #[cfg(test)]
