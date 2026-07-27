@@ -603,6 +603,41 @@ impl App {
         self.theme_manager.theme()
     }
 
+    /// Drop every buffer snapshot and in-flight slide that was captured under
+    /// the theme being replaced.
+    ///
+    /// The frame pipeline's background painters select cells by their *current*
+    /// colour (`CellSelection::Matching(Color::Reset)`) and the slides blit
+    /// cells captured on an earlier frame. A snapshot that outlived its theme
+    /// would therefore be matched — and composited — against colours no longer
+    /// on screen, so it has to go **before** the next frame runs rather than
+    /// when its animation happens to expire.
+    ///
+    /// Only visual leftovers are cleared. State that carries a pending
+    /// *decision* (`fold_anim`, whose collapse is applied when it ends) is
+    /// deliberately left alone: dropping it would lose a user action, not a
+    /// stale colour.
+    pub(crate) fn invalidate_theme_visual_state(&mut self) {
+        *self.popup_snapshot.borrow_mut() = None;
+        *self.popup_backdrop.borrow_mut() = None;
+        *self.session_snapshot.borrow_mut() = None;
+        *self.sftp_snapshot.borrow_mut() = None;
+        self.popup_closing_at = None;
+        self.session_enter_at = None;
+        self.session_exit_at = None;
+        self.session_tab_switch = None;
+        self.sftp_anim = None;
+        self.tab_switch = None;
+        self.zoom_anim = None;
+        // A live preview activates on every arrow key while the picker popup is
+        // open. Its backdrop has just been dropped, so leaving the mode clock
+        // inside `POPUP_ANIM` would re-capture one and replay the drop-in for
+        // each keystroke; settling the clock keeps the popup where it is.
+        self.mode_entered_at = std::time::Instant::now()
+            .checked_sub(crate::tui::POPUP_ANIM)
+            .unwrap_or_else(std::time::Instant::now);
+    }
+
     /// Load the user's themes from `themes_dir` and activate
     /// `appearance.active_theme`.
     ///
@@ -632,6 +667,14 @@ impl App {
                 ))
             }
         };
+        // This is the one place besides `activate_resolved_theme` that changes
+        // what is painted: it swaps the whole manager (registry, saved id and
+        // start-up diagnostics), which the activation seam cannot express. It
+        // therefore runs the same invalidation directly rather than routing a
+        // no-op activation through the seam — today it only runs before the
+        // first frame, but an in-app reload must not be able to paint over a
+        // snapshot taken under the previous theme.
+        self.invalidate_theme_visual_state();
         if let Some(notice) = theme_startup_notice(&self.theme_manager, load_error.as_deref()) {
             self.host_notice = Some(notice);
         }
@@ -684,7 +727,6 @@ impl App {
                     "Theme: no config directory ({e}); using the built-in themes"
                 ))
             }
-        }
         }
 
         app.reload_hosts()?;

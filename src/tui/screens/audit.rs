@@ -91,7 +91,13 @@ pub fn render_audit(frame: &mut Frame, area: Rect, app: &App) {
             area.width,
             (area.y + area.height).saturating_sub(rows_top),
         );
-        crate::tui::blit::fade(buf, rows, fade);
+        crate::tui::blit::fade(
+            buf,
+            rows,
+            fade,
+            app.theme(),
+            crate::theme::catalog::PaintRole::AppBackground,
+        );
     }
 }
 

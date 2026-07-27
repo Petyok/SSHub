@@ -16,6 +16,9 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::app::{App, AppMode};
+use crate::theme::catalog::PaintRole;
+use crate::theme::gradient::{paint_gradient_area, CellSelection, PaintChannel};
+use crate::theme::model::ResolvedPaint;
 
 /// Panic-safe popup dimension: clamp `desired` into `[min, avail]`, but never
 /// let `min` exceed `avail` (which would make `u16::clamp` assert `min <= max`
@@ -37,9 +40,10 @@ pub fn format_local_time(epoch_secs: i64) -> String {
     format!("{:02}:{:02}:{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec)
 }
 
-/// Frame entry point. Renders the UI, then — when `appearance.opaque_background`
-/// is on — paints a solid backdrop behind every still-transparent cell so text
-/// stays readable on a transparent terminal.
+/// Frame entry point. Renders the UI, then backs the still-transparent cells:
+/// with the theme's own `components.app.background` where it resolved to a real
+/// colour, and — when `appearance.opaque_background` is on — with
+/// `semantic.canvas` behind whatever is left.
 pub fn render(frame: &mut Frame, app: &App) {
     // Reset the per-frame popup rect; each popup that draws sets it via
     // `popup_open_rect`, and we snapshot it afterwards for the close slide (#35).
@@ -65,19 +69,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     capture_popup_snapshot(frame, app);
     render_popup_open(frame, app);
     render_popup_close(frame, app);
-    if app.config.appearance.opaque_background {
-        let buf = frame.buffer_mut();
-        let area = buf.area;
-        for y in area.y..area.y + area.height {
-            for x in area.x..area.x + area.width {
-                if let Some(cell) = buf.cell_mut((x, y)) {
-                    if cell.bg == ratatui::style::Color::Reset {
-                        cell.bg = theme::BG;
-                    }
-                }
-            }
-        }
-    }
+    apply_app_background(frame, app);
     apply_panel_selection(frame, app);
     // Fade the whole dashboard up on the way out of the intro animation, so the
     // first frame arrives rather than replacing the splash outright (#35).
@@ -85,7 +77,94 @@ pub fn render(frame: &mut Frame, app: &App) {
         let p = tween::progress(at, SPLASH_FADE, std::time::Instant::now());
         if p < 1.0 {
             let area = frame.area();
-            blit::fade(frame.buffer_mut(), area, tween::ease_out(p));
+            blit::fade(
+                frame.buffer_mut(),
+                area,
+                tween::ease_out(p),
+                app.theme(),
+                PaintRole::AppBackground,
+            );
+        }
+    }
+}
+
+/// Back the cells no widget painted, in two deliberately separate passes.
+///
+/// 1. A theme that resolved `components.app.background` to a real colour or a
+///    gradient paints every still-`Color::Reset` cell of SSHub's **own**
+///    surfaces — never the remote PTY viewport, whose cells carry the host's
+///    ANSI colours and whose "unpainted" cells are the host's default
+///    background, not ours.
+/// 2. The legacy `opaque_background` switch then fills whatever is *left* with
+///    `semantic.canvas`, PTY included. It keeps its old meaning exactly: it is
+///    the user asking for an opaque backdrop on a transparent terminal, and it
+///    cannot suppress a surface the theme set explicitly (pass 1 ran first).
+///
+/// Both passes select on `Color::Reset`, so neither can touch a cell a widget
+/// already coloured.
+fn apply_app_background(frame: &mut Frame, app: &App) {
+    let theme = app.theme();
+    let area = frame.area();
+    let exclusions = remote_pty_exclusions(area, app);
+    let buf = frame.buffer_mut();
+
+    match theme.paint(PaintRole::AppBackground) {
+        // `"terminal"`: the theme asked for no ground of its own.
+        ResolvedPaint::Solid(Color::Reset) => {}
+        ResolvedPaint::Solid(color) => {
+            fill_reset_background(buf, area, *color, &exclusions);
+        }
+        ResolvedPaint::Gradient(_) => {
+            if let Some(gradient) = theme.paint_gradient(PaintRole::AppBackground) {
+                paint_gradient_area(
+                    buf,
+                    area,
+                    gradient,
+                    PaintChannel::Background,
+                    CellSelection::Matching(Color::Reset),
+                    &exclusions,
+                );
+            }
+        }
+    }
+
+    if app.config.appearance.opaque_background {
+        fill_reset_background(buf, area, theme.semantic().canvas, &[]);
+    }
+}
+
+/// The remote PTY viewport, when this frame actually shows one.
+///
+/// Both the rect and the decision come from `session::render`, so the protected
+/// region cannot drift from what the `tui_term` widget really covers. The
+/// connecting spinner and the failure screen occupy the same rows but are
+/// SSHub's own chrome, and a theme is allowed to back them.
+fn remote_pty_exclusions(area: Rect, app: &App) -> Vec<Rect> {
+    if !shows_session_view(app) {
+        return Vec::new();
+    }
+    match app.active_session() {
+        Some(session) if crate::session::render::shows_remote_pty(session) => {
+            vec![crate::session::render::remote_pty_rect(area)]
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Give every still-transparent cell of `area` the background `color`, leaving
+/// `exclusions` untouched.
+fn fill_reset_background(buf: &mut Buffer, area: Rect, color: Color, exclusions: &[Rect]) {
+    let target = area.intersection(buf.area);
+    for y in target.y..target.bottom() {
+        for x in target.x..target.right() {
+            if exclusions.iter().any(|rect| rect.contains((x, y).into())) {
+                continue;
+            }
+            if let Some(cell) = buf.cell_mut((x, y)) {
+                if cell.bg == Color::Reset {
+                    cell.bg = color;
+                }
+            }
         }
     }
 }
@@ -139,15 +218,27 @@ fn apply_panel_selection(frame: &mut Frame, app: &App) {
     *app.panel_sel_text.borrow_mut() = text;
 }
 
-fn render_inner(frame: &mut Frame, app: &App) {
-    let session_behind_picker = app.mode == AppMode::SessionPicker
+/// Whether the picker is floating over a session rather than the dashboard.
+fn session_behind_picker(app: &App) -> bool {
+    app.mode == AppMode::SessionPicker
         && app
             .session_picker
             .as_ref()
-            .is_some_and(|p| matches!(p.return_mode, AppMode::Connecting | AppMode::Session));
+            .is_some_and(|p| matches!(p.return_mode, AppMode::Connecting | AppMode::Session))
+}
+
+/// Whether this frame is the full-screen session view rather than the
+/// dashboard. Shared with the app-background pass, so the region it protects
+/// cannot be claimed on a frame that never drew a session.
+fn shows_session_view(app: &App) -> bool {
+    crate::app::is_session_mode(app.mode) || session_behind_picker(app)
+}
+
+fn render_inner(frame: &mut Frame, app: &App) {
+    let session_behind_picker = session_behind_picker(app);
 
     // Embedded session takes over the whole frame — no dashboard chrome.
-    if matches!(app.mode, AppMode::Connecting | AppMode::Session) || session_behind_picker {
+    if shows_session_view(app) {
         crate::session::render::render(frame, app);
         // Slide the freshly-connected session in from the right (#35). Skipped
         // for the picker-over-session case (no fresh connect happening).
@@ -172,9 +263,21 @@ fn render_inner(frame: &mut Frame, app: &App) {
     let areas = dashboard_layout::dashboard_layout_zoomed(area, app.ui_zoom);
 
     // Header stats
+    let theme = app.theme();
     let [total, online, slow, down] = app.header_stats_advance(compute_header_stats(app));
     let clock = format_utc_clock();
-    widgets::header::render_header(frame, areas.header, total, online, slow, down, &clock);
+    widgets::header::render_header(
+        frame,
+        areas.header,
+        widgets::header::HeaderStats {
+            host_count: total,
+            online,
+            slow,
+            down,
+            clock: &clock,
+        },
+        theme,
+    );
 
     // Open embedded sessions — visible strip on the top header row so
     // background SSH tabs aren't hidden behind a footer hint.
@@ -190,19 +293,19 @@ fn render_inner(frame: &mut Frame, app: &App) {
             p,
         })
     });
-    widgets::header::render_session_strip(frame, areas.header, &session_chips, strip_travel);
+    widgets::header::render_session_strip(frame, areas.header, &session_chips, strip_travel, theme);
 
     // Horizontal rule 1
     let rule1 = row_in(area, areas.header.y + areas.header.height);
-    widgets::footer::render_hrule(frame, rule1, false);
+    widgets::footer::render_hrule(frame, rule1, false, theme, PaintRole::HeaderSeparator);
 
     // Tab bar
     let scope_path = "~/.config/sshub";
-    widgets::tab_bar::render_tab_bar(frame, areas.tab_bar, app.active_tab + 1, scope_path);
+    widgets::tab_bar::render_tab_bar(frame, areas.tab_bar, app.active_tab + 1, scope_path, theme);
 
     // Horizontal rule 2
     let rule2 = row_in(area, areas.tab_bar.y + areas.tab_bar.height);
-    widgets::footer::render_hrule(frame, rule2, false);
+    widgets::footer::render_hrule(frame, rule2, false, theme, PaintRole::TabsSeparator);
 
     // ── Tab body dispatch (with slide animation, #35) ─────────
     let now = std::time::Instant::now();
@@ -242,11 +345,11 @@ fn render_inner(frame: &mut Frame, app: &App) {
 
     // Horizontal rule 3: above footer (bold)
     let rule3 = row_in(area, areas.footer.y.saturating_sub(1));
-    widgets::footer::render_hrule(frame, rule3, true);
+    widgets::footer::render_hrule(frame, rule3, true, theme, PaintRole::FooterSeparator);
 
     // Footer keybinds (tab-specific)
     let (keybinds, pinned) = footer_keybinds(app);
-    widgets::footer::render_footer(frame, areas.footer, &keybinds, pinned);
+    widgets::footer::render_footer(frame, areas.footer, &keybinds, pinned, theme);
 
     // Issue #18: a zoomed panel hides the normal notice surface (status bar),
     // so surface transient feedback (e.g. "copied N chars") as a toast pinned
@@ -1582,37 +1685,57 @@ mod tests {
             .draw(|frame| {
                 let area = frame.area();
                 let areas = dashboard_layout::dashboard_layout_zoomed(area, app.ui_zoom);
+                // Through `app.theme()`, not the legacy constants: that is what
+                // turns the frozen buffer from a claim about `theme.rs` into an
+                // end-to-end guarantee about the `default` theme's roles.
+                let theme = app.theme();
 
                 let [total, online, slow, down] = compute_header_stats(app);
                 widgets::header::render_header(
                     frame,
                     areas.header,
-                    total,
-                    online,
-                    slow,
-                    down,
-                    GOLDEN_CLOCK,
+                    widgets::header::HeaderStats {
+                        host_count: total,
+                        online,
+                        slow,
+                        down,
+                        clock: GOLDEN_CLOCK,
+                    },
+                    theme,
                 );
                 let chips = build_session_chips(app);
-                widgets::header::render_session_strip(frame, areas.header, &chips);
+                widgets::header::render_session_strip(frame, areas.header, &chips, theme);
 
                 let rule1 = row_in(area, areas.header.y + areas.header.height);
-                widgets::footer::render_hrule(frame, rule1, false);
+                widgets::footer::render_hrule(
+                    frame,
+                    rule1,
+                    false,
+                    theme,
+                    PaintRole::HeaderSeparator,
+                );
                 widgets::tab_bar::render_tab_bar(
                     frame,
                     areas.tab_bar,
                     app.active_tab + 1,
                     GOLDEN_SCOPE,
+                    theme,
                 );
                 let rule2 = row_in(area, areas.tab_bar.y + areas.tab_bar.height);
-                widgets::footer::render_hrule(frame, rule2, false);
+                widgets::footer::render_hrule(frame, rule2, false, theme, PaintRole::TabsSeparator);
 
                 render_tab_body(frame, app.active_tab, &areas, app);
 
                 let rule3 = row_in(area, areas.footer.y.saturating_sub(1));
-                widgets::footer::render_hrule(frame, rule3, true);
+                widgets::footer::render_hrule(
+                    frame,
+                    rule3,
+                    true,
+                    theme,
+                    PaintRole::FooterSeparator,
+                );
                 let keybinds = footer_keybinds(app);
-                widgets::footer::render_footer(frame, areas.footer, &keybinds);
+                widgets::footer::render_footer(frame, areas.footer, &keybinds, theme);
             })
             .unwrap();
 
@@ -2012,6 +2135,240 @@ mod tests {
         assert_eq!(
             buffer_signature(&buffer),
             include_str!("../../tests/fixtures/theme/default-dashboard.buffer")
+        );
+    }
+
+    // ── Theme-driven app background ─────────────────────────
+    //
+    // Three background states (terminal / explicit solid / explicit gradient)
+    // crossed with the legacy `opaque_background` switch, plus the rule that
+    // decides the whole task: only the legacy switch may ever reach the remote
+    // PTY viewport.
+
+    /// An app whose live theme is the user file `body`, kept alive by the
+    /// returned temp dir. Never touches the real HOME or config.
+    fn app_with_user_theme(id: &str, body: &str) -> (App, tempfile::TempDir) {
+        let root = tempfile::tempdir().unwrap();
+        let themes = root.path().join("themes");
+        std::fs::create_dir(&themes).unwrap();
+        std::fs::write(themes.join(format!("{id}.toml")), body).unwrap();
+        let mut app = test_app_with_hosts();
+        app.config.appearance.active_theme = id.to_string();
+        app.load_themes_from(&themes);
+        assert_eq!(app.theme().id().as_str(), id, "`{id}` must be live");
+        (app, root)
+    }
+
+    /// A theme whose app background is a black-to-white horizontal sweep, so a
+    /// per-cell sample is distinguishable from a flattened one.
+    const GRADIENT_BACKGROUND_THEME: &str = "schema_version = 1\nname = \"Washed\"\n\
+         extends = \"default\"\n\n\
+         [gradients.wash]\ndirection = \"horizontal\"\n\
+         stops = [ { at = 0.0, color = \"#000000\" }, { at = 1.0, color = \"#ffffff\" } ]\n\n\
+         [components.app]\nbackground = { gradient = \"gradients.wash\" }\n";
+
+    /// A dashboard app on the built-in `theme_id`.
+    fn app_with_builtin_theme(theme_id: &str) -> App {
+        let mut app = test_app_with_hosts();
+        assert!(app.activate_theme(theme_id), "`{theme_id}` is a built-in");
+        app
+    }
+
+    /// A full-screen session app on `theme_id`, with a live PTY grid in the
+    /// body (phase `Running`, so `render_body` draws the tui-term widget).
+    fn session_app_with_theme(theme_id: &str) -> App {
+        let mut app = app_with_builtin_theme(theme_id);
+        enter_live_session(&mut app);
+        app
+    }
+
+    /// Put `app` into the full-screen session view over a live PTY grid.
+    fn enter_live_session(app: &mut App) {
+        use crate::session::{SessionConfig, SessionMeta, SessionPhase};
+
+        let cfg = SessionConfig {
+            argv: vec!["true".into()],
+            display_name: "web-prod".into(),
+            meta: SessionMeta {
+                user: Some("micha".into()),
+                address: Some("10.0.0.11".into()),
+                port: Some(22),
+                ..Default::default()
+            },
+            pending_secret: None,
+        };
+        let mut session = crate::session::Session::spawn(cfg, 24, 80, None).unwrap();
+        session.phase = SessionPhase::Running {
+            started_at: std::time::Instant::now(),
+        };
+        app.sessions.push(session);
+        app.active_session = Some(0);
+        app.mode = AppMode::Session;
+    }
+
+    /// A coordinate inside the remote PTY viewport that the shell never wrote,
+    /// taken from the same geometry function the renderer uses.
+    fn remote_pty_probe(area: Rect) -> (u16, u16) {
+        let pty = crate::session::render::remote_pty_rect(area);
+        assert!(pty.height >= 2 && pty.width >= 2, "no PTY body at {area:?}");
+        // Two rows down: the first row may carry whatever `true` printed.
+        (pty.x + pty.width / 2, pty.y + pty.height / 2)
+    }
+
+    /// A cell that is genuinely app background: the separator row under the
+    /// header only ever sets a foreground, so its background is whatever the
+    /// app ground pass left there.
+    fn app_background_probe(buffer: &Buffer) -> (u16, u16) {
+        let areas = dashboard_layout::dashboard_layout_zoomed(buffer.area, 0);
+        (
+            buffer.area.right() - 1,
+            areas.header.y + areas.header.height,
+        )
+    }
+
+    fn any_background_is_reset(buffer: &Buffer) -> bool {
+        let a = buffer.area;
+        (a.y..a.bottom())
+            .any(|y| (a.x..a.right()).any(|x| buffer[(x, y)].bg == ratatui::style::Color::Reset))
+    }
+
+    fn assert_all_backgrounds_non_reset(buffer: &Buffer) {
+        let a = buffer.area;
+        for y in a.y..a.bottom() {
+            for x in a.x..a.right() {
+                assert_ne!(
+                    buffer[(x, y)].bg,
+                    ratatui::style::Color::Reset,
+                    "cell ({x}, {y}) stayed transparent"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn theme_background_terminal_leaves_the_canvas_transparent() {
+        // `default` resolves `components.app.background` to "terminal", so no
+        // theme painting happens at all and the frame stays see-through.
+        let mut app = app_with_builtin_theme("default");
+        app.config.appearance.opaque_background = false;
+        assert!(any_background_is_reset(&render_to_buffer(&app, 80, 24)));
+    }
+
+    #[test]
+    fn theme_background_explicit_solid_paints_the_whole_dashboard() {
+        let mut app = app_with_builtin_theme("aqua");
+        app.config.appearance.opaque_background = false;
+        let buffer = render_to_buffer(&app, 80, 24);
+        assert_all_backgrounds_non_reset(&buffer);
+        let expected = match app.theme().paint(PaintRole::AppBackground) {
+            ResolvedPaint::Solid(color) => *color,
+            other => panic!("aqua's app background is solid, got {other:?}"),
+        };
+        assert_eq!(buffer[app_background_probe(&buffer)].bg, expected);
+    }
+
+    #[test]
+    fn theme_background_explicit_gradient_is_sampled_per_cell() {
+        let (mut app, _dir) = app_with_user_theme("washed", GRADIENT_BACKGROUND_THEME);
+        app.config.appearance.opaque_background = false;
+        let buffer = render_to_buffer(&app, 80, 24);
+        // The footer row is chrome SSHub leaves transparent, so the whole row
+        // is app background — and it must sweep rather than sit on one colour.
+        let y = buffer.area.bottom() - 1;
+        let row: Vec<_> = (0..buffer.area.width).map(|x| buffer[(x, y)].bg).collect();
+        assert!(
+            row.windows(2).any(|pair| pair[0] != pair[1]),
+            "the app background is flat: {row:?}"
+        );
+    }
+
+    #[test]
+    fn theme_background_legacy_opaque_switch_fills_with_canvas() {
+        let mut app = app_with_builtin_theme("default");
+        app.config.appearance.opaque_background = true;
+        let buffer = render_to_buffer(&app, 80, 24);
+        assert_all_backgrounds_non_reset(&buffer);
+        assert_eq!(
+            buffer[app_background_probe(&buffer)].bg,
+            app.theme().semantic().canvas
+        );
+    }
+
+    #[test]
+    fn theme_background_opaque_switch_cannot_override_an_explicit_surface() {
+        // The switch fills what is *left*; a theme that painted the app surface
+        // keeps it (spec: it "kann eine ausdrücklich gesetzte App-Fläche nicht
+        // unterdrücken").
+        // `fire` is the built-in whose canvas differs from its background, so
+        // the two fills are distinguishable cell by cell.
+        let mut app = app_with_builtin_theme("fire");
+        app.config.appearance.opaque_background = true;
+        let buffer = render_to_buffer(&app, 80, 24);
+        let expected = match app.theme().paint(PaintRole::AppBackground) {
+            ResolvedPaint::Solid(color) => *color,
+            other => panic!("fire's app background is solid, got {other:?}"),
+        };
+        assert_ne!(
+            expected,
+            app.theme().semantic().canvas,
+            "this test needs a theme whose canvas and background differ"
+        );
+        assert_eq!(buffer[app_background_probe(&buffer)].bg, expected);
+    }
+
+    #[test]
+    fn explicit_theme_background_skips_remote_pty_even_when_reset() {
+        let mut app = session_app_with_theme("aqua");
+        app.config.appearance.opaque_background = false;
+        let buffer = render_to_buffer(&app, 80, 24);
+        // The session's own chrome rows are SSHub-owned and get painted.
+        assert_ne!(buffer[(1, 0)].bg, ratatui::style::Color::Reset);
+        let probe = remote_pty_probe(buffer.area);
+        assert_eq!(
+            buffer[probe].bg,
+            ratatui::style::Color::Reset,
+            "the theme repainted the remote PTY at {probe:?}"
+        );
+    }
+
+    #[test]
+    fn a_gradient_background_never_reaches_the_remote_pty() {
+        let (mut app, _dir) = app_with_user_theme("washed", GRADIENT_BACKGROUND_THEME);
+        app.config.appearance.opaque_background = false;
+        enter_live_session(&mut app);
+        let buffer = render_to_buffer(&app, 80, 24);
+        // The session chrome above the grid is SSHub's, and the sweep reaches it.
+        let header: Vec<_> = (0..buffer.area.width).map(|x| buffer[(x, 0)].bg).collect();
+        assert!(
+            header.windows(2).any(|pair| pair[0] != pair[1]),
+            "the gradient never reached the session chrome: {header:?}"
+        );
+        let probe = remote_pty_probe(buffer.area);
+        assert_eq!(buffer[probe].bg, ratatui::style::Color::Reset);
+    }
+
+    #[test]
+    fn a_session_in_the_background_protects_nothing_on_the_dashboard() {
+        // The protected rect is claimed from the frame that actually drew the
+        // grid. An open session the user has stepped away from must not carve
+        // an unpainted band out of the dashboard.
+        let mut app = session_app_with_theme("aqua");
+        app.mode = AppMode::Normal;
+        app.config.appearance.opaque_background = false;
+        let buffer = render_to_buffer(&app, 80, 24);
+        assert_all_backgrounds_non_reset(&buffer);
+    }
+
+    #[test]
+    fn only_the_legacy_opaque_switch_covers_the_remote_pty() {
+        let mut app = session_app_with_theme("aqua");
+        app.config.appearance.opaque_background = true;
+        let buffer = render_to_buffer(&app, 80, 24);
+        let probe = remote_pty_probe(buffer.area);
+        assert_eq!(
+            buffer[probe].bg,
+            app.theme().semantic().canvas,
+            "the legacy switch must still back the PTY with the canvas"
         );
     }
 

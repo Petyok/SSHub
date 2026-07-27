@@ -122,8 +122,14 @@ fn attach_config_watcher(app: &mut App) -> Result<()> {
     Ok(())
 }
 
+/// Play the intro animation until the user dismisses it.
+///
+/// Takes the resolved theme even though the animation still paints with its own
+/// constants: its role migration is a later step, and threading the dependency
+/// now is what keeps that step from having to touch this call boundary again.
 fn run_animation<B: ratatui::backend::Backend + std::io::Write>(
     terminal: &mut Terminal<B>,
+    _theme: &crate::theme::model::ResolvedTheme,
 ) -> Result<()>
 where
     // ratatui 0.30 made Backend::Error an associated type with no auto
@@ -164,7 +170,7 @@ fn run_terminal_loop(app: &mut App, auto_quit: Option<&str>) -> Result<()> {
 
     // Run startup animation (skip in CI/headless or when disabled in config)
     if auto_quit.is_none() && !app.config.appearance.disable_animation {
-        run_animation(&mut terminal)?;
+        run_animation(&mut terminal, app.theme())?;
     }
 
     // The dashboard fades up from here, over the intro animation it replaces.

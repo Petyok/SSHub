@@ -788,3 +788,128 @@ fn the_reload_key_is_wired_to_the_picker() {
 
     assert_eq!(app.theme_manager.active_id(), "mine");
 }
+
+// ── Activation invalidates every old-theme visual state ──────
+//
+// The frame pipeline's background painters select cells by their *current*
+// colour (`CellSelection::Matching(Color::Reset)`). A snapshot or slide taken
+// under the previous theme would therefore be matched against cells carrying
+// that theme's colours, so activation has to drop all of them before the next
+// frame runs.
+
+/// An app carrying one of every buffer snapshot and in-flight slide.
+fn app_with_populated_visual_state() -> App {
+    use ratatui::layout::Rect;
+    use std::time::{Duration, Instant};
+
+    let mut app = app_with_themes(["default"]);
+    let now = Instant::now();
+    let buffer = ratatui::buffer::Buffer::empty(Rect::new(0, 0, 8, 4));
+
+    *app.popup_snapshot.borrow_mut() = Some((Rect::new(0, 0, 8, 4), buffer.clone()));
+    *app.popup_backdrop.borrow_mut() = Some(buffer.clone());
+    *app.session_snapshot.borrow_mut() = Some(buffer.clone());
+    *app.sftp_snapshot.borrow_mut() = Some(buffer);
+    app.popup_closing_at = Some(now);
+    app.session_enter_at = Some(now);
+    app.session_exit_at = Some(now);
+    app.session_tab_switch = Some(crate::app::SessionTabSwitch {
+        dir: 1,
+        from: 0,
+        at: now,
+    });
+    app.sftp_anim = Some((crate::app::SftpAnim::PanesIn, now));
+    app.tab_switch = Some(crate::app::TabSwitch {
+        from: 0,
+        to: 1,
+        at: now,
+    });
+    app.zoom_anim = Some(crate::tui::tween::SlideAnim::new(
+        Rect::new(0, 0, 4, 2),
+        Rect::new(0, 0, 8, 4),
+        Duration::from_millis(200),
+    ));
+    app.mode_entered_at = now;
+    app
+}
+
+#[test]
+fn theme_activation_clears_every_old_theme_snapshot_and_slide() {
+    let mut app = app_with_populated_visual_state();
+
+    assert!(app.activate_theme("fire"), "`fire` is a built-in");
+
+    assert!(app.popup_snapshot.borrow().is_none());
+    assert!(app.popup_backdrop.borrow().is_none());
+    assert!(app.session_snapshot.borrow().is_none());
+    assert!(app.sftp_snapshot.borrow().is_none());
+    assert!(app.popup_closing_at.is_none());
+    assert!(app.session_enter_at.is_none());
+    assert!(app.session_exit_at.is_none());
+    assert!(app.session_tab_switch.is_none());
+    assert!(app.sftp_anim.is_none());
+    assert!(app.tab_switch.is_none());
+    assert!(app.zoom_anim.is_none());
+}
+
+#[test]
+fn theme_activation_settles_the_popup_open_slide() {
+    // A preview repaints while the picker is open. Clearing its backdrop would
+    // otherwise let the next frame re-capture one and replay the drop-in for
+    // every arrow key, so activation also ages the mode clock out of the slide.
+    let mut app = app_with_populated_visual_state();
+    app.mode = AppMode::ThemePicker;
+
+    assert!(app.activate_theme("fire"));
+
+    assert!(
+        app.mode_entered_at.elapsed() >= crate::tui::POPUP_ANIM,
+        "the open slide must read as finished"
+    );
+}
+
+#[test]
+fn every_picker_transition_invalidates_the_old_theme_state() {
+    // Preview, rollback and commit all reach `activate_resolved_theme`; this
+    // pins that none of them can grow a path around the invalidation.
+    let mut app = app_with_themes(["default", "ocean"]);
+    app.open_theme_picker();
+
+    let dirty = |app: &mut App| {
+        *app.session_snapshot.borrow_mut() = Some(ratatui::buffer::Buffer::empty(
+            ratatui::layout::Rect::new(0, 0, 8, 4),
+        ))
+    };
+
+    dirty(&mut app);
+    app.preview_theme("ocean");
+    assert!(app.session_snapshot.borrow().is_none(), "preview");
+
+    dirty(&mut app);
+    app.commit_theme_picker_with(|_| Ok(()));
+    assert!(app.session_snapshot.borrow().is_none(), "commit");
+
+    app.open_theme_picker();
+    app.preview_theme("default");
+    dirty(&mut app);
+    app.cancel_theme_picker();
+    assert!(app.session_snapshot.borrow().is_none(), "rollback");
+}
+
+#[test]
+fn loading_a_themes_directory_invalidates_the_old_theme_state() {
+    // `load_themes_from` replaces the whole manager, so it changes the painted
+    // theme without passing `activate_resolved_theme`. Today it only runs
+    // before the first frame, but an in-app reload must not be able to paint
+    // over a snapshot taken under the previous theme.
+    let root = themes_dir_with(&[("mine", &user_theme("Mine"))]);
+    let mut app = app_wanting("mine");
+    *app.session_snapshot.borrow_mut() = Some(ratatui::buffer::Buffer::empty(
+        ratatui::layout::Rect::new(0, 0, 8, 4),
+    ));
+
+    app.load_themes_from(&themes_path(&root));
+
+    assert_eq!(app.theme_manager.active_id(), "mine");
+    assert!(app.session_snapshot.borrow().is_none());
+}

@@ -237,11 +237,14 @@ impl App {
 
     /// The one place the runtime theme changes.
     ///
-    /// Preview, reload, rollback and commit all funnel through here so Task 12
-    /// has a single seam for invalidating buffer snapshots and ending blit
-    /// transitions. A second path would be a latent bug, not a shortcut.
-    fn activate_resolved_theme(&mut self, theme: Rc<ResolvedTheme>) {
+    /// Preview, reload, rollback and commit all funnel through here, so the
+    /// swap and the invalidation of every snapshot and blit transition captured
+    /// under the old theme happen together. A second path would be a latent
+    /// bug, not a shortcut. (`App::load_themes_from` replaces the whole manager
+    /// instead of activating into it, and runs the same invalidation itself.)
+    pub(crate) fn activate_resolved_theme(&mut self, theme: Rc<ResolvedTheme>) {
         self.theme_manager.activate_resolved(theme);
+        self.invalidate_theme_visual_state();
     }
 
     /// Re-read the themes directory (`r`).

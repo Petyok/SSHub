@@ -235,7 +235,13 @@ pub(crate) fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
     // blink along with what they hold.
     if area.width > 2 && area.height > 2 {
         let body = Rect::new(area.x + 1, area.y + 1, area.width - 2, area.height - 2);
-        crate::tui::blit::fade(buf, body, fade);
+        crate::tui::blit::fade(
+            buf,
+            body,
+            fade,
+            app.theme(),
+            crate::theme::catalog::PaintRole::AppBackground,
+        );
     }
 }
 
