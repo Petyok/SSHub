@@ -95,8 +95,14 @@ pub fn render_audit(frame: &mut Frame, area: Rect, app: &App) {
             buf,
             rows,
             fade,
-            app.theme(),
-            crate::theme::catalog::PaintRole::AppBackground,
+            crate::tui::blit::FadeGround {
+                theme: app.theme(),
+                role: crate::theme::catalog::PaintRole::AppBackground,
+                // Sampled against the frame the role belongs to, not against
+                // the band of rows this fade happens to cover.
+                paint_area: buf.area,
+                exclusions: &[],
+            },
         );
     }
 }

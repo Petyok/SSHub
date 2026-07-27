@@ -239,8 +239,14 @@ pub(crate) fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
             buf,
             body,
             fade,
-            app.theme(),
-            crate::theme::catalog::PaintRole::AppBackground,
+            crate::tui::blit::FadeGround {
+                theme: app.theme(),
+                role: crate::theme::catalog::PaintRole::AppBackground,
+                // The app background's component rect is the whole frame, not
+                // this panel's body: a gradient must not restart inside it.
+                paint_area: buf.area,
+                exclusions: &[],
+            },
         );
     }
 }

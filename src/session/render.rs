@@ -22,19 +22,6 @@ use crate::session::{Session, SessionMeta, SessionPhase};
 use crate::theme::catalog::{ColorRole, PaintRole, StyleRole};
 use crate::theme::model::ResolvedTheme;
 
-/// The PTY body's rect: everything between the one-row header and the one-row
-/// footer. Exposed so the tab-switch slide can move the body alone and leave
-/// the header fixed (#35) -- sliding the whole screen, chrome included, made
-/// switching tabs unpleasant to look at.
-pub fn body_rect(area: Rect) -> Rect {
-    Rect::new(
-        area.x,
-        area.y.saturating_add(1),
-        area.width,
-        area.height.saturating_sub(2),
-    )
-}
-
 /// The session view's three bands: 1-row header, body, 1-row footer.
 fn session_chunks(frame_area: Rect) -> std::rc::Rc<[Rect]> {
     Layout::default()
@@ -53,9 +40,12 @@ fn session_chunks(frame_area: Rect) -> std::rc::Rc<[Rect]> {
 /// `tui_term` widget into it, and `crate::tui`'s app-background pass excludes
 /// exactly it. Two independently derived rects is how a one-cell drift ships,
 /// and one drifted cell means a theme colour written over the host's own
-/// output — which is why this goes through the real layout rather than through
-/// [`body_rect`]'s arithmetic, which parts from it on a terminal too short for
-/// all three bands.
+/// output — which is why it goes through the real layout instead of the
+/// `y + 1 / height - 2` arithmetic it used to: the two part company on a
+/// terminal too short for all three bands, and one of them is not the viewport.
+///
+/// It is also what the tab-switch slide moves, so the region that slide clears
+/// and blits is the region the PTY renderer owns, at every terminal size.
 pub(crate) fn remote_pty_rect(frame_area: Rect) -> Rect {
     session_chunks(frame_area)[1]
 }
@@ -620,9 +610,8 @@ mod tests {
     fn the_protected_rect_is_the_rect_the_pty_widget_gets() {
         // `render` hands `session_chunks(..)[1]` to the `tui_term` widget, so
         // the exclusion is the viewport by construction. What this pins is that
-        // it stays that way — and that the older `body_rect` arithmetic, which
-        // parts from the layout on a terminal too short for three bands, is not
-        // quietly swapped back in.
+        // it stays that way — and that the `y + 1 / height - 2` arithmetic this
+        // used to use is not quietly swapped back in.
         for (w, h) in [(80, 24), (132, 38), (40, 3), (20, 10), (1, 1), (10, 2)] {
             let area = Rect::new(0, 0, w, h);
             assert_eq!(
@@ -631,10 +620,10 @@ mod tests {
                 "the exclusion drifted from the viewport at {w}x{h}"
             );
         }
-        // The two-band case the arithmetic gets wrong, spelled out.
+        // The short-terminal case the arithmetic got wrong, spelled out: the
+        // whole frame is the viewport, where `y + 1 / height - 2` was empty.
         let tiny = Rect::new(0, 0, 10, 1);
         assert_eq!(remote_pty_rect(tiny), Rect::new(0, 0, 10, 1));
-        assert!(body_rect(tiny).is_empty());
     }
 
     fn spawned_session() -> Session {

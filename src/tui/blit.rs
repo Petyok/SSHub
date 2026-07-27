@@ -53,21 +53,45 @@ pub fn snapshot(src: &Buffer, area: Rect) -> Buffer {
     out
 }
 
+/// What a [`fade`] blends towards, and which cells it may not touch.
+///
+/// `paint_area` is deliberately **not** the faded rect. A paint role is sampled
+/// against its own component rectangle — `components.app.background` against the
+/// whole frame, a panel role against that panel — while a fade usually covers
+/// only a slice of it (one panel's body, one band of table rows). Passing the
+/// slice as the reference rect would restart the gradient inside every slice and
+/// give the same absolute cell a different ground depending on what happened to
+/// be faded.
+pub struct FadeGround<'a> {
+    pub theme: &'a ResolvedTheme,
+    /// The role the cells fade out of.
+    pub role: PaintRole,
+    /// The component rectangle `role` is sampled against.
+    pub paint_area: Rect,
+    /// Regions the fade must leave alone — the remote PTY viewport, whose
+    /// foregrounds are the host's own colours.
+    pub exclusions: &'a [Rect],
+}
+
 /// Fade the cells of `area` up out of the background, `k` of the way in
 /// (`k >= 1.0` is fully drawn, `0.0` invisible).
 ///
 /// Used where a panel's *content* changes under a fixed frame -- a different
 /// host's detail, a re-filtered table -- and sliding it would be a lie about
 /// where it came from, but swapping it outright reads as a flicker.
-/// `background` names the role the cells fade *out of*; a gradient role is
-/// sampled per coordinate rather than flattened to one colour.
-pub fn fade(buf: &mut Buffer, area: Rect, k: f32, theme: &ResolvedTheme, background: PaintRole) {
+///
+/// The ground is sampled per coordinate, so a gradient role fades into a
+/// gradient rather than into one flattened colour.
+pub fn fade(buf: &mut Buffer, area: Rect, k: f32, ground: FadeGround<'_>) {
     if k >= 1.0 {
         return;
     }
     for y in area.top()..area.bottom() {
         for x in area.left()..area.right() {
-            let base = fade_ground(theme, background, area, x, y);
+            if ground.exclusions.iter().any(|r| r.contains((x, y).into())) {
+                continue;
+            }
+            let base = fade_ground(ground.theme, ground.role, ground.paint_area, x, y);
             let Some(c) = buf.cell_mut((x, y)) else {
                 continue;
             };
@@ -171,6 +195,20 @@ mod tests {
         Rect::new(2, 1, 8, 3)
     }
 
+    /// The app background of `theme`, sampled against `paint_area`, protecting
+    /// nothing.
+    fn ground<'a>(
+        theme: &'a crate::theme::model::ResolvedTheme,
+        paint_area: Rect,
+    ) -> FadeGround<'a> {
+        FadeGround {
+            theme,
+            role: PaintRole::AppBackground,
+            paint_area,
+            exclusions: &[],
+        }
+    }
+
     /// A resolved built-in, by id. Built-ins are embedded, so this touches no
     /// filesystem at all.
     fn resolved(id: &str) -> Rc<crate::theme::model::ResolvedTheme> {
@@ -246,7 +284,7 @@ mod tests {
         let theme = resolved("default");
         let mut buf = Buffer::empty(a);
         buf.cell_mut((2, 1)).unwrap().fg = theme::GREEN;
-        fade(&mut buf, a, 1.0, &theme, PaintRole::AppBackground);
+        fade(&mut buf, a, 1.0, ground(&theme, a));
         assert_eq!(buf.cell((2, 1)).unwrap().fg, theme::GREEN);
     }
 
@@ -257,7 +295,7 @@ mod tests {
         let mut buf = Buffer::empty(a);
         buf.cell_mut((2, 1)).unwrap().fg = theme::GREEN;
         buf.cell_mut((2, 1)).unwrap().bg = theme::SEL_BG;
-        fade(&mut buf, a, 0.0, &theme, PaintRole::AppBackground);
+        fade(&mut buf, a, 0.0, ground(&theme, a));
         // `default` leaves the app background at "terminal", so the fade falls
         // back to the canvas — which is the `theme::BG` it used to hard-code.
         assert_eq!(buf.cell((2, 1)).unwrap().fg, theme::BG);
@@ -277,7 +315,7 @@ mod tests {
         for x in a.left()..a.right() {
             buf.cell_mut((x, 0)).unwrap().fg = theme::GREEN;
         }
-        fade(&mut buf, a, 0.0, &theme, PaintRole::AppBackground);
+        fade(&mut buf, a, 0.0, ground(&theme, a));
         let row: Vec<_> = (a.left()..a.right())
             .map(|x| buf.cell((x, 0)).unwrap().fg)
             .collect();
@@ -285,6 +323,112 @@ mod tests {
             row.windows(2).any(|pair| pair[0] != pair[1]),
             "the fade ground is flat: {row:?}"
         );
+    }
+
+    #[test]
+    fn a_faded_slice_samples_the_same_ground_as_the_whole_frame() {
+        // The bug this pins: using the faded slice as the gradient's reference
+        // rect restarts the ramp inside every slice, so the same absolute cell
+        // fades towards a different colour depending on how much was faded.
+        let frame = Rect::new(0, 0, 20, 1);
+        let slice = Rect::new(12, 0, 8, 1);
+        let theme = gradient_background_theme();
+
+        let mut whole = Buffer::empty(frame);
+        fade(&mut whole, frame, 0.0, ground(&theme, frame));
+
+        let mut part = Buffer::empty(frame);
+        fade(&mut part, slice, 0.0, ground(&theme, frame));
+
+        for x in slice.left()..slice.right() {
+            assert_eq!(
+                part.cell((x, 0)).unwrap().fg,
+                whole.cell((x, 0)).unwrap().fg,
+                "the ground moved at column {x}"
+            );
+        }
+        // And the ramp really does vary across that slice, so the assertion
+        // above is not comparing two flat colours.
+        assert_ne!(
+            whole.cell((slice.left(), 0)).unwrap().fg,
+            whole.cell((slice.right() - 1, 0)).unwrap().fg
+        );
+    }
+
+    #[test]
+    fn the_fade_ground_follows_the_role_it_is_given() {
+        // Task 13 hands panel fades their own background role; two different
+        // gradients must give the same coordinate two different grounds.
+        let frame = Rect::new(0, 0, 20, 1);
+        let theme = two_gradient_theme();
+        let at = (5u16, 0u16);
+
+        let mut app_ground = Buffer::empty(frame);
+        fade(&mut app_ground, frame, 0.0, ground(&theme, frame));
+
+        let mut panel_ground = Buffer::empty(frame);
+        fade(
+            &mut panel_ground,
+            frame,
+            0.0,
+            FadeGround {
+                theme: &theme,
+                role: PaintRole::DashboardDetailsBackground,
+                paint_area: frame,
+                exclusions: &[],
+            },
+        );
+
+        assert_ne!(
+            app_ground.cell(at).unwrap().fg,
+            panel_ground.cell(at).unwrap().fg,
+            "both roles faded towards the same colour"
+        );
+    }
+
+    #[test]
+    fn a_fade_leaves_its_exclusions_alone() {
+        let frame = Rect::new(0, 0, 8, 2);
+        let protected = Rect::new(4, 0, 4, 2);
+        let theme = resolved("fire");
+        let mut buf = Buffer::empty(frame);
+        for x in frame.left()..frame.right() {
+            let cell = buf.cell_mut((x, 0)).unwrap();
+            cell.fg = Color::Rgb(0x12, 0x34, 0x56);
+            cell.bg = Color::Rgb(0x65, 0x43, 0x21);
+        }
+
+        fade(
+            &mut buf,
+            frame,
+            0.0,
+            FadeGround {
+                theme: &theme,
+                role: PaintRole::AppBackground,
+                paint_area: frame,
+                exclusions: &[protected],
+            },
+        );
+
+        assert_ne!(buf.cell((0, 0)).unwrap().fg, Color::Rgb(0x12, 0x34, 0x56));
+        assert_eq!(buf.cell((4, 0)).unwrap().fg, Color::Rgb(0x12, 0x34, 0x56));
+        assert_eq!(buf.cell((4, 0)).unwrap().bg, Color::Rgb(0x65, 0x43, 0x21));
+    }
+
+    /// A theme whose app background and details background are *different*
+    /// gradients, so a fade's ground can be attributed to the role it was told
+    /// to use.
+    fn two_gradient_theme() -> Rc<crate::theme::model::ResolvedTheme> {
+        user_theme(
+            "two",
+            "schema_version = 1\nname = \"Two\"\nextends = \"default\"\n\n\
+             [gradients.wash]\ndirection = \"horizontal\"\n\
+             stops = [ { at = 0.0, color = \"#000000\" }, { at = 1.0, color = \"#ffffff\" } ]\n\n\
+             [gradients.warm]\ndirection = \"horizontal\"\n\
+             stops = [ { at = 0.0, color = \"#ff0000\" }, { at = 1.0, color = \"#0000ff\" } ]\n\n\
+             [components.app]\nbackground = { gradient = \"gradients.wash\" }\n\n\
+             [components.dashboard.details]\nbackground = { gradient = \"gradients.warm\" }\n",
+        )
     }
 
     #[test]
@@ -318,16 +462,23 @@ mod tests {
     /// built-in paints one, and a flattened sample is only visible against a
     /// gradient that actually varies.
     fn gradient_background_theme() -> Rc<crate::theme::model::ResolvedTheme> {
-        let source = "schema_version = 1\nname = \"Washed\"\nextends = \"default\"\n\n\
+        user_theme(
+            "washed",
+            "schema_version = 1\nname = \"Washed\"\nextends = \"default\"\n\n\
              [gradients.wash]\ndirection = \"horizontal\"\n\
              stops = [ { at = 0.0, color = \"#000000\" }, { at = 1.0, color = \"#ffffff\" } ]\n\n\
-             [components.app]\nbackground = { gradient = \"gradients.wash\" }\n";
+             [components.app]\nbackground = { gradient = \"gradients.wash\" }\n",
+        )
+    }
+
+    /// Resolve a user theme from a temp directory — never the real one.
+    fn user_theme(id: &str, source: &str) -> Rc<crate::theme::model::ResolvedTheme> {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("washed.toml"), source).unwrap();
+        std::fs::write(dir.path().join(format!("{id}.toml")), source).unwrap();
         let registry = ThemeRegistry::load_installed(dir.path(), ValidationMode::Strict).unwrap();
         registry
-            .resolved(&ThemeId::parse("washed").unwrap())
-            .expect("the gradient theme resolves")
+            .resolved(&ThemeId::parse(id).unwrap())
+            .unwrap_or_else(|| panic!("`{id}` resolves"))
     }
 
     #[test]
