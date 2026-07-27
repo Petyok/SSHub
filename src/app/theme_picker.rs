@@ -261,6 +261,9 @@ impl App {
         // config directory). There is nothing to re-read — and above all the
         // working directory is not a fallback.
         let Some(dir) = self.theme_manager.themes_dir().map(|dir| dir.to_path_buf()) else {
+            // Say so rather than doing nothing at all: a silent `r` is
+            // indistinguishable from a broken key.
+            self.set_theme_picker_error("no themes directory to reload");
             return;
         };
 
