@@ -22,7 +22,7 @@ use crate::app::App;
 use crate::broadcast::{done_count, failures_first, HostState, DISMISS, TOAST_ANIM, TOAST_TTL};
 use crate::tui::theme;
 use crate::tui::tween::ease_out;
-use crate::tui::widgets::panel_box::{put_clamped, render_panel_box, zoom_window};
+use crate::tui::widgets::panel_box::{put_clamped, render_panel_box, zoom_window, BROADCAST_PANEL};
 
 // ── Per-host row presentation ───────────────────────────────
 
@@ -142,7 +142,15 @@ pub fn render_broadcast_panel(frame: &mut Frame, area: Rect, app: &App, focused:
     // the docked panel never bleeds through empty interior rows / trailing cells.
     frame.render_widget(Clear, area);
     let (title, badge) = header_parts(bc);
-    render_panel_box(frame.buffer_mut(), area, &title, Some(&badge), focused);
+    render_panel_box(
+        frame.buffer_mut(),
+        area,
+        &title,
+        Some(&badge),
+        focused,
+        app.theme(),
+        BROADCAST_PANEL,
+    );
 
     let inner_x = area.x + 2;
     let right_lim = area.x + area.width - 1; // last col is the border
@@ -200,7 +208,15 @@ pub fn render_broadcast_zoomed(frame: &mut Frame, area: Rect, app: &App) {
 
     frame.render_widget(Clear, area);
     let (title, badge) = header_parts(bc);
-    render_panel_box(frame.buffer_mut(), area, &title, Some(&badge), true);
+    render_panel_box(
+        frame.buffer_mut(),
+        area,
+        &title,
+        Some(&badge),
+        true,
+        app.theme(),
+        BROADCAST_PANEL,
+    );
 
     let inner_x = area.x + 2;
     let right_lim = area.x + area.width - 1;

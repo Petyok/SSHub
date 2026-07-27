@@ -363,6 +363,18 @@ fn render_centered_and_tail(
     theme: &ResolvedTheme,
 ) {
     let dim = theme.style(StyleRole::SessionDebugTail);
+
+    // The connecting and failure screens write text only, so without this fill
+    // their body would inherit whatever `app.background` painted and
+    // `session.background` would never reach a cell. No PTY grid exists on
+    // either screen, so filling the whole body cannot recolour remote output.
+    crate::tui::blit::fill_paint(
+        frame.buffer_mut(),
+        area,
+        theme,
+        PaintRole::SessionBackground,
+    );
+
     let tail_h = area.height.saturating_sub(1).min(8);
     let top_h = area.height - tail_h;
     let top_area = Rect::new(area.x, area.y, area.width, top_h);
@@ -416,7 +428,7 @@ fn render_failure(frame: &mut Frame, area: Rect, session: &Session, theme: &Reso
         Line::raw(""),
         Line::from(vec![
             Span::styled("couldn't connect to ", mute),
-            Span::styled(host, text),
+            Span::styled(host, theme.style(StyleRole::SessionTitle)),
         ]),
         Line::raw(""),
         Line::from(Span::styled(session.failure_reason(), text)),
@@ -500,7 +512,7 @@ fn render_connecting(
             ),
             Span::raw("  "),
             Span::styled("connecting to ", mute),
-            Span::styled(host, theme.style(StyleRole::TextPrimary)),
+            Span::styled(host, theme.style(StyleRole::SessionTitle)),
         ]),
         Line::raw(""),
         Line::from(Span::styled(hint, dim)),
@@ -658,5 +670,74 @@ mod tests {
             started_at: std::time::Instant::now(),
         };
         assert!(shows_remote_pty(&session));
+    }
+
+    /// Both `session.background` and `session.title` had no productive call
+    /// site: the connecting and failure screens write text only, so their body
+    /// inherited `app.background` and the host name took the generic primary
+    /// text role. Under `default` all three coincide — only marker colours can
+    /// separate a bound role from an ignored one.
+    #[test]
+    fn the_connecting_screen_binds_the_session_background_and_title_roles() {
+        use crate::tui::widgets::panel_box::tests::resolved_source;
+        use ratatui::backend::TestBackend;
+        use ratatui::style::Color;
+        use ratatui::Terminal;
+
+        let theme = resolved_source(
+            "markers",
+            "schema_version = 1\nname = \"Markers\"\nextends = \"default\"\n\n\
+             [components.app]\nbackground = \"#010203\"\n\n\
+             [components.session]\n\
+             background = \"#123456\"\n\
+             title = { foreground = \"#ff00ff\" }\n\n\
+             [components.text]\nprimary = { foreground = \"#00ff00\" }\n",
+        );
+
+        let mut session = spawned_session();
+        session.meta.address = Some("10.0.0.1".into());
+        session.phase = SessionPhase::Connecting {
+            started_at: std::time::Instant::now(),
+        };
+
+        let area = Rect::new(0, 0, 60, 12);
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_connecting(
+                    frame,
+                    area,
+                    &session,
+                    &KeybindsConfig::default(),
+                    Duration::from_secs(1),
+                    &theme,
+                );
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+
+        // A cell nothing was written over carries the body's own background.
+        assert_eq!(
+            buf.cell((0, area.height - 1)).unwrap().bg,
+            Color::Rgb(0x12, 0x34, 0x56),
+            "the connecting body sits on `session.background`, not `app.background`"
+        );
+
+        // The host name is the screen's title. Its row depends on how the
+        // centred block is padded, so find the row rather than assume one.
+        let (host_x, host_y) = (0..area.height)
+            .find_map(|y| {
+                let line: String = (0..area.width)
+                    .map(|x| buf.cell((x, y)).unwrap().symbol())
+                    .collect();
+                line.find("10.0.0.1")
+                    .map(|b| (line[..b].chars().count() as u16, y))
+            })
+            .expect("the host name is on the connecting screen");
+        assert_eq!(
+            buf.cell((host_x, host_y)).unwrap().fg,
+            Color::Rgb(0xff, 0x00, 0xff),
+            "the host name takes `session.title`"
+        );
     }
 }

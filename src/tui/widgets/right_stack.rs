@@ -7,8 +7,11 @@ use ratatui::layout::Rect;
 use ratatui::Frame;
 
 use crate::app::App;
-use crate::tui::theme;
-use crate::tui::widgets::panel_box::{put_clamped, render_panel_box};
+use crate::theme::catalog::{ColorRole, StyleRole};
+use crate::theme::model::ResolvedTheme;
+use crate::tui::widgets::panel_box::{
+    put_clamped, render_panel_box, AUTH_PANEL, PING_PANEL, RECENT_PANEL,
+};
 
 // ── Panel heights ───────────────────────────────────────
 pub const RECENT_H: u16 = 8;
@@ -68,12 +71,18 @@ pub fn format_relative_time(timestamp: i64) -> String {
 }
 
 pub(crate) fn render_recent_panel(buf: &mut Buffer, area: Rect, app: &App) {
+    let theme = app.theme();
+    let dim = theme.style(StyleRole::TextDim);
+    let text = theme.style(StyleRole::TextPrimary);
+    let muted = theme.style(StyleRole::TextMuted);
     render_panel_box(
         buf,
         area,
         "recent sessions",
         None,
         app.focused_panel == crate::app::PanelId::Recent,
+        theme,
+        RECENT_PANEL,
     );
 
     let inner_x = area.x + 2;
@@ -111,7 +120,7 @@ pub(crate) fn render_recent_panel(buf: &mut Buffer, area: Rect, app: &App) {
     if recents.is_empty() {
         let y = area.y + 1;
         if y < area.y + area.height - 1 {
-            put_clamped(buf, inner_x, y, "no sessions yet", theme::dim(), inner_w);
+            put_clamped(buf, inner_x, y, "no sessions yet", dim, inner_w);
         }
     } else {
         let name_max = (area.width.saturating_sub(12)) as usize;
@@ -124,12 +133,17 @@ pub(crate) fn render_recent_panel(buf: &mut Buffer, area: Rect, app: &App) {
             let mut col = inner_x;
 
             // ↺ icon in CYAN
-            buf.set_string(col, y, "\u{21ba}", theme::cyan());
+            buf.set_string(
+                col,
+                y,
+                "\u{21ba}",
+                ratatui::style::Style::default().fg(theme.color(ColorRole::StatusInfo)),
+            );
             col += 2;
 
             // host name (truncated)
             let display: String = host.chars().take(name_max).collect();
-            buf.set_string(col, y, &display, theme::text());
+            buf.set_string(col, y, &display, text);
 
             // age — right-aligned in MUTE; skip when the column is too narrow
             let age = format_relative_time(*ts);
@@ -137,7 +151,7 @@ pub(crate) fn render_recent_panel(buf: &mut Buffer, area: Rect, app: &App) {
             if area.width > needed {
                 let age_col = area.x + area.width - needed;
                 if age_col > col {
-                    buf.set_string(age_col, y, &age, theme::mute());
+                    buf.set_string(age_col, y, &age, muted);
                 }
             }
 
@@ -160,7 +174,7 @@ pub(crate) fn render_recent_panel(buf: &mut Buffer, area: Rect, app: &App) {
             inner_x,
             action_y,
             "show full audit log \u{2192}",
-            theme::dim(),
+            dim,
             inner_w,
         );
     }
@@ -168,13 +182,33 @@ pub(crate) fn render_recent_panel(buf: &mut Buffer, area: Rect, app: &App) {
 
 // ── Auth events sparkline panel ─────────────────────────
 
+/// The status-dot colour of an audit status string, taken from the runtime
+/// status colours rather than the frozen palette.
+fn status_color(theme: &ResolvedTheme, status: &str) -> ratatui::style::Color {
+    let role = match status {
+        "ok" | "launched" | "online" | "up" => ColorRole::StatusSuccess,
+        "slow" | "idle" | "retry" | "warning" => ColorRole::StatusWarning,
+        "down" | "fail" | "error" | "unreachable" => ColorRole::StatusError,
+        _ => ColorRole::StatusUnknown,
+    };
+    theme.color(role)
+}
+
 pub(crate) fn render_auth_panel(buf: &mut Buffer, area: Rect, app: &App) {
+    let theme = app.theme();
+    let dim = theme.style(StyleRole::TextDim);
+    let text = theme.style(StyleRole::TextPrimary);
+    let muted = theme.style(StyleRole::TextMuted);
+    let ok_style = ratatui::style::Style::default().fg(theme.color(ColorRole::StatusSuccess));
+    let fail_style = ratatui::style::Style::default().fg(theme.color(ColorRole::StatusError));
     render_panel_box(
         buf,
         area,
         "auth events",
         None,
         app.focused_panel == crate::app::PanelId::Auth,
+        theme,
+        AUTH_PANEL,
     );
 
     let inner_x = area.x + 2;
@@ -185,7 +219,7 @@ pub(crate) fn render_auth_panel(buf: &mut Buffer, area: Rect, app: &App) {
     if total == 0 && app.auth_events_cache.is_empty() {
         let y = area.y + 1;
         if y < area.y + area.height - 1 {
-            put_clamped(buf, inner_x, y, "no audit data", theme::dim(), inner_w);
+            put_clamped(buf, inner_x, y, "no audit data", dim, inner_w);
         }
         return;
     }
@@ -202,16 +236,16 @@ pub(crate) fn render_auth_panel(buf: &mut Buffer, area: Rect, app: &App) {
             }
         };
 
-        put(buf, "\u{25cf} ", theme::green());
-        put(buf, &format!("ok {}  ", ok), theme::text());
-        put(buf, "\u{25cf} ", theme::red());
-        put(buf, &format!("failed {}  ", fail), theme::text());
+        put(buf, "\u{25cf} ", ok_style);
+        put(buf, &format!("ok {}  ", ok), text);
+        put(buf, "\u{25cf} ", fail_style);
+        put(buf, &format!("failed {}  ", fail), text);
         let rate_str = if total > 0 {
             format!("rate {}%", ok * 100 / total)
         } else {
             "rate \u{2014}".to_string()
         };
-        put(buf, &rate_str, theme::mute());
+        put(buf, &rate_str, muted);
     }
 
     // Mini log: last 2-3 events
@@ -242,20 +276,13 @@ pub(crate) fn render_auth_panel(buf: &mut Buffer, area: Rect, app: &App) {
         }
         let age = format_relative_time(ev.created_at);
         let host: String = ev.host_name.chars().take(name_max).collect();
-        let status_style = ratatui::style::Style::default().fg(theme::status_color(&ev.status));
+        let status_style = ratatui::style::Style::default().fg(status_color(theme, &ev.status));
         let mut col = inner_x;
         let age_display = format!("{:>6} ", age);
-        buf.set_string(col, y, &age_display, theme::mute());
+        buf.set_string(col, y, &age_display, muted);
         col += age_display.len() as u16;
         if col < right_lim {
-            col += put_clamped(
-                buf,
-                col,
-                y,
-                &host,
-                theme::text(),
-                (right_lim - col) as usize,
-            );
+            col += put_clamped(buf, col, y, &host, text, (right_lim - col) as usize);
             col += 1;
         }
         if col < right_lim {
@@ -286,12 +313,17 @@ const SPARK_CHARS: [char; 8] = [
 ];
 
 pub(crate) fn render_ping_panel(buf: &mut Buffer, area: Rect, app: &App) {
+    let theme = app.theme();
+    let dim = theme.style(StyleRole::TextDim);
+    let muted = theme.style(StyleRole::TextMuted);
     render_panel_box(
         buf,
         area,
         "ping all hosts",
         None,
         app.focused_panel == crate::app::PanelId::Ping,
+        theme,
+        PING_PANEL,
     );
 
     let inner_x = area.x + 2;
@@ -309,7 +341,7 @@ pub(crate) fn render_ping_panel(buf: &mut Buffer, area: Rect, app: &App) {
         let y = area.y + 1;
         if y < area.y + area.height - 1 {
             let baseline: String = "\u{2581}".repeat(inner_w.min(20));
-            buf.set_string(inner_x, y, &baseline, theme::dim());
+            buf.set_string(inner_x, y, &baseline, dim);
         }
         let info_y = area.y + 2;
         if info_y < area.y + area.height - 1 {
@@ -318,7 +350,7 @@ pub(crate) fn render_ping_panel(buf: &mut Buffer, area: Rect, app: &App) {
                 inner_x,
                 info_y,
                 "waiting for ping data...",
-                theme::dim(),
+                dim,
                 inner_w,
             );
         }
@@ -383,7 +415,12 @@ pub(crate) fn render_ping_panel(buf: &mut Buffer, area: Rect, app: &App) {
                 }
             })
             .collect();
-        buf.set_string(inner_x, spark_y, &spark, theme::cyan());
+        buf.set_string(
+            inner_x,
+            spark_y,
+            &spark,
+            ratatui::style::Style::default().fg(theme.color(ColorRole::StatusInfo)),
+        );
     }
 
     // Stats line: min Xms  max Xms  loss X%
@@ -405,24 +442,29 @@ pub(crate) fn render_ping_panel(buf: &mut Buffer, area: Rect, app: &App) {
             format!("{}ms", all_max)
         };
         let stats = format!("min {}  max {}  loss {}%", min_str, max_str, loss_pct);
-        put_clamped(buf, inner_x, info_y, &stats, theme::mute(), inner_w);
+        put_clamped(buf, inner_x, info_y, &stats, muted, inner_w);
     }
 }
 
 /// Colour a latency (ms) green/amber/red by how healthy it looks.
-fn ping_latency_style(v: u32) -> ratatui::style::Style {
-    if v < 80 {
-        theme::green()
+fn ping_latency_style(theme: &ResolvedTheme, v: u32) -> ratatui::style::Style {
+    let role = if v < 80 {
+        ColorRole::StatusSuccess
     } else if v < 200 {
-        theme::amber()
+        ColorRole::StatusWarning
     } else {
-        theme::red()
-    }
+        ColorRole::StatusError
+    };
+    ratatui::style::Style::default().fg(theme.color(role))
 }
 
 /// Zoomed ping view: one row per host (sorted by name), height-driven, laid out
 /// as a table — name │ current latency │ per-host sparkline │ min/max/loss.
 fn render_ping_zoomed(buf: &mut Buffer, area: Rect, app: &App, inner_x: u16, inner_w: usize) {
+    let theme = app.theme();
+    let dim = theme.style(StyleRole::TextDim);
+    let text = theme.style(StyleRole::TextPrimary);
+    let muted = theme.style(StyleRole::TextMuted);
     let bottom = area.y + area.height - 1; // first row occupied by the border
     let right_lim = inner_x + inner_w as u16;
 
@@ -430,14 +472,7 @@ fn render_ping_zoomed(buf: &mut Buffer, area: Rect, app: &App, inner_x: u16, inn
     if app.ping_data.is_empty() {
         let y = area.y + 1;
         if y < bottom {
-            put_clamped(
-                buf,
-                inner_x,
-                y,
-                "waiting for ping data...",
-                theme::dim(),
-                inner_w,
-            );
+            put_clamped(buf, inner_x, y, "waiting for ping data...", dim, inner_w);
         }
         return;
     }
@@ -464,12 +499,12 @@ fn render_ping_zoomed(buf: &mut Buffer, area: Rect, app: &App, inner_x: u16, inn
     // Header row.
     let header_y = area.y + 1;
     if header_y < bottom {
-        put_clamped(buf, name_x, header_y, "host", theme::mute(), name_w);
+        put_clamped(buf, name_x, header_y, "host", muted, name_w);
         if ms_w > 0 {
-            put_clamped(buf, ms_x, header_y, "now", theme::mute(), ms_w);
+            put_clamped(buf, ms_x, header_y, "now", muted, ms_w);
         }
         if spark_w > 0 {
-            put_clamped(buf, spark_x, header_y, "recent", theme::mute(), spark_w);
+            put_clamped(buf, spark_x, header_y, "recent", muted, spark_w);
         }
         if stats_w > 0 && stats_x < right_lim {
             put_clamped(
@@ -477,7 +512,7 @@ fn render_ping_zoomed(buf: &mut Buffer, area: Rect, app: &App, inner_x: u16, inn
                 stats_x,
                 header_y,
                 "min / max / loss",
-                theme::mute(),
+                muted,
                 (right_lim - stats_x) as usize,
             );
         }
@@ -525,16 +560,17 @@ fn render_ping_zoomed(buf: &mut Buffer, area: Rect, app: &App, inner_x: u16, inn
         }
 
         // Host name.
-        put_clamped(buf, name_x, y, name, theme::text(), name_w);
+        put_clamped(buf, name_x, y, name, text, name_w);
 
         // Current latency (last sample), coloured by health.
         if ms_w > 0 {
             let (cur_str, cur_style) = match samples.last().copied() {
-                None => ("\u{2014}".to_string(), theme::dim()),
-                Some(v) if crate::ping::is_unreachable(v) || v == 0 => {
-                    ("timeout".to_string(), theme::red())
-                }
-                Some(v) => (format!("{}ms", v), ping_latency_style(v)),
+                None => ("\u{2014}".to_string(), dim),
+                Some(v) if crate::ping::is_unreachable(v) || v == 0 => (
+                    "timeout".to_string(),
+                    ratatui::style::Style::default().fg(theme.color(ColorRole::StatusError)),
+                ),
+                Some(v) => (format!("{}ms", v), ping_latency_style(theme, v)),
             };
             // Right-align inside the ms column.
             let pad = ms_w.saturating_sub(cur_str.chars().count());
@@ -564,7 +600,14 @@ fn render_ping_zoomed(buf: &mut Buffer, area: Rect, app: &App, inner_x: u16, inn
                     }
                 })
                 .collect();
-            put_clamped(buf, spark_x, y, &spark, theme::cyan(), spark_w);
+            put_clamped(
+                buf,
+                spark_x,
+                y,
+                &spark,
+                ratatui::style::Style::default().fg(theme.color(ColorRole::StatusInfo)),
+                spark_w,
+            );
         }
 
         // min / max / loss stats.
@@ -586,7 +629,7 @@ fn render_ping_zoomed(buf: &mut Buffer, area: Rect, app: &App, inner_x: u16, inn
                 stats_x,
                 y,
                 &stats,
-                theme::mute(),
+                muted,
                 (right_lim - stats_x) as usize,
             );
         }

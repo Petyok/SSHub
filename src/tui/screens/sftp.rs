@@ -20,11 +20,12 @@ use ratatui::prelude::*;
 
 use crate::app::{App, SftpAnim};
 use crate::sftp::model::{Direction, Focus, Pane, Phase, SftpState};
+use crate::theme::model::ResolvedTheme;
 use crate::tui::blit;
 use crate::tui::text::ellipsize;
 use crate::tui::theme;
 use crate::tui::tween;
-use crate::tui::widgets::panel_box::render_panel_box;
+use crate::tui::widgets::panel_box::{render_panel_box, SFTP_PANEL};
 use crate::tui::SFTP_ANIM;
 
 pub fn render_sftp(frame: &mut Frame, area: Rect, app: &App) {
@@ -64,6 +65,7 @@ fn render_rest(frame: &mut Frame, area: Rect, app: &App) {
                 fill,
                 staged_fly_in(app),
                 nav_offsets(app, area),
+                app.theme(),
             )
         }
     }
@@ -114,6 +116,7 @@ fn render_slide(frame: &mut Frame, area: Rect, app: &App, kind: SftpAnim, p: f32
                 app.sftp_progress_advance(progress_fraction(state)),
                 staged_fly_in(app),
                 nav_offsets(app, area),
+                app.theme(),
             );
             blit_panes(frame.buffer_mut(), area, &layer, 1.0 - e);
             // Same for an Esc landing mid-slide: the panes part from the rest
@@ -198,6 +201,7 @@ fn render_browser(
     fill: f32,
     staged: f32,
     nav: [i32; 2],
+    theme: &ResolvedTheme,
 ) {
     let progress_h: u16 = if state.phase == Phase::Running { 1 } else { 0 };
     let queue_h: u16 = if state.queue.is_empty() {
@@ -223,6 +227,7 @@ fn render_browser(
         left_title,
         state.focus == Focus::Local,
         state.searching && state.focus == Focus::Local,
+        theme,
     );
     if state.left_connecting {
         render_connecting(buf, local_rect, state.left_host.as_deref());
@@ -234,6 +239,7 @@ fn render_browser(
         "remote",
         state.focus == Focus::Remote,
         state.searching && state.focus == Focus::Remote,
+        theme,
     );
 
     // Slide each pane's listing to its new directory, inside its own border so
@@ -265,6 +271,7 @@ fn render_pane(
     title: &str,
     focused: bool,
     searching: bool,
+    theme: &ResolvedTheme,
 ) {
     if rect.width < 6 || rect.height < 2 {
         return;
@@ -291,7 +298,7 @@ fn render_pane(
             pane.filter, vis_n, total, hidden_note
         )
     };
-    render_panel_box(buf, rect, title, Some(&count), false);
+    render_panel_box(buf, rect, title, Some(&count), false, theme, SFTP_PANEL);
 
     let inner_x = rect.x + 2;
     let inner_w = rect.width.saturating_sub(4) as usize;

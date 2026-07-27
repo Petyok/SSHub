@@ -1,10 +1,12 @@
 //! Hosts panel — grouped host tree for the dashboard left column.
 
 use ratatui::layout::Rect;
+use ratatui::style::Style;
 use ratatui::Frame;
 
 use crate::app::{App, HostEntry};
-use crate::tui::theme;
+use crate::theme::catalog::{ColorRole, PaintRole, StyleRole};
+use crate::theme::model::ResolvedTheme;
 use crate::tui::tween;
 use crate::tui::widgets::panel_box;
 
@@ -26,17 +28,45 @@ fn highlight_fill(app: &App) -> f32 {
     }
 }
 
-/// Clear the background of the selected row past the point the wipe has
+/// Restore the background of the selected row past the point the wipe has
 /// reached, leaving the bar filling in from the left edge of the row.
-fn clip_highlight(buf: &mut ratatui::buffer::Buffer, x: u16, y: u16, w: usize, fill: f32) {
+///
+/// What it restores is the panel's own resolved background, sampled per cell so
+/// a gradient survives the wipe — not a blind `Color::Reset`, which would punch
+/// a transparent hole through a painted panel.
+fn clip_highlight(
+    buf: &mut ratatui::buffer::Buffer,
+    x: u16,
+    y: u16,
+    w: usize,
+    fill: f32,
+    ground: PanelGround<'_>,
+) {
     if fill >= 1.0 {
         return;
     }
     let filled = (w as f32 * fill).round() as u16;
     for cx in (x + filled)..(x + w as u16) {
+        let bg = ground.at(cx, y);
         if let Some(c) = buf.cell_mut((cx, y)) {
-            c.bg = ratatui::style::Color::Reset;
+            c.bg = bg;
         }
+    }
+}
+
+/// The panel background a wipe restores, sampled against the panel's own rect.
+#[derive(Clone, Copy)]
+struct PanelGround<'a> {
+    theme: &'a ResolvedTheme,
+    role: PaintRole,
+    /// The panel rectangle the paint role is sampled against — a gradient must
+    /// not restart inside the row being wiped.
+    area: Rect,
+}
+
+impl PanelGround<'_> {
+    fn at(&self, x: u16, y: u16) -> ratatui::style::Color {
+        self.theme.paint_color_at(self.role, self.area, x, y)
     }
 }
 
@@ -45,6 +75,9 @@ fn clip_highlight(buf: &mut ratatui::buffer::Buffer, x: u16, y: u16, w: usize, f
 /// Draws a panel box with title "hosts" and the total host count, then renders
 /// group headers and host rows inside the bordered area.
 pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
+    let theme = app.theme();
+    let semantic = theme.semantic();
+    let selection_bg = semantic.selection_bg;
     let buf = frame.buffer_mut();
 
     // Total host count for the panel badge.
@@ -71,6 +104,8 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
         &title,
         Some(&count_str),
         app.focused_panel == crate::app::PanelId::Hosts,
+        theme,
+        panel_box::HOST_LIST_PANEL,
     );
 
     // Content area inside the panel borders: x+2, y+1, width-4, height-2
@@ -102,7 +137,12 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
         for (i, line) in lines.iter().enumerate() {
             let y = cy + 1 + i as u16;
             if (y as usize) < cy as usize + ch {
-                buf.set_string(cx, y, crate::tui::text::ellipsize(line, cw), theme::mute());
+                buf.set_string(
+                    cx,
+                    y,
+                    crate::tui::text::ellipsize(line, cw),
+                    theme.style(StyleRole::TextMuted),
+                );
             }
         }
         return;
@@ -114,6 +154,11 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
     use crate::app::VisualRow;
     let visual = app.host_visual_rows();
     let fill = highlight_fill(app);
+    let ground = PanelGround {
+        theme,
+        role: PaintRole::DashboardHostListBackground,
+        area,
+    };
 
     for (vrow, row) in visual.iter().enumerate() {
         if vrow < offset || vrow >= window_end {
@@ -143,20 +188,29 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
 
                 if selected {
                     let blank = " ".repeat(cw);
-                    buf.set_string(cx, y, &blank, theme::selected());
+                    buf.set_string(cx, y, &blank, theme.style(StyleRole::SelectionActive));
                 }
+                // A selected group header is the one place whose legacy style
+                // is literally `text_highlight on selection_bg`, i.e. the
+                // frozen value of `host_list.host_selected`; the host rows
+                // below carry `selection.active` (see the task report).
+                let selected_row_style = theme.style(StyleRole::DashboardHostListHostSelected);
                 let (arrow_style, label_style) = if selected {
+                    (selected_row_style, selected_row_style)
+                } else {
                     (
-                        theme::white().bg(theme::SEL_BG),
-                        theme::white().bg(theme::SEL_BG),
+                        theme.style(StyleRole::TextMuted),
+                        // No `Style` role resolves to bare `text_highlight`,
+                        // and `host_list.group` resolves to `info` (cyan),
+                        // which the tree has never used for a group label.
+                        Style::default().fg(semantic.text_highlight),
                     )
-                } else {
-                    (theme::mute(), theme::white())
                 };
+                let muted = theme.style(StyleRole::TextMuted);
                 let mute_bg = if selected {
-                    theme::mute().bg(theme::SEL_BG)
+                    muted.bg(selection_bg)
                 } else {
-                    theme::mute()
+                    muted
                 };
 
                 buf.set_string(col, y, arrow, arrow_style);
@@ -193,7 +247,7 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
                 // If selected, fill the entire row with SEL_BG.
                 if is_selected {
                     let blank = " ".repeat(cw);
-                    buf.set_string(cx, y, &blank, theme::selected());
+                    buf.set_string(cx, y, &blank, theme.style(StyleRole::SelectionActive));
                 }
 
                 // Indent hosts under their group; two cols per nesting level
@@ -204,42 +258,45 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
                 let host_name_for_dot = entry.name();
                 let ping_samples = app.ping_data.get(host_name_for_dot).map(|v| v.as_slice());
                 let (dot_char, dot_color) = match crate::ping::classify_ping(ping_samples) {
-                    crate::ping::PingClass::Online => ("\u{25cf}", theme::GREEN),
+                    crate::ping::PingClass::Online => {
+                        ("\u{25cf}", theme.color(ColorRole::StatusSuccess))
+                    }
                     crate::ping::PingClass::Slow => {
                         let ms = ping_samples.and_then(|s| s.last().copied()).unwrap_or(0);
                         if ms <= 200 {
-                            ("\u{25cf}", theme::AMBER)
+                            ("\u{25cf}", theme.color(ColorRole::StatusWarning))
                         } else {
-                            ("\u{25cf}", theme::RED)
+                            ("\u{25cf}", theme.color(ColorRole::StatusError))
                         }
                     }
-                    crate::ping::PingClass::Unreachable => ("\u{25cf}", theme::RED),
-                    crate::ping::PingClass::Unknown => ("\u{25cb}", theme::DIM),
+                    crate::ping::PingClass::Unreachable => {
+                        ("\u{25cf}", theme.color(ColorRole::StatusError))
+                    }
+                    crate::ping::PingClass::Unknown => {
+                        ("\u{25cb}", theme.color(ColorRole::StatusUnknown))
+                    }
                 };
                 // Flash the dot through white when the class just changed (#35).
                 let dot_color = app.ping_flash_color(host_name_for_dot, dot_color);
                 let dot_style = if is_selected {
-                    ratatui::style::Style::default()
-                        .fg(dot_color)
-                        .bg(theme::SEL_BG)
+                    Style::default().fg(dot_color).bg(selection_bg)
                 } else {
-                    ratatui::style::Style::default().fg(dot_color)
+                    Style::default().fg(dot_color)
                 };
                 buf.set_string(col, y, dot_char, dot_style);
                 col += 2; // dot + space
 
                 // Base style for text on this row.
                 let name_style = if is_selected {
-                    theme::selected()
+                    theme.style(StyleRole::SelectionActive)
                 } else {
-                    theme::text()
+                    theme.style(StyleRole::DashboardHostListHost)
                 };
+                let dim = theme.style(StyleRole::TextDim);
                 let dim_style = if is_selected {
-                    ratatui::style::Style::default()
-                        .fg(theme::DIM)
-                        .bg(theme::SEL_BG)
+                    dim.bg(selection_bg)
                 } else {
-                    theme::dim()
+                    dim
                 };
 
                 let inner_right = cx + cw as u16;
@@ -259,11 +316,11 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
                 if col < inner_right {
                     if entry.favorite() {
                         let star_style = if is_selected {
-                            ratatui::style::Style::default()
-                                .fg(theme::AMBER)
-                                .bg(theme::SEL_BG)
+                            Style::default()
+                                .fg(theme.color(ColorRole::StatusWarning))
+                                .bg(selection_bg)
                         } else {
-                            theme::amber()
+                            Style::default().fg(theme.color(ColorRole::StatusWarning))
                         };
                         buf.set_string(col, y, "\u{2605}", star_style);
                     }
@@ -296,21 +353,16 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
                             );
                             let style = if latest < 100 {
                                 dim_style
-                            } else if latest <= 200 {
-                                if is_selected {
-                                    ratatui::style::Style::default()
-                                        .fg(theme::AMBER)
-                                        .bg(theme::SEL_BG)
-                                } else {
-                                    theme::amber()
-                                }
                             } else {
-                                if is_selected {
-                                    ratatui::style::Style::default()
-                                        .fg(theme::RED)
-                                        .bg(theme::SEL_BG)
+                                let color = if latest <= 200 {
+                                    theme.color(ColorRole::StatusWarning)
                                 } else {
-                                    theme::red()
+                                    theme.color(ColorRole::StatusError)
+                                };
+                                if is_selected {
+                                    Style::default().fg(color).bg(selection_bg)
+                                } else {
+                                    Style::default().fg(color)
                                 }
                             };
                             (s, style)
@@ -328,7 +380,7 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
         // The highlight bar fills in from the left under a moved cursor; done
         // after the row is drawn so it clips the row's own styling too.
         if selected_row {
-            clip_highlight(buf, cx, y, cw, fill);
+            clip_highlight(buf, cx, y, cw, fill, ground);
         }
     }
 
@@ -339,11 +391,16 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
         // Dotted divider line.
         let dots: String = "\u{00b7} ".repeat(cw / 2);
         let dots_trimmed: String = dots.chars().take(cw).collect();
-        buf.set_string(cx, footer_y, &dots_trimmed, theme::mute());
+        buf.set_string(
+            cx,
+            footer_y,
+            &dots_trimmed,
+            theme.style(StyleRole::TextMuted),
+        );
 
         // "+ add a new host" action.
         let action = "+ add a new host";
-        buf.set_string(cx, footer_y + 1, action, theme::dim());
+        buf.set_string(cx, footer_y + 1, action, theme.style(StyleRole::TextDim));
     }
 }
 
@@ -366,31 +423,57 @@ fn host_address(entry: &HostEntry) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::widgets::panel_box::tests::{resolved_default, resolved_source};
     use ratatui::buffer::Buffer;
     use ratatui::style::Color;
 
-    fn filled_row(fill: f32) -> Vec<Color> {
+    /// A wiped row over `theme`'s host-list background, returning the row's
+    /// backgrounds left to right. `sel_bg` is what the bar itself is filled
+    /// with, so the two halves are told apart by value.
+    fn filled_row_with(theme: &ResolvedTheme, fill: f32) -> Vec<Color> {
         let area = Rect::new(0, 0, 8, 1);
         let mut buf = Buffer::empty(area);
+        let sel_bg = theme.semantic().selection_bg;
         for x in 0..8 {
-            buf.cell_mut((x, 0)).unwrap().bg = theme::SEL_BG;
+            buf.cell_mut((x, 0)).unwrap().bg = sel_bg;
         }
-        clip_highlight(&mut buf, 0, 0, 8, fill);
+        clip_highlight(
+            &mut buf,
+            0,
+            0,
+            8,
+            fill,
+            PanelGround {
+                theme,
+                role: PaintRole::DashboardHostListBackground,
+                area,
+            },
+        );
         (0..8).map(|x| buf.cell((x, 0)).unwrap().bg).collect()
+    }
+
+    fn filled_row(fill: f32) -> Vec<Color> {
+        filled_row_with(&resolved_default(), fill)
     }
 
     #[test]
     fn highlight_at_rest_keeps_the_whole_bar() {
-        assert!(filled_row(1.0).iter().all(|c| *c == theme::SEL_BG));
+        let theme = resolved_default();
+        let sel = theme.semantic().selection_bg;
+        assert!(filled_row(1.0).iter().all(|c| *c == sel));
     }
 
     #[test]
     fn highlight_fills_from_the_left() {
+        let theme = resolved_default();
+        let sel = theme.semantic().selection_bg;
         let bgs = filled_row(0.5);
         assert!(
-            bgs[..4].iter().all(|c| *c == theme::SEL_BG),
+            bgs[..4].iter().all(|c| *c == sel),
             "left half stays filled: {bgs:?}"
         );
+        // `default`'s `surface` is "terminal", so the wiped half goes back to
+        // the unpainted ground exactly as it always did.
         assert!(
             bgs[4..].iter().all(|c| *c == Color::Reset),
             "right half is cleared: {bgs:?}"
@@ -400,5 +483,21 @@ mod tests {
     #[test]
     fn highlight_at_zero_clears_the_row() {
         assert!(filled_row(0.0).iter().all(|c| *c == Color::Reset));
+    }
+
+    /// The wipe restores the *panel's* background role, not a blind reset —
+    /// only a marker theme can tell the two apart.
+    #[test]
+    fn the_wipe_restores_the_panel_background_role() {
+        let theme = resolved_source(
+            "markers",
+            "schema_version = 1\nname = \"Markers\"\nextends = \"default\"\n\n\
+             [components.dashboard.host_list]\nbackground = \"#123456\"\n",
+        );
+        let bgs = filled_row_with(&theme, 0.5);
+        assert!(
+            bgs[4..].iter().all(|c| *c == Color::Rgb(0x12, 0x34, 0x56)),
+            "the wiped half falls back to `host_list.background`: {bgs:?}"
+        );
     }
 }

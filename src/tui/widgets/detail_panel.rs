@@ -1,8 +1,34 @@
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::{App, AppMode, DetailEditField, HostEntry};
+use crate::theme::catalog::{ColorRole, StyleRole};
+use crate::theme::model::ResolvedTheme;
+
+/// The three styles this panel writes with.
+///
+/// The hard-coded `Cyan` / `Yellow` / `DarkGray` these used to be were never
+/// design tokens; the spec lists this file under the direct colours that get
+/// unified onto semantic roles.
+#[derive(Clone, Copy)]
+struct DetailStyles {
+    label: Style,
+    value: Style,
+    favorite: Style,
+    hint: Style,
+}
+
+impl DetailStyles {
+    fn of(theme: &ResolvedTheme) -> Self {
+        Self {
+            label: theme.style(StyleRole::DashboardDetailsLabel),
+            value: theme.style(StyleRole::DashboardDetailsValue),
+            favorite: Style::default().fg(theme.color(ColorRole::StatusWarning)),
+            hint: theme.style(StyleRole::TextDim),
+        }
+    }
+}
 
 fn dash(opt: &Option<String>) -> &str {
     match opt {
@@ -66,25 +92,23 @@ fn field_with_cursor(label: &str, value: &str, cursor: usize, active: bool) -> S
     format!("{prefix}{label}: {display}")
 }
 
-fn detail_line(label: &str, value: String) -> Line<'static> {
-    let label_style = Style::default().fg(Color::Cyan);
+fn detail_line(styles: DetailStyles, label: &str, value: String) -> Line<'static> {
     Line::from(vec![
-        Span::styled(format!("{label}: "), label_style),
-        Span::raw(value),
+        Span::styled(format!("{label}: "), styles.label),
+        Span::styled(value, styles.value),
     ])
 }
 
-fn detail_fav_line(fav: bool) -> Line<'static> {
-    let label_style = Style::default().fg(Color::Cyan);
+fn detail_fav_line(styles: DetailStyles, fav: bool) -> Line<'static> {
     if fav {
         Line::from(vec![
-            Span::styled("Favorite: ", label_style),
-            Span::styled("yes ★", Style::default().fg(Color::Yellow)),
+            Span::styled("Favorite: ", styles.label),
+            Span::styled("yes ★", styles.favorite),
         ])
     } else {
         Line::from(vec![
-            Span::styled("Favorite: ", label_style),
-            Span::raw("no"),
+            Span::styled("Favorite: ", styles.label),
+            Span::styled("no", styles.value),
         ])
     }
 }
@@ -94,7 +118,12 @@ fn tri_state_line(label: &str, value: &str, active: bool) -> String {
     format!("{prefix}{label}: {value} (Space or arrows to cycle)")
 }
 
-fn host_detail_view(app: &App, entry: &HostEntry, _host_idx: usize) -> Vec<Line<'static>> {
+fn host_detail_view(
+    app: &App,
+    entry: &HostEntry,
+    _host_idx: usize,
+    styles: DetailStyles,
+) -> Vec<Line<'static>> {
     let ssh = entry.ssh_host();
     let last = entry
         .last_connected()
@@ -114,20 +143,21 @@ fn host_detail_view(app: &App, entry: &HostEntry, _host_idx: usize) -> Vec<Line<
         crate::store::HostSource::SshConfig => "ssh_config",
     };
 
-    let hint_style = Style::default().fg(Color::DarkGray);
+    let hint_style = styles.hint;
 
     let mut lines = vec![
-        detail_line("Host", entry.name().to_string()),
-        detail_line("Label", entry.display_name().to_string()),
-        detail_line("Address", dash(&ssh.hostname).to_string()),
-        detail_line("User", dash(&ssh.user).to_string()),
-        detail_line("Port", format_port(ssh.port)),
-        detail_line("Group", group_line),
-        detail_line("Identity", identity_line),
-        detail_line("ProxyJump", dash(&ssh.proxy_jump).to_string()),
-        detail_line("Source", source.to_string()),
+        detail_line(styles, "Host", entry.name().to_string()),
+        detail_line(styles, "Label", entry.display_name().to_string()),
+        detail_line(styles, "Address", dash(&ssh.hostname).to_string()),
+        detail_line(styles, "User", dash(&ssh.user).to_string()),
+        detail_line(styles, "Port", format_port(ssh.port)),
+        detail_line(styles, "Group", group_line),
+        detail_line(styles, "Identity", identity_line),
+        detail_line(styles, "ProxyJump", dash(&ssh.proxy_jump).to_string()),
+        detail_line(styles, "Source", source.to_string()),
         Line::from(""),
         detail_line(
+            styles,
             "Tags",
             if entry.tags().is_empty() {
                 "—".into()
@@ -136,22 +166,26 @@ fn host_detail_view(app: &App, entry: &HostEntry, _host_idx: usize) -> Vec<Line<
             },
         ),
         detail_line(
+            styles,
             "Environment",
             dash(&entry.environment().map(str::to_string)).to_string(),
         ),
         detail_line(
+            styles,
             "Description",
             dash(&entry.description().map(str::to_string)).to_string(),
         ),
-        detail_fav_line(entry.favorite()),
-        detail_line("Last connected", last),
+        detail_fav_line(styles, entry.favorite()),
+        detail_line(styles, "Last connected", last),
     ];
 
     lines.push(detail_line(
+        styles,
         "Session log",
         entry.session_logging_override().label().to_string(),
     ));
     lines.push(detail_line(
+        styles,
         "Transport",
         entry.session_transport().label().to_string(),
     ));
@@ -189,7 +223,12 @@ fn host_detail_view(app: &App, entry: &HostEntry, _host_idx: usize) -> Vec<Line<
     lines
 }
 
-fn host_detail_edit(app: &App, entry: &HostEntry, _host_idx: usize) -> Vec<Line<'static>> {
+fn host_detail_edit(
+    app: &App,
+    entry: &HostEntry,
+    _host_idx: usize,
+    styles: DetailStyles,
+) -> Vec<Line<'static>> {
     let edit = app
         .detail_edit
         .as_ref()
@@ -220,21 +259,18 @@ fn host_detail_edit(app: &App, entry: &HostEntry, _host_idx: usize) -> Vec<Line<
         edit.field == DetailEditField::SessionLogging,
     );
 
-    let hint_style = Style::default().fg(Color::DarkGray);
+    let hint_style = styles.hint;
 
     vec![
-        detail_line("Host", entry.name().to_string()),
-        detail_line("Address", dash(&ssh.hostname).to_string()),
+        detail_line(styles, "Host", entry.name().to_string()),
+        detail_line(styles, "Address", dash(&ssh.hostname).to_string()),
         Line::from(""),
-        Line::from(Span::styled(
-            "Editing metadata",
-            Style::default().fg(Color::Cyan),
-        )),
+        Line::from(Span::styled("Editing metadata", styles.label)),
         Line::from(tags_line),
         Line::from(desc_line),
         Line::from(env_line),
         Line::from(session_log_line),
-        detail_fav_line(entry.favorite()),
+        detail_fav_line(styles, entry.favorite()),
         Line::from(""),
         Line::from(Span::styled("[Enter] save", hint_style)),
         Line::from(Span::styled("[Esc] cancel", hint_style)),
@@ -243,20 +279,26 @@ fn host_detail_edit(app: &App, entry: &HostEntry, _host_idx: usize) -> Vec<Line<
     ]
 }
 
-fn host_detail_text(app: &App, entry: &HostEntry, host_idx: usize) -> Vec<Line<'static>> {
+fn host_detail_text(
+    app: &App,
+    entry: &HostEntry,
+    host_idx: usize,
+    styles: DetailStyles,
+) -> Vec<Line<'static>> {
     if app.mode == AppMode::HostDetail && app.detail_edit.is_some() {
-        host_detail_edit(app, entry, host_idx)
+        host_detail_edit(app, entry, host_idx, styles)
     } else {
-        host_detail_view(app, entry, host_idx)
+        host_detail_view(app, entry, host_idx, styles)
     }
 }
 
 pub fn render_detail_panel(app: &App) -> Paragraph<'static> {
+    let styles = DetailStyles::of(app.theme());
     let lines = if let Some(host_idx) = app.selected_host_index() {
         let entry = &app.hosts[host_idx];
-        host_detail_text(app, entry, host_idx)
+        host_detail_text(app, entry, host_idx, styles)
     } else {
-        vec![Line::from("No host selected")]
+        vec![Line::from(Span::styled("No host selected", styles.hint))]
     };
     Paragraph::new(lines)
 }
@@ -316,7 +358,7 @@ mod tests {
             cursor: 4,
         });
 
-        let lines = host_detail_text(&app, &app.hosts[0], 0);
+        let lines = host_detail_text(&app, &app.hosts[0], 0, DetailStyles::of(app.theme()));
         let text: String = lines
             .iter()
             .map(|l| l.to_string())
@@ -325,5 +367,34 @@ mod tests {
         assert!(text.contains("> Tags (comma-separated): prod_"));
         assert!(text.contains("[Enter] save"));
         assert!(!text.contains("[e] edit metadata"));
+    }
+
+    /// The panel's four styles come from four roles. `Color::Cyan` /
+    /// `Color::Yellow` / `Color::DarkGray` were direct ANSI, so nothing about
+    /// `default` would have caught them staying put — a marker theme does.
+    #[test]
+    fn the_detail_lines_take_their_own_marker_roles() {
+        use crate::tui::widgets::panel_box::tests::resolved_source;
+        use ratatui::style::Color;
+
+        let theme = resolved_source(
+            "markers",
+            "schema_version = 1\nname = \"Markers\"\nextends = \"default\"\n\n\
+             [components.dashboard.details]\n\
+             label = { foreground = \"#ff00ff\" }\n\
+             value = { foreground = \"#00ffff\" }\n\n\
+             [components.status]\nwarning = \"#ffaa00\"\n\n\
+             [components.text]\ndim = { foreground = \"#333333\" }\n",
+        );
+        let styles = DetailStyles::of(&theme);
+
+        let line = detail_line(styles, "Host", "web-prod".into());
+        assert_eq!(line.spans[0].style.fg, Some(Color::Rgb(0xff, 0x00, 0xff)));
+        assert_eq!(line.spans[1].style.fg, Some(Color::Rgb(0x00, 0xff, 0xff)));
+
+        let fav = detail_fav_line(styles, true);
+        assert_eq!(fav.spans[1].style.fg, Some(Color::Rgb(0xff, 0xaa, 0x00)));
+
+        assert_eq!(styles.hint.fg, Some(Color::Rgb(0x33, 0x33, 0x33)));
     }
 }

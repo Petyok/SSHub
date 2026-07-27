@@ -490,4 +490,63 @@ mod tests {
             assert_eq!(row(&snap, a, y), row(&src, a, y));
         }
     }
+
+    /// The details panel's fade must blend towards `dashboard.details.background`
+    /// sampled over *the panel's* rect — not towards `app.background` over the
+    /// frame. Under `default` both roles land on the same colour, so only a
+    /// theme that gives them two *different* gradients can tell them apart.
+    #[test]
+    fn the_details_fade_blends_towards_the_details_gradient_not_the_app_one() {
+        use crate::tui::widgets::panel_box::tests::resolved_source;
+
+        let theme = resolved_source(
+            "two-gradients",
+            "schema_version = 1\nname = \"Two\"\nextends = \"default\"\n\n\
+             [gradients.app]\ndirection = \"horizontal\"\n\
+             stops = [ { at = 0.0, color = \"#000000\" }, \
+             { at = 1.0, color = \"#0000ff\" } ]\n\n\
+             [gradients.details]\ndirection = \"horizontal\"\n\
+             stops = [ { at = 0.0, color = \"#ff0000\" }, \
+             { at = 1.0, color = \"#ffff00\" } ]\n\n\
+             [components.app]\nbackground = { gradient = \"gradients.app\" }\n\n\
+             [components.dashboard.details]\n\
+             background = { gradient = \"gradients.details\" }\n",
+        );
+
+        // A frame 40 wide with the details panel offset into it, so the two
+        // rects genuinely disagree about where the gradient restarts.
+        let frame = Rect::new(0, 0, 40, 10);
+        let panel = Rect::new(10, 2, 20, 6);
+        // The faded slice is the panel *body*: narrower again, to prove the
+        // gradient is sampled against `paint_area` and not against `area`.
+        let body = Rect::new(12, 3, 16, 4);
+
+        // Fade fully out (k == 0): every cell lands exactly on the ground.
+        let mut buf = Buffer::empty(frame);
+        fade(
+            &mut buf,
+            body,
+            0.0,
+            FadeGround {
+                theme: &theme,
+                role: PaintRole::DashboardDetailsBackground,
+                paint_area: panel,
+                exclusions: &[],
+            },
+        );
+
+        for (x, y) in [(12u16, 3u16), (27u16, 6u16)] {
+            let expected = theme.paint_color_at(PaintRole::DashboardDetailsBackground, panel, x, y);
+            let app_ground = theme.paint_color_at(PaintRole::AppBackground, frame, x, y);
+            assert_ne!(
+                expected, app_ground,
+                "the two gradients must actually differ at ({x}, {y}) for this test to bite"
+            );
+            assert_eq!(
+                buf.cell((x, y)).unwrap().fg,
+                expected,
+                "the fade at ({x}, {y}) blends towards the details gradient"
+            );
+        }
+    }
 }

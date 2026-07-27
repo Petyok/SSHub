@@ -442,8 +442,11 @@ impl App {
         if p >= 1.0 {
             return settled;
         }
+        // The flash peaks on the *active* theme's brightest text, not the
+        // frozen legacy constant — a dark-on-light theme flashes to its own
+        // highlight instead of punching a light grey hole in the row.
         crate::tui::tween::color_lerp(
-            crate::tui::theme::BRIGHT,
+            self.theme().semantic().text_bright,
             settled,
             crate::tui::tween::ease_out(p),
         )

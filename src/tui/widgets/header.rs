@@ -160,10 +160,7 @@ pub fn render_session_strip(
         let name_style = if chip.active && travel.is_none() {
             theme.style(StyleRole::HeaderSessionActive)
         } else {
-            // The inactive chip has always read brighter than the strip's
-            // label, so it keeps the primary text role rather than
-            // `header.session_inactive`.
-            theme.style(StyleRole::TextPrimary)
+            theme.style(StyleRole::HeaderSessionInactive)
         };
 
         // Width this chip needs: "● " + name + a trailing separator space.
@@ -224,4 +221,53 @@ fn put(buf: &mut ratatui::buffer::Buffer, x: u16, y: u16, text: &str, style: Sty
 fn unicode_width(s: &str) -> usize {
     // We only use ASCII + block-element chars (all single-width).
     s.chars().count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tui::widgets::panel_box::tests::resolved_source;
+    use ratatui::backend::TestBackend;
+    use ratatui::style::Color;
+    use ratatui::Terminal;
+
+    /// An inactive session chip must take `header.session_inactive`, not the
+    /// generic primary-text role. Under `default` the two are different
+    /// recipes already, but a marker colour proves the binding rather than a
+    /// coincidence of palettes.
+    #[test]
+    fn an_inactive_session_chip_takes_the_session_inactive_role() {
+        let theme = resolved_source(
+            "markers",
+            "schema_version = 1\nname = \"Markers\"\nextends = \"default\"\n\n\
+             [components.header]\nsession_inactive = { foreground = \"#ff00ff\" }\n\n\
+             [components.text]\nprimary = { foreground = \"#00ff00\" }\n",
+        );
+        let area = Rect::new(0, 0, 60, 2);
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_session_strip(
+                    frame,
+                    area,
+                    &[SessionChip {
+                        name: "alpha".into(),
+                        dot: SessionDot::Running,
+                        active: false,
+                    }],
+                    &theme,
+                );
+            })
+            .unwrap();
+
+        // "open " starts at x + 16, then "\u{25cf} " (2 cells), then the name.
+        let name_x = 16 + 5 + 2;
+        let buf = terminal.backend().buffer();
+        assert_eq!(buf.cell((name_x, 0)).unwrap().symbol(), "a");
+        assert_eq!(
+            buf.cell((name_x, 0)).unwrap().fg,
+            Color::Rgb(0xff, 0x00, 0xff),
+            "the inactive chip name takes `header.session_inactive`"
+        );
+    }
 }
