@@ -20,7 +20,9 @@ use std::path::PathBuf;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 
-use crate::theme::catalog::{ColorRole, PaintRole, SemanticSlot, StyleRole, TintRole};
+use crate::theme::catalog::{
+    ColorRole, PaintRole, SemanticSlot, SemanticStyle, StyleRole, TintRole, SEMANTIC_SPECS,
+};
 
 /// Technical identifier of a theme.
 ///
@@ -602,6 +604,103 @@ pub struct ResolvedSemantic {
     pub connecting: Color,
     pub exited: Color,
     pub unknown: Color,
+}
+
+/// Number of slots in the fixed semantic core, derived from the catalogue so a
+/// slot added there cannot silently leave a hole in [`ResolvedSemantic`].
+pub const SEMANTIC_SLOT_COUNT: usize = SEMANTIC_SPECS.len();
+
+impl ResolvedSemantic {
+    /// Build the core from slot-indexed colours, in [`SemanticSlot`] order.
+    ///
+    /// The resolver works on an indexed array (it fills slots by catalogue
+    /// order), while renderers want named fields; this is the single crossing
+    /// point between the two views.
+    pub fn from_slots(slots: [Color; SEMANTIC_SLOT_COUNT]) -> Self {
+        Self {
+            background: slots[SemanticSlot::Background as usize],
+            canvas: slots[SemanticSlot::Canvas as usize],
+            surface: slots[SemanticSlot::Surface as usize],
+            surface_raised: slots[SemanticSlot::SurfaceRaised as usize],
+            border: slots[SemanticSlot::Border as usize],
+            border_focus: slots[SemanticSlot::BorderFocus as usize],
+            border_popup: slots[SemanticSlot::BorderPopup as usize],
+            text: slots[SemanticSlot::Text as usize],
+            text_bright: slots[SemanticSlot::TextBright as usize],
+            text_highlight: slots[SemanticSlot::TextHighlight as usize],
+            text_muted: slots[SemanticSlot::TextMuted as usize],
+            text_dim: slots[SemanticSlot::TextDim as usize],
+            text_inverse: slots[SemanticSlot::TextInverse as usize],
+            accent: slots[SemanticSlot::Accent as usize],
+            selection_bg: slots[SemanticSlot::SelectionBg as usize],
+            selection_fg: slots[SemanticSlot::SelectionFg as usize],
+            success: slots[SemanticSlot::Success as usize],
+            warning: slots[SemanticSlot::Warning as usize],
+            error: slots[SemanticSlot::Error as usize],
+            info: slots[SemanticSlot::Info as usize],
+            connecting: slots[SemanticSlot::Connecting as usize],
+            exited: slots[SemanticSlot::Exited as usize],
+            unknown: slots[SemanticSlot::Unknown as usize],
+        }
+    }
+
+    /// The colour of one semantic slot.
+    pub fn slot(&self, slot: SemanticSlot) -> Color {
+        match slot {
+            SemanticSlot::Background => self.background,
+            SemanticSlot::Canvas => self.canvas,
+            SemanticSlot::Surface => self.surface,
+            SemanticSlot::SurfaceRaised => self.surface_raised,
+            SemanticSlot::Border => self.border,
+            SemanticSlot::BorderFocus => self.border_focus,
+            SemanticSlot::BorderPopup => self.border_popup,
+            SemanticSlot::Text => self.text,
+            SemanticSlot::TextBright => self.text_bright,
+            SemanticSlot::TextHighlight => self.text_highlight,
+            SemanticSlot::TextMuted => self.text_muted,
+            SemanticSlot::TextDim => self.text_dim,
+            SemanticSlot::TextInverse => self.text_inverse,
+            SemanticSlot::Accent => self.accent,
+            SemanticSlot::SelectionBg => self.selection_bg,
+            SemanticSlot::SelectionFg => self.selection_fg,
+            SemanticSlot::Success => self.success,
+            SemanticSlot::Warning => self.warning,
+            SemanticSlot::Error => self.error,
+            SemanticSlot::Info => self.info,
+            SemanticSlot::Connecting => self.connecting,
+            SemanticSlot::Exited => self.exited,
+            SemanticSlot::Unknown => self.unknown,
+        }
+    }
+}
+
+/// The [`Style`] a [`SemanticStyle`] recipe stands for, given a resolved core.
+///
+/// The recipes are declared once as doc comments on [`SemanticStyle`]; this is
+/// their executable form, and the only place a style fallback is spelled out.
+pub fn semantic_style(semantic: &ResolvedSemantic, recipe: SemanticStyle) -> Style {
+    let fg = |color: Color| Style::default().fg(color);
+    let pair = |fg: Color, bg: Color| Style::default().fg(fg).bg(bg);
+    match recipe {
+        SemanticStyle::Text => fg(semantic.text),
+        SemanticStyle::TextBright => fg(semantic.text_bright),
+        SemanticStyle::TextBrightBold => fg(semantic.text_bright).add_modifier(Modifier::BOLD),
+        SemanticStyle::TextBrightUnderlinedBold => {
+            fg(semantic.text_bright).add_modifier(Modifier::UNDERLINED | Modifier::BOLD)
+        }
+        SemanticStyle::TextMuted => fg(semantic.text_muted),
+        SemanticStyle::TextDim => fg(semantic.text_dim),
+        SemanticStyle::TextOnSurfaceRaised => pair(semantic.text, semantic.surface_raised),
+        SemanticStyle::HighlightOnSelection => pair(semantic.text_highlight, semantic.selection_bg),
+        SemanticStyle::Selection => pair(semantic.selection_fg, semantic.selection_bg),
+        SemanticStyle::Inverse => pair(semantic.text_inverse, semantic.text_bright),
+        SemanticStyle::InverseOnWarning => pair(semantic.text_inverse, semantic.warning),
+        SemanticStyle::Accent => fg(semantic.accent),
+        SemanticStyle::Info => fg(semantic.info),
+        SemanticStyle::Success => fg(semantic.success),
+        SemanticStyle::Warning => fg(semantic.warning),
+        SemanticStyle::Error => fg(semantic.error),
+    }
 }
 
 /// Every component role of the V1 catalogue, indexed by its typed enum.
