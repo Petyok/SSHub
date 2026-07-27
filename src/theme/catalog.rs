@@ -704,85 +704,87 @@ mod tests {
         changed
     }
 
-    /// Every diagnostic class `matrix_diff` can emit, triggered once.
+    /// Every diagnostic class `matrix_diff` can emit, with the **complete**
+    /// report pinned line for line.
     ///
-    /// The pure function exists precisely so these can be reached: the real
-    /// snapshot cannot produce a duplicate or a remap, so without a table like
-    /// this those branches would ship untested and a broken one would only
-    /// surface the day the contract actually changed.
+    /// Substring matching would let an unwanted extra classification, or a
+    /// half-mangled message, pass green — so each case states the whole report.
+    /// Note that a length change can never appear alone: with distinct paths on
+    /// both sides it always implies a removal or an addition, so the only inputs
+    /// that isolate the row-count line are the two duplicate cases.
     #[test]
     fn every_diagnostic_class_is_reported() {
         struct Case {
             name: &'static str,
             frozen: &'static [&'static str],
             actual: &'static [&'static str],
-            expect: &'static str,
+            report: &'static [&'static str],
         }
+
+        const A: &str = "components.a = Style(Text)";
+        const B: &str = "components.b = Style(Text)";
 
         const CASES: &[Case] = &[
             Case {
                 name: "duplicate in the frozen snapshot",
-                frozen: &[
-                    "components.a = Style(Text)",
-                    "components.a = Style(Text)",
-                    "components.b = Style(Text)",
+                frozen: &[A, A, B],
+                actual: &[A, B],
+                report: &[
+                    "! the frozen snapshot has 3 rows but only 2 distinct role paths \u{2014} it contains duplicates",
+                    "! row count moved: 3 frozen, 2 now",
                 ],
-                actual: &["components.a = Style(Text)", "components.b = Style(Text)"],
-                expect: "the frozen snapshot has 3 rows but only 2 distinct role paths",
             },
             Case {
                 name: "duplicate in the catalogue",
-                frozen: &["components.a = Style(Text)", "components.b = Style(Text)"],
-                actual: &[
-                    "components.a = Style(Text)",
-                    "components.a = Style(Text)",
-                    "components.b = Style(Text)",
+                frozen: &[A, B],
+                actual: &[A, A, B],
+                report: &[
+                    "! the catalogue has 3 rows but only 2 distinct role paths \u{2014} it contains duplicates",
+                    "! row count moved: 2 frozen, 3 now",
                 ],
-                expect: "the catalogue has 3 rows but only 2 distinct role paths",
             },
             Case {
-                name: "row count moved",
-                frozen: &["components.a = Style(Text)", "components.b = Style(Text)"],
-                actual: &["components.a = Style(Text)"],
-                expect: "! row count moved: 2 frozen, 1 now",
+                name: "removal, with the row count it implies",
+                frozen: &[A, B],
+                actual: &[A],
+                report: &[
+                    "! row count moved: 2 frozen, 1 now",
+                    "- removed:  components.b = Style(Text)",
+                ],
             },
             Case {
-                name: "removal",
-                frozen: &["components.a = Style(Text)", "components.b = Style(Text)"],
-                actual: &["components.a = Style(Text)"],
-                expect: "- removed:  components.b = Style(Text)",
+                name: "addition, with the row count it implies",
+                frozen: &[A],
+                actual: &[A, B],
+                report: &[
+                    "! row count moved: 1 frozen, 2 now",
+                    "+ added:    components.b = Style(Text)",
+                ],
             },
             Case {
-                name: "addition",
-                frozen: &["components.a = Style(Text)"],
-                actual: &["components.a = Style(Text)", "components.b = Style(Text)"],
-                expect: "+ added:    components.b = Style(Text)",
-            },
-            Case {
-                name: "remap",
-                frozen: &["components.a = Style(Text)"],
+                name: "remap, which moves no row count",
+                frozen: &[A],
                 actual: &["components.a = Style(Error)"],
-                expect: "~ remapped: components.a = Style(Text)  ->  components.a = Style(Error)",
+                report: &[
+                    "~ remapped: components.a = Style(Text)  ->  components.a = Style(Error)",
+                ],
             },
         ];
 
         for case in CASES {
             let actual: Vec<String> = case.actual.iter().map(|row| row.to_string()).collect();
-            let report = matrix_diff(case.frozen, &actual);
-            assert!(
-                report.iter().any(|row| row.contains(case.expect)),
-                "`{}` should report `{}`, got {report:#?}",
-                case.name,
-                case.expect
+            assert_eq!(
+                matrix_diff(case.frozen, &actual),
+                case.report,
+                "`{}` reported something other than its expected lines",
+                case.name
             );
         }
     }
 
-    /// A duplicated frozen line must not buy the catalogue a free removal.
-    ///
-    /// Keying by role path collapses duplicates, so without an explicit length
-    /// check a snapshot listing one row twice compares equal to a catalogue that
-    /// is genuinely one row shorter — and the frozen matrix has no other guard.
+    /// The regression by name: keying by role path collapses duplicates, so
+    /// without a length check a snapshot listing one row twice compared equal to
+    /// a catalogue genuinely one row shorter.
     #[test]
     fn a_duplicated_frozen_row_cannot_hide_a_removal() {
         // Same two paths either side, but the snapshot repeats one of them in

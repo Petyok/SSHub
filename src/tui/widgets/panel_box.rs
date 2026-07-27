@@ -14,31 +14,25 @@ use crate::theme::gradient::paint_gradient_ring;
 use crate::theme::model::ResolvedTheme;
 use crate::tui::text::ellipsize;
 
-/// The five roles one panel frame is painted from.
+/// The roles one panel frame is painted from.
 ///
-/// Border and focused border are separate `Paint` roles (either may be a
-/// gradient); title and count are `Style` roles so they stay independently
-/// legible over a ring; the background is the `Paint` the panel body sits on.
+/// Title and count are `Style` roles rather than `Paint` so they stay legible
+/// over a gradient ring. `count` is `Option` because only three families ever
+/// receive a badge; the rest publish no `count` role, since one that can never
+/// reach a cell is a promise the theme cannot keep.
 ///
-/// `count` is optional because most panels have no badge: only the host list,
-/// the SFTP panes and the broadcast panel ever pass one. A family that cannot
-/// show a badge publishes no `count` role at all, rather than publishing one
-/// that could never reach a cell.
+/// The fields are private so a bundle cannot be reassembled from parts of two
+/// families — see [`PanelFrame`].
 #[derive(Clone, Copy)]
 pub struct PanelRoles {
-    pub border: PaintRole,
-    pub border_focused: PaintRole,
-    pub title: StyleRole,
-    pub count: Option<StyleRole>,
-    pub background: PaintRole,
+    border: PaintRole,
+    border_focused: PaintRole,
+    title: StyleRole,
+    count: Option<StyleRole>,
+    background: PaintRole,
 }
 
-/// A count badge: its text and the role that styles it, inseparably.
-///
-/// The fields are private and there is no public constructor, so a badge can
-/// only ever be built by [`PanelRoles::with_badge`] — which takes the role from
-/// the same family it is building the frame for. A badge naming a *different*
-/// family's count role is therefore not expressible.
+/// A count badge: its text and the role that styles it.
 #[derive(Clone, Copy)]
 pub struct PanelBadge<'a> {
     text: &'a str,
@@ -48,13 +42,11 @@ pub struct PanelBadge<'a> {
 /// Everything one call to [`render_panel_box`] paints from: a family's roles
 /// and, at most, that same family's badge.
 ///
-/// This exists so the two cannot be mixed. While the badge and the role bundle
-/// were separate arguments, `HOST_LIST_PANEL.badge("12")` could be passed
-/// alongside `DETAILS_PANEL` and compile — a panel drawn in one family's colours
-/// with another family's badge. Travelling as one value makes that
-/// unrepresentable, and the private fields keep it that way: outside this module
-/// a `PanelFrame` can only come from [`PanelRoles::plain`] or
-/// [`PanelRoles::with_badge`].
+/// Why one value and not two arguments: a panel drawn in one family's colours
+/// with another family's badge was a mistake the compiler used to accept. With
+/// the roles, the badge and this frame all carrying private fields, the only
+/// ways in are [`PanelRoles::plain`] and [`PanelRoles::with_badge`], and the
+/// mismatch is unwritable.
 #[derive(Clone, Copy)]
 pub struct PanelFrame<'a> {
     roles: PanelRoles,
@@ -72,11 +64,10 @@ impl PanelRoles {
 
     /// A frame whose badge reads `text`, styled by *this* family's count role.
     ///
-    /// A family that publishes no count role yields a frame with no badge, so
-    /// the slot is neither reserved nor drawn and the result is identical to
-    /// [`PanelRoles::plain`]. That is the only sane reading: a badge cannot be
-    /// styled by a role that does not exist, and silently reserving space for
-    /// one is the bug this whole type exists to prevent.
+    /// A family without a count role yields a frame with no badge: a badge
+    /// cannot be styled by a role that does not exist, and reserving the slot
+    /// anyway — truncating the title for a badge never drawn — is the bug this
+    /// type exists to prevent.
     pub(crate) fn with_badge(self, text: &str) -> PanelFrame<'_> {
         PanelFrame {
             roles: self,
@@ -549,13 +540,9 @@ mod tests {
 
     /// A family that publishes no count role cannot be given a badge at all.
     ///
-    /// The regression this pins: `render_panel_box` used to take the badge
-    /// *text* and the badge *role* as two independent options. Handed a text
-    /// for a badge-less family it reserved the slot, drew blank cells into the
-    /// frame and truncated the title to make room — then drew no badge, because
-    /// there was no role. Pairing text and role into one `PanelBadge` makes that
-    /// half-state unrepresentable, and the proof is that the frame comes out
-    /// byte-identical to passing `None`.
+    /// Handed a badge text, such a family used to reserve the slot and truncate
+    /// the title for a badge it then never drew. The proof that the half-state
+    /// is gone is buffer equality with `plain()`.
     #[test]
     fn a_badge_less_family_renders_exactly_as_if_no_badge_was_passed() {
         assert!(
@@ -629,13 +616,8 @@ mod tests {
 
     /// A frame's badge always carries *its own* family's count role.
     ///
-    /// The property this pins is the one the types now enforce: the badge role
-    /// is read from the same `PanelRoles` the frame is built from, so a panel
-    /// can never be drawn in one family's colours with another family's badge.
-    /// Both ways of writing that mismatch are compile errors now — `PanelBadge`
-    /// and `PanelFrame` have private fields and no public constructor, and
-    /// `render_panel_box` takes the frame alone — so what is left to check at
-    /// runtime is that each family really reaches for its own role.
+    /// Privacy proves the mismatch cannot be *written*; only rendering proves
+    /// each family actually reaches for its own role.
     #[test]
     fn a_frames_badge_always_uses_its_own_familys_count_role() {
         use crate::test_support::{panel_marker, panel_marker_theme, PanelFamily};
