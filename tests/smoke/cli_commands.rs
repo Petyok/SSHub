@@ -651,3 +651,30 @@ fn global_help_lists_the_theme_command() {
         .success()
         .stdout(predicate::str::contains("sshub theme check"));
 }
+
+/// A target that is readable while its directory is not listable: the checker
+/// cannot know whether the siblings this theme needs exist, so it must fail
+/// rather than guess "no siblings" and report success.
+#[cfg(unix)]
+#[test]
+fn theme_check_unlistable_directory_exits_one() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let d = dir();
+    let closed = d.path().join("closed");
+    std::fs::create_dir(&closed).unwrap();
+    let file = closed.join("child.toml");
+    std::fs::write(&file, VALID_THEME).unwrap();
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o444)).unwrap();
+    std::fs::set_permissions(&closed, std::fs::Permissions::from_mode(0o111)).unwrap();
+
+    // Root ignores the permission bits, so the state under test cannot be built.
+    if std::fs::read_dir(&closed).is_ok() {
+        std::fs::set_permissions(&closed, std::fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+
+    let assertion = sshub(d.path()).args(["theme", "check"]).arg(&file).assert();
+    std::fs::set_permissions(&closed, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assertion.code(1);
+}

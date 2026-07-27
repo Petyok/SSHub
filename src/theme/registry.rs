@@ -224,14 +224,19 @@ impl ThemeRegistry {
             .collect();
         // The neighbourhood is read with the loader's own limits and order, so
         // a package behaves here exactly as it will once installed. Its
-        // directory-level problems are dropped on purpose: they belong to files
-        // this command was not asked about, and a parent lost to one of them
-        // still surfaces as `unknown parent theme` on the target itself.
+        // directory-level *diagnostics* are dropped on purpose: they belong to
+        // files this command was not asked about, and a parent lost to one of
+        // them still surfaces as `unknown parent theme` on the target itself.
+        //
+        // The `Result`, in contrast, must not be swallowed. A target can be
+        // readable while its directory cannot be listed (POSIX `0111`), and in
+        // that state it is precisely unknown whether the siblings this theme
+        // needs exist — reporting it valid would be a guess dressed up as a
+        // pass.
         let mut neighbourhood = Vec::new();
         let target_key = same_file_key(file);
         candidates.extend(
-            read_user_directory(dir_of(file), &mut neighbourhood)
-                .unwrap_or_default()
+            read_user_directory(dir_of(file), &mut neighbourhood)?
                 .into_iter()
                 // The explicit target is the check target, whatever its
                 // directory also calls it; reading it twice would only make it
@@ -648,7 +653,8 @@ mod tests {
     use ratatui::style::Color;
 
     use super::{
-        ThemeRegistry, ThemeSource, ThemeStatus, MAX_THEME_FILE_BYTES, MAX_USER_THEME_FILES,
+        ThemeRegistry, ThemeRegistryError, ThemeSource, ThemeStatus, MAX_THEME_FILE_BYTES,
+        MAX_USER_THEME_FILES,
     };
     use crate::theme::model::{ThemeId, ValidationMode};
 
@@ -1023,6 +1029,46 @@ mod tests {
         let registry = ThemeRegistry::load_check_target(&file, ValidationMode::Strict).unwrap();
         assert_eq!(user_ids(&registry), ["solo"]);
         assert_eq!(registry.get("solo").unwrap().status, ThemeStatus::Valid);
+    }
+
+    /// A directory can be traversable (`--x`) but not listable (`-r-`), which
+    /// makes the target readable by name while its siblings are unknowable.
+    /// Guessing "no siblings" there would let a theme that needs a sibling
+    /// parent check green, so the I/O error has to reach the caller.
+    #[cfg(unix)]
+    #[test]
+    fn a_check_target_whose_directory_cannot_be_listed_is_an_io_error() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let closed = dir.path().join("closed");
+        fs::create_dir(&closed).unwrap();
+        let file = closed.join("child.toml");
+        fs::write(&file, minimal("Child")).unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o444)).unwrap();
+        // Executable but not readable: `open(file)` works, `readdir` does not.
+        fs::set_permissions(&closed, fs::Permissions::from_mode(0o111)).unwrap();
+
+        // Root ignores the permission bits, so the state under test does not
+        // exist there; asserting on it would only produce a flake in CI.
+        if fs::read_dir(&closed).is_ok() {
+            fs::set_permissions(&closed, fs::Permissions::from_mode(0o755)).unwrap();
+            return;
+        }
+
+        let outcome = ThemeRegistry::load_check_target(&file, ValidationMode::Strict);
+
+        // Restore before the assertion so the temp dir can always be cleaned up.
+        fs::set_permissions(&closed, fs::Permissions::from_mode(0o755)).unwrap();
+
+        match outcome {
+            Err(ThemeRegistryError::Io { path, .. }) => assert_eq!(path, closed),
+            Err(other) => panic!("expected an I/O error, got {other}"),
+            Ok(registry) => panic!(
+                "an unlistable directory must not check green: {:?}",
+                registry.get("child").map(|record| record.status)
+            ),
+        }
     }
 
     #[test]
