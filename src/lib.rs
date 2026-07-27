@@ -21,6 +21,9 @@ pub mod store;
 /// exist per binary, so every allocation-free proof shares this module.
 #[cfg(test)]
 pub(crate) mod test_alloc;
+/// Neutral in-memory fixtures shared by the renderer tests.
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod text_input;
 pub mod theme;
 pub mod tui;

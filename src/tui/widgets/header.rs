@@ -226,7 +226,7 @@ fn unicode_width(s: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::widgets::panel_box::tests::resolved_source;
+    use crate::test_support::resolved_source;
     use ratatui::backend::TestBackend;
     use ratatui::style::Color;
     use ratatui::Terminal;

@@ -681,7 +681,7 @@ fn ping_flash_peaks_on_the_text_bright_role_not_the_semantic_token() {
     use crate::theme::catalog::StyleRole;
     use std::rc::Rc;
 
-    let theme = crate::tui::widgets::panel_box::tests::resolved_source(
+    let theme = crate::test_support::resolved_source(
         "markers",
         "schema_version = 1\nname = \"Markers\"\nextends = \"default\"\n\n\
          [components.text]\nbright = { foreground = \"#ff00ff\" }\n",

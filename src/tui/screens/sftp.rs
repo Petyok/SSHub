@@ -194,21 +194,6 @@ fn render_picker(frame: &mut Frame, area: Rect, app: &App) {
 
 // ── Browser sub-state ────────────────────────────────────────
 
-/// `render_browser` under a name the widget tests can reach, so the SFTP call
-/// site is proved by the same renderer production uses.
-#[cfg(test)]
-pub(crate) fn render_browser_for_test(
-    buf: &mut Buffer,
-    area: Rect,
-    state: &SftpState,
-    fill: f32,
-    staged: f32,
-    nav: [i32; 2],
-    theme: &ResolvedTheme,
-) {
-    render_browser(buf, area, state, fill, staged, nav, theme);
-}
-
 fn render_browser(
     buf: &mut Buffer,
     area: Rect,
@@ -674,48 +659,62 @@ mod tests {
         assert_eq!(row(&dst, a, 1), "45    67");
     }
 
-    /// `render_browser` computes the focus of both panes, but `render_pane`
-    /// used to hard-code `false` into `render_panel_box` — so
-    /// `components.sftp.panel.border_focused` could never take effect. Two
-    /// distinctly different marker paints, one focus each way.
+    /// Both SFTP panes wear `sftp.panel` in **both** focus states, badge
+    /// included.
+    ///
+    /// `render_browser` used to compute the focus correctly and `render_pane`
+    /// threw it away, so `border_focused` could never fire. The count marker is
+    /// checked too: SFTP is one of only three families whose productive caller
+    /// really passes a badge.
     #[test]
-    fn each_sftp_pane_takes_the_focused_border_role_when_it_has_focus() {
-        use crate::tui::widgets::panel_box::tests::resolved_source;
-        use ratatui::style::Color;
+    fn both_sftp_panes_wear_the_panel_roles_in_both_focus_states() {
+        use crate::test_support::{
+            assert_panel_wears, buffer_at, panel_marker, panel_marker_theme, PanelProof,
+        };
 
-        let theme = resolved_source(
-            "markers",
-            "schema_version = 1\nname = \"Markers\"\nextends = \"default\"\n\n\
-             [components.sftp.panel]\n\
-             border = \"#111111\"\n\
-             border_focused = \"#ee00ee\"\n",
+        let theme = panel_marker_theme();
+        let area = Rect::new(0, 0, 60, 12);
+        // `render_browser` splits at `area.width / 2`, so these are the two
+        // pane rects.
+        let local = Rect::new(area.x, area.y, area.width / 2, area.height);
+        let remote = Rect::new(
+            area.x + area.width / 2,
+            area.y,
+            area.width - area.width / 2,
+            area.height,
         );
-        let dim = Color::Rgb(0x11, 0x11, 0x11);
-        let lit = Color::Rgb(0xee, 0x00, 0xee);
 
-        let a = Rect::new(0, 0, 40, 10);
-        // `render_browser` splits at `area.width / 2`; the corners of the two
-        // panes are therefore exactly these two columns.
-        let local_x = a.x;
-        let remote_x = a.x + a.width / 2;
-
-        for (focus, expect_local, expect_remote) in
-            [(Focus::Local, lit, dim), (Focus::Remote, dim, lit)]
-        {
+        for (focus, local_focused) in [(Focus::Local, true), (Focus::Remote, false)] {
             let mut state = SftpState::new("/remote", "/local");
             state.focus = focus;
-            let mut buf = Buffer::empty(a);
-            render_browser(&mut buf, a, &state, 0.0, 1.0, [0, 0], &theme);
+            let buf = buffer_at(area, |buf| {
+                render_browser(buf, area, &state, 0.0, 1.0, [0, 0], &theme);
+            });
 
+            // Titles are "local" and "remote"; the badge is the pane's cwd and
+            // entry count, so each pane's own count text is unique.
+            assert_panel_wears(
+                &buf,
+                local,
+                PanelProof {
+                    family: "sftp.panel",
+                    focused: local_focused,
+                    title: "local",
+                    count: Some("/local"),
+                    body: (local.x + 2, local.y + 1),
+                },
+            );
+            // The remote pane's corner is asserted directly: `assert_panel_wears`
+            // searches the whole buffer for its title, and both panes are in it.
             assert_eq!(
-                buf.cell((local_x, a.y)).unwrap().fg,
-                expect_local,
-                "local pane border with focus {focus:?}"
+                buf.cell((remote.x, remote.y)).unwrap().fg,
+                panel_marker("sftp.panel", if local_focused { 0 } else { 1 }),
+                "the remote pane's border follows the focus too"
             );
             assert_eq!(
-                buf.cell((remote_x, a.y)).unwrap().fg,
-                expect_remote,
-                "remote pane border with focus {focus:?}"
+                buf.cell((remote.x + 2, remote.y + 1)).unwrap().bg,
+                panel_marker("sftp.panel", 4),
+                "the remote pane sits on `sftp.panel.background`"
             );
         }
     }

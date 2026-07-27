@@ -648,8 +648,9 @@ fn render_ping_zoomed(buf: &mut Buffer, area: Rect, app: &App, inner_x: u16, inn
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::widgets::panel_box::tests::{
-        buffer_at, find_text, resolved_source, themed_app,
+    use crate::test_support::{
+        assert_panel_wears, buffer_at, find_text, panel_marker_theme, resolved_source, themed_app,
+        PanelProof,
     };
     use ratatui::style::Color;
 
@@ -767,5 +768,61 @@ mod tests {
             Color::Rgb(0x00, 0x00, 0xff),
             "the aggregate sparkline takes `status.info`"
         );
+    }
+
+    /// The three right-column panels each wear their own family, in **both**
+    /// focus states, and none of them draws a badge.
+    #[test]
+    fn the_right_panels_wear_their_own_roles_in_both_focus_states() {
+        use crate::app::PanelId;
+
+        let mut app = themed_app(panel_marker_theme());
+        let body = (2, AREA.height - 2);
+
+        for focused in [false, true] {
+            let elsewhere = PanelId::Hosts;
+
+            app.focused_panel = if focused { PanelId::Recent } else { elsewhere };
+            let buf = buffer_at(AREA, |buf| render_recent_panel(buf, AREA, &app));
+            assert_panel_wears(
+                &buf,
+                AREA,
+                PanelProof {
+                    family: "dashboard.recent",
+                    focused,
+                    title: "recent sessions",
+                    count: None,
+                    body,
+                },
+            );
+
+            app.focused_panel = if focused { PanelId::Auth } else { elsewhere };
+            let buf = buffer_at(AREA, |buf| render_auth_panel(buf, AREA, &app));
+            assert_panel_wears(
+                &buf,
+                AREA,
+                PanelProof {
+                    family: "dashboard.auth",
+                    focused,
+                    title: "auth events",
+                    count: None,
+                    body,
+                },
+            );
+
+            app.focused_panel = if focused { PanelId::Ping } else { elsewhere };
+            let buf = buffer_at(AREA, |buf| render_ping_panel(buf, AREA, &app));
+            assert_panel_wears(
+                &buf,
+                AREA,
+                PanelProof {
+                    family: "dashboard.ping",
+                    focused,
+                    title: "ping all hosts",
+                    count: None,
+                    body,
+                },
+            );
+        }
     }
 }

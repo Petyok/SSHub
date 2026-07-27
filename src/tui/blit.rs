@@ -497,7 +497,7 @@ mod tests {
     /// theme that gives them two *different* gradients can tell them apart.
     #[test]
     fn the_details_fade_blends_towards_the_details_gradient_not_the_app_one() {
-        use crate::tui::widgets::panel_box::tests::resolved_source;
+        use crate::test_support::resolved_source;
 
         let theme = resolved_source(
             "two-gradients",

@@ -374,7 +374,7 @@ mod tests {
     /// `default` would have caught them staying put — a marker theme does.
     #[test]
     fn the_detail_lines_take_their_own_marker_roles() {
-        use crate::tui::widgets::panel_box::tests::resolved_source;
+        use crate::test_support::resolved_source;
         use ratatui::style::Color;
 
         let theme = resolved_source(

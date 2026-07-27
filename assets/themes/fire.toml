@@ -97,7 +97,7 @@ border_focused = { gradient = "gradients.blaze" }
 [components.dashboard.details]
 border_focused = { gradient = "gradients.updraft" }
 
-[components.dashboard.metrics]
+[components.dashboard.latency]
 border_focused = { gradient = "gradients.cinder" }
 
 [components.separator]

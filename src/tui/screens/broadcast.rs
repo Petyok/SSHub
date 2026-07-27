@@ -724,3 +724,88 @@ pub fn render_preview(frame: &mut Frame, app: &App) {
         theme::mute(),
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{
+        assert_panel_wears, frame_at, panel_marker_theme, themed_app, PanelProof,
+    };
+
+    /// A live run with one pending host — enough for both panels to draw.
+    fn broadcast_state() -> crate::app::BroadcastState {
+        use crate::app::BroadcastPhase;
+        use crate::broadcast::BroadcastTask;
+
+        let tasks = vec![BroadcastTask {
+            host_id: 1,
+            host_name: "web-prod".into(),
+            argv: vec!["ssh".into(), "web-prod".into()],
+            secret: None,
+        }];
+        let (_tx, rx) = std::sync::mpsc::channel();
+        crate::app::BroadcastState {
+            target_label: "group: prod".into(),
+            command: "uptime".into(),
+            results: crate::broadcast::seed_results(&tasks),
+            rx,
+            cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            concurrency: 2,
+            phase: BroadcastPhase::Running,
+            anim: None,
+            audit_written: false,
+        }
+    }
+
+    /// The docked panel wears `broadcast.panel` in **both** focus states.
+    ///
+    /// `render_broadcast_panel` takes `focused` from its caller, so the
+    /// unfocused branch is just as productive as the focused one and needs its
+    /// own proof.
+    #[test]
+    fn the_docked_broadcast_panel_wears_its_roles_in_both_focus_states() {
+        let mut app = themed_app(panel_marker_theme());
+        app.broadcast = Some(broadcast_state());
+        let area = Rect::new(0, 0, 60, 12);
+
+        for focused in [false, true] {
+            let buf = frame_at(area, |frame| {
+                render_broadcast_panel(frame, area, &app, focused);
+            });
+            assert_panel_wears(
+                &buf,
+                area,
+                PanelProof {
+                    family: "broadcast.panel",
+                    focused,
+                    title: "cast",
+                    count: Some("0/1"),
+                    body: (2, area.height - 2),
+                },
+            );
+        }
+    }
+
+    /// The zoomed view is the second call site of the same bundle. It always
+    /// draws focused — it only exists while the panel is zoomed *into* — so one
+    /// state is the whole productive surface here.
+    #[test]
+    fn the_zoomed_broadcast_view_wears_the_same_bundle() {
+        let mut app = themed_app(panel_marker_theme());
+        app.broadcast = Some(broadcast_state());
+        let area = Rect::new(0, 0, 60, 12);
+
+        let buf = frame_at(area, |frame| render_broadcast_zoomed(frame, area, &app));
+        assert_panel_wears(
+            &buf,
+            area,
+            PanelProof {
+                family: "broadcast.panel",
+                focused: true,
+                title: "cast",
+                count: Some("0/1"),
+                body: (2, area.height - 2),
+            },
+        );
+    }
+}

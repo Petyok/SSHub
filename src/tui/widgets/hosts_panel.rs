@@ -446,7 +446,10 @@ fn host_address(entry: &HostEntry) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::widgets::panel_box::tests::{resolved_default, resolved_source};
+    use crate::test_support::{
+        assert_panel_wears, find_text, frame_at, panel_marker_theme, resolved_default,
+        resolved_source, themed_app, PanelProof,
+    };
     use ratatui::buffer::Buffer;
     use ratatui::style::Color;
 
@@ -523,8 +526,6 @@ mod tests {
             "the wiped half falls back to `host_list.background`: {bgs:?}"
         );
     }
-
-    use crate::tui::widgets::panel_box::tests::{find_text, frame_at, themed_app};
 
     /// Every host-list content role, each with a colour nobody else uses.
     fn host_list_marker_theme() -> ResolvedTheme {
@@ -687,6 +688,33 @@ mod tests {
                     "`{ch}` at offset {i} did not match and must keep the row style"
                 );
             }
+        }
+    }
+
+    /// The hosts panel wears `dashboard.host_list` in **both** focus states,
+    /// and is the one dashboard panel whose caller really passes a badge.
+    #[test]
+    fn the_hosts_panel_wears_its_own_five_roles_in_both_focus_states() {
+        let mut app = themed_app(panel_marker_theme());
+        for focused in [false, true] {
+            app.focused_panel = if focused {
+                crate::app::PanelId::Hosts
+            } else {
+                crate::app::PanelId::Recent
+            };
+            let buf = frame_at(AREA, |frame| render_hosts_panel(frame, AREA, &app));
+            assert_panel_wears(
+                &buf,
+                AREA,
+                PanelProof {
+                    family: "dashboard.host_list",
+                    focused,
+                    title: "hosts",
+                    count: Some("1"),
+                    // Below the single host row and above the footer.
+                    body: (2, 6),
+                },
+            );
         }
     }
 }

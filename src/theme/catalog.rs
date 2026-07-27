@@ -399,26 +399,16 @@ role_catalog! {
         DashboardHostListMatch => ("components.dashboard.host_list.match", SemanticStyle::Warning, false),
 
         DashboardDetailsTitle => ("components.dashboard.details.title", SemanticStyle::TextBright, false),
-        DashboardDetailsCount => ("components.dashboard.details.count", SemanticStyle::TextDim, false),
         DashboardDetailsLabel => ("components.dashboard.details.label", SemanticStyle::Info, false),
         DashboardDetailsValue => ("components.dashboard.details.value", SemanticStyle::Text, false),
         DashboardDetailsMetadata => ("components.dashboard.details.metadata", SemanticStyle::TextMuted, false),
 
-        DashboardMetricsTitle => ("components.dashboard.metrics.title", SemanticStyle::TextBright, false),
-        DashboardMetricsCount => ("components.dashboard.metrics.count", SemanticStyle::TextDim, false),
-
         DashboardSshLogTitle => ("components.dashboard.ssh_log.title", SemanticStyle::TextBright, false),
-        DashboardSshLogCount => ("components.dashboard.ssh_log.count", SemanticStyle::TextDim, false),
         DashboardAgentTitle => ("components.dashboard.agent.title", SemanticStyle::TextBright, false),
-        DashboardAgentCount => ("components.dashboard.agent.count", SemanticStyle::TextDim, false),
         DashboardLatencyTitle => ("components.dashboard.latency.title", SemanticStyle::TextBright, false),
-        DashboardLatencyCount => ("components.dashboard.latency.count", SemanticStyle::TextDim, false),
         DashboardRecentTitle => ("components.dashboard.recent.title", SemanticStyle::TextBright, false),
-        DashboardRecentCount => ("components.dashboard.recent.count", SemanticStyle::TextDim, false),
         DashboardAuthTitle => ("components.dashboard.auth.title", SemanticStyle::TextBright, false),
-        DashboardAuthCount => ("components.dashboard.auth.count", SemanticStyle::TextDim, false),
         DashboardPingTitle => ("components.dashboard.ping.title", SemanticStyle::TextBright, false),
-        DashboardPingCount => ("components.dashboard.ping.count", SemanticStyle::TextDim, false),
 
         FooterKey => ("components.footer.key", SemanticStyle::TextBright, false),
         FooterLabel => ("components.footer.label", SemanticStyle::TextMuted, false),
@@ -552,8 +542,6 @@ role_catalog! {
         DashboardDetailsBorder => ("components.dashboard.details.border", SemanticPaint::Border, true),
         DashboardDetailsBorderFocused => ("components.dashboard.details.border_focused", SemanticPaint::BorderFocus, true),
         DashboardDetailsBackground => ("components.dashboard.details.background", SemanticPaint::Surface, false),
-        DashboardMetricsBorder => ("components.dashboard.metrics.border", SemanticPaint::Border, true),
-        DashboardMetricsBorderFocused => ("components.dashboard.metrics.border_focused", SemanticPaint::BorderFocus, true),
 
         DashboardSshLogBorder => ("components.dashboard.ssh_log.border", SemanticPaint::Border, true),
         DashboardSshLogBorderFocused => ("components.dashboard.ssh_log.border_focused", SemanticPaint::BorderFocus, true),
@@ -645,16 +633,33 @@ mod tests {
             .collect();
         let frozen: Vec<&str> = FROZEN_ROLE_MATRIX.lines().collect();
 
-        // Report only the rows that moved: dumping 230 lines twice would bury
-        // the one change the reviewer has to look at.
-        let changed: Vec<String> = frozen
-            .iter()
-            .zip(actual.iter())
-            .filter(|(was, now)| was != now)
-            .map(|(was, now)| format!("{was}  ->  {now}"))
-            .collect();
+        // Diff by role path, not by line position. A pairwise zip turns a
+        // single *removal* into a cascade of dozens of bogus "changed" rows,
+        // which buries exactly the review this snapshot exists to enable.
+        let key = |row: &str| row.split(" = ").next().unwrap_or(row).to_string();
+        let was: std::collections::BTreeMap<String, &str> =
+            frozen.iter().map(|row| (key(row), *row)).collect();
+        let now: std::collections::BTreeMap<String, &str> =
+            actual.iter().map(|row| (key(row), row.as_str())).collect();
+
+        let mut changed: Vec<String> = Vec::new();
+        for (path, row) in &was {
+            match now.get(path) {
+                None => changed.push(format!("- removed:  {row}")),
+                Some(current) if current != row => {
+                    changed.push(format!("~ remapped: {row}  ->  {current}"))
+                }
+                Some(_) => {}
+            }
+        }
+        for (path, row) in &now {
+            if !was.contains_key(path) {
+                changed.push(format!("+ added:    {row}"));
+            }
+        }
+
         assert!(
-            changed.is_empty() && frozen.len() == actual.len(),
+            changed.is_empty(),
             "the frozen V1 role → fallback matrix changed ({} rows frozen, {} now).\n{}\n\
              Check every difference against the spec's role catalogue before \
              updating src/theme/role_matrix.snapshot.",

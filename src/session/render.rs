@@ -729,7 +729,7 @@ mod tests {
     /// A marker theme whose four session roles are all distinct from each other
     /// *and* from the roles they used to be confused with.
     fn session_marker_theme() -> ResolvedTheme {
-        crate::tui::widgets::panel_box::tests::resolved_source(
+        crate::test_support::resolved_source(
             "markers",
             "schema_version = 1\nname = \"Markers\"\nextends = \"default\"\n\n\
              [components.app]\nbackground = \"#010203\"\n\n\

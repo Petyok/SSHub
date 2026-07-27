@@ -813,8 +813,9 @@ pub(crate) fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::widgets::panel_box::tests::{
-        buffer_at, find_text, frame_at, resolved_source, themed_app,
+    use crate::test_support::{
+        assert_panel_wears, buffer_at, find_text, find_text_from, frame_at, panel_marker_theme,
+        resolved_source, themed_app, PanelProof,
     };
     use ratatui::style::Color;
 
@@ -866,27 +867,55 @@ mod tests {
     /// `find_text`, but never on the frame's top row — a panel title often
     /// repeats the very word the body is being checked for.
     fn find_in_body(buf: &ratatui::buffer::Buffer, needle: &str) -> (u16, u16) {
-        let area = buf.area;
-        (area.top() + 1..area.bottom())
-            .find_map(|y| {
-                let line: String = (area.left()..area.right())
-                    .map(|x| buf.cell((x, y)).unwrap().symbol())
-                    .collect();
-                line.find(needle)
-                    .map(|b| (area.left() + line[..b].chars().count() as u16, y))
-            })
-            .unwrap_or_else(|| panic!("`{needle}` is not in the panel body"))
+        find_text_from(buf, needle, buf.area.top() + 1)
     }
 
     /// The host details card writes value, label and metadata from their own
     /// three roles rather than from one shared text style.
     #[test]
     fn the_details_card_separates_value_label_and_metadata() {
-        let app = themed_app(middle_marker_theme());
+        let mut app = themed_app(middle_marker_theme());
+        // `metadata` only reaches a cell on a managed host: the group, key and
+        // proxy rows are the only thing that carries it. Without one, the
+        // marker would resolve and never be drawn. `proxy_jump` is used rather
+        // than a group so the host stays the first navigable row.
+        app.hosts = vec![crate::app::HostEntry::from_managed(
+            crate::store::ManagedHost {
+                id: 1,
+                name: "web-prod".into(),
+                label: None,
+                address: "10.0.0.1".into(),
+                port: 22,
+                group_id: None,
+                identity_id: None,
+                group: None,
+                groups: Vec::new(),
+                identity: None,
+                os_icon: None,
+                tags: Vec::new(),
+                notes: None,
+                proxy_jump: Some("bastion".into()),
+                forward_agent: false,
+                remote_command: None,
+                environment: None,
+                sort_order: 0,
+                favorite: false,
+                last_connected: None,
+                source: crate::store::HostSource::Launcher,
+                ssh_config_hash: None,
+                has_password: false,
+                username: None,
+                session_logging: crate::session_log::SessionLoggingOverride::Inherit,
+                transport: Default::default(),
+                created_at: 0,
+                updated_at: 0,
+            },
+        )];
+        app.rebuild_filter();
         let buf = buffer_at(AREA, |buf| render_host_panel(buf, AREA, &app));
 
         // `user@host:port` is the value row.
-        let (x, y) = find_text(&buf, "ubuntu@10.0.0.1:22");
+        let (x, y) = find_text(&buf, "10.0.0.1:22");
         assert_eq!(
             buf.cell((x, y)).unwrap().fg,
             Color::Rgb(0x00, 0xff, 0x00),
@@ -910,6 +939,84 @@ mod tests {
             Color::Rgb(0xff, 0x00, 0x00),
             "the os row takes `details.label`"
         );
+
+        // The `via <jump>` row is the metadata role — the marker's only surface.
+        let (mx, my) = find_text(&buf, "via bastion");
+        assert_eq!(
+            buf.cell((mx, my)).unwrap().fg,
+            Color::Rgb(0x00, 0x00, 0xff),
+            "the group row takes `details.metadata`"
+        );
+    }
+
+    /// The four middle-column panels each wear their own family, in **both**
+    /// focus states, and none of them draws a badge.
+    #[test]
+    fn the_middle_panels_wear_their_own_roles_in_both_focus_states() {
+        use crate::app::PanelId;
+
+        let mut app = themed_app(panel_marker_theme());
+        let body = (2, AREA.height - 2);
+
+        for focused in [false, true] {
+            let elsewhere = PanelId::Hosts;
+
+            app.focused_panel = if focused { PanelId::Detail } else { elsewhere };
+            let buf = buffer_at(AREA, |buf| render_host_panel(buf, AREA, &app));
+            assert_panel_wears(
+                &buf,
+                AREA,
+                PanelProof {
+                    family: "dashboard.details",
+                    focused,
+                    title: "host \u{b7}",
+                    count: None,
+                    body,
+                },
+            );
+
+            app.focused_panel = if focused { PanelId::SshLog } else { elsewhere };
+            let buf = frame_at(AREA, |frame| render_ssh_log_panel(frame, AREA, &app));
+            assert_panel_wears(
+                &buf,
+                AREA,
+                PanelProof {
+                    family: "dashboard.ssh_log",
+                    focused,
+                    title: "ssh log",
+                    count: None,
+                    body,
+                },
+            );
+
+            app.focused_panel = if focused { PanelId::Agent } else { elsewhere };
+            let buf = buffer_at(AREA, |buf| render_agent_panel(buf, AREA, &app));
+            assert_panel_wears(
+                &buf,
+                AREA,
+                PanelProof {
+                    family: "dashboard.agent",
+                    focused,
+                    title: "agent",
+                    count: None,
+                    body,
+                },
+            );
+
+            app.focused_panel = if focused { PanelId::Latency } else { elsewhere };
+            let buf = buffer_at(AREA, |buf| render_latency_panel(buf, AREA, &app));
+            assert_panel_wears(
+                &buf,
+                AREA,
+                PanelProof {
+                    family: "dashboard.latency",
+                    focused,
+                    title: "latency",
+                    count: None,
+                    body,
+                },
+            );
+        }
     }
 
     /// The latency bars ramp through the three `metrics.sparkline_*` colours,
