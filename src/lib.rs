@@ -18,6 +18,7 @@ pub mod sftp;
 pub mod ssh;
 pub mod store;
 pub mod text_input;
+pub mod theme;
 pub mod tui;
 pub mod tunnel;
 pub mod watcher;

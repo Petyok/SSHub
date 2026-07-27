@@ -1,0 +1,650 @@
+//! The frozen V1 role catalogue.
+//!
+//! Every public component role, its value type and its semantic fallback are
+//! declared exactly once, in the [`role_catalog!`] invocation at the bottom of
+//! this file. The typed enums, their `COUNT` constants and [`ROLE_SPECS`] are
+//! all generated from that single declaration, so validator, resolver and
+//! documentation can never drift apart from what the renderers actually index.
+
+/// One slot of the fixed semantic core of schema version 1.
+///
+/// The 23 slots are the only names a component fallback may reference; a theme
+/// that overrides one of them re-tints everything inheriting from it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SemanticSlot {
+    Background,
+    Canvas,
+    Surface,
+    SurfaceRaised,
+    Border,
+    BorderFocus,
+    BorderPopup,
+    Text,
+    TextBright,
+    TextHighlight,
+    TextMuted,
+    TextDim,
+    TextInverse,
+    Accent,
+    SelectionBg,
+    SelectionFg,
+    Success,
+    Warning,
+    Error,
+    Info,
+    Connecting,
+    Exited,
+    Unknown,
+}
+
+impl SemanticSlot {
+    /// The name used in `[semantic]` tables and in diagnostics.
+    pub fn key(self) -> &'static str {
+        SEMANTIC_SPECS[self as usize].key
+    }
+}
+
+/// A semantic slot used as the fallback of a `Color` role.
+pub type SemanticColor = SemanticSlot;
+
+/// A semantic slot used as the fallback of a `Paint` role.
+pub type SemanticPaint = SemanticSlot;
+
+/// The fallback of a `Style` role.
+///
+/// Style fallbacks are recipes rather than single slots, because several roles
+/// inherit a foreground *and* a background (and occasionally a modifier) as one
+/// unit — `text_inverse on text_bright` has to stay a pair to keep contrast.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SemanticStyle {
+    /// `text`
+    Text,
+    /// `text_bright`
+    TextBright,
+    /// `text_bright` with bold
+    TextBrightBold,
+    /// `text_bright` with underline and bold
+    TextBrightUnderlinedBold,
+    /// `text_muted`
+    TextMuted,
+    /// `text_dim`
+    TextDim,
+    /// `text` on `surface_raised`
+    TextOnSurfaceRaised,
+    /// `text_highlight` on `selection_bg`
+    HighlightOnSelection,
+    /// `selection_fg` on `selection_bg`
+    Selection,
+    /// `text_inverse` on `text_bright`
+    Inverse,
+    /// `text_inverse` on `warning`
+    InverseOnWarning,
+    /// `accent`
+    Accent,
+    /// `info`
+    Info,
+    /// `success`
+    Success,
+    /// `warning`
+    Warning,
+    /// `error`
+    Error,
+}
+
+/// The fallback of a `Tint` role.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SemanticTint {
+    /// Keep the asset's own colours untouched.
+    Native,
+    Color(SemanticSlot),
+}
+
+/// A component role of any kind, used where the four typed enums must be
+/// handled uniformly (catalogue metadata, diagnostics, lookup by path).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RoleRef {
+    Color(ColorRole),
+    Style(StyleRole),
+    Paint(PaintRole),
+    Tint(TintRole),
+}
+
+/// The semantic fallback of a role, tagged with the role kind it belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RoleFallback {
+    Color(SemanticColor),
+    Style(SemanticStyle),
+    Paint(SemanticPaint),
+    Tint(SemanticTint),
+}
+
+impl RoleFallback {
+    /// Whether this fallback can actually supply a value for `role`.
+    ///
+    /// Guards the catalogue itself: a `Style` role whose fallback is a bare
+    /// colour slot would resolve to a value the renderer cannot use.
+    pub fn is_type_compatible(&self, role: RoleRef) -> bool {
+        matches!(
+            (self, role),
+            (RoleFallback::Color(_), RoleRef::Color(_))
+                | (RoleFallback::Style(_), RoleRef::Style(_))
+                | (RoleFallback::Paint(_), RoleRef::Paint(_))
+                | (RoleFallback::Tint(_), RoleRef::Tint(_))
+        )
+    }
+}
+
+/// Catalogue entry of one component role.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RoleSpec {
+    /// Full literal path as written in a theme file, e.g.
+    /// `components.dashboard.host_list.border`.
+    pub path: &'static str,
+    pub role: RoleRef,
+    pub fallback: RoleFallback,
+    /// Whether the role paints a closed frame. Only closed frames may use the
+    /// `perimeter` gradient direction, which has to run a seamless ring.
+    pub closed_frame: bool,
+}
+
+/// Catalogue entry of one semantic slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SemanticSpec {
+    pub key: &'static str,
+    pub slot: SemanticSlot,
+}
+
+/// The semantic core, in declaration order. `SemanticSlot as usize` indexes it.
+pub static SEMANTIC_SPECS: &[SemanticSpec] = &[
+    SemanticSpec {
+        key: "background",
+        slot: SemanticSlot::Background,
+    },
+    SemanticSpec {
+        key: "canvas",
+        slot: SemanticSlot::Canvas,
+    },
+    SemanticSpec {
+        key: "surface",
+        slot: SemanticSlot::Surface,
+    },
+    SemanticSpec {
+        key: "surface_raised",
+        slot: SemanticSlot::SurfaceRaised,
+    },
+    SemanticSpec {
+        key: "border",
+        slot: SemanticSlot::Border,
+    },
+    SemanticSpec {
+        key: "border_focus",
+        slot: SemanticSlot::BorderFocus,
+    },
+    SemanticSpec {
+        key: "border_popup",
+        slot: SemanticSlot::BorderPopup,
+    },
+    SemanticSpec {
+        key: "text",
+        slot: SemanticSlot::Text,
+    },
+    SemanticSpec {
+        key: "text_bright",
+        slot: SemanticSlot::TextBright,
+    },
+    SemanticSpec {
+        key: "text_highlight",
+        slot: SemanticSlot::TextHighlight,
+    },
+    SemanticSpec {
+        key: "text_muted",
+        slot: SemanticSlot::TextMuted,
+    },
+    SemanticSpec {
+        key: "text_dim",
+        slot: SemanticSlot::TextDim,
+    },
+    SemanticSpec {
+        key: "text_inverse",
+        slot: SemanticSlot::TextInverse,
+    },
+    SemanticSpec {
+        key: "accent",
+        slot: SemanticSlot::Accent,
+    },
+    SemanticSpec {
+        key: "selection_bg",
+        slot: SemanticSlot::SelectionBg,
+    },
+    SemanticSpec {
+        key: "selection_fg",
+        slot: SemanticSlot::SelectionFg,
+    },
+    SemanticSpec {
+        key: "success",
+        slot: SemanticSlot::Success,
+    },
+    SemanticSpec {
+        key: "warning",
+        slot: SemanticSlot::Warning,
+    },
+    SemanticSpec {
+        key: "error",
+        slot: SemanticSlot::Error,
+    },
+    SemanticSpec {
+        key: "info",
+        slot: SemanticSlot::Info,
+    },
+    SemanticSpec {
+        key: "connecting",
+        slot: SemanticSlot::Connecting,
+    },
+    SemanticSpec {
+        key: "exited",
+        slot: SemanticSlot::Exited,
+    },
+    SemanticSpec {
+        key: "unknown",
+        slot: SemanticSlot::Unknown,
+    },
+];
+
+/// Generate the four typed role enums plus the flat [`ROLE_SPECS`] table from
+/// one declaration per role: `Variant => ("path", fallback, closed_frame)`.
+macro_rules! role_catalog {
+    (
+        color { $($cvar:ident => ($cpath:literal, $cfb:expr, $cframe:literal)),* $(,)? }
+        style { $($svar:ident => ($spath:literal, $sfb:expr, $sframe:literal)),* $(,)? }
+        paint { $($pvar:ident => ($ppath:literal, $pfb:expr, $pframe:literal)),* $(,)? }
+        tint  { $($tvar:ident => ($tpath:literal, $tfb:expr, $tframe:literal)),* $(,)? }
+    ) => {
+        /// Roles resolving to a single colour.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        #[repr(usize)]
+        pub enum ColorRole { $($cvar),* }
+
+        /// Roles resolving to a full text style.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        #[repr(usize)]
+        pub enum StyleRole { $($svar),* }
+
+        /// Roles resolving to a colour or a gradient.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        #[repr(usize)]
+        pub enum PaintRole { $($pvar),* }
+
+        /// Roles recolouring embedded assets.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        #[repr(usize)]
+        pub enum TintRole { $($tvar),* }
+
+        impl ColorRole {
+            pub const COUNT: usize = [$(stringify!($cvar)),*].len();
+        }
+        impl StyleRole {
+            pub const COUNT: usize = [$(stringify!($svar)),*].len();
+        }
+        impl PaintRole {
+            pub const COUNT: usize = [$(stringify!($pvar)),*].len();
+        }
+        impl TintRole {
+            pub const COUNT: usize = [$(stringify!($tvar)),*].len();
+        }
+
+        /// Every component role of the V1 contract, grouped by kind and in
+        /// enum-discriminant order within each kind.
+        pub static ROLE_SPECS: &[RoleSpec] = &[
+            $(RoleSpec {
+                path: $cpath,
+                role: RoleRef::Color(ColorRole::$cvar),
+                fallback: RoleFallback::Color($cfb),
+                closed_frame: $cframe,
+            },)*
+            $(RoleSpec {
+                path: $spath,
+                role: RoleRef::Style(StyleRole::$svar),
+                fallback: RoleFallback::Style($sfb),
+                closed_frame: $sframe,
+            },)*
+            $(RoleSpec {
+                path: $ppath,
+                role: RoleRef::Paint(PaintRole::$pvar),
+                fallback: RoleFallback::Paint($pfb),
+                closed_frame: $pframe,
+            },)*
+            $(RoleSpec {
+                path: $tpath,
+                role: RoleRef::Tint(TintRole::$tvar),
+                fallback: RoleFallback::Tint($tfb),
+                closed_frame: $tframe,
+            },)*
+        ];
+    };
+}
+
+role_catalog! {
+    color {
+        StatusSuccess => ("components.status.success", SemanticColor::Success, false),
+        StatusWarning => ("components.status.warning", SemanticColor::Warning, false),
+        StatusError => ("components.status.error", SemanticColor::Error, false),
+        StatusInfo => ("components.status.info", SemanticColor::Info, false),
+        StatusConnecting => ("components.status.connecting", SemanticColor::Connecting, false),
+        StatusExited => ("components.status.exited", SemanticColor::Exited, false),
+        StatusUnknown => ("components.status.unknown", SemanticColor::Unknown, false),
+
+        HeaderSessionSuccess => ("components.header.session_success", SemanticColor::Success, false),
+        HeaderSessionWarning => ("components.header.session_warning", SemanticColor::Warning, false),
+        HeaderSessionError => ("components.header.session_error", SemanticColor::Error, false),
+        SessionConnecting => ("components.session.connecting", SemanticColor::Connecting, false),
+        SessionExited => ("components.session.exited", SemanticColor::Exited, false),
+
+        DashboardMetricsSparklineLow => ("components.dashboard.metrics.sparkline_low", SemanticColor::Success, false),
+        DashboardMetricsSparklineMedium => ("components.dashboard.metrics.sparkline_medium", SemanticColor::Warning, false),
+        DashboardMetricsSparklineHigh => ("components.dashboard.metrics.sparkline_high", SemanticColor::Error, false),
+
+        PickerBadgeSuccess => ("components.picker.badge_success", SemanticColor::Success, false),
+        PickerBadgeWarning => ("components.picker.badge_warning", SemanticColor::Warning, false),
+        PickerBadgeError => ("components.picker.badge_error", SemanticColor::Error, false),
+
+        TunnelRunning => ("components.tunnel.running", SemanticColor::Success, false),
+        TunnelStopped => ("components.tunnel.stopped", SemanticColor::Error, false),
+        TunnelRetrying => ("components.tunnel.retrying", SemanticColor::Warning, false),
+        TunnelConnecting => ("components.tunnel.connecting", SemanticColor::Connecting, false),
+        TunnelUnknown => ("components.tunnel.unknown", SemanticColor::Unknown, false),
+
+        IdentitiesCardLoaded => ("components.identities.card.loaded", SemanticColor::Success, false),
+        IdentitiesCardMissing => ("components.identities.card.missing", SemanticColor::Unknown, false),
+        IdentitiesCardCredential => ("components.identities.card.credential", SemanticColor::Warning, false),
+
+        AuditSuccess => ("components.audit.success", SemanticColor::Success, false),
+        AuditWarning => ("components.audit.warning", SemanticColor::Warning, false),
+        AuditError => ("components.audit.error", SemanticColor::Error, false),
+        AuditUnknown => ("components.audit.unknown", SemanticColor::Unknown, false),
+
+        BroadcastPending => ("components.broadcast.pending", SemanticColor::Unknown, false),
+        BroadcastRunning => ("components.broadcast.running", SemanticColor::Warning, false),
+        BroadcastSuccess => ("components.broadcast.success", SemanticColor::Success, false),
+        BroadcastError => ("components.broadcast.error", SemanticColor::Error, false),
+
+        OsLogoFallback => ("components.os_logo.fallback", SemanticColor::Info, false),
+    }
+
+    style {
+        TextPrimary => ("components.text.primary", SemanticStyle::Text, false),
+        TextBright => ("components.text.bright", SemanticStyle::TextBright, false),
+        TextMuted => ("components.text.muted", SemanticStyle::TextMuted, false),
+        TextDim => ("components.text.dim", SemanticStyle::TextDim, false),
+        TextInverse => ("components.text.inverse", SemanticStyle::Inverse, false),
+        SelectionActive => ("components.selection.active", SemanticStyle::Selection, false),
+        SelectionInactive => ("components.selection.inactive", SemanticStyle::TextOnSurfaceRaised, false),
+        FocusIndicator => ("components.focus.indicator", SemanticStyle::Accent, false),
+
+        HeaderBrand => ("components.header.brand", SemanticStyle::Inverse, false),
+        HeaderStatsLabel => ("components.header.stats_label", SemanticStyle::TextMuted, false),
+        HeaderStatsValue => ("components.header.stats_value", SemanticStyle::Text, false),
+        HeaderSessionActive => ("components.header.session_active", SemanticStyle::Inverse, false),
+        HeaderSessionInactive => ("components.header.session_inactive", SemanticStyle::TextMuted, false),
+        HeaderSessionMore => ("components.header.session_more", SemanticStyle::TextMuted, false),
+
+        SessionTitle => ("components.session.title", SemanticStyle::Inverse, false),
+        SessionScrollback => ("components.session.scrollback", SemanticStyle::Warning, false),
+        SessionDebugTail => ("components.session.debug_tail", SemanticStyle::TextDim, false),
+
+        DashboardHostListTitle => ("components.dashboard.host_list.title", SemanticStyle::TextBright, false),
+        DashboardHostListCount => ("components.dashboard.host_list.count", SemanticStyle::TextDim, false),
+        DashboardHostListGroup => ("components.dashboard.host_list.group", SemanticStyle::Info, false),
+        DashboardHostListHost => ("components.dashboard.host_list.host", SemanticStyle::Text, false),
+        DashboardHostListHostSelected => ("components.dashboard.host_list.host_selected", SemanticStyle::HighlightOnSelection, false),
+        DashboardHostListMatch => ("components.dashboard.host_list.match", SemanticStyle::Warning, false),
+
+        DashboardDetailsTitle => ("components.dashboard.details.title", SemanticStyle::TextBright, false),
+        DashboardDetailsCount => ("components.dashboard.details.count", SemanticStyle::TextDim, false),
+        DashboardDetailsLabel => ("components.dashboard.details.label", SemanticStyle::Info, false),
+        DashboardDetailsValue => ("components.dashboard.details.value", SemanticStyle::Text, false),
+        DashboardDetailsMetadata => ("components.dashboard.details.metadata", SemanticStyle::TextMuted, false),
+
+        DashboardMetricsTitle => ("components.dashboard.metrics.title", SemanticStyle::TextBright, false),
+        DashboardMetricsCount => ("components.dashboard.metrics.count", SemanticStyle::TextDim, false),
+
+        DashboardSshLogTitle => ("components.dashboard.ssh_log.title", SemanticStyle::TextBright, false),
+        DashboardSshLogCount => ("components.dashboard.ssh_log.count", SemanticStyle::TextDim, false),
+        DashboardAgentTitle => ("components.dashboard.agent.title", SemanticStyle::TextBright, false),
+        DashboardAgentCount => ("components.dashboard.agent.count", SemanticStyle::TextDim, false),
+        DashboardLatencyTitle => ("components.dashboard.latency.title", SemanticStyle::TextBright, false),
+        DashboardLatencyCount => ("components.dashboard.latency.count", SemanticStyle::TextDim, false),
+        DashboardRecentTitle => ("components.dashboard.recent.title", SemanticStyle::TextBright, false),
+        DashboardRecentCount => ("components.dashboard.recent.count", SemanticStyle::TextDim, false),
+        DashboardAuthTitle => ("components.dashboard.auth.title", SemanticStyle::TextBright, false),
+        DashboardAuthCount => ("components.dashboard.auth.count", SemanticStyle::TextDim, false),
+        DashboardPingTitle => ("components.dashboard.ping.title", SemanticStyle::TextBright, false),
+        DashboardPingCount => ("components.dashboard.ping.count", SemanticStyle::TextDim, false),
+
+        FooterKey => ("components.footer.key", SemanticStyle::TextBright, false),
+        FooterLabel => ("components.footer.label", SemanticStyle::TextMuted, false),
+        StatusBarMode => ("components.status_bar.mode", SemanticStyle::Inverse, false),
+        StatusBarMessage => ("components.status_bar.message", SemanticStyle::Text, false),
+        StatusBarError => ("components.status_bar.error", SemanticStyle::Error, false),
+
+        PopupTitle => ("components.popup.title", SemanticStyle::TextBright, false),
+        PopupHint => ("components.popup.hint", SemanticStyle::TextDim, false),
+        PopupLegend => ("components.popup.legend", SemanticStyle::TextMuted, false),
+        PopupError => ("components.popup.error", SemanticStyle::Error, false),
+        PopupWarning => ("components.popup.warning", SemanticStyle::Warning, false),
+
+        PickerQuery => ("components.picker.query", SemanticStyle::TextBright, false),
+        PickerMatch => ("components.picker.match", SemanticStyle::Accent, false),
+        PickerRow => ("components.picker.row", SemanticStyle::Text, false),
+        PickerRowSelected => ("components.picker.row_selected", SemanticStyle::Selection, false),
+        CommandPaletteRowSelected => ("components.command_palette.row_selected", SemanticStyle::HighlightOnSelection, false),
+        SettingsRowSelected => ("components.settings.row_selected", SemanticStyle::HighlightOnSelection, false),
+
+        FormLabel => ("components.form.label", SemanticStyle::TextDim, false),
+        FormLabelFocused => ("components.form.label_focused", SemanticStyle::Info, false),
+        FormLabelEditing => ("components.form.label_editing", SemanticStyle::Warning, false),
+        FormValue => ("components.form.value", SemanticStyle::Text, false),
+        FormInput => ("components.form.input", SemanticStyle::TextBright, false),
+        FormInputFocused => ("components.form.input_focused", SemanticStyle::TextBright, false),
+        FormInputEditing => ("components.form.input_editing", SemanticStyle::TextBrightUnderlinedBold, false),
+        FormHelp => ("components.form.help", SemanticStyle::TextDim, false),
+        FormError => ("components.form.error", SemanticStyle::Error, false),
+
+        TableHeader => ("components.table.header", SemanticStyle::TextBright, false),
+        TableRow => ("components.table.row", SemanticStyle::Text, false),
+        TableRowSelected => ("components.table.row_selected", SemanticStyle::HighlightOnSelection, false),
+
+        HelpSection => ("components.help.section", SemanticStyle::TextBright, false),
+        HelpKey => ("components.help.key", SemanticStyle::TextBright, false),
+        HelpDescription => ("components.help.description", SemanticStyle::Text, false),
+
+        KeybindRow => ("components.keybind.row", SemanticStyle::Text, false),
+        KeybindRowSelected => ("components.keybind.row_selected", SemanticStyle::HighlightOnSelection, false),
+        KeybindValue => ("components.keybind.value", SemanticStyle::TextMuted, false),
+        KeybindValueBound => ("components.keybind.value_bound", SemanticStyle::Success, false),
+        KeybindValueCapturing => ("components.keybind.value_capturing", SemanticStyle::Warning, false),
+
+        KeychainRow => ("components.keychain.row", SemanticStyle::Text, false),
+        KeychainRowSelected => ("components.keychain.row_selected", SemanticStyle::Selection, false),
+        KeychainNoticeSuccess => ("components.keychain.notice_success", SemanticStyle::Success, false),
+        KeychainNoticeError => ("components.keychain.notice_error", SemanticStyle::Error, false),
+
+        TabsActive => ("components.tabs.active", SemanticStyle::Inverse, false),
+        TabsInactive => ("components.tabs.inactive", SemanticStyle::TextMuted, false),
+
+        TunnelsSummary => ("components.tunnels.summary", SemanticStyle::TextMuted, false),
+        TunnelsTableHeader => ("components.tunnels.table_header", SemanticStyle::TextBrightBold, false),
+        TunnelsRow => ("components.tunnels.row", SemanticStyle::Text, false),
+        TunnelsRowSelected => ("components.tunnels.row_selected", SemanticStyle::Selection, false),
+        TunnelsDirection => ("components.tunnels.direction", SemanticStyle::Info, false),
+        TunnelsRemote => ("components.tunnels.remote", SemanticStyle::TextMuted, false),
+        TunnelsMetadata => ("components.tunnels.metadata", SemanticStyle::TextDim, false),
+        TunnelsNotice => ("components.tunnels.notice", SemanticStyle::Warning, false),
+        TunnelsError => ("components.tunnels.error", SemanticStyle::Error, false),
+        TunnelsEmpty => ("components.tunnels.empty", SemanticStyle::TextDim, false),
+
+        SftpLocal => ("components.sftp.local", SemanticStyle::Info, false),
+        SftpRemote => ("components.sftp.remote", SemanticStyle::Info, false),
+        SftpSelection => ("components.sftp.selection", SemanticStyle::Selection, false),
+        SftpSearch => ("components.sftp.search", SemanticStyle::InverseOnWarning, false),
+        SftpQueueDownload => ("components.sftp.queue_download", SemanticStyle::Success, false),
+        SftpQueueUpload => ("components.sftp.queue_upload", SemanticStyle::Warning, false),
+        SftpProgress => ("components.sftp.progress", SemanticStyle::Warning, false),
+        SftpProgressComplete => ("components.sftp.progress_complete", SemanticStyle::Success, false),
+        SftpProgressRemaining => ("components.sftp.progress_remaining", SemanticStyle::TextDim, false),
+        SftpNotice => ("components.sftp.notice", SemanticStyle::Warning, false),
+        SftpPanelTitle => ("components.sftp.panel.title", SemanticStyle::TextBright, false),
+        SftpPanelCount => ("components.sftp.panel.count", SemanticStyle::TextDim, false),
+
+        IdentitiesEmpty => ("components.identities.empty", SemanticStyle::TextDim, false),
+        IdentitiesCardSelection => ("components.identities.card.selection", SemanticStyle::Selection, false),
+        IdentitiesCardName => ("components.identities.card.name", SemanticStyle::TextBrightBold, false),
+        IdentitiesCardText => ("components.identities.card.text", SemanticStyle::Text, false),
+        IdentitiesCardMetadata => ("components.identities.card.metadata", SemanticStyle::TextDim, false),
+        IdentitiesCardKeyType => ("components.identities.card.key_type", SemanticStyle::TextMuted, false),
+        IdentitiesAgentLabel => ("components.identities.agent.label", SemanticStyle::TextMuted, false),
+        IdentitiesAgentValue => ("components.identities.agent.value", SemanticStyle::Text, false),
+        IdentitiesAgentCount => ("components.identities.agent.count", SemanticStyle::TextBright, false),
+        IdentitiesNotice => ("components.identities.notice", SemanticStyle::Warning, false),
+
+        AuditFilterActive => ("components.audit.filter_active", SemanticStyle::Inverse, false),
+        AuditFilterInactive => ("components.audit.filter_inactive", SemanticStyle::TextDim, false),
+        AuditNote => ("components.audit.note", SemanticStyle::TextMuted, false),
+        AuditTableHeader => ("components.audit.table_header", SemanticStyle::TextBright, false),
+        AuditRow => ("components.audit.row", SemanticStyle::Text, false),
+        AuditRowSelected => ("components.audit.row_selected", SemanticStyle::Selection, false),
+
+        BroadcastStdout => ("components.broadcast.stdout", SemanticStyle::TextMuted, false),
+        BroadcastStderr => ("components.broadcast.stderr", SemanticStyle::Error, false),
+        BroadcastDetail => ("components.broadcast.detail", SemanticStyle::TextDim, false),
+        BroadcastCountdown => ("components.broadcast.countdown", SemanticStyle::Info, false),
+        BroadcastPanelTitle => ("components.broadcast.panel.title", SemanticStyle::TextBright, false),
+        BroadcastPanelCount => ("components.broadcast.panel.count", SemanticStyle::TextDim, false),
+
+        AnimationNode => ("components.animation.node", SemanticStyle::Success, false),
+        AnimationNodeLabel => ("components.animation.node_label", SemanticStyle::Text, false),
+        AnimationSpoke => ("components.animation.spoke", SemanticStyle::TextDim, false),
+        AnimationHubEarly => ("components.animation.hub_early", SemanticStyle::Success, false),
+        AnimationHubReady => ("components.animation.hub_ready", SemanticStyle::TextBright, false),
+        AnimationHubFlash => ("components.animation.hub_flash", SemanticStyle::Warning, false),
+        AnimationWordmark => ("components.animation.wordmark", SemanticStyle::TextBright, false),
+        AnimationWordmarkAccent => ("components.animation.wordmark_accent", SemanticStyle::Warning, false),
+        AnimationTagline => ("components.animation.tagline", SemanticStyle::TextMuted, false),
+        AnimationTaglineAccent => ("components.animation.tagline_accent", SemanticStyle::Warning, false),
+        AnimationQuip => ("components.animation.quip", SemanticStyle::TextDim, false),
+        AnimationPromptKey => ("components.animation.prompt_key", SemanticStyle::TextBright, false),
+        AnimationPromptText => ("components.animation.prompt_text", SemanticStyle::TextMuted, false),
+        AnimationCursor => ("components.animation.cursor", SemanticStyle::Success, false),
+    }
+
+    paint {
+        AppBackground => ("components.app.background", SemanticPaint::Background, false),
+        SeparatorPrimary => ("components.separator.primary", SemanticPaint::Border, false),
+        SeparatorSecondary => ("components.separator.secondary", SemanticPaint::TextDim, false),
+
+        HeaderBackground => ("components.header.background", SemanticPaint::SurfaceRaised, false),
+        HeaderSeparator => ("components.header.separator", SemanticPaint::TextDim, false),
+        SessionBackground => ("components.session.background", SemanticPaint::Background, false),
+        SessionBorder => ("components.session.border", SemanticPaint::BorderPopup, true),
+
+        DashboardHostListBorder => ("components.dashboard.host_list.border", SemanticPaint::Border, true),
+        DashboardHostListBorderFocused => ("components.dashboard.host_list.border_focused", SemanticPaint::BorderFocus, true),
+        DashboardHostListBackground => ("components.dashboard.host_list.background", SemanticPaint::Surface, false),
+        DashboardDetailsBorder => ("components.dashboard.details.border", SemanticPaint::Border, true),
+        DashboardDetailsBorderFocused => ("components.dashboard.details.border_focused", SemanticPaint::BorderFocus, true),
+        DashboardDetailsBackground => ("components.dashboard.details.background", SemanticPaint::Surface, false),
+        DashboardMetricsBorder => ("components.dashboard.metrics.border", SemanticPaint::Border, true),
+        DashboardMetricsBorderFocused => ("components.dashboard.metrics.border_focused", SemanticPaint::BorderFocus, true),
+
+        DashboardSshLogBorder => ("components.dashboard.ssh_log.border", SemanticPaint::Border, true),
+        DashboardSshLogBorderFocused => ("components.dashboard.ssh_log.border_focused", SemanticPaint::BorderFocus, true),
+        DashboardSshLogBackground => ("components.dashboard.ssh_log.background", SemanticPaint::Surface, false),
+        DashboardAgentBorder => ("components.dashboard.agent.border", SemanticPaint::Border, true),
+        DashboardAgentBorderFocused => ("components.dashboard.agent.border_focused", SemanticPaint::BorderFocus, true),
+        DashboardAgentBackground => ("components.dashboard.agent.background", SemanticPaint::Surface, false),
+        DashboardLatencyBorder => ("components.dashboard.latency.border", SemanticPaint::Border, true),
+        DashboardLatencyBorderFocused => ("components.dashboard.latency.border_focused", SemanticPaint::BorderFocus, true),
+        DashboardLatencyBackground => ("components.dashboard.latency.background", SemanticPaint::Surface, false),
+        DashboardRecentBorder => ("components.dashboard.recent.border", SemanticPaint::Border, true),
+        DashboardRecentBorderFocused => ("components.dashboard.recent.border_focused", SemanticPaint::BorderFocus, true),
+        DashboardRecentBackground => ("components.dashboard.recent.background", SemanticPaint::Surface, false),
+        DashboardAuthBorder => ("components.dashboard.auth.border", SemanticPaint::Border, true),
+        DashboardAuthBorderFocused => ("components.dashboard.auth.border_focused", SemanticPaint::BorderFocus, true),
+        DashboardAuthBackground => ("components.dashboard.auth.background", SemanticPaint::Surface, false),
+        DashboardPingBorder => ("components.dashboard.ping.border", SemanticPaint::Border, true),
+        DashboardPingBorderFocused => ("components.dashboard.ping.border_focused", SemanticPaint::BorderFocus, true),
+        DashboardPingBackground => ("components.dashboard.ping.background", SemanticPaint::Surface, false),
+
+        FooterBackground => ("components.footer.background", SemanticPaint::SurfaceRaised, false),
+        FooterSeparator => ("components.footer.separator", SemanticPaint::TextDim, false),
+        StatusBarBackground => ("components.status_bar.background", SemanticPaint::SurfaceRaised, false),
+
+        PopupBackground => ("components.popup.background", SemanticPaint::Surface, false),
+        PopupBorder => ("components.popup.border", SemanticPaint::BorderPopup, true),
+        TableBorder => ("components.table.border", SemanticPaint::Border, true),
+
+        TabsSeparator => ("components.tabs.separator", SemanticPaint::TextDim, false),
+        TunnelsSeparator => ("components.tunnels.separator", SemanticPaint::TextDim, false),
+
+        SftpPanelBorder => ("components.sftp.panel.border", SemanticPaint::Border, true),
+        SftpPanelBorderFocused => ("components.sftp.panel.border_focused", SemanticPaint::BorderFocus, true),
+        SftpPanelBackground => ("components.sftp.panel.background", SemanticPaint::Surface, false),
+
+        IdentitiesCardBorder => ("components.identities.card.border", SemanticPaint::Border, true),
+        IdentitiesCardBorderSelected => ("components.identities.card.border_selected", SemanticPaint::Accent, true),
+        IdentitiesAgentSeparator => ("components.identities.agent.separator", SemanticPaint::TextDim, false),
+
+        BroadcastPanelBorder => ("components.broadcast.panel.border", SemanticPaint::Border, true),
+        BroadcastPanelBorderFocused => ("components.broadcast.panel.border_focused", SemanticPaint::BorderFocus, true),
+        BroadcastPanelBackground => ("components.broadcast.panel.background", SemanticPaint::Surface, false),
+
+        AnimationBackground => ("components.animation.background", SemanticPaint::Background, false),
+        AnimationHalo => ("components.animation.halo", SemanticPaint::SelectionBg, false),
+    }
+
+    tint {
+        OsLogoTint => ("components.os_logo.tint", SemanticTint::Native, false),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn v1_catalog_is_complete_unique_and_typed() {
+        assert_eq!(SEMANTIC_SPECS.len(), 23);
+        let paths: std::collections::BTreeSet<_> =
+            ROLE_SPECS.iter().map(|spec| spec.path).collect();
+        assert_eq!(paths.len(), ROLE_SPECS.len());
+        assert!(ROLE_SPECS
+            .iter()
+            .all(|spec| spec.path.starts_with("components.")));
+        assert!(ROLE_SPECS
+            .iter()
+            .all(|spec| spec.fallback.is_type_compatible(spec.role)));
+    }
+
+    #[test]
+    fn role_counts_cover_every_spec() {
+        assert_eq!(
+            ColorRole::COUNT + StyleRole::COUNT + PaintRole::COUNT + TintRole::COUNT,
+            ROLE_SPECS.len()
+        );
+    }
+
+    #[test]
+    fn semantic_specs_are_indexed_by_their_slot() {
+        for (index, spec) in SEMANTIC_SPECS.iter().enumerate() {
+            assert_eq!(spec.slot as usize, index, "{}", spec.key);
+        }
+    }
+
+    #[test]
+    fn only_closed_frames_may_use_perimeter_gradients() {
+        // `perimeter` has to run a seamless ring, so a role that never draws a
+        // closed frame must not be flagged for it — and only paints draw frames.
+        assert!(ROLE_SPECS
+            .iter()
+            .all(|spec| !spec.closed_frame || matches!(spec.role, RoleRef::Paint(_))));
+    }
+}

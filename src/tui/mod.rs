@@ -1524,6 +1524,108 @@ mod tests {
         terminal.backend().buffer().clone()
     }
 
+    // ── Frozen default-theme golden ──────────────────────────
+    //
+    // The runtime theme system must not change how `default` looks. These
+    // helpers freeze the current `theme.rs`-backed rendering cell by cell, so
+    // any later migration that shifts a colour, a modifier or a glyph fails
+    // loudly instead of quietly redecorating the app.
+
+    /// Fixed clock text — the real one is wall-clock dependent.
+    const GOLDEN_CLOCK: &str = "Mon 00:00:00";
+    /// The scope path `render_inner` passes to the tab bar.
+    const GOLDEN_SCOPE: &str = "~/.config/sshub";
+    /// Columns at the right end of the tab-bar row holding the scope path and
+    /// the build version. The version comes from `CARGO_PKG_VERSION` and moves
+    /// with every release, so this tail is blanked before the signature is
+    /// taken; the tab chrome left of it is what the golden guards.
+    const GOLDEN_VOLATILE_TAIL: u16 = 48;
+
+    fn signature_color(color: ratatui::style::Color) -> String {
+        use ratatui::style::Color;
+        match color {
+            Color::Reset => "reset".to_string(),
+            Color::Rgb(r, g, b) => format!("rgb:{r:02x}{g:02x}{b:02x}"),
+            Color::Indexed(i) => format!("idx:{i}"),
+            other => format!("{other:?}").to_lowercase(),
+        }
+    }
+
+    /// One line per cell: `x,y,symbol,fg,bg,underline,modifiers`.
+    fn buffer_signature(buffer: &Buffer) -> String {
+        let area = buffer.area;
+        let mut out = String::new();
+        for y in area.y..area.bottom() {
+            for x in area.x..area.right() {
+                let cell = &buffer[(x, y)];
+                out.push_str(&format!(
+                    "{x},{y},{},{},{},{},{}\n",
+                    cell.symbol(),
+                    signature_color(cell.fg),
+                    signature_color(cell.bg),
+                    signature_color(cell.underline_color),
+                    cell.modifier.bits(),
+                ));
+            }
+        }
+        out
+    }
+
+    /// The dashboard chrome every tab shares — header, session strip, tab bar,
+    /// hosts body, separators and footer — rendered without the overlay,
+    /// animation and popup paths that carry their own timing.
+    fn render_default_theme_golden_surface(app: &App, width: u16, height: u16) -> Buffer {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                let areas = dashboard_layout::dashboard_layout_zoomed(area, app.ui_zoom);
+
+                let [total, online, slow, down] = compute_header_stats(app);
+                widgets::header::render_header(
+                    frame,
+                    areas.header,
+                    total,
+                    online,
+                    slow,
+                    down,
+                    GOLDEN_CLOCK,
+                );
+                let chips = build_session_chips(app);
+                widgets::header::render_session_strip(frame, areas.header, &chips);
+
+                let rule1 = row_in(area, areas.header.y + areas.header.height);
+                widgets::footer::render_hrule(frame, rule1, false);
+                widgets::tab_bar::render_tab_bar(
+                    frame,
+                    areas.tab_bar,
+                    app.active_tab + 1,
+                    GOLDEN_SCOPE,
+                );
+                let rule2 = row_in(area, areas.tab_bar.y + areas.tab_bar.height);
+                widgets::footer::render_hrule(frame, rule2, false);
+
+                render_tab_body(frame, app.active_tab, &areas, app);
+
+                let rule3 = row_in(area, areas.footer.y.saturating_sub(1));
+                widgets::footer::render_hrule(frame, rule3, true);
+                let keybinds = footer_keybinds(app);
+                widgets::footer::render_footer(frame, areas.footer, &keybinds);
+            })
+            .unwrap();
+
+        let mut buffer = terminal.backend().buffer().clone();
+        let tab_bar = dashboard_layout::dashboard_layout_zoomed(buffer.area, app.ui_zoom).tab_bar;
+        let from = tab_bar.right().saturating_sub(GOLDEN_VOLATILE_TAIL);
+        for x in from..tab_bar.right() {
+            if let Some(cell) = buffer.cell_mut((x, tab_bar.y)) {
+                cell.reset();
+            }
+        }
+        buffer
+    }
+
     /// App with three sessions in distinct phases plus an open picker.
     fn app_with_picker(purpose: crate::app::SessionPickerPurpose, query: &str) -> App {
         use crate::session::{SessionConfig, SessionMeta, SessionPhase};
@@ -1901,6 +2003,15 @@ mod tests {
         assert!(buffer_contains(&buffer, "q quit"));
         assert!(buffer_contains(&buffer, "/ search"));
         assert!(!buffer_contains(&buffer, "\u{2026}"));
+    }
+
+    #[test]
+    fn default_dashboard_matches_frozen_legacy_buffer() {
+        let buffer = render_default_theme_golden_surface(&test_app_with_hosts(), 132, 38);
+        assert_eq!(
+            buffer_signature(&buffer),
+            include_str!("../../tests/fixtures/theme/default-dashboard.buffer")
+        );
     }
 
     #[test]
