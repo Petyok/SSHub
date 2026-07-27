@@ -650,7 +650,7 @@ mod tests {
     use super::*;
     use crate::test_support::{
         assert_panel_wears, buffer_at, find_text, panel_marker_theme, resolved_source, themed_app,
-        PanelProof,
+        PanelFamily, PanelProof,
     };
     use ratatui::style::Color;
 
@@ -788,7 +788,7 @@ mod tests {
                 &buf,
                 AREA,
                 PanelProof {
-                    family: "dashboard.recent",
+                    family: PanelFamily::Recent,
                     focused,
                     title: "recent sessions",
                     count: None,
@@ -802,7 +802,7 @@ mod tests {
                 &buf,
                 AREA,
                 PanelProof {
-                    family: "dashboard.auth",
+                    family: PanelFamily::Auth,
                     focused,
                     title: "auth events",
                     count: None,
@@ -816,7 +816,7 @@ mod tests {
                 &buf,
                 AREA,
                 PanelProof {
-                    family: "dashboard.ping",
+                    family: PanelFamily::Ping,
                     focused,
                     title: "ping all hosts",
                     count: None,

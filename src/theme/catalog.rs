@@ -329,8 +329,6 @@ role_catalog! {
         StatusWarning => ("components.status.warning", SemanticColor::Warning, false),
         StatusError => ("components.status.error", SemanticColor::Error, false),
         StatusInfo => ("components.status.info", SemanticColor::Info, false),
-        StatusConnecting => ("components.status.connecting", SemanticColor::Connecting, false),
-        StatusExited => ("components.status.exited", SemanticColor::Exited, false),
         StatusUnknown => ("components.status.unknown", SemanticColor::Unknown, false),
 
         HeaderSessionSuccess => ("components.header.session_success", SemanticColor::Success, false),
@@ -633,9 +631,28 @@ mod tests {
             .collect();
         let frozen: Vec<&str> = FROZEN_ROLE_MATRIX.lines().collect();
 
-        // Diff by role path, not by line position. A pairwise zip turns a
-        // single *removal* into a cascade of dozens of bogus "changed" rows,
-        // which buries exactly the review this snapshot exists to enable.
+        let changed = matrix_diff(&frozen, &actual);
+        assert!(
+            changed.is_empty(),
+            "the frozen V1 role \u{2192} fallback matrix changed ({} rows frozen, {} now).\n{}\n\
+             Check every difference against the spec's role catalogue before \
+             updating src/theme/role_matrix.snapshot.",
+            frozen.len(),
+            actual.len(),
+            changed.join("\n")
+        );
+    }
+
+    /// The frozen-vs-actual comparison, as a pure function so it can be tested
+    /// on inputs the real snapshot cannot produce.
+    ///
+    /// Diffing is by role path, not by line position: a pairwise zip turns a
+    /// single *removal* into a cascade of dozens of bogus "changed" rows, which
+    /// buries exactly the review this snapshot exists to enable. But a map keyed
+    /// by path also *collapses duplicates*, so the row counts are checked
+    /// explicitly — otherwise a snapshot with a repeated line would compare
+    /// equal to a catalogue that is genuinely one row shorter.
+    fn matrix_diff(frozen: &[&str], actual: &[String]) -> Vec<String> {
         let key = |row: &str| row.split(" = ").next().unwrap_or(row).to_string();
         let was: std::collections::BTreeMap<String, &str> =
             frozen.iter().map(|row| (key(row), *row)).collect();
@@ -643,6 +660,33 @@ mod tests {
             actual.iter().map(|row| (key(row), row.as_str())).collect();
 
         let mut changed: Vec<String> = Vec::new();
+
+        // Duplicate paths would silently vanish into the maps below, taking the
+        // length protection with them.
+        if was.len() != frozen.len() {
+            changed.push(format!(
+                "! the frozen snapshot has {} rows but only {} distinct role paths \u{2014} \
+                 it contains duplicates",
+                frozen.len(),
+                was.len()
+            ));
+        }
+        if now.len() != actual.len() {
+            changed.push(format!(
+                "! the catalogue has {} rows but only {} distinct role paths \u{2014} \
+                 it contains duplicates",
+                actual.len(),
+                now.len()
+            ));
+        }
+        if frozen.len() != actual.len() {
+            changed.push(format!(
+                "! row count moved: {} frozen, {} now",
+                frozen.len(),
+                actual.len()
+            ));
+        }
+
         for (path, row) in &was {
             match now.get(path) {
                 None => changed.push(format!("- removed:  {row}")),
@@ -657,16 +701,49 @@ mod tests {
                 changed.push(format!("+ added:    {row}"));
             }
         }
+        changed
+    }
 
+    /// A duplicated frozen line must not buy the catalogue a free removal.
+    ///
+    /// Keying by role path collapses duplicates, so without an explicit length
+    /// check a snapshot listing one row twice compares equal to a catalogue that
+    /// is genuinely one row shorter — and the frozen matrix has no other guard.
+    #[test]
+    fn a_duplicated_frozen_row_cannot_hide_a_removal() {
+        // Same two paths either side, but the snapshot repeats one of them in
+        // place of a role the catalogue no longer has.
+        let frozen = vec![
+            "components.a = Style(Text)",
+            "components.a = Style(Text)",
+            "components.b = Style(Text)",
+        ];
+        let actual = vec![
+            "components.a = Style(Text)".to_string(),
+            "components.b = Style(Text)".to_string(),
+        ];
+
+        let changed = matrix_diff(&frozen, &actual);
         assert!(
-            changed.is_empty(),
-            "the frozen V1 role → fallback matrix changed ({} rows frozen, {} now).\n{}\n\
-             Check every difference against the spec's role catalogue before \
-             updating src/theme/role_matrix.snapshot.",
-            frozen.len(),
-            actual.len(),
-            changed.join("\n")
+            !changed.is_empty(),
+            "a duplicated frozen row hid a length change: {changed:?}"
         );
+        assert!(
+            changed.iter().any(|row| row.contains("duplicates")),
+            "the report should name the duplication: {changed:?}"
+        );
+    }
+
+    /// The happy path still reports nothing, so the guard above cannot be
+    /// satisfied by simply always failing.
+    #[test]
+    fn an_unchanged_matrix_reports_no_differences() {
+        let frozen = vec!["components.a = Style(Text)", "components.b = Paint(Border)"];
+        let actual = vec![
+            "components.a = Style(Text)".to_string(),
+            "components.b = Paint(Border)".to_string(),
+        ];
+        assert!(matrix_diff(&frozen, &actual).is_empty());
     }
 
     #[test]

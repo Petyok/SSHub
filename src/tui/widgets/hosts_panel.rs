@@ -108,7 +108,7 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
         buf,
         area,
         &title,
-        Some(&count_str),
+        panel_box::HOST_LIST_PANEL.badge(&count_str),
         app.focused_panel == crate::app::PanelId::Hosts,
         theme,
         panel_box::HOST_LIST_PANEL,
@@ -448,7 +448,7 @@ mod tests {
     use super::*;
     use crate::test_support::{
         assert_panel_wears, find_text, frame_at, panel_marker_theme, resolved_default,
-        resolved_source, themed_app, PanelProof,
+        resolved_source, themed_app, PanelFamily, PanelProof,
     };
     use ratatui::buffer::Buffer;
     use ratatui::style::Color;
@@ -707,7 +707,7 @@ mod tests {
                 &buf,
                 AREA,
                 PanelProof {
-                    family: "dashboard.host_list",
+                    family: PanelFamily::HostList,
                     focused,
                     title: "hosts",
                     count: Some("1"),

@@ -298,7 +298,15 @@ fn render_pane(
             pane.filter, vis_n, total, hidden_note
         )
     };
-    render_panel_box(buf, rect, title, Some(&count), focused, theme, SFTP_PANEL);
+    render_panel_box(
+        buf,
+        rect,
+        title,
+        SFTP_PANEL.badge(&count),
+        focused,
+        theme,
+        SFTP_PANEL,
+    );
 
     let inner_x = rect.x + 2;
     let inner_w = rect.width.saturating_sub(4) as usize;
@@ -669,7 +677,7 @@ mod tests {
     #[test]
     fn both_sftp_panes_wear_the_panel_roles_in_both_focus_states() {
         use crate::test_support::{
-            assert_panel_wears, buffer_at, panel_marker, panel_marker_theme, PanelProof,
+            assert_panel_wears, buffer_at, panel_marker_theme, PanelFamily, PanelProof,
         };
 
         let theme = panel_marker_theme();
@@ -691,30 +699,31 @@ mod tests {
                 render_browser(buf, area, &state, 0.0, 1.0, [0, 0], &theme);
             });
 
-            // Titles are "local" and "remote"; the badge is the pane's cwd and
-            // entry count, so each pane's own count text is unique.
+            // Both panes get the full five-role assertion. The titles
+            // ("local" / "remote") and the badges (each pane's own cwd) are
+            // unique strings in the shared buffer, so searching it finds the
+            // right pane either way.
             assert_panel_wears(
                 &buf,
                 local,
                 PanelProof {
-                    family: "sftp.panel",
+                    family: PanelFamily::Sftp,
                     focused: local_focused,
                     title: "local",
                     count: Some("/local"),
                     body: (local.x + 2, local.y + 1),
                 },
             );
-            // The remote pane's corner is asserted directly: `assert_panel_wears`
-            // searches the whole buffer for its title, and both panes are in it.
-            assert_eq!(
-                buf.cell((remote.x, remote.y)).unwrap().fg,
-                panel_marker("sftp.panel", if local_focused { 0 } else { 1 }),
-                "the remote pane's border follows the focus too"
-            );
-            assert_eq!(
-                buf.cell((remote.x + 2, remote.y + 1)).unwrap().bg,
-                panel_marker("sftp.panel", 4),
-                "the remote pane sits on `sftp.panel.background`"
+            assert_panel_wears(
+                &buf,
+                remote,
+                PanelProof {
+                    family: PanelFamily::Sftp,
+                    focused: !local_focused,
+                    title: "remote",
+                    count: Some("/remote"),
+                    body: (remote.x + 2, remote.y + 1),
+                },
             );
         }
     }

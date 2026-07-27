@@ -146,7 +146,7 @@ pub fn render_broadcast_panel(frame: &mut Frame, area: Rect, app: &App, focused:
         frame.buffer_mut(),
         area,
         &title,
-        Some(&badge),
+        BROADCAST_PANEL.badge(&badge),
         focused,
         app.theme(),
         BROADCAST_PANEL,
@@ -212,7 +212,7 @@ pub fn render_broadcast_zoomed(frame: &mut Frame, area: Rect, app: &App) {
         frame.buffer_mut(),
         area,
         &title,
-        Some(&badge),
+        BROADCAST_PANEL.badge(&badge),
         true,
         app.theme(),
         BROADCAST_PANEL,
@@ -729,7 +729,7 @@ pub fn render_preview(frame: &mut Frame, app: &App) {
 mod tests {
     use super::*;
     use crate::test_support::{
-        assert_panel_wears, frame_at, panel_marker_theme, themed_app, PanelProof,
+        assert_panel_wears, frame_at, panel_marker_theme, themed_app, PanelFamily, PanelProof,
     };
 
     /// A live run with one pending host — enough for both panels to draw.
@@ -776,7 +776,7 @@ mod tests {
                 &buf,
                 area,
                 PanelProof {
-                    family: "broadcast.panel",
+                    family: PanelFamily::Broadcast,
                     focused,
                     title: "cast",
                     count: Some("0/1"),
@@ -800,7 +800,7 @@ mod tests {
             &buf,
             area,
             PanelProof {
-                family: "broadcast.panel",
+                family: PanelFamily::Broadcast,
                 focused: true,
                 title: "cast",
                 count: Some("0/1"),

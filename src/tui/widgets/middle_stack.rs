@@ -815,7 +815,7 @@ mod tests {
     use super::*;
     use crate::test_support::{
         assert_panel_wears, buffer_at, find_text, find_text_from, frame_at, panel_marker_theme,
-        resolved_source, themed_app, PanelProof,
+        resolved_source, themed_app, PanelFamily, PanelProof,
     };
     use ratatui::style::Color;
 
@@ -967,7 +967,7 @@ mod tests {
                 &buf,
                 AREA,
                 PanelProof {
-                    family: "dashboard.details",
+                    family: PanelFamily::Details,
                     focused,
                     title: "host \u{b7}",
                     count: None,
@@ -981,7 +981,7 @@ mod tests {
                 &buf,
                 AREA,
                 PanelProof {
-                    family: "dashboard.ssh_log",
+                    family: PanelFamily::SshLog,
                     focused,
                     title: "ssh log",
                     count: None,
@@ -995,7 +995,7 @@ mod tests {
                 &buf,
                 AREA,
                 PanelProof {
-                    family: "dashboard.agent",
+                    family: PanelFamily::Agent,
                     focused,
                     title: "agent",
                     count: None,
@@ -1009,7 +1009,7 @@ mod tests {
                 &buf,
                 AREA,
                 PanelProof {
-                    family: "dashboard.latency",
+                    family: PanelFamily::Latency,
                     focused,
                     title: "latency",
                     count: None,

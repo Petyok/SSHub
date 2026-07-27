@@ -149,31 +149,72 @@ pub(crate) fn find_text(buf: &Buffer, needle: &str) -> (u16, u16) {
 // nothing — a caller can pass the right bundle with the wrong arguments, which
 // is exactly how the SFTP panes came to hard-code `focused = false`.
 
-/// The ten `components.*` families behind the eleven panel call sites
-/// (broadcast is used twice), in the order their marker colours are generated.
-pub(crate) const PANEL_FAMILIES: &[&str] = &[
-    "dashboard.host_list",
-    "dashboard.details",
-    "dashboard.ssh_log",
-    "dashboard.agent",
-    "dashboard.latency",
-    "dashboard.recent",
-    "dashboard.auth",
-    "dashboard.ping",
-    "sftp.panel",
-    "broadcast.panel",
-];
+/// One `components.*` family behind a panel call site.
+///
+/// A typed enum rather than a free string: a typo becomes a compile error, and
+/// whether the family carries a badge is a static property of the family rather
+/// than something each test has to remember.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum PanelFamily {
+    HostList,
+    Details,
+    SshLog,
+    Agent,
+    Latency,
+    Recent,
+    Auth,
+    Ping,
+    Sftp,
+    Broadcast,
+}
 
-/// The families whose productive caller really supplies a badge. Only these
-/// publish a `count` role at all.
-const PANEL_FAMILIES_WITH_COUNT: &[&str] =
-    &["dashboard.host_list", "sftp.panel", "broadcast.panel"];
+impl PanelFamily {
+    /// The ten families, in the order their marker colours are generated.
+    /// Broadcast appears once here but is used by two call sites.
+    pub(crate) const ALL: &'static [PanelFamily] = &[
+        PanelFamily::HostList,
+        PanelFamily::Details,
+        PanelFamily::SshLog,
+        PanelFamily::Agent,
+        PanelFamily::Latency,
+        PanelFamily::Recent,
+        PanelFamily::Auth,
+        PanelFamily::Ping,
+        PanelFamily::Sftp,
+        PanelFamily::Broadcast,
+    ];
 
-fn family_index(family: &str) -> usize {
-    PANEL_FAMILIES
-        .iter()
-        .position(|f| *f == family)
-        .unwrap_or_else(|| panic!("`{family}` is not a known panel family"))
+    /// The TOML path a marker theme writes this family under.
+    pub(crate) fn path(self) -> &'static str {
+        match self {
+            PanelFamily::HostList => "dashboard.host_list",
+            PanelFamily::Details => "dashboard.details",
+            PanelFamily::SshLog => "dashboard.ssh_log",
+            PanelFamily::Agent => "dashboard.agent",
+            PanelFamily::Latency => "dashboard.latency",
+            PanelFamily::Recent => "dashboard.recent",
+            PanelFamily::Auth => "dashboard.auth",
+            PanelFamily::Ping => "dashboard.ping",
+            PanelFamily::Sftp => "sftp.panel",
+            PanelFamily::Broadcast => "broadcast.panel",
+        }
+    }
+
+    /// Whether this family's productive caller really passes a badge — and so
+    /// whether it publishes a `count` role at all.
+    pub(crate) fn has_count(self) -> bool {
+        matches!(
+            self,
+            PanelFamily::HostList | PanelFamily::Sftp | PanelFamily::Broadcast
+        )
+    }
+
+    fn index(self) -> usize {
+        PanelFamily::ALL
+            .iter()
+            .position(|f| *f == self)
+            .expect("every family is in ALL")
+    }
 }
 
 /// The marker colour of one slot of one family.
@@ -181,33 +222,33 @@ fn family_index(family: &str) -> usize {
 /// Families differ in the red channel and slots in the blue, so a bundle
 /// copy-pasted from the neighbouring panel fails on an exact value rather than
 /// on a vague "something changed".
-pub(crate) fn panel_marker(family: &str, slot: u8) -> ratatui::style::Color {
-    ratatui::style::Color::Rgb(0x11 + family_index(family) as u8, 0x00, slot)
+pub(crate) fn panel_marker(family: PanelFamily, slot: u8) -> ratatui::style::Color {
+    ratatui::style::Color::Rgb(0x11 + family.index() as u8, 0x00, slot)
 }
 
-/// A theme giving all ten panel families their own five (or four) markers.
+/// A theme giving all ten panel families their own markers.
 pub(crate) fn panel_marker_theme() -> ResolvedTheme {
     let mut src = String::from("schema_version = 1\nname = \"Panels\"\nextends = \"default\"\n");
-    for family in PANEL_FAMILIES {
+    for family in PanelFamily::ALL {
         let hex = |slot: u8| {
-            let c = panel_marker(family, slot);
-            let ratatui::style::Color::Rgb(r, g, b) = c else {
+            let ratatui::style::Color::Rgb(r, g, b) = panel_marker(*family, slot) else {
                 unreachable!()
             };
             format!("#{r:02x}{g:02x}{b:02x}")
         };
         src.push_str(&format!(
-            "\n[components.{family}]\n\
+            "\n[components.{}]\n\
              border = \"{}\"\n\
              border_focused = \"{}\"\n\
              title = {{ foreground = \"{}\" }}\n\
              background = \"{}\"\n",
+            family.path(),
             hex(0),
             hex(1),
             hex(2),
             hex(4),
         ));
-        if PANEL_FAMILIES_WITH_COUNT.contains(family) {
+        if family.has_count() {
             src.push_str(&format!("count = {{ foreground = \"{}\" }}\n", hex(3)));
         }
     }
@@ -216,7 +257,7 @@ pub(crate) fn panel_marker_theme() -> ResolvedTheme {
 
 /// What a panel frame must look like under [`panel_marker_theme`].
 pub(crate) struct PanelProof<'a> {
-    pub family: &'a str,
+    pub family: PanelFamily,
     pub focused: bool,
     pub title: &'a str,
     /// The badge text the *productive* caller passes, or `None` where it never
@@ -239,36 +280,37 @@ pub(crate) fn assert_panel_wears(buf: &Buffer, area: Rect, proof: PanelProof<'_>
         body,
     } = proof;
     let state = if focused { "focused" } else { "unfocused" };
+    let family_path = family.path();
 
     assert_eq!(
         buf.cell((area.x, area.y)).unwrap().fg,
         panel_marker(family, if focused { 1 } else { 0 }),
-        "{family} ({state}): top-left border corner"
+        "{family_path} ({state}): top-left border corner"
     );
 
     let (tx, ty) = find_text(buf, title);
     assert_eq!(
         buf.cell((tx, ty)).unwrap().fg,
         panel_marker(family, 2),
-        "{family} ({state}): title `{title}`"
+        "{family_path} ({state}): title `{title}`"
     );
 
     if let Some(c) = count {
         assert!(
-            PANEL_FAMILIES_WITH_COUNT.contains(&family),
-            "{family} has no published count role, so a badge cannot be proved"
+            family.has_count(),
+            "{family_path} has no published count role, so a badge cannot be proved"
         );
         let (cx, cy) = find_text(buf, c);
         assert_eq!(
             buf.cell((cx, cy)).unwrap().fg,
             panel_marker(family, 3),
-            "{family} ({state}): count `{c}`"
+            "{family_path} ({state}): count `{c}`"
         );
     }
 
     assert_eq!(
         buf.cell(body).unwrap().bg,
         panel_marker(family, 4),
-        "{family} ({state}): panel background at {body:?}"
+        "{family_path} ({state}): panel background at {body:?}"
     );
 }

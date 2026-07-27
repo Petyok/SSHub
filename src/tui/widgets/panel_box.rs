@@ -33,6 +33,28 @@ pub struct PanelRoles {
     pub background: PaintRole,
 }
 
+/// A count badge: its text and the role that styles it, inseparably.
+///
+/// This is one value rather than two independent options on purpose. When
+/// `render_panel_box` took `count: Option<&str>` and read the role from a
+/// second `Option`, the two could disagree: a badge-less family handed a text
+/// reserved blank cells in the frame and truncated the title to make room for a
+/// badge that was then never drawn. Pairing them makes that state
+/// unrepresentable — the slot is reserved from the same value that fills it.
+#[derive(Clone, Copy)]
+pub struct PanelBadge<'a> {
+    pub text: &'a str,
+    pub role: StyleRole,
+}
+
+impl PanelRoles {
+    /// The badge for `text`, or `None` when this family publishes no count
+    /// role — in which case nothing is reserved and nothing is drawn.
+    pub(crate) fn badge<'a>(&self, text: &'a str) -> Option<PanelBadge<'a>> {
+        self.count.map(|role| PanelBadge { text, role })
+    }
+}
+
 /// Declare the role bundle of a panel that carries a count badge.
 macro_rules! panel_roles {
     ($name:ident, $border:ident, $focused:ident, $title:ident, $count:ident, $background:ident) => {
@@ -176,7 +198,7 @@ pub fn render_panel_box(
     buf: &mut Buffer,
     area: Rect,
     title: &str,
-    count: Option<&str>,
+    badge: Option<PanelBadge<'_>>,
     focused: bool,
     theme: &ResolvedTheme,
     roles: PanelRoles,
@@ -202,7 +224,7 @@ pub fn render_panel_box(
 
     // The title slot is measured before anything is drawn, so pass 2 can leave
     // exactly the cells pass 4 fills — the frame is complete either way.
-    let reserved = 1 + count.map(|c| c.len() + 4).unwrap_or(0); // "┐" + "── c "
+    let reserved = 1 + badge.map(|b| b.text.len() + 4).unwrap_or(0); // "┐" + "── c "
     let title_budget = (right_edge.saturating_sub(x + 4) as usize).saturating_sub(reserved);
     let title_text = if title_budget == 0 {
         String::new()
@@ -224,13 +246,13 @@ pub fn render_panel_box(
     buf.set_string(col, y, " ", bstyle);
     col += 1;
 
-    let mut count_x = None;
-    if let Some(c) = count {
+    let mut badge_x = None;
+    if let Some(b) = badge {
         buf.set_string(col, y, "── ", bstyle);
         col += 3;
-        count_x = Some(col);
-        buf.set_string(col, y, " ".repeat(c.len()), bstyle);
-        col += c.len() as u16;
+        badge_x = Some(col);
+        buf.set_string(col, y, " ".repeat(b.text.len()), bstyle);
+        col += b.text.len() as u16;
         buf.set_string(col, y, " ", bstyle);
         col += 1;
     }
@@ -262,11 +284,8 @@ pub fn render_panel_box(
     if title_w > 0 {
         buf.set_string(title_x, y, &title_text, theme.style(roles.title));
     }
-    // A badge is only drawn where the caller passed one *and* the family
-    // publishes a role for it; the two always agree, and a mismatch would mean
-    // a badge rendered from no role at all.
-    if let (Some(cx), Some(c), Some(role)) = (count_x, count, roles.count) {
-        buf.set_string(cx, y, c, theme.style(role));
+    if let (Some(bx), Some(b)) = (badge_x, badge) {
+        buf.set_string(bx, y, b.text, theme.style(b.role));
     }
 }
 
@@ -327,7 +346,15 @@ mod tests {
     ) -> Buffer {
         let area = Rect::new(0, 0, 24, 6);
         let mut buf = Buffer::empty(area);
-        render_panel_box(&mut buf, area, "Hosts", Some("12"), focused, theme, roles);
+        render_panel_box(
+            &mut buf,
+            area,
+            "Hosts",
+            roles.badge("12"),
+            focused,
+            theme,
+            roles,
+        );
         buf
     }
 
@@ -491,14 +518,17 @@ mod tests {
         assert_eq!(focused[(0, 0)].fg, Color::Rgb(0xee, 0x00, 0xee));
     }
 
-    /// The primitive's own count slot: `render_panel_box` must draw a badge
-    /// from the family's `count` role, and must never draw one for a family
-    /// that publishes none.
+    /// A family that publishes no count role cannot be given a badge at all.
     ///
-    /// The eleven *call sites* are proved next to their own renderers; this is
-    /// only about the primitive.
+    /// The regression this pins: `render_panel_box` used to take the badge
+    /// *text* and the badge *role* as two independent options. Handed a text
+    /// for a badge-less family it reserved the slot, drew blank cells into the
+    /// frame and truncated the title to make room — then drew no badge, because
+    /// there was no role. Pairing text and role into one `PanelBadge` makes that
+    /// half-state unrepresentable, and the proof is that the frame comes out
+    /// byte-identical to passing `None`.
     #[test]
-    fn a_badge_less_family_publishes_no_count_role() {
+    fn a_badge_less_family_renders_exactly_as_if_no_badge_was_passed() {
         assert!(
             HOST_LIST_PANEL.count.is_some(),
             "the host list carries a badge"
@@ -516,28 +546,68 @@ mod tests {
                 roles.count.is_none(),
                 "`{name}` never passes a badge, so it must publish no count role"
             );
-        }
+            assert!(
+                roles.badge("12").is_none(),
+                "`{name}` cannot build a badge at all"
+            );
 
-        // And the primitive honours that: handed a badge anyway, a badge-less
-        // family draws no count cells rather than inventing a role for them.
-        let theme = resolved_default();
+            let theme = resolved_default();
+            // Narrow enough that a wrongly reserved four-cell slot would have to
+            // eat into the title.
+            let area = Rect::new(0, 0, 20, 4);
+            let render = |badge| {
+                let mut buf = Buffer::empty(area);
+                render_panel_box(
+                    &mut buf,
+                    area,
+                    "A rather long title",
+                    badge,
+                    false,
+                    &theme,
+                    roles,
+                );
+                buf
+            };
+
+            let with_badge = render(roles.badge("12"));
+            let without = render(None);
+            assert_eq!(
+                with_badge, without,
+                "`{name}` must render identically with and without a badge argument"
+            );
+
+            let top: String = (area.left()..area.right())
+                .map(|x| with_badge.cell((x, 0)).unwrap().symbol())
+                .collect();
+            assert!(
+                !top.contains("12"),
+                "`{name}` must not draw a badge: {top:?}"
+            );
+        }
+    }
+
+    /// And a family that *does* publish a count role still draws one.
+    #[test]
+    fn a_badge_carrying_family_draws_its_badge_from_its_own_role() {
+        let theme = resolved_source(
+            "markers",
+            "schema_version = 1\nname = \"Markers\"\nextends = \"default\"\n\n\
+             [components.dashboard.host_list]\ncount = { foreground = \"#00ffff\" }\n",
+        );
         let area = Rect::new(0, 0, 24, 6);
         let mut buf = Buffer::empty(area);
         render_panel_box(
             &mut buf,
             area,
             "Hosts",
-            Some("12"),
+            HOST_LIST_PANEL.badge("12"),
             false,
             &theme,
-            DETAILS_PANEL,
+            HOST_LIST_PANEL,
         );
-        let top: String = (area.left()..area.right())
-            .map(|x| buf.cell((x, 0)).unwrap().symbol())
-            .collect();
-        assert!(
-            !top.contains("12"),
-            "a family without a count role must not render a badge: {top:?}"
+        assert_eq!(
+            style_at_text(&buf, "12").fg,
+            Some(Color::Rgb(0x00, 0xff, 0xff))
         );
     }
 }
