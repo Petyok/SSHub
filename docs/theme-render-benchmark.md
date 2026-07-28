@@ -98,7 +98,7 @@ gradient side measured *faster* than the solid one, and the reported delta was
 possible demonstration that the delta is not measuring the gradient pass.
 
 **Result.** The claim this measurement supports is the one that needs no
-comparison: a whole gradient frame at `200x60` has a median of `0.204 – 0.262 ms`
+comparison: a whole gradient frame at `200x60` has a median of `0.204 – 0.254 ms`
 across every run recorded here, local and reviewer alike. The gradient pass runs
 inside that frame, so its cost is bounded by it — roughly an order of magnitude
 under the `2 ms` criterion, and that is before subtracting everything else the
