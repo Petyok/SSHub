@@ -961,7 +961,7 @@ fn render_zoom_toast(frame: &mut Frame, footer: Rect, notice: &str, app: &App) {
         .unwrap_or(0);
     let x = rest_x + off;
     let y = footer.y - 1;
-    let style = theme::cyan().add_modifier(Modifier::REVERSED);
+    let style = app.theme().style(StyleRole::StatusBarToast);
     frame.buffer_mut().set_string(x, y, &label, style);
 }
 
@@ -5094,6 +5094,42 @@ primary = \"#c20001\"\n";
     /// Give `app` a marker theme written as `[components.*]` TOML.
     pub(crate) fn wear(app: &mut App, body: &str) {
         app.activate_resolved_theme(std::rc::Rc::new(overlay_theme(body)));
+    }
+
+    /// The zoom toast is the one notice surface that inverts itself instead of
+    /// writing into the status bar, so it has its own role — proved here with a
+    /// marker no other role carries, through the real full-frame renderer, and
+    /// pinned against the `theme::cyan() + REVERSED` cell it replaced.
+    #[test]
+    fn the_zoom_toast_wears_its_own_role() {
+        const TOAST: u32 = 0xa5_0001;
+
+        let mut app = test_app_with_hosts();
+        app.panel_zoomed = true;
+        app.host_notice = Some("copied 12 chars".into());
+        wear(
+            &mut app,
+            &format!("[components.status_bar]\ntoast = {{ foreground = \"#{TOAST:06x}\" }}\n"),
+        );
+        let buf = render_to_buffer(&app, 80, 24);
+        assert_eq!(
+            style_at_text(&buf, "copied 12 chars").fg,
+            Some(marker(TOAST)),
+            "the zoom toast reads `components.status_bar.toast`"
+        );
+
+        // Under `default` the chip is still cyan, still inverted.
+        let mut app = test_app_with_hosts();
+        app.panel_zoomed = true;
+        app.host_notice = Some("copied 12 chars".into());
+        app.activate_resolved_theme(std::rc::Rc::new(crate::test_support::resolved_default()));
+        let buf = render_to_buffer(&app, 80, 24);
+        let style = style_at_text(&buf, "copied 12 chars");
+        assert_eq!(style.fg, Some(theme::CYAN), "theme::cyan()");
+        assert!(
+            style.add_modifier.contains(Modifier::REVERSED),
+            "the chip is drawn inverted, as it always was"
+        );
     }
 
     /// The style of the cell where `needle` starts.

@@ -272,6 +272,7 @@ mod tests {
         "components.dashboard.host_list.group",
         "components.popup.title",
         "components.help.section",
+        "components.status_bar.toast",
     ];
 
     /// Assert that `theme` reproduces the frozen pre-theme-system appearance for
@@ -364,6 +365,20 @@ mod tests {
             "the plain fallback would drop the weight"
         );
 
+        // The zoom toast was `theme::cyan()` inverted by the terminal. `Info`
+        // carries the colour; the inversion is the documented override, and
+        // without it the chip would read as plain cyan text.
+        assert_eq!(
+            theme.style(StyleRole::StatusBarToast),
+            legacy::cyan().add_modifier(Modifier::REVERSED),
+            "the zoom toast chip"
+        );
+        assert_ne!(
+            theme.style(StyleRole::StatusBarToast),
+            legacy::cyan(),
+            "the plain fallback would drop the inversion"
+        );
+
         assert_eq!(
             theme.style(StyleRole::CommandPaletteRowSelected),
             Style::default().fg(legacy::WHITE).bg(legacy::SEL_BG)
@@ -449,9 +464,9 @@ mod tests {
             legacy::heading()
         );
 
-        assert_task14_legacy_cells(theme);
+        assert_migrated_legacy_cells(theme);
     }
-    // ── Per-renderer legacy inventory for the Task 14 surfaces ──
+    // ── Per-renderer legacy inventory for the migrated surfaces ──
     //
     // The blanket loop above is circular *as a class*: it derives its expected
     // value from `ROLE_SPECS[*].fallback`, the same source the productive role
@@ -474,7 +489,7 @@ mod tests {
     // inventory row fails.
     //
     // **What this does and does not prove.** It proves per-renderer *role*
-    // coverage: no Task 14 renderer reads a role this table has not accounted
+    // coverage: no inventoried renderer reads a role this table has not accounted
     // for, and every accounted role reproduces its legacy value under
     // `default`. It does **not** prove per-cell coverage — a renderer that
     // draws a role it already uses at one more place adds no new row, because
@@ -489,19 +504,19 @@ mod tests {
     //
     // The textual scan is also blind to `use StyleRole::*`, to a role reached
     // through a macro or a helper in another file, to a role named only in a
-    // comment or a string, and to a renderer left out of `TASK14_RENDERERS`
-    // altogether. Adding a Task 14 surface therefore still requires adding it
+    // comment or a string, and to a renderer left out of `MIGRATED_RENDERERS`
+    // altogether. Adding a migrated surface therefore still requires adding it
     // to that list by hand.
     //
     // Roles whose legacy source was a *direct ANSI colour* carry
-    // [`Task14Expect::Ansi`]: the spec allows those onto the semantic core and
+    // [`MigratedExpect::Ansi`]: the spec allows those onto the semantic core and
     // there is no `theme.rs` cell to be faithful to. Cells that carried no
     // colour at all are **not** that exception and carry
-    // [`Task14Expect::Unstyled`] with their own recorded reasoning.
+    // [`MigratedExpect::Unstyled`] with their own recorded reasoning.
 
     /// What `default` must produce for one migrated role use.
     #[derive(Clone, Copy)]
-    enum Task14Expect {
+    enum MigratedExpect {
         /// The cells follow the role, and the role must equal this legacy value.
         Style(Style),
         Color(Color),
@@ -529,18 +544,18 @@ mod tests {
         },
     }
 
-    /// One `(renderer, role)` pair this task migrated.
+    /// One `(renderer, role)` pair a migration task moved onto the catalogue.
     ///
     /// **Not one cell.** A renderer usually draws several cells from the same
     /// role — `src/tui/mod.rs` puts `PopupTitle` on three popup frames — and
     /// this row covers all of them together; `was` therefore lists every legacy
     /// source that pair replaced. What the guard below proves is that no role a
-    /// Task 14 renderer reads is missing from this table, not that every
+    /// inventoried renderer reads is missing from this table, not that every
     /// individual `set_string` has its own row. Cell-level parity is proved by
     /// the productive goldens in `crate::tui::tests`, which render the real
     /// frame and read named cells back.
     #[derive(Clone, Copy)]
-    struct Task14RoleUse {
+    struct MigratedRoleUse {
         /// Stable `<surface>.<role>` id, used in failure messages.
         id: &'static str,
         /// The renderer that draws it today, relative to the crate root.
@@ -550,7 +565,7 @@ mod tests {
         /// The role's Rust identifier, as the renderer spells it.
         ident: &'static str,
         role: RoleRef,
-        expect: Task14Expect,
+        expect: MigratedExpect,
     }
 
     const MOD: &str = "src/tui/mod.rs";
@@ -567,11 +582,15 @@ mod tests {
     const KEYS: &str = "src/tui/screens/keys.rs";
     const HELP: &str = "src/tui/screens/help.rs";
     const TUNNEL_RECONNECT: &str = "src/tui/screens/tunnel_reconnect.rs";
+    const TUNNELS: &str = "src/tui/screens/tunnels.rs";
+    const SFTP: &str = "src/tui/screens/sftp.rs";
+    const AUDIT: &str = "src/tui/screens/audit.rs";
+    const BROADCAST: &str = "src/tui/screens/broadcast.rs";
 
     /// Every renderer whose roles this task owns. The completeness guard reads
     /// these files, so a call site added to one of them without an inventory
     /// row fails.
-    const TASK14_RENDERERS: &[&str] = &[
+    const MIGRATED_RENDERERS: &[&str] = &[
         MOD,
         PALETTE,
         FIELD_PICKER,
@@ -586,45 +605,52 @@ mod tests {
         KEYS,
         HELP,
         TUNNEL_RECONNECT,
+        TUNNELS,
+        SFTP,
+        AUDIT,
+        BROADCAST,
     ];
 
-    /// Roles read by a Task 14 renderer that belong to an earlier task.
+    /// Roles read by an inventoried renderer that belong to another task.
     ///
     /// `src/tui/mod.rs` is the whole frame, so it also draws the shared chrome
     /// Task 12 owns. Anything not listed here has to appear in the inventory,
     /// which is what makes a newly added call site fail rather than pass
     /// unnoticed.
-    const NOT_TASK14: &[(&str, &str)] = &[
+    const NOT_MIGRATED: &[(&str, &str)] = &[
         (MOD, "AppBackground"),
         (MOD, "HeaderSeparator"),
         (MOD, "FooterSeparator"),
         (MOD, "TabsSeparator"),
         (MOD, "StatusBarBackground"),
+        // The audit tab fades its result rows over the app ground when the
+        // filter changes; the ground itself is Task 12's shared chrome.
+        (AUDIT, "AppBackground"),
     ];
 
     /// The role uses, grouped by the surface that draws them.
-    fn task14_role_uses() -> Vec<Task14RoleUse> {
-        use Task14Expect::{Ansi, Color as C, Context, Paint, Unstyled};
+    fn migrated_role_uses() -> Vec<MigratedRoleUse> {
+        use MigratedExpect::{Ansi, Color as C, Context, Paint, Unstyled};
         let sel_bg = legacy::SEL_BG;
         vec![
             // ── Generic popup chrome, `src/tui/mod.rs` ──────────
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "popup.title",
                 renderer: MOD,
                 was: "theme::heading() on every popup Block title",
                 ident: "PopupTitle",
                 role: RoleRef::Style(StyleRole::PopupTitle),
-                expect: Task14Expect::Style(legacy::heading()),
+                expect: MigratedExpect::Style(legacy::heading()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "popup.hint",
                 renderer: MOD,
                 was: "theme::dim() on the help footer and the prompt legends",
                 ident: "PopupHint",
                 role: RoleRef::Style(StyleRole::PopupHint),
-                expect: Task14Expect::Style(legacy::dim()),
+                expect: MigratedExpect::Style(legacy::dim()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "popup.border",
                 renderer: MOD,
                 was: "theme::popup_border()",
@@ -632,7 +658,7 @@ mod tests {
                 role: RoleRef::Paint(PaintRole::PopupBorder),
                 expect: Paint(legacy::MUTE),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "popup.background",
                 renderer: MOD,
                 was: "no fill at all: `Clear` left the cells at the terminal ground",
@@ -640,7 +666,7 @@ mod tests {
                 role: RoleRef::Paint(PaintRole::PopupBackground),
                 expect: Paint(Color::Reset),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "confirm.error",
                 renderer: MOD,
                 was: "Style::default().fg(Color::Red)",
@@ -648,7 +674,7 @@ mod tests {
                 role: RoleRef::Style(StyleRole::PopupError),
                 expect: Ansi(Color::Red),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "confirm.warning",
                 renderer: MOD,
                 was: "Style::default().fg(Color::Yellow)",
@@ -656,7 +682,7 @@ mod tests {
                 role: RoleRef::Style(StyleRole::PopupWarning),
                 expect: Ansi(Color::Yellow),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "form_popup.notice",
                 renderer: MOD,
                 was: "Style::default().fg(Color::Red)",
@@ -664,24 +690,24 @@ mod tests {
                 role: RoleRef::Style(StyleRole::FormError),
                 expect: Ansi(Color::Red),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "prompt.label",
                 renderer: MOD,
                 was: "theme::text() on the SFTP and Termius prompt lines",
                 ident: "TextPrimary",
                 role: RoleRef::Style(StyleRole::TextPrimary),
-                expect: Task14Expect::Style(legacy::text()),
+                expect: MigratedExpect::Style(legacy::text()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "prompt.value",
                 renderer: MOD,
                 was: "theme::bright() on the typed path or name",
                 ident: "FormInput",
                 role: RoleRef::Style(StyleRole::FormInput),
-                expect: Task14Expect::Style(legacy::bright()),
+                expect: MigratedExpect::Style(legacy::bright()),
             },
             // ── Fuzzy palette ──────────────────────────────────
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "palette.background",
                 renderer: PALETTE,
                 was: "Block::style(Style::default().bg(theme::BG))",
@@ -696,63 +722,63 @@ mod tests {
                     proof: "tui::tests::palette_popup_interior_filled_with_theme_bg",
                 },
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "palette.title",
                 renderer: PALETTE,
                 was: "theme::heading()",
                 ident: "PopupTitle",
                 role: RoleRef::Style(StyleRole::PopupTitle),
-                expect: Task14Expect::Style(legacy::heading()),
+                expect: MigratedExpect::Style(legacy::heading()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "palette.query",
                 renderer: PALETTE,
                 was: "theme::white()",
                 ident: "CommandPaletteQuery",
                 role: RoleRef::Style(StyleRole::CommandPaletteQuery),
-                expect: Task14Expect::Style(legacy::white()),
+                expect: MigratedExpect::Style(legacy::white()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "palette.row_selected",
                 renderer: PALETTE,
                 was: "theme::white().bg(theme::SEL_BG)",
                 ident: "CommandPaletteRowSelected",
                 role: RoleRef::Style(StyleRole::CommandPaletteRowSelected),
-                expect: Task14Expect::Style(legacy::white().bg(sel_bg)),
+                expect: MigratedExpect::Style(legacy::white().bg(sel_bg)),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "palette.row_name",
                 renderer: PALETTE,
                 was: "theme::bright() on an unselected host name",
                 ident: "TextBright",
                 role: RoleRef::Style(StyleRole::TextBright),
-                expect: Task14Expect::Style(legacy::bright()),
+                expect: MigratedExpect::Style(legacy::bright()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "palette.detail_key",
                 renderer: PALETTE,
                 was: "theme::mute() on the counter, group, hint and detail keys",
                 ident: "PopupLegend",
                 role: RoleRef::Style(StyleRole::PopupLegend),
-                expect: Task14Expect::Style(legacy::mute()),
+                expect: MigratedExpect::Style(legacy::mute()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "palette.detail_value",
                 renderer: PALETTE,
                 was: "theme::text() on a detail value",
                 ident: "TextPrimary",
                 role: RoleRef::Style(StyleRole::TextPrimary),
-                expect: Task14Expect::Style(legacy::text()),
+                expect: MigratedExpect::Style(legacy::text()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "palette.user_column",
                 renderer: PALETTE,
                 was: "theme::dim() on the user column",
                 ident: "PopupHint",
                 role: RoleRef::Style(StyleRole::PopupHint),
-                expect: Task14Expect::Style(legacy::dim()),
+                expect: MigratedExpect::Style(legacy::dim()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "palette.rule",
                 renderer: PALETTE,
                 was: "theme::border() on the two inner rules",
@@ -760,7 +786,7 @@ mod tests {
                 role: RoleRef::Paint(PaintRole::SeparatorPrimary),
                 expect: Paint(legacy::BORDER),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "palette.prompt_caret",
                 renderer: PALETTE,
                 was: "theme::green() on the prompt marker, caret and selection arrow",
@@ -769,39 +795,39 @@ mod tests {
                 expect: C(legacy::GREEN),
             },
             // ── Field picker ───────────────────────────────────
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "field_picker.title",
                 renderer: FIELD_PICKER,
                 was: "theme::heading()",
                 ident: "PopupTitle",
                 role: RoleRef::Style(StyleRole::PopupTitle),
-                expect: Task14Expect::Style(legacy::heading()),
+                expect: MigratedExpect::Style(legacy::heading()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "field_picker.row",
                 renderer: FIELD_PICKER,
                 was: "theme::text()",
                 ident: "PickerRow",
                 role: RoleRef::Style(StyleRole::PickerRow),
-                expect: Task14Expect::Style(legacy::text()),
+                expect: MigratedExpect::Style(legacy::text()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "field_picker.row_selected",
                 renderer: FIELD_PICKER,
                 was: "theme::selected()",
                 ident: "PickerRowSelected",
                 role: RoleRef::Style(StyleRole::PickerRowSelected),
-                expect: Task14Expect::Style(legacy::selected()),
+                expect: MigratedExpect::Style(legacy::selected()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "field_picker.marker",
                 renderer: FIELD_PICKER,
                 was: "the marker inside the selected row's own theme::selected() label",
                 ident: "PickerMarker",
                 role: RoleRef::Style(StyleRole::PickerMarker),
-                expect: Task14Expect::Style(legacy::selected()),
+                expect: MigratedExpect::Style(legacy::selected()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "field_picker.create_row",
                 renderer: FIELD_PICKER,
                 was: "theme::green() on the `+ New group` row",
@@ -809,138 +835,138 @@ mod tests {
                 role: RoleRef::Color(ColorRole::StatusSuccess),
                 expect: C(legacy::GREEN),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "field_picker.inline_input",
                 renderer: FIELD_PICKER,
                 was: "theme::bright() on the inline new-group name",
                 ident: "FormInput",
                 role: RoleRef::Style(StyleRole::FormInput),
-                expect: Task14Expect::Style(legacy::bright()),
+                expect: MigratedExpect::Style(legacy::bright()),
             },
             // ── Group form and its dropdown ────────────────────
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "group_form.title",
                 renderer: GROUP_FORM,
                 was: "theme::heading()",
                 ident: "PopupTitle",
                 role: RoleRef::Style(StyleRole::PopupTitle),
-                expect: Task14Expect::Style(legacy::heading()),
+                expect: MigratedExpect::Style(legacy::heading()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "group_form.label",
                 renderer: GROUP_FORM,
                 was: "theme::mute()",
                 ident: "GroupFormLabel",
                 role: RoleRef::Style(StyleRole::GroupFormLabel),
-                expect: Task14Expect::Style(legacy::mute()),
+                expect: MigratedExpect::Style(legacy::mute()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "group_form.label_focused",
                 renderer: GROUP_FORM,
                 was: "theme::heading()",
                 ident: "GroupFormLabelFocused",
                 role: RoleRef::Style(StyleRole::GroupFormLabelFocused),
-                expect: Task14Expect::Style(legacy::heading()),
+                expect: MigratedExpect::Style(legacy::heading()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "group_form.value",
                 renderer: GROUP_FORM,
                 was: "theme::text()",
                 ident: "GroupFormValue",
                 role: RoleRef::Style(StyleRole::GroupFormValue),
-                expect: Task14Expect::Style(legacy::text()),
+                expect: MigratedExpect::Style(legacy::text()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "group_form.value_focused",
                 renderer: GROUP_FORM,
                 was: "theme::bright().add_modifier(Modifier::BOLD)",
                 ident: "GroupFormValueFocused",
                 role: RoleRef::Style(StyleRole::GroupFormValueFocused),
-                expect: Task14Expect::Style(legacy::bright().add_modifier(Modifier::BOLD)),
+                expect: MigratedExpect::Style(legacy::bright().add_modifier(Modifier::BOLD)),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "group_form.marker",
                 renderer: GROUP_FORM,
                 was: "the marker inside the focused theme::heading() label",
                 ident: "GroupFormMarker",
                 role: RoleRef::Style(StyleRole::GroupFormMarker),
-                expect: Task14Expect::Style(legacy::heading()),
+                expect: MigratedExpect::Style(legacy::heading()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "group_form.hint",
                 renderer: GROUP_FORM,
                 was: "theme::dim() on the key hints and `Enter to choose`",
                 ident: "FormHelp",
                 role: RoleRef::Style(StyleRole::FormHelp),
-                expect: Task14Expect::Style(legacy::dim()),
+                expect: MigratedExpect::Style(legacy::dim()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "group_form.picker_row",
                 renderer: GROUP_FORM,
                 was: "theme::text() on a dropdown option",
                 ident: "PickerRow",
                 role: RoleRef::Style(StyleRole::PickerRow),
-                expect: Task14Expect::Style(legacy::text()),
+                expect: MigratedExpect::Style(legacy::text()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "group_form.picker_row_selected",
                 renderer: GROUP_FORM,
                 was: "List::highlight_style(theme::selected())",
                 ident: "PickerRowSelected",
                 role: RoleRef::Style(StyleRole::PickerRowSelected),
-                expect: Task14Expect::Style(legacy::selected()),
+                expect: MigratedExpect::Style(legacy::selected()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "group_form.picker_none",
                 renderer: GROUP_FORM,
                 was: "theme::mute() on the `(none)` row",
                 ident: "PopupLegend",
                 role: RoleRef::Style(StyleRole::PopupLegend),
-                expect: Task14Expect::Style(legacy::mute()),
+                expect: MigratedExpect::Style(legacy::mute()),
             },
             // ── Group management ───────────────────────────────
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "group_manage.title",
                 renderer: GROUP_MANAGE,
                 was: "theme::heading()",
                 ident: "PopupTitle",
                 role: RoleRef::Style(StyleRole::PopupTitle),
-                expect: Task14Expect::Style(legacy::heading()),
+                expect: MigratedExpect::Style(legacy::heading()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "group_manage.row",
                 renderer: GROUP_MANAGE,
                 was: "theme::text() on a group name",
                 ident: "TableRow",
                 role: RoleRef::Style(StyleRole::TableRow),
-                expect: Task14Expect::Style(legacy::text()),
+                expect: MigratedExpect::Style(legacy::text()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "group_manage.row_selected",
                 renderer: GROUP_MANAGE,
                 was: "List::highlight_style(theme::selected())",
                 ident: "TableRowSelected",
                 role: RoleRef::Style(StyleRole::TableRowSelected),
-                expect: Task14Expect::Style(legacy::selected()),
+                expect: MigratedExpect::Style(legacy::selected()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "group_manage.indent",
                 renderer: GROUP_MANAGE,
                 was: "theme::mute() on the indent, the count and the empty state",
                 ident: "PopupLegend",
                 role: RoleRef::Style(StyleRole::PopupLegend),
-                expect: Task14Expect::Style(legacy::mute()),
+                expect: MigratedExpect::Style(legacy::mute()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "group_manage.hint",
                 renderer: GROUP_MANAGE,
                 was: "theme::dim() on the action hint",
                 ident: "PopupHint",
                 role: RoleRef::Style(StyleRole::PopupHint),
-                expect: Task14Expect::Style(legacy::dim()),
+                expect: MigratedExpect::Style(legacy::dim()),
             },
             // ── Host form (direct ANSI throughout) ─────────────
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "host_form.title",
                 renderer: HOST_FORM,
                 was: "Block::title(title) with no style of its own",
@@ -953,7 +979,7 @@ mod tests {
                           popup ground and make the role unreachable from them",
                 },
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "host_form.label",
                 renderer: HOST_FORM,
                 was: "Style::default().fg(Color::DarkGray)",
@@ -961,7 +987,7 @@ mod tests {
                 role: RoleRef::Style(StyleRole::FormLabel),
                 expect: Ansi(Color::DarkGray),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "host_form.label_focused",
                 renderer: HOST_FORM,
                 was: "Style::default().fg(Color::Cyan).add_modifier(BOLD)",
@@ -969,7 +995,7 @@ mod tests {
                 role: RoleRef::Style(StyleRole::FormLabelFocused),
                 expect: Ansi(Color::Cyan),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "host_form.label_editing",
                 renderer: HOST_FORM,
                 was: "Style::default().fg(Color::Yellow).add_modifier(BOLD)",
@@ -977,7 +1003,7 @@ mod tests {
                 role: RoleRef::Style(StyleRole::FormLabelEditing),
                 expect: Ansi(Color::Yellow),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "host_form.value",
                 renderer: HOST_FORM,
                 was: "Style::default() — an idle value had no style at all",
@@ -990,7 +1016,7 @@ mod tests {
                           already uses for exactly this kind of text",
                 },
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "host_form.value_focused",
                 renderer: HOST_FORM,
                 was: "Style::default().fg(Color::White).add_modifier(BOLD)",
@@ -998,7 +1024,7 @@ mod tests {
                 role: RoleRef::Style(StyleRole::FormInputFocused),
                 expect: Ansi(Color::White),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "host_form.value_editing",
                 renderer: HOST_FORM,
                 was: "Style::default().fg(Color::White).add_modifier(BOLD | UNDERLINED)",
@@ -1006,7 +1032,7 @@ mod tests {
                 role: RoleRef::Style(StyleRole::FormInputEditing),
                 expect: Ansi(Color::White),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "host_form.hint",
                 renderer: HOST_FORM,
                 was: "Style::default().add_modifier(Modifier::DIM)",
@@ -1019,7 +1045,7 @@ mod tests {
                           colour the theme controls",
                 },
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "host_form.marker",
                 renderer: HOST_FORM,
                 was: "the marker inside the ANSI-coloured label span",
@@ -1028,7 +1054,7 @@ mod tests {
                 expect: Ansi(Color::Cyan),
             },
             // ── Identity form (the same ANSI shape) ────────────
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "identity_form.title",
                 renderer: KEYCHAIN,
                 was: "Block::title(\"Identity\") with no style of its own",
@@ -1041,7 +1067,7 @@ mod tests {
                           popup ground and make the role unreachable from them",
                 },
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "identity_form.label",
                 renderer: KEYCHAIN,
                 was: "Style::default().fg(Color::DarkGray)",
@@ -1049,7 +1075,7 @@ mod tests {
                 role: RoleRef::Style(StyleRole::FormLabel),
                 expect: Ansi(Color::DarkGray),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "identity_form.label_focused",
                 renderer: KEYCHAIN,
                 was: "Style::default().fg(Color::Cyan).add_modifier(BOLD)",
@@ -1057,7 +1083,7 @@ mod tests {
                 role: RoleRef::Style(StyleRole::FormLabelFocused),
                 expect: Ansi(Color::Cyan),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "identity_form.label_editing",
                 renderer: KEYCHAIN,
                 was: "Style::default().fg(Color::Yellow).add_modifier(BOLD)",
@@ -1065,7 +1091,7 @@ mod tests {
                 role: RoleRef::Style(StyleRole::FormLabelEditing),
                 expect: Ansi(Color::Yellow),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "identity_form.value",
                 renderer: KEYCHAIN,
                 was: "Style::default()",
@@ -1078,7 +1104,7 @@ mod tests {
                           already uses for exactly this kind of text",
                 },
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "identity_form.value_focused",
                 renderer: KEYCHAIN,
                 was: "Style::default().fg(Color::White).add_modifier(BOLD)",
@@ -1086,7 +1112,7 @@ mod tests {
                 role: RoleRef::Style(StyleRole::FormInputFocused),
                 expect: Ansi(Color::White),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "identity_form.value_editing",
                 renderer: KEYCHAIN,
                 was: "Style::default().fg(Color::White).add_modifier(BOLD | UNDERLINED)",
@@ -1094,7 +1120,7 @@ mod tests {
                 role: RoleRef::Style(StyleRole::FormInputEditing),
                 expect: Ansi(Color::White),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "identity_form.hint",
                 renderer: KEYCHAIN,
                 was: "Style::default().add_modifier(Modifier::DIM)",
@@ -1107,7 +1133,7 @@ mod tests {
                           colour the theme controls",
                 },
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "identity_form.marker",
                 renderer: KEYCHAIN,
                 was: "the marker inside the ANSI-coloured label span",
@@ -1116,56 +1142,56 @@ mod tests {
                 expect: Ansi(Color::Cyan),
             },
             // ── Tag filter ─────────────────────────────────────
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "tag_filter.title",
                 renderer: TAG_FILTER,
                 was: "theme::heading()",
                 ident: "PopupTitle",
                 role: RoleRef::Style(StyleRole::PopupTitle),
-                expect: Task14Expect::Style(legacy::heading()),
+                expect: MigratedExpect::Style(legacy::heading()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "tag_filter.query",
                 renderer: TAG_FILTER,
                 was: "theme::bright()",
                 ident: "PickerQuery",
                 role: RoleRef::Style(StyleRole::PickerQuery),
-                expect: Task14Expect::Style(legacy::bright()),
+                expect: MigratedExpect::Style(legacy::bright()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "tag_filter.row",
                 renderer: TAG_FILTER,
                 was: "theme::text()",
                 ident: "PickerRow",
                 role: RoleRef::Style(StyleRole::PickerRow),
-                expect: Task14Expect::Style(legacy::text()),
+                expect: MigratedExpect::Style(legacy::text()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "tag_filter.row_selected",
                 renderer: TAG_FILTER,
                 was: "theme::selected()",
                 ident: "PickerRowSelected",
                 role: RoleRef::Style(StyleRole::PickerRowSelected),
-                expect: Task14Expect::Style(legacy::selected()),
+                expect: MigratedExpect::Style(legacy::selected()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "tag_filter.marker",
                 renderer: TAG_FILTER,
                 was: "the marker inside the selected row's own theme::selected() label",
                 ident: "PickerMarker",
                 role: RoleRef::Style(StyleRole::PickerMarker),
-                expect: Task14Expect::Style(legacy::selected()),
+                expect: MigratedExpect::Style(legacy::selected()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "tag_filter.legend",
                 renderer: TAG_FILTER,
                 was: "theme::mute() on the hint and the empty note",
                 ident: "PopupLegend",
                 role: RoleRef::Style(StyleRole::PopupLegend),
-                expect: Task14Expect::Style(legacy::mute()),
+                expect: MigratedExpect::Style(legacy::mute()),
             },
             // ── Session picker ─────────────────────────────────
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "session_picker.border",
                 renderer: SESSION_PICKER,
                 was: "Style::default().fg(theme::ACCENT)",
@@ -1173,55 +1199,55 @@ mod tests {
                 role: RoleRef::Paint(PaintRole::PickerBorder),
                 expect: Paint(legacy::ACCENT),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "session_picker.title",
                 renderer: SESSION_PICKER,
                 was: "theme::heading()",
                 ident: "PopupTitle",
                 role: RoleRef::Style(StyleRole::PopupTitle),
-                expect: Task14Expect::Style(legacy::heading()),
+                expect: MigratedExpect::Style(legacy::heading()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "session_picker.query",
                 renderer: SESSION_PICKER,
                 was: "theme::bright()",
                 ident: "PickerQuery",
                 role: RoleRef::Style(StyleRole::PickerQuery),
-                expect: Task14Expect::Style(legacy::bright()),
+                expect: MigratedExpect::Style(legacy::bright()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "session_picker.rule",
                 renderer: SESSION_PICKER,
                 was: "theme::dim() on the separator row",
                 ident: "PopupHint",
                 role: RoleRef::Style(StyleRole::PopupHint),
-                expect: Task14Expect::Style(legacy::dim()),
+                expect: MigratedExpect::Style(legacy::dim()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "session_picker.row",
                 renderer: SESSION_PICKER,
                 was: "theme::text()",
                 ident: "PickerRow",
                 role: RoleRef::Style(StyleRole::PickerRow),
-                expect: Task14Expect::Style(legacy::text()),
+                expect: MigratedExpect::Style(legacy::text()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "session_picker.row_selected",
                 renderer: SESSION_PICKER,
                 was: "theme::selected()",
                 ident: "PickerRowSelected",
                 role: RoleRef::Style(StyleRole::PickerRowSelected),
-                expect: Task14Expect::Style(legacy::selected()),
+                expect: MigratedExpect::Style(legacy::selected()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "session_picker.legend",
                 renderer: SESSION_PICKER,
                 was: "theme::mute() on the empty state, the hint and `current`",
                 ident: "PopupLegend",
                 role: RoleRef::Style(StyleRole::PopupLegend),
-                expect: Task14Expect::Style(legacy::mute()),
+                expect: MigratedExpect::Style(legacy::mute()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "session_picker.badge_up",
                 renderer: SESSION_PICKER,
                 was: "theme::green()",
@@ -1229,7 +1255,7 @@ mod tests {
                 role: RoleRef::Color(ColorRole::PickerBadgeSuccess),
                 expect: C(legacy::GREEN),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "session_picker.badge_connecting",
                 renderer: SESSION_PICKER,
                 was: "theme::amber()",
@@ -1237,7 +1263,7 @@ mod tests {
                 role: RoleRef::Color(ColorRole::PickerBadgeWarning),
                 expect: C(legacy::AMBER),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "session_picker.badge_exited",
                 renderer: SESSION_PICKER,
                 was: "theme::red()",
@@ -1246,39 +1272,39 @@ mod tests {
                 expect: C(legacy::RED),
             },
             // ── Settings ───────────────────────────────────────
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "settings.title",
                 renderer: SETTINGS,
                 was: "theme::heading()",
                 ident: "PopupTitle",
                 role: RoleRef::Style(StyleRole::PopupTitle),
-                expect: Task14Expect::Style(legacy::heading()),
+                expect: MigratedExpect::Style(legacy::heading()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "settings.row",
                 renderer: SETTINGS,
                 was: "theme::text() on an unselected label",
                 ident: "TableRow",
                 role: RoleRef::Style(StyleRole::TableRow),
-                expect: Task14Expect::Style(legacy::text()),
+                expect: MigratedExpect::Style(legacy::text()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "settings.row_selected",
                 renderer: SETTINGS,
                 was: "theme::white().bg(theme::SEL_BG)",
                 ident: "SettingsRowSelected",
                 role: RoleRef::Style(StyleRole::SettingsRowSelected),
-                expect: Task14Expect::Style(legacy::white().bg(sel_bg)),
+                expect: MigratedExpect::Style(legacy::white().bg(sel_bg)),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "settings.theme_value",
                 renderer: SETTINGS,
                 was: "Style::default().fg(theme::ACCENT)",
                 ident: "PickerMatch",
                 role: RoleRef::Style(StyleRole::PickerMatch),
-                expect: Task14Expect::Style(Style::default().fg(legacy::ACCENT)),
+                expect: MigratedExpect::Style(Style::default().fg(legacy::ACCENT)),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "settings.checkbox_on",
                 renderer: SETTINGS,
                 was: "theme::green() on a ticked box",
@@ -1286,121 +1312,121 @@ mod tests {
                 role: RoleRef::Color(ColorRole::StatusSuccess),
                 expect: C(legacy::GREEN),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "settings.legend",
                 renderer: SETTINGS,
                 was: "theme::mute() on the unticked box and the key legend",
                 ident: "PopupLegend",
                 role: RoleRef::Style(StyleRole::PopupLegend),
-                expect: Task14Expect::Style(legacy::mute()),
+                expect: MigratedExpect::Style(legacy::mute()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "settings.hint",
                 renderer: SETTINGS,
                 was: "theme::dim() on the per-row hint",
                 ident: "PopupHint",
                 role: RoleRef::Style(StyleRole::PopupHint),
-                expect: Task14Expect::Style(legacy::dim()),
+                expect: MigratedExpect::Style(legacy::dim()),
             },
             // ── Keybind editor ─────────────────────────────────
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "keybind.title",
                 renderer: KEYBIND,
                 was: "theme::heading()",
                 ident: "PopupTitle",
                 role: RoleRef::Style(StyleRole::PopupTitle),
-                expect: Task14Expect::Style(legacy::heading()),
+                expect: MigratedExpect::Style(legacy::heading()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "keybind.row",
                 renderer: KEYBIND,
                 was: "theme::text()",
                 ident: "KeybindRow",
                 role: RoleRef::Style(StyleRole::KeybindRow),
-                expect: Task14Expect::Style(legacy::text()),
+                expect: MigratedExpect::Style(legacy::text()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "keybind.row_selected",
                 renderer: KEYBIND,
                 was: "theme::white().bg(theme::SEL_BG)",
                 ident: "KeybindRowSelected",
                 role: RoleRef::Style(StyleRole::KeybindRowSelected),
-                expect: Task14Expect::Style(legacy::white().bg(sel_bg)),
+                expect: MigratedExpect::Style(legacy::white().bg(sel_bg)),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "keybind.marker",
                 renderer: KEYBIND,
                 was: "the marker inside the selected white-on-SEL_BG label",
                 ident: "KeybindMarker",
                 role: RoleRef::Style(StyleRole::KeybindMarker),
-                expect: Task14Expect::Style(legacy::white().bg(sel_bg)),
+                expect: MigratedExpect::Style(legacy::white().bg(sel_bg)),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "keybind.value",
                 renderer: KEYBIND,
                 was: "theme::mute()",
                 ident: "KeybindValue",
                 role: RoleRef::Style(StyleRole::KeybindValue),
-                expect: Task14Expect::Style(legacy::mute()),
+                expect: MigratedExpect::Style(legacy::mute()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "keybind.value_bound",
                 renderer: KEYBIND,
                 was: "theme::green().bg(theme::SEL_BG); the bar is now painted separately",
                 ident: "KeybindValueBound",
                 role: RoleRef::Style(StyleRole::KeybindValueBound),
-                expect: Task14Expect::Style(legacy::green()),
+                expect: MigratedExpect::Style(legacy::green()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "keybind.value_capturing",
                 renderer: KEYBIND,
                 was: "theme::amber().bg(theme::SEL_BG); the bar is now painted separately",
                 ident: "KeybindValueCapturing",
                 role: RoleRef::Style(StyleRole::KeybindValueCapturing),
-                expect: Task14Expect::Style(legacy::amber()),
+                expect: MigratedExpect::Style(legacy::amber()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "keybind.hint",
                 renderer: KEYBIND,
                 was: "theme::dim()",
                 ident: "PopupHint",
                 role: RoleRef::Style(StyleRole::PopupHint),
-                expect: Task14Expect::Style(legacy::dim()),
+                expect: MigratedExpect::Style(legacy::dim()),
             },
             // ── Tunnel reconnect ───────────────────────────────
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "tunnel_reconnect.title",
                 renderer: TUNNEL_RECONNECT,
                 was: "theme::heading()",
                 ident: "PopupTitle",
                 role: RoleRef::Style(StyleRole::PopupTitle),
-                expect: Task14Expect::Style(legacy::heading()),
+                expect: MigratedExpect::Style(legacy::heading()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "tunnel_reconnect.row",
                 renderer: TUNNEL_RECONNECT,
                 was: "theme::text() on an unselected label",
                 ident: "TableRow",
                 role: RoleRef::Style(StyleRole::TableRow),
-                expect: Task14Expect::Style(legacy::text()),
+                expect: MigratedExpect::Style(legacy::text()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "tunnel_reconnect.row_selected",
                 renderer: TUNNEL_RECONNECT,
                 was: "theme::white().bg(theme::SEL_BG)",
                 ident: "SettingsRowSelected",
                 role: RoleRef::Style(StyleRole::SettingsRowSelected),
-                expect: Task14Expect::Style(legacy::white().bg(sel_bg)),
+                expect: MigratedExpect::Style(legacy::white().bg(sel_bg)),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "tunnel_reconnect.marker",
                 renderer: TUNNEL_RECONNECT,
                 was: "the marker inside the selected white-on-SEL_BG label",
                 ident: "SettingsMarker",
                 role: RoleRef::Style(StyleRole::SettingsMarker),
-                expect: Task14Expect::Style(legacy::white().bg(sel_bg)),
+                expect: MigratedExpect::Style(legacy::white().bg(sel_bg)),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "tunnel_reconnect.value_selected",
                 renderer: TUNNEL_RECONNECT,
                 was: "theme::green().bg(theme::SEL_BG); the bar is now painted separately",
@@ -1408,65 +1434,65 @@ mod tests {
                 role: RoleRef::Color(ColorRole::StatusSuccess),
                 expect: C(legacy::GREEN),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "tunnel_reconnect.legend",
                 renderer: TUNNEL_RECONNECT,
                 was: "theme::mute() on an unselected value and the key legend",
                 ident: "PopupLegend",
                 role: RoleRef::Style(StyleRole::PopupLegend),
-                expect: Task14Expect::Style(legacy::mute()),
+                expect: MigratedExpect::Style(legacy::mute()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "tunnel_reconnect.hint",
                 renderer: TUNNEL_RECONNECT,
                 was: "theme::dim() on the header line and the per-row hint",
                 ident: "PopupHint",
                 role: RoleRef::Style(StyleRole::PopupHint),
-                expect: Task14Expect::Style(legacy::dim()),
+                expect: MigratedExpect::Style(legacy::dim()),
             },
             // ── Help sheet ─────────────────────────────────────
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "help.section",
                 renderer: HELP,
                 was: "theme::heading()",
                 ident: "HelpSection",
                 role: RoleRef::Style(StyleRole::HelpSection),
-                expect: Task14Expect::Style(legacy::heading()),
+                expect: MigratedExpect::Style(legacy::heading()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "help.key",
                 renderer: HELP,
                 was: "theme::bright()",
                 ident: "HelpKey",
                 role: RoleRef::Style(StyleRole::HelpKey),
-                expect: Task14Expect::Style(legacy::bright()),
+                expect: MigratedExpect::Style(legacy::bright()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "help.description",
                 renderer: HELP,
                 was: "theme::text()",
                 ident: "HelpDescription",
                 role: RoleRef::Style(StyleRole::HelpDescription),
-                expect: Task14Expect::Style(legacy::text()),
+                expect: MigratedExpect::Style(legacy::text()),
             },
             // ── Identity cards ─────────────────────────────────
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "identities.empty",
                 renderer: KEYS,
                 was: "theme::dim() on the empty state and the missing-agent note",
                 ident: "IdentitiesEmpty",
                 role: RoleRef::Style(StyleRole::IdentitiesEmpty),
-                expect: Task14Expect::Style(legacy::dim()),
+                expect: MigratedExpect::Style(legacy::dim()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "identities.notice",
                 renderer: KEYS,
                 was: "theme::amber()",
                 ident: "IdentitiesNotice",
                 role: RoleRef::Style(StyleRole::IdentitiesNotice),
-                expect: Task14Expect::Style(legacy::amber()),
+                expect: MigratedExpect::Style(legacy::amber()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "identities.card_border",
                 renderer: KEYS,
                 was: "theme::border()",
@@ -1474,7 +1500,7 @@ mod tests {
                 role: RoleRef::Paint(PaintRole::IdentitiesCardBorder),
                 expect: Paint(legacy::BORDER),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "identities.card_border_selected",
                 renderer: KEYS,
                 was: "Style::default().fg(theme::ACCENT)",
@@ -1482,47 +1508,47 @@ mod tests {
                 role: RoleRef::Paint(PaintRole::IdentitiesCardBorderSelected),
                 expect: Paint(legacy::ACCENT),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "identities.card_selection",
                 renderer: KEYS,
                 was: "theme::selected()",
                 ident: "IdentitiesCardSelection",
                 role: RoleRef::Style(StyleRole::IdentitiesCardSelection),
-                expect: Task14Expect::Style(legacy::selected()),
+                expect: MigratedExpect::Style(legacy::selected()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "identities.card_name",
                 renderer: KEYS,
                 was: "theme::heading()",
                 ident: "IdentitiesCardName",
                 role: RoleRef::Style(StyleRole::IdentitiesCardName),
-                expect: Task14Expect::Style(legacy::heading()),
+                expect: MigratedExpect::Style(legacy::heading()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "identities.card_text",
                 renderer: KEYS,
                 was: "theme::text()",
                 ident: "IdentitiesCardText",
                 role: RoleRef::Style(StyleRole::IdentitiesCardText),
-                expect: Task14Expect::Style(legacy::text()),
+                expect: MigratedExpect::Style(legacy::text()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "identities.card_metadata",
                 renderer: KEYS,
                 was: "theme::dim() on the fingerprint and the key path",
                 ident: "IdentitiesCardMetadata",
                 role: RoleRef::Style(StyleRole::IdentitiesCardMetadata),
-                expect: Task14Expect::Style(legacy::dim()),
+                expect: MigratedExpect::Style(legacy::dim()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "identities.card_key_type",
                 renderer: KEYS,
                 was: "theme::mute()",
                 ident: "IdentitiesCardKeyType",
                 role: RoleRef::Style(StyleRole::IdentitiesCardKeyType),
-                expect: Task14Expect::Style(legacy::mute()),
+                expect: MigratedExpect::Style(legacy::mute()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "identities.card_loaded",
                 renderer: KEYS,
                 was: "theme::GREEN",
@@ -1530,7 +1556,7 @@ mod tests {
                 role: RoleRef::Color(ColorRole::IdentitiesCardLoaded),
                 expect: C(legacy::GREEN),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "identities.card_missing",
                 renderer: KEYS,
                 was: "theme::DIM",
@@ -1538,7 +1564,7 @@ mod tests {
                 role: RoleRef::Color(ColorRole::IdentitiesCardMissing),
                 expect: C(legacy::DIM),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "identities.card_credential",
                 renderer: KEYS,
                 was: "theme::AMBER",
@@ -1546,7 +1572,7 @@ mod tests {
                 role: RoleRef::Color(ColorRole::IdentitiesCardCredential),
                 expect: C(legacy::AMBER),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "identities.agent_separator",
                 renderer: KEYS,
                 was: "theme::dim() on the rule above the agent block",
@@ -1554,29 +1580,561 @@ mod tests {
                 role: RoleRef::Paint(PaintRole::IdentitiesAgentSeparator),
                 expect: Paint(legacy::DIM),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "identities.agent_label",
                 renderer: KEYS,
                 was: "theme::mute()",
                 ident: "IdentitiesAgentLabel",
                 role: RoleRef::Style(StyleRole::IdentitiesAgentLabel),
-                expect: Task14Expect::Style(legacy::mute()),
+                expect: MigratedExpect::Style(legacy::mute()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "identities.agent_value",
                 renderer: KEYS,
                 was: "theme::text()",
                 ident: "IdentitiesAgentValue",
                 role: RoleRef::Style(StyleRole::IdentitiesAgentValue),
-                expect: Task14Expect::Style(legacy::text()),
+                expect: MigratedExpect::Style(legacy::text()),
             },
-            Task14RoleUse {
+            MigratedRoleUse {
                 id: "identities.agent_count",
                 renderer: KEYS,
                 was: "theme::bright()",
                 ident: "IdentitiesAgentCount",
                 role: RoleRef::Style(StyleRole::IdentitiesAgentCount),
-                expect: Task14Expect::Style(legacy::bright()),
+                expect: MigratedExpect::Style(legacy::bright()),
+            },
+            // ── Zoom toast, `src/tui/mod.rs` ────────────────────
+            MigratedRoleUse {
+                id: "zoom_toast.chip",
+                renderer: MOD,
+                was: "theme::cyan().add_modifier(Modifier::REVERSED)",
+                ident: "StatusBarToast",
+                role: RoleRef::Style(StyleRole::StatusBarToast),
+                expect: MigratedExpect::Style(
+                    legacy::cyan().add_modifier(ratatui::style::Modifier::REVERSED),
+                ),
+            },
+            // ── Tunnel tab, `src/tui/screens/tunnels.rs` ────────
+            MigratedRoleUse {
+                id: "tunnels.summary",
+                renderer: TUNNELS,
+                was: "theme::mute() on the summary strip",
+                ident: "TunnelsSummary",
+                role: RoleRef::Style(StyleRole::TunnelsSummary),
+                expect: MigratedExpect::Style(legacy::mute()),
+            },
+            MigratedRoleUse {
+                id: "tunnels.table_header",
+                renderer: TUNNELS,
+                was: "theme::bright().add_modifier(Modifier::BOLD), i.e. theme::heading()",
+                ident: "TunnelsTableHeader",
+                role: RoleRef::Style(StyleRole::TunnelsTableHeader),
+                expect: MigratedExpect::Style(legacy::heading()),
+            },
+            MigratedRoleUse {
+                id: "tunnels.separator",
+                renderer: TUNNELS,
+                was: "theme::dim() on the rule under the column headers",
+                ident: "TunnelsSeparator",
+                role: RoleRef::Paint(PaintRole::TunnelsSeparator),
+                expect: Paint(legacy::DIM),
+            },
+            MigratedRoleUse {
+                id: "tunnels.row",
+                renderer: TUNNELS,
+                was: "theme::text() on an unselected row",
+                ident: "TunnelsRow",
+                role: RoleRef::Style(StyleRole::TunnelsRow),
+                expect: MigratedExpect::Style(legacy::text()),
+            },
+            MigratedRoleUse {
+                id: "tunnels.row_selected",
+                renderer: TUNNELS,
+                was: "theme::selected() on the selection bar and every column of it",
+                ident: "TunnelsRowSelected",
+                role: RoleRef::Style(StyleRole::TunnelsRowSelected),
+                expect: MigratedExpect::Style(legacy::selected()),
+            },
+            MigratedRoleUse {
+                id: "tunnels.direction",
+                renderer: TUNNELS,
+                was: "theme::cyan() on the L/R/D column",
+                ident: "TunnelsDirection",
+                role: RoleRef::Style(StyleRole::TunnelsDirection),
+                expect: MigratedExpect::Style(legacy::cyan()),
+            },
+            MigratedRoleUse {
+                id: "tunnels.remote",
+                renderer: TUNNELS,
+                was: "theme::mute() on the destination column",
+                ident: "TunnelsRemote",
+                role: RoleRef::Style(StyleRole::TunnelsRemote),
+                expect: MigratedExpect::Style(legacy::mute()),
+            },
+            MigratedRoleUse {
+                id: "tunnels.metadata",
+                renderer: TUNNELS,
+                was: "theme::dim() on the server and label columns",
+                ident: "TunnelsMetadata",
+                role: RoleRef::Style(StyleRole::TunnelsMetadata),
+                expect: MigratedExpect::Style(legacy::dim()),
+            },
+            MigratedRoleUse {
+                id: "tunnels.notice",
+                renderer: TUNNELS,
+                was: "theme::amber() on the tab notice and on a reconnecting tunnel's detail",
+                ident: "TunnelsNotice",
+                role: RoleRef::Style(StyleRole::TunnelsNotice),
+                expect: MigratedExpect::Style(legacy::amber()),
+            },
+            MigratedRoleUse {
+                id: "tunnels.error",
+                renderer: TUNNELS,
+                was: "theme::red() on the detail of a tunnel that errored or gave up",
+                ident: "TunnelsError",
+                role: RoleRef::Style(StyleRole::TunnelsError),
+                expect: MigratedExpect::Style(legacy::red()),
+            },
+            MigratedRoleUse {
+                id: "tunnels.empty",
+                renderer: TUNNELS,
+                was: "theme::dim() on the empty state",
+                ident: "TunnelsEmpty",
+                role: RoleRef::Style(StyleRole::TunnelsEmpty),
+                expect: MigratedExpect::Style(legacy::dim()),
+            },
+            MigratedRoleUse {
+                id: "tunnels.state_running",
+                renderer: TUNNELS,
+                was: "theme::GREEN on the dot, theme::green() on the `up` label",
+                ident: "TunnelRunning",
+                role: RoleRef::Color(ColorRole::TunnelRunning),
+                expect: C(legacy::GREEN),
+            },
+            MigratedRoleUse {
+                id: "tunnels.state_stopped",
+                renderer: TUNNELS,
+                was: "theme::RED on the dot, theme::red() on `gave up` and `err`",
+                ident: "TunnelStopped",
+                role: RoleRef::Color(ColorRole::TunnelStopped),
+                expect: C(legacy::RED),
+            },
+            MigratedRoleUse {
+                id: "tunnels.state_retrying",
+                renderer: TUNNELS,
+                was: "theme::AMBER on the dot and the `retry n/m` label",
+                ident: "TunnelRetrying",
+                role: RoleRef::Color(ColorRole::TunnelRetrying),
+                expect: C(legacy::AMBER),
+            },
+            MigratedRoleUse {
+                id: "tunnels.state_connecting",
+                renderer: TUNNELS,
+                was: "theme::AMBER on the starting spinner and the `start` label",
+                ident: "TunnelConnecting",
+                role: RoleRef::Color(ColorRole::TunnelConnecting),
+                expect: C(legacy::AMBER),
+            },
+            MigratedRoleUse {
+                id: "tunnels.state_unknown",
+                renderer: TUNNELS,
+                was: "theme::DIM on the dot, theme::dim() on `off`, and the far end of \
+                      the reconnecting pulse",
+                ident: "TunnelUnknown",
+                role: RoleRef::Color(ColorRole::TunnelUnknown),
+                expect: C(legacy::DIM),
+            },
+            // ── SFTP browser, `src/tui/screens/sftp.rs` ─────────
+            MigratedRoleUse {
+                id: "sftp.local",
+                renderer: SFTP,
+                was: "theme::cyan() on a directory row of the left pane",
+                ident: "SftpLocal",
+                role: RoleRef::Style(StyleRole::SftpLocal),
+                expect: MigratedExpect::Style(legacy::cyan()),
+            },
+            MigratedRoleUse {
+                id: "sftp.remote",
+                renderer: SFTP,
+                was: "theme::cyan() on a directory row of the right pane",
+                ident: "SftpRemote",
+                role: RoleRef::Style(StyleRole::SftpRemote),
+                expect: MigratedExpect::Style(legacy::cyan()),
+            },
+            MigratedRoleUse {
+                id: "sftp.selection",
+                renderer: SFTP,
+                was: "theme::selected() on the focused pane's selected row, name and size",
+                ident: "SftpSelection",
+                role: RoleRef::Style(StyleRole::SftpSelection),
+                expect: MigratedExpect::Style(legacy::selected()),
+            },
+            MigratedRoleUse {
+                id: "sftp.selection_inactive",
+                renderer: SFTP,
+                was: "nothing — the unfocused pane's selected row was drawn like any other",
+                ident: "SelectionInactive",
+                role: RoleRef::Style(StyleRole::SelectionInactive),
+                expect: Unstyled {
+                    was: "no highlight at all: `active = is_sel && focused` gated the bar, so \
+                          the pane the user was about to Tab back into showed no cursor",
+                    why: "losing the cursor position on Tab is a bug, not a style; the quieter \
+                          `selection.inactive` marks the row without competing with the \
+                          focused pane's bar",
+                },
+            },
+            MigratedRoleUse {
+                id: "sftp.search",
+                renderer: SFTP,
+                was: "Style::default().bg(theme::AMBER).fg(Color::Black)",
+                ident: "SftpSearch",
+                role: RoleRef::Style(StyleRole::SftpSearch),
+                expect: Ansi(Color::Black),
+            },
+            MigratedRoleUse {
+                id: "sftp.queue_download",
+                renderer: SFTP,
+                was: "theme::green() on a queued download row",
+                ident: "SftpQueueDownload",
+                role: RoleRef::Style(StyleRole::SftpQueueDownload),
+                expect: MigratedExpect::Style(legacy::green()),
+            },
+            MigratedRoleUse {
+                id: "sftp.queue_upload",
+                renderer: SFTP,
+                was: "theme::amber() on a queued upload row",
+                ident: "SftpQueueUpload",
+                role: RoleRef::Style(StyleRole::SftpQueueUpload),
+                expect: MigratedExpect::Style(legacy::amber()),
+            },
+            MigratedRoleUse {
+                id: "sftp.queue_header",
+                renderer: SFTP,
+                was: "theme::heading() on the `queue (n)` strip header",
+                ident: "SftpQueueHeader",
+                role: RoleRef::Style(StyleRole::SftpQueueHeader),
+                expect: MigratedExpect::Style(legacy::heading()),
+            },
+            MigratedRoleUse {
+                id: "sftp.progress",
+                renderer: SFTP,
+                was: "theme::amber() on the running line",
+                ident: "SftpProgress",
+                role: RoleRef::Style(StyleRole::SftpProgress),
+                expect: MigratedExpect::Style(legacy::amber()),
+            },
+            MigratedRoleUse {
+                id: "sftp.progress_complete",
+                renderer: SFTP,
+                was: "theme::green() on the filled part of the bar",
+                ident: "SftpProgressComplete",
+                role: RoleRef::Style(StyleRole::SftpProgressComplete),
+                expect: MigratedExpect::Style(legacy::green()),
+            },
+            MigratedRoleUse {
+                id: "sftp.progress_remaining",
+                renderer: SFTP,
+                was: "theme::dim() on the unfilled part of the bar",
+                ident: "SftpProgressRemaining",
+                role: RoleRef::Style(StyleRole::SftpProgressRemaining),
+                expect: MigratedExpect::Style(legacy::dim()),
+            },
+            MigratedRoleUse {
+                id: "sftp.notice",
+                renderer: SFTP,
+                was: "theme::amber() on the queue notice, the connecting placeholder and \
+                      the picker's search hint",
+                ident: "SftpNotice",
+                role: RoleRef::Style(StyleRole::SftpNotice),
+                expect: MigratedExpect::Style(legacy::amber()),
+            },
+            MigratedRoleUse {
+                id: "sftp.text_primary",
+                renderer: SFTP,
+                was: "theme::text() on a plain file row",
+                ident: "TextPrimary",
+                role: RoleRef::Style(StyleRole::TextPrimary),
+                expect: MigratedExpect::Style(legacy::text()),
+            },
+            MigratedRoleUse {
+                id: "sftp.text_dim",
+                renderer: SFTP,
+                was: "theme::dim() on the size column, the empty-pane message, the \
+                      queue hint and the picker's resting hint",
+                ident: "TextDim",
+                role: RoleRef::Style(StyleRole::TextDim),
+                expect: MigratedExpect::Style(legacy::dim()),
+            },
+            // ── Audit tab, `src/tui/screens/audit.rs` ───────────
+            MigratedRoleUse {
+                id: "audit.filter_active",
+                renderer: AUDIT,
+                was: "theme::inv() on the active filter and range chips",
+                ident: "AuditFilterActive",
+                role: RoleRef::Style(StyleRole::AuditFilterActive),
+                expect: MigratedExpect::Style(legacy::inv()),
+            },
+            MigratedRoleUse {
+                id: "audit.filter_inactive",
+                renderer: AUDIT,
+                was: "theme::dim() on every other chip",
+                ident: "AuditFilterInactive",
+                role: RoleRef::Style(StyleRole::AuditFilterInactive),
+                expect: MigratedExpect::Style(legacy::dim()),
+            },
+            MigratedRoleUse {
+                id: "audit.note",
+                renderer: AUDIT,
+                was: "note_detail_style(): theme::red() / amber() / green() / dim() by status",
+                ident: "AuditNote",
+                role: RoleRef::Style(StyleRole::AuditNote),
+                expect: Context {
+                    why: "the note line has always been coloured by the event's own status, \
+                          so its foreground comes from `components.audit.{success,warning,\
+                          error,unknown}` and the note role carries the rest of the style",
+                    proof: "tui::screens::audit::tests::\
+                            the_audit_tab_reproduces_its_legacy_cells_under_default",
+                },
+            },
+            MigratedRoleUse {
+                id: "audit.table_header",
+                renderer: AUDIT,
+                was: "theme::bright().add_modifier(Modifier::BOLD), i.e. theme::heading()",
+                ident: "AuditTableHeader",
+                role: RoleRef::Style(StyleRole::AuditTableHeader),
+                expect: MigratedExpect::Style(legacy::heading()),
+            },
+            MigratedRoleUse {
+                id: "audit.row",
+                renderer: AUDIT,
+                was: "theme::text() on an unselected row's host and result columns",
+                ident: "AuditRow",
+                role: RoleRef::Style(StyleRole::AuditRow),
+                expect: MigratedExpect::Style(legacy::text()),
+            },
+            MigratedRoleUse {
+                id: "audit.row_selected",
+                renderer: AUDIT,
+                was: "theme::selected() on the selection bar and every column of it",
+                ident: "AuditRowSelected",
+                role: RoleRef::Style(StyleRole::AuditRowSelected),
+                expect: MigratedExpect::Style(legacy::selected()),
+            },
+            MigratedRoleUse {
+                id: "audit.status_success",
+                renderer: AUDIT,
+                was: "theme::status_color(\"launched\") = GREEN on the dot, theme::green() \
+                      on the note",
+                ident: "AuditSuccess",
+                role: RoleRef::Color(ColorRole::AuditSuccess),
+                expect: C(legacy::GREEN),
+            },
+            MigratedRoleUse {
+                id: "audit.status_warning",
+                renderer: AUDIT,
+                was: "theme::status_color(\"retry\") = AMBER on the dot, theme::amber() \
+                      on the note",
+                ident: "AuditWarning",
+                role: RoleRef::Color(ColorRole::AuditWarning),
+                expect: C(legacy::AMBER),
+            },
+            MigratedRoleUse {
+                id: "audit.status_error",
+                renderer: AUDIT,
+                was: "theme::status_color(\"fail\") = RED on the dot, theme::red() on the note",
+                ident: "AuditError",
+                role: RoleRef::Color(ColorRole::AuditError),
+                expect: C(legacy::RED),
+            },
+            MigratedRoleUse {
+                id: "audit.status_unknown",
+                renderer: AUDIT,
+                was: "theme::status_color(<anything else>) = DIM on the dot, theme::dim() \
+                      on the note",
+                ident: "AuditUnknown",
+                role: RoleRef::Color(ColorRole::AuditUnknown),
+                expect: C(legacy::DIM),
+            },
+            MigratedRoleUse {
+                id: "audit.separator",
+                renderer: AUDIT,
+                was: "theme::dim() on the rule under the column headers",
+                ident: "SeparatorSecondary",
+                role: RoleRef::Paint(PaintRole::SeparatorSecondary),
+                expect: Paint(legacy::DIM),
+            },
+            MigratedRoleUse {
+                id: "audit.text_muted",
+                renderer: AUDIT,
+                was: "theme::mute() on an unselected row's time column",
+                ident: "TextMuted",
+                role: RoleRef::Style(StyleRole::TextMuted),
+                expect: MigratedExpect::Style(legacy::mute()),
+            },
+            MigratedRoleUse {
+                id: "audit.text_dim",
+                renderer: AUDIT,
+                was: "theme::dim() on the group captions, the user and via columns, \
+                      and the empty state",
+                ident: "TextDim",
+                role: RoleRef::Style(StyleRole::TextDim),
+                expect: MigratedExpect::Style(legacy::dim()),
+            },
+            // ── Broadcast, `src/tui/screens/broadcast.rs` ───────
+            MigratedRoleUse {
+                id: "broadcast.pending",
+                renderer: BROADCAST,
+                was: "theme::mute() on a pending host's glyph and label",
+                ident: "BroadcastPending",
+                role: RoleRef::Color(ColorRole::BroadcastPending),
+                expect: C(legacy::MUTE),
+            },
+            MigratedRoleUse {
+                id: "broadcast.running",
+                renderer: BROADCAST,
+                was: "theme::amber() on a running host's glyph and label",
+                ident: "BroadcastRunning",
+                role: RoleRef::Color(ColorRole::BroadcastRunning),
+                expect: C(legacy::AMBER),
+            },
+            MigratedRoleUse {
+                id: "broadcast.success",
+                renderer: BROADCAST,
+                was: "theme::green() on an `exit 0` row",
+                ident: "BroadcastSuccess",
+                role: RoleRef::Color(ColorRole::BroadcastSuccess),
+                expect: C(legacy::GREEN),
+            },
+            MigratedRoleUse {
+                id: "broadcast.error",
+                renderer: BROADCAST,
+                was: "theme::red() on a failed row and on the failure toast's frame and title",
+                ident: "BroadcastError",
+                role: RoleRef::Color(ColorRole::BroadcastError),
+                expect: C(legacy::RED),
+            },
+            MigratedRoleUse {
+                id: "broadcast.stdout",
+                renderer: BROADCAST,
+                was: "theme::mute() on the `stdout:` tag",
+                ident: "BroadcastStdout",
+                role: RoleRef::Style(StyleRole::BroadcastStdout),
+                expect: MigratedExpect::Style(legacy::mute()),
+            },
+            MigratedRoleUse {
+                id: "broadcast.stderr",
+                renderer: BROADCAST,
+                was: "theme::red() on the `stderr:` tag",
+                ident: "BroadcastStderr",
+                role: RoleRef::Style(StyleRole::BroadcastStderr),
+                expect: MigratedExpect::Style(legacy::red()),
+            },
+            MigratedRoleUse {
+                id: "broadcast.detail",
+                renderer: BROADCAST,
+                was: "theme::dim() on the failure detail, the overflow marker, \
+                      `(no output)` and a toast's body",
+                ident: "BroadcastDetail",
+                role: RoleRef::Style(StyleRole::BroadcastDetail),
+                expect: MigratedExpect::Style(legacy::dim()),
+            },
+            MigratedRoleUse {
+                id: "broadcast.countdown",
+                renderer: BROADCAST,
+                was: "theme::cyan() on the remaining part of the dismiss gauge",
+                ident: "BroadcastCountdown",
+                role: RoleRef::Style(StyleRole::BroadcastCountdown),
+                expect: MigratedExpect::Style(legacy::cyan()),
+            },
+            MigratedRoleUse {
+                id: "broadcast.separator",
+                renderer: BROADCAST,
+                was: "theme::dim() on the zoomed view's divider between list and output",
+                ident: "SeparatorSecondary",
+                role: RoleRef::Paint(PaintRole::SeparatorSecondary),
+                expect: Paint(legacy::DIM),
+            },
+            MigratedRoleUse {
+                id: "broadcast.text_primary",
+                renderer: BROADCAST,
+                was: "theme::text() on a host name, its padding, and the output body lines",
+                ident: "TextPrimary",
+                role: RoleRef::Style(StyleRole::TextPrimary),
+                expect: MigratedExpect::Style(legacy::text()),
+            },
+            MigratedRoleUse {
+                id: "broadcast.text_bright",
+                renderer: BROADCAST,
+                was: "theme::bright() on the `<host> — output` head",
+                ident: "TextBright",
+                role: RoleRef::Style(StyleRole::TextBright),
+                expect: MigratedExpect::Style(legacy::bright()),
+            },
+            MigratedRoleUse {
+                id: "broadcast.text_dim",
+                renderer: BROADCAST,
+                was: "theme::dim() on the spent part of the gauge and on a deselected \
+                      preview candidate",
+                ident: "TextDim",
+                role: RoleRef::Style(StyleRole::TextDim),
+                expect: MigratedExpect::Style(legacy::dim()),
+            },
+            MigratedRoleUse {
+                id: "broadcast.text_muted",
+                renderer: BROADCAST,
+                was: "theme::mute() on the gauge's `dismiss ns` label",
+                ident: "TextMuted",
+                role: RoleRef::Style(StyleRole::TextMuted),
+                expect: MigratedExpect::Style(legacy::mute()),
+            },
+            MigratedRoleUse {
+                id: "broadcast.popup_title",
+                renderer: BROADCAST,
+                was: "theme::heading() on the three wizard popups' titles",
+                ident: "PopupTitle",
+                role: RoleRef::Style(StyleRole::PopupTitle),
+                expect: MigratedExpect::Style(legacy::heading()),
+            },
+            MigratedRoleUse {
+                id: "broadcast.popup_legend",
+                renderer: BROADCAST,
+                was: "theme::mute() on the wizard hints and the two empty-list messages",
+                ident: "PopupLegend",
+                role: RoleRef::Style(StyleRole::PopupLegend),
+                expect: MigratedExpect::Style(legacy::mute()),
+            },
+            MigratedRoleUse {
+                id: "broadcast.popup_hint",
+                renderer: BROADCAST,
+                was: "theme::dim() on the command prompt's `Enter: preview` line",
+                ident: "PopupHint",
+                role: RoleRef::Style(StyleRole::PopupHint),
+                expect: MigratedExpect::Style(legacy::dim()),
+            },
+            MigratedRoleUse {
+                id: "broadcast.picker_row",
+                renderer: BROADCAST,
+                was: "theme::text() on an unselected target and preview row",
+                ident: "PickerRow",
+                role: RoleRef::Style(StyleRole::PickerRow),
+                expect: MigratedExpect::Style(legacy::text()),
+            },
+            MigratedRoleUse {
+                id: "broadcast.picker_row_selected",
+                renderer: BROADCAST,
+                was: "theme::selected() on the target menu's and the preview's cursor row",
+                ident: "PickerRowSelected",
+                role: RoleRef::Style(StyleRole::PickerRowSelected),
+                expect: MigratedExpect::Style(legacy::selected()),
+            },
+            MigratedRoleUse {
+                id: "broadcast.form_input",
+                renderer: BROADCAST,
+                was: "theme::bright() on the `cmd> …` input line",
+                ident: "FormInput",
+                role: RoleRef::Style(StyleRole::FormInput),
+                expect: MigratedExpect::Style(legacy::bright()),
             },
         ]
     }
@@ -1592,30 +2150,30 @@ mod tests {
 
     /// Compare every inventoried cell that follows its role against the
     /// hand-written legacy value, not against the role's own fallback.
-    fn assert_task14_legacy_cells(theme: &ResolvedTheme) {
-        for cell in task14_role_uses() {
+    fn assert_migrated_legacy_cells(theme: &ResolvedTheme) {
+        for cell in migrated_role_uses() {
             let path = role_path(cell.role);
             let context = format!(
                 "{} ({}) via {path}, was {}",
                 cell.id, cell.renderer, cell.was
             );
             match (cell.expect, cell.role) {
-                (Task14Expect::Style(expected), RoleRef::Style(role)) => {
+                (MigratedExpect::Style(expected), RoleRef::Style(role)) => {
                     assert_eq!(theme.style(role), expected, "{context}")
                 }
-                (Task14Expect::Color(expected), RoleRef::Color(role)) => {
+                (MigratedExpect::Color(expected), RoleRef::Color(role)) => {
                     assert_eq!(theme.color(role), expected, "{context}")
                 }
-                (Task14Expect::Paint(expected), RoleRef::Paint(role)) => {
+                (MigratedExpect::Paint(expected), RoleRef::Paint(role)) => {
                     assert_eq!(
                         *theme.paint(role),
                         ResolvedPaint::Solid(expected),
                         "{context}"
                     )
                 }
-                (Task14Expect::Ansi(_), _)
-                | (Task14Expect::Unstyled { .. }, _)
-                | (Task14Expect::Context { .. }, _) => {}
+                (MigratedExpect::Ansi(_), _)
+                | (MigratedExpect::Unstyled { .. }, _)
+                | (MigratedExpect::Context { .. }, _) => {}
                 _ => panic!("{context}: the expectation is of a different kind than the role"),
             }
         }
@@ -1633,14 +2191,18 @@ mod tests {
         }
     }
 
-    /// The body of `fn <name>` in `src/tui/mod.rs`, or `None` if there is no
-    /// such test. Used to check that a cited proof really exercises the branch
-    /// it is cited for.
+    /// The body of a cited proof test, or `None` if there is no such test.
+    ///
+    /// The module path in front of `::tests::` names the file, so a proof may
+    /// live beside the renderer it is about rather than only in `src/tui/mod.rs`.
     fn test_body(qualified: &str) -> Option<String> {
         let name = qualified.rsplit("::").next()?;
-        let source =
-            std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(MOD))
-                .ok()?;
+        let module = qualified.split("::tests::").next()?;
+        let dir = module.replace("::", "/");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let source = std::fs::read_to_string(root.join(format!("src/{dir}.rs")))
+            .or_else(|_| std::fs::read_to_string(root.join(format!("src/{dir}/mod.rs"))))
+            .ok()?;
         let at = source.find(&format!("fn {name}("))?;
         let open = source[at..].find('{')? + at;
         let mut depth = 0usize;
@@ -1691,8 +2253,8 @@ mod tests {
     /// The claim is deliberately per *renderer and role*, not per cell — see
     /// the module comment above for what that does and does not cover.
     #[test]
-    fn the_inventory_covers_every_role_each_task14_renderer_reads() {
-        let cells = task14_role_uses();
+    fn the_inventory_covers_every_role_each_migrated_renderer_reads() {
+        let cells = migrated_role_uses();
 
         let mut ids: Vec<&str> = cells.iter().map(|c| c.id).collect();
         let total = ids.len();
@@ -1701,7 +2263,7 @@ mod tests {
         assert_eq!(total, ids.len(), "two rows share an id");
         // Pinned so the number quoted in reports cannot drift from the table.
         assert_eq!(
-            total, 115,
+            total, 178,
             "the inventory changed size; add or remove the row deliberately"
         );
 
@@ -1729,7 +2291,7 @@ mod tests {
                 cell.id
             );
             match cell.expect {
-                Task14Expect::Context { why, proof } => {
+                MigratedExpect::Context { why, proof } => {
                     assert!(
                         !why.is_empty(),
                         "{}: a context exception must say why the cells leave their role",
@@ -1739,7 +2301,10 @@ mod tests {
                     // `why` describes: a test that gives the role a marker
                     // value never reaches the `default` substitution at all.
                     let body = test_body(proof).unwrap_or_else(|| {
-                        panic!("{}: no test named {proof} in src/tui/mod.rs", cell.id)
+                        panic!(
+                            "{}: no test named {proof} in the file its path names",
+                            cell.id
+                        )
                     });
                     assert!(
                         !body.contains(role_path(cell.role)),
@@ -1752,13 +2317,13 @@ mod tests {
                 // The spec's parity exception is for direct ANSI *colours*. A
                 // cell that merely had no colour is a different thing and must
                 // use `Unstyled`, which forces a recorded reason.
-                Task14Expect::Ansi(was) => assert!(
+                MigratedExpect::Ansi(was) => assert!(
                     !matches!(was, Color::Rgb(..) | Color::Indexed(_) | Color::Reset),
                     "{}: {was:?} is not a direct ANSI colour, so the spec's \
                      normalisation exception does not cover it",
                     cell.id
                 ),
-                Task14Expect::Unstyled { was, why } => {
+                MigratedExpect::Unstyled { was, why } => {
                     assert!(
                         !was.is_empty(),
                         "{}: record what the uncoloured cell actually was",
@@ -1776,11 +2341,11 @@ mod tests {
             }
         }
 
-        // Reverse: every role a Task 14 renderer reads is inventoried for that
+        // Reverse: every role an inventoried renderer reads is inventoried for that
         // renderer, or explicitly declared as an earlier task's.
-        for renderer in TASK14_RENDERERS {
+        for renderer in MIGRATED_RENDERERS {
             for ident in roles_read_by(renderer) {
-                if NOT_TASK14
+                if NOT_MIGRATED
                     .iter()
                     .any(|(file, role)| file == renderer && *role == ident)
                 {
@@ -1791,8 +2356,8 @@ mod tests {
                         .iter()
                         .any(|c| c.renderer == *renderer && c.ident == ident),
                     "{renderer} draws from {ident}, which no inventory row covers \
-                     — add it to `task14_role_uses` with the `theme.rs` calls it \
-                     replaced, or to `NOT_TASK14` if it belongs to another task"
+                     — add it to `migrated_role_uses` with the `theme.rs` calls it \
+                     replaced, or to `NOT_MIGRATED` if it belongs to another task"
                 );
             }
         }

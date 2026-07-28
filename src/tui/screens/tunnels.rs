@@ -4,6 +4,9 @@ use ratatui::widgets::Clear;
 
 use crate::app::App;
 use crate::store::TunnelType;
+use crate::theme::catalog::{ColorRole, PaintRole, StyleRole};
+use crate::theme::model::ResolvedTheme;
+use crate::tui::blit;
 use crate::tui::theme;
 
 /// One breath of a reconnecting tunnel's status dot (#35).
@@ -14,6 +17,7 @@ pub fn render_tunnels(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
+    let theme = app.theme();
     let buf = frame.buffer_mut();
     let margin = if area.width >= 132 {
         2
@@ -30,7 +34,12 @@ pub fn render_tunnels(frame: &mut Frame, area: Rect, app: &App) {
     let active = app.tunnel_manager.active_count();
     let total = app.tunnels.len();
     let summary = format!("{total} tunnels  {active} active");
-    buf.set_string(inner_x, summary_y, &summary, theme::mute());
+    buf.set_string(
+        inner_x,
+        summary_y,
+        &summary,
+        theme.style(StyleRole::TunnelsSummary),
+    );
 
     let mut body_y = summary_y + 2;
     if let Some(tunnel) = app.tunnels.get(app.tunnel_selected) {
@@ -38,10 +47,12 @@ pub fn render_tunnels(frame: &mut Frame, area: Rect, app: &App) {
         if matches!(status, "gave_up" | "error" | "reconnecting") {
             if let Some(detail) = app.tunnel_manager.error_detail(tunnel.id) {
                 if !detail.is_empty() {
+                    // Still retrying is a notice, not a failure: the tunnel is
+                    // working its way back on its own.
                     let style = if status == "reconnecting" {
-                        theme::amber()
+                        theme.style(StyleRole::TunnelsNotice)
                     } else {
-                        theme::red()
+                        theme.style(StyleRole::TunnelsError)
                     };
                     buf.set_string(
                         inner_x,
@@ -58,7 +69,7 @@ pub fn render_tunnels(frame: &mut Frame, area: Rect, app: &App) {
     if let Some(ref notice) = app.tunnel_notice {
         let nx = inner_x + summary.len() as u16 + 3;
         if nx + notice.len() as u16 <= inner_x + inner_w {
-            buf.set_string(nx, summary_y, notice, theme::amber());
+            buf.set_string(nx, summary_y, notice, theme.style(StyleRole::TunnelsNotice));
         }
     }
 
@@ -67,13 +78,22 @@ pub fn render_tunnels(frame: &mut Frame, area: Rect, app: &App) {
     if header_y >= area.y + area.height {
         return;
     }
-    render_table_header(buf, inner_x, header_y, inner_w);
+    render_table_header(buf, inner_x, header_y, inner_w, theme);
 
     // Row 3: separator line
     let sep_y = header_y + 1;
     if sep_y < area.y + area.height {
+        // Its own rect, so a gradient separator runs across the rule and
+        // nothing else. The tunnels tab is never drawn over the remote PTY.
+        let rule = Rect::new(inner_x, sep_y, inner_w, 1);
         let line: String = std::iter::repeat_n('─', inner_w as usize).collect();
-        buf.set_string(inner_x, sep_y, &line, theme::dim());
+        buf.set_string(
+            inner_x,
+            sep_y,
+            &line,
+            Style::default().fg(blit::line_color(theme, PaintRole::TunnelsSeparator, rule)),
+        );
+        blit::paint_line(buf, rule, theme, PaintRole::TunnelsSeparator);
     }
 
     // Row 4+: Data rows
@@ -119,6 +139,7 @@ pub fn render_tunnels(frame: &mut Frame, area: Rect, app: &App) {
             app.tunnel_manager.reconnect_countdown_secs(tunnel.id),
             app.config.tunnel_reconnect.max_attempts,
             app.motion_enabled(),
+            theme,
         );
     }
 
@@ -127,15 +148,15 @@ pub fn render_tunnels(frame: &mut Frame, area: Rect, app: &App) {
         let msg = "No tunnels — press 'a' to add one";
         let x = inner_x + (inner_w.saturating_sub(msg.len() as u16)) / 2;
         let y = data_y + 2.min(max_rows.saturating_sub(1) as u16);
-        buf.set_string(x, y, msg, theme::dim());
+        buf.set_string(x, y, msg, theme.style(StyleRole::TunnelsEmpty));
     }
 }
 
-fn render_table_header(buf: &mut Buffer, x: u16, y: u16, w: u16) {
+fn render_table_header(buf: &mut Buffer, x: u16, y: u16, w: u16, theme: &ResolvedTheme) {
     let cols = table_columns(w);
     let mut cx = x;
     for (label, width) in &cols {
-        buf.set_string(cx, y, label, theme::bright().add_modifier(Modifier::BOLD));
+        buf.set_string(cx, y, label, theme.style(StyleRole::TunnelsTableHeader));
         cx += width;
     }
 }
@@ -155,13 +176,17 @@ fn render_tunnel_row(
     reconnect_countdown: Option<u64>,
     max_attempts: u32,
     motion: bool,
+    theme: &ResolvedTheme,
 ) {
     let running = status == "up";
-    let base_style = if selected {
-        theme::selected()
+    // The cardless full-screen table has always highlighted with `selection_fg`
+    // and has its own role for it — routing it through the generic
+    // `table.row_selected` would hand it another family's idiom.
+    let base_style = theme.style(if selected {
+        StyleRole::TunnelsRowSelected
     } else {
-        theme::text()
-    };
+        StyleRole::TunnelsRow
+    });
 
     if selected {
         for cx in x..x + w {
@@ -177,38 +202,50 @@ fn render_tunnel_row(
 
     // STATUS dot
     let status_w = cols[0].1;
+    let state_color = |role: ColorRole| theme.color(role);
     let (dot, dot_color) = match status {
-        "up" => ("●", theme::GREEN),
+        "up" => ("●", state_color(ColorRole::TunnelRunning)),
         // Retrying: the dot breathes, so a tunnel working its way back reads
-        // as busy rather than parked on amber (#35).
+        // as busy rather than parked on amber (#35). Both ends of the breath
+        // are roles, so a theme moves the whole pulse.
         "reconnecting" if motion => (
             "●",
             crate::tui::tween::color_lerp(
-                theme::AMBER,
-                theme::DIM,
+                state_color(ColorRole::TunnelRetrying),
+                state_color(ColorRole::TunnelUnknown),
                 crate::tui::tween::pulse_now(TUNNEL_PULSE),
             ),
         ),
-        "reconnecting" => ("●", theme::AMBER),
+        "reconnecting" => ("●", state_color(ColorRole::TunnelRetrying)),
         // Coming up: the same spinner every other in-flight handshake turns.
-        "starting" if motion => (crate::tui::tween::spinner_frame_now(), theme::AMBER),
-        "starting" => ("○", theme::AMBER),
-        "gave_up" | "error" => ("●", theme::RED),
-        _ => ("○", theme::DIM),
+        "starting" if motion => (
+            crate::tui::tween::spinner_frame_now(),
+            state_color(ColorRole::TunnelConnecting),
+        ),
+        "starting" => ("○", state_color(ColorRole::TunnelConnecting)),
+        "gave_up" | "error" => ("●", state_color(ColorRole::TunnelStopped)),
+        _ => ("○", state_color(ColorRole::TunnelUnknown)),
     };
+    // The dot keeps the state colour on the row's own ground, so a selected
+    // row never floats its status marker on the wrong background.
     let dot_style = if selected {
-        Style::default().fg(dot_color).bg(theme::SEL_BG)
+        base_style.fg(dot_color)
     } else {
         Style::default().fg(dot_color)
     };
     buf.set_string(cx, y, dot, dot_style);
+    // The status *word* is kept beside the dot: a terminal that reduces the
+    // theme's RGB to the nearest ANSI colour can make two states share a
+    // swatch, and the label still says which is which.
+    let state_style = |role: ColorRole| {
+        if selected {
+            base_style
+        } else {
+            Style::default().fg(theme.color(role))
+        }
+    };
     if running {
-        buf.set_string(
-            cx + 2,
-            y,
-            "up",
-            if selected { base_style } else { theme::green() },
-        );
+        buf.set_string(cx + 2, y, "up", state_style(ColorRole::TunnelRunning));
     } else if status == "reconnecting" {
         let attempt = reconnect_attempt.unwrap_or(0).saturating_add(1);
         let retry_label = if max_attempts > 0 {
@@ -225,40 +262,26 @@ fn render_tunnel_row(
             cx + 2,
             y,
             truncate(&retry_label, status_w.saturating_sub(2) as usize),
-            if selected {
-                base_style
-            } else {
-                Style::default().fg(theme::AMBER)
-            },
+            state_style(ColorRole::TunnelRetrying),
         );
     } else if status == "gave_up" {
         buf.set_string(
             cx + 2,
             y,
             crate::tui::text::ellipsize("gave up", status_w.saturating_sub(2) as usize),
-            if selected { base_style } else { theme::red() },
+            state_style(ColorRole::TunnelStopped),
         );
     } else if status == "starting" {
         buf.set_string(
             cx + 2,
             y,
             crate::tui::text::ellipsize("start", status_w.saturating_sub(2) as usize),
-            if selected { base_style } else { theme::amber() },
+            state_style(ColorRole::TunnelConnecting),
         );
     } else if status == "error" {
-        buf.set_string(
-            cx + 2,
-            y,
-            "err",
-            if selected { base_style } else { theme::red() },
-        );
+        buf.set_string(cx + 2, y, "err", state_style(ColorRole::TunnelStopped));
     } else {
-        buf.set_string(
-            cx + 2,
-            y,
-            "off",
-            if selected { base_style } else { theme::dim() },
-        );
+        buf.set_string(cx + 2, y, "off", state_style(ColorRole::TunnelUnknown));
     }
     cx += status_w;
 
@@ -273,7 +296,11 @@ fn render_tunnel_row(
         cx,
         y,
         dir_label,
-        if selected { base_style } else { theme::cyan() },
+        if selected {
+            base_style
+        } else {
+            theme.style(StyleRole::TunnelsDirection)
+        },
     );
     cx += dir_w;
 
@@ -294,7 +321,11 @@ fn render_tunnel_row(
         cx,
         y,
         truncate(&remote_str, remote_w as usize),
-        if selected { base_style } else { theme::mute() },
+        if selected {
+            base_style
+        } else {
+            theme.style(StyleRole::TunnelsRemote)
+        },
     );
     cx += remote_w;
 
@@ -305,7 +336,11 @@ fn render_tunnel_row(
         cx,
         y,
         truncate(host_label, host_w as usize),
-        if selected { base_style } else { theme::dim() },
+        if selected {
+            base_style
+        } else {
+            theme.style(StyleRole::TunnelsMetadata)
+        },
     );
     cx += host_w;
 
@@ -332,7 +367,11 @@ fn render_tunnel_row(
         cx,
         y,
         crate::tui::text::ellipsize(&label_str, remaining),
-        if selected { base_style } else { theme::dim() },
+        if selected {
+            base_style
+        } else {
+            theme.style(StyleRole::TunnelsMetadata)
+        },
     );
 }
 
@@ -640,5 +679,330 @@ fn truncate(s: &str, max: usize) -> &str {
             .map(|(i, c)| i + c.len_utf8())
             .unwrap_or(0);
         &s[..end]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::Tunnel;
+    use crate::test_support::{
+        fg, fg_at_text, fg_bg, frame_at, marker, resolved_default, role_marker_theme, themed_app,
+        RoleMarker,
+    };
+    use crate::theme::model::ResolvedTheme;
+
+    // One unique colour per role this screen reads. Two roles never share a
+    // value, so a row that reaches for its neighbour fails on the literal.
+    const SUMMARY: u32 = 0xa1_0001;
+    const HEADER: u32 = 0xa1_0002;
+    const SEPARATOR: u32 = 0xa1_0003;
+    const ROW: u32 = 0xa1_0004;
+    const ROW_SEL_FG: u32 = 0xa1_0005;
+    const ROW_SEL_BG: u32 = 0xa1_0105;
+    const DIRECTION: u32 = 0xa1_0006;
+    const REMOTE: u32 = 0xa1_0007;
+    const METADATA: u32 = 0xa1_0008;
+    const NOTICE: u32 = 0xa1_0009;
+    const ERROR: u32 = 0xa1_000a;
+    const EMPTY: u32 = 0xa1_000b;
+    const RUNNING: u32 = 0xa1_000c;
+    const STOPPED: u32 = 0xa1_000d;
+    const RETRYING: u32 = 0xa1_000e;
+    const CONNECTING: u32 = 0xa1_000f;
+    const UNKNOWN: u32 = 0xa1_0010;
+
+    const MARKERS: &[RoleMarker] = &[
+        fg("components.tunnels.summary", SUMMARY),
+        fg("components.tunnels.table_header", HEADER),
+        fg("components.tunnels.separator", SEPARATOR),
+        fg("components.tunnels.row", ROW),
+        fg_bg("components.tunnels.row_selected", ROW_SEL_FG, ROW_SEL_BG),
+        fg("components.tunnels.direction", DIRECTION),
+        fg("components.tunnels.remote", REMOTE),
+        fg("components.tunnels.metadata", METADATA),
+        fg("components.tunnels.notice", NOTICE),
+        fg("components.tunnels.error", ERROR),
+        fg("components.tunnels.empty", EMPTY),
+        fg("components.tunnel.running", RUNNING),
+        fg("components.tunnel.stopped", STOPPED),
+        fg("components.tunnel.retrying", RETRYING),
+        fg("components.tunnel.connecting", CONNECTING),
+        fg("components.tunnel.unknown", UNKNOWN),
+    ];
+
+    fn marked() -> ResolvedTheme {
+        role_marker_theme("tunnels", MARKERS)
+    }
+
+    fn tunnel() -> Tunnel {
+        Tunnel {
+            id: 7,
+            host_id: None,
+            tunnel_type: TunnelType::Local,
+            local_port: 8080,
+            remote_host: "db.internal".into(),
+            remote_port: 5432,
+            label: Some("staging".into()),
+            auto_connect: false,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    /// Draw one row through the productive row renderer at a known origin.
+    fn row_buffer(theme: &ResolvedTheme, status: &str, selected: bool) -> Buffer {
+        let area = Rect::new(0, 0, 110, 1);
+        let mut buf = Buffer::empty(area);
+        render_tunnel_row(
+            &mut buf,
+            area.x,
+            area.y,
+            area.width,
+            &tunnel(),
+            selected,
+            status,
+            Some(90),
+            Some("web-prod"),
+            Some(0),
+            Some(4),
+            3,
+            // Motion off: the retrying dot otherwise breathes between two
+            // roles and its colour depends on the wall clock.
+            false,
+            theme,
+        );
+        buf
+    }
+
+    /// The status column of every tunnel state comes from `components.tunnel.*`
+    /// — dot **and** label — while the rest of the row is `components.tunnels.*`.
+    ///
+    /// Both selection states are rendered for every status: the selected branch
+    /// is a different code path and used to be the only one anybody looked at.
+    #[test]
+    fn every_tunnel_state_wears_its_own_status_colour() {
+        let theme = marked();
+        for (status, label, state) in [
+            ("up", "up", RUNNING),
+            ("reconnecting", "retry", RETRYING),
+            ("starting", "start", CONNECTING),
+            ("gave_up", "gave up", STOPPED),
+            ("error", "err", STOPPED),
+            ("stopped", "off", UNKNOWN),
+        ] {
+            for selected in [false, true] {
+                let buf = row_buffer(&theme, status, selected);
+                let dot = buf.cell((0, 0)).unwrap();
+                assert_eq!(
+                    dot.fg,
+                    marker(state),
+                    "{status} (selected={selected}): the status dot"
+                );
+                // A selected row keeps its selection background under the dot,
+                // so the state colour never floats on the wrong ground.
+                assert_eq!(
+                    dot.bg,
+                    if selected {
+                        marker(ROW_SEL_BG)
+                    } else {
+                        Color::Reset
+                    },
+                    "{status} (selected={selected}): the status dot's ground"
+                );
+                assert_eq!(
+                    fg_at_text(&buf, label),
+                    if selected {
+                        marker(ROW_SEL_FG)
+                    } else {
+                        marker(state)
+                    },
+                    "{status} (selected={selected}): the `{label}` label"
+                );
+            }
+        }
+    }
+
+    /// The columns beside the status are the tab's own chrome, in both
+    /// selection states.
+    #[test]
+    fn tunnel_row_columns_wear_the_tunnels_roles() {
+        let theme = marked();
+
+        let buf = row_buffer(&theme, "stopped", false);
+        assert_eq!(fg_at_text(&buf, "L"), marker(DIRECTION), "the direction");
+        assert_eq!(fg_at_text(&buf, ":8080"), marker(ROW), "the local port");
+        assert_eq!(
+            fg_at_text(&buf, "db.internal"),
+            marker(REMOTE),
+            "the destination"
+        );
+        assert_eq!(fg_at_text(&buf, "web-prod"), marker(METADATA), "the server");
+        assert_eq!(fg_at_text(&buf, "staging"), marker(METADATA), "the label");
+
+        // Selected: every column collapses onto the one selection role, and the
+        // whole row carries its background — not `table.row_selected`.
+        let buf = row_buffer(&theme, "stopped", true);
+        for (needle, what) in [
+            ("L", "the direction"),
+            (":8080", "the local port"),
+            ("db.internal", "the destination"),
+            ("web-prod", "the server"),
+            ("staging", "the label"),
+        ] {
+            assert_eq!(
+                fg_at_text(&buf, needle),
+                marker(ROW_SEL_FG),
+                "selected: {what}"
+            );
+        }
+        assert_eq!(
+            buf.cell((109, 0)).unwrap().bg,
+            marker(ROW_SEL_BG),
+            "the selection bar reaches the last column"
+        );
+    }
+
+    /// An app carrying `count` tunnels and the marker theme.
+    fn tunnel_app(count: usize) -> crate::app::App {
+        let mut app = themed_app(marked());
+        app.tunnels = (0..count)
+            .map(|i| Tunnel {
+                id: i as i64 + 1,
+                ..tunnel()
+            })
+            .collect();
+        app
+    }
+
+    fn tab(app: &crate::app::App) -> Buffer {
+        let area = Rect::new(0, 0, 110, 12);
+        frame_at(area, |frame| render_tunnels(frame, area, app))
+    }
+
+    /// Summary strip, column headers, rule and empty state, through the real
+    /// full-tab renderer.
+    #[test]
+    fn the_tunnel_tab_chrome_wears_the_tunnels_roles() {
+        let app = tunnel_app(0);
+        let buf = tab(&app);
+
+        assert_eq!(
+            fg_at_text(&buf, "0 tunnels"),
+            marker(SUMMARY),
+            "the summary"
+        );
+        assert_eq!(
+            fg_at_text(&buf, "STATUS"),
+            marker(HEADER),
+            "a column header"
+        );
+        assert_eq!(
+            fg_at_text(&buf, "\u{2500}"),
+            marker(SEPARATOR),
+            "the header rule"
+        );
+        assert_eq!(
+            fg_at_text(&buf, "No tunnels"),
+            marker(EMPTY),
+            "the empty state"
+        );
+    }
+
+    /// The tab notice is its own role, not the error one.
+    #[test]
+    fn the_tunnel_tab_notice_is_the_notice_role() {
+        let mut app = tunnel_app(1);
+        app.tunnel_notice = Some("started".into());
+        let buf = tab(&app);
+        assert_eq!(fg_at_text(&buf, "started"), marker(NOTICE));
+    }
+
+    /// A tunnel still working its way back reads as a notice; one that has
+    /// given up reads as an error. The two used to be amber and red by hand.
+    #[test]
+    fn the_error_line_separates_retrying_from_given_up() {
+        let cfg = crate::config::TunnelReconnectConfig {
+            max_attempts: 1,
+            ..Default::default()
+        };
+
+        let mut app = tunnel_app(1);
+        app.tunnel_manager.on_auto_start_failed(1, "boom", &cfg);
+        assert_eq!(app.tunnel_manager.status(1), "reconnecting");
+        let buf = tab(&app);
+        assert_eq!(
+            fg_at_text(&buf, "error: boom"),
+            marker(NOTICE),
+            "a reconnecting tunnel's detail"
+        );
+
+        // A second failure exhausts the single allowed attempt.
+        app.tunnel_manager.on_auto_start_failed(1, "boom", &cfg);
+        assert_eq!(app.tunnel_manager.status(1), "gave_up");
+        let buf = tab(&app);
+        assert_eq!(
+            fg_at_text(&buf, "error: boom"),
+            marker(ERROR),
+            "a tunnel that gave up"
+        );
+    }
+
+    /// Legacy parity, hand-transcribed from the `crate::tui::theme` calls this
+    /// screen used before the migration — never derived from `ROLE_SPECS`,
+    /// which is the same source the renderer resolves from.
+    #[test]
+    fn the_tunnel_tab_reproduces_its_legacy_cells_under_default() {
+        use crate::tui::theme as legacy;
+        let theme = resolved_default();
+
+        let app = {
+            let mut app = themed_app(resolved_default());
+            app.tunnels = vec![Tunnel { id: 1, ..tunnel() }];
+            app.tunnel_notice = Some("started".into());
+            app
+        };
+        let buf = tab(&app);
+        assert_eq!(fg_at_text(&buf, "1 tunnels"), legacy::MUTE, "theme::mute()");
+        assert_eq!(fg_at_text(&buf, "started"), legacy::AMBER, "theme::amber()");
+        let (hx, hy) = crate::test_support::find_text(&buf, "STATUS");
+        let head = buf.cell((hx, hy)).unwrap();
+        assert_eq!(head.fg, legacy::BRIGHT, "theme::bright()");
+        assert!(
+            head.modifier.contains(Modifier::BOLD),
+            "the column header kept `theme::heading()`'s weight"
+        );
+        assert_eq!(
+            fg_at_text(&buf, "\u{2500}"),
+            legacy::DIM,
+            "theme::dim() rule"
+        );
+
+        // The row, both states.
+        let unselected = row_buffer(&theme, "up", false);
+        assert_eq!(unselected.cell((0, 0)).unwrap().fg, legacy::GREEN);
+        assert_eq!(fg_at_text(&unselected, "up"), legacy::GREEN);
+        assert_eq!(fg_at_text(&unselected, "L"), legacy::CYAN, "theme::cyan()");
+        assert_eq!(fg_at_text(&unselected, ":8080"), legacy::TEXT);
+        assert_eq!(fg_at_text(&unselected, "db.internal"), legacy::MUTE);
+        assert_eq!(fg_at_text(&unselected, "web-prod"), legacy::DIM);
+
+        let selected = row_buffer(&theme, "up", true);
+        let cell = selected.cell((0, 0)).unwrap();
+        assert_eq!(cell.fg, legacy::GREEN, "the dot keeps its state colour");
+        assert_eq!(cell.bg, legacy::SEL_BG);
+        assert_eq!(fg_at_text(&selected, ":8080"), legacy::SEL_FG);
+
+        // The four remaining state colours, each on its own row.
+        for (status, label, expected) in [
+            ("reconnecting", "retry", legacy::AMBER),
+            ("starting", "start", legacy::AMBER),
+            ("gave_up", "gave up", legacy::RED),
+            ("stopped", "off", legacy::DIM),
+        ] {
+            let buf = row_buffer(&theme, status, false);
+            assert_eq!(buf.cell((0, 0)).unwrap().fg, expected, "{status}: the dot");
+            assert_eq!(fg_at_text(&buf, label), expected, "{status}: the label");
+        }
     }
 }

@@ -89,3 +89,10 @@ title = { foreground = "semantic.text_bright", modifiers = ["bold"] }
 # popup titles, and lose their weight to the same plain fallback.
 [components.help]
 section = { foreground = "semantic.text_bright", modifiers = ["bold"] }
+
+# The zoom toast is a cyan chip the terminal inverts — `theme::cyan()` plus
+# `REVERSED`. The colour is the `info` fallback; only the inversion has to be
+# stated, and it belongs in the theme rather than being welded into the
+# renderer, so a theme can drop it.
+[components.status_bar]
+toast = { foreground = "semantic.info", modifiers = ["reversed"] }

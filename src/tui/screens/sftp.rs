@@ -20,10 +20,10 @@ use ratatui::prelude::*;
 
 use crate::app::{App, SftpAnim};
 use crate::sftp::model::{Direction, Focus, Pane, Phase, SftpState};
+use crate::theme::catalog::StyleRole;
 use crate::theme::model::ResolvedTheme;
 use crate::tui::blit;
 use crate::tui::text::ellipsize;
-use crate::tui::theme;
 use crate::tui::tween;
 use crate::tui::widgets::panel_box::{render_panel_box, SFTP_PANEL};
 use crate::tui::SFTP_ANIM;
@@ -54,7 +54,8 @@ fn render_rest(frame: &mut Frame, area: Rect, app: &App) {
         // Still handshaking: show a "connecting…" line, not empty panes. An
         // unreachable host fails into the Notice popup (never a blank browser).
         Some(state) if state.connecting => {
-            render_connecting(frame.buffer_mut(), area, app.sftp_host.as_deref())
+            let theme = app.theme();
+            render_connecting(frame.buffer_mut(), area, app.sftp_host.as_deref(), theme)
         }
         Some(state) => {
             let fill = app.sftp_progress_advance(progress_fraction(state));
@@ -87,7 +88,7 @@ fn render_slide(frame: &mut Frame, area: Rect, app: &App, kind: SftpAnim, p: f32
         SftpAnim::ConnectIn => {
             render_picker(frame, area, app);
             let mut layer = Buffer::empty(area);
-            render_connecting(&mut layer, area, app.sftp_host.as_deref());
+            render_connecting(&mut layer, area, app.sftp_host.as_deref(), app.theme());
             let dx = ((1.0 - e) * area.width as f32).round() as i32;
             blit::blit(frame.buffer_mut(), area, area, &layer, dx, 0);
             // Keep the resting layer around: a host that fails before the slide
@@ -107,7 +108,12 @@ fn render_slide(frame: &mut Frame, area: Rect, app: &App, kind: SftpAnim, p: f32
             };
             // The placeholder stays put underneath, so the panes close over the
             // very line that was reporting the handshake.
-            render_connecting(frame.buffer_mut(), area, app.sftp_host.as_deref());
+            render_connecting(
+                frame.buffer_mut(),
+                area,
+                app.sftp_host.as_deref(),
+                app.theme(),
+            );
             let mut layer = Buffer::empty(area);
             render_browser(
                 &mut layer,
@@ -153,7 +159,7 @@ fn blit_panes(dst: &mut Buffer, area: Rect, src: &Buffer, k: f32) {
 
 /// Centered "connecting to <host>…" placeholder shown while the SFTP worker is
 /// still establishing the session.
-fn render_connecting(buf: &mut Buffer, area: Rect, host: Option<&str>) {
+fn render_connecting(buf: &mut Buffer, area: Rect, host: Option<&str>, theme: &ResolvedTheme) {
     // Same braille spinner the session connect screen turns, so a handshake
     // reads as in flight rather than hung.
     let spin = tween::spinner_frame_now();
@@ -164,7 +170,7 @@ fn render_connecting(buf: &mut Buffer, area: Rect, host: Option<&str>) {
     let w = (msg.chars().count() as u16).min(area.width);
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + area.height / 2;
-    buf.set_string(x, y, &msg, theme::amber());
+    buf.set_string(x, y, &msg, theme.style(StyleRole::SftpNotice));
 }
 
 // ── Picker sub-state ─────────────────────────────────────────
@@ -182,11 +188,11 @@ fn render_picker(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         "Enter connect (on a group: fold) · / search · Esc back".to_string()
     };
-    let style = if app.sftp_picker_searching {
-        theme::amber()
+    let style = app.theme().style(if app.sftp_picker_searching {
+        StyleRole::SftpNotice
     } else {
-        theme::dim()
-    };
+        StyleRole::TextDim
+    });
     frame
         .buffer_mut()
         .set_string(area.x + 2, hint_y, &hint, style);
@@ -227,10 +233,11 @@ fn render_browser(
         left_title,
         state.focus == Focus::Local,
         state.searching && state.focus == Focus::Local,
+        StyleRole::SftpLocal,
         theme,
     );
     if state.left_connecting {
-        render_connecting(buf, local_rect, state.left_host.as_deref());
+        render_connecting(buf, local_rect, state.left_host.as_deref(), theme);
     }
     render_pane(
         buf,
@@ -239,6 +246,7 @@ fn render_browser(
         "remote",
         state.focus == Focus::Remote,
         state.searching && state.focus == Focus::Remote,
+        StyleRole::SftpRemote,
         theme,
     );
 
@@ -256,14 +264,16 @@ fn render_browser(
         &state.queue,
         state.notice.as_deref(),
         staged,
+        theme,
     );
 
     if progress_h > 0 {
         let py = area.y + area.height.saturating_sub(1);
-        render_progress(buf, area.x, py, area.width, state, fill);
+        render_progress(buf, area.x, py, area.width, state, fill, theme);
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_pane(
     buf: &mut Buffer,
     rect: Rect,
@@ -271,6 +281,9 @@ fn render_pane(
     title: &str,
     focused: bool,
     searching: bool,
+    // The pane's own directory-entry role: `sftp.local` on the left,
+    // `sftp.remote` on the right.
+    entry_role: StyleRole,
     theme: &ResolvedTheme,
 ) {
     if rect.width < 6 || rect.height < 2 {
@@ -318,7 +331,9 @@ fn render_pane(
     // Prominent search bar on the top inner row while this focused pane is being
     // typed into, so it's unmistakable that keystrokes are filtering (not lost).
     if searching {
-        let bar = Style::default().bg(theme::AMBER).fg(Color::Black);
+        // The foreground is the role's declared inverse rather than a hard
+        // `Color::Black`, so a theme that lightens the bar keeps it legible.
+        let bar = theme.style(StyleRole::SftpSearch);
         for cx in (rect.x + 1)..(rect.x + rect.width - 1) {
             if let Some(c) = buf.cell_mut((cx, top)) {
                 c.set_style(bar);
@@ -346,7 +361,7 @@ fn render_pane(
             (false, true) => format!("(no matches — {hidden} hidden, . to show)"),
             (false, false) => "(no matches)".to_string(),
         };
-        buf.set_string(inner_x, top, &msg, theme::dim());
+        buf.set_string(inner_x, top, &msg, theme.style(StyleRole::TextDim));
         return;
     }
 
@@ -366,16 +381,27 @@ fn render_pane(
         let is_sel = pos == pane.selected;
         let active = is_sel && focused;
 
-        // Highlight the whole selected row of the focused pane.
-        if active {
+        // Both panes keep a visible cursor. The unfocused one wears the quieter
+        // `selection.inactive`: without it the pane the user is about to Tab
+        // back into showed no selection at all and the position was lost.
+        let selection = is_sel.then(|| {
+            theme.style(if active {
+                StyleRole::SftpSelection
+            } else {
+                StyleRole::SelectionInactive
+            })
+        });
+        if let Some(bar) = selection {
             for cx in (rect.x + 1)..(rect.x + rect.width - 1) {
                 if let Some(c) = buf.cell_mut((cx, y)) {
-                    c.set_style(theme::selected());
+                    c.set_style(bar);
                     c.set_symbol(" ");
                 }
             }
         }
 
+        // The arrow stays the *focused* pane's marker: two panes both showing
+        // one would be ambiguous about where the keystrokes go.
         let marker = if active { "▸ " } else { "  " };
         // The ".." row is a way out, not a listing entry: no size badge.
         let size_str = if entry.is_parent() {
@@ -391,26 +417,21 @@ fn render_pane(
         let name = ellipsize(&entry.name, name_budget);
         let line = format!("{marker}{name}");
 
-        let name_style = if active {
-            theme::selected()
-        } else if entry.is_dir {
-            theme::cyan()
-        } else {
-            theme::text()
+        let name_style = match selection {
+            Some(bar) => bar,
+            None if entry.is_dir => theme.style(entry_role),
+            None => theme.style(StyleRole::TextPrimary),
         };
         buf.set_string(inner_x, y, &line, name_style);
 
         let size_w = size_str.chars().count() as u16;
         let size_x = (rect.x + rect.width).saturating_sub(size_w + 2);
-        let size_style = if active {
-            theme::selected()
-        } else {
-            theme::dim()
-        };
+        let size_style = selection.unwrap_or_else(|| theme.style(StyleRole::TextDim));
         buf.set_string(size_x, y, &size_str, size_style);
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_queue(
     buf: &mut Buffer,
     x: u16,
@@ -419,14 +440,15 @@ fn render_queue(
     queue: &[crate::sftp::model::QueuedTransfer],
     notice: Option<&str>,
     staged: f32,
+    theme: &ResolvedTheme,
 ) {
     if queue.is_empty() {
         let (text, style) = match notice {
-            Some(n) => (format!("⚠ {n}"), theme::amber()),
+            Some(n) => (format!("⚠ {n}"), theme.style(StyleRole::SftpNotice)),
             None => (
                 "queue: empty  (← download · → upload · c run · . hidden · o second host)"
                     .to_string(),
-                theme::dim(),
+                theme.style(StyleRole::TextDim),
             ),
         };
         buf.set_string(
@@ -445,14 +467,16 @@ fn render_queue(
         x + 2,
         y,
         ellipsize(&header, w.saturating_sub(4) as usize),
-        theme::heading(),
+        theme.style(StyleRole::SftpQueueHeader),
     );
     let last = queue.len().saturating_sub(1);
     for (i, t) in queue.iter().take(4).enumerate() {
         let yy = y + 1 + i as u16;
+        // Arrow *and* word: the two directions differ only by colour otherwise,
+        // and a terminal that reduces the theme's RGB can collapse them.
         let (arrow, label, style) = match t.direction {
-            Direction::Download => ("←", "download", theme::green()),
-            Direction::Upload => ("→", "upload", theme::amber()),
+            Direction::Download => ("←", "download", theme.style(StyleRole::SftpQueueDownload)),
+            Direction::Upload => ("→", "upload", theme.style(StyleRole::SftpQueueUpload)),
         };
         let s = format!("{arrow} {label}  {}", t.name);
         let clamped = ellipsize(&s, w.saturating_sub(6) as usize);
@@ -548,7 +572,15 @@ const BAR_PARTIALS: [&str; 7] = ["▏", "▎", "▍", "▌", "▋", "▊", "▉"
 /// Progress line for the running queue: a filled bar under the numbers, drawn
 /// at `fill` (the smoothed figure, #35) so it sweeps between the worker's
 /// chunked updates instead of stepping.
-fn render_progress(buf: &mut Buffer, x: u16, y: u16, w: u16, state: &SftpState, fill: f32) {
+fn render_progress(
+    buf: &mut Buffer,
+    x: u16,
+    y: u16,
+    w: u16,
+    state: &SftpState,
+    fill: f32,
+    theme: &ResolvedTheme,
+) {
     let s = if let Some(p) = state.progress {
         let pct = if p.size > 0 {
             (p.transferred as f64 / p.size as f64 * 100.0) as u32
@@ -567,7 +599,7 @@ fn render_progress(buf: &mut Buffer, x: u16, y: u16, w: u16, state: &SftpState, 
     };
     let clamped = ellipsize(&s, w.saturating_sub(4) as usize);
     let label_w = clamped.chars().count() as u16;
-    buf.set_string(x + 2, y, clamped, theme::amber());
+    buf.set_string(x + 2, y, clamped, theme.style(StyleRole::SftpProgress));
 
     // Bar in whatever is left of the line, right of the numbers.
     let bar_x = x + 3 + label_w;
@@ -578,14 +610,17 @@ fn render_progress(buf: &mut Buffer, x: u16, y: u16, w: u16, state: &SftpState, 
     let units = (bar_w as f32 * 8.0 * fill.clamp(0.0, 1.0)).round() as u16;
     let full = units / 8;
     let rem = (units % 8) as usize;
+    let done = theme.style(StyleRole::SftpProgressComplete);
+    let todo = theme.style(StyleRole::SftpProgressRemaining);
     for i in 0..bar_w {
         let cell_x = bar_x + i;
+        // Solid vs shaded glyphs, so the bar still reads without colour.
         let (glyph, style) = if i < full {
-            ("█", theme::green())
+            ("█", done)
         } else if i == full && rem > 0 {
-            (BAR_PARTIALS[rem - 1], theme::green())
+            (BAR_PARTIALS[rem - 1], done)
         } else {
-            ("░", theme::dim())
+            ("░", todo)
         };
         buf.set_string(cell_x, y, glyph, style);
     }
@@ -725,5 +760,314 @@ mod tests {
                 },
             );
         }
+    }
+
+    // ── Role coverage ────────────────────────────────────────
+
+    use crate::sftp::model::{FileEntry, QueuedTransfer};
+    use crate::test_support::{
+        fg, fg_at_text, fg_at_text_from, fg_bg, marker, resolved_default, role_marker_theme,
+        RoleMarker,
+    };
+
+    const LOCAL: u32 = 0xa3_0001;
+    const REMOTE: u32 = 0xa3_0002;
+    const SELECTION: u32 = 0xa3_0003;
+    const SELECTION_BG: u32 = 0xa3_0103;
+    const INACTIVE: u32 = 0xa3_0004;
+    const INACTIVE_BG: u32 = 0xa3_0104;
+    const SEARCH: u32 = 0xa3_0005;
+    const SEARCH_BG: u32 = 0xa3_0105;
+    const QUEUE_DOWNLOAD: u32 = 0xa3_0006;
+    const QUEUE_UPLOAD: u32 = 0xa3_0007;
+    const QUEUE_HEADER: u32 = 0xa3_0008;
+    const PROGRESS: u32 = 0xa3_0009;
+    const PROGRESS_DONE: u32 = 0xa3_000a;
+    const PROGRESS_LEFT: u32 = 0xa3_000b;
+    const NOTICE: u32 = 0xa3_000c;
+    const TEXT: u32 = 0xa3_000d;
+    const DIM: u32 = 0xa3_000e;
+
+    const MARKERS: &[RoleMarker] = &[
+        fg("components.sftp.local", LOCAL),
+        fg("components.sftp.remote", REMOTE),
+        fg_bg("components.sftp.selection", SELECTION, SELECTION_BG),
+        fg_bg("components.selection.inactive", INACTIVE, INACTIVE_BG),
+        fg_bg("components.sftp.search", SEARCH, SEARCH_BG),
+        fg("components.sftp.queue_download", QUEUE_DOWNLOAD),
+        fg("components.sftp.queue_upload", QUEUE_UPLOAD),
+        fg("components.sftp.queue_header", QUEUE_HEADER),
+        fg("components.sftp.progress", PROGRESS),
+        fg("components.sftp.progress_complete", PROGRESS_DONE),
+        fg("components.sftp.progress_remaining", PROGRESS_LEFT),
+        fg("components.sftp.notice", NOTICE),
+        fg("components.text.primary", TEXT),
+        fg("components.text.dim", DIM),
+    ];
+
+    fn marked() -> ResolvedTheme {
+        role_marker_theme("sftp", MARKERS)
+    }
+
+    fn entry(name: &str, is_dir: bool) -> FileEntry {
+        FileEntry {
+            name: name.into(),
+            is_dir,
+            size: 2048,
+            is_symlink: false,
+            perm: None,
+        }
+    }
+
+    /// Both panes listing a directory and a file, remote pane focused.
+    fn browsing() -> SftpState {
+        let mut state = SftpState::new("/remote", "/local");
+        state.local.entries = vec![entry("lefty", true), entry("left.txt", false)];
+        state.remote.entries = vec![entry("righty", true), entry("right.txt", false)];
+        state.focus = Focus::Remote;
+        state
+    }
+
+    const AREA: Rect = Rect {
+        x: 0,
+        y: 0,
+        width: 60,
+        height: 14,
+    };
+
+    fn browser(state: &SftpState, theme: &ResolvedTheme) -> Buffer {
+        crate::test_support::buffer_at(AREA, |buf| {
+            render_browser(buf, AREA, state, 0.5, 1.0, [0, 0], theme)
+        })
+    }
+
+    /// Directory names carry the pane's own role, plain files the shared body
+    /// text role — proved on both panes in one frame, so neither can be
+    /// reading the other's.
+    #[test]
+    fn each_pane_colours_its_directories_with_its_own_role() {
+        let theme = marked();
+        // Both panes point at their second row, so neither directory is the
+        // selected one and both are read in their unselected state.
+        let mut state = browsing();
+        state.local.selected = 1;
+        state.remote.selected = 1;
+        let buf = browser(&state, &theme);
+
+        assert_eq!(
+            fg_at_text_from(&buf, "lefty", AREA.y + 1),
+            marker(LOCAL),
+            "a directory in the local pane"
+        );
+        assert_eq!(
+            fg_at_text_from(&buf, "righty", AREA.y + 1),
+            marker(REMOTE),
+            "a directory in the remote pane"
+        );
+
+        // The plain files are the selected rows here, so read them from the
+        // frame where nothing is selected but the first row.
+        let buf = browser(&browsing(), &theme);
+        assert_eq!(
+            fg_at_text_from(&buf, "left.txt", AREA.y + 1),
+            marker(TEXT),
+            "a file in the local pane"
+        );
+        assert_eq!(
+            fg_at_text_from(&buf, "right.txt", AREA.y + 1),
+            marker(TEXT),
+            "a file in the remote pane"
+        );
+    }
+
+    /// The focused pane's cursor and the unfocused pane's cursor are different
+    /// roles, and **both** are drawn. The unfocused one used to be invisible.
+    #[test]
+    fn both_panes_show_a_cursor_and_they_are_not_the_same_role() {
+        let theme = marked();
+        let mut state = browsing();
+        state.local.selected = 1;
+        state.remote.selected = 1;
+        let buf = browser(&state, &theme);
+
+        // Remote is focused: its selected row wears `sftp.selection`.
+        let sel = crate::test_support::find_text_from(&buf, "right.txt", AREA.y + 1);
+        assert_eq!(buf.cell(sel).unwrap().fg, marker(SELECTION));
+        assert_eq!(buf.cell(sel).unwrap().bg, marker(SELECTION_BG));
+
+        // Local is not focused, and its selected row is still marked.
+        let inactive = crate::test_support::find_text_from(&buf, "left.txt", AREA.y + 1);
+        assert_eq!(buf.cell(inactive).unwrap().fg, marker(INACTIVE));
+        assert_eq!(buf.cell(inactive).unwrap().bg, marker(INACTIVE_BG));
+
+        // The size column follows the same bar on both sides.
+        assert_eq!(
+            fg_at_text_from(&buf, "2.0K", AREA.y + 1),
+            marker(INACTIVE),
+            "the unfocused pane's size column"
+        );
+    }
+
+    /// The picker's footer hint switches between two roles when a search is
+    /// open, through the real `render_sftp` entry point.
+    #[test]
+    fn the_sftp_picker_hint_switches_role_while_searching() {
+        let mut app = crate::test_support::themed_app(marked());
+        let area = Rect::new(0, 0, 60, 14);
+
+        let buf = crate::test_support::frame_at(area, |f| render_sftp(f, area, &app));
+        assert_eq!(fg_at_text(&buf, "Enter connect"), marker(DIM), "at rest");
+
+        app.sftp_picker_searching = true;
+        app.search_query = "web".into();
+        let buf = crate::test_support::frame_at(area, |f| render_sftp(f, area, &app));
+        assert_eq!(fg_at_text(&buf, "search: web"), marker(NOTICE), "searching");
+    }
+
+    /// The search bar's foreground is the role's declared inverse, not a
+    /// hard-coded black.
+    #[test]
+    fn the_sftp_search_bar_wears_its_inverse_role() {
+        let theme = marked();
+        let mut state = browsing();
+        state.searching = true;
+        state.remote.filter = "fire".into();
+        let buf = browser(&state, &theme);
+
+        let at = crate::test_support::find_text(&buf, "search: fire");
+        assert_eq!(buf.cell(at).unwrap().fg, marker(SEARCH));
+        assert_eq!(buf.cell(at).unwrap().bg, marker(SEARCH_BG));
+    }
+
+    fn transfer(direction: Direction, name: &str) -> QueuedTransfer {
+        QueuedTransfer {
+            direction,
+            src: name.into(),
+            dst: name.into(),
+            name: name.into(),
+            is_dir: false,
+        }
+    }
+
+    /// Queue header, both directions, and the empty-queue hint.
+    #[test]
+    fn the_sftp_queue_wears_its_own_roles() {
+        let theme = marked();
+        let mut state = browsing();
+        state.queue = vec![
+            transfer(Direction::Download, "down.bin"),
+            transfer(Direction::Upload, "up.bin"),
+        ];
+        let buf = browser(&state, &theme);
+
+        assert_eq!(fg_at_text(&buf, "queue (2)"), marker(QUEUE_HEADER));
+        assert_eq!(fg_at_text(&buf, "download"), marker(QUEUE_DOWNLOAD));
+        assert_eq!(fg_at_text(&buf, "upload"), marker(QUEUE_UPLOAD));
+
+        let buf = browser(&browsing(), &theme);
+        assert_eq!(fg_at_text(&buf, "queue: empty"), marker(DIM));
+    }
+
+    /// A notice replaces the queue hint and is its own role, in both the empty
+    /// and the populated queue strip.
+    #[test]
+    fn the_sftp_notice_is_its_own_role_in_both_queue_states() {
+        let theme = marked();
+        let mut state = browsing();
+        state.notice = Some("permission denied".into());
+        let buf = browser(&state, &theme);
+        assert_eq!(fg_at_text(&buf, "\u{26a0}"), marker(NOTICE), "empty queue");
+
+        state.queue = vec![transfer(Direction::Download, "down.bin")];
+        let buf = browser(&state, &theme);
+        assert_eq!(
+            fg_at_text(&buf, "queue (1)"),
+            marker(QUEUE_HEADER),
+            "the header still leads the strip"
+        );
+
+        // The connecting placeholder shares the notice role.
+        let buf = crate::test_support::buffer_at(AREA, |buf| {
+            render_connecting(buf, AREA, Some("web-prod"), &theme)
+        });
+        assert_eq!(fg_at_text(&buf, "Connecting to web-prod"), marker(NOTICE));
+    }
+
+    /// The running line and the three bar roles.
+    #[test]
+    fn the_sftp_progress_line_wears_its_three_roles() {
+        let theme = marked();
+        let mut state = browsing();
+        state.phase = Phase::Running;
+        state.progress = Some(crate::sftp::model::Progress {
+            index: 0,
+            total: 2,
+            transferred: 512,
+            size: 1024,
+        });
+        let buf = browser(&state, &theme);
+
+        assert_eq!(fg_at_text(&buf, "running 1/2"), marker(PROGRESS));
+        assert_eq!(fg_at_text(&buf, "\u{2588}"), marker(PROGRESS_DONE));
+        assert_eq!(fg_at_text(&buf, "\u{2591}"), marker(PROGRESS_LEFT));
+    }
+
+    /// Legacy parity, hand-transcribed from the `crate::tui::theme` calls this
+    /// screen made before the migration.
+    #[test]
+    fn the_sftp_browser_reproduces_its_legacy_cells_under_default() {
+        use crate::tui::theme as legacy;
+        let theme = resolved_default();
+
+        let mut state = browsing();
+        state.local.selected = 1;
+        state.remote.selected = 1;
+        state.phase = Phase::Running;
+        state.progress = Some(crate::sftp::model::Progress {
+            index: 0,
+            total: 2,
+            transferred: 512,
+            size: 1024,
+        });
+        state.queue = vec![
+            transfer(Direction::Download, "down.bin"),
+            transfer(Direction::Upload, "up.bin"),
+        ];
+        let buf = browser(&state, &theme);
+
+        assert_eq!(
+            fg_at_text_from(&buf, "lefty", AREA.y + 1),
+            legacy::CYAN,
+            "a directory was theme::cyan()"
+        );
+        let sel = crate::test_support::find_text_from(&buf, "right.txt", AREA.y + 1);
+        assert_eq!(buf.cell(sel).unwrap().fg, legacy::SEL_FG);
+        assert_eq!(buf.cell(sel).unwrap().bg, legacy::SEL_BG);
+
+        let head = crate::test_support::find_text(&buf, "queue (2)");
+        assert_eq!(buf.cell(head).unwrap().fg, legacy::BRIGHT);
+        assert!(
+            buf.cell(head).unwrap().modifier.contains(Modifier::BOLD),
+            "the queue header kept `theme::heading()`'s weight"
+        );
+        assert_eq!(fg_at_text(&buf, "download"), legacy::GREEN);
+        assert_eq!(fg_at_text(&buf, "upload"), legacy::AMBER);
+        assert_eq!(fg_at_text(&buf, "running 1/2"), legacy::AMBER);
+        assert_eq!(fg_at_text(&buf, "\u{2588}"), legacy::GREEN);
+        assert_eq!(fg_at_text(&buf, "\u{2591}"), legacy::DIM);
+
+        // The search bar's ground was `theme::AMBER`; only its foreground moved
+        // from a hard `Color::Black` to the theme's own inverse.
+        let mut searching = browsing();
+        searching.searching = true;
+        searching.remote.filter = "fire".into();
+        let buf = browser(&searching, &theme);
+        let at = crate::test_support::find_text(&buf, "search: fire");
+        assert_eq!(buf.cell(at).unwrap().bg, legacy::AMBER);
+        assert_eq!(
+            buf.cell(at).unwrap().fg,
+            legacy::BG_DEEP,
+            "`semantic.text_inverse`, the declared inverse of the warning bar"
+        );
     }
 }

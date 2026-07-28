@@ -58,6 +58,108 @@ pub(crate) fn resolved_default() -> ResolvedTheme {
     )
 }
 
+/// A `#rrggbb` literal as a [`Color`], so a test can name the marker it wrote
+/// into a theme and the value it expects back out of a cell with one constant.
+pub(crate) fn marker(rgb: u32) -> ratatui::style::Color {
+    ratatui::style::Color::Rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
+}
+
+/// One role of a marker theme: its published path, its foreground marker, and
+/// — for the roles whose background is load-bearing — a second marker for that.
+pub(crate) struct RoleMarker {
+    pub path: &'static str,
+    pub fg: u32,
+    pub bg: Option<u32>,
+}
+
+/// Shorthand for a role marked on its foreground only.
+pub(crate) const fn fg(path: &'static str, fg: u32) -> RoleMarker {
+    RoleMarker { path, fg, bg: None }
+}
+
+/// Shorthand for a role marked on both channels.
+pub(crate) const fn fg_bg(path: &'static str, fg: u32, bg: u32) -> RoleMarker {
+    RoleMarker {
+        path,
+        fg,
+        bg: Some(bg),
+    }
+}
+
+/// A theme giving every listed role a colour no other listed role carries.
+///
+/// This is the only way a renderer test can prove a role is *read*: under
+/// `default` an unbound role and a correctly bound one produce the same cell,
+/// so parity alone proves nothing. Each marker is unique, so a renderer that
+/// reaches for the neighbouring role fails on an exact value.
+///
+/// The TOML shape (bare string vs `{ foreground = … }`) is looked up from
+/// `ROLE_SPECS`, which is a statement about the role's *kind*, never about its
+/// value — the value under test is the literal the caller wrote here.
+pub(crate) fn role_marker_theme(id: &str, roles: &[RoleMarker]) -> ResolvedTheme {
+    use crate::theme::catalog::{RoleRef, ROLE_SPECS};
+    use std::collections::BTreeMap;
+
+    let mut seen: BTreeMap<u32, &str> = BTreeMap::new();
+    let mut tables: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    for role in roles {
+        let spec = ROLE_SPECS
+            .iter()
+            .find(|s| s.path == role.path)
+            .unwrap_or_else(|| panic!("`{}` is not a published role", role.path));
+        for value in std::iter::once(role.fg).chain(role.bg) {
+            if let Some(other) = seen.insert(value, role.path) {
+                panic!(
+                    "{:#08x} marks both `{other}` and `{}` — a shared marker \
+                     cannot tell the two roles apart",
+                    value, role.path
+                );
+            }
+        }
+        let (table, key) = role.path.rsplit_once('.').expect("role paths are dotted");
+        let line = match spec.role {
+            RoleRef::Style(_) => match role.bg {
+                Some(bg) => format!(
+                    "{key} = {{ foreground = \"#{:06x}\", background = \"#{bg:06x}\" }}",
+                    role.fg
+                ),
+                None => format!("{key} = {{ foreground = \"#{:06x}\" }}", role.fg),
+            },
+            _ => {
+                assert!(
+                    role.bg.is_none(),
+                    "`{}` is not a style role and has no background",
+                    role.path
+                );
+                format!("{key} = \"#{:06x}\"", role.fg)
+            }
+        };
+        tables.entry(table).or_default().push(line);
+    }
+
+    let mut src = format!("schema_version = 1\nname = \"{id}\"\nextends = \"default\"\n");
+    for (table, lines) in tables {
+        src.push_str(&format!("\n[{table}]\n"));
+        for line in lines {
+            src.push_str(&line);
+            src.push('\n');
+        }
+    }
+    resolved_source(id, &src)
+}
+
+/// The foreground of the cell where `needle` starts.
+pub(crate) fn fg_at_text(buf: &Buffer, needle: &str) -> ratatui::style::Color {
+    let at = find_text(buf, needle);
+    buf.cell(at).unwrap().fg
+}
+
+/// Same, searching from `first_row` down — for a word the panel title repeats.
+pub(crate) fn fg_at_text_from(buf: &Buffer, needle: &str, first_row: u16) -> ratatui::style::Color {
+    let at = find_text_from(buf, needle, first_row);
+    buf.cell(at).unwrap().fg
+}
+
 struct NoHosts;
 
 impl crate::ssh::HostResolver for NoHosts {

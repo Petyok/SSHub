@@ -362,7 +362,9 @@ role_catalog! {
         AuditError => ("components.audit.error", SemanticColor::Error, false),
         AuditUnknown => ("components.audit.unknown", SemanticColor::Unknown, false),
 
-        BroadcastPending => ("components.broadcast.pending", SemanticColor::Unknown, false),
+        // `pending` is muted text, not the `unknown` status colour: a host that
+        // has not been reached yet is quiet, not in an unknown state.
+        BroadcastPending => ("components.broadcast.pending", SemanticColor::TextMuted, false),
         BroadcastRunning => ("components.broadcast.running", SemanticColor::Warning, false),
         BroadcastSuccess => ("components.broadcast.success", SemanticColor::Success, false),
         BroadcastError => ("components.broadcast.error", SemanticColor::Error, false),
@@ -415,6 +417,10 @@ role_catalog! {
         StatusBarMode => ("components.status_bar.mode", SemanticStyle::Inverse, false),
         StatusBarMessage => ("components.status_bar.message", SemanticStyle::Text, false),
         StatusBarError => ("components.status_bar.error", SemanticStyle::Error, false),
+        // The floating chip that stands in for the status-bar notice while a
+        // panel is zoomed. Its own role because it is the one notice surface
+        // that inverts itself instead of writing into the bar.
+        StatusBarToast => ("components.status_bar.toast", SemanticStyle::Info, false),
 
         PopupTitle => ("components.popup.title", SemanticStyle::TextBright, false),
         PopupHint => ("components.popup.hint", SemanticStyle::TextDim, false),
@@ -487,6 +493,7 @@ role_catalog! {
         SftpProgressComplete => ("components.sftp.progress_complete", SemanticStyle::Success, false),
         SftpProgressRemaining => ("components.sftp.progress_remaining", SemanticStyle::TextDim, false),
         SftpNotice => ("components.sftp.notice", SemanticStyle::Warning, false),
+        SftpQueueHeader => ("components.sftp.queue_header", SemanticStyle::TextBrightBold, false),
         SftpPanelTitle => ("components.sftp.panel.title", SemanticStyle::TextBright, false),
         SftpPanelCount => ("components.sftp.panel.count", SemanticStyle::TextDim, false),
 
@@ -504,7 +511,9 @@ role_catalog! {
         AuditFilterActive => ("components.audit.filter_active", SemanticStyle::Inverse, false),
         AuditFilterInactive => ("components.audit.filter_inactive", SemanticStyle::TextDim, false),
         AuditNote => ("components.audit.note", SemanticStyle::TextMuted, false),
-        AuditTableHeader => ("components.audit.table_header", SemanticStyle::TextBright, false),
+        // Bold like its sibling `tunnels.table_header`: both column headers have
+        // always been drawn with the same `theme::heading()` call.
+        AuditTableHeader => ("components.audit.table_header", SemanticStyle::TextBrightBold, false),
         AuditRow => ("components.audit.row", SemanticStyle::Text, false),
         AuditRowSelected => ("components.audit.row_selected", SemanticStyle::Selection, false),
 
