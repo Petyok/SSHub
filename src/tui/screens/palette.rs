@@ -82,7 +82,9 @@ pub fn render_palette(
     ));
     let legend = theme.style(StyleRole::PopupLegend);
     let hint = theme.style(StyleRole::PopupHint);
-    let theme_query = theme.style(StyleRole::PickerQuery);
+    // The palette types in `text_highlight`, a shade brighter than the
+    // session picker's query — hence its own role.
+    let theme_query = theme.style(StyleRole::CommandPaletteQuery);
     let detail = DetailStyles::of(theme);
 
     // We'll write directly into the buffer for fine-grained control.

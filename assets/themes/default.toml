@@ -84,3 +84,8 @@ group = { foreground = "semantic.text_highlight" }
 # colour with it and only the weight is stated here.
 [components.popup]
 title = { foreground = "semantic.text_bright", modifiers = ["bold"] }
+
+# The help sheet's section headings came from the same `theme::heading()` as the
+# popup titles, and lose their weight to the same plain fallback.
+[components.help]
+section = { foreground = "semantic.text_bright", modifiers = ["bold"] }

@@ -241,6 +241,7 @@ mod tests {
             SemanticStyle::TextBrightUnderlinedBold => {
                 legacy::bright().add_modifier(Modifier::UNDERLINED | Modifier::BOLD)
             }
+            SemanticStyle::TextHighlight => legacy::white(),
             SemanticStyle::TextMuted => legacy::mute(),
             SemanticStyle::TextDim => legacy::dim(),
             SemanticStyle::TextOnSurfaceRaised => {
@@ -270,6 +271,7 @@ mod tests {
         "components.dashboard.host_list.host_selected",
         "components.dashboard.host_list.group",
         "components.popup.title",
+        "components.help.section",
     ];
 
     /// Assert that `theme` reproduces the frozen pre-theme-system appearance for
@@ -285,7 +287,7 @@ mod tests {
         }
 
         for spec in ROLE_SPECS {
-            // `default` carries exactly two deliberate component overrides,
+            // `default` carries a handful of deliberate component overrides,
             // asserted explicitly below against the legacy surface each one
             // reproduces. Their semantic fallback is *not* what SSHub drew,
             // which is precisely why the override exists.
@@ -327,7 +329,7 @@ mod tests {
         assert_eq!(theme.semantic.text_inverse, legacy::BG_DEEP);
         assert_ne!(theme.semantic.text_inverse, theme.semantic.text_bright);
 
-        // The two documented `default` overrides, against the exact legacy
+        // The documented `default` overrides, against the exact legacy
         // helper each replaces. The selected *host name* was `theme::selected()`
         // (SEL_FG); `text_highlight` (WHITE) is the selected *group* label, and
         // the two are not interchangeable.
@@ -407,15 +409,17 @@ mod tests {
             );
         }
 
-        // The tunnels tab keeps SEL_FG for its selected row, unlike the tables
-        // that highlight with WHITE.
+        // Two selection idioms coexist and must not converge: the tunnels tab,
+        // the picker and the group list highlight with SEL_FG, while the
+        // settings, palette and keybind rows brighten to WHITE.
         assert_eq!(
             theme.style(StyleRole::TunnelsRowSelected),
             legacy::selected()
         );
+        assert_eq!(theme.style(StyleRole::TableRowSelected), legacy::selected());
         assert_ne!(
             theme.style(StyleRole::TunnelsRowSelected),
-            theme.style(StyleRole::TableRowSelected)
+            theme.style(StyleRole::SettingsRowSelected)
         );
         assert_eq!(
             theme.style(StyleRole::TunnelsTableHeader),
@@ -444,5 +448,344 @@ mod tests {
             theme.style(StyleRole::IdentitiesCardName),
             legacy::heading()
         );
+
+        assert_task14_legacy_cells(theme);
+    }
+
+    // ── Independent legacy witness for the Task 14 surfaces ──
+    //
+    // The blanket loop above is circular *as a class*: it derives its expected
+    // value from `ROLE_SPECS[*].fallback`, the same source the productive role
+    // resolves from. A fallback that was mis-assigned when it was written is
+    // therefore wrong on both sides and the loop stays green — which is exactly
+    // how four overlay regressions survived a full round of review.
+    //
+    // The tables below are an independent witness. Each row states a role's
+    // legacy appearance **by hand**, transcribed from the `crate::tui::theme`
+    // call the migration replaced, and never from `ROLE_SPECS`. A role whose
+    // fallback disagrees with the surface it replaced now fails here.
+    //
+    // Roles whose legacy source was a *direct ANSI colour* are deliberately
+    // absent: the spec allows those to be normalised onto the semantic core,
+    // and there is no `theme.rs` cell for them to witness. `focus.indicator`
+    // is absent for the opposite reason — before the migration the marker had
+    // no style of its own at all, and giving it one is the point of the role.
+
+    /// `(role path, role, the legacy `theme.rs` style it replaced)`.
+    fn task14_legacy_styles() -> Vec<(&'static str, StyleRole, Style)> {
+        vec![
+            // Popup chrome — `theme::heading()`, `dim()`, `mute()`.
+            (
+                "components.popup.title",
+                StyleRole::PopupTitle,
+                legacy::heading(),
+            ),
+            ("components.popup.hint", StyleRole::PopupHint, legacy::dim()),
+            (
+                "components.popup.legend",
+                StyleRole::PopupLegend,
+                legacy::mute(),
+            ),
+            // Session picker and tag filter typed in `bright()`; the palette
+            // typed in `white()`, which is why the two have separate roles.
+            (
+                "components.picker.query",
+                StyleRole::PickerQuery,
+                legacy::bright(),
+            ),
+            (
+                "components.command_palette.query",
+                StyleRole::CommandPaletteQuery,
+                legacy::white(),
+            ),
+            (
+                "components.picker.row",
+                StyleRole::PickerRow,
+                legacy::text(),
+            ),
+            (
+                "components.picker.row_selected",
+                StyleRole::PickerRowSelected,
+                legacy::selected(),
+            ),
+            // The active theme id in the settings popup was drawn in ACCENT.
+            (
+                "components.picker.match",
+                StyleRole::PickerMatch,
+                Style::default().fg(legacy::ACCENT),
+            ),
+            (
+                "components.command_palette.row_selected",
+                StyleRole::CommandPaletteRowSelected,
+                legacy::white().bg(legacy::SEL_BG),
+            ),
+            (
+                "components.settings.row_selected",
+                StyleRole::SettingsRowSelected,
+                legacy::white().bg(legacy::SEL_BG),
+            ),
+            // The group list highlighted with `selected()`, not with the
+            // brighter `text_highlight` the settings rows used.
+            ("components.table.row", StyleRole::TableRow, legacy::text()),
+            (
+                "components.table.row_selected",
+                StyleRole::TableRowSelected,
+                legacy::selected(),
+            ),
+            // The group form marked its current field by brightening and
+            // bolding both halves; the host form used ANSI accents, so the two
+            // cannot share one pair of roles.
+            (
+                "components.group_form.label",
+                StyleRole::GroupFormLabel,
+                legacy::mute(),
+            ),
+            (
+                "components.group_form.label_focused",
+                StyleRole::GroupFormLabelFocused,
+                legacy::heading(),
+            ),
+            (
+                "components.group_form.value",
+                StyleRole::GroupFormValue,
+                legacy::text(),
+            ),
+            (
+                "components.group_form.value_focused",
+                StyleRole::GroupFormValueFocused,
+                legacy::bright().add_modifier(Modifier::BOLD),
+            ),
+            // The single-line prompts typed in `bright()`; their help lines and
+            // the group form's hint were `dim()`.
+            (
+                "components.form.input",
+                StyleRole::FormInput,
+                legacy::bright(),
+            ),
+            ("components.form.help", StyleRole::FormHelp, legacy::dim()),
+            // Help sheet — `heading()`, `bright()`, `text()`.
+            (
+                "components.help.section",
+                StyleRole::HelpSection,
+                legacy::heading(),
+            ),
+            ("components.help.key", StyleRole::HelpKey, legacy::bright()),
+            (
+                "components.help.description",
+                StyleRole::HelpDescription,
+                legacy::text(),
+            ),
+            // Keybind editor. The two value states were drawn over the
+            // selection bar, which the renderer now paints separately, so only
+            // the foreground is the role's business.
+            (
+                "components.keybind.row",
+                StyleRole::KeybindRow,
+                legacy::text(),
+            ),
+            (
+                "components.keybind.row_selected",
+                StyleRole::KeybindRowSelected,
+                legacy::white().bg(legacy::SEL_BG),
+            ),
+            (
+                "components.keybind.value",
+                StyleRole::KeybindValue,
+                legacy::mute(),
+            ),
+            (
+                "components.keybind.value_bound",
+                StyleRole::KeybindValueBound,
+                legacy::green(),
+            ),
+            (
+                "components.keybind.value_capturing",
+                StyleRole::KeybindValueCapturing,
+                legacy::amber(),
+            ),
+            // Identity cards.
+            (
+                "components.identities.empty",
+                StyleRole::IdentitiesEmpty,
+                legacy::dim(),
+            ),
+            (
+                "components.identities.notice",
+                StyleRole::IdentitiesNotice,
+                legacy::amber(),
+            ),
+            (
+                "components.identities.card.selection",
+                StyleRole::IdentitiesCardSelection,
+                legacy::selected(),
+            ),
+            (
+                "components.identities.card.name",
+                StyleRole::IdentitiesCardName,
+                legacy::heading(),
+            ),
+            (
+                "components.identities.card.text",
+                StyleRole::IdentitiesCardText,
+                legacy::text(),
+            ),
+            (
+                "components.identities.card.metadata",
+                StyleRole::IdentitiesCardMetadata,
+                legacy::dim(),
+            ),
+            (
+                "components.identities.card.key_type",
+                StyleRole::IdentitiesCardKeyType,
+                legacy::mute(),
+            ),
+            (
+                "components.identities.agent.label",
+                StyleRole::IdentitiesAgentLabel,
+                legacy::mute(),
+            ),
+            (
+                "components.identities.agent.value",
+                StyleRole::IdentitiesAgentValue,
+                legacy::text(),
+            ),
+            (
+                "components.identities.agent.count",
+                StyleRole::IdentitiesAgentCount,
+                legacy::bright(),
+            ),
+            // The two global roles the overlays reach for.
+            (
+                "components.text.primary",
+                StyleRole::TextPrimary,
+                legacy::text(),
+            ),
+            (
+                "components.text.bright",
+                StyleRole::TextBright,
+                legacy::bright(),
+            ),
+        ]
+    }
+
+    /// `(role path, role, the legacy colour it replaced)`.
+    fn task14_legacy_colors() -> Vec<(&'static str, ColorRole, Color)> {
+        vec![
+            (
+                "components.picker.badge_success",
+                ColorRole::PickerBadgeSuccess,
+                legacy::GREEN,
+            ),
+            (
+                "components.picker.badge_warning",
+                ColorRole::PickerBadgeWarning,
+                legacy::AMBER,
+            ),
+            (
+                "components.picker.badge_error",
+                ColorRole::PickerBadgeError,
+                legacy::RED,
+            ),
+            (
+                "components.status.success",
+                ColorRole::StatusSuccess,
+                legacy::GREEN,
+            ),
+            (
+                "components.identities.card.loaded",
+                ColorRole::IdentitiesCardLoaded,
+                legacy::GREEN,
+            ),
+            (
+                "components.identities.card.missing",
+                ColorRole::IdentitiesCardMissing,
+                legacy::DIM,
+            ),
+            (
+                "components.identities.card.credential",
+                ColorRole::IdentitiesCardCredential,
+                legacy::AMBER,
+            ),
+        ]
+    }
+
+    /// `(role path, role, the legacy colour it replaced)`.
+    fn task14_legacy_paints() -> Vec<(&'static str, PaintRole, Color)> {
+        vec![
+            // `theme::popup_border()` — the muted frame every overlay wore...
+            (
+                "components.popup.border",
+                PaintRole::PopupBorder,
+                legacy::MUTE,
+            ),
+            // ...except the session picker, which was framed in the accent.
+            (
+                "components.picker.border",
+                PaintRole::PickerBorder,
+                legacy::ACCENT,
+            ),
+            // `theme::border()` — the palette's inner rules.
+            (
+                "components.separator.primary",
+                PaintRole::SeparatorPrimary,
+                legacy::BORDER,
+            ),
+            (
+                "components.identities.card.border",
+                PaintRole::IdentitiesCardBorder,
+                legacy::BORDER,
+            ),
+            (
+                "components.identities.card.border_selected",
+                PaintRole::IdentitiesCardBorderSelected,
+                legacy::ACCENT,
+            ),
+            (
+                "components.identities.agent.separator",
+                PaintRole::IdentitiesAgentSeparator,
+                legacy::DIM,
+            ),
+        ]
+    }
+
+    /// Compare every Task 14 role that replaced a `theme.rs` call against the
+    /// hand-written legacy value, not against its own fallback.
+    fn assert_task14_legacy_cells(theme: &ResolvedTheme) {
+        for (path, role, expected) in task14_legacy_styles() {
+            assert_eq!(theme.style(role), expected, "{path}");
+        }
+        for (path, role, expected) in task14_legacy_colors() {
+            assert_eq!(theme.color(role), expected, "{path}");
+        }
+        for (path, role, expected) in task14_legacy_paints() {
+            assert_eq!(*theme.paint(role), ResolvedPaint::Solid(expected), "{path}");
+        }
+    }
+
+    /// The witness must not silently shrink: a role that is dropped from the
+    /// table stops being checked, which is how a regression would come back.
+    #[test]
+    fn the_legacy_witness_covers_every_task14_theme_rs_role() {
+        let mut paths: Vec<&str> = task14_legacy_styles()
+            .into_iter()
+            .map(|(p, _, _)| p)
+            .chain(task14_legacy_colors().into_iter().map(|(p, _, _)| p))
+            .chain(task14_legacy_paints().into_iter().map(|(p, _, _)| p))
+            .collect();
+        let before = paths.len();
+        paths.sort_unstable();
+        paths.dedup();
+        assert_eq!(before, paths.len(), "a role is witnessed twice");
+        assert_eq!(
+            before, 51,
+            "the legacy witness changed size; add or remove the row deliberately"
+        );
+        // Every path must still exist in the catalogue.
+        for path in paths {
+            assert!(
+                ROLE_SPECS.iter().any(|s| s.path == path),
+                "{path} is witnessed but no longer published"
+            );
+        }
     }
 }

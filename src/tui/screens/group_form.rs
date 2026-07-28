@@ -89,15 +89,18 @@ pub fn render_group_form(
     let field_row = |field: GroupFormField, label: &str, value: String, is_picker: bool| {
         let focused = form.field == field;
         let marker = if focused { "\u{25b8} " } else { "  " };
+        // The group form has its own family: it marked the current field by
+        // brightening and bolding both label and value, where the host form
+        // used cyan/yellow accents. One pair of roles cannot be both.
         let label_style = if focused {
-            theme.style(StyleRole::FormLabelFocused)
+            theme.style(StyleRole::GroupFormLabelFocused)
         } else {
-            theme.style(StyleRole::FormLabel)
+            theme.style(StyleRole::GroupFormLabel)
         };
         let value_style = if focused {
-            theme.style(StyleRole::FormInputFocused)
+            theme.style(StyleRole::GroupFormValueFocused)
         } else {
-            theme.style(StyleRole::FormValue)
+            theme.style(StyleRole::GroupFormValue)
         };
         let mut spans = vec![
             Span::styled(marker, if focused { focus } else { label_style }),

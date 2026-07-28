@@ -5,7 +5,7 @@ use ratatui::layout::{Margin, Rect};
 use ratatui::prelude::*;
 
 use crate::app::{App, PickerBadge, PickerRow};
-use crate::theme::catalog::{ColorRole, StyleRole};
+use crate::theme::catalog::{ColorRole, PaintRole, StyleRole};
 use crate::theme::model::ResolvedTheme;
 
 /// Widest the popup ever gets. Session rows carry more than host rows, so this
@@ -81,7 +81,14 @@ pub fn render(frame: &mut Frame, app: &App) {
                 picker.purpose.title(),
                 theme.style(StyleRole::PopupTitle),
             ))
-            .border_style(crate::tui::popup_border_style(theme, popup)),
+            // The picker has always been framed in the accent, not in the
+            // muted popup border every other overlay wears, so it carries its
+            // own paint role.
+            .border_style(Style::default().fg(crate::tui::blit::line_color(
+                theme,
+                PaintRole::PickerBorder,
+                popup,
+            ))),
         popup,
     );
 

@@ -65,6 +65,8 @@ pub enum SemanticStyle {
     TextBrightBold,
     /// `text_bright` with underline and bold
     TextBrightUnderlinedBold,
+    /// `text_highlight`
+    TextHighlight,
     /// `text_muted`
     TextMuted,
     /// `text_dim`
@@ -424,8 +426,14 @@ role_catalog! {
         PickerMatch => ("components.picker.match", SemanticStyle::Accent, false),
         PickerRow => ("components.picker.row", SemanticStyle::Text, false),
         PickerRowSelected => ("components.picker.row_selected", SemanticStyle::Selection, false),
+        CommandPaletteQuery => ("components.command_palette.query", SemanticStyle::TextHighlight, false),
         CommandPaletteRowSelected => ("components.command_palette.row_selected", SemanticStyle::HighlightOnSelection, false),
         SettingsRowSelected => ("components.settings.row_selected", SemanticStyle::HighlightOnSelection, false),
+
+        GroupFormLabel => ("components.group_form.label", SemanticStyle::TextMuted, false),
+        GroupFormLabelFocused => ("components.group_form.label_focused", SemanticStyle::TextBrightBold, false),
+        GroupFormValue => ("components.group_form.value", SemanticStyle::Text, false),
+        GroupFormValueFocused => ("components.group_form.value_focused", SemanticStyle::TextBrightBold, false),
 
         FormLabel => ("components.form.label", SemanticStyle::TextDim, false),
         FormLabelFocused => ("components.form.label_focused", SemanticStyle::Info, false),
@@ -438,7 +446,7 @@ role_catalog! {
         FormError => ("components.form.error", SemanticStyle::Error, false),
 
         TableRow => ("components.table.row", SemanticStyle::Text, false),
-        TableRowSelected => ("components.table.row_selected", SemanticStyle::HighlightOnSelection, false),
+        TableRowSelected => ("components.table.row_selected", SemanticStyle::Selection, false),
 
         HelpSection => ("components.help.section", SemanticStyle::TextBright, false),
         HelpKey => ("components.help.key", SemanticStyle::TextBright, false),
@@ -561,6 +569,7 @@ role_catalog! {
 
         PopupBackground => ("components.popup.background", SemanticPaint::Surface, false),
         PopupBorder => ("components.popup.border", SemanticPaint::BorderPopup, true),
+        PickerBorder => ("components.picker.border", SemanticPaint::Accent, true),
 
         TabsSeparator => ("components.tabs.separator", SemanticPaint::TextDim, false),
         TunnelsSeparator => ("components.tunnels.separator", SemanticPaint::TextDim, false),

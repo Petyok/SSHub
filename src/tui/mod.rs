@@ -3149,10 +3149,11 @@ mod tests {
         use crate::app::SessionPickerPurpose::{NewSession, SftpLeftPane, SwitchSession};
 
         const MARKERS: &str = "[components.popup]\n\
-             border = \"#ff6001\"\n\
+             border = \"#ff6005\"\n\
              title = { foreground = \"#ff6002\" }\n\
              legend = { foreground = \"#ff6003\" }\n\
              [components.picker]\n\
+             border = \"#ff6001\"\n\
              query = { foreground = \"#ff6004\" }\n";
 
         for (purpose, title, empty) in [
@@ -3169,7 +3170,13 @@ mod tests {
             assert_eq!(
                 buf[(popup.x, popup.y)].fg,
                 Color::Rgb(0xff, 0x60, 0x01),
-                "{purpose:?}: the frame is components.popup.border"
+                "{purpose:?}: the frame is components.picker.border, the accent \
+                 frame the picker has always worn"
+            );
+            assert_ne!(
+                buf[(popup.x, popup.y)].fg,
+                Color::Rgb(0xff, 0x60, 0x05),
+                "{purpose:?}: not the muted generic popup border"
             );
             assert_eq!(
                 style_at_text_in(&buf, popup, title).fg,
@@ -3811,7 +3818,12 @@ mod tests {
     fn form_labels_and_focus_indicator_are_independently_themed() {
         const MARKERS: &str = "[components.focus]\n\
              indicator = { foreground = \"#ff2001\" }\n\
-             [components.form]\n\
+             [components.group_form]\n\
+label = { foreground = \"#ab0001\" }\n\
+label_focused = { foreground = \"#ab0002\" }\n\
+value = { foreground = \"#ab0003\" }\n\
+value_focused = { foreground = \"#ab0004\" }\n\
+[components.form]\n\
              label = { foreground = \"#ff2002\" }\n\
              label_focused = { foreground = \"#ff2003\" }\n\
              label_editing = { foreground = \"#ff2004\" }\n\
@@ -3904,6 +3916,99 @@ mod tests {
             buf[(popup.right() - 2, popup.y + 1)].bg,
             marker(0x0a0b0c),
             "the palette honours a theme's own popup background"
+        );
+    }
+
+    /// The four cells an isolated legacy golden caught drifting: the help
+    /// section heading, the session-picker frame, the group form's focused
+    /// field and the palette query. Read under `default`, through the real
+    /// renderer, against the exact `theme.rs` value each one replaced.
+    #[test]
+    fn the_overlays_reproduce_their_legacy_cells_under_default() {
+        use crate::tui::theme as legacy;
+
+        // 1. Help section heading — `theme::heading()`, bright *and* bold.
+        let mut app = test_app_with_hosts();
+        app.mode = AppMode::Help;
+        let buf = render_to_buffer(&app, 120, 38);
+        let heading = style_at_text(&buf, "navigate");
+        assert_eq!(heading.fg, Some(legacy::BRIGHT), "help section colour");
+        assert!(
+            heading.add_modifier.contains(Modifier::BOLD),
+            "help section weight"
+        );
+
+        // 2. Session-picker frame — the accent, not the muted popup border.
+        let mut app = app_with_picker(crate::app::SessionPickerPurpose::SwitchSession, "");
+        app.session_picker.as_mut().unwrap().return_mode = AppMode::Normal;
+        let buf = render_to_buffer(&app, 80, 24);
+        let popup = drawn_popup(&app);
+        assert_eq!(
+            buf[(popup.x, popup.y)].fg,
+            legacy::ACCENT,
+            "the session picker was framed in the accent"
+        );
+        assert_ne!(
+            buf[(popup.x, popup.y)].fg,
+            legacy::MUTE,
+            "not the popup border"
+        );
+
+        // 3. Group form — the focused label and value were both bright + bold.
+        let mut app = test_app_with_hosts();
+        app.group_form = Some(crate::app::GroupFormEdit {
+            id: None,
+            name: "alpha".into(),
+            cursor: 0,
+            field: crate::app::GroupFormField::Name,
+            default_identity_id: None,
+            parent_id: None,
+            return_to_manage: false,
+        });
+        app.mode = AppMode::GroupForm;
+        let buf = render_to_buffer(&app, 120, 38);
+        let popup = drawn_popup(&app);
+        let label = style_at_text_in(&buf, popup, "Name:");
+        assert_eq!(label.fg, Some(legacy::BRIGHT), "focused group label colour");
+        assert!(
+            label.add_modifier.contains(Modifier::BOLD),
+            "focused group label weight"
+        );
+        let value = style_at_text_in(&buf, popup, "alpha");
+        assert_eq!(value.fg, Some(legacy::BRIGHT), "focused group value colour");
+        assert!(
+            value.add_modifier.contains(Modifier::BOLD),
+            "focused group value weight"
+        );
+        // The unfocused rows kept `mute()` / `text()`.
+        assert_eq!(
+            style_at_text_in(&buf, popup, "Parent group:").fg,
+            Some(legacy::MUTE),
+            "an idle group label"
+        );
+        assert_eq!(
+            style_at_text_in(&buf, popup, "(top level)").fg,
+            Some(legacy::TEXT),
+            "an idle group value"
+        );
+
+        // 4. Palette query — `white()`, a shade above the picker's `bright()`.
+        let mut app = test_app_with_many_hosts(6);
+        app.mode = AppMode::Palette;
+        app.palette_query = "zzq".into();
+        app.palette_results = vec![];
+        app.palette_selected = 0;
+        let buf = render_to_buffer(&app, 120, 38);
+        let popup = drawn_popup(&app);
+        assert_eq!(
+            style_at_text_in(&buf, popup, "zzq").fg,
+            Some(legacy::WHITE),
+            "the palette typed in white"
+        );
+        assert_ne!(
+            style_at_text_in(&buf, popup, "zzq").fg,
+            Some(legacy::BRIGHT),
+            "not the session picker's query colour"
         );
     }
 
@@ -4072,6 +4177,57 @@ mod tests {
         );
     }
 
+    /// The group form's own four roles, both field states in one frame.
+    #[test]
+    fn the_group_form_wears_its_own_focus_roles() {
+        let mut app = test_app_with_hosts();
+        app.group_form = Some(crate::app::GroupFormEdit {
+            id: None,
+            name: "alpha".into(),
+            cursor: 0,
+            field: crate::app::GroupFormField::Name,
+            default_identity_id: None,
+            parent_id: None,
+            return_to_manage: false,
+        });
+        app.mode = AppMode::GroupForm;
+        wear(&mut app, OVERLAY_MARKERS);
+        let buf = render_to_buffer(&app, 120, 38);
+        let popup = drawn_popup(&app);
+
+        assert_eq!(
+            style_at_text_in(&buf, popup, "Name:").fg,
+            Some(marker(0xab0002)),
+            "the current label is components.group_form.label_focused"
+        );
+        assert_eq!(
+            style_at_text_in(&buf, popup, "alpha").fg,
+            Some(marker(0xab0004)),
+            "its value is components.group_form.value_focused"
+        );
+        assert_eq!(
+            style_at_text_in(&buf, popup, "Parent group:").fg,
+            Some(marker(0xab0001)),
+            "an idle label is components.group_form.label"
+        );
+        assert_eq!(
+            style_at_text_in(&buf, popup, "(top level)").fg,
+            Some(marker(0xab0003)),
+            "its value is components.group_form.value"
+        );
+        // The host form's roles must not leak in: they are a different family.
+        assert_ne!(
+            style_at_text_in(&buf, popup, "Name:").fg,
+            Some(marker(0xa50002)),
+            "components.form.label_focused belongs to the host form"
+        );
+        assert_eq!(
+            style_at_text_in(&buf, popup, "\u{25b8} ").fg,
+            Some(marker(0xa90001)),
+            "the marker is still components.focus.indicator"
+        );
+    }
+
     /// Both generic table roles, on the group-management popup.
     #[test]
     fn the_group_popup_wears_both_table_roles() {
@@ -4228,7 +4384,7 @@ mod tests {
     fn the_palette_wears_its_row_and_chrome_roles() {
         let mut app = test_app_with_many_hosts(6);
         app.mode = AppMode::Palette;
-        app.palette_query = "host".into();
+        app.palette_query = "zqx".into();
         app.palette_results = (0..app.hosts.len()).collect();
         app.palette_selected = 0;
         wear(&mut app, OVERLAY_MARKERS);
@@ -4244,6 +4400,11 @@ mod tests {
             style_at_text_in(&buf, popup, "host-01").fg,
             Some(marker(0xc00002)),
             "an unselected name is components.text.bright"
+        );
+        assert_eq!(
+            style_at_text_in(&buf, popup, "zqx").fg,
+            Some(marker(0xa30002)),
+            "the typed query is components.command_palette.query"
         );
         assert_eq!(
             style_at_text_in(&buf, popup, "\u{276f}").fg,
@@ -4393,25 +4554,52 @@ mod tests {
     }
 
     /// The two identity roles the populated tab cannot show.
+    ///
+    /// Checked across the terminal widths people actually use: the agent block
+    /// used to start at the top of an empty tab and write its own text over the
+    /// empty-state row, which at 132 columns happened to land beside the
+    /// message and at 80 on top of it.
     #[test]
     fn the_empty_identities_tab_wears_its_own_roles() {
-        let mut app = test_app_with_hosts();
-        app.active_tab = 3;
-        app.identities.clear();
-        app.agent_info = None;
-        wear(&mut app, OVERLAY_MARKERS);
-        let buf = render_to_buffer(&app, 132, 38);
+        for width in [20u16, 40, 80, 132] {
+            let mut app = test_app_with_hosts();
+            app.active_tab = 3;
+            app.identities.clear();
+            app.agent_info = None;
+            wear(&mut app, OVERLAY_MARKERS);
+            let buf = render_to_buffer(&app, width, 38);
 
-        assert_eq!(
-            style_at_text(&buf, "No identities").fg,
-            Some(marker(0xb00001)),
-            "the empty state is components.identities.empty"
-        );
-        assert_eq!(
-            style_at_text(&buf, "SSH agent not detected").fg,
-            Some(marker(0xb00001)),
-            "so is the missing-agent note"
-        );
+            let body =
+                crate::tui::dashboard_layout::dashboard_layout_zoomed(buf.area, app.ui_zoom).body;
+            // `render_keys` draws nothing at all below this size, so there is
+            // no cell to read and nothing to claim.
+            if body.width < 20 || body.height < 4 {
+                continue;
+            }
+            let inner = crate::tui::screens::keys::inner_width(body.width) as usize;
+
+            // Whichever of the two texts fits is asserted whole; a body too
+            // narrow for one still shows its head, and never loses it to the
+            // other message landing on the same row.
+            for (label, full) in [
+                (
+                    "empty state",
+                    "No identities \u{2014} press 'a' (key or user+password)",
+                ),
+                ("missing-agent note", "SSH agent not detected"),
+            ] {
+                let needle: String = if full.chars().count() <= inner {
+                    full.to_string()
+                } else {
+                    full.chars().take(inner.min(13)).collect()
+                };
+                assert_eq!(
+                    style_at_text(&buf, &needle).fg,
+                    Some(marker(0xb00001)),
+                    "{width} cols: the {label} survives, in identities.empty"
+                );
+            }
+        }
     }
 
     /// `components.identities.card.missing` — the colour a key that is not in
@@ -4460,6 +4648,8 @@ mod tests {
             AppMode::ConfirmDelete,
             AppMode::Help,
             AppMode::Notice,
+            AppMode::ImportPrompt,
+            AppMode::SftpPrompt,
         ];
         for mode in modes {
             for (w, h) in [(1u16, 1u16), (3, 2), (8, 4), (20, 6), (40, 10)] {
@@ -4505,6 +4695,20 @@ mod tests {
                     selected: 0,
                     return_mode: AppMode::Normal,
                 });
+                app.import_prompt = Some(crate::app::ImportPromptEdit {
+                    path: "/tmp/termius".into(),
+                    cursor: 0,
+                    error: Some("no L00t.csv".into()),
+                });
+                app.sftp_prompt = Some(crate::app::SftpPromptEdit {
+                    kind: crate::app::SftpPromptKind::Rename,
+                    side: crate::sftp::model::Side::Local,
+                    base: std::path::PathBuf::from("/tmp"),
+                    old_path: Some(std::path::PathBuf::from("/tmp/notes.txt")),
+                    value: "notes.txt".into(),
+                    cursor: 0,
+                    error: Some("exists".into()),
+                });
                 app.mode = mode;
                 let buf = render_to_buffer(&app, w, h);
                 assert_eq!(buf.area.width, w, "{mode:?} at {w}x{h}");
@@ -4549,10 +4753,17 @@ row_selected = { foreground = \"#a20004\", background = \"#020401\" }\n\
 badge_success = \"#a20005\"\n\
 badge_warning = \"#a20006\"\n\
 badge_error = \"#a20007\"\n\
+border = \"#a20008\"\n\
 [components.command_palette]\n\
+query = { foreground = \"#a30002\" }\n\
 row_selected = { foreground = \"#a30001\", background = \"#030401\" }\n\
 [components.settings]\n\
 row_selected = { foreground = \"#a40001\", background = \"#040401\" }\n\
+[components.group_form]\n\
+label = { foreground = \"#ab0001\" }\n\
+label_focused = { foreground = \"#ab0002\" }\n\
+value = { foreground = \"#ab0003\" }\n\
+value_focused = { foreground = \"#ab0004\" }\n\
 [components.form]\n\
 label = { foreground = \"#a50001\" }\n\
 label_focused = { foreground = \"#a50002\" }\n\

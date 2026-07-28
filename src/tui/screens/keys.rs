@@ -12,6 +12,9 @@ const CARD_H: u16 = 6;
 /// Narrowest a card may shrink to before content becomes unreadable.
 const MIN_CARD_W: u16 = 26;
 const CARD_GAP: u16 = 2;
+/// Row of the body the empty-state message occupies. The agent block starts
+/// below it, so the two can never share a line.
+const EMPTY_ROW: u16 = 2;
 
 /// One card row plus the blank line under it.
 const fn row_stride_const() -> u16 {
@@ -194,12 +197,18 @@ pub fn render_keys(frame: &mut Frame, area: Rect, app: &App) {
     crate::tui::blit::blit(buf, ext, grid, &layer, 0, -(pad as i32));
 
     // After the card layer, not before it: the blit copies every cell of the
-    // scratch buffer over `grid`, so an empty-state message written first would
-    // be erased again and never reach the screen.
-    if app.identities.is_empty() {
+    // scratch buffer over `grid`, so an empty-state message written first was
+    // erased again and never reached the screen.
+    let empty = app.identities.is_empty();
+    if empty {
         let msg = "No identities — press 'a' (key or user+password)";
         let x = inner_x + (inner_w.saturating_sub(msg.chars().count() as u16)) / 2;
-        buf.set_string(x, area.y + 2, msg, theme.style(StyleRole::IdentitiesEmpty));
+        buf.set_string(
+            x,
+            area.y + EMPTY_ROW,
+            msg,
+            theme.style(StyleRole::IdentitiesEmpty),
+        );
     }
 
     if let Some(y) = agent_y {

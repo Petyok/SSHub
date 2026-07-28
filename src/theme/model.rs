@@ -693,6 +693,7 @@ pub fn semantic_style(semantic: &ResolvedSemantic, recipe: SemanticStyle) -> Sty
         SemanticStyle::TextMuted => fg(semantic.text_muted),
         SemanticStyle::TextDim => fg(semantic.text_dim),
         SemanticStyle::TextOnSurfaceRaised => pair(semantic.text, semantic.surface_raised),
+        SemanticStyle::TextHighlight => fg(semantic.text_highlight),
         SemanticStyle::HighlightOnSelection => pair(semantic.text_highlight, semantic.selection_bg),
         SemanticStyle::Selection => pair(semantic.selection_fg, semantic.selection_bg),
         SemanticStyle::Inverse => pair(semantic.text_inverse, semantic.text_bright),
