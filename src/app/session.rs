@@ -132,10 +132,6 @@ impl App {
         if self.sessions.is_empty() {
             return false;
         }
-        if self.is_action(KeyAction::SessionSwitcher, key) {
-            self.open_session_picker(SessionPickerPurpose::SwitchSession);
-            return true;
-        }
         if self.is_action(KeyAction::SessionFocus, key) {
             self.focus_active_session();
             return true;

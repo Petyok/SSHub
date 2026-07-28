@@ -637,6 +637,90 @@ pub(crate) fn session_switcher_hotkey_from_dashboard_and_session() {
     assert_eq!(app.mode, AppMode::SessionPicker);
 }
 
+/// One dispatch path has to cover every context the hotkey is reachable from,
+/// so removing the unreachable duplicate in `handle_key_background_sessions`
+/// cannot quietly drop one of them.
+#[test]
+pub(crate) fn session_switcher_hotkey_preserves_context_boundaries() {
+    use crate::app::SessionPickerPurpose::SwitchSession;
+    use crate::session::SessionPhase;
+    use std::time::Instant;
+
+    let alt_s = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::ALT);
+
+    // Both live origins open the switcher, and from a session the 's' is
+    // claimed before it can be encoded for the remote PTY.
+    for (origin, phase) in [
+        (
+            AppMode::Session,
+            SessionPhase::Running {
+                started_at: Instant::now(),
+            },
+        ),
+        (
+            AppMode::Connecting,
+            SessionPhase::Connecting {
+                started_at: Instant::now(),
+            },
+        ),
+    ] {
+        let mut app = app_with_sessions(&["edge", "other"]);
+        app.sessions[0].phase = phase;
+        app.mode = origin;
+        app.handle_key(alt_s).unwrap();
+        assert_eq!(app.mode, AppMode::SessionPicker, "origin {origin:?}");
+        assert_eq!(
+            app.session_picker.as_ref().unwrap().purpose,
+            SwitchSession,
+            "origin {origin:?}"
+        );
+        assert_eq!(
+            app.session_picker.as_ref().unwrap().return_mode,
+            origin,
+            "origin {origin:?}"
+        );
+    }
+
+    // Modal overlays keep their own input: the hotkey must not punch through
+    // one and leave the app in a picker over a half-finished dialog.
+    for modal in [
+        AppMode::Help,
+        AppMode::Settings,
+        AppMode::ConfirmQuit,
+        AppMode::HostForm,
+        AppMode::Palette,
+    ] {
+        let mut app = app_with_sessions(&["edge", "other"]);
+        app.mode = modal;
+        app.handle_key(alt_s).unwrap();
+        assert!(app.session_picker.is_none(), "modal {modal:?}");
+        assert_ne!(app.mode, AppMode::SessionPicker, "modal {modal:?}");
+    }
+}
+
+/// The picker must never close into `SessionPicker` with no picker on screen:
+/// `focus_active_session` leaves `mode` alone when there is nothing to focus,
+/// which strands the app until the user presses Esc a second time.
+#[test]
+pub(crate) fn closing_the_picker_always_lands_in_a_live_mode() {
+    use crate::app::SessionPickerPurpose::SwitchSession;
+
+    for return_mode in [AppMode::Session, AppMode::Connecting] {
+        let mut app = app_with_sessions(&["a", "b"]);
+        app.mode = return_mode;
+        app.open_session_picker(SwitchSession);
+        // The sessions outlive the active index — e.g. the focused tab was
+        // closed under the open overlay.
+        app.active_session = None;
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()))
+            .unwrap();
+
+        assert!(app.session_picker.is_none(), "return_mode {return_mode:?}");
+        assert_eq!(app.mode, AppMode::Normal, "return_mode {return_mode:?}");
+        assert!(!app.sessions.is_empty(), "return_mode {return_mode:?}");
+    }
+}
+
 #[test]
 pub(crate) fn session_switcher_hotkey_works_from_every_dashboard_tab() {
     use crate::app::SessionPickerPurpose::SwitchSession;

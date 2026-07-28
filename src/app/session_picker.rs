@@ -130,6 +130,13 @@ impl App {
             AppMode::Session | AppMode::Connecting => self.focus_active_session(),
             other => self.mode = other,
         }
+        // `focus_active_session` leaves `mode` untouched when there is no active
+        // session to focus but sessions remain, which would strand the app in
+        // `SessionPicker` with no picker on screen. The dashboard is always a
+        // valid place to land.
+        if self.mode == AppMode::SessionPicker {
+            self.mode = AppMode::Normal;
+        }
     }
 
     pub(crate) fn handle_key_session_picker(&mut self, key: KeyEvent) -> Result<()> {
