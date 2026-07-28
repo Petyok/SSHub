@@ -58,11 +58,29 @@ pub struct ThemeRow {
     pub id: String,
     /// Display name from the file; empty when the file could not be parsed.
     pub name: String,
+    /// The theme's own `description`, shown in the footer when nothing more
+    /// urgent needs the space (spec, "Layout": "Beschreibung oder
+    /// Validierungsfehler"). `None` for a file that never parsed that far.
+    pub description: Option<String>,
     pub builtin: bool,
     pub status: ThemeRowStatus,
     /// Where the file lives; `None` for a built-in.
     pub path: Option<PathBuf>,
     pub diagnostics: Vec<ThemeDiagnostic>,
+}
+
+/// What makes a row *that* row across a registry reload.
+///
+/// Not the id alone. A user file may squat a reserved built-in id — that is
+/// precisely the file whose author needs the picker to explain it — so the list
+/// deliberately holds two rows spelling `aqua`. Matching on the id would move
+/// the selection from the user's broken file to the canonical built-in, and the
+/// next `Enter` would then save a theme nobody chose.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ThemeRowIdentity {
+    id: String,
+    builtin: bool,
+    path: Option<PathBuf>,
 }
 
 impl ThemeRow {
@@ -73,6 +91,14 @@ impl ThemeRow {
             &self.id
         } else {
             &self.name
+        }
+    }
+
+    pub(crate) fn identity(&self) -> ThemeRowIdentity {
+        ThemeRowIdentity {
+            id: self.id.clone(),
+            builtin: self.builtin,
+            path: self.path.clone(),
         }
     }
 }
@@ -108,6 +134,12 @@ pub struct ThemePickerState {
     /// never through `host_notice` (which the next keypress would clear).
     pub error: Option<String>,
     pub tombstone: Option<ThemeRecordSummary>,
+    /// First diagnostics line the footer shows.
+    ///
+    /// The footer is two rows tall, and a theme with three unknown roles has
+    /// more than two things to say; the spec asks for *all* ignored roles, so
+    /// the area scrolls (`Shift+↑`/`Shift+↓`) instead of truncating silently.
+    pub diagnostics_scroll: usize,
 }
 
 impl App {
@@ -130,18 +162,65 @@ impl App {
             original_theme,
             error: None,
             tombstone: None,
+            diagnostics_scroll: 0,
         });
         self.mode = AppMode::ThemePicker;
     }
 
     /// The list the picker renders and navigates: built-ins in their frozen
     /// order, then user themes, plus the tombstone of a row that disappeared.
-    pub(crate) fn theme_picker_rows(&self) -> Vec<ThemeRow> {
+    ///
+    /// Read-only, and public so a workflow test can name a row instead of a
+    /// list offset.
+    pub fn theme_picker_rows(&self) -> Vec<ThemeRow> {
         let tombstone = self
             .theme_picker
             .as_ref()
             .and_then(|state| state.tombstone.as_ref());
         picker_rows(self.theme_manager.registry(), tombstone)
+    }
+
+    /// What the picker footer has to say about the selected row, in priority
+    /// order: the picker's own save/reload failure, the row's diagnostics, the
+    /// directory's diagnostics, and — only when none of those needed the space
+    /// — the theme's description.
+    ///
+    /// The directory list is deliberately not filtered to errors: an unusable
+    /// file name or the 256-file cut are warnings, and they are exactly what
+    /// explains a theme *missing* from the list.
+    ///
+    /// Lives on `App` rather than in the renderer because the key handler has
+    /// to know how many lines there are to scroll through; public so a workflow
+    /// test can read what the footer says.
+    pub fn theme_diagnostic_lines(&self) -> Vec<String> {
+        let rows = self.theme_picker_rows();
+        let selected = self
+            .theme_picker
+            .as_ref()
+            .and_then(|state| rows.get(state.selected));
+        let mut lines = Vec::new();
+        if let Some(error) = self
+            .theme_picker
+            .as_ref()
+            .and_then(|state| state.error.as_deref())
+        {
+            lines.push(error.to_string());
+        }
+        if let Some(row) = selected {
+            lines.extend(row.diagnostics.iter().map(|d| d.message.clone()));
+        }
+        lines.extend(
+            self.theme_registry()
+                .diagnostics()
+                .iter()
+                .map(|d| d.message.clone()),
+        );
+        if lines.is_empty() {
+            if let Some(description) = selected.and_then(|row| row.description.as_deref()) {
+                lines.push(description.to_string());
+            }
+        }
+        lines
     }
 
     /// Move the selection by `delta`, wrapping at both ends (`Up` / `Down`).
@@ -178,29 +257,51 @@ impl App {
     ///
     /// An invalid row is still selectable — its diagnostics are the whole
     /// reason it is listed — but the live theme does not move.
-    pub(crate) fn select_theme_row(&mut self, index: usize) {
+    ///
+    /// Returns whether the row actually became the live preview. A reload needs
+    /// that answer: the alternative — comparing the preview id with the active
+    /// id — cannot distinguish an `Rc` from the old registry from one out of the
+    /// new one, because both spell the same id.
+    pub(crate) fn select_theme_row(&mut self, index: usize) -> bool {
         let rows = self.theme_picker_rows();
         let Some(row) = rows.get(index) else {
-            return;
+            return false;
         };
         let Some(state) = self.theme_picker.as_mut() else {
-            return;
+            return false;
         };
         state.selected = index;
-        // A new navigation supersedes a stale save/reload error.
+        // A new navigation supersedes a stale save/reload error, and the footer
+        // starts at the top of whatever the new row has to say.
         state.error = None;
+        state.diagnostics_scroll = 0;
         if !row.status.is_activatable() {
-            return;
+            return false;
         }
         let Ok(id) = ThemeId::parse(&row.id) else {
-            return;
+            return false;
         };
         let Some(theme) = self.theme_manager.registry().resolved(&id) else {
-            return;
+            return false;
         };
         self.activate_resolved_theme(theme);
         if let Some(state) = self.theme_picker.as_mut() {
             state.preview_id = row.id.clone();
+        }
+        true
+    }
+
+    /// Move the diagnostics footer by `delta` lines (`Shift+↑` / `Shift+↓`).
+    ///
+    /// Clamped against what the footer can actually show, so the last line is
+    /// always reachable and scrolling past it is impossible.
+    pub(crate) fn scroll_theme_diagnostics(&mut self, delta: isize) {
+        let lines = self.theme_diagnostic_lines().len();
+        let visible = crate::tui::screens::theme_picker::diagnostic_rows(self.terminal_area);
+        let max = lines.saturating_sub(visible);
+        if let Some(state) = self.theme_picker.as_mut() {
+            let next = (state.diagnostics_scroll as isize + delta).clamp(0, max as isize);
+            state.diagnostics_scroll = next as usize;
         }
     }
 
@@ -283,7 +384,13 @@ impl App {
 
         let fresh = picker_rows(self.theme_manager.registry(), None);
         let (selected, tombstone) = match previous {
-            Some(previous) => match fresh.iter().position(|row| row.id == previous.id) {
+            // Identity, not id: a user file squatting a reserved built-in id
+            // has a row of its own, and a reload must leave the selection in
+            // the user's slot rather than moving it to the canonical built-in.
+            Some(previous) => match fresh
+                .iter()
+                .position(|row| row.identity() == previous.identity())
+            {
                 Some(index) => (index, None),
                 None => {
                     let index = previous_index.min(fresh.len());
@@ -306,22 +413,28 @@ impl App {
             state.selected = selected;
             state.tombstone = tombstone;
             state.error = None;
+            state.diagnostics_scroll = 0;
         }
 
         // The file the user was looking at is the one they were editing, so a
         // repaired selection becomes the live preview immediately.
-        self.select_theme_row(selected);
+        let activated = self.select_theme_row(selected);
 
         // A selection that is still unusable leaves the preview where it was —
-        // but that file may have changed too, so re-resolve it. A preview that
-        // is gone or broken keeps the last valid runtime theme painting.
-        let preview_id = self
-            .theme_picker
-            .as_ref()
-            .map(|state| state.preview_id.clone())
-            .unwrap_or_default();
-        if preview_id != self.theme_manager.active_id() {
+        // but every `Rc` the UI holds now comes from a registry that no longer
+        // exists, and that file may have been repaired in the same edit. So the
+        // preview is re-adopted from the *new* registry unconditionally
+        // whenever the selection did not already activate one. Comparing ids
+        // here would be worthless: the old and the new `Rc` spell the same one.
+        if !activated {
+            let preview_id = self
+                .theme_picker
+                .as_ref()
+                .map(|state| state.preview_id.clone())
+                .unwrap_or_default();
             if let Ok(parsed) = ThemeId::parse(&preview_id) {
+                // A preview that is gone or broken in the new registry keeps
+                // the last valid runtime theme painting.
                 if let Some(theme) = self.theme_manager.registry().resolved(&parsed) {
                     self.activate_resolved_theme(theme);
                 }
@@ -358,7 +471,11 @@ impl App {
     /// enforced by the signatures: activate, then write, then `mark_saved()` —
     /// which adopts `active_id` and therefore can only ever record a theme that
     /// was genuinely active.
-    pub(crate) fn commit_theme_picker_with(
+    ///
+    /// Public so an end-to-end test can observe exactly the [`AppConfig`] a
+    /// commit would write without pointing the process at a real config
+    /// directory. `Enter` in the picker calls it with the real writer.
+    pub fn commit_theme_picker_with(
         &mut self,
         persist: impl FnOnce(&AppConfig) -> anyhow::Result<()>,
     ) {
@@ -437,6 +554,7 @@ pub(crate) fn picker_rows(
         let row = ThemeRow {
             id: record.id.as_str().to_string(),
             name: record.name.clone(),
+            description: record.description.clone(),
             builtin,
             status,
             path: match &record.source {
@@ -466,6 +584,9 @@ pub(crate) fn picker_rows(
             ThemeRow {
                 id: tombstone.id.clone(),
                 name: tombstone.name.clone(),
+                // A row that is gone has nothing to describe; its one message
+                // is the diagnostic below.
+                description: None,
                 builtin: tombstone.builtin,
                 status: ThemeRowStatus::Invalid,
                 path: tombstone.path.clone(),

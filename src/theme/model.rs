@@ -748,6 +748,10 @@ pub struct ResolvedTheme {
     pub(crate) id: ThemeId,
     pub(crate) name: String,
     pub(crate) description: Option<String>,
+    /// The file's `author`, carried through resolution so `theme show
+    /// --resolved` can write it back out. A resolved export that silently drops
+    /// the credit is not the copyable document the spec asks for.
+    pub(crate) author: Option<String>,
     pub(crate) semantic: ResolvedSemantic,
     pub(crate) gradients: Vec<ResolvedGradient>,
     /// The authored name of each gradient, parallel to `gradients`.
@@ -771,6 +775,11 @@ impl ResolvedTheme {
 
     pub fn description(&self) -> Option<&str> {
         self.description.as_deref()
+    }
+
+    /// The `author` the theme file declared, if any.
+    pub fn author(&self) -> Option<&str> {
+        self.author.as_deref()
     }
 
     /// The 23 semantic slots every component fallback is built from.

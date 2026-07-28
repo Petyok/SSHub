@@ -263,27 +263,12 @@ fn status_style(theme: &ResolvedTheme, status: ThemeRowStatus) -> Style {
     Style::default().fg(theme.color(role))
 }
 
-/// The lines the footer explains the selected row with: a save/reload failure
-/// first, then the row's own diagnostics, then directory-level ones.
+/// How many footer rows the diagnostics area gets on this terminal.
 ///
-/// The directory list is deliberately not filtered to errors — an unusable file
-/// name or the 256-file cut are warnings, and they are exactly what explains a
-/// theme *missing* from the list.
-fn diagnostic_lines(app: &App, selected: Option<&ThemeRow>) -> Vec<String> {
-    let mut lines = Vec::new();
-    if let Some(error) = app.theme_picker.as_ref().and_then(|s| s.error.as_deref()) {
-        lines.push(error.to_string());
-    }
-    if let Some(row) = selected {
-        lines.extend(row.diagnostics.iter().map(|d| d.message.clone()));
-    }
-    lines.extend(
-        app.theme_registry()
-            .diagnostics()
-            .iter()
-            .map(|d| d.message.clone()),
-    );
-    lines
+/// The key handler clamps its scroll offset against this, so the geometry and
+/// the scrolling can never disagree about what is on screen.
+pub(crate) fn diagnostic_rows(area: Rect) -> usize {
+    plan_theme_picker_layout(area).diagnostics.height as usize
 }
 
 /// Interior of a preview box: inside the frame plus one padding column, which
@@ -681,15 +666,21 @@ pub fn render(frame: &mut Frame, app: &App) {
         );
     }
 
+    let lines = app.theme_diagnostic_lines();
     let diagnostics = areas.diagnostics;
-    if diagnostics.height > 0 {
+    let height = diagnostics.height as usize;
+    // The offset the state asks for, clamped to what this terminal can show —
+    // the window may have shrunk since the last keypress.
+    let scroll = app
+        .theme_picker
+        .as_ref()
+        .map(|s| s.diagnostics_scroll)
+        .unwrap_or(0)
+        .min(lines.len().saturating_sub(height));
+    if height > 0 {
         let error_first = app.theme_picker.as_ref().is_some_and(|s| s.error.is_some());
-        for (i, line) in diagnostic_lines(app, selected_row)
-            .into_iter()
-            .take(diagnostics.height as usize)
-            .enumerate()
-        {
-            let style = if i == 0 && error_first {
+        for (i, line) in lines.iter().skip(scroll).take(height).enumerate() {
+            let style = if scroll + i == 0 && error_first {
                 live.style(StyleRole::PopupError)
             } else {
                 live.style(StyleRole::TextMuted)
@@ -705,7 +696,15 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     if let Some(legend) = areas.legend {
-        let text = "Enter save \u{b7} \u{2191}\u{2193} move \u{b7} r reload \u{b7} Esc cancel";
+        let mut text =
+            "Enter save \u{b7} \u{2191}\u{2193} move \u{b7} r reload \u{b7} Esc cancel".to_string();
+        // Only when there is genuinely something out of sight: a scroll hint on
+        // a footer that already shows everything would be a lie about the keys.
+        let hidden = lines.len().saturating_sub(height);
+        if hidden > 0 {
+            use std::fmt::Write;
+            let _ = write!(text, " \u{b7} Shift+\u{2191}\u{2193} {hidden} more");
+        }
         buf.set_stringn(
             legend.x,
             legend.y,
@@ -1308,6 +1307,75 @@ mod tests {
             diagnostics.contains("components.footer.glow"),
             "the ignored role must be named: {diagnostics:?}"
         );
+    }
+
+    /// A clean theme has no error to report, so the footer shows what the file
+    /// actually says about itself — the spec's "Beschreibung oder
+    /// Validierungsfehler", not just the second half of it.
+    #[test]
+    fn the_footer_shows_the_selected_themes_description() {
+        let app = picker_app_previewing("aqua");
+        let areas = plan_theme_picker_layout(Rect::new(0, 0, 100, 30));
+        let buffer = draw(&app, 100, 30);
+        let description = app
+            .theme()
+            .description()
+            .expect("aqua carries a description")
+            .to_string();
+        let shown = row_text(&buffer, areas.diagnostics, areas.diagnostics.y);
+        assert!(
+            shown.starts_with(&description[..30]),
+            "the description is not on the footer: {shown:?}"
+        );
+    }
+
+    /// Four unknown roles do not fit two footer rows, so the area scrolls and
+    /// the legend says how much is out of sight. Both halves of the contract
+    /// are asserted, and both scroll positions are read back off the buffer.
+    #[test]
+    fn the_diagnostics_footer_scrolls_through_every_ignored_role() {
+        let (mut app, _dir) = user_theme_app(
+            "noisy",
+            "schema_version = 1\nname = \"Noisy\"\nextends = \"default\"\n\n\
+             [components.footer]\nglow = \"semantic.accent\"\nhalo = \"semantic.accent\"\n\
+             shine = \"semantic.accent\"\nsparkle = \"semantic.accent\"\n",
+        );
+        app.terminal_area = Rect::new(0, 0, 100, 30);
+        let areas = plan_theme_picker_layout(app.terminal_area);
+        assert_eq!(areas.diagnostics.height, 2, "the footer holds two rows");
+        assert_eq!(app.theme_diagnostic_lines().len(), 4);
+
+        let buffer = draw(&app, 100, 30);
+        let top = |buffer: &ratatui::buffer::Buffer| {
+            (0..2)
+                .map(|i| row_text(buffer, areas.diagnostics, areas.diagnostics.y + i))
+                .collect::<Vec<_>>()
+        };
+        let first = top(&buffer);
+        assert!(first[0].contains("footer.glow"), "{first:?}");
+        assert!(first[1].contains("footer.halo"), "{first:?}");
+        let legend = row_text(&buffer, areas.legend.unwrap(), areas.legend.unwrap().y);
+        assert!(
+            legend.contains("Shift+\u{2191}\u{2193} 2 more"),
+            "the legend must say what is out of sight: {legend:?}"
+        );
+
+        app.scroll_theme_diagnostics(2);
+        let scrolled = top(&draw(&app, 100, 30));
+        assert!(scrolled[0].contains("footer.shine"), "{scrolled:?}");
+        assert!(scrolled[1].contains("footer.sparkle"), "{scrolled:?}");
+    }
+
+    /// The scroll hint may only appear when something really is hidden.
+    #[test]
+    fn a_footer_that_fits_gets_no_scroll_hint() {
+        let app = picker_app_previewing("aqua");
+        let areas = plan_theme_picker_layout(Rect::new(0, 0, 100, 30));
+        let buffer = draw(&app, 100, 30);
+        assert_eq!(app.theme_diagnostic_lines().len(), 1);
+        let legend = row_text(&buffer, areas.legend.unwrap(), areas.legend.unwrap().y);
+        assert!(!legend.contains("more"), "{legend:?}");
+        assert!(legend.contains("Esc cancel"), "{legend:?}");
     }
 
     /// The selection and the diagnostics are the same in all three regimes —

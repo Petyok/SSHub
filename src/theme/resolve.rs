@@ -140,6 +140,7 @@ struct MergedStyle {
 struct Merged {
     name: String,
     description: Option<String>,
+    author: Option<String>,
     palette: BTreeMap<String, Sourced<ColorValue>>,
     semantic: Vec<Option<Sourced<ColorValue>>>,
     gradients: BTreeMap<String, Sourced<GradientDefinition>>,
@@ -189,6 +190,7 @@ impl<'a> Resolver<'a> {
             merged: Merged {
                 name: String::new(),
                 description: None,
+                author: None,
                 palette: BTreeMap::new(),
                 semantic: vec![None; SEMANTIC_SLOT_COUNT],
                 gradients: BTreeMap::new(),
@@ -237,6 +239,7 @@ impl<'a> Resolver<'a> {
             id: id.clone(),
             name: self.merged.name.clone(),
             description: self.merged.description.clone(),
+            author: self.merged.author.clone(),
             semantic,
             gradients,
             gradient_names,
@@ -335,6 +338,9 @@ impl<'a> Resolver<'a> {
         }
         if let Some(description) = &definition.description {
             self.merged.description = Some(description.value.clone());
+        }
+        if let Some(author) = &definition.author {
+            self.merged.author = Some(author.value.clone());
         }
 
         for entry in &definition.palette {

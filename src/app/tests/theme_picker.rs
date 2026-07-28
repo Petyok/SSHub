@@ -951,3 +951,294 @@ fn the_theme_accessors_report_what_the_manager_holds() {
     assert_eq!(app.saved_theme_id(), "mine");
     assert_eq!(app.theme().id().as_str(), "fire");
 }
+
+// ── Reload identity, preview freshness, and the footer ──────────
+//
+// A reload swaps the whole registry. Two things that look like the same row —
+// and two `Rc`s that spell the same id — are the traps that lets a reload
+// silently change what the user is looking at.
+
+/// A valid user theme whose accent is `accent`, so a repaired file is
+/// distinguishable from the version it replaced by a value, not by an id.
+fn theme_with_accent(name: &str, accent: &str) -> String {
+    format!(
+        "schema_version = 1\nname = \"{name}\"\nextends = \"default\"\n\n\
+         [semantic]\naccent = \"{accent}\"\n"
+    )
+}
+
+/// Index of the *user* row for `id` — the file, never the built-in of that
+/// name. The whole point of these tests is that the two are different rows.
+fn user_row_index(app: &App, id: &str) -> usize {
+    app.theme_picker_rows()
+        .iter()
+        .position(|row| row.id == id && !row.builtin)
+        .unwrap_or_else(|| panic!("no user row for `{id}`"))
+}
+
+#[test]
+fn reload_keeps_the_selection_on_a_reserved_id_squatter() {
+    // Two rows spell `aqua`: the canonical built-in and the user's file, which
+    // is invalid precisely because it squats a reserved id. Matching rows by id
+    // across a reload moved the selection onto the built-in, and the next Enter
+    // would then have saved a theme the user never chose.
+    let mut app = app_with_files(&[("aqua", &user_theme("Not Really Aqua"))]);
+    app.open_theme_picker();
+    let squatter = user_row_index(&app, "aqua");
+    let builtin = app
+        .theme_picker_rows()
+        .iter()
+        .position(|row| row.id == "aqua" && row.builtin)
+        .expect("the built-in aqua is listed");
+    assert_ne!(squatter, builtin, "the two aqua rows must be distinct");
+
+    app.select_theme_row(squatter);
+    let live = app.theme_manager.active_rc();
+    assert_eq!(
+        app.theme_manager.active_id(),
+        "default",
+        "an invalid row never previews"
+    );
+
+    app.reload_theme_picker();
+
+    let state = app.theme_picker.as_ref().unwrap();
+    assert_eq!(state.selected, squatter, "the selection jumped rows");
+    assert_eq!(state.tombstone, None, "nothing disappeared");
+    let selected = &app.theme_picker_rows()[state.selected];
+    assert!(!selected.builtin, "the selection landed on the built-in");
+    assert_eq!(selected.status, ThemeRowStatus::Invalid);
+    // Value equality, not `Rc::ptr_eq`: a reload always re-adopts the preview
+    // out of the new registry, so the pointer legitimately moves. What may not
+    // move is the theme the user is looking at.
+    assert_eq!(app.theme_manager.active_id(), "default");
+    assert_eq!(
+        *live,
+        *app.theme_manager.active_rc(),
+        "a reload of an unchanged directory must not change the live theme"
+    );
+}
+
+#[test]
+fn deleting_a_squatter_tombstones_the_user_slot_not_the_built_in() {
+    let mut app = app_with_files(&[("aqua", &user_theme("Not Really Aqua"))]);
+    app.open_theme_picker();
+    let squatter = user_row_index(&app, "aqua");
+    app.select_theme_row(squatter);
+
+    app.remove_user_theme_and_reload("aqua");
+
+    let state = app.theme_picker.as_ref().unwrap();
+    let tombstone = state.tombstone.as_ref().expect("the file is gone");
+    assert_eq!(tombstone.id, "aqua");
+    assert!(!tombstone.builtin, "the built-in aqua did not disappear");
+    assert_eq!(state.selected, tombstone.index);
+    let rows = app.theme_picker_rows();
+    assert!(
+        !rows[state.selected].builtin,
+        "the tombstone must sit in the user slot"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.id == "aqua" && row.builtin && row.status == ThemeRowStatus::Valid),
+        "the canonical built-in must still be listed and usable"
+    );
+}
+
+#[test]
+fn reload_readopts_the_preview_from_the_new_registry_while_an_invalid_row_is_selected() {
+    // The freshness trap: `preview_id == active_id` is true both before and
+    // after a repair, because an id says nothing about which registry the `Rc`
+    // came from. Repairing the previewed file while the *selection* sits on an
+    // unusable row therefore used to leave the old `Rc` painting.
+    let mut app = app_with_files(&[
+        ("ocean", &theme_with_accent("Ocean", "#010203")),
+        ("broken", &invalid_theme("Broken")),
+    ]);
+    app.open_theme_picker();
+    assert!(app.preview_theme("ocean"));
+    let stale = app.theme_manager.active_rc();
+    assert_eq!(stale.semantic().accent, ratatui::style::Color::Rgb(1, 2, 3));
+
+    let broken = app.theme_row_index("broken");
+    assert!(
+        !app.select_theme_row(broken),
+        "an invalid row must report that it did not activate"
+    );
+    assert_eq!(app.theme_picker.as_ref().unwrap().preview_id, "ocean");
+
+    fs::write(
+        app.test_themes_dir().join("ocean.toml"),
+        theme_with_accent("Ocean", "#0a0b0c"),
+    )
+    .unwrap();
+    app.reload_theme_picker();
+
+    assert_eq!(app.theme_manager.active_id(), "ocean");
+    assert_eq!(
+        app.theme().semantic().accent,
+        ratatui::style::Color::Rgb(0x0a, 0x0b, 0x0c),
+        "the reload kept painting the theme from the discarded registry"
+    );
+    assert!(!Rc::ptr_eq(&stale, &app.theme_manager.active_rc()));
+}
+
+#[test]
+fn a_reload_that_changes_nothing_still_leaves_a_usable_preview() {
+    // The counterpart to the test above: re-adopting must not be able to drop
+    // the preview when the file is untouched.
+    let mut app = app_with_files(&[
+        ("ocean", &theme_with_accent("Ocean", "#010203")),
+        ("broken", &invalid_theme("Broken")),
+    ]);
+    app.open_theme_picker();
+    assert!(app.preview_theme("ocean"));
+    app.select_theme_row(app.theme_row_index("broken"));
+
+    app.reload_theme_picker();
+
+    assert_eq!(app.theme_manager.active_id(), "ocean");
+    assert_eq!(
+        app.theme().semantic().accent,
+        ratatui::style::Color::Rgb(1, 2, 3)
+    );
+}
+
+// ── The footer: description, diagnostics, scrolling ─────────────
+
+#[test]
+fn the_footer_shows_the_description_when_nothing_is_wrong() {
+    // Spec, "Layout": the area under the list shows "Beschreibung oder
+    // Validierungsfehler". A clean theme has no error, so it must show prose.
+    let mut app = app_with_themes(["default"]);
+    app.open_theme_picker();
+    app.select_theme_row(app.theme_row_index("aqua"));
+
+    let rows = app.theme_picker_rows();
+    let description = rows[app.theme_row_index("aqua")]
+        .description
+        .clone()
+        .expect("every built-in carries a description");
+    assert!(description.contains("Deep-water"), "{description}");
+    assert_eq!(app.theme_diagnostic_lines(), vec![description]);
+}
+
+#[test]
+fn a_diagnostic_outranks_the_description() {
+    let mut app = app_with_files(&[("warned", &warning_theme("Warned"))]);
+    app.open_theme_picker();
+    app.select_theme_row(app.theme_row_index("warned"));
+
+    let lines = app.theme_diagnostic_lines();
+    assert!(
+        lines[0].contains("not_a_real_section_v2"),
+        "the diagnostic must come first: {lines:?}"
+    );
+    let description = app.theme_picker_rows()[app.theme_row_index("warned")]
+        .description
+        .clone();
+    assert_eq!(description, None, "this fixture carries no description");
+    assert_eq!(lines.len(), 1);
+}
+
+#[test]
+fn a_picker_error_outranks_both_the_diagnostics_and_the_description() {
+    let mut app = app_with_files(&[("warned", &warning_theme("Warned"))]);
+    app.open_theme_picker();
+    app.select_theme_row(app.theme_row_index("warned"));
+    // A save failure is the one picker error reachable without a filesystem
+    // trick, and it leaves the preview alone.
+    app.commit_theme_picker_with(|_| Err(anyhow::anyhow!("disk on fire")));
+
+    let lines = app.theme_diagnostic_lines();
+    assert_eq!(lines[0], "disk on fire");
+    assert!(lines[1].contains("not_a_real_section_v2"), "{lines:?}");
+}
+
+/// A theme with four unknown component roles — more diagnostics than the
+/// two-row footer can hold at once.
+fn four_unknown_roles(name: &str) -> String {
+    format!(
+        "schema_version = 1\nname = \"{name}\"\nextends = \"default\"\n\n\
+         [components.footer]\nglow = \"semantic.accent\"\nhalo = \"semantic.accent\"\n\
+         shine = \"semantic.accent\"\nsparkle = \"semantic.accent\"\n"
+    )
+}
+
+#[test]
+fn the_diagnostics_footer_scrolls_to_every_ignored_role() {
+    // Spec: a warning theme shows *all* ignored roles. The footer is two rows
+    // tall, so four of them can only be reached by scrolling.
+    let mut app = app_with_files(&[("noisy", &four_unknown_roles("Noisy"))]);
+    app.terminal_area = ratatui::layout::Rect::new(0, 0, 100, 30);
+    app.open_theme_picker();
+    app.select_theme_row(app.theme_row_index("noisy"));
+
+    let lines = app.theme_diagnostic_lines();
+    assert_eq!(lines.len(), 4, "{lines:?}");
+    for role in ["glow", "halo", "shine", "sparkle"] {
+        assert!(
+            lines.iter().any(|line| line.contains(role)),
+            "`{role}` is not among the diagnostics: {lines:?}"
+        );
+    }
+
+    let visible = crate::tui::screens::theme_picker::diagnostic_rows(app.terminal_area);
+    assert_eq!(visible, 2, "the footer holds two rows at 100x30");
+    assert_eq!(app.theme_picker.as_ref().unwrap().diagnostics_scroll, 0);
+
+    app.scroll_theme_diagnostics(1);
+    assert_eq!(app.theme_picker.as_ref().unwrap().diagnostics_scroll, 1);
+    app.scroll_theme_diagnostics(5);
+    assert_eq!(
+        app.theme_picker.as_ref().unwrap().diagnostics_scroll,
+        lines.len() - visible,
+        "scrolling must stop at the last line rather than run past it"
+    );
+    app.scroll_theme_diagnostics(-99);
+    assert_eq!(app.theme_picker.as_ref().unwrap().diagnostics_scroll, 0);
+}
+
+#[test]
+fn moving_the_selection_puts_the_diagnostics_footer_back_at_the_top() {
+    let mut app = app_with_files(&[("noisy", &four_unknown_roles("Noisy"))]);
+    app.terminal_area = ratatui::layout::Rect::new(0, 0, 100, 30);
+    app.open_theme_picker();
+    app.select_theme_row(app.theme_row_index("noisy"));
+    app.scroll_theme_diagnostics(2);
+    assert_ne!(app.theme_picker.as_ref().unwrap().diagnostics_scroll, 0);
+
+    app.select_theme_row(0);
+    assert_eq!(
+        app.theme_picker.as_ref().unwrap().diagnostics_scroll,
+        0,
+        "another row's diagnostics must start at their own first line"
+    );
+}
+
+#[test]
+fn shift_arrows_are_wired_to_the_diagnostics_scroll() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut app = app_with_files(&[("noisy", &four_unknown_roles("Noisy"))]);
+    app.terminal_area = ratatui::layout::Rect::new(0, 0, 100, 30);
+    app.open_theme_picker();
+    let noisy = app.theme_row_index("noisy");
+    app.select_theme_row(noisy);
+
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT))
+        .unwrap();
+    let state = app.theme_picker.as_ref().unwrap();
+    assert_eq!(state.diagnostics_scroll, 1);
+    assert_eq!(state.selected, noisy, "Shift+Down must not move the list");
+
+    app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::SHIFT))
+        .unwrap();
+    assert_eq!(app.theme_picker.as_ref().unwrap().diagnostics_scroll, 0);
+
+    // The unshifted arrow still navigates, so the new binding cannot have
+    // swallowed the old one.
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+        .unwrap();
+    assert_ne!(app.theme_picker.as_ref().unwrap().selected, noisy);
+}

@@ -669,6 +669,8 @@ struct ResolvedJson {
     name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    author: Option<String>,
     semantic: Vec<NamedValueJson>,
     gradients: Vec<GradientJson>,
     components: Vec<ComponentJson>,
@@ -681,6 +683,7 @@ impl ResolvedJson {
             id: theme.id().to_string(),
             name: theme.name().to_string(),
             description: theme.description().map(str::to_string),
+            author: theme.author().map(str::to_string),
             semantic: SEMANTIC_SPECS
                 .iter()
                 .map(|spec| NamedValueJson {
@@ -862,6 +865,9 @@ fn resolved_toml(theme: &ResolvedTheme) -> String {
     if let Some(description) = theme.description() {
         let _ = writeln!(out, "description = {}", toml_string(description));
     }
+    if let Some(author) = theme.author() {
+        let _ = writeln!(out, "author = {}", toml_string(author));
+    }
 
     let _ = writeln!(out, "\n[semantic]");
     for spec in SEMANTIC_SPECS {
@@ -981,6 +987,53 @@ mod tests {
                 "{id} export does not round-trip semantically"
             );
         }
+    }
+
+    /// `author` has to survive resolution *and* both exports.
+    ///
+    /// The round-trip above cannot catch its loss on its own: if the field is
+    /// dropped during resolution it is already gone from both sides of the
+    /// `ResolvedTheme == ResolvedTheme` comparison. So this test starts from a
+    /// serialised document that carries one, and checks the value in the
+    /// resolved theme, in the TOML export and in the JSON export.
+    #[test]
+    fn a_resolved_export_keeps_the_author() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credited.toml");
+        std::fs::write(
+            &path,
+            "schema_version = 1\nname = \"Credited\"\nauthor = \"Ada Lovelace\"\n\
+             description = \"has a credit line\"\n\n[semantic]\naccent = \"#123456\"\n",
+        )
+        .unwrap();
+        let registry = ThemeRegistry::load_check_target(&path, ValidationMode::Strict).unwrap();
+        let theme = registry
+            .get("credited")
+            .and_then(|record| record.resolved())
+            .expect("the file resolves")
+            .clone();
+        assert_eq!(theme.author(), Some("Ada Lovelace"));
+
+        let toml = resolved_toml(&theme);
+        assert!(
+            toml.contains("author = \"Ada Lovelace\""),
+            "the TOML export dropped the author:\n{toml}"
+        );
+        let json = serde_json::to_string(&ResolvedJson::new(&theme)).unwrap();
+        assert!(
+            json.contains("\"author\":\"Ada Lovelace\""),
+            "the JSON export dropped the author:\n{json}"
+        );
+
+        // And the export still round-trips, now with the credit on both sides.
+        let round = dir.path().join("credited-export.toml");
+        std::fs::write(&round, &toml).unwrap();
+        let registry = ThemeRegistry::load_check_target(&round, ValidationMode::Strict).unwrap();
+        let reparsed = registry
+            .get("credited-export")
+            .and_then(|record| record.resolved())
+            .expect("the export resolves");
+        assert_eq!(reparsed.author(), Some("Ada Lovelace"));
     }
 
     #[test]

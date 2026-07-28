@@ -1157,10 +1157,23 @@ impl App {
             _ if self.is_action(KeyAction::Cancel, &key) => self.cancel_theme_picker(),
             KeyCode::Enter => self.commit_theme_picker(),
             KeyCode::Char('r') => self.reload_theme_picker(),
-            KeyCode::Home => self.select_theme_row(0),
-            KeyCode::End => self.select_theme_row(last),
+            KeyCode::Home => {
+                self.select_theme_row(0);
+            }
+            KeyCode::End => {
+                self.select_theme_row(last);
+            }
             KeyCode::PageUp => self.page_theme_selection(-(page as isize)),
             KeyCode::PageDown => self.page_theme_selection(page as isize),
+            // The two-row footer cannot hold every ignored role at once, so it
+            // scrolls. Shift is what keeps these off the navigation keys, whose
+            // bindings match modifiers exactly.
+            KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.scroll_theme_diagnostics(1)
+            }
+            KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.scroll_theme_diagnostics(-1)
+            }
             _ if self.is_action(KeyAction::MoveDown, &key) => self.move_theme_selection(1),
             _ if self.is_action(KeyAction::MoveUp, &key) => self.move_theme_selection(-1),
             _ => {}

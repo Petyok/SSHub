@@ -552,12 +552,16 @@ mod tests {
     // draws a role it already uses at one more place adds no new row, because
     // the check is textual and deduplicates identifiers per file. Proving that
     // would need an AST pass with source spans, and this crate may not take the
-    // dependency. Cell-level parity is instead proved where it belongs: by the
-    // productive goldens in `crate::tui::tests`, which render the real frame
-    // and read named cells back — `the_overlays_reproduce_their_legacy_cells_
-    // under_default`, `the_field_markers_reproduce_their_legacy_cells_under_
-    // default`, `the_forms_uncoloured_cells_keep_their_documented_roles` and
-    // the per-surface marker proofs.
+    // dependency. What covers individual cells instead are the productive
+    // goldens in `crate::tui::tests`, which render the real frame and read
+    // named cells back — `the_overlays_reproduce_their_legacy_cells_under_
+    // default`, `the_field_markers_reproduce_their_legacy_cells_under_default`,
+    // `the_forms_uncoloured_cells_keep_their_documented_roles` and the
+    // per-surface marker proofs. Those are *targeted* cell regressions on the
+    // cells that were argued about, not a complete inventory of every cell the
+    // TUI paints: no test in this crate enumerates that. So a role's parity is
+    // machine-checked here, and the specific cells the migration reasoned about
+    // are pinned there; a cell nobody named is covered by neither.
     //
     // The textual scan is also blind to `use StyleRole::*`, to a role reached
     // through a macro or a helper in another file, to a role named only in a
@@ -565,11 +569,17 @@ mod tests {
     // altogether. Adding a migrated surface therefore still requires adding it
     // to that list by hand.
     //
-    // Roles whose legacy source was a *direct ANSI colour* carry
-    // [`MigratedExpect::Ansi`]: the spec allows those onto the semantic core and
-    // there is no `theme.rs` cell to be faithful to. Cells that carried no
-    // colour at all are **not** that exception and carry
-    // [`MigratedExpect::Unstyled`] with their own recorded reasoning.
+    // **The two documented deviations from `default` parity.** The spec's
+    // written exception is the first one only; the second is a deviation this
+    // migration argued for separately, and calling it "the one exception"
+    // would misstate the contract:
+    //
+    // 1. [`MigratedExpect::Ansi`] — the legacy source was a *direct ANSI
+    //    colour*. The spec allows those onto the semantic core, and there is no
+    //    `theme.rs` cell to be faithful to.
+    // 2. [`MigratedExpect::Unstyled`] — the legacy cells carried **no colour at
+    //    all**. That is not the ANSI exception; each one is a deliberate change
+    //    in appearance, so the variant forces a recorded `was` and `why`.
 
     /// What `default` must produce for one migrated role use.
     #[derive(Clone, Copy)]
@@ -579,15 +589,16 @@ mod tests {
         Color(Color),
         Paint(Color),
         /// The legacy source really was a direct ANSI colour, which the spec's
-        /// one parity exception allows onto the semantic core. Carries the
+        /// written parity exception allows onto the semantic core. Carries the
         /// colour itself, and the guard rejects anything that is not a named
         /// ANSI colour — the exception may not be stretched over cells that
-        /// simply had no colour.
+        /// simply had no colour, which is what [`MigratedExpect::Unstyled`],
+        /// the second documented deviation, exists for.
         Ansi(Color),
         /// The legacy cells carried **no colour at all** — the terminal's own
         /// foreground, sometimes with a bare `DIM` modifier. That is not the
-        /// ANSI exception, so each one is a deliberate deviation recorded in
-        /// the spec, with its reasoning, rather than absorbed silently.
+        /// ANSI exception but a second, separately reasoned deviation: each one
+        /// is recorded here, with its reasoning, rather than absorbed silently.
         Unstyled {
             was: &'static str,
             why: &'static str,
@@ -608,9 +619,10 @@ mod tests {
     /// this row covers all of them together; `was` therefore lists every legacy
     /// source that pair replaced. What the guard below proves is that no role a
     /// inventoried renderer reads is missing from this table, not that every
-    /// individual `set_string` has its own row. Cell-level parity is proved by
+    /// individual `set_string` has its own row. Individual cells are covered by
     /// the productive goldens in `crate::tui::tests`, which render the real
-    /// frame and read named cells back.
+    /// frame and read named cells back — targeted regressions on the cells the
+    /// migration argued about, not a complete cell inventory.
     #[derive(Clone, Copy)]
     struct MigratedRoleUse {
         /// Stable `<surface>.<role>` id, used in failure messages.
@@ -1116,7 +1128,9 @@ mod tests {
             MigratedRoleUse {
                 id: "host_form.marker",
                 renderer: HOST_FORM,
-                was: "the marker inside the ANSI-coloured label span",
+                was: "the marker rode inside the ANSI-coloured label span, so it \
+                      was Color::Cyan + BOLD while the field was merely focused \
+                      and Color::Yellow + BOLD while it was being edited",
                 ident: "FocusIndicator",
                 role: RoleRef::Style(StyleRole::FocusIndicator),
                 expect: Ansi(Color::Cyan),
@@ -1204,7 +1218,9 @@ mod tests {
             MigratedRoleUse {
                 id: "identity_form.marker",
                 renderer: KEYCHAIN,
-                was: "the marker inside the ANSI-coloured label span",
+                was: "the marker rode inside the ANSI-coloured label span, so it \
+                      was Color::Cyan + BOLD while the field was merely focused \
+                      and Color::Yellow + BOLD while it was being edited",
                 ident: "FocusIndicator",
                 role: RoleRef::Style(StyleRole::FocusIndicator),
                 expect: Ansi(Color::Cyan),
@@ -2721,9 +2737,10 @@ mod tests {
                         role_path(cell.role)
                     );
                 }
-                // The spec's parity exception is for direct ANSI *colours*. A
-                // cell that merely had no colour is a different thing and must
-                // use `Unstyled`, which forces a recorded reason.
+                // The spec's written parity exception is for direct ANSI
+                // *colours*. A cell that merely had no colour is the second,
+                // separately reasoned deviation and must use `Unstyled`, which
+                // forces a recorded reason.
                 MigratedExpect::Ansi(was) => assert!(
                     !matches!(was, Color::Rgb(..) | Color::Indexed(_) | Color::Reset),
                     "{}: {was:?} is not a direct ANSI colour, so the spec's \
