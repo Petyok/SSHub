@@ -642,7 +642,12 @@ pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
 
 // ── Latency sparkline panel ─────────────────────────────
 
-/// Sparkline block characters, ordered lowest to highest.
+/// The ping timeline of the selected host: a bar graph when the panel is zoomed
+/// tall enough for one, a single-row sparkline otherwise.
+///
+/// Both draw from `theme::SPARK` and band their columns by the *window peak*
+/// rather than an absolute latency, so a fast link and a slow one are both
+/// legible instead of one of them being a flat line.
 pub(crate) fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
     let theme = app.theme();
     let dim = theme.style(StyleRole::TextDim);

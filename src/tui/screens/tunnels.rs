@@ -391,7 +391,7 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
     };
     let border = ratatui::widgets::Block::default()
         .borders(ratatui::widgets::Borders::ALL)
-        .title(Span::styled(title, theme.style(StyleRole::PopupTitle)))
+        .title(Span::styled(title, theme.style(StyleRole::TunnelFormTitle)))
         .border_style(Style::default().fg(crate::tui::blit::line_color(
             theme,
             PaintRole::TunnelFormBorder,
@@ -1032,7 +1032,10 @@ mod tests {
     // ── The tunnel form and its host picker ────────────────
 
     const FORM_BORDER: u32 = 0xa2_0001;
-    const FORM_TITLE: u32 = 0xa2_0002;
+    /// The host picker's title, which really was `theme::heading()`.
+    const POPUP_TITLE: u32 = 0xa2_0002;
+    /// The tunnel form's own title, which never was.
+    const FORM_TITLE: u32 = 0xa2_0011;
     const FORM_LABEL: u32 = 0xa2_0003;
     const FORM_LABEL_FOCUSED: u32 = 0xa2_0004;
     const FORM_VALUE: u32 = 0xa2_0005;
@@ -1052,7 +1055,8 @@ mod tests {
     fn form_markers() -> Vec<RoleMarker> {
         vec![
             fg("components.tunnel_form.border", FORM_BORDER),
-            fg("components.popup.title", FORM_TITLE),
+            fg("components.popup.title", POPUP_TITLE),
+            fg("components.tunnel_form.title", FORM_TITLE),
             fg("components.tunnel_form.label", FORM_LABEL),
             fg("components.tunnel_form.label_focused", FORM_LABEL_FOCUSED),
             fg("components.tunnel_form.value", FORM_VALUE),
@@ -1135,6 +1139,12 @@ mod tests {
         // The frame and its title.
         let (bx, by) = crate::test_support::find_text(&buf, "New Tunnel");
         assert_eq!(buf[(bx, by)].fg, marker(FORM_TITLE), "the form title");
+        assert_ne!(
+            buf[(bx, by)].fg,
+            marker(POPUP_TITLE),
+            "the form title is not the generic overlay title \u{2014} it inherited \
+             the accent frame, not theme::heading()"
+        );
         assert_eq!(
             buf[frame_corner(&buf)].fg,
             marker(FORM_BORDER),
@@ -1188,7 +1198,7 @@ mod tests {
         });
 
         let (tx, ty) = crate::test_support::find_text(&buf, "select SSH server");
-        assert_eq!(buf[(tx, ty)].fg, marker(FORM_TITLE), "the picker title");
+        assert_eq!(buf[(tx, ty)].fg, marker(POPUP_TITLE), "the picker title");
         assert_eq!(
             buf[frame_corner(&buf)].fg,
             marker(PICKER_BORDER),
@@ -1261,6 +1271,18 @@ mod tests {
             render_tunnel_form(f, &app);
         });
         assert_eq!(buf[frame_corner(&buf)].fg, legacy::ACCENT);
+        // The title. At `645aaf5` this was a bare `Block::title("New Tunnel")`
+        // over a frame styled `theme::ACCENT`, and ratatui draws an unstyled
+        // title in the border style — so the cell was ACCENT with **no**
+        // modifier. Measured against a reconstruction of the base block, not
+        // assumed: `fg=Rgb(158, 201, 155) modifier=NONE`.
+        let (bx, by) = crate::test_support::find_text(&buf, "New Tunnel");
+        assert_eq!(buf[(bx, by)].fg, legacy::ACCENT, "the form title");
+        assert!(
+            !buf[(bx, by)].modifier.contains(Modifier::BOLD),
+            "the tunnel form title was never bold — it inherited the frame, \
+             not theme::heading()"
+        );
         let (lx, ly) = crate::test_support::find_text(&buf, "Local port");
         assert_eq!(buf[(lx, ly)].fg, legacy::BRIGHT, "theme::bright()");
         assert!(

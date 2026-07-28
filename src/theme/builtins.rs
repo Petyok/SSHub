@@ -2352,13 +2352,22 @@ mod tests {
 
             // ── Tunnel form and its host picker, `tunnels.rs` ───
             MigratedRoleUse {
-                id: "tunnel_form.popup_title",
+                id: "tunnel_host_picker.title",
                 renderer: TUNNELS,
-                was: "theme::heading() on the host picker's ` select SSH server ` title; the \
-                      tunnel form's own title was an unstyled Block::title(..)",
+                was: "theme::heading() on the host picker's ` select SSH server ` title",
                 ident: "PopupTitle",
                 role: RoleRef::Style(StyleRole::PopupTitle),
                 expect: MigratedExpect::Style(legacy::heading()),
+            },
+            MigratedRoleUse {
+                id: "tunnel_form.title",
+                renderer: TUNNELS,
+                was: "an unstyled Block::title(..) over a theme::ACCENT frame \u{2014} ratatui \
+                      draws an unstyled title in the border style, so the cell was ACCENT with \
+                      no modifier",
+                ident: "TunnelFormTitle",
+                role: RoleRef::Style(StyleRole::TunnelFormTitle),
+                expect: MigratedExpect::Style(Style::default().fg(legacy::ACCENT)),
             },
             MigratedRoleUse {
                 id: "tunnel_form.border",
@@ -2661,7 +2670,7 @@ mod tests {
         assert_eq!(total, ids.len(), "two rows share an id");
         // Pinned so the number quoted in reports cannot drift from the table.
         assert_eq!(
-            total, 216,
+            total, 217,
             "the inventory changed size; add or remove the row deliberately"
         );
 

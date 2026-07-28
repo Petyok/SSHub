@@ -465,6 +465,13 @@ role_catalog! {
         // brightens the label without bolding it, and marks the field being
         // edited with underlined highlight text rather than bold. Folding it
         // onto a neighbour would have silently restyled that neighbour's cells.
+        //
+        // The title is `accent`, not `popup.title`: the form's title was a bare
+        // `Block::title(..)` over an accent frame, and ratatui draws an
+        // unstyled title in the border style — so the cell was accent with no
+        // weight. It gets its own role rather than staying unstyled, because
+        // implicit inheritance is exactly what made the deviation invisible.
+        TunnelFormTitle => ("components.tunnel_form.title", SemanticStyle::Accent, false),
         TunnelFormLabel => ("components.tunnel_form.label", SemanticStyle::TextMuted, false),
         TunnelFormLabelFocused => ("components.tunnel_form.label_focused", SemanticStyle::TextBright, false),
         TunnelFormValue => ("components.tunnel_form.value", SemanticStyle::Text, false),
