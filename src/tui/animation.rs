@@ -839,24 +839,29 @@ mod tests {
         let buf = frame_at(&theme, 5.0);
         let hub = buf[(HUB_X, HUB_Y)].clone();
         assert_eq!(hub.fg, legacy::BRIGHT);
-        assert!(hub.modifier.contains(Modifier::BOLD), "the hub was bold");
+        assert_eq!(
+            hub.modifier,
+            Modifier::BOLD,
+            "the hub was bold, and only bold"
+        );
         assert_eq!(buf[(HUB_X - 1, HUB_Y)].bg, legacy::SEL_BG, "the halo");
         assert_eq!(buf[(39, 10)].fg, legacy::MUTE, "the quiet `hub` label");
 
         let buf = frame_at(&theme, 8.0);
         let word = buf[(WORDMARK_COL, WORDMARK_ROW)].clone();
         assert_eq!(word.fg, legacy::BRIGHT);
-        assert!(word.modifier.contains(Modifier::BOLD));
+        assert_eq!(word.modifier, Modifier::BOLD);
         let accent = buf[(WORDMARK_COL + 8, WORDMARK_ROW)].clone();
         assert_eq!(accent.fg, legacy::AMBER);
-        assert!(accent.modifier.contains(Modifier::BOLD));
+        assert_eq!(accent.modifier, Modifier::BOLD);
         assert_eq!(buf[(TAGLINE_COL, TAGLINE_ROW)].fg, legacy::MUTE);
         let amber_at = TAGLINE.find("undefined").unwrap() as u16;
         let tag = buf[(TAGLINE_COL + amber_at, TAGLINE_ROW)].clone();
         assert_eq!(tag.fg, legacy::AMBER);
-        assert!(
-            !tag.modifier.contains(Modifier::BOLD),
-            "the tagline accent was never bold"
+        assert_eq!(
+            tag.modifier,
+            Modifier::empty(),
+            "`theme::amber()` was a bare foreground — the tagline accent was never bold"
         );
 
         let state = AnimationState::at(80, 24, 10.0);
@@ -866,7 +871,7 @@ mod tests {
         let buf = terminal.backend().buffer().clone();
         let flash = buf[(39, 10)].clone();
         assert_eq!(flash.fg, legacy::AMBER);
-        assert!(flash.modifier.contains(Modifier::BOLD));
+        assert_eq!(flash.modifier, Modifier::BOLD);
         assert_eq!(buf[(state.quip_col, QUIP_ROW)].fg, legacy::DIM);
         assert_eq!(buf[(PROMPT_COL, PROMPT_ROW)].fg, legacy::BRIGHT);
         assert_eq!(buf[(PROMPT_COL + 1, PROMPT_ROW)].fg, legacy::MUTE);

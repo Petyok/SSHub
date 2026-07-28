@@ -1278,16 +1278,19 @@ mod tests {
         // assumed: `fg=Rgb(158, 201, 155) modifier=NONE`.
         let (bx, by) = crate::test_support::find_text(&buf, "New Tunnel");
         assert_eq!(buf[(bx, by)].fg, legacy::ACCENT, "the form title");
-        assert!(
-            !buf[(bx, by)].modifier.contains(Modifier::BOLD),
-            "the tunnel form title was never bold — it inherited the frame, \
-             not theme::heading()"
+        assert_eq!(
+            buf[(bx, by)].modifier,
+            Modifier::empty(),
+            "the tunnel form title carried no modifier at all — it inherited the \
+             frame, not theme::heading()"
         );
         let (lx, ly) = crate::test_support::find_text(&buf, "Local port");
         assert_eq!(buf[(lx, ly)].fg, legacy::BRIGHT, "theme::bright()");
-        assert!(
-            !buf[(lx, ly)].modifier.contains(Modifier::BOLD),
-            "the tunnel form's focused label was never bold \u{2014} that is              group_form's idiom, not this one"
+        assert_eq!(
+            buf[(lx, ly)].modifier,
+            Modifier::empty(),
+            "`theme::bright()` was a bare foreground; bold is group_form's idiom, \
+             not this one"
         );
         assert_eq!(buf[(lx - 1, ly)].fg, legacy::GREEN, "theme::green() arrow");
         let (ux, uy) = crate::test_support::find_text(&buf, "Destination");
@@ -1304,8 +1307,11 @@ mod tests {
         let (vx, vy) = crate::test_support::find_text(&buf, "8080");
         let editing = buf[(vx, vy)].clone();
         assert_eq!(editing.fg, legacy::WHITE);
-        assert!(editing.modifier.contains(Modifier::UNDERLINED));
-        assert!(!editing.modifier.contains(Modifier::BOLD));
+        assert_eq!(
+            editing.modifier,
+            Modifier::UNDERLINED,
+            "underlined and nothing else — bold would make it group_form's cell"
+        );
 
         let mut app = form_app(resolved_default(), false);
         managed_hosts(&mut app, &["web-prod"]);
@@ -1318,9 +1324,10 @@ mod tests {
         });
         let (tx, ty) = crate::test_support::find_text(&buf, "select SSH server");
         assert_eq!(buf[(tx, ty)].fg, legacy::BRIGHT);
-        assert!(
-            buf[(tx, ty)].modifier.contains(Modifier::BOLD),
-            "theme::heading() was bright *and* bold"
+        assert_eq!(
+            buf[(tx, ty)].modifier,
+            Modifier::BOLD,
+            "theme::heading() was bright *and* bold, and nothing else"
         );
         assert_eq!(buf[frame_corner(&buf)].fg, legacy::ACCENT);
         let (qx, qy) = crate::test_support::find_text(&buf, "/ ");
