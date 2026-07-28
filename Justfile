@@ -14,6 +14,18 @@ test:
 build:
     cargo build --release
 
+# Assemble the npm packages into npm/dist from the tarballs attached to the
+# matching GitHub release. Nothing is compiled and nothing is published; the
+# shim is exercised end to end first. Version defaults to Cargo.toml's.
+npm-build version="":
+    npm/build.sh {{version}}
+
+# Assemble, verify, then publish to npm. Needs `npm login` (or a token in
+# ~/.npmrc). Platform packages publish first, the `sshub` wrapper last, so the
+# wrapper never lands pointing at binaries that do not exist yet.
+npm-publish version="":
+    npm/build.sh {{version}} --publish
+
 # Record README GIFs + screenshots with VHS (requires `vhs` and `ffmpeg` on
 # PATH). Pass tape names to record a subset: `just record-gifs overview sftp`.
 record-gifs *tapes: build
