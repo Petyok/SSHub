@@ -11,6 +11,7 @@ categories = ["command-line-utilities"]
 # Keep the published crate lean and installable: drop the heavy demo media
 # (README GIFs/screenshots render from GitHub, not the crate) and CI config.
 exclude = [
+    "npm",
     "demo/gifs",
     "demo/screenshots",
     "demo/tapes",
