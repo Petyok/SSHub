@@ -1027,7 +1027,7 @@ mod tests {
         );
     }
 
-    /// The zoomed view's divider, head and both output blocks.
+    /// The zoomed view's divider and its detail head.
     #[test]
     fn the_zoomed_broadcast_view_wears_its_output_roles() {
         let mut app = themed_app(marked());
@@ -1052,7 +1052,7 @@ mod tests {
         );
     }
 
-    /// stdout and stderr are different roles even when both are present.
+    /// stdout and stderr must stay distinct even when a host produced both.
     #[test]
     fn broadcast_stdout_and_stderr_never_share_a_role() {
         let mut app = themed_app(marked());
@@ -1076,7 +1076,6 @@ mod tests {
         );
     }
 
-    /// An empty run reports it in the detail role.
     #[test]
     fn a_silent_host_reports_no_output_in_the_detail_role() {
         let mut app = themed_app(marked());
@@ -1086,7 +1085,6 @@ mod tests {
         assert_eq!(fg_at_text(&buf, "(no output)"), marker(DETAIL));
     }
 
-    /// Both halves of the countdown gauge, and its label.
     #[test]
     fn the_countdown_gauge_wears_its_two_roles() {
         let theme = marked();

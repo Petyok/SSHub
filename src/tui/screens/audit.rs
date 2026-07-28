@@ -531,7 +531,6 @@ mod tests {
         );
     }
 
-    /// Column headers, the rule under them, and the empty state.
     #[test]
     fn the_audit_table_chrome_wears_its_roles() {
         let app = audit_app(marked(), vec![]);
@@ -601,7 +600,8 @@ mod tests {
         );
     }
 
-    /// The four status colours, each on the dot **and** on the note line.
+    /// Dot and note line must agree on the status: they used to disagree,
+    /// because the note carried a shorter mapping than the dot beside it.
     #[test]
     fn every_audit_status_wears_its_own_colour() {
         for (status, colour) in [

@@ -96,3 +96,17 @@ section = { foreground = "semantic.text_bright", modifiers = ["bold"] }
 # renderer, so a theme can drop it.
 [components.status_bar]
 toast = { foreground = "semantic.info", modifiers = ["reversed"] }
+
+# The unfocused SFTP pane's selected row. Before the theme system it had no
+# highlight at all — `active = is_sel && focused` gated the bar — so the cursor
+# position vanished in exactly the pane the user was about to Tab back into.
+# The semantic fallback (`text` on `surface_raised`) cannot fix that here,
+# because SSHub leaves `surface_raised` on the terminal's own ground: the row
+# would still be indistinguishable from its neighbours.
+#
+# So `default` states it: the same selection bar as the focused pane, with muted
+# rather than bright text. Position stays readable, and which pane has the
+# keyboard stays unambiguous. This is a deliberate improvement over the frozen
+# appearance, recorded in `DEFAULT_PARITY_OVERRIDES`, not a reproduction.
+[components.selection]
+inactive = { foreground = "semantic.text_muted", background = "semantic.selection_bg" }

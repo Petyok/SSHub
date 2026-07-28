@@ -459,16 +459,28 @@ fn render_queue(
         );
         return;
     }
-    let header = match notice {
-        Some(n) => format!("queue ({})  c=run  u=remove   ⚠ {n}", queue.len()),
-        None => format!("queue ({})  c=run  u=remove", queue.len()),
-    };
+    // Header and notice are two cells rather than one string: the same warning
+    // was already amber over an empty queue, and baking it into the header made
+    // it read as chrome exactly when it mattered most.
+    let header = format!("queue ({})  c=run  u=remove", queue.len());
+    let budget = w.saturating_sub(4) as usize;
     buf.set_string(
         x + 2,
         y,
-        ellipsize(&header, w.saturating_sub(4) as usize),
+        ellipsize(&header, budget),
         theme.style(StyleRole::SftpQueueHeader),
     );
+    if let Some(n) = notice {
+        let at = header.chars().count() + 3;
+        if at < budget {
+            buf.set_string(
+                x + 2 + at as u16,
+                y,
+                ellipsize(&format!("⚠ {n}"), budget - at),
+                theme.style(StyleRole::SftpNotice),
+            );
+        }
+    }
     let last = queue.len().saturating_sub(1);
     for (i, t) in queue.iter().take(4).enumerate() {
         let yy = y + 1 + i as u16;
@@ -949,7 +961,6 @@ mod tests {
         }
     }
 
-    /// Queue header, both directions, and the empty-queue hint.
     #[test]
     fn the_sftp_queue_wears_its_own_roles() {
         let theme = marked();
@@ -976,7 +987,11 @@ mod tests {
         let mut state = browsing();
         state.notice = Some("permission denied".into());
         let buf = browser(&state, &theme);
-        assert_eq!(fg_at_text(&buf, "\u{26a0}"), marker(NOTICE), "empty queue");
+        assert_eq!(
+            fg_at_text(&buf, "\u{26a0} permission denied"),
+            marker(NOTICE),
+            "empty queue"
+        );
 
         state.queue = vec![transfer(Direction::Download, "down.bin")];
         let buf = browser(&state, &theme);
@@ -984,6 +999,11 @@ mod tests {
             fg_at_text(&buf, "queue (1)"),
             marker(QUEUE_HEADER),
             "the header still leads the strip"
+        );
+        assert_eq!(
+            fg_at_text(&buf, "\u{26a0} permission denied"),
+            marker(NOTICE),
+            "filled queue: the notice keeps its own role beside the header"
         );
 
         // The connecting placeholder shares the notice role.
@@ -993,7 +1013,47 @@ mod tests {
         assert_eq!(fg_at_text(&buf, "Connecting to web-prod"), marker(NOTICE));
     }
 
-    /// The running line and the three bar roles.
+    /// The unfocused pane's cursor has to be *visible*, not merely bound.
+    ///
+    /// A marker theme proves the binding; it cannot prove the user can see
+    /// anything. This reads the real `default` and compares the unfocused
+    /// pane's selected row against the plain row directly above it, and against
+    /// the focused pane's own selection.
+    #[test]
+    fn the_unfocused_pane_cursor_is_visible_under_default() {
+        use crate::tui::theme as legacy;
+
+        let mut state = browsing();
+        state.focus = Focus::Remote;
+        state.local.selected = 1; // `left.txt`, with `lefty` unselected above it
+        state.remote.selected = 1; // `right.txt`, in the focused pane
+        let buf = browser(&state, &resolved_default());
+
+        let inactive = crate::test_support::find_text_from(&buf, "left.txt", AREA.y + 1);
+        let plain = crate::test_support::find_text_from(&buf, "lefty", AREA.y + 1);
+        let active = crate::test_support::find_text_from(&buf, "right.txt", AREA.y + 1);
+
+        assert_ne!(
+            (
+                buf.cell(inactive).unwrap().fg,
+                buf.cell(inactive).unwrap().bg
+            ),
+            (buf.cell(plain).unwrap().fg, buf.cell(plain).unwrap().bg),
+            "the unfocused pane's cursor must be distinguishable from a plain row"
+        );
+        // Positively: the bar is there, and its text is muted rather than the
+        // focused pane's bright selection foreground.
+        assert_eq!(buf.cell(inactive).unwrap().bg, legacy::SEL_BG);
+        assert_eq!(buf.cell(inactive).unwrap().fg, legacy::MUTE);
+        assert_eq!(buf.cell(plain).unwrap().bg, ratatui::style::Color::Reset);
+        assert_eq!(buf.cell(active).unwrap().fg, legacy::SEL_FG);
+        assert_ne!(
+            buf.cell(inactive).unwrap().fg,
+            buf.cell(active).unwrap().fg,
+            "the two panes' cursors must still be told apart"
+        );
+    }
+
     #[test]
     fn the_sftp_progress_line_wears_its_three_roles() {
         let theme = marked();
@@ -1055,6 +1115,24 @@ mod tests {
         assert_eq!(fg_at_text(&buf, "running 1/2"), legacy::AMBER);
         assert_eq!(fg_at_text(&buf, "\u{2588}"), legacy::GREEN);
         assert_eq!(fg_at_text(&buf, "\u{2591}"), legacy::DIM);
+
+        // The one deliberate deviation on this screen: a notice beside a filled
+        // queue used to be part of the `theme::heading()` header string, so the
+        // same warning was amber over an empty queue and bright+bold over a
+        // full one. It is now amber in both, and the header keeps its weight.
+        let mut noticed = browsing();
+        noticed.queue = vec![transfer(Direction::Download, "down.bin")];
+        noticed.notice = Some("permission denied".into());
+        let buf = browser(&noticed, &theme);
+        let head = crate::test_support::find_text(&buf, "queue (1)");
+        assert_eq!(buf.cell(head).unwrap().fg, legacy::BRIGHT);
+        assert!(buf.cell(head).unwrap().modifier.contains(Modifier::BOLD));
+        let warn = crate::test_support::find_text(&buf, "\u{26a0} permission denied");
+        assert_eq!(buf.cell(warn).unwrap().fg, legacy::AMBER);
+        assert!(
+            !buf.cell(warn).unwrap().modifier.contains(Modifier::BOLD),
+            "the notice is no longer part of the header"
+        );
 
         // The search bar's ground was `theme::AMBER`; only its foreground moved
         // from a hard `Color::Black` to the theme's own inverse.

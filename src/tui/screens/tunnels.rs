@@ -152,6 +152,34 @@ pub fn render_tunnels(frame: &mut Frame, area: Rect, app: &App) {
     }
 }
 
+/// How one tunnel status presents itself: glyph, state role and short word.
+///
+/// Glyph *and* word, because a terminal that reduces the theme's RGB to the
+/// nearest ANSI colour can make two states share a swatch.
+struct TunnelPresentation {
+    glyph: &'static str,
+    role: ColorRole,
+    word: &'static str,
+}
+
+fn tunnel_presentation(status: &str, motion: bool) -> TunnelPresentation {
+    let (glyph, role, word) = match status {
+        "up" => ("●", ColorRole::TunnelRunning, "up"),
+        "reconnecting" => ("●", ColorRole::TunnelRetrying, "retry"),
+        // Coming up: the same spinner every other in-flight handshake turns.
+        "starting" if motion => (
+            crate::tui::tween::spinner_frame_now(),
+            ColorRole::TunnelConnecting,
+            "start",
+        ),
+        "starting" => ("○", ColorRole::TunnelConnecting, "start"),
+        "gave_up" => ("●", ColorRole::TunnelStopped, "gave up"),
+        "error" => ("●", ColorRole::TunnelStopped, "err"),
+        _ => ("○", ColorRole::TunnelUnknown, "off"),
+    };
+    TunnelPresentation { glyph, role, word }
+}
+
 fn render_table_header(buf: &mut Buffer, x: u16, y: u16, w: u16, theme: &ResolvedTheme) {
     let cols = table_columns(w);
     let mut cx = x;
@@ -178,7 +206,6 @@ fn render_tunnel_row(
     motion: bool,
     theme: &ResolvedTheme,
 ) {
-    let running = status == "up";
     // The cardless full-screen table has always highlighted with `selection_fg`
     // and has its own role for it — routing it through the generic
     // `table.row_selected` would hand it another family's idiom.
@@ -200,89 +227,55 @@ fn render_tunnel_row(
     let cols = table_columns(w);
     let mut cx = x;
 
-    // STATUS dot
+    // STATUS: one decision for glyph, role and word, so the three can never
+    // disagree about which state a row is in.
     let status_w = cols[0].1;
-    let state_color = |role: ColorRole| theme.color(role);
-    let (dot, dot_color) = match status {
-        "up" => ("●", state_color(ColorRole::TunnelRunning)),
-        // Retrying: the dot breathes, so a tunnel working its way back reads
-        // as busy rather than parked on amber (#35). Both ends of the breath
-        // are roles, so a theme moves the whole pulse.
-        "reconnecting" if motion => (
-            "●",
-            crate::tui::tween::color_lerp(
-                state_color(ColorRole::TunnelRetrying),
-                state_color(ColorRole::TunnelUnknown),
-                crate::tui::tween::pulse_now(TUNNEL_PULSE),
-            ),
-        ),
-        "reconnecting" => ("●", state_color(ColorRole::TunnelRetrying)),
-        // Coming up: the same spinner every other in-flight handshake turns.
-        "starting" if motion => (
-            crate::tui::tween::spinner_frame_now(),
-            state_color(ColorRole::TunnelConnecting),
-        ),
-        "starting" => ("○", state_color(ColorRole::TunnelConnecting)),
-        "gave_up" | "error" => ("●", state_color(ColorRole::TunnelStopped)),
-        _ => ("○", state_color(ColorRole::TunnelUnknown)),
+    let TunnelPresentation { glyph, role, word } = tunnel_presentation(status, motion);
+    let dot_color = if status == "reconnecting" && motion {
+        // A tunnel working its way back breathes rather than parking on amber
+        // (#35). Both ends are roles, so a theme moves the whole pulse.
+        crate::tui::tween::color_lerp(
+            theme.color(role),
+            theme.color(ColorRole::TunnelUnknown),
+            crate::tui::tween::pulse_now(TUNNEL_PULSE),
+        )
+    } else {
+        theme.color(role)
     };
-    // The dot keeps the state colour on the row's own ground, so a selected
-    // row never floats its status marker on the wrong background.
+    // Keeping the row's own ground under the dot stops a selected row floating
+    // its status marker on the wrong background.
     let dot_style = if selected {
         base_style.fg(dot_color)
     } else {
         Style::default().fg(dot_color)
     };
-    buf.set_string(cx, y, dot, dot_style);
-    // The status *word* is kept beside the dot: a terminal that reduces the
-    // theme's RGB to the nearest ANSI colour can make two states share a
-    // swatch, and the label still says which is which.
-    let state_style = |role: ColorRole| {
-        if selected {
-            base_style
-        } else {
-            Style::default().fg(theme.color(role))
-        }
+    buf.set_string(cx, y, glyph, dot_style);
+    let word_style = if selected {
+        base_style
+    } else {
+        Style::default().fg(theme.color(role))
     };
-    if running {
-        buf.set_string(cx + 2, y, "up", state_style(ColorRole::TunnelRunning));
-    } else if status == "reconnecting" {
+    // The retry counter is the one word that carries live numbers.
+    let retry_label = (status == "reconnecting").then(|| {
         let attempt = reconnect_attempt.unwrap_or(0).saturating_add(1);
-        let retry_label = if max_attempts > 0 {
+        let base = if max_attempts > 0 {
             format!("retry {attempt}/{max_attempts}")
         } else {
             format!("retry {attempt}")
         };
-        let retry_label = if let Some(secs) = reconnect_countdown {
-            format!("{retry_label} {secs}s")
-        } else {
-            retry_label
-        };
-        buf.set_string(
-            cx + 2,
-            y,
-            truncate(&retry_label, status_w.saturating_sub(2) as usize),
-            state_style(ColorRole::TunnelRetrying),
-        );
-    } else if status == "gave_up" {
-        buf.set_string(
-            cx + 2,
-            y,
-            crate::tui::text::ellipsize("gave up", status_w.saturating_sub(2) as usize),
-            state_style(ColorRole::TunnelStopped),
-        );
-    } else if status == "starting" {
-        buf.set_string(
-            cx + 2,
-            y,
-            crate::tui::text::ellipsize("start", status_w.saturating_sub(2) as usize),
-            state_style(ColorRole::TunnelConnecting),
-        );
-    } else if status == "error" {
-        buf.set_string(cx + 2, y, "err", state_style(ColorRole::TunnelStopped));
-    } else {
-        buf.set_string(cx + 2, y, "off", state_style(ColorRole::TunnelUnknown));
-    }
+        match reconnect_countdown {
+            Some(secs) => format!("{base} {secs}s"),
+            None => base,
+        }
+    });
+    let budget = status_w.saturating_sub(2) as usize;
+    let text = match retry_label.as_deref() {
+        // The counter is hard-truncated, the fixed words ellipsize — as each
+        // always did.
+        Some(label) => truncate(label, budget).to_string(),
+        None => crate::tui::text::ellipsize(word, budget),
+    };
+    buf.set_string(cx + 2, y, &text, word_style);
     cx += status_w;
 
     // DIR
@@ -880,8 +873,6 @@ mod tests {
         frame_at(area, |frame| render_tunnels(frame, area, app))
     }
 
-    /// Summary strip, column headers, rule and empty state, through the real
-    /// full-tab renderer.
     #[test]
     fn the_tunnel_tab_chrome_wears_the_tunnels_roles() {
         let app = tunnel_app(0);
@@ -909,7 +900,6 @@ mod tests {
         );
     }
 
-    /// The tab notice is its own role, not the error one.
     #[test]
     fn the_tunnel_tab_notice_is_the_notice_role() {
         let mut app = tunnel_app(1);

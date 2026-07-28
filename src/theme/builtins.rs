@@ -273,6 +273,7 @@ mod tests {
         "components.popup.title",
         "components.help.section",
         "components.status_bar.toast",
+        "components.selection.inactive",
     ];
 
     /// Assert that `theme` reproduces the frozen pre-theme-system appearance for
@@ -363,6 +364,26 @@ mod tests {
             theme.style(StyleRole::PopupTitle),
             legacy::bright(),
             "the plain fallback would drop the weight"
+        );
+
+        // The one override that is *not* a reproduction: the unfocused SFTP
+        // pane's selected row had no highlight at all, and the semantic
+        // fallback cannot give it one while `surface_raised` is the terminal's
+        // own ground. `default` therefore states the bar explicitly.
+        assert_eq!(
+            theme.style(StyleRole::SelectionInactive),
+            Style::default().fg(legacy::MUTE).bg(legacy::SEL_BG),
+            "the unfocused selection bar"
+        );
+        assert_ne!(
+            theme.style(StyleRole::SelectionInactive),
+            theme.style(StyleRole::SelectionActive),
+            "the two panes' cursors must stay distinguishable"
+        );
+        assert_ne!(
+            theme.style(StyleRole::SelectionInactive),
+            theme.style(StyleRole::TextPrimary),
+            "…and an unfocused cursor must not look like a plain row"
         );
 
         // The zoom toast was `theme::cyan()` inverted by the terminal. `Info`
@@ -1779,9 +1800,11 @@ mod tests {
                 expect: Unstyled {
                     was: "no highlight at all: `active = is_sel && focused` gated the bar, so \
                           the pane the user was about to Tab back into showed no cursor",
-                    why: "losing the cursor position on Tab is a bug, not a style; the quieter \
-                          `selection.inactive` marks the row without competing with the \
-                          focused pane's bar",
+                    why: "losing the cursor position on Tab is a bug, not a style. The semantic \
+                          fallback cannot fix it either — `surface_raised` is the terminal's own \
+                          ground in `default`, so the row would still look plain — hence the \
+                          explicit `default.toml` override in `DEFAULT_PARITY_OVERRIDES`: the \
+                          selection bar with muted rather than bright text",
                 },
             },
             MigratedRoleUse {
@@ -1811,7 +1834,8 @@ mod tests {
             MigratedRoleUse {
                 id: "sftp.queue_header",
                 renderer: SFTP,
-                was: "theme::heading() on the `queue (n)` strip header",
+                was: "theme::heading() on the `queue (n)` strip header, which used to carry \
+                      the notice text too",
                 ident: "SftpQueueHeader",
                 role: RoleRef::Style(StyleRole::SftpQueueHeader),
                 expect: MigratedExpect::Style(legacy::heading()),
@@ -1843,8 +1867,11 @@ mod tests {
             MigratedRoleUse {
                 id: "sftp.notice",
                 renderer: SFTP,
-                was: "theme::amber() on the queue notice, the connecting placeholder and \
-                      the picker's search hint",
+                was: "theme::amber() on the empty-queue notice, the connecting placeholder \
+                      and the picker's search hint. Over a *filled* queue the same warning was \
+                      baked into the theme::heading() header string; it is drawn separately now \
+                      so one notice does not read as chrome in one branch and as a warning in \
+                      the other",
                 ident: "SftpNotice",
                 role: RoleRef::Style(StyleRole::SftpNotice),
                 expect: MigratedExpect::Style(legacy::amber()),
