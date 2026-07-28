@@ -51,7 +51,8 @@ pub fn render(frame: &mut Frame, app: &App) {
     let legend = theme.style(StyleRole::PopupLegend);
     let selection = theme.style(StyleRole::PickerRowSelected);
     let row = theme.style(StyleRole::PickerRow);
-    let focus = theme.style(StyleRole::FocusIndicator);
+    // See `field_picker`: this marker was drawn in the row's selection style.
+    let focus = theme.style(StyleRole::PickerMarker);
 
     crate::tui::open_popup(frame, popup, theme);
     frame.render_widget(

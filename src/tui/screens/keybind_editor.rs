@@ -26,7 +26,9 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
     // The catalogue gives the keybind list `text_highlight` on the selection
     // background, deliberately unlike the keychain's `selection_fg`.
     let selection = theme.style(StyleRole::KeybindRowSelected);
-    let focus = theme.style(StyleRole::FocusIndicator);
+    // The marker was part of the styled label, so it wore the highlighted
+    // row's own colours; its family carries that as a role of its own.
+    let focus = theme.style(StyleRole::KeybindMarker);
 
     crate::tui::open_popup(frame, popup, theme);
     frame.render_widget(

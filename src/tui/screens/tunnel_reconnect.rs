@@ -20,7 +20,8 @@ pub fn render_tunnel_reconnect_settings(frame: &mut Frame, app: &App) {
     let theme = app.theme();
     let selection = theme.style(StyleRole::SettingsRowSelected);
     let hint_style = theme.style(StyleRole::PopupHint);
-    let focus = theme.style(StyleRole::FocusIndicator);
+    // As in the keybind editor: the marker wore the highlighted row's style.
+    let focus = theme.style(StyleRole::SettingsMarker);
 
     crate::tui::open_popup(frame, popup, theme);
     frame.render_widget(

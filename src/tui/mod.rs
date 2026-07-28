@@ -3823,6 +3823,7 @@ label = { foreground = \"#ab0001\" }\n\
 label_focused = { foreground = \"#ab0002\" }\n\
 value = { foreground = \"#ab0003\" }\n\
 value_focused = { foreground = \"#ab0004\" }\n\
+marker = { foreground = \"#ab0005\" }\n\
 [components.form]\n\
              label = { foreground = \"#ff2002\" }\n\
              label_focused = { foreground = \"#ff2003\" }\n\
@@ -4009,6 +4010,126 @@ value_focused = { foreground = \"#ab0004\" }\n\
             style_at_text_in(&buf, popup, "zzq").fg,
             Some(legacy::BRIGHT),
             "not the session picker's query colour"
+        );
+    }
+
+    /// The five row/field markers that used to be glued to a styled label and
+    /// therefore wore that label's own `theme.rs` cell.
+    ///
+    /// Splitting the marker into its own span made it independently themeable,
+    /// which was the point — but under `default` it must still land on the
+    /// colour it always had, and for four of the five families that is *not*
+    /// the accent `components.focus.indicator` resolves to.
+    #[test]
+    fn the_field_markers_reproduce_their_legacy_cells_under_default() {
+        use crate::tui::theme as legacy;
+
+        // 1 + 2. Both picker overlays drew the marker in `theme::selected()`.
+        let mut app = test_app_with_hosts();
+        app.mode = AppMode::TagFilter;
+        app.tag_filter_selected = 0;
+        let buf = render_to_buffer(&app, 120, 38);
+        let (ax, ay) = crate::test_support::find_text(&buf, "(all)");
+        assert_eq!(
+            cell_style(&buf, ax - 2, ay),
+            legacy::selected(),
+            "the tag filter's marker was the selected row's own style"
+        );
+
+        let mut app = test_app_with_hosts();
+        app.enter_host_form(None, false).unwrap();
+        app.groups = vec![crate::store::HostGroup {
+            id: 1,
+            name: "alpha".into(),
+            sort_order: 0,
+            default_identity_id: None,
+            parent_id: None,
+            reserved: false,
+        }];
+        app.field_picker = Some(crate::app::FieldPicker {
+            kind: crate::app::PickerKind::Group,
+            selected: 0,
+            creating: None,
+            cursor: 0,
+        });
+        app.mode = AppMode::FieldPicker;
+        let buf = render_to_buffer(&app, 120, 38);
+        let (gx, gy) = crate::test_support::find_text(&buf, "[ ] alpha");
+        assert_eq!(
+            cell_style(&buf, gx - 2, gy),
+            legacy::selected(),
+            "the field picker's marker likewise"
+        );
+
+        // 3. The group form's marker was glued to `theme::heading()`.
+        let mut app = test_app_with_hosts();
+        app.group_form = Some(crate::app::GroupFormEdit {
+            id: None,
+            name: "alpha".into(),
+            cursor: 0,
+            field: crate::app::GroupFormField::Name,
+            default_identity_id: None,
+            parent_id: None,
+            return_to_manage: false,
+        });
+        app.mode = AppMode::GroupForm;
+        let buf = render_to_buffer(&app, 120, 38);
+        let popup = drawn_popup(&app);
+        let (mx, my) = crate::test_support::find_text(&buf, "\u{25b8} Name");
+        let marker = cell_style(&buf, mx, my);
+        assert_eq!(marker.fg, Some(legacy::BRIGHT), "group form marker colour");
+        assert!(
+            marker.add_modifier.contains(Modifier::BOLD),
+            "group form marker weight"
+        );
+        assert_ne!(
+            marker.fg,
+            Some(legacy::ACCENT),
+            "not the global focus indicator's accent"
+        );
+        let _ = popup;
+
+        // 4 + 5. Both settings-shaped popups drew it in `white()` on the bar.
+        let mut app = test_app_with_hosts();
+        app.keybind_editor = Some(crate::app::KeybindEditor {
+            selected: 0,
+            scroll: 0,
+            capturing: false,
+            append: false,
+        });
+        app.mode = AppMode::KeybindEditor;
+        let buf = render_to_buffer(&app, 120, 38);
+        let (kx, ky) =
+            crate::test_support::find_text(&buf, crate::config::KeyAction::ALL[0].label());
+        assert_eq!(
+            cell_style(&buf, kx - 2, ky),
+            legacy::white().bg(legacy::SEL_BG),
+            "the keybind editor's marker rode the highlighted row"
+        );
+
+        let mut app = test_app_with_hosts();
+        app.mode = AppMode::TunnelReconnectSettings;
+        app.tunnel_reconnect_selected = 0;
+        let buf = render_to_buffer(&app, 120, 38);
+        let label = crate::app::TUNNEL_RECONNECT_FIELDS[0].0;
+        let (tx, ty) = crate::test_support::find_text(&buf, label);
+        assert_eq!(
+            cell_style(&buf, tx - 2, ty),
+            legacy::white().bg(legacy::SEL_BG),
+            "the tunnel-reconnect marker likewise"
+        );
+
+        // The two forms whose marker only ever had a direct ANSI colour keep
+        // the global role, and that role is the accent.
+        let mut app = test_app_with_hosts();
+        app.enter_host_form(None, false).unwrap();
+        app.host_form.as_mut().unwrap().editing = false;
+        let buf = render_to_buffer(&app, 120, 38);
+        let (hx, hy) = crate::test_support::find_text(&buf, "> Address");
+        assert_eq!(
+            cell_style(&buf, hx, hy).fg,
+            Some(legacy::ACCENT),
+            "the host form's marker is components.focus.indicator"
         );
     }
 
@@ -4223,8 +4344,13 @@ value_focused = { foreground = \"#ab0004\" }\n\
         );
         assert_eq!(
             style_at_text_in(&buf, popup, "\u{25b8} ").fg,
+            Some(marker(0xab0005)),
+            "the marker is this family's own components.group_form.marker"
+        );
+        assert_ne!(
+            style_at_text_in(&buf, popup, "\u{25b8} ").fg,
             Some(marker(0xa90001)),
-            "the marker is still components.focus.indicator"
+            "not the global focus indicator, which is the host form's"
         );
     }
 
@@ -4295,6 +4421,12 @@ value_focused = { foreground = \"#ab0004\" }\n\
                 style_at_text_in(&buf, popup, first.label()).bg,
                 Some(marker(0x080401)),
                 "capturing={capturing}: the current row is keybind.row_selected"
+            );
+            let (kx, ky) = crate::test_support::find_text(&buf, first.label());
+            assert_eq!(
+                cell_style(&buf, kx - 2, ky).fg,
+                Some(marker(0xa80006)),
+                "capturing={capturing}: its marker is components.keybind.marker"
             );
             assert_eq!(
                 style_at_text_in(&buf, popup, crate::config::KeyAction::ALL[1].label()).fg,
@@ -4374,8 +4506,43 @@ value_focused = { foreground = \"#ab0004\" }\n\
         let (ax, ay) = crate::test_support::find_text(&buf, "(all)");
         assert_eq!(
             cell_style(&buf, ax - 2, ay).fg,
-            Some(marker(0xa90001)),
-            "its marker is components.focus.indicator"
+            Some(marker(0xa20009)),
+            "its marker is components.picker.marker"
+        );
+    }
+
+    /// The tunnel-reconnect popup, which shares the settings family.
+    #[test]
+    fn the_tunnel_reconnect_popup_wears_the_settings_roles() {
+        let mut app = test_app_with_hosts();
+        app.mode = AppMode::TunnelReconnectSettings;
+        app.tunnel_reconnect_selected = 0;
+        wear(&mut app, OVERLAY_MARKERS);
+        let buf = render_to_buffer(&app, 120, 38);
+        let popup = drawn_popup(&app);
+
+        let selected = crate::app::TUNNEL_RECONNECT_FIELDS[0].0;
+        let other = crate::app::TUNNEL_RECONNECT_FIELDS[1].0;
+        assert_eq!(
+            style_at_text_in(&buf, popup, selected).bg,
+            Some(marker(0x040401)),
+            "the current row is components.settings.row_selected"
+        );
+        let (sx, sy) = crate::test_support::find_text(&buf, selected);
+        assert_eq!(
+            cell_style(&buf, sx - 2, sy).fg,
+            Some(marker(0xa40002)),
+            "its marker is components.settings.marker"
+        );
+        assert_eq!(
+            style_at_text_in(&buf, popup, other).fg,
+            Some(marker(0xa60001)),
+            "every other row is components.table.row"
+        );
+        assert_eq!(
+            style_at_text_in(&buf, popup, "+/- adjust").fg,
+            Some(marker(0xa10004)),
+            "the legend is components.popup.legend"
         );
     }
 
@@ -4750,6 +4917,7 @@ query = { foreground = \"#a20001\" }\n\
 match = { foreground = \"#a20002\" }\n\
 row = { foreground = \"#a20003\" }\n\
 row_selected = { foreground = \"#a20004\", background = \"#020401\" }\n\
+marker = { foreground = \"#a20009\" }\n\
 badge_success = \"#a20005\"\n\
 badge_warning = \"#a20006\"\n\
 badge_error = \"#a20007\"\n\
@@ -4759,11 +4927,13 @@ query = { foreground = \"#a30002\" }\n\
 row_selected = { foreground = \"#a30001\", background = \"#030401\" }\n\
 [components.settings]\n\
 row_selected = { foreground = \"#a40001\", background = \"#040401\" }\n\
+marker = { foreground = \"#a40002\" }\n\
 [components.group_form]\n\
 label = { foreground = \"#ab0001\" }\n\
 label_focused = { foreground = \"#ab0002\" }\n\
 value = { foreground = \"#ab0003\" }\n\
 value_focused = { foreground = \"#ab0004\" }\n\
+marker = { foreground = \"#ab0005\" }\n\
 [components.form]\n\
 label = { foreground = \"#a50001\" }\n\
 label_focused = { foreground = \"#a50002\" }\n\
@@ -4784,6 +4954,7 @@ description = { foreground = \"#a70003\" }\n\
 [components.keybind]\n\
 row = { foreground = \"#a80001\" }\n\
 row_selected = { foreground = \"#a80002\", background = \"#080401\" }\n\
+marker = { foreground = \"#a80006\" }\n\
 value = { foreground = \"#a80003\" }\n\
 value_bound = { foreground = \"#a80004\" }\n\
 value_capturing = { foreground = \"#a80005\" }\n\

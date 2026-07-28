@@ -23,8 +23,9 @@ pub fn render_identity_form(
     theme: &ResolvedTheme,
     border: Style,
 ) -> Paragraph<'static> {
-    // Same contract as the host form: the marker in front of the current field
-    // is the focus indicator and is themed apart from the label beside it.
+    // Same contract as the host form, and for the same reason: this form's
+    // marker had no `theme.rs` cell of its own, only direct ANSI accents, so
+    // the global focus role is what it takes.
     let focus = theme.style(StyleRole::FocusIndicator);
     let mut lines = Vec::with_capacity(IdentityFormField::ALL.len() + 2);
     for field in IdentityFormField::ALL {

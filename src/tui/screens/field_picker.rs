@@ -64,7 +64,10 @@ pub fn render_field_picker(frame: &mut Frame, app: &App) {
 
     let theme = app.theme();
     let selection = theme.style(StyleRole::PickerRowSelected);
-    let focus = theme.style(StyleRole::FocusIndicator);
+    // The row marker used to be part of the styled label and therefore wore
+    // the row's own selection style. It keeps that appearance under `default`
+    // through its family's marker role, while staying separately themeable.
+    let focus = theme.style(StyleRole::PickerMarker);
 
     crate::tui::open_popup(frame, popup, theme);
     frame.render_widget(

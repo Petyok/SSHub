@@ -82,7 +82,9 @@ pub fn render_group_form(
     let help = theme.style(StyleRole::FormHelp);
     // Same split as the host form: the `▸` marker is the focus indicator and
     // stays themeable apart from the label it sits next to.
-    let focus = theme.style(StyleRole::FocusIndicator);
+    // The marker used to be glued to the label and wore `theme::heading()`
+    // with it. Its own role in this family reproduces that.
+    let focus = theme.style(StyleRole::GroupFormMarker);
 
     // One labelled row per field; the focused one gets a marker and a
     // highlighted label so ↑/↓ navigation is obvious.

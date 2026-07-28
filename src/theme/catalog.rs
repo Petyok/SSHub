@@ -426,14 +426,17 @@ role_catalog! {
         PickerMatch => ("components.picker.match", SemanticStyle::Accent, false),
         PickerRow => ("components.picker.row", SemanticStyle::Text, false),
         PickerRowSelected => ("components.picker.row_selected", SemanticStyle::Selection, false),
+        PickerMarker => ("components.picker.marker", SemanticStyle::Selection, false),
         CommandPaletteQuery => ("components.command_palette.query", SemanticStyle::TextHighlight, false),
         CommandPaletteRowSelected => ("components.command_palette.row_selected", SemanticStyle::HighlightOnSelection, false),
         SettingsRowSelected => ("components.settings.row_selected", SemanticStyle::HighlightOnSelection, false),
+        SettingsMarker => ("components.settings.marker", SemanticStyle::HighlightOnSelection, false),
 
         GroupFormLabel => ("components.group_form.label", SemanticStyle::TextMuted, false),
         GroupFormLabelFocused => ("components.group_form.label_focused", SemanticStyle::TextBrightBold, false),
         GroupFormValue => ("components.group_form.value", SemanticStyle::Text, false),
         GroupFormValueFocused => ("components.group_form.value_focused", SemanticStyle::TextBrightBold, false),
+        GroupFormMarker => ("components.group_form.marker", SemanticStyle::TextBrightBold, false),
 
         FormLabel => ("components.form.label", SemanticStyle::TextDim, false),
         FormLabelFocused => ("components.form.label_focused", SemanticStyle::Info, false),
@@ -454,6 +457,7 @@ role_catalog! {
 
         KeybindRow => ("components.keybind.row", SemanticStyle::Text, false),
         KeybindRowSelected => ("components.keybind.row_selected", SemanticStyle::HighlightOnSelection, false),
+        KeybindMarker => ("components.keybind.marker", SemanticStyle::HighlightOnSelection, false),
         KeybindValue => ("components.keybind.value", SemanticStyle::TextMuted, false),
         KeybindValueBound => ("components.keybind.value_bound", SemanticStyle::Success, false),
         KeybindValueCapturing => ("components.keybind.value_capturing", SemanticStyle::Warning, false),

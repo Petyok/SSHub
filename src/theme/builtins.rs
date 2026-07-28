@@ -467,9 +467,14 @@ mod tests {
     //
     // Roles whose legacy source was a *direct ANSI colour* are deliberately
     // absent: the spec allows those to be normalised onto the semantic core,
-    // and there is no `theme.rs` cell for them to witness. `focus.indicator`
-    // is absent for the opposite reason — before the migration the marker had
-    // no style of its own at all, and giving it one is the point of the role.
+    // and there is no `theme.rs` cell for them to witness.
+    //
+    // `components.focus.indicator` is one of those, and only just: its two
+    // remaining call sites are the host form and the identity form, whose
+    // markers were glued to labels drawn in ANSI cyan/yellow. The markers that
+    // *did* carry a `theme.rs` cell — the two pickers, the group form, the
+    // keybind editor and the tunnel-reconnect popup — no longer share that
+    // role. Each wears its own family's `marker`, and each is witnessed here.
 
     /// `(role path, role, the legacy `theme.rs` style it replaced)`.
     fn task14_legacy_styles() -> Vec<(&'static str, StyleRole, Style)> {
@@ -508,6 +513,13 @@ mod tests {
                 StyleRole::PickerRowSelected,
                 legacy::selected(),
             ),
+            // The field picker and the tag filter drew their marker inside the
+            // styled row label, so it wore the row's own selection style.
+            (
+                "components.picker.marker",
+                StyleRole::PickerMarker,
+                legacy::selected(),
+            ),
             // The active theme id in the settings popup was drawn in ACCENT.
             (
                 "components.picker.match",
@@ -522,6 +534,12 @@ mod tests {
             (
                 "components.settings.row_selected",
                 StyleRole::SettingsRowSelected,
+                legacy::white().bg(legacy::SEL_BG),
+            ),
+            // The tunnel-reconnect popup's marker rode the highlighted row.
+            (
+                "components.settings.marker",
+                StyleRole::SettingsMarker,
                 legacy::white().bg(legacy::SEL_BG),
             ),
             // The group list highlighted with `selected()`, not with the
@@ -555,6 +573,12 @@ mod tests {
                 StyleRole::GroupFormValueFocused,
                 legacy::bright().add_modifier(Modifier::BOLD),
             ),
+            // Its marker was part of the label span, so it was `heading()` too.
+            (
+                "components.group_form.marker",
+                StyleRole::GroupFormMarker,
+                legacy::heading(),
+            ),
             // The single-line prompts typed in `bright()`; their help lines and
             // the group form's hint were `dim()`.
             (
@@ -586,6 +610,12 @@ mod tests {
             (
                 "components.keybind.row_selected",
                 StyleRole::KeybindRowSelected,
+                legacy::white().bg(legacy::SEL_BG),
+            ),
+            // The keybind editor's marker sat inside the highlighted label.
+            (
+                "components.keybind.marker",
+                StyleRole::KeybindMarker,
                 legacy::white().bg(legacy::SEL_BG),
             ),
             (
@@ -762,29 +792,252 @@ mod tests {
         }
     }
 
-    /// The witness must not silently shrink: a role that is dropped from the
-    /// table stops being checked, which is how a regression would come back.
+    /// The inventory of `theme.rs` cells Task 14 replaced, by role and by where
+    /// the cell lived before the migration.
+    ///
+    /// This is the *authoritative* list, kept separately from the witness on
+    /// purpose. The witness says "this role must look like that"; this says
+    /// "these are the roles that must be witnessed at all". Checking the
+    /// witness only against itself — its size, its uniqueness, or whether its
+    /// paths exist in the catalogue — cannot notice a required row being
+    /// swapped for some other valid path, which is exactly the hole that let
+    /// four regressions and then the field markers through.
+    ///
+    /// A row is added here when a `crate::tui::theme` call site is migrated,
+    /// and removed only when that surface is deleted.
+    const TASK14_REPLACED_CELLS: &[(&str, &str)] = &[
+        // Generic popup chrome — `src/tui/mod.rs` and every overlay screen.
+        (
+            "components.popup.title",
+            "theme::heading() on every popup Block title",
+        ),
+        (
+            "components.popup.hint",
+            "theme::dim() on the help footer and popup hints",
+        ),
+        (
+            "components.popup.legend",
+            "theme::mute() on key legends and empty states",
+        ),
+        (
+            "components.popup.border",
+            "theme::popup_border() on every overlay frame",
+        ),
+        // Pickers — `session_picker.rs`, `tag_filter.rs`, `field_picker.rs`.
+        (
+            "components.picker.border",
+            "session_picker.rs: Style::fg(theme::ACCENT)",
+        ),
+        (
+            "components.picker.query",
+            "session_picker.rs / tag_filter.rs: theme::bright()",
+        ),
+        ("components.picker.row", "picker rows: theme::text()"),
+        (
+            "components.picker.row_selected",
+            "picker rows: theme::selected()",
+        ),
+        (
+            "components.picker.marker",
+            "field_picker.rs / tag_filter.rs: the marker inside the selected label",
+        ),
+        (
+            "components.picker.match",
+            "settings.rs: Style::fg(theme::ACCENT) on the theme id",
+        ),
+        (
+            "components.picker.badge_success",
+            "session_picker.rs: theme::green()",
+        ),
+        (
+            "components.picker.badge_warning",
+            "session_picker.rs: theme::amber()",
+        ),
+        (
+            "components.picker.badge_error",
+            "session_picker.rs: theme::red()",
+        ),
+        // Command palette — `palette.rs`.
+        (
+            "components.command_palette.query",
+            "palette.rs: theme::white()",
+        ),
+        (
+            "components.command_palette.row_selected",
+            "palette.rs: theme::white().bg(SEL_BG)",
+        ),
+        (
+            "components.separator.primary",
+            "palette.rs: theme::border() on the inner rules",
+        ),
+        (
+            "components.status.success",
+            "palette.rs / settings.rs / field_picker.rs: theme::green()",
+        ),
+        ("components.text.primary", "mod.rs prompts: theme::text()"),
+        (
+            "components.text.bright",
+            "palette.rs: theme::bright() on an unselected name",
+        ),
+        // Settings and tunnel reconnect — `settings.rs`, `tunnel_reconnect.rs`.
+        (
+            "components.settings.row_selected",
+            "settings.rs: theme::white().bg(SEL_BG)",
+        ),
+        (
+            "components.settings.marker",
+            "tunnel_reconnect.rs: the marker inside the selected label",
+        ),
+        // Group form — `group_form.rs`.
+        (
+            "components.group_form.label",
+            "group_form.rs: theme::mute()",
+        ),
+        (
+            "components.group_form.label_focused",
+            "group_form.rs: theme::heading()",
+        ),
+        (
+            "components.group_form.value",
+            "group_form.rs: theme::text()",
+        ),
+        (
+            "components.group_form.value_focused",
+            "group_form.rs: theme::bright() + BOLD",
+        ),
+        (
+            "components.group_form.marker",
+            "group_form.rs: the marker inside the focused label",
+        ),
+        // The two single-line prompts — `mod.rs`.
+        ("components.form.input", "mod.rs prompts: theme::bright()"),
+        (
+            "components.form.help",
+            "host_form.rs / group_form.rs hints: theme::dim()",
+        ),
+        // Group management — `group_manage.rs`.
+        ("components.table.row", "group_manage.rs: theme::text()"),
+        (
+            "components.table.row_selected",
+            "group_manage.rs: theme::selected()",
+        ),
+        // Help sheet — `help.rs`.
+        ("components.help.section", "help.rs: theme::heading()"),
+        ("components.help.key", "help.rs: theme::bright()"),
+        ("components.help.description", "help.rs: theme::text()"),
+        // Keybind editor — `keybind_editor.rs`.
+        ("components.keybind.row", "keybind_editor.rs: theme::text()"),
+        (
+            "components.keybind.row_selected",
+            "keybind_editor.rs: theme::white().bg(SEL_BG)",
+        ),
+        (
+            "components.keybind.marker",
+            "keybind_editor.rs: the marker inside the selected label",
+        ),
+        (
+            "components.keybind.value",
+            "keybind_editor.rs: theme::mute()",
+        ),
+        (
+            "components.keybind.value_bound",
+            "keybind_editor.rs: theme::green()",
+        ),
+        (
+            "components.keybind.value_capturing",
+            "keybind_editor.rs: theme::amber()",
+        ),
+        // Identity cards — `keys.rs`.
+        ("components.identities.empty", "keys.rs: theme::dim()"),
+        ("components.identities.notice", "keys.rs: theme::amber()"),
+        (
+            "components.identities.card.border",
+            "keys.rs: theme::border()",
+        ),
+        (
+            "components.identities.card.border_selected",
+            "keys.rs: Style::fg(theme::ACCENT)",
+        ),
+        (
+            "components.identities.card.selection",
+            "keys.rs: theme::selected()",
+        ),
+        (
+            "components.identities.card.name",
+            "keys.rs: theme::heading()",
+        ),
+        ("components.identities.card.text", "keys.rs: theme::text()"),
+        (
+            "components.identities.card.metadata",
+            "keys.rs: theme::dim()",
+        ),
+        (
+            "components.identities.card.key_type",
+            "keys.rs: theme::mute()",
+        ),
+        ("components.identities.card.loaded", "keys.rs: theme::GREEN"),
+        ("components.identities.card.missing", "keys.rs: theme::DIM"),
+        (
+            "components.identities.card.credential",
+            "keys.rs: theme::AMBER",
+        ),
+        (
+            "components.identities.agent.separator",
+            "keys.rs: theme::dim() on the rule",
+        ),
+        (
+            "components.identities.agent.label",
+            "keys.rs: theme::mute()",
+        ),
+        (
+            "components.identities.agent.value",
+            "keys.rs: theme::text()",
+        ),
+        (
+            "components.identities.agent.count",
+            "keys.rs: theme::bright()",
+        ),
+    ];
+
+    /// The witness must cover the inventory exactly — no row missing, none
+    /// invented, none witnessed twice.
     #[test]
-    fn the_legacy_witness_covers_every_task14_theme_rs_role() {
-        let mut paths: Vec<&str> = task14_legacy_styles()
+    fn the_legacy_witness_covers_every_task14_theme_rs_cell() {
+        let mut witnessed: Vec<&str> = task14_legacy_styles()
             .into_iter()
             .map(|(p, _, _)| p)
             .chain(task14_legacy_colors().into_iter().map(|(p, _, _)| p))
             .chain(task14_legacy_paints().into_iter().map(|(p, _, _)| p))
             .collect();
-        let before = paths.len();
-        paths.sort_unstable();
-        paths.dedup();
-        assert_eq!(before, paths.len(), "a role is witnessed twice");
-        assert_eq!(
-            before, 51,
-            "the legacy witness changed size; add or remove the row deliberately"
+        let before = witnessed.len();
+        witnessed.sort_unstable();
+        witnessed.dedup();
+        assert_eq!(before, witnessed.len(), "a role is witnessed twice");
+
+        let mut required: Vec<&str> = TASK14_REPLACED_CELLS.iter().map(|(p, _)| *p).collect();
+        let count = required.len();
+        required.sort_unstable();
+        required.dedup();
+        assert_eq!(count, required.len(), "the inventory lists a role twice");
+
+        let missing: Vec<_> = required.iter().filter(|p| !witnessed.contains(p)).collect();
+        assert!(
+            missing.is_empty(),
+            "these replaced cells have no legacy witness: {missing:#?}"
         );
-        // Every path must still exist in the catalogue.
-        for path in paths {
+        let extra: Vec<_> = witnessed.iter().filter(|p| !required.contains(p)).collect();
+        assert!(
+            extra.is_empty(),
+            "these roles are witnessed but are not in the inventory of replaced \
+             cells; add them there with the `theme.rs` call they replaced: {extra:#?}"
+        );
+
+        // And every inventoried role must still be published, so a deleted
+        // surface cannot leave a dangling row behind.
+        for (path, origin) in TASK14_REPLACED_CELLS {
             assert!(
-                ROLE_SPECS.iter().any(|s| s.path == path),
-                "{path} is witnessed but no longer published"
+                ROLE_SPECS.iter().any(|s| s.path == *path),
+                "{path} ({origin}) is inventoried but no longer published"
             );
         }
     }

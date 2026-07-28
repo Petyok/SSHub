@@ -26,9 +26,12 @@ pub fn render_host_form(
     };
 
     let help = theme.style(StyleRole::FormHelp);
-    // The `▸`/`>` glyph in front of the current field is the focus indicator,
-    // and it carries its own role: a theme may mark focus without recolouring
-    // the label the marker sits next to.
+    // The `▸`/`>` glyph in front of the current field is the focus indicator.
+    // This form marked focus with direct ANSI accents, which the spec allows to
+    // be normalised, so there is no legacy cell to be faithful to and the
+    // global role fits. The screens whose marker *did* carry a `theme.rs` style
+    // — pickers, group form, keybind editor, tunnel reconnect — keep their own
+    // family's marker role instead.
     let focus = theme.style(StyleRole::FocusIndicator);
 
     let mut lines = Vec::with_capacity(HostFormField::ALL.len() + 2);
