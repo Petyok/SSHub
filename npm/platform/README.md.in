@@ -1,0 +1,8 @@
+# @NAME@
+
+The SSHub binary for `@TRIPLE@`, built by the project's release workflow.
+
+Do not install this package directly. Install [`sshub`](https://www.npmjs.com/package/sshub)
+instead; it depends on this one and picks the right build for your machine.
+
+Licensed under AGPL-3.0-or-later.
