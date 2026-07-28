@@ -17,6 +17,8 @@ struct DetailStyles {
     value: Style,
     favorite: Style,
     hint: Style,
+    /// The `> ` cursor in front of the field being edited.
+    field_marker: Style,
 }
 
 impl DetailStyles {
@@ -26,6 +28,7 @@ impl DetailStyles {
             value: theme.style(StyleRole::DashboardDetailsValue),
             favorite: Style::default().fg(theme.color(ColorRole::StatusWarning)),
             hint: theme.style(StyleRole::TextDim),
+            field_marker: theme.style(StyleRole::DashboardDetailsFieldMarker),
         }
     }
 }
@@ -80,8 +83,20 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
     (year, m as i64, d as i64)
 }
 
-fn field_with_cursor(label: &str, value: &str, cursor: usize, active: bool) -> String {
-    let prefix = if active { "> " } else { "  " };
+/// One editable field row: the active-field cursor, then `label: value`.
+///
+/// The cursor is its own span so it can wear
+/// `components.dashboard.details.field_marker`. It carried no colour at all
+/// before the migration — the whole row was an unstyled `Line::from(String)` —
+/// which made the one cell that says *where the keystrokes go* the only cell on
+/// the panel a theme could not reach.
+fn field_with_cursor(
+    styles: DetailStyles,
+    label: &str,
+    value: &str,
+    cursor: usize,
+    active: bool,
+) -> Line<'static> {
     let display = if value.is_empty() {
         "_".to_string()
     } else {
@@ -89,7 +104,27 @@ fn field_with_cursor(label: &str, value: &str, cursor: usize, active: bool) -> S
         let (before, after) = value.split_at(clamped);
         format!("{before}_{after}")
     };
-    format!("{prefix}{label}: {display}")
+    marked_line(styles, active, format!("{label}: {display}"))
+}
+
+/// A row of the metadata editor, prefixed by the active-field marker.
+///
+/// The inactive prefix is two spaces rather than a styled marker: only one
+/// field is being edited, and a second visible cursor would be a lie about
+/// where typing lands. It still goes through the same span so the two states
+/// line up column for column.
+fn marked_line(styles: DetailStyles, active: bool, rest: String) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            if active { "> " } else { "  " },
+            if active {
+                styles.field_marker
+            } else {
+                Style::default()
+            },
+        ),
+        Span::raw(rest),
+    ])
 }
 
 fn detail_line(styles: DetailStyles, label: &str, value: String) -> Line<'static> {
@@ -113,9 +148,12 @@ fn detail_fav_line(styles: DetailStyles, fav: bool) -> Line<'static> {
     }
 }
 
-fn tri_state_line(label: &str, value: &str, active: bool) -> String {
-    let prefix = if active { "> " } else { "  " };
-    format!("{prefix}{label}: {value} (Space or arrows to cycle)")
+fn tri_state_line(styles: DetailStyles, label: &str, value: &str, active: bool) -> Line<'static> {
+    marked_line(
+        styles,
+        active,
+        format!("{label}: {value} (Space or arrows to cycle)"),
+    )
 }
 
 fn host_detail_view(
@@ -213,7 +251,10 @@ fn host_detail_view(
             .and_then(|m| m.os_icon.as_deref())
             .and_then(crate::osinfo::logo_for)
         {
-            let mut prefixed = crate::osinfo::widget::logo_to_lines(logo);
+            let mut prefixed = crate::osinfo::widget::logo_to_lines(
+                logo,
+                crate::osinfo::logos::os_logo_tint(app.theme()),
+            );
             prefixed.push(Line::from(""));
             prefixed.extend(lines);
             lines = prefixed;
@@ -236,24 +277,28 @@ fn host_detail_edit(
     let ssh = entry.ssh_host();
 
     let tags_line = field_with_cursor(
+        styles,
         "Tags (comma-separated)",
         &edit.tags,
         edit.cursor,
         edit.field == DetailEditField::Tags,
     );
     let desc_line = field_with_cursor(
+        styles,
         "Description",
         &edit.description,
         edit.cursor,
         edit.field == DetailEditField::Description,
     );
     let env_line = field_with_cursor(
+        styles,
         "Environment",
         &edit.environment,
         edit.cursor,
         edit.field == DetailEditField::Environment,
     );
     let session_log_line = tri_state_line(
+        styles,
         "Session log",
         edit.session_logging.label(),
         edit.field == DetailEditField::SessionLogging,
@@ -266,10 +311,10 @@ fn host_detail_edit(
         detail_line(styles, "Address", dash(&ssh.hostname).to_string()),
         Line::from(""),
         Line::from(Span::styled("Editing metadata", styles.label)),
-        Line::from(tags_line),
-        Line::from(desc_line),
-        Line::from(env_line),
-        Line::from(session_log_line),
+        tags_line,
+        desc_line,
+        env_line,
+        session_log_line,
         detail_fav_line(styles, entry.favorite()),
         Line::from(""),
         Line::from(Span::styled("[Enter] save", hint_style)),
@@ -347,7 +392,7 @@ mod tests {
             },
         );
         app.hosts = vec![HostEntry::new(SshHost::new("web"))];
-        app.filtered_indices = vec![0];
+        app.rebuild_filter();
         app.mode = AppMode::HostDetail;
         app.detail_edit = Some(HostDetailEdit {
             tags: "prod".into(),
@@ -396,5 +441,134 @@ mod tests {
         assert_eq!(fav.spans[1].style.fg, Some(Color::Rgb(0xff, 0xaa, 0x00)));
 
         assert_eq!(styles.hint.fg, Some(Color::Rgb(0x33, 0x33, 0x33)));
+    }
+
+    /// An app in metadata-edit mode with `field` active, plus its theme.
+    fn editing_app(theme: ResolvedTheme, field: DetailEditField) -> App {
+        let mut app = App::new_with_deps(
+            AppConfig::default(),
+            AppDeps {
+                resolver: Box::new(EmptyResolver),
+                metadata: Arc::new(MetadataDb::default()),
+                store: test_store(),
+                password_store: Box::new(crate::credentials::NoopPasswordStore),
+            },
+        );
+        app.hosts = vec![HostEntry::new(SshHost::new("web"))];
+        app.rebuild_filter();
+        app.mode = AppMode::HostDetail;
+        app.detail_edit = Some(HostDetailEdit {
+            tags: "prod".into(),
+            description: String::new(),
+            environment: String::new(),
+            session_logging: crate::session_log::SessionLoggingOverride::Inherit,
+            field,
+            cursor: 4,
+        });
+        app.activate_resolved_theme(std::rc::Rc::new(theme));
+        app
+    }
+
+    /// Render the real `render_detail_panel` output and hand back the buffer.
+    fn panel_buffer(app: &App) -> ratatui::buffer::Buffer {
+        use ratatui::widgets::Widget;
+        let area = ratatui::layout::Rect::new(0, 0, 80, 24);
+        let mut buf = ratatui::buffer::Buffer::empty(area);
+        render_detail_panel(app).render(area, &mut buf);
+        buf
+    }
+
+    /// The active-field marker is the detail panel's own role, and it is read
+    /// in the active state and *not* in the inactive one — both states driven
+    /// through the real renderer.
+    #[test]
+    fn the_field_marker_wears_the_detail_panels_own_role() {
+        use crate::test_support::{fg, marker, role_marker_theme};
+        use ratatui::style::Color;
+
+        const MARKER: u32 = 0xd1_0001;
+        const FOCUS: u32 = 0xd1_0002;
+
+        let theme = role_marker_theme(
+            "detail-markers",
+            &[
+                fg("components.dashboard.details.field_marker", MARKER),
+                // The global marker must *not* leak in here: binding this cell
+                // to `focus.indicator` was the tempting shortcut, and this is
+                // what rules it out.
+                fg("components.focus.indicator", FOCUS),
+            ],
+        );
+        let app = editing_app(theme, DetailEditField::Tags);
+        let buf = panel_buffer(&app);
+
+        // The `Tags` row is the active one; `Description` is the row under it.
+        let (tx, ty) = crate::test_support::find_text(&buf, "Tags (comma-separated)");
+        assert_eq!(buf[(tx - 2, ty)].symbol(), ">");
+        assert_eq!(
+            buf[(tx - 2, ty)].fg,
+            marker(MARKER),
+            "the active field's marker"
+        );
+        assert_ne!(
+            buf[(tx - 2, ty)].fg,
+            marker(FOCUS),
+            "the detail panel must not read the global focus indicator"
+        );
+
+        let (dx, dy) = crate::test_support::find_text(&buf, "Description:");
+        assert_eq!(buf[(dx - 2, dy)].symbol(), " ");
+        assert_eq!(
+            buf[(dx - 2, dy)].fg,
+            Color::Reset,
+            "an inactive row carries no marker at all"
+        );
+
+        // …and the marker moves with the active field rather than being
+        // stuck on the first row.
+        let app = editing_app(
+            role_marker_theme(
+                "detail-markers-2",
+                &[fg("components.dashboard.details.field_marker", MARKER)],
+            ),
+            DetailEditField::Description,
+        );
+        let buf = panel_buffer(&app);
+        let (dx, dy) = crate::test_support::find_text(&buf, "Description:");
+        assert_eq!(buf[(dx - 2, dy)].symbol(), ">");
+        assert_eq!(buf[(dx - 2, dy)].fg, marker(MARKER));
+        let (tx, ty) = crate::test_support::find_text(&buf, "Tags (comma-separated)");
+        assert_eq!(buf[(tx - 2, ty)].fg, Color::Reset);
+    }
+
+    /// A binding is not a fix if the result is invisible: under the built-in
+    /// `default` the marker has to stand out from the row it sits in front of.
+    #[test]
+    fn the_field_marker_is_visible_under_default() {
+        use crate::test_support::resolved_default;
+        use crate::tui::theme::legacy;
+        use ratatui::style::Color;
+
+        let app = editing_app(resolved_default(), DetailEditField::Tags);
+        let buf = panel_buffer(&app);
+        let (tx, ty) = crate::test_support::find_text(&buf, "Tags (comma-separated)");
+
+        // The row was one unstyled string before, so its text is still the
+        // terminal's own foreground — that is the neighbour the marker has to
+        // be distinguishable from.
+        assert_eq!(buf[(tx, ty)].fg, Color::Reset, "the neighbouring cell");
+        assert_ne!(buf[(tx - 2, ty)].fg, buf[(tx, ty)].fg);
+        assert_eq!(
+            buf[(tx - 2, ty)].fg,
+            legacy::ACCENT,
+            "`accent` is what `default` resolves the marker to"
+        );
+
+        // The tri-state row goes through the same helper and must agree.
+        let app = editing_app(resolved_default(), DetailEditField::SessionLogging);
+        let buf = panel_buffer(&app);
+        let (sx, sy) = crate::test_support::find_text(&buf, "Session log:");
+        assert_eq!(buf[(sx - 2, sy)].symbol(), ">");
+        assert_eq!(buf[(sx - 2, sy)].fg, legacy::ACCENT);
     }
 }

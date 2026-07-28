@@ -188,7 +188,7 @@ mod tests {
     use super::*;
     use crate::theme::model::{ThemeId, ValidationMode};
     use crate::theme::registry::ThemeRegistry;
-    use crate::tui::theme;
+    use crate::tui::theme::legacy as theme;
     use std::rc::Rc;
 
     fn area() -> Rect {

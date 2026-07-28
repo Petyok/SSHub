@@ -67,7 +67,7 @@ mod tests {
         GradientDirection, ResolvedPaint, ResolvedTheme, ResolvedTint, ThemeId, ValidationMode,
     };
     use crate::theme::registry::{ThemeRegistry, ThemeStatus};
-    use crate::tui::theme as legacy;
+    use crate::tui::theme::legacy;
 
     #[test]
     fn all_builtins_pass_the_public_strict_pipeline() {
@@ -274,6 +274,9 @@ mod tests {
         "components.help.section",
         "components.status_bar.toast",
         "components.selection.inactive",
+        "components.animation.hub_flash",
+        "components.animation.wordmark_accent",
+        "components.tunnel_form.value_editing",
     ];
 
     /// Assert that `theme` reproduces the frozen pre-theme-system appearance for
@@ -485,6 +488,39 @@ mod tests {
             legacy::heading()
         );
 
+        // The animation's two amber-and-bold cells. There is no
+        // "warning with bold" recipe in the semantic core, so unlike their
+        // bright siblings these cannot be fixed in the catalogue and are
+        // stated in `default.toml` instead.
+        assert_eq!(
+            theme.style(StyleRole::AnimationHubFlash),
+            legacy::amber().add_modifier(Modifier::BOLD),
+        );
+        assert_eq!(
+            theme.style(StyleRole::AnimationWordmarkAccent),
+            legacy::amber().add_modifier(Modifier::BOLD),
+        );
+        // …and their bright siblings, which the catalogue's `text_bright with
+        // bold` recipe already covers. Asserted here anyway: the two pairs have
+        // to keep the same weight, and only one of them is stated in the asset.
+        assert_eq!(theme.style(StyleRole::AnimationHubReady), legacy::heading());
+        assert_eq!(theme.style(StyleRole::AnimationWordmark), legacy::heading());
+        assert_ne!(
+            theme.style(StyleRole::AnimationHubFlash),
+            theme.style(StyleRole::AnimationHubReady),
+        );
+
+        // The tunnel form underlines the value it is editing, in highlight
+        // white — no bold, which is what separates it from `group_form`.
+        assert_eq!(
+            theme.style(StyleRole::TunnelFormValueEditing),
+            legacy::white().add_modifier(Modifier::UNDERLINED),
+        );
+        assert!(!theme
+            .style(StyleRole::TunnelFormValueEditing)
+            .add_modifier
+            .contains(Modifier::BOLD));
+
         assert_migrated_legacy_cells(theme);
     }
     // ── Per-renderer legacy inventory for the migrated surfaces ──
@@ -607,6 +643,8 @@ mod tests {
     const SFTP: &str = "src/tui/screens/sftp.rs";
     const AUDIT: &str = "src/tui/screens/audit.rs";
     const BROADCAST: &str = "src/tui/screens/broadcast.rs";
+    const ANIMATION: &str = "src/tui/animation.rs";
+    const DETAIL_PANEL: &str = "src/tui/widgets/detail_panel.rs";
 
     /// Every renderer whose roles this task owns. The completeness guard reads
     /// these files, so a call site added to one of them without an inventory
@@ -630,7 +668,16 @@ mod tests {
         SFTP,
         AUDIT,
         BROADCAST,
+        ANIMATION,
+        DETAIL_PANEL,
     ];
+
+    // `src/tui/screens/theme_picker.rs` is deliberately **not** in that list.
+    // Its chrome was migrated by this task and is proved by marker tests beside
+    // the renderer, but the file also contains the live two-box *preview*,
+    // whose whole purpose is to sample dozens of unrelated roles. One inventory
+    // row per sampled role would say nothing about a migration and would have
+    // to be rewritten whenever the preview changes what it shows.
 
     /// Roles read by an inventoried renderer that belong to another task.
     ///
@@ -2163,6 +2210,330 @@ mod tests {
                 role: RoleRef::Style(StyleRole::FormInput),
                 expect: MigratedExpect::Style(legacy::bright()),
             },
+            // ── Startup animation, `src/tui/animation.rs` ───────
+            MigratedRoleUse {
+                id: "animation.background",
+                renderer: ANIMATION,
+                was: "a bare `Clear`; the animation never laid down a ground of its own",
+                ident: "AnimationBackground",
+                role: RoleRef::Paint(PaintRole::AnimationBackground),
+                expect: Paint(Color::Reset),
+            },
+            MigratedRoleUse {
+                id: "animation.node",
+                renderer: ANIMATION,
+                was: "Style::default().fg(theme::GREEN) on each host dot",
+                ident: "AnimationNode",
+                role: RoleRef::Style(StyleRole::AnimationNode),
+                expect: MigratedExpect::Style(legacy::green()),
+            },
+            MigratedRoleUse {
+                id: "animation.node_label",
+                renderer: ANIMATION,
+                was: "Style::default().fg(theme::TEXT) on each host name",
+                ident: "AnimationNodeLabel",
+                role: RoleRef::Style(StyleRole::AnimationNodeLabel),
+                expect: MigratedExpect::Style(legacy::text()),
+            },
+            MigratedRoleUse {
+                id: "animation.spoke",
+                renderer: ANIMATION,
+                was: "Style::default().fg(theme::DIM) on every Bresenham spoke cell",
+                ident: "AnimationSpoke",
+                role: RoleRef::Style(StyleRole::AnimationSpoke),
+                expect: MigratedExpect::Style(legacy::dim()),
+            },
+            MigratedRoleUse {
+                id: "animation.hub_early",
+                renderer: ANIMATION,
+                was: "HUB_STAGES[0..2] = Style::new().fg(theme::GREEN) on the `\u{b7}` and `+` hub",
+                ident: "AnimationHubEarly",
+                role: RoleRef::Style(StyleRole::AnimationHubEarly),
+                expect: MigratedExpect::Style(legacy::green()),
+            },
+            MigratedRoleUse {
+                id: "animation.hub_ready",
+                renderer: ANIMATION,
+                was: "HUB_STAGES[2..4] = theme::BRIGHT + BOLD on the `\u{25c6}` and `\u{25c9}` hub",
+                ident: "AnimationHubReady",
+                role: RoleRef::Style(StyleRole::AnimationHubReady),
+                expect: MigratedExpect::Style(legacy::heading()),
+            },
+            MigratedRoleUse {
+                id: "animation.halo",
+                renderer: ANIMATION,
+                was: "Style::default().bg(theme::SEL_BG) on the two cells beside the hub",
+                ident: "AnimationHalo",
+                role: RoleRef::Paint(PaintRole::AnimationHalo),
+                expect: Paint(legacy::SEL_BG),
+            },
+            MigratedRoleUse {
+                id: "animation.hub_flash",
+                renderer: ANIMATION,
+                was: "theme::AMBER + BOLD on the `hub` label once the animation is done",
+                ident: "AnimationHubFlash",
+                role: RoleRef::Style(StyleRole::AnimationHubFlash),
+                expect: MigratedExpect::Style(legacy::amber().add_modifier(Modifier::BOLD)),
+            },
+            MigratedRoleUse {
+                id: "animation.hub_label",
+                renderer: ANIMATION,
+                was: "Style::default().fg(theme::MUTE) on the `hub` label while it assembles",
+                ident: "AnimationHubLabel",
+                role: RoleRef::Style(StyleRole::AnimationHubLabel),
+                expect: MigratedExpect::Style(legacy::mute()),
+            },
+            MigratedRoleUse {
+                id: "animation.wordmark",
+                renderer: ANIMATION,
+                was: "theme::BRIGHT + BOLD on `\u{2500} S S H ` and ` \u{2500}`, and on the \
+                      compact terminal's `SSHub`",
+                ident: "AnimationWordmark",
+                role: RoleRef::Style(StyleRole::AnimationWordmark),
+                expect: MigratedExpect::Style(legacy::heading()),
+            },
+            MigratedRoleUse {
+                id: "animation.wordmark_accent",
+                renderer: ANIMATION,
+                was: "theme::AMBER + BOLD on the `u b` of the wordmark",
+                ident: "AnimationWordmarkAccent",
+                role: RoleRef::Style(StyleRole::AnimationWordmarkAccent),
+                expect: MigratedExpect::Style(legacy::amber().add_modifier(Modifier::BOLD)),
+            },
+            MigratedRoleUse {
+                id: "animation.tagline",
+                renderer: ANIMATION,
+                was: "Style::default().fg(theme::MUTE) on `secure shell x `",
+                ident: "AnimationTagline",
+                role: RoleRef::Style(StyleRole::AnimationTagline),
+                expect: MigratedExpect::Style(legacy::mute()),
+            },
+            MigratedRoleUse {
+                id: "animation.tagline_accent",
+                renderer: ANIMATION,
+                was: "Style::default().fg(theme::AMBER) from `undefined` on",
+                ident: "AnimationTaglineAccent",
+                role: RoleRef::Style(StyleRole::AnimationTaglineAccent),
+                expect: MigratedExpect::Style(legacy::amber()),
+            },
+            MigratedRoleUse {
+                id: "animation.quip",
+                renderer: ANIMATION,
+                was: "Style::default().fg(theme::DIM) on the random quip",
+                ident: "AnimationQuip",
+                role: RoleRef::Style(StyleRole::AnimationQuip),
+                expect: MigratedExpect::Style(legacy::dim()),
+            },
+            MigratedRoleUse {
+                id: "animation.prompt_key",
+                renderer: ANIMATION,
+                was: "Style::default().fg(theme::BRIGHT) on `\u{21b5}` and `Enter`",
+                ident: "AnimationPromptKey",
+                role: RoleRef::Style(StyleRole::AnimationPromptKey),
+                expect: MigratedExpect::Style(legacy::bright()),
+            },
+            MigratedRoleUse {
+                id: "animation.prompt_text",
+                renderer: ANIMATION,
+                was: "Style::default().fg(theme::MUTE) on ` press `, ` to continue ` and the \
+                      compact terminal's `press Enter`",
+                ident: "AnimationPromptText",
+                role: RoleRef::Style(StyleRole::AnimationPromptText),
+                expect: MigratedExpect::Style(legacy::mute()),
+            },
+            MigratedRoleUse {
+                id: "animation.cursor",
+                renderer: ANIMATION,
+                was: "Style::default().fg(theme::GREEN) on the blinking `\u{258c}`",
+                ident: "AnimationCursor",
+                role: RoleRef::Style(StyleRole::AnimationCursor),
+                expect: MigratedExpect::Style(legacy::green()),
+            },
+
+            // ── Tunnel form and its host picker, `tunnels.rs` ───
+            MigratedRoleUse {
+                id: "tunnel_form.popup_title",
+                renderer: TUNNELS,
+                was: "theme::heading() on the host picker's ` select SSH server ` title; the \
+                      tunnel form's own title was an unstyled Block::title(..)",
+                ident: "PopupTitle",
+                role: RoleRef::Style(StyleRole::PopupTitle),
+                expect: MigratedExpect::Style(legacy::heading()),
+            },
+            MigratedRoleUse {
+                id: "tunnel_form.border",
+                renderer: TUNNELS,
+                was: "Style::default().fg(theme::ACCENT) on the tunnel form frame",
+                ident: "TunnelFormBorder",
+                role: RoleRef::Paint(PaintRole::TunnelFormBorder),
+                expect: Paint(legacy::ACCENT),
+            },
+            MigratedRoleUse {
+                id: "tunnel_form.label",
+                renderer: TUNNELS,
+                was: "theme::mute() on an inactive field label",
+                ident: "TunnelFormLabel",
+                role: RoleRef::Style(StyleRole::TunnelFormLabel),
+                expect: MigratedExpect::Style(legacy::mute()),
+            },
+            MigratedRoleUse {
+                id: "tunnel_form.label_focused",
+                renderer: TUNNELS,
+                was: "theme::bright() on the active field label \u{2014} bright, not bold, \
+                      which is what separates it from group_form.label_focused",
+                ident: "TunnelFormLabelFocused",
+                role: RoleRef::Style(StyleRole::TunnelFormLabelFocused),
+                expect: MigratedExpect::Style(legacy::bright()),
+            },
+            MigratedRoleUse {
+                id: "tunnel_form.value",
+                renderer: TUNNELS,
+                was: "theme::text() on an inactive field value",
+                ident: "TunnelFormValue",
+                role: RoleRef::Style(StyleRole::TunnelFormValue),
+                expect: MigratedExpect::Style(legacy::text()),
+            },
+            MigratedRoleUse {
+                id: "tunnel_form.value_focused",
+                renderer: TUNNELS,
+                was: "theme::bright() on the active but not-yet-edited value",
+                ident: "TunnelFormValueFocused",
+                role: RoleRef::Style(StyleRole::TunnelFormValueFocused),
+                expect: MigratedExpect::Style(legacy::bright()),
+            },
+            MigratedRoleUse {
+                id: "tunnel_form.value_editing",
+                renderer: TUNNELS,
+                was: "Style::default().fg(theme::WHITE).add_modifier(UNDERLINED) on the value \
+                      being edited",
+                ident: "TunnelFormValueEditing",
+                role: RoleRef::Style(StyleRole::TunnelFormValueEditing),
+                expect: MigratedExpect::Style(legacy::white().add_modifier(Modifier::UNDERLINED)),
+            },
+            MigratedRoleUse {
+                id: "tunnel_form.marker",
+                renderer: TUNNELS,
+                was: "theme::green() on the `\u{203a}` active-field arrow",
+                ident: "TunnelFormMarker",
+                role: RoleRef::Style(StyleRole::TunnelFormMarker),
+                expect: MigratedExpect::Style(legacy::green()),
+            },
+            MigratedRoleUse {
+                id: "tunnel_form.help",
+                renderer: TUNNELS,
+                was: "theme::dim() on the `\u{2190}/\u{2192}` / `Enter: pick` hints and both footer rows",
+                ident: "TunnelFormHelp",
+                role: RoleRef::Style(StyleRole::TunnelFormHelp),
+                expect: MigratedExpect::Style(legacy::dim()),
+            },
+            MigratedRoleUse {
+                id: "tunnel_host_picker.border",
+                renderer: TUNNELS,
+                was: "Style::default().fg(theme::ACCENT) on the host picker frame",
+                ident: "PickerBorder",
+                role: RoleRef::Paint(PaintRole::PickerBorder),
+                expect: Paint(legacy::ACCENT),
+            },
+            MigratedRoleUse {
+                id: "tunnel_host_picker.query",
+                renderer: TUNNELS,
+                was: "theme::bright() on the `/ \u{2026}\u{2588}` query line",
+                ident: "PickerQuery",
+                role: RoleRef::Style(StyleRole::PickerQuery),
+                expect: MigratedExpect::Style(legacy::bright()),
+            },
+            MigratedRoleUse {
+                id: "tunnel_host_picker.separator",
+                renderer: TUNNELS,
+                was: "theme::dim() on the rule under the query line",
+                ident: "SeparatorSecondary",
+                role: RoleRef::Paint(PaintRole::SeparatorSecondary),
+                expect: Paint(legacy::DIM),
+            },
+            MigratedRoleUse {
+                id: "tunnel_host_picker.row",
+                renderer: TUNNELS,
+                was: "theme::text() on an unselected host row",
+                ident: "PickerRow",
+                role: RoleRef::Style(StyleRole::PickerRow),
+                expect: MigratedExpect::Style(legacy::text()),
+            },
+            MigratedRoleUse {
+                id: "tunnel_host_picker.row_selected",
+                renderer: TUNNELS,
+                was: "theme::selected() on the cursor row's bar, marker and name",
+                ident: "PickerRowSelected",
+                role: RoleRef::Style(StyleRole::PickerRowSelected),
+                expect: MigratedExpect::Style(legacy::selected()),
+            },
+            MigratedRoleUse {
+                id: "tunnel_host_picker.empty",
+                renderer: TUNNELS,
+                was: "theme::mute() on `(no matching hosts)`",
+                ident: "TextMuted",
+                role: RoleRef::Style(StyleRole::TextMuted),
+                expect: MigratedExpect::Style(legacy::mute()),
+            },
+            MigratedRoleUse {
+                id: "tunnel_host_picker.legend",
+                renderer: TUNNELS,
+                was: "theme::mute() on the `type to filter \u{b7} \u{2026}` hint line",
+                ident: "PopupLegend",
+                role: RoleRef::Style(StyleRole::PopupLegend),
+                expect: MigratedExpect::Style(legacy::mute()),
+            },
+
+            // ── Host detail panel, `widgets/detail_panel.rs` ────
+            MigratedRoleUse {
+                id: "detail_panel.label",
+                renderer: DETAIL_PANEL,
+                was: "Style::default().fg(Color::Cyan) on every `Field: ` caption",
+                ident: "DashboardDetailsLabel",
+                role: RoleRef::Style(StyleRole::DashboardDetailsLabel),
+                expect: Ansi(Color::Cyan),
+            },
+            MigratedRoleUse {
+                id: "detail_panel.value",
+                renderer: DETAIL_PANEL,
+                was: "Span::raw(value) \u{2014} the value carried no style at all",
+                ident: "DashboardDetailsValue",
+                role: RoleRef::Style(StyleRole::DashboardDetailsValue),
+                expect: Unstyled {
+                    was: "Span::raw, i.e. the terminal's own foreground",
+                    why: "the rest of the app draws body text through a role, and a value that \
+                          cannot be themed on a themed panel is not guaranteed legible",
+                },
+            },
+            MigratedRoleUse {
+                id: "detail_panel.favorite",
+                renderer: DETAIL_PANEL,
+                was: "Style::default().fg(Color::Yellow) on `yes \u{2605}`",
+                ident: "StatusWarning",
+                role: RoleRef::Color(ColorRole::StatusWarning),
+                expect: Ansi(Color::Yellow),
+            },
+            MigratedRoleUse {
+                id: "detail_panel.hint",
+                renderer: DETAIL_PANEL,
+                was: "Style::default().fg(Color::DarkGray) on the `[e] edit host` key hints",
+                ident: "TextDim",
+                role: RoleRef::Style(StyleRole::TextDim),
+                expect: Ansi(Color::DarkGray),
+            },
+            MigratedRoleUse {
+                id: "detail_panel.field_marker",
+                renderer: DETAIL_PANEL,
+                was: "`> ` baked into an unstyled Line::from(String)",
+                ident: "DashboardDetailsFieldMarker",
+                role: RoleRef::Style(StyleRole::DashboardDetailsFieldMarker),
+                expect: Unstyled {
+                    was: "no colour \u{2014} the whole edit row was one unstyled string",
+                    why: "the marker is the one cell that says where keystrokes land, and it \
+                          belongs to the detail panel rather than to the global \
+                          `focus.indicator`, which the spec reserves for the two form popups \
+                          whose marker clung to a directly-ANSI label",
+                },
+            },
         ]
     }
 
@@ -2290,7 +2661,7 @@ mod tests {
         assert_eq!(total, ids.len(), "two rows share an id");
         // Pinned so the number quoted in reports cannot drift from the table.
         assert_eq!(
-            total, 178,
+            total, 216,
             "the inventory changed size; add or remove the row deliberately"
         );
 

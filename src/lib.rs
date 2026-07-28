@@ -126,13 +126,9 @@ fn attach_config_watcher(app: &mut App) -> Result<()> {
 }
 
 /// Play the intro animation until the user dismisses it.
-///
-/// Takes the resolved theme even though the animation still paints with its own
-/// constants: its role migration is a later step, and threading the dependency
-/// now is what keeps that step from having to touch this call boundary again.
 fn run_animation<B: ratatui::backend::Backend + std::io::Write>(
     terminal: &mut Terminal<B>,
-    _theme: &crate::theme::model::ResolvedTheme,
+    theme: &crate::theme::model::ResolvedTheme,
 ) -> Result<()>
 where
     // ratatui 0.30 made Backend::Error an associated type with no auto
@@ -143,7 +139,7 @@ where
     let state = tui::animation::AnimationState::new(size.width, size.height);
 
     loop {
-        terminal.draw(|frame| state.render(frame))?;
+        terminal.draw(|frame| state.render(frame, theme))?;
         if event::poll(Duration::from_millis(33))? {
             if let Event::Key(key) = event::read()? {
                 match key.code {

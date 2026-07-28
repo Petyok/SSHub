@@ -404,6 +404,12 @@ role_catalog! {
         DashboardDetailsLabel => ("components.dashboard.details.label", SemanticStyle::Info, false),
         DashboardDetailsValue => ("components.dashboard.details.value", SemanticStyle::Text, false),
         DashboardDetailsMetadata => ("components.dashboard.details.metadata", SemanticStyle::TextMuted, false),
+        // The `> ` cursor in front of the detail panel's active edit field.
+        // Deliberately *not* `focus.indicator`: that role is the global marker
+        // for the two form popups whose marker clung to a directly-ANSI label.
+        // This one belongs to the detail panel, so a theme can move the
+        // dashboard's own cursor without moving the popups'.
+        DashboardDetailsFieldMarker => ("components.dashboard.details.field_marker", SemanticStyle::Accent, false),
 
         DashboardSshLogTitle => ("components.dashboard.ssh_log.title", SemanticStyle::TextBright, false),
         DashboardAgentTitle => ("components.dashboard.agent.title", SemanticStyle::TextBright, false),
@@ -453,6 +459,19 @@ role_catalog! {
         FormInputEditing => ("components.form.input_editing", SemanticStyle::TextBrightUnderlinedBold, false),
         FormHelp => ("components.form.help", SemanticStyle::TextDim, false),
         FormError => ("components.form.error", SemanticStyle::Error, false),
+
+        // The tunnel form is its own family rather than a second reader of
+        // `form.*` or `group_form.*`. Its focus idiom matches neither: it
+        // brightens the label without bolding it, and marks the field being
+        // edited with underlined highlight text rather than bold. Folding it
+        // onto a neighbour would have silently restyled that neighbour's cells.
+        TunnelFormLabel => ("components.tunnel_form.label", SemanticStyle::TextMuted, false),
+        TunnelFormLabelFocused => ("components.tunnel_form.label_focused", SemanticStyle::TextBright, false),
+        TunnelFormValue => ("components.tunnel_form.value", SemanticStyle::Text, false),
+        TunnelFormValueFocused => ("components.tunnel_form.value_focused", SemanticStyle::TextBright, false),
+        TunnelFormValueEditing => ("components.tunnel_form.value_editing", SemanticStyle::TextHighlight, false),
+        TunnelFormMarker => ("components.tunnel_form.marker", SemanticStyle::Success, false),
+        TunnelFormHelp => ("components.tunnel_form.help", SemanticStyle::TextDim, false),
 
         TableRow => ("components.table.row", SemanticStyle::Text, false),
         TableRowSelected => ("components.table.row_selected", SemanticStyle::Selection, false),
@@ -528,9 +547,16 @@ role_catalog! {
         AnimationNodeLabel => ("components.animation.node_label", SemanticStyle::Text, false),
         AnimationSpoke => ("components.animation.spoke", SemanticStyle::TextDim, false),
         AnimationHubEarly => ("components.animation.hub_early", SemanticStyle::Success, false),
-        AnimationHubReady => ("components.animation.hub_ready", SemanticStyle::TextBright, false),
+        // Bright *and* bold, like `wordmark`: the assembled hub glyph and the
+        // wordmark were the same `theme::heading()`-weight cell, and the plain
+        // `text_bright` fallback would have quietly dropped the weight.
+        AnimationHubReady => ("components.animation.hub_ready", SemanticStyle::TextBrightBold, false),
         AnimationHubFlash => ("components.animation.hub_flash", SemanticStyle::Warning, false),
-        AnimationWordmark => ("components.animation.wordmark", SemanticStyle::TextBright, false),
+        // The word "hub" while the hub is still assembling. `hub_flash` is the
+        // same word once the animation is done and it starts pulsing; the two
+        // were never the same colour, so they cannot be the same role.
+        AnimationHubLabel => ("components.animation.hub_label", SemanticStyle::TextMuted, false),
+        AnimationWordmark => ("components.animation.wordmark", SemanticStyle::TextBrightBold, false),
         AnimationWordmarkAccent => ("components.animation.wordmark_accent", SemanticStyle::Warning, false),
         AnimationTagline => ("components.animation.tagline", SemanticStyle::TextMuted, false),
         AnimationTaglineAccent => ("components.animation.tagline_accent", SemanticStyle::Warning, false),
@@ -586,6 +612,7 @@ role_catalog! {
 
         TabsSeparator => ("components.tabs.separator", SemanticPaint::TextDim, false),
         TunnelsSeparator => ("components.tunnels.separator", SemanticPaint::TextDim, false),
+        TunnelFormBorder => ("components.tunnel_form.border", SemanticPaint::Accent, true),
 
         SftpPanelBorder => ("components.sftp.panel.border", SemanticPaint::Border, true),
         SftpPanelBorderFocused => ("components.sftp.panel.border_focused", SemanticPaint::BorderFocus, true),

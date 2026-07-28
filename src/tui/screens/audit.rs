@@ -651,7 +651,7 @@ mod tests {
     /// screen made before the migration.
     #[test]
     fn the_audit_tab_reproduces_its_legacy_cells_under_default() {
-        use crate::tui::theme as legacy;
+        use crate::tui::theme::legacy;
 
         let app = audit_app(
             resolved_default(),

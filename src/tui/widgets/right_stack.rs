@@ -183,14 +183,11 @@ pub(crate) fn render_recent_panel(buf: &mut Buffer, area: Rect, app: &App) {
 
 /// The status-dot colour of an audit status string, taken from the runtime
 /// status colours rather than the frozen palette.
+///
+/// The string-to-role mapping itself is `tui::theme::status_role`, so the
+/// surfaces reading the global `components.status.*` family cannot drift apart.
 fn status_color(theme: &ResolvedTheme, status: &str) -> ratatui::style::Color {
-    let role = match status {
-        "ok" | "launched" | "online" | "up" => ColorRole::StatusSuccess,
-        "slow" | "idle" | "retry" | "warning" => ColorRole::StatusWarning,
-        "down" | "fail" | "error" | "unreachable" => ColorRole::StatusError,
-        _ => ColorRole::StatusUnknown,
-    };
-    theme.color(role)
+    theme.color(crate::tui::theme::status_role(status))
 }
 
 pub(crate) fn render_auth_panel(buf: &mut Buffer, area: Rect, app: &App) {

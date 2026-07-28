@@ -110,3 +110,20 @@ toast = { foreground = "semantic.info", modifiers = ["reversed"] }
 # appearance, recorded in `DEFAULT_PARITY_OVERRIDES`, not a reproduction.
 [components.selection]
 inactive = { foreground = "semantic.text_muted", background = "semantic.selection_bg" }
+
+# The animation's two amber-and-bold cells: the pulsing `hub` label and the
+# `u b` of the wordmark. The colour is the `warning` fallback; only the weight
+# has to be stated, because the semantic core has no "warning with bold"
+# recipe — the same shape as `popup.title` above. Their bright siblings
+# (`hub_ready`, `wordmark`) get their weight from the `text_bright with bold`
+# recipe in the catalogue instead, which is where a recipe already exists.
+[components.animation]
+hub_flash = { foreground = "semantic.warning", modifiers = ["bold"] }
+wordmark_accent = { foreground = "semantic.warning", modifiers = ["bold"] }
+
+# The tunnel form marks the field it is editing by underlining its value in
+# `theme::WHITE` — highlight text, no bold. `text_highlight` carries the
+# colour; the underline is stated here so a theme can mark the edited field
+# some other way instead of the renderer welding the modifier on.
+[components.tunnel_form]
+value_editing = { foreground = "semantic.text_highlight", modifiers = ["underlined"] }

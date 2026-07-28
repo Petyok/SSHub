@@ -1117,7 +1117,7 @@ mod tests {
     /// the focused pane's own selection.
     #[test]
     fn the_unfocused_pane_cursor_is_visible_under_default() {
-        use crate::tui::theme as legacy;
+        use crate::tui::theme::legacy;
 
         let mut state = browsing();
         state.focus = Focus::Remote;
@@ -1172,7 +1172,7 @@ mod tests {
     /// screen made before the migration.
     #[test]
     fn the_sftp_browser_reproduces_its_legacy_cells_under_default() {
-        use crate::tui::theme as legacy;
+        use crate::tui::theme::legacy;
         let theme = resolved_default();
 
         let mut state = browsing();

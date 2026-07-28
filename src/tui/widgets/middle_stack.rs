@@ -109,7 +109,7 @@ pub(crate) fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
         // Vertically center the logo within the card body.
         let pad = (inner_h.saturating_sub(logo_h)) / 2;
         let logo_area = Rect::new(inner_x, inner_top + pad, logo_w, logo_h);
-        OsLogoWidget::new(logo).render(logo_area, buf);
+        OsLogoWidget::new(logo, crate::osinfo::logos::os_logo_tint(theme)).render(logo_area, buf);
         text_x = inner_x + logo_w + 2;
     }
 
@@ -643,10 +643,6 @@ pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
 // ── Latency sparkline panel ─────────────────────────────
 
 /// Sparkline block characters, ordered lowest to highest.
-const SPARK_CHARS: [char; 8] = [
-    '\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}', '\u{2587}', '\u{2588}',
-];
-
 pub(crate) fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
     let theme = app.theme();
     let dim = theme.style(StyleRole::TextDim);
@@ -767,7 +763,12 @@ pub(crate) fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
                 if rem > 0 && full < graph_h {
                     let y = bottom - full;
                     if y >= graph_top {
-                        buf.set_string(x, y, SPARK_CHARS[rem - 1].to_string().as_str(), style);
+                        buf.set_string(
+                            x,
+                            y,
+                            crate::tui::theme::SPARK[rem - 1].to_string().as_str(),
+                            style,
+                        );
                     }
                 }
             }
@@ -792,7 +793,7 @@ pub(crate) fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
                 if i == last {
                     idx = (idx as f32 * grow).round() as usize;
                 }
-                SPARK_CHARS[idx]
+                crate::tui::theme::SPARK[idx]
             })
             .collect();
         buf.set_string(inner_x, spark_y, &sparkline, spark_low);

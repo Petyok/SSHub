@@ -1,13 +1,11 @@
 use ratatui::layout::Rect;
 use ratatui::prelude::*;
-use ratatui::widgets::Clear;
 
 use crate::app::App;
 use crate::store::TunnelType;
 use crate::theme::catalog::{ColorRole, PaintRole, StyleRole};
 use crate::theme::model::ResolvedTheme;
 use crate::tui::blit;
-use crate::tui::theme;
 
 /// One breath of a reconnecting tunnel's status dot (#35).
 const TUNNEL_PULSE: std::time::Duration = std::time::Duration::from_millis(1100);
@@ -381,8 +379,9 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
     let popup_area = crate::tui::popup_open_rect(popup_area, app);
+    let theme = app.theme();
 
-    frame.render_widget(Clear, popup_area);
+    crate::tui::open_popup(frame, popup_area, theme);
 
     // Border
     let title = if form.editing_id.is_some() {
@@ -392,8 +391,12 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
     };
     let border = ratatui::widgets::Block::default()
         .borders(ratatui::widgets::Borders::ALL)
-        .title(title)
-        .border_style(Style::default().fg(theme::ACCENT));
+        .title(Span::styled(title, theme.style(StyleRole::PopupTitle)))
+        .border_style(Style::default().fg(crate::tui::blit::line_color(
+            theme,
+            PaintRole::TunnelFormBorder,
+            popup_area,
+        )));
     let inner = border.inner(popup_area);
     frame.render_widget(border, popup_area);
 
@@ -450,9 +453,9 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
 
         // Field label
         let label_style = if is_active {
-            theme::bright()
+            theme.style(StyleRole::TunnelFormLabelFocused)
         } else {
-            theme::mute()
+            theme.style(StyleRole::TunnelFormLabel)
         };
         buf.set_string(inner.x + 1, row_y, name, label_style);
 
@@ -460,13 +463,11 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
         let val_x = inner.x + 15;
         let val_w = inner.width.saturating_sub(16) as usize;
         let val_style = if is_active && form.editing {
-            Style::default()
-                .fg(theme::WHITE)
-                .add_modifier(Modifier::UNDERLINED)
+            theme.style(StyleRole::TunnelFormValueEditing)
         } else if is_active {
-            theme::bright()
+            theme.style(StyleRole::TunnelFormValueFocused)
         } else {
-            theme::text()
+            theme.style(StyleRole::TunnelFormValue)
         };
 
         // Render the edit cursor in the active text field (Type/Host aren't text).
@@ -493,7 +494,12 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
 
         // Arrow indicator for active field
         if is_active {
-            buf.set_string(inner.x, row_y, "›", theme::green());
+            buf.set_string(
+                inner.x,
+                row_y,
+                "\u{203a}",
+                theme.style(StyleRole::TunnelFormMarker),
+            );
         }
 
         // Navigation hints: Type cycles with ←/→; Host opens a picker.
@@ -510,7 +516,7 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
             };
             let hx = val_x + display.len() as u16 + 1;
             if hx + hint.len() as u16 <= inner.x + inner.width {
-                buf.set_string(hx, row_y, hint, theme::dim());
+                buf.set_string(hx, row_y, hint, theme.style(StyleRole::TunnelFormHelp));
             }
         }
     }
@@ -524,7 +530,7 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
             inner.x + 1,
             footer_top,
             crate::tui::text::ellipsize("type to edit  Tab/\u{2193}: next field", avail),
-            theme::dim(),
+            theme.style(StyleRole::TunnelFormHelp),
         );
         let save_esc = format!("{}: save", app.save_key_label());
         let esc = "Esc: close";
@@ -541,7 +547,12 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
         if line.chars().count() > avail {
             line = esc.to_string();
         }
-        buf.set_string(inner.x + 1, footer_bottom, line, theme::dim());
+        buf.set_string(
+            inner.x + 1,
+            footer_bottom,
+            line,
+            theme.style(StyleRole::TunnelFormHelp),
+        );
     }
 }
 
@@ -562,13 +573,21 @@ pub fn render_tunnel_host_picker(frame: &mut Frame, app: &App) {
     let popup = Rect::new(x, y, popup_w, popup_h);
 
     let popup = crate::tui::popup_open_rect(popup, app);
+    let theme = app.theme();
 
-    frame.render_widget(Clear, popup);
+    crate::tui::open_popup(frame, popup, theme);
     frame.render_widget(
         ratatui::widgets::Block::default()
             .borders(ratatui::widgets::Borders::ALL)
-            .title(Span::styled(" select SSH server ", theme::heading()))
-            .border_style(Style::default().fg(theme::ACCENT)),
+            .title(Span::styled(
+                " select SSH server ",
+                theme.style(StyleRole::PopupTitle),
+            ))
+            .border_style(Style::default().fg(crate::tui::blit::line_color(
+                theme,
+                PaintRole::PickerBorder,
+                popup,
+            ))),
         popup,
     );
 
@@ -582,17 +601,31 @@ pub fn render_tunnel_host_picker(frame: &mut Frame, app: &App) {
         row_x,
         popup.y + 1,
         crate::tui::text::ellipsize(&query_line, inner_w),
-        theme::bright(),
+        theme.style(StyleRole::PickerQuery),
     );
 
     // Separator.
     let sep: String = std::iter::repeat_n('\u{2500}', inner_w).collect();
-    buf.set_string(row_x, popup.y + 2, &sep, theme::dim());
+    buf.set_string(
+        row_x,
+        popup.y + 2,
+        &sep,
+        Style::default().fg(crate::tui::blit::line_color(
+            theme,
+            PaintRole::SeparatorSecondary,
+            Rect::new(row_x, popup.y + 2, inner_w as u16, 1),
+        )),
+    );
 
     let list_top = popup.y + 3;
     let visible = popup.height.saturating_sub(5) as usize;
     if matches.is_empty() {
-        buf.set_string(row_x, list_top, "(no matching hosts)", theme::mute());
+        buf.set_string(
+            row_x,
+            list_top,
+            "(no matching hosts)",
+            theme.style(StyleRole::TextMuted),
+        );
     } else {
         // Scroll so the selection stays visible.
         let scroll = picker.selected.saturating_sub(visible.saturating_sub(1));
@@ -601,13 +634,13 @@ pub fn render_tunnel_host_picker(frame: &mut Frame, app: &App) {
             let ry = list_top + i as u16;
             let is_sel = idx == picker.selected;
             let style = if is_sel {
-                theme::selected()
+                theme.style(StyleRole::PickerRowSelected)
             } else {
-                theme::text()
+                theme.style(StyleRole::PickerRow)
             };
             if is_sel {
                 let blank = " ".repeat(popup.width.saturating_sub(2) as usize);
-                buf.set_string(popup.x + 1, ry, &blank, theme::selected());
+                buf.set_string(popup.x + 1, ry, &blank, style);
             }
             let marker = if is_sel { "\u{203a} " } else { "  " };
             buf.set_string(
@@ -625,7 +658,7 @@ pub fn render_tunnel_host_picker(frame: &mut Frame, app: &App) {
         row_x,
         hint_y,
         crate::tui::text::ellipsize("type to filter · \u{2191}/\u{2193} · Enter · Esc", inner_w),
-        theme::mute(),
+        theme.style(StyleRole::PopupLegend),
     );
 }
 
@@ -943,7 +976,7 @@ mod tests {
     /// which is the same source the renderer resolves from.
     #[test]
     fn the_tunnel_tab_reproduces_its_legacy_cells_under_default() {
-        use crate::tui::theme as legacy;
+        use crate::tui::theme::legacy;
         let theme = resolved_default();
 
         let app = {
@@ -994,5 +1027,287 @@ mod tests {
             assert_eq!(buf.cell((0, 0)).unwrap().fg, expected, "{status}: the dot");
             assert_eq!(fg_at_text(&buf, label), expected, "{status}: the label");
         }
+    }
+
+    // ── The tunnel form and its host picker ────────────────
+
+    const FORM_BORDER: u32 = 0xa2_0001;
+    const FORM_TITLE: u32 = 0xa2_0002;
+    const FORM_LABEL: u32 = 0xa2_0003;
+    const FORM_LABEL_FOCUSED: u32 = 0xa2_0004;
+    const FORM_VALUE: u32 = 0xa2_0005;
+    const FORM_VALUE_FOCUSED: u32 = 0xa2_0006;
+    const FORM_VALUE_EDITING: u32 = 0xa2_0007;
+    const FORM_MARKER: u32 = 0xa2_0008;
+    const FORM_HELP: u32 = 0xa2_0009;
+    const PICKER_BORDER: u32 = 0xa2_000a;
+    const PICKER_QUERY: u32 = 0xa2_000b;
+    const PICKER_SEPARATOR: u32 = 0xa2_000c;
+    const PICKER_ROW: u32 = 0xa2_000d;
+    const PICKER_ROW_SEL_FG: u32 = 0xa2_000e;
+    const PICKER_ROW_SEL_BG: u32 = 0xa2_010e;
+    const PICKER_EMPTY: u32 = 0xa2_000f;
+    const PICKER_LEGEND: u32 = 0xa2_0010;
+
+    fn form_markers() -> Vec<RoleMarker> {
+        vec![
+            fg("components.tunnel_form.border", FORM_BORDER),
+            fg("components.popup.title", FORM_TITLE),
+            fg("components.tunnel_form.label", FORM_LABEL),
+            fg("components.tunnel_form.label_focused", FORM_LABEL_FOCUSED),
+            fg("components.tunnel_form.value", FORM_VALUE),
+            fg("components.tunnel_form.value_focused", FORM_VALUE_FOCUSED),
+            fg("components.tunnel_form.value_editing", FORM_VALUE_EDITING),
+            fg("components.tunnel_form.marker", FORM_MARKER),
+            fg("components.tunnel_form.help", FORM_HELP),
+            fg("components.picker.border", PICKER_BORDER),
+            fg("components.picker.query", PICKER_QUERY),
+            fg("components.separator.secondary", PICKER_SEPARATOR),
+            fg("components.picker.row", PICKER_ROW),
+            fg_bg(
+                "components.picker.row_selected",
+                PICKER_ROW_SEL_FG,
+                PICKER_ROW_SEL_BG,
+            ),
+            fg("components.text.muted", PICKER_EMPTY),
+            fg("components.popup.legend", PICKER_LEGEND),
+        ]
+    }
+
+    /// The top-left corner of the popup drawn into `buf`.
+    fn frame_corner(buf: &ratatui::buffer::Buffer) -> (u16, u16) {
+        crate::test_support::find_text(buf, "\u{250c}")
+    }
+
+    /// Replace the app's hosts with store-backed managed ones, which is what
+    /// the picker filters over (it needs a real host id).
+    fn managed_hosts(app: &mut crate::app::App, names: &[&str]) {
+        use crate::app::HostEntry;
+        use crate::store::NewHost;
+        let mut hosts = Vec::new();
+        for name in names {
+            let id = app
+                .store()
+                .create_host(&NewHost::launcher(*name, "10.0.0.1"))
+                .unwrap()
+                .id;
+            hosts.push(HostEntry::Managed(
+                app.store().get_host(id).unwrap().unwrap(),
+            ));
+        }
+        app.hosts = hosts;
+        app.rebuild_filter();
+    }
+
+    /// An app showing the tunnel form, with `Local port` active and `editing`
+    /// as given.
+    fn form_app(theme: ResolvedTheme, editing: bool) -> crate::app::App {
+        use crate::app::{TunnelFormEdit, TunnelFormField};
+        let mut app = themed_app(theme);
+        app.tunnel_form = Some(TunnelFormEdit {
+            editing_id: None,
+            tunnel_type: TunnelType::Local,
+            local_port: "8080".into(),
+            remote_host: "db.internal".into(),
+            remote_port: "5432".into(),
+            host_id: None,
+            label: "metrics".into(),
+            auto_connect: false,
+            active_field: TunnelFormField::LocalPort,
+            editing,
+            edit_snapshot: String::new(),
+            dirty: false,
+            cursor: 0,
+        });
+        app
+    }
+
+    /// Every cell of the tunnel form reads its own `tunnel_form.*` role. The
+    /// form is not a second reader of `form.*` or `group_form.*`, and the two
+    /// focus states are rendered unconditionally.
+    #[test]
+    fn the_tunnel_form_wears_its_own_role_family() {
+        let app = form_app(role_marker_theme("tunnel-form", &form_markers()), false);
+        let buf = frame_at(Rect::new(0, 0, 80, 24), |f| {
+            render_tunnel_form(f, &app);
+        });
+
+        // The frame and its title.
+        let (bx, by) = crate::test_support::find_text(&buf, "New Tunnel");
+        assert_eq!(buf[(bx, by)].fg, marker(FORM_TITLE), "the form title");
+        assert_eq!(
+            buf[frame_corner(&buf)].fg,
+            marker(FORM_BORDER),
+            "the form frame"
+        );
+
+        // Focused label + value (Local port) and an unfocused pair (Label).
+        let (lx, ly) = crate::test_support::find_text(&buf, "Local port");
+        assert_eq!(buf[(lx, ly)].fg, marker(FORM_LABEL_FOCUSED));
+        assert_eq!(
+            buf[(lx - 1, ly)].symbol(),
+            "\u{203a}",
+            "the active row carries the arrow"
+        );
+        assert_eq!(buf[(lx - 1, ly)].fg, marker(FORM_MARKER));
+        let (vx, vy) = crate::test_support::find_text(&buf, "8080");
+        assert_eq!(buf[(vx, vy)].fg, marker(FORM_VALUE_FOCUSED));
+
+        let (ux, uy) = crate::test_support::find_text(&buf, "Destination");
+        assert_eq!(buf[(ux, uy)].fg, marker(FORM_LABEL));
+        assert_eq!(buf[(ux - 1, uy)].symbol(), " ", "no arrow on inactive rows");
+        let (dx, dy) = crate::test_support::find_text(&buf, "db.internal");
+        assert_eq!(buf[(dx, dy)].fg, marker(FORM_VALUE));
+
+        let (hx, hy) = crate::test_support::find_text(&buf, "type to edit");
+        assert_eq!(buf[(hx, hy)].fg, marker(FORM_HELP));
+
+        // The editing state of the same field is its own role.
+        let app = form_app(role_marker_theme("tunnel-form-edit", &form_markers()), true);
+        let buf = frame_at(Rect::new(0, 0, 80, 24), |f| {
+            render_tunnel_form(f, &app);
+        });
+        let (vx, vy) = crate::test_support::find_text(&buf, "8080");
+        assert_eq!(buf[(vx, vy)].fg, marker(FORM_VALUE_EDITING));
+    }
+
+    /// The host picker inside the form is a `picker.*` surface, in both the
+    /// populated and the empty state.
+    #[test]
+    fn the_tunnel_host_picker_wears_the_picker_roles() {
+        use crate::app::TunnelHostPicker;
+
+        let mut app = form_app(role_marker_theme("tunnel-picker", &form_markers()), false);
+        managed_hosts(&mut app, &["web-prod"]);
+        app.tunnel_host_picker = Some(TunnelHostPicker {
+            query: String::new(),
+            selected: 0,
+        });
+        let buf = frame_at(Rect::new(0, 0, 80, 24), |f| {
+            render_tunnel_host_picker(f, &app);
+        });
+
+        let (tx, ty) = crate::test_support::find_text(&buf, "select SSH server");
+        assert_eq!(buf[(tx, ty)].fg, marker(FORM_TITLE), "the picker title");
+        assert_eq!(
+            buf[frame_corner(&buf)].fg,
+            marker(PICKER_BORDER),
+            "the picker frame"
+        );
+        let (qx, qy) = crate::test_support::find_text(&buf, "/ ");
+        assert_eq!(buf[(qx, qy)].fg, marker(PICKER_QUERY));
+        assert_eq!(
+            buf[(qx, qy + 1)].fg,
+            marker(PICKER_SEPARATOR),
+            "the rule under the query"
+        );
+        // `themed_app` carries exactly one host, so row 0 is the selection and
+        // there is no unselected row to read here — the empty state below is
+        // what the `PickerRow` binding is proved on instead.
+        let (rx, ry) = crate::test_support::find_text(&buf, "web-prod");
+        assert_eq!(buf[(rx, ry)].fg, marker(PICKER_ROW_SEL_FG));
+        assert_eq!(buf[(rx, ry)].bg, marker(PICKER_ROW_SEL_BG));
+        let (hx, hy) = crate::test_support::find_text(&buf, "type to filter");
+        assert_eq!(buf[(hx, hy)].fg, marker(PICKER_LEGEND));
+
+        // Empty state: nothing matches, and the notice is its own role.
+        app.tunnel_host_picker = Some(TunnelHostPicker {
+            query: "nothing-matches-this".into(),
+            selected: 0,
+        });
+        let buf = frame_at(Rect::new(0, 0, 80, 24), |f| {
+            render_tunnel_host_picker(f, &app);
+        });
+        let (ex, ey) = crate::test_support::find_text(&buf, "(no matching hosts)");
+        assert_eq!(buf[(ex, ey)].fg, marker(PICKER_EMPTY));
+    }
+
+    /// An unselected picker row reads `picker.row`. Proved on a two-host app so
+    /// the assertion cannot land on the cursor row.
+    #[test]
+    fn an_unselected_host_picker_row_reads_the_row_role() {
+        use crate::app::TunnelHostPicker;
+
+        let mut app = form_app(role_marker_theme("tunnel-picker-2", &form_markers()), false);
+        managed_hosts(&mut app, &["aaa-first", "zzz-second"]);
+        app.tunnel_host_picker = Some(TunnelHostPicker {
+            query: String::new(),
+            selected: 0,
+        });
+        let buf = frame_at(Rect::new(0, 0, 80, 24), |f| {
+            render_tunnel_host_picker(f, &app);
+        });
+        let (ax, ay) = crate::test_support::find_text(&buf, "aaa-first");
+        let (zx, zy) = crate::test_support::find_text(&buf, "zzz-second");
+        assert_eq!(
+            buf[(ax, ay)].fg,
+            marker(PICKER_ROW_SEL_FG),
+            "the cursor row"
+        );
+        assert_eq!(buf[(zx, zy)].fg, marker(PICKER_ROW), "the row below it");
+        assert_ne!(buf[(zx, zy)].bg, marker(PICKER_ROW_SEL_BG));
+    }
+
+    /// Legacy parity for both popups, hand-transcribed from the
+    /// `crate::tui::theme` calls this task replaced.
+    #[test]
+    fn the_tunnel_form_reproduces_its_legacy_cells_under_default() {
+        use crate::app::TunnelHostPicker;
+        use crate::tui::theme::legacy;
+        use ratatui::style::Modifier;
+
+        let app = form_app(resolved_default(), false);
+        let buf = frame_at(Rect::new(0, 0, 80, 24), |f| {
+            render_tunnel_form(f, &app);
+        });
+        assert_eq!(buf[frame_corner(&buf)].fg, legacy::ACCENT);
+        let (lx, ly) = crate::test_support::find_text(&buf, "Local port");
+        assert_eq!(buf[(lx, ly)].fg, legacy::BRIGHT, "theme::bright()");
+        assert!(
+            !buf[(lx, ly)].modifier.contains(Modifier::BOLD),
+            "the tunnel form's focused label was never bold \u{2014} that is              group_form's idiom, not this one"
+        );
+        assert_eq!(buf[(lx - 1, ly)].fg, legacy::GREEN, "theme::green() arrow");
+        let (ux, uy) = crate::test_support::find_text(&buf, "Destination");
+        assert_eq!(buf[(ux, uy)].fg, legacy::MUTE, "theme::mute()");
+        let (dx, dy) = crate::test_support::find_text(&buf, "db.internal");
+        assert_eq!(buf[(dx, dy)].fg, legacy::TEXT, "theme::text()");
+        let (hx, hy) = crate::test_support::find_text(&buf, "type to edit");
+        assert_eq!(buf[(hx, hy)].fg, legacy::DIM, "theme::dim()");
+
+        let app = form_app(resolved_default(), true);
+        let buf = frame_at(Rect::new(0, 0, 80, 24), |f| {
+            render_tunnel_form(f, &app);
+        });
+        let (vx, vy) = crate::test_support::find_text(&buf, "8080");
+        let editing = buf[(vx, vy)].clone();
+        assert_eq!(editing.fg, legacy::WHITE);
+        assert!(editing.modifier.contains(Modifier::UNDERLINED));
+        assert!(!editing.modifier.contains(Modifier::BOLD));
+
+        let mut app = form_app(resolved_default(), false);
+        managed_hosts(&mut app, &["web-prod"]);
+        app.tunnel_host_picker = Some(TunnelHostPicker {
+            query: String::new(),
+            selected: 0,
+        });
+        let buf = frame_at(Rect::new(0, 0, 80, 24), |f| {
+            render_tunnel_host_picker(f, &app);
+        });
+        let (tx, ty) = crate::test_support::find_text(&buf, "select SSH server");
+        assert_eq!(buf[(tx, ty)].fg, legacy::BRIGHT);
+        assert!(
+            buf[(tx, ty)].modifier.contains(Modifier::BOLD),
+            "theme::heading() was bright *and* bold"
+        );
+        assert_eq!(buf[frame_corner(&buf)].fg, legacy::ACCENT);
+        let (qx, qy) = crate::test_support::find_text(&buf, "/ ");
+        assert_eq!(buf[(qx, qy)].fg, legacy::BRIGHT);
+        assert_eq!(buf[(qx, qy + 1)].fg, legacy::DIM);
+        let (rx, ry) = crate::test_support::find_text(&buf, "web-prod");
+        assert_eq!(buf[(rx, ry)].fg, legacy::SEL_FG);
+        assert_eq!(buf[(rx, ry)].bg, legacy::SEL_BG);
+        let (hx, hy) = crate::test_support::find_text(&buf, "type to filter");
+        assert_eq!(buf[(hx, hy)].fg, legacy::MUTE);
     }
 }

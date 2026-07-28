@@ -3926,7 +3926,7 @@ marker = { foreground = \"#ab0005\" }\n\
     /// renderer, against the exact `theme.rs` value each one replaced.
     #[test]
     fn the_overlays_reproduce_their_legacy_cells_under_default() {
-        use crate::tui::theme as legacy;
+        use crate::tui::theme::legacy;
 
         // 1. Help section heading — `theme::heading()`, bright *and* bold.
         let mut app = test_app_with_hosts();
@@ -4022,7 +4022,7 @@ marker = { foreground = \"#ab0005\" }\n\
     /// the accent `components.focus.indicator` resolves to.
     #[test]
     fn the_field_markers_reproduce_their_legacy_cells_under_default() {
-        use crate::tui::theme as legacy;
+        use crate::tui::theme::legacy;
 
         // 1 + 2. Both picker overlays drew the marker in `theme::selected()`.
         let mut app = test_app_with_hosts();
@@ -4162,7 +4162,7 @@ marker = { foreground = \"#ab0005\" }\n\
     /// here against the value it deliberately took, in both forms that draw it.
     #[test]
     fn the_forms_uncoloured_cells_keep_their_documented_roles() {
-        use crate::tui::theme as legacy;
+        use crate::tui::theme::legacy;
 
         let mut host = test_app_with_hosts();
         host.enter_host_form(None, false).unwrap();
@@ -4223,7 +4223,11 @@ marker = { foreground = \"#ab0005\" }\n\
         let buf = render_to_buffer(&app, 120, 38);
         let (x, y) = crate::test_support::find_text(&buf, " Help ");
         let cell = &buf[(x + 1, y)];
-        assert_eq!(cell.fg, crate::tui::theme::BRIGHT, "legacy heading colour");
+        assert_eq!(
+            cell.fg,
+            crate::tui::theme::legacy::BRIGHT,
+            "legacy heading colour"
+        );
         assert!(
             cell.modifier.contains(Modifier::BOLD),
             "legacy heading weight"
@@ -5125,7 +5129,11 @@ primary = \"#c20001\"\n";
         app.activate_resolved_theme(std::rc::Rc::new(crate::test_support::resolved_default()));
         let buf = render_to_buffer(&app, 80, 24);
         let style = style_at_text(&buf, "copied 12 chars");
-        assert_eq!(style.fg, Some(theme::CYAN), "theme::cyan()");
+        assert_eq!(
+            style.fg,
+            Some(crate::tui::theme::legacy::CYAN),
+            "theme::cyan()"
+        );
         assert!(
             style.add_modifier.contains(Modifier::REVERSED),
             "the chip is drawn inverted, as it always was"

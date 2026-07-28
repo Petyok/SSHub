@@ -1213,7 +1213,7 @@ mod tests {
     /// screen made before the migration.
     #[test]
     fn the_broadcast_surfaces_reproduce_their_legacy_cells_under_default() {
-        use crate::tui::theme as legacy;
+        use crate::tui::theme::legacy;
         let theme = resolved_default();
 
         let mut app = themed_app(resolved_default());

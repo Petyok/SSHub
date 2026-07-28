@@ -15,7 +15,7 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Clear};
+use ratatui::widgets::{Block, Borders};
 
 use crate::app::{App, ThemeRow, ThemeRowStatus};
 use crate::theme::catalog::{ColorRole, PaintRole, StyleRole};
@@ -24,7 +24,6 @@ use crate::theme::gradient::{
 };
 use crate::theme::model::{ResolvedPaint, ResolvedTheme};
 use crate::tui::text::ellipsize;
-use crate::tui::theme;
 
 /// Width of the right-hand status column (`warning` is the longest word).
 const STATUS_W: usize = 7;
@@ -250,12 +249,18 @@ fn row_line(row: &ThemeRow, width: usize) -> String {
     )
 }
 
-fn status_style(status: ThemeRowStatus) -> Style {
-    match status {
-        ThemeRowStatus::Valid => theme::green(),
-        ThemeRowStatus::Warning => theme::amber(),
-        ThemeRowStatus::Invalid => theme::red(),
-    }
+/// The badge colour of a row's validation status.
+///
+/// The picker's own badge family, not the global status colours: this list is a
+/// picker, and its three states are exactly what `components.picker.badge_*`
+/// exists for.
+fn status_style(theme: &ResolvedTheme, status: ThemeRowStatus) -> Style {
+    let role = match status {
+        ThemeRowStatus::Valid => ColorRole::PickerBadgeSuccess,
+        ThemeRowStatus::Warning => ColorRole::PickerBadgeWarning,
+        ThemeRowStatus::Invalid => ColorRole::PickerBadgeError,
+    };
+    Style::default().fg(theme.color(role))
 }
 
 /// The lines the footer explains the selected row with: a save/reload failure
@@ -580,12 +585,15 @@ pub fn render(frame: &mut Frame, app: &App) {
         return;
     }
 
-    frame.render_widget(Clear, popup);
+    // The picker previews the theme it is selecting, so its own chrome reads
+    // the live theme too — the frame the user is judging is the frame it draws.
+    let live = app.theme();
+    crate::tui::open_popup(frame, popup, live);
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)
-            .title(Span::styled(" Theme ", theme::heading()))
-            .border_style(theme::popup_border()),
+            .title(Span::styled(" Theme ", live.style(StyleRole::PopupTitle)))
+            .border_style(crate::tui::popup_border_style(live, popup)),
         popup,
     );
 
@@ -605,9 +613,9 @@ pub fn render(frame: &mut Frame, app: &App) {
         let index = offset + line;
         let is_sel = index == selected;
         let base = if is_sel {
-            theme::selected()
+            live.style(StyleRole::PickerRowSelected)
         } else {
-            theme::text()
+            live.style(StyleRole::PickerRow)
         };
         if is_sel {
             buf.set_stringn(list.x, y, " ".repeat(inner_w), inner_w, base);
@@ -617,9 +625,13 @@ pub fn render(frame: &mut Frame, app: &App) {
         // the line already reserved for it, so the column never shifts.
         if inner_w > KIND_W + STATUS_W + 2 {
             let status_x = list.x + (inner_w - STATUS_W) as u16;
-            let mut style = status_style(row.status);
+            let mut style = status_style(live, row.status);
             if is_sel {
-                style = style.bg(theme::SEL_BG);
+                // The badge keeps the selection bar under it, so the row reads
+                // as one band rather than a hole in the highlight.
+                if let Some(bg) = base.bg {
+                    style = style.bg(bg);
+                }
             }
             buf.set_stringn(status_x, y, row.status.label(), STATUS_W, style);
         }
@@ -660,7 +672,13 @@ pub fn render(frame: &mut Frame, app: &App) {
                 None => "no themes directory".to_string(),
             },
         };
-        buf.set_stringn(path.x, path.y, text, path.width as usize, theme::dim());
+        buf.set_stringn(
+            path.x,
+            path.y,
+            text,
+            path.width as usize,
+            live.style(StyleRole::PopupHint),
+        );
     }
 
     let diagnostics = areas.diagnostics;
@@ -672,9 +690,9 @@ pub fn render(frame: &mut Frame, app: &App) {
             .enumerate()
         {
             let style = if i == 0 && error_first {
-                theme::red()
+                live.style(StyleRole::PopupError)
             } else {
-                theme::mute()
+                live.style(StyleRole::TextMuted)
             };
             buf.set_stringn(
                 diagnostics.x,
@@ -693,7 +711,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             legend.y,
             text,
             legend.width as usize,
-            theme::mute(),
+            live.style(StyleRole::PopupLegend),
         );
     }
 }
@@ -706,6 +724,7 @@ mod tests {
     use crate::metadata::MetadataDb;
     use crate::ssh::{HostResolver, SshHost};
     use crate::store::LauncherStore;
+    use crate::tui::theme::legacy;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
     use std::sync::Arc;
@@ -1308,7 +1327,7 @@ mod tests {
             let row_y = areas.list.y + (selected - offset) as u16;
             assert_eq!(
                 buffer[(areas.list.x, row_y)].bg,
-                theme::SEL_BG,
+                legacy::SEL_BG,
                 "{w}x{h}: the selected row must be visible"
             );
             let diagnostics = row_text(&buffer, areas.diagnostics, areas.diagnostics.y);
@@ -1341,7 +1360,7 @@ mod tests {
         assert!(!first.trim().is_empty(), "the error must be visible");
         assert_eq!(
             buffer[(areas.diagnostics.x, areas.diagnostics.y)].fg,
-            theme::red().fg.unwrap()
+            legacy::red().fg.unwrap()
         );
     }
 
@@ -1367,15 +1386,117 @@ mod tests {
         }
     }
 
-    /// The selected row is the one the picker state points at.
+    /// The selected row is the one the picker state points at, and its bar
+    /// follows the theme the picker is *previewing* — navigating already
+    /// activates that theme across the whole TUI, so the picker's own chrome
+    /// showing the old one would contradict the frame around it.
     #[test]
     fn the_selected_row_carries_the_selection_background() {
         let mut app = picker_app();
-        app.select_theme_row(2);
-        let buffer = draw(&app, 80, 24);
         let list = plan_theme_picker_layout(Rect::new(0, 0, 80, 24)).list;
-        assert_eq!(buffer[(list.x, list.y + 2)].bg, theme::SEL_BG);
-        assert_ne!(buffer[(list.x, list.y)].bg, theme::SEL_BG);
+
+        // Row 0 is `default`, so this is also the legacy-parity check: the bar
+        // is exactly the `theme::selected()` ground it always was.
+        app.select_theme_row(0);
+        let buffer = draw(&app, 80, 24);
+        assert_eq!(buffer[(list.x, list.y)].bg, legacy::SEL_BG);
+        assert_eq!(buffer[(list.x, list.y)].fg, legacy::SEL_FG);
+        assert_ne!(buffer[(list.x, list.y + 1)].bg, legacy::SEL_BG);
+
+        // Row 2 is `aqua`, whose selection ground is its own.
+        app.select_theme_row(2);
+        let aqua = app
+            .theme()
+            .style(StyleRole::PickerRowSelected)
+            .bg
+            .expect("the selection role carries a ground");
+        assert_ne!(aqua, legacy::SEL_BG, "aqua must differ from default");
+        let buffer = draw(&app, 80, 24);
+        assert_eq!(buffer[(list.x, list.y + 2)].bg, aqua);
+        assert_ne!(buffer[(list.x, list.y)].bg, aqua);
+    }
+
+    /// The list rows, badges and footer are read from roles, not from a fixed
+    /// palette. Marker colours nothing else in the theme carries, driven
+    /// through the real `render`.
+    #[test]
+    fn the_picker_chrome_wears_its_own_roles() {
+        use crate::test_support::{fg, fg_bg, marker, role_marker_theme};
+
+        const TITLE: u32 = 0xb1_0001;
+        const ROW: u32 = 0xb1_0002;
+        const ROW_SEL_FG: u32 = 0xb1_0003;
+        const ROW_SEL_BG: u32 = 0xb1_0004;
+        const BADGE_OK: u32 = 0xb1_0005;
+        const HINT: u32 = 0xb1_0006;
+        const LEGEND: u32 = 0xb1_0007;
+
+        let theme = role_marker_theme(
+            "picker-markers",
+            &[
+                fg("components.popup.title", TITLE),
+                fg("components.picker.row", ROW),
+                fg_bg("components.picker.row_selected", ROW_SEL_FG, ROW_SEL_BG),
+                fg("components.picker.badge_success", BADGE_OK),
+                fg("components.popup.hint", HINT),
+                fg("components.popup.legend", LEGEND),
+            ],
+        );
+        let mut app = picker_app();
+        app.select_theme_row(1);
+        app.activate_resolved_theme(std::rc::Rc::new(theme));
+
+        let areas = plan_theme_picker_layout(Rect::new(0, 0, 100, 30));
+        let buffer = draw(&app, 100, 30);
+
+        assert_eq!(
+            buffer[(areas.popup.x + 1, areas.popup.y)].fg,
+            marker(TITLE),
+            "the ` Theme ` title reads components.popup.title"
+        );
+        // Both row states, unconditionally: row 1 is selected, row 0 is not.
+        assert_eq!(
+            buffer[(areas.list.x, areas.list.y + 1)].bg,
+            marker(ROW_SEL_BG),
+            "the selected row's bar"
+        );
+        assert_eq!(
+            buffer[(areas.list.x, areas.list.y + 1)].fg,
+            marker(ROW_SEL_FG),
+            "the selected row's text"
+        );
+        assert_eq!(
+            buffer[(areas.list.x, areas.list.y)].fg,
+            marker(ROW),
+            "an unselected row"
+        );
+        // The status badge keeps its own colour over the selection bar.
+        let badge_x = areas.list.x + (areas.list.width as usize - STATUS_W) as u16;
+        for (y, state) in [(areas.list.y, "unselected"), (areas.list.y + 1, "selected")] {
+            assert_eq!(
+                buffer[(badge_x, y)].fg,
+                marker(BADGE_OK),
+                "the {state} row's `valid` badge"
+            );
+        }
+        assert_eq!(
+            buffer[(badge_x, areas.list.y + 1)].bg,
+            marker(ROW_SEL_BG),
+            "the selected row's badge keeps the bar under it"
+        );
+
+        let path = areas.path.expect("the path row fits at 100x30");
+        assert_eq!(
+            buffer[(path.x, path.y)].fg,
+            marker(HINT),
+            "the themes-directory line"
+        );
+        let legend = areas.legend.expect("the legend row fits at 100x30");
+        assert_eq!(
+            buffer[(legend.x, legend.y)].fg,
+            marker(LEGEND),
+            "the key legend"
+        );
     }
 
     /// The legend and the themes-directory line occupy the bottom rows.
