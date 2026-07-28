@@ -5,25 +5,39 @@ after a frame has been drawn. The design constraint was that this must cost
 **less than 2 ms of additional median render time** per frame compared with a
 theme that has no gradients at all.
 
-This document is the evidence for that constraint. Read it for what it is: a
-**smoke measurement that establishes an upper bound**, not a controlled
-experiment that attributes a cost to the gradient pass.
+This document is the evidence for that constraint. Two different things live in
+it, and it matters which is which.
 
-- It is **not** a CI gate. The benchmark asserts nothing about timing and is
-  `#[ignore]`d, so it only runs when someone asks for it. A shared runner's
-  scheduling noise is larger than the effect being measured, so a timing
-  assertion there would fail for reasons that have nothing to do with SSHub.
-- It is **not** an isolation experiment. It compares two differently configured
-  built-in themes, always measured in the same order. The printed delta is the
-  combined effect of everything those two themes do differently, plus whatever
-  drift the fixed ordering introduces.
+**The bound comes from the gradient theme's own frame time.** A whole `fire`
+frame at `200x60` takes about `0.25 ms` at the median, and the gradient pass
+runs serially inside that frame — so it cannot possibly cost more than the whole
+frame does. That is a conservative upper bound on the gradient work, it holds
+without any comparison at all, and it sits roughly an order of magnitude below
+`2 ms` even before you subtract everything else the frame is doing.
 
-That is enough to answer the question the constraint asks — "can a gradient
-theme cost 2 ms more per frame?" — and it answers it with a very wide margin.
-It is not enough to say what a gradient pass costs. Isolating that would mean
-measuring one app state twice, once with gradient paints and once with
-equivalent solid paints, alternating the order between runs. That has not been
-done, and no claim here depends on it.
+**The printed delta bounds nothing.** It is a smoke observation, and it is worth
+being blunt about why it cannot be read as a cost:
+
+- `high-contrast` and `fire` differ in every value they set, not only in
+  gradients, so the difference mixes in everything else the two themes do
+  differently.
+- They are always measured in the same order, solid first, so any drift over the
+  run lands in the difference too.
+- Faster work elsewhere in `fire` can offset gradient work *inside* the
+  difference, hiding it rather than showing it.
+- The benchmark computes the delta with `saturating_sub`, so a negative
+  observation is reported as `0.000 ms` rather than as what it was. That has
+  happened: see the reviewer run below, where the gradient side measured
+  *faster* than the solid one.
+
+It is also **not** a CI gate: the benchmark asserts nothing about timing and is
+`#[ignore]`d, so it only runs when someone asks for it. A shared runner's
+scheduling noise is larger than the effect being measured, so a timing assertion
+there would fail for reasons that have nothing to do with SSHub.
+
+Isolating what the pass actually costs would mean measuring one app state twice,
+once with gradient paints and once with equivalent solid paints, alternating the
+order between runs. That has not been done, and no claim here depends on it.
 
 ## How to reproduce
 
@@ -44,7 +58,7 @@ not what separates the two:
 | Side | Theme | What it defines |
 | --- | --- | --- |
 | solid | `high-contrast` | Opaque app background, **no** gradients at all |
-| gradient | `fire` | Opaque app background, 3 gradient definitions (`blaze`, `updraft`, `cinder`) referenced by 5 roles: three focused panel frames, the primary separator and the tunnel-table separator. No background gradient. |
+| gradient | `fire` | Opaque app background, 3 gradient definitions (`blaze`, `updraft`, `cinder`) referenced by 5 roles: `components.dashboard.host_list.border_focused`, `components.dashboard.details.border_focused`, `components.dashboard.latency.border_focused`, `components.separator.primary` and `components.header.separator`. No background gradient. |
 
 They still differ in every other value they set. Per theme: 100 warm-up frames
 that are thrown away, then 1,000 measured frames; the durations are sorted and
@@ -77,22 +91,26 @@ Ten consecutive runs on an otherwise idle machine:
 | 9 | 0.210 ms | 0.214 ms | 0.004 ms |
 | 10 | 0.205 ms | 0.220 ms | 0.015 ms |
 
-An independent reviewer's repeat run on different hardware produced solid
-`0.224 ms`, gradient `0.218 ms`, delta `0.000 ms` — the gradient side measuring
-*faster* than the solid one, which is the clearest possible statement of how far
-this sits inside the noise floor.
+Two independent reviewer runs on different hardware produced solid `0.224 ms` /
+gradient `0.218 ms` and solid `0.262 ms` / gradient `0.254 ms` — in both, the
+gradient side measured *faster* than the solid one, and the reported delta was
+`0.000 ms` only because `saturating_sub` clamps it. That is the clearest
+possible demonstration that the delta is not measuring the gradient pass.
 
-**Result:** across every run recorded here the observed difference stays under
-`0.03 ms`, and one independent run put it at zero or below. Whatever a gradient
-theme costs per frame at `200x60`, it is bounded far below the `2 ms`
-acceptance criterion — roughly two orders of magnitude below. The measurement
-does not support any narrower claim than that, and none is made.
+**Result.** The claim this measurement supports is the one that needs no
+comparison: a whole gradient frame at `200x60` has a median of `0.204 – 0.262 ms`
+across every run recorded here, local and reviewer alike. The gradient pass runs
+inside that frame, so its cost is bounded by it — roughly an order of magnitude
+under the `2 ms` criterion, and that is before subtracting everything else the
+frame does. The deltas are recorded for completeness and support no claim: they
+range from a clamped zero to `0.023 ms`, which is the size of the run-to-run
+noise, not the size of an effect.
 
-## Why an upper bound this low is plausible
+## Why a frame this cheap is plausible
 
 Gradient sampling allocates nothing per cell — no `Vec`, `String`, `Box` or heap
 closure — and runs only over the rects that actually carry a gradient role, not
 over the whole buffer. A theme without gradients never enters the painter at
 all: the solid path is a plain blanking pass. That is the design reason the
-effect is hard to measure; the numbers above are consistent with it, not a proof
-of it.
+effect is too small to separate from the noise; the numbers above are consistent
+with it, not a proof of it.

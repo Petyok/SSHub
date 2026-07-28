@@ -2,29 +2,40 @@
 #
 # `default` is the only theme without a parent: every other theme, built-in or
 # your own, inherits from it. Its job is to reproduce the appearance SSHub had
-# before the theme system existed, cell for cell, with two documented and
-# deliberate exceptions:
+# before the theme system existed, cell for cell, with three documented and
+# deliberate classes of exception:
 #
 #   1. cells that carried a direct ANSI colour (no `theme.rs` value existed for
 #      them) are normalised onto their semantic role;
 #   2. a handful of cells that carried *no* colour at all — two form titles, an
 #      idle form value, the form key hints and the detail-panel field marker —
 #      now carry one, so they can be themed and stay readable on a themed
-#      ground. Each one is recorded individually in the release notes.
+#      ground;
+#   3. two places where the old appearance was simply unusable and this theme
+#      deliberately draws something better: the selected row of the *unfocused*
+#      SFTP pane, which used to have no highlight at all, and the SFTP queue
+#      warning, which used to hide inside the panel heading exactly when it
+#      mattered most.
 #
-# Everything else looks exactly as it did.
+# Each case is recorded individually — the ones in this file are commented at
+# the override that implements them, and all of them are in the release notes.
+# Everything not covered by the three classes looks exactly as it did.
 #
-# `default` defines the complete semantic core and nothing else. Every one of
-# the 234 component roles already carries a documented fallback in the Rust
-# catalogue (see docs/theme-system.md for the full generated table), so
-# restating them here would create a second hand-maintained copy of the same
-# table — the one thing the V1 contract rules out. Change a semantic slot below
-# and every component that inherits from it follows automatically.
+# `default` defines the complete semantic core plus a short list of component
+# overrides, and nothing else. Most of those overrides exist to *reproduce* the
+# old appearance where a semantic fallback cannot — it carries a colour but not
+# a bold, an underline or an inversion — and one of them, `selection.inactive`,
+# is the deliberate improvement named above. Every one of the 234
+# component roles already carries a documented fallback in the Rust catalogue
+# (see docs/theme-system.md for the full generated table), so restating them all
+# here would create a second hand-maintained copy of the same table — the one
+# thing the V1 contract rules out. Change a semantic slot below and every
+# component that inherits from it follows automatically.
 #
-# If `default` ever does need a component override, it may use only
-# `semantic.*` references and the sentinels "terminal", "auto" and "native" —
-# never a hex literal and never `palette.*`, so that every default assignment
-# stays overridable through the semantic core.
+# The overrides `default` does carry use only `semantic.*` references and the
+# sentinels "terminal", "auto" and "native" — never a hex literal and never
+# `palette.*`, so that every default assignment stays overridable through the
+# semantic core.
 
 schema_version = 1
 name = "Default"

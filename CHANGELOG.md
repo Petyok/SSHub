@@ -93,13 +93,18 @@ All notable changes to SSHub are documented in this file.
   that mentions roles this version does not know is usable with a warning.
 - **Five built-in themes**, embedded in the binary and readable with
   `sshub theme show`: `default`, `summer`, `aqua`, `fire` and `high-contrast`.
-  `default` reproduces the previous appearance cell for cell with two
-  deliberate exceptions: cells that carried a direct ANSI colour are normalised
-  onto their semantic role, and a handful of cells that carried *no* colour at
-  all now carry one - the host and identity form titles, an idle form value,
-  the form key hints and the detail-panel field marker. Those cells were
-  unthemeable and, on a themed popup ground, not guaranteed readable; each is
-  recorded individually in `assets/themes/default.toml` and the design spec.
+  `default` reproduces the previous appearance cell for cell with three
+  deliberate classes of exception. Cells that carried a direct ANSI colour are
+  normalised onto their semantic role. A handful of cells that carried *no*
+  colour at all now carry one - the host and identity form titles, an idle form
+  value, the form key hints and the detail-panel field marker - because they
+  were unthemeable and, on a themed popup ground, not guaranteed readable. And
+  two places are deliberately **improved** rather than reproduced: the selected
+  row of the unfocused SFTP pane, which previously had no highlight at all so
+  the cursor vanished in exactly the pane you were about to Tab back into, and
+  the SFTP queue warning, which used to sit inside the panel heading and is now
+  drawn as its own line. Each case is recorded individually in
+  `assets/themes/default.toml` and the design spec.
 - **Static gradients** - named multi-stop gradients in five directions
   (`horizontal`, `vertical`, `diagonal_down`, `diagonal_up`, `perimeter`) on
   frames, separators and backgrounds, painted by buffer post-processing with no

@@ -569,7 +569,7 @@ mod tests {
     // altogether. Adding a migrated surface therefore still requires adding it
     // to that list by hand.
     //
-    // **The two documented deviations from `default` parity.** The spec's
+    // **The two parity deviations this inventory classifies.** The spec's
     // written exception is the first one only; the second is a deviation this
     // migration argued for separately, and calling it "the one exception"
     // would misstate the contract:
@@ -580,6 +580,15 @@ mod tests {
     // 2. [`MigratedExpect::Unstyled`] — the legacy cells carried **no colour at
     //    all**. That is not the ANSI exception; each one is a deliberate change
     //    in appearance, so the variant forces a recorded `was` and `why`.
+    //
+    // The spec names a **third** class these variants do not cover: the two
+    // per-surface improvements where the frozen appearance was unusable.
+    // `components.selection.inactive` is an explicit override, so it lives in
+    // `DEFAULT_PARITY_OVERRIDES` and in `assets/themes/default.toml`;
+    // `components.sftp.notice` is a renderer change — the queue warning is
+    // drawn as its own line instead of inside the heading — so it has no
+    // override at all. Neither is a role whose value drifted, which is all this
+    // table judges. Do not read it as the whole parity contract.
 
     /// What `default` must produce for one migrated role use.
     #[derive(Clone, Copy)]

@@ -5273,22 +5273,32 @@ primary = \"#c20001\"\n";
         );
     }
 
-    // ── Release measurement: an upper bound on gradient cost ────────
+    // ── Release measurement: gradient rendering cost ────────────────
     //
-    // Not a CI gate, and not an isolation experiment either. It asserts nothing
-    // about timing — a shared runner's scheduling noise dwarfs the effect being
-    // measured — and is `#[ignore]`d so only a deliberate local run produces it.
+    // Not a CI gate and not an isolation experiment. It asserts nothing about
+    // timing — a shared runner's scheduling noise dwarfs the effect being
+    // measured — and is `#[ignore]`d so only a deliberate local run produces
+    // it.
     //
-    // What it can and cannot show: it compares two *differently configured
-    // themes*, always in the same order, so the difference it prints is the
-    // combined effect of everything those two themes do differently, plus
-    // whatever drift the fixed ordering introduces. That makes it a sanity
-    // check and an **upper bound**, not an attribution of cost to the gradient
-    // pass. Isolating that properly would mean measuring one app state twice,
+    // **What bounds the gradient pass is the gradient theme's own total frame
+    // time**, not the printed delta. The pass runs serially inside the frame,
+    // so it cannot cost more than the whole frame takes; a `fire` frame around
+    // a quarter of a millisecond is therefore already a conservative bound far
+    // under the spec's `2 ms` criterion, whatever share of it the gradients
+    // actually are.
+    //
+    // The **delta is not a bound on anything**. It compares two differently
+    // configured themes, always in the same order: `fire` differs from
+    // `high-contrast` in every value it sets, faster work elsewhere in `fire`
+    // can offset gradient work inside the difference, and `saturating_sub`
+    // clamps a negative observation to zero — which has been observed, with the
+    // gradient side measuring the faster of the two. Treat it as a
+    // non-isolated smoke observation and nothing more.
+    //
+    // Isolating the pass properly would mean measuring one app state twice,
     // once with gradient paints and once with equivalent solid ones, with the
-    // order alternated. The bound is enough for the spec's `< 2 ms` median
-    // criterion, which it clears by orders of magnitude; the numbers are
-    // recorded in `docs/theme-render-benchmark.md`.
+    // order alternated between runs. The numbers are recorded in
+    // `docs/theme-render-benchmark.md`.
 
     /// Frames measured per theme. The spec asks for at least 1,000.
     const BENCH_SAMPLES: usize = 1_000;
@@ -5323,8 +5333,9 @@ primary = \"#c20001\"\n";
     /// the built-ins offer: it paints an opaque app background like `fire` does
     /// but defines no gradient at all, so at least the presence of a background
     /// pass is not what separates them. They still differ in every other value
-    /// they set, and they are always measured in that order, so treat the
-    /// printed delta as an upper bound rather than as the gradient pass's cost.
+    /// they set, and they are always measured in that order, so the printed
+    /// delta is a smoke observation, not a bound. The bound is the gradient
+    /// theme's own frame time, which is printed alongside it.
     #[test]
     #[ignore = "local release measurement; prints timings, asserts none"]
     fn theme_gradient_release_benchmark() {
@@ -5355,8 +5366,17 @@ primary = \"#c20001\"\n";
             gradient_median.as_secs_f64() * 1e3
         );
         println!(
-            "  delta                          : {:.3} ms",
+            "  delta (NOT a bound; see below) : {:.3} ms",
             delta.as_secs_f64() * 1e3
+        );
+        // The claim that survives review: the gradient pass runs serially
+        // inside the gradient frame, so the whole frame bounds it from above.
+        println!(
+            "  => the gradient pass costs at most one whole `fire` frame, {:.3} ms",
+            gradient_median.as_secs_f64() * 1e3
+        );
+        println!(
+            "     (the delta compares two different themes in fixed order and bounds nothing)"
         );
     }
 }
