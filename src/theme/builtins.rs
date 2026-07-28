@@ -451,7 +451,7 @@ mod tests {
 
         assert_task14_legacy_cells(theme);
     }
-    // ── Per-call-site legacy inventory for the Task 14 surfaces ──
+    // ── Per-renderer legacy inventory for the Task 14 surfaces ──
     //
     // The blanket loop above is circular *as a class*: it derives its expected
     // value from `ROLE_SPECS[*].fallback`, the same source the productive role
@@ -460,56 +460,92 @@ mod tests {
     // four overlay regressions, and then the five field markers, survived
     // review.
     //
-    // A witness keyed on *role paths* is not enough either. Several productive
-    // cells share one path (`popup.title` is drawn by a dozen overlays), a path
-    // that is forgotten in both the witness and the guard is invisible, and a
-    // cell whose appearance does not follow its role at all — the palette's
-    // opaque background — cannot be expressed as a role value.
+    // A witness keyed on *role paths alone* is not enough either: a path that
+    // is forgotten in both the witness and its guard is invisible, and a cell
+    // whose appearance does not follow its role at all — the palette's opaque
+    // background — cannot be expressed as a role value.
     //
-    // So the inventory below has **one row per productive cell**: where it is
-    // drawn, what it was before the migration, which role it reads now, and
-    // what `default` must produce for it. [`Task14Expect::Context`] is the
-    // typed escape hatch for a cell whose `default` appearance is deliberately
-    // not its role's value, and it must name the productive test that proves
-    // the cell instead.
+    // So the inventory below has **one row per `(renderer, role)` pair**: where
+    // the role is drawn, every legacy source that pair replaced, and what
+    // `default` must produce. Two things keep it honest, and both are machine
+    // -checked: the values are hand-written from the `crate::tui::theme` calls
+    // they replaced, never from `ROLE_SPECS`; and the *set* of pairs is derived
+    // from the renderers' own source, so a role a renderer reads without an
+    // inventory row fails.
     //
-    // Two things keep it honest, and both are machine-checked below:
-    // the values are hand-written from the `crate::tui::theme` call each cell
-    // replaced, never from `ROLE_SPECS`; and the *set* of cells is derived from
-    // the renderers' own source, so a call site missing from this table fails.
+    // **What this does and does not prove.** It proves per-renderer *role*
+    // coverage: no Task 14 renderer reads a role this table has not accounted
+    // for, and every accounted role reproduces its legacy value under
+    // `default`. It does **not** prove per-cell coverage — a renderer that
+    // draws a role it already uses at one more place adds no new row, because
+    // the check is textual and deduplicates identifiers per file. Proving that
+    // would need an AST pass with source spans, and this crate may not take the
+    // dependency. Cell-level parity is instead proved where it belongs: by the
+    // productive goldens in `crate::tui::tests`, which render the real frame
+    // and read named cells back — `the_overlays_reproduce_their_legacy_cells_
+    // under_default`, `the_field_markers_reproduce_their_legacy_cells_under_
+    // default`, `the_forms_uncoloured_cells_keep_their_documented_roles` and
+    // the per-surface marker proofs.
+    //
+    // The textual scan is also blind to `use StyleRole::*`, to a role reached
+    // through a macro or a helper in another file, to a role named only in a
+    // comment or a string, and to a renderer left out of `TASK14_RENDERERS`
+    // altogether. Adding a Task 14 surface therefore still requires adding it
+    // to that list by hand.
     //
     // Roles whose legacy source was a *direct ANSI colour* carry
-    // [`Task14Expect::Normalised`]: the spec allows those onto the semantic
-    // core and there is no `theme.rs` cell to be faithful to.
+    // [`Task14Expect::Ansi`]: the spec allows those onto the semantic core and
+    // there is no `theme.rs` cell to be faithful to. Cells that carried no
+    // colour at all are **not** that exception and carry
+    // [`Task14Expect::Unstyled`] with their own recorded reasoning.
 
-    /// What `default` must produce for one migrated cell.
+    /// What `default` must produce for one migrated role use.
     #[derive(Clone, Copy)]
     enum Task14Expect {
-        /// The cell is its role, and the role must equal this legacy value.
+        /// The cells follow the role, and the role must equal this legacy value.
         Style(Style),
         Color(Color),
         Paint(Color),
-        /// The cell's legacy source was a direct ANSI colour, which the spec
-        /// allows to be normalised onto the semantic core. Carries the colour
-        /// it used to be, for the record.
-        Normalised(&'static str),
-        /// The cell deliberately does *not* wear its role's `default` value;
+        /// The legacy source really was a direct ANSI colour, which the spec's
+        /// one parity exception allows onto the semantic core. Carries the
+        /// colour itself, and the guard rejects anything that is not a named
+        /// ANSI colour — the exception may not be stretched over cells that
+        /// simply had no colour.
+        Ansi(Color),
+        /// The legacy cells carried **no colour at all** — the terminal's own
+        /// foreground, sometimes with a bare `DIM` modifier. That is not the
+        /// ANSI exception, so each one is a deliberate deviation recorded in
+        /// the spec, with its reasoning, rather than absorbed silently.
+        Unstyled {
+            was: &'static str,
+            why: &'static str,
+        },
+        /// The cells deliberately do *not* wear the role's `default` value;
         /// the renderer documents a substitution. Names the reason and the
-        /// productive test that proves the cell instead.
+        /// productive test that proves them instead.
         Context {
             why: &'static str,
             proof: &'static str,
         },
     }
 
-    /// One productive cell this task migrated.
+    /// One `(renderer, role)` pair this task migrated.
+    ///
+    /// **Not one cell.** A renderer usually draws several cells from the same
+    /// role — `src/tui/mod.rs` puts `PopupTitle` on three popup frames — and
+    /// this row covers all of them together; `was` therefore lists every legacy
+    /// source that pair replaced. What the guard below proves is that no role a
+    /// Task 14 renderer reads is missing from this table, not that every
+    /// individual `set_string` has its own row. Cell-level parity is proved by
+    /// the productive goldens in `crate::tui::tests`, which render the real
+    /// frame and read named cells back.
     #[derive(Clone, Copy)]
-    struct Task14Cell {
-        /// Stable `<surface>.<cell>` id, used in failure messages.
+    struct Task14RoleUse {
+        /// Stable `<surface>.<role>` id, used in failure messages.
         id: &'static str,
         /// The renderer that draws it today, relative to the crate root.
         renderer: &'static str,
-        /// The pre-migration source expression, verbatim.
+        /// Every pre-migration source this pair replaced, verbatim.
         was: &'static str,
         /// The role's Rust identifier, as the renderer spells it.
         ident: &'static str,
@@ -566,33 +602,29 @@ mod tests {
         (MOD, "StatusBarBackground"),
     ];
 
-    fn style(s: Style) -> Task14Expect {
-        Task14Expect::Style(s)
-    }
-
-    /// The cells, grouped by the surface that draws them.
-    fn task14_cells() -> Vec<Task14Cell> {
-        use Task14Expect::{Color as C, Context, Normalised, Paint};
+    /// The role uses, grouped by the surface that draws them.
+    fn task14_role_uses() -> Vec<Task14RoleUse> {
+        use Task14Expect::{Ansi, Color as C, Context, Paint, Unstyled};
         let sel_bg = legacy::SEL_BG;
         vec![
             // ── Generic popup chrome, `src/tui/mod.rs` ──────────
-            Task14Cell {
+            Task14RoleUse {
                 id: "popup.title",
                 renderer: MOD,
                 was: "theme::heading() on every popup Block title",
                 ident: "PopupTitle",
                 role: RoleRef::Style(StyleRole::PopupTitle),
-                expect: style(legacy::heading()),
+                expect: Task14Expect::Style(legacy::heading()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "popup.hint",
                 renderer: MOD,
                 was: "theme::dim() on the help footer and the prompt legends",
                 ident: "PopupHint",
                 role: RoleRef::Style(StyleRole::PopupHint),
-                expect: style(legacy::dim()),
+                expect: Task14Expect::Style(legacy::dim()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "popup.border",
                 renderer: MOD,
                 was: "theme::popup_border()",
@@ -600,7 +632,7 @@ mod tests {
                 role: RoleRef::Paint(PaintRole::PopupBorder),
                 expect: Paint(legacy::MUTE),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "popup.background",
                 renderer: MOD,
                 was: "no fill at all: `Clear` left the cells at the terminal ground",
@@ -608,48 +640,48 @@ mod tests {
                 role: RoleRef::Paint(PaintRole::PopupBackground),
                 expect: Paint(Color::Reset),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "confirm.error",
                 renderer: MOD,
                 was: "Style::default().fg(Color::Red)",
                 ident: "PopupError",
                 role: RoleRef::Style(StyleRole::PopupError),
-                expect: Normalised("ANSI Color::Red"),
+                expect: Ansi(Color::Red),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "confirm.warning",
                 renderer: MOD,
                 was: "Style::default().fg(Color::Yellow)",
                 ident: "PopupWarning",
                 role: RoleRef::Style(StyleRole::PopupWarning),
-                expect: Normalised("ANSI Color::Yellow"),
+                expect: Ansi(Color::Yellow),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "form_popup.notice",
                 renderer: MOD,
                 was: "Style::default().fg(Color::Red)",
                 ident: "FormError",
                 role: RoleRef::Style(StyleRole::FormError),
-                expect: Normalised("ANSI Color::Red"),
+                expect: Ansi(Color::Red),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "prompt.label",
                 renderer: MOD,
                 was: "theme::text() on the SFTP and Termius prompt lines",
                 ident: "TextPrimary",
                 role: RoleRef::Style(StyleRole::TextPrimary),
-                expect: style(legacy::text()),
+                expect: Task14Expect::Style(legacy::text()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "prompt.value",
                 renderer: MOD,
                 was: "theme::bright() on the typed path or name",
                 ident: "FormInput",
                 role: RoleRef::Style(StyleRole::FormInput),
-                expect: style(legacy::bright()),
+                expect: Task14Expect::Style(legacy::bright()),
             },
             // ── Fuzzy palette ──────────────────────────────────
-            Task14Cell {
+            Task14RoleUse {
                 id: "palette.background",
                 renderer: PALETTE,
                 was: "Block::style(Style::default().bg(theme::BG))",
@@ -661,66 +693,66 @@ mod tests {
                           every surface role; where the role resolves to the terminal \
                           ground the palette substitutes `semantic.canvas`, which under \
                           `default` is literally the former `theme::BG`",
-                    proof: "tui::tests::a_generic_popup_wears_the_popup_background_not_the_app_background",
+                    proof: "tui::tests::palette_popup_interior_filled_with_theme_bg",
                 },
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "palette.title",
                 renderer: PALETTE,
                 was: "theme::heading()",
                 ident: "PopupTitle",
                 role: RoleRef::Style(StyleRole::PopupTitle),
-                expect: style(legacy::heading()),
+                expect: Task14Expect::Style(legacy::heading()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "palette.query",
                 renderer: PALETTE,
                 was: "theme::white()",
                 ident: "CommandPaletteQuery",
                 role: RoleRef::Style(StyleRole::CommandPaletteQuery),
-                expect: style(legacy::white()),
+                expect: Task14Expect::Style(legacy::white()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "palette.row_selected",
                 renderer: PALETTE,
                 was: "theme::white().bg(theme::SEL_BG)",
                 ident: "CommandPaletteRowSelected",
                 role: RoleRef::Style(StyleRole::CommandPaletteRowSelected),
-                expect: style(legacy::white().bg(sel_bg)),
+                expect: Task14Expect::Style(legacy::white().bg(sel_bg)),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "palette.row_name",
                 renderer: PALETTE,
                 was: "theme::bright() on an unselected host name",
                 ident: "TextBright",
                 role: RoleRef::Style(StyleRole::TextBright),
-                expect: style(legacy::bright()),
+                expect: Task14Expect::Style(legacy::bright()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "palette.detail_key",
                 renderer: PALETTE,
                 was: "theme::mute() on the counter, group, hint and detail keys",
                 ident: "PopupLegend",
                 role: RoleRef::Style(StyleRole::PopupLegend),
-                expect: style(legacy::mute()),
+                expect: Task14Expect::Style(legacy::mute()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "palette.detail_value",
                 renderer: PALETTE,
                 was: "theme::text() on a detail value",
                 ident: "TextPrimary",
                 role: RoleRef::Style(StyleRole::TextPrimary),
-                expect: style(legacy::text()),
+                expect: Task14Expect::Style(legacy::text()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "palette.user_column",
                 renderer: PALETTE,
                 was: "theme::dim() on the user column",
                 ident: "PopupHint",
                 role: RoleRef::Style(StyleRole::PopupHint),
-                expect: style(legacy::dim()),
+                expect: Task14Expect::Style(legacy::dim()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "palette.rule",
                 renderer: PALETTE,
                 was: "theme::border() on the two inner rules",
@@ -728,7 +760,7 @@ mod tests {
                 role: RoleRef::Paint(PaintRole::SeparatorPrimary),
                 expect: Paint(legacy::BORDER),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "palette.prompt_caret",
                 renderer: PALETTE,
                 was: "theme::green() on the prompt marker, caret and selection arrow",
@@ -737,39 +769,39 @@ mod tests {
                 expect: C(legacy::GREEN),
             },
             // ── Field picker ───────────────────────────────────
-            Task14Cell {
+            Task14RoleUse {
                 id: "field_picker.title",
                 renderer: FIELD_PICKER,
                 was: "theme::heading()",
                 ident: "PopupTitle",
                 role: RoleRef::Style(StyleRole::PopupTitle),
-                expect: style(legacy::heading()),
+                expect: Task14Expect::Style(legacy::heading()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "field_picker.row",
                 renderer: FIELD_PICKER,
                 was: "theme::text()",
                 ident: "PickerRow",
                 role: RoleRef::Style(StyleRole::PickerRow),
-                expect: style(legacy::text()),
+                expect: Task14Expect::Style(legacy::text()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "field_picker.row_selected",
                 renderer: FIELD_PICKER,
                 was: "theme::selected()",
                 ident: "PickerRowSelected",
                 role: RoleRef::Style(StyleRole::PickerRowSelected),
-                expect: style(legacy::selected()),
+                expect: Task14Expect::Style(legacy::selected()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "field_picker.marker",
                 renderer: FIELD_PICKER,
                 was: "the marker inside the selected row's own theme::selected() label",
                 ident: "PickerMarker",
                 role: RoleRef::Style(StyleRole::PickerMarker),
-                expect: style(legacy::selected()),
+                expect: Task14Expect::Style(legacy::selected()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "field_picker.create_row",
                 renderer: FIELD_PICKER,
                 was: "theme::green() on the `+ New group` row",
@@ -777,333 +809,363 @@ mod tests {
                 role: RoleRef::Color(ColorRole::StatusSuccess),
                 expect: C(legacy::GREEN),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "field_picker.inline_input",
                 renderer: FIELD_PICKER,
                 was: "theme::bright() on the inline new-group name",
                 ident: "FormInput",
                 role: RoleRef::Style(StyleRole::FormInput),
-                expect: style(legacy::bright()),
+                expect: Task14Expect::Style(legacy::bright()),
             },
             // ── Group form and its dropdown ────────────────────
-            Task14Cell {
+            Task14RoleUse {
                 id: "group_form.title",
                 renderer: GROUP_FORM,
                 was: "theme::heading()",
                 ident: "PopupTitle",
                 role: RoleRef::Style(StyleRole::PopupTitle),
-                expect: style(legacy::heading()),
+                expect: Task14Expect::Style(legacy::heading()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "group_form.label",
                 renderer: GROUP_FORM,
                 was: "theme::mute()",
                 ident: "GroupFormLabel",
                 role: RoleRef::Style(StyleRole::GroupFormLabel),
-                expect: style(legacy::mute()),
+                expect: Task14Expect::Style(legacy::mute()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "group_form.label_focused",
                 renderer: GROUP_FORM,
                 was: "theme::heading()",
                 ident: "GroupFormLabelFocused",
                 role: RoleRef::Style(StyleRole::GroupFormLabelFocused),
-                expect: style(legacy::heading()),
+                expect: Task14Expect::Style(legacy::heading()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "group_form.value",
                 renderer: GROUP_FORM,
                 was: "theme::text()",
                 ident: "GroupFormValue",
                 role: RoleRef::Style(StyleRole::GroupFormValue),
-                expect: style(legacy::text()),
+                expect: Task14Expect::Style(legacy::text()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "group_form.value_focused",
                 renderer: GROUP_FORM,
                 was: "theme::bright().add_modifier(Modifier::BOLD)",
                 ident: "GroupFormValueFocused",
                 role: RoleRef::Style(StyleRole::GroupFormValueFocused),
-                expect: style(legacy::bright().add_modifier(Modifier::BOLD)),
+                expect: Task14Expect::Style(legacy::bright().add_modifier(Modifier::BOLD)),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "group_form.marker",
                 renderer: GROUP_FORM,
                 was: "the marker inside the focused theme::heading() label",
                 ident: "GroupFormMarker",
                 role: RoleRef::Style(StyleRole::GroupFormMarker),
-                expect: style(legacy::heading()),
+                expect: Task14Expect::Style(legacy::heading()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "group_form.hint",
                 renderer: GROUP_FORM,
                 was: "theme::dim() on the key hints and `Enter to choose`",
                 ident: "FormHelp",
                 role: RoleRef::Style(StyleRole::FormHelp),
-                expect: style(legacy::dim()),
+                expect: Task14Expect::Style(legacy::dim()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "group_form.picker_row",
                 renderer: GROUP_FORM,
                 was: "theme::text() on a dropdown option",
                 ident: "PickerRow",
                 role: RoleRef::Style(StyleRole::PickerRow),
-                expect: style(legacy::text()),
+                expect: Task14Expect::Style(legacy::text()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "group_form.picker_row_selected",
                 renderer: GROUP_FORM,
                 was: "List::highlight_style(theme::selected())",
                 ident: "PickerRowSelected",
                 role: RoleRef::Style(StyleRole::PickerRowSelected),
-                expect: style(legacy::selected()),
+                expect: Task14Expect::Style(legacy::selected()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "group_form.picker_none",
                 renderer: GROUP_FORM,
                 was: "theme::mute() on the `(none)` row",
                 ident: "PopupLegend",
                 role: RoleRef::Style(StyleRole::PopupLegend),
-                expect: style(legacy::mute()),
+                expect: Task14Expect::Style(legacy::mute()),
             },
             // ── Group management ───────────────────────────────
-            Task14Cell {
+            Task14RoleUse {
                 id: "group_manage.title",
                 renderer: GROUP_MANAGE,
                 was: "theme::heading()",
                 ident: "PopupTitle",
                 role: RoleRef::Style(StyleRole::PopupTitle),
-                expect: style(legacy::heading()),
+                expect: Task14Expect::Style(legacy::heading()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "group_manage.row",
                 renderer: GROUP_MANAGE,
                 was: "theme::text() on a group name",
                 ident: "TableRow",
                 role: RoleRef::Style(StyleRole::TableRow),
-                expect: style(legacy::text()),
+                expect: Task14Expect::Style(legacy::text()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "group_manage.row_selected",
                 renderer: GROUP_MANAGE,
                 was: "List::highlight_style(theme::selected())",
                 ident: "TableRowSelected",
                 role: RoleRef::Style(StyleRole::TableRowSelected),
-                expect: style(legacy::selected()),
+                expect: Task14Expect::Style(legacy::selected()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "group_manage.indent",
                 renderer: GROUP_MANAGE,
                 was: "theme::mute() on the indent, the count and the empty state",
                 ident: "PopupLegend",
                 role: RoleRef::Style(StyleRole::PopupLegend),
-                expect: style(legacy::mute()),
+                expect: Task14Expect::Style(legacy::mute()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "group_manage.hint",
                 renderer: GROUP_MANAGE,
                 was: "theme::dim() on the action hint",
                 ident: "PopupHint",
                 role: RoleRef::Style(StyleRole::PopupHint),
-                expect: style(legacy::dim()),
+                expect: Task14Expect::Style(legacy::dim()),
             },
             // ── Host form (direct ANSI throughout) ─────────────
-            Task14Cell {
+            Task14RoleUse {
                 id: "host_form.title",
                 renderer: HOST_FORM,
                 was: "Block::title(title) with no style of its own",
                 ident: "PopupTitle",
                 role: RoleRef::Style(StyleRole::PopupTitle),
-                expect: Normalised("an unstyled Block title"),
+                expect: Unstyled {
+                    was: "an unstyled Block title, i.e. the terminal's own foreground",
+                    why: "every other overlay titles itself with `popup.title`; leaving \
+                          these two unstyled would put an unthemeable title on a themed \
+                          popup ground and make the role unreachable from them",
+                },
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "host_form.label",
                 renderer: HOST_FORM,
                 was: "Style::default().fg(Color::DarkGray)",
                 ident: "FormLabel",
                 role: RoleRef::Style(StyleRole::FormLabel),
-                expect: Normalised("ANSI Color::DarkGray"),
+                expect: Ansi(Color::DarkGray),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "host_form.label_focused",
                 renderer: HOST_FORM,
                 was: "Style::default().fg(Color::Cyan).add_modifier(BOLD)",
                 ident: "FormLabelFocused",
                 role: RoleRef::Style(StyleRole::FormLabelFocused),
-                expect: Normalised("ANSI Color::Cyan + BOLD"),
+                expect: Ansi(Color::Cyan),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "host_form.label_editing",
                 renderer: HOST_FORM,
                 was: "Style::default().fg(Color::Yellow).add_modifier(BOLD)",
                 ident: "FormLabelEditing",
                 role: RoleRef::Style(StyleRole::FormLabelEditing),
-                expect: Normalised("ANSI Color::Yellow + BOLD"),
+                expect: Ansi(Color::Yellow),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "host_form.value",
                 renderer: HOST_FORM,
                 was: "Style::default() — an idle value had no style at all",
                 ident: "FormValue",
                 role: RoleRef::Style(StyleRole::FormValue),
-                expect: Normalised("an unstyled span"),
+                expect: Unstyled {
+                    was: "Style::default(), i.e. the terminal's own foreground",
+                    why: "an idle value that carries no colour cannot be themed at all; \
+                          `form.value` gives it the body-text role the rest of the app \
+                          already uses for exactly this kind of text",
+                },
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "host_form.value_focused",
                 renderer: HOST_FORM,
                 was: "Style::default().fg(Color::White).add_modifier(BOLD)",
                 ident: "FormInputFocused",
                 role: RoleRef::Style(StyleRole::FormInputFocused),
-                expect: Normalised("ANSI Color::White + BOLD"),
+                expect: Ansi(Color::White),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "host_form.value_editing",
                 renderer: HOST_FORM,
                 was: "Style::default().fg(Color::White).add_modifier(BOLD | UNDERLINED)",
                 ident: "FormInputEditing",
                 role: RoleRef::Style(StyleRole::FormInputEditing),
-                expect: Normalised("ANSI Color::White + BOLD + UNDERLINED"),
+                expect: Ansi(Color::White),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "host_form.hint",
                 renderer: HOST_FORM,
                 was: "Style::default().add_modifier(Modifier::DIM)",
                 ident: "FormHelp",
                 role: RoleRef::Style(StyleRole::FormHelp),
-                expect: Normalised("the DIM modifier with no colour"),
+                expect: Unstyled {
+                    was: "Style::default().add_modifier(Modifier::DIM), no colour",
+                    why: "the bare DIM modifier is terminal-dependent and several \
+                          emulators ignore it; `form.help` states the same intent as a \
+                          colour the theme controls",
+                },
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "host_form.marker",
                 renderer: HOST_FORM,
                 was: "the marker inside the ANSI-coloured label span",
                 ident: "FocusIndicator",
                 role: RoleRef::Style(StyleRole::FocusIndicator),
-                expect: Normalised("whatever ANSI colour the label carried"),
+                expect: Ansi(Color::Cyan),
             },
             // ── Identity form (the same ANSI shape) ────────────
-            Task14Cell {
+            Task14RoleUse {
                 id: "identity_form.title",
                 renderer: KEYCHAIN,
                 was: "Block::title(\"Identity\") with no style of its own",
                 ident: "PopupTitle",
                 role: RoleRef::Style(StyleRole::PopupTitle),
-                expect: Normalised("an unstyled Block title"),
+                expect: Unstyled {
+                    was: "an unstyled Block title, i.e. the terminal's own foreground",
+                    why: "every other overlay titles itself with `popup.title`; leaving \
+                          these two unstyled would put an unthemeable title on a themed \
+                          popup ground and make the role unreachable from them",
+                },
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "identity_form.label",
                 renderer: KEYCHAIN,
                 was: "Style::default().fg(Color::DarkGray)",
                 ident: "FormLabel",
                 role: RoleRef::Style(StyleRole::FormLabel),
-                expect: Normalised("ANSI Color::DarkGray"),
+                expect: Ansi(Color::DarkGray),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "identity_form.label_focused",
                 renderer: KEYCHAIN,
                 was: "Style::default().fg(Color::Cyan).add_modifier(BOLD)",
                 ident: "FormLabelFocused",
                 role: RoleRef::Style(StyleRole::FormLabelFocused),
-                expect: Normalised("ANSI Color::Cyan + BOLD"),
+                expect: Ansi(Color::Cyan),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "identity_form.label_editing",
                 renderer: KEYCHAIN,
                 was: "Style::default().fg(Color::Yellow).add_modifier(BOLD)",
                 ident: "FormLabelEditing",
                 role: RoleRef::Style(StyleRole::FormLabelEditing),
-                expect: Normalised("ANSI Color::Yellow + BOLD"),
+                expect: Ansi(Color::Yellow),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "identity_form.value",
                 renderer: KEYCHAIN,
                 was: "Style::default()",
                 ident: "FormValue",
                 role: RoleRef::Style(StyleRole::FormValue),
-                expect: Normalised("an unstyled span"),
+                expect: Unstyled {
+                    was: "Style::default(), i.e. the terminal's own foreground",
+                    why: "an idle value that carries no colour cannot be themed at all; \
+                          `form.value` gives it the body-text role the rest of the app \
+                          already uses for exactly this kind of text",
+                },
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "identity_form.value_focused",
                 renderer: KEYCHAIN,
                 was: "Style::default().fg(Color::White).add_modifier(BOLD)",
                 ident: "FormInputFocused",
                 role: RoleRef::Style(StyleRole::FormInputFocused),
-                expect: Normalised("ANSI Color::White + BOLD"),
+                expect: Ansi(Color::White),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "identity_form.value_editing",
                 renderer: KEYCHAIN,
                 was: "Style::default().fg(Color::White).add_modifier(BOLD | UNDERLINED)",
                 ident: "FormInputEditing",
                 role: RoleRef::Style(StyleRole::FormInputEditing),
-                expect: Normalised("ANSI Color::White + BOLD + UNDERLINED"),
+                expect: Ansi(Color::White),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "identity_form.hint",
                 renderer: KEYCHAIN,
                 was: "Style::default().add_modifier(Modifier::DIM)",
                 ident: "FormHelp",
                 role: RoleRef::Style(StyleRole::FormHelp),
-                expect: Normalised("the DIM modifier with no colour"),
+                expect: Unstyled {
+                    was: "Style::default().add_modifier(Modifier::DIM), no colour",
+                    why: "the bare DIM modifier is terminal-dependent and several \
+                          emulators ignore it; `form.help` states the same intent as a \
+                          colour the theme controls",
+                },
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "identity_form.marker",
                 renderer: KEYCHAIN,
                 was: "the marker inside the ANSI-coloured label span",
                 ident: "FocusIndicator",
                 role: RoleRef::Style(StyleRole::FocusIndicator),
-                expect: Normalised("whatever ANSI colour the label carried"),
+                expect: Ansi(Color::Cyan),
             },
             // ── Tag filter ─────────────────────────────────────
-            Task14Cell {
+            Task14RoleUse {
                 id: "tag_filter.title",
                 renderer: TAG_FILTER,
                 was: "theme::heading()",
                 ident: "PopupTitle",
                 role: RoleRef::Style(StyleRole::PopupTitle),
-                expect: style(legacy::heading()),
+                expect: Task14Expect::Style(legacy::heading()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "tag_filter.query",
                 renderer: TAG_FILTER,
                 was: "theme::bright()",
                 ident: "PickerQuery",
                 role: RoleRef::Style(StyleRole::PickerQuery),
-                expect: style(legacy::bright()),
+                expect: Task14Expect::Style(legacy::bright()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "tag_filter.row",
                 renderer: TAG_FILTER,
                 was: "theme::text()",
                 ident: "PickerRow",
                 role: RoleRef::Style(StyleRole::PickerRow),
-                expect: style(legacy::text()),
+                expect: Task14Expect::Style(legacy::text()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "tag_filter.row_selected",
                 renderer: TAG_FILTER,
                 was: "theme::selected()",
                 ident: "PickerRowSelected",
                 role: RoleRef::Style(StyleRole::PickerRowSelected),
-                expect: style(legacy::selected()),
+                expect: Task14Expect::Style(legacy::selected()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "tag_filter.marker",
                 renderer: TAG_FILTER,
                 was: "the marker inside the selected row's own theme::selected() label",
                 ident: "PickerMarker",
                 role: RoleRef::Style(StyleRole::PickerMarker),
-                expect: style(legacy::selected()),
+                expect: Task14Expect::Style(legacy::selected()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "tag_filter.legend",
                 renderer: TAG_FILTER,
                 was: "theme::mute() on the hint and the empty note",
                 ident: "PopupLegend",
                 role: RoleRef::Style(StyleRole::PopupLegend),
-                expect: style(legacy::mute()),
+                expect: Task14Expect::Style(legacy::mute()),
             },
             // ── Session picker ─────────────────────────────────
-            Task14Cell {
+            Task14RoleUse {
                 id: "session_picker.border",
                 renderer: SESSION_PICKER,
                 was: "Style::default().fg(theme::ACCENT)",
@@ -1111,55 +1173,55 @@ mod tests {
                 role: RoleRef::Paint(PaintRole::PickerBorder),
                 expect: Paint(legacy::ACCENT),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "session_picker.title",
                 renderer: SESSION_PICKER,
                 was: "theme::heading()",
                 ident: "PopupTitle",
                 role: RoleRef::Style(StyleRole::PopupTitle),
-                expect: style(legacy::heading()),
+                expect: Task14Expect::Style(legacy::heading()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "session_picker.query",
                 renderer: SESSION_PICKER,
                 was: "theme::bright()",
                 ident: "PickerQuery",
                 role: RoleRef::Style(StyleRole::PickerQuery),
-                expect: style(legacy::bright()),
+                expect: Task14Expect::Style(legacy::bright()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "session_picker.rule",
                 renderer: SESSION_PICKER,
                 was: "theme::dim() on the separator row",
                 ident: "PopupHint",
                 role: RoleRef::Style(StyleRole::PopupHint),
-                expect: style(legacy::dim()),
+                expect: Task14Expect::Style(legacy::dim()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "session_picker.row",
                 renderer: SESSION_PICKER,
                 was: "theme::text()",
                 ident: "PickerRow",
                 role: RoleRef::Style(StyleRole::PickerRow),
-                expect: style(legacy::text()),
+                expect: Task14Expect::Style(legacy::text()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "session_picker.row_selected",
                 renderer: SESSION_PICKER,
                 was: "theme::selected()",
                 ident: "PickerRowSelected",
                 role: RoleRef::Style(StyleRole::PickerRowSelected),
-                expect: style(legacy::selected()),
+                expect: Task14Expect::Style(legacy::selected()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "session_picker.legend",
                 renderer: SESSION_PICKER,
                 was: "theme::mute() on the empty state, the hint and `current`",
                 ident: "PopupLegend",
                 role: RoleRef::Style(StyleRole::PopupLegend),
-                expect: style(legacy::mute()),
+                expect: Task14Expect::Style(legacy::mute()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "session_picker.badge_up",
                 renderer: SESSION_PICKER,
                 was: "theme::green()",
@@ -1167,7 +1229,7 @@ mod tests {
                 role: RoleRef::Color(ColorRole::PickerBadgeSuccess),
                 expect: C(legacy::GREEN),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "session_picker.badge_connecting",
                 renderer: SESSION_PICKER,
                 was: "theme::amber()",
@@ -1175,7 +1237,7 @@ mod tests {
                 role: RoleRef::Color(ColorRole::PickerBadgeWarning),
                 expect: C(legacy::AMBER),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "session_picker.badge_exited",
                 renderer: SESSION_PICKER,
                 was: "theme::red()",
@@ -1184,39 +1246,39 @@ mod tests {
                 expect: C(legacy::RED),
             },
             // ── Settings ───────────────────────────────────────
-            Task14Cell {
+            Task14RoleUse {
                 id: "settings.title",
                 renderer: SETTINGS,
                 was: "theme::heading()",
                 ident: "PopupTitle",
                 role: RoleRef::Style(StyleRole::PopupTitle),
-                expect: style(legacy::heading()),
+                expect: Task14Expect::Style(legacy::heading()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "settings.row",
                 renderer: SETTINGS,
                 was: "theme::text() on an unselected label",
                 ident: "TableRow",
                 role: RoleRef::Style(StyleRole::TableRow),
-                expect: style(legacy::text()),
+                expect: Task14Expect::Style(legacy::text()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "settings.row_selected",
                 renderer: SETTINGS,
                 was: "theme::white().bg(theme::SEL_BG)",
                 ident: "SettingsRowSelected",
                 role: RoleRef::Style(StyleRole::SettingsRowSelected),
-                expect: style(legacy::white().bg(sel_bg)),
+                expect: Task14Expect::Style(legacy::white().bg(sel_bg)),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "settings.theme_value",
                 renderer: SETTINGS,
                 was: "Style::default().fg(theme::ACCENT)",
                 ident: "PickerMatch",
                 role: RoleRef::Style(StyleRole::PickerMatch),
-                expect: style(Style::default().fg(legacy::ACCENT)),
+                expect: Task14Expect::Style(Style::default().fg(legacy::ACCENT)),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "settings.checkbox_on",
                 renderer: SETTINGS,
                 was: "theme::green() on a ticked box",
@@ -1224,121 +1286,121 @@ mod tests {
                 role: RoleRef::Color(ColorRole::StatusSuccess),
                 expect: C(legacy::GREEN),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "settings.legend",
                 renderer: SETTINGS,
                 was: "theme::mute() on the unticked box and the key legend",
                 ident: "PopupLegend",
                 role: RoleRef::Style(StyleRole::PopupLegend),
-                expect: style(legacy::mute()),
+                expect: Task14Expect::Style(legacy::mute()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "settings.hint",
                 renderer: SETTINGS,
                 was: "theme::dim() on the per-row hint",
                 ident: "PopupHint",
                 role: RoleRef::Style(StyleRole::PopupHint),
-                expect: style(legacy::dim()),
+                expect: Task14Expect::Style(legacy::dim()),
             },
             // ── Keybind editor ─────────────────────────────────
-            Task14Cell {
+            Task14RoleUse {
                 id: "keybind.title",
                 renderer: KEYBIND,
                 was: "theme::heading()",
                 ident: "PopupTitle",
                 role: RoleRef::Style(StyleRole::PopupTitle),
-                expect: style(legacy::heading()),
+                expect: Task14Expect::Style(legacy::heading()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "keybind.row",
                 renderer: KEYBIND,
                 was: "theme::text()",
                 ident: "KeybindRow",
                 role: RoleRef::Style(StyleRole::KeybindRow),
-                expect: style(legacy::text()),
+                expect: Task14Expect::Style(legacy::text()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "keybind.row_selected",
                 renderer: KEYBIND,
                 was: "theme::white().bg(theme::SEL_BG)",
                 ident: "KeybindRowSelected",
                 role: RoleRef::Style(StyleRole::KeybindRowSelected),
-                expect: style(legacy::white().bg(sel_bg)),
+                expect: Task14Expect::Style(legacy::white().bg(sel_bg)),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "keybind.marker",
                 renderer: KEYBIND,
                 was: "the marker inside the selected white-on-SEL_BG label",
                 ident: "KeybindMarker",
                 role: RoleRef::Style(StyleRole::KeybindMarker),
-                expect: style(legacy::white().bg(sel_bg)),
+                expect: Task14Expect::Style(legacy::white().bg(sel_bg)),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "keybind.value",
                 renderer: KEYBIND,
                 was: "theme::mute()",
                 ident: "KeybindValue",
                 role: RoleRef::Style(StyleRole::KeybindValue),
-                expect: style(legacy::mute()),
+                expect: Task14Expect::Style(legacy::mute()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "keybind.value_bound",
                 renderer: KEYBIND,
                 was: "theme::green().bg(theme::SEL_BG); the bar is now painted separately",
                 ident: "KeybindValueBound",
                 role: RoleRef::Style(StyleRole::KeybindValueBound),
-                expect: style(legacy::green()),
+                expect: Task14Expect::Style(legacy::green()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "keybind.value_capturing",
                 renderer: KEYBIND,
                 was: "theme::amber().bg(theme::SEL_BG); the bar is now painted separately",
                 ident: "KeybindValueCapturing",
                 role: RoleRef::Style(StyleRole::KeybindValueCapturing),
-                expect: style(legacy::amber()),
+                expect: Task14Expect::Style(legacy::amber()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "keybind.hint",
                 renderer: KEYBIND,
                 was: "theme::dim()",
                 ident: "PopupHint",
                 role: RoleRef::Style(StyleRole::PopupHint),
-                expect: style(legacy::dim()),
+                expect: Task14Expect::Style(legacy::dim()),
             },
             // ── Tunnel reconnect ───────────────────────────────
-            Task14Cell {
+            Task14RoleUse {
                 id: "tunnel_reconnect.title",
                 renderer: TUNNEL_RECONNECT,
                 was: "theme::heading()",
                 ident: "PopupTitle",
                 role: RoleRef::Style(StyleRole::PopupTitle),
-                expect: style(legacy::heading()),
+                expect: Task14Expect::Style(legacy::heading()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "tunnel_reconnect.row",
                 renderer: TUNNEL_RECONNECT,
                 was: "theme::text() on an unselected label",
                 ident: "TableRow",
                 role: RoleRef::Style(StyleRole::TableRow),
-                expect: style(legacy::text()),
+                expect: Task14Expect::Style(legacy::text()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "tunnel_reconnect.row_selected",
                 renderer: TUNNEL_RECONNECT,
                 was: "theme::white().bg(theme::SEL_BG)",
                 ident: "SettingsRowSelected",
                 role: RoleRef::Style(StyleRole::SettingsRowSelected),
-                expect: style(legacy::white().bg(sel_bg)),
+                expect: Task14Expect::Style(legacy::white().bg(sel_bg)),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "tunnel_reconnect.marker",
                 renderer: TUNNEL_RECONNECT,
                 was: "the marker inside the selected white-on-SEL_BG label",
                 ident: "SettingsMarker",
                 role: RoleRef::Style(StyleRole::SettingsMarker),
-                expect: style(legacy::white().bg(sel_bg)),
+                expect: Task14Expect::Style(legacy::white().bg(sel_bg)),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "tunnel_reconnect.value_selected",
                 renderer: TUNNEL_RECONNECT,
                 was: "theme::green().bg(theme::SEL_BG); the bar is now painted separately",
@@ -1346,65 +1408,65 @@ mod tests {
                 role: RoleRef::Color(ColorRole::StatusSuccess),
                 expect: C(legacy::GREEN),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "tunnel_reconnect.legend",
                 renderer: TUNNEL_RECONNECT,
                 was: "theme::mute() on an unselected value and the key legend",
                 ident: "PopupLegend",
                 role: RoleRef::Style(StyleRole::PopupLegend),
-                expect: style(legacy::mute()),
+                expect: Task14Expect::Style(legacy::mute()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "tunnel_reconnect.hint",
                 renderer: TUNNEL_RECONNECT,
                 was: "theme::dim() on the header line and the per-row hint",
                 ident: "PopupHint",
                 role: RoleRef::Style(StyleRole::PopupHint),
-                expect: style(legacy::dim()),
+                expect: Task14Expect::Style(legacy::dim()),
             },
             // ── Help sheet ─────────────────────────────────────
-            Task14Cell {
+            Task14RoleUse {
                 id: "help.section",
                 renderer: HELP,
                 was: "theme::heading()",
                 ident: "HelpSection",
                 role: RoleRef::Style(StyleRole::HelpSection),
-                expect: style(legacy::heading()),
+                expect: Task14Expect::Style(legacy::heading()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "help.key",
                 renderer: HELP,
                 was: "theme::bright()",
                 ident: "HelpKey",
                 role: RoleRef::Style(StyleRole::HelpKey),
-                expect: style(legacy::bright()),
+                expect: Task14Expect::Style(legacy::bright()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "help.description",
                 renderer: HELP,
                 was: "theme::text()",
                 ident: "HelpDescription",
                 role: RoleRef::Style(StyleRole::HelpDescription),
-                expect: style(legacy::text()),
+                expect: Task14Expect::Style(legacy::text()),
             },
             // ── Identity cards ─────────────────────────────────
-            Task14Cell {
+            Task14RoleUse {
                 id: "identities.empty",
                 renderer: KEYS,
                 was: "theme::dim() on the empty state and the missing-agent note",
                 ident: "IdentitiesEmpty",
                 role: RoleRef::Style(StyleRole::IdentitiesEmpty),
-                expect: style(legacy::dim()),
+                expect: Task14Expect::Style(legacy::dim()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "identities.notice",
                 renderer: KEYS,
                 was: "theme::amber()",
                 ident: "IdentitiesNotice",
                 role: RoleRef::Style(StyleRole::IdentitiesNotice),
-                expect: style(legacy::amber()),
+                expect: Task14Expect::Style(legacy::amber()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "identities.card_border",
                 renderer: KEYS,
                 was: "theme::border()",
@@ -1412,7 +1474,7 @@ mod tests {
                 role: RoleRef::Paint(PaintRole::IdentitiesCardBorder),
                 expect: Paint(legacy::BORDER),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "identities.card_border_selected",
                 renderer: KEYS,
                 was: "Style::default().fg(theme::ACCENT)",
@@ -1420,47 +1482,47 @@ mod tests {
                 role: RoleRef::Paint(PaintRole::IdentitiesCardBorderSelected),
                 expect: Paint(legacy::ACCENT),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "identities.card_selection",
                 renderer: KEYS,
                 was: "theme::selected()",
                 ident: "IdentitiesCardSelection",
                 role: RoleRef::Style(StyleRole::IdentitiesCardSelection),
-                expect: style(legacy::selected()),
+                expect: Task14Expect::Style(legacy::selected()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "identities.card_name",
                 renderer: KEYS,
                 was: "theme::heading()",
                 ident: "IdentitiesCardName",
                 role: RoleRef::Style(StyleRole::IdentitiesCardName),
-                expect: style(legacy::heading()),
+                expect: Task14Expect::Style(legacy::heading()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "identities.card_text",
                 renderer: KEYS,
                 was: "theme::text()",
                 ident: "IdentitiesCardText",
                 role: RoleRef::Style(StyleRole::IdentitiesCardText),
-                expect: style(legacy::text()),
+                expect: Task14Expect::Style(legacy::text()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "identities.card_metadata",
                 renderer: KEYS,
                 was: "theme::dim() on the fingerprint and the key path",
                 ident: "IdentitiesCardMetadata",
                 role: RoleRef::Style(StyleRole::IdentitiesCardMetadata),
-                expect: style(legacy::dim()),
+                expect: Task14Expect::Style(legacy::dim()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "identities.card_key_type",
                 renderer: KEYS,
                 was: "theme::mute()",
                 ident: "IdentitiesCardKeyType",
                 role: RoleRef::Style(StyleRole::IdentitiesCardKeyType),
-                expect: style(legacy::mute()),
+                expect: Task14Expect::Style(legacy::mute()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "identities.card_loaded",
                 renderer: KEYS,
                 was: "theme::GREEN",
@@ -1468,7 +1530,7 @@ mod tests {
                 role: RoleRef::Color(ColorRole::IdentitiesCardLoaded),
                 expect: C(legacy::GREEN),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "identities.card_missing",
                 renderer: KEYS,
                 was: "theme::DIM",
@@ -1476,7 +1538,7 @@ mod tests {
                 role: RoleRef::Color(ColorRole::IdentitiesCardMissing),
                 expect: C(legacy::DIM),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "identities.card_credential",
                 renderer: KEYS,
                 was: "theme::AMBER",
@@ -1484,7 +1546,7 @@ mod tests {
                 role: RoleRef::Color(ColorRole::IdentitiesCardCredential),
                 expect: C(legacy::AMBER),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "identities.agent_separator",
                 renderer: KEYS,
                 was: "theme::dim() on the rule above the agent block",
@@ -1492,29 +1554,29 @@ mod tests {
                 role: RoleRef::Paint(PaintRole::IdentitiesAgentSeparator),
                 expect: Paint(legacy::DIM),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "identities.agent_label",
                 renderer: KEYS,
                 was: "theme::mute()",
                 ident: "IdentitiesAgentLabel",
                 role: RoleRef::Style(StyleRole::IdentitiesAgentLabel),
-                expect: style(legacy::mute()),
+                expect: Task14Expect::Style(legacy::mute()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "identities.agent_value",
                 renderer: KEYS,
                 was: "theme::text()",
                 ident: "IdentitiesAgentValue",
                 role: RoleRef::Style(StyleRole::IdentitiesAgentValue),
-                expect: style(legacy::text()),
+                expect: Task14Expect::Style(legacy::text()),
             },
-            Task14Cell {
+            Task14RoleUse {
                 id: "identities.agent_count",
                 renderer: KEYS,
                 was: "theme::bright()",
                 ident: "IdentitiesAgentCount",
                 role: RoleRef::Style(StyleRole::IdentitiesAgentCount),
-                expect: style(legacy::bright()),
+                expect: Task14Expect::Style(legacy::bright()),
             },
         ]
     }
@@ -1531,7 +1593,7 @@ mod tests {
     /// Compare every inventoried cell that follows its role against the
     /// hand-written legacy value, not against the role's own fallback.
     fn assert_task14_legacy_cells(theme: &ResolvedTheme) {
-        for cell in task14_cells() {
+        for cell in task14_role_uses() {
             let path = role_path(cell.role);
             let context = format!(
                 "{} ({}) via {path}, was {}",
@@ -1551,7 +1613,9 @@ mod tests {
                         "{context}"
                     )
                 }
-                (Task14Expect::Normalised(_), _) | (Task14Expect::Context { .. }, _) => {}
+                (Task14Expect::Ansi(_), _)
+                | (Task14Expect::Unstyled { .. }, _)
+                | (Task14Expect::Context { .. }, _) => {}
                 _ => panic!("{context}: the expectation is of a different kind than the role"),
             }
         }
@@ -1567,6 +1631,32 @@ mod tests {
             Some(cut) => text[..cut].to_string(),
             None => text,
         }
+    }
+
+    /// The body of `fn <name>` in `src/tui/mod.rs`, or `None` if there is no
+    /// such test. Used to check that a cited proof really exercises the branch
+    /// it is cited for.
+    fn test_body(qualified: &str) -> Option<String> {
+        let name = qualified.rsplit("::").next()?;
+        let source =
+            std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(MOD))
+                .ok()?;
+        let at = source.find(&format!("fn {name}("))?;
+        let open = source[at..].find('{')? + at;
+        let mut depth = 0usize;
+        for (offset, ch) in source[open..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(source[open..open + offset].to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
     }
 
     /// The `<Kind>Role::<Ident>` references a renderer really makes.
@@ -1589,22 +1679,31 @@ mod tests {
         found
     }
 
-    /// The inventory must match what the renderers actually do — both ways.
+    /// The inventory must match the roles the renderers actually read — both
+    /// ways.
     ///
     /// The forward direction catches an invented row; the reverse direction is
     /// the one that matters, because it derives the required set from the
-    /// renderers' own source. A call site that nobody remembered to inventory
-    /// fails here naming its file and its role, which is exactly how the
-    /// palette's opaque background was found missing.
+    /// renderers' own source. A role that nobody remembered to inventory fails
+    /// here naming its file, which is how the palette's opaque background was
+    /// found missing.
+    ///
+    /// The claim is deliberately per *renderer and role*, not per cell — see
+    /// the module comment above for what that does and does not cover.
     #[test]
-    fn the_inventory_covers_every_task14_call_site() {
-        let cells = task14_cells();
+    fn the_inventory_covers_every_role_each_task14_renderer_reads() {
+        let cells = task14_role_uses();
 
         let mut ids: Vec<&str> = cells.iter().map(|c| c.id).collect();
         let total = ids.len();
         ids.sort_unstable();
         ids.dedup();
-        assert_eq!(total, ids.len(), "two cells share an id");
+        assert_eq!(total, ids.len(), "two rows share an id");
+        // Pinned so the number quoted in reports cannot drift from the table.
+        assert_eq!(
+            total, 115,
+            "the inventory changed size; add or remove the row deliberately"
+        );
 
         // Forward: every inventoried cell names a role its renderer really
         // reads, and a role the catalogue really publishes.
@@ -1633,21 +1732,46 @@ mod tests {
                 Task14Expect::Context { why, proof } => {
                     assert!(
                         !why.is_empty(),
-                        "{}: a context exception must say why the cell leaves its role",
+                        "{}: a context exception must say why the cells leave their role",
+                        cell.id
+                    );
+                    // The proof must exist, and it must exercise the branch the
+                    // `why` describes: a test that gives the role a marker
+                    // value never reaches the `default` substitution at all.
+                    let body = test_body(proof).unwrap_or_else(|| {
+                        panic!("{}: no test named {proof} in src/tui/mod.rs", cell.id)
+                    });
+                    assert!(
+                        !body.contains(role_path(cell.role)),
+                        "{}: {proof} overrides {}, so it never runs the `default` \
+                         substitution it is cited for",
+                        cell.id,
+                        role_path(cell.role)
+                    );
+                }
+                // The spec's parity exception is for direct ANSI *colours*. A
+                // cell that merely had no colour is a different thing and must
+                // use `Unstyled`, which forces a recorded reason.
+                Task14Expect::Ansi(was) => assert!(
+                    !matches!(was, Color::Rgb(..) | Color::Indexed(_) | Color::Reset),
+                    "{}: {was:?} is not a direct ANSI colour, so the spec's \
+                     normalisation exception does not cover it",
+                    cell.id
+                ),
+                Task14Expect::Unstyled { was, why } => {
+                    assert!(
+                        !was.is_empty(),
+                        "{}: record what the uncoloured cell actually was",
                         cell.id
                     );
                     assert!(
-                        proof.starts_with("tui::tests::"),
-                        "{}: a context exception must name the productive test that \
-                         proves the cell instead, got {proof:?}",
+                        !why.is_empty(),
+                        "{}: a cell that had no colour and now has one is a \
+                         deliberate deviation and needs its reasoning here and \
+                         in the spec",
                         cell.id
                     );
                 }
-                Task14Expect::Normalised(was) => assert!(
-                    !was.is_empty(),
-                    "{}: a normalised cell must record the direct colour it carried",
-                    cell.id
-                ),
                 _ => {}
             }
         }
@@ -1666,8 +1790,8 @@ mod tests {
                     cells
                         .iter()
                         .any(|c| c.renderer == *renderer && c.ident == ident),
-                    "{renderer} draws a cell from {ident} that no inventory row \
-                     covers — add it to `task14_cells` with the `theme.rs` call it \
+                    "{renderer} draws from {ident}, which no inventory row covers \
+                     — add it to `task14_role_uses` with the `theme.rs` calls it \
                      replaced, or to `NOT_TASK14` if it belongs to another task"
                 );
             }

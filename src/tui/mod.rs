@@ -4153,6 +4153,64 @@ marker = { foreground = \"#ab0005\" }\n\
         );
     }
 
+    /// The three form cells that carried **no colour** before the migration and
+    /// deliberately carry one now.
+    ///
+    /// These are not the spec's direct-ANSI exception — an unstyled `Block`
+    /// title, an idle `Style::default()` value and a bare `Modifier::DIM` hint
+    /// had no colour at all. Each is a recorded deviation, so each is pinned
+    /// here against the value it deliberately took, in both forms that draw it.
+    #[test]
+    fn the_forms_uncoloured_cells_keep_their_documented_roles() {
+        use crate::tui::theme as legacy;
+
+        let mut host = test_app_with_hosts();
+        host.enter_host_form(None, false).unwrap();
+        host.host_form.as_mut().unwrap().editing = false;
+
+        let mut identity = test_app_with_hosts();
+        identity.enter_identity_form(None).unwrap();
+        identity.identity_form.as_mut().unwrap().editing = false;
+
+        for (which, app, title, idle_label, hint) in [
+            ("host form", &host, "New host", "Port:", "Tab/"),
+            (
+                "identity form",
+                &identity,
+                "Identity",
+                "Username:",
+                "type to edit",
+            ),
+        ] {
+            let buf = render_to_buffer(app, 120, 38);
+            let popup = drawn_popup(app);
+
+            // Was: an unstyled Block title. Now: `components.popup.title`,
+            // like every other overlay's.
+            let title_cell = style_at_text_in(&buf, popup, title);
+            assert_eq!(title_cell.fg, Some(legacy::BRIGHT), "{which}: title colour");
+            assert!(
+                title_cell.add_modifier.contains(Modifier::BOLD),
+                "{which}: title weight"
+            );
+
+            // Was: `Style::default()`. Now: `components.form.value`.
+            let (lx, ly) = crate::test_support::find_text(&buf, idle_label);
+            assert_eq!(
+                cell_style(&buf, lx + idle_label.chars().count() as u16 + 1, ly).fg,
+                Some(legacy::TEXT),
+                "{which}: an idle value takes the body-text role"
+            );
+
+            // Was: the bare DIM modifier. Now: `components.form.help`.
+            assert_eq!(
+                style_at_text_in(&buf, popup, hint).fg,
+                Some(legacy::DIM),
+                "{which}: the key hints take the help role"
+            );
+        }
+    }
+
     /// A popup title keeps the weight it always had under `default`.
     ///
     /// Cell-exact, through the real renderer, including the modifier — the role
