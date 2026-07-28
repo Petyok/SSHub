@@ -80,12 +80,25 @@ jobs:
     name: Publish to npm
     needs: build
     runs-on: ubuntu-latest
+    # Trusted publishing (OIDC) rather than a long-lived NPM_TOKEN: every publish
+    # authenticates with a short-lived token minted for this workflow, and npm
+    # attaches provenance on its own. npm is also retiring direct publishes from
+    # 2FA-bypass tokens (announced 2026-07-08, effective around January 2027), so
+    # a token-based job would have had to move regardless.
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
+      # Trusted publishing needs npm >= 11.5.1, newer than what Node bundles.
+      - name: Ensure an npm that speaks OIDC
+        run: |
+          npm install -g npm@latest
+          npm --version
       - name: Collect the built tarballs
         uses: actions/download-artifact@v4
         with:
@@ -95,11 +108,13 @@ jobs:
       # release can never diverge. The version comes from the tag rather than
       # Cargo.toml, so a mismatch fails here instead of reaching the registry.
       # Publishes the three platform packages first and the `sshub` wrapper last.
-      # Requires the NPM_TOKEN repo secret.
+      #
+      # Each of the four packages needs a trusted publisher configured on
+      # npmjs.com pointing at this repository and `release.yml`, otherwise this
+      # step stops with ENEEDAUTH.
       - name: Assemble and publish
         env:
           TARBALL_DIR: npm-tarballs
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm/build.sh "${GITHUB_REF_NAME#v}" --publish
 
   publish:
