@@ -6,6 +6,11 @@ All notable changes to SSHub are documented in this file.
 
 ### Added
 
+- **Install from npm** (issue #51) - `npx sshub` and `npm install -g sshub` now
+  work. The npm package ships the same prebuilt binaries the GitHub release does,
+  delivered as platform-specific optional dependencies, so there is no build step
+  and nothing is fetched from outside the registry. Prebuilt for Linux x64, macOS
+  arm64 and macOS x64; every other platform keeps using `cargo install sshub`.
 - **UI motion pass** (issue #35) - the interface moves instead of cutting
   between states. Popups drop in from off the top and are thrown back up on
   close; tab bodies slide; a zoomed panel morphs out of its grid slot; the
