@@ -1135,8 +1135,8 @@ pub enum RelayLeg {
 }
 
 /// What a picker instance was opened for. Decides the title, the list source,
-/// the row layout, the initial selection, the empty-state text, the status-bar
-/// label and what Enter does — everything else is shared.
+/// the row layout, the initial selection, the empty-state text and what Enter
+/// does — everything else is shared.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SessionPickerPurpose {
     /// Open a new embedded SSH session tab (Ctrl+T).
@@ -1164,15 +1164,6 @@ impl SessionPickerPurpose {
         match self {
             Self::NewSession | Self::SftpLeftPane => "(no matching hosts)",
             Self::SwitchSession => "(no matching sessions)",
-        }
-    }
-
-    /// Status-bar label while this picker is up.
-    pub fn status_label(self) -> &'static str {
-        match self {
-            Self::NewSession => "New session",
-            Self::SftpLeftPane => "Select server",
-            Self::SwitchSession => "Switch session",
         }
     }
 

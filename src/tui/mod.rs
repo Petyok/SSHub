@@ -230,15 +230,8 @@ fn render_inner(frame: &mut Frame, app: &App) {
     let rule3 = row_in(area, areas.footer.y.saturating_sub(1));
     widgets::footer::render_hrule(frame, rule3, true);
 
-    // A picker has its own purpose-specific status. The legacy status-bar
-    // widget is otherwise not part of the dashboard render path, so wire it
-    // here instead of leaving every picker labelled like the underlying tab.
-    if app.mode == AppMode::SessionPicker {
-        frame.render_widget(widgets::status_bar::render_status_bar(app), areas.footer);
-    } else {
-        let keybinds = footer_keybinds(app);
-        widgets::footer::render_footer(frame, areas.footer, &keybinds);
-    }
+    let keybinds = footer_keybinds(app);
+    widgets::footer::render_footer(frame, areas.footer, &keybinds);
 
     // Issue #18: a zoomed panel hides the normal notice surface (status bar),
     // so surface transient feedback (e.g. "copied N chars") as a toast pinned
@@ -1603,6 +1596,51 @@ mod tests {
         }
     }
 
+    /// The picker keeps the dashboard's themed keybind footer for every purpose
+    /// instead of swapping in the legacy status bar, which paints an off-theme
+    /// `DarkGray` band and reads "Enter: connect" plus a host count under a
+    /// session switcher. Compares the footer row cell by cell against the very
+    /// same dashboard with no picker up, so a purpose-dependent footer or a
+    /// restyled band both fail.
+    #[test]
+    fn session_picker_keeps_the_dashboard_footer() {
+        fn footer_cells(app: &App) -> Vec<(String, Color, Color)> {
+            let buf = render_to_buffer(app, 120, 38);
+            let footer = dashboard_layout::dashboard_layout_zoomed(buf.area, app.ui_zoom).footer;
+            (footer.x..footer.right())
+                .map(|x| {
+                    let cell = buf.cell((x, footer.y)).unwrap();
+                    (cell.symbol().to_string(), cell.fg, cell.bg)
+                })
+                .collect()
+        }
+
+        for purpose in [
+            crate::app::SessionPickerPurpose::NewSession,
+            crate::app::SessionPickerPurpose::SftpLeftPane,
+            crate::app::SessionPickerPurpose::SwitchSession,
+        ] {
+            let mut app = app_with_picker(purpose, "");
+            assert_eq!(app.mode, AppMode::SessionPicker, "{purpose:?}");
+            let with_picker = footer_cells(&app);
+
+            // The very same app with the overlay dismissed — sessions, hosts and
+            // tab all identical, so the open picker is the only difference the
+            // footer could react to.
+            app.session_picker = None;
+            app.mode = AppMode::Normal;
+            let without_picker = footer_cells(&app);
+
+            assert!(
+                without_picker
+                    .iter()
+                    .all(|(_, _, bg)| *bg != Color::DarkGray),
+                "{purpose:?}: the dashboard footer is themed, not a DarkGray band"
+            );
+            assert_eq!(with_picker, without_picker, "{purpose:?} footer row");
+        }
+    }
+
     #[test]
     fn session_picker_renders_title_and_empty_state_per_purpose() {
         use crate::app::SessionPickerPurpose::{NewSession, SftpLeftPane, SwitchSession};
@@ -1670,11 +1708,14 @@ mod tests {
     fn session_picker_draws_dashboard_or_session_behind_it() {
         let mut app = app_with_picker(crate::app::SessionPickerPurpose::SwitchSession, "");
 
+        // The dashboard's own keybind footer stays under the popup. Read a hint
+        // from its left edge, which survives the clipping at 80 columns, rather
+        // than one that only fits on a wide terminal.
         app.session_picker.as_mut().unwrap().return_mode = AppMode::Normal;
         let dashboard = buffer_text(&render_to_buffer(&app, 80, 24));
         assert!(
-            dashboard.contains("q: quit"),
-            "dashboard status bar behind the popup"
+            dashboard.contains("↵ connect"),
+            "dashboard keybind footer behind the popup"
         );
 
         // Both session-ish origins take over the whole frame. Assert positively
@@ -1690,25 +1731,9 @@ mod tests {
                 "{origin:?}: session footer clock behind the popup"
             );
             assert!(
-                !text.contains("q: quit"),
-                "{origin:?}: dashboard status bar must be gone"
+                !text.contains("↵ connect"),
+                "{origin:?}: dashboard keybind footer must be gone"
             );
-        }
-    }
-
-    #[test]
-    fn session_picker_status_bar_names_the_purpose() {
-        use crate::app::SessionPickerPurpose::{NewSession, SftpLeftPane, SwitchSession};
-
-        for (purpose, label) in [
-            (NewSession, "New session"),
-            (SftpLeftPane, "Select server"),
-            (SwitchSession, "Switch session"),
-        ] {
-            let mut app = app_with_picker(purpose, "");
-            app.session_picker.as_mut().unwrap().return_mode = AppMode::Normal;
-            let text = buffer_text(&render_to_buffer(&app, 80, 24));
-            assert!(text.contains(label), "{purpose:?} status label");
         }
     }
 

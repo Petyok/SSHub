@@ -52,12 +52,7 @@ pub fn render_status_bar(app: &App) -> Paragraph<'static> {
 
     let total = app.hosts.len();
     let shown = app.filtered_indices.len();
-    // mode_label only sees the AppMode, which cannot distinguish the picker's
-    // three purposes; take the purpose straight from the picker state.
-    let mode = match (app.mode, app.session_picker.as_ref()) {
-        (AppMode::SessionPicker, Some(p)) => p.purpose.status_label(),
-        (mode, _) => mode_label(mode),
-    };
+    let mode = mode_label(app.mode);
     let action = match app.mode {
         AppMode::HostDetail => "Enter: save",
         AppMode::HostForm => "Enter: save",
