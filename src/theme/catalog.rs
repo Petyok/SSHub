@@ -642,9 +642,367 @@ role_catalog! {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Documentation renderer
+// ---------------------------------------------------------------------------
+
+/// The public role catalogue as Markdown, for `docs/theme-system.md`.
+///
+/// Generated, never written by hand: the guide's table sits between the stable
+/// `THEME_ROLES:START` / `THEME_ROLES:END` markers and a test compares the
+/// checked-in block with this function byte for byte. A role added to
+/// [`ROLE_SPECS`] therefore fails the build until the guide is regenerated,
+/// which is the only way a 234-row table stays true.
+///
+/// Grouped by *surface* rather than by [`ROLE_SPECS`] order, because a reader
+/// arrives knowing which part of the screen they want to recolour, not which
+/// value type it happens to have.
+pub fn role_catalog_markdown() -> String {
+    use std::collections::BTreeMap;
+    use std::fmt::Write;
+
+    let mut families: BTreeMap<&'static str, Vec<&RoleSpec>> = BTreeMap::new();
+    for spec in ROLE_SPECS {
+        families
+            .entry(role_family(spec.path))
+            .or_default()
+            .push(spec);
+    }
+
+    let mut out = String::new();
+    for (family, mut specs) in families {
+        specs.sort_by_key(|spec| spec.path);
+        let _ = writeln!(out, "#### `components.{family}`\n");
+        let _ = writeln!(out, "| Role | Type | Falls back to | Closed frame |");
+        let _ = writeln!(out, "| --- | --- | --- | --- |");
+        for spec in specs {
+            let _ = writeln!(
+                out,
+                "| `{}` | {} | {} | {} |",
+                spec.path,
+                role_kind(spec.role),
+                fallback_markdown(spec.fallback),
+                if spec.closed_frame { "yes" } else { "no" },
+            );
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// The surface a role path belongs to: the segment after `components.`.
+fn role_family(path: &'static str) -> &'static str {
+    path.strip_prefix("components.")
+        .and_then(|rest| rest.split('.').next())
+        // Unreachable while the catalogue guard holds; documenting a role under
+        // its own path is still better than panicking in a doc renderer.
+        .unwrap_or(path)
+}
+
+fn role_kind(role: RoleRef) -> &'static str {
+    match role {
+        RoleRef::Color(_) => "color",
+        RoleRef::Style(_) => "style",
+        RoleRef::Paint(_) => "paint",
+        RoleRef::Tint(_) => "tint",
+    }
+}
+
+/// What a role inherits when a theme does not set it, in prose.
+///
+/// The style recipes are **read out of the resolver** rather than transcribed:
+/// [`crate::theme::model::semantic_style`] is run against a probe core whose
+/// slots all carry distinct colours, and the resulting `Style` is translated
+/// back into the slot names it used. A recipe that changes therefore changes
+/// this table, instead of leaving the documentation quietly wrong.
+fn fallback_markdown(fallback: RoleFallback) -> String {
+    match fallback {
+        RoleFallback::Color(slot) | RoleFallback::Paint(slot) => {
+            format!("`semantic.{}`", slot.key())
+        }
+        RoleFallback::Tint(SemanticTint::Native) => {
+            "`native` (the asset's own colours)".to_string()
+        }
+        RoleFallback::Tint(SemanticTint::Color(slot)) => format!("`semantic.{}`", slot.key()),
+        RoleFallback::Style(recipe) => style_recipe_markdown(recipe),
+    }
+}
+
+/// A probe semantic core: every slot a colour that identifies only that slot.
+fn probe_semantic() -> crate::theme::model::ResolvedSemantic {
+    let mut slots = [ratatui::style::Color::Reset; crate::theme::model::SEMANTIC_SLOT_COUNT];
+    for (index, slot) in slots.iter_mut().enumerate() {
+        *slot = ratatui::style::Color::Rgb(0, 0, index as u8);
+    }
+    crate::theme::model::ResolvedSemantic::from_slots(slots)
+}
+
+/// The slot a probe colour came from, if any.
+fn probe_slot(color: ratatui::style::Color) -> Option<SemanticSlot> {
+    match color {
+        ratatui::style::Color::Rgb(0, 0, index) => {
+            SEMANTIC_SPECS.get(index as usize).map(|spec| spec.slot)
+        }
+        _ => None,
+    }
+}
+
+fn style_recipe_markdown(recipe: SemanticStyle) -> String {
+    use std::fmt::Write;
+
+    let style = crate::theme::model::semantic_style(&probe_semantic(), recipe);
+    let name = |color: Option<ratatui::style::Color>| {
+        color
+            .and_then(probe_slot)
+            .map(|slot| format!("`semantic.{}`", slot.key()))
+    };
+    let mut out = name(style.fg).unwrap_or_else(|| "`terminal`".to_string());
+    if let Some(background) = name(style.bg) {
+        let _ = write!(out, " on {background}");
+    }
+    let modifiers: Vec<&str> = crate::theme::model::MODIFIER_KEYS
+        .iter()
+        .filter(|key| {
+            crate::theme::model::modifier_from_key(key)
+                .is_some_and(|modifier| style.add_modifier.contains(modifier))
+        })
+        .copied()
+        .collect();
+    if !modifiers.is_empty() {
+        let _ = write!(out, " + {}", modifiers.join(" + "));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The guide, as it is checked in.
+    const THEME_GUIDE: &str = include_str!("../../docs/theme-system.md");
+    const ROLES_START: &str = "<!-- THEME_ROLES:START -->";
+    const ROLES_END: &str = "<!-- THEME_ROLES:END -->";
+
+    /// The block between the two markers, without the marker lines themselves.
+    fn checked_in_role_block() -> &'static str {
+        let start = THEME_GUIDE
+            .find(ROLES_START)
+            .expect("docs/theme-system.md must carry the THEME_ROLES:START marker")
+            + ROLES_START.len();
+        let end = THEME_GUIDE
+            .find(ROLES_END)
+            .expect("docs/theme-system.md must carry the THEME_ROLES:END marker");
+        // One newline belongs to each marker line; the table itself is what
+        // lies between them.
+        THEME_GUIDE[start..end]
+            .strip_prefix('\n')
+            .expect("the start marker must sit on a line of its own")
+    }
+
+    /// The single-source contract: the guide's role table *is*
+    /// [`role_catalog_markdown`], byte for byte.
+    #[test]
+    fn the_guide_role_table_matches_the_generated_catalogue() {
+        let generated = role_catalog_markdown();
+        let checked_in = checked_in_role_block();
+        assert_eq!(
+            checked_in, generated,
+            "docs/theme-system.md is out of date with ROLE_SPECS. Regenerate the \
+             block between the THEME_ROLES markers with:\n  cargo test --lib \
+             theme::catalog::tests::print_role_catalog_markdown -- --ignored --nocapture"
+        );
+    }
+
+    /// Every published role has to appear in the guide, under its own path.
+    ///
+    /// The byte-for-byte test above already implies this, but only while the
+    /// generator is right; this one reads the checked-in file directly, so a
+    /// generator that started dropping rows fails here too.
+    #[test]
+    fn the_guide_lists_every_published_role() {
+        let checked_in = checked_in_role_block();
+        for spec in ROLE_SPECS {
+            assert!(
+                checked_in.contains(&format!("| `{}` |", spec.path)),
+                "{} is missing from the guide's role catalogue",
+                spec.path
+            );
+        }
+    }
+
+    /// Every complete theme the guide prints, as `(id, toml)`.
+    ///
+    /// Extracted from the checked-in Markdown rather than duplicated here: a
+    /// copy would be the one thing this test exists to rule out.
+    fn guide_examples() -> Vec<(String, String)> {
+        const START: &str = "<!-- THEME_EXAMPLE:START id=";
+        const END: &str = "<!-- THEME_EXAMPLE:END -->";
+        let mut out = Vec::new();
+        let mut rest = THEME_GUIDE;
+        while let Some(at) = rest.find(START) {
+            rest = &rest[at + START.len()..];
+            let (id, after) = rest
+                .split_once(" -->\n")
+                .expect("a well-formed start marker");
+            let (block, after) = after.split_once(END).expect("an unterminated example");
+            let toml = block
+                .trim()
+                .strip_prefix("```toml")
+                .and_then(|body| body.trim_end().strip_suffix("```"))
+                .unwrap_or_else(|| panic!("example `{id}` is not a ```toml fence"))
+                .trim_start_matches('\n');
+            out.push((id.to_string(), toml.to_string()));
+            rest = after;
+        }
+        out
+    }
+
+    /// The guide's complete example themes have to *work*.
+    ///
+    /// Each one goes through the real strict pipeline — the same
+    /// [`ThemeRegistry::load_check_target`] that `sshub theme check` runs — and
+    /// has to validate without a single diagnostic and resolve to a runtime
+    /// theme. A documentation example that does not work is worse than none.
+    #[test]
+    fn every_guide_example_passes_the_real_strict_pipeline() {
+        let examples = guide_examples();
+        let ids: Vec<&str> = examples.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["mint", "harbour"],
+            "the guide's worked examples changed; keep this list in step so a \
+             silently dropped example cannot pass as a green run"
+        );
+
+        for (id, toml) in &examples {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join(format!("{id}.toml"));
+            std::fs::write(&path, toml).unwrap();
+
+            let registry = crate::theme::registry::ThemeRegistry::load_check_target(
+                &path,
+                crate::theme::model::ValidationMode::Strict,
+            )
+            .unwrap_or_else(|e| panic!("example `{id}` could not be read: {e}"));
+            let record = registry
+                .get(id)
+                .unwrap_or_else(|| panic!("example `{id}` is not registered"));
+            assert!(
+                record.diagnostics.is_empty(),
+                "example `{id}` is not clean: {:#?}",
+                record.diagnostics
+            );
+            assert!(record.is_valid(), "example `{id}` does not validate");
+            assert!(
+                record.resolved().is_some(),
+                "example `{id}` validates but does not resolve"
+            );
+        }
+    }
+
+    /// The substantial example has to demonstrate what its prose claims: an
+    /// inherited parent, a multi-stop ring on a closed frame, and an `"auto"`
+    /// reset that really lands back on the semantic fallback.
+    #[test]
+    fn the_substantial_guide_example_demonstrates_what_it_promises() {
+        use crate::theme::model::{ResolvedPaint, ValidationMode};
+
+        let (id, toml) = guide_examples()
+            .into_iter()
+            .find(|(id, _)| id == "harbour")
+            .expect("the substantial example");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(format!("{id}.toml"));
+        std::fs::write(&path, &toml).unwrap();
+        let registry =
+            crate::theme::registry::ThemeRegistry::load_check_target(&path, ValidationMode::Strict)
+                .unwrap();
+        let record = registry.get(&id).unwrap();
+        let theme = record.resolved().expect("it resolves").clone();
+
+        assert_eq!(
+            record.inheritance_chain().last().map(|id| id.as_str()),
+            Some("default"),
+            "the chain must run through the built-in root"
+        );
+        assert!(
+            record
+                .inheritance_chain()
+                .iter()
+                .any(|id| id.as_str() == "aqua"),
+            "the example claims to extend `aqua`"
+        );
+
+        // The perimeter ring: a gradient, on a closed frame, with four stops
+        // whose ends meet.
+        let ring = match theme.paint(PaintRole::DashboardHostListBorderFocused) {
+            ResolvedPaint::Gradient(id) => theme.gradient(*id).expect("the ring resolves"),
+            other => panic!("the focused frame is not a gradient: {other:?}"),
+        };
+        assert!(
+            ROLE_SPECS.iter().any(|spec| spec.role
+                == RoleRef::Paint(PaintRole::DashboardHostListBorderFocused)
+                && spec.closed_frame),
+            "the role the example rings must be a closed frame"
+        );
+        assert_eq!(ring.stops().len(), 4);
+        assert_eq!(
+            ring.stops().first().unwrap().color(),
+            ring.stops().last().unwrap().color(),
+            "a perimeter ring has to close on itself"
+        );
+
+        // The `"auto"` reset really goes back to the semantic fallback — and
+        // the parent really did override that role, so the reset is visible
+        // rather than a no-op dressed up as documentation.
+        let aqua = crate::theme::registry::ThemeRegistry::builtins(ValidationMode::Strict)
+            .unwrap()
+            .resolved(&crate::theme::model::ThemeId::parse("aqua").unwrap())
+            .unwrap();
+        assert!(
+            matches!(
+                aqua.paint(PaintRole::PopupBorder),
+                ResolvedPaint::Gradient(_)
+            ),
+            "`aqua` no longer rings the popup frame, so the example's `auto` \
+             reset would demonstrate nothing"
+        );
+        assert_eq!(
+            *theme.paint(PaintRole::PopupBorder),
+            ResolvedPaint::Solid(theme.semantic().border_popup),
+            "`border = \"auto\"` must land back on semantic.border_popup"
+        );
+    }
+
+    /// Regeneration helper: prints exactly what belongs between the markers.
+    #[test]
+    #[ignore = "prints the generated role table for docs/theme-system.md"]
+    fn print_role_catalog_markdown() {
+        print!("{}", role_catalog_markdown());
+    }
+
+    /// The style recipes in the table are read out of the resolver, so this
+    /// pins the translation rather than the recipes: a fallback that is a pair
+    /// must name both slots, and a modifier must survive into the prose.
+    #[test]
+    fn the_generated_fallback_prose_names_slots_and_modifiers() {
+        assert_eq!(
+            fallback_markdown(RoleFallback::Style(SemanticStyle::Selection)),
+            "`semantic.selection_fg` on `semantic.selection_bg`"
+        );
+        assert_eq!(
+            fallback_markdown(RoleFallback::Style(SemanticStyle::TextBrightUnderlinedBold)),
+            "`semantic.text_bright` + bold + underlined"
+        );
+        assert_eq!(
+            fallback_markdown(RoleFallback::Color(SemanticSlot::Accent)),
+            "`semantic.accent`"
+        );
+        assert_eq!(
+            fallback_markdown(RoleFallback::Tint(SemanticTint::Native)),
+            "`native` (the asset's own colours)"
+        );
+    }
 
     #[test]
     fn v1_catalog_is_complete_unique_and_typed() {

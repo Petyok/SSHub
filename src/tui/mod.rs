@@ -2201,16 +2201,17 @@ mod tests {
     #[test]
     fn dashboard_strip_highlight_travels_instead_of_teleporting() {
         let mut app = app_with_two_sessions();
+        let active_bg = app
+            .theme()
+            .style(StyleRole::HeaderSessionActive)
+            .bg
+            .expect("the active session chip has a background");
 
         // At rest the highlight sits on the active chip, as before.
         app.active_session = Some(1);
         let buffer = render_to_buffer(&app, 120, 38);
         let (bx, by) = find_cell(&buffer, "bravo").expect("second chip rendered");
-        assert_eq!(
-            buffer[(bx, by)].bg,
-            theme::BRIGHT,
-            "at rest: on the new chip"
-        );
+        assert_eq!(buffer[(bx, by)].bg, active_bg, "at rest: on the new chip");
 
         // Mid-switch, with progress still at ~0, the highlight must still be on
         // the chip being left. That is the whole point: it moves across rather
@@ -2225,12 +2226,12 @@ mod tests {
         let (bx, by) = find_cell(&buffer, "bravo").expect("second chip rendered");
         assert_eq!(
             buffer[(ax, ay)].bg,
-            theme::BRIGHT,
+            active_bg,
             "travelling: still on the chip being left"
         );
         assert_ne!(
             buffer[(bx, by)].bg,
-            theme::BRIGHT,
+            active_bg,
             "travelling: not yet on the target"
         );
 
@@ -2239,8 +2240,8 @@ mod tests {
         let buffer = render_to_buffer(&app, 120, 38);
         let (ax, ay) = find_cell(&buffer, "alpha").unwrap();
         let (bx, by) = find_cell(&buffer, "bravo").unwrap();
-        assert_eq!(buffer[(bx, by)].bg, theme::BRIGHT, "reduced motion: target");
-        assert_ne!(buffer[(ax, ay)].bg, theme::BRIGHT);
+        assert_eq!(buffer[(bx, by)].bg, active_bg, "reduced motion: target");
+        assert_ne!(buffer[(ax, ay)].bg, active_bg);
     }
 
     #[test]
@@ -4094,6 +4095,7 @@ marker = { foreground = \"#ab0005\" }\n\
             scroll: 0,
             capturing: false,
             append: false,
+            query: String::new(),
         });
         app.mode = AppMode::KeybindEditor;
         let buf = render_to_buffer(&app, 120, 38);
@@ -5268,6 +5270,82 @@ primary = \"#c20001\"\n";
             style_at_text(&quitting, "Quit sshub").fg,
             warning_fg,
             "its question is components.popup.warning too"
+        );
+    }
+
+    // ── Release measurement: what gradients cost per frame ──────────
+    //
+    // Not a CI gate. It asserts nothing about timing — a shared runner's
+    // scheduling noise dwarfs the effect being measured — and is `#[ignore]`d so
+    // only a deliberate local run produces it. What it produces is the evidence
+    // behind the spec's `< 2 ms` median acceptance criterion, recorded in
+    // `docs/theme-render-benchmark.md`.
+
+    /// Frames measured per theme. The spec asks for at least 1,000.
+    const BENCH_SAMPLES: usize = 1_000;
+    /// Frames rendered before the clock starts, per theme.
+    const BENCH_WARMUP: usize = 100;
+
+    /// Render `samples` frames of `app` at `200x60` and return the durations.
+    fn bench_frames(app: &App, warmup: usize, samples: usize) -> Vec<std::time::Duration> {
+        let backend = TestBackend::new(200, 60);
+        let mut terminal = Terminal::new(backend).unwrap();
+        for _ in 0..warmup {
+            terminal.draw(|frame| render(frame, app)).unwrap();
+        }
+        let mut durations = Vec::with_capacity(samples);
+        for _ in 0..samples {
+            let started = std::time::Instant::now();
+            terminal.draw(|frame| render(frame, app)).unwrap();
+            durations.push(started.elapsed());
+        }
+        durations
+    }
+
+    fn median(durations: &mut [std::time::Duration]) -> std::time::Duration {
+        durations.sort_unstable();
+        durations[durations.len() / 2]
+    }
+
+    /// Print the median frame time of a solid theme, of a gradient theme, and
+    /// the difference. Never asserts on time.
+    ///
+    /// `high-contrast` is the solid side on purpose: it paints an opaque app
+    /// background like `fire` does but defines no gradient at all, so the
+    /// difference between the two is the gradient work and not the presence of
+    /// a background pass.
+    #[test]
+    #[ignore = "local release measurement; prints timings, asserts none"]
+    fn theme_gradient_release_benchmark() {
+        let solid = app_with_builtin_theme("high-contrast");
+        let gradient = app_with_builtin_theme("fire");
+        assert!(
+            solid.theme().gradients().is_empty(),
+            "the solid side must define no gradients"
+        );
+        assert!(
+            !gradient.theme().gradients().is_empty(),
+            "the gradient side must define gradients"
+        );
+
+        let mut solid_times = bench_frames(&solid, BENCH_WARMUP, BENCH_SAMPLES);
+        let mut gradient_times = bench_frames(&gradient, BENCH_WARMUP, BENCH_SAMPLES);
+        let solid_median = median(&mut solid_times);
+        let gradient_median = median(&mut gradient_times);
+        let delta = gradient_median.saturating_sub(solid_median);
+
+        println!("theme gradient render benchmark  (200x60, {BENCH_SAMPLES} frames each, {BENCH_WARMUP} warm-up)");
+        println!(
+            "  solid    (high-contrast) median: {:.3} ms",
+            solid_median.as_secs_f64() * 1e3
+        );
+        println!(
+            "  gradient (fire)          median: {:.3} ms",
+            gradient_median.as_secs_f64() * 1e3
+        );
+        println!(
+            "  delta                          : {:.3} ms",
+            delta.as_secs_f64() * 1e3
         );
     }
 }

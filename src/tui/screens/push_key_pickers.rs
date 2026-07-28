@@ -2,10 +2,10 @@
 
 use ratatui::layout::Rect;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Clear};
+use ratatui::widgets::{Block, Borders};
 
 use crate::app::App;
-use crate::tui::theme;
+use crate::theme::catalog::{PaintRole, StyleRole};
 
 pub fn render_host_picker(frame: &mut Frame, app: &App) {
     let Some(picker) = app.push_key_host_picker.as_ref() else {
@@ -21,12 +21,20 @@ pub fn render_host_picker(frame: &mut Frame, app: &App) {
     let y = area.y + (area.height.saturating_sub(popup_h)) / 2;
     let popup = Rect::new(x, y, popup_w, popup_h);
 
-    frame.render_widget(Clear, popup);
+    let theme = app.theme();
+    crate::tui::open_popup(frame, popup, theme);
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)
-            .title(Span::styled(" push public key to host ", theme::heading()))
-            .border_style(Style::default().fg(theme::ACCENT)),
+            .title(Span::styled(
+                " push public key to host ",
+                theme.style(StyleRole::PopupTitle),
+            ))
+            .border_style(Style::default().fg(crate::tui::blit::line_color(
+                theme,
+                PaintRole::PickerBorder,
+                popup,
+            ))),
         popup,
     );
 
@@ -39,16 +47,21 @@ pub fn render_host_picker(frame: &mut Frame, app: &App) {
         row_x,
         popup.y + 1,
         crate::tui::text::ellipsize(&query_line, inner_w),
-        theme::bright(),
+        theme.style(StyleRole::PickerQuery),
     );
 
     let sep: String = std::iter::repeat_n('\u{2500}', inner_w).collect();
-    buf.set_string(row_x, popup.y + 2, &sep, theme::dim());
+    buf.set_string(row_x, popup.y + 2, &sep, theme.style(StyleRole::PopupHint));
 
     let list_top = popup.y + 3;
     let visible = popup.height.saturating_sub(5) as usize;
     if matches.is_empty() {
-        buf.set_string(row_x, list_top, "(no matching hosts)", theme::mute());
+        buf.set_string(
+            row_x,
+            list_top,
+            "(no matching hosts)",
+            theme.style(StyleRole::PopupLegend),
+        );
     } else {
         let scroll = picker.selected.saturating_sub(visible.saturating_sub(1));
         for (i, (_, name)) in matches.iter().skip(scroll).take(visible).enumerate() {
@@ -56,13 +69,18 @@ pub fn render_host_picker(frame: &mut Frame, app: &App) {
             let ry = list_top + i as u16;
             let is_sel = idx == picker.selected;
             let style = if is_sel {
-                theme::selected()
+                theme.style(StyleRole::PickerRowSelected)
             } else {
-                theme::text()
+                theme.style(StyleRole::PickerRow)
             };
             if is_sel {
                 let blank = " ".repeat(popup.width.saturating_sub(2) as usize);
-                buf.set_string(popup.x + 1, ry, &blank, theme::selected());
+                buf.set_string(
+                    popup.x + 1,
+                    ry,
+                    &blank,
+                    theme.style(StyleRole::PickerRowSelected),
+                );
             }
             let marker = if is_sel { "\u{203a} " } else { "  " };
             buf.set_string(
@@ -79,7 +97,7 @@ pub fn render_host_picker(frame: &mut Frame, app: &App) {
         row_x,
         hint_y,
         crate::tui::text::ellipsize("type to filter · \u{2191}/\u{2193} · Enter · Esc", inner_w),
-        theme::mute(),
+        theme.style(StyleRole::PopupHint),
     );
 }
 
@@ -97,15 +115,20 @@ pub fn render_identity_picker(frame: &mut Frame, app: &App) {
     let y = area.y + (area.height.saturating_sub(popup_h)) / 2;
     let popup = Rect::new(x, y, popup_w, popup_h);
 
-    frame.render_widget(Clear, popup);
+    let theme = app.theme();
+    crate::tui::open_popup(frame, popup, theme);
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)
             .title(Span::styled(
                 " select public key to push ",
-                theme::heading(),
+                theme.style(StyleRole::PopupTitle),
             ))
-            .border_style(Style::default().fg(theme::ACCENT)),
+            .border_style(Style::default().fg(crate::tui::blit::line_color(
+                theme,
+                PaintRole::PickerBorder,
+                popup,
+            ))),
         popup,
     );
 
@@ -116,7 +139,12 @@ pub fn render_identity_picker(frame: &mut Frame, app: &App) {
     let list_top = popup.y + 2;
     let visible = popup.height.saturating_sub(4) as usize;
     if identities.is_empty() {
-        buf.set_string(row_x, list_top, "(no key identities)", theme::mute());
+        buf.set_string(
+            row_x,
+            list_top,
+            "(no key identities)",
+            theme.style(StyleRole::PopupLegend),
+        );
     } else {
         let scroll = picker.selected.saturating_sub(visible.saturating_sub(1));
         for (i, identity) in identities.iter().skip(scroll).take(visible).enumerate() {
@@ -124,13 +152,18 @@ pub fn render_identity_picker(frame: &mut Frame, app: &App) {
             let ry = list_top + i as u16;
             let is_sel = idx == picker.selected;
             let style = if is_sel {
-                theme::selected()
+                theme.style(StyleRole::PickerRowSelected)
             } else {
-                theme::text()
+                theme.style(StyleRole::PickerRow)
             };
             if is_sel {
                 let blank = " ".repeat(popup.width.saturating_sub(2) as usize);
-                buf.set_string(popup.x + 1, ry, &blank, theme::selected());
+                buf.set_string(
+                    popup.x + 1,
+                    ry,
+                    &blank,
+                    theme.style(StyleRole::PickerRowSelected),
+                );
             }
             let marker = if is_sel { "\u{203a} " } else { "  " };
             buf.set_string(
@@ -147,6 +180,6 @@ pub fn render_identity_picker(frame: &mut Frame, app: &App) {
         row_x,
         hint_y,
         crate::tui::text::ellipsize("\u{2191}/\u{2193} · Enter · Esc", inner_w),
-        theme::mute(),
+        theme.style(StyleRole::PopupHint),
     );
 }

@@ -181,6 +181,11 @@ sshub sftp get prod-web /var/log/app.log ./app.log
 sshub sftp put prod-web ./deploy.tar.gz /tmp/deploy.tar.gz
 sshub sftp rm prod-web /tmp/deploy.tar.gz --yes
 
+# Themes (see "Theming" below)
+sshub theme list
+sshub theme show aqua
+sshub theme check ~/.config/sshub/themes/mine.toml
+
 # Audit log
 sshub audit list --status fail --days 7
 sshub audit stats --days 7
@@ -215,6 +220,7 @@ one yourself with `sshub completions bash|zsh|fish`.
 | Resource   | Default path                          |
 |------------|---------------------------------------|
 | Config     | `~/.config/sshub/config.toml`         |
+| Themes     | `~/.config/sshub/themes/*.toml`       |
 | Database   | `~/.local/share/sshub/launcher.db`    |
 | SSH config | `~/.ssh/config`                       |
 
@@ -317,6 +323,44 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 |-----|--------------------------------------|
 | `f` | Cycle filter (all / ok / fail)       |
 | `r` | Cycle range (all / today / week / month) |
+
+## Theming
+
+SSHub's colours live in TOML theme files you can copy, edit and switch at
+runtime. Five themes ship built into the binary — **`default`**, **`summer`**,
+**`aqua`**, **`fire`** and **`high-contrast`** — and your own go in
+`~/.config/sshub/themes/*.toml`, where the file name is the theme's ID.
+
+```bash
+mkdir -p ~/.config/sshub/themes
+sshub theme show aqua > ~/.config/sshub/themes/mine.toml   # copy a built-in
+$EDITOR ~/.config/sshub/themes/mine.toml                   # change `name`, then colours
+sshub theme check ~/.config/sshub/themes/mine.toml         # validate before you look
+```
+
+Select it in the TUI with **Ctrl+H → Theme… → Enter**: moving through the list
+previews each theme on the whole interface, `Esc` rolls back, and `Enter` saves
+`appearance.active_theme` to `config.toml`. Nothing else is written.
+
+A theme sets any of three layers — your own `[palette]`, the fixed 23-slot
+`[semantic]` core, and per-role `[components]` overrides — plus named static
+`[gradients]`. Everything you leave out is inherited from `default`, so
+changing one semantic slot recolours everything that uses it. True Color
+terminals get the colours as written; the embedded remote session is never
+recoloured.
+
+Three headless commands, all without a TUI or a database:
+
+| Command | What it does |
+|---------|--------------|
+| `sshub theme list` | Every built-in and user theme with its state |
+| `sshub theme show <id> [--resolved]` | The theme's source, or a fully resolved standalone export |
+| `sshub theme check <file>` | Strict validation with `file:line:column` diagnostics |
+
+**Full guide: [docs/theme-system.md](docs/theme-system.md)** — the file format,
+colour values and simulated opacity, inheritance and `"auto"`, gradient
+directions and the `perimeter` rule, the complete role catalogue, every picker
+key, the CLI exit codes, and two copy-pasteable example themes.
 
 ## Configuration
 

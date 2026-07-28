@@ -74,6 +74,38 @@ All notable changes to SSHub are documented in this file.
   optional dependencies, so there is no build step and nothing is fetched from
   outside the registry. Prebuilt for Linux x64, macOS arm64 and macOS x64; every
   other platform keeps using `cargo install sshub`.
+- **Runtime theme system** - SSHub's colours are TOML files now, not constants.
+  A theme sets any of three layers - your own `[palette]`, a fixed 23-slot
+  `[semantic]` core, and per-role `[components]` overrides - plus named static
+  `[gradients]`; everything left out is inherited from `default`, so changing a
+  single semantic slot recolours every component that uses it. Every one of the
+  234 component roles the TUI paints is addressable, from the dashboard and the
+  popups to tunnels, SFTP, the audit log, the identity cards and the startup
+  animation. Colours are hex, explicit `rgb`, or references with `brightness`
+  and simulated `opacity` over an explicit ground; `"terminal"`, `"auto"` and
+  `"native"` are the three sentinels. Themes live in
+  `~/.config/sshub/themes/*.toml` (the file name is the ID) and `config.toml`
+  stores only `appearance.active_theme`.
+- **Theme picker** (Ctrl+H → Theme…) - moving through the list previews each
+  theme on the *whole* interface next to a two-box detail preview, `Esc` rolls
+  back to what was active, `r` re-reads the directory, and only `Enter` writes.
+  Invalid themes stay listed with their reason instead of vanishing, and a theme
+  that mentions roles this version does not know is usable with a warning.
+- **Five built-in themes**, embedded in the binary and readable with
+  `sshub theme show`: `default` (the previous appearance, unchanged),
+  `summer`, `aqua`, `fire` and `high-contrast`.
+- **Static gradients** - named multi-stop gradients in five directions
+  (`horizontal`, `vertical`, `diagonal_down`, `diagonal_up`, `perimeter`) on
+  frames, separators and backgrounds, painted by buffer post-processing with no
+  per-cell allocation. The embedded remote session is never recoloured.
+- **`sshub theme` CLI** - `check`, `list` and `show`, all headless (no TUI, no
+  database). `theme check` validates strictly and reports `file:line:column`
+  with `did you mean` suggestions; `theme show --resolved` writes a standalone
+  document that re-reads to the same theme.
+- **Theme documentation** - the full guide is
+  [docs/theme-system.md](docs/theme-system.md), with the generated role
+  catalogue and two worked example themes; the measured cost of gradient
+  rendering is in [docs/theme-render-benchmark.md](docs/theme-render-benchmark.md).
 - **UI motion pass** (issue #35) - the interface moves instead of cutting
   between states. Popups drop in from off the top and are thrown back up on
   close; tab bodies slide; a zoomed panel morphs out of its grid slot; the

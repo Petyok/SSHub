@@ -695,10 +695,13 @@ impl App {
     /// `default` while `saved_id` keeps the configured value, and `config.toml`
     /// is never rewritten: repairing the theme file is enough to get it back.
     ///
-    /// `pub(crate)`, not `pub`: it changes what is painted, so it goes through
-    /// [`App::replace_theme_manager`] and must not be an entry point an outside
-    /// caller can reach around the invalidation with.
-    pub(crate) fn load_themes_from(&mut self, themes_dir: &Path) {
+    /// Public because it is the **only** loading entry point: it changes what
+    /// is painted, so it goes through [`App::replace_theme_manager`] and runs
+    /// the snapshot invalidation itself. Nothing that reaches around that
+    /// invalidation is exposed. `App::new` calls it with the installed
+    /// directory; an end-to-end test calls it with a temporary one, which is
+    /// how a workflow test stays off the real config directory.
+    pub fn load_themes_from(&mut self, themes_dir: &Path) {
         let saved_id = self.config.appearance.active_theme.clone();
         let (manager, load_error) =
             match ThemeRegistry::load_installed(themes_dir, ValidationMode::Compatible) {
