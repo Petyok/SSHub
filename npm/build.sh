@@ -40,11 +40,15 @@ fi
 }
 
 dist="npm/dist"
+# The wrapper is `sshub-tui`, not `sshub`: npm refuses the bare name for being too
+# close to the existing `ssh2` and `sshpk`. The command it installs is still
+# `sshub`, since the bin name is independent of the package name.
+wrapper="sshub-tui"
 # Release order matters: the wrapper is published last, after the packages its
-# optionalDependencies point at exist. Published the other way round, npm
-# resolves the wrapper to no binary at all and `npx sshub` fails for everyone who
-# installs in that window.
-packages=(sshub-linux-x64 sshub-darwin-arm64 sshub-darwin-x64 sshub)
+# optionalDependencies point at exist. Published the other way round, npm resolves
+# the wrapper to no binary at all and it fails for everyone who installs in that
+# window.
+packages=(sshub-linux-x64 sshub-darwin-arm64 sshub-darwin-x64 "$wrapper")
 
 # triple | package | os | cpu
 targets=(
@@ -82,13 +86,13 @@ for entry in "${targets[@]}"; do
     echo "    $pkg  ($triple)"
 done
 
-mkdir -p "$dist/sshub"
-cp -r npm/wrapper/bin "$dist/sshub/bin"
-chmod 755 "$dist/sshub/bin/sshub.js"
-sed -e "s|@VERSION@|$version|g" npm/wrapper/package.json.in >"$dist/sshub/package.json"
-cp npm/wrapper/README.md "$dist/sshub/README.md"
-cp LICENSE "$dist/sshub/LICENSE"
-echo "    sshub  (wrapper)"
+mkdir -p "$dist/$wrapper"
+cp -r npm/wrapper/bin "$dist/$wrapper/bin"
+chmod 755 "$dist/$wrapper/bin/sshub.js"
+sed -e "s|@VERSION@|$version|g" npm/wrapper/package.json.in >"$dist/$wrapper/package.json"
+cp npm/wrapper/README.md "$dist/$wrapper/README.md"
+cp LICENSE "$dist/$wrapper/LICENSE"
+echo "    $wrapper  (wrapper)"
 
 echo "==> verifying"
 host="$(uname -s)-$(uname -m)"
@@ -103,7 +107,7 @@ if [ "$host" = "Linux-x86_64" ]; then
     # then drive the shim exactly the way `npx sshub` would.
     mkdir -p "$dist/node_modules"
     ln -sfn ../sshub-linux-x64 "$dist/node_modules/sshub-linux-x64"
-    got="$(node "$dist/sshub/bin/sshub.js" --version)"
+    got="$(node "$dist/$wrapper/bin/sshub.js" --version)"
     [ "$got" = "sshub $version" ] || {
         echo "the shim did not reach the binary, it printed '$got'" >&2
         exit 1
@@ -125,7 +129,14 @@ fi
 
 echo "==> publishing $version"
 for pkg in "${packages[@]}"; do
+    # A version in the registry is immutable, so re-running after a partial
+    # failure (or re-running a release job) must skip what already landed instead
+    # of dying on "cannot publish over the previously published version".
+    if npm view "$pkg@$version" version >/dev/null 2>&1; then
+        echo "    $pkg@$version is already published, skipping"
+        continue
+    fi
     echo "    $pkg@$version"
     (cd "$dist/$pkg" && npm publish --access public)
 done
-echo "==> published: npx sshub@$version"
+echo "==> published: npx $wrapper@$version"

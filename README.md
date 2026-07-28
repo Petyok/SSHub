@@ -2,8 +2,8 @@
 
 [![crates.io](https://img.shields.io/crates/v/sshub.svg)](https://crates.io/crates/sshub)
 [![crates.io downloads](https://img.shields.io/crates/d/sshub.svg?label=crates.io%20downloads)](https://crates.io/crates/sshub)
-[![npm](https://img.shields.io/npm/v/sshub.svg)](https://www.npmjs.com/package/sshub)
-[![npm downloads](https://img.shields.io/npm/dm/sshub.svg?label=npm%20downloads%2Fmonth)](https://www.npmjs.com/package/sshub)
+[![npm](https://img.shields.io/npm/v/sshub-tui.svg)](https://www.npmjs.com/package/sshub-tui)
+[![npm downloads](https://img.shields.io/npm/dm/sshub-tui.svg?label=npm%20downloads%2Fmonth)](https://www.npmjs.com/package/sshub-tui)
 
 A terminal UI for managing and connecting to SSH hosts. Combines your `~/.ssh/config` with a built-in host database, tunnels, key management, and an audit log -- all in one keyboard-driven interface.
 
@@ -69,12 +69,15 @@ The settings overlay (`Ctrl+H`) — toggle an opaque background, OS logos, quit 
 
 ## Install
 
-From [npm](https://www.npmjs.com/package/sshub), prebuilt, no toolchain required:
+From [npm](https://www.npmjs.com/package/sshub-tui), prebuilt, no toolchain required:
 
 ```bash
-npx sshub              # run it without installing
-npm install -g sshub
+npx sshub-tui              # run it without installing
+npm install -g sshub-tui   # then just: sshub
 ```
+
+The installed command is `sshub`; the package is `sshub-tui` because npm rejects
+the bare `sshub` name as too close to the existing `ssh2` and `sshpk`.
 
 Prebuilt for Linux x64, macOS arm64 and macOS x64. The binary arrives as a
 platform-specific optional dependency, so nothing is compiled and nothing is

@@ -1,5 +1,5 @@
 {
-  "name": "sshub",
+  "name": "sshub-tui",
   "version": "@VERSION@",
   "description": "SSHub: a TUI launcher for SSH hosts",
   "keywords": [

@@ -1,12 +1,15 @@
-# sshub
+# sshub-tui
 
 A terminal UI for the SSH hosts you actually use: browse and search them, connect in embedded
 tabs, move files over SFTP with a dual-pane browser, manage keys and tunnels.
 
 ```bash
-npx sshub          # run without installing
-npm install -g sshub
+npx sshub-tui              # run without installing
+npm install -g sshub-tui   # then just: sshub
 ```
+
+The command it installs is `sshub`. The package is `sshub-tui` because npm refuses the bare
+`sshub` name for being too close to the existing `ssh2` and `sshpk`.
 
 This package ships prebuilt binaries, so there is no build step and nothing is downloaded from
 outside the registry: the platform-specific binary arrives as an optional dependency and npm
