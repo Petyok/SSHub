@@ -1,6 +1,6 @@
 use ratatui::layout::Rect;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Clear};
+use ratatui::widgets::{Block, Borders};
 
 use crate::app::{App, TUNNEL_RECONNECT_FIELDS};
 use crate::theme::catalog::{ColorRole, StyleRole};
@@ -22,7 +22,7 @@ pub fn render_tunnel_reconnect_settings(frame: &mut Frame, app: &App) {
     let hint_style = theme.style(StyleRole::PopupHint);
     let focus = theme.style(StyleRole::FocusIndicator);
 
-    frame.render_widget(Clear, popup);
+    crate::tui::open_popup(frame, popup, theme);
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)

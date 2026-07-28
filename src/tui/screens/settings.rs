@@ -1,6 +1,6 @@
 use ratatui::layout::Rect;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Clear};
+use ratatui::widgets::{Block, Borders};
 
 use crate::app::{App, SettingItem, SETTINGS_ITEMS};
 use crate::theme::catalog::{ColorRole, StyleRole};
@@ -23,7 +23,7 @@ pub fn render_settings(frame: &mut Frame, app: &App) {
     let row = theme.style(StyleRole::TableRow);
     let legend = theme.style(StyleRole::PopupLegend);
 
-    frame.render_widget(Clear, popup);
+    crate::tui::open_popup(frame, popup, theme);
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)

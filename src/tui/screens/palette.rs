@@ -1,5 +1,5 @@
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Clear};
+use ratatui::widgets::{Block, Borders};
 
 use crate::app::{App, HostEntry};
 use crate::theme::catalog::{ColorRole, PaintRole, StyleRole};
@@ -38,22 +38,16 @@ pub fn render_palette(
     let popup_area = Rect::new(x, y, popup_width, popup_height);
     let popup_area = crate::tui::popup_open_rect(popup_area, app);
 
-    frame.render_widget(Clear, popup_area);
-
     let theme = app.theme();
-    // The palette is the one overlay that has always been opaque. Its fill goes
-    // through the paint role rather than a widget style so a gradient can reach
-    // it; the rows drawn afterwards leave `bg` unset and let it show through.
-    crate::tui::blit::fill_paint(
-        frame.buffer_mut(),
-        popup_area,
-        theme,
-        PaintRole::PopupBackground,
-    );
-    // `popup.background` is transparent in `default`, as every surface role is.
-    // Where it resolves to the terminal's own ground, the opaque companion
+    // Clears the area and lays down `components.popup.background`, exactly as
+    // every other overlay does.
+    crate::tui::open_popup(frame, popup_area, theme);
+    // The palette is then the one overlay that has always been *opaque*.
+    // `popup.background` is transparent in `default`, as every surface role is,
+    // so where it resolves to the terminal's own ground the opaque companion
     // `semantic.canvas` stands in — the same substitution the fade pass makes,
-    // and under `default` it is literally the colour this used to hard-code.
+    // and under `default` literally the colour this used to hard-code. A theme
+    // that names its own popup background keeps it untouched.
     if *theme.paint(PaintRole::PopupBackground) == ResolvedPaint::Solid(Color::Reset) {
         frame.render_widget(
             Block::default().style(Style::default().bg(theme.semantic().canvas)),

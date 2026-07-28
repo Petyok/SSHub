@@ -1,6 +1,6 @@
 use ratatui::layout::Rect;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Clear};
+use ratatui::widgets::{Block, Borders};
 
 use crate::app::{App, PickerKind};
 use crate::theme::catalog::{ColorRole, StyleRole};
@@ -66,7 +66,7 @@ pub fn render_field_picker(frame: &mut Frame, app: &App) {
     let selection = theme.style(StyleRole::PickerRowSelected);
     let focus = theme.style(StyleRole::FocusIndicator);
 
-    frame.render_widget(Clear, popup);
+    crate::tui::open_popup(frame, popup, theme);
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)

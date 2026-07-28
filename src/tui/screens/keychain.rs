@@ -1,48 +1,20 @@
-use ratatui::style::Style;
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
+//! The identity form popup (`AppMode::IdentityForm`).
+//!
+//! The identity *list* used to live here too, as `render_keychain`,
+//! `render_identity_list` and `render_notice`. The identities tab replaced all
+//! three with the card grid in `screens/keys.rs` and nothing called them any
+//! more, so they were removed along with the four `components.keychain.*` roles
+//! that only they could reach. This form is the surface that survived, and it
+//! is styled from `components.form.*`, `components.focus.indicator` and
+//! `components.popup.*` — not from a keychain family of its own.
 
-use crate::app::{App, AppMode, IdentityFormEdit, IdentityFormField};
+use ratatui::style::Style;
+use ratatui::widgets::{Block, Borders, Paragraph};
+
+use crate::app::{IdentityFormEdit, IdentityFormField};
 use crate::text_input;
 use crate::theme::catalog::StyleRole;
 use crate::theme::model::ResolvedTheme;
-
-pub fn render_keychain(app: &App) -> Paragraph<'static> {
-    let title = if app.mode == AppMode::IdentityForm {
-        if app.identity_form.as_ref().and_then(|f| f.id).is_some() {
-            "Edit identity"
-        } else {
-            "New identity"
-        }
-    } else {
-        "Keychain"
-    };
-    Paragraph::new(title).style(app.theme().style(StyleRole::PopupTitle))
-}
-
-pub fn render_identity_list(app: &App) -> List<'static> {
-    let items: Vec<ListItem> = app
-        .identities
-        .iter()
-        .enumerate()
-        .map(|(idx, identity)| {
-            let selected = idx == app.identity_selected;
-            let marker = if selected { "▶ " } else { "  " };
-            let user = identity
-                .username
-                .as_deref()
-                .map(|u| format!(" ({u})"))
-                .unwrap_or_default();
-            let label = format!("{marker}{}{user}", identity.name);
-            let style = if selected {
-                app.theme().style(StyleRole::KeychainRowSelected)
-            } else {
-                app.theme().style(StyleRole::KeychainRow)
-            };
-            ListItem::new(label).style(style)
-        })
-        .collect();
-    List::new(items)
-}
 
 pub fn render_identity_form(
     form: &IdentityFormEdit,
@@ -152,13 +124,4 @@ pub fn render_identity_form(
                 theme.style(StyleRole::PopupTitle),
             )),
     )
-}
-
-pub fn render_notice(notice: &str, theme: &ResolvedTheme) -> Paragraph<'static> {
-    let role = if notice.starts_with("Error") || notice.starts_with("error") {
-        StyleRole::KeychainNoticeError
-    } else {
-        StyleRole::KeychainNoticeSuccess
-    };
-    Paragraph::new(notice.to_string()).style(theme.style(role))
 }

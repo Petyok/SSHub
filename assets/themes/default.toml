@@ -75,3 +75,12 @@ unknown = "#3d4a44"
 [components.dashboard.host_list]
 host_selected = { foreground = "semantic.selection_fg", background = "semantic.selection_bg" }
 group = { foreground = "semantic.text_highlight" }
+
+# Every popup title SSHub ever drew went through `theme::heading()` — bright
+# *and* bold. The `text_bright` fallback carries the colour but not the weight,
+# so without this the whole overlay layer would quietly lose its emphasis.
+#
+# Semantic reference plus modifier, so a theme that retunes the core moves the
+# colour with it and only the weight is stated here.
+[components.popup]
+title = { foreground = "semantic.text_bright", modifiers = ["bold"] }

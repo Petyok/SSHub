@@ -4,7 +4,7 @@
 
 use ratatui::layout::Rect;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Clear};
+use ratatui::widgets::{Block, Borders};
 
 use crate::app::App;
 use crate::theme::catalog::StyleRole;
@@ -53,7 +53,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     let row = theme.style(StyleRole::PickerRow);
     let focus = theme.style(StyleRole::FocusIndicator);
 
-    frame.render_widget(Clear, popup);
+    crate::tui::open_popup(frame, popup, theme);
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)

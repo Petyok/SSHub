@@ -437,7 +437,6 @@ role_catalog! {
         FormHelp => ("components.form.help", SemanticStyle::TextDim, false),
         FormError => ("components.form.error", SemanticStyle::Error, false),
 
-        TableHeader => ("components.table.header", SemanticStyle::TextBright, false),
         TableRow => ("components.table.row", SemanticStyle::Text, false),
         TableRowSelected => ("components.table.row_selected", SemanticStyle::HighlightOnSelection, false),
 
@@ -451,10 +450,6 @@ role_catalog! {
         KeybindValueBound => ("components.keybind.value_bound", SemanticStyle::Success, false),
         KeybindValueCapturing => ("components.keybind.value_capturing", SemanticStyle::Warning, false),
 
-        KeychainRow => ("components.keychain.row", SemanticStyle::Text, false),
-        KeychainRowSelected => ("components.keychain.row_selected", SemanticStyle::Selection, false),
-        KeychainNoticeSuccess => ("components.keychain.notice_success", SemanticStyle::Success, false),
-        KeychainNoticeError => ("components.keychain.notice_error", SemanticStyle::Error, false),
 
         TabsActive => ("components.tabs.active", SemanticStyle::Inverse, false),
         TabsInactive => ("components.tabs.inactive", SemanticStyle::TextMuted, false),
@@ -566,7 +561,6 @@ role_catalog! {
 
         PopupBackground => ("components.popup.background", SemanticPaint::Surface, false),
         PopupBorder => ("components.popup.border", SemanticPaint::BorderPopup, true),
-        TableBorder => ("components.table.border", SemanticPaint::Border, true),
 
         TabsSeparator => ("components.tabs.separator", SemanticPaint::TextDim, false),
         TunnelsSeparator => ("components.tunnels.separator", SemanticPaint::TextDim, false),

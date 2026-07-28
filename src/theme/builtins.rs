@@ -269,6 +269,7 @@ mod tests {
     const DEFAULT_PARITY_OVERRIDES: &[&str] = &[
         "components.dashboard.host_list.host_selected",
         "components.dashboard.host_list.group",
+        "components.popup.title",
     ];
 
     /// Assert that `theme` reproduces the frozen pre-theme-system appearance for
@@ -342,16 +343,31 @@ mod tests {
             "the group label"
         );
 
+        // Popup titles were `theme::heading()` — bright *and* bold. The
+        // catalogue fallback is plain `text_bright`, so comparing this role
+        // against its own fallback (as the loop above does) would have frozen
+        // the wrong assumption instead of the legacy cell.
+        assert_eq!(
+            theme.style(StyleRole::PopupTitle),
+            legacy::heading(),
+            "a popup title"
+        );
+        assert!(theme
+            .style(StyleRole::PopupTitle)
+            .add_modifier
+            .contains(Modifier::BOLD));
+        assert_ne!(
+            theme.style(StyleRole::PopupTitle),
+            legacy::bright(),
+            "the plain fallback would drop the weight"
+        );
+
         assert_eq!(
             theme.style(StyleRole::CommandPaletteRowSelected),
             Style::default().fg(legacy::WHITE).bg(legacy::SEL_BG)
         );
         assert_eq!(
             theme.style(StyleRole::PickerRowSelected),
-            legacy::selected()
-        );
-        assert_eq!(
-            theme.style(StyleRole::KeychainRowSelected),
             legacy::selected()
         );
 

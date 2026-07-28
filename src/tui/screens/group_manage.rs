@@ -1,6 +1,6 @@
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
 use crate::app::App;
@@ -23,7 +23,7 @@ pub fn render_group_manage_popup(frame: &mut Frame, app: &App) {
     let theme = app.theme();
     let legend = theme.style(StyleRole::PopupLegend);
 
-    frame.render_widget(Clear, popup);
+    crate::tui::open_popup(frame, popup, theme);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(crate::tui::popup_border_style(theme, popup))

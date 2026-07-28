@@ -3,7 +3,6 @@
 
 use ratatui::layout::{Margin, Rect};
 use ratatui::prelude::*;
-use ratatui::widgets::Clear;
 
 use crate::app::{App, PickerBadge, PickerRow};
 use crate::theme::catalog::{ColorRole, StyleRole};
@@ -74,7 +73,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     let popup = crate::tui::popup_open_rect(Rect::new(x, y, popup_w, popup_h), app);
     let theme = app.theme();
 
-    frame.render_widget(Clear, popup);
+    crate::tui::open_popup(frame, popup, theme);
     frame.render_widget(
         ratatui::widgets::Block::default()
             .borders(ratatui::widgets::Borders::ALL)

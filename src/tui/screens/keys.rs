@@ -54,9 +54,9 @@ pub fn resolve_columns(inner_w: u16, pref: usize) -> usize {
 /// The `components.identities.*` roles one identity card is painted from,
 /// resolved once per frame.
 ///
-/// This family is the cards' own — the row-based identity form in
-/// `screens/keychain.rs` keeps `components.keychain.*`, and neither surface
-/// borrows the generic table roles.
+/// This family is the cards' own. The row-based identity form in
+/// `screens/keychain.rs` is a form and reads `components.form.*`; neither
+/// surface borrows the generic table roles.
 #[derive(Clone, Copy)]
 struct CardStyles {
     border: ratatui::style::Color,
@@ -149,12 +149,6 @@ pub fn render_keys(frame: &mut Frame, area: Rect, app: &App) {
     let cpr_u16 = cards_per_row as u16;
     let card_w = (inner_w.saturating_sub((cpr_u16 - 1) * CARD_GAP)) / cpr_u16;
 
-    if app.identities.is_empty() {
-        let msg = "No identities — press 'a' (key or user+password)";
-        let x = inner_x + (inner_w.saturating_sub(msg.len() as u16)) / 2;
-        buf.set_string(x, area.y + 2, msg, theme.style(StyleRole::IdentitiesEmpty));
-    }
-
     // Cards are laid out in rows of `cards_per_row`. Once there are more rows
     // than fit, scroll by whole card-rows to keep the selected card on screen
     // (roughly centered).
@@ -198,6 +192,15 @@ pub fn render_keys(frame: &mut Frame, area: Rect, app: &App) {
         );
     }
     crate::tui::blit::blit(buf, ext, grid, &layer, 0, -(pad as i32));
+
+    // After the card layer, not before it: the blit copies every cell of the
+    // scratch buffer over `grid`, so an empty-state message written first would
+    // be erased again and never reach the screen.
+    if app.identities.is_empty() {
+        let msg = "No identities — press 'a' (key or user+password)";
+        let x = inner_x + (inner_w.saturating_sub(msg.chars().count() as u16)) / 2;
+        buf.set_string(x, area.y + 2, msg, theme.style(StyleRole::IdentitiesEmpty));
+    }
 
     if let Some(y) = agent_y {
         render_agent_info(buf, inner_x, y, inner_w, agent, theme);
