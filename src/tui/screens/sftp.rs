@@ -462,21 +462,32 @@ fn render_queue(
     // Header and notice are two cells rather than one string: the same warning
     // was already amber over an empty queue, and baking it into the header made
     // it read as chrome exactly when it mattered most.
+    //
+    // Both are placed and clamped in terminal *columns*, via `set_stringn` —
+    // a notice carries dynamic file and server names, and measuring a CJK one
+    // in `chars()` would claim half the columns it actually paints and run
+    // through the strip's right margin. `ellipsize` still runs first so an
+    // over-long notice keeps its `…`; `set_stringn` is the hard cell limit
+    // underneath it.
     let header = format!("queue ({})  c=run  u=remove", queue.len());
+    let content_end = x + 2 + w.saturating_sub(4);
     let budget = w.saturating_sub(4) as usize;
-    buf.set_string(
+    let (after_header, _) = buf.set_stringn(
         x + 2,
         y,
         ellipsize(&header, budget),
+        budget,
         theme.style(StyleRole::SftpQueueHeader),
     );
     if let Some(n) = notice {
-        let at = header.chars().count() + 3;
-        if at < budget {
-            buf.set_string(
-                x + 2 + at as u16,
+        let at = after_header.saturating_add(3);
+        let room = content_end.saturating_sub(at) as usize;
+        if room > 0 {
+            buf.set_stringn(
+                at,
                 y,
-                ellipsize(&format!("⚠ {n}"), budget - at),
+                ellipsize(&format!("⚠ {n}"), room),
+                room,
                 theme.style(StyleRole::SftpNotice),
             );
         }
@@ -1011,6 +1022,50 @@ mod tests {
             render_connecting(buf, AREA, Some("web-prod"), &theme)
         });
         assert_eq!(fg_at_text(&buf, "Connecting to web-prod"), marker(NOTICE));
+    }
+
+    /// The queue strip must be clamped in terminal cells, not Unicode scalars.
+    ///
+    /// A notice carries dynamic file and server text, so wide glyphs are not a
+    /// hypothetical: measured in `chars()` a CJK notice claims half the columns
+    /// it actually paints and runs straight through the strip's right margin.
+    #[test]
+    fn a_wide_glyph_queue_notice_stays_inside_the_strip() {
+        let theme = marked();
+        // The strip is 40 columns of a wider buffer, so both the reserved right
+        // margin (38, 39) and the untouched cells beyond it are readable.
+        let area = Rect::new(0, 0, 60, 2);
+        let strip_w = 40u16;
+        let mut buf = Buffer::empty(area);
+        for x in area.left()..area.right() {
+            buf.cell_mut((x, 0)).unwrap().set_symbol("z");
+        }
+
+        render_queue(
+            &mut buf,
+            0,
+            0,
+            strip_w,
+            &[transfer(Direction::Download, "down.bin")],
+            Some("\u{754c}\u{754c}\u{754c}\u{754c}\u{754c}\u{754c}\u{754c}\u{754c}"),
+            1.0,
+            &theme,
+        );
+
+        for x in (strip_w - 2)..area.right() {
+            assert_eq!(
+                buf.cell((x, 0)).unwrap().symbol(),
+                "z",
+                "column {x} is outside the strip's content area and must be untouched"
+            );
+        }
+        // …and the notice really is on the row, so the guard above is not
+        // passing because nothing was drawn.
+        assert_eq!(
+            fg_at_text(&buf, "\u{26a0}"),
+            marker(NOTICE),
+            "the notice is still drawn, just clamped"
+        );
     }
 
     /// The unfocused pane's cursor has to be *visible*, not merely bound.
