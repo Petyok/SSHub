@@ -243,14 +243,10 @@ impl App {
             // The tab that takes over sat to the right of the closed one, unless
             // the closed one was last — then we fall back to its left neighbour
             // and the slide has to travel the other way (#35).
-            if self.mode != AppMode::Normal && self.motion_enabled() {
-                self.session_tab_switch = Some(SessionTabSwitch {
-                    dir: if next == idx { 1 } else { -1 },
-                    // The closed tab is gone from the strip, so the highlight
-                    // travels from where its neighbour now sits.
-                    from: next,
-                    at: std::time::Instant::now(),
-                });
+            if self.mode != AppMode::Normal {
+                // The closed tab is gone from the strip, so the highlight
+                // travels from where its neighbour now sits.
+                self.arm_session_tab_switch(if next == idx { 1 } else { -1 }, next);
             }
             self.active_session = Some(next);
             let phase = &self.sessions[self.active_session.unwrap()].phase;
@@ -263,6 +259,26 @@ impl App {
                 }
             };
         }
+    }
+
+    /// Arm the tab slide that carries the tab at `from` off in direction `dir`
+    /// (`+1` = the new tab arrives from the right) while the strip's highlight
+    /// travels with it (#35).
+    ///
+    /// The single place that gates the transition on reduced motion and stamps
+    /// it, so every path that retargets `active_session` — cycling, closing a
+    /// tab, the switcher — animates identically. `dir` stays a parameter
+    /// because it is not always the sign of the index delta: the strip wraps,
+    /// so cycling past either end travels the way the key pointed.
+    pub(crate) fn arm_session_tab_switch(&mut self, dir: i8, from: usize) {
+        if !self.motion_enabled() {
+            return;
+        }
+        self.session_tab_switch = Some(SessionTabSwitch {
+            dir,
+            from,
+            at: std::time::Instant::now(),
+        });
     }
 
     /// Cycle tabs by `delta` (`+1` = next, `-1` = prev). Wraps at both ends.
@@ -282,12 +298,8 @@ impl App {
         }
         // Carry the tab we're leaving off in the direction of travel (#35). The
         // strip wraps, so the direction comes from `delta`, not the indices.
-        if next != cur && self.motion_enabled() {
-            self.session_tab_switch = Some(SessionTabSwitch {
-                dir: if delta > 0 { 1 } else { -1 },
-                from: cur as usize,
-                at: std::time::Instant::now(),
-            });
+        if next != cur {
+            self.arm_session_tab_switch(if delta > 0 { 1 } else { -1 }, cur as usize);
         }
 
         // Reflect the new active session's phase in app.mode, so render

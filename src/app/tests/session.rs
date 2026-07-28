@@ -441,6 +441,58 @@ pub(crate) fn session_switcher_enter_derives_mode_from_target_phase() {
     }
 }
 
+/// Confirming a different session has to slide the tab strip exactly like the
+/// cycling keys do (#35) instead of cutting straight to the new tab.
+#[test]
+pub(crate) fn session_switcher_arms_the_tab_slide() {
+    use crate::app::SessionPickerPurpose::SwitchSession;
+
+    // (origin mode, motion, active before, target, expected direction)
+    let cases: [(AppMode, bool, usize, usize, Option<i8>); 6] = [
+        // Forwards and backwards out of a live session: the outgoing tab is
+        // carried off in the direction of travel.
+        (AppMode::Session, true, 0, 2, Some(1)),
+        (AppMode::Session, true, 2, 0, Some(-1)),
+        // A session that is still connecting is a session origin too.
+        (AppMode::Connecting, true, 1, 2, Some(1)),
+        // Reduced motion arms nothing.
+        (AppMode::Session, false, 0, 2, None),
+        // Picking the session you are already on is not a transition.
+        (AppMode::Session, true, 1, 1, None),
+        // From the dashboard no session tab is on screen to carry off, so the
+        // switcher must not invent an outgoing tab (the dashboard's own gap is
+        // #49 and stays out of this fix).
+        (AppMode::Normal, true, 0, 2, None),
+    ];
+
+    for (origin, motion, from, target, expected) in cases {
+        let mut app = app_with_sessions(&["a", "b", "c"]);
+        app.config.appearance.disable_animation = !motion;
+        app.active_session = Some(from);
+        app.mode = origin;
+        app.open_session_picker(SwitchSession);
+        if let Some(p) = app.session_picker.as_mut() {
+            p.selected = target;
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()))
+            .unwrap();
+
+        let case = format!("{origin:?} motion={motion} {from}->{target}");
+        assert_eq!(app.active_session, Some(target), "{case}");
+        match expected {
+            Some(dir) => {
+                let anim = app
+                    .session_tab_switch
+                    .as_ref()
+                    .unwrap_or_else(|| panic!("{case}: expected an armed tab slide"));
+                assert_eq!(anim.dir, dir, "{case}");
+                assert_eq!(anim.from, from, "{case}");
+            }
+            None => assert!(app.session_tab_switch.is_none(), "{case}"),
+        }
+    }
+}
+
 #[test]
 pub(crate) fn session_switcher_phase_change_while_open() {
     use crate::app::SessionPickerPurpose::SwitchSession;

@@ -163,6 +163,22 @@ impl App {
                 };
                 match purpose {
                     SessionPickerPurpose::SwitchSession => {
+                        // A jump between two session tabs slides the strip just
+                        // like the cycling keys do (#35). Only a session origin
+                        // has an outgoing tab on screen to carry off: opened from
+                        // the dashboard there is none, and that mirror-image gap
+                        // is #49, not this branch's business.
+                        let from = self
+                            .session_picker
+                            .as_ref()
+                            .filter(|p| {
+                                matches!(p.return_mode, AppMode::Session | AppMode::Connecting)
+                            })
+                            .and(self.active_session)
+                            .filter(|&from| from != index);
+                        if let Some(from) = from {
+                            self.arm_session_tab_switch(if index > from { 1 } else { -1 }, from);
+                        }
                         // Retarget first, drop the picker, then derive the mode from
                         // the session we are switching *to* — never from wherever
                         // the picker happened to be opened.
