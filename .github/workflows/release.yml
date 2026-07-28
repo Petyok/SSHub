@@ -76,6 +76,32 @@ jobs:
           body_path: CHANGELOG.md
           generate_release_notes: false
 
+  npm:
+    name: Publish to npm
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - name: Collect the built tarballs
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: npm-tarballs
+      # Repacks the very tarballs this release ships, so npm and the GitHub
+      # release can never diverge. The version comes from the tag rather than
+      # Cargo.toml, so a mismatch fails here instead of reaching the registry.
+      # Publishes the three platform packages first and the `sshub` wrapper last.
+      # Requires the NPM_TOKEN repo secret.
+      - name: Assemble and publish
+        env:
+          TARBALL_DIR: npm-tarballs
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm/build.sh "${GITHUB_REF_NAME#v}" --publish
+
   publish:
     name: Publish to crates.io
     needs: build
