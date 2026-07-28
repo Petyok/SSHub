@@ -190,19 +190,51 @@ fn rgb(r: u8, g: u8, b: u8) -> ratatui::style::Color {
     ratatui::style::Color::Rgb(r, g, b)
 }
 
-/// A fingerprint of every file under `root`, so "nothing was written" can be
-/// asserted rather than assumed.
-fn fingerprint(root: &Path) -> Vec<(String, u64)> {
-    let mut out = Vec::new();
-    for entry in std::fs::read_dir(root).unwrap().flatten() {
-        let meta = entry.metadata().unwrap();
-        out.push((entry.file_name().to_string_lossy().into_owned(), meta.len()));
-        if meta.is_dir() {
-            out.extend(fingerprint(&entry.path()));
+/// A fingerprint of every file under `root`: its path relative to `root` and
+/// its full contents.
+///
+/// Contents, not length: an overwrite that happens to keep the byte count —
+/// swapping one six-digit hex colour for another is exactly that — would be
+/// invisible to a size comparison. Relative paths, not bare file names: the
+/// recursion would otherwise report `mine.toml` for a file in any directory,
+/// so a file moved between directories would pass unnoticed too.
+fn fingerprint(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    fn walk(base: &Path, dir: &Path, out: &mut Vec<(PathBuf, Vec<u8>)>) {
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if entry.metadata().unwrap().is_dir() {
+                walk(base, &path, out);
+            } else {
+                let relative = path.strip_prefix(base).unwrap().to_path_buf();
+                out.push((relative, std::fs::read(&path).unwrap()));
+            }
         }
     }
+    let mut out = Vec::new();
+    walk(root, root, &mut out);
     out.sort();
     out
+}
+
+/// The "nothing was written" assertions are only worth what the fingerprint
+/// can see, so this pins that it sees a same-length overwrite — the case a
+/// file-size comparison misses, and the shape a theme edit actually has.
+#[test]
+fn the_fingerprint_notices_a_same_length_overwrite() {
+    let env = ThemeEnv::new(&[("custom", theme_with_accent("Custom", "#ff00ff"))]);
+    let before = fingerprint(env.root.path());
+
+    let path = env.theme_path("custom");
+    let original = std::fs::read(&path).unwrap();
+    std::fs::write(&path, theme_with_accent("Custom", "#00ff00")).unwrap();
+    let after = fingerprint(env.root.path());
+
+    assert_eq!(
+        original.len(),
+        std::fs::read(&path).unwrap().len(),
+        "the rewrite has to keep the byte count, or this proves nothing"
+    );
+    assert_ne!(before, after, "a same-length overwrite must be visible");
 }
 
 /// The headline workflow: preview, roll back with `Esc`, come back and save.
@@ -351,9 +383,18 @@ fn reload_after_repair_adopts_the_fixed_file() {
         "a reload saves nothing"
     );
 
-    // The only file that changed is the one the test rewrote itself.
+    // Exactly one file differs, and it is the one the test rewrote itself.
     let after = fingerprint(env.root.path());
-    assert_eq!(before.len(), after.len(), "a reload must not create files");
+    let changed: Vec<&PathBuf> = after
+        .iter()
+        .filter(|(path, bytes)| !before.iter().any(|(was, had)| was == path && had == bytes))
+        .map(|(path, _)| path)
+        .collect();
+    assert_eq!(
+        changed,
+        vec![&PathBuf::from("themes/mine.toml")],
+        "a reload must touch nothing but the file the user edited"
+    );
 }
 
 /// Deleting the previewed file and reloading leaves the last valid theme

@@ -5273,13 +5273,22 @@ primary = \"#c20001\"\n";
         );
     }
 
-    // ── Release measurement: what gradients cost per frame ──────────
+    // ── Release measurement: an upper bound on gradient cost ────────
     //
-    // Not a CI gate. It asserts nothing about timing — a shared runner's
-    // scheduling noise dwarfs the effect being measured — and is `#[ignore]`d so
-    // only a deliberate local run produces it. What it produces is the evidence
-    // behind the spec's `< 2 ms` median acceptance criterion, recorded in
-    // `docs/theme-render-benchmark.md`.
+    // Not a CI gate, and not an isolation experiment either. It asserts nothing
+    // about timing — a shared runner's scheduling noise dwarfs the effect being
+    // measured — and is `#[ignore]`d so only a deliberate local run produces it.
+    //
+    // What it can and cannot show: it compares two *differently configured
+    // themes*, always in the same order, so the difference it prints is the
+    // combined effect of everything those two themes do differently, plus
+    // whatever drift the fixed ordering introduces. That makes it a sanity
+    // check and an **upper bound**, not an attribution of cost to the gradient
+    // pass. Isolating that properly would mean measuring one app state twice,
+    // once with gradient paints and once with equivalent solid ones, with the
+    // order alternated. The bound is enough for the spec's `< 2 ms` median
+    // criterion, which it clears by orders of magnitude; the numbers are
+    // recorded in `docs/theme-render-benchmark.md`.
 
     /// Frames measured per theme. The spec asks for at least 1,000.
     const BENCH_SAMPLES: usize = 1_000;
@@ -5310,10 +5319,12 @@ primary = \"#c20001\"\n";
     /// Print the median frame time of a solid theme, of a gradient theme, and
     /// the difference. Never asserts on time.
     ///
-    /// `high-contrast` is the solid side on purpose: it paints an opaque app
-    /// background like `fire` does but defines no gradient at all, so the
-    /// difference between the two is the gradient work and not the presence of
-    /// a background pass.
+    /// `high-contrast` is the solid side because it is the closest comparison
+    /// the built-ins offer: it paints an opaque app background like `fire` does
+    /// but defines no gradient at all, so at least the presence of a background
+    /// pass is not what separates them. They still differ in every other value
+    /// they set, and they are always measured in that order, so treat the
+    /// printed delta as an upper bound rather than as the gradient pass's cost.
     #[test]
     #[ignore = "local release measurement; prints timings, asserts none"]
     fn theme_gradient_release_benchmark() {

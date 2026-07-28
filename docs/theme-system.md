@@ -12,9 +12,11 @@ Three things make that practical:
 - **Strict validation.** `sshub theme check` reads your file with the same
   parser and resolver the application uses, and reports every problem it finds
   in one run, with file, line and column.
-- **Sensible inheritance.** Every one of the 234 component roles falls back to
-  one of 23 semantic meanings, and every user theme inherits from `default`.
-  Changing `semantic.accent` alone recolours everything that uses the accent.
+- **Sensible inheritance.** The 234 component roles are driven by 23 semantic
+  meanings — 233 of them fall back to a semantic slot, and the one exception,
+  `components.os_logo.tint`, keeps the asset's own colours by default. Every
+  user theme inherits from `default`, so changing `semantic.accent` alone
+  recolours everything that uses the accent.
 
 This guide is the long form. The README has the three-line version.
 
@@ -130,9 +132,11 @@ An entry nobody references is reported as a warning, not an error.
 
 ### 4. The semantic core — the 23 meanings
 
-This is the layer worth learning. SSHub's 234 component roles all fall back to
-one of exactly these 23 slots, so overriding a slot re-tints every component
-that inherits from it:
+This is the layer worth learning. 233 of SSHub's 234 component roles fall back
+to one of exactly these 23 slots, so overriding a slot re-tints every component
+that inherits from it. (The one that does not is `components.os_logo.tint`,
+whose default is `"native"` — the detected distro logos keep their own brand
+colours until you say otherwise.)
 
 ```text
 background, canvas, surface, surface_raised,
@@ -153,7 +157,11 @@ Two of them deserve a note:
 - **`background`** decides whether SSHub paints its own app background at all.
   Resolve it to `"terminal"` and SSHub leaves your terminal's own background
   showing through (including any transparency it has). Resolve it to a colour
-  or a gradient and SSHub paints its own surfaces — never the remote PTY.
+  and SSHub paints its own surfaces — never the remote PTY. Like every entry in
+  `[semantic]`, it takes a colour only; a gradient there is a validation error
+  (`` `semantic.background` does not support gradients ``). To sweep the app
+  background with one, put the gradient on the paint role
+  `components.app.background` instead — see [Static gradients](#static-gradients).
 - **`canvas`** is the opaque companion value: the colour an otherwise
   transparent theme uses when something genuinely needs a solid ground, and the
   default mixing ground for simulated opacity.
@@ -369,6 +377,11 @@ stops = [
 
 [components.dashboard.host_list]
 border = { gradient = "gradients.panel_border" }
+
+# The whole app background is a paint role too, which is where a gradient goes
+# when you want the surface itself to sweep. `[semantic]` cannot hold one.
+[components.app]
+background = { gradient = "gradients.panel_border" }
 ```
 
 ### The five directions

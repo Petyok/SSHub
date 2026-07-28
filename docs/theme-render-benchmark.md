@@ -5,11 +5,25 @@ after a frame has been drawn. The design constraint was that this must cost
 **less than 2 ms of additional median render time** per frame compared with a
 theme that has no gradients at all.
 
-This document is the evidence for that number. It is **not** a CI gate: the
-benchmark asserts nothing about timing, and it is `#[ignore]`d so it only runs
-when someone asks for it. A shared runner's scheduling noise is larger than the
-effect being measured, so a timing assertion there would fail for reasons that
-have nothing to do with SSHub.
+This document is the evidence for that constraint. Read it for what it is: a
+**smoke measurement that establishes an upper bound**, not a controlled
+experiment that attributes a cost to the gradient pass.
+
+- It is **not** a CI gate. The benchmark asserts nothing about timing and is
+  `#[ignore]`d, so it only runs when someone asks for it. A shared runner's
+  scheduling noise is larger than the effect being measured, so a timing
+  assertion there would fail for reasons that have nothing to do with SSHub.
+- It is **not** an isolation experiment. It compares two differently configured
+  built-in themes, always measured in the same order. The printed delta is the
+  combined effect of everything those two themes do differently, plus whatever
+  drift the fixed ordering introduces.
+
+That is enough to answer the question the constraint asks — "can a gradient
+theme cost 2 ms more per frame?" — and it answers it with a very wide margin.
+It is not enough to say what a gradient pass costs. Isolating that would mean
+measuring one app state twice, once with gradient paints and once with
+equivalent solid paints, alternating the order between runs. That has not been
+done, and no claim here depends on it.
 
 ## How to reproduce
 
@@ -23,17 +37,18 @@ It renders the **real** frame — the same `tui::render` the application calls �
 at `200x60`, which is a large terminal on purpose: gradient work scales with the
 number of cells, so a big frame is the unfavourable case.
 
-Both themes are built-ins, chosen so that the difference between them is the
-gradient work and nothing else:
+Both sides are built-ins. `high-contrast` is the closest comparison the
+built-ins offer, because at least the presence of an opaque background pass is
+not what separates the two:
 
-| Side | Theme | Why |
+| Side | Theme | What it defines |
 | --- | --- | --- |
-| solid | `high-contrast` | Paints an opaque app background, defines **no** gradients |
-| gradient | `fire` | Paints an opaque app background, defines 10 gradients across frames, separators and backgrounds |
+| solid | `high-contrast` | Opaque app background, **no** gradients at all |
+| gradient | `fire` | Opaque app background, 3 gradient definitions (`blaze`, `updraft`, `cinder`) referenced by 5 roles: three focused panel frames, the primary separator and the tunnel-table separator. No background gradient. |
 
-Per theme: 100 warm-up frames that are thrown away, then 1,000 measured frames.
-The durations are sorted and the median is reported, so a single scheduling
-hiccup cannot move the result.
+They still differ in every other value they set. Per theme: 100 warm-up frames
+that are thrown away, then 1,000 measured frames; the durations are sorted and
+the median is reported, so a single scheduling hiccup cannot move the result.
 
 ## Measurement
 
@@ -47,7 +62,7 @@ hiccup cannot move the result.
 | Warm-up | 100 frames per theme |
 | Samples | 1,000 frames per theme |
 
-Four consecutive runs on an otherwise idle machine:
+Ten consecutive runs on an otherwise idle machine:
 
 | Run | Solid median (`high-contrast`) | Gradient median (`fire`) | Delta |
 | --- | --- | --- | --- |
@@ -55,20 +70,29 @@ Four consecutive runs on an otherwise idle machine:
 | 2 | 0.200 ms | 0.204 ms | 0.004 ms |
 | 3 | 0.191 ms | 0.210 ms | 0.019 ms |
 | 4 | 0.193 ms | 0.217 ms | 0.023 ms |
+| 5 | 0.210 ms | 0.220 ms | 0.009 ms |
+| 6 | 0.209 ms | 0.211 ms | 0.002 ms |
+| 7 | 0.209 ms | 0.221 ms | 0.012 ms |
+| 8 | 0.212 ms | 0.221 ms | 0.009 ms |
+| 9 | 0.210 ms | 0.214 ms | 0.004 ms |
+| 10 | 0.205 ms | 0.220 ms | 0.015 ms |
 
-**Representative figures — run 1:** solid `0.208 ms`, gradient `0.213 ms`,
-delta `0.005 ms`.
+An independent reviewer's repeat run on different hardware produced solid
+`0.224 ms`, gradient `0.218 ms`, delta `0.000 ms` — the gradient side measuring
+*faster* than the solid one, which is the clearest possible statement of how far
+this sits inside the noise floor.
 
-**Result:** the additional median render time of a full gradient theme is
-between `0.004 ms` and `0.023 ms` on this machine — roughly two orders of
-magnitude below the `2 ms` acceptance criterion. The spread between runs is
-larger than the effect itself, which is the honest way to read these numbers:
-the gradient pass is not measurably expensive at this frame size.
+**Result:** across every run recorded here the observed difference stays under
+`0.03 ms`, and one independent run put it at zero or below. Whatever a gradient
+theme costs per frame at `200x60`, it is bounded far below the `2 ms`
+acceptance criterion — roughly two orders of magnitude below. The measurement
+does not support any narrower claim than that, and none is made.
 
-## Why it is this cheap
+## Why an upper bound this low is plausible
 
 Gradient sampling allocates nothing per cell — no `Vec`, `String`, `Box` or heap
 closure — and runs only over the rects that actually carry a gradient role, not
 over the whole buffer. A theme without gradients never enters the painter at
-all: the solid path is a plain blanking pass, which is why `default` and
-`high-contrast` cost exactly what they did before the theme system existed.
+all: the solid path is a plain blanking pass. That is the design reason the
+effect is hard to measure; the numbers above are consistent with it, not a proof
+of it.

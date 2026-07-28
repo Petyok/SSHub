@@ -92,8 +92,14 @@ All notable changes to SSHub are documented in this file.
   Invalid themes stay listed with their reason instead of vanishing, and a theme
   that mentions roles this version does not know is usable with a warning.
 - **Five built-in themes**, embedded in the binary and readable with
-  `sshub theme show`: `default` (the previous appearance, unchanged),
-  `summer`, `aqua`, `fire` and `high-contrast`.
+  `sshub theme show`: `default`, `summer`, `aqua`, `fire` and `high-contrast`.
+  `default` reproduces the previous appearance cell for cell with two
+  deliberate exceptions: cells that carried a direct ANSI colour are normalised
+  onto their semantic role, and a handful of cells that carried *no* colour at
+  all now carry one - the host and identity form titles, an idle form value,
+  the form key hints and the detail-panel field marker. Those cells were
+  unthemeable and, on a themed popup ground, not guaranteed readable; each is
+  recorded individually in `assets/themes/default.toml` and the design spec.
 - **Static gradients** - named multi-stop gradients in five directions
   (`horizontal`, `vertical`, `diagonal_down`, `diagonal_up`, `perimeter`) on
   frames, separators and backgrounds, painted by buffer post-processing with no

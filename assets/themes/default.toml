@@ -1,16 +1,25 @@
 # SSHub — built-in root theme.
 #
 # `default` is the only theme without a parent: every other theme, built-in or
-# your own, inherits from it. Its job is to be an exact reproduction of the
-# appearance SSHub had before the theme system existed, so upgrading changes
-# nothing on screen.
+# your own, inherits from it. Its job is to reproduce the appearance SSHub had
+# before the theme system existed, cell for cell, with two documented and
+# deliberate exceptions:
 #
-# It therefore defines the complete semantic core and nothing else. Every one of
-# the ~230 component roles already carries a documented semantic fallback in the
-# Rust catalogue (the README documents the full table), so restating them here
-# would create a second hand-maintained copy of the same table — the one
-# thing the V1 contract rules out. Change a semantic slot below and every
-# component that inherits from it follows automatically.
+#   1. cells that carried a direct ANSI colour (no `theme.rs` value existed for
+#      them) are normalised onto their semantic role;
+#   2. a handful of cells that carried *no* colour at all — two form titles, an
+#      idle form value, the form key hints and the detail-panel field marker —
+#      now carry one, so they can be themed and stay readable on a themed
+#      ground. Each one is recorded individually in the release notes.
+#
+# Everything else looks exactly as it did.
+#
+# `default` defines the complete semantic core and nothing else. Every one of
+# the 234 component roles already carries a documented fallback in the Rust
+# catalogue (see docs/theme-system.md for the full generated table), so
+# restating them here would create a second hand-maintained copy of the same
+# table — the one thing the V1 contract rules out. Change a semantic slot below
+# and every component that inherits from it follows automatically.
 #
 # If `default` ever does need a component override, it may use only
 # `semantic.*` references and the sentinels "terminal", "auto" and "native" —
