@@ -4074,7 +4074,6 @@ marker = { foreground = \"#ab0005\" }\n\
         });
         app.mode = AppMode::GroupForm;
         let buf = render_to_buffer(&app, 120, 38);
-        let popup = drawn_popup(&app);
         let (mx, my) = crate::test_support::find_text(&buf, "\u{25b8} Name");
         let marker = cell_style(&buf, mx, my);
         assert_eq!(marker.fg, Some(legacy::BRIGHT), "group form marker colour");
@@ -4087,7 +4086,6 @@ marker = { foreground = \"#ab0005\" }\n\
             Some(legacy::ACCENT),
             "not the global focus indicator's accent"
         );
-        let _ = popup;
 
         // 4 + 5. Both settings-shaped popups drew it in `white()` on the bar.
         let mut app = test_app_with_hosts();
@@ -4120,7 +4118,9 @@ marker = { foreground = \"#ab0005\" }\n\
         );
 
         // The two forms whose marker only ever had a direct ANSI colour keep
-        // the global role, and that role is the accent.
+        // the global role, and that role is the accent. Both are rendered:
+        // documenting a two-form exception and proving one of them is how a
+        // half-bound role passes for a bound one.
         let mut app = test_app_with_hosts();
         app.enter_host_form(None, false).unwrap();
         app.host_form.as_mut().unwrap().editing = false;
@@ -4130,6 +4130,26 @@ marker = { foreground = \"#ab0005\" }\n\
             cell_style(&buf, hx, hy).fg,
             Some(legacy::ACCENT),
             "the host form's marker is components.focus.indicator"
+        );
+
+        let mut app = test_app_with_hosts();
+        app.enter_identity_form(None).unwrap();
+        app.identity_form.as_mut().unwrap().editing = false;
+        let buf = render_to_buffer(&app, 120, 38);
+        let (ix, iy) = crate::test_support::find_text(&buf, "> Name");
+        assert_eq!(
+            cell_style(&buf, ix, iy).fg,
+            Some(legacy::ACCENT),
+            "the identity form's marker is components.focus.indicator too"
+        );
+        // And while editing, where the glyph changes but the role does not.
+        app.identity_form.as_mut().unwrap().editing = true;
+        let buf = render_to_buffer(&app, 120, 38);
+        let (ex, ey) = crate::test_support::find_text(&buf, "\u{25b8} Name");
+        assert_eq!(
+            cell_style(&buf, ex, ey).fg,
+            Some(legacy::ACCENT),
+            "the identity form's editing marker likewise"
         );
     }
 
