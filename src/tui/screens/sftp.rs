@@ -442,6 +442,23 @@ fn render_queue(
     staged: f32,
     theme: &ResolvedTheme,
 ) {
+    // Everything in this strip is written through `set_stringn`, and nothing is
+    // pre-cut with `ellipsize` first.
+    //
+    // The strip carries dynamic file and server names, so its text is not
+    // ASCII by assumption. `ellipsize` counts Unicode scalars, which is wrong
+    // in both directions: a CJK name claims half the columns it actually paints
+    // and runs through the reserved right margin, and `e` + a combining acute
+    // counts as two where it occupies one, so a grapheme that fits gets thrown
+    // away for an ellipsis. `set_stringn` measures graphemes in terminal
+    // columns and writes each one whole or not at all.
+    //
+    // The trade is explicit: a clipped line here ends without a `…` marker. A
+    // cell-accurate `ellipsize` for the whole renderer is a separate change —
+    // `text.rs` has ~66 callers — and is on the ledger rather than smuggled in.
+    let budget = w.saturating_sub(4) as usize;
+    let content_end = x + 2 + w.saturating_sub(4);
+
     if queue.is_empty() {
         let (text, style) = match notice {
             Some(n) => (format!("⚠ {n}"), theme.style(StyleRole::SftpNotice)),
@@ -451,31 +468,17 @@ fn render_queue(
                 theme.style(StyleRole::TextDim),
             ),
         };
-        buf.set_string(
-            x + 2,
-            y,
-            ellipsize(&text, w.saturating_sub(4) as usize),
-            style,
-        );
+        buf.set_stringn(x + 2, y, text, budget, style);
         return;
     }
     // Header and notice are two cells rather than one string: the same warning
     // was already amber over an empty queue, and baking it into the header made
     // it read as chrome exactly when it mattered most.
-    //
-    // Both are placed and clamped in terminal *columns*, via `set_stringn` —
-    // a notice carries dynamic file and server names, and measuring a CJK one
-    // in `chars()` would claim half the columns it actually paints and run
-    // through the strip's right margin. `ellipsize` still runs first so an
-    // over-long notice keeps its `…`; `set_stringn` is the hard cell limit
-    // underneath it.
     let header = format!("queue ({})  c=run  u=remove", queue.len());
-    let content_end = x + 2 + w.saturating_sub(4);
-    let budget = w.saturating_sub(4) as usize;
     let (after_header, _) = buf.set_stringn(
         x + 2,
         y,
-        ellipsize(&header, budget),
+        &header,
         budget,
         theme.style(StyleRole::SftpQueueHeader),
     );
@@ -486,7 +489,7 @@ fn render_queue(
             buf.set_stringn(
                 at,
                 y,
-                ellipsize(&format!("⚠ {n}"), room),
+                format!("⚠ {n}"),
                 room,
                 theme.style(StyleRole::SftpNotice),
             );
@@ -501,8 +504,10 @@ fn render_queue(
             Direction::Download => ("←", "download", theme.style(StyleRole::SftpQueueDownload)),
             Direction::Upload => ("→", "upload", theme.style(StyleRole::SftpQueueUpload)),
         };
+        // A file name is the most likely wide-glyph text on this strip, so the
+        // row is clamped in columns like the header above it.
         let s = format!("{arrow} {label}  {}", t.name);
-        let clamped = ellipsize(&s, w.saturating_sub(6) as usize);
+        let row_budget = content_end.saturating_sub(x + 4) as usize;
         // A just-staged row flies in from the side the file is coming from:
         // a download off the remote pane on the right, an upload off the local
         // pane on the left (#35).
@@ -514,10 +519,10 @@ fn render_queue(
             };
             let strip = Rect::new(x, yy, w, 1);
             let mut layer = Buffer::empty(strip);
-            layer.set_string(x + 4, yy, clamped, style);
+            layer.set_stringn(x + 4, yy, &s, row_budget, style);
             blit::blit(buf, strip, strip, &layer, dx, 0);
         } else {
-            buf.set_string(x + 4, yy, clamped, style);
+            buf.set_stringn(x + 4, yy, &s, row_budget, style);
         }
     }
 }
@@ -1029,42 +1034,78 @@ mod tests {
     /// A notice carries dynamic file and server text, so wide glyphs are not a
     /// hypothetical: measured in `chars()` a CJK notice claims half the columns
     /// it actually paints and runs straight through the strip's right margin.
+    ///
+    /// Both queue states are driven, because they are two different write paths
+    /// and each has to hold the same boundary.
     #[test]
     fn a_wide_glyph_queue_notice_stays_inside_the_strip() {
         let theme = marked();
-        // The strip is 40 columns of a wider buffer, so both the reserved right
-        // margin (38, 39) and the untouched cells beyond it are readable.
-        let area = Rect::new(0, 0, 60, 2);
-        let strip_w = 40u16;
-        let mut buf = Buffer::empty(area);
-        for x in area.left()..area.right() {
-            buf.cell_mut((x, 0)).unwrap().set_symbol("z");
-        }
+        let wide = "\u{754c}".repeat(20);
 
+        for (state, queue) in [
+            ("empty queue", Vec::new()),
+            ("filled queue", vec![transfer(Direction::Download, &wide)]),
+        ] {
+            // The strip is 40 columns of a wider buffer, so both the reserved
+            // right margin (38, 39) and the cells beyond it are readable.
+            let area = Rect::new(0, 0, 60, 3);
+            let strip_w = 40u16;
+            let mut buf = Buffer::empty(area);
+            for y in area.top()..area.bottom() {
+                for x in area.left()..area.right() {
+                    buf.cell_mut((x, y)).unwrap().set_symbol("z");
+                }
+            }
+
+            render_queue(&mut buf, 0, 0, strip_w, &queue, Some(&wide), 1.0, &theme);
+
+            for y in area.top()..area.bottom() {
+                for x in (strip_w - 2)..area.right() {
+                    assert_eq!(
+                        buf.cell((x, y)).unwrap().symbol(),
+                        "z",
+                        "{state}: ({x}, {y}) is outside the strip's content area \
+                         and must be untouched"
+                    );
+                }
+            }
+            // …and the notice really is on the row, so the guard above is not
+            // passing because nothing was drawn.
+            assert_eq!(
+                fg_at_text(&buf, "\u{26a0}"),
+                marker(NOTICE),
+                "{state}: the notice is still drawn, just clamped"
+            );
+        }
+    }
+
+    /// A grapheme that fits must not be thrown away by a scalar-counted cut.
+    ///
+    /// `é` written as `e` + a combining acute is two scalars but one column, so
+    /// planning the ellipsis in `chars()` replaced a grapheme that fitted.
+    #[test]
+    fn a_notice_that_fits_exactly_is_not_ellipsised() {
+        let theme = marked();
+        // 36 columns leaves the notice exactly three cells after the header and
+        // its three-column gap — precisely what `⚠ é` needs.
+        let area = Rect::new(0, 0, 40, 2);
+        let mut buf = Buffer::empty(area);
         render_queue(
             &mut buf,
             0,
             0,
-            strip_w,
+            36,
             &[transfer(Direction::Download, "down.bin")],
-            Some("\u{754c}\u{754c}\u{754c}\u{754c}\u{754c}\u{754c}\u{754c}\u{754c}"),
+            Some("e\u{301}"),
             1.0,
             &theme,
         );
 
-        for x in (strip_w - 2)..area.right() {
-            assert_eq!(
-                buf.cell((x, 0)).unwrap().symbol(),
-                "z",
-                "column {x} is outside the strip's content area and must be untouched"
-            );
-        }
-        // …and the notice really is on the row, so the guard above is not
-        // passing because nothing was drawn.
+        assert_eq!(buf.cell((31, 0)).unwrap().symbol(), "\u{26a0}");
         assert_eq!(
-            fg_at_text(&buf, "\u{26a0}"),
-            marker(NOTICE),
-            "the notice is still drawn, just clamped"
+            buf.cell((33, 0)).unwrap().symbol(),
+            "e\u{301}",
+            "the grapheme fits in the three remaining columns and must survive"
         );
     }
 
