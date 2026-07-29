@@ -103,6 +103,15 @@ All notable changes to SSHub are documented in this file.
 
 ### Fixed
 
+- **Upgrading while running broke password auth until restart** (issue #63) - the
+  askpass helper is this binary, found through `current_exe()`, and an upgrade
+  replaces the file rather than writing into it, so the running process was left
+  pointing at `<path> (deleted)`. ssh could not exec that, no stored secret was
+  delivered, and the failure read as `Permission denied (publickey)`, which points
+  at the server rather than at the upgrade. The path is now re-resolved when it
+  disappears, so an in-place upgrade keeps working, and when the helper genuinely
+  cannot be found the session log says why instead of leaving a rejected-key
+  message to explain itself.
 - **The agent panel printed over the identity cards** - its position was derived
   from whole card rows while the grid scrolls by lines, so mid-scroll it landed on
   a card and its own short fields left the card showing through, giving lines like

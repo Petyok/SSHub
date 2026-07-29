@@ -195,7 +195,7 @@ impl CommandRunner for SshCommandRunner {
         // has exited (i.e. for the whole poll loop below).
         let mut _askpass = None;
         if let Some(secret) = secret {
-            if let Ok(exe) = std::env::current_exe() {
+            if let Ok(exe) = crate::session::askpass::helper_exe() {
                 if let Ok(guard) = crate::session::askpass::AskpassSecret::new(secret.value()) {
                     for (k, v) in guard.env(&exe) {
                         cmd.env(k, v);
