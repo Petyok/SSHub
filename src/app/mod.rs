@@ -525,15 +525,31 @@ impl App {
         let metadata = Arc::new(MetadataDb::open(db_path)?);
         let store = Arc::new(LauncherStore::open(launcher_path)?);
         let resolver = Box::new(SshConfigResolver::default());
+        let keyring_available = crate::credentials::check_keyring_available();
+        let password_store: Box<dyn crate::credentials::PasswordStore> = if keyring_available {
+            let _ = crate::credentials::migrate_fallback_to_keyring();
+            Box::new(crate::credentials::OsKeyring)
+        } else {
+            Box::new(crate::credentials::FilePasswordStore::new(
+                data_dir.join("credentials.json"),
+            ))
+        };
+
         let mut app = Self::new_with_deps(
             config,
             AppDeps {
                 resolver,
                 metadata,
                 store,
-                password_store: Box::new(crate::credentials::OsKeyring),
+                password_store,
             },
         );
+
+        if !keyring_available {
+            app.host_notice =
+                Some("OS keyring unavailable. Using credentials.json fallback.".into());
+        }
+
         app.reload_hosts()?;
         app.refresh_auth_cache();
         app.start_ping_worker();

@@ -6,6 +6,14 @@ All notable changes to SSHub are documented in this file.
 
 ### Added
 
+- **Credentials survive a missing keyring** (PR #1) - where no Secret Service is
+  reachable (WSL, Docker, a headless box), passwords and passphrases used to have
+  nowhere to go. They now fall back to an owner-only `credentials.json` in the
+  data directory, written through a `0600` temp file and an atomic rename, and the
+  status bar says so rather than letting you assume the keyring took it. **The
+  fallback file is plaintext**, since there is no keyring to encrypt against. Once
+  a keyring shows up again, its contents migrate into it on the next launch and
+  the file is removed, but only if every entry made it across.
 - **Install from npm** (issue #51) - `npx sshub-tui` and `npm install -g sshub-tui`
   now work, installing a command still called `sshub`. The npm package ships the
   same prebuilt binaries the GitHub release does, delivered as platform-specific
