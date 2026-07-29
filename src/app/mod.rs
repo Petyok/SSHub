@@ -9,6 +9,7 @@ mod host_form;
 mod hostlist;
 mod identities;
 mod import;
+mod keygen;
 mod keys;
 mod mouse;
 mod session;
@@ -113,6 +114,8 @@ pub struct App {
     pub identity_selected: usize,
     pub identity_form: Option<IdentityFormEdit>,
     pub identity_notice: Option<String>,
+    pub keygen_form: Option<KeygenFormEdit>,
+    pub keygen_notice: Option<String>,
     pub groups: Vec<HostGroup>,
     /// The reserved Favorites group, kept out of `groups` so it never appears in
     /// the group-manage list or the host-form group selector. Used only when
@@ -587,6 +590,8 @@ impl App {
             identity_selected: 0,
             identity_form: None,
             identity_notice: None,
+            keygen_form: None,
+            keygen_notice: None,
             groups: Vec::new(),
             favorites_group: None,
             host_form: None,

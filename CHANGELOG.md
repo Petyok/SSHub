@@ -6,6 +6,11 @@ All notable changes to SSHub are documented in this file.
 
 ### Added
 
+- **Generate SSH keys from the Keys tab** (PR #15) - `g` opens a form for the key
+  type (Ed25519 or RSA-4096), passphrase, comment and target path. The passphrase
+  reaches `ssh-keygen` through askpass rather than argv, the new key is registered
+  as an identity immediately, and its passphrase goes to the credential store when
+  one was set. Generation refuses to overwrite an existing key or its `.pub`.
 - **Credentials survive a missing keyring** (PR #1) - where no Secret Service is
   reachable (WSL, Docker, a headless box), passwords and passphrases used to have
   nowhere to go. They now fall back to an owner-only `credentials.json` in the
