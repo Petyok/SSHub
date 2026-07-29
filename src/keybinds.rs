@@ -300,6 +300,11 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
+    (@fn local_shell $($key:literal),* $(,)?) => {
+        fn default_kb_local_shell() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
     (@fn session_focus $($key:literal),* $(,)?) => {
         fn default_kb_session_focus() -> Vec<String> {
             vec![$($key.to_string()),*]
@@ -436,6 +441,7 @@ kb_defaults! {
     session_tab_next => ["Ctrl+]", "Ctrl+PageDown"],
     session_detach => ["Ctrl+D"],
     session_open_sftp => ["Ctrl+Shift+F"],
+    local_shell => ["Ctrl+Shift+T"],
     session_focus => ["Ctrl+Shift+S"],
     session_scroll_up => ["PageUp"],
     session_scroll_down => ["PageDown"],
@@ -513,6 +519,7 @@ pub enum KeyAction {
     SessionTabNext,
     SessionDetach,
     SessionOpenSftp,
+    LocalShell,
     SessionFocus,
     SessionScrollUp,
     SessionScrollDown,
@@ -532,7 +539,7 @@ pub enum KeyAction {
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 73] = [
+    pub const ALL: [KeyAction; 74] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -591,6 +598,7 @@ impl KeyAction {
         KeyAction::SessionTabNext,
         KeyAction::SessionDetach,
         KeyAction::SessionOpenSftp,
+        KeyAction::LocalShell,
         KeyAction::SessionFocus,
         KeyAction::SessionScrollUp,
         KeyAction::SessionScrollDown,
@@ -668,6 +676,7 @@ impl KeyAction {
             KeyAction::SessionTabNext => "Next session tab",
             KeyAction::SessionDetach => "Detach to dashboard",
             KeyAction::SessionOpenSftp => "Open SFTP for this host",
+            KeyAction::LocalShell => "Open local shell tab",
             KeyAction::SessionFocus => "Focus session tab",
             KeyAction::SessionScrollUp => "Scroll session up",
             KeyAction::SessionScrollDown => "Scroll session down",
@@ -806,6 +815,8 @@ pub struct KeybindsConfig {
     pub session_detach: Vec<String>,
     #[serde(default = "default_kb_session_open_sftp")]
     pub session_open_sftp: Vec<String>,
+    #[serde(default = "default_kb_local_shell")]
+    pub local_shell: Vec<String>,
     #[serde(default = "default_kb_session_focus")]
     pub session_focus: Vec<String>,
     #[serde(default = "default_kb_session_scroll_up")]
@@ -899,6 +910,7 @@ impl Default for KeybindsConfig {
             session_tab_next: default_kb_session_tab_next(),
             session_detach: default_kb_session_detach(),
             session_open_sftp: default_kb_session_open_sftp(),
+            local_shell: default_kb_local_shell(),
             session_focus: default_kb_session_focus(),
             session_scroll_up: default_kb_session_scroll_up(),
             session_scroll_down: default_kb_session_scroll_down(),
@@ -979,6 +991,7 @@ impl KeybindsConfig {
             KeyAction::SessionTabNext => default_kb_session_tab_next(),
             KeyAction::SessionDetach => default_kb_session_detach(),
             KeyAction::SessionOpenSftp => default_kb_session_open_sftp(),
+            KeyAction::LocalShell => default_kb_local_shell(),
             KeyAction::SessionFocus => default_kb_session_focus(),
             KeyAction::SessionScrollUp => default_kb_session_scroll_up(),
             KeyAction::SessionScrollDown => default_kb_session_scroll_down(),
@@ -1104,6 +1117,7 @@ impl KeybindsConfig {
             KeyAction::SessionTabNext => &self.session_tab_next,
             KeyAction::SessionDetach => &self.session_detach,
             KeyAction::SessionOpenSftp => &self.session_open_sftp,
+            KeyAction::LocalShell => &self.local_shell,
             KeyAction::SessionFocus => &self.session_focus,
             KeyAction::SessionScrollUp => &self.session_scroll_up,
             KeyAction::SessionScrollDown => &self.session_scroll_down,
@@ -1182,6 +1196,7 @@ impl KeybindsConfig {
             KeyAction::SessionTabNext => self.session_tab_next = binds,
             KeyAction::SessionDetach => self.session_detach = binds,
             KeyAction::SessionOpenSftp => self.session_open_sftp = binds,
+            KeyAction::LocalShell => self.local_shell = binds,
             KeyAction::SessionFocus => self.session_focus = binds,
             KeyAction::SessionScrollUp => self.session_scroll_up = binds,
             KeyAction::SessionScrollDown => self.session_scroll_down = binds,

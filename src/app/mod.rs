@@ -1,3 +1,4 @@
+pub(crate) mod adhoc;
 mod audit;
 mod broadcast;
 mod connect;
@@ -11,9 +12,11 @@ mod identities;
 mod import;
 mod keygen;
 mod keys;
+mod local_shell;
 mod mouse;
 mod push_key;
 mod session;
+mod session_spawn;
 mod sftp;
 mod tags;
 mod tunnels;
@@ -308,6 +311,7 @@ pub struct App {
     pub palette_query: String,
     pub palette_selected: usize,
     pub palette_results: Vec<usize>,
+    pub palette_adhoc: Option<crate::app::adhoc::AdhocTarget>,
     pub ping_rx: Option<Receiver<crate::ping::PingResult>>,
     pub ping_data: std::collections::HashMap<String, Vec<u32>>,
     pub sftp: Option<crate::sftp::model::SftpState>,
@@ -682,6 +686,7 @@ impl App {
             palette_query: String::new(),
             palette_selected: 0,
             palette_results: Vec::new(),
+            palette_adhoc: None,
             ping_rx: None,
             ping_data: std::collections::HashMap::new(),
             sftp: None,

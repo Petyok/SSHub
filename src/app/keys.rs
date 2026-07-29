@@ -25,6 +25,12 @@ impl App {
             return Ok(());
         }
 
+        // Open a local shell tab from any dashboard tab.
+        if matches!(self.mode, AppMode::Normal) && self.is_action(KeyAction::LocalShell, &key) {
+            self.open_local_shell()?;
+            return Ok(());
+        }
+
         // Keybinding editor from the dashboard navigation screens.
         if self.mode == AppMode::Normal && self.is_action(KeyAction::KeybindEditor, &key) {
             self.keybind_editor = Some(KeybindEditor {
@@ -303,6 +309,7 @@ impl App {
                 self.palette_query.clear();
                 self.palette_selected = 0;
                 self.palette_results = (0..self.hosts.len()).collect();
+                self.palette_adhoc = self.compute_palette_adhoc();
                 self.mode = AppMode::Palette;
             }
             _ if self.is_action(KeyAction::Help, &key) => {
@@ -446,6 +453,12 @@ impl App {
                 self.mode = AppMode::Normal;
             }
             _ if self.is_action(KeyAction::Connect, &key) => {
+                if self.palette_adhoc.is_some()
+                    && self.palette_selected == self.palette_results.len()
+                {
+                    let t = self.palette_adhoc.take().unwrap();
+                    return self.connect_adhoc(t);
+                }
                 let chosen = self.palette_results.get(self.palette_selected).copied();
                 self.mode = AppMode::Normal;
                 if let Some(idx) = chosen {
@@ -471,7 +484,8 @@ impl App {
                 }
             }
             _ if self.is_action(KeyAction::MoveDown, &key) => {
-                if self.palette_selected + 1 < self.palette_results.len() {
+                let total = self.palette_results.len() + self.palette_adhoc.is_some() as usize;
+                if self.palette_selected + 1 < total {
                     self.palette_selected += 1;
                 }
             }
@@ -488,7 +502,9 @@ impl App {
         // nucleo fuzzy match (same engine as list search) — the palette is
         // advertised as fuzzy, so typos and abbreviations must match too.
         self.palette_results = self.search.update_query(&self.hosts, &self.palette_query);
-        if self.palette_selected >= self.palette_results.len() {
+        self.palette_adhoc = self.compute_palette_adhoc();
+        let total = self.palette_results.len() + self.palette_adhoc.is_some() as usize;
+        if total == 0 || self.palette_selected >= total {
             self.palette_selected = 0;
         }
     }

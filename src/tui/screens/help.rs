@@ -84,6 +84,10 @@ fn help_lines() -> Vec<Line<'static>> {
         Line::from(""),
         section("search & tags"),
         entry("/", "Fuzzy palette (type to search, Enter connects)"),
+        entry(
+            "",
+            "Unknown [user@]host[:port] offers ad-hoc connect (no save)",
+        ),
         entry("#", "Filter hosts by tag (type to narrow the list)"),
         entry(
             "Space",
@@ -138,6 +142,7 @@ fn help_lines() -> Vec<Line<'static>> {
         ),
         entry("[session]", ""),
         entry("Ctrl+T", "New session tab (pick host)"),
+        entry("Ctrl+Shift+T", "Open a local shell tab"),
         entry("Ctrl+W", "Close session tab"),
         entry("Ctrl+D", "Detach to dashboard (session keeps running)"),
         entry(

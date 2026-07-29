@@ -6,6 +6,14 @@ All notable changes to SSHub are documented in this file.
 
 ### Added
 
+- **Ad-hoc connect** - typing an unknown `[user@]host[:port]` into the fuzzy
+  palette (`/`), IPv6 in brackets included, now offers a "connect without saving"
+  row instead of reporting no matches, and Enter opens an embedded session
+  straight to it. The destination is validated and passed after `--`, so a host
+  that starts with a dash cannot turn into an ssh flag.
+- **Local shell tab** - `Ctrl+Shift+T` opens a session tab running your login
+  shell (`$SHELL`, falling back to `/bin/sh`), with the same detach and close
+  behaviour as an ssh tab.
 - **Push a public key to a host** (PR #16) - `Shift+P` from the hosts list picks
   an identity, or from the Keys tab picks a host, and installs that identity's
   public key into the remote `~/.ssh/authorized_keys`. The remote side runs under

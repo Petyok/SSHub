@@ -57,6 +57,10 @@ The settings overlay (`Ctrl+H`) — toggle an opaque background, OS logos, quit 
 - **Multiple groups & Favorites** — a host can belong to several groups at once; a reserved Favorites group and a ★ marker in the list, toggled with `f`
 - **Tunnels** — define and manage SSH tunnels (local/remote/dynamic SOCKS). Start, stop, and monitor from the TUI. Per-tunnel **keep alive** auto-starts on launch and reconnects dropped forwards with exponential backoff (configurable in `config.toml`).
 - **Keys** — identity management with ssh-agent integration. Add/remove keys from agent, see loaded status
+- **Ad-hoc connect** - in the fuzzy palette (`/`), typing an unknown `[user@]host[:port]` (IPv6 in brackets supported) that matches no saved host offers a "connect without saving" row; Enter opens an embedded ssh session to it. Input is validated and injection-safe (no leading-dash hosts; destination passed after `--`)
+- **Local shell tab** - `Ctrl+Shift+T` opens a session tab running your login shell (`$SHELL`, else `/bin/sh`) with the same detach/close semantics as ssh tabs
+- **Audit** — log of all connection events with filtering by status (ok/fail) and time range (today/week/month)
+- **Settings overlay** (`Ctrl+H`) — toggle an opaque background (for transparent terminals), OS logos, quit confirmation, and the startup animation
 - **Audit** — log of all connection events with filtering by status (ok/fail) and time range (today/week/month); session connect events record the path to the session log when logging is enabled
 - **Session logging** — opt-in capture of PTY session output to `~/.local/share/sshub/logs/<host-dir>/` (managed hosts use `{name}-{id}`; pure `~/.ssh/config` aliases without a launcher row may share a directory when sanitized names collide). Enable globally in Settings (`Ctrl+H`) or override per host (`inherit` / `on` / `off`). **Logs capture everything echoed to the terminal, including passwords if they appear on screen.**
 - **Mosh transport** — per-host `Transport` field in the host form (`ssh` or `mosh`). Embedded sessions use `mosh` when selected; tunnels and SFTP stay ssh-only.
@@ -236,6 +240,7 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | Key                    | Action                              |
 |------------------------|-------------------------------------|
 | `Ctrl+T`               | New session tab (host picker)         |
+| `Ctrl+Shift+T`         | Local shell tab                     |
 | `Ctrl+W`               | Close session tab                   |
 | `Ctrl+D`               | Detach to dashboard (SSH keeps running) |
 | `Ctrl+[` / `Ctrl+]`   | Previous / next session tab         |
@@ -256,6 +261,7 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | `Alt`+arrows       | Move dashboard panel focus |
 | `z`                | Zoom focused panel (Esc to exit) |
 | `/`                | Fuzzy search              |
+| `/` + `[user@]host` | Ad-hoc connect (unknown host, no save) |
 | `#`                | Filter by tags (AND)      |
 | `Shift+G`          | Manage groups (nested)    |
 | `Shift+I`          | Import from ssh config    |

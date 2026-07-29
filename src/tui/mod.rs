@@ -258,6 +258,7 @@ fn render_inner(frame: &mut Frame, app: &App) {
                 &app.hosts,
                 &app.palette_results,
                 app.palette_selected,
+                app.palette_adhoc.as_ref(),
             );
         }
         AppMode::HostForm => render_form_popup(frame, app, FormKind::Host),
