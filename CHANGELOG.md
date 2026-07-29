@@ -118,6 +118,8 @@ All notable changes to SSHub are documented in this file.
   dashboard tab, but the keys only fired on hosts. They are handled globally
   whenever sessions exist, before the per-tab dispatch. Ctrl+T still opens a new
   SSH session picker on the SFTP tab; plain `o` remains the left-pane picker.
+  The dashboard footer no longer lists `detach`: you are already detached, so
+  advertising it was a lie; detach stays on the in-session header.
 - **Upgrading while running broke password auth until restart** (issue #63) - the
   askpass helper is this binary, found through `current_exe()`, and an upgrade
   replaces the file rather than writing into it, so the running process was left

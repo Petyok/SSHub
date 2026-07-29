@@ -161,12 +161,9 @@ impl App {
             self.close_active_session();
             return true;
         }
-        // Advertised in the footer alongside resume/tabs; detach is a no-op when
-        // already on the dashboard, and sftp opens the browser for the active tab.
-        if self.is_action(KeyAction::SessionDetach, key) {
-            self.detach_to_dashboard();
-            return true;
-        }
+        // Footer "sftp" — real work from any dashboard tab. Detach is not
+        // handled here: already on the dashboard, and the footer no longer
+        // advertises it (see session_footer_hints).
         if self.is_action(KeyAction::SessionOpenSftp, key) {
             self.open_sftp_for_active_session();
             return true;
