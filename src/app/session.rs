@@ -141,14 +141,15 @@ impl App {
             self.focus_active_session();
             return true;
         }
+        // Cycling moves the selection along the session strip and stays on the
+        // dashboard. Entering the selected session is `SessionFocus`, which sits
+        // right next to these in the footer.
         if self.is_action(KeyAction::SessionTabPrev, key) {
             self.switch_session(-1);
-            self.focus_active_session();
             return true;
         }
         if self.is_action(KeyAction::SessionTabNext, key) {
             self.switch_session(1);
-            self.focus_active_session();
             return true;
         }
         if self.is_action(KeyAction::SessionNewTab, key) {
@@ -395,17 +396,22 @@ impl App {
         let next = ((cur + delta) % len + len) % len;
         self.active_session = Some(next as usize);
 
-        if self.mode == AppMode::Normal {
-            return;
-        }
         // Carry the tab we're leaving off in the direction of travel (#35). The
         // strip wraps, so the direction comes from `delta`, not the indices.
+        // Armed before the dashboard returns, because the strip up there mirrors
+        // the same travel.
         if next != cur && self.motion_enabled() {
             self.session_tab_switch = Some(SessionTabSwitch {
                 dir: if delta > 0 { 1 } else { -1 },
                 from: cur as usize,
                 at: std::time::Instant::now(),
             });
+        }
+
+        // On the dashboard only the strip moves; the mode below would drag the
+        // user into the session they were merely scrolling past.
+        if self.mode == AppMode::Normal {
+            return;
         }
 
         // Reflect the new active session's phase in app.mode, so render

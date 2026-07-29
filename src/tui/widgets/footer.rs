@@ -7,9 +7,6 @@ use crate::tui::theme;
 
 /// Gap between two hint pairs.
 const GAP: u16 = 3;
-/// How many trailing pairs are pinned: every tab ends its list with `? help`
-/// and `q quit`.
-const PINNED: usize = 2;
 
 /// Cells one `(key, label)` pair occupies: key, a space, label.
 fn pair_width<K: AsRef<str>, L: AsRef<str>>((key, label): &(K, L)) -> u16 {
@@ -44,7 +41,12 @@ fn put_pair<K: AsRef<str>, L: AsRef<str>>(
 /// from the end. The SFTP tab needs 220 columns to show its full row, so plain
 /// tail truncation dropped `? help` and `q quit` on any normal terminal: the two
 /// hints telling you how to get out were the first to go.
-pub fn render_footer<K, L>(frame: &mut Frame, area: Rect, keybinds: &[(K, L)])
+///
+/// `pinned` is how many trailing pairs must survive that truncation. The caller
+/// decides, because which pairs those are depends on what is running: with a
+/// session in the background the way back into it is as essential as the way out
+/// of the app.
+pub fn render_footer<K, L>(frame: &mut Frame, area: Rect, keybinds: &[(K, L)], pinned: usize)
 where
     K: AsRef<str>,
     L: AsRef<str>,
@@ -71,7 +73,7 @@ where
         return;
     }
 
-    let pinned = keybinds.len().min(PINNED);
+    let pinned = keybinds.len().min(pinned.max(1));
     let (head, tail) = keybinds.split_at(keybinds.len() - pinned);
     let tail_width: u16 =
         tail.iter().map(pair_width).sum::<u16>() + GAP * (pinned as u16).saturating_sub(1);

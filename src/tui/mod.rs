@@ -242,8 +242,8 @@ fn render_inner(frame: &mut Frame, app: &App) {
     widgets::footer::render_hrule(frame, rule3, true);
 
     // Footer keybinds (tab-specific)
-    let keybinds = footer_keybinds(app);
-    widgets::footer::render_footer(frame, areas.footer, &keybinds);
+    let (keybinds, pinned) = footer_keybinds(app);
+    widgets::footer::render_footer(frame, areas.footer, &keybinds, pinned);
 
     // Issue #18: a zoomed panel hides the normal notice surface (status bar),
     // so surface transient feedback (e.g. "copied N chars") as a toast pinned
@@ -524,7 +524,8 @@ fn compute_header_stats(app: &App) -> [usize; 4] {
     [total, online, slow, down]
 }
 
-fn footer_keybinds(app: &App) -> Vec<(String, &'static str)> {
+/// The footer's pairs, plus how many trailing ones must never be dropped.
+fn footer_keybinds(app: &App) -> (Vec<(String, &'static str)>, usize) {
     let mut binds: Vec<(String, &'static str)> = match app.active_tab {
         0 => vec![
             ("\u{2191}\u{2193}".into(), "select"),
@@ -650,7 +651,22 @@ fn footer_keybinds(app: &App) -> Vec<(String, &'static str)> {
     if !app.sessions.is_empty() {
         binds.extend(app.config.keybinds.session_footer_hints());
     }
-    binds
+
+    // Move the pairs that say how to get out, or back into a session, to the end
+    // and report how many there are, because the footer pins its tail when the
+    // row does not fit. Every conditional block above (panel zoom, broadcast,
+    // the session hints) otherwise pushes `? help` and `q quit` into the middle,
+    // which is exactly where truncation eats them.
+    const PINNED_LABELS: [&str; 3] = ["resume", "help", "quit"];
+    let mut pinned: Vec<(String, &'static str)> = Vec::new();
+    for label in PINNED_LABELS {
+        if let Some(i) = binds.iter().position(|(_, l)| *l == label) {
+            pinned.push(binds.remove(i));
+        }
+    }
+    let pinned_len = pinned.len();
+    binds.extend(pinned);
+    (binds, pinned_len)
 }
 
 /// Draw a transient notice (issue #18) as a floating chip right-aligned on the
@@ -1518,6 +1534,35 @@ mod tests {
     }
 
     #[test]
+    fn cycling_tabs_from_the_dashboard_stays_on_the_dashboard() {
+        use crate::config::KeyAction;
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut app = app_with_two_sessions();
+        app.active_session = Some(0);
+        app.mode = AppMode::Normal;
+        app.config
+            .keybinds
+            .set(KeyAction::SessionTabNext, vec!["F6".into()]);
+
+        app.handle_key(KeyEvent::new(KeyCode::F(6), KeyModifiers::empty()))
+            .unwrap();
+
+        // The regression: this used to call `focus_active_session`, so a key
+        // named "next session tab" threw you into the session full screen.
+        assert_eq!(
+            app.mode,
+            AppMode::Normal,
+            "cycling must not enter a session"
+        );
+        assert_eq!(app.active_session, Some(1), "the selection moved");
+        assert!(
+            app.session_tab_switch.is_some(),
+            "the travel is armed from the dashboard too"
+        );
+    }
+
+    #[test]
     fn dashboard_strip_highlight_travels_instead_of_teleporting() {
         let mut app = app_with_two_sessions();
 
@@ -1599,7 +1644,23 @@ mod tests {
             );
         }
 
+        // With sessions running, the way back into one is as essential as the
+        // way out of the app. This is the case that regressed: the session hints
+        // are appended after `? help` / `q quit` and pushed them into the middle.
+        let mut app = app_with_two_sessions();
+        app.active_tab = 1;
+        app.sftp = Some(crate::sftp::model::SftpState::new("/srv", "/home/me"));
+        for w in [120u16, 160, 200] {
+            let buffer = render_to_buffer(&app, w, 38);
+            assert!(buffer_contains(&buffer, "resume"), "width {w}: resume");
+            assert!(buffer_contains(&buffer, "? help"), "width {w}: help");
+            assert!(buffer_contains(&buffer, "q quit"), "width {w}: quit");
+        }
+
         // Wide enough for everything: no ellipsis, nothing dropped.
+        let mut app = test_app_with_hosts();
+        app.active_tab = 1;
+        app.sftp = Some(crate::sftp::model::SftpState::new("/srv", "/home/me"));
         let buffer = render_to_buffer(&app, 240, 38);
         assert!(buffer_contains(&buffer, "? help"));
         assert!(buffer_contains(&buffer, "q quit"));
