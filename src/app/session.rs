@@ -128,7 +128,8 @@ impl App {
         Ok(())
     }
 
-    /// Session tab keys while on the dashboard with background sessions.
+    /// Session-strip keys while on the dashboard with background sessions.
+    /// Called from every dashboard tab so the footer hints stay truthful.
     pub(crate) fn handle_key_background_sessions(&mut self, key: &KeyEvent) -> bool {
         if self.sessions.is_empty() {
             return false;
@@ -158,6 +159,13 @@ impl App {
         }
         if self.is_action(KeyAction::SessionCloseTab, key) {
             self.close_active_session();
+            return true;
+        }
+        // Footer "sftp" — real work from any dashboard tab. Detach is not
+        // handled here: already on the dashboard, and the footer no longer
+        // advertises it (see session_footer_hints).
+        if self.is_action(KeyAction::SessionOpenSftp, key) {
+            self.open_sftp_for_active_session();
             return true;
         }
         false

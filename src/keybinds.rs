@@ -1092,10 +1092,13 @@ impl KeybindsConfig {
     /// `resume` comes first on purpose: with a session running somewhere behind
     /// the dashboard, getting back into it is the thing you want, and it used to
     /// be discoverable only through the help overlay.
+    ///
+    /// `detach` is intentionally absent: you are already on the dashboard, so
+    /// there is nothing to detach from. It still appears in the in-session
+    /// header via [`Self::session_header_hints`].
     pub fn session_footer_hints(&self) -> Vec<(String, &'static str)> {
         let mut out = Vec::new();
         push_footer_hint(&mut out, self.primary(KeyAction::SessionFocus), "resume");
-        push_footer_hint(&mut out, self.primary(KeyAction::SessionDetach), "detach");
         push_footer_hint(&mut out, self.primary(KeyAction::SessionOpenSftp), "sftp");
         if let Some(keys) = tab_switch_keys(self) {
             out.push((keys, "tabs"));
@@ -1389,6 +1392,10 @@ mod tests {
         let hints = custom.session_footer_hints();
         assert_eq!(hints[0], ("F8".to_string(), "resume"));
         assert!(!hints.iter().any(|(keys, _)| keys == "Ctrl+Shift+S"));
+        assert!(
+            !hints.iter().any(|(_, label)| *label == "detach"),
+            "detach belongs on the in-session header, not the dashboard footer"
+        );
     }
 
     #[test]
