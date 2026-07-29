@@ -870,9 +870,9 @@ impl HostEntry {
 }
 
 /// State of the keybinding editor overlay.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeybindEditor {
-    /// Index into [`KeyAction::ALL`].
+    /// Index into the *filtered* action list (see `App::filtered_keybind_actions`).
     pub selected: usize,
     /// First visible row in the action list (for scrolling).
     pub scroll: usize,
@@ -880,6 +880,8 @@ pub struct KeybindEditor {
     pub capturing: bool,
     /// When capturing, whether to append (`true`) or replace (`false`).
     pub append: bool,
+    /// Type-to-filter query (case-insensitive substring over label + binds).
+    pub query: String,
 }
 
 /// Which host-form field the dropdown is editing.
