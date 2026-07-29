@@ -21,6 +21,8 @@ pub(crate) fn enter_starts_embedded_session() {
         display_name: "edge".into(),
         meta: crate::session::SessionMeta::default(),
         pending_secret: None,
+        key_push_identity: None,
+        host_name: "edge".into(),
     };
     let session = crate::session::Session::spawn(config, 24, 80, None).unwrap();
     app.sessions.push(session);
@@ -66,15 +68,20 @@ pub(crate) fn ctrl_t_opens_host_picker() {
         display_name: "edge".into(),
         meta: crate::session::SessionMeta::default(),
         pending_secret: None,
+        key_push_identity: None,
+        host_name: "edge".into(),
     };
     app.sessions
         .push(crate::session::Session::spawn(cfg, 24, 80, None).unwrap());
+    app.sessions[0].phase = crate::session::SessionPhase::Running {
+        started_at: std::time::Instant::now(),
+    };
     app.active_session = Some(0);
     app.mode = AppMode::Session;
 
     app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL))
         .unwrap();
-    assert_eq!(app.mode, AppMode::SessionHostPicker);
+    assert_eq!(app.mode, AppMode::SessionPicker);
     assert_eq!(app.sessions.len(), 1);
 
     app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()))
@@ -104,6 +111,8 @@ pub(crate) fn session_tabs_switch_detach_and_focus() {
         display_name: "edge".into(),
         meta: crate::session::SessionMeta::default(),
         pending_secret: None,
+        key_push_identity: None,
+        host_name: "edge".into(),
     };
     for _ in 0..3 {
         app.sessions
@@ -158,6 +167,8 @@ pub(crate) fn shutdown_all_kills_detached_sessions() {
         display_name: "edge".into(),
         meta: crate::session::SessionMeta::default(),
         pending_secret: None,
+        key_push_identity: None,
+        host_name: "edge".into(),
     };
     app.sessions
         .push(crate::session::Session::spawn(cfg, 24, 80, None).unwrap());
@@ -182,4 +193,688 @@ pub(crate) fn tab_toggles_detail_focus() {
     assert!(app.detail_focus);
     app.handle_key(key(KeyCode::Tab)).unwrap();
     assert!(!app.detail_focus);
+}
+
+#[test]
+pub(crate) fn sftp_left_pane_picker_filters_and_dispatches() {
+    let metadata: Arc<dyn MetadataStore> = Arc::new(MetadataDb::default());
+    let resolver = MockResolver::new(vec![("alpha", host("alpha")), ("bravo", host("bravo"))]);
+    let mut app = App::new_with_deps(
+        AppConfig::default(),
+        AppDeps {
+            resolver: Box::new(resolver),
+            metadata,
+            store: test_store(),
+            password_store: Box::new(crate::credentials::NoopPasswordStore),
+        },
+    );
+    app.reload_hosts().unwrap();
+    app.terminal_area = ratatui::layout::Rect::new(0, 0, 80, 24);
+    app.mode = AppMode::Normal;
+    app.active_tab = 1;
+    app.sftp = Some(crate::sftp::model::SftpState::new("/srv", "/home/me"));
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::empty()))
+        .unwrap();
+    assert_eq!(app.mode, AppMode::SessionPicker);
+    assert_eq!(
+        app.session_picker.as_ref().unwrap().purpose,
+        crate::app::SessionPickerPurpose::SftpLeftPane
+    );
+    assert_eq!(app.session_picker_host_matches().len(), 2);
+
+    for c in "bra".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::empty()))
+            .unwrap();
+    }
+    let matches = app.session_picker_host_matches();
+    assert_eq!(matches.len(), 1);
+    assert!(matches[0].1.contains("bravo"));
+
+    // Esc returns to the dashboard without dispatching.
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()))
+        .unwrap();
+    assert_eq!(app.mode, AppMode::Normal);
+    assert!(app.session_picker.is_none());
+
+    // Reopen and press Enter: the pick must reach sftp_connect_left_pane. With
+    // no SFTP browser connected that call parks a known notice, which proves
+    // the dispatch without needing a network.
+    app.host_notice = None;
+    app.sftp = None;
+    app.open_session_picker(crate::app::SessionPickerPurpose::SftpLeftPane);
+    for c in "bra".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::empty()))
+            .unwrap();
+    }
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()))
+        .unwrap();
+    assert_eq!(
+        app.host_notice.as_deref(),
+        Some("connect the SFTP browser first")
+    );
+    assert!(app.session_picker.is_none());
+}
+
+/// App with `names.len()` spawned sessions, ready for picker tests.
+fn app_with_sessions(names: &[&str]) -> App {
+    let metadata: Arc<dyn MetadataStore> = Arc::new(MetadataDb::default());
+    let resolver = MockResolver::new(vec![("edge", host("edge"))]);
+    let mut app = App::new_with_deps(
+        AppConfig::default(),
+        AppDeps {
+            resolver: Box::new(resolver),
+            metadata,
+            store: test_store(),
+            password_store: Box::new(crate::credentials::NoopPasswordStore),
+        },
+    );
+    app.reload_hosts().unwrap();
+    app.terminal_area = ratatui::layout::Rect::new(0, 0, 80, 24);
+    for name in names {
+        let cfg = crate::session::SessionConfig {
+            argv: vec!["true".into()],
+            display_name: (*name).into(),
+            meta: crate::session::SessionMeta::default(),
+            pending_secret: None,
+            key_push_identity: None,
+            host_name: (*name).into(),
+        };
+        app.sessions
+            .push(crate::session::Session::spawn(cfg, 24, 80, None).unwrap());
+    }
+    app.active_session = if names.is_empty() { None } else { Some(0) };
+    app.mode = AppMode::Normal;
+    app
+}
+
+fn app_with_background_session(hosts: Vec<(&str, SshHost)>) -> App {
+    let metadata: Arc<dyn MetadataStore> = Arc::new(MetadataDb::default());
+    let resolver = MockResolver::new(hosts);
+    let mut app = App::new_with_deps(
+        AppConfig::default(),
+        AppDeps {
+            resolver: Box::new(resolver),
+            metadata,
+            store: test_store(),
+            password_store: Box::new(crate::credentials::NoopPasswordStore),
+        },
+    );
+    app.reload_hosts().unwrap();
+    app.terminal_area = ratatui::layout::Rect::new(0, 0, 80, 24);
+
+    let name = app.hosts[0].name().to_string();
+    let cfg = crate::session::SessionConfig {
+        argv: vec!["true".into()],
+        display_name: name.clone(),
+        meta: crate::session::SessionMeta::default(),
+        pending_secret: None,
+        key_push_identity: None,
+        host_name: name,
+    };
+    app.sessions
+        .push(crate::session::Session::spawn(cfg, 24, 80, None).unwrap());
+    app.active_session = Some(0);
+    app.mode = AppMode::Normal;
+    app
+}
+
+#[test]
+pub(crate) fn session_switcher_open_guard_matrix() {
+    use crate::app::SessionPickerPurpose::SwitchSession;
+
+    const ORIGINS: [AppMode; 3] = [AppMode::Normal, AppMode::Session, AppMode::Connecting];
+
+    // No sessions: refuses to open, whatever the origin.
+    for origin in ORIGINS {
+        let mut app = app_with_sessions(&[]);
+        app.mode = origin;
+        app.open_session_picker(SwitchSession);
+        assert!(app.session_picker.is_none(), "origin {origin:?}");
+        assert_eq!(app.mode, origin, "origin {origin:?}");
+    }
+
+    // One session: opens from every origin and pre-selects it.
+    for origin in ORIGINS {
+        let mut app = app_with_sessions(&["only"]);
+        app.mode = origin;
+        app.open_session_picker(SwitchSession);
+        assert_eq!(app.mode, AppMode::SessionPicker, "origin {origin:?}");
+        let p = app.session_picker.as_ref().unwrap();
+        assert_eq!(p.purpose, SwitchSession, "origin {origin:?}");
+        assert_eq!(p.return_mode, origin, "origin {origin:?}");
+        assert_eq!(p.selected, 0, "origin {origin:?}");
+        assert_eq!(app.session_picker_rows().len(), 1);
+    }
+
+    // Several sessions: from every origin the active one is pre-selected and
+    // marked current, and the ordinals count from one.
+    for origin in ORIGINS {
+        let mut app = app_with_sessions(&["a", "b", "c"]);
+        app.active_session = Some(2);
+        app.mode = origin;
+        app.open_session_picker(SwitchSession);
+        let p = app.session_picker.as_ref().unwrap();
+        assert_eq!(p.purpose, SwitchSession, "origin {origin:?}");
+        assert_eq!(p.return_mode, origin, "origin {origin:?}");
+        assert_eq!(p.selected, 2, "origin {origin:?}");
+        let rows = app.session_picker_rows();
+        assert_eq!(rows.iter().filter(|r| r.current).count(), 1);
+        assert!(rows[2].current);
+        assert_eq!(rows[0].ordinal, Some(1));
+        assert_eq!(rows[2].ordinal, Some(3));
+    }
+}
+
+#[test]
+pub(crate) fn session_switcher_matching_and_navigation() {
+    use crate::app::SessionPickerPurpose::SwitchSession;
+
+    let mut app = app_with_sessions(&["web-PROD", "dev-box", "db"]);
+    app.sessions[1].meta.user = Some("Deploy".into());
+    app.sessions[2].meta.address = Some("10.0.0.42".into());
+    app.open_session_picker(SwitchSession);
+
+    // Name, user and address all match, case-insensitively.
+    for (query, expected) in [("prod", 0usize), ("deploy", 1), ("0.0.42", 2)] {
+        if let Some(p) = app.session_picker.as_mut() {
+            p.query = query.into();
+            p.selected = 0;
+        }
+        let rows = app.session_picker_rows();
+        assert_eq!(rows.len(), 1, "query {query}");
+        assert_eq!(rows[0].index, expected, "query {query}");
+    }
+
+    // Identical names remain separate choices because their source indices and
+    // displayed tab ordinals are different.
+    let mut duplicates = app_with_sessions(&["same", "same"]);
+    duplicates.open_session_picker(SwitchSession);
+    let rows = duplicates.session_picker_rows();
+    assert_eq!(rows.iter().map(|r| r.index).collect::<Vec<_>>(), vec![0, 1]);
+    assert_eq!(
+        rows.iter().map(|r| r.ordinal).collect::<Vec<_>>(),
+        vec![Some(1), Some(2)]
+    );
+
+    // Typing resets the selection.
+    if let Some(p) = app.session_picker.as_mut() {
+        p.query.clear();
+        p.selected = 2;
+    }
+    app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::empty()))
+        .unwrap();
+    assert_eq!(app.session_picker.as_ref().unwrap().selected, 0);
+
+    // Up/Down wrap around, and an empty list neither panics nor moves.
+    if let Some(p) = app.session_picker.as_mut() {
+        p.query.clear();
+        p.selected = 0;
+    }
+    app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::empty()))
+        .unwrap();
+    assert_eq!(app.session_picker.as_ref().unwrap().selected, 2);
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::empty()))
+        .unwrap();
+    assert_eq!(app.session_picker.as_ref().unwrap().selected, 0);
+
+    if let Some(p) = app.session_picker.as_mut() {
+        p.query = "zzzz".into();
+    }
+    assert!(app.session_picker_rows().is_empty());
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::empty()))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()))
+        .unwrap();
+    assert_eq!(
+        app.mode,
+        AppMode::SessionPicker,
+        "enter without a match is a no-op"
+    );
+    assert!(app.session_picker.is_some());
+}
+
+#[test]
+pub(crate) fn session_switcher_enter_derives_mode_from_target_phase() {
+    use crate::app::SessionPickerPurpose::SwitchSession;
+    use crate::session::SessionPhase;
+    use std::time::Instant;
+
+    let mut app = app_with_sessions(&["one", "two", "three"]);
+    let cases = [
+        (
+            0usize,
+            SessionPhase::Connecting {
+                started_at: Instant::now(),
+            },
+            AppMode::Connecting,
+        ),
+        (
+            1,
+            SessionPhase::Running {
+                started_at: Instant::now(),
+            },
+            AppMode::Session,
+        ),
+        (
+            2,
+            SessionPhase::Exited {
+                status: "exit 0".into(),
+                at: Instant::now(),
+            },
+            AppMode::Session,
+        ),
+    ];
+
+    for (target, phase, expected) in cases {
+        app.sessions[target].phase = phase;
+        app.active_session = Some(0);
+        app.mode = AppMode::Normal;
+        app.open_session_picker(SwitchSession);
+        if let Some(p) = app.session_picker.as_mut() {
+            p.selected = target;
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()))
+            .unwrap();
+        assert_eq!(app.active_session, Some(target), "target {target}");
+        assert_eq!(app.mode, expected, "target {target}");
+        assert!(app.session_picker.is_none());
+    }
+}
+
+/// Confirming a different session has to slide the tab strip exactly like the
+/// cycling keys do (#35) instead of cutting straight to the new tab.
+#[test]
+pub(crate) fn session_switcher_arms_the_tab_slide() {
+    use crate::app::SessionPickerPurpose::SwitchSession;
+
+    // (origin mode, motion, active before, target, expected direction)
+    let cases: [(AppMode, bool, usize, usize, Option<i8>); 6] = [
+        // Forwards and backwards out of a live session: the outgoing tab is
+        // carried off in the direction of travel.
+        (AppMode::Session, true, 0, 2, Some(1)),
+        (AppMode::Session, true, 2, 0, Some(-1)),
+        // A session that is still connecting is a session origin too.
+        (AppMode::Connecting, true, 1, 2, Some(1)),
+        // Reduced motion arms nothing.
+        (AppMode::Session, false, 0, 2, None),
+        // Picking the session you are already on is not a transition.
+        (AppMode::Session, true, 1, 1, None),
+        // From the dashboard no session tab is on screen to carry off, so the
+        // switcher must not invent an outgoing tab (the dashboard's own gap is
+        // #49 and stays out of this fix).
+        (AppMode::Normal, true, 0, 2, None),
+    ];
+
+    for (origin, motion, from, target, expected) in cases {
+        let mut app = app_with_sessions(&["a", "b", "c"]);
+        app.config.appearance.disable_animation = !motion;
+        app.active_session = Some(from);
+        app.mode = origin;
+        app.open_session_picker(SwitchSession);
+        if let Some(p) = app.session_picker.as_mut() {
+            p.selected = target;
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()))
+            .unwrap();
+
+        let case = format!("{origin:?} motion={motion} {from}->{target}");
+        assert_eq!(app.active_session, Some(target), "{case}");
+        match expected {
+            Some(dir) => {
+                let anim = app
+                    .session_tab_switch
+                    .as_ref()
+                    .unwrap_or_else(|| panic!("{case}: expected an armed tab slide"));
+                assert_eq!(anim.dir, dir, "{case}");
+                assert_eq!(anim.from, from, "{case}");
+            }
+            None => assert!(app.session_tab_switch.is_none(), "{case}"),
+        }
+    }
+}
+
+#[test]
+pub(crate) fn session_switcher_phase_change_while_open() {
+    use crate::app::SessionPickerPurpose::SwitchSession;
+    use crate::session::SessionPhase;
+    use std::time::Instant;
+
+    let mut app = app_with_sessions(&["aaa", "bbb"]);
+    app.sessions[0].phase = SessionPhase::Running {
+        started_at: Instant::now(),
+    };
+    app.active_session = Some(0);
+    app.mode = AppMode::Session;
+    app.open_session_picker(SwitchSession);
+    assert_eq!(
+        app.session_picker.as_ref().unwrap().return_mode,
+        AppMode::Session
+    );
+
+    // A session dying under the open overlay changes its badge but must not
+    // renumber the list, or the cursor would silently point somewhere else.
+    let before: Vec<usize> = app.session_picker_rows().iter().map(|r| r.index).collect();
+    app.sessions[1].phase = SessionPhase::Exited {
+        status: "exit 1".into(),
+        at: Instant::now(),
+    };
+    let after = app.session_picker_rows();
+    assert_eq!(
+        before,
+        after.iter().map(|r| r.index).collect::<Vec<_>>(),
+        "a dying session must not renumber the list under the cursor"
+    );
+    assert_eq!(after[1].badge, Some(crate::app::PickerBadge::Exited));
+
+    // Now move the *active* session backwards to Connecting. The stored
+    // return_mode is still Session, so an implementation that restores it
+    // verbatim would land on Session — only re-deriving from the current phase
+    // yields Connecting. Changing an inactive session here would make this test
+    // pass either way, which is exactly the trap to avoid.
+    app.sessions[0].phase = SessionPhase::Connecting {
+        started_at: Instant::now(),
+    };
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()))
+        .unwrap();
+    assert_eq!(
+        app.mode,
+        AppMode::Connecting,
+        "escape must re-derive the mode from the active session's current phase"
+    );
+}
+
+#[test]
+pub(crate) fn session_picker_opener_refuses_to_replace_an_open_picker() {
+    use crate::app::SessionPickerPurpose::{NewSession, SwitchSession};
+
+    let mut app = app_with_sessions(&["one", "two"]);
+
+    // The opener's mode guard already refuses while a picker is up, in both
+    // directions. The keyboard-level counterpart lives in task 4, because it
+    // needs the hotkey to exist.
+    app.open_session_picker(SwitchSession);
+    app.open_session_picker(NewSession);
+    assert_eq!(app.session_picker.as_ref().unwrap().purpose, SwitchSession);
+
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()))
+        .unwrap();
+    app.open_session_picker(NewSession);
+    app.open_session_picker(SwitchSession);
+    assert_eq!(app.session_picker.as_ref().unwrap().purpose, NewSession);
+}
+
+#[test]
+pub(crate) fn session_picker_paste_lands_in_the_query() {
+    use crate::app::SessionPickerPurpose::SwitchSession;
+
+    let mut app = app_with_sessions(&["dev-box", "web-prod"]);
+    app.open_session_picker(SwitchSession);
+    app.handle_paste("dev").unwrap();
+    assert_eq!(app.session_picker.as_ref().unwrap().query, "dev");
+    let rows = app.session_picker_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].index, 0);
+}
+
+#[test]
+pub(crate) fn session_switcher_hotkey_from_dashboard_and_session() {
+    use crate::app::SessionPickerPurpose::{NewSession, SwitchSession};
+
+    let alt_s = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::ALT);
+
+    // Without sessions the hotkey does nothing at all.
+    let mut app = app_with_sessions(&[]);
+    app.handle_key(alt_s).unwrap();
+    assert_eq!(app.mode, AppMode::Normal);
+
+    let mut app = app_with_sessions(&["edge", "other"]);
+
+    // From the dashboard.
+    app.handle_key(alt_s).unwrap();
+    assert_eq!(app.mode, AppMode::SessionPicker);
+    assert_eq!(app.session_picker.as_ref().unwrap().purpose, SwitchSession);
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()))
+        .unwrap();
+
+    // From inside a live session — the 's' must not reach the PTY.
+    app.mode = AppMode::Session;
+    app.handle_key(alt_s).unwrap();
+    assert_eq!(app.mode, AppMode::SessionPicker);
+    assert_eq!(app.session_picker.as_ref().unwrap().purpose, SwitchSession);
+
+    // Ctrl+T inside the switcher is swallowed as ordinary modal input.
+    app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.session_picker.as_ref().unwrap().purpose, SwitchSession);
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()))
+        .unwrap();
+
+    // And the other direction, through the real key dispatch rather than the
+    // opener: Alt+S inside the new-tab picker must leave it untouched.
+    app.mode = AppMode::Normal;
+    app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.session_picker.as_ref().unwrap().purpose, NewSession);
+    app.handle_key(alt_s).unwrap();
+    assert_eq!(
+        app.session_picker.as_ref().unwrap().purpose,
+        NewSession,
+        "Alt+S must not hijack an open new-tab picker"
+    );
+    assert_eq!(app.mode, AppMode::SessionPicker);
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()))
+        .unwrap();
+
+    // A rebind takes effect and the old default stops working.
+    app.config
+        .keybinds
+        .set(KeyAction::SessionSwitcher, vec!["F7".into()]);
+    app.mode = AppMode::Normal;
+    app.handle_key(alt_s).unwrap();
+    assert_ne!(app.mode, AppMode::SessionPicker);
+    app.handle_key(KeyEvent::new(KeyCode::F(7), KeyModifiers::empty()))
+        .unwrap();
+    assert_eq!(app.mode, AppMode::SessionPicker);
+}
+
+/// One dispatch path has to cover every context the hotkey is reachable from,
+/// so removing the unreachable duplicate in `handle_key_background_sessions`
+/// cannot quietly drop one of them.
+#[test]
+pub(crate) fn session_switcher_hotkey_preserves_context_boundaries() {
+    use crate::app::SessionPickerPurpose::SwitchSession;
+    use crate::session::SessionPhase;
+    use std::time::Instant;
+
+    let alt_s = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::ALT);
+
+    // Both live origins open the switcher, and from a session the 's' is
+    // claimed before it can be encoded for the remote PTY.
+    for (origin, phase) in [
+        (
+            AppMode::Session,
+            SessionPhase::Running {
+                started_at: Instant::now(),
+            },
+        ),
+        (
+            AppMode::Connecting,
+            SessionPhase::Connecting {
+                started_at: Instant::now(),
+            },
+        ),
+    ] {
+        let mut app = app_with_sessions(&["edge", "other"]);
+        app.sessions[0].phase = phase;
+        app.mode = origin;
+        app.handle_key(alt_s).unwrap();
+        assert_eq!(app.mode, AppMode::SessionPicker, "origin {origin:?}");
+        assert_eq!(
+            app.session_picker.as_ref().unwrap().purpose,
+            SwitchSession,
+            "origin {origin:?}"
+        );
+        assert_eq!(
+            app.session_picker.as_ref().unwrap().return_mode,
+            origin,
+            "origin {origin:?}"
+        );
+    }
+
+    // Modal overlays keep their own input: the hotkey must not punch through
+    // one and leave the app in a picker over a half-finished dialog.
+    for modal in [
+        AppMode::Help,
+        AppMode::Settings,
+        AppMode::ConfirmQuit,
+        AppMode::HostForm,
+        AppMode::Palette,
+    ] {
+        let mut app = app_with_sessions(&["edge", "other"]);
+        app.mode = modal;
+        app.handle_key(alt_s).unwrap();
+        assert!(app.session_picker.is_none(), "modal {modal:?}");
+        assert_ne!(app.mode, AppMode::SessionPicker, "modal {modal:?}");
+    }
+}
+
+/// The picker must never close into `SessionPicker` with no picker on screen:
+/// `focus_active_session` leaves `mode` alone when there is nothing to focus,
+/// which strands the app until the user presses Esc a second time.
+#[test]
+pub(crate) fn closing_the_picker_always_lands_in_a_live_mode() {
+    use crate::app::SessionPickerPurpose::SwitchSession;
+
+    for return_mode in [AppMode::Session, AppMode::Connecting] {
+        let mut app = app_with_sessions(&["a", "b"]);
+        app.mode = return_mode;
+        app.open_session_picker(SwitchSession);
+        // The sessions outlive the active index — e.g. the focused tab was
+        // closed under the open overlay.
+        app.active_session = None;
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()))
+            .unwrap();
+
+        assert!(app.session_picker.is_none(), "return_mode {return_mode:?}");
+        assert_eq!(app.mode, AppMode::Normal, "return_mode {return_mode:?}");
+        assert!(!app.sessions.is_empty(), "return_mode {return_mode:?}");
+    }
+}
+
+#[test]
+pub(crate) fn session_switcher_hotkey_works_from_every_dashboard_tab() {
+    use crate::app::SessionPickerPurpose::SwitchSession;
+
+    let alt_s = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::ALT);
+
+    for active_tab in 0..=4 {
+        let mut app = app_with_sessions(&["edge", "other"]);
+        app.active_tab = active_tab;
+        app.handle_key(alt_s).unwrap();
+
+        assert_eq!(
+            app.mode,
+            AppMode::SessionPicker,
+            "dashboard tab {active_tab}"
+        );
+        assert_eq!(
+            app.session_picker.as_ref().unwrap().purpose,
+            SwitchSession,
+            "dashboard tab {active_tab}"
+        );
+    }
+}
+
+#[test]
+pub(crate) fn session_strip_binds_work_on_every_dashboard_tab() {
+    // Footer advertises resume / new tab on every tab once a session exists;
+    // those used to only fire on hosts (active_tab == 0).
+    for tab in 0..=4u8 {
+        let mut app = app_with_background_session(vec![("edge", host("edge"))]);
+        app.active_tab = tab as usize;
+
+        app.handle_key(KeyEvent::new(
+            KeyCode::Char('s'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ))
+        .unwrap();
+        assert!(
+            matches!(app.mode, AppMode::Session | AppMode::Connecting),
+            "tab {tab}: resume (Ctrl+Shift+S) must focus the session"
+        );
+
+        app.mode = AppMode::Normal;
+        app.active_tab = tab as usize;
+        app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL))
+            .unwrap();
+        assert_eq!(
+            app.mode,
+            AppMode::SessionPicker,
+            "tab {tab}: Ctrl+T must open the new-session host picker"
+        );
+        assert_eq!(
+            app.session_picker.as_ref().map(|p| p.purpose),
+            Some(crate::app::SessionPickerPurpose::NewSession),
+            "tab {tab}: Ctrl+T target must be NewSession, not SftpLeftPane"
+        );
+    }
+}
+
+#[test]
+pub(crate) fn session_strip_cycle_and_sftp_from_non_hosts_tab() {
+    let mut app = app_with_background_session(vec![("edge", host("edge"))]);
+    // Second session so tab cycling is observable.
+    let cfg = crate::session::SessionConfig {
+        argv: vec!["true".into()],
+        display_name: "edge".into(),
+        meta: crate::session::SessionMeta::default(),
+        pending_secret: None,
+        key_push_identity: None,
+        host_name: "edge".into(),
+    };
+    app.sessions
+        .push(crate::session::Session::spawn(cfg, 24, 80, None).unwrap());
+    app.active_session = Some(0);
+    app.active_tab = 2; // tunnels
+                        // Pre-seed a browser so Ctrl+Shift+F only switches tabs (no worker thread /
+                        // outbound connect that races other tests on SSHUB_CONFIG_DIR).
+    app.sftp = Some(crate::sftp::model::SftpState::new("/srv", "/home/me"));
+
+    app.handle_key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.active_session, Some(1));
+    assert_eq!(app.mode, AppMode::Normal);
+    assert_eq!(app.active_tab, 2);
+
+    app.handle_key(KeyEvent::new(
+        KeyCode::Char('f'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ))
+    .unwrap();
+    assert_eq!(
+        app.active_tab, 1,
+        "Ctrl+Shift+F must switch to the SFTP tab"
+    );
+    assert!(
+        app.sftp.is_some(),
+        "Ctrl+Shift+F must keep the existing SFTP browser"
+    );
+    assert_eq!(app.mode, AppMode::Normal);
+}
+
+#[test]
+pub(crate) fn sftp_o_still_opens_left_pane_picker_with_background_session() {
+    // Ctrl+T is the new-session strip bind; plain `o` must keep opening the
+    // SFTP left-pane host picker when a browser is live.
+    let mut app = app_with_background_session(vec![("edge", host("edge"))]);
+    app.active_tab = 1;
+    app.sftp = Some(crate::sftp::model::SftpState::new("/srv", "/home/me"));
+
+    app.handle_key(key_char('o')).unwrap();
+    assert_eq!(app.mode, AppMode::SessionPicker);
+    assert_eq!(
+        app.session_picker.as_ref().map(|p| p.purpose),
+        Some(crate::app::SessionPickerPurpose::SftpLeftPane)
+    );
 }

@@ -18,6 +18,9 @@ impl App {
     /// loop polls at a higher frame rate while this holds so the ~350ms slide
     /// looks smooth instead of stepping at the idle 20fps poll cadence.
     pub(crate) fn animating(&self) -> bool {
+        if !self.motion_enabled() {
+            return false;
+        }
         let now = Instant::now();
         let panel = self
             .broadcast
@@ -38,7 +41,105 @@ impl App {
             && self
                 .broadcast_panel_gone_at
                 .is_some_and(|g| now.saturating_duration_since(g) < crate::broadcast::TOAST_ANIM);
-        panel || toasts || dropping
+        // Panel zoom morph (#35).
+        let zoom = self.zoom_anim.is_some_and(|a| !a.is_done(now));
+        // Tab-switch body slide (#35).
+        let tab = self
+            .tab_switch
+            .is_some_and(|s| now.saturating_duration_since(s.at) < crate::tui::TAB_ANIM);
+        // Popup open/close slide (#35).
+        let popup_open = crate::app::is_overlay_mode(self.mode)
+            && now.saturating_duration_since(self.mode_entered_at) < crate::tui::POPUP_ANIM;
+        let popup_close = self
+            .popup_closing_at
+            .is_some_and(|at| now.saturating_duration_since(at) < crate::tui::POPUP_ANIM);
+        // Full-screen session enter / exit slide (#35).
+        let session = self
+            .session_enter_at
+            .is_some_and(|at| now.saturating_duration_since(at) < crate::tui::SESSION_ANIM)
+            || self
+                .session_exit_at
+                .is_some_and(|at| now.saturating_duration_since(at) < crate::tui::SESSION_ANIM);
+        // Identities grid still catching up to its scroll target (#35).
+        let keys = self.keys_scroll_moving.get();
+        // The dashboard still fading up out of the intro animation (#35).
+        let splash = self
+            .dashboard_at
+            .is_some_and(|at| now.saturating_duration_since(at) < crate::tui::SPLASH_FADE);
+        // The audit table or a detail panel still fading its new content in (#35).
+        let fade = self
+            .audit_filter_at
+            .is_some_and(|at| now.saturating_duration_since(at) < crate::tui::CONTENT_FADE);
+        // An SFTP pane still sliding to its new directory (#35).
+        let nav = self
+            .sftp_nav
+            .iter()
+            .flatten()
+            .any(|(_, at)| now.saturating_duration_since(*at) < crate::tui::SFTP_NAV_ANIM);
+        // A staged transfer's row still flying into the queue strip (#35).
+        let queue = self
+            .sftp_queue_at
+            .is_some_and(|at| now.saturating_duration_since(at) < crate::tui::SFTP_QUEUE_ANIM);
+        // SFTP progress bar still sweeping toward the reported figure (#35).
+        let progress = self.sftp_progress_moving.get();
+        // A fresh sparkline column still growing in (#35).
+        let spark = self
+            .ping_sample
+            .values()
+            .any(|(_, at)| now.saturating_duration_since(*at) < crate::tui::PING_FLASH);
+        // Header counters still counting toward their real values (#35).
+        let stats = self.header_stats_moving.get();
+        // A status dot still flashing after its ping class changed (#35).
+        let flash = self
+            .ping_flash
+            .values()
+            .any(|(_, at)| now.saturating_duration_since(*at) < crate::tui::PING_FLASH);
+        // Group fold / unfold revealing its rows (#35).
+        let fold = self
+            .fold_anim
+            .as_ref()
+            .is_some_and(|f| now.saturating_duration_since(f.at) < crate::tui::FOLD_ANIM);
+        // Host-list highlight wiping in under a moved cursor (#35).
+        let selection = self
+            .selection_at
+            .is_some_and(|at| now.saturating_duration_since(at) < crate::tui::SELECT_ANIM);
+        // Host list still catching up to its scroll target (#35).
+        let scroll = self.host_scroll_moving.get();
+        // Zoom toast riding in from the right edge (#35).
+        let notice = self
+            .host_notice_at
+            .is_some_and(|at| now.saturating_duration_since(at) < crate::broadcast::TOAST_ANIM);
+        // Slide between two embedded session tabs (#35).
+        let session_tab = self
+            .session_tab_switch
+            .is_some_and(|sw| now.saturating_duration_since(sw.at) < crate::tui::TAB_ANIM);
+        // SFTP tab sub-state slide (#35).
+        let sftp = self
+            .sftp_anim
+            .is_some_and(|(_, at)| now.saturating_duration_since(at) < crate::tui::SFTP_ANIM);
+        panel
+            || toasts
+            || dropping
+            || zoom
+            || tab
+            || popup_open
+            || popup_close
+            || session
+            || session_tab
+            || sftp
+            || notice
+            || scroll
+            || selection
+            || fold
+            || flash
+            || stats
+            || spark
+            || progress
+            || queue
+            || nav
+            || fade
+            || splash
+            || keys
     }
 
     /// Open the broadcast wizard from the hosts tab. Refuses while a run is live

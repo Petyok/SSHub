@@ -11,6 +11,20 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use sshub::store::{HostUpdate, LauncherStore, NewHost, NewHostGroup, NewIdentity};
 
+/// One seeded demo host: display name, address, user, port, group, tags,
+/// favorite, proxy_jump, os_icon.
+type DemoHost<'a> = (
+    &'a str,
+    &'a str,
+    &'a str,
+    u16,
+    Option<i64>,
+    &'a [&'a str],
+    bool,
+    Option<&'a str>,
+    &'a str,
+);
+
 fn main() -> Result<()> {
     let data_dir = std::env::var("SSHUB_DATA_DIR").context("SSHUB_DATA_DIR must be set")?;
 
@@ -33,17 +47,7 @@ fn main() -> Result<()> {
     // (display name, address, user, port, group, tags, favorite, proxy_jump,
     //  os_icon) — os_icon is a canonical distro id so the host card renders its
     // Braille logo (see src/osinfo/logos.rs), as if auto-detected on connect.
-    let hosts: &[(
-        &str,
-        &str,
-        &str,
-        u16,
-        Option<i64>,
-        &[&str],
-        bool,
-        Option<&str>,
-        &str,
-    )] = &[
+    let hosts: &[DemoHost] = &[
         (
             "Real Google DNS (trust me)",
             "8.8.8.8",

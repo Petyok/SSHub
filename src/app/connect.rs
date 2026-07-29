@@ -116,6 +116,8 @@ impl App {
                 display_name,
                 meta,
                 pending_secret: pending_secret.clone(),
+                key_push_identity: None,
+                host_name: entry.name().to_string(),
             };
 
             let log_enabled = crate::session_log::effective_enabled(
@@ -156,6 +158,10 @@ impl App {
                     self.sessions.push(session);
                     self.active_session = Some(self.sessions.len() - 1);
                     self.mode = AppMode::Connecting;
+                    // Slide the full-screen session view in from the right (#35).
+                    if self.motion_enabled() {
+                        self.session_enter_at = Some(std::time::Instant::now());
+                    }
                     let _ = self.store.log_auth_event(
                         &host_name,
                         username,

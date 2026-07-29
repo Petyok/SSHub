@@ -6,9 +6,6 @@ use sshub::metadata::MetadataDb;
 use sshub::ssh::{HostResolver, SshHost};
 use sshub::store::LauncherStore;
 
-#[path = "../support/mod.rs"]
-mod support;
-
 struct EmptyResolver;
 
 impl HostResolver for EmptyResolver {

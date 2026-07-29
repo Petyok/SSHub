@@ -82,8 +82,7 @@ impl App {
                 self.mode = AppMode::TunnelReconnectSettings;
             }
             _ if self.is_action(KeyAction::Help, &key) => {
-                self.pre_help_mode = Some(self.mode);
-                self.mode = AppMode::Help;
+                self.open_help();
             }
             _ => {}
         }

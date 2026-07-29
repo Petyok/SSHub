@@ -26,6 +26,7 @@ impl App {
                 | AppMode::Search
                 | AppMode::TagFilter
                 | AppMode::Palette
+                | AppMode::SessionPicker
                 | AppMode::ImportPrompt
         );
         if !text_entry {

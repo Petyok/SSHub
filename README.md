@@ -1,10 +1,13 @@
 # SSHub
 
 [![crates.io](https://img.shields.io/crates/v/sshub.svg)](https://crates.io/crates/sshub)
+[![crates.io downloads](https://img.shields.io/crates/d/sshub.svg?label=crates.io%20downloads)](https://crates.io/crates/sshub)
+[![npm](https://img.shields.io/npm/v/sshub-tui.svg)](https://www.npmjs.com/package/sshub-tui)
+[![npm downloads](https://img.shields.io/npm/dm/sshub-tui.svg?label=npm%20downloads%2Fmonth)](https://www.npmjs.com/package/sshub-tui)
 
 A terminal UI for managing and connecting to SSH hosts. Combines your `~/.ssh/config` with a built-in host database, tunnels, key management, and an audit log -- all in one keyboard-driven interface.
 
-> ⚠️ This project is 100% vibe-coded slop made with dynamic workflows using Claude Opus 4.8 + Fable 5 + Composer 2.5. Use at your own risk.
+> ⚠️ This project is 100% vibe-coded slop made with dynamic workflows using Opus 4.8 + Opus 5 + Fable 5 + Composer 2.5 + Grok 4.5. Use at your own risk.
 
 ![SSHub demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/hero.gif)
 
@@ -49,11 +52,15 @@ The settings overlay (`Ctrl+H`) — toggle an opaque background, OS logos, quit 
 
 - **Embedded SSH sessions** — connect opens an in-TUI PTY; detach with Ctrl+D and return to the dashboard while SSH keeps running; multiple session tabs
 - **Hosts** — browse, search, and connect. Fuzzy search with `/`, multi-tag AND filter with `#`, favorites, nested groups, manual sort order
-- **SFTP file transfer** — a dual-pane browser (remote / local) with a staged transfer queue: navigate both sides, queue uploads and downloads (files or whole folders, transferred recursively), and run them with a progress bar. Manage files in place too: delete (`d`), new folder (`n`), rename/move (`R`), and change permissions (`M`, octal chmod)
+- **SFTP file transfer** — a dual-pane browser with a staged transfer queue: navigate both sides, queue uploads and downloads (files or whole folders, transferred recursively), and run them with a progress bar. Files can be staged while the queue runs. The left pane is your local filesystem by default, or point it at a **second server** with `o` (`O` sends it back to local) to move files between two hosts — relayed through a local temp file, since SSH has no server-to-server copy. Manage files in place too: delete (`d`), new folder (`n`), rename/move (`R`), and change permissions (`M`, octal chmod)
 - **OS auto-detection** — on first connect a background probe detects the remote distro and the host card renders its logo (Braille art in brand colors), just like Termius
 - **Multiple groups & Favorites** — a host can belong to several groups at once; a reserved Favorites group and a ★ marker in the list, toggled with `f`
 - **Tunnels** — define and manage SSH tunnels (local/remote/dynamic SOCKS). Start, stop, and monitor from the TUI. Per-tunnel **keep alive** auto-starts on launch and reconnects dropped forwards with exponential backoff (configurable in `config.toml`).
 - **Keys** — identity management with ssh-agent integration. Add/remove keys from agent, see loaded status
+- **Ad-hoc connect** - in the fuzzy palette (`/`), typing an unknown `[user@]host[:port]` (IPv6 in brackets supported) that matches no saved host offers a "connect without saving" row; Enter opens an embedded ssh session to it. Input is validated and injection-safe (no leading-dash hosts; destination passed after `--`)
+- **Local shell tab** - `Ctrl+Shift+T` opens a session tab running your login shell (`$SHELL`, else `/bin/sh`) with the same detach/close semantics as ssh tabs
+- **Audit** — log of all connection events with filtering by status (ok/fail) and time range (today/week/month)
+- **Settings overlay** (`Ctrl+H`) — toggle an opaque background (for transparent terminals), OS logos, quit confirmation, and the startup animation
 - **Audit** — log of all connection events with filtering by status (ok/fail) and time range (today/week/month); session connect events record the path to the session log when logging is enabled
 - **Session logging** — opt-in capture of PTY session output to `~/.local/share/sshub/logs/<host-dir>/` (managed hosts use `{name}-{id}`; pure `~/.ssh/config` aliases without a launcher row may share a directory when sanitized names collide). Enable globally in Settings (`Ctrl+H`) or override per host (`inherit` / `on` / `off`). **Logs capture everything echoed to the terminal, including passwords if they appear on screen.**
 - **Mosh transport** — per-host `Transport` field in the host form (`ssh` or `mosh`). Embedded sessions use `mosh` when selected; tunnels and SFTP stay ssh-only.
@@ -65,6 +72,20 @@ The settings overlay (`Ctrl+H`) — toggle an opaque background, OS logos, quit 
 - **Mouse support** — click tabs, select rows, scroll panels, double-click to connect
 
 ## Install
+
+From [npm](https://www.npmjs.com/package/sshub-tui), prebuilt, no toolchain required:
+
+```bash
+npx sshub-tui              # run it without installing
+npm install -g sshub-tui   # then just: sshub
+```
+
+The installed command is `sshub`; the package is `sshub-tui` because npm rejects
+the bare `sshub` name as too close to the existing `ssh2` and `sshpk`.
+
+Prebuilt for Linux x64, macOS arm64 and macOS x64. The binary arrives as a
+platform-specific optional dependency, so nothing is compiled and nothing is
+fetched from outside the registry. Any other platform builds from source below.
 
 From [crates.io](https://crates.io/crates/sshub):
 
@@ -88,9 +109,7 @@ sudo pacman -S --needed dbus
 
 Prebuilt binaries for Linux and macOS are attached to each [GitHub release](https://github.com/Petyok/SSHub/releases).
 
-At runtime, a Secret Service provider (gnome-keyring, KWallet, …) must be
-running and unlocked for credentials to persist; otherwise SSHub warns and ssh
-falls back to prompting.
+At runtime, a Secret Service provider (gnome-keyring, KWallet, …) is preferred for secure credential storage. If one is not running or unlocked (e.g. in WSL, Docker, or headless SSH sessions), SSHub will fallback to storing credentials in a local owner-only restricted file (`credentials.json`), notifying you in the status bar.
 
 ```bash
 git clone https://github.com/Petyok/SSHub.git
@@ -221,10 +240,12 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | Key                    | Action                              |
 |------------------------|-------------------------------------|
 | `Ctrl+T`               | New session tab (host picker)         |
+| `Ctrl+Shift+T`         | Local shell tab                     |
 | `Ctrl+W`               | Close session tab                   |
 | `Ctrl+D`               | Detach to dashboard (SSH keeps running) |
 | `Ctrl+[` / `Ctrl+]`   | Previous / next session tab         |
 | `Ctrl+Shift+S`         | Focus session from dashboard        |
+| `Alt+S`                | Switch to an open session (searchable) |
 
 ### Hosts (tab 1)
 
@@ -241,11 +262,31 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | `Alt`+arrows       | Move dashboard panel focus |
 | `z`                | Zoom focused panel (Esc to exit) |
 | `/`                | Fuzzy search              |
+| `/` + `[user@]host` | Ad-hoc connect (unknown host, no save) |
 | `#`                | Filter by tags (AND)      |
 | `Shift+G`          | Manage groups (nested)    |
 | `Shift+I`          | Import from ssh config    |
 | `Shift+E`          | Export to ssh config      |
 | `Shift+T`          | Import from Termius       |
+| `Shift+P`          | Push public key to host   |
+
+### SFTP (tab 2)
+
+| Key                | Action                                              |
+|--------------------|-----------------------------------------------------|
+| `Enter`            | Connect to host · enter directory (`..` walks up)    |
+| `Tab`              | Switch focus between the panes                       |
+| `Backspace`        | Up one directory                                     |
+| `←` / `→`          | Stage the focused pane's selection toward the other  |
+| `c` / `u`          | Run the queue / unstage the last transfer            |
+| `o` / `O`          | Left pane to a second server / back to local files   |
+| `.`                | Show / hide dotfiles in both panes (remembered)      |
+| `d`                | Delete (recursive)                                   |
+| `n` / `R` / `M`    | New folder / rename / chmod                          |
+| `r`                | Refresh both panes                                   |
+| `s`                | Open an SSH session to this host                     |
+| `/`                | Filter the focused pane                              |
+| `Esc`              | Disconnect, back to the picker                       |
 
 ### Tunnels (tab 3)
 
@@ -260,13 +301,15 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 
 ### Keys (tab 3)
 
-| Key        | Action                  |
+| Key        | Action                   |
 |------------|--------------------------|
 | `a`        | Add identity             |
 | `e`        | Edit identity            |
 | `d`        | Delete identity          |
+| `g`        | Generate SSH key pair    |
 | `r`        | Remove key from agent    |
 | `Shift+A`  | Add key to agent         |
+| `Shift+P`  | Push public key to host  |
 
 ### Audit (tab 4)
 

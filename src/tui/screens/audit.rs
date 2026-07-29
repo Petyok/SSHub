@@ -77,6 +77,22 @@ pub fn render_audit(frame: &mut Frame, area: Rect, app: &App) {
         let y = data_y + 2.min(max_rows.saturating_sub(1) as u16);
         buf.set_string(x, y, msg, theme::dim());
     }
+
+    // Everything below the filter strip is the query's result, so a changed
+    // filter or range swaps all of it. Fade it up, leaving the strip itself
+    // (which the user just interacted with) solid (#35).
+    let fade =
+        crate::tui::widgets::middle_stack::content_fade(app.audit_filter_at, app.motion_enabled());
+    let rows_top = filter_y + 2;
+    if fade < 1.0 && area.height > rows_top - area.y {
+        let rows = Rect::new(
+            area.x,
+            rows_top,
+            area.width,
+            (area.y + area.height).saturating_sub(rows_top),
+        );
+        crate::tui::blit::fade(buf, rows, fade);
+    }
 }
 
 fn render_filter_strip(

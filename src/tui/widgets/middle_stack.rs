@@ -11,9 +11,9 @@ use crate::tui::theme;
 use crate::tui::widgets::panel_box::{put_clamped, render_panel_box};
 
 // ── Panel heights (sum = 19 to align with the right column) ─
-const HOST_H: u16 = 9;
-const AGENT_H: u16 = 6;
-const LATENCY_H: u16 = 4;
+pub const HOST_H: u16 = 9;
+pub const AGENT_H: u16 = 6;
+pub const LATENCY_H: u16 = 4;
 
 /// Render the three middle-column panels stacked vertically.
 pub fn render_middle_stack(frame: &mut Frame, area: Rect, app: &App) {
@@ -54,6 +54,9 @@ pub fn render_middle_stack(frame: &mut Frame, area: Rect, app: &App) {
 /// host's `os_icon` resolves to a known distro (auto-detected on first connect
 /// or set manually in the form); otherwise the card shows just the text.
 pub(crate) fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
+    // Everything below the title belongs to whichever host is selected, so a
+    // moved cursor swaps the lot. Fade it up instead of flicking it over (#35).
+    let fade = content_fade(app.selection_at, app.motion_enabled());
     let entry = app.selected_entry();
     let title = match entry.as_ref() {
         Some(e) => format!("host · {}", e.name()),
@@ -81,7 +84,7 @@ pub(crate) fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
 
     // Left: OS logo (when enabled in Settings and the os_icon resolves to a
     // vendored distro logo). The OS name still shows in the fact sheet either way.
-    let zoomed = app.panel_zoomed;
+    let zoomed = area.height >= crate::tui::widgets::panel_box::ZOOM_CONTENT_MIN;
     let os_id = entry.managed().and_then(|m| m.os_icon.as_deref());
     // When zoomed, prefer the large full-colour logo (fastfetch art); fall back
     // to the small Braille one otherwise.
@@ -226,6 +229,13 @@ pub(crate) fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
             break;
         }
         put_clamped(buf, text_x, y, s, *style, text_w);
+    }
+
+    // Fade the body only: the box and its title frame the panel and shouldn't
+    // blink along with what they hold.
+    if area.width > 2 && area.height > 2 {
+        let body = Rect::new(area.x + 1, area.y + 1, area.width - 2, area.height - 2);
+        crate::tui::blit::fade(buf, body, fade);
     }
 }
 
@@ -374,6 +384,22 @@ fn wrap_line(s: &str, width: usize) -> Vec<String> {
 
 // ── Agent panel ─────────────────────────────────────────
 
+/// How far swapped-out panel content has faded in, `0.0` to `1.0` (#35).
+/// `1.0` at rest and under reduced motion, where content simply appears.
+pub(crate) fn content_fade(at: Option<std::time::Instant>, motion: bool) -> f32 {
+    if !motion {
+        return 1.0;
+    }
+    match at {
+        Some(at) => crate::tui::tween::ease_out(crate::tui::tween::progress(
+            at,
+            crate::tui::CONTENT_FADE,
+            std::time::Instant::now(),
+        )),
+        None => 1.0,
+    }
+}
+
 pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
     render_panel_box(
         buf,
@@ -390,7 +416,7 @@ pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
 
     // Zoomed: keep the socket/forward/config header, then list every loaded key
     // (type, bits, full fingerprint, comment) filling the panel height.
-    if app.panel_zoomed {
+    if area.height >= crate::tui::widgets::panel_box::ZOOM_CONTENT_MIN {
         let bottom_guard = area.y + area.height - 1;
         let label_style = theme::dim();
         let mut y = area.y + 1;
@@ -655,7 +681,7 @@ pub(crate) fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
 
     // Zoomed: a numeric stat row plus a tall, full-height bar graph of the
     // samples (one bottom-anchored column per sample, coloured by latency).
-    if app.panel_zoomed {
+    if area.height >= crate::tui::widgets::panel_box::ZOOM_CONTENT_MIN {
         let min = sorted[0];
         let bottom_guard = area.y + area.height - 1;
 
@@ -668,6 +694,7 @@ pub(crate) fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
 
         // Bar graph fills the rest of the body below the stat row.
         let graph_top = area.y + 2;
+        let grow = selected.as_deref().map(|n| app.ping_grow(n)).unwrap_or(1.0);
         let graph_h = area.height.saturating_sub(3);
         if graph_h >= 1 && inner_w >= 1 {
             let cols = samples.len().min(inner_w);
@@ -689,7 +716,11 @@ pub(crate) fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
                 } else {
                     theme::red()
                 };
-                let level = (((v as u64) * units) / max_val).clamp(1, units);
+                let mut level = (((v as u64) * units) / max_val).clamp(1, units);
+                // The newest column grows in rather than appearing full height.
+                if i + 1 == window.len() {
+                    level = ((level as f32 * grow).round() as u64).clamp(1, units);
+                }
                 let full = (level / 8) as u16;
                 let rem = (level % 8) as usize;
                 // Full block cells from the bottom up.
@@ -719,10 +750,16 @@ pub(crate) fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
         let start = samples.len().saturating_sub(spark_len);
         let window = &samples[start..];
         let max_val = (*window.iter().max().unwrap_or(&1)).max(1);
+        let grow = selected.as_deref().map(|n| app.ping_grow(n)).unwrap_or(1.0);
+        let last = window.len().saturating_sub(1);
         let sparkline: String = window
             .iter()
-            .map(|&v| {
-                let idx = ((v as u64 * 7) / max_val as u64).min(7) as usize;
+            .enumerate()
+            .map(|(i, &v)| {
+                let mut idx = ((v as u64 * 7) / max_val as u64).min(7) as usize;
+                if i == last {
+                    idx = (idx as f32 * grow).round() as usize;
+                }
                 SPARK_CHARS[idx]
             })
             .collect();

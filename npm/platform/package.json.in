@@ -1,0 +1,22 @@
+{
+  "name": "@NAME@",
+  "version": "@VERSION@",
+  "description": "SSHub prebuilt binary for @OS@ @CPU@",
+  "homepage": "https://github.com/Petyok/SSHub#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Petyok/SSHub.git"
+  },
+  "license": "AGPL-3.0-or-later",
+  "files": [
+    "bin",
+    "LICENSE"
+  ],
+  "os": [
+    "@OS@"
+  ],
+  "cpu": [
+    "@CPU@"
+  ],
+  "preferUnplugged": true
+}

@@ -6,8 +6,16 @@ impl App {
     /// Session tab keys are user-configurable (see [`KeyAction::SessionNewTab`]
     /// and friends). `PgUp` / `PgDn` without Ctrl navigate scrollback locally.
     pub(crate) fn handle_key_session(&mut self, key: KeyEvent) -> Result<()> {
+        if self.is_action(KeyAction::LocalShell, &key) {
+            self.open_local_shell()?;
+            return Ok(());
+        }
         if self.is_action(KeyAction::SessionNewTab, &key) {
-            self.open_session_host_picker();
+            self.open_new_session_picker();
+            return Ok(());
+        }
+        if self.is_action(KeyAction::SessionSwitcher, &key) {
+            self.open_session_picker(SessionPickerPurpose::SwitchSession);
             return Ok(());
         }
         if self.is_action(KeyAction::SessionCloseTab, &key) {
@@ -117,131 +125,59 @@ impl App {
         if session.parser.scrollback() > 0 {
             session.parser.snap_to_bottom();
         }
-        if let Some(bytes) = crate::session::keys::encode(key) {
+        let application_cursor = session.parser.screen().application_cursor();
+        if let Some(bytes) = crate::session::keys::encode(key, application_cursor) {
             let _ = session.write(&bytes);
         }
         Ok(())
     }
 
-    /// Session tab keys while on the dashboard with background sessions.
+    /// Session-strip keys while on the dashboard with background sessions.
+    /// Called from every dashboard tab so the footer hints stay truthful.
     pub(crate) fn handle_key_background_sessions(&mut self, key: &KeyEvent) -> bool {
         if self.sessions.is_empty() {
             return false;
+        }
+        if self.is_action(KeyAction::LocalShell, key) {
+            self.open_local_shell().ok();
+            return true;
+        }
+        // Alt+S from any dashboard tab: the strip is on the header everywhere.
+        if self.is_action(KeyAction::SessionSwitcher, key) {
+            self.open_session_picker(SessionPickerPurpose::SwitchSession);
+            return true;
         }
         if self.is_action(KeyAction::SessionFocus, key) {
             self.focus_active_session();
             return true;
         }
+        // Cycling moves the selection along the session strip and stays on the
+        // dashboard. Entering the selected session is `SessionFocus`, which sits
+        // right next to these in the footer.
         if self.is_action(KeyAction::SessionTabPrev, key) {
             self.switch_session(-1);
-            self.focus_active_session();
             return true;
         }
         if self.is_action(KeyAction::SessionTabNext, key) {
             self.switch_session(1);
-            self.focus_active_session();
             return true;
         }
         if self.is_action(KeyAction::SessionNewTab, key) {
-            self.open_session_host_picker();
+            self.open_new_session_picker();
             return true;
         }
         if self.is_action(KeyAction::SessionCloseTab, key) {
             self.close_active_session();
             return true;
         }
-        false
-    }
-
-    /// Hosts matching the session tab picker's query, as `(host index, label)`.
-    pub fn session_host_matches(&self) -> Vec<(usize, String)> {
-        let query = self
-            .session_host_picker
-            .as_ref()
-            .map(|p| p.query.to_lowercase())
-            .unwrap_or_default();
-        self.hosts
-            .iter()
-            .enumerate()
-            .filter(|(_, h)| {
-                if query.is_empty() {
-                    return true;
-                }
-                let name = h.name().to_lowercase();
-                let label = h.display_name().to_lowercase();
-                name.contains(&query) || label.contains(&query)
-            })
-            .map(|(idx, h)| (idx, format!("{}  {}", h.display_name(), h.name())))
-            .collect()
-    }
-
-    pub(crate) fn open_session_host_picker(&mut self) {
-        let return_mode = self.mode;
-        self.session_host_picker = Some(SessionHostPicker {
-            query: String::new(),
-            selected: 0,
-            return_mode,
-        });
-        self.mode = AppMode::SessionHostPicker;
-    }
-
-    pub(crate) fn handle_key_session_host_picker(&mut self, key: KeyEvent) -> Result<()> {
-        let return_mode = self
-            .session_host_picker
-            .as_ref()
-            .map(|p| p.return_mode)
-            .unwrap_or(AppMode::Normal);
-        let len = self.session_host_matches().len();
-        match key.code {
-            KeyCode::Esc => {
-                self.session_host_picker = None;
-                self.mode = return_mode;
-            }
-            KeyCode::Down => {
-                if len > 0 {
-                    if let Some(p) = self.session_host_picker.as_mut() {
-                        p.selected = (p.selected + 1) % len;
-                    }
-                }
-            }
-            KeyCode::Up => {
-                if len > 0 {
-                    if let Some(p) = self.session_host_picker.as_mut() {
-                        p.selected = (p.selected + len - 1) % len;
-                    }
-                }
-            }
-            KeyCode::Enter => {
-                let matches = self.session_host_matches();
-                let host_idx = self
-                    .session_host_picker
-                    .as_ref()
-                    .and_then(|p| matches.get(p.selected))
-                    .map(|(idx, _)| *idx);
-                self.session_host_picker = None;
-                self.mode = return_mode;
-                if let Some(idx) = host_idx {
-                    self.connect_host_at(idx)?;
-                }
-            }
-            KeyCode::Backspace => {
-                if let Some(p) = self.session_host_picker.as_mut() {
-                    p.query.pop();
-                    p.selected = 0;
-                }
-            }
-            KeyCode::Char(c)
-                if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
-                    && !c.is_control() =>
-            {
-                if let Some(p) = self.session_host_picker.as_mut() {
-                    p.query.push(c);
-                    p.selected = 0;
-                }
-            }
-            _ => {}
+        // Footer "sftp" — real work from any dashboard tab. Detach is not
+        // handled here: already on the dashboard, and the footer no longer
+        // advertises it (see session_footer_hints).
+        if self.is_action(KeyAction::SessionOpenSftp, key) {
+            self.open_sftp_for_active_session();
+            return true;
         }
-        Ok(())
+        false
     }
 
     /// Shared accessor for the visible session, if any.
@@ -271,11 +207,18 @@ impl App {
             }
             return;
         };
+        // Entering from outside, rather than being re-derived while already in a
+        // session (an overlay closing over it, a phase change), is what earns the
+        // slide: leaving already animates, so arriving looked like a cut.
+        let entering = !is_session_mode(self.mode);
         let phase = &self.sessions[idx].phase;
         self.mode = match phase {
             crate::session::SessionPhase::Connecting { .. } => AppMode::Connecting,
             _ => AppMode::Session,
         };
+        if entering && self.motion_enabled() {
+            self.session_enter_at = Some(std::time::Instant::now());
+        }
     }
 
     /// Tear down the active embedded session and return to the dashboard when
@@ -322,7 +265,16 @@ impl App {
             self.mode = AppMode::Normal;
         } else {
             // Stay at the same index if possible, else drop back to the new last.
-            self.active_session = Some(idx.min(self.sessions.len() - 1));
+            let next = idx.min(self.sessions.len() - 1);
+            // The tab that takes over sat to the right of the closed one, unless
+            // the closed one was last — then we fall back to its left neighbour
+            // and the slide has to travel the other way (#35).
+            if self.mode != AppMode::Normal {
+                // The closed tab is gone from the strip, so the highlight
+                // travels from where its neighbour now sits.
+                self.arm_session_tab_switch(if next == idx { 1 } else { -1 }, next);
+            }
+            self.active_session = Some(next);
             let phase = &self.sessions[self.active_session.unwrap()].phase;
             self.mode = if self.mode == AppMode::Normal {
                 AppMode::Normal
@@ -333,6 +285,26 @@ impl App {
                 }
             };
         }
+    }
+
+    /// Arm the tab slide that carries the tab at `from` off in direction `dir`
+    /// (`+1` = the new tab arrives from the right) while the strip's highlight
+    /// travels with it (#35).
+    ///
+    /// The single place that gates the transition on reduced motion and stamps
+    /// it, so every path that retargets `active_session` — cycling, closing a
+    /// tab, the switcher — animates identically. `dir` stays a parameter
+    /// because it is not always the sign of the index delta: the strip wraps,
+    /// so cycling past either end travels the way the key pointed.
+    pub(crate) fn arm_session_tab_switch(&mut self, dir: i8, from: usize) {
+        if !self.motion_enabled() {
+            return;
+        }
+        self.session_tab_switch = Some(SessionTabSwitch {
+            dir,
+            from,
+            at: std::time::Instant::now(),
+        });
     }
 
     /// Cycle tabs by `delta` (`+1` = next, `-1` = prev). Wraps at both ends.
@@ -347,6 +319,14 @@ impl App {
         let next = ((cur + delta) % len + len) % len;
         self.active_session = Some(next as usize);
 
+        // Carry the tab we're leaving off in the direction of travel (#35). The
+        // strip wraps, so the direction comes from `delta`, not the indices.
+        if next != cur {
+            self.arm_session_tab_switch(if delta > 0 { 1 } else { -1 }, cur as usize);
+        }
+
+        // On the dashboard only the strip moves; the mode below would drag the
+        // user into the session they were merely scrolling past.
         if self.mode == AppMode::Normal {
             return;
         }

@@ -3,22 +3,24 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear};
 
 use crate::app::App;
-use crate::config::KeyAction;
 use crate::tui::theme;
 
 /// Keybinding editor overlay: one row per configurable action.
 pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
-    let Some(editor) = app.keybind_editor else {
+    let Some(editor) = app.keybind_editor.as_ref() else {
         return;
     };
 
+    let actions = app.filtered_keybind_actions();
     let area = frame.area();
     let popup_w = 60u16.min(area.width.saturating_sub(2));
-    let list_rows = area.height.saturating_sub(8).clamp(8, 20);
-    let popup_h = (list_rows + 6).min(area.height.saturating_sub(2));
+    let list_rows = area.height.saturating_sub(9).clamp(8, 20);
+    let popup_h = (list_rows + 7).min(area.height.saturating_sub(2));
     let x = area.x + (area.width.saturating_sub(popup_w)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_h)) / 2;
     let popup = Rect::new(x, y, popup_w, popup_h);
+
+    let popup = crate::tui::popup_open_rect(popup, app);
 
     frame.render_widget(Clear, popup);
     frame.render_widget(
@@ -32,14 +34,29 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
     let buf = frame.buffer_mut();
     let row_x = popup.x + 2;
     let val_x = popup.x + 33;
-    let visible = popup.height.saturating_sub(4) as usize;
-    let total = KeyAction::ALL.len();
+    let content_w = popup.width.saturating_sub(4) as usize;
+
+    let query_line = format!("› {}\u{2588}", editor.query);
+    buf.set_string(
+        row_x,
+        popup.y + 1,
+        crate::tui::text::ellipsize(&query_line, content_w),
+        theme::bright(),
+    );
+
+    let visible = popup.height.saturating_sub(5) as usize;
+    let total = actions.len();
     let scroll = editor.scroll.min(total.saturating_sub(visible));
+    let selected = if total == 0 {
+        0
+    } else {
+        editor.selected.min(total - 1)
+    };
 
     for (row, i) in (scroll..total).take(visible).enumerate() {
-        let action = KeyAction::ALL[i];
-        let ry = popup.y + 1 + row as u16;
-        let is_sel = i == editor.selected;
+        let action = actions[i];
+        let ry = popup.y + 3 + row as u16;
+        let is_sel = i == selected;
         if is_sel {
             let blank = " ".repeat(popup.width.saturating_sub(2) as usize);
             buf.set_string(popup.x + 1, ry, &blank, theme::selected());
@@ -86,7 +103,7 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
 
     let hint_y = popup.y + popup.height.saturating_sub(2);
     let scroll_hint = if total > visible {
-        format!(" ({}/{})", editor.selected + 1, total)
+        format!(" ({}/{})", selected + 1, total)
     } else {
         String::new()
     };
@@ -97,7 +114,7 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
             "press a key to bind  │  Esc: cancel"
         }
     } else {
-        "↑↓ move │ Enter: set │ a: add │ r: reset │ x: unbind │ Esc: close"
+        "type to filter │ ↑↓ move │ Enter: set │ Ctrl+A: add │ Ctrl+R: reset │ Ctrl+X: unbind │ Esc: clear/close"
     };
     buf.set_string(
         row_x,

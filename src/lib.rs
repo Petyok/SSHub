@@ -162,6 +162,9 @@ fn run_terminal_loop(app: &mut App, auto_quit: Option<&str>) -> Result<()> {
         run_animation(&mut terminal)?;
     }
 
+    // The dashboard fades up from here, over the intro animation it replaces.
+    app.dashboard_at = Some(std::time::Instant::now());
+
     let mut last_size: Option<(u16, u16)> = None;
     loop {
         let sz = terminal.size()?;
@@ -173,9 +176,26 @@ fn run_terminal_loop(app: &mut App, auto_quit: Option<&str>) -> Result<()> {
         let resized = last_size != Some((sz.width, sz.height));
         let mut diag_entries: Vec<(String, String)> = Vec::new();
         let mut newly_connected: Vec<String> = Vec::new();
+        let mut key_push_events = Vec::new();
         for s in app.sessions.iter_mut() {
             let was_connected = s.is_connected();
             s.drain();
+            if s.phase.is_terminal() && !s.logged_exit {
+                s.logged_exit = true;
+                if let Some(ref identity_name) = s.key_push_identity {
+                    let status = match &s.phase {
+                        crate::session::SessionPhase::Exited { status, .. } => status.clone(),
+                        _ => "fail".to_string(),
+                    };
+                    key_push_events.push((
+                        s.host_name.clone(),
+                        s.meta.user.clone(),
+                        s.meta.proxy_jump.clone(),
+                        identity_name.clone(),
+                        status,
+                    ));
+                }
+            }
             if resized {
                 s.resize(sz.height, sz.width);
             }
@@ -192,6 +212,23 @@ fn run_terminal_loop(app: &mut App, auto_quit: Option<&str>) -> Result<()> {
                     diag_entries.push((s.display_name.clone(), line));
                 }
             }
+        }
+
+        for (host_name, user, proxy_jump, identity_name, status) in key_push_events {
+            let db_status = if status == "success" { "ok" } else { "fail" };
+            let note = if status == "success" {
+                format!("pushed public key '{}' to host", identity_name)
+            } else {
+                format!(
+                    "failed to push public key '{}' to host ({})",
+                    identity_name, status
+                )
+            };
+            let username = user.as_deref();
+            let via = proxy_jump.as_deref().unwrap_or("direct");
+            let _ = app
+                .store()
+                .log_auth_event(&host_name, username, via, db_status, &note, None);
         }
         for host_name in newly_connected {
             app.clear_ssh_log_for_host(&host_name);
@@ -348,6 +385,17 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
         }
     }
 
+    // Drain the left pane's worker, when it is browsing a second server.
+    if app.sftp_rx2.is_some() {
+        let events: Vec<crate::sftp::SftpEvent> = {
+            let rx = app.sftp_rx2.as_ref().unwrap();
+            std::iter::from_fn(|| rx.try_recv().ok()).collect()
+        };
+        for ev in events {
+            app.apply_sftp_event_left(ev);
+        }
+    }
+
     // Drain SSH probe log entries from background worker
     if let Some(rx) = app.probe_rx.as_ref() {
         let entries: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
@@ -380,6 +428,13 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
 
     // Refresh auth events cache periodically
     app.refresh_auth_cache();
+
+    // Arm tab-switch / popup slides for ANY mode or tab change this tick (#35).
+    // Must run AFTER the background event drains (SFTP / OS-detect / broadcast),
+    // not just after key handling: a mode change from e.g. an SFTP ConnectFailed
+    // event must stamp `mode_entered_at` in the same tick, or the next frame
+    // renders the popup at rest (a center flash) before the open slide starts.
+    app.detect_tab_switch();
 
     Ok(())
 }

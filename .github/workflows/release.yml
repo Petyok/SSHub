@@ -35,6 +35,24 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
+      # Nothing else in this job ever runs the binary it ships, and `strip` is
+      # the kind of setting that can produce one that doesn't start at all (on
+      # Apple targets it rewrites the Mach-O, which can invalidate the linker's
+      # ad-hoc signature). `--dry-run` exits without opening the TUI, so it is a
+      # safe liveness check. Skipped for the Intel Mac binary, which an arm64
+      # runner cannot execute without Rosetta.
+      - name: Smoke-test the built binary
+        if: matrix.target != 'x86_64-apple-darwin'
+        run: ./target/${{ matrix.target }}/release/sshub --dry-run
+      # The Intel Mac binary can't be executed on an arm64 runner, so check it
+      # structurally instead: a truncated/mangled Mach-O and a signature broken
+      # by `strip` are exactly what this leg would otherwise ship unnoticed.
+      - name: Verify the Intel Mac binary
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: |
+          bin=target/${{ matrix.target }}/release/sshub
+          file "$bin" | grep -q 'Mach-O 64-bit executable x86_64'
+          codesign --verify --strict --verbose=2 "$bin"
       - name: Package
         run: |
           cd target/${{ matrix.target }}/release
@@ -57,6 +75,47 @@ jobs:
           files: sshub-*.tar.gz
           body_path: CHANGELOG.md
           generate_release_notes: false
+
+  npm:
+    name: Publish to npm
+    needs: build
+    runs-on: ubuntu-latest
+    # Trusted publishing (OIDC) rather than a long-lived NPM_TOKEN: every publish
+    # authenticates with a short-lived token minted for this workflow, and npm
+    # attaches provenance on its own. npm is also retiring direct publishes from
+    # 2FA-bypass tokens (announced 2026-07-08, effective around January 2027), so
+    # a token-based job would have had to move regardless.
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      # Trusted publishing needs npm >= 11.5.1, newer than what Node bundles.
+      - name: Ensure an npm that speaks OIDC
+        run: |
+          npm install -g npm@latest
+          npm --version
+      - name: Collect the built tarballs
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: npm-tarballs
+      # Repacks the very tarballs this release ships, so npm and the GitHub
+      # release can never diverge. The version comes from the tag rather than
+      # Cargo.toml, so a mismatch fails here instead of reaching the registry.
+      # Publishes the three platform packages first and the `sshub` wrapper last.
+      #
+      # Each of the four packages needs a trusted publisher configured on
+      # npmjs.com pointing at this repository and `release.yml`, otherwise this
+      # step stops with ENEEDAUTH.
+      - name: Assemble and publish
+        env:
+          TARBALL_DIR: npm-tarballs
+        run: npm/build.sh "${GITHUB_REF_NAME#v}" --publish
 
   publish:
     name: Publish to crates.io

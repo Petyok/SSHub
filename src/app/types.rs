@@ -317,6 +317,7 @@ pub enum AppMode {
     HostDetail,
     HostForm,
     IdentityForm,
+    KeygenForm,
     GroupForm,
     GroupManage,
     /// Dropdown over the group form's Parent / Identity field.
@@ -324,7 +325,11 @@ pub enum AppMode {
     /// Searchable dropdown for choosing the tunnel form's SSH server.
     TunnelHostPicker,
     /// Searchable dropdown for opening a new embedded SSH session tab.
-    SessionHostPicker,
+    SessionPicker,
+    /// Searchable host list for `Shift+P` started from the Keys tab.
+    PushKeyHostPicker,
+    /// Identity list for `Shift+P` started from the hosts list.
+    PushKeyIdentityPicker,
     /// Dropdown over the host form's Group/Identity field.
     FieldPicker,
     /// Keybinding editor overlay.
@@ -353,6 +358,9 @@ pub enum AppMode {
     BroadcastCommand,
     /// Broadcast wizard stage 3: target preview + [y]/[e]/[N] barrier.
     BroadcastPreview,
+    /// A modal message popup (e.g. a connection error). Any key dismisses it;
+    /// the text lives in `App::notice_popup`.
+    Notice,
 }
 
 /// Live background-run state; App holds `broadcast: Option<BroadcastState>`.
@@ -370,6 +378,66 @@ pub struct BroadcastState {
     pub phase: BroadcastPhase,
     pub anim: Option<crate::tui::tween::SlideAnim>, // entry slide; None once settled
     pub audit_written: bool, // guard: log_auth_event fires once at completion
+}
+
+/// An in-flight tab-switch slide (#35): the body wipes between the `from` and
+/// `to` tabs. Direction is `to > from` (new slides in from the right) vs
+/// `to < from` (current slides out to the right, revealing the left tab).
+#[derive(Debug, Clone, Copy)]
+pub struct TabSwitch {
+    pub from: usize,
+    pub to: usize,
+    pub at: std::time::Instant,
+}
+
+/// An in-flight group fold / unfold (#35): the group's subtree is revealed one
+/// row at a time on the way open and swallowed the same way on the way shut,
+/// so the rows below it get pushed rather than teleported.
+///
+/// The collapse itself applies immediately either way, so `nav_rows` stays the
+/// truth about what is visible and navigable. The animation is purely visual:
+/// an unfold reveals a growing prefix of the rows now in `nav_rows`, while a
+/// fold replays a shrinking prefix of `rows`, captured just before they went.
+#[derive(Debug, Clone)]
+pub struct FoldAnim {
+    /// [`HostGroupSection::key`] of the group being folded.
+    pub key: i64,
+    /// `true` while opening, `false` while shutting.
+    pub expanding: bool,
+    pub at: std::time::Instant,
+    /// Subtree rows as they looked before a fold, replayed on the way out.
+    /// Empty for an unfold, whose rows are live in `nav_rows`.
+    pub rows: Vec<VisualRow>,
+}
+
+/// An in-flight session-tab slide (#35): moving between embedded sessions
+/// carries the old tab off one edge while the new one follows it in. `dir` is
+/// `+1` for "next" and `-1` for "prev"; it cannot be derived from the tab
+/// indices, which wrap around at both ends of the strip.
+#[derive(Debug, Clone, Copy)]
+pub struct SessionTabSwitch {
+    pub dir: i8,
+    /// Index of the tab being left, so the header highlight can travel from it
+    /// to the new one instead of jumping.
+    pub from: usize,
+    pub at: std::time::Instant,
+}
+
+/// An in-flight SFTP tab sub-state slide (#35). The tab body swaps between the
+/// host picker, the "connecting…" placeholder and the dual-pane browser, and
+/// each swap moves in the direction it "came from": the placeholder rides in
+/// and out on the right edge, the two browser panes meet in the middle and part
+/// again toward their own edges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SftpAnim {
+    /// Picker -> "connecting…": the placeholder enters from the right.
+    ConnectIn,
+    /// "connecting…" -> picker (failed / aborted handshake): it leaves right.
+    ConnectOut,
+    /// "connecting…" -> browser: the panes slide in from both edges.
+    PanesIn,
+    /// Browser -> picker: the panes part and slide off both edges.
+    PanesOut,
 }
 
 /// A transient error popup (issue #3): one failed host's error text, slides in
@@ -802,9 +870,9 @@ impl HostEntry {
 }
 
 /// State of the keybinding editor overlay.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeybindEditor {
-    /// Index into [`KeyAction::ALL`].
+    /// Index into the *filtered* action list (see `App::filtered_keybind_actions`).
     pub selected: usize,
     /// First visible row in the action list (for scrolling).
     pub scroll: usize,
@@ -812,6 +880,8 @@ pub struct KeybindEditor {
     pub capturing: bool,
     /// When capturing, whether to append (`true`) or replace (`false`).
     pub append: bool,
+    /// Type-to-filter query (case-insensitive substring over label + binds).
+    pub query: String,
 }
 
 /// Which host-form field the dropdown is editing.
@@ -860,7 +930,14 @@ pub struct HostFormEdit {
     pub session_logging: crate::session_log::SessionLoggingOverride,
     pub os_icon_index: usize,
     pub password: String,
+    /// The secret as it was in the credential store when the form opened, so
+    /// saving can tell "untouched" from "changed to this exact value", and an
+    /// emptied field can mean "delete it" rather than "leave it alone".
+    pub password_original: String,
     pub has_password: bool,
+    /// Whether the password field is currently shown as text. Per-form and
+    /// deliberately not persisted: it drops on leaving the field or closing.
+    pub password_revealed: bool,
     pub field: HostFormField,
     pub cursor: usize,
     /// Connection fields (address/name/port) are read-only; only launcher metadata is saved.
@@ -1024,15 +1101,148 @@ pub struct TunnelHostPicker {
 }
 
 /// Searchable dropdown for opening a new SSH session tab
-/// ([`AppMode::SessionHostPicker`]).
+/// ([`AppMode::SessionPicker`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionHostPicker {
+pub struct SessionPicker {
     /// Case-insensitive substring filter typed by the user.
     pub query: String,
     /// Index into the current filtered match list.
     pub selected: usize,
     /// Mode to restore when the picker is dismissed without connecting.
     pub return_mode: AppMode,
+    /// What this picker was opened for.
+    pub purpose: SessionPickerPurpose,
+}
+
+/// Host list for pushing a public key, opened from the Keys tab
+/// ([`AppMode::PushKeyHostPicker`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PushKeyHostPicker {
+    /// Fuzzy filter typed by the user.
+    pub query: String,
+    /// Index into the current filtered match list.
+    pub selected: usize,
+}
+
+/// Identity list for pushing a public key, opened from the hosts list
+/// ([`AppMode::PushKeyIdentityPicker`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PushKeyIdentityPicker {
+    /// Index into the identities that carry a private key.
+    pub selected: usize,
+}
+
+/// A server-to-server transfer in flight, relayed through a local temp file.
+///
+/// libssh2 has no server-to-server copy and the two panes are independent
+/// connections, so each item is moved in two legs: the source worker downloads
+/// it into a temp directory, then the destination worker uploads it from there.
+/// The temp copy is deleted as soon as the second leg lands.
+#[derive(Debug)]
+pub struct SftpRelay {
+    /// Items still to move, current one first.
+    pub items: std::collections::VecDeque<crate::sftp::model::QueuedTransfer>,
+    /// How many there were, for "relaying i/n".
+    pub total: usize,
+    /// Scratch directory holding the item currently in flight.
+    ///
+    /// A [`tempfile::TempDir`], not a path we compose ourselves: the files
+    /// passing through it are the user's, so it needs an unpredictable name and
+    /// owner-only permissions rather than a guessable one under a world-writable
+    /// `/tmp` (where another user could pre-create or symlink it). Dropping it
+    /// removes the directory, so the scratch copies cannot outlive the relay
+    /// even if the app exits mid-transfer.
+    pub tmp_dir: tempfile::TempDir,
+    /// Which leg is running.
+    pub leg: RelayLeg,
+}
+
+/// Which half of a relayed transfer is currently running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelayLeg {
+    /// Source worker is pulling the item down into the temp directory.
+    Fetching,
+    /// Destination worker is pushing it back up from there.
+    Pushing,
+}
+
+/// What a picker instance was opened for. Decides the title, the list source,
+/// the row layout, the initial selection, the empty-state text and what Enter
+/// does — everything else is shared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SessionPickerPurpose {
+    /// Open a new embedded SSH session tab (Ctrl+T).
+    #[default]
+    NewSession,
+    /// Point the SFTP browser's left pane at a second server, so two remote
+    /// hosts can be browsed side by side.
+    SftpLeftPane,
+    /// Jump to a session that is already open (Alt+S).
+    SwitchSession,
+}
+
+impl SessionPickerPurpose {
+    /// Title rendered in the popup's border.
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::NewSession => " new session tab ",
+            Self::SftpLeftPane => " select left server ",
+            Self::SwitchSession => " switch session ",
+        }
+    }
+
+    /// Shown instead of the list when nothing matches the query.
+    pub fn empty_text(self) -> &'static str {
+        match self {
+            Self::NewSession | Self::SftpLeftPane => "(no matching hosts)",
+            Self::SwitchSession => "(no matching sessions)",
+        }
+    }
+
+    /// Whether the list indexes `App::sessions` rather than `App::hosts`.
+    pub fn over_sessions(self) -> bool {
+        matches!(self, Self::SwitchSession)
+    }
+}
+
+/// Lifecycle marker on a session row. Rendered as a coloured glyph *and* a
+/// word — colour alone would drop the information for anyone who cannot
+/// distinguish it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickerBadge {
+    Connecting,
+    Up,
+    Exited,
+}
+
+impl PickerBadge {
+    /// Kept to four characters so the fixed row prefix has a constant width.
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::Connecting => "conn",
+            Self::Up => "up",
+            Self::Exited => "exit",
+        }
+    }
+}
+
+/// One row of the picker's filtered list, purpose-agnostic. The renderer
+/// composes and clips it; it never has to know what the row means.
+#[derive(Debug, Clone)]
+pub struct PickerRow {
+    /// Index into `App::hosts` or `App::sessions`, per the picker's purpose.
+    pub index: usize,
+    /// Lifecycle marker. `None` on host rows.
+    pub badge: Option<PickerBadge>,
+    /// 1-based tab number. `None` on host rows. Two tabs can share a name *and*
+    /// an endpoint, so this is what actually tells them apart.
+    pub ordinal: Option<usize>,
+    /// Host or session name.
+    pub name: String,
+    /// `user@address:port`, empty when the address is unknown.
+    pub endpoint: String,
+    /// Marks the session the user is currently attached to.
+    pub current: bool,
 }
 
 /// Single-field path prompt for the Termius CSV import ([`AppMode::ImportPrompt`]).
@@ -1077,7 +1287,12 @@ pub struct IdentityFormEdit {
     pub private_key: String,
     pub certificate: String,
     pub password: String,
+    /// The passphrase as it was in the credential store when the form opened.
+    /// See [`HostFormEdit::password_original`].
+    pub password_original: String,
     pub has_password: bool,
+    /// Whether the passphrase is currently shown as text.
+    pub password_revealed: bool,
     /// Full key material pasted into the Private key field; written to
     /// `~/.ssh/sshub_<name>` on save (the path field then points at it).
     pub pasted_key: Option<String>,
@@ -1086,6 +1301,72 @@ pub struct IdentityFormEdit {
     pub editing: bool,
     pub edit_snapshot: String,
     pub dirty: bool,
+}
+
+/// In-progress SSH key generation form while in [`AppMode::KeygenForm`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeygenFormEdit {
+    pub key_type: KeygenType,
+    pub passphrase: String,
+    pub comment: String,
+    pub target_path: String,
+    pub field: KeygenFormField,
+    pub cursor: usize,
+    pub dirty: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeygenType {
+    #[default]
+    Ed25519,
+    Rsa4096,
+}
+
+impl KeygenType {
+    pub fn label(self) -> &'static str {
+        match self {
+            KeygenType::Ed25519 => "ed25519",
+            KeygenType::Rsa4096 => "rsa-4096",
+        }
+    }
+}
+
+/// Editable key generation form field index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeygenFormField {
+    #[default]
+    KeyType = 0,
+    Passphrase = 1,
+    Comment = 2,
+    TargetPath = 3,
+}
+
+impl KeygenFormField {
+    pub const ALL: [KeygenFormField; 4] = [
+        KeygenFormField::KeyType,
+        KeygenFormField::Passphrase,
+        KeygenFormField::Comment,
+        KeygenFormField::TargetPath,
+    ];
+
+    pub(crate) fn next(self) -> Self {
+        let idx = Self::ALL.iter().position(|&f| f == self).unwrap_or(0);
+        Self::ALL[(idx + 1) % Self::ALL.len()]
+    }
+
+    pub(crate) fn prev(self) -> Self {
+        let idx = Self::ALL.iter().position(|&f| f == self).unwrap_or(0);
+        Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            KeygenFormField::KeyType => "Key type (Left/Right)",
+            KeygenFormField::Passphrase => "Passphrase (optional)",
+            KeygenFormField::Comment => "Comment (optional)",
+            KeygenFormField::TargetPath => "Target path",
+        }
+    }
 }
 
 /// Editable identity form field index.
@@ -1197,6 +1478,26 @@ impl IdentityFormEdit {
             self.pasted_key = None;
             self.private_key.clear();
             self.cursor = 0;
+        }
+    }
+}
+
+impl KeygenFormEdit {
+    pub fn active_field(&self) -> &str {
+        match self.field {
+            KeygenFormField::KeyType => "",
+            KeygenFormField::Passphrase => &self.passphrase,
+            KeygenFormField::Comment => &self.comment,
+            KeygenFormField::TargetPath => &self.target_path,
+        }
+    }
+
+    pub(crate) fn active_field_mut(&mut self) -> Option<&mut String> {
+        match self.field {
+            KeygenFormField::KeyType => None,
+            KeygenFormField::Passphrase => Some(&mut self.passphrase),
+            KeygenFormField::Comment => Some(&mut self.comment),
+            KeygenFormField::TargetPath => Some(&mut self.target_path),
         }
     }
 }

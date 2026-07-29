@@ -7,17 +7,10 @@ use sshub::metadata::MetadataDb;
 use sshub::store::{HostSource, LauncherStore, NewHost};
 use tempfile::NamedTempFile;
 
-#[path = "../support/mod.rs"]
-mod support;
-
-use support::FixtureResolver;
+use crate::support::FixtureResolver;
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::empty())
-}
-
-fn key_ctrl(code: KeyCode) -> KeyEvent {
-    KeyEvent::new(code, KeyModifiers::CONTROL)
 }
 
 fn key_char(c: char) -> KeyEvent {

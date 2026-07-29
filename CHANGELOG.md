@@ -4,6 +4,200 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-30
+
+### Added
+
+- **Session switcher** (`Alt+S`, PR #46 by @michabbb) - a searchable
+  list of the sessions that are already open, so getting back to one no longer
+  means stepping through the tabs with `Ctrl+[` / `Ctrl+]`. Rows carry the host,
+  its user@address and a lifecycle dot (`up` / `new` / `dead`); Enter jumps to
+  the session, and Ctrl+Shift+T still opens a local shell from inside the
+  picker. The new-session, SFTP-left-pane and switch-session dropdowns are one
+  widget with three purposes now, filtered by the same fuzzy matcher as the
+  host list and the palette.
+- **Type-to-filter in Help and the keybinding editor** (issue #48) - those two
+  overlays were the only long lists you could not search. Both now take a query
+  the same way the tag filter does (`› query█`): case-insensitive substring over
+  the key spec / action label and the description / configured binds. Arrows and
+  PageUp/PageDown move; `j`/`k` type into the query. Esc clears a non-empty query
+  and closes only when it is empty (Help also still dismisses on Enter when the
+  query is idle). Section headers with no surviving help rows are dropped, and
+  the keybinding editor rebinds the filtered row (not `KeyAction::ALL[selected]`),
+  including while a capture is in progress. Row actions there moved to Ctrl+A /
+  Ctrl+R / Ctrl+X so every unmodified letter can be part of a search.
+- **Stored passwords and passphrases are no longer write-only** (issue #60) - a
+  saved secret showed as `(set)` and nothing else: you could not tell which one
+  was stored, could not get it out, and editing meant retyping from scratch. The
+  field now opens prefilled from the credential store, masked, with `Ctrl+R` to
+  show and copy it and `Ctrl+Y` to copy without showing. Both say what they
+  copied and never the value, the reveal drops as soon as the field is left, and
+  the value stays out of every log, audit row and diagnostic. Both binds are
+  rebindable in the keybinding editor, and the form's hint row names them while
+  the field is focused, since a masked value gives no clue on its own.
+- **Ad-hoc connect** - typing an unknown `[user@]host[:port]` into the fuzzy
+  palette (`/`), IPv6 in brackets included, now offers a "connect without saving"
+  row instead of reporting no matches, and Enter opens an embedded session
+  straight to it. The destination is validated and passed after `--`, so a host
+  that starts with a dash cannot turn into an ssh flag.
+- **Local shell tab** - `Ctrl+Shift+T` opens a session tab running your login
+  shell (`$SHELL`, falling back to `/bin/sh`), with the same detach and close
+  behaviour as an ssh tab.
+- **Push a public key to a host** (PR #16) - `Shift+P` from the hosts list picks
+  an identity, or from the Keys tab picks a host, and installs that identity's
+  public key into the remote `~/.ssh/authorized_keys`. The remote side runs under
+  `umask 077`, creates the file if missing, and appends only when an exact
+  matching line is not already there, so repeating it is harmless. The public key
+  comes from the `.pub` file when one exists, otherwise `ssh-keygen -y` extracts
+  it with the passphrase staged through askpass rather than argv. Authentication
+  reuses the same stored-credential path as a normal connect, and the result is
+  written to the audit log. The help overlay has been advertising this key since
+  the feature was ceded to this PR; now it exists.
+- **Generate SSH keys from the Keys tab** (PR #15) - `g` opens a form for the key
+  type (Ed25519 or RSA-4096), passphrase, comment and target path. The passphrase
+  reaches `ssh-keygen` through askpass rather than argv, the new key is registered
+  as an identity immediately, and its passphrase goes to the credential store when
+  one was set. Generation refuses to overwrite an existing key or its `.pub`.
+- **Credentials survive a missing keyring** (PR #1) - where no Secret Service is
+  reachable (WSL, Docker, a headless box), passwords and passphrases used to have
+  nowhere to go. They now fall back to an owner-only `credentials.json` in the
+  data directory, written through a `0600` temp file and an atomic rename, and the
+  status bar says so rather than letting you assume the keyring took it. **The
+  fallback file is plaintext**, since there is no keyring to encrypt against. Once
+  a keyring shows up again, its contents migrate into it on the next launch and
+  the file is removed, but only if every entry made it across.
+- **Install from npm** (issue #51) - `npx sshub-tui` and `npm install -g sshub-tui`
+  now work, installing a command still called `sshub`. The npm package ships the
+  same prebuilt binaries the GitHub release does, delivered as platform-specific
+  optional dependencies, so there is no build step and nothing is fetched from
+  outside the registry. Prebuilt for Linux x64, macOS arm64 and macOS x64; every
+  other platform keeps using `cargo install sshub`.
+- **UI motion pass** (issue #35) - the interface moves instead of cutting
+  between states. Popups drop in from off the top and are thrown back up on
+  close; tab bodies slide; a zoomed panel morphs out of its grid slot; the
+  full-screen host view slides in on connect and off on the way out; the SFTP
+  tab slides between its picker, "connecting…" and browser states, with the two
+  panes meeting in the middle and parting again. The host list scrolls under
+  the cursor rather than jumping half a panel, its highlight wipes in, and a
+  group's rows are revealed one at a time as it folds. Status is legible in
+  motion too: a host's dot flashes when its ping class changes, a reconnecting
+  tunnel's dot breathes, the header tally counts to its new values, a fresh
+  ping reading grows into the latency graph, and the SFTP queue has a progress
+  bar that sweeps between the worker's chunked updates. Everything is gated on
+  the existing `appearance.disable_animation` reduced-motion toggle, and the
+  frame rate only rises while something is actually animating.
+- **SFTP between two servers** - the left pane can be pointed at a second host
+  with `o` (and back to local files with `O`), so two servers sit side by side
+  with their own connections, listings and file operations. Transfers between
+  them are relayed through a local temp file, one leg at a time, since libssh2
+  has no server-to-server copy; an item only leaves the queue once it lands on
+  the far end, so a failure part-way keeps it for a retry.
+- **SFTP queue stays open during a transfer** - files can be staged while the
+  queue runs and roll into the next pass when the current one finishes. The
+  local pane stays browsable meanwhile.
+- **SFTP `..` row** - both panes list their parent directory as a selectable
+  row, so walking up no longer depends on knowing about `Backspace`.
+
+### Changed
+
+- **SFTP hides dotfiles** (issue #44), with `.` to show them - in a home
+  directory they were most of the listing, pushing what you came for below the
+  fold. This changes what an existing install shows on first run, so the pane
+  says how many entries it is holding back, and a search beginning with a dot
+  (`.ssh`) lifts the hiding rather than reporting no matches. The toggle covers
+  both panes and is remembered across restarts. The `..` row is exempt from the
+  hiding, being a way out rather than an entry, but steps aside while searching
+  so the cursor lands on a result.
+- **Smaller release binaries** (issue #42) - release builds had no profile at
+  all, so they shipped with the symbol table and without cross-crate
+  optimisation. Adding `lto = "thin"`, `codegen-units = 1` and
+  `strip = "symbols"` takes the Linux x86-64 binary from 14.8 MB to 11.6 MB
+  (-21.8%), which every distribution channel carries: the release tarballs,
+  `cargo install`, and anything that repackages them. `cargo test` and a plain
+  `cargo build` are untouched, but every release build now takes noticeably
+  longer -- including `just build` and `just install`, which build in release
+  mode, and including every dependency, since `codegen-units = 1` applies across
+  the whole graph. One trade to be aware of when reporting a crash: stripping
+  the symbol table leaves `RUST_BACKTRACE` output empty in a released binary,
+  so a backtrace worth sending has to come from a debug build.
+
+### Fixed
+
+- **Session-strip binds only worked on the hosts tab** (issue #67) - the header
+  strip and footer advertised resume, tabs, new tab, detach and sftp from every
+  dashboard tab, but the keys only fired on hosts. They are handled globally
+  whenever sessions exist, before the per-tab dispatch. Ctrl+T still opens a new
+  SSH session picker on the SFTP tab; plain `o` remains the left-pane picker.
+  The dashboard footer no longer lists `detach`: you are already detached, so
+  advertising it was a lie; detach stays on the in-session header.
+- **Upgrading while running broke password auth until restart** (issue #63) - the
+  askpass helper is this binary, found through `current_exe()`, and an upgrade
+  replaces the file rather than writing into it, so the running process was left
+  pointing at `<path> (deleted)`. ssh could not exec that, no stored secret was
+  delivered, and the failure read as `Permission denied (publickey)`, which points
+  at the server rather than at the upgrade. The path is now re-resolved when it
+  disappears, so an in-place upgrade keeps working, and when the helper genuinely
+  cannot be found the session log says why instead of leaving a rejected-key
+  message to explain itself.
+- **The agent panel printed over the identity cards** - its position was derived
+  from whole card rows while the grid scrolls by lines, so mid-scroll it landed on
+  a card and its own short fields left the card showing through, giving lines like
+  `loaded keys 0n (no key)` and `agent socket (not set)────┘`. It is a fixed strip
+  at the bottom of the tab now, with the grid sized to whole card rows, so the two
+  cannot share a row whatever the scroll is doing. Sizing to whole rows also
+  removes the sliver of a cut-off card that used to sit above the rule and slide
+  around while everything else stayed still. The transient notice moved to the
+  last row for the same reason.
+- **A stored secret could not be removed** - clearing the password field meant
+  "leave whatever is stored alone", because an empty field was the only signal
+  the save path had. It now compares against what the store held when the form
+  opened, so an emptied field deletes the entry, and the field masks while typing
+  too, since it arrives carrying a real secret.
+- **Cycling session tabs from the dashboard threw you into the session** (issue
+  #49) - `Ctrl+[` / `Ctrl+]` there moved the selection *and* immediately opened
+  the session full screen, so a key named "previous / next session tab" left the
+  dashboard entirely, with no transition. It now moves the selection along the
+  session strip and stays put; opening the selected session is what
+  `Ctrl+Shift+S` is for, and the footer says so. The strip carries its highlight
+  across instead of teleporting, reading the same travel state the full-screen
+  tab bar uses. A chip collapsed into the `+N` overflow marker has nowhere to
+  travel and is left alone, and reduced motion jumps straight to the target.
+- **Entering a running session did not animate** - leaving one slid the session
+  off to the right, but arriving cut straight to it, because the slide was armed
+  on connect only. Re-entering from the dashboard now slides in the same way a
+  fresh connect does; re-deriving the mode while already inside a session, when an
+  overlay closes over it or a phase changes, does not replay it.
+- **The session slide arrived over a black screen** - it blanked the columns it
+  had not reached yet, so connecting flashed black before the host appeared. The
+  dashboard is now snapshotted the way the session view already was, and the
+  session slides over it.
+- **Narrow footers dropped the wrong hints** - the pairs that say how to get out
+  (`? help`, `q quit`) or back into a running session (`resume`) were pushed into
+  the middle of the row by whatever was appended after them, panel-zoom hints,
+  broadcast hints, session hints, and the middle is exactly what truncation eats.
+  They are now moved to the end and pinned explicitly.
+- **Arrow keys did nothing in Midnight Commander** (PR #56) - full-screen
+  applications ask for application cursor mode (DECCKM) and then expect the
+  cursor keys as SS3 sequences, while SSHub always sent the normal CSI ones. The
+  embedded terminal tracked the mode all along; only the key encoder ignored it.
+  Holding Shift looked like a workaround because modified cursor keys take a
+  different encoding, but Midnight Commander read those as "select file". Arrows,
+  `Home` and `End` now follow whatever mode the remote application asked for.
+- **SFTP could not leave the login directory** - `Backspace` did nothing on a
+  fresh remote pane, because the parent of the server-resolved `"."` is the
+  empty path, which the server rejects as a listing target.
+- **SFTP staged from the wrong pane** - `←` queued whatever the *remote* cursor
+  sat on whichever pane had focus, so browsing locally and reaching for `←`
+  queued an entry you weren't looking at, and queued it again after every local
+  `cd`. The arrows still point at the destination; the source is now the
+  focused pane.
+- **A failed SFTP transfer retried itself forever** - a worker follows an error
+  with its usual completion event, which the queue's auto-continue read as
+  "start the next pass". Failed runs now stop and wait for the user, and both
+  workers are told to cancel.
+- **An unreachable SFTP host opened a blank browser** - it now fails into a
+  modal popup, with a connect timeout instead of an open-ended wait.
+
 ## [0.10.0] - 2026-07-19
 
 ### Added
