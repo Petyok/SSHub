@@ -1,15 +1,19 @@
 pub mod app;
+pub mod broadcast;
+pub mod cli;
 pub mod config;
 pub mod credentials;
+pub mod hosts;
 pub mod import;
 pub mod keybinds;
-pub mod launcher;
 pub mod metadata;
 pub mod osinfo;
 pub mod ping;
 pub mod search;
 pub mod secure_fs;
 pub mod session;
+pub mod session_log;
+pub mod session_transport;
 pub mod sftp;
 pub mod ssh;
 pub mod store;
@@ -158,6 +162,9 @@ fn run_terminal_loop(app: &mut App, auto_quit: Option<&str>) -> Result<()> {
         run_animation(&mut terminal)?;
     }
 
+    // The dashboard fades up from here, over the intro animation it replaces.
+    app.dashboard_at = Some(std::time::Instant::now());
+
     let mut last_size: Option<(u16, u16)> = None;
     loop {
         let sz = terminal.size()?;
@@ -221,7 +228,7 @@ fn run_terminal_loop(app: &mut App, auto_quit: Option<&str>) -> Result<()> {
             let via = proxy_jump.as_deref().unwrap_or("direct");
             let _ = app
                 .store()
-                .log_auth_event(&host_name, username, via, db_status, &note);
+                .log_auth_event(&host_name, username, via, db_status, &note, None);
         }
         for host_name in newly_connected {
             app.clear_ssh_log_for_host(&host_name);
@@ -308,7 +315,14 @@ fn apply_auto_quit(app: &mut App, auto_quit: Option<&str>) -> Result<()> {
 }
 
 fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
-    if event::poll(POLL_INTERVAL)? {
+    // While a panel animation is playing, shorten the poll window so the render
+    // loop redraws at ~60fps and the slide is smooth; otherwise idle at 20fps.
+    let poll_window = if app.animating() {
+        std::time::Duration::from_millis(16)
+    } else {
+        POLL_INTERVAL
+    };
+    if event::poll(poll_window)? {
         // Drain everything already queued: one event per 50ms frame makes
         // paste into an embedded session crawl at ~20 chars/sec.
         loop {
@@ -371,6 +385,17 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
         }
     }
 
+    // Drain the left pane's worker, when it is browsing a second server.
+    if app.sftp_rx2.is_some() {
+        let events: Vec<crate::sftp::SftpEvent> = {
+            let rx = app.sftp_rx2.as_ref().unwrap();
+            std::iter::from_fn(|| rx.try_recv().ok()).collect()
+        };
+        for ev in events {
+            app.apply_sftp_event_left(ev);
+        }
+    }
+
     // Drain SSH probe log entries from background worker
     if let Some(rx) = app.probe_rx.as_ref() {
         let entries: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
@@ -389,8 +414,11 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
         }
     }
 
-    // Check tunnel health
-    app.tunnel_manager.check_health();
+    // Drive the live broadcast run (drain worker events, settle/dismiss panel).
+    app.tick_broadcast()?;
+
+    // Check tunnel health and drive keep-alive reconnects.
+    let _ = app.tick_tunnels();
 
     // Drive selection edge-autoscroll: a drag held past the top/bottom edge
     // keeps scrolling even when the mouse isn't moving (no drag events fire).
@@ -400,6 +428,13 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
 
     // Refresh auth events cache periodically
     app.refresh_auth_cache();
+
+    // Arm tab-switch / popup slides for ANY mode or tab change this tick (#35).
+    // Must run AFTER the background event drains (SFTP / OS-detect / broadcast),
+    // not just after key handling: a mode change from e.g. an SFTP ConnectFailed
+    // event must stamp `mode_entered_at` in the same tick, or the next frame
+    // renders the popup at rest (a center flash) before the open slide starts.
+    app.detect_tab_switch();
 
     Ok(())
 }
@@ -441,6 +476,24 @@ fn install_panic_hook() {
             default_hook(info);
         }));
     });
+}
+
+#[cfg(test)]
+pub(crate) mod test_env {
+    use std::sync::{Mutex, MutexGuard};
+
+    /// Serializes tests that mutate the process-global `$HOME`. Environment
+    /// variables are shared across the whole test binary and cargo runs tests in
+    /// parallel, so concurrent setters corrupted each other's `$HOME` mid-test
+    /// (a flaky `keyfile`/`resolver` failure that surfaced on macOS). Hold the
+    /// returned guard for the entire test body.
+    static HOME_LOCK: Mutex<()> = Mutex::new(());
+
+    pub(crate) fn lock_home() -> MutexGuard<'static, ()> {
+        HOME_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
 }
 
 #[cfg(test)]
@@ -493,14 +546,12 @@ mod tests {
             ssh_g_dir: root.join("tests/fixtures/ssh_g"),
         };
         let metadata: Arc<dyn MetadataStore> = Arc::new(metadata::MetadataDb::default());
-        let launcher = launcher::launcher_from_config(&AppConfig::default()).unwrap();
         let mut app = App::new_with_deps(
             AppConfig::default(),
             AppDeps {
                 resolver: Box::new(resolver),
                 metadata: Arc::clone(&metadata),
                 store: Arc::new(LauncherStore::open_in_memory().unwrap()),
-                launcher,
                 password_store: Box::new(crate::credentials::NoopPasswordStore),
             },
         );
@@ -508,8 +559,6 @@ mod tests {
         assert!(!app.hosts.is_empty());
 
         let _: Box<dyn HostResolver> = Box::new(ssh::SshConfigResolver::default());
-        let _: Box<dyn launcher::TerminalLauncher> =
-            launcher::launcher_from_config(&AppConfig::default()).unwrap();
         let _: Box<dyn MetadataStore> = Box::new(metadata::MetadataDb::default());
     }
 
@@ -521,14 +570,6 @@ mod tests {
         }
         fn resolve_host(&self, _name: &str) -> anyhow::Result<crate::ssh::SshHost> {
             anyhow::bail!("no hosts")
-        }
-    }
-
-    // Minimal launcher that does nothing
-    struct NoopLauncher;
-    impl crate::launcher::TerminalLauncher for NoopLauncher {
-        fn launch_ssh_argv(&self, _argv: &[String]) -> anyhow::Result<()> {
-            Ok(())
         }
     }
 
@@ -544,7 +585,6 @@ mod tests {
             resolver: Box::new(NoopResolver),
             metadata,
             store,
-            launcher: Box::new(NoopLauncher),
             password_store: Box::new(crate::credentials::NoopPasswordStore),
         };
         let mut app = crate::app::App::new_with_deps(crate::config::AppConfig::default(), app_deps);

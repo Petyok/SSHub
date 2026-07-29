@@ -10,7 +10,7 @@ use tempfile::NamedTempFile;
 #[path = "../support/mod.rs"]
 mod support;
 
-use support::{FixtureResolver, MockLauncher};
+use support::FixtureResolver;
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::empty())
@@ -37,7 +37,6 @@ fn hybrid_env() -> (NamedTempFile, App) {
             resolver: Box::new(FixtureResolver::from_manifest_dir()),
             metadata: Arc::new(MetadataDb::default()),
             store,
-            launcher: Box::new(MockLauncher::new()),
             password_store: Box::new(sshub::credentials::NoopPasswordStore),
         },
     );

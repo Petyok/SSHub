@@ -27,6 +27,7 @@ pub(crate) fn keyevent_to_spec_roundtrips() {
 
 #[test]
 pub(crate) fn pasted_key_material_is_written_to_a_file_on_save() {
+    let _home = crate::test_env::lock_home();
     let dir = tempfile::tempdir().unwrap();
     std::env::set_var("HOME", dir.path());
 
@@ -252,7 +253,6 @@ pub(crate) fn sort_mode_label_orders_by_display_name() {
             resolver: Box::new(MockResolver::new(vec![])),
             metadata: Arc::new(MetadataDb::default()),
             store,
-            launcher: Box::new(RecordingLauncher::new().0),
             password_store: Box::new(crate::credentials::NoopPasswordStore),
         },
     );
@@ -286,7 +286,6 @@ pub(crate) fn reload_hosts_skips_unresolved_and_preserves_selection() {
     }
 
     let metadata: Arc<dyn MetadataStore> = Arc::new(MetadataDb::default());
-    let (launcher, _launched) = RecordingLauncher::new();
     let mut app = App::new_with_deps(
         AppConfig::default(),
         AppDeps {
@@ -295,7 +294,6 @@ pub(crate) fn reload_hosts_skips_unresolved_and_preserves_selection() {
             }),
             metadata,
             store: test_store(),
-            launcher: Box::new(launcher),
             password_store: Box::new(crate::credentials::NoopPasswordStore),
         },
     );
@@ -359,7 +357,6 @@ pub(crate) fn nested_groups_build_tree_and_collapse_subtree() {
             resolver: Box::new(MockResolver::new(vec![])),
             metadata: Arc::new(MetadataDb::default()),
             store,
-            launcher: Box::new(RecordingLauncher::new().0),
             password_store: Box::new(crate::credentials::NoopPasswordStore),
         },
     );
@@ -433,7 +430,6 @@ pub(crate) fn shift_arrow_jumps_between_group_headers() {
             resolver: Box::new(MockResolver::new(vec![])),
             metadata: Arc::new(MetadataDb::default()),
             store,
-            launcher: Box::new(RecordingLauncher::new().0),
             password_store: Box::new(crate::credentials::NoopPasswordStore),
         },
     );
@@ -482,4 +478,275 @@ pub(crate) fn help_scroll_stops_at_render_ceiling() {
     // End lands on the same ceiling.
     app.handle_key(key(KeyCode::End)).unwrap();
     assert_eq!(app.help_scroll, max);
+}
+
+/// The smoothed host-list scroll (#35) must start settled, chase a moved
+/// target across several frames rather than snapping, and eventually land on
+/// it exactly.
+#[test]
+fn host_scroll_chases_its_target_over_several_frames() {
+    let hosts: Vec<(String, SshHost)> = (0..40)
+        .map(|i| (format!("h{i:02}"), host(&format!("h{i:02}"))))
+        .collect();
+    let mut app = test_app(hosts.iter().map(|(n, h)| (n.as_str(), h.clone())).collect());
+    let body_h = 10;
+
+    // First draw adopts the target outright: the list must not scroll in from
+    // row zero when the app opens on a selection halfway down.
+    app.selected = 20;
+    let first = app.host_scroll_advance(body_h);
+    assert_eq!(first, app.host_scroll_offset(body_h));
+    assert!(!app.host_scroll_moving.get());
+
+    // Jump the selection to the end: the next frame moves toward the new
+    // target without reaching it, and reports itself as moving. Frames are
+    // backdated by a 60fps tick, since the chase is driven by wall-clock time
+    // and a test runs its frames back to back.
+    let tick = |app: &App| {
+        app.host_scroll_at.set(Some(
+            std::time::Instant::now() - std::time::Duration::from_millis(16),
+        ));
+    };
+    app.selected = app.nav_rows.len() - 1;
+    let target = app.host_scroll_offset(body_h);
+    tick(&app);
+    let stepped = app.host_scroll_advance(body_h);
+    assert!(app.host_scroll_moving.get(), "should report as moving");
+    assert!(
+        stepped > first && stepped < target,
+        "expected a step between {first} and {target}, got {stepped}"
+    );
+    // Hit-testing agrees with what was drawn, mid-scroll.
+    assert_eq!(app.host_scroll_shown(body_h), stepped);
+
+    // Given enough frames it settles exactly on the target and stops asking
+    // for more of them.
+    for _ in 0..200 {
+        tick(&app);
+        app.host_scroll_advance(body_h);
+    }
+    assert_eq!(app.host_scroll_advance(body_h), target);
+    assert!(!app.host_scroll_moving.get());
+}
+
+/// Reduced motion keeps the list pinned to the target offset, with no chase.
+#[test]
+fn host_scroll_snaps_under_reduced_motion() {
+    let hosts: Vec<(String, SshHost)> = (0..40)
+        .map(|i| (format!("h{i:02}"), host(&format!("h{i:02}"))))
+        .collect();
+    let mut app = test_app(hosts.iter().map(|(n, h)| (n.as_str(), h.clone())).collect());
+    app.config.appearance.disable_animation = true;
+    let body_h = 10;
+
+    app.selected = 0;
+    app.host_scroll_advance(body_h);
+    app.selected = app.nav_rows.len() - 1;
+    let target = app.host_scroll_offset(body_h);
+    assert_eq!(app.host_scroll_advance(body_h), target);
+    assert!(!app.host_scroll_moving.get());
+}
+
+/// Folding a group (#35) keeps `nav_rows` authoritative -- the collapse
+/// applies at once -- while the visual rows replay a shrinking prefix of the
+/// subtree, so the list closes up a row at a time instead of jumping.
+#[test]
+fn fold_replays_the_subtree_while_nav_rows_collapse_at_once() {
+    let store = test_store();
+    let group = store
+        .create_group(&NewHostGroup {
+            name: "prod".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    for i in 0..4 {
+        store
+            .create_host(&NewHost {
+                name: format!("p{i}"),
+                address: format!("10.0.0.{i}"),
+                port: 22,
+                group_id: Some(group.id),
+                ..Default::default()
+            })
+            .unwrap();
+    }
+    let mut app = App::new_with_deps(
+        AppConfig::default(),
+        AppDeps {
+            resolver: Box::new(MockResolver::new(vec![])),
+            metadata: Arc::new(MetadataDb::default()),
+            store,
+            password_store: Box::new(crate::credentials::NoopPasswordStore),
+        },
+    );
+    app.reload_hosts().unwrap();
+    let hosts_shown = |app: &App| {
+        app.host_visual_rows()
+            .iter()
+            .filter(|r| matches!(r, VisualRow::Host { .. }))
+            .count()
+    };
+    assert_eq!(hosts_shown(&app), 4);
+
+    // Folding collapses the tree immediately...
+    app.toggle_group_by_section(0);
+    assert_eq!(app.nav_rows.len(), 1, "only the header is navigable");
+    // ...but the rows are still on screen, replayed from the captured subtree.
+    assert_eq!(
+        hosts_shown(&app),
+        4,
+        "full subtree at the start of the fold"
+    );
+
+    // Halfway through the (symmetric) reveal, half of them are left.
+    app.fold_anim.as_mut().unwrap().at = std::time::Instant::now() - crate::tui::FOLD_ANIM / 2;
+    let midway = hosts_shown(&app);
+    assert!(
+        (1..4).contains(&midway),
+        "expected a partial subtree, got {midway}"
+    );
+
+    // Once it has run its course nothing is replayed any more.
+    app.fold_anim.as_mut().unwrap().at = std::time::Instant::now() - crate::tui::FOLD_ANIM;
+    assert_eq!(hosts_shown(&app), 0);
+
+    // Unfolding is the mirror: the rows are live again and revealed over time.
+    app.detect_tab_switch();
+    app.toggle_group_by_section(0);
+    assert_eq!(app.nav_rows.len(), 5, "the subtree is navigable again");
+    assert_eq!(hosts_shown(&app), 0, "nothing revealed yet");
+    app.fold_anim.as_mut().unwrap().at = std::time::Instant::now() - crate::tui::FOLD_ANIM;
+    assert_eq!(hosts_shown(&app), 4);
+}
+
+/// A host whose ping class changes flashes on the way to its new colour (#35),
+/// while one seen for the first time is already settled.
+#[test]
+fn ping_class_change_flashes_the_status_dot() {
+    let mut app = test_app(vec![("a", host("a"))]);
+    let settled = crate::tui::theme::GREEN;
+
+    // Nothing known about the host yet: no flash to play.
+    assert_eq!(app.ping_flash_color("a", settled), settled);
+
+    // First samples arrive: the app opening is not a status change.
+    app.ping_data.insert("a".into(), vec![12]);
+    app.detect_ping_changes();
+    assert_eq!(app.ping_flash_color("a", settled), settled);
+
+    // The host goes unreachable: the dot flashes away from its class colour.
+    app.ping_data
+        .insert("a".into(), vec![crate::ping::PING_UNREACHABLE]);
+    app.detect_ping_changes();
+    let flashing = app.ping_flash_color("a", crate::tui::theme::RED);
+    assert_ne!(
+        flashing,
+        crate::tui::theme::RED,
+        "expected the dot mid-flash, not its resting colour"
+    );
+
+    // More samples of the same class don't restart it.
+    let at = app.ping_flash.get("a").unwrap().1;
+    app.ping_data
+        .insert("a".into(), vec![crate::ping::PING_UNREACHABLE; 2]);
+    app.detect_ping_changes();
+    assert_eq!(
+        app.ping_flash.get("a").unwrap().1,
+        at,
+        "flash not restarted"
+    );
+
+    // Once it has run its course the dot is back to its class colour.
+    app.ping_flash.insert(
+        "a".into(),
+        (
+            crate::ping::PingClass::Unreachable,
+            std::time::Instant::now() - crate::tui::PING_FLASH,
+        ),
+    );
+    assert_eq!(
+        app.ping_flash_color("a", crate::tui::theme::RED),
+        crate::tui::theme::RED
+    );
+}
+
+/// Reduced motion never flashes.
+#[test]
+fn ping_flash_is_off_under_reduced_motion() {
+    let mut app = test_app(vec![("a", host("a"))]);
+    app.config.appearance.disable_animation = true;
+    app.ping_data.insert("a".into(), vec![12]);
+    app.detect_ping_changes();
+    app.ping_flash.insert(
+        "a".into(),
+        (crate::ping::PingClass::Online, std::time::Instant::now()),
+    );
+    assert_eq!(
+        app.ping_flash_color("a", crate::tui::theme::GREEN),
+        crate::tui::theme::GREEN
+    );
+}
+
+/// The header tally counts toward its real values instead of snapping (#35),
+/// and lands on them exactly.
+#[test]
+fn header_stats_count_toward_their_target() {
+    let app = test_app(vec![("a", host("a"))]);
+    let tick = |app: &App| {
+        app.header_stats_at.set(Some(
+            std::time::Instant::now() - std::time::Duration::from_millis(16),
+        ));
+    };
+
+    // First frame adopts the tally outright: no counting up from zero on open.
+    assert_eq!(app.header_stats_advance([12, 8, 3, 1]), [12, 8, 3, 1]);
+    assert!(!app.header_stats_moving.get());
+
+    // A jump is approached, not taken in one step.
+    tick(&app);
+    let stepped = app.header_stats_advance([12, 0, 3, 9]);
+    assert!(app.header_stats_moving.get());
+    assert_eq!(stepped[0], 12, "an unchanged counter stays put");
+    assert!(
+        (1..8).contains(&stepped[1]) && (1..9).contains(&stepped[3]),
+        "expected both counters mid-flight, got {stepped:?}"
+    );
+
+    for _ in 0..200 {
+        tick(&app);
+        app.header_stats_advance([12, 0, 3, 9]);
+    }
+    assert_eq!(app.header_stats_advance([12, 0, 3, 9]), [12, 0, 3, 9]);
+    assert!(!app.header_stats_moving.get());
+}
+
+/// A fresh ping reading grows into the sparkline (#35): the newest column
+/// starts flat and reaches full height, and a first reading is already there.
+#[test]
+fn fresh_ping_sample_grows_into_the_sparkline() {
+    let mut app = test_app(vec![("a", host("a"))]);
+    assert_eq!(app.ping_grow("a"), 1.0, "no data: nothing to grow");
+
+    // First reading: the graph appearing is not a new sample landing.
+    app.ping_data.insert("a".into(), vec![12]);
+    app.detect_ping_changes();
+    assert_eq!(app.ping_grow("a"), 1.0);
+
+    // A new reading starts the column at the floor.
+    app.ping_data.insert("a".into(), vec![12, 40]);
+    app.detect_ping_changes();
+    assert!(app.ping_grow("a") < 1.0, "expected the column mid-growth");
+
+    // A repeated value is not a new reading.
+    let at = app.ping_sample.get("a").unwrap().1;
+    app.ping_data.insert("a".into(), vec![12, 40, 40]);
+    app.detect_ping_changes();
+    assert_eq!(app.ping_sample.get("a").unwrap().1, at);
+
+    // Grown out, it draws at full height again.
+    app.ping_sample.insert(
+        "a".into(),
+        (40, std::time::Instant::now() - crate::tui::PING_FLASH),
+    );
+    assert_eq!(app.ping_grow("a"), 1.0);
 }

@@ -34,6 +34,193 @@ impl SortMode {
             SortMode::Manual => "manual",
         }
     }
+
+    /// Parse CLI `--sort` values (not TUI display labels).
+    pub fn from_cli_str(s: &str) -> Option<Self> {
+        match s {
+            "label" => Some(Self::Label),
+            "last-connected" => Some(Self::LastConnected),
+            "favorite" => Some(Self::FavoriteFirst),
+            "group" => Some(Self::GroupThenLabel),
+            "manual" => Some(Self::Manual),
+            _ => None,
+        }
+    }
+}
+
+/// An in-progress text selection over a zoomed dashboard panel (issue #18):
+/// terminal-cell coordinates of the drag anchor and the current pointer.
+#[derive(Debug, Clone, Copy)]
+pub struct PanelSel {
+    pub anchor: (u16, u16),
+    pub cur: (u16, u16),
+}
+
+/// Direction for dashboard panel focus movement (issue #18).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusDir {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+/// A focusable panel on the hosts dashboard. Focus moves spatially with
+/// `Alt+arrows`; `z` zooms the focused panel to the full dashboard body
+/// (issue #18). The bento grid is: a left column (`Hosts`, one tall panel),
+/// a middle stack (`Detail` / `Agent` / `Latency`), a right stack (`Recent` /
+/// `Auth` / `Ping`), and a `SshLog` strip spanning mid+right along the bottom.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PanelId {
+    #[default]
+    Hosts,
+    Detail,
+    Agent,
+    Latency,
+    Recent,
+    Auth,
+    Ping,
+    SshLog,
+    /// Live broadcast run panel, docked bottom-right (issue #3). Only drawn +
+    /// focusable while `app.broadcast.is_some()`; the `focus_panel` guard in
+    /// `keys.rs` suppresses `neighbor()` hops to it when the run is absent.
+    Broadcast,
+}
+
+impl PanelId {
+    pub fn label(self) -> &'static str {
+        match self {
+            PanelId::Hosts => "hosts",
+            PanelId::Detail => "host detail",
+            PanelId::Agent => "agent",
+            PanelId::Latency => "latency",
+            PanelId::Recent => "recent sessions",
+            PanelId::Auth => "auth events",
+            PanelId::Ping => "ping",
+            PanelId::SshLog => "ssh log",
+            PanelId::Broadcast => "broadcast",
+        }
+    }
+
+    /// The neighboring panel in `dir`, or `None` to keep focus put (e.g. moving
+    /// off an edge). Hand-written adjacency over the bento grid.
+    pub fn neighbor(self, dir: FocusDir) -> Option<PanelId> {
+        use FocusDir::*;
+        use PanelId::*;
+        match (self, dir) {
+            // Left column (one tall panel).
+            (Hosts, Right) => Some(Detail),
+            (Hosts, _) => None,
+            // Middle stack.
+            (Detail, Left) => Some(Hosts),
+            (Detail, Right) => Some(Recent),
+            (Detail, Down) => Some(Agent),
+            (Detail, Up) => None,
+            (Agent, Left) => Some(Hosts),
+            (Agent, Right) => Some(Auth),
+            (Agent, Up) => Some(Detail),
+            (Agent, Down) => Some(Latency),
+            (Latency, Left) => Some(Hosts),
+            (Latency, Right) => Some(Ping),
+            (Latency, Up) => Some(Agent),
+            (Latency, Down) => Some(SshLog),
+            // Right stack.
+            (Recent, Left) => Some(Detail),
+            (Recent, Down) => Some(Auth),
+            (Recent, _) => None,
+            (Auth, Left) => Some(Agent),
+            (Auth, Up) => Some(Recent),
+            (Auth, Down) => Some(Ping),
+            (Auth, Right) => None,
+            (Ping, Left) => Some(Latency),
+            (Ping, Up) => Some(Auth),
+            (Ping, Down) => Some(SshLog),
+            (Ping, Right) => Some(Broadcast),
+            // Bottom strip (spans mid+right).
+            (SshLog, Up) => Some(Latency),
+            (SshLog, Left) => Some(Hosts),
+            (SshLog, Right) => Some(Broadcast),
+            (SshLog, _) => None,
+            // Broadcast docked panel (bottom-right); only live when
+            // app.broadcast.is_some() — the orchestrator's focus_panel guard
+            // suppresses these when it's absent.
+            (Broadcast, Left) => Some(SshLog),
+            (Broadcast, Up) => Some(Ping),
+            (Broadcast, _) => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod panel_id_tests {
+    use super::{FocusDir, PanelId};
+
+    #[test]
+    fn neighbor_moves_across_the_bento_grid() {
+        // Columns: hosts ⇄ mid stack ⇄ right stack.
+        assert_eq!(
+            PanelId::Hosts.neighbor(FocusDir::Right),
+            Some(PanelId::Detail)
+        );
+        assert_eq!(
+            PanelId::Detail.neighbor(FocusDir::Left),
+            Some(PanelId::Hosts)
+        );
+        assert_eq!(
+            PanelId::Detail.neighbor(FocusDir::Right),
+            Some(PanelId::Recent)
+        );
+        // Vertical within a stack, down into the shared ssh-log strip.
+        assert_eq!(
+            PanelId::Detail.neighbor(FocusDir::Down),
+            Some(PanelId::Agent)
+        );
+        assert_eq!(
+            PanelId::Latency.neighbor(FocusDir::Down),
+            Some(PanelId::SshLog)
+        );
+        assert_eq!(
+            PanelId::Ping.neighbor(FocusDir::Down),
+            Some(PanelId::SshLog)
+        );
+        assert_eq!(
+            PanelId::SshLog.neighbor(FocusDir::Up),
+            Some(PanelId::Latency)
+        );
+        // Broadcast docks bottom-right: reachable from the ssh-log strip and
+        // the ping panel, and hops back left/up into the grid.
+        assert_eq!(
+            PanelId::SshLog.neighbor(FocusDir::Right),
+            Some(PanelId::Broadcast)
+        );
+        assert_eq!(
+            PanelId::Ping.neighbor(FocusDir::Right),
+            Some(PanelId::Broadcast)
+        );
+        assert_eq!(
+            PanelId::Broadcast.neighbor(FocusDir::Left),
+            Some(PanelId::SshLog)
+        );
+        assert_eq!(
+            PanelId::Broadcast.neighbor(FocusDir::Up),
+            Some(PanelId::Ping)
+        );
+        assert_eq!(PanelId::Broadcast.neighbor(FocusDir::Right), None);
+    }
+
+    #[test]
+    fn neighbor_returns_none_at_edges() {
+        assert_eq!(PanelId::Hosts.neighbor(FocusDir::Left), None);
+        assert_eq!(PanelId::Hosts.neighbor(FocusDir::Up), None);
+        assert_eq!(PanelId::Detail.neighbor(FocusDir::Up), None);
+        assert_eq!(PanelId::Recent.neighbor(FocusDir::Right), None);
+        assert_eq!(PanelId::SshLog.neighbor(FocusDir::Down), None);
+    }
+
+    #[test]
+    fn default_focus_is_hosts() {
+        assert_eq!(PanelId::default(), PanelId::Hosts);
+    }
 }
 
 /// One section in the group tree (real group or virtual ungrouped bucket).
@@ -95,7 +282,7 @@ pub enum VisualRow {
 /// in `tui::screens::settings`) and avoid ambiguous-width chars like the em
 /// dash — some terminals draw those 2 cells wide, pushing the tail of the
 /// line onto the popup border.
-pub const SETTINGS_ITEMS: [(&str, &str); 4] = [
+pub const SETTINGS_ITEMS: [(&str, &str); 5] = [
     (
         "Opaque background",
         "fixes unreadable text on transparent terminals",
@@ -106,6 +293,20 @@ pub const SETTINGS_ITEMS: [(&str, &str); 4] = [
         "Disable startup animation",
         "skip the intro splash (applies next launch)",
     ),
+    (
+        "Session logging",
+        "save PTY output under ~/.local/share/sshub/logs",
+    ),
+];
+
+/// Global keep-alive reconnect knobs (Tunnels tab, `R`). Row index maps to
+/// [`crate::app::App::tunnel_reconnect_field_display`].
+pub const TUNNEL_RECONNECT_FIELDS: [(&str, &str); 5] = [
+    ("Max attempts", "0 = unlimited retries"),
+    ("Initial delay", "first retry wait (seconds)"),
+    ("Max delay", "backoff cap (seconds)"),
+    ("Stable time", "uptime before a spawn counts as up"),
+    ("Jitter", "random spread around each delay"),
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,12 +326,18 @@ pub enum AppMode {
     TunnelHostPicker,
     /// Searchable dropdown for opening a new embedded SSH session tab.
     SessionHostPicker,
+    /// Searchable host list for `Shift+P` started from the Keys tab.
+    PushKeyHostPicker,
+    /// Identity list for `Shift+P` started from the hosts list.
+    PushKeyIdentityPicker,
     /// Dropdown over the host form's Group/Identity field.
     FieldPicker,
     /// Keybinding editor overlay.
     KeybindEditor,
     /// Settings overlay: checkbox list of appearance toggles.
     Settings,
+    /// Keep-alive reconnect backoff settings (Tunnels tab).
+    TunnelReconnectSettings,
     /// Quit confirmation dialog.
     ConfirmQuit,
     TunnelForm,
@@ -145,8 +352,147 @@ pub enum AppMode {
     Connecting,
     /// Live embedded SSH session; PTY drives the fullscreen view.
     Session,
-    PushKeyHostPicker,
-    PushKeyIdentityPicker,
+    /// Broadcast wizard stage 1: pick a target (group / tag menu).
+    BroadcastPickTarget,
+    /// Broadcast wizard stage 2: single-line command input.
+    BroadcastCommand,
+    /// Broadcast wizard stage 3: target preview + [y]/[e]/[N] barrier.
+    BroadcastPreview,
+    /// A modal message popup (e.g. a connection error). Any key dismisses it;
+    /// the text lives in `App::notice_popup`.
+    Notice,
+}
+
+/// Live background-run state; App holds `broadcast: Option<BroadcastState>`.
+///
+/// No derive attribute at all — not even `Debug` — because
+/// `std::sync::mpsc::Receiver` is not `Debug`, and this type is deliberately
+/// neither `Clone` nor `Copy` (it owns the run's channel + cancel flag).
+pub struct BroadcastState {
+    pub target_label: String, // "#prod" / "group: production"
+    pub command: String,
+    pub results: Vec<crate::broadcast::HostResult>,
+    pub rx: std::sync::mpsc::Receiver<crate::broadcast::BroadcastEvent>,
+    pub cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub concurrency: usize,
+    pub phase: BroadcastPhase,
+    pub anim: Option<crate::tui::tween::SlideAnim>, // entry slide; None once settled
+    pub audit_written: bool, // guard: log_auth_event fires once at completion
+}
+
+/// An in-flight tab-switch slide (#35): the body wipes between the `from` and
+/// `to` tabs. Direction is `to > from` (new slides in from the right) vs
+/// `to < from` (current slides out to the right, revealing the left tab).
+#[derive(Debug, Clone, Copy)]
+pub struct TabSwitch {
+    pub from: usize,
+    pub to: usize,
+    pub at: std::time::Instant,
+}
+
+/// An in-flight group fold / unfold (#35): the group's subtree is revealed one
+/// row at a time on the way open and swallowed the same way on the way shut,
+/// so the rows below it get pushed rather than teleported.
+///
+/// The collapse itself applies immediately either way, so `nav_rows` stays the
+/// truth about what is visible and navigable. The animation is purely visual:
+/// an unfold reveals a growing prefix of the rows now in `nav_rows`, while a
+/// fold replays a shrinking prefix of `rows`, captured just before they went.
+#[derive(Debug, Clone)]
+pub struct FoldAnim {
+    /// [`HostGroupSection::key`] of the group being folded.
+    pub key: i64,
+    /// `true` while opening, `false` while shutting.
+    pub expanding: bool,
+    pub at: std::time::Instant,
+    /// Subtree rows as they looked before a fold, replayed on the way out.
+    /// Empty for an unfold, whose rows are live in `nav_rows`.
+    pub rows: Vec<VisualRow>,
+}
+
+/// An in-flight session-tab slide (#35): moving between embedded sessions
+/// carries the old tab off one edge while the new one follows it in. `dir` is
+/// `+1` for "next" and `-1` for "prev"; it cannot be derived from the tab
+/// indices, which wrap around at both ends of the strip.
+#[derive(Debug, Clone, Copy)]
+pub struct SessionTabSwitch {
+    pub dir: i8,
+    /// Index of the tab being left, so the header highlight can travel from it
+    /// to the new one instead of jumping.
+    pub from: usize,
+    pub at: std::time::Instant,
+}
+
+/// An in-flight SFTP tab sub-state slide (#35). The tab body swaps between the
+/// host picker, the "connecting…" placeholder and the dual-pane browser, and
+/// each swap moves in the direction it "came from": the placeholder rides in
+/// and out on the right edge, the two browser panes meet in the middle and part
+/// again toward their own edges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SftpAnim {
+    /// Picker -> "connecting…": the placeholder enters from the right.
+    ConnectIn,
+    /// "connecting…" -> picker (failed / aborted handshake): it leaves right.
+    ConnectOut,
+    /// "connecting…" -> browser: the panes slide in from both edges.
+    PanesIn,
+    /// Browser -> picker: the panes part and slide off both edges.
+    PanesOut,
+}
+
+/// A transient error popup (issue #3): one failed host's error text, slides in
+/// from the right above the broadcast panel and auto-expires. Geometry + slide
+/// progress are derived from `born` at render time (no stored anim state).
+#[derive(Debug, Clone)]
+pub struct BroadcastToast {
+    pub host: String,
+    pub text: String,
+    pub born: std::time::Instant,
+}
+
+/// Lifecycle phase of a live broadcast run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BroadcastPhase {
+    Running,
+    Settling { done_at: std::time::Instant }, // countdown armed
+    Paused,                                   // focused/zoomed after completion
+    Leaving,                                  // exit slide playing, remove when done
+}
+
+/// A pickable broadcast target (menu row).
+#[derive(Debug, Clone)]
+pub enum BroadcastTarget {
+    Group { id: i64, label: String },
+    Tag { name: String },
+}
+
+/// One resolved target host in the preview (managed hosts only; entries with no
+/// managed id are excluded upstream).
+#[derive(Debug, Clone)]
+pub struct BroadcastCandidate {
+    pub host_id: i64,
+    pub host_name: String,
+    pub argv: Vec<String>,
+    /// Stored credential for this host (phase 2), resolved when the target is
+    /// picked; threaded into the run so password hosts authenticate via
+    /// SSH_ASKPASS. `None` => key/agent only.
+    pub secret: Option<crate::session::PendingSecret>,
+    pub selected: bool, // toggled in edit-targets
+}
+
+/// Pre-run wizard state; App holds `broadcast_setup: Option<BroadcastSetup>`.
+/// The active AppMode variant (PickTarget/Command/Preview) names the stage.
+///
+/// No derive attribute at all — deliberately neither `Clone` nor `Copy`.
+pub struct BroadcastSetup {
+    pub options: Vec<BroadcastTarget>,
+    pub menu_selected: usize,
+    pub target_label: String, // filled once a target is chosen
+    pub command: String,
+    pub cursor: usize,
+    pub candidates: Vec<BroadcastCandidate>, // resolved on target pick
+    pub preview_selected: usize,             // highlighted row in edit-targets
+    pub edit_targets: bool,                  // preview [e] entered per-host deselect
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -233,16 +579,18 @@ pub enum TunnelFormField {
     RemotePort,
     Host,
     Label,
+    AutoConnect,
 }
 
 impl TunnelFormField {
-    const ALL: [TunnelFormField; 6] = [
+    const ALL: [TunnelFormField; 7] = [
         TunnelFormField::Host,
         TunnelFormField::Type,
         TunnelFormField::LocalPort,
         TunnelFormField::RemoteHost,
         TunnelFormField::RemotePort,
         TunnelFormField::Label,
+        TunnelFormField::AutoConnect,
     ];
 
     pub(crate) fn next(self) -> Self {
@@ -253,6 +601,10 @@ impl TunnelFormField {
     pub(crate) fn prev(self) -> Self {
         let idx = Self::ALL.iter().position(|f| *f == self).unwrap_or(0);
         Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+
+    pub fn is_toggle(self) -> bool {
+        matches!(self, Self::AutoConnect)
     }
 }
 
@@ -265,6 +617,7 @@ pub struct TunnelFormEdit {
     pub remote_port: String,
     pub host_id: Option<i64>,
     pub label: String,
+    pub auto_connect: bool,
     pub active_field: TunnelFormField,
     pub editing: bool,
     pub edit_snapshot: String,
@@ -333,13 +686,15 @@ pub enum DetailEditField {
     Tags = 0,
     Description = 1,
     Environment = 2,
+    SessionLogging = 3,
 }
 
 impl DetailEditField {
-    const ALL: [DetailEditField; 3] = [
+    const ALL: [DetailEditField; 4] = [
         DetailEditField::Tags,
         DetailEditField::Description,
         DetailEditField::Environment,
+        DetailEditField::SessionLogging,
     ];
 
     pub(crate) fn next(self) -> Self {
@@ -351,6 +706,10 @@ impl DetailEditField {
         let idx = self as usize;
         Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
     }
+
+    pub(crate) fn is_tri_state(self) -> bool {
+        matches!(self, Self::SessionLogging)
+    }
 }
 
 /// In-progress metadata edits while in HostDetail mode.
@@ -359,6 +718,7 @@ pub struct HostDetailEdit {
     pub tags: String,
     pub description: String,
     pub environment: String,
+    pub session_logging: crate::session_log::SessionLoggingOverride,
     pub field: DetailEditField,
     pub cursor: usize,
 }
@@ -429,6 +789,20 @@ impl HostEntry {
         match self {
             Self::Managed(m) => m.environment.as_deref(),
             Self::Legacy { meta, .. } => meta.environment.as_deref(),
+        }
+    }
+
+    pub fn session_logging_override(&self) -> crate::session_log::SessionLoggingOverride {
+        match self {
+            Self::Managed(m) => m.session_logging,
+            Self::Legacy { meta, .. } => meta.session_logging,
+        }
+    }
+
+    pub fn session_transport(&self) -> crate::session_transport::SessionTransport {
+        match self {
+            Self::Managed(m) => m.transport,
+            Self::Legacy { meta, .. } => meta.transport,
         }
     }
 
@@ -550,6 +924,8 @@ pub struct HostFormEdit {
     pub proxy_jump: String,
     pub forward_agent: bool,
     pub remote_command: String,
+    pub transport: crate::session_transport::SessionTransport,
+    pub session_logging: crate::session_log::SessionLoggingOverride,
     pub os_icon_index: usize,
     pub password: String,
     pub has_password: bool,
@@ -579,13 +955,15 @@ pub enum HostFormField {
     ProxyJump = 7,
     ForwardAgent = 8,
     RemoteCommand = 9,
-    OsIcon = 10,
-    Password = 11,
-    Username = 12,
+    Transport = 10,
+    SessionLogging = 11,
+    OsIcon = 12,
+    Password = 13,
+    Username = 14,
 }
 
 impl HostFormField {
-    pub const ALL: [HostFormField; 13] = [
+    pub const ALL: [HostFormField; 15] = [
         HostFormField::Address,
         HostFormField::Password,
         HostFormField::Username,
@@ -598,6 +976,8 @@ impl HostFormField {
         HostFormField::ProxyJump,
         HostFormField::ForwardAgent,
         HostFormField::RemoteCommand,
+        HostFormField::Transport,
+        HostFormField::SessionLogging,
         HostFormField::OsIcon,
     ];
 
@@ -636,6 +1016,8 @@ impl HostFormField {
             HostFormField::ProxyJump => "ProxyJump",
             HostFormField::ForwardAgent => "Agent forward",
             HostFormField::RemoteCommand => "Startup command",
+            HostFormField::Transport => "Transport",
+            HostFormField::SessionLogging => "Session log",
             HostFormField::OsIcon => "OS icon",
             HostFormField::Password => "Password",
             HostFormField::Username => "Username",
@@ -650,7 +1032,11 @@ impl HostFormField {
     }
 
     pub(crate) fn is_toggle(self) -> bool {
-        matches!(self, HostFormField::ForwardAgent)
+        matches!(self, HostFormField::ForwardAgent | HostFormField::Transport)
+    }
+
+    pub(crate) fn is_tri_state(self) -> bool {
+        matches!(self, HostFormField::SessionLogging)
     }
 }
 
@@ -715,17 +1101,71 @@ pub struct SessionHostPicker {
     pub selected: usize,
     /// Mode to restore when the picker is dismissed without connecting.
     pub return_mode: AppMode,
+    /// What the picked host is for.
+    pub target: PickerTarget,
 }
 
+/// Host list for pushing a public key, opened from the Keys tab
+/// ([`AppMode::PushKeyHostPicker`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PushKeyHostPicker {
+    /// Fuzzy filter typed by the user.
     pub query: String,
+    /// Index into the current filtered match list.
     pub selected: usize,
 }
 
+/// Identity list for pushing a public key, opened from the hosts list
+/// ([`AppMode::PushKeyIdentityPicker`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PushKeyIdentityPicker {
+    /// Index into the identities that carry a private key.
     pub selected: usize,
+}
+
+/// A server-to-server transfer in flight, relayed through a local temp file.
+///
+/// libssh2 has no server-to-server copy and the two panes are independent
+/// connections, so each item is moved in two legs: the source worker downloads
+/// it into a temp directory, then the destination worker uploads it from there.
+/// The temp copy is deleted as soon as the second leg lands.
+#[derive(Debug)]
+pub struct SftpRelay {
+    /// Items still to move, current one first.
+    pub items: std::collections::VecDeque<crate::sftp::model::QueuedTransfer>,
+    /// How many there were, for "relaying i/n".
+    pub total: usize,
+    /// Scratch directory holding the item currently in flight.
+    ///
+    /// A [`tempfile::TempDir`], not a path we compose ourselves: the files
+    /// passing through it are the user's, so it needs an unpredictable name and
+    /// owner-only permissions rather than a guessable one under a world-writable
+    /// `/tmp` (where another user could pre-create or symlink it). Dropping it
+    /// removes the directory, so the scratch copies cannot outlive the relay
+    /// even if the app exits mid-transfer.
+    pub tmp_dir: tempfile::TempDir,
+    /// Which leg is running.
+    pub leg: RelayLeg,
+}
+
+/// Which half of a relayed transfer is currently running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelayLeg {
+    /// Source worker is pulling the item down into the temp directory.
+    Fetching,
+    /// Destination worker is pushing it back up from there.
+    Pushing,
+}
+
+/// What a host picked in the shared host picker is wanted for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PickerTarget {
+    /// Open a new embedded SSH session tab (Ctrl+T).
+    #[default]
+    NewSession,
+    /// Point the SFTP browser's left pane at a second server, so two remote
+    /// hosts can be browsed side by side.
+    SftpLeftPane,
 }
 
 /// Single-field path prompt for the Termius CSV import ([`AppMode::ImportPrompt`]).
@@ -790,12 +1230,10 @@ pub struct KeygenFormEdit {
     pub target_path: String,
     pub field: KeygenFormField,
     pub cursor: usize,
-    pub editing: bool,
-    pub edit_snapshot: String,
     pub dirty: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum KeygenType {
     #[default]
     Ed25519,
@@ -902,7 +1340,9 @@ impl HostFormEdit {
             HostFormField::Tags => &self.tags,
             HostFormField::ProxyJump => &self.proxy_jump,
             HostFormField::RemoteCommand => &self.remote_command,
-            HostFormField::ForwardAgent => "",
+            HostFormField::ForwardAgent
+            | HostFormField::Transport
+            | HostFormField::SessionLogging => "",
             HostFormField::Password => &self.password,
         }
     }
@@ -920,7 +1360,9 @@ impl HostFormEdit {
             HostFormField::Tags => &mut self.tags,
             HostFormField::ProxyJump => &mut self.proxy_jump,
             HostFormField::RemoteCommand => &mut self.remote_command,
-            HostFormField::ForwardAgent => &mut self.address,
+            HostFormField::ForwardAgent
+            | HostFormField::Transport
+            | HostFormField::SessionLogging => &mut self.address,
             HostFormField::Password => &mut self.password,
         }
     }
@@ -968,12 +1410,12 @@ impl KeygenFormEdit {
         }
     }
 
-    pub(crate) fn active_field_mut(&mut self) -> &mut String {
+    pub(crate) fn active_field_mut(&mut self) -> Option<&mut String> {
         match self.field {
-            KeygenFormField::KeyType => &mut self.passphrase, // dummy
-            KeygenFormField::Passphrase => &mut self.passphrase,
-            KeygenFormField::Comment => &mut self.comment,
-            KeygenFormField::TargetPath => &mut self.target_path,
+            KeygenFormField::KeyType => None,
+            KeygenFormField::Passphrase => Some(&mut self.passphrase),
+            KeygenFormField::Comment => Some(&mut self.comment),
+            KeygenFormField::TargetPath => Some(&mut self.target_path),
         }
     }
 }
@@ -984,6 +1426,7 @@ impl HostDetailEdit {
             DetailEditField::Tags => &self.tags,
             DetailEditField::Description => &self.description,
             DetailEditField::Environment => &self.environment,
+            DetailEditField::SessionLogging => "",
         }
     }
 
@@ -992,6 +1435,7 @@ impl HostDetailEdit {
             DetailEditField::Tags => &mut self.tags,
             DetailEditField::Description => &mut self.description,
             DetailEditField::Environment => &mut self.environment,
+            DetailEditField::SessionLogging => &mut self.environment,
         }
     }
 }

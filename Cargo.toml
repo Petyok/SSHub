@@ -1,6 +1,6 @@
 [package]
 name = "sshub"
-version = "0.8.8"
+version = "0.10.0"
 edition = "2021"
 description = "SSHub — TUI launcher for SSH hosts"
 license = "AGPL-3.0-or-later"
@@ -11,6 +11,7 @@ categories = ["command-line-utilities"]
 # Keep the published crate lean and installable: drop the heavy demo media
 # (README GIFs/screenshots render from GitHub, not the crate) and CI config.
 exclude = [
+    "npm",
     "demo/gifs",
     "demo/screenshots",
     "demo/tapes",
@@ -62,6 +63,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
 toml_edit = "0.22"
+tempfile = "3"
 tui-term = "0.3"
 vt100 = "0.16"
 
@@ -69,7 +71,6 @@ vt100 = "0.16"
 assert_cmd = "2"
 predicates = "3"
 rusqlite = { version = "0.32", features = ["bundled"] }
-tempfile = "3"
 
 [[test]]
 name = "smoke"
@@ -82,3 +83,21 @@ path = "tests/e2e/mod.rs"
 [[test]]
 name = "config_load"
 path = "tests/smoke/config_load.rs"
+
+# Shipped binaries carry no symbol table and are optimised across crate
+# boundaries: the tarballs from the release workflow, `cargo install sshub`, and
+# anything that repackages them are what users actually download. (Debug info
+# was never in them -- release defaults to `debug = false` -- so what `strip`
+# removes is the symbol table, which leaves `RUST_BACKTRACE` output empty in a
+# shipped build.)
+#
+# `panic` stays on unwind, and not for the reason you might assume: the panic
+# hook runs under `abort` too, so the tty would be restored either way. What
+# abort would cost is (a) every worker thread -- watcher, ping, broadcast, sftp,
+# os-detect -- whose panic currently kills only itself and leaves the TUI alive,
+# and (b) every cleanup `Drop`, including `AskpassSecret`, which removes the
+# file holding a host's password.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

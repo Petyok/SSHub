@@ -196,11 +196,18 @@ pub struct Session {
     pub key_push_identity: Option<String>,
     pub logged_exit: bool,
     pub host_name: String,
+    /// Optional PTY transcript writer; closed on session end.
+    log: Option<crate::session_log::SessionLogWriter>,
 }
 
 impl Session {
     /// Spawn the child on a freshly allocated PTY and start the reader thread.
-    pub fn spawn(config: SessionConfig, rows: u16, cols: u16) -> Result<Self> {
+    pub fn spawn(
+        config: SessionConfig,
+        rows: u16,
+        cols: u16,
+        log: Option<crate::session_log::SessionLogWriter>,
+    ) -> Result<Self> {
         // Reserve 1 row for header + 1 row for footer; ensure non-zero PTY.
         let pty_rows = rows.saturating_sub(2).max(1);
         let pty_cols = cols.max(1);
@@ -261,7 +268,13 @@ impl Session {
             logged_exit: false,
             host_name: config.host_name.clone(),
             config,
+            log,
         })
+    }
+
+    /// Attach a session log writer after the PTY child is running.
+    pub fn set_log(&mut self, log: crate::session_log::SessionLogWriter) {
+        self.log = Some(log);
     }
 
     // ── Text selection ────────────────────────────────────────────
@@ -442,6 +455,13 @@ impl Session {
             match event {
                 PtyEvent::Bytes(bytes) => {
                     self.parser.process(&bytes);
+                    if let Some(log) = self.log.as_mut() {
+                        if log.append(&bytes).is_err() {
+                            self.diagnostics
+                                .push("session log write failed; logging disabled".into());
+                            self.log = None;
+                        }
+                    }
                     had_bytes = true;
                     self.saw_pty_bytes = true;
                 }
@@ -477,19 +497,21 @@ impl Session {
                 }
             }
         }
+        if had_bytes {
+            self.maybe_send_pending_secret();
+            self.maybe_reveal();
+        }
         if had_stderr {
-            // The "authenticated to" marker arrives on stderr, so re-check even
-            // when no PTY bytes landed this tick.
             self.maybe_detect_connected();
         }
         if had_bytes {
-            self.maybe_send_pending_secret();
             self.maybe_detect_connected();
-            self.maybe_reveal();
         }
         // Safety net: reveal after the timeout even with no output at all, so a
         // session blocked on auth never hangs the connect screen forever.
         self.reveal_on_timeout();
+        // Re-check after reveal/timeout transitions (mosh has no ssh -v marker).
+        self.maybe_detect_connected();
     }
 
     /// Reveal the live terminal once the connect timeout elapses — but only if
@@ -563,14 +585,27 @@ impl Session {
     /// TCP connect even completes. The debug stream now lives in `debug_log`
     /// (siphoned off the PTY), so no screen scrubbing is needed: the PTY only
     /// ever carries the post-auth shell (banner + prompt).
+    ///
+    /// Mosh does not run `ssh -v`, so latch once the live shell is showing
+    /// (`Running` phase) instead.
     fn maybe_detect_connected(&mut self) {
         if self.connected {
+            return;
+        }
+        if self.is_mosh_session() {
+            if matches!(self.phase, SessionPhase::Running { .. }) {
+                self.connected = true;
+            }
             return;
         }
         let text = self.debug_log.to_ascii_lowercase();
         if CONNECTED_NEEDLES.iter().any(|n| text.contains(n)) {
             self.connected = true;
         }
+    }
+
+    fn is_mosh_session(&self) -> bool {
+        self.config.argv.first().map(String::as_str) == Some("mosh")
     }
 
     /// The accumulated ssh `-v` debug output (host-key search, kex, auth).
@@ -885,7 +920,7 @@ fn line_before_cursor(screen: &vt100::Screen) -> String {
     for col in 0..cursor_col {
         if let Some(cell) = screen.cell(row, col) {
             if cell.has_contents() {
-                out.push_str(&cell.contents());
+                out.push_str(cell.contents());
             } else {
                 out.push(' ');
             }
@@ -896,6 +931,9 @@ fn line_before_cursor(screen: &vt100::Screen) -> String {
 
 impl Drop for Session {
     fn drop(&mut self) {
+        if let Some(log) = self.log.take() {
+            let _ = log.close();
+        }
         // PtyRuntime::Drop kills the child and joins the reader thread.
     }
 }
@@ -923,7 +961,7 @@ fn current_screen_tail(screen: &vt100::Screen) -> String {
         for col in 0..cols {
             if let Some(cell) = screen.cell(row, col) {
                 if cell.has_contents() {
-                    out.push_str(&cell.contents());
+                    out.push_str(cell.contents());
                 }
             }
         }
@@ -1030,6 +1068,26 @@ mod prompt_tests {
     use super::*;
 
     #[test]
+    fn mosh_reports_connected_when_running() {
+        let config = SessionConfig {
+            argv: vec!["sh".into(), "-c".into(), "sleep 120".into()],
+            display_name: "mosh-host".into(),
+            meta: SessionMeta::default(),
+            pending_secret: None,
+            key_push_identity: None,
+            host_name: "mosh-host".into(),
+        };
+        let mut s = Session::spawn(config, 10, 40, None).unwrap();
+        s.config.argv = vec!["mosh".into(), "host".into()];
+        s.phase = SessionPhase::Running {
+            started_at: Instant::now(),
+        };
+        assert!(!s.is_connected());
+        s.drain();
+        assert!(s.is_connected());
+    }
+
+    #[test]
     fn stderr_is_siphoned_off_the_pty() {
         // stdout must land on the PTY grid; stderr must be routed through the
         // side FIFO into debug_log — never onto the grid.
@@ -1045,7 +1103,7 @@ mod prompt_tests {
             key_push_identity: None,
             host_name: "t".into(),
         };
-        let mut s = Session::spawn(config, 24, 80).unwrap();
+        let mut s = Session::spawn(config, 24, 80, None).unwrap();
 
         // Pump the reader threads; both writes are tiny and immediate.
         let mut got_err = false;
@@ -1096,7 +1154,7 @@ mod prompt_tests {
             key_push_identity: None,
             host_name: "x".into(),
         };
-        let mut s = Session::spawn(config, 24, 80).unwrap();
+        let mut s = Session::spawn(config, 24, 80, None).unwrap();
         // The child's exit and its stderr bytes race between the two reader
         // threads; the main loop keeps draining regardless, so wait for both.
         let mut exited = false;

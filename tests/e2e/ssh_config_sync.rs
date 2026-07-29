@@ -11,7 +11,7 @@ use tempfile::tempdir;
 #[path = "../support/mod.rs"]
 mod support;
 
-use support::{FixtureResolver, MockLauncher};
+use support::FixtureResolver;
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -70,7 +70,6 @@ fn reload_updates_ssh_config_address_without_wiping_tags() {
             resolver: Box::new(FixtureResolver::with_paths(&config_path, &ssh_g_dir)),
             metadata: Arc::new(MetadataDb::default()),
             store: store.clone(),
-            launcher: Box::new(MockLauncher::new()),
             password_store: Box::new(sshub::credentials::NoopPasswordStore),
         },
     );

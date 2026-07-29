@@ -12,8 +12,6 @@ use tempfile::NamedTempFile;
 #[path = "../support/mod.rs"]
 mod support;
 
-use support::MockLauncher;
-
 struct EmptyResolver;
 
 impl HostResolver for EmptyResolver {
@@ -60,7 +58,6 @@ fn app_with_store(store_path: &std::path::Path) -> App {
             resolver: Box::new(EmptyResolver),
             metadata: Arc::new(MetadataDb::default()),
             store,
-            launcher: Box::new(MockLauncher::new()),
             password_store: Box::new(sshub::credentials::NoopPasswordStore),
         },
     );
@@ -185,23 +182,23 @@ fn keychain_keygen_form_flow() {
     app.handle_key(key_char('g')).unwrap();
     assert_eq!(app.mode, AppMode::KeygenForm);
 
-    // Default key type is Ed25519, target path ~/.ssh/id_ed25519
+    // Default key type is Ed25519, target path ~/.ssh/id_ed25519_sshub
     let form = app.keygen_form.as_ref().unwrap();
     assert_eq!(form.key_type, sshub::app::KeygenType::Ed25519);
-    assert_eq!(form.target_path, "~/.ssh/id_ed25519");
+    assert_eq!(form.target_path, "~/.ssh/id_ed25519_sshub");
 
     // Cycle key type (from Ed25519 to Rsa4096)
     app.handle_key(key(KeyCode::Right)).unwrap();
     let form = app.keygen_form.as_ref().unwrap();
     assert_eq!(form.key_type, sshub::app::KeygenType::Rsa4096);
-    // Path should auto-update to ~/.ssh/id_rsa
-    assert_eq!(form.target_path, "~/.ssh/id_rsa");
+    // Path should auto-update to ~/.ssh/id_rsa_sshub
+    assert_eq!(form.target_path, "~/.ssh/id_rsa_sshub");
 
     // Cycle back
     app.handle_key(key(KeyCode::Left)).unwrap();
     let form = app.keygen_form.as_ref().unwrap();
     assert_eq!(form.key_type, sshub::app::KeygenType::Ed25519);
-    assert_eq!(form.target_path, "~/.ssh/id_ed25519");
+    assert_eq!(form.target_path, "~/.ssh/id_ed25519_sshub");
 
     // Navigate to Passphrase
     app.handle_key(key(KeyCode::Down)).unwrap();
@@ -224,6 +221,16 @@ fn keychain_keygen_form_flow() {
 
 #[test]
 fn keychain_keygen_successful_generation() {
+    // Mirror the guard from the unit test: skip on machines without ssh-keygen.
+    if std::process::Command::new("ssh-keygen")
+        .arg("-V")
+        .output()
+        .is_err()
+    {
+        eprintln!("ssh-keygen not found — skipping keychain_keygen_successful_generation");
+        return;
+    }
+
     let file = NamedTempFile::new().unwrap();
     let db_path = file.path();
     let mut app = app_with_store(db_path);
@@ -274,7 +281,7 @@ fn keychain_keygen_successful_generation() {
             .map(|p| p.to_string_lossy().into_owned()),
         Some(key_path_str)
     );
-    assert_eq!(ident.has_password, false);
+    assert!(!ident.has_password);
 
     // Verify that the new identity is selected in app
     assert_eq!(

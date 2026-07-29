@@ -9,7 +9,7 @@ pub fn render_keygen_form(form: &KeygenFormEdit, save_hint: &str) -> Paragraph<'
     let mut lines = Vec::with_capacity(KeygenFormField::ALL.len() + 2);
     for field in KeygenFormField::ALL {
         let active = form.field == field;
-        let editing = active && form.editing;
+        let editing = active;
         let prefix = if editing {
             "▸ "
         } else if active {

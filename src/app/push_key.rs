@@ -204,9 +204,14 @@ impl App {
                 let err_msg = format!("Failed to read public key: {e:#}");
                 self.host_notice = Some(err_msg.clone());
                 let username = entry.managed().and_then(|m| m.username.as_deref());
-                let _ =
-                    self.store
-                        .log_auth_event(entry.name(), username, "direct", "fail", &err_msg);
+                let _ = self.store.log_auth_event(
+                    entry.name(),
+                    username,
+                    "direct",
+                    "fail",
+                    &err_msg,
+                    None,
+                );
                 return Ok(());
             }
         };
@@ -314,7 +319,7 @@ impl App {
             host_name: entry.name().to_string(),
         };
 
-        match crate::session::Session::spawn(config, rows, cols) {
+        match crate::session::Session::spawn(config, rows, cols, None) {
             Ok(session) => {
                 self.sessions.push(session);
                 self.active_session = Some(self.sessions.len() - 1);
@@ -325,13 +330,14 @@ impl App {
                     via,
                     "launched",
                     &format!("started pushing public key '{}'", identity.name),
+                    None,
                 );
             }
             Err(e) => {
                 let err_msg = format!("Session spawn failed: {e:#}");
                 let _ = self
                     .store
-                    .log_auth_event(&host_name, username, via, "fail", &err_msg);
+                    .log_auth_event(&host_name, username, via, "fail", &err_msg, None);
                 self.push_ssh_log(crate::ssh::probe::SshLogEntry {
                     host_name: host_name.clone(),
                     line: err_msg.clone(),
