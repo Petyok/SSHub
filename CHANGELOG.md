@@ -113,6 +113,11 @@ All notable changes to SSHub are documented in this file.
 
 ### Fixed
 
+- **Session-strip binds only worked on the hosts tab** (issue #67) - the header
+  strip and footer advertised resume, tabs, new tab, detach and sftp from every
+  dashboard tab, but the keys only fired on hosts. They are handled globally
+  whenever sessions exist, before the per-tab dispatch. Ctrl+T still opens a new
+  SSH session picker on the SFTP tab; plain `o` remains the left-pane picker.
 - **Upgrading while running broke password auth until restart** (issue #63) - the
   askpass helper is this binary, found through `current_exe()`, and an upgrade
   replaces the file rather than writing into it, so the running process was left
