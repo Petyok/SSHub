@@ -43,7 +43,11 @@ pub fn render_identity_list(app: &App) -> List<'static> {
     List::new(items)
 }
 
-pub fn render_identity_form(form: &IdentityFormEdit, save_hint: &str) -> Paragraph<'static> {
+pub fn render_identity_form(
+    form: &IdentityFormEdit,
+    save_hint: &str,
+    secret_hints: &str,
+) -> Paragraph<'static> {
     let mut lines = Vec::with_capacity(IdentityFormField::ALL.len() + 2);
     for field in IdentityFormField::ALL {
         let active = form.field == field;
@@ -127,8 +131,16 @@ pub fn render_identity_form(form: &IdentityFormEdit, save_hint: &str) -> Paragra
         ]));
     }
     lines.push(ratatui::text::Line::from(""));
+    let base = format!("type to edit │ paste a key or its path into Private key │ Tab/↓: next │ {save_hint}: save │ Esc: cancel");
+    // On the passphrase field the secret binds come first: the value is masked,
+    // so that is the moment the user needs to know how to see or copy it.
+    let hint = if form.field == IdentityFormField::Password && !secret_hints.is_empty() {
+        format!("{secret_hints} │ {base}")
+    } else {
+        base
+    };
     lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
-        format!("type to edit │ paste a key or its path into Private key │ Tab/↓: next │ {save_hint}: save │ Esc: cancel"),
+        hint,
         Style::default().add_modifier(Modifier::DIM),
     )));
     Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("Identity"))

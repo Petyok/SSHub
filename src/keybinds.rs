@@ -1071,6 +1071,22 @@ impl KeybindsConfig {
         parts.join("  ")
     }
 
+    /// Hint shown while a password / passphrase field is focused. A stored secret
+    /// is masked, so without this the two binds that show or copy it are
+    /// invisible exactly where they are needed. Empty when both are unbound.
+    pub fn secret_field_hints(&self) -> String {
+        let mut parts = Vec::new();
+        let reveal = self.primary(KeyAction::RevealSecret);
+        if !reveal.is_empty() {
+            parts.push(format!("{reveal}: show + copy"));
+        }
+        let copy = self.primary(KeyAction::CopySecret);
+        if !copy.is_empty() {
+            parts.push(format!("{copy}: copy"));
+        }
+        parts.join(" \u{2502} ")
+    }
+
     /// Dashboard footer hints when embedded sessions are running in background.
     ///
     /// `resume` comes first on purpose: with a session running somewhere behind

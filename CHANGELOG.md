@@ -13,7 +13,8 @@ All notable changes to SSHub are documented in this file.
   show and copy it and `Ctrl+Y` to copy without showing. Both say what they
   copied and never the value, the reveal drops as soon as the field is left, and
   the value stays out of every log, audit row and diagnostic. Both binds are
-  rebindable in the keybinding editor.
+  rebindable in the keybinding editor, and the form's hint row names them while
+  the field is focused, since a masked value gives no clue on its own.
 - **Ad-hoc connect** - typing an unknown `[user@]host[:port]` into the fuzzy
   palette (`/`), IPv6 in brackets included, now offers a "connect without saving"
   row instead of reporting no matches, and Enter opens an embedded session

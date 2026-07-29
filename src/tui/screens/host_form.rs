@@ -12,6 +12,7 @@ pub fn render_host_form(
     groups: &[HostGroup],
     identities: &[Identity],
     save_hint: &str,
+    secret_hints: &str,
 ) -> Paragraph<'static> {
     let title = if form.metadata_only {
         "Edit metadata (ssh_config)"
@@ -179,6 +180,10 @@ pub fn render_host_form(
 
     let hint = Style::default().add_modifier(Modifier::DIM);
     lines.push(Line::from(""));
+    if form.field == HostFormField::Password && !secret_hints.is_empty() {
+        // See the identity form: a masked value needs its binds said out loud.
+        lines.push(Line::from(Span::styled(secret_hints.to_string(), hint)));
+    }
     lines.push(Line::from(Span::styled(
         "Tab/↓: next field    Enter: open picker (Group/Identity)",
         hint,

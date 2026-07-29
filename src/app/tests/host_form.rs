@@ -264,3 +264,20 @@ pub(crate) fn reveal_bind_is_ignored_away_from_the_secret_field() {
         .unwrap();
     assert!(!app.identity_form.as_ref().unwrap().password_revealed);
 }
+
+#[test]
+pub(crate) fn secret_field_hints_name_the_binds_and_follow_rebinds() {
+    let mut kb = crate::config::KeybindsConfig::default();
+    assert_eq!(
+        kb.secret_field_hints(),
+        "Ctrl+R: show + copy \u{2502} Ctrl+Y: copy"
+    );
+
+    kb.set(KeyAction::RevealSecret, vec!["F6".into()]);
+    kb.set(KeyAction::CopySecret, vec![]);
+    assert_eq!(
+        kb.secret_field_hints(),
+        "F6: show + copy",
+        "a rebind shows through and an unbound action says nothing"
+    );
+}
