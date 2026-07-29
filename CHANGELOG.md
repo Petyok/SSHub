@@ -6,7 +6,7 @@ All notable changes to SSHub are documented in this file.
 
 ### Added
 
-- **Session switcher** (`Alt+S`, issue #44, PR #46 by @michabbb) - a searchable
+- **Session switcher** (`Alt+S`, PR #46 by @michabbb) - a searchable
   list of the sessions that are already open, so getting back to one no longer
   means stepping through the tabs with `Ctrl+[` / `Ctrl+]`. Rows carry the host,
   its user@address and a lifecycle dot (`up` / `new` / `dead`); Enter jumps to
