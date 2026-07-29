@@ -245,6 +245,11 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
+    (@fn push_key $($key:literal),* $(,)?) => {
+        fn default_kb_push_key() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
     (@fn tunnel_kill $($key:literal),* $(,)?) => {
         fn default_kb_tunnel_kill() -> Vec<String> {
             vec![$($key.to_string()),*]
@@ -420,6 +425,7 @@ kb_defaults! {
     identity_columns_dec => ["["],
     add_to_agent => ["p"],
     remove_from_agent => ["r"],
+    push_key => ["Shift+P"],
     tunnel_kill => ["x"],
     toggle_tunnel => ["Enter"],
     audit_filter => ["f"],
@@ -496,6 +502,7 @@ pub enum KeyAction {
     IdentityColumnsDec,
     AddToAgent,
     RemoveFromAgent,
+    PushKey,
     TunnelKill,
     ToggleTunnel,
     AuditFilter,
@@ -525,7 +532,7 @@ pub enum KeyAction {
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 72] = [
+    pub const ALL: [KeyAction; 73] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -573,6 +580,7 @@ impl KeyAction {
         KeyAction::IdentityColumnsDec,
         KeyAction::AddToAgent,
         KeyAction::RemoveFromAgent,
+        KeyAction::PushKey,
         KeyAction::TunnelKill,
         KeyAction::ToggleTunnel,
         KeyAction::AuditFilter,
@@ -649,6 +657,7 @@ impl KeyAction {
             KeyAction::IdentityColumnsDec => "Fewer identity columns",
             KeyAction::AddToAgent => "Add key to agent",
             KeyAction::RemoveFromAgent => "Remove key from agent",
+            KeyAction::PushKey => "Push public key to host",
             KeyAction::TunnelKill => "Kill tunnel",
             KeyAction::ToggleTunnel => "Start / stop tunnel",
             KeyAction::AuditFilter => "Cycle audit filter",
@@ -775,6 +784,8 @@ pub struct KeybindsConfig {
     pub add_to_agent: Vec<String>,
     #[serde(default = "default_kb_remove_from_agent")]
     pub remove_from_agent: Vec<String>,
+    #[serde(default = "default_kb_push_key")]
+    pub push_key: Vec<String>,
     #[serde(default = "default_kb_tunnel_kill")]
     pub tunnel_kill: Vec<String>,
     #[serde(default = "default_kb_toggle_tunnel")]
@@ -877,6 +888,7 @@ impl Default for KeybindsConfig {
             identity_columns_dec: default_kb_identity_columns_dec(),
             add_to_agent: default_kb_add_to_agent(),
             remove_from_agent: default_kb_remove_from_agent(),
+            push_key: default_kb_push_key(),
             tunnel_kill: default_kb_tunnel_kill(),
             toggle_tunnel: default_kb_toggle_tunnel(),
             audit_filter: default_kb_audit_filter(),
@@ -956,6 +968,7 @@ impl KeybindsConfig {
             KeyAction::IdentityColumnsDec => default_kb_identity_columns_dec(),
             KeyAction::AddToAgent => default_kb_add_to_agent(),
             KeyAction::RemoveFromAgent => default_kb_remove_from_agent(),
+            KeyAction::PushKey => default_kb_push_key(),
             KeyAction::TunnelKill => default_kb_tunnel_kill(),
             KeyAction::ToggleTunnel => default_kb_toggle_tunnel(),
             KeyAction::AuditFilter => default_kb_audit_filter(),
@@ -1080,6 +1093,7 @@ impl KeybindsConfig {
             KeyAction::IdentityColumnsDec => &self.identity_columns_dec,
             KeyAction::AddToAgent => &self.add_to_agent,
             KeyAction::RemoveFromAgent => &self.remove_from_agent,
+            KeyAction::PushKey => &self.push_key,
             KeyAction::TunnelKill => &self.tunnel_kill,
             KeyAction::ToggleTunnel => &self.toggle_tunnel,
             KeyAction::AuditFilter => &self.audit_filter,
@@ -1157,6 +1171,7 @@ impl KeybindsConfig {
             KeyAction::IdentityColumnsDec => self.identity_columns_dec = binds,
             KeyAction::AddToAgent => self.add_to_agent = binds,
             KeyAction::RemoveFromAgent => self.remove_from_agent = binds,
+            KeyAction::PushKey => self.push_key = binds,
             KeyAction::TunnelKill => self.tunnel_kill = binds,
             KeyAction::ToggleTunnel => self.toggle_tunnel = binds,
             KeyAction::AuditFilter => self.audit_filter = binds,

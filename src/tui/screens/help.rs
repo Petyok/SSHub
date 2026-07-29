@@ -49,6 +49,7 @@ fn help_lines() -> Vec<Line<'static>> {
         entry("Ctrl+\u{2191}\u{2193}", "Move host up / down (manual sort)"),
         entry("c", "Clear SSH log"),
         entry("y", "Copy SSH log for selected host (clipboard)"),
+        entry("Shift+P", "Push public key to host"),
         Line::from(""),
         section("tunnels (tab 3)"),
         entry("a", "Add new tunnel"),

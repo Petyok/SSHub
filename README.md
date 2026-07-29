@@ -261,6 +261,7 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | `Shift+I`          | Import from ssh config    |
 | `Shift+E`          | Export to ssh config      |
 | `Shift+T`          | Import from Termius       |
+| `Shift+P`          | Push public key to host   |
 
 ### SFTP (tab 2)
 

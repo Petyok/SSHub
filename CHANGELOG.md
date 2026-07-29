@@ -6,6 +6,16 @@ All notable changes to SSHub are documented in this file.
 
 ### Added
 
+- **Push a public key to a host** (PR #16) - `Shift+P` from the hosts list picks
+  an identity, or from the Keys tab picks a host, and installs that identity's
+  public key into the remote `~/.ssh/authorized_keys`. The remote side runs under
+  `umask 077`, creates the file if missing, and appends only when an exact
+  matching line is not already there, so repeating it is harmless. The public key
+  comes from the `.pub` file when one exists, otherwise `ssh-keygen -y` extracts
+  it with the passphrase staged through askpass rather than argv. Authentication
+  reuses the same stored-credential path as a normal connect, and the result is
+  written to the audit log. The help overlay has been advertising this key since
+  the feature was ceded to this PR; now it exists.
 - **Generate SSH keys from the Keys tab** (PR #15) - `g` opens a form for the key
   type (Ed25519 or RSA-4096), passphrase, comment and target path. The passphrase
   reaches `ssh-keygen` through askpass rather than argv, the new key is registered

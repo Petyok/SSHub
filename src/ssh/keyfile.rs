@@ -172,6 +172,35 @@ pub fn generate_key_pair(
     Ok(())
 }
 
+/// Read public key from path.pub, or extract it from private_key_path using ssh-keygen.
+pub fn read_public_key(private_key_path: &Path, passphrase: Option<&str>) -> Result<String> {
+    let expanded = crate::ssh::expand_tilde(&private_key_path.to_string_lossy());
+    let path = Path::new(&expanded);
+
+    // 1. Try reading the .pub file first
+    let pub_path = std::path::PathBuf::from(format!("{}.pub", path.display()));
+    if pub_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&pub_path) {
+            return Ok(content.trim().to_string());
+        }
+    }
+
+    // 2. Extract on the fly via ssh-keygen -y
+    let pass = passphrase.unwrap_or("");
+    let askpass = KeygenAskpass::new(pass).context("create askpass helper")?;
+    let mut cmd = Command::new("ssh-keygen");
+    cmd.arg("-y").arg("-f").arg(path);
+    for (k, v) in askpass.env() {
+        cmd.env(k, v);
+    }
+    let output = cmd.output().context("run ssh-keygen -y")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("Failed to extract public key: {}", stderr.trim());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 /// Does `text` look like pasted private-key material (rather than a path)?
 pub fn looks_like_private_key(text: &str) -> bool {
     let t = text.trim_start();
@@ -342,5 +371,18 @@ mod tests {
         assert_eq!(key_is_encrypted(&key_path), Some(true));
         assert_eq!(passphrase_matches(&key_path, "mypass123"), Some(true));
         assert_eq!(passphrase_matches(&key_path, "wrong"), Some(false));
+    }
+
+    #[test]
+    fn read_public_key_supports_dots_in_filename() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("prod.ed25519");
+        let pub_path = dir.path().join("prod.ed25519.pub");
+
+        let expected_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPxyz test_comment";
+        std::fs::write(&pub_path, expected_key).unwrap();
+
+        let key = read_public_key(&key_path, None).unwrap();
+        assert_eq!(key, expected_key);
     }
 }

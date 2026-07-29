@@ -326,6 +326,10 @@ pub enum AppMode {
     TunnelHostPicker,
     /// Searchable dropdown for opening a new embedded SSH session tab.
     SessionHostPicker,
+    /// Searchable host list for `Shift+P` started from the Keys tab.
+    PushKeyHostPicker,
+    /// Identity list for `Shift+P` started from the hosts list.
+    PushKeyIdentityPicker,
     /// Dropdown over the host form's Group/Identity field.
     FieldPicker,
     /// Keybinding editor overlay.
@@ -1099,6 +1103,24 @@ pub struct SessionHostPicker {
     pub return_mode: AppMode,
     /// What the picked host is for.
     pub target: PickerTarget,
+}
+
+/// Host list for pushing a public key, opened from the Keys tab
+/// ([`AppMode::PushKeyHostPicker`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PushKeyHostPicker {
+    /// Fuzzy filter typed by the user.
+    pub query: String,
+    /// Index into the current filtered match list.
+    pub selected: usize,
+}
+
+/// Identity list for pushing a public key, opened from the hosts list
+/// ([`AppMode::PushKeyIdentityPicker`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PushKeyIdentityPicker {
+    /// Index into the identities that carry a private key.
+    pub selected: usize,
 }
 
 /// A server-to-server transfer in flight, relayed through a local temp file.

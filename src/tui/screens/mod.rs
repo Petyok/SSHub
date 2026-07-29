@@ -11,6 +11,7 @@ pub mod keychain;
 pub mod keygen;
 pub mod keys;
 pub mod palette;
+pub mod push_key_pickers;
 pub mod session_host_picker;
 pub mod settings;
 pub mod sftp;

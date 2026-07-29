@@ -290,6 +290,10 @@ fn render_inner(frame: &mut Frame, app: &App) {
             screens::tunnels::render_tunnel_host_picker(frame, app);
         }
         AppMode::SessionHostPicker => screens::session_host_picker::render(frame, app),
+        AppMode::PushKeyHostPicker => screens::push_key_pickers::render_host_picker(frame, app),
+        AppMode::PushKeyIdentityPicker => {
+            screens::push_key_pickers::render_identity_picker(frame, app)
+        }
         AppMode::ConfirmDiscard => {
             if app.host_form.is_some() {
                 render_form_popup(frame, app, FormKind::Host);
@@ -518,6 +522,7 @@ fn footer_keybinds(app: &App) -> Vec<(String, &'static str)> {
             ("a".into(), "add"),
             ("e".into(), "edit"),
             ("d".into(), "del"),
+            ("P".into(), "push key"),
             ("+/-".into(), "zoom"),
             ("\u{2423}".into(), "fold"),
             ("G".into(), "groups"),
@@ -571,6 +576,7 @@ fn footer_keybinds(app: &App) -> Vec<(String, &'static str)> {
             ("e".into(), "edit"),
             ("d".into(), "delete"),
             ("p/r".into(), "agent +/-"),
+            ("P".into(), "push key"),
             ("?".into(), "help"),
             ("q".into(), "quit"),
         ],
@@ -1530,7 +1536,7 @@ mod tests {
     #[test]
     fn render_status_bar_shows_counts_and_mode() {
         let app = test_app_with_hosts();
-        let buffer = render_to_buffer(&app, 120, 38);
+        let buffer = render_to_buffer(&app, 132, 38);
         // Dashboard footer shows keybinds; check for key elements
         assert!(buffer_contains(&buffer, "connect"));
         assert!(buffer_contains(&buffer, "quit"));
@@ -1785,6 +1791,8 @@ mod tests {
                 ..Default::default()
             },
             pending_secret: None,
+            key_push_identity: None,
+            host_name: "web-prod".into(),
         };
         let session = crate::session::Session::spawn(config, 24, 80, None).unwrap();
         app.sessions.push(session);
@@ -1822,6 +1830,8 @@ mod tests {
                 ..Default::default()
             },
             pending_secret: None,
+            key_push_identity: None,
+            host_name: "web-prod".into(),
         };
         let session = crate::session::Session::spawn(config, 24, 80, None).unwrap();
         app.sessions.push(session);
@@ -1841,6 +1851,8 @@ mod tests {
             display_name: "web-prod".into(),
             meta: crate::session::SessionMeta::default(),
             pending_secret: None,
+            key_push_identity: None,
+            host_name: "web-prod".into(),
         };
         let session = crate::session::Session::spawn(config, 24, 80, None).unwrap();
         app.sessions.push(session);

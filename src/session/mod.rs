@@ -47,6 +47,10 @@ pub struct SessionConfig {
     /// the first send. `None` when no credential is stored or the host
     /// uses an unlocked key / agent.
     pub pending_secret: Option<PendingSecret>,
+    /// Identity being pushed if this is a key push session.
+    pub key_push_identity: Option<String>,
+    /// Actual unique host name (entry.name()).
+    pub host_name: String,
 }
 
 /// Auto-respond once to either a password or passphrase prompt.
@@ -189,6 +193,9 @@ pub struct Session {
     /// edge), `-1` toward older (top edge); `col` is the pointer column to keep
     /// extending the selection to. `None` = not autoscrolling.
     drag_autoscroll: Option<(i32, u16)>,
+    pub key_push_identity: Option<String>,
+    pub logged_exit: bool,
+    pub host_name: String,
     /// Optional PTY transcript writer; closed on session end.
     log: Option<crate::session_log::SessionLogWriter>,
 }
@@ -257,6 +264,9 @@ impl Session {
             selection: None,
             copy_notice: None,
             drag_autoscroll: None,
+            key_push_identity: config.key_push_identity.clone(),
+            logged_exit: false,
+            host_name: config.host_name.clone(),
             config,
             log,
         })
@@ -466,12 +476,22 @@ impl Session {
                     }
                     had_stderr = true;
                 }
-                PtyEvent::Exited(status) => {
-                    self.runtime.reap_child();
+                PtyEvent::Exited(reason) => {
+                    let exit_status = self.runtime.reap_child();
+                    let status_str = match exit_status {
+                        Some(es) => {
+                            if es.success() {
+                                "success".to_string()
+                            } else {
+                                format!("code {}", es.exit_code())
+                            }
+                        }
+                        None => reason,
+                    };
                     self.diagnostics
-                        .push(format!("session: ssh exited ({status})"));
+                        .push(format!("session: ssh exited ({status_str})"));
                     self.phase = SessionPhase::Exited {
-                        status,
+                        status: status_str,
                         at: Instant::now(),
                     };
                 }
@@ -1054,6 +1074,8 @@ mod prompt_tests {
             display_name: "mosh-host".into(),
             meta: SessionMeta::default(),
             pending_secret: None,
+            key_push_identity: None,
+            host_name: "mosh-host".into(),
         };
         let mut s = Session::spawn(config, 10, 40, None).unwrap();
         s.config.argv = vec!["mosh".into(), "host".into()];
@@ -1078,6 +1100,8 @@ mod prompt_tests {
             display_name: "t".into(),
             meta: SessionMeta::default(),
             pending_secret: None,
+            key_push_identity: None,
+            host_name: "t".into(),
         };
         let mut s = Session::spawn(config, 24, 80, None).unwrap();
 
@@ -1127,6 +1151,8 @@ mod prompt_tests {
             display_name: "x".into(),
             meta: SessionMeta::default(),
             pending_secret: None,
+            key_push_identity: None,
+            host_name: "x".into(),
         };
         let mut s = Session::spawn(config, 24, 80, None).unwrap();
         // The child's exit and its stderr bytes race between the two reader

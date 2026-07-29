@@ -12,6 +12,7 @@ mod import;
 mod keygen;
 mod keys;
 mod mouse;
+mod push_key;
 mod session;
 mod sftp;
 mod tags;
@@ -130,6 +131,8 @@ pub struct App {
     pub tunnel_host_picker: Option<TunnelHostPicker>,
     /// Searchable host picker for a new embedded session tab.
     pub session_host_picker: Option<SessionHostPicker>,
+    pub push_key_host_picker: Option<PushKeyHostPicker>,
+    pub push_key_identity_picker: Option<PushKeyIdentityPicker>,
     pub import_prompt: Option<ImportPromptEdit>,
     /// Open SFTP mkdir / rename text prompt, if any.
     pub sftp_prompt: Option<SftpPromptEdit>,
@@ -600,6 +603,8 @@ impl App {
             group_field_picker: None,
             tunnel_host_picker: None,
             session_host_picker: None,
+            push_key_host_picker: None,
+            push_key_identity_picker: None,
             import_prompt: None,
             sftp_prompt: None,
             ui_zoom: 0,
