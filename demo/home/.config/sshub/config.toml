@@ -108,3 +108,28 @@ confirm_no = [
 cancel = ["Esc"]
 tab_sftp = ["2"]
 session_open_sftp = ["Ctrl+Shift+J"]
+generate_key = ["g"]
+push_key = ["Shift+P"]
+local_shell = ["Ctrl+Shift+T"]
+toggle_panel_zoom = [
+    "z",
+    "Alt+Enter",
+]
+focus_panel_left = ["Alt+Left"]
+focus_panel_right = ["Alt+Right"]
+focus_panel_up = ["Alt+Up"]
+focus_panel_down = ["Alt+Down"]
+broadcast = ["b"]
+broadcast_cancel = ["x"]
+
+[session_logging]
+enabled = false
+max_file_bytes = 10485760
+retention_files = 50
+
+[tunnel_reconnect]
+max_attempts = 12
+initial_delay_ms = 1000
+max_delay_ms = 60000
+jitter_ratio = 0.25
+stable_secs = 5

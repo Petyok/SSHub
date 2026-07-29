@@ -55,6 +55,9 @@ pub fn render(frame: &mut Frame, app: &App) {
             *app.session_snapshot.borrow_mut() = Some(frame.buffer_mut().clone());
         }
     } else {
+        // Mirror of the above: keep the dashboard fresh so entering a session has
+        // something to slide over instead of blank cells.
+        *app.dashboard_snapshot.borrow_mut() = Some(frame.buffer_mut().clone());
         render_session_exit(frame, app);
     }
     // Snapshot the popup shown this frame, slide a fresh one in from the top,
@@ -176,7 +179,18 @@ fn render_inner(frame: &mut Frame, app: &App) {
     // Open embedded sessions — visible strip on the top header row so
     // background SSH tabs aren't hidden behind a footer hint.
     let session_chips = build_session_chips(app);
-    widgets::header::render_session_strip(frame, areas.header, &session_chips);
+    // Cycling session tabs from the dashboard used to change the highlighted
+    // chip with no motion at all, while the same keys inside the full-screen
+    // view slide it. Both now read the same travel state (#35).
+    let strip_travel = crate::session::render::highlight_travel(app).and_then(|p| {
+        let sw = app.session_tab_switch?;
+        Some(widgets::header::StripTravel {
+            from: sw.from,
+            to: app.active_session?,
+            p,
+        })
+    });
+    widgets::header::render_session_strip(frame, areas.header, &session_chips, strip_travel);
 
     // Horizontal rule 1
     let rule1 = row_in(area, areas.header.y + areas.header.height);
@@ -231,8 +245,8 @@ fn render_inner(frame: &mut Frame, app: &App) {
     widgets::footer::render_hrule(frame, rule3, true);
 
     // Footer keybinds (tab-specific)
-    let keybinds = footer_keybinds(app);
-    widgets::footer::render_footer(frame, areas.footer, &keybinds);
+    let (keybinds, pinned) = footer_keybinds(app);
+    widgets::footer::render_footer(frame, areas.footer, &keybinds, pinned);
 
     // Issue #18: a zoomed panel hides the normal notice surface (status bar),
     // so surface transient feedback (e.g. "copied N chars") as a toast pinned
@@ -513,7 +527,8 @@ fn compute_header_stats(app: &App) -> [usize; 4] {
     [total, online, slow, down]
 }
 
-fn footer_keybinds(app: &App) -> Vec<(String, &'static str)> {
+/// The footer's pairs, plus how many trailing ones must never be dropped.
+fn footer_keybinds(app: &App) -> (Vec<(String, &'static str)>, usize) {
     let mut binds: Vec<(String, &'static str)> = match app.active_tab {
         0 => vec![
             ("\u{2191}\u{2193}".into(), "select"),
@@ -639,7 +654,22 @@ fn footer_keybinds(app: &App) -> Vec<(String, &'static str)> {
     if !app.sessions.is_empty() {
         binds.extend(app.config.keybinds.session_footer_hints());
     }
-    binds
+
+    // Move the pairs that say how to get out, or back into a session, to the end
+    // and report how many there are, because the footer pins its tail when the
+    // row does not fit. Every conditional block above (panel zoom, broadcast,
+    // the session hints) otherwise pushes `? help` and `q quit` into the middle,
+    // which is exactly where truncation eats them.
+    const PINNED_LABELS: [&str; 3] = ["resume", "help", "quit"];
+    let mut pinned: Vec<(String, &'static str)> = Vec::new();
+    for label in PINNED_LABELS {
+        if let Some(i) = binds.iter().position(|(_, l)| *l == label) {
+            pinned.push(binds.remove(i));
+        }
+    }
+    let pinned_len = pinned.len();
+    binds.extend(pinned);
+    (binds, pinned_len)
 }
 
 /// Draw a transient notice (issue #18) as a floating chip right-aligned on the
@@ -796,6 +826,10 @@ fn render_session_enter(frame: &mut Frame, app: &App) {
         return;
     }
     let src = frame.buffer_mut().clone();
+    // What the session is sliding over. Without it the columns it has not reached
+    // yet come out blank, so entering a session flashed a black screen with the
+    // host arriving over it.
+    let behind = app.dashboard_snapshot.borrow();
     let fb = frame.buffer_mut();
     for y in area.y..area.y + area.height {
         // Right-to-left so each destination reads a not-yet-overwritten source.
@@ -805,7 +839,10 @@ fn render_session_enter(frame: &mut Frame, app: &App) {
                     *d = s.clone();
                 }
             } else if let Some(d) = fb.cell_mut((x, y)) {
-                d.reset();
+                match behind.as_ref().and_then(|b| b.cell((x, y))) {
+                    Some(s) => *d = s.clone(),
+                    None => d.reset(),
+                }
             }
         }
     }
@@ -1474,6 +1511,173 @@ mod tests {
         terminal.backend().buffer().clone()
     }
 
+    /// First column of `needle` anywhere in `buf`, searched row by row.
+    fn find_cell(buf: &Buffer, needle: &str) -> Option<(u16, u16)> {
+        let n = needle.chars().count() as u16;
+        for y in buf.area.y..buf.area.bottom() {
+            for x in buf.area.x..buf.area.right().saturating_sub(n) {
+                let got: String = (x..x + n).map(|i| buf[(i, y)].symbol()).collect();
+                if got == needle {
+                    return Some((x, y));
+                }
+            }
+        }
+        None
+    }
+
+    /// App with two spawned sessions, for the dashboard session strip.
+    fn app_with_two_sessions() -> App {
+        let mut app = test_app_with_hosts();
+        for name in ["alpha", "bravo"] {
+            let cfg = crate::session::SessionConfig {
+                argv: vec!["true".into()],
+                display_name: name.into(),
+                meta: crate::session::SessionMeta::default(),
+                pending_secret: None,
+                key_push_identity: None,
+                host_name: name.into(),
+            };
+            app.sessions
+                .push(crate::session::Session::spawn(cfg, 24, 80, None).unwrap());
+        }
+        app
+    }
+
+    #[test]
+    fn cycling_tabs_from_the_dashboard_stays_on_the_dashboard() {
+        use crate::config::KeyAction;
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut app = app_with_two_sessions();
+        app.active_session = Some(0);
+        app.mode = AppMode::Normal;
+        app.config
+            .keybinds
+            .set(KeyAction::SessionTabNext, vec!["F6".into()]);
+
+        app.handle_key(KeyEvent::new(KeyCode::F(6), KeyModifiers::empty()))
+            .unwrap();
+
+        // The regression: this used to call `focus_active_session`, so a key
+        // named "next session tab" threw you into the session full screen.
+        assert_eq!(
+            app.mode,
+            AppMode::Normal,
+            "cycling must not enter a session"
+        );
+        assert_eq!(app.active_session, Some(1), "the selection moved");
+        assert!(
+            app.session_tab_switch.is_some(),
+            "the travel is armed from the dashboard too"
+        );
+    }
+
+    #[test]
+    fn the_session_slides_in_over_the_dashboard_not_over_black() {
+        let mut app = app_with_two_sessions();
+        app.active_session = Some(0);
+        app.mode = AppMode::Normal;
+
+        // Rendering the dashboard is what captures the snapshot the slide needs.
+        let dashboard = render_to_buffer(&app, 120, 38);
+        let (hx, hy) = find_cell(&dashboard, "web-prod").expect("dashboard drawn");
+
+        // First frame of the slide: the session is still fully off to the right,
+        // so what shows is the dashboard. It used to be blank cells, which read as
+        // a black screen flashing before the host arrived.
+        app.mode = AppMode::Session;
+        app.session_enter_at = Some(std::time::Instant::now());
+        let sliding = render_to_buffer(&app, 120, 38);
+        assert_eq!(
+            sliding[(hx, hy)].symbol(),
+            dashboard[(hx, hy)].symbol(),
+            "the vacated columns show the dashboard"
+        );
+        assert_ne!(sliding[(hx, hy)].symbol(), " ", "and are not blanked");
+    }
+
+    #[test]
+    fn entering_a_session_from_the_dashboard_slides_it_in() {
+        use crate::config::KeyAction;
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut app = app_with_two_sessions();
+        app.active_session = Some(0);
+        app.mode = AppMode::Normal;
+        app.config
+            .keybinds
+            .set(KeyAction::SessionFocus, vec!["F7".into()]);
+
+        app.handle_key(KeyEvent::new(KeyCode::F(7), KeyModifiers::empty()))
+            .unwrap();
+        assert!(
+            crate::app::is_session_mode(app.mode),
+            "we are in the session"
+        );
+        assert!(
+            app.session_enter_at.is_some(),
+            "arriving animates, the same way leaving already did"
+        );
+
+        // Re-deriving the mode while already inside a session is not an entry
+        // and must not replay the slide.
+        app.session_enter_at = None;
+        app.focus_active_session();
+        assert!(app.session_enter_at.is_none());
+
+        // Reduced motion arms nothing.
+        app.mode = AppMode::Normal;
+        app.config.appearance.disable_animation = true;
+        app.focus_active_session();
+        assert!(crate::app::is_session_mode(app.mode));
+        assert!(app.session_enter_at.is_none());
+    }
+
+    #[test]
+    fn dashboard_strip_highlight_travels_instead_of_teleporting() {
+        let mut app = app_with_two_sessions();
+
+        // At rest the highlight sits on the active chip, as before.
+        app.active_session = Some(1);
+        let buffer = render_to_buffer(&app, 120, 38);
+        let (bx, by) = find_cell(&buffer, "bravo").expect("second chip rendered");
+        assert_eq!(
+            buffer[(bx, by)].bg,
+            theme::BRIGHT,
+            "at rest: on the new chip"
+        );
+
+        // Mid-switch, with progress still at ~0, the highlight must still be on
+        // the chip being left. That is the whole point: it moves across rather
+        // than appearing on the target instantly.
+        app.session_tab_switch = Some(crate::app::SessionTabSwitch {
+            dir: 1,
+            from: 0,
+            at: std::time::Instant::now(),
+        });
+        let buffer = render_to_buffer(&app, 120, 38);
+        let (ax, ay) = find_cell(&buffer, "alpha").expect("first chip rendered");
+        let (bx, by) = find_cell(&buffer, "bravo").expect("second chip rendered");
+        assert_eq!(
+            buffer[(ax, ay)].bg,
+            theme::BRIGHT,
+            "travelling: still on the chip being left"
+        );
+        assert_ne!(
+            buffer[(bx, by)].bg,
+            theme::BRIGHT,
+            "travelling: not yet on the target"
+        );
+
+        // Reduced motion jumps straight to the final state.
+        app.config.appearance.disable_animation = true;
+        let buffer = render_to_buffer(&app, 120, 38);
+        let (ax, ay) = find_cell(&buffer, "alpha").unwrap();
+        let (bx, by) = find_cell(&buffer, "bravo").unwrap();
+        assert_eq!(buffer[(bx, by)].bg, theme::BRIGHT, "reduced motion: target");
+        assert_ne!(buffer[(ax, ay)].bg, theme::BRIGHT);
+    }
+
     #[test]
     fn sftp_footer_points_back_to_local_once_the_left_pane_is_remote() {
         let mut app = test_app_with_hosts();
@@ -1511,7 +1715,23 @@ mod tests {
             );
         }
 
+        // With sessions running, the way back into one is as essential as the
+        // way out of the app. This is the case that regressed: the session hints
+        // are appended after `? help` / `q quit` and pushed them into the middle.
+        let mut app = app_with_two_sessions();
+        app.active_tab = 1;
+        app.sftp = Some(crate::sftp::model::SftpState::new("/srv", "/home/me"));
+        for w in [120u16, 160, 200] {
+            let buffer = render_to_buffer(&app, w, 38);
+            assert!(buffer_contains(&buffer, "resume"), "width {w}: resume");
+            assert!(buffer_contains(&buffer, "? help"), "width {w}: help");
+            assert!(buffer_contains(&buffer, "q quit"), "width {w}: quit");
+        }
+
         // Wide enough for everything: no ellipsis, nothing dropped.
+        let mut app = test_app_with_hosts();
+        app.active_tab = 1;
+        app.sftp = Some(crate::sftp::model::SftpState::new("/srv", "/home/me"));
         let buffer = render_to_buffer(&app, 240, 38);
         assert!(buffer_contains(&buffer, "? help"));
         assert!(buffer_contains(&buffer, "q quit"));

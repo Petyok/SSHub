@@ -94,6 +94,29 @@ All notable changes to SSHub are documented in this file.
 
 ### Fixed
 
+- **Cycling session tabs from the dashboard threw you into the session** (issue
+  #49) - `Ctrl+[` / `Ctrl+]` there moved the selection *and* immediately opened
+  the session full screen, so a key named "previous / next session tab" left the
+  dashboard entirely, with no transition. It now moves the selection along the
+  session strip and stays put; opening the selected session is what
+  `Ctrl+Shift+S` is for, and the footer says so. The strip carries its highlight
+  across instead of teleporting, reading the same travel state the full-screen
+  tab bar uses. A chip collapsed into the `+N` overflow marker has nowhere to
+  travel and is left alone, and reduced motion jumps straight to the target.
+- **Entering a running session did not animate** - leaving one slid the session
+  off to the right, but arriving cut straight to it, because the slide was armed
+  on connect only. Re-entering from the dashboard now slides in the same way a
+  fresh connect does; re-deriving the mode while already inside a session, when an
+  overlay closes over it or a phase changes, does not replay it.
+- **The session slide arrived over a black screen** - it blanked the columns it
+  had not reached yet, so connecting flashed black before the host appeared. The
+  dashboard is now snapshotted the way the session view already was, and the
+  session slides over it.
+- **Narrow footers dropped the wrong hints** - the pairs that say how to get out
+  (`? help`, `q quit`) or back into a running session (`resume`) were pushed into
+  the middle of the row by whatever was appended after them, panel-zoom hints,
+  broadcast hints, session hints, and the middle is exactly what truncation eats.
+  They are now moved to the end and pinned explicitly.
 - **Arrow keys did nothing in Midnight Commander** (PR #56) - full-screen
   applications ask for application cursor mode (DECCKM) and then expect the
   cursor keys as SS3 sequences, while SSHub always sent the normal CSI ones. The

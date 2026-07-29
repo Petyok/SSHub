@@ -187,7 +187,10 @@ fn render_header(frame: &mut Frame, area: Rect, session: &Session, app: &App) {
 
 /// Progress of the tab-highlight travel, or `None` when it is at rest (which
 /// is also when the active label paints itself highlighted).
-fn highlight_travel(app: &App) -> Option<f32> {
+///
+/// Shared with the dashboard session strip, which mirrors the same travel, so
+/// both surfaces agree on when the highlight is moving.
+pub(crate) fn highlight_travel(app: &App) -> Option<f32> {
     if !app.motion_enabled() {
         return None;
     }
@@ -201,7 +204,7 @@ fn span_cols(span: &Span<'static>) -> u16 {
     span.content.chars().count() as u16
 }
 
-fn lerp_u16(a: u16, b: u16, t: f32) -> u16 {
+pub(crate) fn lerp_u16(a: u16, b: u16, t: f32) -> u16 {
     (a as f32 + (b as f32 - a as f32) * t).round().max(0.0) as u16
 }
 
