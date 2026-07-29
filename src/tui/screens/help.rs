@@ -77,6 +77,8 @@ fn help_lines() -> Vec<Line<'static>> {
         entry("p", "Add key to agent"),
         entry("r", "Remove key from agent"),
         entry("Shift+P", "Push public key to a remote host"),
+        entry("Ctrl+R", "In a form: show and copy the stored secret"),
+        entry("Ctrl+Y", "In a form: copy the stored secret"),
         Line::from(""),
         section("audit (tab 5)"),
         entry("f", "Cycle filter (all/ok/fail)"),

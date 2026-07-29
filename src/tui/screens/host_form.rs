@@ -12,6 +12,7 @@ pub fn render_host_form(
     groups: &[HostGroup],
     identities: &[Identity],
     save_hint: &str,
+    secret_hints: &str,
 ) -> Paragraph<'static> {
     let title = if form.metadata_only {
         "Edit metadata (ssh_config)"
@@ -124,10 +125,18 @@ pub fn render_host_form(
             HostFormField::OsIcon => ("OS icon", os_icon_label(form.os_icon_index)),
             HostFormField::Password => (
                 "Password",
-                if editing {
+                // Masked while typing too, now that the field arrives prefilled
+                // with the stored secret: walking onto it must not expose one.
+                // The reveal bind is the way to see it.
+                if editing && form.password_revealed {
                     text_input::with_cursor(&form.password, form.cursor)
+                } else if editing {
+                    text_input::with_cursor(
+                        &"\u{25CF}".repeat(form.password.chars().count()),
+                        form.cursor,
+                    )
                 } else {
-                    password_display(&form.password, form.has_password)
+                    password_display(&form.password, form.has_password, form.password_revealed)
                 },
             ),
             HostFormField::Username => (
@@ -171,6 +180,10 @@ pub fn render_host_form(
 
     let hint = Style::default().add_modifier(Modifier::DIM);
     lines.push(Line::from(""));
+    if form.field == HostFormField::Password && !secret_hints.is_empty() {
+        // See the identity form: a masked value needs its binds said out loud.
+        lines.push(Line::from(Span::styled(secret_hints.to_string(), hint)));
+    }
     lines.push(Line::from(Span::styled(
         "Tab/↓: next field    Enter: open picker (Group/Identity)",
         hint,
@@ -214,13 +227,20 @@ fn os_icon_label(index: usize) -> String {
         .unwrap_or_else(|| "(none)".to_string())
 }
 
-fn password_display(password: &str, has_password: bool) -> String {
-    if !password.is_empty() {
-        "\u{25CF}".repeat(password.chars().count())
-    } else if has_password {
-        "(set)".to_string()
+fn password_display(password: &str, has_password: bool, revealed: bool) -> String {
+    if password.is_empty() {
+        // `(set)` only survives for a secret the store would not hand back, e.g.
+        // a locked keyring: otherwise the field is prefilled and this is honest.
+        return if has_password {
+            "(set)".to_string()
+        } else {
+            "(empty)".to_string()
+        };
+    }
+    if revealed {
+        password.to_string()
     } else {
-        "(empty)".to_string()
+        "\u{25CF}".repeat(password.chars().count())
     }
 }
 

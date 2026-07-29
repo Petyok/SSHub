@@ -1184,6 +1184,7 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
                         &app.groups,
                         &app.identities,
                         &app.save_key_label(),
+                        &app.config.keybinds.secret_field_hints(),
                     ),
                     popup_area,
                 );
@@ -1192,7 +1193,11 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
         FormKind::Identity => {
             if let Some(form) = app.identity_form.as_ref() {
                 frame.render_widget(
-                    screens::keychain::render_identity_form(form, &app.save_key_label()),
+                    screens::keychain::render_identity_form(
+                        form,
+                        &app.save_key_label(),
+                        &app.config.keybinds.secret_field_hints(),
+                    ),
                     popup_area,
                 );
             }

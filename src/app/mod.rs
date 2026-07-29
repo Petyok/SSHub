@@ -414,6 +414,29 @@ impl App {
         !self.config.appearance.disable_animation
     }
 
+    /// The secret stored under `key`, or empty when there is none and when the
+    /// store refuses to answer (a locked or absent keyring). Used to prefill a
+    /// form field, so editing a stored password starts from what is stored
+    /// instead of from nothing.
+    pub(crate) fn stored_secret(&self, key: &str) -> String {
+        self.password_store
+            .get(key)
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+    }
+
+    /// Store `secret` under `key`, or remove the entry when it is empty. A form
+    /// field cleared on purpose means "there is no secret any more", which used
+    /// to be indistinguishable from "left untouched".
+    pub(crate) fn put_secret(&self, key: &str, secret: &str) -> anyhow::Result<()> {
+        if secret.is_empty() {
+            self.password_store.delete(key)
+        } else {
+            self.password_store.set(key, secret)
+        }
+    }
+
     /// Notice a tab change (from any of the many code paths that set
     /// `active_tab`) and arm the body slide (#35). Called once per poll tick.
     pub(crate) fn detect_tab_switch(&mut self) {

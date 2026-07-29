@@ -160,6 +160,16 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
+    (@fn reveal_secret $($key:literal),* $(,)?) => {
+        fn default_kb_reveal_secret() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
+    (@fn copy_secret $($key:literal),* $(,)?) => {
+        fn default_kb_copy_secret() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
     (@fn ui_zoom_in $($key:literal),* $(,)?) => {
         fn default_kb_ui_zoom_in() -> Vec<String> {
             vec![$($key.to_string()),*]
@@ -413,6 +423,8 @@ kb_defaults! {
     clear_ssh_log => ["c"],
     sort_cycle => ["s"],
     yank_log => ["y"],
+    reveal_secret => ["Ctrl+R"],
+    copy_secret => ["Ctrl+Y"],
     ui_zoom_in => ["+", "="],
     ui_zoom_out => ["-", "_"],
     export_ssh => ["Shift+E"],
@@ -491,6 +503,8 @@ pub enum KeyAction {
     ClearSshLog,
     SortCycle,
     YankLog,
+    RevealSecret,
+    CopySecret,
     UiZoomIn,
     UiZoomOut,
     ExportSsh,
@@ -539,7 +553,7 @@ pub enum KeyAction {
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 74] = [
+    pub const ALL: [KeyAction; 76] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -570,6 +584,8 @@ impl KeyAction {
         KeyAction::ClearSshLog,
         KeyAction::SortCycle,
         KeyAction::YankLog,
+        KeyAction::RevealSecret,
+        KeyAction::CopySecret,
         KeyAction::UiZoomIn,
         KeyAction::UiZoomOut,
         KeyAction::ExportSsh,
@@ -648,6 +664,8 @@ impl KeyAction {
             KeyAction::ClearSshLog => "Clear SSH log",
             KeyAction::SortCycle => "Cycle sort mode",
             KeyAction::YankLog => "Copy SSH log",
+            KeyAction::RevealSecret => "Show and copy the stored secret",
+            KeyAction::CopySecret => "Copy the stored secret",
             KeyAction::UiZoomIn => "Zoom in (hosts column)",
             KeyAction::UiZoomOut => "Zoom out (hosts column)",
             KeyAction::ExportSsh => "Export to ssh config",
@@ -759,6 +777,10 @@ pub struct KeybindsConfig {
     pub sort_cycle: Vec<String>,
     #[serde(default = "default_kb_yank_log")]
     pub yank_log: Vec<String>,
+    #[serde(default = "default_kb_reveal_secret")]
+    pub reveal_secret: Vec<String>,
+    #[serde(default = "default_kb_copy_secret")]
+    pub copy_secret: Vec<String>,
     #[serde(default = "default_kb_ui_zoom_in")]
     pub ui_zoom_in: Vec<String>,
     #[serde(default = "default_kb_ui_zoom_out")]
@@ -882,6 +904,8 @@ impl Default for KeybindsConfig {
             clear_ssh_log: default_kb_clear_ssh_log(),
             sort_cycle: default_kb_sort_cycle(),
             yank_log: default_kb_yank_log(),
+            reveal_secret: default_kb_reveal_secret(),
+            copy_secret: default_kb_copy_secret(),
             ui_zoom_in: default_kb_ui_zoom_in(),
             ui_zoom_out: default_kb_ui_zoom_out(),
             export_ssh: default_kb_export_ssh(),
@@ -963,6 +987,8 @@ impl KeybindsConfig {
             KeyAction::ClearSshLog => default_kb_clear_ssh_log(),
             KeyAction::SortCycle => default_kb_sort_cycle(),
             KeyAction::YankLog => default_kb_yank_log(),
+            KeyAction::RevealSecret => default_kb_reveal_secret(),
+            KeyAction::CopySecret => default_kb_copy_secret(),
             KeyAction::UiZoomIn => default_kb_ui_zoom_in(),
             KeyAction::UiZoomOut => default_kb_ui_zoom_out(),
             KeyAction::ExportSsh => default_kb_export_ssh(),
@@ -1045,6 +1071,22 @@ impl KeybindsConfig {
         parts.join("  ")
     }
 
+    /// Hint shown while a password / passphrase field is focused. A stored secret
+    /// is masked, so without this the two binds that show or copy it are
+    /// invisible exactly where they are needed. Empty when both are unbound.
+    pub fn secret_field_hints(&self) -> String {
+        let mut parts = Vec::new();
+        let reveal = self.primary(KeyAction::RevealSecret);
+        if !reveal.is_empty() {
+            parts.push(format!("{reveal}: show + copy"));
+        }
+        let copy = self.primary(KeyAction::CopySecret);
+        if !copy.is_empty() {
+            parts.push(format!("{copy}: copy"));
+        }
+        parts.join(" \u{2502} ")
+    }
+
     /// Dashboard footer hints when embedded sessions are running in background.
     ///
     /// `resume` comes first on purpose: with a session running somewhere behind
@@ -1094,6 +1136,8 @@ impl KeybindsConfig {
             KeyAction::ClearSshLog => &self.clear_ssh_log,
             KeyAction::SortCycle => &self.sort_cycle,
             KeyAction::YankLog => &self.yank_log,
+            KeyAction::RevealSecret => &self.reveal_secret,
+            KeyAction::CopySecret => &self.copy_secret,
             KeyAction::UiZoomIn => &self.ui_zoom_in,
             KeyAction::UiZoomOut => &self.ui_zoom_out,
             KeyAction::ExportSsh => &self.export_ssh,
@@ -1173,6 +1217,8 @@ impl KeybindsConfig {
             KeyAction::ClearSshLog => self.clear_ssh_log = binds,
             KeyAction::SortCycle => self.sort_cycle = binds,
             KeyAction::YankLog => self.yank_log = binds,
+            KeyAction::RevealSecret => self.reveal_secret = binds,
+            KeyAction::CopySecret => self.copy_secret = binds,
             KeyAction::UiZoomIn => self.ui_zoom_in = binds,
             KeyAction::UiZoomOut => self.ui_zoom_out = binds,
             KeyAction::ExportSsh => self.export_ssh = binds,

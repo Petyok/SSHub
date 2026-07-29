@@ -928,7 +928,14 @@ pub struct HostFormEdit {
     pub session_logging: crate::session_log::SessionLoggingOverride,
     pub os_icon_index: usize,
     pub password: String,
+    /// The secret as it was in the credential store when the form opened, so
+    /// saving can tell "untouched" from "changed to this exact value", and an
+    /// emptied field can mean "delete it" rather than "leave it alone".
+    pub password_original: String,
     pub has_password: bool,
+    /// Whether the password field is currently shown as text. Per-form and
+    /// deliberately not persisted: it drops on leaving the field or closing.
+    pub password_revealed: bool,
     pub field: HostFormField,
     pub cursor: usize,
     /// Connection fields (address/name/port) are read-only; only launcher metadata is saved.
@@ -1210,7 +1217,12 @@ pub struct IdentityFormEdit {
     pub private_key: String,
     pub certificate: String,
     pub password: String,
+    /// The passphrase as it was in the credential store when the form opened.
+    /// See [`HostFormEdit::password_original`].
+    pub password_original: String,
     pub has_password: bool,
+    /// Whether the passphrase is currently shown as text.
+    pub password_revealed: bool,
     /// Full key material pasted into the Private key field; written to
     /// `~/.ssh/sshub_<name>` on save (the path field then points at it).
     pub pasted_key: Option<String>,
