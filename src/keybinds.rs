@@ -1046,8 +1046,13 @@ impl KeybindsConfig {
     }
 
     /// Dashboard footer hints when embedded sessions are running in background.
+    ///
+    /// `resume` comes first on purpose: with a session running somewhere behind
+    /// the dashboard, getting back into it is the thing you want, and it used to
+    /// be discoverable only through the help overlay.
     pub fn session_footer_hints(&self) -> Vec<(String, &'static str)> {
         let mut out = Vec::new();
+        push_footer_hint(&mut out, self.primary(KeyAction::SessionFocus), "resume");
         push_footer_hint(&mut out, self.primary(KeyAction::SessionDetach), "detach");
         push_footer_hint(&mut out, self.primary(KeyAction::SessionOpenSftp), "sftp");
         if let Some(keys) = tab_switch_keys(self) {
@@ -1319,6 +1324,25 @@ mod tests {
         let before = kb.tab_tunnels.clone();
         assert!(!kb.migrate_pre_sftp_tabs(raw));
         assert_eq!(kb.tab_tunnels, before);
+    }
+
+    #[test]
+    fn session_footer_hints_lead_with_resume() {
+        let kb = KeybindsConfig::default();
+        let hints = kb.session_footer_hints();
+        assert_eq!(
+            hints.first().map(|(keys, label)| (keys.as_str(), *label)),
+            Some((kb.primary(KeyAction::SessionFocus), "resume")),
+            "getting back into a running session comes first"
+        );
+
+        // The key is read from the config rather than hardcoded, so a rebind
+        // shows up here and the old default stops being advertised.
+        let mut custom = KeybindsConfig::default();
+        custom.set(KeyAction::SessionFocus, vec!["F8".into()]);
+        let hints = custom.session_footer_hints();
+        assert_eq!(hints[0], ("F8".to_string(), "resume"));
+        assert!(!hints.iter().any(|(keys, _)| keys == "Ctrl+Shift+S"));
     }
 
     #[test]
