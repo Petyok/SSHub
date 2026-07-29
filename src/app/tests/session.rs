@@ -286,8 +286,14 @@ pub(crate) fn session_strip_cycle_and_sftp_from_non_hosts_tab() {
         KeyModifiers::CONTROL | KeyModifiers::SHIFT,
     ))
     .unwrap();
-    assert_eq!(app.active_tab, 1, "Ctrl+Shift+F must switch to the SFTP tab");
-    assert!(app.sftp.is_some(), "Ctrl+Shift+F must open SFTP for the session host");
+    assert_eq!(
+        app.active_tab, 1,
+        "Ctrl+Shift+F must switch to the SFTP tab"
+    );
+    assert!(
+        app.sftp.is_some(),
+        "Ctrl+Shift+F must open SFTP for the session host"
+    );
     assert_eq!(app.mode, AppMode::Normal);
 }
 
