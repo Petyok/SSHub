@@ -14,10 +14,12 @@ impl App {
             .environment()
             .unwrap_or_default()
             .to_string();
+        let session_logging = self.hosts[host_idx].session_logging_override();
         self.detail_edit = Some(HostDetailEdit {
             tags: tags.clone(),
             description,
             environment,
+            session_logging,
             field: DetailEditField::Tags,
             cursor: text_input::char_len(&tags),
         });
@@ -65,6 +67,7 @@ impl App {
                 tags: Some(tags),
                 notes: Some(description),
                 environment: Some(environment),
+                session_logging: Some(edit.session_logging),
                 ..Default::default()
             };
             if let Some(updated) = self.store.update_host(id, &update)? {
@@ -78,6 +81,8 @@ impl App {
                 environment,
                 favorite,
                 last_connected,
+                session_logging: edit.session_logging,
+                transport: self.hosts[host_idx].session_transport(),
             };
             self.metadata.upsert(&meta)?;
             if let Some((_, stored_meta)) = self.hosts[host_idx].legacy_mut() {
@@ -94,7 +99,9 @@ impl App {
             return;
         };
         edit.field = edit.field.next();
-        edit.cursor = text_input::char_len(edit.active_field());
+        if !edit.field.is_tri_state() {
+            edit.cursor = text_input::char_len(edit.active_field());
+        }
     }
 
     pub(crate) fn detail_edit_field_prev(&mut self) {
@@ -102,13 +109,42 @@ impl App {
             return;
         };
         edit.field = edit.field.prev();
-        edit.cursor = text_input::char_len(edit.active_field());
+        if !edit.field.is_tri_state() {
+            edit.cursor = text_input::char_len(edit.active_field());
+        }
+    }
+
+    pub(crate) fn detail_edit_cycle_session_logging(&mut self, delta: i32) {
+        let Some(edit) = self.detail_edit.as_mut() else {
+            return;
+        };
+        if edit.field != DetailEditField::SessionLogging {
+            return;
+        }
+        edit.session_logging = if delta >= 0 {
+            edit.session_logging.next()
+        } else {
+            match edit.session_logging {
+                crate::session_log::SessionLoggingOverride::Inherit => {
+                    crate::session_log::SessionLoggingOverride::Off
+                }
+                crate::session_log::SessionLoggingOverride::On => {
+                    crate::session_log::SessionLoggingOverride::Inherit
+                }
+                crate::session_log::SessionLoggingOverride::Off => {
+                    crate::session_log::SessionLoggingOverride::On
+                }
+            }
+        };
     }
 
     pub(crate) fn detail_edit_backspace(&mut self) {
         let Some(edit) = self.detail_edit.as_mut() else {
             return;
         };
+        if edit.field.is_tri_state() {
+            return;
+        }
         let c = edit.cursor;
         edit.cursor = text_input::backspace_at(edit.active_field_mut(), c);
     }
@@ -117,6 +153,9 @@ impl App {
         let Some(edit) = self.detail_edit.as_mut() else {
             return;
         };
+        if edit.field.is_tri_state() {
+            return;
+        }
         let c = edit.cursor;
         edit.cursor = text_input::insert_at(edit.active_field_mut(), c, ch);
     }

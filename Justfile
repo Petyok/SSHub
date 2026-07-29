@@ -14,6 +14,18 @@ test:
 build:
     cargo build --release
 
+# Assemble the npm packages into npm/dist from the tarballs attached to the
+# matching GitHub release. Nothing is compiled and nothing is published; the
+# shim is exercised end to end first. Version defaults to Cargo.toml's.
+npm-build version="":
+    npm/build.sh {{version}}
+
+# Assemble, verify, then publish to npm. Needs `npm login` (or a token in
+# ~/.npmrc). Platform packages publish first, the `sshub` wrapper last, so the
+# wrapper never lands pointing at binaries that do not exist yet.
+npm-publish version="":
+    npm/build.sh {{version}} --publish
+
 # Record README GIFs + screenshots with VHS (requires `vhs` and `ffmpeg` on
 # PATH). Pass tape names to record a subset: `just record-gifs overview sftp`.
 record-gifs *tapes: build
@@ -23,12 +35,52 @@ record-gifs *tapes: build
 dry-run:
     cargo run -- --dry-run
 
-# Bump the version (odometer, each field 0-9; see CLAUDE.md "Versioning").
+# Preview the man page (man/sshub.1) without installing it.
+man:
+    man -l man/sshub.1
+
+# Install shell completions so they work with no manual setup. bash and fish
+# files drop into auto-loaded dirs; zsh gets a sourced line appended to
+# ~/.zshrc (idempotent, marked, removed by `just uninstall`). Included by
+# `just install`; run standalone to (re)install just the completions.
+install-completions: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bin=target/release/sshub
+    bash_dir="${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions"
+    fish_dir="${XDG_CONFIG_HOME:-$HOME/.config}/fish/completions"
+    install -d "$bash_dir" "$fish_dir"
+    "$bin" completions bash > "$bash_dir/sshub"
+    "$bin" completions fish > "$fish_dir/sshub.fish"
+    echo "completions: bash -> $bash_dir/sshub"
+    echo "completions: fish -> $fish_dir/sshub.fish"
+    # zsh has no user dir on the default fpath, so source the completion from
+    # ~/.zshrc (only if it exists) instead. compinit is ensured before compdef.
+    zshrc="$HOME/.zshrc"
+    marker="# >>> sshub completions >>>"
+    if [ -f "$zshrc" ] && grep -qF "$marker" "$zshrc"; then
+      echo "completions: zsh -> ~/.zshrc already wired"
+    elif [ -f "$zshrc" ]; then
+      {
+        echo ""
+        echo "$marker"
+        echo '(( $+functions[compdef] )) || { autoload -Uz compinit && compinit -u; }'
+        echo 'source <(command sshub completions zsh)'
+        echo "# <<< sshub completions <<<"
+      } >> "$zshrc"
+      echo "completions: zsh -> appended sourcing to ~/.zshrc (run: exec zsh)"
+    else
+      echo "completions: zsh -> no ~/.zshrc found; add: source <(sshub completions zsh)"
+    fi
+    echo "bash and fish auto-load in a new shell."
+
+# Bump the version (odometer; Z 0-9, Y 0-99; see CLAUDE.md "Versioning").
 #   just bump patch       # every commit to development
 #   just bump minor       # on release (merge development -> main); resets patch
 #   just bump major       # milestone / manual
 #   just bump set 0.7.0   # set an explicit version (e.g. to jump ahead)
-# Carries over: 0.4.9 + patch -> 0.5.0, 0.9.9 + patch -> 1.0.0.
+# Carries over: 0.4.9 + patch -> 0.5.0, 0.9.9 + patch -> 0.10.0,
+# 0.99.0 + minor -> 1.0.0, 0.99.9 + patch -> 1.0.0.
 bump kind version="":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -36,8 +88,8 @@ bump kind version="":
     IFS=. read -r X Y Z <<< "$ver"
     case "{{kind}}" in
       patch) Z=$((Z + 1)); if [ "$Z" -gt 9 ]; then Z=0; Y=$((Y + 1)); fi
-             if [ "$Y" -gt 9 ]; then Y=0; X=$((X + 1)); fi; new="$X.$Y.$Z" ;;
-      minor) Y=$((Y + 1)); Z=0; if [ "$Y" -gt 9 ]; then Y=0; X=$((X + 1)); fi; new="$X.$Y.$Z" ;;
+             if [ "$Y" -gt 99 ]; then Y=0; X=$((X + 1)); fi; new="$X.$Y.$Z" ;;
+      minor) Y=$((Y + 1)); Z=0; if [ "$Y" -gt 99 ]; then Y=0; X=$((X + 1)); fi; new="$X.$Y.$Z" ;;
       major) X=$((X + 1)); Y=0; Z=0; new="$X.$Y.$Z" ;;
       set)   new="{{version}}"
              echo "$new" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' \
@@ -134,27 +186,72 @@ release kind="minor":
     git push origin development
     echo "released v$ver ({{kind}}) — 'chore: release v$ver' merged to main; the release workflow builds binaries and publishes to crates.io"
 
+# Sync development -> main WITHOUT cutting a release: no version bump, no
+# CHANGELOG roll, no tag (so the release workflow is NOT triggered). main gets
+# a single `chore: sync development into main` merge commit on its first-parent
+# line, then development is fast-forwarded back so both branches point at the
+# same commit and the next release still merges cleanly. Use this to bring main
+# up to date with dev (e.g. docs/CI fixes) between releases.
+# Run from a clean `development`. Pushing to protected `main` relies on your
+# owner/admin bypass.
+sync:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "$(git rev-parse --abbrev-ref HEAD)" = development ] || { echo "run from development" >&2; exit 1; }
+    git diff --quiet && git diff --cached --quiet || { echo "working tree not clean" >&2; exit 1; }
+    git fetch origin --quiet
+    git push origin development
+    if git merge-base --is-ancestor development main; then
+      echo "main already contains development — nothing to sync"; exit 0
+    fi
+    git checkout main
+    git pull --ff-only origin main
+    # Real merge (--no-ff): main gets one sync merge commit on its first-parent
+    # line. Merges cleanly because dev is ff'd to main after every release/sync,
+    # so main is always an ancestor of dev here.
+    git merge --no-ff development -m "chore: sync development into main"
+    git push origin main
+    git checkout development
+    # Fast-forward development to the sync merge: both branches now point at the
+    # same commit and ahead/behind stays clean.
+    git merge --ff-only main
+    git push origin development
+    echo "synced development -> main (no release; no tag, no version bump)"
+
 # Install the release binary to ~/.local/bin and a launcher entry so sshub
 # shows up in your application launcher (GNOME, rofi, etc). Uses kitty if
 # available, otherwise falls back to xterm. Runs `just build` first.
-install: build
+install: build install-completions
     #!/usr/bin/env bash
     set -euo pipefail
     bin="$HOME/.local/bin/sshub"
     term="$(command -v kitty || command -v ghostty || command -v alacritty || command -v foot || echo xterm)"
     install -Dm755 target/release/sshub "$bin"
+    install -Dm644 man/sshub.1 "$HOME/.local/share/man/man1/sshub.1"
     install -Dm644 assets/sshub.svg "$HOME/.local/share/icons/hicolor/scalable/apps/sshub.svg"
     mkdir -p "$HOME/.local/share/applications"
     sed -e "s|@TERM@|$term|g" -e "s|@BIN@|$bin|g" \
         assets/sshub.desktop > "$HOME/.local/share/applications/sshub.desktop"
     update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
     gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
-    echo "Installed $bin, icon and launcher entry (terminal: $term)."
+    echo "Installed $bin, man page, icon and launcher entry (terminal: $term)."
     echo "If it doesn't show up, log out/in or run: update-desktop-database ~/.local/share/applications"
 
-# Remove the installed binary and launcher entry.
+# Remove the installed binary, man page, completions, icon and launcher entry.
 uninstall:
+    #!/usr/bin/env bash
+    set -euo pipefail
     rm -f "$HOME/.local/bin/sshub" \
+          "$HOME/.local/share/man/man1/sshub.1" \
+          "${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions/sshub" \
+          "${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions/_sshub" \
+          "${XDG_CONFIG_HOME:-$HOME/.config}/fish/completions/sshub.fish" \
           "$HOME/.local/share/applications/sshub.desktop" \
           "$HOME/.local/share/icons/hicolor/scalable/apps/sshub.svg"
-    @echo "Removed sshub binary, icon and launcher entry."
+    # Strip the sshub completions block from ~/.zshrc if we added it.
+    zshrc="$HOME/.zshrc"
+    if [ -f "$zshrc" ] && grep -qF '# >>> sshub completions >>>' "$zshrc"; then
+      sed -i '/# >>> sshub completions >>>/,/# <<< sshub completions <<</d' "$zshrc"
+      echo "Removed sshub completions block from ~/.zshrc"
+    fi
+    echo "Removed sshub binary, man page, completions, icon and launcher entry."

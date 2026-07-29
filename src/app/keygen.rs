@@ -58,13 +58,9 @@ impl App {
             KeygenType::Rsa4096 => Some(4096),
         };
 
-        if let Err(e) = crate::ssh::generate_key_pair(
-            key_type_str,
-            bits,
-            &form.passphrase,
-            &form.comment,
-            path,
-        ) {
+        if let Err(e) =
+            crate::ssh::generate_key_pair(key_type_str, bits, &form.passphrase, &form.comment, path)
+        {
             self.keygen_notice = Some(format!("Generation failed: {e:#}"));
             self.keygen_form = Some(form);
             return Ok(());

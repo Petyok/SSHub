@@ -89,6 +89,11 @@ fn detail_fav_line(fav: bool) -> Line<'static> {
     }
 }
 
+fn tri_state_line(label: &str, value: &str, active: bool) -> String {
+    let prefix = if active { "> " } else { "  " };
+    format!("{prefix}{label}: {value} (Space or arrows to cycle)")
+}
+
 fn host_detail_view(app: &App, entry: &HostEntry, _host_idx: usize) -> Vec<Line<'static>> {
     let ssh = entry.ssh_host();
     let last = entry
@@ -140,6 +145,18 @@ fn host_detail_view(app: &App, entry: &HostEntry, _host_idx: usize) -> Vec<Line<
         ),
         detail_fav_line(entry.favorite()),
         detail_line("Last connected", last),
+    ];
+
+    lines.push(detail_line(
+        "Session log",
+        entry.session_logging_override().label().to_string(),
+    ));
+    lines.push(detail_line(
+        "Transport",
+        entry.session_transport().label().to_string(),
+    ));
+
+    lines.extend([
         Line::from(""),
         Line::from(Span::styled(
             if entry.is_launcher() {
@@ -150,7 +167,7 @@ fn host_detail_view(app: &App, entry: &HostEntry, _host_idx: usize) -> Vec<Line<
             hint_style,
         )),
         Line::from(Span::styled("[f] toggle favourite", hint_style)),
-    ];
+    ]);
 
     // Prepend the detected OS logo (colored ASCII art) when enabled and the
     // host's os_icon resolves to a known logo. render_detail_panel returns a
@@ -197,6 +214,11 @@ fn host_detail_edit(app: &App, entry: &HostEntry, _host_idx: usize) -> Vec<Line<
         edit.cursor,
         edit.field == DetailEditField::Environment,
     );
+    let session_log_line = tri_state_line(
+        "Session log",
+        edit.session_logging.label(),
+        edit.field == DetailEditField::SessionLogging,
+    );
 
     let hint_style = Style::default().fg(Color::DarkGray);
 
@@ -211,6 +233,7 @@ fn host_detail_edit(app: &App, entry: &HostEntry, _host_idx: usize) -> Vec<Line<
         Line::from(tags_line),
         Line::from(desc_line),
         Line::from(env_line),
+        Line::from(session_log_line),
         detail_fav_line(entry.favorite()),
         Line::from(""),
         Line::from(Span::styled("[Enter] save", hint_style)),
@@ -243,7 +266,6 @@ mod tests {
     use super::*;
     use crate::app::{AppDeps, HostDetailEdit};
     use crate::config::AppConfig;
-    use crate::launcher::TerminalLauncher;
     use crate::metadata::MetadataDb;
     use crate::ssh::{HostResolver, SshHost};
     use crate::store::LauncherStore;
@@ -265,14 +287,6 @@ mod tests {
         }
     }
 
-    struct NoopLauncher;
-
-    impl TerminalLauncher for NoopLauncher {
-        fn launch_ssh_argv(&self, _ssh_argv: &[String]) -> anyhow::Result<()> {
-            Ok(())
-        }
-    }
-
     #[test]
     fn format_utc_ymd_hm_known_epoch() {
         // 2024-01-01 00:00:00 UTC
@@ -287,7 +301,6 @@ mod tests {
                 resolver: Box::new(EmptyResolver),
                 metadata: Arc::new(MetadataDb::default()),
                 store: test_store(),
-                launcher: Box::new(NoopLauncher),
                 password_store: Box::new(crate::credentials::NoopPasswordStore),
             },
         );
@@ -298,6 +311,7 @@ mod tests {
             tags: "prod".into(),
             description: String::new(),
             environment: String::new(),
+            session_logging: crate::session_log::SessionLoggingOverride::Inherit,
             field: DetailEditField::Tags,
             cursor: 4,
         });

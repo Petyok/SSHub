@@ -13,8 +13,6 @@ use tempfile::NamedTempFile;
 #[path = "../support/mod.rs"]
 mod support;
 
-use support::MockLauncher;
-
 struct MapResolver {
     hosts: HashMap<String, SshHost>,
     order: Vec<String>,
@@ -68,7 +66,6 @@ fn app_with_persisted_db(db_path: &std::path::Path) -> App {
             resolver: Box::new(resolver),
             metadata,
             store: Arc::new(LauncherStore::open_in_memory().unwrap()),
-            launcher: Box::new(MockLauncher::new()),
             password_store: Box::new(sshub::credentials::NoopPasswordStore),
         },
     );

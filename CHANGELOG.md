@@ -6,9 +6,186 @@ All notable changes to SSHub are documented in this file.
 
 ### Added
 
-- **File-based password fallback** — if the OS keyring is unavailable (such as in headless D-Bus environments like WSL, Docker, or minimal Linux setups), credentials (passwords and passphrases) will be stored in a local, owner-restricted `credentials.json` file.
-- **Credential migration** — credentials stored in the fallback file are automatically migrated to the OS keyring once it becomes available again.
-- **SSH key generation from the Keys tab** — press `g` on the Keys tab to open the keygen form. Choose between ed25519 (default) and rsa-4096, set an optional passphrase and comment, then confirm the target path (defaults to `~/.ssh/id_ed25519_sshub`). The new key is generated via `ssh-keygen` with the passphrase protected through `SSH_ASKPASS` (never exposed in argv), saved to the database, and immediately focused in the tab.
+- **Generate SSH keys from the Keys tab** (PR #15) - `g` opens a form for the key
+  type (Ed25519 or RSA-4096), passphrase, comment and target path. The passphrase
+  reaches `ssh-keygen` through askpass rather than argv, the new key is registered
+  as an identity immediately, and its passphrase goes to the credential store when
+  one was set. Generation refuses to overwrite an existing key or its `.pub`.
+- **Credentials survive a missing keyring** (PR #1) - where no Secret Service is
+  reachable (WSL, Docker, a headless box), passwords and passphrases used to have
+  nowhere to go. They now fall back to an owner-only `credentials.json` in the
+  data directory, written through a `0600` temp file and an atomic rename, and the
+  status bar says so rather than letting you assume the keyring took it. **The
+  fallback file is plaintext**, since there is no keyring to encrypt against. Once
+  a keyring shows up again, its contents migrate into it on the next launch and
+  the file is removed, but only if every entry made it across.
+- **Install from npm** (issue #51) - `npx sshub-tui` and `npm install -g sshub-tui`
+  now work, installing a command still called `sshub`. The npm package ships the
+  same prebuilt binaries the GitHub release does, delivered as platform-specific
+  optional dependencies, so there is no build step and nothing is fetched from
+  outside the registry. Prebuilt for Linux x64, macOS arm64 and macOS x64; every
+  other platform keeps using `cargo install sshub`.
+- **UI motion pass** (issue #35) - the interface moves instead of cutting
+  between states. Popups drop in from off the top and are thrown back up on
+  close; tab bodies slide; a zoomed panel morphs out of its grid slot; the
+  full-screen host view slides in on connect and off on the way out; the SFTP
+  tab slides between its picker, "connecting…" and browser states, with the two
+  panes meeting in the middle and parting again. The host list scrolls under
+  the cursor rather than jumping half a panel, its highlight wipes in, and a
+  group's rows are revealed one at a time as it folds. Status is legible in
+  motion too: a host's dot flashes when its ping class changes, a reconnecting
+  tunnel's dot breathes, the header tally counts to its new values, a fresh
+  ping reading grows into the latency graph, and the SFTP queue has a progress
+  bar that sweeps between the worker's chunked updates. Everything is gated on
+  the existing `appearance.disable_animation` reduced-motion toggle, and the
+  frame rate only rises while something is actually animating.
+- **SFTP between two servers** - the left pane can be pointed at a second host
+  with `o` (and back to local files with `O`), so two servers sit side by side
+  with their own connections, listings and file operations. Transfers between
+  them are relayed through a local temp file, one leg at a time, since libssh2
+  has no server-to-server copy; an item only leaves the queue once it lands on
+  the far end, so a failure part-way keeps it for a retry.
+- **SFTP queue stays open during a transfer** - files can be staged while the
+  queue runs and roll into the next pass when the current one finishes. The
+  local pane stays browsable meanwhile.
+- **SFTP `..` row** - both panes list their parent directory as a selectable
+  row, so walking up no longer depends on knowing about `Backspace`.
+
+### Changed
+
+- **SFTP hides dotfiles** (issue #44), with `.` to show them - in a home
+  directory they were most of the listing, pushing what you came for below the
+  fold. This changes what an existing install shows on first run, so the pane
+  says how many entries it is holding back, and a search beginning with a dot
+  (`.ssh`) lifts the hiding rather than reporting no matches. The toggle covers
+  both panes and is remembered across restarts. The `..` row is exempt from the
+  hiding, being a way out rather than an entry, but steps aside while searching
+  so the cursor lands on a result.
+- **Smaller release binaries** (issue #42) - release builds had no profile at
+  all, so they shipped with the symbol table and without cross-crate
+  optimisation. Adding `lto = "thin"`, `codegen-units = 1` and
+  `strip = "symbols"` takes the Linux x86-64 binary from 14.8 MB to 11.6 MB
+  (-21.8%), which every distribution channel carries: the release tarballs,
+  `cargo install`, and anything that repackages them. `cargo test` and a plain
+  `cargo build` are untouched, but every release build now takes noticeably
+  longer -- including `just build` and `just install`, which build in release
+  mode, and including every dependency, since `codegen-units = 1` applies across
+  the whole graph. One trade to be aware of when reporting a crash: stripping
+  the symbol table leaves `RUST_BACKTRACE` output empty in a released binary,
+  so a backtrace worth sending has to come from a debug build.
+
+### Fixed
+
+- **Arrow keys did nothing in Midnight Commander** (PR #56) - full-screen
+  applications ask for application cursor mode (DECCKM) and then expect the
+  cursor keys as SS3 sequences, while SSHub always sent the normal CSI ones. The
+  embedded terminal tracked the mode all along; only the key encoder ignored it.
+  Holding Shift looked like a workaround because modified cursor keys take a
+  different encoding, but Midnight Commander read those as "select file". Arrows,
+  `Home` and `End` now follow whatever mode the remote application asked for.
+- **SFTP could not leave the login directory** - `Backspace` did nothing on a
+  fresh remote pane, because the parent of the server-resolved `"."` is the
+  empty path, which the server rejects as a listing target.
+- **SFTP staged from the wrong pane** - `←` queued whatever the *remote* cursor
+  sat on whichever pane had focus, so browsing locally and reaching for `←`
+  queued an entry you weren't looking at, and queued it again after every local
+  `cd`. The arrows still point at the destination; the source is now the
+  focused pane.
+- **A failed SFTP transfer retried itself forever** - a worker follows an error
+  with its usual completion event, which the queue's auto-continue read as
+  "start the next pass". Failed runs now stop and wait for the user, and both
+  workers are told to cancel.
+- **An unreachable SFTP host opened a blank browser** - it now fails into a
+  modal popup, with a connect timeout instead of an open-ended wait.
+
+## [0.10.0] - 2026-07-19
+
+### Added
+
+- **Broadcast mode** - run one command across a whole group or tag at once
+  (issue #3). Pick a target from a menu, type the command, and review a dry-run
+  preview (deselect hosts with `e`, edit the command with `c`) before it runs
+  non-interactively over SSH on every host concurrently with a bounded worker
+  pool (default 8). A live docked panel slides into the bottom-right corner and
+  shows per-host status, exit code, and output with failures first; it joins the
+  dashboard panel focus/zoom (`Alt`+arrows to focus, `z` to zoom for full
+  per-host output), auto-dismisses on a countdown, and can be cancelled with `x`.
+  Each host result is written to the audit log (with the error text on failure),
+  and failed hosts pop animated error toasts. Authenticates with key/agent
+  (`BatchMode`) and stored passwords (via `SSH_ASKPASS`, the same path a live
+  session uses).
+- **Dashboard panel focus + zoom** - focus any dashboard panel with `Alt`+arrows
+  and zoom it to the full body with `z` or `Alt+Enter` (tmux-style), issue #18.
+  Zoomed panels scroll, support drag-to-copy text selection (OSC52), and carry
+  per-panel actions: connect to the selected host from the ping / recent panels,
+  cycle the auth panel's filters, and remove the selected key from ssh-agent.
+- **PuTTY and mRemoteNG import** - import saved sessions from a PuTTY registry
+  export or an mRemoteNG `confCons.xml` into the host store, alongside the
+  existing ssh_config and Termius import (issue #12).
+- **Headless CLI** - drive the whole launcher without opening the TUI. New
+  subcommands cover hosts (`list` / `show` / `connect` / `resolve` / `search` /
+  `add` / `edit` / `rename` / `delete` / `duplicate`, with top-level `connect`,
+  `list`, and `groups` aliases), group CRUD, identity CRUD plus `agent-remove`,
+  tunnels (`list` / `show` / `create` / `delete` / `start` / `stop`, and
+  `start --foreground`), one-shot SFTP (`ls` / `get` / `put` / `rm` / `mkdir` /
+  `rename` / `chmod`), the audit log (`list` / `stats`), `tags`, and
+  `sync` / `import` / `export`. Machine-readable output with `--format json`
+  where applicable (plain text stays the default). Exit codes follow a fixed
+  convention: `0` success, `1` operational failure, `2` usage or bad flags.
+  Destructive commands refuse to run without `--yes` (`db purge` keeps its
+  `--yes-i-am-stupid` guard). `sshub completions bash|zsh|fish` emits a shell
+  completion script, optionally caching the host-name list to a file with
+  `--cache PATH` so completion stays fast on large inventories.
+
+### Removed
+
+- **External-terminal launcher** - removed the retired `TerminalLauncher`
+  subsystem (Kitty / Ghostty / custom command launchers) and the `terminal` /
+  `launch_command` config keys (issue #30). Embedded PTY sessions have been the
+  only transport for a while, so this was dead code. Old `config.toml` files that
+  still carry those keys keep loading fine; the keys are simply ignored.
+
+## [0.9.0] - 2026-07-16
+
+### Added
+
+- **Mosh transport** — per-host `Transport` field (`ssh` or `mosh`) in the host form
+  and detail panel. Embedded sessions use `mosh` when selected; tunnels and SFTP stay
+  ssh-only. Graceful error when `mosh` is not installed.
+  (Schema v13.)
+- **Session logging** — opt-in capture of embedded SSH session PTY output to plain-text
+  files under `~/.local/share/sshub/logs/<host-dir>/`, with rotated segment files inside
+  (managed hosts use `{sanitized-name}-{id}`). Toggle globally in Settings (`Ctrl+H`) or
+  per host in the host form (`inherit` / `on` / `off`). Size-based rotation and per-host
+  retention cap are configurable in `config.toml`. The audit tab shows the log directory
+  path for each connect event. Pure `~/.ssh/config` aliases without a launcher
+  row may share a log directory when sanitized host names collide. **Warning:** logs
+  capture everything echoed to the terminal, including passwords if they appear on
+  screen. (Schema v12.)
+- **Tunnel keep alive** — per-tunnel **Keep alive** toggle in the tunnel form
+  (uses existing `auto_connect` column). Enabled tunnels start on app launch and
+  automatically reconnect after unexpected exit with exponential backoff, jitter,
+  and a capped retry count (`[tunnel_reconnect]` in `config.toml`, editable on the
+  Tunnels tab with `R`: `max_attempts`, delays in seconds, stable time, jitter).
+  Manual stop or kill disables the retry loop until the tunnel is started again
+  (until the next app launch for keep-alive auto-start). The Tunnels tab shows
+  `starting` / `reconnecting` / `gave up` with attempt counter; audit logs
+  reconnect attempts. A tunnel must stay up for `stable_secs` (default 5s) before
+  it counts as reconnected. Background ssh uses `ServerAliveInterval`,
+  `ServerAliveCountMax`, and `TCPKeepAlive` so dead paths (e.g. VPN dropped) tear
+  down instead of leaving a stale local listener.
+
+### Fixed
+
+- **Session keybind hints** — the connected-session header and dashboard footer
+  now show your configured keybindings (from `config.toml` / the keybind editor)
+  instead of hardcoded `Ctrl+T` / `Ctrl+D` defaults. Connecting-screen hints
+  (`expand log`, `cancel`) follow the same config.
+- **Tunnel auth on TUI** — background `ssh -N` tunnels no longer open `/dev/tty`
+  for password prompts (which painted over the dashboard and stole mouse/keyboard
+  input). Tunnels use `BatchMode=yes` when no stored credential is available
+  (fail fast with an error in the Tunnels tab) and `SSH_ASKPASS` when a host or
+  identity password is in the keyring.
 
 ## [0.8.0] - 2026-07-12
 

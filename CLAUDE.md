@@ -4,17 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Workflow rules
 
+Pinned implementation flow: [docs/implementation-flow.md](docs/implementation-flow.md) (issue → claim → branch → verify → adversarial review → PR → merge).
+
+- **GitHub comments from agents** must always end with `_Written by {Model} ({Platform}) on behalf of the maintainer._` — see [implementation-flow § GitHub comments](docs/implementation-flow.md#github-comments-ai-agents).
+- **Lint before push.** Always run `cargo fmt`, `cargo fmt --check`, and `cargo clippy --all-targets` locally before every push — CI runs the same checks; do not skip them.
+
 - **Commit frequently.** After completing each logical unit of work (a bug fix, a feature, a refactor pass), create a commit immediately. Do not accumulate large uncommitted diffs across multiple tasks.
 - **Branch model.** `main` is stable (releases + tags); `development` is the integration branch; features go on `feature/*` branches cut from `development`. Flow: `feature/* → development → main`. Releases merge `development` into `main` with a `--no-ff` merge commit `chore: release vX.Y.Z` (so `git log --first-parent main` shows one entry per release), bump the version + CHANGELOG, and push a `vX.Y.Z` tag (the release workflow builds binaries and publishes to crates.io). `main` and `development` converge at every release — see the Releasing section.
 - **Delete merged branches.** The repo has "Automatically delete head branches" enabled, so merging a PR on GitHub removes the branch (keep the "Delete branch" box checked). For a local/CLI merge, delete it yourself right after: `git branch -d <branch>` and `git push origin --delete <branch>`. Never leave merged branches lingering.
 
 ## Versioning (`vX.Y.Z`)
 
-Odometer scheme — each field rolls 0–9 and carries:
+Odometer scheme — **Z (patch)** rolls 0–9, **Y (minor)** rolls 0–99, and they carry:
 
-- **Z (patch)** — bump on **every commit to `development`**: `just bump patch`. It's the running odometer counter within a dev cycle **and** the version a hotfix release ships as-is.
-- **Y (minor)** — bump when **merging `development → main`** for a feature release; this resets Z to 0: `just bump minor`. A minor release is `X.Y.0`.
-- **X (major)** — bump **manually** for a milestone, or automatically by carry when the odometer rolls over (`0.9.9 + patch → 1.0.0`): `just bump major`.
+- **Z (patch)** — bump on **every commit to `development`**: `just bump patch`. It's the running odometer counter within a dev cycle **and** the version a hotfix release ships as-is. Rolls 0–9, carrying into Y.
+- **Y (minor)** — bump when **merging `development → main`** for a feature release; this resets Z to 0: `just bump minor`. A minor release is `X.Y.0`. Rolls 0–99, carrying into X (so `0.99.0 → 1.0.0`).
+- **X (major)** — bump **manually** for a milestone, or automatically by carry when the odometer rolls over (`0.99.0 + minor → 1.0.0`, `0.99.9 + patch → 1.0.0`): `just bump major`.
 
 `main` is **not** always `X.Y.0`: feature releases land as `X.Y.0`, but hotfix (patch) releases publish `development`'s current `X.Y.Z` unchanged (see `just release patch` below).
 
@@ -41,6 +46,11 @@ cargo build
 # Run all tests (unit + integration)
 just test
 
+# Lint (required before every push — matches CI)
+cargo fmt
+cargo fmt --check
+cargo clippy --all-targets
+
 # Equivalent manual:
 cargo test                         # unit tests in src/
 cargo test --test smoke            # binary smoke: help, dry-run, headless quit
@@ -58,40 +68,14 @@ cargo run -- --dry-run
 
 **Stack:** ratatui 0.30 + crossterm (TUI), portable-pty + vt100 (embedded SSH sessions via `tui-term`; upstream vt100 0.16, no vendored fork), nucleo (fuzzy search), rusqlite/bundled (SQLite), notify (file watcher), serde + toml + toml_edit (config). No async runtime — synchronous event loop with `crossterm::event::poll` at 50ms intervals. File watcher runs on a separate thread, sends events via `std::sync::mpsc::Receiver`.
 
-**Entry point:** `src/main.rs` (binary) → `src/lib.rs` (`run_app()`) → `App::new()` + event loop. `AppDeps` struct enables dependency injection for tests (resolver, metadata store, launcher store, terminal launcher).
+For current architecture details (tabs, schema, event loop, modules), see `openwiki/quickstart.md` and `openwiki/architecture/overview.md`.
 
-**Hybrid host sources (R1):** Hosts come from two origins — `launcher` (managed in-app, full CRUD) and `ssh_config` (imported from `~/.ssh/config`, read-only connection fields, metadata overlay). `reload_hosts()` merges launcher DB rows, imported ssh_config rows, and live resolver aliases without duplicating by name. Launcher rows win on name collision.
+<!-- OPENWIKI:START -->
 
-**Key modules:**
+## OpenWiki
 
-| Module | Purpose |
-|--------|---------|
-| `app.rs` | `App` state, `AppMode`, `SortMode`, `HostEntry` enum (Legacy/Managed), key/mouse dispatch, tab routing |
-| `store/` | `LauncherStore` — SQLite v10 with `hosts`, `host_groups`, `identities`, `tunnels`, `auth_events` tables. CRUD + migrations |
-| `metadata/` | Legacy `MetadataDb` (MVP). Still used by old code paths; `HostMetadata` struct |
-| `ssh/` | `SshHost`, `HostResolver` trait, `SshConfigResolver` (shells out to `ssh -G`), import/export, agent detection, probe |
-| `tunnel.rs` | `TunnelManager` — spawn/monitor/kill SSH -N -L/-R/-D child processes |
-| `tui/mod.rs` | Top-level render dispatcher — `active_tab` (0-3) controls body; overlays for forms, help, confirm dialogs |
-| `tui/screens/` | Tab renderers: `hosts.rs`, `tunnels.rs`, `keys.rs`, `audit.rs`, plus `host_form.rs`, `group_form.rs`, `help.rs` |
-| `tui/widgets/` | Reusable widgets: `search_bar`, `host_list`, `detail_panel`, `status_bar`, `middle_stack`, `footer`, `panel_box` |
-| `launcher/` | `TerminalLauncher` trait, `KittyLauncher`, `GhosttyLauncher`, `CustomLauncher` (template from config) |
-| `search.rs` | nucleo wrapper for fuzzy filtering |
-| `text_input.rs` | Vim-like modal text input widget |
-| `watcher.rs` | `notify`-based file watcher, sends `WatchEvent` over channel |
-| `config.rs` | `AppConfig` (TOML), XDG paths, env var overrides |
-| `import/` | SSH config and Termius backup importers |
+This repository uses OpenWiki for recurring code documentation. Start with `openwiki/quickstart.md`, then follow its links to architecture, workflows, domain concepts, operations, integrations, testing guidance, and source maps.
 
-**Tab system:** `active_tab` (0=hosts, 1=tunnels, 2=keys, 3=audit) controls both rendering and key dispatch. Number keys 1-4 switch tabs. Each tab has its own `handle_key_*()` method.
+The scheduled OpenWiki GitHub Actions workflow refreshes the repository wiki. Do not hand-edit generated OpenWiki pages unless explicitly asked; prefer updating source code/docs and letting OpenWiki regenerate.
 
-**App mode flow:** `AppMode` determines rendering and key handling. `Normal` dispatches by `active_tab`. `Search` activates on `/`. `HostForm` / `GroupForm` / `IdentityForm` / `TunnelForm` are popup forms. `ConfirmDelete` and `ConfirmDiscard` show confirmation popups. `Help` renders the help screen.
-
-**Test infrastructure:** `tests/support/` provides `FixtureResolver` (reads `tests/fixtures/ssh_config` and `tests/fixtures/ssh_g/*.txt` instead of real SSH) and `MockLauncher` (records launch calls). E2E tests use `TestBackend` and simulate key events. Smoke tests run headless via `SSHUB_AUTO_QUIT`.
-
-**Environment variables for CI/headless:**
-- `SSHUB_CONFIG_DIR` — override config directory
-- `SSHUB_DATA_DIR` — override data/SQLite directory
-- `SSHUB_SSH_CONFIG` — override SSH config path
-- `SSHUB_DRY_RUN` — `run()` exits immediately without TUI
-- `SSHUB_AUTO_QUIT` — `1` = quit after first draw, `q` = send quit key
-
-**SQLite schema (v10):** `hosts` (id, name, label, address, port, group_id FK, identity_id FK, os_icon, tags JSON, notes, proxy_jump, forward_agent, remote_command, sort_order, favorite, last_connected, source, ssh_config_hash, timestamps), `host_groups` (id, name, sort_order, parent_id FK — nested groups), `identities` (id, name, username, private_key, certificate, sort_order), `tunnels` (id, host_id FK, tunnel_type, local_port, remote_host, remote_port, label, auto_connect, timestamps), `auth_events` (id, host_id, host_name, event_type, status, detail, created_at). `SCHEMA_VERSION` is the source of truth in `src/store/migrate.rs`; migrations run inside one transaction. Legacy `metadata.db` is migrated to `launcher.db` on first open — best-effort, so a corrupt/locked legacy db is skipped rather than aborting startup.
+<!-- OPENWIKI:END -->

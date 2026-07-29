@@ -13,6 +13,7 @@ fn upsert_persists_across_reopen() {
         environment: Some("prod".into()),
         favorite: true,
         last_connected: Some(1_700_000_000),
+        ..Default::default()
     };
 
     {

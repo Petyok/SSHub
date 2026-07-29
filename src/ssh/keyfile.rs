@@ -172,7 +172,6 @@ pub fn generate_key_pair(
     Ok(())
 }
 
-
 /// Does `text` look like pasted private-key material (rather than a path)?
 pub fn looks_like_private_key(text: &str) -> bool {
     let t = text.trim_start();
@@ -296,6 +295,7 @@ mod tests {
 
     #[test]
     fn writes_key_with_owner_only_perms_and_dedups() {
+        let _home = crate::test_env::lock_home();
         let dir = tempfile::tempdir().unwrap();
         std::env::set_var("HOME", dir.path());
 
@@ -344,4 +344,3 @@ mod tests {
         assert_eq!(passphrase_matches(&key_path, "wrong"), Some(false));
     }
 }
-

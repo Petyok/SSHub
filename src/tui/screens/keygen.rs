@@ -78,10 +78,7 @@ pub fn render_keygen_form(form: &KeygenFormEdit, save_hint: &str) -> Paragraph<'
         };
 
         lines.push(ratatui::text::Line::from(vec![
-            ratatui::text::Span::styled(
-                format!("{prefix}{}: ", field.label()),
-                label_style,
-            ),
+            ratatui::text::Span::styled(format!("{prefix}{}: ", field.label()), label_style),
             ratatui::text::Span::styled(display, value_style),
         ]));
     }
