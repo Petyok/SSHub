@@ -6,6 +6,14 @@ All notable changes to SSHub are documented in this file.
 
 ### Added
 
+- **Stored passwords and passphrases are no longer write-only** (issue #60) - a
+  saved secret showed as `(set)` and nothing else: you could not tell which one
+  was stored, could not get it out, and editing meant retyping from scratch. The
+  field now opens prefilled from the credential store, masked, with `Ctrl+R` to
+  show and copy it and `Ctrl+Y` to copy without showing. Both say what they
+  copied and never the value, the reveal drops as soon as the field is left, and
+  the value stays out of every log, audit row and diagnostic. Both binds are
+  rebindable in the keybinding editor.
 - **Ad-hoc connect** - typing an unknown `[user@]host[:port]` into the fuzzy
   palette (`/`), IPv6 in brackets included, now offers a "connect without saving"
   row instead of reporting no matches, and Enter opens an embedded session
@@ -94,6 +102,11 @@ All notable changes to SSHub are documented in this file.
 
 ### Fixed
 
+- **A stored secret could not be removed** - clearing the password field meant
+  "leave whatever is stored alone", because an empty field was the only signal
+  the save path had. It now compares against what the store held when the form
+  opened, so an emptied field deletes the entry, and the field masks while typing
+  too, since it arrives carrying a real secret.
 - **Cycling session tabs from the dashboard threw you into the session** (issue
   #49) - `Ctrl+[` / `Ctrl+]` there moved the selection *and* immediately opened
   the session full screen, so a key named "previous / next session tab" left the

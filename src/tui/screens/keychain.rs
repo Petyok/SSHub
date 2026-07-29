@@ -57,8 +57,15 @@ pub fn render_identity_form(form: &IdentityFormEdit, save_hint: &str) -> Paragra
         };
         let display = match field {
             IdentityFormField::Password => {
-                if editing {
+                if editing && form.password_revealed {
                     text_input::with_cursor(&form.password, form.cursor)
+                } else if editing {
+                    text_input::with_cursor(
+                        &"\u{25CF}".repeat(form.password.chars().count()),
+                        form.cursor,
+                    )
+                } else if form.password_revealed {
+                    form.password.clone()
                 } else if !form.password.is_empty() {
                     "\u{25CF}".repeat(form.password.chars().count())
                 } else if form.has_password {

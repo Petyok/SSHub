@@ -101,6 +101,25 @@ impl App {
             return Ok(());
         };
         let field = form.field;
+
+        // Reveal / copy act on the passphrase field only, and are checked before
+        // the field editor so a Ctrl chord cannot be typed into the value.
+        if field == IdentityFormField::Password
+            && (self.is_action(KeyAction::RevealSecret, &key)
+                || self.is_action(KeyAction::CopySecret, &key))
+        {
+            let reveal = self.is_action(KeyAction::RevealSecret, &key);
+            let secret = form.password.clone();
+            if reveal {
+                if let Some(form) = self.identity_form.as_mut() {
+                    form.password_revealed = true;
+                }
+            }
+            self.identity_notice =
+                Some(crate::app::util::copy_secret_notice(&secret, "passphrase"));
+            return Ok(());
+        }
+
         match key.code {
             KeyCode::Esc => self.cancel_identity_form()?,
             _ if self.is_save_key(&key) => self.save_identity_form()?,
@@ -147,6 +166,8 @@ impl App {
 
     pub(crate) fn enter_identity_form(&mut self, existing: Option<&Identity>) -> Result<()> {
         let form = if let Some(identity) = existing {
+            let stored = self.stored_secret(&crate::credentials::identity_key(identity.id));
+
             IdentityFormEdit {
                 id: Some(identity.id),
                 name: identity.name.clone(),
@@ -161,8 +182,10 @@ impl App {
                     .as_ref()
                     .map(|p| p.to_string_lossy().into_owned())
                     .unwrap_or_default(),
-                password: String::new(),
+                password: stored.clone(),
+                password_original: stored,
                 has_password: identity.has_password,
+                password_revealed: false,
                 pasted_key: None,
                 field: IdentityFormField::Name,
                 cursor: text_input::char_len(&identity.name),
@@ -178,7 +201,9 @@ impl App {
                 private_key: String::new(),
                 certificate: String::new(),
                 password: String::new(),
+                password_original: String::new(),
                 has_password: false,
+                password_revealed: false,
                 pasted_key: None,
                 field: IdentityFormField::Name,
                 cursor: 0,
@@ -278,18 +303,19 @@ impl App {
             }
         }
 
-        let password_changed = !form.password.is_empty();
+        // See the host form: compared against what the store held on open, so an
+        // emptied field removes the passphrase instead of silently keeping it.
+        let password_changed = form.password != form.password_original;
         let new_has_password = if password_changed {
-            true
+            !form.password.is_empty()
         } else {
             form.has_password
         };
 
         if let Some(id) = form.id {
             if password_changed {
-                if let Err(e) = self
-                    .password_store
-                    .set(&crate::credentials::identity_key(id), &form.password)
+                if let Err(e) =
+                    self.put_secret(&crate::credentials::identity_key(id), &form.password)
                 {
                     self.identity_notice =
                         Some(format!("Saved, but storing the passphrase failed: {e}"));
@@ -339,6 +365,9 @@ impl App {
         let Some(form) = self.identity_form.as_mut() else {
             return;
         };
+        // Walking away re-masks: a form left open should not sit there with a
+        // plaintext secret on screen.
+        form.password_revealed = false;
         form.field = form.field.next();
         form.cursor = text_input::char_len(form.active_field());
     }
@@ -347,6 +376,9 @@ impl App {
         let Some(form) = self.identity_form.as_mut() else {
             return;
         };
+        // Walking away re-masks: a form left open should not sit there with a
+        // plaintext secret on screen.
+        form.password_revealed = false;
         form.field = form.field.prev();
         form.cursor = text_input::char_len(form.active_field());
     }
