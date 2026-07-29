@@ -16,6 +16,7 @@ mod local_shell;
 mod mouse;
 mod push_key;
 mod session;
+mod session_picker;
 mod session_spawn;
 mod sftp;
 mod tags;
@@ -133,7 +134,7 @@ pub struct App {
     /// Searchable SSH-server picker for the tunnel form.
     pub tunnel_host_picker: Option<TunnelHostPicker>,
     /// Searchable host picker for a new embedded session tab.
-    pub session_host_picker: Option<SessionHostPicker>,
+    pub session_picker: Option<SessionPicker>,
     pub push_key_host_picker: Option<PushKeyHostPicker>,
     pub push_key_identity_picker: Option<PushKeyIdentityPicker>,
     pub import_prompt: Option<ImportPromptEdit>,
@@ -636,7 +637,7 @@ impl App {
             group_form: None,
             group_field_picker: None,
             tunnel_host_picker: None,
-            session_host_picker: None,
+            session_picker: None,
             push_key_host_picker: None,
             push_key_identity_picker: None,
             import_prompt: None,

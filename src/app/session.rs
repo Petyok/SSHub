@@ -11,7 +11,11 @@ impl App {
             return Ok(());
         }
         if self.is_action(KeyAction::SessionNewTab, &key) {
-            self.open_session_host_picker();
+            self.open_new_session_picker();
+            return Ok(());
+        }
+        if self.is_action(KeyAction::SessionSwitcher, &key) {
+            self.open_session_picker(SessionPickerPurpose::SwitchSession);
             return Ok(());
         }
         if self.is_action(KeyAction::SessionCloseTab, &key) {
@@ -138,6 +142,11 @@ impl App {
             self.open_local_shell().ok();
             return true;
         }
+        // Alt+S from any dashboard tab: the strip is on the header everywhere.
+        if self.is_action(KeyAction::SessionSwitcher, key) {
+            self.open_session_picker(SessionPickerPurpose::SwitchSession);
+            return true;
+        }
         if self.is_action(KeyAction::SessionFocus, key) {
             self.focus_active_session();
             return true;
@@ -154,7 +163,7 @@ impl App {
             return true;
         }
         if self.is_action(KeyAction::SessionNewTab, key) {
-            self.open_session_host_picker();
+            self.open_new_session_picker();
             return true;
         }
         if self.is_action(KeyAction::SessionCloseTab, key) {
@@ -169,123 +178,6 @@ impl App {
             return true;
         }
         false
-    }
-
-    /// Hosts matching the session tab picker's query, as `(host index, label)`.
-    pub fn session_host_matches(&self) -> Vec<(usize, String)> {
-        let query = self
-            .session_host_picker
-            .as_ref()
-            .map(|p| p.query.clone())
-            .unwrap_or_default();
-        if query.is_empty() {
-            return self
-                .hosts
-                .iter()
-                .enumerate()
-                .map(|(idx, h)| (idx, format!("{}  {}", h.display_name(), h.name())))
-                .collect();
-        }
-        let mut search = crate::search::HostSearch::new();
-        let matched_indices = search.update_query(&self.hosts, &query);
-        matched_indices
-            .into_iter()
-            .map(|idx| {
-                (
-                    idx,
-                    format!(
-                        "{}  {}",
-                        self.hosts[idx].display_name(),
-                        self.hosts[idx].name()
-                    ),
-                )
-            })
-            .collect()
-    }
-
-    pub(crate) fn open_session_host_picker(&mut self) {
-        self.open_host_picker(PickerTarget::NewSession);
-    }
-
-    /// Open the shared host picker for whatever `target` wants a host.
-    pub(crate) fn open_host_picker(&mut self, target: PickerTarget) {
-        let return_mode = self.mode;
-        self.session_host_picker = Some(SessionHostPicker {
-            query: String::new(),
-            selected: 0,
-            return_mode,
-            target,
-        });
-        self.mode = AppMode::SessionHostPicker;
-    }
-
-    pub(crate) fn handle_key_session_host_picker(&mut self, key: KeyEvent) -> Result<()> {
-        let return_mode = self
-            .session_host_picker
-            .as_ref()
-            .map(|p| p.return_mode)
-            .unwrap_or(AppMode::Normal);
-        // Ctrl+Shift+T works inside the picker too: close it and open a local
-        // shell tab. Handled before the `key.code` match so it isn't swallowed
-        // by the generic Char query-input arm.
-        if self.is_action(KeyAction::LocalShell, &key) {
-            self.session_host_picker = None;
-            self.mode = return_mode;
-            self.open_local_shell()?;
-            return Ok(());
-        }
-        let len = self.session_host_matches().len();
-        match key.code {
-            KeyCode::Esc => {
-                self.session_host_picker = None;
-                self.mode = return_mode;
-            }
-            KeyCode::Down => {
-                if len > 0 {
-                    if let Some(p) = self.session_host_picker.as_mut() {
-                        p.selected = (p.selected + 1) % len;
-                    }
-                }
-            }
-            KeyCode::Up => {
-                if len > 0 {
-                    if let Some(p) = self.session_host_picker.as_mut() {
-                        p.selected = (p.selected + len - 1) % len;
-                    }
-                }
-            }
-            KeyCode::Enter => {
-                let matches = self.session_host_matches();
-                let picked = self
-                    .session_host_picker
-                    .as_ref()
-                    .and_then(|p| matches.get(p.selected).map(|(idx, _)| (*idx, p.target)));
-                self.session_host_picker = None;
-                self.mode = return_mode;
-                match picked {
-                    Some((idx, PickerTarget::NewSession)) => self.connect_host_at(idx)?,
-                    Some((idx, PickerTarget::SftpLeftPane)) => self.sftp_connect_left_pane(idx)?,
-                    None => {}
-                }
-            }
-            KeyCode::Backspace => {
-                if let Some(p) = self.session_host_picker.as_mut() {
-                    p.query.pop();
-                    p.selected = 0;
-                }
-            }
-            KeyCode::Char(c)
-                if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
-                    && !c.is_control() =>
-            {
-                if let Some(p) = self.session_host_picker.as_mut() {
-                    p.query.push(c);
-                    p.selected = 0;
-                }
-            }
-            _ => {}
-        }
-        Ok(())
     }
 
     /// Shared accessor for the visible session, if any.
@@ -377,14 +269,10 @@ impl App {
             // The tab that takes over sat to the right of the closed one, unless
             // the closed one was last — then we fall back to its left neighbour
             // and the slide has to travel the other way (#35).
-            if self.mode != AppMode::Normal && self.motion_enabled() {
-                self.session_tab_switch = Some(SessionTabSwitch {
-                    dir: if next == idx { 1 } else { -1 },
-                    // The closed tab is gone from the strip, so the highlight
-                    // travels from where its neighbour now sits.
-                    from: next,
-                    at: std::time::Instant::now(),
-                });
+            if self.mode != AppMode::Normal {
+                // The closed tab is gone from the strip, so the highlight
+                // travels from where its neighbour now sits.
+                self.arm_session_tab_switch(if next == idx { 1 } else { -1 }, next);
             }
             self.active_session = Some(next);
             let phase = &self.sessions[self.active_session.unwrap()].phase;
@@ -397,6 +285,26 @@ impl App {
                 }
             };
         }
+    }
+
+    /// Arm the tab slide that carries the tab at `from` off in direction `dir`
+    /// (`+1` = the new tab arrives from the right) while the strip's highlight
+    /// travels with it (#35).
+    ///
+    /// The single place that gates the transition on reduced motion and stamps
+    /// it, so every path that retargets `active_session` — cycling, closing a
+    /// tab, the switcher — animates identically. `dir` stays a parameter
+    /// because it is not always the sign of the index delta: the strip wraps,
+    /// so cycling past either end travels the way the key pointed.
+    pub(crate) fn arm_session_tab_switch(&mut self, dir: i8, from: usize) {
+        if !self.motion_enabled() {
+            return;
+        }
+        self.session_tab_switch = Some(SessionTabSwitch {
+            dir,
+            from,
+            at: std::time::Instant::now(),
+        });
     }
 
     /// Cycle tabs by `delta` (`+1` = next, `-1` = prev). Wraps at both ends.
@@ -413,14 +321,8 @@ impl App {
 
         // Carry the tab we're leaving off in the direction of travel (#35). The
         // strip wraps, so the direction comes from `delta`, not the indices.
-        // Armed before the dashboard returns, because the strip up there mirrors
-        // the same travel.
-        if next != cur && self.motion_enabled() {
-            self.session_tab_switch = Some(SessionTabSwitch {
-                dir: if delta > 0 { 1 } else { -1 },
-                from: cur as usize,
-                at: std::time::Instant::now(),
-            });
+        if next != cur {
+            self.arm_session_tab_switch(if delta > 0 { 1 } else { -1 }, cur as usize);
         }
 
         // On the dashboard only the strip moves; the mode below would drag the

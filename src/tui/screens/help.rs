@@ -350,6 +350,10 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "Focus session from dashboard",
     },
     HelpItem::Entry {
+        key: "Alt+S",
+        desc: "Switch to an open session (searchable)",
+    },
+    HelpItem::Entry {
         key: "PgUp/PgDn",
         desc: "Scroll session history",
     },

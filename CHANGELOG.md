@@ -6,6 +6,14 @@ All notable changes to SSHub are documented in this file.
 
 ### Added
 
+- **Session switcher** (`Alt+S`, issue #44, PR #46 by @michabbb) - a searchable
+  list of the sessions that are already open, so getting back to one no longer
+  means stepping through the tabs with `Ctrl+[` / `Ctrl+]`. Rows carry the host,
+  its user@address and a lifecycle dot (`up` / `new` / `dead`); Enter jumps to
+  the session, and Ctrl+Shift+T still opens a local shell from inside the
+  picker. The new-session, SFTP-left-pane and switch-session dropdowns are one
+  widget with three purposes now, filtered by the same fuzzy matcher as the
+  host list and the palette.
 - **Type-to-filter in Help and the keybinding editor** (issue #48) - those two
   overlays were the only long lists you could not search. Both now take a query
   the same way the tag filter does (`› query█`): case-insensitive substring over

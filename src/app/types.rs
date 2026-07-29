@@ -325,7 +325,7 @@ pub enum AppMode {
     /// Searchable dropdown for choosing the tunnel form's SSH server.
     TunnelHostPicker,
     /// Searchable dropdown for opening a new embedded SSH session tab.
-    SessionHostPicker,
+    SessionPicker,
     /// Searchable host list for `Shift+P` started from the Keys tab.
     PushKeyHostPicker,
     /// Identity list for `Shift+P` started from the hosts list.
@@ -1101,17 +1101,17 @@ pub struct TunnelHostPicker {
 }
 
 /// Searchable dropdown for opening a new SSH session tab
-/// ([`AppMode::SessionHostPicker`]).
+/// ([`AppMode::SessionPicker`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionHostPicker {
+pub struct SessionPicker {
     /// Case-insensitive substring filter typed by the user.
     pub query: String,
     /// Index into the current filtered match list.
     pub selected: usize,
     /// Mode to restore when the picker is dismissed without connecting.
     pub return_mode: AppMode,
-    /// What the picked host is for.
-    pub target: PickerTarget,
+    /// What this picker was opened for.
+    pub purpose: SessionPickerPurpose,
 }
 
 /// Host list for pushing a public key, opened from the Keys tab
@@ -1166,15 +1166,83 @@ pub enum RelayLeg {
     Pushing,
 }
 
-/// What a host picked in the shared host picker is wanted for.
+/// What a picker instance was opened for. Decides the title, the list source,
+/// the row layout, the initial selection, the empty-state text and what Enter
+/// does — everything else is shared.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum PickerTarget {
+pub enum SessionPickerPurpose {
     /// Open a new embedded SSH session tab (Ctrl+T).
     #[default]
     NewSession,
     /// Point the SFTP browser's left pane at a second server, so two remote
     /// hosts can be browsed side by side.
     SftpLeftPane,
+    /// Jump to a session that is already open (Alt+S).
+    SwitchSession,
+}
+
+impl SessionPickerPurpose {
+    /// Title rendered in the popup's border.
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::NewSession => " new session tab ",
+            Self::SftpLeftPane => " select left server ",
+            Self::SwitchSession => " switch session ",
+        }
+    }
+
+    /// Shown instead of the list when nothing matches the query.
+    pub fn empty_text(self) -> &'static str {
+        match self {
+            Self::NewSession | Self::SftpLeftPane => "(no matching hosts)",
+            Self::SwitchSession => "(no matching sessions)",
+        }
+    }
+
+    /// Whether the list indexes `App::sessions` rather than `App::hosts`.
+    pub fn over_sessions(self) -> bool {
+        matches!(self, Self::SwitchSession)
+    }
+}
+
+/// Lifecycle marker on a session row. Rendered as a coloured glyph *and* a
+/// word — colour alone would drop the information for anyone who cannot
+/// distinguish it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickerBadge {
+    Connecting,
+    Up,
+    Exited,
+}
+
+impl PickerBadge {
+    /// Kept to four characters so the fixed row prefix has a constant width.
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::Connecting => "conn",
+            Self::Up => "up",
+            Self::Exited => "exit",
+        }
+    }
+}
+
+/// One row of the picker's filtered list, purpose-agnostic. The renderer
+/// composes and clips it; it never has to know what the row means.
+#[derive(Debug, Clone)]
+pub struct PickerRow {
+    /// Index into `App::hosts` or `App::sessions`, per the picker's purpose.
+    pub index: usize,
+    /// Lifecycle marker. `None` on host rows.
+    pub badge: Option<PickerBadge>,
+    /// 1-based tab number. `None` on host rows. Two tabs can share a name *and*
+    /// an endpoint, so this is what actually tells them apart.
+    pub ordinal: Option<usize>,
+    /// Host or session name.
+    pub name: String,
+    /// `user@address:port`, empty when the address is unknown.
+    pub endpoint: String,
+    /// Marks the session the user is currently attached to.
+    pub current: bool,
 }
 
 /// Single-field path prompt for the Termius CSV import ([`AppMode::ImportPrompt`]).

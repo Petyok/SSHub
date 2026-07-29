@@ -2,8 +2,8 @@ use super::*;
 
 impl App {
     pub fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
-        if self.mode == AppMode::SessionHostPicker {
-            return self.handle_key_session_host_picker(key);
+        if self.mode == AppMode::SessionPicker {
+            return self.handle_key_session_picker(key);
         }
 
         // When an embedded session is active, Ctrl+C inside the terminal must
@@ -54,8 +54,9 @@ impl App {
             return Ok(());
         }
 
-        // Session-strip binds (resume / tabs / new tab / …) must work on every
-        // dashboard tab — the footer advertises them whenever sessions exist.
+        // Session-strip binds (resume / switch / tabs / new tab / …) must work on
+        // every dashboard tab — the footer advertises them whenever sessions
+        // exist. The switcher goes through the same door rather than its own.
         if self.mode == AppMode::Normal && self.handle_key_background_sessions(&key) {
             return Ok(());
         }
@@ -74,7 +75,7 @@ impl App {
             AppMode::GroupForm => self.handle_key_group_form(key),
             AppMode::GroupFieldPicker => self.handle_key_group_field_picker(key),
             AppMode::TunnelHostPicker => self.handle_key_tunnel_host_picker(key),
-            AppMode::SessionHostPicker => self.handle_key_session_host_picker(key),
+            AppMode::SessionPicker => self.handle_key_session_picker(key),
             AppMode::PushKeyHostPicker => self.handle_key_push_key_host_picker(key),
             AppMode::PushKeyIdentityPicker => self.handle_key_push_key_identity_picker(key),
             AppMode::FieldPicker => self.handle_key_field_picker(key),

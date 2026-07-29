@@ -17,6 +17,7 @@ mod local_shell;
 mod metadata_persist;
 mod quick_connect;
 mod search_and_navigate;
+mod session_switcher;
 mod ssh_config_sync;
 mod termius_import;
 mod tunnel_form;
