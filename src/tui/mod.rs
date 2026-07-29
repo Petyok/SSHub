@@ -1389,15 +1389,15 @@ fn format_utc_clock() -> String {
     format!("{} {:02}:{:02}:{:02} UTC", DAY_NAMES[weekday], h, m, s)
 }
 
-/// Scroll ceiling for the help body given the full terminal area — the same
-/// popup geometry as `render_help_popup` (60% height, min 16; borders + fixed
-/// footer row), kept in one place so the key handler can't scroll past what
-/// the renderer will show (the excess would be invisible "debt" that Up has
-/// to unwind before the view moves).
-pub(crate) fn help_max_scroll(area: Rect) -> u16 {
+/// Scroll ceiling for the help body given the full terminal area. Uses the same
+/// popup geometry as `render_help_popup` (60% height, min 16; borders, query row,
+/// and fixed footer), kept in one place so the key handler can't scroll past what
+/// the renderer will show (the excess would be invisible "debt" that Up has to
+/// unwind before the view moves).
+pub(crate) fn help_max_scroll(area: Rect, query: &str) -> u16 {
     let popup_height = (area.height * 60 / 100).max(16).min(area.height);
-    let body_height = popup_height.saturating_sub(3);
-    screens::help::help_line_count().saturating_sub(body_height)
+    let body_height = popup_height.saturating_sub(4);
+    screens::help::help_line_count(query).saturating_sub(body_height)
 }
 
 fn render_help_popup(frame: &mut Frame, app: &App) {
@@ -1419,16 +1419,24 @@ fn render_help_popup(frame: &mut Frame, app: &App) {
         popup_area,
     );
 
-    // Reserve the last inner row for a fixed footer; scroll only the body.
+    // Query + fixed footer; scroll only the body between them.
     let inner = popup_area.inner(Margin::new(1, 1));
-    let body = Rect::new(
+    let query_line = format!("› {}\u{2588}", app.help_query);
+    frame.buffer_mut().set_string(
         inner.x,
         inner.y,
-        inner.width,
-        inner.height.saturating_sub(1),
+        crate::tui::text::ellipsize(&query_line, inner.width as usize),
+        theme::bright(),
     );
-    let scroll = app.help_scroll.min(help_max_scroll(area));
-    frame.render_widget(screens::help::render_help(scroll), body);
+
+    let body = Rect::new(
+        inner.x,
+        inner.y.saturating_add(1),
+        inner.width,
+        inner.height.saturating_sub(2),
+    );
+    let scroll = app.help_scroll.min(help_max_scroll(area, &app.help_query));
+    frame.render_widget(screens::help::render_help(scroll, &app.help_query), body);
 
     let footer_y = inner.y + inner.height.saturating_sub(1);
     frame.buffer_mut().set_string(
@@ -2285,5 +2293,41 @@ mod tests {
             !buffer_contains(&buffer, "host-00"),
             "list did not scroll; top host still visible"
         );
+    }
+
+    #[test]
+    fn help_overlay_shows_query_and_filters() {
+        let mut app = test_app_with_hosts();
+        app.mode = AppMode::Help;
+        let full = render_to_buffer(&app, 100, 40);
+        assert!(buffer_contains(&full, "navigate"));
+        assert!(buffer_contains(&full, "type to filter"));
+        assert!(buffer_contains(&full, "›"));
+
+        app.help_query = "favorite".into();
+        let filtered = render_to_buffer(&app, 100, 40);
+        assert!(buffer_contains(&filtered, "Toggle favorite"));
+        assert!(buffer_contains(&filtered, "hosts (tab 1)"));
+        assert!(!buffer_contains(&filtered, "Cycle filter"));
+    }
+
+    #[test]
+    fn keybind_editor_shows_query_and_filters() {
+        let mut app = test_app_with_hosts();
+        app.keybind_editor = Some(crate::app::KeybindEditor {
+            selected: 0,
+            scroll: 0,
+            capturing: false,
+            append: false,
+            query: "quit".into(),
+        });
+        app.mode = AppMode::KeybindEditor;
+        let buffer = render_to_buffer(&app, 100, 40);
+        assert!(buffer_contains(&buffer, "› quit"));
+        assert!(buffer_contains(&buffer, "Quit"));
+        assert!(buffer_contains(&buffer, "type to filter"));
+        // Save form is ALL[0]; under "quit" it must not be the selected row content
+        // unless its binds somehow match — label "Save form" does not.
+        assert!(!buffer_contains(&buffer, "Save form"));
     }
 }

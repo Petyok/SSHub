@@ -13,9 +13,9 @@ pub(crate) fn keybind_editor_captures_and_persists() {
 
     // Row 0 is "Save". Enter starts capture; press F10 to bind it.
     app.handle_key(key(KeyCode::Enter)).unwrap();
-    assert!(app.keybind_editor.unwrap().capturing);
+    assert!(app.keybind_editor.as_ref().unwrap().capturing);
     app.handle_key(key(KeyCode::F(10))).unwrap();
-    assert!(!app.keybind_editor.unwrap().capturing);
+    assert!(!app.keybind_editor.as_ref().unwrap().capturing);
 
     assert_eq!(app.config.keybinds.save, vec!["F10".to_string()]);
     assert!(app.is_save_key(&key(KeyCode::F(10))));
@@ -25,9 +25,10 @@ pub(crate) fn keybind_editor_captures_and_persists() {
     let saved = crate::config::load_config().unwrap();
     assert_eq!(saved.keybinds.save, vec!["F10".to_string()]);
 
-    // 'a' adds another binding without replacing.
-    app.handle_key(key_char('a')).unwrap();
-    assert!(app.keybind_editor.unwrap().append);
+    // Ctrl+A adds another binding without replacing.
+    app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert!(app.keybind_editor.as_ref().unwrap().append);
     app.handle_key(key(KeyCode::F(12))).unwrap();
     assert_eq!(
         app.config.keybinds.save,
@@ -36,14 +37,167 @@ pub(crate) fn keybind_editor_captures_and_persists() {
     assert!(app.is_save_key(&key(KeyCode::F(10))));
     assert!(app.is_save_key(&key(KeyCode::F(12))));
 
-    // 'x' unbinds the action entirely.
-    app.handle_key(key_char('x')).unwrap();
+    // Ctrl+X unbinds the action entirely.
+    app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL))
+        .unwrap();
     assert!(app.config.keybinds.save.is_empty());
     assert!(!app.is_save_key(&key(KeyCode::F(10))));
 
-    // 'r' resets the selected action to defaults.
-    app.handle_key(key_char('r')).unwrap();
+    // Ctrl+R resets the selected action to defaults.
+    app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL))
+        .unwrap();
     assert_eq!(app.config.keybinds.save, vec!["F2", "Ctrl+S"]);
+
+    std::env::remove_var("SSHUB_CONFIG_DIR");
+}
+
+#[test]
+pub(crate) fn keybind_editor_filter_rebinds_filtered_action() {
+    let dir = tempfile::tempdir().unwrap();
+    std::env::set_var("SSHUB_CONFIG_DIR", dir.path());
+
+    let mut app = test_app(vec![("web", host("web"))]);
+    app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL))
+        .unwrap();
+
+    // Narrow to "Help" — filtered[0] is Help, not Save (ALL[0]).
+    for c in ['h', 'e', 'l', 'p'] {
+        app.handle_key(key_char(c)).unwrap();
+    }
+    let actions = app.filtered_keybind_actions();
+    assert!(
+        actions.contains(&KeyAction::Help),
+        "filter should include Help"
+    );
+    assert_eq!(app.keybind_editor.as_ref().unwrap().selected, 0);
+    assert_eq!(actions[0], KeyAction::Help);
+
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert!(app.keybind_editor.as_ref().unwrap().capturing);
+    // While capturing, a letter must bind — not extend the query.
+    app.handle_key(key_char('z')).unwrap();
+    assert!(!app.keybind_editor.as_ref().unwrap().capturing);
+    assert_eq!(app.keybind_editor.as_ref().unwrap().query, "help");
+    assert_eq!(app.config.keybinds.help, vec!["z".to_string()]);
+    // Save (ALL[0]) must be untouched.
+    assert_eq!(app.config.keybinds.save, vec!["F2", "Ctrl+S"]);
+
+    std::env::remove_var("SSHUB_CONFIG_DIR");
+}
+
+#[test]
+pub(crate) fn keybind_editor_esc_clears_query_then_closes() {
+    let mut app = test_app(vec![("web", host("web"))]);
+    app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL))
+        .unwrap();
+    app.handle_key(key_char('q')).unwrap();
+    assert_eq!(app.keybind_editor.as_ref().unwrap().query, "q");
+    assert_eq!(app.mode, AppMode::KeybindEditor);
+
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert!(app.keybind_editor.as_ref().unwrap().query.is_empty());
+    assert_eq!(app.mode, AppMode::KeybindEditor);
+
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert!(app.keybind_editor.is_none());
+    assert_eq!(app.mode, AppMode::Normal);
+}
+
+#[test]
+pub(crate) fn keybind_editor_selection_resets_on_keystroke() {
+    let mut app = test_app(vec![("web", host("web"))]);
+    app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL))
+        .unwrap();
+    app.handle_key(key(KeyCode::Down)).unwrap();
+    app.handle_key(key(KeyCode::Down)).unwrap();
+    assert_eq!(app.keybind_editor.as_ref().unwrap().selected, 2);
+
+    app.handle_key(key_char('m')).unwrap();
+    assert_eq!(app.keybind_editor.as_ref().unwrap().selected, 0);
+    let len = app.filtered_keybind_actions().len();
+    assert!(len < KeyAction::ALL.len());
+    assert!(len > 0);
+}
+
+#[test]
+pub(crate) fn help_filter_matches_and_esc_clears() {
+    let mut app = test_app(vec![("web", host("web"))]);
+    app.handle_key(key_char('?')).unwrap();
+    assert_eq!(app.mode, AppMode::Help);
+
+    for c in ['f', 'a', 'v'] {
+        app.handle_key(key_char(c)).unwrap();
+    }
+    assert_eq!(app.help_query, "fav");
+    assert_eq!(app.help_scroll, 0);
+    let n = crate::tui::screens::help::help_line_count(&app.help_query);
+    assert!(n < crate::tui::screens::help::help_line_count(""));
+    assert!(n > 0);
+
+    // j/k are query input, not scroll.
+    app.handle_key(key_char('j')).unwrap();
+    assert_eq!(app.help_query, "favj");
+    assert_eq!(app.help_scroll, 0);
+
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert!(app.help_query.is_empty());
+    assert_eq!(app.mode, AppMode::Help);
+
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert_eq!(app.mode, AppMode::Normal);
+}
+
+#[test]
+pub(crate) fn keybind_editor_letters_go_to_query_not_row_actions() {
+    let dir = tempfile::tempdir().unwrap();
+    std::env::set_var("SSHUB_CONFIG_DIR", dir.path());
+
+    let mut app = test_app(vec![("web", host("web"))]);
+    app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL))
+        .unwrap();
+    let save_before = app.config.keybinds.save.clone();
+
+    // Typing "agent" must filter, not append-capture / reset / unbind.
+    for c in ['a', 'g', 'e', 'n', 't'] {
+        app.handle_key(key_char(c)).unwrap();
+    }
+    assert_eq!(app.keybind_editor.as_ref().unwrap().query, "agent");
+    assert!(!app.keybind_editor.as_ref().unwrap().capturing);
+    assert_eq!(app.config.keybinds.save, save_before);
+
+    std::env::remove_var("SSHUB_CONFIG_DIR");
+}
+
+#[test]
+pub(crate) fn keybind_editor_clamps_selection_after_bind_leaves_filter() {
+    let dir = tempfile::tempdir().unwrap();
+    std::env::set_var("SSHUB_CONFIG_DIR", dir.path());
+
+    let mut app = test_app(vec![("web", host("web"))]);
+    app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL))
+        .unwrap();
+    for c in "ctrl+".chars() {
+        app.handle_key(key_char(c)).unwrap();
+    }
+    let len = app.filtered_keybind_actions().len();
+    assert!(len > 1, "expected multiple Ctrl+ binds");
+    if let Some(e) = app.keybind_editor.as_mut() {
+        e.selected = len - 1;
+    }
+    let target = app.filtered_keybind_actions()[len - 1];
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    app.handle_key(key(KeyCode::F(9))).unwrap();
+    // Row dropped out of the "ctrl+" filter; selection must stay in range.
+    let after = app.filtered_keybind_actions().len();
+    assert!(after < len);
+    assert!(!app
+        .config
+        .keybinds
+        .binds(target)
+        .iter()
+        .any(|b| b.to_lowercase().contains("ctrl+")));
+    let selected = app.keybind_editor.as_ref().unwrap().selected;
+    assert!(selected < after || after == 0);
 
     std::env::remove_var("SSHUB_CONFIG_DIR");
 }
