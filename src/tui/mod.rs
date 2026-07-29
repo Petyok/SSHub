@@ -1586,6 +1586,21 @@ mod tests {
         let buffer = render_to_buffer(&app, 120, 40);
         let (_, ly) = find_cell(&buffer, "loaded keys").expect("agent panel drawn");
 
+        // The grid shows whole card rows only: a card cut by the grid's bottom
+        // left a sliver above the rule that slid around while the rest sat still.
+        // So no card border may appear on the rule's row or the one above it.
+        let rule = ly - 1;
+        for row in [rule - 1, rule] {
+            let text: String = (buffer.area.x..buffer.area.right())
+                .map(|x| buffer[(x, row)].symbol())
+                .collect();
+            assert!(
+                !text.contains('\u{250c}') && !text.contains('\u{2510}'),
+                "row {row} carries a card's top border: {:?}",
+                text.trim_end()
+            );
+        }
+
         // Both text rows of the panel must be the panel's alone. Card borders and
         // key paths bleeding in is what this looked like on screen:
         //   agent socket  (not set)────────────┘  └──────────┘

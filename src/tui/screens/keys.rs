@@ -73,13 +73,18 @@ pub fn render_keys(frame: &mut Frame, area: Rect, app: &App) {
     // half-scrolled card row, and its own fields are shorter than the row, so the
     // card showed through as borders and key paths spliced onto the panel's text.
     //
-    // Rows, bottom up: notice, keys, socket, rule, blank.
-    const AGENT_STRIP: u16 = 5;
-    let (grid, agent_y) = if area.height > row_stride_const() + AGENT_STRIP {
-        (
-            Rect::new(area.x, area.y, area.width, area.height - AGENT_STRIP),
-            Some(area.y + area.height - 4),
-        )
+    // Rows, bottom up: notice, keys, socket, rule.
+    const AGENT_STRIP: u16 = 4;
+    let stride = row_stride_const();
+    let available = area.height.saturating_sub(AGENT_STRIP);
+    // Whole card rows only. A grid cut mid-card left a sliver of the next row
+    // above the rule, and since the grid scrolls by lines that sliver moved while
+    // everything around it stayed put. The rule then sits directly under the last
+    // row, so there is no drifting gap between them either.
+    let rows_that_fit = available / stride;
+    let (grid, agent_y) = if rows_that_fit > 0 {
+        let h = rows_that_fit * stride;
+        (Rect::new(area.x, area.y, area.width, h), Some(area.y + h))
     } else {
         (area, None)
     };
