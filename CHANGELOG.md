@@ -4,6 +4,8 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-30
+
 ### Added
 
 - **Session switcher** (`Alt+S`, PR #46 by @michabbb) - a searchable
