@@ -114,7 +114,7 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
             "press a key to bind  │  Esc: cancel"
         }
     } else {
-        "type to filter │ ↑↓ move │ Enter: set │ a: add │ r: reset │ x: unbind │ Esc: clear/close"
+        "type to filter │ ↑↓ move │ Enter: set │ Ctrl+A: add │ Ctrl+R: reset │ Ctrl+X: unbind │ Esc: clear/close"
     };
     buf.set_string(
         row_x,

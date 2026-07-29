@@ -1389,11 +1389,11 @@ fn format_utc_clock() -> String {
     format!("{} {:02}:{:02}:{:02} UTC", DAY_NAMES[weekday], h, m, s)
 }
 
-/// Scroll ceiling for the help body given the full terminal area — the same
-/// popup geometry as `render_help_popup` (60% height, min 16; borders + query
-/// + fixed footer row), kept in one place so the key handler can't scroll past what
-/// the renderer will show (the excess would be invisible "debt" that Up has
-/// to unwind before the view moves).
+/// Scroll ceiling for the help body given the full terminal area. Uses the same
+/// popup geometry as `render_help_popup` (60% height, min 16; borders, query row,
+/// and fixed footer), kept in one place so the key handler can't scroll past what
+/// the renderer will show (the excess would be invisible "debt" that Up has to
+/// unwind before the view moves).
 pub(crate) fn help_max_scroll(area: Rect, query: &str) -> u16 {
     let popup_height = (area.height * 60 / 100).max(16).min(area.height);
     let body_height = popup_height.saturating_sub(4);

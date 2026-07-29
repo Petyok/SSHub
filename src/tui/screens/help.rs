@@ -5,7 +5,7 @@ use crate::tui::theme;
 
 /// Fixed footer hint shown below the scrollable help body.
 pub const HELP_FOOTER: &str =
-    "type to filter  ·  \u{2191}\u{2193}/PgUp/PgDn scroll  ·  Esc clear/close";
+    "type to filter  ·  \u{2191}\u{2193}/PgUp/PgDn scroll  ·  Esc clear/close  ·  Enter close";
 
 /// One row of the help overlay before it is turned into a styled [`Line`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -492,7 +492,8 @@ pub fn filtered_help_items(query: &str) -> Vec<HelpItem> {
         match item {
             HelpItem::Section(title) => {
                 pending_section = Some(title);
-                pending_blank = false;
+                // Keep pending_blank so a kept section can still emit the
+                // separator that preceded it in HELP_ITEMS.
             }
             HelpItem::Blank => {
                 pending_blank = true;

@@ -11,9 +11,11 @@ All notable changes to SSHub are documented in this file.
   the same way the tag filter does (`› query█`): case-insensitive substring over
   the key spec / action label and the description / configured binds. Arrows and
   PageUp/PageDown move; `j`/`k` type into the query. Esc clears a non-empty query
-  and closes only when it is empty. Section headers with no surviving help rows
-  are dropped, and the keybinding editor rebinds the filtered row (not
-  `KeyAction::ALL[selected]`), including while a capture is in progress.
+  and closes only when it is empty (Help also still dismisses on Enter when the
+  query is idle). Section headers with no surviving help rows are dropped, and
+  the keybinding editor rebinds the filtered row (not `KeyAction::ALL[selected]`),
+  including while a capture is in progress. Row actions there moved to Ctrl+A /
+  Ctrl+R / Ctrl+X so every unmodified letter can be part of a search.
 - **Stored passwords and passphrases are no longer write-only** (issue #60) - a
   saved secret showed as `(set)` and nothing else: you could not tell which one
   was stored, could not get it out, and editing meant retyping from scratch. The

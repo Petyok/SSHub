@@ -683,6 +683,11 @@ impl App {
                     self.help_scroll = 0;
                 }
             }
+            // Enter is not printable query input; keep it as dismiss when idle.
+            KeyCode::Enter if self.help_query.is_empty() => {
+                self.mode = self.pre_help_mode.take().unwrap_or(AppMode::Normal);
+                self.help_scroll = 0;
+            }
             // Ceiling = what the renderer can actually show, not the line count:
             // scrolling past it would silently bank presses that Up must unwind.
             KeyCode::Up => {
@@ -901,6 +906,9 @@ impl App {
             if let Some(e) = self.keybind_editor.as_mut() {
                 e.capturing = false;
             }
+            // Rebinding can drop the row out of a bind-text filter; keep selection
+            // inside the new list so Enter/Ctrl+R/Ctrl+X don't go silent.
+            self.clamp_keybind_editor_selection();
             return Ok(());
         }
 
@@ -959,9 +967,8 @@ impl App {
                     }
                 }
             }
-            // Reserved row actions (same idea as Space in the tag filter): not
-            // query input, so type-to-filter still works for every other letter.
-            KeyCode::Char('a') if key.modifiers.is_empty() => {
+            // Ctrl+letter row actions so unmodified letters stay query input.
+            KeyCode::Char('a') if key.modifiers == KeyModifiers::CONTROL => {
                 let has_rows = !self.filtered_keybind_actions().is_empty();
                 if let Some(e) = self.keybind_editor.as_mut() {
                     if has_rows {
@@ -970,18 +977,20 @@ impl App {
                     }
                 }
             }
-            KeyCode::Char('r') if key.modifiers.is_empty() => {
+            KeyCode::Char('r') if key.modifiers == KeyModifiers::CONTROL => {
                 let actions = self.filtered_keybind_actions();
                 if let Some(&action) = actions.get(editor.selected) {
                     self.config.keybinds.reset_action(action);
                     self.save_config_quietly();
+                    self.clamp_keybind_editor_selection();
                 }
             }
-            KeyCode::Char('x') if key.modifiers.is_empty() => {
+            KeyCode::Char('x') if key.modifiers == KeyModifiers::CONTROL => {
                 let actions = self.filtered_keybind_actions();
                 if let Some(&action) = actions.get(editor.selected) {
                     self.config.keybinds.set(action, Vec::new());
                     self.save_config_quietly();
+                    self.clamp_keybind_editor_selection();
                 }
             }
             KeyCode::Backspace => {
@@ -1027,6 +1036,19 @@ impl App {
                         .any(|b| b.to_lowercase().contains(&query))
             })
             .collect()
+    }
+
+    fn clamp_keybind_editor_selection(&mut self) {
+        let len = self.filtered_keybind_actions().len();
+        if let Some(e) = self.keybind_editor.as_mut() {
+            if len == 0 {
+                e.selected = 0;
+                e.scroll = 0;
+            } else if e.selected >= len {
+                e.selected = len - 1;
+            }
+            Self::clamp_keybind_editor_scroll(e);
+        }
     }
 
     fn clamp_keybind_editor_scroll(editor: &mut KeybindEditor) {
