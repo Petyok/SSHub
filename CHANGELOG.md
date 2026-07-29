@@ -108,6 +108,10 @@ All notable changes to SSHub are documented in this file.
   on connect only. Re-entering from the dashboard now slides in the same way a
   fresh connect does; re-deriving the mode while already inside a session, when an
   overlay closes over it or a phase changes, does not replay it.
+- **The session slide arrived over a black screen** - it blanked the columns it
+  had not reached yet, so connecting flashed black before the host appeared. The
+  dashboard is now snapshotted the way the session view already was, and the
+  session slides over it.
 - **Narrow footers dropped the wrong hints** - the pairs that say how to get out
   (`? help`, `q quit`) or back into a running session (`resume`) were pushed into
   the middle of the row by whatever was appended after them, panel-zoom hints,

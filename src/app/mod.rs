@@ -229,6 +229,11 @@ pub struct App {
     /// Full-frame snapshot of the last session view, captured each frame while in
     /// a session so it can be slid off to the right when the host is left (#35).
     pub session_snapshot: std::cell::RefCell<Option<ratatui::buffer::Buffer>>,
+    /// Full-frame snapshot of the last dashboard, captured each frame while off
+    /// the session view, so the session sliding in has something to slide *over*
+    /// (#35). Without it the columns the slide has not reached yet are blank, and
+    /// entering a session flashes a black screen before the host arrives.
+    pub dashboard_snapshot: std::cell::RefCell<Option<ratatui::buffer::Buffer>>,
     /// When the host view started exiting (session -> dashboard), driving the
     /// slide-out of `session_snapshot`. `None` at rest / under reduced motion.
     pub session_exit_at: Option<std::time::Instant>,
@@ -655,6 +660,7 @@ impl App {
             popup_closing_at: None,
             session_enter_at: None,
             session_snapshot: std::cell::RefCell::new(None),
+            dashboard_snapshot: std::cell::RefCell::new(None),
             session_exit_at: None,
             session_tab_switch: None,
             header_stats_pos: std::cell::Cell::new([0.0; 4]),

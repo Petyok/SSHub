@@ -55,6 +55,9 @@ pub fn render(frame: &mut Frame, app: &App) {
             *app.session_snapshot.borrow_mut() = Some(frame.buffer_mut().clone());
         }
     } else {
+        // Mirror of the above: keep the dashboard fresh so entering a session has
+        // something to slide over instead of blank cells.
+        *app.dashboard_snapshot.borrow_mut() = Some(frame.buffer_mut().clone());
         render_session_exit(frame, app);
     }
     // Snapshot the popup shown this frame, slide a fresh one in from the top,
@@ -823,6 +826,10 @@ fn render_session_enter(frame: &mut Frame, app: &App) {
         return;
     }
     let src = frame.buffer_mut().clone();
+    // What the session is sliding over. Without it the columns it has not reached
+    // yet come out blank, so entering a session flashed a black screen with the
+    // host arriving over it.
+    let behind = app.dashboard_snapshot.borrow();
     let fb = frame.buffer_mut();
     for y in area.y..area.y + area.height {
         // Right-to-left so each destination reads a not-yet-overwritten source.
@@ -832,7 +839,10 @@ fn render_session_enter(frame: &mut Frame, app: &App) {
                     *d = s.clone();
                 }
             } else if let Some(d) = fb.cell_mut((x, y)) {
-                d.reset();
+                match behind.as_ref().and_then(|b| b.cell((x, y))) {
+                    Some(s) => *d = s.clone(),
+                    None => d.reset(),
+                }
             }
         }
     }
@@ -1560,6 +1570,30 @@ mod tests {
             app.session_tab_switch.is_some(),
             "the travel is armed from the dashboard too"
         );
+    }
+
+    #[test]
+    fn the_session_slides_in_over_the_dashboard_not_over_black() {
+        let mut app = app_with_two_sessions();
+        app.active_session = Some(0);
+        app.mode = AppMode::Normal;
+
+        // Rendering the dashboard is what captures the snapshot the slide needs.
+        let dashboard = render_to_buffer(&app, 120, 38);
+        let (hx, hy) = find_cell(&dashboard, "web-prod").expect("dashboard drawn");
+
+        // First frame of the slide: the session is still fully off to the right,
+        // so what shows is the dashboard. It used to be blank cells, which read as
+        // a black screen flashing before the host arrived.
+        app.mode = AppMode::Session;
+        app.session_enter_at = Some(std::time::Instant::now());
+        let sliding = render_to_buffer(&app, 120, 38);
+        assert_eq!(
+            sliding[(hx, hy)].symbol(),
+            dashboard[(hx, hy)].symbol(),
+            "the vacated columns show the dashboard"
+        );
+        assert_ne!(sliding[(hx, hy)].symbol(), " ", "and are not blanked");
     }
 
     #[test]
