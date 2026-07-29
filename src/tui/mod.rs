@@ -1549,6 +1549,83 @@ mod tests {
     }
 
     #[test]
+    fn agent_panel_does_not_overprint_a_half_scrolled_card_row() {
+        // The overlap is only reachable with a particular geometry, worked out
+        // from the real numbers rather than guessed: the body must have at least
+        // three spare rows after whole card rows (`height % 7 >= 3`), so the panel
+        // is drawn at all, and the scroll must lag its goal by two lines or more,
+        // so the cards sit lower than the whole-row arithmetic assumes.
+        //
+        // A 40-row terminal gives a 32-row body: four card rows of stride 7 fit
+        // with four spare. Twelve identities in two columns make six rows; the
+        // selection on row 4 puts the goal at line 14, and a scroll still at line
+        // 10 pushes the last drawn card down to rows 31..36 -- straight through the
+        // panel the old placement put at 34.
+        let mut app = test_app_with_hosts();
+        app.active_tab = 3;
+        app.config.appearance.identity_columns = 2;
+        app.identities = (0..12)
+            .map(|i| crate::store::Identity {
+                id: i as i64 + 1,
+                name: format!("key-{i}"),
+                username: Some("root".into()),
+                private_key: Some(format!("/home/me/.ssh/sshub_key_{i}").into()),
+                certificate: None,
+                has_password: true,
+            })
+            .collect();
+        app.identity_selected = 8;
+        app.agent_info = Some(crate::ssh::agent::AgentInfo {
+            socket_path: None,
+            keys: Vec::new(),
+            forwarding_hosts: 0,
+        });
+        app.keys_scroll_pos.set(10.0);
+        app.keys_scroll_at.set(Some(std::time::Instant::now()));
+
+        let buffer = render_to_buffer(&app, 120, 40);
+        let (_, ly) = find_cell(&buffer, "loaded keys").expect("agent panel drawn");
+
+        // The grid shows whole card rows only: a card cut by the grid's bottom
+        // left a sliver above the rule that slid around while the rest sat still.
+        // So no card border may appear on the rule's row or the one above it.
+        let rule = ly - 1;
+        for row in [rule - 1, rule] {
+            let text: String = (buffer.area.x..buffer.area.right())
+                .map(|x| buffer[(x, row)].symbol())
+                .collect();
+            assert!(
+                !text.contains('\u{250c}') && !text.contains('\u{2510}'),
+                "row {row} carries a card's top border: {:?}",
+                text.trim_end()
+            );
+        }
+
+        // Both text rows of the panel must be the panel's alone. Card borders and
+        // key paths bleeding in is what this looked like on screen:
+        //   agent socket  (not set)────────────┘  └──────────┘
+        for row in [ly - 1, ly] {
+            let text: String = (buffer.area.x..buffer.area.right())
+                .map(|x| buffer[(x, row)].symbol())
+                .collect();
+            for leftover in [
+                "\u{2518}",
+                "\u{2514}",
+                "\u{2502}",
+                ".ssh/sshub_key",
+                "passphrase",
+                "not loaded",
+            ] {
+                assert!(
+                    !text.contains(leftover),
+                    "row {row} carries {leftover:?} from a card: {:?}",
+                    text.trim_end()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn cycling_tabs_from_the_dashboard_stays_on_the_dashboard() {
         use crate::config::KeyAction;
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
