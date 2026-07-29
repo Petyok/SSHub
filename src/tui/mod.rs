@@ -1563,6 +1563,43 @@ mod tests {
     }
 
     #[test]
+    fn entering_a_session_from_the_dashboard_slides_it_in() {
+        use crate::config::KeyAction;
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut app = app_with_two_sessions();
+        app.active_session = Some(0);
+        app.mode = AppMode::Normal;
+        app.config
+            .keybinds
+            .set(KeyAction::SessionFocus, vec!["F7".into()]);
+
+        app.handle_key(KeyEvent::new(KeyCode::F(7), KeyModifiers::empty()))
+            .unwrap();
+        assert!(
+            crate::app::is_session_mode(app.mode),
+            "we are in the session"
+        );
+        assert!(
+            app.session_enter_at.is_some(),
+            "arriving animates, the same way leaving already did"
+        );
+
+        // Re-deriving the mode while already inside a session is not an entry
+        // and must not replay the slide.
+        app.session_enter_at = None;
+        app.focus_active_session();
+        assert!(app.session_enter_at.is_none());
+
+        // Reduced motion arms nothing.
+        app.mode = AppMode::Normal;
+        app.config.appearance.disable_animation = true;
+        app.focus_active_session();
+        assert!(crate::app::is_session_mode(app.mode));
+        assert!(app.session_enter_at.is_none());
+    }
+
+    #[test]
     fn dashboard_strip_highlight_travels_instead_of_teleporting() {
         let mut app = app_with_two_sessions();
 

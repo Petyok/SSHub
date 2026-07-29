@@ -103,6 +103,11 @@ All notable changes to SSHub are documented in this file.
   across instead of teleporting, reading the same travel state the full-screen
   tab bar uses. A chip collapsed into the `+N` overflow marker has nowhere to
   travel and is left alone, and reduced motion jumps straight to the target.
+- **Entering a running session did not animate** - leaving one slid the session
+  off to the right, but arriving cut straight to it, because the slide was armed
+  on connect only. Re-entering from the dashboard now slides in the same way a
+  fresh connect does; re-deriving the mode while already inside a session, when an
+  overlay closes over it or a phase changes, does not replay it.
 - **Narrow footers dropped the wrong hints** - the pairs that say how to get out
   (`? help`, `q quit`) or back into a running session (`resume`) were pushed into
   the middle of the row by whatever was appended after them, panel-zoom hints,

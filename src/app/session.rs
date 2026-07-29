@@ -307,11 +307,18 @@ impl App {
             }
             return;
         };
+        // Entering from outside, rather than being re-derived while already in a
+        // session (an overlay closing over it, a phase change), is what earns the
+        // slide: leaving already animates, so arriving looked like a cut.
+        let entering = !is_session_mode(self.mode);
         let phase = &self.sessions[idx].phase;
         self.mode = match phase {
             crate::session::SessionPhase::Connecting { .. } => AppMode::Connecting,
             _ => AppMode::Session,
         };
+        if entering && self.motion_enabled() {
+            self.session_enter_at = Some(std::time::Instant::now());
+        }
     }
 
     /// Tear down the active embedded session and return to the dashboard when
