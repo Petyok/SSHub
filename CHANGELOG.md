@@ -63,6 +63,13 @@ All notable changes to SSHub are documented in this file.
 
 ### Fixed
 
+- **Arrow keys did nothing in Midnight Commander** (PR #56) - full-screen
+  applications ask for application cursor mode (DECCKM) and then expect the
+  cursor keys as SS3 sequences, while SSHub always sent the normal CSI ones. The
+  embedded terminal tracked the mode all along; only the key encoder ignored it.
+  Holding Shift looked like a workaround because modified cursor keys take a
+  different encoding, but Midnight Commander read those as "select file". Arrows,
+  `Home` and `End` now follow whatever mode the remote application asked for.
 - **SFTP could not leave the login directory** - `Backspace` did nothing on a
   fresh remote pane, because the parent of the server-resolved `"."` is the
   empty path, which the server rejects as a listing target.
