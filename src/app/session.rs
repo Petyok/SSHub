@@ -117,7 +117,8 @@ impl App {
         if session.parser.scrollback() > 0 {
             session.parser.snap_to_bottom();
         }
-        if let Some(bytes) = crate::session::keys::encode(key) {
+        let application_cursor = session.parser.screen().application_cursor();
+        if let Some(bytes) = crate::session::keys::encode(key, application_cursor) {
             let _ = session.write(&bytes);
         }
         Ok(())
