@@ -54,6 +54,12 @@ impl App {
             return Ok(());
         }
 
+        // Session-strip binds (resume / tabs / new tab / …) must work on every
+        // dashboard tab — the footer advertises them whenever sessions exist.
+        if self.mode == AppMode::Normal && self.handle_key_background_sessions(&key) {
+            return Ok(());
+        }
+
         match self.mode {
             AppMode::KeybindEditor => self.handle_key_keybind_editor(key),
             AppMode::Settings => self.handle_key_settings(key),
@@ -97,10 +103,6 @@ impl App {
 
     pub(crate) fn handle_key_normal(&mut self, key: KeyEvent) -> Result<()> {
         self.host_notice = None;
-
-        if self.handle_key_background_sessions(&key) {
-            return Ok(());
-        }
 
         if self.try_tab_switch(&key)? {
             return Ok(());
