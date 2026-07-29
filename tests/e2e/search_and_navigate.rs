@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow;
-
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use sshub::app::{App, AppDeps, AppMode};
 use sshub::config::AppConfig;
@@ -10,10 +8,7 @@ use sshub::metadata::MetadataDb;
 use sshub::ssh::{HostResolver, SshHost};
 use sshub::store::LauncherStore;
 
-#[path = "../support/mod.rs"]
-mod support;
-
-use support::FixtureResolver;
+use crate::support::FixtureResolver;
 
 struct MapResolver {
     hosts: HashMap<String, SshHost>,

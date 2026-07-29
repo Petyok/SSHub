@@ -10,9 +10,11 @@ use vt100::{MouseProtocolEncoding, MouseProtocolMode};
 
 /// Encode a `KeyEvent` for transmission to the PTY child.
 ///
+/// `application_cursor` selects the SS3 cursor-key sequences requested by
+/// DECCKM; modified cursor keys continue to use xterm's CSI parameters.
 /// Returns `None` for events with no meaningful encoding (modifier-only
 /// presses, key releases on platforms that report them, etc.).
-pub fn encode(key: KeyEvent) -> Option<Vec<u8>> {
+pub fn encode(key: KeyEvent, application_cursor: bool) -> Option<Vec<u8>> {
     let mods = key.modifiers;
     let ctrl = mods.contains(KeyModifiers::CONTROL);
     let alt = mods.contains(KeyModifiers::ALT);
@@ -25,12 +27,12 @@ pub fn encode(key: KeyEvent) -> Option<Vec<u8>> {
         KeyCode::BackTab => Some(b"\x1b[Z".to_vec()),
         KeyCode::Backspace => Some(b"\x7f".to_vec()),
         KeyCode::Esc => Some(b"\x1b".to_vec()),
-        KeyCode::Up => Some(arrow_seq('A', mods)),
-        KeyCode::Down => Some(arrow_seq('B', mods)),
-        KeyCode::Right => Some(arrow_seq('C', mods)),
-        KeyCode::Left => Some(arrow_seq('D', mods)),
-        KeyCode::Home => Some(arrow_seq('H', mods)),
-        KeyCode::End => Some(arrow_seq('F', mods)),
+        KeyCode::Up => Some(arrow_seq('A', mods, application_cursor)),
+        KeyCode::Down => Some(arrow_seq('B', mods, application_cursor)),
+        KeyCode::Right => Some(arrow_seq('C', mods, application_cursor)),
+        KeyCode::Left => Some(arrow_seq('D', mods, application_cursor)),
+        KeyCode::Home => Some(arrow_seq('H', mods, application_cursor)),
+        KeyCode::End => Some(arrow_seq('F', mods, application_cursor)),
         KeyCode::PageUp => Some(b"\x1b[5~".to_vec()),
         KeyCode::PageDown => Some(b"\x1b[6~".to_vec()),
         KeyCode::Insert => Some(b"\x1b[2~".to_vec()),
@@ -72,9 +74,8 @@ fn encode_char(ch: char, ctrl: bool, alt: bool, _shift: bool) -> Vec<u8> {
     buf
 }
 
-/// Build a CSI sequence for arrow / Home / End keys with modifier-aware
-/// parameters (xterm-style: CSI 1;<n> X where n = 1+shift+2*alt+4*ctrl).
-fn arrow_seq(final_byte: char, mods: KeyModifiers) -> Vec<u8> {
+/// Build an SS3 or CSI sequence for arrow / Home / End keys.
+fn arrow_seq(final_byte: char, mods: KeyModifiers, application_cursor: bool) -> Vec<u8> {
     let mut param: u8 = 1;
     if mods.contains(KeyModifiers::SHIFT) {
         param += 1;
@@ -85,10 +86,12 @@ fn arrow_seq(final_byte: char, mods: KeyModifiers) -> Vec<u8> {
     if mods.contains(KeyModifiers::CONTROL) {
         param += 4;
     }
-    if param == 1 {
-        format!("\x1b[{final_byte}").into_bytes()
-    } else {
+    if param != 1 {
         format!("\x1b[1;{param}{final_byte}").into_bytes()
+    } else if application_cursor {
+        format!("\x1bO{final_byte}").into_bytes()
+    } else {
+        format!("\x1b[{final_byte}").into_bytes()
     }
 }
 
@@ -229,27 +232,31 @@ mod tests {
         KeyEvent::new(code, mods)
     }
 
+    fn encode_normal(key: KeyEvent) -> Option<Vec<u8>> {
+        super::encode(key, false)
+    }
+
     #[test]
     fn plain_chars_pass_through() {
-        assert_eq!(encode(k(KeyCode::Char('a'))).unwrap(), b"a");
-        assert_eq!(encode(k(KeyCode::Char('Z'))).unwrap(), b"Z");
-        assert_eq!(encode(k(KeyCode::Char('1'))).unwrap(), b"1");
+        assert_eq!(encode_normal(k(KeyCode::Char('a'))).unwrap(), b"a");
+        assert_eq!(encode_normal(k(KeyCode::Char('Z'))).unwrap(), b"Z");
+        assert_eq!(encode_normal(k(KeyCode::Char('1'))).unwrap(), b"1");
     }
 
     #[test]
     fn enter_is_cr() {
-        assert_eq!(encode(k(KeyCode::Enter)).unwrap(), b"\r");
+        assert_eq!(encode_normal(k(KeyCode::Enter)).unwrap(), b"\r");
     }
 
     #[test]
     fn backspace_is_del() {
-        assert_eq!(encode(k(KeyCode::Backspace)).unwrap(), b"\x7f");
+        assert_eq!(encode_normal(k(KeyCode::Backspace)).unwrap(), b"\x7f");
     }
 
     #[test]
     fn ctrl_c_is_etx() {
         assert_eq!(
-            encode(km(KeyCode::Char('c'), KeyModifiers::CONTROL)).unwrap(),
+            encode_normal(km(KeyCode::Char('c'), KeyModifiers::CONTROL)).unwrap(),
             b"\x03"
         );
     }
@@ -257,7 +264,7 @@ mod tests {
     #[test]
     fn ctrl_a_is_soh() {
         assert_eq!(
-            encode(km(KeyCode::Char('a'), KeyModifiers::CONTROL)).unwrap(),
+            encode_normal(km(KeyCode::Char('a'), KeyModifiers::CONTROL)).unwrap(),
             b"\x01"
         );
     }
@@ -265,7 +272,7 @@ mod tests {
     #[test]
     fn ctrl_d_is_eot() {
         assert_eq!(
-            encode(km(KeyCode::Char('d'), KeyModifiers::CONTROL)).unwrap(),
+            encode_normal(km(KeyCode::Char('d'), KeyModifiers::CONTROL)).unwrap(),
             b"\x04"
         );
     }
@@ -273,59 +280,91 @@ mod tests {
     #[test]
     fn alt_a_is_esc_a() {
         assert_eq!(
-            encode(km(KeyCode::Char('a'), KeyModifiers::ALT)).unwrap(),
+            encode_normal(km(KeyCode::Char('a'), KeyModifiers::ALT)).unwrap(),
             b"\x1ba"
         );
     }
 
     #[test]
     fn arrows_unmodified() {
-        assert_eq!(encode(k(KeyCode::Up)).unwrap(), b"\x1b[A");
-        assert_eq!(encode(k(KeyCode::Down)).unwrap(), b"\x1b[B");
-        assert_eq!(encode(k(KeyCode::Right)).unwrap(), b"\x1b[C");
-        assert_eq!(encode(k(KeyCode::Left)).unwrap(), b"\x1b[D");
+        assert_eq!(encode_normal(k(KeyCode::Up)).unwrap(), b"\x1b[A");
+        assert_eq!(encode_normal(k(KeyCode::Down)).unwrap(), b"\x1b[B");
+        assert_eq!(encode_normal(k(KeyCode::Right)).unwrap(), b"\x1b[C");
+        assert_eq!(encode_normal(k(KeyCode::Left)).unwrap(), b"\x1b[D");
+    }
+
+    #[test]
+    fn decckm_switches_cursor_keys_to_ss3() {
+        let mut parser = vt100::Parser::new(24, 80, 0);
+        parser.process(b"\x1b[?1h");
+        let application_cursor = parser.screen().application_cursor();
+
+        assert_eq!(
+            super::encode(k(KeyCode::Up), application_cursor).unwrap(),
+            b"\x1bOA"
+        );
+        assert_eq!(
+            super::encode(k(KeyCode::Down), application_cursor).unwrap(),
+            b"\x1bOB"
+        );
+        assert_eq!(
+            super::encode(k(KeyCode::Right), application_cursor).unwrap(),
+            b"\x1bOC"
+        );
+        assert_eq!(
+            super::encode(k(KeyCode::Left), application_cursor).unwrap(),
+            b"\x1bOD"
+        );
+        assert_eq!(
+            super::encode(k(KeyCode::Home), application_cursor).unwrap(),
+            b"\x1bOH"
+        );
+        assert_eq!(
+            super::encode(k(KeyCode::End), application_cursor).unwrap(),
+            b"\x1bOF"
+        );
     }
 
     #[test]
     fn ctrl_arrow_uses_modifier_param() {
         assert_eq!(
-            encode(km(KeyCode::Up, KeyModifiers::CONTROL)).unwrap(),
+            encode_normal(km(KeyCode::Up, KeyModifiers::CONTROL)).unwrap(),
             b"\x1b[1;5A"
         );
     }
 
     #[test]
     fn shift_tab_is_csi_z() {
-        assert_eq!(encode(k(KeyCode::BackTab)).unwrap(), b"\x1b[Z");
+        assert_eq!(encode_normal(k(KeyCode::BackTab)).unwrap(), b"\x1b[Z");
     }
 
     #[test]
     fn pgup_pgdn() {
-        assert_eq!(encode(k(KeyCode::PageUp)).unwrap(), b"\x1b[5~");
-        assert_eq!(encode(k(KeyCode::PageDown)).unwrap(), b"\x1b[6~");
+        assert_eq!(encode_normal(k(KeyCode::PageUp)).unwrap(), b"\x1b[5~");
+        assert_eq!(encode_normal(k(KeyCode::PageDown)).unwrap(), b"\x1b[6~");
     }
 
     #[test]
     fn f1_f4_use_ss3() {
-        assert_eq!(encode(k(KeyCode::F(1))).unwrap(), b"\x1bOP");
-        assert_eq!(encode(k(KeyCode::F(4))).unwrap(), b"\x1bOS");
+        assert_eq!(encode_normal(k(KeyCode::F(1))).unwrap(), b"\x1bOP");
+        assert_eq!(encode_normal(k(KeyCode::F(4))).unwrap(), b"\x1bOS");
     }
 
     #[test]
     fn f5_plus_use_csi_tilde() {
-        assert_eq!(encode(k(KeyCode::F(5))).unwrap(), b"\x1b[15~");
-        assert_eq!(encode(k(KeyCode::F(12))).unwrap(), b"\x1b[24~");
+        assert_eq!(encode_normal(k(KeyCode::F(5))).unwrap(), b"\x1b[15~");
+        assert_eq!(encode_normal(k(KeyCode::F(12))).unwrap(), b"\x1b[24~");
     }
 
     #[test]
     fn esc() {
-        assert_eq!(encode(k(KeyCode::Esc)).unwrap(), b"\x1b");
+        assert_eq!(encode_normal(k(KeyCode::Esc)).unwrap(), b"\x1b");
     }
 
     #[test]
     fn utf8_chars() {
         assert_eq!(
-            encode(k(KeyCode::Char('é'))).unwrap(),
+            encode_normal(k(KeyCode::Char('é'))).unwrap(),
             "é".as_bytes().to_vec()
         );
     }

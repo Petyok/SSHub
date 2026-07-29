@@ -281,6 +281,19 @@ pub(crate) fn optional_path(raw: &str) -> Option<std::path::PathBuf> {
 /// "put this base64-encoded payload on the system clipboard". The
 /// sequence is invisible to the alternate-screen UI — the host terminal
 /// consumes it before it ever lands on a buffer cell.
+/// Copy `secret` to the clipboard and return the notice to show. `what` names it
+/// ("password", "passphrase"); the value itself never reaches the message, the
+/// audit log or any diagnostic.
+pub(crate) fn copy_secret_notice(secret: &str, what: &str) -> String {
+    if secret.is_empty() {
+        return format!("no {what} stored for this entry");
+    }
+    match write_osc52(secret) {
+        Ok(()) => format!("{what} copied to the clipboard"),
+        Err(e) => format!("could not copy the {what}: {e}"),
+    }
+}
+
 pub(crate) fn write_osc52(text: &str) -> std::io::Result<()> {
     use std::io::Write;
     let encoded = base64_encode(text.as_bytes());

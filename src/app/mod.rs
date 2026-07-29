@@ -1,3 +1,4 @@
+pub(crate) mod adhoc;
 mod audit;
 mod broadcast;
 mod connect;
@@ -9,10 +10,14 @@ mod host_form;
 mod hostlist;
 mod identities;
 mod import;
+mod keygen;
 mod keys;
+mod local_shell;
 mod mouse;
+mod push_key;
 mod session;
 mod session_picker;
+mod session_spawn;
 mod sftp;
 mod tags;
 mod tunnels;
@@ -114,6 +119,8 @@ pub struct App {
     pub identity_selected: usize,
     pub identity_form: Option<IdentityFormEdit>,
     pub identity_notice: Option<String>,
+    pub keygen_form: Option<KeygenFormEdit>,
+    pub keygen_notice: Option<String>,
     pub groups: Vec<HostGroup>,
     /// The reserved Favorites group, kept out of `groups` so it never appears in
     /// the group-manage list or the host-form group selector. Used only when
@@ -128,6 +135,8 @@ pub struct App {
     pub tunnel_host_picker: Option<TunnelHostPicker>,
     /// Searchable host picker for a new embedded session tab.
     pub session_picker: Option<SessionPicker>,
+    pub push_key_host_picker: Option<PushKeyHostPicker>,
+    pub push_key_identity_picker: Option<PushKeyIdentityPicker>,
     pub import_prompt: Option<ImportPromptEdit>,
     /// Open SFTP mkdir / rename text prompt, if any.
     pub sftp_prompt: Option<SftpPromptEdit>,
@@ -178,6 +187,8 @@ pub struct App {
     pub pre_help_mode: Option<AppMode>,
     /// Vertical scroll offset (in lines) of the help overlay.
     pub help_scroll: u16,
+    /// Type-to-filter query for the help overlay.
+    pub help_query: String,
     /// Mode to return to if the quit dialog is cancelled.
     pub pre_quit_mode: Option<AppMode>,
     pub group_sections: Vec<HostGroupSection>,
@@ -221,6 +232,11 @@ pub struct App {
     /// Full-frame snapshot of the last session view, captured each frame while in
     /// a session so it can be slid off to the right when the host is left (#35).
     pub session_snapshot: std::cell::RefCell<Option<ratatui::buffer::Buffer>>,
+    /// Full-frame snapshot of the last dashboard, captured each frame while off
+    /// the session view, so the session sliding in has something to slide *over*
+    /// (#35). Without it the columns the slide has not reached yet are blank, and
+    /// entering a session flashes a black screen before the host arrives.
+    pub dashboard_snapshot: std::cell::RefCell<Option<ratatui::buffer::Buffer>>,
     /// When the host view started exiting (session -> dashboard), driving the
     /// slide-out of `session_snapshot`. `None` at rest / under reduced motion.
     pub session_exit_at: Option<std::time::Instant>,
@@ -303,6 +319,7 @@ pub struct App {
     pub palette_query: String,
     pub palette_selected: usize,
     pub palette_results: Vec<usize>,
+    pub palette_adhoc: Option<crate::app::adhoc::AdhocTarget>,
     pub ping_rx: Option<Receiver<crate::ping::PingResult>>,
     pub ping_data: std::collections::HashMap<String, Vec<u32>>,
     pub sftp: Option<crate::sftp::model::SftpState>,
@@ -398,6 +415,29 @@ impl App {
     /// render loop never bumps to 60fps for nothing.
     pub(crate) fn motion_enabled(&self) -> bool {
         !self.config.appearance.disable_animation
+    }
+
+    /// The secret stored under `key`, or empty when there is none and when the
+    /// store refuses to answer (a locked or absent keyring). Used to prefill a
+    /// form field, so editing a stored password starts from what is stored
+    /// instead of from nothing.
+    pub(crate) fn stored_secret(&self, key: &str) -> String {
+        self.password_store
+            .get(key)
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+    }
+
+    /// Store `secret` under `key`, or remove the entry when it is empty. A form
+    /// field cleared on purpose means "there is no secret any more", which used
+    /// to be indistinguishable from "left untouched".
+    pub(crate) fn put_secret(&self, key: &str, secret: &str) -> anyhow::Result<()> {
+        if secret.is_empty() {
+            self.password_store.delete(key)
+        } else {
+            self.password_store.set(key, secret)
+        }
     }
 
     /// Notice a tab change (from any of the many code paths that set
@@ -526,15 +566,31 @@ impl App {
         let metadata = Arc::new(MetadataDb::open(db_path)?);
         let store = Arc::new(LauncherStore::open(launcher_path)?);
         let resolver = Box::new(SshConfigResolver::default());
+        let keyring_available = crate::credentials::check_keyring_available();
+        let password_store: Box<dyn crate::credentials::PasswordStore> = if keyring_available {
+            let _ = crate::credentials::migrate_fallback_to_keyring();
+            Box::new(crate::credentials::OsKeyring)
+        } else {
+            Box::new(crate::credentials::FilePasswordStore::new(
+                data_dir.join("credentials.json"),
+            ))
+        };
+
         let mut app = Self::new_with_deps(
             config,
             AppDeps {
                 resolver,
                 metadata,
                 store,
-                password_store: Box::new(crate::credentials::OsKeyring),
+                password_store,
             },
         );
+
+        if !keyring_available {
+            app.host_notice =
+                Some("OS keyring unavailable. Using credentials.json fallback.".into());
+        }
+
         app.reload_hosts()?;
         app.refresh_auth_cache();
         app.start_ping_worker();
@@ -572,6 +628,8 @@ impl App {
             identity_selected: 0,
             identity_form: None,
             identity_notice: None,
+            keygen_form: None,
+            keygen_notice: None,
             groups: Vec::new(),
             favorites_group: None,
             host_form: None,
@@ -580,6 +638,8 @@ impl App {
             group_field_picker: None,
             tunnel_host_picker: None,
             session_picker: None,
+            push_key_host_picker: None,
+            push_key_identity_picker: None,
             import_prompt: None,
             sftp_prompt: None,
             ui_zoom: 0,
@@ -602,6 +662,7 @@ impl App {
             pending_delete: None,
             pre_help_mode: None,
             help_scroll: 0,
+            help_query: String::new(),
             pre_quit_mode: None,
             group_sections: Vec::new(),
             nav_rows: Vec::new(),
@@ -626,6 +687,7 @@ impl App {
             popup_closing_at: None,
             session_enter_at: None,
             session_snapshot: std::cell::RefCell::new(None),
+            dashboard_snapshot: std::cell::RefCell::new(None),
             session_exit_at: None,
             session_tab_switch: None,
             header_stats_pos: std::cell::Cell::new([0.0; 4]),
@@ -657,6 +719,7 @@ impl App {
             palette_query: String::new(),
             palette_selected: 0,
             palette_results: Vec::new(),
+            palette_adhoc: None,
             ping_rx: None,
             ping_data: std::collections::HashMap::new(),
             sftp: None,

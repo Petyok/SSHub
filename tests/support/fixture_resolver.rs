@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use sshub::ssh::{parse_host_aliases, parse_ssh_g_output, HostResolver, SshHost};
@@ -25,10 +25,6 @@ impl FixtureResolver {
             config_path: config_path.into(),
             ssh_g_dir: ssh_g_dir.into(),
         }
-    }
-
-    pub fn config_path(&self) -> &Path {
-        &self.config_path
     }
 }
 

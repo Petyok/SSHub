@@ -1,0 +1,38 @@
+{
+  "name": "sshub-tui",
+  "version": "@VERSION@",
+  "description": "SSHub: a TUI launcher for SSH hosts",
+  "keywords": [
+    "ssh",
+    "tui",
+    "terminal",
+    "launcher",
+    "sftp"
+  ],
+  "homepage": "https://github.com/Petyok/SSHub#readme",
+  "bugs": "https://github.com/Petyok/SSHub/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Petyok/SSHub.git"
+  },
+  "license": "AGPL-3.0-or-later",
+  "bin": {
+    "sshub": "bin/sshub.js"
+  },
+  "files": [
+    "bin",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "linux",
+    "darwin"
+  ],
+  "optionalDependencies": {
+    "sshub-darwin-arm64": "@VERSION@",
+    "sshub-darwin-x64": "@VERSION@",
+    "sshub-linux-x64": "@VERSION@"
+  }
+}

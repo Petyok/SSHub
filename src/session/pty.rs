@@ -279,9 +279,11 @@ impl PtyRuntime {
 
     /// Reap a child that has already exited. Prevents zombies while the
     /// [`Session`] object stays alive in a detached tab.
-    pub fn reap_child(&mut self) {
+    pub fn reap_child(&mut self) -> Option<portable_pty::ExitStatus> {
         if let Some(mut child) = self.child.take() {
-            let _ = child.wait();
+            child.wait().ok()
+        } else {
+            None
         }
     }
 

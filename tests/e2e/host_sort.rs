@@ -5,11 +5,8 @@ use sshub::app::{App, AppDeps, SortMode};
 use sshub::config::AppConfig;
 use sshub::metadata::MetadataDb;
 use sshub::ssh::{HostResolver, SshHost};
-use sshub::store::{HostSource, HostUpdate, LauncherStore, NewHost, NewHostGroup};
+use sshub::store::{HostUpdate, LauncherStore, NewHost, NewHostGroup};
 use tempfile::NamedTempFile;
-
-#[path = "../support/mod.rs"]
-mod support;
 
 struct EmptyResolver;
 

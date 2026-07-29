@@ -41,5 +41,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: rustfmt
         run: cargo fmt --check
+      # The tree is warning-free as of #50, so warnings fail the build from here
+      # on. Without this the last pile grew back: 42 warnings on the `e2e` target
+      # were enough noise that a real one in new code went unread.
       - name: clippy
-        run: cargo clippy --all-targets
+        run: cargo clippy --all-targets -- -D warnings

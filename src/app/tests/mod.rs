@@ -36,6 +36,67 @@ impl HostResolver for MockResolver {
     }
 }
 
+/// An in-memory credential store, so tests can exercise the paths that read a
+/// secret back: `NoopPasswordStore` answers `None` to everything, which makes
+/// prefilling and "was it changed" untestable.
+#[derive(Default)]
+pub(crate) struct MemoryPasswordStore {
+    entries: std::sync::Mutex<HashMap<String, String>>,
+}
+
+impl crate::credentials::PasswordStore for MemoryPasswordStore {
+    fn get(&self, key: &str) -> Result<Option<String>> {
+        Ok(self.entries.lock().unwrap().get(key).cloned())
+    }
+    fn set(&self, key: &str, password: &str) -> Result<()> {
+        self.entries
+            .lock()
+            .unwrap()
+            .insert(key.to_string(), password.to_string());
+        Ok(())
+    }
+    fn delete(&self, key: &str) -> Result<()> {
+        self.entries.lock().unwrap().remove(key);
+        Ok(())
+    }
+}
+
+/// `test_app`, but with a credential store that actually remembers. Returns the
+/// app and a handle to the same store so a test can look inside it.
+pub(crate) fn test_app_with_secrets(
+    hosts: Vec<(&str, SshHost)>,
+) -> (App, Arc<MemoryPasswordStore>) {
+    let secrets = Arc::new(MemoryPasswordStore::default());
+    let resolver = MockResolver::new(hosts);
+    let metadata: Arc<dyn MetadataStore> = Arc::new(MetadataDb::default());
+    let mut app = App::new_with_deps(
+        AppConfig::default(),
+        AppDeps {
+            resolver: Box::new(resolver),
+            metadata,
+            store: test_store(),
+            password_store: Box::new(SharedStore(secrets.clone())),
+        },
+    );
+    app.reload_hosts().unwrap();
+    (app, secrets)
+}
+
+/// Lets the test keep a handle on the store the app owns.
+struct SharedStore(Arc<MemoryPasswordStore>);
+
+impl crate::credentials::PasswordStore for SharedStore {
+    fn get(&self, key: &str) -> Result<Option<String>> {
+        self.0.get(key)
+    }
+    fn set(&self, key: &str, password: &str) -> Result<()> {
+        self.0.set(key, password)
+    }
+    fn delete(&self, key: &str) -> Result<()> {
+        self.0.delete(key)
+    }
+}
+
 pub(crate) fn test_app(hosts: Vec<(&str, SshHost)>) -> App {
     let resolver = MockResolver::new(hosts);
     let metadata: Arc<dyn MetadataStore> = Arc::new(MetadataDb::default());

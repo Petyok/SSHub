@@ -93,7 +93,9 @@ cargo clippy --all-targets
 
 All must pass. `cargo fmt --check` is what CI runs (not `fmt` alone — run both: `fmt` fixes, `--check` confirms). CI runs the same test suite plus `cargo fmt --check` and `cargo clippy --all-targets` on Ubuntu and macOS.
 
-**Tests:** use fixtures and `tempfile`; never touch real `~/.ssh`, keyring, or user config dirs. See [CONTRIBUTING.md § Tests](../CONTRIBUTING.md#tests).
+**CI must be green before Done.** After opening or updating a PR, watch GitHub Actions (`gh pr checks <n>` / `gh run watch`). Local green is not enough; do not mark the work complete until every required check (Ubuntu tests, macOS tests, lint) passes. If CI fails, fix and re-push before claiming Done.
+
+**Tests:** use fixtures and `tempfile`; never touch real `~/.ssh`, keyring, or user config dirs. See [CONTRIBUTING.md § Tests](../CONTRIBUTING.md#tests). Tests that mutate process-wide env vars (especially `SSHUB_CONFIG_DIR`) must serialize via [`config::with_test_config_dir`](../src/config.rs) so parallel `cargo test` cannot race.
 
 ## 5. Security review (when applicable)
 

@@ -48,6 +48,8 @@ impl App {
                 text_input::char_len(&managed.address)
             };
 
+            let stored_password = self.stored_secret(&crate::credentials::host_key(managed.id));
+
             HostFormEdit {
                 id: Some(managed.id),
                 address: managed.address.clone(),
@@ -69,8 +71,10 @@ impl App {
                 transport: managed.transport,
                 session_logging: managed.session_logging,
                 os_icon_index: os_icon_index_from_option(&managed.os_icon),
-                password: String::new(),
+                password: stored_password.clone(),
+                password_original: stored_password,
                 has_password: managed.has_password,
+                password_revealed: false,
                 field: start_field,
                 cursor: start_cursor,
                 metadata_only,
@@ -115,7 +119,9 @@ impl App {
                 session_logging: crate::session_log::SessionLoggingOverride::Inherit,
                 os_icon_index: 0,
                 password: String::new(),
+                password_original: String::new(),
                 has_password: false,
+                password_revealed: false,
                 field: HostFormField::Address,
                 cursor: 0,
                 metadata_only: false,
@@ -165,9 +171,12 @@ impl App {
         let identity_id = self.identities.get(form.identity_index).map(|i| i.id);
         let tags = parse_tags(&form.tags);
         let label = optional_field(&form.label);
-        let host_pw_changed = !form.password.is_empty();
+        // Compared against what the store held when the form opened: prefilling
+        // the field made "not empty" useless as a signal, and an emptied field
+        // now means the secret should go.
+        let host_pw_changed = form.password != form.password_original;
         let new_has_password = if host_pw_changed {
-            true
+            !form.password.is_empty()
         } else {
             form.has_password
         };
@@ -180,10 +189,7 @@ impl App {
             };
             let saved_name = form.name.clone();
             if host_pw_changed {
-                if let Err(e) = self
-                    .password_store
-                    .set(&crate::credentials::host_key(id), &form.password)
-                {
+                if let Err(e) = self.put_secret(&crate::credentials::host_key(id), &form.password) {
                     self.host_notice = Some(format!("Saved, but storing the password failed: {e}"));
                 }
             }
@@ -247,10 +253,7 @@ impl App {
         let saved_name = name.to_string();
         if let Some(id) = form.id {
             if host_pw_changed {
-                if let Err(e) = self
-                    .password_store
-                    .set(&crate::credentials::host_key(id), &form.password)
-                {
+                if let Err(e) = self.put_secret(&crate::credentials::host_key(id), &form.password) {
                     self.host_notice = Some(format!("Saved, but storing the password failed: {e}"));
                 }
             }
@@ -298,9 +301,8 @@ impl App {
             })?;
             self.store.set_host_groups(created.id, &group_ids)?;
             if host_pw_changed {
-                if let Err(e) = self
-                    .password_store
-                    .set(&crate::credentials::host_key(created.id), &form.password)
+                if let Err(e) =
+                    self.put_secret(&crate::credentials::host_key(created.id), &form.password)
                 {
                     self.host_notice = Some(format!("Saved, but storing the password failed: {e}"));
                 }
@@ -318,6 +320,24 @@ impl App {
             return Ok(());
         };
         let field = form.field;
+
+        // Reveal / copy act on the password field only, and are checked before the
+        // field editor so a Ctrl chord cannot be typed into the value.
+        if field == HostFormField::Password
+            && (self.is_action(KeyAction::RevealSecret, &key)
+                || self.is_action(KeyAction::CopySecret, &key))
+        {
+            let reveal = self.is_action(KeyAction::RevealSecret, &key);
+            let secret = form.password.clone();
+            if reveal {
+                if let Some(form) = self.host_form.as_mut() {
+                    form.password_revealed = true;
+                }
+            }
+            self.host_notice = Some(crate::app::util::copy_secret_notice(&secret, "password"));
+            return Ok(());
+        }
+
         match key.code {
             KeyCode::Esc => self.cancel_host_form()?,
             _ if self.is_save_key(&key) => self.save_host_form()?,
@@ -372,6 +392,8 @@ impl App {
         let Some(form) = self.host_form.as_mut() else {
             return;
         };
+        // Walking away re-masks (see the identity form).
+        form.password_revealed = false;
         form.field = form.field.next();
         form.cursor = text_input::char_len(form.active_field());
     }
@@ -380,6 +402,8 @@ impl App {
         let Some(form) = self.host_form.as_mut() else {
             return;
         };
+        // Walking away re-masks (see the identity form).
+        form.password_revealed = false;
         form.field = form.field.prev();
         form.cursor = text_input::char_len(form.active_field());
     }

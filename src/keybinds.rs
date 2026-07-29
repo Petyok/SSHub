@@ -50,6 +50,11 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
+    (@fn generate_key $($key:literal),* $(,)?) => {
+        fn default_kb_generate_key() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
     (@fn edit $($key:literal),* $(,)?) => {
         fn default_kb_edit() -> Vec<String> {
             vec![$($key.to_string()),*]
@@ -155,6 +160,16 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
+    (@fn reveal_secret $($key:literal),* $(,)?) => {
+        fn default_kb_reveal_secret() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
+    (@fn copy_secret $($key:literal),* $(,)?) => {
+        fn default_kb_copy_secret() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
     (@fn ui_zoom_in $($key:literal),* $(,)?) => {
         fn default_kb_ui_zoom_in() -> Vec<String> {
             vec![$($key.to_string()),*]
@@ -240,6 +255,11 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
+    (@fn push_key $($key:literal),* $(,)?) => {
+        fn default_kb_push_key() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
     (@fn tunnel_kill $($key:literal),* $(,)?) => {
         fn default_kb_tunnel_kill() -> Vec<String> {
             vec![$($key.to_string()),*]
@@ -287,6 +307,11 @@ macro_rules! kb_defaults {
     };
     (@fn session_open_sftp $($key:literal),* $(,)?) => {
         fn default_kb_session_open_sftp() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
+    (@fn local_shell $($key:literal),* $(,)?) => {
+        fn default_kb_local_shell() -> Vec<String> {
             vec![$($key.to_string()),*]
         }
     };
@@ -381,6 +406,7 @@ kb_defaults! {
     force_quit => ["Ctrl+C"],
     connect => ["Enter"],
     add_host => ["a"],
+    generate_key => ["g"],
     edit => ["e"],
     delete => ["d"],
     duplicate => ["Shift+D"],
@@ -402,6 +428,8 @@ kb_defaults! {
     clear_ssh_log => ["c"],
     sort_cycle => ["s"],
     yank_log => ["y"],
+    reveal_secret => ["Ctrl+R"],
+    copy_secret => ["Ctrl+Y"],
     ui_zoom_in => ["+", "="],
     ui_zoom_out => ["-", "_"],
     export_ssh => ["Shift+E"],
@@ -419,6 +447,7 @@ kb_defaults! {
     identity_columns_dec => ["["],
     add_to_agent => ["p"],
     remove_from_agent => ["r"],
+    push_key => ["Shift+P"],
     tunnel_kill => ["x"],
     toggle_tunnel => ["Enter"],
     audit_filter => ["f"],
@@ -429,6 +458,7 @@ kb_defaults! {
     session_tab_next => ["Ctrl+]", "Ctrl+PageDown"],
     session_detach => ["Ctrl+D"],
     session_open_sftp => ["Ctrl+Shift+F"],
+    local_shell => ["Ctrl+Shift+T"],
     session_focus => ["Ctrl+Shift+S"],
     session_switcher => ["Alt+S"],
     session_scroll_up => ["PageUp"],
@@ -457,6 +487,7 @@ pub enum KeyAction {
     ForceQuit,
     Connect,
     AddHost,
+    GenerateKey,
     Edit,
     Delete,
     Duplicate,
@@ -478,6 +509,8 @@ pub enum KeyAction {
     ClearSshLog,
     SortCycle,
     YankLog,
+    RevealSecret,
+    CopySecret,
     UiZoomIn,
     UiZoomOut,
     ExportSsh,
@@ -495,6 +528,7 @@ pub enum KeyAction {
     IdentityColumnsDec,
     AddToAgent,
     RemoveFromAgent,
+    PushKey,
     TunnelKill,
     ToggleTunnel,
     AuditFilter,
@@ -505,6 +539,7 @@ pub enum KeyAction {
     SessionTabNext,
     SessionDetach,
     SessionOpenSftp,
+    LocalShell,
     SessionFocus,
     SessionSwitcher,
     SessionScrollUp,
@@ -525,7 +560,7 @@ pub enum KeyAction {
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 72] = [
+    pub const ALL: [KeyAction; 77] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -534,6 +569,7 @@ impl KeyAction {
         KeyAction::ForceQuit,
         KeyAction::Connect,
         KeyAction::AddHost,
+        KeyAction::GenerateKey,
         KeyAction::Edit,
         KeyAction::Delete,
         KeyAction::Duplicate,
@@ -555,6 +591,8 @@ impl KeyAction {
         KeyAction::ClearSshLog,
         KeyAction::SortCycle,
         KeyAction::YankLog,
+        KeyAction::RevealSecret,
+        KeyAction::CopySecret,
         KeyAction::UiZoomIn,
         KeyAction::UiZoomOut,
         KeyAction::ExportSsh,
@@ -572,6 +610,7 @@ impl KeyAction {
         KeyAction::IdentityColumnsDec,
         KeyAction::AddToAgent,
         KeyAction::RemoveFromAgent,
+        KeyAction::PushKey,
         KeyAction::TunnelKill,
         KeyAction::ToggleTunnel,
         KeyAction::AuditFilter,
@@ -582,6 +621,7 @@ impl KeyAction {
         KeyAction::SessionTabNext,
         KeyAction::SessionDetach,
         KeyAction::SessionOpenSftp,
+        KeyAction::LocalShell,
         KeyAction::SessionFocus,
         KeyAction::SessionSwitcher,
         KeyAction::SessionScrollUp,
@@ -610,6 +650,7 @@ impl KeyAction {
             KeyAction::ForceQuit => "Force quit",
             KeyAction::Connect => "Connect / confirm",
             KeyAction::AddHost => "Add host / identity / tunnel",
+            KeyAction::GenerateKey => "Generate SSH key",
             KeyAction::Edit => "Edit",
             KeyAction::Delete => "Delete",
             KeyAction::Duplicate => "Duplicate host",
@@ -631,6 +672,8 @@ impl KeyAction {
             KeyAction::ClearSshLog => "Clear SSH log",
             KeyAction::SortCycle => "Cycle sort mode",
             KeyAction::YankLog => "Copy SSH log",
+            KeyAction::RevealSecret => "Show and copy the stored secret",
+            KeyAction::CopySecret => "Copy the stored secret",
             KeyAction::UiZoomIn => "Zoom in (hosts column)",
             KeyAction::UiZoomOut => "Zoom out (hosts column)",
             KeyAction::ExportSsh => "Export to ssh config",
@@ -648,6 +691,7 @@ impl KeyAction {
             KeyAction::IdentityColumnsDec => "Fewer identity columns",
             KeyAction::AddToAgent => "Add key to agent",
             KeyAction::RemoveFromAgent => "Remove key from agent",
+            KeyAction::PushKey => "Push public key to host",
             KeyAction::TunnelKill => "Kill tunnel",
             KeyAction::ToggleTunnel => "Start / stop tunnel",
             KeyAction::AuditFilter => "Cycle audit filter",
@@ -658,6 +702,7 @@ impl KeyAction {
             KeyAction::SessionTabNext => "Next session tab",
             KeyAction::SessionDetach => "Detach to dashboard",
             KeyAction::SessionOpenSftp => "Open SFTP for this host",
+            KeyAction::LocalShell => "Open local shell tab",
             KeyAction::SessionFocus => "Focus session tab",
             KeyAction::SessionSwitcher => "Switch to an open session",
             KeyAction::SessionScrollUp => "Scroll session up",
@@ -697,6 +742,8 @@ pub struct KeybindsConfig {
     pub connect: Vec<String>,
     #[serde(default = "default_kb_add_host")]
     pub add_host: Vec<String>,
+    #[serde(default = "default_kb_generate_key")]
+    pub generate_key: Vec<String>,
     #[serde(default = "default_kb_edit")]
     pub edit: Vec<String>,
     #[serde(default = "default_kb_delete")]
@@ -739,6 +786,10 @@ pub struct KeybindsConfig {
     pub sort_cycle: Vec<String>,
     #[serde(default = "default_kb_yank_log")]
     pub yank_log: Vec<String>,
+    #[serde(default = "default_kb_reveal_secret")]
+    pub reveal_secret: Vec<String>,
+    #[serde(default = "default_kb_copy_secret")]
+    pub copy_secret: Vec<String>,
     #[serde(default = "default_kb_ui_zoom_in")]
     pub ui_zoom_in: Vec<String>,
     #[serde(default = "default_kb_ui_zoom_out")]
@@ -773,6 +824,8 @@ pub struct KeybindsConfig {
     pub add_to_agent: Vec<String>,
     #[serde(default = "default_kb_remove_from_agent")]
     pub remove_from_agent: Vec<String>,
+    #[serde(default = "default_kb_push_key")]
+    pub push_key: Vec<String>,
     #[serde(default = "default_kb_tunnel_kill")]
     pub tunnel_kill: Vec<String>,
     #[serde(default = "default_kb_toggle_tunnel")]
@@ -793,6 +846,8 @@ pub struct KeybindsConfig {
     pub session_detach: Vec<String>,
     #[serde(default = "default_kb_session_open_sftp")]
     pub session_open_sftp: Vec<String>,
+    #[serde(default = "default_kb_local_shell")]
+    pub local_shell: Vec<String>,
     #[serde(default = "default_kb_session_focus")]
     pub session_focus: Vec<String>,
     #[serde(default = "default_kb_session_switcher")]
@@ -838,6 +893,7 @@ impl Default for KeybindsConfig {
             force_quit: default_kb_force_quit(),
             connect: default_kb_connect(),
             add_host: default_kb_add_host(),
+            generate_key: default_kb_generate_key(),
             edit: default_kb_edit(),
             delete: default_kb_delete(),
             duplicate: default_kb_duplicate(),
@@ -859,6 +915,8 @@ impl Default for KeybindsConfig {
             clear_ssh_log: default_kb_clear_ssh_log(),
             sort_cycle: default_kb_sort_cycle(),
             yank_log: default_kb_yank_log(),
+            reveal_secret: default_kb_reveal_secret(),
+            copy_secret: default_kb_copy_secret(),
             ui_zoom_in: default_kb_ui_zoom_in(),
             ui_zoom_out: default_kb_ui_zoom_out(),
             export_ssh: default_kb_export_ssh(),
@@ -876,6 +934,7 @@ impl Default for KeybindsConfig {
             identity_columns_dec: default_kb_identity_columns_dec(),
             add_to_agent: default_kb_add_to_agent(),
             remove_from_agent: default_kb_remove_from_agent(),
+            push_key: default_kb_push_key(),
             tunnel_kill: default_kb_tunnel_kill(),
             toggle_tunnel: default_kb_toggle_tunnel(),
             audit_filter: default_kb_audit_filter(),
@@ -886,6 +945,7 @@ impl Default for KeybindsConfig {
             session_tab_next: default_kb_session_tab_next(),
             session_detach: default_kb_session_detach(),
             session_open_sftp: default_kb_session_open_sftp(),
+            local_shell: default_kb_local_shell(),
             session_focus: default_kb_session_focus(),
             session_switcher: default_kb_session_switcher(),
             session_scroll_up: default_kb_session_scroll_up(),
@@ -917,6 +977,7 @@ impl KeybindsConfig {
             KeyAction::ForceQuit => default_kb_force_quit(),
             KeyAction::Connect => default_kb_connect(),
             KeyAction::AddHost => default_kb_add_host(),
+            KeyAction::GenerateKey => default_kb_generate_key(),
             KeyAction::Edit => default_kb_edit(),
             KeyAction::Delete => default_kb_delete(),
             KeyAction::Duplicate => default_kb_duplicate(),
@@ -938,6 +999,8 @@ impl KeybindsConfig {
             KeyAction::ClearSshLog => default_kb_clear_ssh_log(),
             KeyAction::SortCycle => default_kb_sort_cycle(),
             KeyAction::YankLog => default_kb_yank_log(),
+            KeyAction::RevealSecret => default_kb_reveal_secret(),
+            KeyAction::CopySecret => default_kb_copy_secret(),
             KeyAction::UiZoomIn => default_kb_ui_zoom_in(),
             KeyAction::UiZoomOut => default_kb_ui_zoom_out(),
             KeyAction::ExportSsh => default_kb_export_ssh(),
@@ -955,6 +1018,7 @@ impl KeybindsConfig {
             KeyAction::IdentityColumnsDec => default_kb_identity_columns_dec(),
             KeyAction::AddToAgent => default_kb_add_to_agent(),
             KeyAction::RemoveFromAgent => default_kb_remove_from_agent(),
+            KeyAction::PushKey => default_kb_push_key(),
             KeyAction::TunnelKill => default_kb_tunnel_kill(),
             KeyAction::ToggleTunnel => default_kb_toggle_tunnel(),
             KeyAction::AuditFilter => default_kb_audit_filter(),
@@ -965,6 +1029,7 @@ impl KeybindsConfig {
             KeyAction::SessionTabNext => default_kb_session_tab_next(),
             KeyAction::SessionDetach => default_kb_session_detach(),
             KeyAction::SessionOpenSftp => default_kb_session_open_sftp(),
+            KeyAction::LocalShell => default_kb_local_shell(),
             KeyAction::SessionFocus => default_kb_session_focus(),
             KeyAction::SessionSwitcher => default_kb_session_switcher(),
             KeyAction::SessionScrollUp => default_kb_session_scroll_up(),
@@ -1024,10 +1089,34 @@ impl KeybindsConfig {
         parts.join("  ")
     }
 
+    /// Hint shown while a password / passphrase field is focused. A stored secret
+    /// is masked, so without this the two binds that show or copy it are
+    /// invisible exactly where they are needed. Empty when both are unbound.
+    pub fn secret_field_hints(&self) -> String {
+        let mut parts = Vec::new();
+        let reveal = self.primary(KeyAction::RevealSecret);
+        if !reveal.is_empty() {
+            parts.push(format!("{reveal}: show + copy"));
+        }
+        let copy = self.primary(KeyAction::CopySecret);
+        if !copy.is_empty() {
+            parts.push(format!("{copy}: copy"));
+        }
+        parts.join(" \u{2502} ")
+    }
+
     /// Dashboard footer hints when embedded sessions are running in background.
+    ///
+    /// `resume` comes first on purpose: with a session running somewhere behind
+    /// the dashboard, getting back into it is the thing you want, and it used to
+    /// be discoverable only through the help overlay.
+    ///
+    /// `detach` is intentionally absent: you are already on the dashboard, so
+    /// there is nothing to detach from. It still appears in the in-session
+    /// header via [`Self::session_header_hints`].
     pub fn session_footer_hints(&self) -> Vec<(String, &'static str)> {
         let mut out = Vec::new();
-        push_footer_hint(&mut out, self.primary(KeyAction::SessionDetach), "detach");
+        push_footer_hint(&mut out, self.primary(KeyAction::SessionFocus), "resume");
         push_footer_hint(&mut out, self.primary(KeyAction::SessionOpenSftp), "sftp");
         if let Some(keys) = tab_switch_keys(self) {
             out.push((keys, "tabs"));
@@ -1047,6 +1136,7 @@ impl KeybindsConfig {
             KeyAction::ForceQuit => &self.force_quit,
             KeyAction::Connect => &self.connect,
             KeyAction::AddHost => &self.add_host,
+            KeyAction::GenerateKey => &self.generate_key,
             KeyAction::Edit => &self.edit,
             KeyAction::Delete => &self.delete,
             KeyAction::Duplicate => &self.duplicate,
@@ -1068,6 +1158,8 @@ impl KeybindsConfig {
             KeyAction::ClearSshLog => &self.clear_ssh_log,
             KeyAction::SortCycle => &self.sort_cycle,
             KeyAction::YankLog => &self.yank_log,
+            KeyAction::RevealSecret => &self.reveal_secret,
+            KeyAction::CopySecret => &self.copy_secret,
             KeyAction::UiZoomIn => &self.ui_zoom_in,
             KeyAction::UiZoomOut => &self.ui_zoom_out,
             KeyAction::ExportSsh => &self.export_ssh,
@@ -1085,6 +1177,7 @@ impl KeybindsConfig {
             KeyAction::IdentityColumnsDec => &self.identity_columns_dec,
             KeyAction::AddToAgent => &self.add_to_agent,
             KeyAction::RemoveFromAgent => &self.remove_from_agent,
+            KeyAction::PushKey => &self.push_key,
             KeyAction::TunnelKill => &self.tunnel_kill,
             KeyAction::ToggleTunnel => &self.toggle_tunnel,
             KeyAction::AuditFilter => &self.audit_filter,
@@ -1095,6 +1188,7 @@ impl KeybindsConfig {
             KeyAction::SessionTabNext => &self.session_tab_next,
             KeyAction::SessionDetach => &self.session_detach,
             KeyAction::SessionOpenSftp => &self.session_open_sftp,
+            KeyAction::LocalShell => &self.local_shell,
             KeyAction::SessionFocus => &self.session_focus,
             KeyAction::SessionSwitcher => &self.session_switcher,
             KeyAction::SessionScrollUp => &self.session_scroll_up,
@@ -1124,6 +1218,7 @@ impl KeybindsConfig {
             KeyAction::ForceQuit => self.force_quit = binds,
             KeyAction::Connect => self.connect = binds,
             KeyAction::AddHost => self.add_host = binds,
+            KeyAction::GenerateKey => self.generate_key = binds,
             KeyAction::Edit => self.edit = binds,
             KeyAction::Delete => self.delete = binds,
             KeyAction::Duplicate => self.duplicate = binds,
@@ -1145,6 +1240,8 @@ impl KeybindsConfig {
             KeyAction::ClearSshLog => self.clear_ssh_log = binds,
             KeyAction::SortCycle => self.sort_cycle = binds,
             KeyAction::YankLog => self.yank_log = binds,
+            KeyAction::RevealSecret => self.reveal_secret = binds,
+            KeyAction::CopySecret => self.copy_secret = binds,
             KeyAction::UiZoomIn => self.ui_zoom_in = binds,
             KeyAction::UiZoomOut => self.ui_zoom_out = binds,
             KeyAction::ExportSsh => self.export_ssh = binds,
@@ -1162,6 +1259,7 @@ impl KeybindsConfig {
             KeyAction::IdentityColumnsDec => self.identity_columns_dec = binds,
             KeyAction::AddToAgent => self.add_to_agent = binds,
             KeyAction::RemoveFromAgent => self.remove_from_agent = binds,
+            KeyAction::PushKey => self.push_key = binds,
             KeyAction::TunnelKill => self.tunnel_kill = binds,
             KeyAction::ToggleTunnel => self.toggle_tunnel = binds,
             KeyAction::AuditFilter => self.audit_filter = binds,
@@ -1172,6 +1270,7 @@ impl KeybindsConfig {
             KeyAction::SessionTabNext => self.session_tab_next = binds,
             KeyAction::SessionDetach => self.session_detach = binds,
             KeyAction::SessionOpenSftp => self.session_open_sftp = binds,
+            KeyAction::LocalShell => self.local_shell = binds,
             KeyAction::SessionFocus => self.session_focus = binds,
             KeyAction::SessionSwitcher => self.session_switcher = binds,
             KeyAction::SessionScrollUp => self.session_scroll_up = binds,
@@ -1295,6 +1394,29 @@ mod tests {
         let before = kb.tab_tunnels.clone();
         assert!(!kb.migrate_pre_sftp_tabs(raw));
         assert_eq!(kb.tab_tunnels, before);
+    }
+
+    #[test]
+    fn session_footer_hints_lead_with_resume() {
+        let kb = KeybindsConfig::default();
+        let hints = kb.session_footer_hints();
+        assert_eq!(
+            hints.first().map(|(keys, label)| (keys.as_str(), *label)),
+            Some((kb.primary(KeyAction::SessionFocus), "resume")),
+            "getting back into a running session comes first"
+        );
+
+        // The key is read from the config rather than hardcoded, so a rebind
+        // shows up here and the old default stops being advertised.
+        let mut custom = KeybindsConfig::default();
+        custom.set(KeyAction::SessionFocus, vec!["F8".into()]);
+        let hints = custom.session_footer_hints();
+        assert_eq!(hints[0], ("F8".to_string(), "resume"));
+        assert!(!hints.iter().any(|(keys, _)| keys == "Ctrl+Shift+S"));
+        assert!(
+            !hints.iter().any(|(_, label)| *label == "detach"),
+            "detach belongs on the in-session header, not the dashboard footer"
+        );
     }
 
     #[test]

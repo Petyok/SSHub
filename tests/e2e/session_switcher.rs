@@ -75,6 +75,8 @@ fn alt_s_filters_open_sessions_and_renders_the_selected_tab() {
                     display_name: name.into(),
                     meta: SessionMeta::default(),
                     pending_secret: None,
+                    key_push_identity: None,
+                    host_name: name.into(),
                 },
                 40,
                 120,

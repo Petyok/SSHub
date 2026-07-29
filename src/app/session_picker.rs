@@ -11,20 +11,33 @@ impl App {
         let query = self
             .session_picker
             .as_ref()
-            .map(|p| p.query.to_lowercase())
+            .map(|p| p.query.clone())
             .unwrap_or_default();
-        self.hosts
-            .iter()
-            .enumerate()
-            .filter(|(_, h)| {
-                if query.is_empty() {
-                    return true;
-                }
-                let name = h.name().to_lowercase();
-                let label = h.display_name().to_lowercase();
-                name.contains(&query) || label.contains(&query)
+        // Fuzzy, through the same matcher the host list and palette use: this
+        // picker had a plain substring filter and development moved it to
+        // `HostSearch`, so keep that rather than regressing it in the move.
+        if query.is_empty() {
+            return self
+                .hosts
+                .iter()
+                .enumerate()
+                .map(|(idx, h)| (idx, format!("{}  {}", h.display_name(), h.name())))
+                .collect();
+        }
+        let mut search = crate::search::HostSearch::new();
+        search
+            .update_query(&self.hosts, &query)
+            .into_iter()
+            .map(|idx| {
+                (
+                    idx,
+                    format!(
+                        "{}  {}",
+                        self.hosts[idx].display_name(),
+                        self.hosts[idx].name()
+                    ),
+                )
             })
-            .map(|(idx, h)| (idx, format!("{}  {}", h.display_name(), h.name())))
             .collect()
     }
 
@@ -140,6 +153,15 @@ impl App {
     }
 
     pub(crate) fn handle_key_session_picker(&mut self, key: KeyEvent) -> Result<()> {
+        // Ctrl+Shift+T works inside the picker too: close it and open a local
+        // shell tab. Checked before the `key.code` match so the generic Char arm
+        // cannot swallow it. Carried over from development, which added it to the
+        // handler this module replaced.
+        if self.is_action(KeyAction::LocalShell, &key) {
+            self.close_session_picker();
+            self.open_local_shell()?;
+            return Ok(());
+        }
         let rows = self.session_picker_rows();
         let len = rows.len();
         match key.code {

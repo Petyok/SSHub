@@ -47,6 +47,10 @@ pub struct SessionConfig {
     /// the first send. `None` when no credential is stored or the host
     /// uses an unlocked key / agent.
     pub pending_secret: Option<PendingSecret>,
+    /// Identity being pushed if this is a key push session.
+    pub key_push_identity: Option<String>,
+    /// Actual unique host name (entry.name()).
+    pub host_name: String,
 }
 
 /// Auto-respond once to either a password or passphrase prompt.
@@ -189,6 +193,9 @@ pub struct Session {
     /// edge), `-1` toward older (top edge); `col` is the pointer column to keep
     /// extending the selection to. `None` = not autoscrolling.
     drag_autoscroll: Option<(i32, u16)>,
+    pub key_push_identity: Option<String>,
+    pub logged_exit: bool,
+    pub host_name: String,
     /// Optional PTY transcript writer; closed on session end.
     log: Option<crate::session_log::SessionLogWriter>,
 }
@@ -211,13 +218,20 @@ impl Session {
         let mut env: Vec<(String, String)> = Vec::new();
         let mut askpass = None;
         let mut use_askpass = false;
+        let mut askpass_error = None;
         if let Some(secret) = config.pending_secret.as_ref() {
-            if let Ok(exe) = std::env::current_exe() {
-                if let Ok(guard) = askpass::AskpassSecret::new(secret.value()) {
-                    env = guard.env(&exe);
-                    askpass = Some(guard);
-                    use_askpass = true;
+            match askpass::helper_exe() {
+                Ok(exe) => {
+                    if let Ok(guard) = askpass::AskpassSecret::new(secret.value()) {
+                        env = guard.env(&exe);
+                        askpass = Some(guard);
+                        use_askpass = true;
+                    }
                 }
+                // Worth saying out loud: without it every stored secret goes
+                // undelivered and ssh reports a rejected key, which sends the
+                // user looking at the server instead of at the upgrade.
+                Err(e) => askpass_error = Some(e.to_string()),
             }
         }
 
@@ -231,6 +245,8 @@ impl Session {
         if config.pending_secret.is_some() {
             diagnostics.push(if use_askpass {
                 "auth: credential handed to ssh via SSH_ASKPASS".to_string()
+            } else if let Some(e) = askpass_error.as_deref() {
+                format!("auth: SSH_ASKPASS unavailable ({e}) — will type at the prompt")
             } else {
                 "auth: SSH_ASKPASS unavailable — will type at the prompt".to_string()
             });
@@ -257,6 +273,9 @@ impl Session {
             selection: None,
             copy_notice: None,
             drag_autoscroll: None,
+            key_push_identity: config.key_push_identity.clone(),
+            logged_exit: false,
+            host_name: config.host_name.clone(),
             config,
             log,
         })
@@ -466,12 +485,22 @@ impl Session {
                     }
                     had_stderr = true;
                 }
-                PtyEvent::Exited(status) => {
-                    self.runtime.reap_child();
+                PtyEvent::Exited(reason) => {
+                    let exit_status = self.runtime.reap_child();
+                    let status_str = match exit_status {
+                        Some(es) => {
+                            if es.success() {
+                                "success".to_string()
+                            } else {
+                                format!("code {}", es.exit_code())
+                            }
+                        }
+                        None => reason,
+                    };
                     self.diagnostics
-                        .push(format!("session: ssh exited ({status})"));
+                        .push(format!("session: ssh exited ({status_str})"));
                     self.phase = SessionPhase::Exited {
-                        status,
+                        status: status_str,
                         at: Instant::now(),
                     };
                 }
@@ -1054,6 +1083,8 @@ mod prompt_tests {
             display_name: "mosh-host".into(),
             meta: SessionMeta::default(),
             pending_secret: None,
+            key_push_identity: None,
+            host_name: "mosh-host".into(),
         };
         let mut s = Session::spawn(config, 10, 40, None).unwrap();
         s.config.argv = vec!["mosh".into(), "host".into()];
@@ -1078,6 +1109,8 @@ mod prompt_tests {
             display_name: "t".into(),
             meta: SessionMeta::default(),
             pending_secret: None,
+            key_push_identity: None,
+            host_name: "t".into(),
         };
         let mut s = Session::spawn(config, 24, 80, None).unwrap();
 
@@ -1127,6 +1160,8 @@ mod prompt_tests {
             display_name: "x".into(),
             meta: SessionMeta::default(),
             pending_secret: None,
+            key_push_identity: None,
+            host_name: "x".into(),
         };
         let mut s = Session::spawn(config, 24, 80, None).unwrap();
         // The child's exit and its stderr bytes race between the two reader

@@ -25,6 +25,12 @@ impl App {
             return Ok(());
         }
 
+        // Open a local shell tab from any dashboard tab.
+        if matches!(self.mode, AppMode::Normal) && self.is_action(KeyAction::LocalShell, &key) {
+            self.open_local_shell()?;
+            return Ok(());
+        }
+
         // Keybinding editor from the dashboard navigation screens.
         if self.mode == AppMode::Normal && self.is_action(KeyAction::KeybindEditor, &key) {
             self.keybind_editor = Some(KeybindEditor {
@@ -32,6 +38,7 @@ impl App {
                 scroll: 0,
                 capturing: false,
                 append: false,
+                query: String::new(),
             });
             self.mode = AppMode::KeybindEditor;
             return Ok(());
@@ -47,13 +54,10 @@ impl App {
             return Ok(());
         }
 
-        // The session strip and its footer hints are shared by every dashboard
-        // tab, so the switcher must be intercepted before tab-specific input.
-        if self.mode == AppMode::Normal
-            && !self.sessions.is_empty()
-            && self.is_action(KeyAction::SessionSwitcher, &key)
-        {
-            self.open_session_picker(SessionPickerPurpose::SwitchSession);
+        // Session-strip binds (resume / switch / tabs / new tab / …) must work on
+        // every dashboard tab — the footer advertises them whenever sessions
+        // exist. The switcher goes through the same door rather than its own.
+        if self.mode == AppMode::Normal && self.handle_key_background_sessions(&key) {
             return Ok(());
         }
 
@@ -67,10 +71,13 @@ impl App {
             AppMode::ConfirmDelete => self.handle_key_confirm_delete(key),
             AppMode::HostForm => self.handle_key_host_form(key),
             AppMode::IdentityForm => self.handle_key_identity_form(key),
+            AppMode::KeygenForm => self.handle_key_keygen_form(key),
             AppMode::GroupForm => self.handle_key_group_form(key),
             AppMode::GroupFieldPicker => self.handle_key_group_field_picker(key),
             AppMode::TunnelHostPicker => self.handle_key_tunnel_host_picker(key),
             AppMode::SessionPicker => self.handle_key_session_picker(key),
+            AppMode::PushKeyHostPicker => self.handle_key_push_key_host_picker(key),
+            AppMode::PushKeyIdentityPicker => self.handle_key_push_key_identity_picker(key),
             AppMode::FieldPicker => self.handle_key_field_picker(key),
             AppMode::ImportPrompt => self.handle_key_import_prompt(key),
             AppMode::SftpPrompt => self.handle_key_sftp_prompt(key),
@@ -97,10 +104,6 @@ impl App {
 
     pub(crate) fn handle_key_normal(&mut self, key: KeyEvent) -> Result<()> {
         self.host_notice = None;
-
-        if self.handle_key_background_sessions(&key) {
-            return Ok(());
-        }
 
         if self.try_tab_switch(&key)? {
             return Ok(());
@@ -310,11 +313,11 @@ impl App {
                 self.palette_query.clear();
                 self.palette_selected = 0;
                 self.palette_results = (0..self.hosts.len()).collect();
+                self.palette_adhoc = self.compute_palette_adhoc();
                 self.mode = AppMode::Palette;
             }
             _ if self.is_action(KeyAction::Help, &key) => {
-                self.pre_help_mode = Some(self.mode);
-                self.mode = AppMode::Help;
+                self.open_help();
             }
             _ if self.is_action(KeyAction::TagFilter, &key) => self.open_tag_filter(),
             _ if self.is_action(KeyAction::ClearSshLog, &key) => {
@@ -332,6 +335,7 @@ impl App {
             _ if self.is_action(KeyAction::RenameGroup, &key) => {
                 self.rename_selected_host_group()?
             }
+            _ if self.is_action(KeyAction::PushKey, &key) => self.trigger_push_key_from_hosts()?,
             _ => {}
         }
         Ok(())
@@ -452,6 +456,12 @@ impl App {
                 self.mode = AppMode::Normal;
             }
             _ if self.is_action(KeyAction::Connect, &key) => {
+                if self.palette_adhoc.is_some()
+                    && self.palette_selected == self.palette_results.len()
+                {
+                    let t = self.palette_adhoc.take().unwrap();
+                    return self.connect_adhoc(t);
+                }
                 let chosen = self.palette_results.get(self.palette_selected).copied();
                 self.mode = AppMode::Normal;
                 if let Some(idx) = chosen {
@@ -477,7 +487,8 @@ impl App {
                 }
             }
             _ if self.is_action(KeyAction::MoveDown, &key) => {
-                if self.palette_selected + 1 < self.palette_results.len() {
+                let total = self.palette_results.len() + self.palette_adhoc.is_some() as usize;
+                if self.palette_selected + 1 < total {
                     self.palette_selected += 1;
                 }
             }
@@ -494,7 +505,9 @@ impl App {
         // nucleo fuzzy match (same engine as list search) — the palette is
         // advertised as fuzzy, so typos and abbreviations must match too.
         self.palette_results = self.search.update_query(&self.hosts, &self.palette_query);
-        if self.palette_selected >= self.palette_results.len() {
+        self.palette_adhoc = self.compute_palette_adhoc();
+        let total = self.palette_results.len() + self.palette_adhoc.is_some() as usize;
+        if total == 0 || self.palette_selected >= total {
             self.palette_selected = 0;
         }
     }
@@ -580,15 +593,16 @@ impl App {
                 self.adjust_identity_columns(-1);
             }
             _ if self.is_action(KeyAction::AddHost, &key) => self.enter_identity_form(None)?,
+            _ if self.is_action(KeyAction::GenerateKey, &key) => self.enter_keygen_form()?,
             _ if self.is_action(KeyAction::Edit, &key) => self.edit_selected_identity()?,
             _ if self.is_action(KeyAction::Delete, &key) => self.delete_selected_identity()?,
             _ if self.is_action(KeyAction::RemoveFromAgent, &key) => {
                 self.remove_selected_from_agent()?;
             }
             _ if self.is_action(KeyAction::AddToAgent, &key) => self.add_selected_to_agent()?,
+            _ if self.is_action(KeyAction::PushKey, &key) => self.trigger_push_key_from_keys()?,
             _ if self.is_action(KeyAction::Help, &key) => {
-                self.pre_help_mode = Some(self.mode);
-                self.mode = AppMode::Help;
+                self.open_help();
             }
             _ => {}
         }
@@ -610,6 +624,11 @@ impl App {
                     if self.identity_form.is_some() && self.mode == AppMode::ConfirmDiscard {
                         self.mode = AppMode::IdentityForm;
                     }
+                } else if self.keygen_form.is_some() {
+                    self.save_keygen_form()?;
+                    if self.keygen_form.is_some() && self.mode == AppMode::ConfirmDiscard {
+                        self.mode = AppMode::KeygenForm;
+                    }
                 } else if self.tunnel_form.is_some() {
                     self.save_tunnel_form()?;
                     if self.tunnel_form.is_some() && self.mode == AppMode::ConfirmDiscard {
@@ -623,6 +642,8 @@ impl App {
                     self.discard_host_form()?;
                 } else if self.identity_form.is_some() {
                     self.discard_identity_form()?;
+                } else if self.keygen_form.is_some() {
+                    self.discard_keygen_form()?;
                 } else if self.tunnel_form.is_some() {
                     self.tunnel_form = None;
                     self.mode = AppMode::Normal;
@@ -634,6 +655,8 @@ impl App {
                     self.mode = AppMode::HostForm;
                 } else if self.identity_form.is_some() {
                     self.mode = AppMode::IdentityForm;
+                } else if self.keygen_form.is_some() {
+                    self.mode = AppMode::KeygenForm;
                 } else if self.tunnel_form.is_some() {
                     self.mode = AppMode::TunnelForm;
                 } else {
@@ -645,34 +668,61 @@ impl App {
         Ok(())
     }
 
+    pub(crate) fn open_help(&mut self) {
+        self.pre_help_mode = Some(self.mode);
+        self.mode = AppMode::Help;
+        self.help_scroll = 0;
+        self.help_query.clear();
+    }
+
     pub(crate) fn handle_key_help(&mut self, key: KeyEvent) -> Result<()> {
-        if self.is_action(KeyAction::Cancel, &key)
-            || self.is_action(KeyAction::Quit, &key)
-            || self.is_action(KeyAction::Help, &key)
-            || self.is_action(KeyAction::Connect, &key)
-        {
-            self.mode = self.pre_help_mode.take().unwrap_or(AppMode::Normal);
-            self.help_scroll = 0;
-            return Ok(());
-        }
-        // Ceiling = what the renderer can actually show, not the line count:
-        // scrolling past it would silently bank presses that Up must unwind.
-        let max = crate::tui::help_max_scroll(self.terminal_area);
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
+            KeyCode::Esc => {
+                if !self.help_query.is_empty() {
+                    self.help_query.clear();
+                    self.help_scroll = 0;
+                } else {
+                    self.mode = self.pre_help_mode.take().unwrap_or(AppMode::Normal);
+                    self.help_scroll = 0;
+                }
+            }
+            // Enter is not printable query input; keep it as dismiss when idle.
+            KeyCode::Enter if self.help_query.is_empty() => {
+                self.mode = self.pre_help_mode.take().unwrap_or(AppMode::Normal);
+                self.help_scroll = 0;
+            }
+            // Ceiling = what the renderer can actually show, not the line count:
+            // scrolling past it would silently bank presses that Up must unwind.
+            KeyCode::Up => {
                 self.help_scroll = self.help_scroll.saturating_sub(1);
             }
-            KeyCode::Down | KeyCode::Char('j') => {
+            KeyCode::Down => {
+                let max = crate::tui::help_max_scroll(self.terminal_area, &self.help_query);
                 self.help_scroll = (self.help_scroll + 1).min(max);
             }
             KeyCode::PageUp => {
                 self.help_scroll = self.help_scroll.saturating_sub(10);
             }
             KeyCode::PageDown => {
+                let max = crate::tui::help_max_scroll(self.terminal_area, &self.help_query);
                 self.help_scroll = (self.help_scroll + 10).min(max);
             }
             KeyCode::Home => self.help_scroll = 0,
-            KeyCode::End => self.help_scroll = max,
+            KeyCode::End => {
+                self.help_scroll =
+                    crate::tui::help_max_scroll(self.terminal_area, &self.help_query);
+            }
+            KeyCode::Backspace => {
+                self.help_query.pop();
+                self.help_scroll = 0;
+            }
+            KeyCode::Char(c)
+                if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
+                    && !c.is_control() =>
+            {
+                self.help_query.push(c);
+                self.help_scroll = 0;
+            }
             _ => {}
         }
         Ok(())
@@ -835,7 +885,7 @@ impl App {
     }
 
     pub(crate) fn handle_key_keybind_editor(&mut self, key: KeyEvent) -> Result<()> {
-        let Some(editor) = self.keybind_editor else {
+        let Some(editor) = self.keybind_editor.clone() else {
             self.mode = AppMode::Normal;
             return Ok(());
         };
@@ -843,63 +893,165 @@ impl App {
         if editor.capturing {
             if key.code != KeyCode::Esc {
                 if let Some(spec) = keyevent_to_spec(&key) {
-                    let action = KeyAction::ALL[editor.selected];
-                    if editor.append {
-                        self.config.keybinds.add(action, spec);
-                    } else {
-                        self.config.keybinds.set(action, vec![spec]);
+                    // `selected` indexes the filtered list — rebinding ALL[selected]
+                    // would silently edit the wrong action under an active filter.
+                    let actions = self.filtered_keybind_actions();
+                    if let Some(&action) = actions.get(editor.selected) {
+                        if editor.append {
+                            self.config.keybinds.add(action, spec);
+                        } else {
+                            self.config.keybinds.set(action, vec![spec]);
+                        }
+                        self.save_config_quietly();
                     }
-                    self.save_config_quietly();
                 }
             }
             if let Some(e) = self.keybind_editor.as_mut() {
                 e.capturing = false;
             }
+            // Rebinding can drop the row out of a bind-text filter; keep selection
+            // inside the new list so Enter/Ctrl+R/Ctrl+X don't go silent.
+            self.clamp_keybind_editor_selection();
             return Ok(());
         }
 
         match key.code {
-            _ if self.is_action(KeyAction::Cancel, &key) => {
-                self.keybind_editor = None;
-                self.mode = AppMode::Normal;
-            }
-            _ if self.is_action(KeyAction::MoveDown, &key) => {
+            KeyCode::Esc => {
                 if let Some(e) = self.keybind_editor.as_mut() {
-                    e.selected = (e.selected + 1) % KeyAction::ALL.len();
+                    if !e.query.is_empty() {
+                        e.query.clear();
+                        e.selected = 0;
+                        e.scroll = 0;
+                    } else {
+                        self.keybind_editor = None;
+                        self.mode = AppMode::Normal;
+                    }
+                }
+            }
+            KeyCode::Down => {
+                let len = self.filtered_keybind_actions().len();
+                if len > 0 {
+                    if let Some(e) = self.keybind_editor.as_mut() {
+                        e.selected = (e.selected + 1) % len;
+                        Self::clamp_keybind_editor_scroll(e);
+                    }
+                }
+            }
+            KeyCode::Up => {
+                let len = self.filtered_keybind_actions().len();
+                if len > 0 {
+                    if let Some(e) = self.keybind_editor.as_mut() {
+                        e.selected = (e.selected + len - 1) % len;
+                        Self::clamp_keybind_editor_scroll(e);
+                    }
+                }
+            }
+            KeyCode::PageDown => {
+                let len = self.filtered_keybind_actions().len();
+                if len > 0 {
+                    if let Some(e) = self.keybind_editor.as_mut() {
+                        e.selected = (e.selected + 10).min(len - 1);
+                        Self::clamp_keybind_editor_scroll(e);
+                    }
+                }
+            }
+            KeyCode::PageUp => {
+                if let Some(e) = self.keybind_editor.as_mut() {
+                    e.selected = e.selected.saturating_sub(10);
                     Self::clamp_keybind_editor_scroll(e);
                 }
             }
-            _ if self.is_action(KeyAction::MoveUp, &key) => {
+            KeyCode::Enter => {
+                let has_rows = !self.filtered_keybind_actions().is_empty();
                 if let Some(e) = self.keybind_editor.as_mut() {
-                    e.selected = (e.selected + KeyAction::ALL.len() - 1) % KeyAction::ALL.len();
-                    Self::clamp_keybind_editor_scroll(e);
+                    if has_rows {
+                        e.capturing = true;
+                        e.append = false;
+                    }
                 }
             }
-            _ if self.is_action(KeyAction::Connect, &key) => {
+            // Ctrl+letter row actions so unmodified letters stay query input.
+            KeyCode::Char('a') if key.modifiers == KeyModifiers::CONTROL => {
+                let has_rows = !self.filtered_keybind_actions().is_empty();
                 if let Some(e) = self.keybind_editor.as_mut() {
-                    e.capturing = true;
-                    e.append = false;
+                    if has_rows {
+                        e.capturing = true;
+                        e.append = true;
+                    }
                 }
             }
-            _ if self.is_action(KeyAction::AddHost, &key) => {
-                if let Some(e) = self.keybind_editor.as_mut() {
-                    e.capturing = true;
-                    e.append = true;
+            KeyCode::Char('r') if key.modifiers == KeyModifiers::CONTROL => {
+                let actions = self.filtered_keybind_actions();
+                if let Some(&action) = actions.get(editor.selected) {
+                    self.config.keybinds.reset_action(action);
+                    self.save_config_quietly();
+                    self.clamp_keybind_editor_selection();
                 }
             }
-            KeyCode::Char('r') if key.modifiers.is_empty() => {
-                let action = KeyAction::ALL[editor.selected];
-                self.config.keybinds.reset_action(action);
-                self.save_config_quietly();
+            KeyCode::Char('x') if key.modifiers == KeyModifiers::CONTROL => {
+                let actions = self.filtered_keybind_actions();
+                if let Some(&action) = actions.get(editor.selected) {
+                    self.config.keybinds.set(action, Vec::new());
+                    self.save_config_quietly();
+                    self.clamp_keybind_editor_selection();
+                }
             }
-            KeyCode::Char('x') if key.modifiers.is_empty() => {
-                let action = KeyAction::ALL[editor.selected];
-                self.config.keybinds.set(action, Vec::new());
-                self.save_config_quietly();
+            KeyCode::Backspace => {
+                if let Some(e) = self.keybind_editor.as_mut() {
+                    e.query.pop();
+                    e.selected = 0;
+                    e.scroll = 0;
+                }
+            }
+            KeyCode::Char(c)
+                if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
+                    && !c.is_control() =>
+            {
+                if let Some(e) = self.keybind_editor.as_mut() {
+                    e.query.push(c);
+                    e.selected = 0;
+                    e.scroll = 0;
+                }
             }
             _ => {}
         }
         Ok(())
+    }
+
+    /// Actions visible in the keybinding editor under the current filter query.
+    pub fn filtered_keybind_actions(&self) -> Vec<KeyAction> {
+        let query = self
+            .keybind_editor
+            .as_ref()
+            .map(|e| e.query.to_lowercase())
+            .unwrap_or_default();
+        KeyAction::ALL
+            .iter()
+            .copied()
+            .filter(|action| {
+                query.is_empty()
+                    || action.label().to_lowercase().contains(&query)
+                    || self
+                        .config
+                        .keybinds
+                        .binds(*action)
+                        .iter()
+                        .any(|b| b.to_lowercase().contains(&query))
+            })
+            .collect()
+    }
+
+    fn clamp_keybind_editor_selection(&mut self) {
+        let len = self.filtered_keybind_actions().len();
+        if let Some(e) = self.keybind_editor.as_mut() {
+            if len == 0 {
+                e.selected = 0;
+                e.scroll = 0;
+            } else if e.selected >= len {
+                e.selected = len - 1;
+            }
+            Self::clamp_keybind_editor_scroll(e);
+        }
     }
 
     fn clamp_keybind_editor_scroll(editor: &mut KeybindEditor) {

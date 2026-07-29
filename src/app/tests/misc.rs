@@ -466,7 +466,7 @@ pub(crate) fn help_scroll_stops_at_render_ceiling() {
     app.handle_key(key_char('?')).unwrap();
     assert_eq!(app.mode, AppMode::Help);
 
-    let max = crate::tui::help_max_scroll(app.terminal_area);
+    let max = crate::tui::help_max_scroll(app.terminal_area, &app.help_query);
     assert!(max > 0, "help content must overflow a 24-row terminal");
     for _ in 0..500 {
         app.handle_key(key(KeyCode::Down)).unwrap();

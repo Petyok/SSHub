@@ -103,3 +103,181 @@ pub(crate) fn host_form_picker_at_boundary_moves_to_adjacent_field() {
         HostFormField::Identity
     );
 }
+
+/// An identity whose passphrase is already in the store, plus its id.
+fn identity_with_stored_passphrase(app: &mut App, secret: &str) -> i64 {
+    let created = app
+        .store
+        .create_identity(&crate::store::NewIdentity {
+            name: "prod-key".into(),
+            username: None,
+            private_key: None,
+            certificate: None,
+            sort_order: 0,
+            has_password: true,
+        })
+        .unwrap();
+    app.password_store
+        .set(&crate::credentials::identity_key(created.id), secret)
+        .unwrap();
+    app.reload_identities().unwrap();
+    created.id
+}
+
+#[test]
+pub(crate) fn identity_form_prefills_the_stored_passphrase() {
+    let (mut app, _secrets) = test_app_with_secrets(vec![]);
+    identity_with_stored_passphrase(&mut app, "s3cret");
+
+    let identity = app
+        .identities
+        .iter()
+        .find(|i| i.name == "prod-key")
+        .expect("the identity we just created")
+        .clone();
+    app.enter_identity_form(Some(&identity)).unwrap();
+
+    let form = app.identity_form.as_ref().unwrap();
+    assert_eq!(
+        form.password, "s3cret",
+        "the field starts from what is stored"
+    );
+    assert_eq!(
+        form.password_original, "s3cret",
+        "and remembers it, so an untouched save is a no-op"
+    );
+    assert!(!form.password_revealed, "masked until asked");
+}
+
+#[test]
+pub(crate) fn clearing_the_passphrase_removes_it_from_the_store() {
+    let (mut app, secrets) = test_app_with_secrets(vec![]);
+    let id = identity_with_stored_passphrase(&mut app, "s3cret");
+
+    let identity = app
+        .identities
+        .iter()
+        .find(|i| i.name == "prod-key")
+        .expect("the identity we just created")
+        .clone();
+    app.enter_identity_form(Some(&identity)).unwrap();
+    app.identity_form.as_mut().unwrap().password.clear();
+    app.save_identity_form().unwrap();
+
+    use crate::credentials::PasswordStore;
+    assert_eq!(
+        secrets.get(&crate::credentials::identity_key(id)).unwrap(),
+        None,
+        "an emptied field means the secret should go"
+    );
+    let saved = app
+        .identities
+        .iter()
+        .find(|i| i.name == "prod-key")
+        .unwrap();
+    assert!(!saved.has_password, "and the row stops claiming it has one");
+}
+
+#[test]
+pub(crate) fn saving_an_untouched_form_keeps_the_stored_passphrase() {
+    let (mut app, secrets) = test_app_with_secrets(vec![]);
+    let id = identity_with_stored_passphrase(&mut app, "s3cret");
+
+    let identity = app
+        .identities
+        .iter()
+        .find(|i| i.name == "prod-key")
+        .expect("the identity we just created")
+        .clone();
+    app.enter_identity_form(Some(&identity)).unwrap();
+    app.save_identity_form().unwrap();
+
+    use crate::credentials::PasswordStore;
+    assert_eq!(
+        secrets.get(&crate::credentials::identity_key(id)).unwrap(),
+        Some("s3cret".to_string())
+    );
+    let saved = app
+        .identities
+        .iter()
+        .find(|i| i.name == "prod-key")
+        .unwrap();
+    assert!(saved.has_password);
+}
+
+#[test]
+pub(crate) fn reveal_and_copy_binds_differ_and_never_echo_the_secret() {
+    let (mut app, _secrets) = test_app_with_secrets(vec![]);
+    identity_with_stored_passphrase(&mut app, "s3cret");
+    let identity = app
+        .identities
+        .iter()
+        .find(|i| i.name == "prod-key")
+        .expect("the identity we just created")
+        .clone();
+
+    // Copy only: nothing is revealed, and the notice names the secret, not its value.
+    app.enter_identity_form(Some(&identity)).unwrap();
+    app.identity_form.as_mut().unwrap().field = IdentityFormField::Password;
+    app.config
+        .keybinds
+        .set(KeyAction::CopySecret, vec!["F5".into()]);
+    app.config
+        .keybinds
+        .set(KeyAction::RevealSecret, vec!["F6".into()]);
+
+    app.handle_key(KeyEvent::new(KeyCode::F(5), KeyModifiers::empty()))
+        .unwrap();
+    assert!(!app.identity_form.as_ref().unwrap().password_revealed);
+    let notice = app.identity_notice.clone().unwrap();
+    assert!(notice.contains("passphrase"), "{notice}");
+    assert!(!notice.contains("s3cret"), "the value must not be echoed");
+
+    // Reveal: shows it, and walking off the field masks it again.
+    app.handle_key(KeyEvent::new(KeyCode::F(6), KeyModifiers::empty()))
+        .unwrap();
+    assert!(app.identity_form.as_ref().unwrap().password_revealed);
+    app.identity_form_field_next();
+    assert!(
+        !app.identity_form.as_ref().unwrap().password_revealed,
+        "leaving the field re-masks"
+    );
+}
+
+#[test]
+pub(crate) fn reveal_bind_is_ignored_away_from_the_secret_field() {
+    let (mut app, _secrets) = test_app_with_secrets(vec![]);
+    identity_with_stored_passphrase(&mut app, "s3cret");
+    let identity = app
+        .identities
+        .iter()
+        .find(|i| i.name == "prod-key")
+        .expect("the identity we just created")
+        .clone();
+    app.enter_identity_form(Some(&identity)).unwrap();
+    app.identity_form.as_mut().unwrap().field = IdentityFormField::Name;
+    app.config
+        .keybinds
+        .set(KeyAction::RevealSecret, vec!["F6".into()]);
+
+    app.handle_key(KeyEvent::new(KeyCode::F(6), KeyModifiers::empty()))
+        .unwrap();
+    assert!(!app.identity_form.as_ref().unwrap().password_revealed);
+}
+
+#[test]
+pub(crate) fn secret_field_hints_name_the_binds_and_follow_rebinds() {
+    let mut kb = crate::config::KeybindsConfig::default();
+    assert_eq!(
+        kb.secret_field_hints(),
+        "Ctrl+R: show + copy \u{2502} Ctrl+Y: copy"
+    );
+
+    kb.set(KeyAction::RevealSecret, vec!["F6".into()]);
+    kb.set(KeyAction::CopySecret, vec![]);
+    assert_eq!(
+        kb.secret_field_hints(),
+        "F6: show + copy",
+        "a rebind shows through and an unbound action says nothing"
+    );
+}

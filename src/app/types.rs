@@ -317,6 +317,7 @@ pub enum AppMode {
     HostDetail,
     HostForm,
     IdentityForm,
+    KeygenForm,
     GroupForm,
     GroupManage,
     /// Dropdown over the group form's Parent / Identity field.
@@ -325,6 +326,10 @@ pub enum AppMode {
     TunnelHostPicker,
     /// Searchable dropdown for opening a new embedded SSH session tab.
     SessionPicker,
+    /// Searchable host list for `Shift+P` started from the Keys tab.
+    PushKeyHostPicker,
+    /// Identity list for `Shift+P` started from the hosts list.
+    PushKeyIdentityPicker,
     /// Dropdown over the host form's Group/Identity field.
     FieldPicker,
     /// Keybinding editor overlay.
@@ -865,9 +870,9 @@ impl HostEntry {
 }
 
 /// State of the keybinding editor overlay.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeybindEditor {
-    /// Index into [`KeyAction::ALL`].
+    /// Index into the *filtered* action list (see `App::filtered_keybind_actions`).
     pub selected: usize,
     /// First visible row in the action list (for scrolling).
     pub scroll: usize,
@@ -875,6 +880,8 @@ pub struct KeybindEditor {
     pub capturing: bool,
     /// When capturing, whether to append (`true`) or replace (`false`).
     pub append: bool,
+    /// Type-to-filter query (case-insensitive substring over label + binds).
+    pub query: String,
 }
 
 /// Which host-form field the dropdown is editing.
@@ -923,7 +930,14 @@ pub struct HostFormEdit {
     pub session_logging: crate::session_log::SessionLoggingOverride,
     pub os_icon_index: usize,
     pub password: String,
+    /// The secret as it was in the credential store when the form opened, so
+    /// saving can tell "untouched" from "changed to this exact value", and an
+    /// emptied field can mean "delete it" rather than "leave it alone".
+    pub password_original: String,
     pub has_password: bool,
+    /// Whether the password field is currently shown as text. Per-form and
+    /// deliberately not persisted: it drops on leaving the field or closing.
+    pub password_revealed: bool,
     pub field: HostFormField,
     pub cursor: usize,
     /// Connection fields (address/name/port) are read-only; only launcher metadata is saved.
@@ -1100,6 +1114,24 @@ pub struct SessionPicker {
     pub purpose: SessionPickerPurpose,
 }
 
+/// Host list for pushing a public key, opened from the Keys tab
+/// ([`AppMode::PushKeyHostPicker`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PushKeyHostPicker {
+    /// Fuzzy filter typed by the user.
+    pub query: String,
+    /// Index into the current filtered match list.
+    pub selected: usize,
+}
+
+/// Identity list for pushing a public key, opened from the hosts list
+/// ([`AppMode::PushKeyIdentityPicker`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PushKeyIdentityPicker {
+    /// Index into the identities that carry a private key.
+    pub selected: usize,
+}
+
 /// A server-to-server transfer in flight, relayed through a local temp file.
 ///
 /// libssh2 has no server-to-server copy and the two panes are independent
@@ -1255,7 +1287,12 @@ pub struct IdentityFormEdit {
     pub private_key: String,
     pub certificate: String,
     pub password: String,
+    /// The passphrase as it was in the credential store when the form opened.
+    /// See [`HostFormEdit::password_original`].
+    pub password_original: String,
     pub has_password: bool,
+    /// Whether the passphrase is currently shown as text.
+    pub password_revealed: bool,
     /// Full key material pasted into the Private key field; written to
     /// `~/.ssh/sshub_<name>` on save (the path field then points at it).
     pub pasted_key: Option<String>,
@@ -1264,6 +1301,72 @@ pub struct IdentityFormEdit {
     pub editing: bool,
     pub edit_snapshot: String,
     pub dirty: bool,
+}
+
+/// In-progress SSH key generation form while in [`AppMode::KeygenForm`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeygenFormEdit {
+    pub key_type: KeygenType,
+    pub passphrase: String,
+    pub comment: String,
+    pub target_path: String,
+    pub field: KeygenFormField,
+    pub cursor: usize,
+    pub dirty: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeygenType {
+    #[default]
+    Ed25519,
+    Rsa4096,
+}
+
+impl KeygenType {
+    pub fn label(self) -> &'static str {
+        match self {
+            KeygenType::Ed25519 => "ed25519",
+            KeygenType::Rsa4096 => "rsa-4096",
+        }
+    }
+}
+
+/// Editable key generation form field index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeygenFormField {
+    #[default]
+    KeyType = 0,
+    Passphrase = 1,
+    Comment = 2,
+    TargetPath = 3,
+}
+
+impl KeygenFormField {
+    pub const ALL: [KeygenFormField; 4] = [
+        KeygenFormField::KeyType,
+        KeygenFormField::Passphrase,
+        KeygenFormField::Comment,
+        KeygenFormField::TargetPath,
+    ];
+
+    pub(crate) fn next(self) -> Self {
+        let idx = Self::ALL.iter().position(|&f| f == self).unwrap_or(0);
+        Self::ALL[(idx + 1) % Self::ALL.len()]
+    }
+
+    pub(crate) fn prev(self) -> Self {
+        let idx = Self::ALL.iter().position(|&f| f == self).unwrap_or(0);
+        Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            KeygenFormField::KeyType => "Key type (Left/Right)",
+            KeygenFormField::Passphrase => "Passphrase (optional)",
+            KeygenFormField::Comment => "Comment (optional)",
+            KeygenFormField::TargetPath => "Target path",
+        }
+    }
 }
 
 /// Editable identity form field index.
@@ -1375,6 +1478,26 @@ impl IdentityFormEdit {
             self.pasted_key = None;
             self.private_key.clear();
             self.cursor = 0;
+        }
+    }
+}
+
+impl KeygenFormEdit {
+    pub fn active_field(&self) -> &str {
+        match self.field {
+            KeygenFormField::KeyType => "",
+            KeygenFormField::Passphrase => &self.passphrase,
+            KeygenFormField::Comment => &self.comment,
+            KeygenFormField::TargetPath => &self.target_path,
+        }
+    }
+
+    pub(crate) fn active_field_mut(&mut self) -> Option<&mut String> {
+        match self.field {
+            KeygenFormField::KeyType => None,
+            KeygenFormField::Passphrase => Some(&mut self.passphrase),
+            KeygenFormField::Comment => Some(&mut self.comment),
+            KeygenFormField::TargetPath => Some(&mut self.target_path),
         }
     }
 }

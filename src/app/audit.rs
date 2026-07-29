@@ -70,8 +70,7 @@ impl App {
                 self.refresh_audit_events();
             }
             _ if self.is_action(KeyAction::Help, &key) => {
-                self.pre_help_mode = Some(self.mode);
-                self.mode = AppMode::Help;
+                self.open_help();
             }
             _ => {}
         }

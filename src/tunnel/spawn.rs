@@ -132,7 +132,7 @@ pub fn stage_tunnel_askpass(
     let Some(secret) = secret else {
         return Ok(None);
     };
-    let exe = std::env::current_exe()?;
+    let exe = askpass::helper_exe()?;
     let guard = askpass::AskpassSecret::new(secret.value())?;
     for (k, v) in guard.env(&exe) {
         cmd.env(k, v);

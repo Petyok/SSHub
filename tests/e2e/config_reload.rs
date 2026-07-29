@@ -10,10 +10,7 @@ use sshub::metadata::MetadataDb;
 use sshub::store::LauncherStore;
 use sshub::watcher::{spawn_config_watcher, WatchEvent, WATCHER_DEBOUNCE};
 
-#[path = "../support/mod.rs"]
-mod support;
-
-use support::FixtureResolver;
+use crate::support::FixtureResolver;
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

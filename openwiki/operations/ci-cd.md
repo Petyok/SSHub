@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: CI & Automation — GitHub Actions workflows
-description: SSHub's three GitHub Actions workflows — ci.yml (test matrix + fmt/clippy lint gate), release.yml (tag-triggered binaries, GitHub release, crates.io publish), and openwiki-update.yml (scheduled OpenWiki documentation regeneration bot).
+description: SSHub's four GitHub Actions workflows — ci.yml (test matrix + fmt/clippy lint gate), release.yml (tag-triggered binaries, GitHub release, crates.io publish), openwiki-update.yml (scheduled OpenWiki documentation regeneration bot), and strix-pentest.yml (PR security scan).
 resource: .github/workflows/ci.yml
 tags: [ci, github-actions, release, automation, operations]
 ---
@@ -25,8 +25,12 @@ Trigger: tag push `v*` (created by `just release`).
 
 ## `openwiki-update.yml` — wiki bot
 
-Trigger: `workflow_dispatch` + daily cron `0 8 * * *`. Installs the `openwiki` npm CLI and runs `openwiki code --update --print` (OpenRouter provider, LangSmith tracing), then opens a PR from branch `openwiki/update` via `peter-evans/create-pull-request`.
+Trigger: `workflow_dispatch` + daily cron `0 8 * * *`. Installs the `openwiki` npm CLI and runs `openwiki code --update --print` (OpenRouter provider, LangSmith tracing), then opens a PR from branch `openwiki/update` via `peter-evans/create-pull-request`. The PR path filter includes the workflow file itself, so bot config edits ride along with doc updates.
+
+## `strix-pentest.yml` — PR security scan
+
+Trigger: every pull request. Runs [Strix](https://strix.ai) in quick scan mode (`strix -n -t ./ --scan-mode quick`) against the checked-out tree. Auth: `STRIX_LLM` secret for the model name, and `LLM_API_KEY` mapped to the existing `OPENROUTER_API_KEY` secret (no extra key needed).
 
 ## Secrets used by workflows
 
-`CARGO_REGISTRY_TOKEN` (crates.io publish), OpenRouter/LangSmith keys for the wiki bot (referenced by env name only; see the workflow file for exact variable names). Never commit values.
+`CARGO_REGISTRY_TOKEN` (crates.io publish), OpenRouter/LangSmith keys for the wiki bot, and `STRIX_LLM` for the PR pentest scan (referenced by env name only; see the workflow files for exact variable names). Never commit values.
