@@ -245,6 +245,7 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | `Ctrl+D`               | Detach to dashboard (SSH keeps running) |
 | `Ctrl+[` / `Ctrl+]`   | Previous / next session tab         |
 | `Ctrl+Shift+S`         | Focus session from dashboard        |
+| `Alt+S`                | Switch to an open session (searchable) |
 
 ### Hosts (tab 1)
 
