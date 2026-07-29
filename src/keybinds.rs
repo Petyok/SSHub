@@ -330,6 +330,41 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
+    (@fn toggle_panel_zoom $($key:literal),* $(,)?) => {
+        fn default_kb_toggle_panel_zoom() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
+    (@fn focus_panel_left $($key:literal),* $(,)?) => {
+        fn default_kb_focus_panel_left() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
+    (@fn focus_panel_right $($key:literal),* $(,)?) => {
+        fn default_kb_focus_panel_right() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
+    (@fn focus_panel_up $($key:literal),* $(,)?) => {
+        fn default_kb_focus_panel_up() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
+    (@fn focus_panel_down $($key:literal),* $(,)?) => {
+        fn default_kb_focus_panel_down() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
+    (@fn broadcast $($key:literal),* $(,)?) => {
+        fn default_kb_broadcast() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
+    (@fn broadcast_cancel $($key:literal),* $(,)?) => {
+        fn default_kb_broadcast_cancel() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
 }
 
 kb_defaults! {
@@ -397,6 +432,13 @@ kb_defaults! {
     confirm_yes => ["y", "Y", "Enter"],
     confirm_no => ["n", "N"],
     cancel => ["Esc"],
+    toggle_panel_zoom => ["z", "Alt+Enter"],
+    focus_panel_left => ["Alt+Left"],
+    focus_panel_right => ["Alt+Right"],
+    focus_panel_up => ["Alt+Up"],
+    focus_panel_down => ["Alt+Down"],
+    broadcast => ["b"],
+    broadcast_cancel => ["x"],
 }
 /// An action whose keybinding is user-configurable and editable in the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -465,11 +507,18 @@ pub enum KeyAction {
     ConfirmYes,
     ConfirmNo,
     Cancel,
+    TogglePanelZoom,
+    FocusPanelLeft,
+    FocusPanelRight,
+    FocusPanelUp,
+    FocusPanelDown,
+    Broadcast,
+    BroadcastCancel,
 }
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 64] = [
+    pub const ALL: [KeyAction; 71] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -534,6 +583,13 @@ impl KeyAction {
         KeyAction::ConfirmYes,
         KeyAction::ConfirmNo,
         KeyAction::Cancel,
+        KeyAction::TogglePanelZoom,
+        KeyAction::FocusPanelLeft,
+        KeyAction::FocusPanelRight,
+        KeyAction::FocusPanelUp,
+        KeyAction::FocusPanelDown,
+        KeyAction::Broadcast,
+        KeyAction::BroadcastCancel,
     ];
 
     pub fn label(self) -> &'static str {
@@ -602,6 +658,13 @@ impl KeyAction {
             KeyAction::ConfirmYes => "Confirm yes",
             KeyAction::ConfirmNo => "Confirm no",
             KeyAction::Cancel => "Cancel / back",
+            KeyAction::TogglePanelZoom => "Zoom dashboard panel",
+            KeyAction::FocusPanelLeft => "Focus panel left",
+            KeyAction::FocusPanelRight => "Focus panel right",
+            KeyAction::FocusPanelUp => "Focus panel up",
+            KeyAction::FocusPanelDown => "Focus panel down",
+            KeyAction::Broadcast => "Broadcast command",
+            KeyAction::BroadcastCancel => "Cancel broadcast",
         }
     }
 }
@@ -737,6 +800,20 @@ pub struct KeybindsConfig {
     pub confirm_no: Vec<String>,
     #[serde(default = "default_kb_cancel")]
     pub cancel: Vec<String>,
+    #[serde(default = "default_kb_toggle_panel_zoom")]
+    pub toggle_panel_zoom: Vec<String>,
+    #[serde(default = "default_kb_focus_panel_left")]
+    pub focus_panel_left: Vec<String>,
+    #[serde(default = "default_kb_focus_panel_right")]
+    pub focus_panel_right: Vec<String>,
+    #[serde(default = "default_kb_focus_panel_up")]
+    pub focus_panel_up: Vec<String>,
+    #[serde(default = "default_kb_focus_panel_down")]
+    pub focus_panel_down: Vec<String>,
+    #[serde(default = "default_kb_broadcast")]
+    pub broadcast: Vec<String>,
+    #[serde(default = "default_kb_broadcast_cancel")]
+    pub broadcast_cancel: Vec<String>,
 }
 
 impl Default for KeybindsConfig {
@@ -806,6 +883,13 @@ impl Default for KeybindsConfig {
             confirm_yes: default_kb_confirm_yes(),
             confirm_no: default_kb_confirm_no(),
             cancel: default_kb_cancel(),
+            toggle_panel_zoom: default_kb_toggle_panel_zoom(),
+            focus_panel_left: default_kb_focus_panel_left(),
+            focus_panel_right: default_kb_focus_panel_right(),
+            focus_panel_up: default_kb_focus_panel_up(),
+            focus_panel_down: default_kb_focus_panel_down(),
+            broadcast: default_kb_broadcast(),
+            broadcast_cancel: default_kb_broadcast_cancel(),
         }
     }
 }
@@ -877,12 +961,61 @@ impl KeybindsConfig {
             KeyAction::ConfirmYes => default_kb_confirm_yes(),
             KeyAction::ConfirmNo => default_kb_confirm_no(),
             KeyAction::Cancel => default_kb_cancel(),
+            KeyAction::TogglePanelZoom => default_kb_toggle_panel_zoom(),
+            KeyAction::FocusPanelLeft => default_kb_focus_panel_left(),
+            KeyAction::FocusPanelRight => default_kb_focus_panel_right(),
+            KeyAction::FocusPanelUp => default_kb_focus_panel_up(),
+            KeyAction::FocusPanelDown => default_kb_focus_panel_down(),
+            KeyAction::Broadcast => default_kb_broadcast(),
+            KeyAction::BroadcastCancel => default_kb_broadcast_cancel(),
         }
     }
 
     /// Restore one action's bindings to its built-in default.
     pub fn reset_action(&mut self, action: KeyAction) {
         self.set(action, Self::default_for(action));
+    }
+
+    /// First configured key for `action`, or `""` when unbound.
+    pub fn primary(&self, action: KeyAction) -> &str {
+        self.binds(action).first().map(String::as_str).unwrap_or("")
+    }
+
+    /// Right-aligned hints in the fullscreen session header.
+    pub fn session_header_hints(&self, multi_tab: bool) -> String {
+        let mut parts = Vec::new();
+        if multi_tab {
+            push_hint(&mut parts, self.primary(KeyAction::SessionNewTab), "new");
+            push_hint(
+                &mut parts,
+                self.primary(KeyAction::SessionCloseTab),
+                "close",
+            );
+            if let Some(tabs) = tab_switch_hint(self) {
+                parts.push(tabs);
+            }
+            push_hint(&mut parts, self.primary(KeyAction::SessionDetach), "detach");
+        } else {
+            push_hint(
+                &mut parts,
+                self.primary(KeyAction::SessionNewTab),
+                "new tab",
+            );
+            push_hint(&mut parts, self.primary(KeyAction::SessionDetach), "detach");
+        }
+        parts.join("  ")
+    }
+
+    /// Dashboard footer hints when embedded sessions are running in background.
+    pub fn session_footer_hints(&self) -> Vec<(String, &'static str)> {
+        let mut out = Vec::new();
+        push_footer_hint(&mut out, self.primary(KeyAction::SessionDetach), "detach");
+        push_footer_hint(&mut out, self.primary(KeyAction::SessionOpenSftp), "sftp");
+        if let Some(keys) = tab_switch_keys(self) {
+            out.push((keys, "tabs"));
+        }
+        push_footer_hint(&mut out, self.primary(KeyAction::SessionNewTab), "new tab");
+        out
     }
 
     pub fn binds(&self, action: KeyAction) -> &[String] {
@@ -951,6 +1084,13 @@ impl KeybindsConfig {
             KeyAction::ConfirmYes => &self.confirm_yes,
             KeyAction::ConfirmNo => &self.confirm_no,
             KeyAction::Cancel => &self.cancel,
+            KeyAction::TogglePanelZoom => &self.toggle_panel_zoom,
+            KeyAction::FocusPanelLeft => &self.focus_panel_left,
+            KeyAction::FocusPanelRight => &self.focus_panel_right,
+            KeyAction::FocusPanelUp => &self.focus_panel_up,
+            KeyAction::FocusPanelDown => &self.focus_panel_down,
+            KeyAction::Broadcast => &self.broadcast,
+            KeyAction::BroadcastCancel => &self.broadcast_cancel,
         }
     }
 
@@ -1020,6 +1160,13 @@ impl KeybindsConfig {
             KeyAction::ConfirmYes => self.confirm_yes = binds,
             KeyAction::ConfirmNo => self.confirm_no = binds,
             KeyAction::Cancel => self.cancel = binds,
+            KeyAction::TogglePanelZoom => self.toggle_panel_zoom = binds,
+            KeyAction::FocusPanelLeft => self.focus_panel_left = binds,
+            KeyAction::FocusPanelRight => self.focus_panel_right = binds,
+            KeyAction::FocusPanelUp => self.focus_panel_up = binds,
+            KeyAction::FocusPanelDown => self.focus_panel_down = binds,
+            KeyAction::Broadcast => self.broadcast = binds,
+            KeyAction::BroadcastCancel => self.broadcast_cancel = binds,
         }
     }
 
@@ -1068,6 +1215,35 @@ impl KeybindsConfig {
     }
 }
 
+fn push_hint(parts: &mut Vec<String>, key: &str, label: &str) {
+    if !key.is_empty() {
+        parts.push(format!("{key} {label}"));
+    }
+}
+
+fn push_footer_hint(out: &mut Vec<(String, &'static str)>, key: &str, label: &'static str) {
+    if !key.is_empty() {
+        out.push((key.to_string(), label));
+    }
+}
+
+/// `Ctrl+[/]` style key from prev/next tab bindings.
+fn tab_switch_keys(kb: &KeybindsConfig) -> Option<String> {
+    let prev = kb.primary(KeyAction::SessionTabPrev);
+    let next = kb.primary(KeyAction::SessionTabNext);
+    match (prev.is_empty(), next.is_empty()) {
+        (true, true) => None,
+        (false, false) if prev != next => Some(format!("{prev}/{next}")),
+        (false, _) => Some(prev.to_string()),
+        (_, false) => Some(next.to_string()),
+    }
+}
+
+/// `Ctrl+[/] tabs` style hint from prev/next tab bindings.
+fn tab_switch_hint(kb: &KeybindsConfig) -> Option<String> {
+    tab_switch_keys(kb).map(|keys| format!("{keys} tabs"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1098,6 +1274,28 @@ mod tests {
         let before = kb.tab_tunnels.clone();
         assert!(!kb.migrate_pre_sftp_tabs(raw));
         assert_eq!(kb.tab_tunnels, before);
+    }
+
+    #[test]
+    fn session_header_hints_use_configured_binds() {
+        let kb = KeybindsConfig {
+            session_new_tab: vec!["F9".into()],
+            session_detach: vec!["Ctrl+Shift+D".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            kb.session_header_hints(false),
+            "F9 new tab  Ctrl+Shift+D detach"
+        );
+    }
+
+    #[test]
+    fn session_header_hints_multi_tab_pair() {
+        let kb = KeybindsConfig::default();
+        let hints = kb.session_header_hints(true);
+        assert!(hints.contains("Ctrl+T new"));
+        assert!(hints.contains("Ctrl+D detach"));
+        assert!(hints.contains("Ctrl+[/Ctrl+] tabs"));
     }
 
     #[test]

@@ -93,7 +93,6 @@ pub(crate) fn keychain_create_edit_delete_flow() {
             resolver: Box::new(MockResolver::new(vec![])),
             metadata: Arc::new(MetadataDb::default()),
             store: Arc::clone(&store),
-            launcher: Box::new(RecordingLauncher::new().0),
             password_store: Box::new(crate::credentials::NoopPasswordStore),
         },
     );

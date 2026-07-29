@@ -1,4 +1,5 @@
 pub mod audit;
+pub mod broadcast;
 pub mod field_picker;
 pub mod group_form;
 pub mod group_manage;
@@ -13,4 +14,5 @@ pub mod session_host_picker;
 pub mod settings;
 pub mod sftp;
 pub mod tag_filter;
+pub mod tunnel_reconnect;
 pub mod tunnels;

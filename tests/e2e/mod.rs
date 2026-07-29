@@ -1,3 +1,4 @@
+mod broadcast;
 mod config_reload;
 mod connect_managed;
 mod first_run;

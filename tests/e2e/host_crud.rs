@@ -11,8 +11,6 @@ use tempfile::NamedTempFile;
 #[path = "../support/mod.rs"]
 mod support;
 
-use support::MockLauncher;
-
 struct EmptyResolver;
 
 impl HostResolver for EmptyResolver {
@@ -63,7 +61,6 @@ fn app_with_store(store_path: &std::path::Path) -> App {
             resolver: Box::new(EmptyResolver),
             metadata: Arc::new(MetadataDb::default()),
             store,
-            launcher: Box::new(MockLauncher::new()),
             password_store: Box::new(sshub::credentials::NoopPasswordStore),
         },
     );
@@ -298,7 +295,6 @@ fn delete_ssh_config_host_shows_notice() {
             }),
             metadata: Arc::new(MetadataDb::default()),
             store,
-            launcher: Box::new(MockLauncher::new()),
             password_store: Box::new(sshub::credentials::NoopPasswordStore),
         },
     );

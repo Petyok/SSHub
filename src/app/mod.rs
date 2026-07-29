@@ -1,4 +1,5 @@
 mod audit;
+mod broadcast;
 mod connect;
 mod field_picker;
 mod groups;
@@ -23,7 +24,6 @@ mod tests;
 pub use types::*;
 pub use util::*;
 
-use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -32,7 +32,6 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::config::{self, AppConfig, KeyAction};
-use crate::launcher::{self, TerminalLauncher};
 use crate::metadata::{MetadataDb, MetadataStore};
 use crate::search::HostSearch;
 use crate::ssh::{
@@ -90,7 +89,6 @@ pub struct AppDeps {
     pub resolver: Box<dyn HostResolver>,
     pub metadata: Arc<dyn MetadataStore>,
     pub store: Arc<LauncherStore>,
-    pub launcher: Box<dyn TerminalLauncher>,
     pub password_store: Box<dyn crate::credentials::PasswordStore>,
 }
 
@@ -135,9 +133,45 @@ pub struct App {
     /// UI zoom level (0 = default). Widens the hosts column in the layout and
     /// the host-name column within it.
     pub ui_zoom: usize,
+    /// Currently focused dashboard panel (issue #18: focus + tmux-style zoom).
+    pub focused_panel: PanelId,
+    /// Whether the focused dashboard panel is zoomed to the full body.
+    pub panel_zoomed: bool,
+    /// Active zoom morph (#35): interpolates the focused panel between its grid
+    /// slot and the full body on `z` / `Alt+Enter`. `None` when at rest or under
+    /// reduced motion.
+    pub zoom_anim: Option<crate::tui::tween::SlideAnim>,
+    /// Scroll offset within the zoomed panel (issue #18). Reset on zoom/focus
+    /// change; each zoomed list panel clamps it to its own content via the
+    /// `Cell`'s interior mutability during render.
+    pub panel_scroll: std::cell::Cell<u16>,
+    /// In-progress text selection over the zoomed panel (issue #18).
+    pub panel_sel: Option<PanelSel>,
+    /// Text under the current panel selection, extracted from the rendered
+    /// buffer each frame (interior mutability so the `&App` render pass can fill
+    /// it); copied to the clipboard on mouse release.
+    pub panel_sel_text: std::cell::RefCell<String>,
+    /// `self.hosts` indices for the rows of a zoomed host-list panel (ping /
+    /// recent), filled by their render so Enter connects the selected row.
+    pub zoomed_host_idx: std::cell::RefCell<Vec<usize>>,
+    /// Live broadcast run (issue #3): `Some` while a fleet command runs or its
+    /// finished panel is settling. Owns the run's mpsc + cancel flag.
+    pub broadcast: Option<BroadcastState>,
+    /// Pre-run broadcast wizard state (pick target / command / preview);
+    /// `Some` only while an `AppMode::Broadcast*` stage is active.
+    pub broadcast_setup: Option<BroadcastSetup>,
+    /// Transient error popups (issue #3), newest last; slide in from the right
+    /// above the broadcast panel and expire after `TOAST_TTL`.
+    pub broadcast_toasts: Vec<BroadcastToast>,
+    /// When the docked panel was dismissed, so lingering toasts can animate
+    /// *down* into the freed space instead of jumping. `None` while a panel is
+    /// present (or before any run).
+    pub broadcast_panel_gone_at: Option<std::time::Instant>,
     pub group_manage_selected: usize,
     pub group_notice: Option<String>,
     pub host_notice: Option<String>,
+    /// Message shown by the modal `AppMode::Notice` popup (e.g. a connect error).
+    pub notice_popup: Option<String>,
     pub sort_mode: SortMode,
     pub pending_delete: Option<PendingDelete>,
     pub pre_help_mode: Option<AppMode>,
@@ -154,7 +188,117 @@ pub struct App {
     pub keybind_editor: Option<KeybindEditor>,
     /// Highlighted row in the Settings overlay.
     pub settings_selected: usize,
+    /// Highlighted row in the tunnel reconnect settings overlay.
+    pub tunnel_reconnect_selected: usize,
     pub active_tab: usize,
+    /// Tab shown on the previous poll tick, so a change can be detected centrally
+    /// (many code paths set `active_tab`) and turned into a slide animation (#35).
+    pub anim_prev_tab: usize,
+    /// In-flight tab-switch slide, or `None` at rest / under reduced motion.
+    pub tab_switch: Option<TabSwitch>,
+    /// When the current `mode` was entered, so popups can animate their open
+    /// (#35). Updated centrally on any mode change.
+    pub mode_entered_at: std::time::Instant,
+    /// `mode` on the previous poll tick, to detect a change centrally.
+    pub anim_prev_mode: AppMode,
+    /// Resting rect of the popup drawn this frame (set by `popup_open_rect`), so
+    /// the render pass can snapshot it for the close animation (#35).
+    pub last_popup_rect: std::cell::Cell<Option<ratatui::layout::Rect>>,
+    /// Captured cells of the last-rendered popup, thrown upward on close (#35).
+    pub popup_snapshot:
+        std::cell::RefCell<Option<(ratatui::layout::Rect, ratatui::buffer::Buffer)>>,
+    /// Full-frame dashboard snapshot captured just before a popup draws, so the
+    /// open slide can restore what's behind the popup and let it drop in from off
+    /// the top of the screen (#35).
+    pub popup_backdrop: std::cell::RefCell<Option<ratatui::buffer::Buffer>>,
+    /// When a popup started closing, driving the upward exit of its snapshot.
+    pub popup_closing_at: Option<std::time::Instant>,
+    /// When a fresh SSH session was launched (mode → Connecting), so the
+    /// full-screen session view can slide in from the right (#35). `None` at rest
+    /// / under reduced motion.
+    pub session_enter_at: Option<std::time::Instant>,
+    /// Full-frame snapshot of the last session view, captured each frame while in
+    /// a session so it can be slid off to the right when the host is left (#35).
+    pub session_snapshot: std::cell::RefCell<Option<ratatui::buffer::Buffer>>,
+    /// When the host view started exiting (session -> dashboard), driving the
+    /// slide-out of `session_snapshot`. `None` at rest / under reduced motion.
+    pub session_exit_at: Option<std::time::Instant>,
+    /// Header counters as drawn right now (total / online / slow / down),
+    /// counting toward their real values rather than snapping (#35). `Cell`
+    /// because the render pass owns the frame clock.
+    pub header_stats_pos: std::cell::Cell<[f32; 4]>,
+    /// When the header counters were last advanced. `None` until first drawn.
+    pub header_stats_at: std::cell::Cell<Option<std::time::Instant>>,
+    /// Whether a counter is still counting, so the loop keeps the frame rate up.
+    pub header_stats_moving: std::cell::Cell<bool>,
+    /// Smoothed scroll position of the identities grid, in *lines* (not card
+    /// rows), chasing the target offset each frame (#35).
+    pub keys_scroll_pos: std::cell::Cell<f32>,
+    /// When the identities grid was last advanced. `None` until first drawn.
+    pub keys_scroll_at: std::cell::Cell<Option<std::time::Instant>>,
+    /// Whether the grid is still catching up to its target offset.
+    pub keys_scroll_moving: std::cell::Cell<bool>,
+    /// When the dashboard first took the screen, so it can fade up out of the
+    /// intro animation instead of replacing it between frames (#35). Set by the
+    /// terminal loop once, just before its first draw.
+    pub dashboard_at: Option<std::time::Instant>,
+    /// Audit filter + range as of the previous tick, so a re-filtered table can
+    /// be faded in centrally rather than swapping between frames (#35).
+    pub anim_prev_audit: (AuditFilter, AuditRange),
+    /// When the audit table was last re-filtered.
+    pub audit_filter_at: Option<std::time::Instant>,
+    /// Working directories of the two SFTP panes as of the previous tick, so a
+    /// directory change can be detected centrally whether it came from the
+    /// local filesystem or an async remote listing (#35).
+    pub anim_prev_cwd: [std::path::PathBuf; 2],
+    /// Per-pane directory change: whether it went deeper, and when. Indexed by
+    /// [`crate::sftp::model::Side`] (local, remote).
+    pub sftp_nav: [Option<(bool, std::time::Instant)>; 2],
+    /// SFTP queue length as of the previous tick, so a newly staged transfer
+    /// can be detected centrally and flown in (#35).
+    pub anim_prev_queue: usize,
+    /// When the last transfer was staged, driving its row's fly-in.
+    pub sftp_queue_at: Option<std::time::Instant>,
+    /// Fraction of the running SFTP queue drawn on the progress bar, chasing
+    /// the real figure so the bar sweeps between the worker's updates (#35).
+    pub sftp_progress_pos: std::cell::Cell<f32>,
+    /// When the progress bar was last advanced. `None` until first drawn.
+    pub sftp_progress_at: std::cell::Cell<Option<std::time::Instant>>,
+    /// Whether the bar is still catching up to the real figure.
+    pub sftp_progress_moving: std::cell::Cell<bool>,
+    /// Latest ping sample per host and when it landed, so a fresh reading can
+    /// grow into the sparkline instead of appearing at full height (#35).
+    pub ping_sample: std::collections::HashMap<String, (u32, std::time::Instant)>,
+    /// Ping class per host as of the previous tick, and when it last changed,
+    /// so a host going green or red flashes instead of switching silently (#35).
+    pub ping_flash: std::collections::HashMap<String, (crate::ping::PingClass, std::time::Instant)>,
+    /// In-flight group fold / unfold (#35). While a *fold* plays its rows are
+    /// still live in `nav_rows`; `collapsed_groups` takes the change when the
+    /// animation ends (see [`App::flush_pending_fold`]).
+    pub fold_anim: Option<FoldAnim>,
+    /// `selected` as of the previous poll tick, so a moved cursor can be
+    /// detected centrally and its highlight wiped in (#35).
+    pub anim_prev_selected: usize,
+    /// When the host-list cursor last moved, driving the highlight wipe.
+    pub selection_at: Option<std::time::Instant>,
+    /// Smoothed scroll position of the host list, in visual rows, chasing the
+    /// target offset each frame (#35). `Cell` because the render pass advances
+    /// it through `&App`.
+    pub host_scroll_pos: std::cell::Cell<f32>,
+    /// When the scroll position was last advanced, for the frame delta. `None`
+    /// until the list has been drawn once.
+    pub host_scroll_at: std::cell::Cell<Option<std::time::Instant>>,
+    /// Whether the list is still catching up to its target offset, so the loop
+    /// knows to keep the frame rate up.
+    pub host_scroll_moving: std::cell::Cell<bool>,
+    /// `host_notice` as of the previous poll tick, so a fresh one can be
+    /// detected centrally (34 code paths set it) and slid in (#35).
+    pub anim_prev_notice: Option<String>,
+    /// When the current `host_notice` appeared, driving the toast slide-in.
+    pub host_notice_at: Option<std::time::Instant>,
+    /// In-flight slide between two embedded session tabs (#35). While it plays,
+    /// `session_snapshot` is held frozen on the tab being left behind.
+    pub session_tab_switch: Option<SessionTabSwitch>,
     pub palette_query: String,
     pub palette_selected: usize,
     pub palette_results: Vec<usize>,
@@ -166,8 +310,32 @@ pub struct App {
     /// Name of the host the live SFTP session is connected to, so the browser
     /// can open an SSH session back to the same host (completes the round trip).
     pub sftp_host: Option<String>,
+    /// Second SFTP worker, driving the left pane when it browses another server
+    /// instead of the local filesystem. `None` while the left pane is local.
+    pub sftp_tx2: Option<std::sync::mpsc::Sender<crate::sftp::SftpCommand>>,
+    pub sftp_rx2: Option<std::sync::mpsc::Receiver<crate::sftp::SftpEvent>>,
+    /// Server-to-server transfer in flight, relayed leg by leg through a local
+    /// temp file. `None` whenever the queue is a plain local transfer.
+    pub sftp_relay: Option<SftpRelay>,
+    /// `QueueDone` events still to be swallowed: a worker always finishes its
+    /// run with one, even after an error we already acted on, and acting on it
+    /// twice would restart the very transfer that just failed.
+    pub sftp_swallow_done: usize,
+    /// Whether the run in flight has already reported an error, so its leftover
+    /// queue is left for the user to retry rather than restarted automatically.
+    pub sftp_run_failed: bool,
     /// True while the SFTP picker's host search input is capturing keys.
     pub sftp_picker_searching: bool,
+    /// Remembered dotfile visibility for the SFTP panes, restored from
+    /// `ui_state` at startup and applied to each new browser.
+    pub sftp_show_hidden: bool,
+    /// In-flight SFTP tab sub-state slide and when it started (#35). `None` at
+    /// rest / under reduced motion.
+    pub sftp_anim: Option<(SftpAnim, std::time::Instant)>,
+    /// Snapshot of the SFTP tab body captured each resting frame while a session
+    /// is live, so leaving it can slide the captured cells away after the state
+    /// itself is gone.
+    pub sftp_snapshot: std::cell::RefCell<Option<ratatui::buffer::Buffer>>,
     pub probe_rx: Option<Receiver<crate::ssh::probe::SshLogEntry>>,
     pub os_detect_tx: Option<std::sync::mpsc::Sender<crate::osinfo::OsDetectCmd>>,
     pub os_detect_rx: Option<Receiver<crate::osinfo::OsDetectEvent>>,
@@ -189,6 +357,8 @@ pub struct App {
     pub tunnel_form: Option<TunnelFormEdit>,
     pub tunnel_notice: Option<String>,
     pub tunnel_manager: crate::tunnel::TunnelManager,
+    /// One-shot startup hook for `auto_connect` tunnels.
+    tunnels_auto_started: bool,
     pub terminal_area: ratatui::layout::Rect,
     /// Embedded PTY sessions. Multiple may coexist (Ctrl+T opens a new tab).
     /// Empty when not in `Connecting` / `Session` mode.
@@ -199,17 +369,151 @@ pub struct App {
     resolver: Box<dyn HostResolver>,
     metadata: Arc<dyn MetadataStore>,
     store: Arc<LauncherStore>,
-    // Retained for AppDeps compatibility but no longer called now that
-    // sessions run on an embedded PTY. The launcher impls in src/launcher/
-    // stay in the binary but are dead at runtime.
-    #[allow(dead_code)]
-    launcher: Box<dyn TerminalLauncher>,
     password_store: Box<dyn crate::credentials::PasswordStore>,
     search: HostSearch,
 }
 
+/// Whether `mode` draws a popup overlay (so its open/close should animate,
+/// #35). Excludes the full-screen session modes, which are not popups. The
+/// session-host picker counts: it is a popup like any other, drawn over either
+/// the dashboard or a live session, both of which snapshot a backdrop for it.
+pub(crate) fn is_overlay_mode(mode: AppMode) -> bool {
+    !matches!(
+        mode,
+        AppMode::Normal | AppMode::Connecting | AppMode::Session
+    )
+}
+
+/// Whether `mode` shows the full-screen embedded session (connecting or live).
+pub(crate) fn is_session_mode(mode: AppMode) -> bool {
+    matches!(mode, AppMode::Connecting | AppMode::Session)
+}
+
 impl App {
-    /// Build app with default resolver, on-disk metadata db, and config-derived launcher.
+    /// Whether UI motion (slides / morphs / fades) should play. Off when the
+    /// user set `appearance.disable_animation` (the reduced-motion toggle, also
+    /// flipped in Settings). Animation call sites jump straight to the final
+    /// state when this is false; [`App::animating`] also returns false so the
+    /// render loop never bumps to 60fps for nothing.
+    pub(crate) fn motion_enabled(&self) -> bool {
+        !self.config.appearance.disable_animation
+    }
+
+    /// Notice a tab change (from any of the many code paths that set
+    /// `active_tab`) and arm the body slide (#35). Called once per poll tick.
+    pub(crate) fn detect_tab_switch(&mut self) {
+        if self.active_tab != self.anim_prev_tab {
+            if self.motion_enabled() {
+                self.tab_switch = Some(TabSwitch {
+                    from: self.anim_prev_tab,
+                    to: self.active_tab,
+                    at: std::time::Instant::now(),
+                });
+            }
+            self.anim_prev_tab = self.active_tab;
+        }
+        // Drive popup open/close animations off mode changes (#35). Only a
+        // *fresh* open over the dashboard (non-overlay -> overlay) restarts the
+        // drop-in, and only a full close (overlay -> non-overlay) throws the
+        // snapshot up. Overlay -> overlay (e.g. a form bouncing to its
+        // discard-confirm and back on held Esc) does neither, so it never jumps.
+        if self.mode != self.anim_prev_mode {
+            let now_overlay = is_overlay_mode(self.mode);
+            let prev_overlay = is_overlay_mode(self.anim_prev_mode);
+            if now_overlay && !prev_overlay {
+                self.mode_entered_at = std::time::Instant::now();
+                self.popup_closing_at = None;
+            } else if prev_overlay && !now_overlay {
+                self.popup_closing_at = Some(std::time::Instant::now());
+            }
+            // Leaving the full-screen host view back to the dashboard slides the
+            // captured session snapshot off to the right (#35). Only to Normal —
+            // opening the session-host picker over a live session isn't an exit.
+            if is_session_mode(self.anim_prev_mode) && self.mode == AppMode::Normal {
+                // Leaving supersedes any tab slide still in flight, and releases
+                // the snapshot it was holding frozen.
+                self.session_tab_switch = None;
+                if self.motion_enabled() {
+                    self.session_exit_at = Some(std::time::Instant::now());
+                } else {
+                    *self.session_snapshot.borrow_mut() = None;
+                }
+            }
+            self.anim_prev_mode = self.mode;
+        }
+        // Retire a finished session-exit slide so its snapshot buffer is freed.
+        if self
+            .session_exit_at
+            .is_some_and(|at| at.elapsed() >= crate::tui::SESSION_ANIM)
+        {
+            self.session_exit_at = None;
+            *self.session_snapshot.borrow_mut() = None;
+        }
+        // The audit table was re-filtered: fade the new rows in (#35).
+        if (self.audit_filter, self.audit_range) != self.anim_prev_audit {
+            self.anim_prev_audit = (self.audit_filter, self.audit_range);
+            self.audit_filter_at = Some(std::time::Instant::now());
+        }
+        self.detect_sftp_navigation();
+        // A transfer staged since the last tick flies its row in (#35).
+        let queued = self.sftp.as_ref().map(|s| s.queue.len()).unwrap_or(0);
+        if queued != self.anim_prev_queue {
+            // Only a fresh entry animates; removing one is the user's own key
+            // press and reads fine as an immediate change.
+            self.sftp_queue_at = (queued > self.anim_prev_queue).then(std::time::Instant::now);
+            self.anim_prev_queue = queued;
+        }
+        self.detect_ping_changes();
+        // Retire a finished fold, releasing the rows it was replaying.
+        if self
+            .fold_anim
+            .as_ref()
+            .is_some_and(|f| f.at.elapsed() >= crate::tui::FOLD_ANIM)
+        {
+            self.fold_anim = None;
+        }
+        // The cursor moved since the last tick: wipe its highlight in (#35).
+        if self.selected != self.anim_prev_selected {
+            self.anim_prev_selected = self.selected;
+            self.selection_at = Some(std::time::Instant::now());
+        }
+        // A notice that changed since the last tick is a fresh one: stamp it so
+        // the zoom toast can slide in from the right edge (#35).
+        if self.host_notice != self.anim_prev_notice {
+            self.anim_prev_notice = self.host_notice.clone();
+            self.host_notice_at = self.host_notice.as_ref().map(|_| std::time::Instant::now());
+        }
+        // Retire a finished session-tab slide, releasing the frozen snapshot of
+        // the tab that was left behind.
+        if self
+            .session_tab_switch
+            .is_some_and(|sw| sw.at.elapsed() >= crate::tui::TAB_ANIM)
+        {
+            self.session_tab_switch = None;
+        }
+        // Retire a finished SFTP sub-state slide. Its snapshot is refreshed every
+        // resting frame while a session is live, so only free it once there is
+        // none left to capture.
+        if self
+            .sftp_anim
+            .is_some_and(|(_, at)| at.elapsed() >= crate::tui::SFTP_ANIM)
+        {
+            self.sftp_anim = None;
+            if self.sftp.is_none() {
+                *self.sftp_snapshot.borrow_mut() = None;
+            }
+        }
+        // Retire a finished close slide so its snapshot buffer is freed.
+        if self
+            .popup_closing_at
+            .is_some_and(|at| at.elapsed() >= crate::tui::POPUP_ANIM)
+        {
+            self.popup_closing_at = None;
+            *self.popup_snapshot.borrow_mut() = None;
+        }
+    }
+
+    /// Build app with default resolver and on-disk metadata db.
     pub fn new(config: AppConfig) -> Result<Self> {
         let data_dir = config::data_dir()?;
         std::fs::create_dir_all(&data_dir)?;
@@ -221,8 +525,6 @@ impl App {
         let metadata = Arc::new(MetadataDb::open(db_path)?);
         let store = Arc::new(LauncherStore::open(launcher_path)?);
         let resolver = Box::new(SshConfigResolver::default());
-        let launcher = launcher::launcher_from_config(&config)?;
-
         let keyring_available = crate::credentials::check_keyring_available();
         let password_store: Box<dyn crate::credentials::PasswordStore> = if keyring_available {
             let _ = crate::credentials::migrate_fallback_to_keyring();
@@ -239,15 +541,13 @@ impl App {
                 resolver,
                 metadata,
                 store,
-                launcher,
                 password_store,
             },
         );
 
         if !keyring_available {
-            app.host_notice = Some(
-                "OS keyring unavailable. Using credentials.json fallback.".into(),
-            );
+            app.host_notice =
+                Some("OS keyring unavailable. Using credentials.json fallback.".into());
         }
 
         app.reload_hosts()?;
@@ -298,9 +598,21 @@ impl App {
             import_prompt: None,
             sftp_prompt: None,
             ui_zoom: 0,
+            focused_panel: PanelId::default(),
+            panel_zoomed: false,
+            zoom_anim: None,
+            panel_scroll: std::cell::Cell::new(0),
+            panel_sel: None,
+            panel_sel_text: std::cell::RefCell::new(String::new()),
+            zoomed_host_idx: std::cell::RefCell::new(Vec::new()),
+            broadcast: None,
+            broadcast_setup: None,
+            broadcast_toasts: Vec::new(),
+            broadcast_panel_gone_at: None,
             group_manage_selected: 0,
             group_notice: None,
             host_notice: None,
+            notice_popup: None,
             sort_mode: SortMode::default(),
             pending_delete: None,
             pre_help_mode: None,
@@ -311,7 +623,52 @@ impl App {
             collapsed_groups: std::collections::HashSet::new(),
             keybind_editor: None,
             settings_selected: 0,
+            tunnel_reconnect_selected: 0,
             active_tab: 0,
+            anim_prev_tab: 0,
+            tab_switch: None,
+            // Start "settled" in the past so the initial mode never counts as
+            // just-entered: popups animate only after a real mode change stamps
+            // `mode_entered_at` (via detect_tab_switch in the poll loop), so
+            // direct-mode-set render tests draw popups at rest, not mid-slide.
+            mode_entered_at: std::time::Instant::now()
+                .checked_sub(std::time::Duration::from_secs(3600))
+                .unwrap_or_else(std::time::Instant::now),
+            anim_prev_mode: AppMode::Normal,
+            last_popup_rect: std::cell::Cell::new(None),
+            popup_snapshot: std::cell::RefCell::new(None),
+            popup_backdrop: std::cell::RefCell::new(None),
+            popup_closing_at: None,
+            session_enter_at: None,
+            session_snapshot: std::cell::RefCell::new(None),
+            session_exit_at: None,
+            session_tab_switch: None,
+            header_stats_pos: std::cell::Cell::new([0.0; 4]),
+            header_stats_at: std::cell::Cell::new(None),
+            header_stats_moving: std::cell::Cell::new(false),
+            keys_scroll_pos: std::cell::Cell::new(0.0),
+            keys_scroll_at: std::cell::Cell::new(None),
+            keys_scroll_moving: std::cell::Cell::new(false),
+            dashboard_at: None,
+            anim_prev_audit: (AuditFilter::default(), AuditRange::default()),
+            audit_filter_at: None,
+            anim_prev_cwd: [std::path::PathBuf::new(), std::path::PathBuf::new()],
+            sftp_nav: [None, None],
+            anim_prev_queue: 0,
+            sftp_queue_at: None,
+            sftp_progress_pos: std::cell::Cell::new(0.0),
+            sftp_progress_at: std::cell::Cell::new(None),
+            sftp_progress_moving: std::cell::Cell::new(false),
+            ping_sample: std::collections::HashMap::new(),
+            ping_flash: std::collections::HashMap::new(),
+            fold_anim: None,
+            anim_prev_selected: 0,
+            selection_at: None,
+            host_scroll_pos: std::cell::Cell::new(0.0),
+            host_scroll_at: std::cell::Cell::new(None),
+            host_scroll_moving: std::cell::Cell::new(false),
+            anim_prev_notice: None,
+            host_notice_at: None,
             palette_query: String::new(),
             palette_selected: 0,
             palette_results: Vec::new(),
@@ -321,7 +678,15 @@ impl App {
             sftp_tx: None,
             sftp_rx: None,
             sftp_host: None,
+            sftp_tx2: None,
+            sftp_rx2: None,
+            sftp_relay: None,
+            sftp_swallow_done: 0,
+            sftp_run_failed: false,
             sftp_picker_searching: false,
+            sftp_show_hidden: false,
+            sftp_anim: None,
+            sftp_snapshot: std::cell::RefCell::new(None),
             probe_rx: None,
             os_detect_tx: None,
             os_detect_rx: None,
@@ -342,6 +707,7 @@ impl App {
             tunnel_form: None,
             tunnel_notice: None,
             tunnel_manager: crate::tunnel::TunnelManager::new(),
+            tunnels_auto_started: false,
             terminal_area: ratatui::layout::Rect::default(),
             sessions: Vec::new(),
             active_session: None,
@@ -349,7 +715,6 @@ impl App {
             resolver: deps.resolver,
             metadata: deps.metadata,
             store: deps.store,
-            launcher: deps.launcher,
             password_store: deps.password_store,
             search: HostSearch::new(),
         }
@@ -441,50 +806,16 @@ impl App {
     pub fn reload_hosts(&mut self) -> Result<()> {
         let selected_name = self.selected_entry().map(|e| e.name().to_string());
         self.load_collapsed_groups();
+        self.load_sftp_hidden();
         self.load_ui_zoom();
 
         sync_ssh_config_hosts(self.resolver.as_ref(), &self.store)?;
 
-        let launcher_hosts = self.store.list_hosts_filtered(Some(HostSource::Launcher))?;
-        let ssh_config_hosts = self
-            .store
-            .list_hosts_filtered(Some(HostSource::SshConfig))?;
-        let db_names: std::collections::HashSet<String> = launcher_hosts
-            .iter()
-            .chain(ssh_config_hosts.iter())
-            .map(|h| h.name.clone())
-            .collect();
-
-        let mut hosts: Vec<HostEntry> = launcher_hosts
-            .into_iter()
-            .chain(ssh_config_hosts)
-            .map(HostEntry::from_managed)
-            .collect();
-
-        let config_names = self.resolver.list_hosts()?;
-        self.metadata.ensure_defaults(&config_names)?;
-
-        for name in config_names {
-            if db_names.contains(&name) {
-                continue;
-            }
-            let host = match self.resolver.resolve_host(&name) {
-                Ok(host) => host,
-                Err(_) => {
-                    // Can't resolve this alias via `ssh -G`; skip it. We run
-                    // under raw mode, so never write to stderr here (it would
-                    // corrupt the TUI). The host simply won't be listed.
-                    continue;
-                }
-            };
-            let meta = self
-                .metadata
-                .get(&name)?
-                .unwrap_or_else(|| crate::metadata::HostMetadata::new(&name));
-            hosts.push(HostEntry::Legacy { host, meta });
-        }
-
-        self.hosts = hosts;
+        self.hosts = crate::hosts::load_merged_hosts(
+            self.resolver.as_ref(),
+            &self.store,
+            self.metadata.as_ref(),
+        )?;
         self.load_groups()?;
         self.rebuild_filter();
         if let Some(name) = selected_name {

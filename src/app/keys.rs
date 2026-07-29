@@ -50,6 +50,7 @@ impl App {
         match self.mode {
             AppMode::KeybindEditor => self.handle_key_keybind_editor(key),
             AppMode::Settings => self.handle_key_settings(key),
+            AppMode::TunnelReconnectSettings => self.handle_key_tunnel_reconnect_settings(key),
             AppMode::ConfirmQuit => self.handle_key_confirm_quit(key),
             AppMode::Help => self.handle_key_help(key),
             AppMode::ConfirmDiscard => self.handle_key_confirm_discard(key),
@@ -69,6 +70,10 @@ impl App {
             AppMode::TagFilter => self.handle_key_tag_filter(key),
             AppMode::HostDetail => self.handle_key_host_detail(key),
             AppMode::TunnelForm => self.handle_key_tunnel_form(key),
+            AppMode::BroadcastPickTarget => self.handle_key_broadcast_pick(key),
+            AppMode::BroadcastCommand => self.handle_key_broadcast_command(key),
+            AppMode::BroadcastPreview => self.handle_key_broadcast_preview(key),
+            AppMode::Notice => self.handle_key_notice(key),
             AppMode::Connecting | AppMode::Session => self.handle_key_session(key),
             AppMode::Normal => match self.active_tab {
                 1 => self.handle_key_sftp(key),
@@ -91,14 +96,88 @@ impl App {
             return Ok(());
         }
 
+        // Broadcast (#3). The cancel key does double duty, claimed before any
+        // other binding: cancel a live run, or (nothing running) clear the error
+        // toasts. Works regardless of focus, matching the always-shown footer
+        // hint. `open_broadcast` refuses a second concurrent run.
+        if self.is_action(KeyAction::BroadcastCancel, &key)
+            && (self.broadcast.is_some() || !self.broadcast_toasts.is_empty())
+        {
+            if self
+                .broadcast
+                .as_ref()
+                .is_some_and(|b| !crate::broadcast::all_terminal(&b.results))
+            {
+                self.cancel_broadcast();
+            } else {
+                self.broadcast_toasts.clear();
+            }
+            return Ok(());
+        }
+        if self.is_action(KeyAction::Broadcast, &key) {
+            self.open_broadcast();
+            return Ok(());
+        }
+
         match key.code {
             _ if self.is_action(KeyAction::Quit, &key) => self.request_quit(),
             _ if self.is_action(KeyAction::MoveHostUp, &key) => self.move_host_manual(-1)?,
             _ if self.is_action(KeyAction::MoveHostDown, &key) => self.move_host_manual(1)?,
             _ if self.is_action(KeyAction::MoveGroupUp, &key) => self.move_selection_by_group(-1),
             _ if self.is_action(KeyAction::MoveGroupDown, &key) => self.move_selection_by_group(1),
+            // Scroll the zoomed panel (except the hosts tree, which keeps its own
+            // selection navigation). MUST precede the MoveDown/MoveUp arms below,
+            // or those would shadow it and move the hidden host selection instead.
+            _ if self.panel_zoomed
+                && self.focused_panel != PanelId::Hosts
+                && (self.is_action(KeyAction::MoveDown, &key) || key.code == KeyCode::PageDown) =>
+            {
+                let step = if key.code == KeyCode::PageDown { 10 } else { 1 };
+                self.scroll_zoomed(true, step);
+            }
+            _ if self.panel_zoomed
+                && self.focused_panel != PanelId::Hosts
+                && (self.is_action(KeyAction::MoveUp, &key) || key.code == KeyCode::PageUp) =>
+            {
+                let step = if key.code == KeyCode::PageUp { 10 } else { 1 };
+                self.scroll_zoomed(false, step);
+            }
+            // Connect to the host selected in a zoomed ping/recent panel.
+            _ if self.panel_zoomed
+                && matches!(self.focused_panel, PanelId::Ping | PanelId::Recent)
+                && self.is_action(KeyAction::Connect, &key) =>
+            {
+                self.connect_zoomed_host()?;
+            }
+            // Zoomed auth panel behaves like the Audit tab: cycle status / range.
+            _ if self.panel_zoomed
+                && self.focused_panel == PanelId::Auth
+                && self.is_action(KeyAction::AuditFilter, &key) =>
+            {
+                self.audit_filter = self.audit_filter.next();
+                self.refresh_audit_events();
+            }
+            _ if self.panel_zoomed
+                && self.focused_panel == PanelId::Auth
+                && self.is_action(KeyAction::AuditRange, &key) =>
+            {
+                self.audit_range = self.audit_range.next();
+                self.refresh_audit_events();
+            }
+            // Zoomed agent panel: remove the selected key from ssh-agent.
+            _ if self.panel_zoomed
+                && self.focused_panel == PanelId::Agent
+                && self.is_action(KeyAction::Delete, &key) =>
+            {
+                self.remove_zoomed_agent_key();
+            }
             _ if self.is_action(KeyAction::MoveDown, &key) => self.move_selection(1),
             _ if self.is_action(KeyAction::MoveUp, &key) => self.move_selection(-1),
+            _ if self.is_action(KeyAction::Cancel, &key) && self.panel_zoomed => {
+                self.panel_zoomed = false;
+                self.panel_scroll.set(0);
+                self.panel_sel = None;
+            }
             _ if self.is_action(KeyAction::Cancel, &key) && !self.tag_filters.is_empty() => {
                 self.tag_filters.clear();
                 self.search_query.clear();
@@ -175,6 +254,44 @@ impl App {
             _ if self.is_action(KeyAction::UiZoomOut, &key) => {
                 self.set_ui_zoom(self.ui_zoom.saturating_sub(1));
             }
+            _ if self.is_action(KeyAction::TogglePanelZoom, &key) => {
+                let to_zoomed = !self.panel_zoomed;
+                self.panel_zoomed = to_zoomed;
+                self.panel_scroll.set(0);
+                self.panel_sel = None;
+                // Morph the panel between its grid slot and the full body (#35).
+                // Broadcast is a floating panel with its own animation path.
+                self.zoom_anim =
+                    if self.motion_enabled() && self.focused_panel != PanelId::Broadcast {
+                        let areas = crate::tui::dashboard_layout::dashboard_layout_zoomed(
+                            self.terminal_area,
+                            self.ui_zoom,
+                        );
+                        let slot = crate::tui::panel_zoom_source(&areas, self.focused_panel);
+                        let (from, to) = if to_zoomed {
+                            (slot, areas.body)
+                        } else {
+                            (areas.body, slot)
+                        };
+                        Some(crate::tui::tween::SlideAnim::new_in_out(
+                            from,
+                            to,
+                            std::time::Duration::from_millis(320),
+                        ))
+                    } else {
+                        None
+                    };
+            }
+            _ if self.is_action(KeyAction::FocusPanelLeft, &key) => {
+                self.focus_panel(FocusDir::Left)
+            }
+            _ if self.is_action(KeyAction::FocusPanelRight, &key) => {
+                self.focus_panel(FocusDir::Right)
+            }
+            _ if self.is_action(KeyAction::FocusPanelUp, &key) => self.focus_panel(FocusDir::Up),
+            _ if self.is_action(KeyAction::FocusPanelDown, &key) => {
+                self.focus_panel(FocusDir::Down)
+            }
             _ if self.is_action(KeyAction::Favorite, &key) => self.toggle_favorite()?,
             _ if self.is_action(KeyAction::DetailFocus, &key) => {
                 self.detail_focus = !self.detail_focus;
@@ -208,6 +325,89 @@ impl App {
             _ => {}
         }
         Ok(())
+    }
+
+    /// Modal message popup (`AppMode::Notice`): any key dismisses it back to the
+    /// dashboard. Used e.g. for an SFTP connection error.
+    pub(crate) fn handle_key_notice(&mut self, _key: KeyEvent) -> Result<()> {
+        self.notice_popup = None;
+        self.mode = AppMode::Normal;
+        Ok(())
+    }
+
+    /// Move dashboard panel focus one step in `dir`; a no-op at a grid edge.
+    fn focus_panel(&mut self, dir: FocusDir) {
+        // A zoomed panel is exclusive (tmux-style): don't move focus while
+        // zoomed, or the zoomed view would swap panels under the user.
+        if self.panel_zoomed {
+            return;
+        }
+        if let Some(next) = self.focused_panel.neighbor(dir) {
+            // The Broadcast panel only exists while a run is live (#3); its
+            // neighbor edges are always present in the grid, so skip the move
+            // when there's nothing to focus.
+            if next == PanelId::Broadcast && self.broadcast.is_none() {
+                return;
+            }
+            self.focused_panel = next;
+            self.panel_scroll.set(0);
+            self.panel_sel = None;
+        }
+    }
+
+    /// Best-effort removal of the key selected in a zoomed agent panel (issue
+    /// #18). `ssh-add -d` can only drop a key by file path, and the agent
+    /// listing exposes only the key's comment (usually, but not always, that
+    /// path), so this can fail with a clear notice.
+    fn remove_zoomed_agent_key(&mut self) {
+        let agent = crate::ssh::agent::detect_agent();
+        let idx = self.panel_scroll.get() as usize;
+        let Some(k) = agent.keys.get(idx) else {
+            return;
+        };
+        if k.comment.is_empty() {
+            self.host_notice = Some("can't remove: agent key has no file path".into());
+            return;
+        }
+        self.host_notice = Some(match crate::ssh::agent::remove_key(&k.comment) {
+            Ok(()) => format!("removed {} from agent", k.comment),
+            Err(_) => format!(
+                "couldn't remove {} (ssh-add needs the key file path)",
+                k.comment
+            ),
+        });
+    }
+
+    /// Connect to the host selected in a zoomed ping/recent panel (issue #18).
+    fn connect_zoomed_host(&mut self) -> Result<()> {
+        let idx = self.panel_scroll.get() as usize;
+        let host_idx = self.zoomed_host_idx.borrow().get(idx).copied();
+        if let Some(hi) = host_idx {
+            self.connect_host_at(hi)?;
+        }
+        Ok(())
+    }
+
+    /// Scroll the focused zoomed panel (issue #18) by `step` rows. `down` moves
+    /// toward the end of a list / the latest ssh-log line. Shared by the
+    /// keyboard arms and the mouse wheel.
+    pub(crate) fn scroll_zoomed(&mut self, down: bool, step: u16) {
+        if self.focused_panel == PanelId::SshLog {
+            // The ssh-log offset counts back from the latest line, so scrolling
+            // "down" (toward the latest) decreases it.
+            self.ssh_log_scroll = if down {
+                self.ssh_log_scroll.saturating_sub(step as usize)
+            } else {
+                self.ssh_log_scroll.saturating_add(step as usize)
+            };
+        } else {
+            let cur = self.panel_scroll.get();
+            self.panel_scroll.set(if down {
+                cur.saturating_add(step)
+            } else {
+                cur.saturating_sub(step)
+            });
+        }
     }
 
     /// Switch dashboard tabs when a tab keybinding matches.
@@ -317,6 +517,7 @@ impl App {
         if self.detail_edit.is_none() {
             return Ok(());
         }
+        let field = self.detail_edit.as_ref().unwrap().field;
 
         match key.code {
             _ if self.is_action(KeyAction::Cancel, &key) => self.cancel_host_detail()?,
@@ -326,10 +527,18 @@ impl App {
             KeyCode::BackTab => self.detail_edit_field_prev(),
             _ if self.is_action(KeyAction::MoveDown, &key) => self.detail_edit_field_next(),
             _ if self.is_action(KeyAction::MoveUp, &key) => self.detail_edit_field_prev(),
+            KeyCode::Right if field.is_tri_state() => self.detail_edit_cycle_session_logging(1),
+            KeyCode::Left if field.is_tri_state() => self.detail_edit_cycle_session_logging(-1),
+            KeyCode::Char(' ')
+                if key.modifiers.is_empty() && field == DetailEditField::SessionLogging =>
+            {
+                self.detail_edit_cycle_session_logging(1);
+            }
             KeyCode::Backspace if key.modifiers.is_empty() => self.detail_edit_backspace(),
             KeyCode::Char(c)
                 if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
-                    && !c.is_control() =>
+                    && !c.is_control()
+                    && !field.is_tri_state() =>
             {
                 self.detail_edit_insert(c);
             }
@@ -500,9 +709,8 @@ impl App {
                     self.enter_group_manage()?;
                 }
                 Some(PendingDelete::Tunnel { id, label }) => {
-                    if self.tunnel_manager.is_running(id) {
-                        self.tunnel_manager.stop(id)?;
-                    }
+                    let _ = self.tunnel_manager.stop_user(id);
+                    self.tunnel_manager.clear_user_stopped(id);
                     self.store.delete_tunnel(id)?;
                     self.tunnel_notice = Some(format!("Tunnel '{label}' deleted"));
                     self.reload_tunnels()?;
@@ -703,18 +911,27 @@ impl App {
             1 => a.os_logo,
             2 => a.confirm_quit,
             3 => a.disable_animation,
+            4 => self.config.session_logging.enabled,
             _ => false,
         }
     }
 
     /// Flip the Settings toggle at row `i` and persist immediately.
     fn toggle_setting(&mut self, i: usize) {
-        let a = &mut self.config.appearance;
         match i {
-            0 => a.opaque_background = !a.opaque_background,
-            1 => a.os_logo = !a.os_logo,
-            2 => a.confirm_quit = !a.confirm_quit,
-            3 => a.disable_animation = !a.disable_animation,
+            0 => {
+                self.config.appearance.opaque_background =
+                    !self.config.appearance.opaque_background;
+            }
+            1 => self.config.appearance.os_logo = !self.config.appearance.os_logo,
+            2 => self.config.appearance.confirm_quit = !self.config.appearance.confirm_quit,
+            3 => {
+                self.config.appearance.disable_animation =
+                    !self.config.appearance.disable_animation;
+            }
+            4 => {
+                self.config.session_logging.enabled = !self.config.session_logging.enabled;
+            }
             _ => {}
         }
         self.save_config_quietly();

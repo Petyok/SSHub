@@ -110,6 +110,17 @@ pub fn render_host_form(
                     display_text(&form.remote_command)
                 },
             ),
+            HostFormField::Transport => (
+                "Transport",
+                format!("{} (Space to toggle)", form.transport.label()),
+            ),
+            HostFormField::SessionLogging => (
+                "Session log",
+                format!(
+                    "{} (Space or arrows to cycle)",
+                    form.session_logging.label()
+                ),
+            ),
             HostFormField::OsIcon => ("OS icon", os_icon_label(form.os_icon_index)),
             HostFormField::Password => (
                 "Password",

@@ -7,8 +7,9 @@
 //! unknown key is recorded and accepted, only a *changed* key is refused.
 
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use ssh2::{CheckResult, KnownHostFileKind, KnownHostKeyFormat, Session};
@@ -257,7 +258,14 @@ impl SftpTransport for Ssh2Transport {
         }
 
         let (host, port) = self.address();
-        let tcp = TcpStream::connect((host.as_str(), port))
+        // Resolve + connect with a timeout so an unreachable host fails fast: a
+        // bare TcpStream::connect can hang for a minute+ on a firewalled address.
+        let addr = (host.as_str(), port)
+            .to_socket_addrs()
+            .with_context(|| format!("could not resolve {host}:{port}"))?
+            .next()
+            .ok_or_else(|| anyhow!("no address found for {host}:{port}"))?;
+        let tcp = TcpStream::connect_timeout(&addr, Duration::from_secs(8))
             .with_context(|| format!("could not connect to {host}:{port}"))?;
 
         let mut session = Session::new().context("failed to create SSH session")?;
@@ -353,10 +361,8 @@ impl SftpTransport for Ssh2Transport {
         })();
         match stream {
             Ok(()) => std::fs::rename(&tmp, local)
-                .map_err(|e| {
-                    // Don't leave the streamed temp behind if the rename fails.
+                .inspect_err(|_| {
                     let _ = std::fs::remove_file(&tmp);
-                    e
                 })
                 .with_context(|| format!("failed to finalize {}", local.display())),
             Err(e) => {

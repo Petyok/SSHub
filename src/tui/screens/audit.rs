@@ -31,9 +31,22 @@ pub fn render_audit(frame: &mut Frame, area: Rect, app: &App) {
         app.audit_range,
     );
 
-    // Row 1: blank separator
-    // Row 2: Table header
-    let header_y = area.y + 2;
+    let mut body_y = filter_y + 2;
+    if let Some(event) = app.auth_events_cache.get(app.audit_selected) {
+        let note = audit_note(event);
+        if !note.is_empty() {
+            buf.set_string(
+                inner_x,
+                body_y,
+                crate::tui::text::ellipsize(&format!("note: {note}"), inner_w as usize),
+                note_detail_style(&event.status),
+            );
+            body_y += 2;
+        }
+    }
+
+    // Table header (after optional note detail + spacer)
+    let header_y = body_y;
     if header_y >= area.y + area.height {
         return;
     }
@@ -63,6 +76,22 @@ pub fn render_audit(frame: &mut Frame, area: Rect, app: &App) {
         let x = inner_x + (inner_w.saturating_sub(msg.len() as u16)) / 2;
         let y = data_y + 2.min(max_rows.saturating_sub(1) as u16);
         buf.set_string(x, y, msg, theme::dim());
+    }
+
+    // Everything below the filter strip is the query's result, so a changed
+    // filter or range swaps all of it. Fade it up, leaving the strip itself
+    // (which the user just interacted with) solid (#35).
+    let fade =
+        crate::tui::widgets::middle_stack::content_fade(app.audit_filter_at, app.motion_enabled());
+    let rows_top = filter_y + 2;
+    if fade < 1.0 && area.height > rows_top - area.y {
+        let rows = Rect::new(
+            area.x,
+            rows_top,
+            area.width,
+            (area.y + area.height).saturating_sub(rows_top),
+        );
+        crate::tui::blit::fade(buf, rows, fade);
     }
 }
 
@@ -220,38 +249,44 @@ fn render_event_row(
         truncate(status_label, (result_w - 2) as usize),
         if selected { base_style } else { theme::text() },
     );
-    cx += result_w - 2;
+}
 
-    // NOTE
-    let note = event.note.as_deref().unwrap_or("");
-    let remaining = (x + w).saturating_sub(cx) as usize;
-    buf.set_string(
-        cx,
-        y,
-        truncate(note, remaining),
-        if selected { base_style } else { theme::dim() },
-    );
+fn note_detail_style(status: &str) -> Style {
+    match status {
+        "fail" => theme::red(),
+        "retry" => theme::amber(),
+        "launched" | "ok" => theme::green(),
+        _ => theme::dim(),
+    }
 }
 
 fn table_columns(total_w: u16) -> Vec<(&'static str, u16)> {
     if total_w >= 100 {
         vec![
             ("TIME", 12),
-            ("HOST", 24),
-            ("USER", 12),
-            ("VIA", 14),
-            ("RESULT", 10),
-            ("NOTE", total_w.saturating_sub(72)),
+            ("HOST", 30),
+            ("USER", 14),
+            ("VIA", 16),
+            ("RESULT", total_w.saturating_sub(72)),
         ]
     } else {
         vec![
             ("TIME", 10),
-            ("HOST", 18),
+            ("HOST", 20),
             ("USER", 10),
-            ("VIA", 10),
-            ("RESULT", 8),
-            ("NOTE", total_w.saturating_sub(56)),
+            ("VIA", 12),
+            ("RESULT", total_w.saturating_sub(52)),
         ]
+    }
+}
+
+fn audit_note(event: &crate::store::AuthEvent) -> String {
+    match (&event.note, &event.log_path) {
+        (Some(note), Some(path)) if note.is_empty() => path.clone(),
+        (Some(note), Some(path)) => format!("{note} (logs in {path})"),
+        (Some(note), None) => note.clone(),
+        (None, Some(path)) => path.clone(),
+        (None, None) => String::new(),
     }
 }
 
@@ -270,5 +305,47 @@ fn truncate(s: &str, max: usize) -> &str {
             .map(|(i, c)| i + c.len_utf8())
             .unwrap_or(0);
         &s[..end]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::AuthEvent;
+
+    fn sample_event(note: Option<&str>, log_path: Option<&str>) -> AuthEvent {
+        AuthEvent {
+            id: 1,
+            host_name: "web".into(),
+            username: Some("deploy".into()),
+            via: Some("direct".into()),
+            status: "launched".into(),
+            note: note.map(str::to_string),
+            log_path: log_path.map(str::to_string),
+            created_at: 0,
+        }
+    }
+
+    #[test]
+    fn audit_note_appends_log_dir_to_session_started() {
+        let dir = "/home/user/.local/share/sshub/logs/web_prod-42";
+        let event = sample_event(Some("session started"), Some(dir));
+        assert_eq!(
+            audit_note(&event),
+            format!("session started (logs in {dir})")
+        );
+    }
+
+    #[test]
+    fn audit_note_uses_path_when_note_empty() {
+        let dir = "/tmp/sshub/logs/web/";
+        let event = sample_event(Some(""), Some(dir));
+        assert_eq!(audit_note(&event), dir);
+    }
+
+    #[test]
+    fn audit_note_note_only_without_log_path() {
+        let event = sample_event(Some("spawn failed"), None);
+        assert_eq!(audit_note(&event), "spawn failed");
     }
 }

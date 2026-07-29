@@ -251,6 +251,7 @@ mod tests {
 
     #[test]
     fn writes_key_with_owner_only_perms_and_dedups() {
+        let _home = crate::test_env::lock_home();
         let dir = tempfile::tempdir().unwrap();
         std::env::set_var("HOME", dir.path());
 
