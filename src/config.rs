@@ -377,6 +377,25 @@ fn env_dir(var: &str) -> Option<std::path::PathBuf> {
     }
 }
 
+/// Run `f` with `SSHUB_CONFIG_DIR` pointed at `dir`, holding a process-wide lock
+/// so parallel tests cannot race on that env var (macOS CI surfaces this often).
+#[cfg(test)]
+pub(crate) fn with_test_config_dir<R>(dir: &std::path::Path, f: impl FnOnce() -> R) -> R {
+    use std::sync::{Mutex, OnceLock};
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let _guard = LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    std::env::set_var("SSHUB_CONFIG_DIR", dir);
+    let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    std::env::remove_var("SSHUB_CONFIG_DIR");
+    match out {
+        Ok(value) => value,
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
+}
+
 /// If `new_dir` does not exist but `legacy_dir` does, copy the legacy directory
 /// to the new location so user data is preserved on upgrade.
 ///
@@ -426,38 +445,38 @@ mod tests {
     #[test]
     fn save_config_preserves_comments_and_unknown_keys() {
         let dir = tempfile::tempdir().unwrap();
-        std::env::set_var("SSHUB_CONFIG_DIR", dir.path());
-        let path = config_file_path().unwrap();
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(
-            &path,
-            "# my hand-written note\nfuture_option = true  # keep me\n\n[appearance]\ndate_format = \"%Y-%m-%d %H:%M\"\n",
-        )
-        .unwrap();
+        with_test_config_dir(dir.path(), || {
+            let path = config_file_path().unwrap();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(
+                &path,
+                "# my hand-written note\nfuture_option = true  # keep me\n\n[appearance]\ndate_format = \"%Y-%m-%d %H:%M\"\n",
+            )
+            .unwrap();
 
-        let config = AppConfig {
-            appearance: AppearanceConfig {
-                date_format: "%d/%m/%Y".to_string(),
-                ..AppearanceConfig::default()
-            },
-            ..AppConfig::default()
-        };
-        save_config(&config).unwrap();
+            let config = AppConfig {
+                appearance: AppearanceConfig {
+                    date_format: "%d/%m/%Y".to_string(),
+                    ..AppearanceConfig::default()
+                },
+                ..AppConfig::default()
+            };
+            save_config(&config).unwrap();
 
-        let after = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            after.contains("# my hand-written note"),
-            "comment lost: {after}"
-        );
-        assert!(
-            after.contains("future_option = true"),
-            "unknown key lost: {after}"
-        );
-        assert!(
-            after.contains("%d/%m/%Y"),
-            "our change not written: {after}"
-        );
-        std::env::remove_var("SSHUB_CONFIG_DIR");
+            let after = std::fs::read_to_string(&path).unwrap();
+            assert!(
+                after.contains("# my hand-written note"),
+                "comment lost: {after}"
+            );
+            assert!(
+                after.contains("future_option = true"),
+                "unknown key lost: {after}"
+            );
+            assert!(
+                after.contains("%d/%m/%Y"),
+                "our change not written: {after}"
+            );
+        });
     }
 
     #[test]
