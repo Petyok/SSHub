@@ -103,11 +103,20 @@ pub struct SessionChip {
 /// Each chip is `● name`; the dot is colored by lifecycle (green running,
 /// amber connecting, red exited) and the active session is reversed. Overflow
 /// past the available width collapses into a `+N` counter.
-pub fn render_session_strip(frame: &mut Frame, area: Rect, chips: &[SessionChip]) {
+pub fn render_session_strip(
+    frame: &mut Frame,
+    area: Rect,
+    chips: &[SessionChip],
+    travel: Option<StripTravel>,
+) {
     if area.height == 0 || area.width == 0 || chips.is_empty() {
         return;
     }
 
+    // Columns each chip's name occupies, so a travelling highlight knows where
+    // to start and where to land. Only names are highlighted; the lifecycle dot
+    // keeps its own colour.
+    let mut name_spans: Vec<(u16, u16)> = Vec::with_capacity(chips.len());
     let buf = frame.buffer_mut();
     let y = area.y; // top row, alongside the wordmark
     let start_x = area.x + 16; // clear of the widest wordmark line
@@ -124,7 +133,10 @@ pub fn render_session_strip(frame: &mut Frame, area: Rect, chips: &[SessionChip]
             SessionDot::Running => theme::green(),
             SessionDot::Exited => theme::red(),
         };
-        let name_style = if chip.active {
+        // While the highlight is travelling, no chip paints itself highlighted:
+        // the moving bar below is the only thing wearing `inv`, exactly as the
+        // full-screen tab strip does it.
+        let name_style = if chip.active && travel.is_none() {
             theme::inv()
         } else {
             theme::text()
@@ -142,9 +154,40 @@ pub fn render_session_strip(frame: &mut Frame, area: Rect, chips: &[SessionChip]
         }
 
         x = put(buf, x, y, "\u{25cf} ", dot_style);
+        name_spans.push((x, unicode_width(&chip.name) as u16));
         x = put(buf, x, y, &chip.name, name_style);
         x = put(buf, x, y, " ", theme::dim());
     }
+
+    // Carry the highlight from the chip being left to the new one, so switching
+    // tabs from the dashboard moves instead of teleporting (#35). A chip that
+    // collapsed into the `+N` marker has no span, and then there is nothing to
+    // travel between.
+    if let Some(t) = travel {
+        let (Some(&(fx, fw)), Some(&(tx, tw))) = (name_spans.get(t.from), name_spans.get(t.to))
+        else {
+            return;
+        };
+        let e = crate::tui::tween::ease_in_out(t.p);
+        let bar_x = crate::session::render::lerp_u16(fx, tx, e);
+        let bar_w = crate::session::render::lerp_u16(fw, tw, e);
+        for cx in bar_x..bar_x.saturating_add(bar_w).min(end_x) {
+            if let Some(cell) = buf.cell_mut((cx, y)) {
+                cell.set_style(theme::inv());
+            }
+        }
+    }
+}
+
+/// An in-flight highlight travel across the dashboard session strip (#35):
+/// `from` and `to` are chip indices, `p` is raw progress in `0..1` (the easing
+/// is applied here, so callers pass what [`crate::tui::tween::progress`] gave
+/// them).
+#[derive(Debug, Clone, Copy)]
+pub struct StripTravel {
+    pub from: usize,
+    pub to: usize,
+    pub p: f32,
 }
 
 /// Write `text` at (x, y) and return x + width.

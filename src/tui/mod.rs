@@ -176,7 +176,18 @@ fn render_inner(frame: &mut Frame, app: &App) {
     // Open embedded sessions — visible strip on the top header row so
     // background SSH tabs aren't hidden behind a footer hint.
     let session_chips = build_session_chips(app);
-    widgets::header::render_session_strip(frame, areas.header, &session_chips);
+    // Cycling session tabs from the dashboard used to change the highlighted
+    // chip with no motion at all, while the same keys inside the full-screen
+    // view slide it. Both now read the same travel state (#35).
+    let strip_travel = crate::session::render::highlight_travel(app).and_then(|p| {
+        let sw = app.session_tab_switch?;
+        Some(widgets::header::StripTravel {
+            from: sw.from,
+            to: app.active_session?,
+            p,
+        })
+    });
+    widgets::header::render_session_strip(frame, areas.header, &session_chips, strip_travel);
 
     // Horizontal rule 1
     let rule1 = row_in(area, areas.header.y + areas.header.height);
@@ -1472,6 +1483,83 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|frame| render(frame, app)).unwrap();
         terminal.backend().buffer().clone()
+    }
+
+    /// First column of `needle` anywhere in `buf`, searched row by row.
+    fn find_cell(buf: &Buffer, needle: &str) -> Option<(u16, u16)> {
+        let n = needle.chars().count() as u16;
+        for y in buf.area.y..buf.area.bottom() {
+            for x in buf.area.x..buf.area.right().saturating_sub(n) {
+                let got: String = (x..x + n).map(|i| buf[(i, y)].symbol()).collect();
+                if got == needle {
+                    return Some((x, y));
+                }
+            }
+        }
+        None
+    }
+
+    /// App with two spawned sessions, for the dashboard session strip.
+    fn app_with_two_sessions() -> App {
+        let mut app = test_app_with_hosts();
+        for name in ["alpha", "bravo"] {
+            let cfg = crate::session::SessionConfig {
+                argv: vec!["true".into()],
+                display_name: name.into(),
+                meta: crate::session::SessionMeta::default(),
+                pending_secret: None,
+                key_push_identity: None,
+                host_name: name.into(),
+            };
+            app.sessions
+                .push(crate::session::Session::spawn(cfg, 24, 80, None).unwrap());
+        }
+        app
+    }
+
+    #[test]
+    fn dashboard_strip_highlight_travels_instead_of_teleporting() {
+        let mut app = app_with_two_sessions();
+
+        // At rest the highlight sits on the active chip, as before.
+        app.active_session = Some(1);
+        let buffer = render_to_buffer(&app, 120, 38);
+        let (bx, by) = find_cell(&buffer, "bravo").expect("second chip rendered");
+        assert_eq!(
+            buffer[(bx, by)].bg,
+            theme::BRIGHT,
+            "at rest: on the new chip"
+        );
+
+        // Mid-switch, with progress still at ~0, the highlight must still be on
+        // the chip being left. That is the whole point: it moves across rather
+        // than appearing on the target instantly.
+        app.session_tab_switch = Some(crate::app::SessionTabSwitch {
+            dir: 1,
+            from: 0,
+            at: std::time::Instant::now(),
+        });
+        let buffer = render_to_buffer(&app, 120, 38);
+        let (ax, ay) = find_cell(&buffer, "alpha").expect("first chip rendered");
+        let (bx, by) = find_cell(&buffer, "bravo").expect("second chip rendered");
+        assert_eq!(
+            buffer[(ax, ay)].bg,
+            theme::BRIGHT,
+            "travelling: still on the chip being left"
+        );
+        assert_ne!(
+            buffer[(bx, by)].bg,
+            theme::BRIGHT,
+            "travelling: not yet on the target"
+        );
+
+        // Reduced motion jumps straight to the final state.
+        app.config.appearance.disable_animation = true;
+        let buffer = render_to_buffer(&app, 120, 38);
+        let (ax, ay) = find_cell(&buffer, "alpha").unwrap();
+        let (bx, by) = find_cell(&buffer, "bravo").unwrap();
+        assert_eq!(buffer[(bx, by)].bg, theme::BRIGHT, "reduced motion: target");
+        assert_ne!(buffer[(ax, ay)].bg, theme::BRIGHT);
     }
 
     #[test]

@@ -94,6 +94,13 @@ All notable changes to SSHub are documented in this file.
 
 ### Fixed
 
+- **Switching session tabs from the dashboard did not animate** (issue #49) - the
+  same `Ctrl+[` / `Ctrl+]` that slide the highlight inside the full-screen view
+  changed the highlighted chip in the dashboard strip instantly. The strip now
+  carries the highlight across, reading the same travel state the full-screen tab
+  bar does, so the two surfaces cannot drift apart again. A chip collapsed into
+  the `+N` overflow marker has nowhere to travel and is left alone, and reduced
+  motion still jumps straight to the final state.
 - **Arrow keys did nothing in Midnight Commander** (PR #56) - full-screen
   applications ask for application cursor mode (DECCKM) and then expect the
   cursor keys as SS3 sequences, while SSHub always sent the normal CSI ones. The
