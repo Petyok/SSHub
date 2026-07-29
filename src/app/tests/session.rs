@@ -274,6 +274,9 @@ pub(crate) fn session_strip_cycle_and_sftp_from_non_hosts_tab() {
         .push(crate::session::Session::spawn(cfg, 24, 80, None).unwrap());
     app.active_session = Some(0);
     app.active_tab = 2; // tunnels
+                        // Pre-seed a browser so Ctrl+Shift+F only switches tabs (no worker thread /
+                        // outbound connect that races other tests on SSHUB_CONFIG_DIR).
+    app.sftp = Some(crate::sftp::model::SftpState::new("/srv", "/home/me"));
 
     app.handle_key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::CONTROL))
         .unwrap();
@@ -292,7 +295,7 @@ pub(crate) fn session_strip_cycle_and_sftp_from_non_hosts_tab() {
     );
     assert!(
         app.sftp.is_some(),
-        "Ctrl+Shift+F must open SFTP for the session host"
+        "Ctrl+Shift+F must keep the existing SFTP browser"
     );
     assert_eq!(app.mode, AppMode::Normal);
 }
