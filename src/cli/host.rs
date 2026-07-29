@@ -201,7 +201,7 @@ fn cmd_connect(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     let mut askpass_guard = None;
     let mut extra_env: Vec<(String, String)> = Vec::new();
     if let Some(secret) = pending_secret.as_ref() {
-        if let Ok(exe) = std::env::current_exe() {
+        if let Ok(exe) = crate::session::askpass::helper_exe() {
             if let Ok(guard) = AskpassSecret::new(secret.value()) {
                 extra_env = guard.env(&exe);
                 askpass_guard = Some(guard);

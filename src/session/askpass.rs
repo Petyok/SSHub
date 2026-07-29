@@ -14,6 +14,45 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// Path to hand ssh as its `SSH_ASKPASS` helper: this binary, re-executed.
+///
+/// Not simply `current_exe()`, which reads `/proc/self/exe` and reports
+/// `<path> (deleted)` once the file has been replaced. An upgrade never writes
+/// into the running binary: `npm install -g`, `cargo install`, a package manager
+/// and `just install` all unlink the old inode and create a new one. ssh then
+/// fails to exec that literal path, no stored secret is delivered, and what the
+/// user sees is `Permission denied (publickey)`, which points at the server
+/// rather than at the upgrade.
+///
+/// So when the path is gone, strip the marker and take the same path again: after
+/// an in-place upgrade a new binary is sitting right there.
+pub fn helper_exe() -> std::io::Result<PathBuf> {
+    let exe = std::env::current_exe()?;
+    if exe.exists() {
+        return Ok(exe);
+    }
+    if let Some(replaced) = strip_deleted_marker(&exe) {
+        return Ok(replaced);
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        format!(
+            "the sshub binary is no longer at {}, which happens when it is \
+             upgraded while running; restart SSHub to restore password and \
+             passphrase auth",
+            exe.display()
+        ),
+    ))
+}
+
+/// `/proc/self/exe` for a replaced binary reads as `<path> (deleted)`. Returns
+/// that path when it exists again, which is the normal outcome of an upgrade.
+fn strip_deleted_marker(exe: &Path) -> Option<PathBuf> {
+    let text = exe.to_str()?;
+    let base = PathBuf::from(text.strip_suffix(" (deleted)")?);
+    base.exists().then_some(base)
+}
+
 /// A secret staged in a short-lived, owner-only file for `SSH_ASKPASS`.
 pub struct AskpassSecret {
     path: PathBuf,
@@ -122,5 +161,45 @@ mod tests {
     fn askpass_mode_off_without_env() {
         std::env::remove_var(ASKPASS_FILE_ENV);
         assert!(!maybe_run_askpass());
+    }
+}
+
+#[cfg(test)]
+mod exe_tests {
+    use super::*;
+
+    #[test]
+    fn helper_exe_is_the_running_binary() {
+        // The test binary exists, so this is the plain path with no marker.
+        let exe = helper_exe().unwrap();
+        assert!(exe.exists(), "{exe:?}");
+        assert_eq!(exe, std::env::current_exe().unwrap());
+    }
+
+    #[test]
+    fn a_replaced_binary_resolves_to_whatever_took_its_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("sshub");
+        std::fs::write(&real, b"new binary").unwrap();
+
+        // What /proc/self/exe reads once an upgrade replaced the file.
+        let deleted = PathBuf::from(format!("{} (deleted)", real.display()));
+        assert_eq!(
+            strip_deleted_marker(&deleted).as_deref(),
+            Some(real.as_path())
+        );
+
+        // Nothing took its place: no path to offer, and the caller must say so
+        // rather than handing ssh something that cannot be executed.
+        std::fs::remove_file(&real).unwrap();
+        assert_eq!(strip_deleted_marker(&deleted), None);
+    }
+
+    #[test]
+    fn a_path_without_the_marker_is_not_rewritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("sshub");
+        std::fs::write(&real, b"binary").unwrap();
+        assert_eq!(strip_deleted_marker(&real), None);
     }
 }

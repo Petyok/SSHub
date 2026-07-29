@@ -218,13 +218,20 @@ impl Session {
         let mut env: Vec<(String, String)> = Vec::new();
         let mut askpass = None;
         let mut use_askpass = false;
+        let mut askpass_error = None;
         if let Some(secret) = config.pending_secret.as_ref() {
-            if let Ok(exe) = std::env::current_exe() {
-                if let Ok(guard) = askpass::AskpassSecret::new(secret.value()) {
-                    env = guard.env(&exe);
-                    askpass = Some(guard);
-                    use_askpass = true;
+            match askpass::helper_exe() {
+                Ok(exe) => {
+                    if let Ok(guard) = askpass::AskpassSecret::new(secret.value()) {
+                        env = guard.env(&exe);
+                        askpass = Some(guard);
+                        use_askpass = true;
+                    }
                 }
+                // Worth saying out loud: without it every stored secret goes
+                // undelivered and ssh reports a rejected key, which sends the
+                // user looking at the server instead of at the upgrade.
+                Err(e) => askpass_error = Some(e.to_string()),
             }
         }
 
@@ -238,6 +245,8 @@ impl Session {
         if config.pending_secret.is_some() {
             diagnostics.push(if use_askpass {
                 "auth: credential handed to ssh via SSH_ASKPASS".to_string()
+            } else if let Some(e) = askpass_error.as_deref() {
+                format!("auth: SSH_ASKPASS unavailable ({e}) — will type at the prompt")
             } else {
                 "auth: SSH_ASKPASS unavailable — will type at the prompt".to_string()
             });
