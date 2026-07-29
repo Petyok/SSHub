@@ -12,6 +12,11 @@ const CARD_H: u16 = 6;
 const MIN_CARD_W: u16 = 26;
 const CARD_GAP: u16 = 2;
 
+/// One card row plus the blank line under it.
+const fn row_stride_const() -> u16 {
+    CARD_H + 1
+}
+
 /// Inner content width of the identities body for a given total width
 /// (mirrors the margin logic in [`render_keys`]).
 pub fn inner_width(total_width: u16) -> u16 {
@@ -63,6 +68,22 @@ pub fn render_keys(frame: &mut Frame, area: Rect, app: &App) {
 
     let agent = app.agent_info.as_ref();
 
+    // The agent block is a fixed strip at the bottom, not a floater that follows
+    // the last card: deriving its position from the grid put it straight onto a
+    // half-scrolled card row, and its own fields are shorter than the row, so the
+    // card showed through as borders and key paths spliced onto the panel's text.
+    //
+    // Rows, bottom up: notice, keys, socket, rule, blank.
+    const AGENT_STRIP: u16 = 5;
+    let (grid, agent_y) = if area.height > row_stride_const() + AGENT_STRIP {
+        (
+            Rect::new(area.x, area.y, area.width, area.height - AGENT_STRIP),
+            Some(area.y + area.height - 4),
+        )
+    } else {
+        (area, None)
+    };
+
     // Cards per row — user preference (0 = auto), clamped to what fits.
     let cards_per_row = resolve_columns(inner_w, app.config.appearance.identity_columns);
     let cpr_u16 = cards_per_row as u16;
@@ -77,12 +98,9 @@ pub fn render_keys(frame: &mut Frame, area: Rect, app: &App) {
     // Cards are laid out in rows of `cards_per_row`. Once there are more rows
     // than fit, scroll by whole card-rows to keep the selected card on screen
     // (roughly centered).
-    let row_stride = CARD_H + 1;
+    let row_stride = row_stride_const();
     let cpr = cards_per_row.max(1);
-    let total_rows = app.identities.len().div_ceil(cpr);
-    let visible_rows = ((area.height / row_stride) as usize).max(1);
-    let row_offset = app.keys_scroll_row_offset(area.height, cpr, row_stride);
-    let window_end_row = row_offset + visible_rows;
+    let row_offset = app.keys_scroll_row_offset(grid.height, cpr, row_stride);
 
     // Scroll by lines rather than whole card rows (#35): the grid slides under
     // the selection instead of jumping a card height at a time. Cards are drawn
@@ -91,7 +109,7 @@ pub fn render_keys(frame: &mut Frame, area: Rect, app: &App) {
     // the panels around it.
     let pad = row_stride;
     let scroll = app.keys_scroll_advance(row_offset * row_stride as usize);
-    let ext = Rect::new(area.x, area.y, area.width, area.height + pad * 2);
+    let ext = Rect::new(grid.x, grid.y, grid.width, grid.height + pad * 2);
     let mut layer = Buffer::empty(ext);
     for (i, identity) in app.identities.iter().enumerate() {
         let row = i / cpr;
@@ -100,30 +118,26 @@ pub fn render_keys(frame: &mut Frame, area: Rect, app: &App) {
         // of slack on each side, the first drawn card can be at most `pad`
         // above the view, which the padded buffer has room for.
         let top = (row as u16) * row_stride;
-        if top + row_stride < scroll || top >= scroll + area.height {
+        if top + row_stride < scroll || top >= scroll + grid.height {
             continue;
         }
 
         let col = i % cpr;
         let card_x = inner_x + (col as u16) * (card_w + CARD_GAP);
-        let y = area.y + pad + top - scroll;
+        let y = grid.y + pad + top - scroll;
 
         let is_selected = i == app.identity_selected;
         render_card(&mut layer, card_x, y, card_w, identity, is_selected, agent);
     }
-    crate::tui::blit::blit(buf, ext, area, &layer, 0, -(pad as i32));
+    crate::tui::blit::blit(buf, ext, grid, &layer, 0, -(pad as i32));
 
-    // Agent info below the visible cards (only when there is room left).
-    let drawn_rows = window_end_row.min(total_rows).saturating_sub(row_offset);
-    let mut y = area.y + (drawn_rows as u16) * row_stride;
-    if y + 3 <= area.y + area.height {
-        y += 1;
+    if let Some(y) = agent_y {
         render_agent_info(buf, inner_x, y, inner_w, agent);
     }
 
-    // Notice
+    // Notice, on the last row so it cannot land on the agent strip.
     if let Some(notice) = app.identity_notice.as_deref() {
-        let notice_y = area.y + area.height.saturating_sub(2);
+        let notice_y = area.y + area.height.saturating_sub(1);
         buf.set_string(
             inner_x,
             notice_y,
@@ -298,6 +312,9 @@ fn render_card(
 }
 
 fn render_agent_info(buf: &mut Buffer, x: u16, y: u16, w: u16, agent: Option<&AgentInfo>) {
+    // Clear first: these rows may still hold a card the grid drew, and the
+    // fields below are shorter than the row, so leftovers would show through as
+    // text spliced onto "loaded keys 0".
     let line: String = std::iter::repeat_n('─', w as usize).collect();
     buf.set_string(x, y, &line, theme::dim());
 

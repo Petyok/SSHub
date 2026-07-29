@@ -103,6 +103,13 @@ All notable changes to SSHub are documented in this file.
 
 ### Fixed
 
+- **The agent panel printed over the identity cards** - its position was derived
+  from whole card rows while the grid scrolls by lines, so mid-scroll it landed on
+  a card and its own short fields left the card showing through, giving lines like
+  `loaded keys 0n (no key)` and `agent socket (not set)────┘`. It is a fixed strip
+  at the bottom of the tab now, with the grid sized to what is left, so the two
+  cannot share a row whatever the scroll is doing. The transient notice moved to
+  the last row for the same reason.
 - **A stored secret could not be removed** - clearing the password field meant
   "leave whatever is stored alone", because an empty field was the only signal
   the save path had. It now compares against what the store held when the form
