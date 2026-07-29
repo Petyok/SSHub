@@ -203,7 +203,7 @@ fn keychain_keygen_form_flow() {
     // Navigate to Passphrase
     app.handle_key(key(KeyCode::Down)).unwrap();
     edit_field(&mut app, "secret123");
-    
+
     // Navigate to Comment
     app.handle_key(key(KeyCode::Down)).unwrap();
     edit_field(&mut app, "mycomment");
@@ -275,11 +275,17 @@ fn keychain_keygen_successful_generation() {
         .unwrap()
         .expect("should find identity");
     assert_eq!(
-        ident.private_key.as_ref().map(|p| p.to_string_lossy().into_owned()),
+        ident
+            .private_key
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned()),
         Some(key_path_str)
     );
     assert!(!ident.has_password);
 
     // Verify that the new identity is selected in app
-    assert_eq!(app.identities[app.identity_selected].name, "my_new_keygen_key");
+    assert_eq!(
+        app.identities[app.identity_selected].name,
+        "my_new_keygen_key"
+    );
 }
