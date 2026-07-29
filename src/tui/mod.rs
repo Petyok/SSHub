@@ -1587,10 +1587,9 @@ mod tests {
     }
 
     #[test]
-    fn render_status_bar_shows_counts_and_mode() {
+    fn dashboard_footer_shows_keybinds() {
         let app = test_app_with_hosts();
         let buffer = render_to_buffer(&app, 132, 38);
-        // Dashboard footer shows keybinds; check for key elements
         assert!(buffer_contains(&buffer, "connect"));
         assert!(buffer_contains(&buffer, "quit"));
     }

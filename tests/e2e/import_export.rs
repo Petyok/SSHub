@@ -7,10 +7,7 @@ use sshub::metadata::MetadataDb;
 use sshub::ssh::export_launcher_hosts_to;
 use sshub::store::{HostSource, LauncherStore, NewHost};
 
-#[path = "../support/mod.rs"]
-mod support;
-
-use support::FixtureResolver;
+use crate::support::FixtureResolver;
 
 struct TestEnv {
     _config_dir: tempfile::TempDir,

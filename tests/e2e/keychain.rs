@@ -1,16 +1,12 @@
 use std::sync::Arc;
 
-use anyhow;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use sshub::app::{App, AppDeps, AppMode};
 use sshub::config::AppConfig;
 use sshub::metadata::MetadataDb;
 use sshub::ssh::{HostResolver, SshHost};
-use sshub::store::{HostSource, LauncherStore, NewHost};
+use sshub::store::{LauncherStore, NewHost};
 use tempfile::NamedTempFile;
-
-#[path = "../support/mod.rs"]
-mod support;
 
 struct EmptyResolver;
 
@@ -26,10 +22,6 @@ impl HostResolver for EmptyResolver {
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::empty())
-}
-
-fn key_ctrl(code: KeyCode) -> KeyEvent {
-    KeyEvent::new(code, KeyModifiers::CONTROL)
 }
 
 fn key_char(c: char) -> KeyEvent {
