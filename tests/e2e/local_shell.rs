@@ -10,8 +10,6 @@ use sshub::store::LauncherStore;
 #[path = "../support/mod.rs"]
 mod support;
 
-use support::MockLauncher;
-
 struct EmptyResolver;
 
 impl HostResolver for EmptyResolver {
@@ -37,7 +35,6 @@ fn fresh_app() -> App {
             resolver: Box::new(EmptyResolver),
             metadata: Arc::new(MetadataDb::default()),
             store,
-            launcher: Box::new(MockLauncher::new()),
             password_store: Box::new(sshub::credentials::NoopPasswordStore),
         },
     );

@@ -7,7 +7,40 @@
 
 use std::path::PathBuf;
 
+/// Name of the synthetic row that walks a pane up to its parent directory.
+pub const PARENT_ROW: &str = "..";
+
+/// The directory one level up from `path`, or `None` at the root.
+///
+/// `Path::parent` alone is wrong for the relative paths the remote pane starts
+/// on: the server resolves the login directory from `"."`, whose `parent()` is
+/// the empty path -- a listing request the server rejects, which is why walking
+/// up from a fresh remote pane did nothing at all. Relative paths therefore
+/// grow a `..` component instead of losing their last one.
+pub fn parent_of(path: &std::path::Path) -> Option<PathBuf> {
+    let last = path.components().next_back();
+    // Already climbing (".", "..", "a/.."): another `..` is the only way up.
+    if matches!(
+        last,
+        Some(std::path::Component::CurDir) | Some(std::path::Component::ParentDir)
+    ) {
+        return Some(path.join(PARENT_ROW));
+    }
+    match path.parent() {
+        // A bare name ("work") sits in the pane's own directory.
+        Some(p) if p.as_os_str().is_empty() => Some(PathBuf::from(".")),
+        Some(p) => Some(p.to_path_buf()),
+        // Filesystem root: nowhere left to go.
+        None => None,
+    }
+}
+
 /// Which of the two panes a path/entry belongs to.
+///
+/// `Remote` is the right-hand pane, always a server. `Local` is the left-hand
+/// one, which is the local filesystem by default but can be pointed at a
+/// second server ([`SftpState::left_host`]) -- the name is kept for its default
+/// and because the worker protocol is written in these terms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Side {
     Remote,
@@ -48,6 +81,26 @@ pub struct QueuedTransfer {
     pub is_dir: bool,
 }
 
+impl FileEntry {
+    /// The synthetic ".." row. Enterable, but never a transfer or file-op
+    /// target -- see [`FileEntry::is_parent`].
+    pub fn parent_row() -> Self {
+        Self {
+            name: PARENT_ROW.to_string(),
+            is_dir: true,
+            size: 0,
+            is_symlink: false,
+            perm: None,
+        }
+    }
+
+    /// Whether this is the synthetic parent row rather than a real listing
+    /// entry. No real file can be named `..`, so the name is enough.
+    pub fn is_parent(&self) -> bool {
+        self.name == PARENT_ROW
+    }
+}
+
 /// One browsable directory column (remote or local).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pane {
@@ -55,6 +108,9 @@ pub struct Pane {
     pub entries: Vec<FileEntry>,
     pub selected: usize,
     pub filter: String,
+    /// Whether dotfiles are listed. Off by default: in a home directory they
+    /// are most of the listing, and what someone came for sits below them.
+    pub show_hidden: bool,
 }
 
 impl Pane {
@@ -64,32 +120,68 @@ impl Pane {
             entries: Vec::new(),
             selected: 0,
             filter: String::new(),
+            show_hidden: false,
         }
     }
 
-    /// Indices into `entries` matching the current filter (all if the filter is empty).
-    pub fn visible_indices(&self) -> Vec<usize> {
-        if self.filter.is_empty() {
-            return (0..self.entries.len()).collect();
+    /// Whether `entry` is listed right now: it must survive the text filter
+    /// and, unless dotfiles are shown, not be one.
+    ///
+    /// The synthetic `..` row is exempt from the dotfile rule -- its name
+    /// starts with a dot, but it is the way out of the directory rather than an
+    /// entry in it. It is *not* exempt from the text filter: while searching,
+    /// the user is after something specific, and a `..` sitting at the top of
+    /// the results would take the cursor `set_filter` parks on row zero.
+    ///
+    /// A search that *starts with a dot* lifts the hiding: typing `.ssh` is an
+    /// unambiguous request for a dotfile, and answering it with "no matches"
+    /// while the entry sits right there would be obtuse.
+    fn is_visible(&self, entry: &FileEntry, needle: &str) -> bool {
+        if entry.is_parent() {
+            return needle.is_empty();
         }
-        let needle = self.filter.to_lowercase();
+        let asked_for_dotfiles = needle.starts_with('.');
+        if !self.show_hidden && !asked_for_dotfiles && entry.name.starts_with('.') {
+            return false;
+        }
+        needle.is_empty() || entry.name.to_lowercase().contains(needle)
+    }
+
+    /// The text filter, lowercased once per query rather than per entry:
+    /// `visible_indices` runs for both panes on every frame.
+    fn needle(&self) -> String {
+        self.filter.to_lowercase()
+    }
+
+    /// Indices into `entries` that are currently listed.
+    pub fn visible_indices(&self) -> Vec<usize> {
+        let needle = self.needle();
         self.entries
             .iter()
             .enumerate()
-            .filter(|(_, e)| e.name.to_lowercase().contains(&needle))
+            .filter(|(_, e)| self.is_visible(e, &needle))
             .map(|(i, _)| i)
             .collect()
     }
 
-    /// Number of entries currently visible under the filter.
+    /// Number of entries currently listed.
     pub fn visible_len(&self) -> usize {
-        if self.filter.is_empty() {
-            return self.entries.len();
-        }
-        let needle = self.filter.to_lowercase();
+        let needle = self.needle();
         self.entries
             .iter()
-            .filter(|e| e.name.to_lowercase().contains(&needle))
+            .filter(|e| self.is_visible(e, &needle))
+            .count()
+    }
+
+    /// Entries the dotfile filter is currently keeping off screen, so the pane
+    /// can say so instead of looking mysteriously short.
+    pub fn hidden_len(&self) -> usize {
+        if self.show_hidden || self.filter.starts_with('.') {
+            return 0;
+        }
+        self.entries
+            .iter()
+            .filter(|e| !e.is_parent() && e.name.starts_with('.'))
             .count()
     }
 
@@ -101,19 +193,23 @@ impl Pane {
 
     /// The entry under the cursor, if any.
     pub fn selected_entry(&self) -> Option<&FileEntry> {
-        if self.filter.is_empty() {
-            return self.entries.get(self.selected);
-        }
-        let needle = self.filter.to_lowercase();
+        let needle = self.needle();
         self.entries
             .iter()
-            .filter(|e| e.name.to_lowercase().contains(&needle))
+            .filter(|e| self.is_visible(e, &needle))
             .nth(self.selected)
     }
 
     /// Replace the listing and clamp the cursor to the new bounds.
+    ///
+    /// Prepends the synthetic [`PARENT_ROW`] unless the pane is at the root, so
+    /// walking up is a visible row you can select rather than a keybind you
+    /// have to know about.
     pub fn set_entries(&mut self, entries: Vec<FileEntry>) {
         self.entries = entries;
+        if parent_of(&self.cwd).is_some() {
+            self.entries.insert(0, FileEntry::parent_row());
+        }
         self.filter = String::new();
         self.clamp_selection();
     }
@@ -128,7 +224,7 @@ impl Pane {
         }
     }
 
-    fn clamp_selection(&mut self) {
+    pub(crate) fn clamp_selection(&mut self) {
         let len = self.visible_len();
         if len == 0 {
             self.selected = 0;
@@ -177,6 +273,18 @@ pub struct SftpState {
     pub progress: Option<Progress>,
     pub notice: Option<String>,
     pub searching: bool,
+    /// True from connect until the worker reports `Connected`, so the UI shows a
+    /// "connecting…" state (the picker) instead of an empty browser.
+    pub connecting: bool,
+    /// Name of the second server the left pane is browsing, or `None` when it
+    /// is showing the local filesystem.
+    pub left_host: Option<String>,
+    /// True from connecting the left pane's server until it reports `Connected`.
+    pub left_connecting: bool,
+    /// The transfers handed to the worker for the run in flight. The queue can
+    /// be added to while it runs, so completion clears exactly this snapshot
+    /// rather than everything staged.
+    pub running: Vec<QueuedTransfer>,
 }
 
 impl SftpState {
@@ -191,6 +299,10 @@ impl SftpState {
             progress: None,
             notice: None,
             searching: false,
+            connecting: false,
+            left_host: None,
+            left_connecting: false,
+            running: Vec::new(),
         }
     }
 
@@ -269,6 +381,9 @@ impl SftpState {
     pub fn enter_dir(&self) -> Option<(Side, PathBuf)> {
         let pane = self.focused_pane();
         let entry = pane.selected_entry()?;
+        if entry.is_parent() {
+            return self.parent_dir();
+        }
         if !entry.is_dir {
             return None;
         }
@@ -278,9 +393,28 @@ impl SftpState {
     /// Compute the parent path of the focused pane's cwd. Returns
     /// `(Side, parent)` or `None` when already at the root. Pure PathBuf math.
     pub fn parent_dir(&self) -> Option<(Side, PathBuf)> {
-        let pane = self.focused_pane();
-        let parent = pane.cwd.parent()?;
-        Some((self.focused_side(), parent.to_path_buf()))
+        let parent = parent_of(&self.focused_pane().cwd)?;
+        Some((self.focused_side(), parent))
+    }
+
+    /// Stage the **focused pane's** selection for transfer toward `target`.
+    ///
+    /// The arrow keys point at the destination pane (left = local, right =
+    /// remote) and the source is always what the cursor is on. Staging used to
+    /// read the remote pane whichever side was focused, so pressing ← while
+    /// browsing locally queued whatever the remote cursor happened to sit on --
+    /// and queued it again after each local `cd`, since the destination path
+    /// had changed and the duplicate guard compares both ends.
+    pub fn stage_toward(&mut self, target: Side) -> Result<(), String> {
+        if self.focused_side() == target {
+            let msg = "that pane is the destination — Tab to pick a source".to_string();
+            self.notice = Some(msg.clone());
+            return Err(msg);
+        }
+        match target {
+            Side::Local => self.stage_download(),
+            Side::Remote => self.stage_upload(),
+        }
     }
 
     /// Stage the focused-remote selection for download into `local.cwd`.
@@ -291,6 +425,9 @@ impl SftpState {
             .selected_entry()
             .cloned()
             .ok_or_else(|| "nothing selected".to_string())?;
+        if entry.is_parent() {
+            return Err("that row just walks up a directory".to_string());
+        }
         let src = self.remote.cwd.join(&entry.name);
         let dst = self.local.cwd.join(&entry.name);
         if self.queue.iter().any(|q| q.src == src && q.dst == dst) {
@@ -316,6 +453,9 @@ impl SftpState {
             .selected_entry()
             .cloned()
             .ok_or_else(|| "nothing selected".to_string())?;
+        if entry.is_parent() {
+            return Err("that row just walks up a directory".to_string());
+        }
         let src = self.local.cwd.join(&entry.name);
         let dst = self.remote.cwd.join(&entry.name);
         if self.queue.iter().any(|q| q.src == src && q.dst == dst) {
@@ -333,6 +473,43 @@ impl SftpState {
         Ok(())
     }
 
+    /// Show or hide dotfiles in both panes at once -- they are browsed as a
+    /// pair, so splitting the setting would just be two keys to press. Returns
+    /// the new state so the caller can persist it.
+    pub fn toggle_hidden(&mut self) -> bool {
+        let show = !self.local.show_hidden;
+        for pane in [&mut self.local, &mut self.remote] {
+            // `selected` indexes the *visible* listing, so revealing rows above
+            // the cursor would slide it onto a different entry. Re-find the one
+            // it was on instead.
+            let was_on = pane.selected_entry().map(|e| e.name.clone());
+            pane.show_hidden = show;
+            match was_on.and_then(|name| {
+                pane.visible_indices()
+                    .iter()
+                    .position(|i| pane.entries[*i].name == name)
+            }) {
+                Some(pos) => pane.selected = pos,
+                None => pane.clamp_selection(),
+            }
+        }
+        show
+    }
+
+    /// Whether the left pane is browsing a second server rather than the local
+    /// filesystem, which decides where its listings and file ops are sent.
+    pub fn left_is_remote(&self) -> bool {
+        self.left_host.is_some()
+    }
+
+    /// Take the transfers just finished out of the queue, leaving anything
+    /// staged while the run was in flight. Returns whether work is left.
+    pub fn finish_run(&mut self) -> bool {
+        let done = std::mem::take(&mut self.running);
+        self.queue.retain(|q| !done.contains(q));
+        !self.queue.is_empty()
+    }
+
     /// Remove the queued transfer at `idx` (no-op if out of range).
     pub fn unstage(&mut self, idx: usize) {
         if idx < self.queue.len() {
@@ -344,6 +521,15 @@ impl SftpState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Index of the row named `name` in `pane`, so tests address rows by name
+    /// and stay honest about the synthetic ".." row sitting at index 0.
+    fn row(pane: &Pane, name: &str) -> usize {
+        pane.entries
+            .iter()
+            .position(|e| e.name == name)
+            .unwrap_or_else(|| panic!("no row named {name}"))
+    }
 
     fn state_with_entries() -> SftpState {
         let mut s = SftpState::new("/srv", "/home/me");
@@ -396,12 +582,13 @@ mod tests {
     #[test]
     fn move_selection_clamps() {
         let mut s = state_with_entries();
+        // "..", "docs", "a.txt"
         s.move_selection(-5);
         assert_eq!(s.remote.selected, 0);
         s.move_selection(1);
         assert_eq!(s.remote.selected, 1);
         s.move_selection(10);
-        assert_eq!(s.remote.selected, 1); // clamped to len-1
+        assert_eq!(s.remote.selected, 2); // clamped to len-1
     }
 
     #[test]
@@ -424,20 +611,62 @@ mod tests {
     #[test]
     fn enter_dir_only_for_directories() {
         let mut s = state_with_entries();
-        // selected 0 = "docs" (dir)
+        s.remote.selected = row(&s.remote, "docs");
         assert_eq!(
             s.enter_dir(),
             Some((Side::Remote, PathBuf::from("/srv/docs")))
         );
-        // selected 1 = "a.txt" (file) → None
-        s.remote.selected = 1;
+        // A file isn't enterable.
+        s.remote.selected = row(&s.remote, "a.txt");
         assert_eq!(s.enter_dir(), None);
+    }
+
+    #[test]
+    fn parent_row_leads_the_listing_and_walks_up() {
+        let mut s = state_with_entries();
+        assert_eq!(s.remote.entries[0].name, PARENT_ROW, "\"..\" comes first");
+        assert!(s.remote.entries[0].is_parent());
+        // Selecting it and entering walks up, rather than into "/srv/..".
+        s.remote.selected = 0;
+        assert_eq!(s.enter_dir(), Some((Side::Remote, PathBuf::from("/"))));
+        // It is never a transfer target.
+        assert!(s.stage_download().is_err());
+        assert!(s.queue.is_empty());
+    }
+
+    #[test]
+    fn parent_row_absent_at_the_root() {
+        let mut s = SftpState::new("/", "/");
+        s.remote.set_entries(vec![FileEntry {
+            name: "etc".into(),
+            is_dir: true,
+            size: 0,
+            is_symlink: false,
+            perm: None,
+        }]);
+        assert_eq!(s.remote.entries[0].name, "etc", "nowhere to walk up to");
+    }
+
+    #[test]
+    fn parent_of_climbs_relative_paths() {
+        use std::path::Path;
+        // The remote pane starts on ".", whose `parent()` is the empty path;
+        // walking up has to grow a "..", not produce an unlistable path.
+        assert_eq!(parent_of(Path::new(".")), Some(PathBuf::from("./..")));
+        assert_eq!(parent_of(Path::new("..")), Some(PathBuf::from("../..")));
+        assert_eq!(parent_of(Path::new("work")), Some(PathBuf::from(".")));
+        assert_eq!(
+            parent_of(Path::new("/srv/www")),
+            Some(PathBuf::from("/srv"))
+        );
+        assert_eq!(parent_of(Path::new("/")), None);
     }
 
     #[test]
     fn enter_dir_respects_focus() {
         let mut s = state_with_entries();
-        s.toggle_focus(); // now Local, selected 0 = "photos"
+        s.toggle_focus(); // now Local
+        s.local.selected = row(&s.local, "photos");
         assert_eq!(
             s.enter_dir(),
             Some((Side::Local, PathBuf::from("/home/me/photos")))
@@ -455,7 +684,7 @@ mod tests {
     #[test]
     fn stage_download_file() {
         let mut s = state_with_entries();
-        s.remote.selected = 1; // a.txt
+        s.remote.selected = row(&s.remote, "a.txt");
         assert!(s.stage_download().is_ok());
         assert_eq!(s.queue.len(), 1);
         let q = &s.queue[0];
@@ -468,7 +697,7 @@ mod tests {
     #[test]
     fn stage_download_directory_is_queued_recursively() {
         let mut s = state_with_entries();
-        s.remote.selected = 0; // docs (dir)
+        s.remote.selected = row(&s.remote, "docs");
         assert!(s.stage_download().is_ok());
         assert_eq!(s.queue.len(), 1);
         let q = &s.queue[0];
@@ -480,7 +709,7 @@ mod tests {
     #[test]
     fn stage_upload_file() {
         let mut s = state_with_entries();
-        s.local.selected = 1; // b.bin
+        s.local.selected = row(&s.local, "b.bin");
         assert!(s.stage_upload().is_ok());
         let q = &s.queue[0];
         assert_eq!(q.direction, Direction::Upload);
@@ -491,18 +720,235 @@ mod tests {
     #[test]
     fn stage_upload_directory_is_queued_recursively() {
         let mut s = state_with_entries();
-        s.local.selected = 0; // photos (dir)
+        s.local.selected = row(&s.local, "photos");
         assert!(s.stage_upload().is_ok());
         assert_eq!(s.queue.len(), 1);
         assert!(s.queue[0].is_dir);
     }
 
+    fn with_dotfiles() -> SftpState {
+        let mut s = SftpState::new("/srv", "/home/me");
+        let entry = |name: &str| FileEntry {
+            name: name.into(),
+            is_dir: false,
+            size: 1,
+            is_symlink: false,
+            perm: None,
+        };
+        s.remote
+            .set_entries(vec![entry(".ssh"), entry("app.log"), entry(".bashrc")]);
+        s.local
+            .set_entries(vec![entry(".config"), entry("notes.txt")]);
+        s
+    }
+
+    #[test]
+    fn dotfiles_are_hidden_until_toggled() {
+        let mut s = with_dotfiles();
+        // Listed: "..", "app.log". The two dotfiles are filtered out.
+        assert_eq!(s.remote.visible_len(), 2);
+        let names: Vec<&str> = s
+            .remote
+            .visible_indices()
+            .iter()
+            .map(|i| s.remote.entries[*i].name.as_str())
+            .collect();
+        assert_eq!(names, vec![PARENT_ROW, "app.log"]);
+
+        // The toggle applies to both panes at once and reports the new state.
+        assert!(s.toggle_hidden());
+        assert_eq!(s.remote.visible_len(), 4);
+        assert_eq!(s.local.visible_len(), 3);
+        assert!(!s.toggle_hidden());
+        assert_eq!(s.remote.visible_len(), 2);
+    }
+
+    /// The parent row's name starts with a dot but is the way out of the
+    /// directory, not an entry in it: hiding dotfiles must not hide it.
+    #[test]
+    fn parent_row_survives_the_dotfile_filter() {
+        let s = with_dotfiles();
+        assert!(!s.remote.show_hidden);
+        assert!(s.remote.selected_entry().unwrap().is_parent());
+        assert!(s
+            .remote
+            .visible_indices()
+            .iter()
+            .any(|i| s.remote.entries[*i].is_parent()));
+    }
+
+    /// Hiding entries under the cursor must not leave it pointing past the end
+    /// of the listing.
+    #[test]
+    fn toggling_hidden_keeps_the_cursor_in_range() {
+        let mut s = with_dotfiles();
+        s.toggle_hidden();
+        s.remote.selected = 3; // ".bashrc", only reachable while shown
+        s.toggle_hidden();
+        assert!(
+            s.remote.selected < s.remote.visible_len(),
+            "cursor left past the end of the listing"
+        );
+        assert!(s.remote.selected_entry().is_some());
+    }
+
+    /// Revealing rows above the cursor must not slide it onto a different
+    /// entry: `selected` indexes the visible listing, not `entries`.
+    #[test]
+    fn toggling_hidden_keeps_the_cursor_on_its_entry() {
+        let mut s = with_dotfiles();
+        // Listed: "..", "app.log". Sit on the file.
+        s.remote.selected = 1;
+        assert_eq!(s.remote.selected_entry().unwrap().name, "app.log");
+        // Revealing ".ssh" and ".bashrc" inserts rows above it.
+        s.toggle_hidden();
+        assert_eq!(
+            s.remote.selected_entry().unwrap().name,
+            "app.log",
+            "cursor slid onto another entry"
+        );
+        // And back again.
+        s.toggle_hidden();
+        assert_eq!(s.remote.selected_entry().unwrap().name, "app.log");
+    }
+
+    /// Hiding the entry the cursor is on has to land it somewhere valid.
+    #[test]
+    fn hiding_the_selected_entry_lands_the_cursor_in_range() {
+        let mut s = with_dotfiles();
+        s.toggle_hidden();
+        let idx = s
+            .remote
+            .visible_indices()
+            .iter()
+            .position(|i| s.remote.entries[*i].name == ".bashrc")
+            .unwrap();
+        s.remote.selected = idx;
+        s.toggle_hidden();
+        assert!(s.remote.selected < s.remote.visible_len());
+        assert!(s.remote.selected_entry().is_some());
+    }
+
+    /// The pane reports what it is holding back, so a short listing isn't a
+    /// mystery once the setting has persisted into a later session.
+    #[test]
+    fn hidden_len_counts_what_the_filter_holds_back() {
+        let mut s = with_dotfiles();
+        assert_eq!(s.remote.hidden_len(), 2, ".ssh and .bashrc");
+        assert_eq!(s.local.hidden_len(), 1, ".config");
+        s.toggle_hidden();
+        assert_eq!(s.remote.hidden_len(), 0, "nothing held back when shown");
+    }
+
+    /// Searching is for finding entries, so the way-out row steps aside --
+    /// otherwise it would take row zero, where `set_filter` parks the cursor,
+    /// and Enter on a search result would walk up instead.
+    #[test]
+    fn parent_row_steps_aside_while_filtering() {
+        let mut s = with_dotfiles();
+        assert!(s.remote.selected_entry().unwrap().is_parent());
+        s.remote.set_filter("app".into());
+        assert_eq!(s.remote.visible_len(), 1);
+        assert_eq!(s.remote.selected_entry().unwrap().name, "app.log");
+    }
+
+    /// Typing a leading dot is an explicit request for dotfiles, so the hiding
+    /// steps aside rather than answering "no matches" about a file in plain
+    /// sight -- `/` + `.ssh` is the likeliest search in an SSH tool.
+    #[test]
+    fn a_search_starting_with_a_dot_finds_hidden_entries() {
+        let mut s = with_dotfiles();
+        assert!(!s.remote.show_hidden);
+        s.remote.set_filter(".ss".into());
+        assert_eq!(s.remote.visible_len(), 1);
+        assert_eq!(s.remote.selected_entry().unwrap().name, ".ssh");
+        // And nothing is reported as held back, since nothing is.
+        assert_eq!(s.remote.hidden_len(), 0);
+    }
+
+    /// The text filter and the dotfile filter compose rather than override.
+    #[test]
+    fn text_filter_still_respects_hidden() {
+        let mut s = with_dotfiles();
+        s.remote.set_filter("sh".into());
+        // ".ssh" and ".bashrc" both match "sh" but are hidden.
+        assert_eq!(s.remote.visible_len(), 0);
+        s.toggle_hidden();
+        assert_eq!(s.remote.visible_len(), 2);
+    }
+
+    #[test]
+    fn stage_toward_takes_the_source_from_the_focused_pane() {
+        let mut s = state_with_entries();
+        // Focused remote, arrow points left: download, as before.
+        s.remote.selected = row(&s.remote, "a.txt");
+        assert!(s.stage_toward(Side::Local).is_ok());
+        assert_eq!(s.queue.len(), 1);
+        assert_eq!(s.queue[0].direction, Direction::Download);
+
+        // Focused remote, arrow points right: that pane is where the cursor
+        // already is, so nothing is staged.
+        assert!(s.stage_toward(Side::Remote).is_err());
+        assert_eq!(s.queue.len(), 1);
+        assert!(s.notice.is_some());
+
+        // Focused local, arrow points right: upload.
+        s.toggle_focus();
+        s.local.selected = row(&s.local, "b.bin");
+        assert!(s.stage_toward(Side::Remote).is_ok());
+        assert_eq!(s.queue[1].direction, Direction::Upload);
+    }
+
+    /// Regression: pressing ← while browsing locally used to queue the remote
+    /// cursor's entry, and re-queue it after every local `cd`, because the
+    /// duplicate guard compares src *and* dst and the dst had moved.
+    #[test]
+    fn browsing_locally_never_queues_the_remote_cursor() {
+        let mut s = state_with_entries();
+        s.toggle_focus(); // Local
+        assert!(s.stage_toward(Side::Local).is_err());
+        assert!(s.queue.is_empty());
+
+        // ...including after walking into another local directory.
+        s.local.cwd = PathBuf::from("/home/me/work");
+        s.local.set_entries(Vec::new());
+        assert!(s.stage_toward(Side::Local).is_err());
+        assert!(s.queue.is_empty());
+    }
+
+    #[test]
+    fn finishing_a_run_keeps_what_was_staged_meanwhile() {
+        let mut s = state_with_entries();
+        s.remote.selected = row(&s.remote, "a.txt");
+        s.stage_download().unwrap();
+        // The run goes out with what is queued right now.
+        s.running = s.queue.clone();
+        s.phase = Phase::Running;
+
+        // More work is staged while it runs.
+        s.remote.selected = row(&s.remote, "docs");
+        s.stage_download().unwrap();
+        assert_eq!(s.queue.len(), 2);
+
+        // Completion clears only the snapshot that ran, and reports that there
+        // is more to do.
+        assert!(s.finish_run(), "the mid-run entry is still pending");
+        assert_eq!(s.queue.len(), 1);
+        assert_eq!(s.queue[0].name, "docs");
+        assert!(s.running.is_empty());
+
+        // A run with nothing staged behind it reports itself as the last one.
+        s.running = s.queue.clone();
+        assert!(!s.finish_run());
+        assert!(s.queue.is_empty());
+    }
+
     #[test]
     fn unstage_removes() {
         let mut s = state_with_entries();
-        s.remote.selected = 1; // a.txt → download
+        s.remote.selected = row(&s.remote, "a.txt"); // download
         s.stage_download().unwrap();
-        s.local.selected = 1; // b.bin → upload
+        s.local.selected = row(&s.local, "b.bin"); // upload
         s.stage_upload().unwrap();
         assert_eq!(s.queue.len(), 2);
         s.unstage(0);
@@ -514,7 +960,7 @@ mod tests {
     #[test]
     fn staging_same_file_twice_is_deduped() {
         let mut s = state_with_entries();
-        s.remote.selected = 1; // a.txt
+        s.remote.selected = row(&s.remote, "a.txt");
         s.stage_download().unwrap();
         // Second identical stage is rejected (no duplicate queue entry).
         assert!(s.stage_download().is_err());
@@ -543,7 +989,7 @@ mod tests {
         // Downloads always land in local.cwd even when focus is on Local.
         let mut s = state_with_entries();
         s.toggle_focus(); // focus Local, but stage_download reads the remote pane
-        s.remote.selected = 1; // a.txt
+        s.remote.selected = row(&s.remote, "a.txt");
         s.stage_download().unwrap();
         assert_eq!(s.queue[0].src, PathBuf::from("/srv/a.txt"));
         assert_eq!(s.queue[0].dst, PathBuf::from("/home/me/a.txt"));
@@ -588,7 +1034,8 @@ mod tests {
             perm: None,
         }]);
         assert!(s.remote.filter.is_empty());
-        assert_eq!(s.remote.visible_len(), 1);
+        // The new row, plus the ".." the pane grows below the root.
+        assert_eq!(s.remote.visible_len(), 2);
     }
 
     #[test]
@@ -603,7 +1050,7 @@ mod tests {
     #[test]
     fn set_entries_clamps_selection() {
         let mut s = state_with_entries();
-        s.remote.selected = 1;
+        s.remote.selected = 5;
         s.remote.set_entries(vec![FileEntry {
             name: "only".into(),
             is_dir: false,
@@ -611,6 +1058,7 @@ mod tests {
             is_symlink: false,
             perm: None,
         }]);
-        assert_eq!(s.remote.selected, 0);
+        // Clamped to the last row of the new listing ("..", "only").
+        assert_eq!(s.remote.selected, 1);
     }
 }

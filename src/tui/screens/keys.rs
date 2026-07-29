@@ -84,22 +84,34 @@ pub fn render_keys(frame: &mut Frame, area: Rect, app: &App) {
     let row_offset = app.keys_scroll_row_offset(area.height, cpr, row_stride);
     let window_end_row = row_offset + visible_rows;
 
+    // Scroll by lines rather than whole card rows (#35): the grid slides under
+    // the selection instead of jumping a card height at a time. Cards are drawn
+    // into a taller scratch buffer, padded by one row above and below, so a card
+    // half-way off either edge is clipped by the blit rather than spilling over
+    // the panels around it.
+    let pad = row_stride;
+    let scroll = app.keys_scroll_advance(row_offset * row_stride as usize);
+    let ext = Rect::new(area.x, area.y, area.width, area.height + pad * 2);
+    let mut layer = Buffer::empty(ext);
     for (i, identity) in app.identities.iter().enumerate() {
         let row = i / cpr;
-        if row < row_offset {
+        // Draw a card once any part of it is at or below the top of the view,
+        // and stop once one starts past the bottom. With `pad` == one card row
+        // of slack on each side, the first drawn card can be at most `pad`
+        // above the view, which the padded buffer has room for.
+        let top = (row as u16) * row_stride;
+        if top + row_stride < scroll || top >= scroll + area.height {
             continue;
-        }
-        if row >= window_end_row {
-            break;
         }
 
         let col = i % cpr;
         let card_x = inner_x + (col as u16) * (card_w + CARD_GAP);
-        let y = area.y + ((row - row_offset) as u16) * row_stride;
+        let y = area.y + pad + top - scroll;
 
         let is_selected = i == app.identity_selected;
-        render_card(buf, card_x, y, card_w, identity, is_selected, agent);
+        render_card(&mut layer, card_x, y, card_w, identity, is_selected, agent);
     }
+    crate::tui::blit::blit(buf, ext, area, &layer, 0, -(pad as i32));
 
     // Agent info below the visible cards (only when there is room left).
     let drawn_rows = window_end_row.min(total_rows).saturating_sub(row_offset);

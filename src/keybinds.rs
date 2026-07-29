@@ -50,6 +50,11 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
+    (@fn generate_key $($key:literal),* $(,)?) => {
+        fn default_kb_generate_key() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
     (@fn edit $($key:literal),* $(,)?) => {
         fn default_kb_edit() -> Vec<String> {
             vec![$($key.to_string()),*]
@@ -240,6 +245,11 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
+    (@fn push_key $($key:literal),* $(,)?) => {
+        fn default_kb_push_key() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
     (@fn tunnel_kill $($key:literal),* $(,)?) => {
         fn default_kb_tunnel_kill() -> Vec<String> {
             vec![$($key.to_string()),*]
@@ -290,6 +300,11 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
+    (@fn local_shell $($key:literal),* $(,)?) => {
+        fn default_kb_local_shell() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
     (@fn session_focus $($key:literal),* $(,)?) => {
         fn default_kb_session_focus() -> Vec<String> {
             vec![$($key.to_string()),*]
@@ -330,8 +345,38 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
-    (@fn local_shell $($key:literal),* $(,)?) => {
-        fn default_kb_local_shell() -> Vec<String> {
+    (@fn toggle_panel_zoom $($key:literal),* $(,)?) => {
+        fn default_kb_toggle_panel_zoom() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
+    (@fn focus_panel_left $($key:literal),* $(,)?) => {
+        fn default_kb_focus_panel_left() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
+    (@fn focus_panel_right $($key:literal),* $(,)?) => {
+        fn default_kb_focus_panel_right() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
+    (@fn focus_panel_up $($key:literal),* $(,)?) => {
+        fn default_kb_focus_panel_up() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
+    (@fn focus_panel_down $($key:literal),* $(,)?) => {
+        fn default_kb_focus_panel_down() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
+    (@fn broadcast $($key:literal),* $(,)?) => {
+        fn default_kb_broadcast() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
+    (@fn broadcast_cancel $($key:literal),* $(,)?) => {
+        fn default_kb_broadcast_cancel() -> Vec<String> {
             vec![$($key.to_string()),*]
         }
     };
@@ -346,6 +391,7 @@ kb_defaults! {
     force_quit => ["Ctrl+C"],
     connect => ["Enter"],
     add_host => ["a"],
+    generate_key => ["g"],
     edit => ["e"],
     delete => ["d"],
     duplicate => ["Shift+D"],
@@ -384,6 +430,7 @@ kb_defaults! {
     identity_columns_dec => ["["],
     add_to_agent => ["p"],
     remove_from_agent => ["r"],
+    push_key => ["Shift+P"],
     tunnel_kill => ["x"],
     toggle_tunnel => ["Enter"],
     audit_filter => ["f"],
@@ -394,6 +441,7 @@ kb_defaults! {
     session_tab_next => ["Ctrl+]", "Ctrl+PageDown"],
     session_detach => ["Ctrl+D"],
     session_open_sftp => ["Ctrl+Shift+F"],
+    local_shell => ["Ctrl+Shift+T"],
     session_focus => ["Ctrl+Shift+S"],
     session_scroll_up => ["PageUp"],
     session_scroll_down => ["PageDown"],
@@ -402,7 +450,13 @@ kb_defaults! {
     confirm_yes => ["y", "Y", "Enter"],
     confirm_no => ["n", "N"],
     cancel => ["Esc"],
-    local_shell => ["Ctrl+Shift+T"],
+    toggle_panel_zoom => ["z", "Alt+Enter"],
+    focus_panel_left => ["Alt+Left"],
+    focus_panel_right => ["Alt+Right"],
+    focus_panel_up => ["Alt+Up"],
+    focus_panel_down => ["Alt+Down"],
+    broadcast => ["b"],
+    broadcast_cancel => ["x"],
 }
 /// An action whose keybinding is user-configurable and editable in the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -415,6 +469,7 @@ pub enum KeyAction {
     ForceQuit,
     Connect,
     AddHost,
+    GenerateKey,
     Edit,
     Delete,
     Duplicate,
@@ -453,6 +508,7 @@ pub enum KeyAction {
     IdentityColumnsDec,
     AddToAgent,
     RemoveFromAgent,
+    PushKey,
     TunnelKill,
     ToggleTunnel,
     AuditFilter,
@@ -463,6 +519,7 @@ pub enum KeyAction {
     SessionTabNext,
     SessionDetach,
     SessionOpenSftp,
+    LocalShell,
     SessionFocus,
     SessionScrollUp,
     SessionScrollDown,
@@ -471,12 +528,18 @@ pub enum KeyAction {
     ConfirmYes,
     ConfirmNo,
     Cancel,
-    LocalShell,
+    TogglePanelZoom,
+    FocusPanelLeft,
+    FocusPanelRight,
+    FocusPanelUp,
+    FocusPanelDown,
+    Broadcast,
+    BroadcastCancel,
 }
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 65] = [
+    pub const ALL: [KeyAction; 74] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -485,6 +548,7 @@ impl KeyAction {
         KeyAction::ForceQuit,
         KeyAction::Connect,
         KeyAction::AddHost,
+        KeyAction::GenerateKey,
         KeyAction::Edit,
         KeyAction::Delete,
         KeyAction::Duplicate,
@@ -523,6 +587,7 @@ impl KeyAction {
         KeyAction::IdentityColumnsDec,
         KeyAction::AddToAgent,
         KeyAction::RemoveFromAgent,
+        KeyAction::PushKey,
         KeyAction::TunnelKill,
         KeyAction::ToggleTunnel,
         KeyAction::AuditFilter,
@@ -533,6 +598,7 @@ impl KeyAction {
         KeyAction::SessionTabNext,
         KeyAction::SessionDetach,
         KeyAction::SessionOpenSftp,
+        KeyAction::LocalShell,
         KeyAction::SessionFocus,
         KeyAction::SessionScrollUp,
         KeyAction::SessionScrollDown,
@@ -541,7 +607,13 @@ impl KeyAction {
         KeyAction::ConfirmYes,
         KeyAction::ConfirmNo,
         KeyAction::Cancel,
-        KeyAction::LocalShell,
+        KeyAction::TogglePanelZoom,
+        KeyAction::FocusPanelLeft,
+        KeyAction::FocusPanelRight,
+        KeyAction::FocusPanelUp,
+        KeyAction::FocusPanelDown,
+        KeyAction::Broadcast,
+        KeyAction::BroadcastCancel,
     ];
 
     pub fn label(self) -> &'static str {
@@ -554,6 +626,7 @@ impl KeyAction {
             KeyAction::ForceQuit => "Force quit",
             KeyAction::Connect => "Connect / confirm",
             KeyAction::AddHost => "Add host / identity / tunnel",
+            KeyAction::GenerateKey => "Generate SSH key",
             KeyAction::Edit => "Edit",
             KeyAction::Delete => "Delete",
             KeyAction::Duplicate => "Duplicate host",
@@ -592,6 +665,7 @@ impl KeyAction {
             KeyAction::IdentityColumnsDec => "Fewer identity columns",
             KeyAction::AddToAgent => "Add key to agent",
             KeyAction::RemoveFromAgent => "Remove key from agent",
+            KeyAction::PushKey => "Push public key to host",
             KeyAction::TunnelKill => "Kill tunnel",
             KeyAction::ToggleTunnel => "Start / stop tunnel",
             KeyAction::AuditFilter => "Cycle audit filter",
@@ -602,6 +676,7 @@ impl KeyAction {
             KeyAction::SessionTabNext => "Next session tab",
             KeyAction::SessionDetach => "Detach to dashboard",
             KeyAction::SessionOpenSftp => "Open SFTP for this host",
+            KeyAction::LocalShell => "Open local shell tab",
             KeyAction::SessionFocus => "Focus session tab",
             KeyAction::SessionScrollUp => "Scroll session up",
             KeyAction::SessionScrollDown => "Scroll session down",
@@ -610,7 +685,13 @@ impl KeyAction {
             KeyAction::ConfirmYes => "Confirm yes",
             KeyAction::ConfirmNo => "Confirm no",
             KeyAction::Cancel => "Cancel / back",
-            KeyAction::LocalShell => "Open local shell tab",
+            KeyAction::TogglePanelZoom => "Zoom dashboard panel",
+            KeyAction::FocusPanelLeft => "Focus panel left",
+            KeyAction::FocusPanelRight => "Focus panel right",
+            KeyAction::FocusPanelUp => "Focus panel up",
+            KeyAction::FocusPanelDown => "Focus panel down",
+            KeyAction::Broadcast => "Broadcast command",
+            KeyAction::BroadcastCancel => "Cancel broadcast",
         }
     }
 }
@@ -634,6 +715,8 @@ pub struct KeybindsConfig {
     pub connect: Vec<String>,
     #[serde(default = "default_kb_add_host")]
     pub add_host: Vec<String>,
+    #[serde(default = "default_kb_generate_key")]
+    pub generate_key: Vec<String>,
     #[serde(default = "default_kb_edit")]
     pub edit: Vec<String>,
     #[serde(default = "default_kb_delete")]
@@ -710,6 +793,8 @@ pub struct KeybindsConfig {
     pub add_to_agent: Vec<String>,
     #[serde(default = "default_kb_remove_from_agent")]
     pub remove_from_agent: Vec<String>,
+    #[serde(default = "default_kb_push_key")]
+    pub push_key: Vec<String>,
     #[serde(default = "default_kb_tunnel_kill")]
     pub tunnel_kill: Vec<String>,
     #[serde(default = "default_kb_toggle_tunnel")]
@@ -730,6 +815,8 @@ pub struct KeybindsConfig {
     pub session_detach: Vec<String>,
     #[serde(default = "default_kb_session_open_sftp")]
     pub session_open_sftp: Vec<String>,
+    #[serde(default = "default_kb_local_shell")]
+    pub local_shell: Vec<String>,
     #[serde(default = "default_kb_session_focus")]
     pub session_focus: Vec<String>,
     #[serde(default = "default_kb_session_scroll_up")]
@@ -746,8 +833,20 @@ pub struct KeybindsConfig {
     pub confirm_no: Vec<String>,
     #[serde(default = "default_kb_cancel")]
     pub cancel: Vec<String>,
-    #[serde(default = "default_kb_local_shell")]
-    pub local_shell: Vec<String>,
+    #[serde(default = "default_kb_toggle_panel_zoom")]
+    pub toggle_panel_zoom: Vec<String>,
+    #[serde(default = "default_kb_focus_panel_left")]
+    pub focus_panel_left: Vec<String>,
+    #[serde(default = "default_kb_focus_panel_right")]
+    pub focus_panel_right: Vec<String>,
+    #[serde(default = "default_kb_focus_panel_up")]
+    pub focus_panel_up: Vec<String>,
+    #[serde(default = "default_kb_focus_panel_down")]
+    pub focus_panel_down: Vec<String>,
+    #[serde(default = "default_kb_broadcast")]
+    pub broadcast: Vec<String>,
+    #[serde(default = "default_kb_broadcast_cancel")]
+    pub broadcast_cancel: Vec<String>,
 }
 
 impl Default for KeybindsConfig {
@@ -761,6 +860,7 @@ impl Default for KeybindsConfig {
             force_quit: default_kb_force_quit(),
             connect: default_kb_connect(),
             add_host: default_kb_add_host(),
+            generate_key: default_kb_generate_key(),
             edit: default_kb_edit(),
             delete: default_kb_delete(),
             duplicate: default_kb_duplicate(),
@@ -799,6 +899,7 @@ impl Default for KeybindsConfig {
             identity_columns_dec: default_kb_identity_columns_dec(),
             add_to_agent: default_kb_add_to_agent(),
             remove_from_agent: default_kb_remove_from_agent(),
+            push_key: default_kb_push_key(),
             tunnel_kill: default_kb_tunnel_kill(),
             toggle_tunnel: default_kb_toggle_tunnel(),
             audit_filter: default_kb_audit_filter(),
@@ -809,6 +910,7 @@ impl Default for KeybindsConfig {
             session_tab_next: default_kb_session_tab_next(),
             session_detach: default_kb_session_detach(),
             session_open_sftp: default_kb_session_open_sftp(),
+            local_shell: default_kb_local_shell(),
             session_focus: default_kb_session_focus(),
             session_scroll_up: default_kb_session_scroll_up(),
             session_scroll_down: default_kb_session_scroll_down(),
@@ -817,7 +919,13 @@ impl Default for KeybindsConfig {
             confirm_yes: default_kb_confirm_yes(),
             confirm_no: default_kb_confirm_no(),
             cancel: default_kb_cancel(),
-            local_shell: default_kb_local_shell(),
+            toggle_panel_zoom: default_kb_toggle_panel_zoom(),
+            focus_panel_left: default_kb_focus_panel_left(),
+            focus_panel_right: default_kb_focus_panel_right(),
+            focus_panel_up: default_kb_focus_panel_up(),
+            focus_panel_down: default_kb_focus_panel_down(),
+            broadcast: default_kb_broadcast(),
+            broadcast_cancel: default_kb_broadcast_cancel(),
         }
     }
 }
@@ -833,6 +941,7 @@ impl KeybindsConfig {
             KeyAction::ForceQuit => default_kb_force_quit(),
             KeyAction::Connect => default_kb_connect(),
             KeyAction::AddHost => default_kb_add_host(),
+            KeyAction::GenerateKey => default_kb_generate_key(),
             KeyAction::Edit => default_kb_edit(),
             KeyAction::Delete => default_kb_delete(),
             KeyAction::Duplicate => default_kb_duplicate(),
@@ -871,6 +980,7 @@ impl KeybindsConfig {
             KeyAction::IdentityColumnsDec => default_kb_identity_columns_dec(),
             KeyAction::AddToAgent => default_kb_add_to_agent(),
             KeyAction::RemoveFromAgent => default_kb_remove_from_agent(),
+            KeyAction::PushKey => default_kb_push_key(),
             KeyAction::TunnelKill => default_kb_tunnel_kill(),
             KeyAction::ToggleTunnel => default_kb_toggle_tunnel(),
             KeyAction::AuditFilter => default_kb_audit_filter(),
@@ -881,6 +991,7 @@ impl KeybindsConfig {
             KeyAction::SessionTabNext => default_kb_session_tab_next(),
             KeyAction::SessionDetach => default_kb_session_detach(),
             KeyAction::SessionOpenSftp => default_kb_session_open_sftp(),
+            KeyAction::LocalShell => default_kb_local_shell(),
             KeyAction::SessionFocus => default_kb_session_focus(),
             KeyAction::SessionScrollUp => default_kb_session_scroll_up(),
             KeyAction::SessionScrollDown => default_kb_session_scroll_down(),
@@ -889,13 +1000,61 @@ impl KeybindsConfig {
             KeyAction::ConfirmYes => default_kb_confirm_yes(),
             KeyAction::ConfirmNo => default_kb_confirm_no(),
             KeyAction::Cancel => default_kb_cancel(),
-            KeyAction::LocalShell => default_kb_local_shell(),
+            KeyAction::TogglePanelZoom => default_kb_toggle_panel_zoom(),
+            KeyAction::FocusPanelLeft => default_kb_focus_panel_left(),
+            KeyAction::FocusPanelRight => default_kb_focus_panel_right(),
+            KeyAction::FocusPanelUp => default_kb_focus_panel_up(),
+            KeyAction::FocusPanelDown => default_kb_focus_panel_down(),
+            KeyAction::Broadcast => default_kb_broadcast(),
+            KeyAction::BroadcastCancel => default_kb_broadcast_cancel(),
         }
     }
 
     /// Restore one action's bindings to its built-in default.
     pub fn reset_action(&mut self, action: KeyAction) {
         self.set(action, Self::default_for(action));
+    }
+
+    /// First configured key for `action`, or `""` when unbound.
+    pub fn primary(&self, action: KeyAction) -> &str {
+        self.binds(action).first().map(String::as_str).unwrap_or("")
+    }
+
+    /// Right-aligned hints in the fullscreen session header.
+    pub fn session_header_hints(&self, multi_tab: bool) -> String {
+        let mut parts = Vec::new();
+        if multi_tab {
+            push_hint(&mut parts, self.primary(KeyAction::SessionNewTab), "new");
+            push_hint(
+                &mut parts,
+                self.primary(KeyAction::SessionCloseTab),
+                "close",
+            );
+            if let Some(tabs) = tab_switch_hint(self) {
+                parts.push(tabs);
+            }
+            push_hint(&mut parts, self.primary(KeyAction::SessionDetach), "detach");
+        } else {
+            push_hint(
+                &mut parts,
+                self.primary(KeyAction::SessionNewTab),
+                "new tab",
+            );
+            push_hint(&mut parts, self.primary(KeyAction::SessionDetach), "detach");
+        }
+        parts.join("  ")
+    }
+
+    /// Dashboard footer hints when embedded sessions are running in background.
+    pub fn session_footer_hints(&self) -> Vec<(String, &'static str)> {
+        let mut out = Vec::new();
+        push_footer_hint(&mut out, self.primary(KeyAction::SessionDetach), "detach");
+        push_footer_hint(&mut out, self.primary(KeyAction::SessionOpenSftp), "sftp");
+        if let Some(keys) = tab_switch_keys(self) {
+            out.push((keys, "tabs"));
+        }
+        push_footer_hint(&mut out, self.primary(KeyAction::SessionNewTab), "new tab");
+        out
     }
 
     pub fn binds(&self, action: KeyAction) -> &[String] {
@@ -908,6 +1067,7 @@ impl KeybindsConfig {
             KeyAction::ForceQuit => &self.force_quit,
             KeyAction::Connect => &self.connect,
             KeyAction::AddHost => &self.add_host,
+            KeyAction::GenerateKey => &self.generate_key,
             KeyAction::Edit => &self.edit,
             KeyAction::Delete => &self.delete,
             KeyAction::Duplicate => &self.duplicate,
@@ -946,6 +1106,7 @@ impl KeybindsConfig {
             KeyAction::IdentityColumnsDec => &self.identity_columns_dec,
             KeyAction::AddToAgent => &self.add_to_agent,
             KeyAction::RemoveFromAgent => &self.remove_from_agent,
+            KeyAction::PushKey => &self.push_key,
             KeyAction::TunnelKill => &self.tunnel_kill,
             KeyAction::ToggleTunnel => &self.toggle_tunnel,
             KeyAction::AuditFilter => &self.audit_filter,
@@ -956,6 +1117,7 @@ impl KeybindsConfig {
             KeyAction::SessionTabNext => &self.session_tab_next,
             KeyAction::SessionDetach => &self.session_detach,
             KeyAction::SessionOpenSftp => &self.session_open_sftp,
+            KeyAction::LocalShell => &self.local_shell,
             KeyAction::SessionFocus => &self.session_focus,
             KeyAction::SessionScrollUp => &self.session_scroll_up,
             KeyAction::SessionScrollDown => &self.session_scroll_down,
@@ -964,7 +1126,13 @@ impl KeybindsConfig {
             KeyAction::ConfirmYes => &self.confirm_yes,
             KeyAction::ConfirmNo => &self.confirm_no,
             KeyAction::Cancel => &self.cancel,
-            KeyAction::LocalShell => &self.local_shell,
+            KeyAction::TogglePanelZoom => &self.toggle_panel_zoom,
+            KeyAction::FocusPanelLeft => &self.focus_panel_left,
+            KeyAction::FocusPanelRight => &self.focus_panel_right,
+            KeyAction::FocusPanelUp => &self.focus_panel_up,
+            KeyAction::FocusPanelDown => &self.focus_panel_down,
+            KeyAction::Broadcast => &self.broadcast,
+            KeyAction::BroadcastCancel => &self.broadcast_cancel,
         }
     }
 
@@ -978,6 +1146,7 @@ impl KeybindsConfig {
             KeyAction::ForceQuit => self.force_quit = binds,
             KeyAction::Connect => self.connect = binds,
             KeyAction::AddHost => self.add_host = binds,
+            KeyAction::GenerateKey => self.generate_key = binds,
             KeyAction::Edit => self.edit = binds,
             KeyAction::Delete => self.delete = binds,
             KeyAction::Duplicate => self.duplicate = binds,
@@ -1016,6 +1185,7 @@ impl KeybindsConfig {
             KeyAction::IdentityColumnsDec => self.identity_columns_dec = binds,
             KeyAction::AddToAgent => self.add_to_agent = binds,
             KeyAction::RemoveFromAgent => self.remove_from_agent = binds,
+            KeyAction::PushKey => self.push_key = binds,
             KeyAction::TunnelKill => self.tunnel_kill = binds,
             KeyAction::ToggleTunnel => self.toggle_tunnel = binds,
             KeyAction::AuditFilter => self.audit_filter = binds,
@@ -1026,6 +1196,7 @@ impl KeybindsConfig {
             KeyAction::SessionTabNext => self.session_tab_next = binds,
             KeyAction::SessionDetach => self.session_detach = binds,
             KeyAction::SessionOpenSftp => self.session_open_sftp = binds,
+            KeyAction::LocalShell => self.local_shell = binds,
             KeyAction::SessionFocus => self.session_focus = binds,
             KeyAction::SessionScrollUp => self.session_scroll_up = binds,
             KeyAction::SessionScrollDown => self.session_scroll_down = binds,
@@ -1034,7 +1205,13 @@ impl KeybindsConfig {
             KeyAction::ConfirmYes => self.confirm_yes = binds,
             KeyAction::ConfirmNo => self.confirm_no = binds,
             KeyAction::Cancel => self.cancel = binds,
-            KeyAction::LocalShell => self.local_shell = binds,
+            KeyAction::TogglePanelZoom => self.toggle_panel_zoom = binds,
+            KeyAction::FocusPanelLeft => self.focus_panel_left = binds,
+            KeyAction::FocusPanelRight => self.focus_panel_right = binds,
+            KeyAction::FocusPanelUp => self.focus_panel_up = binds,
+            KeyAction::FocusPanelDown => self.focus_panel_down = binds,
+            KeyAction::Broadcast => self.broadcast = binds,
+            KeyAction::BroadcastCancel => self.broadcast_cancel = binds,
         }
     }
 
@@ -1083,6 +1260,35 @@ impl KeybindsConfig {
     }
 }
 
+fn push_hint(parts: &mut Vec<String>, key: &str, label: &str) {
+    if !key.is_empty() {
+        parts.push(format!("{key} {label}"));
+    }
+}
+
+fn push_footer_hint(out: &mut Vec<(String, &'static str)>, key: &str, label: &'static str) {
+    if !key.is_empty() {
+        out.push((key.to_string(), label));
+    }
+}
+
+/// `Ctrl+[/]` style key from prev/next tab bindings.
+fn tab_switch_keys(kb: &KeybindsConfig) -> Option<String> {
+    let prev = kb.primary(KeyAction::SessionTabPrev);
+    let next = kb.primary(KeyAction::SessionTabNext);
+    match (prev.is_empty(), next.is_empty()) {
+        (true, true) => None,
+        (false, false) if prev != next => Some(format!("{prev}/{next}")),
+        (false, _) => Some(prev.to_string()),
+        (_, false) => Some(next.to_string()),
+    }
+}
+
+/// `Ctrl+[/] tabs` style hint from prev/next tab bindings.
+fn tab_switch_hint(kb: &KeybindsConfig) -> Option<String> {
+    tab_switch_keys(kb).map(|keys| format!("{keys} tabs"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1113,6 +1319,28 @@ mod tests {
         let before = kb.tab_tunnels.clone();
         assert!(!kb.migrate_pre_sftp_tabs(raw));
         assert_eq!(kb.tab_tunnels, before);
+    }
+
+    #[test]
+    fn session_header_hints_use_configured_binds() {
+        let kb = KeybindsConfig {
+            session_new_tab: vec!["F9".into()],
+            session_detach: vec!["Ctrl+Shift+D".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            kb.session_header_hints(false),
+            "F9 new tab  Ctrl+Shift+D detach"
+        );
+    }
+
+    #[test]
+    fn session_header_hints_multi_tab_pair() {
+        let kb = KeybindsConfig::default();
+        let hints = kb.session_header_hints(true);
+        assert!(hints.contains("Ctrl+T new"));
+        assert!(hints.contains("Ctrl+D detach"));
+        assert!(hints.contains("Ctrl+[/Ctrl+] tabs"));
     }
 
     #[test]

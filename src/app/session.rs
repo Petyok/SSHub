@@ -121,7 +121,8 @@ impl App {
         if session.parser.scrollback() > 0 {
             session.parser.snap_to_bottom();
         }
-        if let Some(bytes) = crate::session::keys::encode(key) {
+        let application_cursor = session.parser.screen().application_cursor();
+        if let Some(bytes) = crate::session::keys::encode(key, application_cursor) {
             let _ = session.write(&bytes);
         }
         Ok(())
@@ -166,29 +167,45 @@ impl App {
         let query = self
             .session_host_picker
             .as_ref()
-            .map(|p| p.query.to_lowercase())
+            .map(|p| p.query.clone())
             .unwrap_or_default();
-        self.hosts
-            .iter()
-            .enumerate()
-            .filter(|(_, h)| {
-                if query.is_empty() {
-                    return true;
-                }
-                let name = h.name().to_lowercase();
-                let label = h.display_name().to_lowercase();
-                name.contains(&query) || label.contains(&query)
+        if query.is_empty() {
+            return self
+                .hosts
+                .iter()
+                .enumerate()
+                .map(|(idx, h)| (idx, format!("{}  {}", h.display_name(), h.name())))
+                .collect();
+        }
+        let mut search = crate::search::HostSearch::new();
+        let matched_indices = search.update_query(&self.hosts, &query);
+        matched_indices
+            .into_iter()
+            .map(|idx| {
+                (
+                    idx,
+                    format!(
+                        "{}  {}",
+                        self.hosts[idx].display_name(),
+                        self.hosts[idx].name()
+                    ),
+                )
             })
-            .map(|(idx, h)| (idx, format!("{}  {}", h.display_name(), h.name())))
             .collect()
     }
 
     pub(crate) fn open_session_host_picker(&mut self) {
+        self.open_host_picker(PickerTarget::NewSession);
+    }
+
+    /// Open the shared host picker for whatever `target` wants a host.
+    pub(crate) fn open_host_picker(&mut self, target: PickerTarget) {
         let return_mode = self.mode;
         self.session_host_picker = Some(SessionHostPicker {
             query: String::new(),
             selected: 0,
             return_mode,
+            target,
         });
         self.mode = AppMode::SessionHostPicker;
     }
@@ -230,15 +247,16 @@ impl App {
             }
             KeyCode::Enter => {
                 let matches = self.session_host_matches();
-                let host_idx = self
+                let picked = self
                     .session_host_picker
                     .as_ref()
-                    .and_then(|p| matches.get(p.selected))
-                    .map(|(idx, _)| *idx);
+                    .and_then(|p| matches.get(p.selected).map(|(idx, _)| (*idx, p.target)));
                 self.session_host_picker = None;
                 self.mode = return_mode;
-                if let Some(idx) = host_idx {
-                    self.connect_host_at(idx)?;
+                match picked {
+                    Some((idx, PickerTarget::NewSession)) => self.connect_host_at(idx)?,
+                    Some((idx, PickerTarget::SftpLeftPane)) => self.sftp_connect_left_pane(idx)?,
+                    None => {}
                 }
             }
             KeyCode::Backspace => {
@@ -339,7 +357,20 @@ impl App {
             self.mode = AppMode::Normal;
         } else {
             // Stay at the same index if possible, else drop back to the new last.
-            self.active_session = Some(idx.min(self.sessions.len() - 1));
+            let next = idx.min(self.sessions.len() - 1);
+            // The tab that takes over sat to the right of the closed one, unless
+            // the closed one was last — then we fall back to its left neighbour
+            // and the slide has to travel the other way (#35).
+            if self.mode != AppMode::Normal && self.motion_enabled() {
+                self.session_tab_switch = Some(SessionTabSwitch {
+                    dir: if next == idx { 1 } else { -1 },
+                    // The closed tab is gone from the strip, so the highlight
+                    // travels from where its neighbour now sits.
+                    from: next,
+                    at: std::time::Instant::now(),
+                });
+            }
+            self.active_session = Some(next);
             let phase = &self.sessions[self.active_session.unwrap()].phase;
             self.mode = if self.mode == AppMode::Normal {
                 AppMode::Normal
@@ -366,6 +397,15 @@ impl App {
 
         if self.mode == AppMode::Normal {
             return;
+        }
+        // Carry the tab we're leaving off in the direction of travel (#35). The
+        // strip wraps, so the direction comes from `delta`, not the indices.
+        if next != cur && self.motion_enabled() {
+            self.session_tab_switch = Some(SessionTabSwitch {
+                dir: if delta > 0 { 1 } else { -1 },
+                from: cur as usize,
+                at: std::time::Instant::now(),
+            });
         }
 
         // Reflect the new active session's phase in app.mode, so render

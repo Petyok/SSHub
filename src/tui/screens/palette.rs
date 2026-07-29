@@ -1,7 +1,7 @@
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear};
 
-use crate::app::HostEntry;
+use crate::app::{App, HostEntry};
 use crate::tui::theme;
 
 /// Maximum number of result rows visible in the palette list.
@@ -18,6 +18,7 @@ const MAX_VISIBLE_ROWS: usize = 12;
 ///   row (index `filtered.len()`, one past the last result) beneath the list.
 pub fn render_palette(
     frame: &mut Frame,
+    app: &App,
     query: &str,
     hosts: &[HostEntry],
     filtered: &[usize],
@@ -34,6 +35,7 @@ pub fn render_palette(
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
+    let popup_area = crate::tui::popup_open_rect(popup_area, app);
 
     frame.render_widget(Clear, popup_area);
 

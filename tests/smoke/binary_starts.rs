@@ -1,3 +1,4 @@
+mod cli_commands;
 mod resolver;
 mod run_app_quit;
 

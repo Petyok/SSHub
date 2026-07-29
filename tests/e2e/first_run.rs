@@ -9,8 +9,6 @@ use sshub::store::LauncherStore;
 #[path = "../support/mod.rs"]
 mod support;
 
-use support::MockLauncher;
-
 struct EmptyResolver;
 
 impl HostResolver for EmptyResolver {
@@ -68,7 +66,6 @@ fn subsequent_run_empty_stays_normal() {
             resolver: Box::new(EmptyResolver),
             metadata: Arc::new(MetadataDb::default()),
             store: Arc::new(LauncherStore::open(&store_path).unwrap()),
-            launcher: Box::new(MockLauncher::new()),
             password_store: Box::new(sshub::credentials::NoopPasswordStore),
         },
     );

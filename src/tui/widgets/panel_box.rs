@@ -10,6 +10,14 @@ use ratatui::style::Style;
 use crate::tui::text::ellipsize;
 use crate::tui::theme;
 
+/// A dashboard panel switches from its compact grid layout to the richer zoomed
+/// layout once it is drawn at least this tall (#35). Deciding by the panel's
+/// actual box height (not the global zoom flag) means the content only swaps
+/// once the zoom morph has grown the box enough to hold it, instead of popping
+/// the instant `z` is pressed. Above every compact panel height (max 9), below
+/// a full-body zoom, so a grid slot always reads as compact.
+pub const ZOOM_CONTENT_MIN: u16 = 13;
+
 /// Write `s` at (`x`,`y`), truncated with `…` so it never exceeds `max_w`
 /// display columns — keeps dashboard text inside its panel border even when
 /// the column is narrow (e.g. after a zoom). Returns the columns written.
@@ -29,7 +37,13 @@ pub fn put_clamped(buf: &mut Buffer, x: u16, y: u16, s: &str, style: Style, max_
 /// Bottom:   `└──...──┘`
 ///
 /// If `count` is `None`, the title fills the top bar alone.
-pub fn render_panel_box(buf: &mut Buffer, area: Rect, title: &str, count: Option<&str>) {
+pub fn render_panel_box(
+    buf: &mut Buffer,
+    area: Rect,
+    title: &str,
+    count: Option<&str>,
+    focused: bool,
+) {
     if area.width < 4 || area.height < 2 {
         return;
     }
@@ -38,7 +52,12 @@ pub fn render_panel_box(buf: &mut Buffer, area: Rect, title: &str, count: Option
     let y = area.y;
     let w = area.width as usize;
     let bottom = area.y + area.height - 1;
-    let bstyle = theme::border();
+    // A focused dashboard panel (issue #18) gets an accent (cyan) border.
+    let bstyle = if focused {
+        theme::cyan()
+    } else {
+        theme::border()
+    };
 
     // ── Top border ──────────────────────────────────────
     // Build: ┌── title ── count ──...──┐
@@ -83,4 +102,23 @@ pub fn render_panel_box(buf: &mut Buffer, area: Rect, title: &str, count: Option
         buf.set_string(x + col as u16, bottom, "─", bstyle);
     }
     buf.set_string(right_edge, bottom, "┘", bstyle);
+}
+
+/// Selection window for a zoomed *selectable* list panel (issue #18):
+/// `panel_scroll` is the selected row index. Clamp it to `[0, len)`, write it
+/// back, and return `(first_visible, selected)` so the render draws
+/// `items[first .. first + visible]` with `selected` highlighted and always on
+/// screen (the view follows the selection).
+pub(crate) fn zoom_window(app: &crate::app::App, len: usize, visible: usize) -> (usize, usize) {
+    if len == 0 {
+        app.panel_scroll.set(0);
+        return (0, 0);
+    }
+    let sel = (app.panel_scroll.get() as usize).min(len - 1);
+    app.panel_scroll.set(sel as u16);
+    let visible = visible.max(1);
+    let first = sel
+        .saturating_sub(visible - 1)
+        .min(len.saturating_sub(visible));
+    (first, sel)
 }

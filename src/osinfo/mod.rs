@@ -17,6 +17,6 @@ pub mod widget;
 pub type CanonicalOs = &'static str;
 
 pub use detect::{spawn_os_detect_worker, OsDetectCmd, OsDetectEvent, ProbeRunner, SshProbeRunner};
-pub use logos::{logo_for, OsLogo, OsLogoLine, OsLogoSpan};
+pub use logos::{large_logo_for, logo_for, OsLogo, OsLogoLine, OsLogoSpan};
 pub use parse::parse_os;
 pub use widget::OsLogoWidget;

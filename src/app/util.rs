@@ -74,6 +74,67 @@ pub fn resolve_pending_secret(
     )
 }
 
+/// Same as [`resolve_pending_secret`] but for a [`ManagedHost`] row (tunnels).
+pub fn resolve_pending_secret_for_managed(
+    managed: &crate::store::ManagedHost,
+    password_store: &dyn crate::credentials::PasswordStore,
+) -> (Option<crate::session::PendingSecret>, String) {
+    if managed.has_password {
+        let key = crate::credentials::host_key(managed.id);
+        return match password_store.get(&key) {
+            Ok(Some(pw)) => (
+                Some(crate::session::PendingSecret::Password(pw)),
+                format!("auth: using stored password ({key})"),
+            ),
+            Ok(None) => (
+                None,
+                format!(
+                    "auth: has_password=true but keyring entry {key} is empty — tunnel cannot prompt"
+                ),
+            ),
+            Err(e) => (
+                None,
+                format!("auth: keyring lookup failed for {key}: {e:#}"),
+            ),
+        };
+    }
+
+    if let Some(identity) = managed.identity.as_ref() {
+        if identity.has_password {
+            let key = crate::credentials::identity_key(identity.id);
+            let has_key = identity.private_key.is_some();
+            return match password_store.get(&key) {
+                Ok(Some(pw)) => (
+                    Some(if has_key {
+                        crate::session::PendingSecret::Passphrase(pw)
+                    } else {
+                        crate::session::PendingSecret::Password(pw)
+                    }),
+                    format!(
+                        "auth: using stored {} ({key})",
+                        if has_key { "passphrase" } else { "password" }
+                    ),
+                ),
+                Ok(None) => (
+                    None,
+                    format!(
+                        "auth: identity has_password=true but keyring entry {key} is empty — tunnel cannot prompt"
+                    ),
+                ),
+                Err(e) => (
+                    None,
+                    format!("auth: keyring lookup failed for {key}: {e:#}"),
+                ),
+            };
+        }
+    }
+
+    (
+        None,
+        "auth: no stored credential — tunnel uses agent / unlocked key only (BatchMode)".into(),
+    )
+}
+
 /// Capture host metadata used by the embedded session header + connect
 /// animation.
 pub(crate) fn session_meta_for_entry(entry: &HostEntry) -> crate::session::SessionMeta {
@@ -101,6 +162,68 @@ pub(crate) fn session_meta_for_entry(entry: &HostEntry) -> crate::session::Sessi
             proxy_jump: host.proxy_jump.clone(),
             host_id: None,
         },
+    }
+}
+
+/// Build the bare `mosh` argv for a host entry.
+pub fn mosh_argv_for_entry(entry: &HostEntry) -> Vec<String> {
+    match entry {
+        HostEntry::Managed(m) => {
+            let ssh_host = managed_to_ssh_host(m);
+            if m.source == HostSource::SshConfig {
+                crate::ssh::build_mosh_alias_argv(&ssh_host)
+            } else {
+                crate::ssh::build_mosh_argv(&ssh_host)
+            }
+        }
+        HostEntry::Legacy { host, .. } => crate::ssh::build_mosh_alias_argv(host),
+    }
+}
+
+/// CLI connect argv: optional verbose logging, accept-new when secret present.
+pub fn prepare_cli_connect_argv(
+    mut argv: Vec<String>,
+    has_stored_secret: bool,
+    verbose: bool,
+) -> Vec<String> {
+    match argv.first().map(String::as_str) {
+        Some("ssh") => {
+            if verbose {
+                argv.insert(1, "-v".into());
+            }
+            if has_stored_secret {
+                argv.insert(1, "-o".into());
+                argv.insert(2, "StrictHostKeyChecking=accept-new".into());
+            }
+            argv
+        }
+        Some("mosh") if has_stored_secret => crate::ssh::inject_mosh_ssh_accept_new(argv),
+        _ => argv,
+    }
+}
+
+/// Apply connect-time tweaks to a bare session argv: verbose `ssh` logging and
+/// `StrictHostKeyChecking=accept-new` when a stored credential is present.
+pub fn prepare_session_connect_argv(mut argv: Vec<String>, has_stored_secret: bool) -> Vec<String> {
+    match argv.first().map(String::as_str) {
+        Some("ssh") => {
+            argv.insert(1, "-v".into());
+            if has_stored_secret {
+                argv.insert(1, "-o".into());
+                argv.insert(2, "StrictHostKeyChecking=accept-new".into());
+            }
+            argv
+        }
+        Some("mosh") if has_stored_secret => crate::ssh::inject_mosh_ssh_accept_new(argv),
+        _ => argv,
+    }
+}
+
+/// Build session argv (`ssh` or `mosh`) from per-host transport setting.
+pub fn session_argv_for_entry(entry: &HostEntry) -> Vec<String> {
+    match entry.session_transport() {
+        crate::session_transport::SessionTransport::Ssh => ssh_argv_for_entry(entry),
+        crate::session_transport::SessionTransport::Mosh => mosh_argv_for_entry(entry),
     }
 }
 
@@ -236,7 +359,7 @@ pub(crate) fn parse_tags(raw: &str) -> Vec<String> {
         .collect()
 }
 
-pub(crate) fn sort_host_indices(hosts: &[HostEntry], indices: &mut [usize], mode: SortMode) {
+pub fn sort_host_indices(hosts: &[HostEntry], indices: &mut [usize], mode: SortMode) {
     indices.sort_by(|&a, &b| compare_hosts(&hosts[a], &hosts[b], mode));
 }
 

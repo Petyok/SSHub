@@ -287,11 +287,18 @@ mod tests {
 
     #[test]
     fn expand_tilde_replaces_home_prefix() {
+        let _home = crate::test_env::lock_home();
+        let prev = std::env::var_os("HOME");
         std::env::set_var("HOME", "/tmp/test-home");
         assert_eq!(
             expand_tilde("~/.ssh/config"),
             PathBuf::from("/tmp/test-home/.ssh/config")
         );
+        // Restore so this fixed value can't leak into other tests.
+        match prev {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
     }
 
     #[test]

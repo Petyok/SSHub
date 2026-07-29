@@ -56,8 +56,12 @@ impl App {
             display_name,
             meta,
             pending_secret,
+            key_push_identity: None,
+            host_name: log_host_name.to_string(),
         };
-        match crate::session::Session::spawn(config, rows, cols) {
+        // No transcript: session logging is configured per saved host, and these
+        // sessions have no host row (ad-hoc destination or a local shell).
+        match crate::session::Session::spawn(config, rows, cols, None) {
             Ok(session) => {
                 self.sessions.push(session);
                 self.active_session = Some(self.sessions.len() - 1);
@@ -68,14 +72,20 @@ impl App {
                     "direct",
                     "launched",
                     "session started",
+                    None,
                 );
                 Ok(())
             }
             Err(e) => {
                 let err_msg = format!("Session spawn failed: {e:#}");
-                let _ = self
-                    .store
-                    .log_auth_event(log_host_name, None, "direct", "fail", &err_msg);
+                let _ = self.store.log_auth_event(
+                    log_host_name,
+                    None,
+                    "direct",
+                    "fail",
+                    &err_msg,
+                    None,
+                );
                 self.push_ssh_log(crate::ssh::probe::SshLogEntry {
                     host_name: log_host_name.to_string(),
                     line: err_msg.clone(),
