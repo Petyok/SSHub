@@ -152,7 +152,7 @@ mod tests {
 
     // Same real-FSEvents caveat as spawn_config_watcher_emits_after_write: the
     // debounce coalescing logic is validated on Linux; macOS CI can't deliver
-    // FSEvents reliably enough to assert "exactly one" within any bound.
+    // FSEvents reliably enough to assert anything about counts within a bound.
     #[test]
     #[cfg_attr(
         target_os = "macos",
@@ -170,7 +170,8 @@ mod tests {
             Duration::from_millis(100)
         };
         thread::sleep(settle);
-        for i in 0..5 {
+        const WRITES: u32 = 5;
+        for i in 0..WRITES {
             writeln!(file, "Host line-{i}").unwrap();
             file.flush().unwrap();
             let _ = file.as_file().sync_all();
@@ -182,20 +183,27 @@ mod tests {
         let mut events = 0u32;
         while Instant::now() < deadline {
             match rx.recv_timeout(Duration::from_millis(200)) {
-                Ok(WatchEvent::ConfigChanged) => {
-                    events += 1;
-                    assert!(
-                        events <= 1,
-                        "expected single debounced event, got at least {events}"
-                    );
-                }
+                Ok(WatchEvent::ConfigChanged) => events += 1,
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break,
             }
         }
-        assert_eq!(
-            events, 1,
-            "expected exactly one debounced event within {window:?}"
+
+        // What the debouncer promises is that a burst does not arrive one event
+        // per write, not that it always collapses to exactly one. The window is
+        // wall-clock time and the writes are real inotify events, so a loaded
+        // machine can straddle the boundary and deliver two: asserting `== 1`
+        // failed at random on CI (issue #62).
+        //
+        // Both bounds still catch a break: zero means delivery stopped, WRITES
+        // means nothing was coalesced at all.
+        assert!(
+            events >= 1,
+            "expected at least one event from {WRITES} writes within {window:?}"
+        );
+        assert!(
+            events < WRITES,
+            "expected the burst coalesced, got {events} events from {WRITES} writes"
         );
     }
 
