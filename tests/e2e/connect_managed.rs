@@ -1,16 +1,12 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use sshub::app::{App, AppDeps};
 use sshub::config::AppConfig;
 use sshub::metadata::MetadataDb;
 use sshub::ssh::{HostResolver, SshHost};
 use sshub::store::{HostSource, LauncherStore, NewHost, NewIdentity, SshConfigHostImport};
 use tempfile::NamedTempFile;
-
-#[path = "../support/mod.rs"]
-mod support;
 
 struct EmptyResolver;
 
@@ -22,10 +18,6 @@ impl HostResolver for EmptyResolver {
     fn resolve_host(&self, name: &str) -> anyhow::Result<SshHost> {
         Ok(SshHost::new(name))
     }
-}
-
-fn key(code: KeyCode) -> KeyEvent {
-    KeyEvent::new(code, KeyModifiers::empty())
 }
 
 fn app_with_managed_host(store_path: &std::path::Path) -> App {

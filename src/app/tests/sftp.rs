@@ -202,7 +202,7 @@ fn server_to_server_transfer_relays_in_two_legs() {
 /// it can be retried rather than silently vanishing.
 #[test]
 fn failed_relay_leg_stops_and_keeps_the_item() {
-    use crate::sftp::model::{Direction, FileEntry, QueuedTransfer, SftpState, Side};
+    use crate::sftp::model::{FileEntry, SftpState, Side};
     use crate::sftp::SftpCommand;
 
     let mut app = test_app(vec![]);

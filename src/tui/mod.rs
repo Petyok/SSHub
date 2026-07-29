@@ -534,6 +534,14 @@ fn footer_keybinds(app: &App) -> Vec<(String, &'static str)> {
             ("\u{2191}\u{2193}".into(), "select"),
             ("\u{21b5}".into(), "enter/connect"),
             ("\u{21c6}".into(), "focus"),
+            // Once the left pane points at a second server, the way back to the
+            // local filesystem is the thing that needs saying: `o` only leads
+            // further away, and nothing else on screen mentions `O`.
+            if app.sftp.as_ref().is_some_and(|s| s.left_is_remote()) {
+                ("O".into(), "local")
+            } else {
+                ("o".into(), "2nd host")
+            },
             ("\u{2190}".into(), "download"),
             ("\u{2192}".into(), "upload"),
             ("c".into(), "run"),
@@ -544,7 +552,6 @@ fn footer_keybinds(app: &App) -> Vec<(String, &'static str)> {
             ("M".into(), "chmod"),
             ("r".into(), "refresh"),
             ("s".into(), "ssh"),
-            ("o".into(), "2nd host"),
             (
                 ".".into(),
                 if app.sftp_show_hidden {
@@ -1468,6 +1475,51 @@ mod tests {
     }
 
     #[test]
+    fn sftp_footer_points_back_to_local_once_the_left_pane_is_remote() {
+        let mut app = test_app_with_hosts();
+        app.active_tab = 1;
+        app.sftp = Some(crate::sftp::model::SftpState::new("/srv", "/home/me"));
+
+        // 120 columns on purpose: the SFTP row does not fit there, so this also
+        // pins that the pair survives the truncation rather than only existing.
+        let buffer = render_to_buffer(&app, 120, 38);
+        assert!(buffer_contains(&buffer, "2nd host"));
+        assert!(!buffer_contains(&buffer, "O local"));
+
+        // Pointed at a second server, the footer has to say how to get back;
+        // `o` only leads further away and nothing else on screen mentions `O`.
+        app.sftp.as_mut().unwrap().left_host = Some("bravo".into());
+        let buffer = render_to_buffer(&app, 120, 38);
+        assert!(buffer_contains(&buffer, "O local"));
+        assert!(!buffer_contains(&buffer, "2nd host"));
+    }
+
+    #[test]
+    fn narrow_footer_keeps_help_and_quit_and_marks_the_gap() {
+        // The SFTP tab has the longest row: 220 columns to show all of it.
+        let mut app = test_app_with_hosts();
+        app.active_tab = 1;
+        app.sftp = Some(crate::sftp::model::SftpState::new("/srv", "/home/me"));
+
+        for w in [80u16, 100, 120, 160, 200] {
+            let buffer = render_to_buffer(&app, w, 38);
+            assert!(buffer_contains(&buffer, "? help"), "width {w}: help");
+            assert!(buffer_contains(&buffer, "q quit"), "width {w}: quit");
+            assert!(
+                buffer_contains(&buffer, "\u{2026}"),
+                "width {w}: dropped pairs are marked"
+            );
+        }
+
+        // Wide enough for everything: no ellipsis, nothing dropped.
+        let buffer = render_to_buffer(&app, 240, 38);
+        assert!(buffer_contains(&buffer, "? help"));
+        assert!(buffer_contains(&buffer, "q quit"));
+        assert!(buffer_contains(&buffer, "/ search"));
+        assert!(!buffer_contains(&buffer, "\u{2026}"));
+    }
+
+    #[test]
     fn render_includes_host_name_in_list() {
         let app = test_app_with_hosts();
         let buffer = render_to_buffer(&app, 120, 38);
@@ -1535,10 +1587,9 @@ mod tests {
     }
 
     #[test]
-    fn render_status_bar_shows_counts_and_mode() {
+    fn dashboard_footer_shows_keybinds() {
         let app = test_app_with_hosts();
         let buffer = render_to_buffer(&app, 132, 38);
-        // Dashboard footer shows keybinds; check for key elements
         assert!(buffer_contains(&buffer, "connect"));
         assert!(buffer_contains(&buffer, "quit"));
     }

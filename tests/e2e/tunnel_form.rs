@@ -8,9 +8,6 @@ use sshub::ssh::{HostResolver, SshHost};
 use sshub::store::{LauncherStore, NewHost};
 use tempfile::NamedTempFile;
 
-#[path = "../support/mod.rs"]
-mod support;
-
 struct EmptyResolver;
 
 impl HostResolver for EmptyResolver {

@@ -8,10 +8,7 @@ use sshub::metadata::MetadataDb;
 use sshub::store::{HostSource, HostUpdate, LauncherStore};
 use tempfile::tempdir;
 
-#[path = "../support/mod.rs"]
-mod support;
-
-use support::FixtureResolver;
+use crate::support::FixtureResolver;
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

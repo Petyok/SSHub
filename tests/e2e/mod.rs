@@ -1,3 +1,6 @@
+#[path = "../support/mod.rs"]
+mod support;
+
 mod adhoc_connect;
 mod broadcast;
 mod config_reload;
