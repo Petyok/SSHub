@@ -6,6 +6,14 @@ All notable changes to SSHub are documented in this file.
 
 ### Added
 
+- **Type-to-filter in Help and the keybinding editor** (issue #48) - those two
+  overlays were the only long lists you could not search. Both now take a query
+  the same way the tag filter does (`› query█`): case-insensitive substring over
+  the key spec / action label and the description / configured binds. Arrows and
+  PageUp/PageDown move; `j`/`k` type into the query. Esc clears a non-empty query
+  and closes only when it is empty. Section headers with no surviving help rows
+  are dropped, and the keybinding editor rebinds the filtered row (not
+  `KeyAction::ALL[selected]`), including while a capture is in progress.
 - **Stored passwords and passphrases are no longer write-only** (issue #60) - a
   saved secret showed as `(set)` and nothing else: you could not tell which one
   was stored, could not get it out, and editing meant retyping from scratch. The
