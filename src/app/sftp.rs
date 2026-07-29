@@ -158,8 +158,7 @@ impl App {
                 self.rebuild_filter();
             }
             _ if self.is_action(KeyAction::Help, &key) => {
-                self.pre_help_mode = Some(self.mode);
-                self.mode = AppMode::Help;
+                self.open_help();
             }
             _ => {}
         }
@@ -238,8 +237,7 @@ impl App {
             return Ok(());
         }
         if self.is_action(KeyAction::Help, &key) {
-            self.pre_help_mode = Some(self.mode);
-            self.mode = AppMode::Help;
+            self.open_help();
             return Ok(());
         }
 

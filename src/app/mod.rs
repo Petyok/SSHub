@@ -186,6 +186,8 @@ pub struct App {
     pub pre_help_mode: Option<AppMode>,
     /// Vertical scroll offset (in lines) of the help overlay.
     pub help_scroll: u16,
+    /// Type-to-filter query for the help overlay.
+    pub help_query: String,
     /// Mode to return to if the quit dialog is cancelled.
     pub pre_quit_mode: Option<AppMode>,
     pub group_sections: Vec<HostGroupSection>,
@@ -659,6 +661,7 @@ impl App {
             pending_delete: None,
             pre_help_mode: None,
             help_scroll: 0,
+            help_query: String::new(),
             pre_quit_mode: None,
             group_sections: Vec::new(),
             nav_rows: Vec::new(),
