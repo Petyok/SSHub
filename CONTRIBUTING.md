@@ -68,6 +68,14 @@ platform — see [docs/implementation-flow.md § GitHub comments](docs/implement
   security-sensitive** should say so explicitly in the description; silent
   changes to the security model will be bounced.
 
+### Credit
+
+Merged work keeps you as the commit author, and the CHANGELOG entry names you:
+`- **Feature** (PR #46 by @you) - …`. If a maintainer has to rebase your branch
+or reconcile it with `development`, it stays your patch and your credit; the PR
+comment will say what changed. A missing credit line is a bug — say so and it
+gets fixed.
+
 ## AI involvement
 
 This repo is heavily agent-assisted. Maintainers and agents triage issues and

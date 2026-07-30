@@ -43,29 +43,31 @@ All notable changes to SSHub are documented in this file.
 - **Local shell tab** - `Ctrl+Shift+T` opens a session tab running your login
   shell (`$SHELL`, falling back to `/bin/sh`), with the same detach and close
   behaviour as an ssh tab.
-- **Push a public key to a host** (PR #16) - `Shift+P` from the hosts list picks
-  an identity, or from the Keys tab picks a host, and installs that identity's
-  public key into the remote `~/.ssh/authorized_keys`. The remote side runs under
-  `umask 077`, creates the file if missing, and appends only when an exact
-  matching line is not already there, so repeating it is harmless. The public key
-  comes from the `.pub` file when one exists, otherwise `ssh-keygen -y` extracts
-  it with the passphrase staged through askpass rather than argv. Authentication
-  reuses the same stored-credential path as a normal connect, and the result is
-  written to the audit log. The help overlay has been advertising this key since
-  the feature was ceded to this PR; now it exists.
-- **Generate SSH keys from the Keys tab** (PR #15) - `g` opens a form for the key
-  type (Ed25519 or RSA-4096), passphrase, comment and target path. The passphrase
-  reaches `ssh-keygen` through askpass rather than argv, the new key is registered
-  as an identity immediately, and its passphrase goes to the credential store when
-  one was set. Generation refuses to overwrite an existing key or its `.pub`.
-- **Credentials survive a missing keyring** (PR #1) - where no Secret Service is
-  reachable (WSL, Docker, a headless box), passwords and passphrases used to have
-  nowhere to go. They now fall back to an owner-only `credentials.json` in the
-  data directory, written through a `0600` temp file and an atomic rename, and the
-  status bar says so rather than letting you assume the keyring took it. **The
-  fallback file is plaintext**, since there is no keyring to encrypt against. Once
-  a keyring shows up again, its contents migrate into it on the next launch and
-  the file is removed, but only if every entry made it across.
+- **Push a public key to a host** (PR #16 by @vesyorsins) - `Shift+P` from the
+  hosts list picks an identity, or from the Keys tab picks a host, and installs
+  that identity's public key into the remote `~/.ssh/authorized_keys`. The
+  remote side runs under `umask 077`, creates the file if missing, and appends
+  only when an exact matching line is not already there, so repeating it is
+  harmless. The public key comes from the `.pub` file when one exists, otherwise
+  `ssh-keygen -y` extracts it with the passphrase staged through askpass rather
+  than argv. Authentication reuses the same stored-credential path as a normal
+  connect, and the result is written to the audit log. The help overlay has been
+  advertising this key since the feature was ceded to this PR; now it exists.
+- **Generate SSH keys from the Keys tab** (PR #15 by @vesyorsins) - `g` opens a
+  form for the key type (Ed25519 or RSA-4096), passphrase, comment and target
+  path. The passphrase reaches `ssh-keygen` through askpass rather than argv,
+  the new key is registered as an identity immediately, and its passphrase goes
+  to the credential store when one was set. Generation refuses to overwrite an
+  existing key or its `.pub`.
+- **Credentials survive a missing keyring** (PR #1 by @vesyorsins) - where no
+  Secret Service is reachable (WSL, Docker, a headless box), passwords and
+  passphrases used to have nowhere to go. They now fall back to an owner-only
+  `credentials.json` in the data directory, written through a `0600` temp file
+  and an atomic rename, and the status bar says so rather than letting you
+  assume the keyring took it. **The fallback file is plaintext**, since there is
+  no keyring to encrypt against. Once a keyring shows up again, its contents
+  migrate into it on the next launch and the file is removed, but only if every
+  entry made it across.
 - **Install from npm** (issue #51) - `npx sshub-tui` and `npm install -g sshub-tui`
   now work, installing a command still called `sshub`. The npm package ships the
   same prebuilt binaries the GitHub release does, delivered as platform-specific
@@ -176,13 +178,14 @@ All notable changes to SSHub are documented in this file.
   the middle of the row by whatever was appended after them, panel-zoom hints,
   broadcast hints, session hints, and the middle is exactly what truncation eats.
   They are now moved to the end and pinned explicitly.
-- **Arrow keys did nothing in Midnight Commander** (PR #56) - full-screen
-  applications ask for application cursor mode (DECCKM) and then expect the
-  cursor keys as SS3 sequences, while SSHub always sent the normal CSI ones. The
-  embedded terminal tracked the mode all along; only the key encoder ignored it.
-  Holding Shift looked like a workaround because modified cursor keys take a
-  different encoding, but Midnight Commander read those as "select file". Arrows,
-  `Home` and `End` now follow whatever mode the remote application asked for.
+- **Arrow keys did nothing in Midnight Commander** (PR #56 by @michabbb) -
+  full-screen applications ask for application cursor mode (DECCKM) and then
+  expect the cursor keys as SS3 sequences, while SSHub always sent the normal
+  CSI ones. The embedded terminal tracked the mode all along; only the key
+  encoder ignored it. Holding Shift looked like a workaround because modified
+  cursor keys take a different encoding, but Midnight Commander read those as
+  "select file". Arrows, `Home` and `End` now follow whatever mode the remote
+  application asked for.
 - **SFTP could not leave the login directory** - `Backspace` did nothing on a
   fresh remote pane, because the parent of the server-resolved `"."` is the
   empty path, which the server rejects as a listing target.

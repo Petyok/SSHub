@@ -144,6 +144,29 @@ Example test plan bullets:
 - Issue closes; roadmap checkbox on #14 ticks when `Closes #N` matched.
 - Work rides the next release to `main` via `just release` (maintainer). See [CLAUDE.md § Versioning](../CLAUDE.md#versioning-vxyz).
 
+## Respect the community
+
+Somebody spent their evening on this project for free. The credit is the whole
+payment, so it is not optional and it is not a nice-to-have.
+
+- **CHANGELOG.** Every entry that came from outside the maintainer names the
+  author: `- **Feature** (PR #46 by @michabbb) - …`. One handle per PR, on the
+  entry itself, not in a footnote. If several people worked on it, name all of
+  them.
+- **Commit authorship.** Merge so the contributor stays the commit author (a
+  squash merge on GitHub does this). When a commit is genuinely shared work, add
+  a `Co-authored-by:` trailer for the other party.
+- **Say it on the PR.** Merging is not the whole answer: comment what landed,
+  and if the merge changed their code, say what changed and why, so they can
+  read the result of their own work.
+- **Never absorb work silently.** Rewriting a contributor's patch under our own
+  name, or shipping it with the credit line missing, is the one mistake here
+  that cannot be fixed by a later commit. Audit the CHANGELOG before every
+  release: `gh pr list --state merged --json number,author` against the entries
+  in `[Unreleased]`.
+- **The rule applies to us too.** Our own agents sign their GitHub comments (see
+  above) rather than passing work off as the maintainer's.
+
 ## Quick reference
 
 | Question | Answer |
