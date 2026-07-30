@@ -110,6 +110,101 @@ setup-hooks:
     git config core.hooksPath .githooks
     @echo "git hooks enabled (core.hooksPath = .githooks)"
 
+# Point ./target at ../.cargo-target (sibling of the git root). Keeps one Rust
+# artifact dir for the main checkout + all agent worktrees. Safe to re-run.
+# If ./target is a real directory and ../.cargo-target is empty/missing, moves
+# the existing artifacts into the shared dir first (preserves the cache).
+setup-shared-target:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    repo="$(git rev-parse --show-toplevel)"
+    parent="$(dirname "$repo")"
+    shared="$parent/.cargo-target"
+    cd "$repo"
+    if [ -L target ]; then
+      cur="$(readlink target)"
+      want="../.cargo-target"
+      if [ "$cur" = "$want" ] || [ "$(readlink -f target)" = "$(readlink -f "$shared")" ]; then
+        echo "target already -> $shared"
+        exit 0
+      fi
+      echo "target is a symlink to '$cur', expected '$want' or $shared" >&2
+      exit 1
+    fi
+    if [ -d target ]; then
+      if [ -e "$shared" ]; then
+        echo "both ./target and $shared exist — move/merge by hand, then re-run" >&2
+        exit 1
+      fi
+      echo "moving ./target -> $shared"
+      mv target "$shared"
+    else
+      mkdir -p "$shared"
+    fi
+    ln -sfn ../.cargo-target target
+    echo "target -> $shared ($(du -sh "$shared" | cut -f1))"
+
+# Add an isolated worktree under ../.worktrees/<name> on branch <branch>
+# (default: feature/<name>), then link its target/ at the shared cargo dir.
+#   just worktree-add agent-foo
+#   just worktree-add agent-foo feature/bar
+# Run from the main checkout (or any worktree of this repo).
+worktree-add name branch="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    repo="$(git rev-parse --show-toplevel)"
+    parent="$(dirname "$repo")"
+    shared="$parent/.cargo-target"
+    name="{{name}}"
+    branch="{{branch}}"
+    [ -n "$name" ] || { echo "usage: just worktree-add <name> [branch]" >&2; exit 1; }
+    [ -n "$branch" ] || branch="feature/$name"
+    dest="$parent/.worktrees/$name"
+    mkdir -p "$parent/.worktrees"
+    mkdir -p "$shared"
+    if [ -e "$dest" ]; then
+      echo "already exists: $dest" >&2
+      exit 1
+    fi
+    # Ensure main checkout shares target too (no-op if already set up).
+    just setup-shared-target
+    if git show-ref --verify --quiet "refs/heads/$branch"; then
+      git worktree add "$dest" "$branch"
+    else
+      git worktree add -b "$branch" "$dest"
+    fi
+    ln -sfn "$shared" "$dest/target"
+    echo "worktree: $dest"
+    echo "branch:   $branch"
+    echo "target:   $dest/target -> $shared"
+    echo "cd $dest"
+
+# Remove a worktree created by worktree-add. Does NOT delete the shared
+# .cargo-target. Branch is left intact unless you pass delete-branch.
+#   just worktree-rm agent-foo
+#   just worktree-rm agent-foo delete-branch
+worktree-rm name mode="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    repo="$(git rev-parse --show-toplevel)"
+    parent="$(dirname "$repo")"
+    name="{{name}}"
+    mode="{{mode}}"
+    dest="$parent/.worktrees/$name"
+    [ -n "$name" ] || { echo "usage: just worktree-rm <name> [delete-branch]" >&2; exit 1; }
+    if [ ! -e "$dest" ]; then
+      echo "no worktree at $dest" >&2
+      exit 1
+    fi
+    branch="$(git -C "$dest" branch --show-current || true)"
+    git worktree remove --force "$dest"
+    if [ "$mode" = "delete-branch" ] && [ -n "$branch" ]; then
+      git branch -d "$branch" || git branch -D "$branch"
+      echo "deleted branch $branch"
+    fi
+    rmdir "$parent/.worktrees" 2>/dev/null || true
+    echo "removed $dest"
+
 # Cut a release: merge development -> main with a --no-ff merge commit, tag,
 # and push. The tag triggers the release workflow (binaries + crates.io
 # publish). Development is then fast-forwarded to the release merge so both
