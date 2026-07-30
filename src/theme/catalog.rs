@@ -369,7 +369,6 @@ role_catalog! {
         BroadcastSuccess => ("components.broadcast.success", SemanticColor::Success, false),
         BroadcastError => ("components.broadcast.error", SemanticColor::Error, false),
 
-        OsLogoFallback => ("components.os_logo.fallback", SemanticColor::Info, false),
     }
 
     style {
@@ -377,7 +376,6 @@ role_catalog! {
         TextBright => ("components.text.bright", SemanticStyle::TextBright, false),
         TextMuted => ("components.text.muted", SemanticStyle::TextMuted, false),
         TextDim => ("components.text.dim", SemanticStyle::TextDim, false),
-        TextInverse => ("components.text.inverse", SemanticStyle::Inverse, false),
         SelectionActive => ("components.selection.active", SemanticStyle::Selection, false),
         SelectionInactive => ("components.selection.inactive", SemanticStyle::TextOnSurfaceRaised, false),
         FocusIndicator => ("components.focus.indicator", SemanticStyle::Accent, false),
@@ -420,9 +418,6 @@ role_catalog! {
 
         FooterKey => ("components.footer.key", SemanticStyle::TextBright, false),
         FooterLabel => ("components.footer.label", SemanticStyle::TextMuted, false),
-        StatusBarMode => ("components.status_bar.mode", SemanticStyle::Inverse, false),
-        StatusBarMessage => ("components.status_bar.message", SemanticStyle::Text, false),
-        StatusBarError => ("components.status_bar.error", SemanticStyle::Error, false),
         // The floating chip that stands in for the status-bar notice while a
         // panel is zoomed. Its own role because it is the one notice surface
         // that inverts itself instead of writing into the bar.
@@ -611,7 +606,6 @@ role_catalog! {
 
         FooterBackground => ("components.footer.background", SemanticPaint::SurfaceRaised, false),
         FooterSeparator => ("components.footer.separator", SemanticPaint::TextDim, false),
-        StatusBarBackground => ("components.status_bar.background", SemanticPaint::SurfaceRaised, false),
 
         PopupBackground => ("components.popup.background", SemanticPaint::Surface, false),
         PopupBorder => ("components.popup.border", SemanticPaint::BorderPopup, true),

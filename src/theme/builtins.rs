@@ -58,7 +58,7 @@ pub fn source(id: &str) -> Option<&'static str> {
 mod tests {
     use ratatui::style::{Color, Modifier, Style};
 
-    use crate::theme::catalog::{ColorRole, PaintRole};
+    use crate::theme::catalog::{ColorRole, PaintRole, TintRole};
     use crate::theme::catalog::{
         RoleFallback, RoleRef, SemanticSlot, SemanticStyle, SemanticTint, StyleRole, ROLE_SPECS,
         SEMANTIC_SPECS,
@@ -327,10 +327,8 @@ mod tests {
         // out against the exact legacy helper each one replaces.
 
         // `theme::inv()` — deep background on bright text, not the other way round.
-        assert_eq!(theme.style(StyleRole::TextInverse), legacy::inv());
         assert_eq!(theme.style(StyleRole::HeaderBrand), legacy::inv());
         assert_eq!(theme.style(StyleRole::TabsActive), legacy::inv());
-        assert_eq!(theme.style(StyleRole::StatusBarMode), legacy::inv());
         assert_eq!(theme.semantic.text_inverse, legacy::BG_DEEP);
         assert_ne!(theme.semantic.text_inverse, theme.semantic.text_bright);
 
@@ -435,7 +433,6 @@ mod tests {
             PaintRole::PopupBackground,
             PaintRole::HeaderBackground,
             PaintRole::FooterBackground,
-            PaintRole::StatusBarBackground,
             PaintRole::DashboardHostListBackground,
             PaintRole::DashboardDetailsBackground,
             PaintRole::SftpPanelBackground,
@@ -711,11 +708,178 @@ mod tests {
         (MOD, "HeaderSeparator"),
         (MOD, "FooterSeparator"),
         (MOD, "TabsSeparator"),
-        (MOD, "StatusBarBackground"),
         // The audit tab fades its result rows over the app ground when the
         // filter changes; the ground itself is Task 12's shared chrome.
         (AUDIT, "AppBackground"),
     ];
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum ReaderSyntax {
+        Direct,
+        PanelMacro,
+    }
+
+    /// One published role owned by the shared chrome or an earlier migration.
+    ///
+    /// Unlike a source-code scanner, this inventory is compiler-checked: every
+    /// row contains a concrete `RoleRef`, the renderer that consumes it, and
+    /// whether the renderer spells it as a typed path or as a type-positioned
+    /// argument to the panel macro.
+    #[derive(Clone, Copy)]
+    struct PublishedRoleReader {
+        renderer: &'static str,
+        ident: &'static str,
+        role: RoleRef,
+        syntax: ReaderSyntax,
+    }
+
+    fn published_role_readers() -> Vec<PublishedRoleReader> {
+        macro_rules! direct {
+            ($renderer:expr, Style, $role:ident) => {
+                PublishedRoleReader {
+                    renderer: $renderer,
+                    ident: stringify!($role),
+                    role: RoleRef::Style(StyleRole::$role),
+                    syntax: ReaderSyntax::Direct,
+                }
+            };
+            ($renderer:expr, Paint, $role:ident) => {
+                PublishedRoleReader {
+                    renderer: $renderer,
+                    ident: stringify!($role),
+                    role: RoleRef::Paint(PaintRole::$role),
+                    syntax: ReaderSyntax::Direct,
+                }
+            };
+            ($renderer:expr, Color, $role:ident) => {
+                PublishedRoleReader {
+                    renderer: $renderer,
+                    ident: stringify!($role),
+                    role: RoleRef::Color(ColorRole::$role),
+                    syntax: ReaderSyntax::Direct,
+                }
+            };
+            ($renderer:expr, Tint, $role:ident) => {
+                PublishedRoleReader {
+                    renderer: $renderer,
+                    ident: stringify!($role),
+                    role: RoleRef::Tint(TintRole::$role),
+                    syntax: ReaderSyntax::Direct,
+                }
+            };
+        }
+        macro_rules! panel {
+            (Style, $role:ident) => {
+                PublishedRoleReader {
+                    renderer: "src/tui/widgets/panel_box.rs",
+                    ident: stringify!($role),
+                    role: RoleRef::Style(StyleRole::$role),
+                    syntax: ReaderSyntax::PanelMacro,
+                }
+            };
+            (Paint, $role:ident) => {
+                PublishedRoleReader {
+                    renderer: "src/tui/widgets/panel_box.rs",
+                    ident: stringify!($role),
+                    role: RoleRef::Paint(PaintRole::$role),
+                    syntax: ReaderSyntax::PanelMacro,
+                }
+            };
+        }
+
+        const HEADER: &str = "src/tui/widgets/header.rs";
+        const SESSION: &str = "src/session/render.rs";
+        const HOSTS: &str = "src/tui/widgets/hosts_panel.rs";
+        const MIDDLE: &str = "src/tui/widgets/middle_stack.rs";
+        const RIGHT: &str = "src/tui/widgets/right_stack.rs";
+        const FOOTER: &str = "src/tui/widgets/footer.rs";
+        const TABS: &str = "src/tui/widgets/tab_bar.rs";
+
+        vec![
+            direct!(HOSTS, Color, StatusError),
+            direct!(RIGHT, Color, StatusInfo),
+            direct!(HOSTS, Color, StatusUnknown),
+            direct!(HEADER, Color, HeaderSessionSuccess),
+            direct!(HEADER, Color, HeaderSessionWarning),
+            direct!(HEADER, Color, HeaderSessionError),
+            direct!(SESSION, Color, SessionConnecting),
+            direct!(SESSION, Color, SessionExited),
+            direct!(MIDDLE, Color, DashboardMetricsSparklineLow),
+            direct!(MIDDLE, Color, DashboardMetricsSparklineMedium),
+            direct!(MIDDLE, Color, DashboardMetricsSparklineHigh),
+            direct!(HOSTS, Style, SelectionActive),
+            direct!(SESSION, Style, HeaderBrand),
+            direct!(HEADER, Style, HeaderStatsLabel),
+            direct!(HEADER, Style, HeaderStatsValue),
+            direct!(HEADER, Style, HeaderSessionActive),
+            direct!(HEADER, Style, HeaderSessionInactive),
+            direct!(HEADER, Style, HeaderSessionMore),
+            direct!(SESSION, Style, SessionTitle),
+            direct!(SESSION, Style, SessionScrollback),
+            direct!(SESSION, Style, SessionDebugTail),
+            panel!(Style, DashboardHostListTitle),
+            panel!(Style, DashboardHostListCount),
+            direct!(HOSTS, Style, DashboardHostListGroup),
+            direct!(HOSTS, Style, DashboardHostListHost),
+            direct!(HOSTS, Style, DashboardHostListHostSelected),
+            direct!(HOSTS, Style, DashboardHostListMatch),
+            panel!(Style, DashboardDetailsTitle),
+            direct!(MIDDLE, Style, DashboardDetailsMetadata),
+            panel!(Style, DashboardSshLogTitle),
+            panel!(Style, DashboardAgentTitle),
+            panel!(Style, DashboardLatencyTitle),
+            panel!(Style, DashboardRecentTitle),
+            panel!(Style, DashboardAuthTitle),
+            panel!(Style, DashboardPingTitle),
+            direct!(FOOTER, Style, FooterKey),
+            direct!(FOOTER, Style, FooterLabel),
+            direct!(TABS, Style, TabsActive),
+            direct!(TABS, Style, TabsInactive),
+            panel!(Style, SftpPanelTitle),
+            panel!(Style, SftpPanelCount),
+            panel!(Style, BroadcastPanelTitle),
+            panel!(Style, BroadcastPanelCount),
+            direct!(MOD, Paint, AppBackground),
+            direct!(HEADER, Paint, HeaderBackground),
+            direct!(MOD, Paint, HeaderSeparator),
+            direct!(SESSION, Paint, SessionBackground),
+            direct!(SESSION, Paint, SessionBorder),
+            panel!(Paint, DashboardHostListBorder),
+            panel!(Paint, DashboardHostListBorderFocused),
+            panel!(Paint, DashboardHostListBackground),
+            panel!(Paint, DashboardDetailsBorder),
+            panel!(Paint, DashboardDetailsBorderFocused),
+            panel!(Paint, DashboardDetailsBackground),
+            panel!(Paint, DashboardSshLogBorder),
+            panel!(Paint, DashboardSshLogBorderFocused),
+            panel!(Paint, DashboardSshLogBackground),
+            panel!(Paint, DashboardAgentBorder),
+            panel!(Paint, DashboardAgentBorderFocused),
+            panel!(Paint, DashboardAgentBackground),
+            panel!(Paint, DashboardLatencyBorder),
+            panel!(Paint, DashboardLatencyBorderFocused),
+            panel!(Paint, DashboardLatencyBackground),
+            panel!(Paint, DashboardRecentBorder),
+            panel!(Paint, DashboardRecentBorderFocused),
+            panel!(Paint, DashboardRecentBackground),
+            panel!(Paint, DashboardAuthBorder),
+            panel!(Paint, DashboardAuthBorderFocused),
+            panel!(Paint, DashboardAuthBackground),
+            panel!(Paint, DashboardPingBorder),
+            panel!(Paint, DashboardPingBorderFocused),
+            panel!(Paint, DashboardPingBackground),
+            direct!(FOOTER, Paint, FooterBackground),
+            direct!(MOD, Paint, FooterSeparator),
+            direct!(MOD, Paint, TabsSeparator),
+            panel!(Paint, SftpPanelBorder),
+            panel!(Paint, SftpPanelBorderFocused),
+            panel!(Paint, SftpPanelBackground),
+            panel!(Paint, BroadcastPanelBorder),
+            panel!(Paint, BroadcastPanelBorderFocused),
+            panel!(Paint, BroadcastPanelBackground),
+            direct!("src/osinfo/logos.rs", Tint, OsLogoTint),
+        ]
+    }
 
     /// The role uses, grouped by the surface that draws them.
     fn migrated_role_uses() -> Vec<MigratedRoleUse> {
@@ -2809,6 +2973,62 @@ mod tests {
                      replaced, or to `NOT_MIGRATED` if it belongs to another task"
                 );
             }
+        }
+    }
+
+    /// Every role in the public catalogue has an explicit, typed productive
+    /// reader. Migration rows cover the surfaces changed by this task; the
+    /// compact shared inventory covers the pre-existing renderer contract.
+    #[test]
+    fn every_published_role_has_an_inventoried_renderer() {
+        let migrated = migrated_role_uses();
+        let shared = published_role_readers();
+
+        for reader in &shared {
+            assert!(
+                ROLE_SPECS.iter().any(|spec| spec.role == reader.role),
+                "{} is inventoried for {} but is not published",
+                reader.ident,
+                reader.renderer
+            );
+            assert!(
+                !migrated.iter().any(|cell| cell.role == reader.role),
+                "{} is owned by both renderer inventories",
+                reader.ident
+            );
+
+            let source = renderer_source(reader.renderer);
+            let present = match (reader.syntax, reader.role) {
+                (ReaderSyntax::Direct, RoleRef::Style(_)) => {
+                    source.contains(&format!("StyleRole::{}", reader.ident))
+                }
+                (ReaderSyntax::Direct, RoleRef::Paint(_)) => {
+                    source.contains(&format!("PaintRole::{}", reader.ident))
+                }
+                (ReaderSyntax::Direct, RoleRef::Color(_)) => {
+                    source.contains(&format!("ColorRole::{}", reader.ident))
+                }
+                (ReaderSyntax::Direct, RoleRef::Tint(_)) => {
+                    source.contains(&format!("TintRole::{}", reader.ident))
+                }
+                (ReaderSyntax::PanelMacro, _) => source
+                    .lines()
+                    .any(|line| line.trim().trim_end_matches(',') == reader.ident),
+            };
+            assert!(
+                present,
+                "{} no longer reads {} with the inventoried syntax",
+                reader.renderer, reader.ident
+            );
+        }
+
+        for spec in ROLE_SPECS {
+            assert!(
+                migrated.iter().any(|cell| cell.role == spec.role)
+                    || shared.iter().any(|reader| reader.role == spec.role),
+                "{} has no explicitly inventoried productive renderer",
+                spec.path
+            );
         }
     }
 }

@@ -111,9 +111,6 @@ background = { gradient = "gradients.sunrise" }
 [components.footer]
 background = { color = "palette.sun", opacity = 0.22 }
 
-[components.status_bar]
-background = { color = "palette.sun", opacity = 0.22 }
-
 [components.popup]
 background = "palette.white"
 border = "palette.ink_soft"

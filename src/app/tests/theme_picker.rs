@@ -103,6 +103,37 @@ fn an_unreadable_themes_directory_still_yields_a_working_app() {
 }
 
 #[test]
+fn a_theme_startup_notice_preserves_an_existing_credential_fallback_notice() {
+    let root = tempfile::tempdir().unwrap();
+    let themes = root.path().join("themes | broken");
+    fs::write(&themes, "not a directory").unwrap();
+
+    let mut app = app_wanting("default");
+    let credential_notice = "OS keyring unavailable. Using credentials.json fallback.";
+    app.host_notice = Some(credential_notice.to_string());
+
+    app.load_themes_from(&themes);
+
+    let first = app
+        .host_notice
+        .clone()
+        .expect("both degradations need a notice");
+    assert!(
+        first.starts_with(&format!("{credential_notice} | Theme:")),
+        "credential fallback must stay first: {first}"
+    );
+    assert_eq!(first.matches("Theme:").count(), 1, "{first}");
+
+    app.load_themes_from(&themes);
+
+    assert_eq!(
+        app.host_notice.as_deref(),
+        Some(first.as_str()),
+        "reloading the same degraded theme directory must not duplicate its notice"
+    );
+}
+
+#[test]
 fn a_missing_active_theme_falls_back_without_rewriting_config() {
     let root = themes_dir_with(&[("mine", &user_theme("Mine"))]);
     let themes = themes_path(&root);

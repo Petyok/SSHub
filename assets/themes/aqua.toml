@@ -105,6 +105,3 @@ primary = { gradient = "gradients.tide" }
 # but would fail on a theme that left the background at "terminal".
 [components.footer]
 background = { color = "palette.turquoise", opacity = 0.18, over = "palette.deep" }
-
-[components.status_bar]
-background = { color = "palette.turquoise", opacity = 0.18, over = "palette.deep" }

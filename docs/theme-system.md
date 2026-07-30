@@ -681,7 +681,6 @@ renderers use, so it cannot drift.
 
 | Role | Type | Falls back to | Closed frame |
 | --- | --- | --- | --- |
-| `components.os_logo.fallback` | color | `semantic.info` | no |
 | `components.os_logo.tint` | tint | `native` (the asset's own colours) | no |
 
 #### `components.picker`
@@ -778,10 +777,6 @@ renderers use, so it cannot drift.
 
 | Role | Type | Falls back to | Closed frame |
 | --- | --- | --- | --- |
-| `components.status_bar.background` | paint | `semantic.surface_raised` | no |
-| `components.status_bar.error` | style | `semantic.error` | no |
-| `components.status_bar.message` | style | `semantic.text` | no |
-| `components.status_bar.mode` | style | `semantic.text_inverse` on `semantic.text_bright` | no |
 | `components.status_bar.toast` | style | `semantic.info` | no |
 
 #### `components.table`
@@ -805,7 +800,6 @@ renderers use, so it cannot drift.
 | --- | --- | --- | --- |
 | `components.text.bright` | style | `semantic.text_bright` | no |
 | `components.text.dim` | style | `semantic.text_dim` | no |
-| `components.text.inverse` | style | `semantic.text_inverse` on `semantic.text_bright` | no |
 | `components.text.muted` | style | `semantic.text_muted` | no |
 | `components.text.primary` | style | `semantic.text` | no |
 

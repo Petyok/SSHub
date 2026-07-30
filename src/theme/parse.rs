@@ -851,7 +851,7 @@ impl DefinitionParser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theme::catalog::{ColorRole, PaintRole, SemanticSlot, StyleRole, TintRole};
+    use crate::theme::catalog::{PaintRole, SemanticSlot, StyleRole, TintRole};
     use crate::theme::model::*;
     use std::path::PathBuf;
 
@@ -1108,7 +1108,7 @@ mod tests {
         let source = header(
             "[gradients.panel_border]\ndirection = \"perimeter\"\n\
              stops = [ { at = 0.0, color = \"semantic.accent\" }, { at = 1.0, color = \"#a0ffe0\" } ]\n\
-             [components.os_logo]\nfallback = \"auto\"\ntint = \"native\"\n\
+             [components.os_logo]\ntint = \"native\"\n\
              [components.dashboard.host_list]\nborder = { gradient = \"gradients.panel_border\" }\n\
              background = \"terminal\"\n\
              [components.app]\nbackground = \"auto\"\n",
@@ -1124,14 +1124,6 @@ mod tests {
             gradient.stops[1].color.as_ref().unwrap().value.base,
             ColorBase::Hex([0xa0, 0xff, 0xe0])
         );
-
-        let ComponentValue::Color { role, value } =
-            &component(&definition, "components.os_logo.fallback").value
-        else {
-            panic!("color value");
-        };
-        assert_eq!(*role, ColorRole::OsLogoFallback);
-        assert!(matches!(value.value, ColorSlot::Auto));
 
         let ComponentValue::Tint { role, value } =
             &component(&definition, "components.os_logo.tint").value
@@ -1221,7 +1213,7 @@ mod tests {
     fn gradient_on_a_non_paint_role_names_the_real_problem() {
         let parsed = parse_user(&header(
             "[components.footer.key]\nforeground = { gradient = \"gradients.g\" }\n\
-             [components.os_logo]\nfallback = { gradient = \"gradients.g\" }\n",
+             [components.os_logo]\ntint = { gradient = \"gradients.g\" }\n",
         ));
         let errors: Vec<_> = parsed.diagnostics.iter().filter(|d| d.is_error()).collect();
         assert_eq!(errors.len(), 2, "{errors:?}");
@@ -1233,7 +1225,7 @@ mod tests {
         );
         let definition = parsed.definition.expect("definition");
         assert!(definition.unknown_fields.is_empty());
-        // The colour role is dropped; the style survives without a foreground.
+        // The tint role is dropped; the style survives without a foreground.
         let paths: Vec<_> = definition
             .components
             .iter()

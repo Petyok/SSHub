@@ -127,6 +127,24 @@ fn theme_startup_notice(manager: &ThemeManager, load_error: Option<&str>) -> Opt
     })
 }
 
+/// Preserve earlier startup degradations while adding another one-line notice.
+fn append_host_notice(host_notice: &mut Option<String>, notice: String) {
+    const SEPARATOR: &str = " | ";
+
+    match host_notice {
+        Some(existing)
+            if existing == &notice
+                || existing
+                    .strip_suffix(&notice)
+                    .is_some_and(|prefix| prefix.ends_with(SEPARATOR)) => {}
+        Some(existing) if !existing.is_empty() => {
+            existing.push_str(SEPARATOR);
+            existing.push_str(&notice);
+        }
+        _ => *host_notice = Some(notice),
+    }
+}
+
 /// Injectable dependencies for [`App`].
 pub struct AppDeps {
     pub resolver: Box<dyn HostResolver>,
@@ -722,7 +740,7 @@ impl App {
             };
         self.replace_theme_manager(manager);
         if let Some(notice) = theme_startup_notice(&self.theme_manager, load_error.as_deref()) {
-            self.host_notice = Some(notice);
+            append_host_notice(&mut self.host_notice, notice);
         }
     }
 
@@ -768,11 +786,10 @@ impl App {
         // start even with a broken themes directory.
         match config::config_dir() {
             Ok(dir) => app.load_themes_from(&dir.join("themes")),
-            Err(e) => {
-                app.host_notice = Some(format!(
-                    "Theme: no config directory ({e}); using the built-in themes"
-                ))
-            }
+            Err(e) => append_host_notice(
+                &mut app.host_notice,
+                format!("Theme: no config directory ({e}); using the built-in themes"),
+            ),
         }
 
         app.reload_hosts()?;
