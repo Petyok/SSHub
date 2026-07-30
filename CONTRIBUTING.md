@@ -32,6 +32,14 @@ considered free again.
 If an **AI agent** leaves the claim comment, it **must** name the model and
 platform — see [docs/implementation-flow.md § GitHub comments](docs/implementation-flow.md#github-comments-ai-agents).
 
+Three labels change what claiming means:
+
+| Label | What it means for you |
+|-------|-----------------------|
+| `design-needed` | Do not open a PR from the issue text alone. It needs a design first (posted on the issue or as a doc) and a round of review; the open questions in the issue are open on purpose. |
+| `epic` | Too large for one PR. Agree on the staging, then claim a stage, not the epic. |
+| `icebox` | Deliberately parked, usually until a milestone named in the issue. Not free work waiting to be taken. |
+
 ## Making changes
 
 1. Create a branch from `development` (not `main`)
