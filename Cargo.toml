@@ -1,6 +1,6 @@
 [package]
 name = "sshub"
-version = "0.11.6"
+version = "0.11.7"
 edition = "2021"
 description = "SSHub — TUI launcher for SSH hosts"
 license = "AGPL-3.0-or-later"
@@ -34,11 +34,6 @@ path = "demo/seed_demo.rs"
 [lib]
 name = "sshub"
 path = "src/lib.rs"
-
-[features]
-# Stretch every motion duration so a screenshot-based recorder (VHS) can capture
-# the slides at all — see the `anim_ms` docs in src/tui/mod.rs. Demo builds only.
-demo-motion = []
 
 [dependencies]
 anyhow = "1"

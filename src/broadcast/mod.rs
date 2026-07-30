@@ -31,7 +31,7 @@ pub const ENTRY_ANIM: Duration = Duration::from_millis(600);
 /// How long an error toast stays before it slides away.
 pub const TOAST_TTL: Duration = Duration::from_secs(10);
 /// Error-toast slide-in / slide-out duration.
-pub const TOAST_ANIM: Duration = crate::tui::anim_ms(300);
+pub const TOAST_ANIM: Duration = Duration::from_millis(300);
 /// Per-host ssh connect timeout (seconds) and run cap.
 pub const CONNECT_TIMEOUT_SECS: u32 = 8;
 pub const RUN_TIMEOUT: Duration = Duration::from_secs(60);

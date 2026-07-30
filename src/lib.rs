@@ -317,22 +317,8 @@ fn apply_auto_quit(app: &mut App, auto_quit: Option<&str>) -> Result<()> {
 fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
     // While a panel animation is playing, shorten the poll window so the render
     // loop redraws at ~60fps and the slide is smooth; otherwise idle at 20fps.
-    // 16ms (~60fps) is right for a real terminal. The demo build instead paces
-    // motion at the rate the recorder samples the screen, because writing faster
-    // than that is not just wasted — it is actively harmful. VHS screenshots a
-    // headless browser running xterm.js, which parses our writes on a budget per
-    // rendered frame; 60 full-screen repaints a second overrun that budget, so
-    // the screenshot catches an already-finished slide and the backlog shows up
-    // as a sped-up recording. Measured on hero: at 60fps writes a 975ms slide
-    // landed in ONE GIF frame. Matching the capture cadence keeps every drawn
-    // frame, and the tapes' `Set Framerate 12` is what this pairs with.
-    let anim_window = if cfg!(feature = "demo-motion") {
-        std::time::Duration::from_millis(80)
-    } else {
-        std::time::Duration::from_millis(16)
-    };
     let poll_window = if app.animating() {
-        anim_window
+        std::time::Duration::from_millis(16)
     } else {
         POLL_INTERVAL
     };

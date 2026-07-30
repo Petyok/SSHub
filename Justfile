@@ -26,10 +26,11 @@ npm-build version="":
 npm-publish version="":
     npm/build.sh {{version}} --publish
 
-# Record README GIFs + screenshots with VHS (requires `vhs` and `ffmpeg` on
-# PATH). Pass tape names to record a subset: `just record-gifs overview sftp`.
-record-gifs *tapes:
-    bash demo/record.sh {{tapes}}
+# Record the README GIFs + screenshots (requires `agg` and `ffmpeg` on PATH:
+# cargo install --git https://github.com/asciinema/agg). Pass scenario names to
+# record a subset: `just record-gifs hero sftp`.
+record-gifs *scenarios:
+    demo/record.py {{scenarios}}
 
 # Run with dry-run (no TUI)
 dry-run:

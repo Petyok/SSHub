@@ -351,6 +351,31 @@ pub(crate) fn shellexpand_home(path: &str) -> std::path::PathBuf {
     std::path::PathBuf::from(path)
 }
 
+/// Render `path` for display with the user's home directory collapsed to `~`.
+///
+/// The inverse of [`shellexpand_home`]. Local paths reach the screen in the SFTP
+/// browser, and `/home/<you>/…` is both longer than the pane and nobody else's
+/// business — a recording of the browser used to carry the real username straight
+/// into the README.
+pub(crate) fn contract_home(path: &std::path::Path) -> String {
+    match std::env::var_os("HOME") {
+        Some(home) if !home.is_empty() => contract_prefix(path, std::path::Path::new(&home)),
+        _ => path.display().to_string(),
+    }
+}
+
+/// [`contract_home`] with the home directory passed in, so it can be tested
+/// without touching a process-wide environment variable other tests share.
+fn contract_prefix(path: &std::path::Path, home: &std::path::Path) -> String {
+    if path == home {
+        return "~".to_string();
+    }
+    match path.strip_prefix(home) {
+        Ok(rest) => format!("~/{}", rest.display()),
+        Err(_) => path.display().to_string(),
+    }
+}
+
 pub(crate) fn os_icon_from_index(index: usize) -> Option<String> {
     match OS_ICON_OPTIONS.get(index) {
         Some(&"(none)") | None => None,
@@ -659,4 +684,27 @@ pub(crate) fn tab_from_x(x: u16) -> Option<usize> {
         cx += tab_w;
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn contract_prefix_collapses_only_paths_under_that_home() {
+        let home = std::path::Path::new("/home/someone");
+        assert_eq!(contract_prefix(home, home), "~");
+        assert_eq!(
+            contract_prefix(&home.join("work/notes.md"), home),
+            "~/work/notes.md"
+        );
+        // Sharing a prefix is not being under it.
+        let sibling = std::path::Path::new("/home/someone-else/x");
+        assert_eq!(contract_prefix(sibling, home), "/home/someone-else/x");
+        // Anything outside home is left alone, remote-looking paths included.
+        assert_eq!(
+            contract_prefix(std::path::Path::new("/srv/www"), home),
+            "/srv/www"
+        );
+    }
 }

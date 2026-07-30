@@ -7,7 +7,7 @@ disable_animation = false
 confirm_quit = true
 identity_columns = 0
 os_logo = true
-opaque_background = false
+opaque_background = true
 
 [keybinds]
 save = [

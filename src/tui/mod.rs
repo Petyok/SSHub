@@ -925,66 +925,38 @@ fn render_session_tab_slide(frame: &mut Frame, app: &App) {
     );
 }
 
-/// Motion durations (#35), all in one place so a recorder can slow them down.
-///
-/// VHS samples the terminal by screenshotting it, and on a full-screen repaint
-/// its capture rate collapses well below the 25fps it writes the video at. A
-/// 260ms slide therefore lands in the GIF as one or two frames — measured on
-/// hero.gif, where the whole session-enter slide is two frames and the popup
-/// slide flashes past in one. Nothing on the recorder's side fixes that: the
-/// states simply are not sampled.
-///
-/// So the demo build stretches every duration instead. `--features demo-motion`
-/// (used by `demo/record.sh`) makes each one [`DEMO_MOTION_SCALE`] times longer,
-/// which is enough frames for the motion to read, and costs the normal build
-/// nothing: this is resolved at compile time and every call site keeps using the
-/// constants unchanged.
-pub(crate) const fn anim_ms(ms: u64) -> std::time::Duration {
-    std::time::Duration::from_millis(if cfg!(feature = "demo-motion") {
-        ms * DEMO_MOTION_PERCENT / 100
-    } else {
-        ms
-    })
-}
-
-/// How much `--features demo-motion` stretches every motion duration by, in
-/// percent. Measured on hero.gif at 25fps: unstretched, the longest transition
-/// is 5 frames and most are 2; at 300% it is 8 and 4; at 375% the slides read as
-/// motion rather than as a cut.
-pub const DEMO_MOTION_PERCENT: u64 = 375;
-
 /// How long the dashboard takes to fade up over the intro animation (#35).
-pub const SPLASH_FADE: std::time::Duration = anim_ms(360);
+pub const SPLASH_FADE: std::time::Duration = std::time::Duration::from_millis(360);
 
 /// How long a panel's swapped-out content takes to fade in (#35).
-pub const CONTENT_FADE: std::time::Duration = anim_ms(140);
+pub const CONTENT_FADE: std::time::Duration = std::time::Duration::from_millis(140);
 
 /// How long an SFTP pane's listing takes to slide to a new directory (#35).
-pub const SFTP_NAV_ANIM: std::time::Duration = anim_ms(200);
+pub const SFTP_NAV_ANIM: std::time::Duration = std::time::Duration::from_millis(200);
 
 /// How long a newly staged SFTP transfer takes to fly into the queue (#35).
-pub const SFTP_QUEUE_ANIM: std::time::Duration = anim_ms(200);
+pub const SFTP_QUEUE_ANIM: std::time::Duration = std::time::Duration::from_millis(200);
 
 /// How long a host's status dot flashes after its ping class changes (#35).
-pub const PING_FLASH: std::time::Duration = anim_ms(420);
+pub const PING_FLASH: std::time::Duration = std::time::Duration::from_millis(420);
 
 /// Duration of a group's fold / unfold reveal in the host list (#35).
-pub const FOLD_ANIM: std::time::Duration = anim_ms(180);
+pub const FOLD_ANIM: std::time::Duration = std::time::Duration::from_millis(180);
 
 /// Duration of the host-list highlight wipe under a moved cursor (#35).
-pub const SELECT_ANIM: std::time::Duration = anim_ms(120);
+pub const SELECT_ANIM: std::time::Duration = std::time::Duration::from_millis(120);
 
 /// Duration of the tab-switch body slide (#35).
-pub const TAB_ANIM: std::time::Duration = anim_ms(220);
+pub const TAB_ANIM: std::time::Duration = std::time::Duration::from_millis(220);
 
 /// Duration of a popup's open / close slide (#35).
-pub const POPUP_ANIM: std::time::Duration = anim_ms(260);
+pub const POPUP_ANIM: std::time::Duration = std::time::Duration::from_millis(260);
 
 /// Duration of the full-screen session-enter slide on connect (#35).
-pub const SESSION_ANIM: std::time::Duration = anim_ms(280);
+pub const SESSION_ANIM: std::time::Duration = std::time::Duration::from_millis(280);
 
 /// Duration of an SFTP tab sub-state slide: picker <-> connecting <-> browser (#35).
-pub const SFTP_ANIM: std::time::Duration = anim_ms(260);
+pub const SFTP_ANIM: std::time::Duration = std::time::Duration::from_millis(260);
 
 /// Shared popup rect hook (#35): every overlay runs its resting rect through
 /// this so the render pass can snapshot the popup for its open/close slides.
@@ -1543,35 +1515,6 @@ mod tests {
         app.selected = 0;
         app.rebuild_filter();
         app
-    }
-
-    /// Every motion duration goes through `anim_ms`, so the demo build stretches
-    /// all of them together and the normal build is untouched. A duration written
-    /// as a bare `from_millis` would silently opt out of both.
-    #[test]
-    fn motion_durations_scale_together() {
-        // Same integer arithmetic as `anim_ms`, so the test pins the real values.
-        let ms = |base: u64| {
-            if cfg!(feature = "demo-motion") {
-                base * DEMO_MOTION_PERCENT / 100
-            } else {
-                base
-            }
-        };
-        assert_eq!(SELECT_ANIM.as_millis() as u64, ms(120));
-        assert_eq!(FOLD_ANIM.as_millis() as u64, ms(180));
-        assert_eq!(TAB_ANIM.as_millis() as u64, ms(220));
-        assert_eq!(POPUP_ANIM.as_millis() as u64, ms(260));
-        assert_eq!(SFTP_ANIM.as_millis() as u64, ms(260));
-        assert_eq!(SESSION_ANIM.as_millis() as u64, ms(280));
-        assert_eq!(SPLASH_FADE.as_millis() as u64, ms(360));
-        assert_eq!(CONTENT_FADE.as_millis() as u64, ms(140));
-        assert_eq!(PING_FLASH.as_millis() as u64, ms(420));
-        assert_eq!(crate::broadcast::TOAST_ANIM.as_millis() as u64, ms(300));
-        // Dwell times are not motion: a toast that lingers 30s in a demo build
-        // would outlast the tape, and the intro animation is what the tapes'
-        // opening `Sleep` is measured against.
-        assert_eq!(crate::broadcast::TOAST_TTL.as_secs(), 10);
     }
 
     fn render_to_buffer(app: &App, width: u16, height: u16) -> Buffer {
