@@ -1533,3 +1533,26 @@ pub struct KnownHostsState {
     pub confirming_delete: bool,
     pub notice: Option<String>,
 }
+
+impl KnownHostsState {
+    pub fn filtered_indices(&self) -> Vec<usize> {
+        if self.query.is_empty() {
+            (0..self.entries.len()).collect()
+        } else {
+            let q = self.query.to_lowercase();
+            self.entries
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| {
+                    e.display_host().to_lowercase().contains(&q)
+                        || e.fingerprint
+                            .as_deref()
+                            .unwrap_or("")
+                            .to_lowercase()
+                            .contains(&q)
+                })
+                .map(|(i, _)| i)
+                .collect()
+        }
+    }
+}

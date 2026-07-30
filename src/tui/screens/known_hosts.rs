@@ -41,15 +41,17 @@ pub fn render_known_hosts(frame: &mut Frame, app: &App) {
         theme::bright(),
     );
 
-    let filtered: Vec<usize> = filtered_indices(state);
+    let filtered: Vec<usize> = state.filtered_indices();
     let visible = popup.height.saturating_sub(5) as usize;
     let total = filtered.len();
-    let scroll = state.scroll.min(total.saturating_sub(visible));
     let selected = if total == 0 {
         0
     } else {
         state.selected.min(total - 1)
     };
+    let scroll = selected
+        .saturating_sub(visible.saturating_sub(1))
+        .min(total.saturating_sub(visible));
 
     let host_x = row_x;
     let marker_x = popup.x + 28;
@@ -59,7 +61,7 @@ pub fn render_known_hosts(frame: &mut Frame, app: &App) {
     for (row, &fi) in filtered.iter().skip(scroll).take(visible).enumerate() {
         let entry = &state.entries[fi];
         let ry = popup.y + 3 + row as u16;
-        let is_sel = row == selected;
+        let is_sel = scroll + row == selected;
         if is_sel {
             let blank = " ".repeat(popup.width.saturating_sub(2) as usize);
             buf.set_string(popup.x + 1, ry, &blank, theme::selected());
@@ -153,30 +155,4 @@ pub fn render_known_hosts(frame: &mut Frame, app: &App) {
         &count,
         theme::mute(),
     );
-}
-
-fn filtered_indices(state: &crate::app::KnownHostsState) -> Vec<usize> {
-    if state.query.is_empty() {
-        (0..state.entries.len()).collect()
-    } else {
-        let q = state.query.to_lowercase();
-        state
-            .entries
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| {
-                e.display_host().to_lowercase().contains(&q)
-                    || e.fingerprint
-                        .as_deref()
-                        .unwrap_or("")
-                        .to_lowercase()
-                        .contains(&q)
-            })
-            .map(|(i, _)| i)
-            .collect()
-    }
-}
-
-pub fn filtered_indices_pub(state: &crate::app::KnownHostsState) -> Vec<usize> {
-    filtered_indices(state)
 }

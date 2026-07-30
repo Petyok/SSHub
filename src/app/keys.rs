@@ -755,7 +755,7 @@ impl App {
         if state.confirming_delete {
             match key.code {
                 KeyCode::Char('y') | KeyCode::Char('Y') => {
-                    let filtered = crate::tui::screens::known_hosts::filtered_indices_pub(state);
+                    let filtered = state.filtered_indices();
                     if let Some(&fi) = filtered.get(state.selected) {
                         let entry = state.entries[fi].clone();
                         if entry.is_hashed() {
@@ -805,7 +805,7 @@ impl App {
                 state.notice = None;
             }
             KeyCode::Down => {
-                let filtered = crate::tui::screens::known_hosts::filtered_indices_pub(state);
+                let filtered = state.filtered_indices();
                 if state.selected + 1 < filtered.len() {
                     state.selected += 1;
                 }
@@ -815,7 +815,7 @@ impl App {
                 state.selected = state.selected.saturating_sub(10);
             }
             KeyCode::PageDown => {
-                let filtered = crate::tui::screens::known_hosts::filtered_indices_pub(state);
+                let filtered = state.filtered_indices();
                 state.selected = (state.selected + 10).min(filtered.len().saturating_sub(1));
             }
             KeyCode::Char('d') => {

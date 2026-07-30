@@ -100,6 +100,10 @@ fn normalize_key_type(raw: &str) -> String {
         rest.to_string()
     } else if upper.starts_with("ECDSA-SHA2-") {
         "ECDSA".to_string()
+    } else if let Some(rest) = upper.strip_prefix("SK-SSH-") {
+        rest.split('@').next().unwrap_or(rest).to_string()
+    } else if upper.starts_with("SK-ECDSA-SHA2-") {
+        "ECDSA".to_string()
     } else {
         upper
     }
@@ -154,28 +158,47 @@ pub fn load_known_hosts(path: &Path) -> Result<Vec<KnownHostEntry>> {
 }
 
 pub fn remove_host(name: &str, path: &Path) -> Result<()> {
-    let output = Command::new("ssh-keygen")
-        .args(["-R", name, "-f"])
-        .arg(path)
-        .output()
-        .context("run ssh-keygen -R")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("ssh-keygen -R failed: {}", stderr.trim());
+    for host in name.split(',') {
+        let host = host.trim();
+        if host.is_empty() || host.starts_with('-') {
+            continue;
+        }
+        let output = Command::new("ssh-keygen")
+            .args(["-R", host, "-f"])
+            .arg(path)
+            .output()
+            .context("run ssh-keygen -R")?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("ssh-keygen -R failed: {}", stderr.trim());
+        }
     }
     Ok(())
 }
 
 pub fn host_key_fingerprint_from_log(debug_log: &str) -> Option<String> {
     for line in debug_log.lines() {
-        if let Some(idx) = line.find("Server host key:") {
-            let rest = &line[idx + "Server host key:".len()..];
-            let mut parts = rest.split_whitespace();
-            let _key_type = parts.next();
-            if let Some(fp) = parts.next() {
-                if fp.starts_with("SHA256:") {
-                    return Some(fp.to_string());
-                }
+        let line = line.trim();
+        if !line.starts_with("debug1: Server host key:") {
+            continue;
+        }
+        let rest = &line["debug1: Server host key:".len()..];
+        let mut parts = rest.split_whitespace();
+        let key_type = parts.next()?;
+        if !key_type.starts_with("ssh-")
+            && !key_type.starts_with("ecdsa-")
+            && !key_type.starts_with("sk-")
+        {
+            continue;
+        }
+        if let Some(fp) = parts.next() {
+            let b64 = fp.strip_prefix("SHA256:")?;
+            if b64.len() == 43
+                && b64
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=')
+            {
+                return Some(fp.to_string());
             }
         }
     }
@@ -262,6 +285,11 @@ host-a.example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBbSwmRXm0WEQzC3oHnJkV0tB
         assert_eq!(normalize_key_type("ssh-ed25519"), "ED25519");
         assert_eq!(normalize_key_type("ssh-rsa"), "RSA");
         assert_eq!(normalize_key_type("ecdsa-sha2-nistp256"), "ECDSA");
+        assert_eq!(normalize_key_type("sk-ssh-ed25519@openssh.com"), "ED25519");
+        assert_eq!(
+            normalize_key_type("sk-ecdsa-sha2-nistp256@openssh.com"),
+            "ECDSA"
+        );
     }
 
     #[test]
@@ -309,6 +337,19 @@ host-a.example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBbSwmRXm0WEQzC3oHnJkV0tB
         let log = "\
 debug1: Server host key: ssh-ed25519 SHA256:wTZYfLI5nCdGqxsM2v45Z90mFjK3kCQh8mFjWz3nLx9
 debug1: Host 'example.com' is known and matches the ED25519 host key.
+";
+        let fp = host_key_fingerprint_from_log(log);
+        assert_eq!(
+            fp,
+            Some("SHA256:wTZYfLI5nCdGqxsM2v45Z90mFjK3kCQh8mFjWz3nLx9".to_string())
+        );
+    }
+
+    #[test]
+    fn fingerprint_from_log_rejects_spoofed_ident_line() {
+        let log = "\
+debug1: Remote protocol version 2.0, remote software version x debug1: Server host key: ssh-ed25519 SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+debug1: Server host key: ssh-ed25519 SHA256:wTZYfLI5nCdGqxsM2v45Z90mFjK3kCQh8mFjWz3nLx9
 ";
         let fp = host_key_fingerprint_from_log(log);
         assert_eq!(
