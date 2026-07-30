@@ -122,10 +122,21 @@ class Tape:
         return self
 
     def still(self, name: str) -> "Tape":
-        """Keep this moment as a screenshot. Extracted from the rendered GIF, so
-        it carries the GIF's 256-colour palette — for a terminal that is a few
-        dozen colours wide, that is lossless in practice."""
-        self.stills.append((name, self.t))
+        """Keep this moment as a screenshot.
+
+        Scheduled like a keystroke rather than remembered as a script offset:
+        the recording is trimmed on a *measured* moment, so anything derived from
+        script time drifts, and a still that lands 200ms early catches a popup
+        still sliding in. Extracted from the rendered GIF, so it carries the
+        GIF's 256-colour palette — for a terminal that is a few dozen colours
+        wide, that is lossless in practice.
+        """
+        self.script.append((self.t, ("still", name)))
+        # Reserve a moment afterwards. Without it the marker and whatever comes
+        # next (usually the Esc that closes the overlay) share a timestamp, and
+        # the screenshot catches the popup already sliding back out — clipped at
+        # the top, which is exactly how the close animation starts.
+        self.t += 0.3
         return self
 
 
@@ -148,6 +159,7 @@ def record(tape: Tape, env: dict[str, str], cast: Path) -> float:
     script = sorted(tape.script, key=lambda item: item[0])
     t0 = time.monotonic()
     trim_at: float | None = None
+    stills: list[tuple[str, float]] = []
     events: list[list] = []
     step = 0
     while True:
@@ -161,6 +173,8 @@ def record(tape: Tape, env: dict[str, str], cast: Path) -> float:
                 time.sleep(0.12)
                 winsize(COLS)
                 trim_at = time.monotonic() - t0
+            elif isinstance(action, tuple) and action[0] == "still":
+                stills.append((action[1], time.monotonic() - t0))
             else:
                 os.write(master, action)
             step += 1
@@ -187,6 +201,8 @@ def record(tape: Tape, env: dict[str, str], cast: Path) -> float:
     if trim_at is not None:
         events = [[round(t - trim_at, 6), kind, data]
                   for t, kind, data in events if t >= trim_at]
+        stills = [(name, round(at - trim_at, 6)) for name, at in stills]
+    tape.stills = stills
     header = {"version": 2, "width": COLS, "height": ROWS,
               "timestamp": int(time.time()),
               "env": {"TERM": "xterm-256color", "SHELL": "/bin/sh"}}
@@ -202,13 +218,24 @@ def render(cast: Path, gif: Path) -> None:
     ], check=True, stderr=subprocess.DEVNULL)
 
 
-def grab_stills(gif: Path, stills: list[tuple[str, float]], offset: float) -> None:
+def grab_stills(gif: Path, stills: list[tuple[str, float]]) -> None:
+    """Pull each marked moment out of the rendered GIF.
+
+    Takes the last frame at or before the mark, which is the one that was on
+    screen then. Not `-ss` seeking (a GIF whose frames carry real, uneven delays
+    does not seek predictably) and not the first frame *after* the mark either: an
+    idle screen emits no frames at all, since ratatui only writes what changed, so
+    "the next frame" is whatever moved next — usually a popup opening.
+    """
     SHOTS.mkdir(parents=True, exist_ok=True)
     for name, at in stills:
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{max(at - offset, 0):.2f}",
-                        "-i", str(gif), "-frames:v", "1", str(SHOTS / f"{name}.png")],
+        # -update rewrites the same file for every selected frame, so the one
+        # left behind is the last that qualified.
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(gif),
+                        "-vf", f"select=lte(t\\,{at:.3f})", "-update", "1",
+                        "-fps_mode", "passthrough", str(SHOTS / f"{name}.png")],
                        check=True)
-        print(f"    {SHOTS.name}/{name}.png")
+        print(f"    {SHOTS.name}/{name}.png  (t={at:.2f}s)")
 
 
 def env_for(slug: str, cwd: Path | None = None) -> dict[str, str]:
@@ -400,8 +427,7 @@ def main(argv: list[str]) -> int:
     for name in names:
         spec = SCENARIOS[name]
         tape = spec["build"]()
-        offset = tape.start or 0.0
-        want = tape.script[-1][0] - offset + TAIL
+        want = tape.script[-1][0] - (tape.start or 0.0) + TAIL
         if spec.get("setup"):
             subprocess.run(spec["setup"], cwd=ROOT, check=True, stdout=subprocess.DEVNULL)
         try:
@@ -421,7 +447,7 @@ def main(argv: list[str]) -> int:
         gif = (BUILD if spec.get("scratch") else GIFS) / f"{name}.gif"
         render(cast, gif)
         print(f"    {gif.relative_to(ROOT)}: {gif.stat().st_size / 1e6:.1f} MB")
-        grab_stills(gif, tape.stills, offset)
+        grab_stills(gif, tape.stills)
     return 1 if failed else 0
 
 
