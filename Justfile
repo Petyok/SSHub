@@ -28,7 +28,7 @@ npm-publish version="":
 
 # Record README GIFs + screenshots with VHS (requires `vhs` and `ffmpeg` on
 # PATH). Pass tape names to record a subset: `just record-gifs overview sftp`.
-record-gifs *tapes: build
+record-gifs *tapes:
     bash demo/record.sh {{tapes}}
 
 # Run with dry-run (no TUI)

@@ -4,6 +4,20 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The README GIFs played 1.4x to 2.7x too fast**, which is why the motion pass
+  (#35) looked like a series of cuts in them. VHS writes its video container at a
+  fixed 25 fps while `Set Framerate` only sets how often it screenshots the
+  terminal, so once a screenshot costs more than the frame budget - which is what
+  a full-screen repaint does - the frames are not dropped, they are missing, and
+  the take plays sped up. Raising the tapes to 60 fps made it worse, not smoother.
+  The tapes now record at 12 fps, which the capture sustains (measured: 0.98x real
+  time against 0.60x at 60 fps), `demo/record.sh` compares every take against the
+  duration its tape asked for and says so, and the demo binary is built with a new
+  `demo-motion` feature that stretches every motion duration so a 25 fps recorder
+  can sample it at all. The shipped binary is unchanged.
+
 ## [0.11.0] - 2026-07-30
 
 ### Added

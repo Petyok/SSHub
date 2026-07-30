@@ -6,7 +6,20 @@ Set Height 700
 Set Theme "Catppuccin Mocha"
 Set TypingSpeed 90ms
 Set PlaybackSpeed 1
-Set Framerate 24
+# Deliberately low, and lower than it looks like it should be. VHS writes the
+# container at a FIXED 25 fps while `Set Framerate` only sets how fast it
+# screenshots the terminal. When it sustains that rate it duplicates frames up to
+# 25 and the timeline is correct; when a screenshot costs more than the budget
+# (which is what happens on a full-screen repaint) frames are simply missing and
+# the take plays SPED UP. Measured on 10s of continuous full-screen motion:
+#
+#   Framerate 60 -> 6.04s (0.60x)   Framerate 20 -> 9.12s (0.91x)
+#   Framerate 25 -> 8.84s (0.88x)   Framerate 12 -> 9.84s (0.98x)
+#
+# So raising this makes motion worse, not smoother. 12 keeps real time, and the
+# demo build stretches the animations (see demo/record.sh) so a slide still gets
+# ~12 distinct frames.
+Set Framerate 12
 
 Hide
 # Boot with the startup animation disabled so we land straight on the app, and
@@ -17,7 +30,7 @@ Wait
 Type "bash demo/sftp-server.sh start"
 Enter
 Wait@60s
-Type "export SSHUB_VERSION_LABEL= SSHUB_CONFIG_DIR=/tmp/sshub-sftp SSHUB_DATA_DIR=$PWD/demo/home/.local/share/sshub SSHUB_SSH_CONFIG=$PWD/demo/home/ssh_config PATH=$PWD/demo/bin:$PWD/target/release:$PATH"
+Type "export SSHUB_VERSION_LABEL= SSHUB_CONFIG_DIR=/tmp/sshub-sftp SSHUB_DATA_DIR=$PWD/demo/home/.local/share/sshub SSHUB_SSH_CONFIG=$PWD/demo/home/ssh_config PATH=$PWD/demo/bin:$PWD/target/demo/release:$PATH"
 Enter
 Wait
 Type "bash demo/seed-demo.sh"
