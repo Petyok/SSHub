@@ -395,12 +395,17 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
+    (@fn known_hosts $($key:literal),* $(,)?) => {
+        fn default_kb_known_hosts() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
 }
 
 kb_defaults! {
     save => ["F2", "Ctrl+S"],
     quit => ["q"],
-    help => ["?", "Shift+H"],
+    help => ["?"],
     search => ["/"],
     keybind_editor => ["Ctrl+K"],
     force_quit => ["Ctrl+C"],
@@ -475,6 +480,7 @@ kb_defaults! {
     focus_panel_down => ["Alt+Down"],
     broadcast => ["b"],
     broadcast_cancel => ["x"],
+    known_hosts => ["H"],
 }
 /// An action whose keybinding is user-configurable and editable in the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -556,11 +562,12 @@ pub enum KeyAction {
     FocusPanelDown,
     Broadcast,
     BroadcastCancel,
+    KnownHosts,
 }
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 77] = [
+    pub const ALL: [KeyAction; 78] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -638,6 +645,7 @@ impl KeyAction {
         KeyAction::FocusPanelDown,
         KeyAction::Broadcast,
         KeyAction::BroadcastCancel,
+        KeyAction::KnownHosts,
     ];
 
     pub fn label(self) -> &'static str {
@@ -719,6 +727,7 @@ impl KeyAction {
             KeyAction::FocusPanelDown => "Focus panel down",
             KeyAction::Broadcast => "Broadcast command",
             KeyAction::BroadcastCancel => "Cancel broadcast",
+            KeyAction::KnownHosts => "Known hosts",
         }
     }
 }
@@ -880,6 +889,8 @@ pub struct KeybindsConfig {
     pub broadcast: Vec<String>,
     #[serde(default = "default_kb_broadcast_cancel")]
     pub broadcast_cancel: Vec<String>,
+    #[serde(default = "default_kb_known_hosts")]
+    pub known_hosts: Vec<String>,
 }
 
 impl Default for KeybindsConfig {
@@ -962,6 +973,7 @@ impl Default for KeybindsConfig {
             focus_panel_down: default_kb_focus_panel_down(),
             broadcast: default_kb_broadcast(),
             broadcast_cancel: default_kb_broadcast_cancel(),
+            known_hosts: default_kb_known_hosts(),
         }
     }
 }
@@ -1046,6 +1058,7 @@ impl KeybindsConfig {
             KeyAction::FocusPanelDown => default_kb_focus_panel_down(),
             KeyAction::Broadcast => default_kb_broadcast(),
             KeyAction::BroadcastCancel => default_kb_broadcast_cancel(),
+            KeyAction::KnownHosts => default_kb_known_hosts(),
         }
     }
 
@@ -1205,6 +1218,7 @@ impl KeybindsConfig {
             KeyAction::FocusPanelDown => &self.focus_panel_down,
             KeyAction::Broadcast => &self.broadcast,
             KeyAction::BroadcastCancel => &self.broadcast_cancel,
+            KeyAction::KnownHosts => &self.known_hosts,
         }
     }
 
@@ -1287,6 +1301,7 @@ impl KeybindsConfig {
             KeyAction::FocusPanelDown => self.focus_panel_down = binds,
             KeyAction::Broadcast => self.broadcast = binds,
             KeyAction::BroadcastCancel => self.broadcast_cancel = binds,
+            KeyAction::KnownHosts => self.known_hosts = binds,
         }
     }
 

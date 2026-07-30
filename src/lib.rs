@@ -6,6 +6,7 @@ pub mod credentials;
 pub mod hosts;
 pub mod import;
 pub mod keybinds;
+pub mod known_hosts;
 pub mod metadata;
 pub mod osinfo;
 pub mod ping;
