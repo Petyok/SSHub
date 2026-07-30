@@ -37,7 +37,7 @@ Three labels change what claiming means:
 | Label | What it means for you |
 |-------|-----------------------|
 | `design-needed` | Do not open a PR from the issue text alone. It needs a design first (posted on the issue or as a doc) and a round of review; the open questions in the issue are open on purpose. |
-| `need-POC` | Nobody has proved this can work yet. Build a throwaway spike, post what you measured, and let that decide the design. A spike is welcome as a claim; a full feature built on an unverified assumption is not. |
+| `needs-PoC` | Nobody has proved this can work yet. Build a throwaway spike, post what you measured, and let that decide the design. A spike is welcome as a claim; a full feature built on an unverified assumption is not. |
 | `epic` | Too large for one PR. Agree on the staging, then claim a stage, not the epic. |
 | `icebox` | Deliberately parked, usually until a milestone named in the issue. Not free work waiting to be taken. |
 
