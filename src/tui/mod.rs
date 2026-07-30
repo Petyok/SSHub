@@ -1702,7 +1702,7 @@ fn render_help_popup(frame: &mut Frame, app: &App) {
         inner.x,
         inner.y,
         crate::tui::text::ellipsize(&query_line, inner.width as usize),
-        theme.style(StyleRole::TextBright),
+        theme.style(StyleRole::PickerQuery),
     );
 
     let body = Rect::new(

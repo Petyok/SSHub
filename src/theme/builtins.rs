@@ -740,6 +740,14 @@ mod tests {
                 expect: MigratedExpect::Style(legacy::dim()),
             },
             MigratedRoleUse {
+                id: "help_popup.query",
+                renderer: MOD,
+                was: "theme::bright() on the help search query",
+                ident: "PickerQuery",
+                role: RoleRef::Style(StyleRole::PickerQuery),
+                expect: MigratedExpect::Style(legacy::bright()),
+            },
+            MigratedRoleUse {
                 id: "popup.border",
                 renderer: MOD,
                 was: "theme::popup_border()",
@@ -1429,6 +1437,14 @@ mod tests {
                 ident: "PopupTitle",
                 role: RoleRef::Style(StyleRole::PopupTitle),
                 expect: MigratedExpect::Style(legacy::heading()),
+            },
+            MigratedRoleUse {
+                id: "keybind.query",
+                renderer: KEYBIND,
+                was: "theme::bright() on the keybind search query",
+                ident: "PickerQuery",
+                role: RoleRef::Style(StyleRole::PickerQuery),
+                expect: MigratedExpect::Style(legacy::bright()),
             },
             MigratedRoleUse {
                 id: "keybind.row",
@@ -2695,7 +2711,7 @@ mod tests {
         assert_eq!(total, ids.len(), "two rows share an id");
         // Pinned so the number quoted in reports cannot drift from the table.
         assert_eq!(
-            total, 217,
+            total, 219,
             "the inventory changed size; add or remove the row deliberately"
         );
 

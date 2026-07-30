@@ -59,7 +59,7 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
         row_x,
         popup.y + 1,
         crate::tui::text::ellipsize(&query_line, content_w),
-        theme.style(StyleRole::TextBright),
+        theme.style(StyleRole::PickerQuery),
     );
 
     let visible = popup.height.saturating_sub(5) as usize;
