@@ -738,7 +738,6 @@ impl App {
         self.known_hosts = Some(KnownHostsState {
             entries,
             selected: 0,
-            scroll: 0,
             query: String::new(),
             confirming_delete: false,
             notice: None,
@@ -747,44 +746,34 @@ impl App {
     }
 
     pub(crate) fn handle_key_known_hosts(&mut self, key: KeyEvent) -> Result<()> {
+        let is_yes = self.is_action(KeyAction::ConfirmYes, &key);
         let Some(state) = self.known_hosts.as_mut() else {
             self.mode = AppMode::Normal;
             return Ok(());
         };
 
         if state.confirming_delete {
-            match key.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') => {
-                    let filtered = state.filtered_indices();
-                    if let Some(&fi) = filtered.get(state.selected) {
-                        let entry = state.entries[fi].clone();
-                        if entry.is_hashed() {
-                            state.notice = Some(
-                                "Cannot delete hashed entry \u{2014} run ssh-keygen -R <host> manually, or set HashKnownHosts no".to_string()
-                            );
-                        } else {
-                            let path = crate::known_hosts::known_hosts_path();
-                            match crate::known_hosts::remove_host(&entry.hosts, &path) {
-                                Ok(()) => {
-                                    let entries = crate::known_hosts::load_known_hosts(&path)
-                                        .unwrap_or_default();
-                                    state.entries = entries;
-                                    state.selected = 0;
-                                    state.scroll = 0;
-                                    state.notice =
-                                        Some(format!("Removed all keys for {}", entry.hosts));
-                                }
-                                Err(e) => {
-                                    state.notice = Some(format!("{e}"));
-                                }
-                            }
+            if is_yes {
+                let filtered = state.filtered_indices();
+                if let Some(&fi) = filtered.get(state.selected) {
+                    let entry = state.entries[fi].clone();
+                    let path = crate::known_hosts::known_hosts_path();
+                    match crate::known_hosts::remove_host(&entry.hosts, &path) {
+                        Ok(()) => {
+                            let entries =
+                                crate::known_hosts::load_known_hosts(&path).unwrap_or_default();
+                            state.entries = entries;
+                            state.selected = 0;
+                            state.notice = Some(format!("Removed all keys for {}", entry.hosts));
+                        }
+                        Err(e) => {
+                            state.notice = Some(format!("{e}"));
                         }
                     }
-                    state.confirming_delete = false;
                 }
-                _ => {
-                    state.confirming_delete = false;
-                }
+                state.confirming_delete = false;
+            } else {
+                state.confirming_delete = false;
             }
             return Ok(());
         }
@@ -794,7 +783,6 @@ impl App {
                 if !state.query.is_empty() {
                     state.query.clear();
                     state.selected = 0;
-                    state.scroll = 0;
                 } else {
                     self.known_hosts = None;
                     self.mode = AppMode::Normal;
@@ -818,21 +806,28 @@ impl App {
                 let filtered = state.filtered_indices();
                 state.selected = (state.selected + 10).min(filtered.len().saturating_sub(1));
             }
-            KeyCode::Char('d') => {
+            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 state.notice = None;
-                state.confirming_delete = true;
+                let filtered = state.filtered_indices();
+                if let Some(&fi) = filtered.get(state.selected) {
+                    if state.entries[fi].is_hashed() {
+                        state.notice = Some(
+                            "Cannot delete hashed entry \u{2014} run ssh-keygen -R <host> manually, or set HashKnownHosts no".to_string()
+                        );
+                    } else {
+                        state.confirming_delete = true;
+                    }
+                }
             }
-            KeyCode::Char('r') => {
+            KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 let path = crate::known_hosts::known_hosts_path();
                 state.entries = crate::known_hosts::load_known_hosts(&path).unwrap_or_default();
                 state.selected = 0;
-                state.scroll = 0;
                 state.notice = Some("Refreshed".to_string());
             }
             KeyCode::Backspace => {
                 state.query.pop();
                 state.selected = 0;
-                state.scroll = 0;
             }
             KeyCode::Char(c)
                 if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
@@ -840,7 +835,6 @@ impl App {
             {
                 state.query.push(c);
                 state.selected = 0;
-                state.scroll = 0;
                 state.notice = None;
             }
             _ => {}

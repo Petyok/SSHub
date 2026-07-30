@@ -40,11 +40,8 @@ impl KnownHostEntry {
         }
     }
 
-    pub fn display_type(&self) -> &str {
-        self.key_type
-            .strip_prefix("ssh-")
-            .or_else(|| self.key_type.strip_prefix("ecdsa-sha2-"))
-            .unwrap_or(&self.key_type)
+    pub fn display_type(&self) -> String {
+        normalize_key_type(&self.key_type)
     }
 }
 
@@ -158,6 +155,7 @@ pub fn load_known_hosts(path: &Path) -> Result<Vec<KnownHostEntry>> {
 }
 
 pub fn remove_host(name: &str, path: &Path) -> Result<()> {
+    let mut ran = false;
     for host in name.split(',') {
         let host = host.trim();
         if host.is_empty() || host.starts_with('-') {
@@ -172,6 +170,10 @@ pub fn remove_host(name: &str, path: &Path) -> Result<()> {
             let stderr = String::from_utf8_lossy(&output.stderr);
             anyhow::bail!("ssh-keygen -R failed: {}", stderr.trim());
         }
+        ran = true;
+    }
+    if !ran {
+        anyhow::bail!("no valid host names to remove");
     }
     Ok(())
 }
@@ -229,7 +231,7 @@ host-a.example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBbSwmRXm0WEQzC3oHnJkV0tB
         assert_eq!(plain.key_type, "ssh-ed25519");
         assert_eq!(plain.marker, None);
         assert_eq!(plain.display_host(), "host-a.example.com");
-        assert_eq!(plain.display_type(), "ed25519");
+        assert_eq!(plain.display_type(), "ED25519");
         assert!(!plain.is_hashed());
     }
 
@@ -239,7 +241,7 @@ host-a.example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBbSwmRXm0WEQzC3oHnJkV0tB
         let port = &entries[1];
         assert_eq!(port.hosts, "[host-b.example.com]:2222");
         assert_eq!(port.key_type, "ssh-rsa");
-        assert_eq!(port.display_type(), "rsa");
+        assert_eq!(port.display_type(), "RSA");
     }
 
     #[test]

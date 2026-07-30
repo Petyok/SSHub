@@ -1528,7 +1528,6 @@ impl HostDetailEdit {
 pub struct KnownHostsState {
     pub entries: Vec<crate::known_hosts::KnownHostEntry>,
     pub selected: usize,
-    pub scroll: usize,
     pub query: String,
     pub confirming_delete: bool,
     pub notice: Option<String>,

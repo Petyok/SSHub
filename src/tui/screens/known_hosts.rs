@@ -99,10 +99,11 @@ pub fn render_known_hosts(frame: &mut Frame, app: &App) {
         );
 
         let type_col = (fp_x.saturating_sub(type_x)) as usize;
+        let type_str = entry.display_type();
         buf.set_string(
             type_x,
             ry,
-            crate::tui::text::ellipsize(&entry.display_type().to_uppercase(), type_col),
+            crate::tui::text::ellipsize(&type_str, type_col),
             dim,
         );
 
@@ -138,7 +139,7 @@ pub fn render_known_hosts(frame: &mut Frame, app: &App) {
             theme::red(),
         );
     } else {
-        let hint = "\u{2191}\u{2193} move \u{00b7} type to filter \u{00b7} d delete \u{00b7} r refresh \u{00b7} Esc close";
+        let hint = "\u{2191}\u{2193} move \u{00b7} type to filter \u{00b7} Ctrl+D delete \u{00b7} Ctrl+R refresh \u{00b7} Esc close";
         buf.set_string(
             row_x,
             footer_y,
