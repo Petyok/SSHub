@@ -361,6 +361,8 @@ pub enum AppMode {
     /// A modal message popup (e.g. a connection error). Any key dismisses it;
     /// the text lives in `App::notice_popup`.
     Notice,
+    /// Known-hosts manager overlay (Keys tab).
+    KnownHosts,
 }
 
 /// Live background-run state; App holds `broadcast: Option<BroadcastState>`.
@@ -1520,4 +1522,14 @@ impl HostDetailEdit {
             DetailEditField::SessionLogging => &mut self.environment,
         }
     }
+}
+
+#[derive(Debug)]
+pub struct KnownHostsState {
+    pub entries: Vec<crate::known_hosts::KnownHostEntry>,
+    pub selected: usize,
+    pub scroll: usize,
+    pub query: String,
+    pub confirming_delete: bool,
+    pub notice: Option<String>,
 }

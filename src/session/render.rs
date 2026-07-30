@@ -448,6 +448,16 @@ fn render_connecting(
         Line::raw(""),
         Line::from(Span::styled(hint, dim)),
     ];
+    let mut center = center;
+    if let Some(fp) = crate::known_hosts::host_key_fingerprint_from_log(session.debug_log()) {
+        center.insert(
+            1,
+            Line::from(vec![
+                Span::styled("host key  ", mute),
+                Span::styled(fp, Style::default().fg(theme::GREEN)),
+            ]),
+        );
+    }
     render_centered_and_tail(frame, area, session, center);
 }
 

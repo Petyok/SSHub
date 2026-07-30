@@ -333,6 +333,7 @@ fn render_inner(frame: &mut Frame, app: &App) {
         AppMode::BroadcastCommand => screens::broadcast::render_command_prompt(frame, app),
         AppMode::BroadcastPreview => screens::broadcast::render_preview(frame, app),
         AppMode::Notice => render_notice_popup(frame, app),
+        AppMode::KnownHosts => screens::known_hosts::render_known_hosts(frame, app),
         _ => {}
     }
 }
@@ -600,6 +601,7 @@ fn footer_keybinds(app: &App) -> (Vec<(String, &'static str)>, usize) {
             ("d".into(), "delete"),
             ("p/r".into(), "agent +/-"),
             ("P".into(), "push key"),
+            ("H".into(), "known hosts"),
             ("?".into(), "help"),
             ("q".into(), "quit"),
         ],

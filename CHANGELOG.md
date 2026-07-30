@@ -4,6 +4,19 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Known hosts manager** (`H` on the Keys tab, issue #7) - an overlay listing
+  every entry in `~/.ssh/known_hosts`: host (or `(hashed)`), `@cert-authority` /
+  `@revoked` marker, key type, and `SHA256:` fingerprint (joined from
+  `ssh-keygen -l`). Type to filter by host or fingerprint, `d` to delete all
+  keys for a host via `ssh-keygen -R` (with confirmation; hashed entries are
+  refused with an explanation), `r` to refresh from disk. The connect screen now
+  shows the server host key fingerprint from the `-v` output while connecting,
+  so a first-connect fingerprint can be read and compared without digging
+  through the scrollback. Help is now bound to `?` only; `H` / `Shift+H` opens
+  the known hosts manager.
+
 ### Fixed
 
 - **The README GIFs and screenshots are recorded from the terminal stream now,
