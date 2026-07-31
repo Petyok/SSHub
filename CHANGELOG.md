@@ -108,7 +108,9 @@ All notable changes to SSHub are documented in this file.
 - **Static gradients** - named multi-stop gradients in five directions
   (`horizontal`, `vertical`, `diagonal_down`, `diagonal_up`, `perimeter`) on
   frames, separators and backgrounds, painted by buffer post-processing with no
-  per-cell allocation. The embedded remote session is never recoloured.
+  per-cell allocation. Explicit theme surfaces never recolour the embedded
+  remote session; the opt-in legacy `opaque_background` switch may still fill
+  transparent PTY reset cells with `semantic.canvas`.
 - **`sshub theme` CLI** - `check`, `list` and `show`, all headless (no TUI, no
   database). `theme check` validates strictly and reports `file:line:column`
   with `did you mean` suggestions; `theme show --resolved` writes a standalone

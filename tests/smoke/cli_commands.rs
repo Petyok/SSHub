@@ -451,6 +451,26 @@ fn theme_show_succeeds_in_toml_and_json() {
 }
 
 #[test]
+fn theme_show_never_prints_an_invalid_user_themes_source() {
+    let d = dir();
+    let secret = "private-token-do-not-print";
+    install_theme(
+        d.path(),
+        "broken",
+        &format!("schema_version = 1\nname = [\"{secret}\"\n"),
+    );
+
+    for format in ["toml", "json"] {
+        sshub(d.path())
+            .args(["theme", "show", "broken", "--format", format])
+            .assert()
+            .code(1)
+            .stdout(predicate::str::contains(secret).not())
+            .stderr(predicate::str::contains(secret).not());
+    }
+}
+
+#[test]
 fn theme_show_resolved_output_passes_check() {
     let d = dir();
     let out = sshub(d.path())

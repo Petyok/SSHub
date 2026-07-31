@@ -87,9 +87,9 @@ pub fn render(frame: &mut Frame, app: &App) {
 
 /// [`render`] with the transition clock supplied by the caller.
 ///
-/// `now` drives exactly two things: the [`FrameComposition`] captured below —
-/// the exit slide's offset and the regions protected from theme paint — and the
-/// splash fade's progress. Those are the passes that must agree with each other
+/// `now` drives the [`FrameComposition`] captured below — the exit slide's
+/// offset, the session-tab slide's progress and the regions protected from
+/// theme paint — plus the splash fade's progress. Those passes must agree
 /// about where a transition is, because the slide's blit and the protection of
 /// what it blitted are one animation frame or they are a bug.
 ///
@@ -107,7 +107,7 @@ fn render_with_transition_clock(frame: &mut Frame, app: &App, now: std::time::In
     // Reset the per-frame popup rect; each popup that draws sets it via
     // `popup_open_rect`, and we snapshot it afterwards for the close slide (#35).
     app.last_popup_rect.set(None);
-    render_inner(frame, app);
+    render_inner(frame, app, &composition);
     // While in the full-screen host view, keep a fresh snapshot so leaving it can
     // slide the session off to the right (#35). Once exited, render_inner has
     // drawn the dashboard beneath — blit the snapshot sliding away over it.
@@ -115,7 +115,14 @@ fn render_with_transition_clock(frame: &mut Frame, app: &App, now: std::time::In
         // Hold the snapshot still while a tab slide plays: it *is* the tab being
         // carried off, so refreshing it would feed the slide its own output.
         if app.session_tab_switch.is_none() {
-            *app.session_snapshot.borrow_mut() = Some(frame.buffer_mut().clone());
+            let remote_pty = app
+                .active_session()
+                .filter(|session| crate::session::render::shows_remote_pty(session))
+                .map(|_| crate::session::render::remote_pty_rect(frame.area()));
+            *app.session_snapshot.borrow_mut() = Some(crate::app::SessionSnapshot {
+                buffer: frame.buffer_mut().clone(),
+                remote_pty,
+            });
         }
     } else {
         // Mirror of the above: keep the dashboard fresh so entering a session has
@@ -213,6 +220,8 @@ fn apply_app_background(frame: &mut Frame, app: &App, composition: &FrameComposi
 struct FrameComposition {
     /// How far the exit slide has carried its snapshot, if one is playing.
     exit_offset: Option<u16>,
+    /// Eased progress of a session-tab slide, if its snapshot is still visible.
+    tab_slide_progress: Option<f32>,
     /// Every region of the composed frame that carries remote output, and which
     /// no theme paint or fade may touch.
     protected: Vec<Rect>,
@@ -221,13 +230,18 @@ struct FrameComposition {
 impl FrameComposition {
     fn capture(app: &App, area: Rect, now: std::time::Instant) -> Self {
         let mut protected = Vec::new();
+        let tab_slide_progress = will_render_session_tab_slide(app)
+            .then(|| session_tab_slide_progress(app, now))
+            .flatten();
 
         // 1. The live viewport, while the session view *is* the frame. Both the
         //    rect and the decision come from `session::render`, so the protected
         //    region cannot drift from what the `tui_term` widget really covers.
         //    The connecting spinner and the failure screen occupy the same rows
         //    but are SSHub's own chrome, and a theme is allowed to back them.
-        if shows_session_view(app) {
+        //    During a tab slide the live layer is shifted, so the transition's
+        //    translated ownership regions below replace this resting rect.
+        if tab_slide_progress.is_none() && shows_session_view(app) {
             if let Some(session) = app.active_session() {
                 if crate::session::render::shows_remote_pty(session) {
                     protected.push(crate::session::render::remote_pty_rect(area));
@@ -245,11 +259,88 @@ impl FrameComposition {
             protected.extend(exit_snapshot_region(app, area, offset));
         }
 
+        // 3. A session-tab slide protects only the shifted pieces that really
+        // carry remote output. Connecting/failed layers are SSHub chrome and
+        // must still receive the app background while travelling.
+        if let Some(progress) = tab_slide_progress {
+            protected.extend(session_tab_slide_regions(app, area, progress));
+        }
+
         Self {
             exit_offset,
+            tab_slide_progress,
             protected,
         }
     }
+}
+
+fn session_tab_slide_progress(app: &App, now: std::time::Instant) -> Option<f32> {
+    if !app.motion_enabled() || app.session_snapshot.borrow().is_none() {
+        return None;
+    }
+    let switch = app.session_tab_switch?;
+    let progress = tween::progress(switch.at, TAB_ANIM, now);
+    (progress < 1.0).then(|| tween::ease_out(progress))
+}
+
+fn session_tab_slide_regions(app: &App, frame_area: Rect, progress: f32) -> Vec<Rect> {
+    let Some(switch) = app.session_tab_switch else {
+        return Vec::new();
+    };
+    let viewport = crate::session::render::remote_pty_rect(frame_area);
+    let width = viewport.width as f32;
+    let direction = switch.dir as f32;
+    let mut regions = Vec::with_capacity(2);
+
+    if let Some(remote) = app
+        .session_snapshot
+        .borrow()
+        .as_ref()
+        .and_then(|snapshot| snapshot.remote_pty)
+    {
+        let source = remote.intersection(viewport);
+        if let Some(visible) = translated_region(
+            source,
+            (-direction * progress * width).round() as i32,
+            viewport,
+        ) {
+            regions.push(visible);
+        }
+    }
+
+    if app
+        .active_session()
+        .is_some_and(crate::session::render::shows_remote_pty)
+    {
+        if let Some(visible) = translated_region(
+            viewport,
+            (direction * (1.0 - progress) * width).round() as i32,
+            viewport,
+        ) {
+            regions.push(visible);
+        }
+    }
+
+    regions
+}
+
+fn translated_region(source: Rect, offset_x: i32, clip: Rect) -> Option<Rect> {
+    if source.is_empty() {
+        return None;
+    }
+    let left = i32::from(source.x) + offset_x;
+    let right = left + i32::from(source.width);
+    let clipped_left = left.max(i32::from(clip.x));
+    let clipped_right = right.min(i32::from(clip.right()));
+    if clipped_left >= clipped_right {
+        return None;
+    }
+    Some(Rect::new(
+        clipped_left as u16,
+        source.y.max(clip.y),
+        (clipped_right - clipped_left) as u16,
+        source.bottom().min(clip.bottom()) - source.y.max(clip.y),
+    ))
 }
 
 /// Where the exit snapshot's remote cells land in *this* frame.
@@ -264,13 +355,9 @@ impl FrameComposition {
 /// which also keeps a *grown* terminal from having rows the snapshot never
 /// reached carved out of the dashboard.
 ///
-/// A snapshot is a verbatim copy of a session frame and no longer says which
-/// phase produced it, so a slide in flight is protected unconditionally. The
-/// cost of being wrong that way is an unpainted band for 280 ms; the cost of the
-/// other way is the host's own colours overwritten.
 fn exit_snapshot_region(app: &App, area: Rect, offset: u16) -> Option<Rect> {
     let snapshot = app.session_snapshot.borrow();
-    let source = crate::session::render::remote_pty_rect(snapshot.as_ref()?.area);
+    let source = snapshot.as_ref()?.remote_pty?;
     // The slide is horizontal, so the rows stay put and only the left edge
     // moves: everything left of the offset is the dashboard being revealed, and
     // must still be painted.
@@ -387,7 +474,12 @@ fn shows_session_view(app: &App) -> bool {
     crate::app::is_session_mode(app.mode) || session_behind_picker(app)
 }
 
-fn render_inner(frame: &mut Frame, app: &App) {
+/// Whether this frame takes the exact branch that blits a session-tab slide.
+fn will_render_session_tab_slide(app: &App) -> bool {
+    shows_session_view(app) && !session_behind_picker(app)
+}
+
+fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
     let session_behind_picker = session_behind_picker(app);
 
     // Embedded session takes over the whole frame — no dashboard chrome.
@@ -397,7 +489,9 @@ fn render_inner(frame: &mut Frame, app: &App) {
         // for the picker-over-session case (no fresh connect happening).
         if !session_behind_picker {
             render_session_enter(frame, app);
-            render_session_tab_slide(frame, app);
+        }
+        if will_render_session_tab_slide(app) {
+            render_session_tab_slide(frame, app, composition);
         }
         if app.mode == AppMode::SessionPicker {
             // Snapshot the session underneath before the picker draws, so its
@@ -1123,7 +1217,7 @@ fn render_session_exit(frame: &mut Frame, app: &App, composition: &FrameComposit
         return;
     };
     let snap = app.session_snapshot.borrow();
-    let Some(buf) = snap.as_ref() else {
+    let Some(snapshot) = snap.as_ref() else {
         return;
     };
     if off >= area.width {
@@ -1133,7 +1227,7 @@ fn render_session_exit(frame: &mut Frame, app: &App, composition: &FrameComposit
     for y in area.y..area.y + area.height {
         // Left-to-right: each destination x reads source x-off (already passed).
         for x in (area.x + off)..(area.x + area.width) {
-            if let (Some(s), Some(d)) = (buf.cell((x - off, y)), fb.cell_mut((x, y))) {
+            if let (Some(s), Some(d)) = (snapshot.buffer.cell((x - off, y)), fb.cell_mut((x, y))) {
                 *d = s.clone();
             }
         }
@@ -1144,18 +1238,13 @@ fn render_session_exit(frame: &mut Frame, app: &App, composition: &FrameComposit
 /// being left is carried off one edge while the new one follows it in from the
 /// other, so `Ctrl`+arrows reads as travel along the strip instead of a swap.
 /// Shares the dashboard tab-switch duration, being the same gesture.
-fn render_session_tab_slide(frame: &mut Frame, app: &App) {
-    if !app.motion_enabled() {
-        return;
-    }
+fn render_session_tab_slide(frame: &mut Frame, app: &App, composition: &FrameComposition) {
     let Some(sw) = app.session_tab_switch else {
         return;
     };
-    let now = std::time::Instant::now();
-    let p = tween::progress(sw.at, TAB_ANIM, now);
-    if p >= 1.0 {
+    let Some(e) = composition.tab_slide_progress else {
         return;
-    }
+    };
     let snap = app.session_snapshot.borrow();
     let Some(outgoing) = snap.as_ref() else {
         return;
@@ -1168,11 +1257,17 @@ fn render_session_tab_slide(frame: &mut Frame, app: &App) {
     // The new tab is already drawn at rest; lift it so both layers can move.
     let incoming = blit::snapshot(frame.buffer_mut(), area);
     frame.render_widget(Clear, area);
-    let e = tween::ease_out(p);
     let w = area.width as f32;
     let dir = sw.dir as f32;
     let fb = frame.buffer_mut();
-    blit::blit(fb, area, area, outgoing, (-dir * e * w).round() as i32, 0);
+    blit::blit(
+        fb,
+        area,
+        area,
+        &outgoing.buffer,
+        (-dir * e * w).round() as i32,
+        0,
+    );
     blit::blit(
         fb,
         area,
@@ -1301,15 +1396,6 @@ fn render_tab_slide(
 }
 
 fn render_hosts_body(frame: &mut Frame, areas: &dashboard_layout::DashboardAreas, app: &App) {
-    render_hosts_body_with_agent_info(frame, areas, app, None);
-}
-
-fn render_hosts_body_with_agent_info(
-    frame: &mut Frame,
-    areas: &dashboard_layout::DashboardAreas,
-    app: &App,
-    agent: Option<&crate::ssh::agent::AgentInfo>,
-) {
     // Issue #18: a zoomed panel takes over the whole dashboard body.
     // Broadcast (#3) is a floating panel drawn from render_inner instead, so a
     // zoomed Broadcast must not be handled here (it has no home in the hosts
@@ -1325,12 +1411,7 @@ fn render_hosts_body_with_agent_info(
         return;
     }
     widgets::hosts_panel::render_hosts_panel(frame, areas.col_left, app);
-    match agent {
-        Some(agent) => {
-            widgets::middle_stack::render_middle_stack_with_info(frame, areas.col_mid, app, agent)
-        }
-        None => widgets::middle_stack::render_middle_stack(frame, areas.col_mid, app),
-    }
+    widgets::middle_stack::render_middle_stack(frame, areas.col_mid, app);
     widgets::right_stack::render_right_stack(frame, areas.col_right, app);
 
     // SSH log panel spanning middle + right columns below their stacks
@@ -1864,6 +1945,149 @@ mod tests {
         out
     }
 
+    fn assert_buffer_signature_matches(actual: &str, expected: &str) {
+        fn cell_and_terminator(record: &str) -> (&str, &str) {
+            if let Some(cell) = record.strip_suffix("\r\n") {
+                (cell, "CRLF")
+            } else if let Some(cell) = record.strip_suffix('\n') {
+                (cell, "LF")
+            } else {
+                (record, "<end>")
+            }
+        }
+
+        let actual_cells: Vec<_> = actual.split_inclusive('\n').collect();
+        let expected_cells: Vec<_> = expected.split_inclusive('\n').collect();
+        for (index, (actual_record, expected_record)) in
+            actual_cells.iter().zip(expected_cells.iter()).enumerate()
+        {
+            let (actual_cell, actual_terminator) = cell_and_terminator(actual_record);
+            let (expected_cell, expected_terminator) = cell_and_terminator(expected_record);
+            if actual_cell != expected_cell {
+                let coordinate = expected_cell
+                    .split(',')
+                    .take(2)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                panic!(
+                    "golden buffer first mismatch at {coordinate} (cell {index})\n\
+                     expected: {expected_cell}\nactual:   {actual_cell}"
+                );
+            }
+            if actual_terminator != expected_terminator {
+                panic!(
+                    "golden buffer terminator mismatch at cell {index}\n\
+                     expected: {expected_terminator}\nactual:   {actual_terminator}"
+                );
+            }
+        }
+        if actual_cells.len() != expected_cells.len() {
+            let index = actual_cells.len().min(expected_cells.len());
+            let actual = actual_cells
+                .get(index)
+                .map(|record| cell_and_terminator(record).0)
+                .unwrap_or("<missing>");
+            let expected = expected_cells
+                .get(index)
+                .map(|record| cell_and_terminator(record).0)
+                .unwrap_or("<missing>");
+            panic!(
+                "golden buffer length mismatch at cell {index}: expected {} cells, actual {}\n\
+                 expected: {expected}\nactual:   {actual}",
+                expected_cells.len(),
+                actual_cells.len()
+            );
+        }
+        if actual != expected {
+            let byte = actual
+                .bytes()
+                .zip(expected.bytes())
+                .position(|(actual, expected)| actual != expected)
+                .unwrap_or_else(|| actual.len().min(expected.len()));
+            panic!("golden buffer first unclassified byte mismatch at byte {byte}");
+        }
+    }
+
+    #[test]
+    fn golden_signature_failure_reports_only_the_first_different_cell() {
+        let panic = std::panic::catch_unwind(|| {
+            assert_buffer_signature_matches(
+                "0,0,A,reset,reset,reset,0\n1,0,X,reset,reset,reset,0\n2,0,Z,reset,reset,reset,0\n",
+                "0,0,A,reset,reset,reset,0\n1,0,B,reset,reset,reset,0\n2,0,Y,reset,reset,reset,0\n",
+            );
+        })
+        .expect_err("different signatures must fail");
+        let message = panic_message(panic);
+        assert!(message.contains("first mismatch at 1,0"), "{message}");
+        assert!(message.contains("expected: 1,0,B"), "{message}");
+        assert!(message.contains("actual:   1,0,X"), "{message}");
+        assert!(!message.contains("2,0,Y"), "{message}");
+        assert!(!message.contains("2,0,Z"), "{message}");
+    }
+
+    #[test]
+    fn golden_signature_failure_reports_a_missing_or_extra_cell() {
+        let panic = std::panic::catch_unwind(|| {
+            assert_buffer_signature_matches(
+                "0,0,A,reset,reset,reset,0\n",
+                "0,0,A,reset,reset,reset,0\n1,0,B,reset,reset,reset,0\n",
+            );
+        })
+        .expect_err("different lengths must fail");
+        let message = panic_message(panic);
+        assert!(message.contains("length mismatch at cell 1"), "{message}");
+        assert!(message.contains("expected: 1,0,B"), "{message}");
+        assert!(message.contains("actual:   <missing>"), "{message}");
+    }
+
+    #[test]
+    fn golden_signature_failure_reports_a_missing_final_line_feed() {
+        let panic = std::panic::catch_unwind(|| {
+            assert_buffer_signature_matches(
+                "0,0,A,reset,reset,reset,0",
+                "0,0,A,reset,reset,reset,0\n",
+            );
+        })
+        .expect_err("the serialized signatures differ byte-for-byte");
+        let message = panic_message(panic);
+        assert!(
+            message.contains("terminator mismatch at cell 0"),
+            "{message}"
+        );
+        assert!(message.contains("expected: LF"), "{message}");
+        assert!(message.contains("actual:   <end>"), "{message}");
+    }
+
+    #[test]
+    fn golden_signature_failure_distinguishes_crlf_from_lf() {
+        let panic = std::panic::catch_unwind(|| {
+            assert_buffer_signature_matches(
+                "0,0,A,reset,reset,reset,0\r\n",
+                "0,0,A,reset,reset,reset,0\n",
+            );
+        })
+        .expect_err("CRLF and LF differ byte-for-byte");
+        let message = panic_message(panic);
+        assert!(
+            message.contains("terminator mismatch at cell 0"),
+            "{message}"
+        );
+        assert!(message.contains("expected: LF"), "{message}");
+        assert!(message.contains("actual:   CRLF"), "{message}");
+    }
+
+    fn panic_message(panic: Box<dyn std::any::Any + Send>) -> String {
+        panic
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| {
+                panic
+                    .downcast_ref::<&str>()
+                    .map(|message| (*message).to_string())
+            })
+            .unwrap_or_else(|| "non-string panic".to_string())
+    }
+
     /// The dashboard chrome every tab shares — header, session strip, tab bar,
     /// hosts body, separators and footer — rendered without the overlay,
     /// animation and popup paths that carry their own timing.
@@ -1913,12 +2137,7 @@ mod tests {
                 let rule2 = row_in(area, areas.tab_bar.y + areas.tab_bar.height);
                 widgets::footer::render_hrule(frame, rule2, false, theme, PaintRole::TabsSeparator);
 
-                render_hosts_body_with_agent_info(
-                    frame,
-                    &areas,
-                    app,
-                    Some(&crate::ssh::agent::AgentInfo::default()),
-                );
+                render_tab_body(frame, app.active_tab, &areas, app);
 
                 let rule3 = row_in(area, areas.footer.y.saturating_sub(1));
                 widgets::footer::render_hrule(
@@ -2327,9 +2546,9 @@ mod tests {
     #[test]
     fn default_dashboard_matches_frozen_legacy_buffer() {
         let buffer = render_default_theme_golden_surface(&test_app_with_hosts(), 132, 38);
-        assert_eq!(
-            buffer_signature(&buffer),
-            include_str!("../../tests/fixtures/theme/default-dashboard.buffer")
+        assert_buffer_signature_matches(
+            &buffer_signature(&buffer),
+            include_str!("../../tests/fixtures/theme/default-dashboard.buffer"),
         );
     }
 
@@ -2686,13 +2905,198 @@ mod tests {
 
     /// A session snapshot carrying one remote cell: RGB foreground, `Reset`
     /// background, at the top-left of the PTY viewport.
-    fn remote_snapshot(area: Rect) -> Buffer {
+    fn remote_snapshot(area: Rect) -> crate::app::SessionSnapshot {
         let mut snapshot = Buffer::empty(area);
         let pty = crate::session::render::remote_pty_rect(area);
         let cell = snapshot.cell_mut((pty.x, pty.y)).unwrap();
         cell.set_symbol("R");
         cell.fg = REMOTE_FG;
-        snapshot
+        crate::app::SessionSnapshot {
+            buffer: snapshot,
+            remote_pty: Some(pty),
+        }
+    }
+
+    fn running_to_connecting_tab_slide(
+        theme_id: &str,
+        elapsed: std::time::Duration,
+    ) -> (App, std::time::Instant, (u16, u16)) {
+        let mut app = app_with_two_sessions();
+        app.activate_theme(theme_id);
+        app.config.appearance.opaque_background = false;
+        app.mode = AppMode::Connecting;
+        app.active_session = Some(1);
+        let started = std::time::Instant::now();
+        app.sessions[0].phase = crate::session::SessionPhase::Running {
+            started_at: started,
+        };
+        app.sessions[1].phase = crate::session::SessionPhase::Connecting {
+            started_at: started,
+        };
+        app.session_tab_switch = Some(crate::app::SessionTabSwitch {
+            dir: 1,
+            from: 0,
+            at: started,
+        });
+
+        let area = Rect::new(0, 0, 80, 24);
+        let pty = crate::session::render::remote_pty_rect(area);
+        let source_x = pty.right() - 2;
+        let mut snapshot = Buffer::empty(area);
+        let marker = snapshot.cell_mut((source_x, pty.y)).unwrap();
+        marker.set_symbol("R");
+        marker.fg = REMOTE_FG;
+        *app.session_snapshot.borrow_mut() = Some(crate::app::SessionSnapshot {
+            buffer: snapshot,
+            remote_pty: Some(pty),
+        });
+
+        let p = elapsed.as_secs_f32() / TAB_ANIM.as_secs_f32();
+        let travelled = (tween::ease_out(p) * pty.width as f32).round() as u16;
+        (
+            app,
+            started + elapsed,
+            (source_x.saturating_sub(travelled), pty.y),
+        )
+    }
+
+    #[test]
+    fn a_running_to_connecting_tab_slide_protects_the_blitted_remote_cell() {
+        let elapsed = TAB_ANIM / 2;
+        let (app, now, expected) = running_to_connecting_tab_slide("aqua", elapsed);
+
+        let buffer = render_frame_at(&app, 80, 24, now);
+
+        assert_eq!(
+            buffer[expected].symbol(),
+            "R",
+            "the frame clock drives the blit"
+        );
+        assert_remote_cell_untouched_by_theme(
+            &buffer,
+            expected,
+            Color::Reset,
+            "running to connecting tab slide",
+        );
+    }
+
+    fn app_background_tab_slide(
+        outgoing: crate::session::SessionPhase,
+        incoming: crate::session::SessionPhase,
+    ) -> (App, std::time::Instant) {
+        let mut app = app_with_two_sessions();
+        wear(
+            &mut app,
+            "[semantic]\nbackground = \"#112233\"\n[components.session]\nbackground = \"terminal\"\n",
+        );
+        app.sessions[0].phase = outgoing;
+        app.sessions[1].phase = incoming;
+        app.active_session = Some(0);
+        app.mode = match &app.sessions[0].phase {
+            crate::session::SessionPhase::Connecting { .. } => AppMode::Connecting,
+            _ => AppMode::Session,
+        };
+        let started = std::time::Instant::now();
+        let _ = render_frame_at(&app, 80, 24, started);
+
+        app.active_session = Some(1);
+        app.mode = match &app.sessions[1].phase {
+            crate::session::SessionPhase::Connecting { .. } => AppMode::Connecting,
+            _ => AppMode::Session,
+        };
+        app.session_tab_switch = Some(crate::app::SessionTabSwitch {
+            dir: 1,
+            from: 0,
+            at: started,
+        });
+        (app, started + TAB_ANIM / 2)
+    }
+
+    #[test]
+    fn running_to_connecting_tab_slide_paints_the_incoming_chrome() {
+        let started = std::time::Instant::now();
+        let (app, now) = app_background_tab_slide(
+            crate::session::SessionPhase::Running {
+                started_at: started,
+            },
+            crate::session::SessionPhase::Connecting {
+                started_at: started,
+            },
+        );
+
+        let buffer = render_frame_at(&app, 80, 24, now);
+
+        assert_eq!(
+            buffer[(60, 3)].bg,
+            Color::Rgb(0x11, 0x22, 0x33),
+            "the shifted incoming Connecting chrome keeps the app background"
+        );
+    }
+
+    #[test]
+    fn connecting_to_running_tab_slide_paints_the_outgoing_chrome() {
+        let started = std::time::Instant::now();
+        let (app, now) = app_background_tab_slide(
+            crate::session::SessionPhase::Connecting {
+                started_at: started,
+            },
+            crate::session::SessionPhase::Running {
+                started_at: started,
+            },
+        );
+
+        let buffer = render_frame_at(&app, 80, 24, now);
+
+        assert_eq!(
+            buffer[(5, 3)].bg,
+            Color::Rgb(0x11, 0x22, 0x33),
+            "the shifted outgoing Connecting chrome keeps the app background"
+        );
+    }
+
+    #[test]
+    fn a_finished_session_tab_slide_neither_blits_nor_protects_a_remote_band() {
+        let (app, now, _) = running_to_connecting_tab_slide("aqua", TAB_ANIM);
+        let buffer = render_frame_at(&app, 80, 24, now);
+        let pty = crate::session::render::remote_pty_rect(buffer.area);
+
+        assert_no_remote_cells(&buffer, "finished tab slide");
+        assert_ne!(
+            buffer[(pty.x, pty.y)].bg,
+            Color::Reset,
+            "the finished slide must not leave a stale protected band"
+        );
+    }
+
+    #[test]
+    fn a_dashboard_tab_switch_does_not_expand_an_exit_slides_protected_band() {
+        let width = 80u16;
+        let area = Rect::new(0, 0, width, 24);
+        let pty = crate::session::render::remote_pty_rect(area);
+        let elapsed = std::time::Duration::from_millis(23);
+        let (mut app, _dir, now) = exiting_app("fire", area, pty.y, elapsed);
+        app.session_tab_switch = Some(crate::app::SessionTabSwitch {
+            dir: 1,
+            from: 0,
+            at: now.checked_sub(TAB_ANIM / 2).unwrap(),
+        });
+
+        let buffer = render_frame_at(&app, width, area.height, now);
+        let revealed_right = pty.x + exit_offset_at(width, elapsed);
+        assert!(
+            revealed_right > pty.x,
+            "the exit must reveal dashboard cells"
+        );
+
+        for y in pty.y..pty.bottom() {
+            for x in pty.x..revealed_right {
+                assert_ne!(
+                    buffer[(x, y)].bg,
+                    Color::Reset,
+                    "dashboard cell ({x}, {y}) outside the visible exit snapshot was protected by an unrendered tab switch"
+                );
+            }
+        }
     }
 
     // ── The exit transition, with time and terminal size controlled ──
@@ -2727,7 +3131,10 @@ mod tests {
         let cell = buffer.cell_mut((snapshot.x, marker_row)).unwrap();
         cell.set_symbol("R");
         cell.fg = REMOTE_FG;
-        *app.session_snapshot.borrow_mut() = Some(buffer);
+        *app.session_snapshot.borrow_mut() = Some(crate::app::SessionSnapshot {
+            buffer,
+            remote_pty: Some(crate::session::render::remote_pty_rect(snapshot)),
+        });
         app.session_exit_at = Some(started);
         (app, dir, started + elapsed)
     }
@@ -2830,6 +3237,56 @@ mod tests {
             assert_no_remote_cells(&buffer, theme_id);
             assert_band_is_painted(&buffer, pty, theme_id);
         }
+    }
+
+    fn assert_chrome_exit_slide_is_painted(phase: crate::session::SessionPhase, what: &str) {
+        let mut app = app_with_two_sessions();
+        wear(
+            &mut app,
+            "[semantic]\nbackground = \"#112233\"\n[components.session]\nbackground = \"terminal\"\n",
+        );
+        app.sessions[0].phase = phase;
+        app.active_session = Some(0);
+        app.mode = match &app.sessions[0].phase {
+            crate::session::SessionPhase::Connecting { .. } => AppMode::Connecting,
+            _ => AppMode::Session,
+        };
+        let started = std::time::Instant::now();
+        let _ = render_frame_at(&app, 80, 24, started);
+
+        app.mode = AppMode::Normal;
+        app.session_exit_at = Some(started);
+        let buffer = render_frame_at(&app, 80, 24, started + SESSION_ANIM / 2);
+        let offset = exit_offset_at(80, SESSION_ANIM / 2);
+
+        for x in offset..80 {
+            assert_eq!(
+                buffer[(x, 3)].bg,
+                Color::Rgb(0x11, 0x22, 0x33),
+                "{what}: visible chrome at ({x}, 3) lost the app background"
+            );
+        }
+    }
+
+    #[test]
+    fn connecting_exit_slide_paints_the_outgoing_chrome() {
+        assert_chrome_exit_slide_is_painted(
+            crate::session::SessionPhase::Connecting {
+                started_at: std::time::Instant::now(),
+            },
+            "Connecting exit",
+        );
+    }
+
+    #[test]
+    fn failed_exit_slide_paints_the_outgoing_chrome() {
+        assert_chrome_exit_slide_is_painted(
+            crate::session::SessionPhase::Exited {
+                status: "failed".into(),
+                at: std::time::Instant::now(),
+            },
+            "failed exit",
+        );
     }
 
     /// No cell anywhere carries the remote marker's colour.

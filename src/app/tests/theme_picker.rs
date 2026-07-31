@@ -839,7 +839,10 @@ fn app_with_populated_visual_state() -> App {
 
     *app.popup_snapshot.borrow_mut() = Some((Rect::new(0, 0, 8, 4), buffer.clone()));
     *app.popup_backdrop.borrow_mut() = Some(buffer.clone());
-    *app.session_snapshot.borrow_mut() = Some(buffer.clone());
+    *app.session_snapshot.borrow_mut() = Some(crate::app::SessionSnapshot {
+        buffer: buffer.clone(),
+        remote_pty: None,
+    });
     *app.sftp_snapshot.borrow_mut() = Some(buffer);
     app.popup_closing_at = Some(now);
     app.session_enter_at = Some(now);
@@ -907,9 +910,10 @@ fn every_path_that_changes_the_painted_theme_invalidates_it() {
     // and asserts each one arrives at the invalidation — the guarantee the
     // frame pipeline's `Matching(Color::Reset)` painters depend on.
     let dirty = |app: &mut App| {
-        *app.session_snapshot.borrow_mut() = Some(ratatui::buffer::Buffer::empty(
-            ratatui::layout::Rect::new(0, 0, 8, 4),
-        ))
+        *app.session_snapshot.borrow_mut() = Some(crate::app::SessionSnapshot {
+            buffer: ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 8, 4)),
+            remote_pty: None,
+        })
     };
 
     // ── activation within one manager ────────────────────────

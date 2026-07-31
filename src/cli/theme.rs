@@ -390,6 +390,12 @@ fn run_show(args: &[String]) -> Result<i32> {
         return Ok(0);
     }
 
+    if !record.is_valid() {
+        return Ok(failure(&format!(
+            "theme '{id}' is invalid; run `sshub theme list` for the reason"
+        )));
+    }
+
     match format {
         ThemeShowFormat::Toml => {
             // The file verbatim, never re-serialised: the comments are the

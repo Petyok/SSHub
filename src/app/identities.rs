@@ -2,9 +2,20 @@ use super::*;
 
 impl App {
     pub fn refresh_agent_info(&mut self) {
-        if self.agent_info_updated.elapsed() > std::time::Duration::from_secs(30) {
-            self.agent_info = Some(crate::ssh::agent::detect_agent());
-            self.agent_info_updated = std::time::Instant::now();
+        let now = std::time::Instant::now();
+        self.refresh_agent_info_with(now, crate::ssh::agent::detect_agent);
+    }
+
+    pub(crate) fn refresh_agent_info_with(
+        &mut self,
+        now: std::time::Instant,
+        detect: impl FnOnce() -> crate::ssh::agent::AgentInfo,
+    ) {
+        if now.saturating_duration_since(self.agent_info_updated)
+            > std::time::Duration::from_secs(30)
+        {
+            self.agent_info = Some(detect());
+            self.agent_info_updated = now;
         }
     }
 

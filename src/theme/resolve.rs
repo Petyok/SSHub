@@ -60,7 +60,15 @@ pub fn resolve_theme(
     id: &ThemeId,
     definitions: &BTreeMap<ThemeId, &ThemeDefinition>,
 ) -> ResolveOutcome {
-    Resolver::new(definitions).resolve(id)
+    resolve_theme_with_invalid_parents(id, definitions, &BTreeMap::new())
+}
+
+pub(crate) fn resolve_theme_with_invalid_parents(
+    id: &ThemeId,
+    definitions: &BTreeMap<ThemeId, &ThemeDefinition>,
+    invalid_parents: &BTreeMap<ThemeId, ThemeOrigin>,
+) -> ResolveOutcome {
+    Resolver::new(definitions, invalid_parents).resolve(id)
 }
 
 /// A value together with the theme and byte range it came from.
@@ -169,6 +177,7 @@ impl ColorOutcome {
 
 struct Resolver<'a> {
     definitions: &'a BTreeMap<ThemeId, &'a ThemeDefinition>,
+    invalid_parents: &'a BTreeMap<ThemeId, ThemeOrigin>,
     diagnostics: Vec<ThemeDiagnostic>,
     merged: Merged,
     /// Memoised reference results, keyed by qualified label. Without it one
@@ -183,9 +192,13 @@ struct Resolver<'a> {
 }
 
 impl<'a> Resolver<'a> {
-    fn new(definitions: &'a BTreeMap<ThemeId, &'a ThemeDefinition>) -> Self {
+    fn new(
+        definitions: &'a BTreeMap<ThemeId, &'a ThemeDefinition>,
+        invalid_parents: &'a BTreeMap<ThemeId, ThemeOrigin>,
+    ) -> Self {
         Self {
             definitions,
+            invalid_parents,
             diagnostics: Vec::new(),
             merged: Merged {
                 name: String::new(),
@@ -313,11 +326,25 @@ impl<'a> Resolver<'a> {
                 return None;
             }
             if !self.definitions.contains_key(&parent) {
-                self.diagnostics.push(ThemeDiagnostic::error(
-                    origin,
-                    span,
-                    format!("unknown parent theme `{parent}`"),
-                ));
+                let diagnostic = match self.invalid_parents.get(&parent) {
+                    Some(ThemeOrigin::User(path)) => ThemeDiagnostic::error(
+                        origin,
+                        span,
+                        format!("parent theme `{parent}` is installed but invalid"),
+                    )
+                    .with_help(format!(
+                        "repair `{}` before loading themes that extend `{parent}`",
+                        path.file_name()
+                            .map(|name| name.to_string_lossy())
+                            .unwrap_or_else(|| path.as_os_str().to_string_lossy())
+                    )),
+                    _ => ThemeDiagnostic::error(
+                        origin,
+                        span,
+                        format!("unknown parent theme `{parent}`"),
+                    ),
+                };
+                self.diagnostics.push(diagnostic);
                 return None;
             }
             current = parent;
@@ -888,9 +915,9 @@ impl<'a> Resolver<'a> {
                         site.origin.clone(),
                         Some(site.span.clone()),
                         format!(
-                            "`{}` is not a closed frame and cannot use the `perimeter` \
-                             gradient `{name}` inherited from `{gradient_theme}`",
-                            spec.path
+                            "`{}` is not a closed frame; paint override from `{}` cannot use \
+                             `perimeter` gradient `{name}` from `{gradient_theme}`",
+                            spec.path, entry.theme
                         ),
                     ));
                     return None;
@@ -1616,6 +1643,34 @@ foreground = \"semantic.accent\"
             ],
         );
         assert_failed_with(&outcome, "is not a closed frame");
+    }
+
+    #[test]
+    fn a_child_perimeter_redefinition_names_gradient_and_paint_origins() {
+        let outcome = resolve_with(
+            "child",
+            vec![
+                (
+                    "base",
+                    "schema_version = 1\nname = \"Base\"\nextends = \"default\"\n\
+                     [gradients.ring]\ndirection = \"horizontal\"\n\
+                     stops = [{ at = 0.0, color = \"#102030\" }, \
+                     { at = 1.0, color = \"#102030\" }]\n\
+                     [components.separator]\nprimary = { gradient = \"gradients.ring\" }\n",
+                ),
+                (
+                    "child",
+                    "schema_version = 1\nname = \"Child\"\nextends = \"base\"\n\
+                     [gradients.ring]\ndirection = \"perimeter\"\n\
+                     stops = [{ at = 0.0, color = \"#405060\" }, \
+                     { at = 1.0, color = \"#405060\" }]\n",
+                ),
+            ],
+        );
+
+        assert_failed_with(&outcome, "is not a closed frame");
+        assert_diagnostic_contains(&outcome.diagnostics, "paint override from `base`");
+        assert_diagnostic_contains(&outcome.diagnostics, "gradient `ring` from `child`");
     }
 
     #[test]

@@ -15,7 +15,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -24,7 +24,7 @@ use crate::theme::model::{
     ResolvedTheme, ThemeDefinition, ThemeDiagnostic, ThemeId, ThemeIdError, ThemeOrigin,
     ValidationMode,
 };
-use crate::theme::resolve::resolve_theme;
+use crate::theme::resolve::resolve_theme_with_invalid_parents;
 use crate::theme::validate::parse_and_validate;
 
 /// The two V1 limits the loader owns. The remaining ones live where the code
@@ -102,6 +102,7 @@ impl ThemeRecord {
 pub enum ThemeRegistryError {
     Io { path: PathBuf, source: io::Error },
     InvalidFileName { path: PathBuf, source: ThemeIdError },
+    NotRegular { path: PathBuf },
     TooLarge { path: PathBuf, length: u64 },
 }
 
@@ -111,6 +112,9 @@ impl fmt::Display for ThemeRegistryError {
             Self::Io { path, source } => write!(f, "{}: {source}", path.display()),
             Self::InvalidFileName { path, source } => {
                 write!(f, "{}: {source}", path.display())
+            }
+            Self::NotRegular { path } => {
+                write!(f, "{}: theme path is not a regular file", path.display())
             }
             Self::TooLarge { path, length } => write!(
                 f,
@@ -126,7 +130,7 @@ impl std::error::Error for ThemeRegistryError {
         match self {
             Self::Io { source, .. } => Some(source),
             Self::InvalidFileName { source, .. } => Some(source),
-            Self::TooLarge { .. } => None,
+            Self::NotRegular { .. } | Self::TooLarge { .. } => None,
         }
     }
 }
@@ -137,6 +141,12 @@ struct Candidate {
     source: ThemeSource,
     origin: ThemeOrigin,
     text: String,
+}
+
+#[derive(Default)]
+struct UserDirectory {
+    candidates: Vec<Candidate>,
+    unavailable: BTreeMap<ThemeId, ThemeOrigin>,
 }
 
 /// Built-in and installed themes, with everything needed to report on them.
@@ -156,7 +166,12 @@ impl ThemeRegistry {
     /// Only the embedded themes. Used by tests and by every code path that must
     /// work without a config directory.
     pub fn builtins(mode: ValidationMode) -> Result<Self, ThemeRegistryError> {
-        Ok(Self::build(builtin_candidates(), Vec::new(), mode))
+        Ok(Self::build(
+            builtin_candidates(),
+            Vec::new(),
+            BTreeMap::new(),
+            mode,
+        ))
     }
 
     /// The built-ins plus every `*.toml` directly inside `themes_dir`.
@@ -170,8 +185,8 @@ impl ThemeRegistry {
         let mut diagnostics = Vec::new();
         let user = read_user_directory(themes_dir, &mut diagnostics)?;
         let mut candidates = builtin_candidates();
-        candidates.extend(user);
-        Ok(Self::build(candidates, diagnostics, mode))
+        candidates.extend(user.candidates);
+        Ok(Self::build(candidates, diagnostics, user.unavailable, mode))
     }
 
     /// One explicitly named file, checked against the built-ins and against
@@ -195,22 +210,7 @@ impl ThemeRegistry {
             path: file.to_path_buf(),
             source,
         })?;
-        let length = fs::metadata(file)
-            .map_err(|source| ThemeRegistryError::Io {
-                path: file.to_path_buf(),
-                source,
-            })?
-            .len();
-        if length > MAX_THEME_FILE_BYTES {
-            return Err(ThemeRegistryError::TooLarge {
-                path: file.to_path_buf(),
-                length,
-            });
-        }
-        let text = fs::read_to_string(file).map_err(|source| ThemeRegistryError::Io {
-            path: file.to_path_buf(),
-            source,
-        })?;
+        let text = read_theme_file(file)?;
 
         let reserved = builtins::is_reserved(id.as_str());
         // A draft of a built-in is a legitimate thing to check. Dropping the
@@ -225,8 +225,9 @@ impl ThemeRegistry {
         // The neighbourhood is read with the loader's own limits and order, so
         // a package behaves here exactly as it will once installed. Its
         // directory-level *diagnostics* are dropped on purpose: they belong to
-        // files this command was not asked about, and a parent lost to one of
-        // them still surfaces as `unknown parent theme` on the target itself.
+        // files this command was not asked about. Their valid ids are retained
+        // in `user.unavailable`, so a referenced parent is still distinguished
+        // as installed but invalid rather than reported as unknown.
         //
         // The `Result`, in contrast, must not be swallowed. A target can be
         // readable while its directory cannot be listed (POSIX `0111`), and in
@@ -235,8 +236,9 @@ impl ThemeRegistry {
         // pass.
         let mut neighbourhood = Vec::new();
         let target_key = same_file_key(file);
+        let user = read_user_directory(dir_of(file), &mut neighbourhood)?;
         candidates.extend(
-            read_user_directory(dir_of(file), &mut neighbourhood)?
+            user.candidates
                 .into_iter()
                 // The explicit target is the check target, whatever its
                 // directory also calls it; reading it twice would only make it
@@ -253,7 +255,7 @@ impl ThemeRegistry {
             text,
         });
 
-        let mut registry = Self::build(candidates, Vec::new(), mode);
+        let mut registry = Self::build(candidates, Vec::new(), user.unavailable, mode);
         registry.warn_about_sibling_parents(&id, file);
         if reserved {
             if let Some(&index) = registry.canonical.get(&id) {
@@ -353,6 +355,7 @@ impl ThemeRegistry {
     fn build(
         candidates: Vec<Candidate>,
         diagnostics: Vec<ThemeDiagnostic>,
+        unavailable: BTreeMap<ThemeId, ThemeOrigin>,
         mode: ValidationMode,
     ) -> Self {
         let mut records: Vec<ThemeRecord> = Vec::with_capacity(candidates.len());
@@ -423,12 +426,23 @@ impl ThemeRegistry {
             .iter()
             .map(|(id, definition)| (id.clone(), definition))
             .collect();
+        let mut invalid_installed = unavailable;
+        for (id, &index) in canonical
+            .iter()
+            .filter(|(id, _)| !definitions.contains_key(*id))
+        {
+            if let ThemeSource::User(path) = &records[index].source {
+                invalid_installed
+                    .entry(id.clone())
+                    .or_insert_with(|| ThemeOrigin::User(path.clone()));
+            }
+        }
         let mut resolvable = BTreeMap::new();
         for (id, &index) in &canonical {
             if !definitions.contains_key(id) {
                 continue;
             }
-            let outcome = resolve_theme(id, &view);
+            let outcome = resolve_theme_with_invalid_parents(id, &view, &invalid_installed);
             let record = &mut records[index];
             record.diagnostics.extend(outcome.diagnostics);
             record.inheritance_chain = outcome.inheritance_chain;
@@ -483,16 +497,28 @@ fn builtin_candidates() -> Vec<Candidate> {
         .collect()
 }
 
+fn select_user_theme_files(mut files: Vec<PathBuf>) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    files.sort();
+    let overflow = if files.len() > MAX_USER_THEME_FILES {
+        files.split_off(MAX_USER_THEME_FILES)
+    } else {
+        Vec::new()
+    };
+    (files, overflow)
+}
+
 /// Locate and read the installable themes, newest problems first as
 /// diagnostics rather than as a failed load.
 fn read_user_directory(
     dir: &Path,
     diagnostics: &mut Vec<ThemeDiagnostic>,
-) -> Result<Vec<Candidate>, ThemeRegistryError> {
+) -> Result<UserDirectory, ThemeRegistryError> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         // No themes directory simply means no user themes.
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(UserDirectory::default())
+        }
         Err(source) => {
             return Err(ThemeRegistryError::Io {
                 path: dir.to_path_buf(),
@@ -502,6 +528,7 @@ fn read_user_directory(
     };
 
     let mut files: Vec<PathBuf> = Vec::new();
+    let mut unavailable = BTreeMap::new();
     for entry in entries {
         let entry = entry.map_err(|source| ThemeRegistryError::Io {
             path: dir.to_path_buf(),
@@ -531,27 +558,42 @@ fn read_user_directory(
                      symlink whose target no longer exists",
                 ),
             );
+            if let Some(id) = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .and_then(|stem| ThemeId::parse(stem).ok())
+            {
+                unavailable.insert(id, ThemeOrigin::User(path));
+            }
             continue;
         }
         files.push(path);
     }
     // `read_dir` yields in filesystem order, which is arbitrary. The spec's
     // lexicographic order is what makes diagnostics and the picker stable.
-    files.sort();
+    let (files, overflow) = select_user_theme_files(files);
 
-    if files.len() > MAX_USER_THEME_FILES {
+    if !overflow.is_empty() {
         diagnostics.push(
             ThemeDiagnostic::warning(
                 ThemeOrigin::User(dir.to_path_buf()),
                 None,
                 format!(
                     "{} theme files found; only the first {MAX_USER_THEME_FILES} are loaded",
-                    files.len()
+                    files.len() + overflow.len()
                 ),
             )
             .with_help("move the themes you do not use out of the themes directory"),
         );
-        files.truncate(MAX_USER_THEME_FILES);
+        for path in overflow {
+            if let Some(id) = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .and_then(|stem| ThemeId::parse(stem).ok())
+            {
+                unavailable.insert(id, ThemeOrigin::User(path));
+            }
+        }
     }
 
     let mut candidates = Vec::with_capacity(files.len());
@@ -577,30 +619,27 @@ fn read_user_directory(
                 continue;
             }
         };
-
-        let length = match fs::metadata(&path) {
-            Ok(metadata) => metadata.len(),
-            Err(error) => {
-                diagnostics.push(unreadable(&path, &error));
+        let text = match read_theme_file(&path) {
+            Ok(text) => text,
+            Err(ThemeRegistryError::TooLarge { length, .. }) => {
+                diagnostics.push(
+                    ThemeDiagnostic::error(
+                        ThemeOrigin::User(path.clone()),
+                        None,
+                        format!("theme file is {length} bytes; the limit is 1 MiB"),
+                    )
+                    .with_help("split the theme, or move the file out of the themes directory"),
+                );
+                unavailable.insert(id, ThemeOrigin::User(path));
                 continue;
             }
-        };
-        if length > MAX_THEME_FILE_BYTES {
-            diagnostics.push(
-                ThemeDiagnostic::error(
+            Err(error) => {
+                diagnostics.push(ThemeDiagnostic::error(
                     ThemeOrigin::User(path.clone()),
                     None,
-                    format!("theme file is {length} bytes; the limit is 1 MiB"),
-                )
-                .with_help("split the theme, or move the file out of the themes directory"),
-            );
-            continue;
-        }
-
-        let text = match fs::read_to_string(&path) {
-            Ok(text) => text,
-            Err(error) => {
-                diagnostics.push(unreadable(&path, &error));
+                    format!("theme file cannot be read: {error}"),
+                ));
+                unavailable.insert(id, ThemeOrigin::User(path));
                 continue;
             }
         };
@@ -611,15 +650,69 @@ fn read_user_directory(
             text,
         });
     }
-    Ok(candidates)
+    Ok(UserDirectory {
+        candidates,
+        unavailable,
+    })
 }
 
-fn unreadable(path: &Path, error: &io::Error) -> ThemeDiagnostic {
-    ThemeDiagnostic::error(
-        ThemeOrigin::User(path.to_path_buf()),
-        None,
-        format!("theme file cannot be read: {error}"),
-    )
+fn read_theme_file(path: &Path) -> Result<String, ThemeRegistryError> {
+    let metadata = fs::metadata(path).map_err(|source| ThemeRegistryError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    if !metadata.is_file() {
+        return Err(ThemeRegistryError::NotRegular {
+            path: path.to_path_buf(),
+        });
+    }
+    if metadata.len() > MAX_THEME_FILE_BYTES {
+        return Err(ThemeRegistryError::TooLarge {
+            path: path.to_path_buf(),
+            length: metadata.len(),
+        });
+    }
+
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = options
+        .open(path)
+        .map_err(|source| ThemeRegistryError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    let opened_metadata = file.metadata().map_err(|source| ThemeRegistryError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    if !opened_metadata.is_file() {
+        return Err(ThemeRegistryError::NotRegular {
+            path: path.to_path_buf(),
+        });
+    }
+
+    let mut bytes = Vec::with_capacity((opened_metadata.len() as usize).min(64 * 1024));
+    file.take(MAX_THEME_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|source| ThemeRegistryError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    if bytes.len() as u64 > MAX_THEME_FILE_BYTES {
+        return Err(ThemeRegistryError::TooLarge {
+            path: path.to_path_buf(),
+            length: bytes.len() as u64,
+        });
+    }
+    String::from_utf8(bytes).map_err(|source| ThemeRegistryError::Io {
+        path: path.to_path_buf(),
+        source: io::Error::new(io::ErrorKind::InvalidData, source),
+    })
 }
 
 /// The reserved-id message, which has to name a concrete replacement id: a user
@@ -648,13 +741,13 @@ fn sort_diagnostics(diagnostics: &mut Vec<ThemeDiagnostic>) {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use ratatui::style::Color;
 
     use super::{
-        ThemeRegistry, ThemeRegistryError, ThemeSource, ThemeStatus, MAX_THEME_FILE_BYTES,
-        MAX_USER_THEME_FILES,
+        select_user_theme_files, ThemeRegistry, ThemeRegistryError, ThemeSource, ThemeStatus,
+        MAX_THEME_FILE_BYTES, MAX_USER_THEME_FILES,
     };
     use crate::theme::model::{ThemeId, ValidationMode};
 
@@ -779,13 +872,75 @@ mod tests {
     }
 
     #[test]
+    fn a_child_distinguishes_an_invalid_installed_parent_from_a_missing_one() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            "base.toml",
+            "schema_version = 1\nname = [\"broken\"\n",
+        );
+        write(
+            dir.path(),
+            "child.toml",
+            "schema_version = 1\nname = \"Child\"\nextends = \"base\"\n",
+        );
+
+        let registry =
+            ThemeRegistry::load_installed(dir.path(), ValidationMode::Compatible).unwrap();
+        let child = registry.get("child").unwrap();
+        let diagnostic = child
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.message.contains("parent theme `base`"))
+            .expect("the child explains its invalid installed parent");
+        assert!(diagnostic.message.contains("installed but invalid"));
+        assert!(
+            diagnostic
+                .help
+                .as_deref()
+                .is_some_and(|help| help.contains("base.toml") && help.contains("repair")),
+            "{:?}",
+            diagnostic.help
+        );
+        assert!(!diagnostic.message.contains("unknown parent"));
+    }
+
+    #[test]
+    fn a_child_distinguishes_an_oversized_installed_parent_from_a_missing_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let head = "schema_version = 1\nname = \"Base\"\n# ";
+        let mut oversized = String::from(head);
+        oversized.push_str(&"p".repeat(MAX_THEME_FILE_BYTES as usize + 1 - head.len()));
+        write(dir.path(), "base.toml", &oversized);
+        write(
+            dir.path(),
+            "child.toml",
+            "schema_version = 1\nname = \"Child\"\nextends = \"base\"\n",
+        );
+
+        let registry =
+            ThemeRegistry::load_installed(dir.path(), ValidationMode::Compatible).unwrap();
+        assert!(registry
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("1 MiB")));
+        let child = registry.get("child").unwrap();
+        let diagnostic = child
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.message.contains("parent theme `base`"))
+            .expect("the child explains its oversized installed parent");
+        assert!(diagnostic.message.contains("installed but invalid"));
+        assert!(!diagnostic.message.contains("unknown parent"));
+    }
+
+    #[test]
     fn a_theme_file_above_one_mebibyte_is_skipped_with_a_diagnostic() {
         let dir = tempfile::tempdir().unwrap();
-        let mut oversized = minimal("Huge");
-        oversized.push_str(&format!(
-            "# {}\n",
-            "p".repeat(MAX_THEME_FILE_BYTES as usize)
-        ));
+        let head = "schema_version = 1\nname = \"Huge\"\n# ";
+        let mut oversized = String::from(head);
+        oversized.push_str(&"p".repeat(MAX_THEME_FILE_BYTES as usize + 1 - head.len()));
+        assert_eq!(oversized.len() as u64, MAX_THEME_FILE_BYTES + 1);
         write(dir.path(), "huge.toml", &oversized);
         write(dir.path(), "small.toml", &minimal("Small"));
 
@@ -822,6 +977,87 @@ mod tests {
     }
 
     #[test]
+    fn invalid_early_file_names_still_consume_the_deterministic_file_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        for index in 0..MAX_USER_THEME_FILES {
+            write(
+                dir.path(),
+                &format!("A{index:03}.toml"),
+                &minimal("Invalid name"),
+            );
+        }
+        write(dir.path(), "z-valid.toml", &minimal("Late valid"));
+
+        let registry =
+            ThemeRegistry::load_installed(dir.path(), ValidationMode::Compatible).unwrap();
+
+        assert_eq!(user_ids(&registry), Vec::<String>::new());
+        assert!(registry
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("only the first 256 are loaded")));
+        assert_eq!(
+            registry
+                .diagnostics()
+                .iter()
+                .filter(|diagnostic| diagnostic.message.contains("not a usable theme id"))
+                .count(),
+            MAX_USER_THEME_FILES
+        );
+    }
+
+    #[test]
+    fn file_limit_selects_the_lexicographic_prefix_from_shuffled_input() {
+        let mut files: Vec<_> = (0..MAX_USER_THEME_FILES + 2)
+            .rev()
+            .map(|index| PathBuf::from(format!("theme-{index:04}.toml")))
+            .collect();
+        files.rotate_left(73);
+
+        let (selected, overflow) = select_user_theme_files(files);
+
+        assert_eq!(selected.len(), MAX_USER_THEME_FILES);
+        assert_eq!(selected.first().unwrap(), Path::new("theme-0000.toml"));
+        assert_eq!(selected.last().unwrap(), Path::new("theme-0255.toml"));
+        assert_eq!(
+            overflow,
+            [
+                PathBuf::from("theme-0256.toml"),
+                PathBuf::from("theme-0257.toml")
+            ]
+        );
+    }
+
+    #[test]
+    fn a_child_recognises_an_installed_parent_beyond_the_file_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            "child.toml",
+            "schema_version = 1\nname = \"Child\"\nextends = \"z-parent\"\n",
+        );
+        for index in 0..MAX_USER_THEME_FILES - 1 {
+            write(
+                dir.path(),
+                &format!("filler-{index:04}.toml"),
+                &minimal("Filler"),
+            );
+        }
+        write(dir.path(), "z-parent.toml", &minimal("Parent"));
+
+        let registry =
+            ThemeRegistry::load_installed(dir.path(), ValidationMode::Compatible).unwrap();
+        let child = registry.get("child").unwrap();
+        let diagnostic = child
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.message.contains("parent theme `z-parent`"))
+            .expect("the child explains its installed but unloaded parent");
+        assert!(diagnostic.message.contains("installed but invalid"));
+        assert!(!diagnostic.message.contains("unknown parent"));
+    }
+
+    #[test]
     fn a_theme_file_of_exactly_one_mebibyte_is_accepted() {
         // The published limit is inclusive. Without this the `>` in the loader
         // could become `>=` and quietly tighten a documented boundary.
@@ -838,6 +1074,31 @@ mod tests {
         assert_eq!(user_ids(&registry), ["exact"]);
         assert_eq!(registry.get("exact").unwrap().status, ThemeStatus::Valid);
         assert!(registry.diagnostics().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn theme_check_rejects_a_fifo_without_waiting_for_a_writer() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("blocked.toml");
+        let fifo_name = CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo_name.as_ptr(), 0o600) }, 0);
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = ThemeRegistry::load_check_target(&fifo, ValidationMode::Compatible);
+            let _ = tx.send(result.map(|_| ()).map_err(|error| error.to_string()));
+        });
+
+        let result = rx
+            .recv_timeout(Duration::from_millis(500))
+            .expect("theme check blocked while opening a FIFO");
+        let error = result.expect_err("a FIFO is not a regular theme file");
+        assert!(error.contains("regular"), "{error}");
     }
 
     #[test]
@@ -971,6 +1232,30 @@ mod tests {
                 .accent,
             Color::Rgb(0, 0xff, 0)
         );
+    }
+
+    #[test]
+    fn a_check_target_accepts_one_mebibyte_and_rejects_the_next_byte() {
+        let dir = tempfile::tempdir().unwrap();
+        let head = "schema_version = 1\nname = \"Boundary\"\n# ";
+        let file = dir.path().join("boundary.toml");
+        let mut body = String::from(head);
+        body.push_str(&"p".repeat(MAX_THEME_FILE_BYTES as usize - head.len()));
+        assert_eq!(body.len() as u64, MAX_THEME_FILE_BYTES);
+        fs::write(&file, &body).unwrap();
+        let registry = ThemeRegistry::load_check_target(&file, ValidationMode::Strict).unwrap();
+        assert_eq!(registry.get("boundary").unwrap().status, ThemeStatus::Valid);
+
+        body.push('p');
+        fs::write(&file, &body).unwrap();
+        let error = ThemeRegistry::load_check_target(&file, ValidationMode::Strict)
+            .err()
+            .expect("one byte beyond the limit must fail");
+        assert!(matches!(
+            error,
+            ThemeRegistryError::TooLarge { length, .. }
+                if length == MAX_THEME_FILE_BYTES + 1
+        ));
     }
 
     #[test]

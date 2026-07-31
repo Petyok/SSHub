@@ -272,6 +272,7 @@ fn run_terminal_loop(app: &mut App, auto_quit: Option<&str>) -> Result<()> {
         // override: holding Shift while dragging bypasses the app's mouse
         // capture for native text selection.
 
+        app.refresh_agent_info();
         terminal.draw(|frame| tui::render(frame, app))?;
 
         if auto_quit.is_some() {

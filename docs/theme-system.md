@@ -157,8 +157,9 @@ Two of them deserve a note:
 - **`background`** decides whether SSHub paints its own app background at all.
   Resolve it to `"terminal"` and SSHub leaves your terminal's own background
   showing through (including any transparency it has). Resolve it to a colour
-  and SSHub paints its own surfaces — never the remote PTY. Like every entry in
-  `[semantic]`, it takes a colour only; a gradient there is a validation error
+  and SSHub paints its own surfaces — never the remote PTY, unless the separate
+  legacy `opaque_background` switch is enabled as described below. Like every
+  entry in `[semantic]`, it takes a colour only; a gradient there is a validation error
   (`` `semantic.background` does not support gradients ``). To sweep the app
   background with one, put the gradient on the paint role
   `components.app.background` instead — see [Static gradients](#static-gradients).
@@ -981,16 +982,18 @@ advertise true colour, its own colour reduction decides what you see. SSHub
 makes no promise of colour fidelity there, but it never panics and the status
 words (`up`, `warning`, `error`) stay readable as text, not just as colour.
 
-**The remote PTY is never recoloured.** Theme backgrounds and gradients
-explicitly exclude the embedded session viewport, even where its cells are
-transparent. The colours your remote shell prints are the remote shell's.
+**Explicit theme surfaces never recolour the remote PTY.** Theme backgrounds
+and gradients exclude the embedded session viewport, even where its cells are
+transparent. The colours your remote shell prints remain the remote shell's;
+the only carve-out is the opt-in legacy `opaque_background` fill below.
 
-**`opaque_background`.** The existing Settings toggle keeps its old meaning: when
-it is on *and* your theme's `components.app.background` resolves to `"terminal"`,
-otherwise transparent cells are filled with `semantic.canvas`, exactly as before
-the theme system existed. It cannot override an app background a theme has set
-deliberately, and it is the only thing allowed to put a solid backdrop behind
-the remote PTY.
+**`opaque_background`.** The existing Settings toggle keeps its old meaning. On
+SSHub's own surfaces, it fills transparent cells with `semantic.canvas` when
+`components.app.background` resolves to `"terminal"`; it cannot override an app
+background the theme set deliberately. The remote PTY is the intentional
+carve-out: whenever `opaque_background` is enabled, independently of the chosen
+app background, it may put `semantic.canvas` behind PTY cells whose background
+is still `Color::Reset`.
 
 **An invalid theme never stops SSHub from starting.** If `active_theme` names a
 theme that no longer resolves, SSHub falls back to `default`, shows the reason

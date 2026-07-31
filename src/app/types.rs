@@ -475,6 +475,14 @@ pub struct SessionTabSwitch {
     pub at: std::time::Instant,
 }
 
+/// A rendered session frame together with the region that belonged to the
+/// remote terminal when the frame was captured.
+#[derive(Clone)]
+pub struct SessionSnapshot {
+    pub buffer: ratatui::buffer::Buffer,
+    pub remote_pty: Option<ratatui::layout::Rect>,
+}
+
 /// An in-flight SFTP tab sub-state slide (#35). The tab body swaps between the
 /// host picker, the "connecting…" placeholder and the dual-pane browser, and
 /// each swap moves in the direction it "came from": the placeholder rides in

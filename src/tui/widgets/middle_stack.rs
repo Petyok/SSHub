@@ -20,16 +20,6 @@ pub const LATENCY_H: u16 = 4;
 
 /// Render the three middle-column panels stacked vertically.
 pub fn render_middle_stack(frame: &mut Frame, area: Rect, app: &App) {
-    let agent = crate::ssh::agent::detect_agent();
-    render_middle_stack_with_info(frame, area, app, &agent);
-}
-
-pub(crate) fn render_middle_stack_with_info(
-    frame: &mut Frame,
-    area: Rect,
-    app: &App,
-    agent: &crate::ssh::agent::AgentInfo,
-) {
     let buf = frame.buffer_mut();
 
     let mut y = area.y;
@@ -47,7 +37,7 @@ pub(crate) fn render_middle_stack_with_info(
     // ── Panel 2: Agent info ─────────────────────────────
     let remaining = area.y + area.height - y;
     let agent_area = Rect::new(area.x, y, w, AGENT_H.min(remaining));
-    render_agent_panel_with_info(buf, agent_area, app, agent);
+    render_agent_panel(buf, agent_area, app);
     y += agent_area.height;
 
     if y >= area.y + area.height {
@@ -444,16 +434,8 @@ pub(crate) fn content_fade(at: Option<std::time::Instant>, motion: bool) -> f32 
 }
 
 pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
-    let agent = crate::ssh::agent::detect_agent();
-    render_agent_panel_with_info(buf, area, app, &agent);
-}
-
-pub(crate) fn render_agent_panel_with_info(
-    buf: &mut Buffer,
-    area: Rect,
-    app: &App,
-    agent: &crate::ssh::agent::AgentInfo,
-) {
+    let empty_agent = crate::ssh::agent::AgentInfo::default();
+    let agent = app.agent_info.as_ref().unwrap_or(&empty_agent);
     let theme = app.theme();
     let text = theme.style(StyleRole::TextPrimary);
     let bright = theme.style(StyleRole::TextBright);
@@ -1101,10 +1083,10 @@ mod tests {
     }
 
     #[test]
-    fn the_agent_panel_renders_the_supplied_agent_snapshot() {
-        let app = themed_app(middle_marker_theme());
+    fn the_agent_panel_renders_the_apps_agent_snapshot() {
+        let mut app = themed_app(middle_marker_theme());
         let compact = Rect::new(0, 0, 60, 8);
-        let connected = crate::ssh::agent::AgentInfo {
+        app.agent_info = Some(crate::ssh::agent::AgentInfo {
             socket_path: Some("/tmp/fixed-agent.sock".into()),
             keys: vec![crate::ssh::agent::AgentKey {
                 bits: "256".into(),
@@ -1113,22 +1095,14 @@ mod tests {
                 key_type: "ED25519".into(),
             }],
             forwarding_hosts: 0,
-        };
-
-        let connected_buf = buffer_at(compact, |buf| {
-            render_agent_panel_with_info(buf, compact, &app, &connected)
         });
+
+        let connected_buf = buffer_at(compact, |buf| render_agent_panel(buf, compact, &app));
         assert!(find_text(&connected_buf, "/tmp/fixed-agent.sock").0 > 0);
         assert!(find_text(&connected_buf, "1 loaded").0 > 0);
 
-        let disconnected_buf = buffer_at(compact, |buf| {
-            render_agent_panel_with_info(
-                buf,
-                compact,
-                &app,
-                &crate::ssh::agent::AgentInfo::default(),
-            )
-        });
+        app.agent_info = None;
+        let disconnected_buf = buffer_at(compact, |buf| render_agent_panel(buf, compact, &app));
         let (x, y) = find_text(&disconnected_buf, "not found");
         assert_eq!(
             disconnected_buf.cell((x, y)).unwrap().fg,
