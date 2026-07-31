@@ -32,6 +32,25 @@ impl KnownHostEntry {
         self.hosts.starts_with("|1|")
     }
 
+    pub fn is_deletable(&self) -> bool {
+        !self.is_hashed()
+            && self.marker.is_none()
+            && !self.hosts.contains('*')
+            && !self.hosts.contains('?')
+    }
+
+    pub fn deletion_block_reason(&self) -> Option<&'static str> {
+        if self.is_hashed() {
+            Some("Cannot delete hashed entry \u{2014} run ssh-keygen -R <host> manually, or set HashKnownHosts no")
+        } else if self.marker.is_some() {
+            Some("Cannot delete @cert-authority / @revoked entries \u{2014} edit ~/.ssh/known_hosts manually")
+        } else if self.hosts.contains('*') || self.hosts.contains('?') {
+            Some("Cannot delete wildcard entries \u{2014} edit ~/.ssh/known_hosts manually")
+        } else {
+            None
+        }
+    }
+
     pub fn display_host(&self) -> &str {
         if self.is_hashed() {
             "(hashed)"
@@ -106,8 +125,8 @@ fn normalize_key_type(raw: &str) -> String {
     }
 }
 
-fn fingerprints(path: &Path) -> HashMap<(String, String), String> {
-    let mut map = HashMap::new();
+fn fingerprints(path: &Path) -> HashMap<(String, String), Vec<String>> {
+    let mut map: HashMap<(String, String), Vec<String>> = HashMap::new();
     let Ok(output) = Command::new("ssh-keygen")
         .args(["-l", "-f"])
         .arg(path)
@@ -120,7 +139,6 @@ fn fingerprints(path: &Path) -> HashMap<(String, String), String> {
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     for line in stdout.lines() {
-        // Format: <bits> SHA256:<fp> <name> (<TYPE>)
         let mut parts = line.split_whitespace();
         let _bits = parts.next();
         let fp = match parts.next() {
@@ -135,7 +153,9 @@ fn fingerprints(path: &Path) -> HashMap<(String, String), String> {
             Some(t) => t.trim_start_matches('(').trim_end_matches(')'),
             None => continue,
         };
-        map.insert((name.to_string(), type_raw.to_string()), fp.to_string());
+        map.entry((name.to_string(), type_raw.to_string()))
+            .or_default()
+            .push(fp.to_string());
     }
     map
 }
@@ -144,11 +164,14 @@ pub fn load_known_hosts(path: &Path) -> Result<Vec<KnownHostEntry>> {
     let content =
         std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     let mut entries = parse_known_hosts(&content);
-    let fps = fingerprints(path);
+    let mut fps = fingerprints(path);
     for entry in &mut entries {
         let norm = normalize_key_type(&entry.key_type);
-        if let Some(fp) = fps.get(&(entry.hosts.clone(), norm)) {
-            entry.fingerprint = Some(fp.clone());
+        let key = (entry.hosts.clone(), norm);
+        if let Some(list) = fps.get_mut(&key) {
+            if !list.is_empty() {
+                entry.fingerprint = Some(list.remove(0));
+            }
         }
     }
     Ok(entries)
@@ -186,7 +209,9 @@ pub fn host_key_fingerprint_from_log(debug_log: &str) -> Option<String> {
         }
         let rest = &line["debug1: Server host key:".len()..];
         let mut parts = rest.split_whitespace();
-        let key_type = parts.next()?;
+        let Some(key_type) = parts.next() else {
+            continue;
+        };
         if !key_type.starts_with("ssh-")
             && !key_type.starts_with("ecdsa-")
             && !key_type.starts_with("sk-")
@@ -194,7 +219,9 @@ pub fn host_key_fingerprint_from_log(debug_log: &str) -> Option<String> {
             continue;
         }
         if let Some(fp) = parts.next() {
-            let b64 = fp.strip_prefix("SHA256:")?;
+            let Some(b64) = fp.strip_prefix("SHA256:") else {
+                continue;
+            };
             if b64.len() == 43
                 && b64
                     .chars()

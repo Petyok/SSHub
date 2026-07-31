@@ -11,7 +11,7 @@ pub fn render_known_hosts(frame: &mut Frame, app: &App) {
     };
 
     let area = frame.area();
-    let popup_w = 78u16.min(area.width.saturating_sub(2));
+    let popup_w = 104u16.min(area.width.saturating_sub(2));
     let list_rows = area.height.saturating_sub(9).clamp(8, 20);
     let popup_h = (list_rows + 7).min(area.height.saturating_sub(2));
     let x = area.x + (area.width.saturating_sub(popup_w)) / 2;
@@ -132,11 +132,16 @@ pub fn render_known_hosts(frame: &mut Frame, app: &App) {
             theme::amber(),
         );
     } else if let Some(notice) = &state.notice {
+        let style = if notice.starts_with("Cannot") || notice.contains("failed") {
+            theme::red()
+        } else {
+            theme::green()
+        };
         buf.set_string(
             row_x,
             footer_y,
             crate::tui::text::ellipsize(notice, content_w),
-            theme::red(),
+            style,
         );
     } else {
         let hint = "\u{2191}\u{2193} move \u{00b7} type to filter \u{00b7} Ctrl+D delete \u{00b7} Ctrl+R refresh \u{00b7} Esc close";

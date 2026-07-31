@@ -435,7 +435,7 @@ fn render_connecting(
     if !cancel.is_empty() {
         hint.push_str(&format!("  ·  {cancel} cancel"));
     }
-    let center = vec![
+    let mut center = vec![
         Line::from(vec![
             Span::styled(
                 crate::tui::tween::spinner_frame(elapsed),
@@ -448,7 +448,6 @@ fn render_connecting(
         Line::raw(""),
         Line::from(Span::styled(hint, dim)),
     ];
-    let mut center = center;
     if let Some(fp) = crate::known_hosts::host_key_fingerprint_from_log(session.debug_log()) {
         center.insert(
             1,

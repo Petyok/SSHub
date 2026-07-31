@@ -445,7 +445,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry { key: "", desc: "" },
     HelpItem::Entry {
-        key: "? / Shift+H",
+        key: "?",
         desc: "Toggle this help screen",
     },
     HelpItem::Entry {

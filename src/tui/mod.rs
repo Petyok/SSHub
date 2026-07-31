@@ -1961,11 +1961,28 @@ mod tests {
             AppMode::Help,
             AppMode::KeybindEditor,
             AppMode::ConfirmQuit,
+            AppMode::KnownHosts,
         ];
         for &mode in &modes {
             for (w, h) in [(1u16, 1u16), (10, 3), (30, 8), (49, 20)] {
                 let mut app = test_app_with_hosts();
                 app.mode = mode;
+                if mode == AppMode::KnownHosts {
+                    app.known_hosts = Some(crate::app::KnownHostsState {
+                        entries: vec![crate::known_hosts::KnownHostEntry {
+                            marker: None,
+                            hosts: "example.com".to_string(),
+                            key_type: "ssh-ed25519".to_string(),
+                            fingerprint: Some(
+                                "SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG".to_string(),
+                            ),
+                        }],
+                        selected: 0,
+                        query: String::new(),
+                        confirming_delete: false,
+                        notice: None,
+                    });
+                }
                 // Must not panic; we don't care about the pixels here.
                 let _ = render_to_buffer(&app, w, h);
             }

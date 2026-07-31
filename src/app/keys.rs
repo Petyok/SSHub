@@ -810,10 +810,8 @@ impl App {
                 state.notice = None;
                 let filtered = state.filtered_indices();
                 if let Some(&fi) = filtered.get(state.selected) {
-                    if state.entries[fi].is_hashed() {
-                        state.notice = Some(
-                            "Cannot delete hashed entry \u{2014} run ssh-keygen -R <host> manually, or set HashKnownHosts no".to_string()
-                        );
+                    if let Some(reason) = state.entries[fi].deletion_block_reason() {
+                        state.notice = Some(reason.to_string());
                     } else {
                         state.confirming_delete = true;
                     }
