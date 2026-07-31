@@ -20,6 +20,16 @@ pub const LATENCY_H: u16 = 4;
 
 /// Render the three middle-column panels stacked vertically.
 pub fn render_middle_stack(frame: &mut Frame, area: Rect, app: &App) {
+    let agent = crate::ssh::agent::detect_agent();
+    render_middle_stack_with_info(frame, area, app, &agent);
+}
+
+pub(crate) fn render_middle_stack_with_info(
+    frame: &mut Frame,
+    area: Rect,
+    app: &App,
+    agent: &crate::ssh::agent::AgentInfo,
+) {
     let buf = frame.buffer_mut();
 
     let mut y = area.y;
@@ -37,7 +47,7 @@ pub fn render_middle_stack(frame: &mut Frame, area: Rect, app: &App) {
     // ── Panel 2: Agent info ─────────────────────────────
     let remaining = area.y + area.height - y;
     let agent_area = Rect::new(area.x, y, w, AGENT_H.min(remaining));
-    render_agent_panel(buf, agent_area, app);
+    render_agent_panel_with_info(buf, agent_area, app, agent);
     y += agent_area.height;
 
     if y >= area.y + area.height {
@@ -434,6 +444,16 @@ pub(crate) fn content_fade(at: Option<std::time::Instant>, motion: bool) -> f32 
 }
 
 pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
+    let agent = crate::ssh::agent::detect_agent();
+    render_agent_panel_with_info(buf, area, app, &agent);
+}
+
+pub(crate) fn render_agent_panel_with_info(
+    buf: &mut Buffer,
+    area: Rect,
+    app: &App,
+    agent: &crate::ssh::agent::AgentInfo,
+) {
     let theme = app.theme();
     let text = theme.style(StyleRole::TextPrimary);
     let bright = theme.style(StyleRole::TextBright);
@@ -450,8 +470,6 @@ pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
 
     let inner_x = area.x + 2;
     let inner_w = area.width.saturating_sub(4) as usize;
-
-    let agent = crate::ssh::agent::detect_agent();
 
     // Zoomed: keep the socket/forward/config header, then list every loaded key
     // (type, bits, full fingerprint, comment) filling the panel height.
@@ -1080,5 +1098,42 @@ mod tests {
             Color::Rgb(0xff, 0xff, 0x00),
             "the agent panel's key count takes `text.bright`"
         );
+    }
+
+    #[test]
+    fn the_agent_panel_renders_the_supplied_agent_snapshot() {
+        let app = themed_app(middle_marker_theme());
+        let compact = Rect::new(0, 0, 60, 8);
+        let connected = crate::ssh::agent::AgentInfo {
+            socket_path: Some("/tmp/fixed-agent.sock".into()),
+            keys: vec![crate::ssh::agent::AgentKey {
+                bits: "256".into(),
+                fingerprint: "SHA256:fixed".into(),
+                comment: "ci key".into(),
+                key_type: "ED25519".into(),
+            }],
+            forwarding_hosts: 0,
+        };
+
+        let connected_buf = buffer_at(compact, |buf| {
+            render_agent_panel_with_info(buf, compact, &app, &connected)
+        });
+        assert!(find_text(&connected_buf, "/tmp/fixed-agent.sock").0 > 0);
+        assert!(find_text(&connected_buf, "1 loaded").0 > 0);
+
+        let disconnected_buf = buffer_at(compact, |buf| {
+            render_agent_panel_with_info(
+                buf,
+                compact,
+                &app,
+                &crate::ssh::agent::AgentInfo::default(),
+            )
+        });
+        let (x, y) = find_text(&disconnected_buf, "not found");
+        assert_eq!(
+            disconnected_buf.cell((x, y)).unwrap().fg,
+            app.theme().color(ColorRole::StatusError)
+        );
+        assert!(find_text(&disconnected_buf, "0 loaded").0 > 0);
     }
 }

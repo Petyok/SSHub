@@ -1301,6 +1301,15 @@ fn render_tab_slide(
 }
 
 fn render_hosts_body(frame: &mut Frame, areas: &dashboard_layout::DashboardAreas, app: &App) {
+    render_hosts_body_with_agent_info(frame, areas, app, None);
+}
+
+fn render_hosts_body_with_agent_info(
+    frame: &mut Frame,
+    areas: &dashboard_layout::DashboardAreas,
+    app: &App,
+    agent: Option<&crate::ssh::agent::AgentInfo>,
+) {
     // Issue #18: a zoomed panel takes over the whole dashboard body.
     // Broadcast (#3) is a floating panel drawn from render_inner instead, so a
     // zoomed Broadcast must not be handled here (it has no home in the hosts
@@ -1316,7 +1325,12 @@ fn render_hosts_body(frame: &mut Frame, areas: &dashboard_layout::DashboardAreas
         return;
     }
     widgets::hosts_panel::render_hosts_panel(frame, areas.col_left, app);
-    widgets::middle_stack::render_middle_stack(frame, areas.col_mid, app);
+    match agent {
+        Some(agent) => {
+            widgets::middle_stack::render_middle_stack_with_info(frame, areas.col_mid, app, agent)
+        }
+        None => widgets::middle_stack::render_middle_stack(frame, areas.col_mid, app),
+    }
     widgets::right_stack::render_right_stack(frame, areas.col_right, app);
 
     // SSH log panel spanning middle + right columns below their stacks
@@ -1899,7 +1913,12 @@ mod tests {
                 let rule2 = row_in(area, areas.tab_bar.y + areas.tab_bar.height);
                 widgets::footer::render_hrule(frame, rule2, false, theme, PaintRole::TabsSeparator);
 
-                render_tab_body(frame, app.active_tab, &areas, app);
+                render_hosts_body_with_agent_info(
+                    frame,
+                    &areas,
+                    app,
+                    Some(&crate::ssh::agent::AgentInfo::default()),
+                );
 
                 let rule3 = row_in(area, areas.footer.y.saturating_sub(1));
                 widgets::footer::render_hrule(
