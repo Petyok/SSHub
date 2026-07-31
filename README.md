@@ -7,7 +7,7 @@
 
 A terminal UI for managing and connecting to SSH hosts. Combines your `~/.ssh/config` with a built-in host database, tunnels, key management, and an audit log -- all in one keyboard-driven interface.
 
-> ⚠️ This project is 100% vibe-coded slop made with dynamic workflows using Opus 4.8 + Opus 5 + Fable 5 + Composer 2.5 + Grok 4.5. Use at your own risk.
+> ⚠️ This project is 100% vibe-coded slop made with dynamic workflows + adversarial-multimodel-reviews + cross-model-reviews using Opus 4.8 + Opus 5 + Fable 5 + Composer 2.5 + Grok 4.5 + Qwen 3.8 Max Preview. It has — and will keep having — stupid bugs LLMs can't see. Use at your own risk.
 
 ![SSHub demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/hero.gif)
 
