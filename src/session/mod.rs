@@ -173,6 +173,10 @@ pub struct Session {
     /// side FIFO. Rendered as the connect spinner's debug tail / expanded log,
     /// and scanned for the real "authenticated to" connected marker.
     debug_log: String,
+    /// First host-key fingerprint seen in `debug_log` (first-wins). Cached so a
+    /// hostile banner that floods the 64 KB ring buffer cannot replace the
+    /// genuine KEX line with a forged `debug1: Server host key:` after eviction.
+    host_key_fingerprint: Option<String>,
     /// Whether the connect screen shows the full debug log instead of the
     /// spinner + tail. Toggled by the user.
     debug_expanded: bool,
@@ -268,6 +272,7 @@ impl Session {
             use_askpass,
             connected: false,
             debug_log: String::new(),
+            host_key_fingerprint: None,
             debug_expanded: false,
             saw_pty_bytes: false,
             selection: None,
@@ -479,8 +484,18 @@ impl Session {
                     // for the connect spinner's debug view. Cap the buffer so a
                     // long-lived session can't grow it without bound.
                     self.debug_log.push_str(&String::from_utf8_lossy(&bytes));
+                    if self.host_key_fingerprint.is_none() {
+                        if let Some(fp) =
+                            crate::known_hosts::host_key_fingerprint_from_log(&self.debug_log)
+                        {
+                            self.host_key_fingerprint = Some(fp);
+                        }
+                    }
                     if self.debug_log.len() > DEBUG_LOG_CAP {
-                        let cut = self.debug_log.len() - DEBUG_LOG_CAP;
+                        let mut cut = self.debug_log.len() - DEBUG_LOG_CAP;
+                        while cut > 0 && !self.debug_log.is_char_boundary(cut) {
+                            cut -= 1;
+                        }
                         self.debug_log.drain(..cut);
                     }
                     had_stderr = true;
@@ -620,6 +635,11 @@ impl Session {
     /// The accumulated ssh `-v` debug output (host-key search, kex, auth).
     pub fn debug_log(&self) -> &str {
         &self.debug_log
+    }
+
+    /// Cached first host-key fingerprint from the `-v` log, if any.
+    pub fn host_key_fingerprint(&self) -> Option<&str> {
+        self.host_key_fingerprint.as_deref()
     }
 
     /// True when ssh refused because the server's host key CHANGED versus

@@ -448,7 +448,7 @@ fn render_connecting(
         Line::raw(""),
         Line::from(Span::styled(hint, dim)),
     ];
-    if let Some(fp) = crate::known_hosts::host_key_fingerprint_from_log(session.debug_log()) {
+    if let Some(fp) = session.host_key_fingerprint().map(str::to_string) {
         center.insert(
             1,
             Line::from(vec![

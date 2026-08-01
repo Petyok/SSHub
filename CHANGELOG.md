@@ -9,13 +9,21 @@ All notable changes to SSHub are documented in this file.
 - **Known hosts manager** (`H` on the Keys tab, issue #7) - an overlay listing
   every entry in `~/.ssh/known_hosts`: host (or `(hashed)`), `@cert-authority` /
   `@revoked` marker, key type, and `SHA256:` fingerprint (joined from
-  `ssh-keygen -l`). Type to filter by host or fingerprint, `Ctrl+D` to delete all
-  keys for a host via `ssh-keygen -R` (with confirmation; hashed entries are
-  refused with an explanation), `Ctrl+R` to refresh from disk. The connect screen now
-  shows the server host key fingerprint from the `-v` output while connecting,
-  so a first-connect fingerprint can be read and compared without digging
-  through the scrollback. Help is now bound to `?` only; `H` / `Shift+H` opens
-  the known hosts manager.
+  `ssh-keygen -l`; marker rows stay blank because `ssh-keygen -l` omits them).
+  Type to filter by host or fingerprint, `Ctrl+D` to delete all keys for a host
+  via `ssh-keygen -R` (with confirmation; hashed / `@cert-authority` /
+  `@revoked` / wildcard rows are refused, and plain deletes that would also
+  remove a matching wildcard are refused), `Ctrl+R` to refresh from disk. The
+  connect screen now shows the server host key fingerprint from the `-v` output
+  while connecting (cached first-wins so a banner flood cannot replace it), so a
+  first-connect fingerprint can be read and compared without digging through the
+  scrollback.
+
+### Changed
+
+- Help is bound to `?` only. `H` (Shift+H) opens the known hosts manager. Existing
+  configs that still have `help = ["?", "Shift+H"]` are migrated once on load so
+  the new binding is reachable.
 
 ### Fixed
 
