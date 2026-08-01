@@ -7,9 +7,10 @@ All notable changes to SSHub are documented in this file.
 ### Fixed
 
 - **Copying inside a session reaches your clipboard again when the copy comes
-  from the app running in the PTY** - a nested multiplexer (herdr, tmux), or an
-  editor set to `clipboard=osc52`, would highlight a selection and report a copy
-  while the clipboard never changed. Those apps copy by writing
+  from the app running in the PTY** (PR #88 by @michabbb) - a nested multiplexer
+  (herdr, tmux), or an editor set to `clipboard=osc52`, would highlight a
+  selection and report a copy while the clipboard never changed. Those apps copy
+  by writing
   `ESC ] 52 ; c ; <base64> BEL` to their stdout, which is our PTY; `vt100` parses
   it and hands it to `Callbacks::copy_to_clipboard`, and the default `()` impl
   that SSHub used is a no-op - so the sequence was parsed and dropped, with no
