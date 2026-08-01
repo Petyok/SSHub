@@ -26,6 +26,17 @@ pub(crate) fn decoded_len(b64: &[u8]) -> usize {
     }
 }
 
+/// Why a clipboard write coming out of the PTY never made it to the queue.
+/// The two reasons are counted apart so the notice can name them: one is a
+/// single write past the size cap, the other a remote stuck in a copy loop.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ClipboardDrops {
+    /// Writes whose decoded payload exceeded [`CLIPBOARD_RELAY_MAX_BYTES`].
+    pub(crate) oversize: usize,
+    /// Writes that arrived with the queue already at [`CLIPBOARD_RELAY_MAX_QUEUED`].
+    pub(crate) queue_full: usize,
+}
+
 /// Collects OSC 52 clipboard writes coming out of the PTY so the session can
 /// re-emit them toward the real terminal.
 ///
@@ -34,16 +45,29 @@ pub(crate) fn decoded_len(b64: &[u8]) -> usize {
 /// copying inside the PTY (herdr, tmux, neovim, lazygit…) appears to work but
 /// never reaches the system clipboard.
 #[derive(Default)]
-pub struct ClipboardRelay {
+struct ClipboardRelay {
     /// Pending base64 payloads, in arrival order.
     pending: Vec<String>,
+    /// Writes rejected since the last drain, by reason.
+    drops: ClipboardDrops,
 }
 
 impl vt100::Callbacks for ClipboardRelay {
     fn copy_to_clipboard(&mut self, _: &mut vt100::Screen, _ty: &[u8], data: &[u8]) {
-        if self.pending.len() >= CLIPBOARD_RELAY_MAX_QUEUED
-            || decoded_len(data) > CLIPBOARD_RELAY_MAX_BYTES
-        {
+        // An empty payload is a clipboard *clear* on terminals that honour it.
+        // We neither forward it nor count it as a drop: a remote must not be
+        // able to wipe the local clipboard, and nothing was lost worth naming.
+        if data.is_empty() {
+            return;
+        }
+        // Order matters — a huge write is reported as oversize even when the
+        // queue happens to be full as well.
+        if decoded_len(data) > CLIPBOARD_RELAY_MAX_BYTES {
+            self.drops.oversize += 1;
+            return;
+        }
+        if self.pending.len() >= CLIPBOARD_RELAY_MAX_QUEUED {
+            self.drops.queue_full += 1;
             return;
         }
         // vt100 already guaranteed every byte is in the base64 alphabet
@@ -59,18 +83,6 @@ impl vt100::Callbacks for ClipboardRelay {
     // local clipboard, which is far worse than a write and buys us nothing.
 }
 
-/// Re-emit an already-base64-encoded payload as OSC 52 on our own stdout, so
-/// the terminal hosting SSHub puts it on the system clipboard.
-///
-/// The selector is pinned to `c` rather than forwarded: some terminals discard
-/// the whole sequence when they see a selector they don't know.
-pub fn emit_osc52_b64(payload: &str) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut out = std::io::stdout().lock();
-    out.write_all(format!("\x1b]52;c;{payload}\x07").as_bytes())?;
-    out.flush()
-}
-
 pub struct ParserState {
     inner: vt100::Parser<ClipboardRelay>,
 }
@@ -82,9 +94,14 @@ impl ParserState {
         }
     }
 
+    /// Take the drops recorded since the last call, resetting the counters.
+    pub(crate) fn take_clipboard_drops(&mut self) -> ClipboardDrops {
+        std::mem::take(&mut self.inner.callbacks_mut().drops)
+    }
+
     /// Take the clipboard writes seen since the last call. Each entry is a
-    /// base64 payload ready to hand to [`emit_osc52_b64`].
-    pub fn take_clipboard_writes(&mut self) -> Vec<String> {
+    /// base64 payload ready to hand to [`crate::osc52::write_b64`].
+    pub(crate) fn take_clipboard_writes(&mut self) -> Vec<String> {
         std::mem::take(&mut self.inner.callbacks_mut().pending)
     }
 
@@ -132,6 +149,13 @@ impl ParserState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn drops(oversize: usize, queue_full: usize) -> ClipboardDrops {
+        ClipboardDrops {
+            oversize,
+            queue_full,
+        }
+    }
 
     fn parser_with(rows: u16, cols: u16, stream: &[u8]) -> ParserState {
         let mut p = ParserState::new(rows, cols);
@@ -208,11 +232,9 @@ mod tests {
     #[test]
     fn oversized_clipboard_write_is_dropped() {
         // 90_000 base64 chars ≈ 67.5 KiB decoded — past the 64 KiB cap.
-        let mut stream = b"\x1b]52;c;".to_vec();
-        stream.extend(std::iter::repeat_n(b'A', 90_000));
-        stream.push(0x07);
-        let mut p = parser_with(10, 80, &stream);
+        let mut p = parser_with(10, 80, &oversized_copy());
         assert!(p.take_clipboard_writes().is_empty());
+        assert_eq!(p.take_clipboard_drops(), drops(1, 0));
     }
 
     #[test]
@@ -223,6 +245,61 @@ mod tests {
         }
         let mut p = parser_with(10, 80, &stream);
         assert_eq!(p.take_clipboard_writes().len(), CLIPBOARD_RELAY_MAX_QUEUED);
+        assert_eq!(
+            p.take_clipboard_drops(),
+            drops(0, 20 - CLIPBOARD_RELAY_MAX_QUEUED)
+        );
+    }
+
+    /// An OSC 52 write whose decoded payload is past the size cap.
+    fn oversized_copy() -> Vec<u8> {
+        let mut stream = b"\x1b]52;c;".to_vec();
+        stream.extend(std::iter::repeat_n(b'A', 90_000));
+        stream.push(0x07);
+        stream
+    }
+
+    #[test]
+    fn empty_payload_is_ignored_entirely() {
+        // `ESC]52;c;BEL` clears the clipboard on terminals that honour it. We
+        // neither relay it nor treat it as a drop: an empty write must not
+        // wipe the user's clipboard and must not claim anything happened.
+        let mut p = parser_with(10, 80, b"\x1b]52;c;\x07");
+        assert!(p.take_clipboard_writes().is_empty());
+        assert_eq!(p.take_clipboard_drops(), ClipboardDrops::default());
+    }
+
+    #[test]
+    fn oversize_and_queue_full_are_counted_separately() {
+        // The two drop reasons are different failures — one is a single huge
+        // write, the other a remote in a copy loop — so the notice must be
+        // able to tell them apart.
+        let mut stream = oversized_copy();
+        for _ in 0..20 {
+            stream.extend_from_slice(b"\x1b]52;c;R0VIRUlN\x07");
+        }
+        let mut p = parser_with(10, 80, &stream);
+        assert_eq!(p.take_clipboard_writes().len(), CLIPBOARD_RELAY_MAX_QUEUED);
+        assert_eq!(
+            p.take_clipboard_drops(),
+            drops(1, 20 - CLIPBOARD_RELAY_MAX_QUEUED)
+        );
+    }
+
+    #[test]
+    fn taking_drops_resets_the_counters() {
+        let mut p = parser_with(10, 80, &oversized_copy());
+        assert_eq!(p.take_clipboard_drops(), drops(1, 0));
+        assert_eq!(p.take_clipboard_drops(), ClipboardDrops::default());
+    }
+
+    #[test]
+    fn primary_selection_is_relayed_as_clipboard() {
+        // vt100 hands us selector `p` (X11 primary selection) too. We
+        // deliberately normalise every selector to `c` in the shared helper,
+        // so the payload must reach the queue unchanged.
+        let mut p = parser_with(10, 80, b"\x1b]52;p;R0VIRUlN\x07");
+        assert_eq!(p.take_clipboard_writes(), vec!["R0VIRUlN".to_string()]);
     }
 
     #[test]

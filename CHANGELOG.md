@@ -21,10 +21,21 @@ All notable changes to SSHub are documented in this file.
   out to the full terminal width - across a split layout that drags in the
   neighbouring panes and their borders.
 
-  Since this lets the remote side write to your clipboard, every relay raises a
-  visible notice, payloads are capped at 64 KiB, and the queue is bounded so a
-  copy loop can't flood it. Clipboard *reads* stay refused: `ESC]52;c;?BEL` is
-  still unanswered, so no host can ask what you have copied.
+  Since this lets the remote side write to your clipboard, it is narrow and
+  visible: only the session you are actually looking at may relay, so a
+  background tab, the dashboard, SFTP or the tunnels view drop what their PTY
+  asked for on the spot - and never replay it when you switch to that tab.
+  Payloads are capped at 64 KiB and the queue is bounded, with both kinds of
+  drop counted apart and named in the notice, so a copy that was thrown away is
+  never hidden behind the success message. An empty write is ignored outright:
+  a remote cannot clear your clipboard. Clipboard *reads* stay refused:
+  `ESC]52;c;?BEL` is still unanswered, so no host can ask what you have copied.
+
+  The relay is on by default and can be switched off with `relay_from_pty =
+  false` under a new `[clipboard]` section in `config.toml`; configs written
+  before that section existed keep the default. Note that the OSC 52 sequence
+  travels in the raw PTY stream, so an enabled session log can already contain
+  it - relaying does not add it to the log, but it does not remove it either.
 - **The README GIFs and screenshots are recorded from the terminal stream now,
   not screenshotted** - and four of the five GIFs had no animation in them at
   all. Two separate faults: every tape except `hero` switched
