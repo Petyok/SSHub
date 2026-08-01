@@ -1340,6 +1340,30 @@ impl KeybindsConfig {
         true
     }
 
+    /// Free `H` / `Shift+H` from Help when upgrading to the known-hosts manager.
+    ///
+    /// Pre-PR installs persist `help = ["?", "Shift+H"]`. The new default
+    /// `known_hosts = ["H"]` parses to the same keypress (`Shift` + `h`), and
+    /// Help is matched first on the Keys tab — so without this strip the
+    /// overlay is unreachable for every upgrading user. Detect the upgrade by
+    /// the absence of a `known_hosts` key in the raw config text (same pattern
+    /// as [`Self::migrate_pre_sftp_tabs`]). Idempotent once the config is
+    /// re-saved with `known_hosts` present.
+    pub fn migrate_help_frees_known_hosts(&mut self, raw_config: &str) -> bool {
+        if raw_config.contains("known_hosts") {
+            return false;
+        }
+        let before = self.help.clone();
+        self.help.retain(|b| {
+            let t = b.trim();
+            !t.eq_ignore_ascii_case("Shift+H") && t != "H"
+        });
+        if self.help.is_empty() {
+            self.help = vec!["?".to_string()];
+        }
+        self.help != before
+    }
+
     /// Append `spec` to an action's bindings unless already present.
     pub fn add(&mut self, action: KeyAction, spec: String) {
         let mut binds = self.binds(action).to_vec();
@@ -1409,6 +1433,29 @@ mod tests {
         let before = kb.tab_tunnels.clone();
         assert!(!kb.migrate_pre_sftp_tabs(raw));
         assert_eq!(kb.tab_tunnels, before);
+    }
+
+    #[test]
+    fn migrate_help_strips_shift_h_on_upgrade() {
+        let raw = "[keybinds]\nhelp = [\"?\", \"Shift+H\"]\n";
+        let mut kb = KeybindsConfig {
+            help: vec!["?".into(), "Shift+H".into()],
+            ..KeybindsConfig::default()
+        };
+        assert!(kb.migrate_help_frees_known_hosts(raw));
+        assert_eq!(kb.help, vec!["?"]);
+    }
+
+    #[test]
+    fn migrate_help_is_noop_when_known_hosts_present() {
+        let raw = "[keybinds]\nhelp = [\"?\", \"Shift+H\"]\nknown_hosts = [\"H\"]\n";
+        let mut kb = KeybindsConfig {
+            help: vec!["?".into(), "Shift+H".into()],
+            known_hosts: vec!["H".into()],
+            ..KeybindsConfig::default()
+        };
+        assert!(!kb.migrate_help_frees_known_hosts(raw));
+        assert_eq!(kb.help, vec!["?", "Shift+H"]);
     }
 
     #[test]
