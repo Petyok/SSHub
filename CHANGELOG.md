@@ -6,6 +6,24 @@ All notable changes to SSHub are documented in this file.
 
 ### Fixed
 
+- **Copying inside a session reaches your clipboard again when the copy comes
+  from the app running in the PTY** - a nested multiplexer (herdr, tmux), or an
+  editor set to `clipboard=osc52`, would highlight a selection and report a copy
+  while the clipboard never changed. Those apps copy by writing
+  `ESC ] 52 ; c ; <base64> BEL` to their stdout, which is our PTY; `vt100` parses
+  it and hands it to `Callbacks::copy_to_clipboard`, and the default `()` impl
+  that SSHub used is a no-op - so the sequence was parsed and dropped, with no
+  passthrough to our own stdout. The parser now collects those writes and the
+  session re-emits them toward the hosting terminal. This matters most where the
+  inner app owns the selection: SSHub's own Shift+drag can't stand in for it,
+  because SSHub sees one flat character grid and reads every intermediate line
+  out to the full terminal width - across a split layout that drags in the
+  neighbouring panes and their borders.
+
+  Since this lets the remote side write to your clipboard, every relay raises a
+  visible notice, payloads are capped at 64 KiB, and the queue is bounded so a
+  copy loop can't flood it. Clipboard *reads* stay refused: `ESC]52;c;?BEL` is
+  still unanswered, so no host can ask what you have copied.
 - **The README GIFs and screenshots are recorded from the terminal stream now,
   not screenshotted** - and four of the five GIFs had no animation in them at
   all. Two separate faults: every tape except `hero` switched

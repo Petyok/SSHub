@@ -507,6 +507,7 @@ impl Session {
             }
         }
         if had_bytes {
+            self.relay_clipboard_writes();
             self.maybe_send_pending_secret();
             self.maybe_reveal();
         }
@@ -521,6 +522,41 @@ impl Session {
         self.reveal_on_timeout();
         // Re-check after reveal/timeout transitions (mosh has no ssh -v marker).
         self.maybe_detect_connected();
+    }
+
+    /// Forward OSC 52 clipboard writes emitted by applications inside the PTY
+    /// to the terminal hosting sshub. Without this the sequence dies in our
+    /// vt100 parser: a nested multiplexer (herdr, tmux) or an editor with
+    /// `clipboard=osc52` appears to copy — the selection even highlights —
+    /// but nothing ever reaches the system clipboard.
+    ///
+    /// Relaying means the remote side can write to the local clipboard, so
+    /// every relay raises a visible notice: a clipboard change the user didn't
+    /// ask for is worth noticing. The payload itself never lands in the notice,
+    /// the diagnostics or the session log.
+    fn relay_clipboard_writes(&mut self) {
+        self.relay_clipboard_writes_with(parser::emit_osc52_b64);
+    }
+
+    /// Relay with an injectable sink. Tests drive this directly: the real sink
+    /// writes to the process's stdout, which the test harness does *not*
+    /// capture (it only intercepts the `print!` macros), so exercising it under
+    /// `cargo test` would clobber the clipboard of whoever ran the suite.
+    fn relay_clipboard_writes_with(&mut self, mut emit: impl FnMut(&str) -> std::io::Result<()>) {
+        let mut relayed = None;
+        for payload in self.parser.take_clipboard_writes() {
+            match emit(&payload) {
+                // Several writes in one tick collapse into one notice (the last
+                // one wins), so a copy loop can't flood the corner of the screen.
+                Ok(()) => relayed = Some(parser::decoded_len(payload.as_bytes())),
+                Err(e) => self
+                    .diagnostics
+                    .push(format!("clipboard relay failed: {e}")),
+            }
+        }
+        if let Some(bytes) = relayed {
+            self.set_copy_notice(format!("remote copied {bytes} bytes to clipboard"));
+        }
     }
 
     /// Reveal the live terminal once the connect timeout elapses — but only if
@@ -1144,6 +1180,87 @@ mod prompt_tests {
             !s.screen_tail_snippet().contains("ERR_MARKER"),
             "stderr must not appear on the PTY grid"
         );
+    }
+
+    /// Build a throwaway session for tests that only need a live `Session`.
+    fn scratch_session() -> Session {
+        let config = SessionConfig {
+            argv: vec!["true".into()],
+            display_name: "t".into(),
+            meta: SessionMeta::default(),
+            pending_secret: None,
+            key_push_identity: None,
+            host_name: "t".into(),
+        };
+        Session::spawn(config, 24, 80, None).unwrap()
+    }
+
+    #[test]
+    fn clipboard_writes_from_the_pty_are_relayed_and_announced() {
+        // An app inside the PTY (herdr, tmux, an editor with clipboard=osc52)
+        // copies by writing OSC 52 to its stdout. vt100 hands that to the
+        // default no-op callback, where it used to vanish — the selection
+        // highlighted but the clipboard never changed.
+        let mut s = scratch_session();
+        // base64("GEHEIM") == "R0VIRUlN" → 6 bytes decoded.
+        s.parser.process(b"BEFORE\x1b]52;c;R0VIRUlN\x07AFTER");
+
+        let mut sent = Vec::new();
+        s.relay_clipboard_writes_with(|payload| {
+            sent.push(payload.to_string());
+            Ok(())
+        });
+
+        assert_eq!(sent, vec!["R0VIRUlN".to_string()]);
+        assert_eq!(
+            s.copy_notice.as_ref().map(|(m, _)| m.as_str()),
+            Some("remote copied 6 bytes to clipboard"),
+            "a relayed clipboard write must be visible to the user"
+        );
+
+        // The sequence itself must never become text on the grid.
+        let tail = s.screen_tail_snippet();
+        assert!(tail.contains("BEFOREAFTER"), "tail: {tail:?}");
+        assert!(!tail.contains("52;c;"), "escape sequence leaked: {tail:?}");
+    }
+
+    #[test]
+    fn failing_clipboard_relay_is_reported_not_swallowed() {
+        // A failed relay must not claim success: no notice, but a diagnostic.
+        let mut s = scratch_session();
+        s.parser.process(b"\x1b]52;c;R0VIRUlN\x07");
+
+        s.relay_clipboard_writes_with(|_| Err(std::io::Error::other("boom")));
+
+        assert!(
+            s.copy_notice.is_none(),
+            "a failed relay must not announce a copy"
+        );
+        assert!(
+            s.take_diagnostics()
+                .iter()
+                .any(|d| d.contains("clipboard relay failed")),
+            "a failed relay must surface in diagnostics"
+        );
+    }
+
+    #[test]
+    fn clipboard_queue_is_emptied_by_relaying() {
+        // Guards against re-sending the same payload on the next drain.
+        let mut s = scratch_session();
+        s.parser.process(b"\x1b]52;c;R0VIRUlN\x07");
+
+        let mut sent = 0usize;
+        s.relay_clipboard_writes_with(|_| {
+            sent += 1;
+            Ok(())
+        });
+        s.relay_clipboard_writes_with(|_| {
+            sent += 1;
+            Ok(())
+        });
+
+        assert_eq!(sent, 1, "each clipboard write must be relayed exactly once");
     }
 
     #[test]
