@@ -529,6 +529,18 @@ role_catalog! {
         IdentitiesAgentCount => ("components.identities.agent.count", SemanticStyle::TextBright, false),
         IdentitiesNotice => ("components.identities.notice", SemanticStyle::Warning, false),
 
+        // The key generator popup. `label_focused` and `value_focused` are one
+        // pair rather than the tunnel form's three, because the keygen form has
+        // no separate "selected but not editing" state: reaching a field is
+        // editing it. The `\u{25b8}` marker shares `label_focused` for the same
+        // reason — it marks exactly the row that label belongs to.
+        KeygenTitle => ("components.keygen.title", SemanticStyle::TextBrightBold, false),
+        KeygenLabel => ("components.keygen.label", SemanticStyle::TextDim, false),
+        KeygenLabelFocused => ("components.keygen.label_focused", SemanticStyle::Warning, false),
+        KeygenValue => ("components.keygen.value", SemanticStyle::Text, false),
+        KeygenValueFocused => ("components.keygen.value_focused", SemanticStyle::TextBrightUnderlinedBold, false),
+        KeygenHelp => ("components.keygen.help", SemanticStyle::TextDim, false),
+
         AuditFilterActive => ("components.audit.filter_active", SemanticStyle::Inverse, false),
         AuditFilterInactive => ("components.audit.filter_inactive", SemanticStyle::TextDim, false),
         AuditNote => ("components.audit.note", SemanticStyle::TextMuted, false),
@@ -1222,6 +1234,41 @@ mod tests {
             "components.b = Paint(Border)".to_string(),
         ];
         assert!(matrix_diff(&frozen, &actual).is_empty());
+    }
+
+    /// The two counts the guide states in prose are the ones `ROLE_SPECS`
+    /// actually has.
+    ///
+    /// The generated table between the `THEME_ROLES` markers is checked byte
+    /// for byte elsewhere, but the numbers in the surrounding sentences are
+    /// hand-written and sit far away from it — they went stale silently when
+    /// roles were added. Deriving both from `ROLE_SPECS` and searching the
+    /// guide for them ties the prose to the catalogue.
+    #[test]
+    fn the_guide_states_the_role_counts_the_catalogue_has() {
+        let total = ROLE_SPECS.len();
+        // Every role but one falls back to a semantic slot; `os_logo.tint`
+        // defaults to the asset's own colours instead.
+        let native: Vec<&str> = ROLE_SPECS
+            .iter()
+            .filter(|spec| matches!(spec.fallback, RoleFallback::Tint(SemanticTint::Native)))
+            .map(|spec| spec.path)
+            .collect();
+        assert_eq!(native, ["components.os_logo.tint"]);
+        let semantic = total - native.len();
+        assert_eq!((total, semantic), (234, 233));
+
+        for phrase in [
+            format!("The {total} component roles"),
+            format!("{semantic} of them fall back to a semantic slot"),
+            format!("{semantic} of SSHub's {total} component roles fall back"),
+            format!("{total} roles, grouped by the surface they paint"),
+        ] {
+            assert!(
+                THEME_GUIDE.contains(&phrase),
+                "docs/theme-system.md no longer states `{phrase}`"
+            );
+        }
     }
 
     #[test]

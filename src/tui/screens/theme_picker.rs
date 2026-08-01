@@ -581,6 +581,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             .border_style(crate::tui::popup_border_style(live, popup)),
         popup,
     );
+    crate::tui::paint_popup_border(frame, popup, live);
 
     let rows = app.theme_picker_rows();
     let selected = app.theme_picker.as_ref().map(|s| s.selected).unwrap_or(0);

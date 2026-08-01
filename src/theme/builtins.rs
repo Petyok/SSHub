@@ -277,6 +277,7 @@ mod tests {
         "components.animation.hub_flash",
         "components.animation.wordmark_accent",
         "components.tunnel_form.value_editing",
+        "components.keygen.label_focused",
     ];
 
     /// Assert that `theme` reproduces the frozen pre-theme-system appearance for
@@ -507,6 +508,19 @@ mod tests {
             theme.style(StyleRole::AnimationHubReady),
         );
 
+        // The key generator's focused label: amber and bold, the same
+        // "warning with bold" gap the animation pair falls into. Its focused
+        // value is *not* an override — the catalogue's `text_bright with
+        // underline and bold` recipe already carries both modifiers — so the
+        // two are asserted together here, one stated in the asset and one not.
+        assert_eq!(
+            theme.style(StyleRole::KeygenLabelFocused),
+            legacy::amber().add_modifier(Modifier::BOLD),
+        );
+        let keygen_value = theme.style(StyleRole::KeygenValueFocused);
+        assert!(keygen_value.add_modifier.contains(Modifier::BOLD));
+        assert!(keygen_value.add_modifier.contains(Modifier::UNDERLINED));
+
         // The tunnel form underlines the value it is editing, in highlight
         // white — no bold, which is what separates it from `group_form`.
         assert_eq!(
@@ -654,6 +668,7 @@ mod tests {
     const SETTINGS: &str = "src/tui/screens/settings.rs";
     const KEYBIND: &str = "src/tui/screens/keybind_editor.rs";
     const KEYCHAIN: &str = "src/tui/screens/keychain.rs";
+    const KEYGEN: &str = "src/tui/screens/keygen.rs";
     const KEYS: &str = "src/tui/screens/keys.rs";
     const HELP: &str = "src/tui/screens/help.rs";
     const TUNNEL_RECONNECT: &str = "src/tui/screens/tunnel_reconnect.rs";
@@ -679,6 +694,7 @@ mod tests {
         SETTINGS,
         KEYBIND,
         KEYCHAIN,
+        KEYGEN,
         KEYS,
         HELP,
         TUNNEL_RECONNECT,
@@ -1405,6 +1421,79 @@ mod tests {
                 ident: "FocusIndicator",
                 role: RoleRef::Style(StyleRole::FocusIndicator),
                 expect: Ansi(Color::Cyan),
+            },
+            // ── Key generator (the last form on direct ANSI) ───
+            //
+            // The same shape as the two forms above, with one difference: the
+            // keygen form has no "selected but idle" state — reaching a field
+            // *is* editing it — so it publishes one focused pair rather than
+            // the host form's focused/editing split, and the `\u{25b8}` marker
+            // rides inside `label_focused` instead of naming a role of its own.
+            MigratedRoleUse {
+                id: "keygen.title",
+                renderer: KEYGEN,
+                was: "Block::title(\"Generate SSH Key\") with no style of its own",
+                ident: "KeygenTitle",
+                role: RoleRef::Style(StyleRole::KeygenTitle),
+                expect: Unstyled {
+                    was: "an unstyled Block title, i.e. the terminal's own foreground",
+                    why: "the last overlay title the theme could not reach; \
+                          `keygen.title` gives it the same bold heading role its \
+                          sibling forms already wear, so it is themeable for the \
+                          first time",
+                },
+            },
+            MigratedRoleUse {
+                id: "keygen.label",
+                renderer: KEYGEN,
+                was: "Style::default().fg(Color::DarkGray)",
+                ident: "KeygenLabel",
+                role: RoleRef::Style(StyleRole::KeygenLabel),
+                expect: Ansi(Color::DarkGray),
+            },
+            MigratedRoleUse {
+                id: "keygen.label_focused",
+                renderer: KEYGEN,
+                was: "Style::default().fg(Color::Yellow).add_modifier(BOLD), which \
+                      also carried the `\u{25b8}` marker: it rode inside the label \
+                      span rather than being styled separately",
+                ident: "KeygenLabelFocused",
+                role: RoleRef::Style(StyleRole::KeygenLabelFocused),
+                expect: Ansi(Color::Yellow),
+            },
+            MigratedRoleUse {
+                id: "keygen.value",
+                renderer: KEYGEN,
+                was: "Style::default() — an idle value had no style at all",
+                ident: "KeygenValue",
+                role: RoleRef::Style(StyleRole::KeygenValue),
+                expect: Unstyled {
+                    was: "Style::default(), i.e. the terminal's own foreground",
+                    why: "an idle value that carries no colour cannot be themed at all; \
+                          `keygen.value` gives it the body-text role the rest of the app \
+                          already uses for exactly this kind of text",
+                },
+            },
+            MigratedRoleUse {
+                id: "keygen.value_focused",
+                renderer: KEYGEN,
+                was: "Style::default().fg(Color::White).add_modifier(BOLD | UNDERLINED)",
+                ident: "KeygenValueFocused",
+                role: RoleRef::Style(StyleRole::KeygenValueFocused),
+                expect: Ansi(Color::White),
+            },
+            MigratedRoleUse {
+                id: "keygen.help",
+                renderer: KEYGEN,
+                was: "Style::default().add_modifier(Modifier::DIM)",
+                ident: "KeygenHelp",
+                role: RoleRef::Style(StyleRole::KeygenHelp),
+                expect: Unstyled {
+                    was: "Style::default().add_modifier(Modifier::DIM), no colour",
+                    why: "the bare DIM modifier is terminal-dependent and several \
+                          emulators ignore it; `keygen.help` states the same intent as a \
+                          colour the theme controls",
+                },
             },
             // ── Tag filter ─────────────────────────────────────
             MigratedRoleUse {
@@ -2875,7 +2964,7 @@ mod tests {
         assert_eq!(total, ids.len(), "two rows share an id");
         // Pinned so the number quoted in reports cannot drift from the table.
         assert_eq!(
-            total, 219,
+            total, 225,
             "the inventory changed size; add or remove the row deliberately"
         );
 

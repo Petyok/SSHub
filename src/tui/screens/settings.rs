@@ -34,6 +34,7 @@ pub fn render_settings(frame: &mut Frame, app: &App) {
             .border_style(crate::tui::popup_border_style(theme, popup)),
         popup,
     );
+    crate::tui::paint_popup_border(frame, popup, theme);
 
     // Everything below writes into the buffer directly. `set_string` clips
     // columns on its own, but an out-of-range *row* panics — and `fit_popup`
@@ -61,17 +62,24 @@ pub fn render_settings(frame: &mut Frame, app: &App) {
             buf.set_string(popup.x + 1, ry, &blank, selection);
         }
         let label_style = if is_sel { selection } else { row };
-        // Everything drawn on a selected row is foreground-only: the bar above
-        // already carries the background.
+        // The controls below carry their own foreground but must not carry a
+        // background onto a selected row: the bar drawn above owns that.
+        let over_bar = |style: Style| {
+            if is_sel {
+                crate::tui::inherit_background(style, selection)
+            } else {
+                style
+            }
+        };
 
         match app.setting_value(desc.item) {
             Some(on) => {
                 let check = if on { "[x] " } else { "[ ] " };
-                let check_style = if on {
+                let check_style = over_bar(if on {
                     Style::default().fg(theme.color(ColorRole::StatusSuccess))
                 } else {
                     legend
-                };
+                });
                 buf.set_string(row_x, ry, check, check_style);
                 buf.set_string(
                     label_x,
@@ -93,7 +101,7 @@ pub fn render_settings(frame: &mut Frame, app: &App) {
                     label_x + used as u16,
                     ry,
                     value,
-                    theme.style(StyleRole::PickerMatch),
+                    over_bar(theme.style(StyleRole::PickerMatch)),
                 );
             }
         }
@@ -170,6 +178,106 @@ mod tests {
         terminal.draw(|f| render_settings(f, &app)).unwrap();
         let buffer = terminal.backend().buffer().clone();
         (0..80).map(|x| buffer[(x, y)].symbol()).collect()
+    }
+
+    /// The selection bar's background must survive under the two controls a
+    /// selected row draws over it — the checkbox and the Theme row's value —
+    /// while each keeps its own foreground.
+    ///
+    /// Both are written after the bar. `status.success` is a colour role with
+    /// no background at all and `picker.match` carries its own, so one punched
+    /// a `Reset` hole in the bar and the other overwrote it with a foreign
+    /// colour.
+    #[test]
+    fn selected_row_controls_keep_their_foreground_over_the_selection_background() {
+        use crate::test_support::RoleMarker;
+        use crate::test_support::{fg, fg_bg, frame_at, marker, role_marker_theme, themed_app};
+        use ratatui::layout::Rect;
+
+        const SELECTION_FG: u32 = 0xb3_0001;
+        const SELECTION_BG: u32 = 0xb3_0101;
+        const MATCH_FG: u32 = 0xb3_0002;
+        const MATCH_BG: u32 = 0xb3_0102;
+        const SUCCESS_FG: u32 = 0xb3_0003;
+
+        const MARKERS: &[RoleMarker] = &[
+            fg_bg(
+                "components.settings.row_selected",
+                SELECTION_FG,
+                SELECTION_BG,
+            ),
+            fg_bg("components.picker.match", MATCH_FG, MATCH_BG),
+            fg("components.status.success", SUCCESS_FG),
+        ];
+
+        let area = Rect::new(0, 0, 80, 24);
+        let sel_bg = marker(SELECTION_BG);
+
+        // Row 0 is the Theme action row: its value stands in for the checkbox.
+        let mut app = themed_app(role_marker_theme("settings", MARKERS));
+        app.mode = AppMode::Settings;
+        app.settings_selected = 0;
+        let buf = frame_at(area, |f| render_settings(f, &app));
+        let popup = app.last_popup_rect.get().expect("the popup was laid out");
+        let (value_x, _) = crate::test_support::find_text(&buf, app.active_theme_id());
+        let value_cell = buf.cell((value_x, popup.y + 1)).unwrap();
+        assert_eq!(value_cell.fg, marker(MATCH_FG), "theme value foreground");
+        assert_eq!(value_cell.bg, sel_bg, "theme value background");
+
+        // Row 1 is a toggle: turn it on so the checkbox wears `status.success`.
+        let mut app = themed_app(role_marker_theme("settings", MARKERS));
+        app.mode = AppMode::Settings;
+        app.settings_selected = 1;
+        app.config.appearance.opaque_background = true;
+        let buf = frame_at(area, |f| render_settings(f, &app));
+        let popup = app.last_popup_rect.get().expect("the popup was laid out");
+        let check_cell = buf.cell((popup.x + 2, popup.y + 2)).unwrap();
+        assert_eq!(check_cell.symbol(), "[", "the checkbox");
+        assert_eq!(check_cell.fg, marker(SUCCESS_FG), "checkbox foreground");
+        assert_eq!(check_cell.bg, sel_bg, "checkbox background");
+    }
+
+    /// A gradient `components.popup.border` really reaches the popup frame, and
+    /// the popup title on the same top row keeps its own role.
+    ///
+    /// Settings stands in for all sixteen `popup_border_style` call sites: they
+    /// share one contract — render the block in the solid fallback, then run
+    /// `paint_popup_border` over it — and the mechanism is proved once in
+    /// `blit`. What this adds is that the wiring exists at a real call site.
+    #[test]
+    fn a_gradient_popup_border_reaches_the_frame_without_recolouring_the_title() {
+        use crate::test_support::{find_text, frame_at, resolved_source, themed_app};
+        use ratatui::layout::Rect;
+
+        let theme = resolved_source(
+            "ringed",
+            "schema_version = 1\nname = \"Ringed\"\nextends = \"default\"\n\n\
+             [gradients.ring]\ndirection = \"perimeter\"\n\
+             stops = [ { at = 0.0, color = \"#ff0000\" }, { at = 0.5, color = \"#0000ff\" }, \
+             { at = 1.0, color = \"#ff0000\" } ]\n\n\
+             [components.popup]\nborder = { gradient = \"gradients.ring\" }\n\
+             title = { foreground = \"#00ff00\" }\n",
+        );
+        let mut app = themed_app(theme);
+        app.mode = AppMode::Settings;
+
+        let buf = frame_at(Rect::new(0, 0, 80, 24), |f| render_settings(f, &app));
+        let popup = app.last_popup_rect.get().expect("the popup was laid out");
+
+        let bottom: Vec<_> = (popup.x..popup.right())
+            .map(|x| buf.cell((x, popup.bottom() - 1)).unwrap().fg)
+            .collect();
+        assert!(
+            bottom.windows(2).any(|pair| pair[0] != pair[1]),
+            "the popup border stayed flat: {bottom:?}"
+        );
+
+        let title = find_text(&buf, "Settings");
+        assert_eq!(
+            buf.cell(title).unwrap().fg,
+            ratatui::style::Color::Rgb(0x00, 0xff, 0x00),
+            "the ring pass repainted the popup title"
+        );
     }
 
     /// The Theme row is an action: no checkbox, and the active theme id sits

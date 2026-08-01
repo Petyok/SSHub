@@ -193,6 +193,19 @@ pub fn render_keys(frame: &mut Frame, area: Rect, app: &App) {
             agent,
             CardStyles::of(theme, card),
         );
+        // The card drew its frame in the solid fallback of whichever of the two
+        // border roles its selection state calls for; this is the gradient half
+        // of that, over the same rect and the same role.
+        crate::tui::blit::paint_border(
+            &mut layer,
+            card,
+            theme,
+            if is_selected {
+                PaintRole::IdentitiesCardBorderSelected
+            } else {
+                PaintRole::IdentitiesCardBorder
+            },
+        );
     }
     crate::tui::blit::blit(buf, ext, grid, &layer, 0, -(pad as i32));
 
@@ -496,6 +509,102 @@ mod tests {
             certificate: None,
             has_password,
         }
+    }
+
+    /// Each identity card runs the gradient of the border role its *own*
+    /// selection state names.
+    ///
+    /// Two roles, two cards, one render: the selected card must gradient
+    /// `card.border_selected` and the unselected one `card.border`. Giving the
+    /// two gradients disjoint colours is what proves a card cannot be painted
+    /// with its neighbour's role.
+    #[test]
+    fn identity_cards_gradient_the_border_role_their_selection_state_names() {
+        use crate::test_support::{frame_at, resolved_source, themed_app};
+
+        // Two closed rings, deliberately disjoint: reds for the idle border,
+        // greens for the selected one.
+        let theme = resolved_source(
+            "cards",
+            "schema_version = 1\nname = \"Cards\"\nextends = \"default\"\n\n\
+             [gradients.idle]\ndirection = \"perimeter\"\n\
+             stops = [ { at = 0.0, color = \"#400000\" }, { at = 0.5, color = \"#ff0000\" }, \
+             { at = 1.0, color = \"#400000\" } ]\n\
+             [gradients.sel]\ndirection = \"perimeter\"\n\
+             stops = [ { at = 0.0, color = \"#004000\" }, { at = 0.5, color = \"#00ff00\" }, \
+             { at = 1.0, color = \"#004000\" } ]\n\n\
+             [components.identities.card]\n\
+             border = { gradient = \"gradients.idle\" }\n\
+             border_selected = { gradient = \"gradients.sel\" }\n",
+        );
+
+        let mut app = themed_app(theme);
+        app.identities = vec![
+            Identity {
+                id: 1,
+                name: "first".into(),
+                username: None,
+                private_key: Some(PathBuf::from("/home/u/.ssh/first")),
+                certificate: None,
+                has_password: false,
+            },
+            Identity {
+                id: 2,
+                name: "second".into(),
+                username: None,
+                private_key: Some(PathBuf::from("/home/u/.ssh/second")),
+                certificate: None,
+                has_password: false,
+            },
+        ];
+        app.identity_selected = 0;
+
+        let area = Rect::new(0, 0, 120, 30);
+        let buf = frame_at(area, |f| render_keys(f, area, &app));
+
+        // A card's frame is the only thing drawn in these colours, so a
+        // channel-dominant cell identifies which role reached the buffer.
+        // Collecting the *distinct* values per family is what separates a real
+        // gradient from a flattened one: a renderer that kept sampling each
+        // role at a single `line_color` would still put red on the idle card
+        // and green on the selected one — both rings start on their own hue —
+        // but each family would contribute exactly one colour.
+        let mut idle: Vec<(u8, u8, u8)> = Vec::new();
+        let mut selected: Vec<(u8, u8, u8)> = Vec::new();
+        for y in area.top()..area.bottom() {
+            for x in area.left()..area.right() {
+                if let ratatui::style::Color::Rgb(r, g, b) = buf.cell((x, y)).unwrap().fg {
+                    let family = if b == 0 && r > 0 && g == 0 {
+                        Some(&mut idle)
+                    } else if b == 0 && g > 0 && r == 0 {
+                        Some(&mut selected)
+                    } else {
+                        None
+                    };
+                    if let Some(seen) = family {
+                        if !seen.contains(&(r, g, b)) {
+                            seen.push((r, g, b));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Both roles reached the frame at all…
+        assert!(
+            !selected.is_empty(),
+            "the selected card did not use border_selected"
+        );
+        assert!(!idle.is_empty(), "the unselected card did not use border");
+        // …and each one swept rather than flattening to its first stop.
+        assert!(
+            idle.len() >= 2,
+            "`card.border` flattened to a single colour: {idle:?}"
+        );
+        assert!(
+            selected.len() >= 2,
+            "`card.border_selected` flattened to a single colour: {selected:?}"
+        );
     }
 
     #[test]

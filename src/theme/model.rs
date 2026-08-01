@@ -436,22 +436,69 @@ impl ThemeDiagnostic {
 // Resolved side — the immutable runtime theme.
 // ---------------------------------------------------------------------------
 
-/// Index of a resolved gradient inside a theme's gradient table.
+/// Which resolve run produced a [`ResolvedTheme`], and therefore which run's
+/// [`GradientId`]s it will answer.
+///
+/// A theme id is not enough: reloading the same file — after the user edited
+/// it, or simply because the watcher fired — produces a new gradient table at
+/// the same indices under the same name. A counter that never repeats is what
+/// lets the new theme refuse an id captured from the old one instead of
+/// silently naming whatever now sits at that index.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ThemeGeneration(u64);
+
+impl ThemeGeneration {
+    /// The next unused generation.
+    ///
+    /// `fetch_update` with `checked_add` rather than a plain `fetch_add`: the
+    /// whole guarantee is that a generation is never reused, and a silent wrap
+    /// back to `1` would hand a stale id a theme that accepts it. `Relaxed` is
+    /// enough because the value is only ever compared for equality — it orders
+    /// no other memory.
+    ///
+    /// Exhausting a `u64` is not reachable by any sequence of theme reloads a
+    /// process could perform, so the failure is treated as the broken invariant
+    /// it would be rather than papered over.
+    pub(crate) fn next() -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let value = NEXT
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                current.checked_add(1)
+            })
+            .expect("theme generations exhausted: u64 resolve runs in one process");
+        Self(value)
+    }
+}
+
+/// Index of a resolved gradient inside one resolve run's gradient table.
 ///
 /// Minting one is the resolver's privilege: an id built from an arbitrary
 /// number would name a gradient that does not exist, and every reader of a
 /// [`ResolvedTheme`] is entitled to assume it does. Outside the crate, use
 /// [`ResolvedTheme::gradient`] or [`ResolvedTheme::paint_gradient`].
+///
+/// The id carries the generation of the run that minted it, so a theme only
+/// answers ids that are actually its own — see [`ThemeGeneration`]. Equality
+/// therefore compares runtime identity as well as position: two ids from
+/// different runs are different ids even at the same index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct GradientId(usize);
+pub struct GradientId {
+    generation: ThemeGeneration,
+    index: usize,
+}
 
 impl GradientId {
-    pub(crate) fn new(index: usize) -> Self {
-        Self(index)
+    pub(crate) fn new(generation: ThemeGeneration, index: usize) -> Self {
+        Self { generation, index }
     }
 
     pub(crate) fn index(self) -> usize {
-        self.0
+        self.index
+    }
+
+    pub(crate) fn generation(self) -> ThemeGeneration {
+        self.generation
     }
 }
 
@@ -533,12 +580,12 @@ pub enum ResolvedTint {
 /// readable but not writable from outside.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedGradientStop {
-    pub(crate) position: f32,
+    pub(crate) position: f64,
     pub(crate) color: Color,
 }
 
 impl ResolvedGradientStop {
-    pub fn position(&self) -> f32 {
+    pub fn position(&self) -> f64 {
         self.position
     }
 
@@ -568,7 +615,7 @@ impl ResolvedGradient {
     ///
     /// Channels are interpolated in sRGB and rounded per the V1 colour rules,
     /// so a gradient renders identically on every platform.
-    pub fn sample(&self, t: f32) -> Color {
+    pub fn sample(&self, t: f64) -> Color {
         sample_stops(&self.stops, t.clamp(0.0, 1.0))
     }
 }
@@ -746,6 +793,11 @@ impl ResolvedComponents {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedTheme {
     pub(crate) id: ThemeId,
+    /// The resolve run this theme came out of.
+    ///
+    /// Cloning keeps it — a clone is the same theme — so a `Rc<ResolvedTheme>`
+    /// handed around the app answers exactly the ids its own run minted.
+    pub(crate) generation: ThemeGeneration,
     pub(crate) name: String,
     pub(crate) description: Option<String>,
     /// The file's `author`, carried through resolution so `theme show
@@ -792,15 +844,103 @@ impl ResolvedTheme {
         &self.gradients
     }
 
-    /// The gradient an id names. `None` only ever means the id came from
-    /// another theme.
+    /// Everything two themes can share *except* which resolve run produced
+    /// them.
+    ///
+    /// The derived `PartialEq` deliberately includes the generation, because a
+    /// `GradientId` is only valid within its own run and two runs really are
+    /// two different themes as far as ids are concerned. A round-trip test
+    /// comparing an export against its original is asking the other question —
+    /// "does it mean the same thing?" — and has to say so explicitly.
+    /// `components` is compared **role by role** rather than as a whole,
+    /// because a `ResolvedPaint::Gradient` holds a generation-bound
+    /// [`GradientId`]: two runs can name the identical gradient and still
+    /// compare unequal. A gradient paint is therefore compared through each
+    /// theme's *own* lookup — the table itself is compared directly above — and
+    /// a solid facing a gradient is a genuine difference either way.
+    #[cfg(test)]
+    pub(crate) fn semantically_eq(&self, other: &Self) -> bool {
+        use crate::theme::catalog::{ColorRole, PaintRole, StyleRole, TintRole, ROLE_SPECS};
+
+        let Self {
+            id,
+            generation: _,
+            name,
+            description,
+            author,
+            semantic,
+            gradients,
+            gradient_names,
+            components: _,
+        } = self;
+        let head = id == &other.id
+            && name == &other.name
+            && description == &other.description
+            && author == &other.author
+            && semantic == &other.semantic
+            && gradients == &other.gradients
+            && gradient_names == &other.gradient_names;
+        if !head {
+            return false;
+        }
+
+        ROLE_SPECS.iter().all(|spec| match spec.role {
+            crate::theme::catalog::RoleRef::Color(role) => {
+                let _: ColorRole = role;
+                self.color(role) == other.color(role)
+            }
+            crate::theme::catalog::RoleRef::Style(role) => {
+                let _: StyleRole = role;
+                self.style(role) == other.style(role)
+            }
+            crate::theme::catalog::RoleRef::Tint(role) => {
+                let _: TintRole = role;
+                self.tint(role) == other.tint(role)
+            }
+            crate::theme::catalog::RoleRef::Paint(role) => {
+                let _: PaintRole = role;
+                match (self.paint(role), other.paint(role)) {
+                    (ResolvedPaint::Solid(a), ResolvedPaint::Solid(b)) => a == b,
+                    (ResolvedPaint::Gradient(a), ResolvedPaint::Gradient(b)) => {
+                        // Each id is read by the theme that minted it; equal
+                        // names over an already-equal table means equal
+                        // gradients.
+                        let (Some(a), Some(b)) = (self.gradient_name(*a), other.gradient_name(*b))
+                        else {
+                            return false;
+                        };
+                        a == b
+                    }
+                    _ => false,
+                }
+            }
+        })
+    }
+
+    /// Whether `id` was minted by this theme's own resolve run.
+    ///
+    /// Checked *before* any index lookup: an id from another run may well be in
+    /// range here, and answering it would name a different gradient under the
+    /// same number — exactly the stale-id bug the generation exists to stop.
+    fn owns(&self, id: GradientId) -> bool {
+        id.generation() == self.generation
+    }
+
+    /// The gradient an id names. `None` means the id came from another resolve
+    /// run — a different theme, or the same theme before a reload.
     pub fn gradient(&self, id: GradientId) -> Option<&ResolvedGradient> {
+        if !self.owns(id) {
+            return None;
+        }
         self.gradients.get(id.index())
     }
 
     /// The name the theme file gave a gradient. Reading only — an export needs
     /// to reference `gradients.<name>` the way the author wrote it.
     pub fn gradient_name(&self, id: GradientId) -> Option<&str> {
+        if !self.owns(id) {
+            return None;
+        }
         self.gradient_names.get(id.index()).map(String::as_str)
     }
 
@@ -837,9 +977,20 @@ impl ResolvedTheme {
     /// release builds still fall back, because a wrong colour beats a crash in
     /// front of a user.
     fn checked_gradient(&self, id: GradientId) -> Option<&ResolvedGradient> {
-        let gradient = self.gradients.get(id.index());
+        // A foreign generation and an out-of-range index are different bugs —
+        // the first means an id outlived its resolve run, the second a resolver
+        // that numbered past its own table — so the assertion names which.
         debug_assert!(
-            gradient.is_some(),
+            self.owns(id),
+            "theme `{}` paints with a gradient id from another resolve run \
+             ({:?} vs {:?})",
+            self.id,
+            id.generation(),
+            self.generation
+        );
+        let gradient = self.gradient(id);
+        debug_assert!(
+            gradient.is_some() || !self.owns(id),
             "theme `{}` paints with gradient {} of {}",
             self.id,
             id.index(),
@@ -889,7 +1040,7 @@ impl ResolvedTheme {
 /// interior at `0.0` puts it on the seam, where the resolver guarantees the
 /// first and last stop are the same colour, so the choice is not visible as an
 /// arbitrary end of the ramp.
-fn anchored_position(direction: GradientDirection, area: Rect, x: u16, y: u16) -> f32 {
+fn anchored_position(direction: GradientDirection, area: Rect, x: u16, y: u16) -> f64 {
     if area.is_empty() {
         return 0.0;
     }

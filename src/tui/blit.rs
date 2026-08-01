@@ -170,6 +170,28 @@ pub fn paint_line(buf: &mut Buffer, area: Rect, theme: &ResolvedTheme, role: Pai
     }
 }
 
+/// Run a paint role's gradient over an already rendered block's border ring.
+///
+/// The companion of [`line_color`] for a frame: the block draws its borders in
+/// the role's solid fallback, and this repaints exactly those cells when the
+/// role turned out to be a gradient. A solid role is a no-op — the block is
+/// already correct — so the cheap path stays cheap.
+///
+/// The ring pass is restricted to cells still carrying that same fallback
+/// colour, which is what keeps a title, label or badge drawn on the top border
+/// row in its own role: it was written in a different colour, so it does not
+/// match and is left alone.
+pub fn paint_border(buf: &mut Buffer, area: Rect, theme: &ResolvedTheme, role: PaintRole) {
+    if let Some(gradient) = theme.paint_gradient(role) {
+        crate::theme::gradient::paint_gradient_ring_selective(
+            buf,
+            area,
+            gradient,
+            CellSelection::Matching(line_color(theme, role, area)),
+        );
+    }
+}
+
 /// Overwrite every cell of `area` with a space in `style`.
 fn blank(buf: &mut Buffer, area: Rect, style: Style) {
     let target = area.intersection(buf.area);
@@ -469,6 +491,89 @@ mod tests {
              stops = [ { at = 0.0, color = \"#000000\" }, { at = 1.0, color = \"#ffffff\" } ]\n\n\
              [components.app]\nbackground = { gradient = \"gradients.wash\" }\n",
         )
+    }
+
+    /// A theme whose popup border is a two-stop gradient running the ring.
+    fn gradient_popup_border_theme() -> Rc<crate::theme::model::ResolvedTheme> {
+        user_theme(
+            "ringed",
+            "schema_version = 1\nname = \"Ringed\"\nextends = \"default\"\n\n\
+             [gradients.ring]\ndirection = \"perimeter\"\n\
+             stops = [ { at = 0.0, color = \"#ff0000\" }, { at = 0.5, color = \"#0000ff\" }, \
+             { at = 1.0, color = \"#ff0000\" } ]\n\n\
+             [components.popup]\nborder = { gradient = \"gradients.ring\" }\n",
+        )
+    }
+
+    /// `paint_border` gradients the frame and nothing else.
+    ///
+    /// Two claims in one test, because they are the same mechanism: the ring
+    /// cells sweep through several colours, and a title written on the top
+    /// border row in its own colour survives untouched. Without the
+    /// `Matching(base)` restriction the second claim fails — the ring pass
+    /// would recolour the title too.
+    #[test]
+    fn paint_border_gradients_the_frame_without_touching_the_title() {
+        use crate::theme::catalog::PaintRole;
+        let theme = gradient_popup_border_theme();
+        let area = Rect::new(0, 0, 12, 5);
+        let base = line_color(&theme, PaintRole::PopupBorder, area);
+
+        // Draw the frame the way a block does: every ring cell in the solid
+        // fallback. Then a title on the top row in a colour of its own.
+        let mut buf = Buffer::empty(area);
+        for y in area.top()..area.bottom() {
+            for x in area.left()..area.right() {
+                let on_ring = y == area.top()
+                    || y == area.bottom() - 1
+                    || x == area.left()
+                    || x == area.right() - 1;
+                if on_ring {
+                    buf.cell_mut((x, y)).unwrap().fg = base;
+                }
+            }
+        }
+        let title = ratatui::style::Color::Rgb(0x11, 0x22, 0x33);
+        for x in 2..7 {
+            buf.cell_mut((x, area.top())).unwrap().fg = title;
+        }
+
+        paint_border(&mut buf, area, &theme, PaintRole::PopupBorder);
+
+        let ring: Vec<_> = (area.left()..area.right())
+            .map(|x| buf.cell((x, area.bottom() - 1)).unwrap().fg)
+            .collect();
+        assert!(
+            ring.windows(2).any(|pair| pair[0] != pair[1]),
+            "the border did not gradient: {ring:?}"
+        );
+        assert!(
+            ring.iter().all(|c| *c != base),
+            "some border cells kept the flat fallback: {ring:?}"
+        );
+        for x in 2..7 {
+            assert_eq!(
+                buf.cell((x, area.top())).unwrap().fg,
+                title,
+                "the title at column {x} was repainted by the ring pass"
+            );
+        }
+    }
+
+    /// A solid role must stay a no-op: the block already drew it correctly.
+    #[test]
+    fn paint_border_leaves_a_solid_role_alone() {
+        use crate::theme::catalog::PaintRole;
+        let theme = resolved("default");
+        let area = Rect::new(0, 0, 6, 3);
+        let base = line_color(&theme, PaintRole::PopupBorder, area);
+        let mut buf = Buffer::empty(area);
+        for x in area.left()..area.right() {
+            buf.cell_mut((x, area.top())).unwrap().fg = base;
+        }
+        let before = buf.clone();
+        paint_border(&mut buf, area, &theme, PaintRole::PopupBorder);
+        assert_eq!(buf, before);
     }
 
     /// Resolve a user theme from a temp directory — never the real one.

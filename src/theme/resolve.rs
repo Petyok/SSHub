@@ -30,8 +30,8 @@ use crate::theme::model::{
     modifier_from_key, semantic_style, ColorBase, ColorSlot, ColorValue, ComponentValue,
     GradientDefinition, GradientDirection, GradientId, ModifierList, PaintSlot, ResolvedComponents,
     ResolvedGradient, ResolvedGradientStop, ResolvedPaint, ResolvedSemantic, ResolvedTheme,
-    ResolvedTint, Spanned, ThemeDefinition, ThemeDiagnostic, ThemeId, ThemeOrigin, TintSlot,
-    SEMANTIC_SLOT_COUNT,
+    ResolvedTint, Spanned, ThemeDefinition, ThemeDiagnostic, ThemeGeneration, ThemeId, ThemeOrigin,
+    TintSlot, SEMANTIC_SLOT_COUNT,
 };
 
 /// V1 limit on how many themes one `extends` chain may contain.
@@ -234,7 +234,10 @@ impl<'a> Resolver<'a> {
         }
 
         let semantic = self.resolve_semantic(id);
-        let (gradients, gradient_names, gradient_ids) = self.resolve_gradients();
+        // One generation per resolve run that gets this far, minted before the
+        // gradients so every id of this theme carries the same one.
+        let generation = ThemeGeneration::next();
+        let (gradients, gradient_names, gradient_ids) = self.resolve_gradients(generation);
         let components = self.resolve_components(id, &semantic, &gradient_ids, &gradients);
         self.resolve_unused_palette();
 
@@ -250,6 +253,7 @@ impl<'a> Resolver<'a> {
         let failed = self.diagnostics.iter().any(ThemeDiagnostic::is_error);
         let theme = (!failed).then(|| ResolvedTheme {
             id: id.clone(),
+            generation,
             name: self.merged.name.clone(),
             description: self.merged.description.clone(),
             author: self.merged.author.clone(),
@@ -693,6 +697,7 @@ impl<'a> Resolver<'a> {
     /// let an export write `gradients.<name>` again.
     fn resolve_gradients(
         &mut self,
+        generation: ThemeGeneration,
     ) -> (
         Vec<ResolvedGradient>,
         Vec<String>,
@@ -704,7 +709,7 @@ impl<'a> Resolver<'a> {
 
         for (index, name) in names.iter().enumerate() {
             let entry = self.merged.gradients[name].clone();
-            ids.insert(name.clone(), GradientId::new(index));
+            ids.insert(name.clone(), GradientId::new(generation, index));
 
             let direction = entry
                 .value
@@ -744,7 +749,7 @@ impl<'a> Resolver<'a> {
                     continue;
                 }
                 stops.push(ResolvedGradientStop {
-                    position: at.value as f32,
+                    position: at.value,
                     color: outcome.color,
                 });
             }

@@ -678,6 +678,17 @@ renderers use, so it cannot drift.
 | `components.keybind.value_bound` | style | `semantic.success` | no |
 | `components.keybind.value_capturing` | style | `semantic.warning` | no |
 
+#### `components.keygen`
+
+| Role | Type | Falls back to | Closed frame |
+| --- | --- | --- | --- |
+| `components.keygen.help` | style | `semantic.text_dim` | no |
+| `components.keygen.label` | style | `semantic.text_dim` | no |
+| `components.keygen.label_focused` | style | `semantic.warning` | no |
+| `components.keygen.title` | style | `semantic.text_bright` + bold | no |
+| `components.keygen.value` | style | `semantic.text` | no |
+| `components.keygen.value_focused` | style | `semantic.text_bright` + bold + underlined | no |
+
 #### `components.os_logo`
 
 | Role | Type | Falls back to | Closed frame |

@@ -65,6 +65,7 @@ pub fn render_palette(
         ));
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
+    crate::tui::paint_popup_border(frame, popup_area, theme);
     // Below this the palette writes into the buffer directly. `set_string`
     // clips horizontally, but an out-of-range *row* panics — and on a terminal
     // narrower or shorter than the popup's own minimum the frame alone can eat
@@ -75,11 +76,17 @@ pub fn render_palette(
 
     let prompt = Style::default().fg(theme.color(ColorRole::StatusSuccess));
     let row_selected = theme.style(StyleRole::CommandPaletteRowSelected);
-    let separator = Style::default().fg(crate::tui::blit::line_color(
-        theme,
-        PaintRole::SeparatorPrimary,
-        inner,
-    ));
+    // Sampled per separator row rather than once over `inner`: a gradient's
+    // colour depends on the rect it is sampled against, and the row is what
+    // `paint_line` then runs over.
+    let separator_rect = |y: u16| Rect::new(inner.x, y, inner.width, 1);
+    let separator_style = |y: u16| {
+        Style::default().fg(crate::tui::blit::line_color(
+            theme,
+            PaintRole::SeparatorPrimary,
+            separator_rect(y),
+        ))
+    };
     let legend = theme.style(StyleRole::PopupLegend);
     let hint = theme.style(StyleRole::PopupHint);
     // The palette types in `text_highlight`, a shade brighter than the
@@ -118,7 +125,13 @@ pub fn render_palette(
         let sep_y = inner.y + 1;
         if sep_y < inner.bottom() {
             let line = "\u{2500}".repeat(w);
-            buf.set_string(inner.x, sep_y, &line, separator);
+            buf.set_string(inner.x, sep_y, &line, separator_style(sep_y));
+            crate::tui::blit::paint_line(
+                buf,
+                separator_rect(sep_y),
+                theme,
+                PaintRole::SeparatorPrimary,
+            );
         }
     }
 
@@ -266,7 +279,13 @@ pub fn render_palette(
     let detail_sep_y = list_start_y.saturating_add(MAX_VISIBLE_ROWS as u16);
     if detail_sep_y < inner.bottom() {
         let line = "\u{2500}".repeat(w);
-        buf.set_string(inner.x, detail_sep_y, &line, separator);
+        buf.set_string(inner.x, detail_sep_y, &line, separator_style(detail_sep_y));
+        crate::tui::blit::paint_line(
+            buf,
+            separator_rect(detail_sep_y),
+            theme,
+            PaintRole::SeparatorPrimary,
+        );
     }
 
     // ── detail block (4 rows) ───────────────────────────────
@@ -410,4 +429,45 @@ fn render_detail_kv(
     let avail = max_width.saturating_sub(label.len() as u16) as usize;
     let truncated = crate::tui::text::ellipsize(value, avail);
     buf.set_string(val_x, y, &truncated, styles.value);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{frame_at, resolved_source, themed_app};
+
+    /// The palette's rules run `components.separator.primary`, so a gradient on
+    /// that role has to sweep along the row.
+    ///
+    /// The separator is a one-row `set_string`, not a block, so it needs
+    /// `paint_line` over its own rect rather than the border ring — and it is
+    /// the rect it was *sampled* against that has to be painted, or the ramp
+    /// restarts somewhere other than where the colour was picked.
+    #[test]
+    fn a_gradient_separator_sweeps_the_palette_rule() {
+        let theme = resolved_source(
+            "ruled",
+            "schema_version = 1\nname = \"Ruled\"\nextends = \"default\"\n\n\
+             [gradients.sweep]\ndirection = \"horizontal\"\n\
+             stops = [ { at = 0.0, color = \"#000000\" }, { at = 1.0, color = \"#ffffff\" } ]\n\n\
+             [components.separator]\nprimary = { gradient = \"gradients.sweep\" }\n",
+        );
+        let app = themed_app(theme);
+        let area = Rect::new(0, 0, 100, 30);
+
+        let buf = frame_at(area, |f| {
+            render_palette(f, &app, "", &app.hosts, &[], 0, None)
+        });
+        let popup = app.last_popup_rect.get().expect("the palette drew");
+        // Row 1 of the popup's inner area: border, prompt, then the rule.
+        let sep_y = popup.y + 2;
+        let row: Vec<_> = (popup.x + 1..popup.right() - 1)
+            .map(|x| buf.cell((x, sep_y)).unwrap().fg)
+            .collect();
+
+        assert!(
+            row.windows(2).any(|pair| pair[0] != pair[1]),
+            "the palette separator stayed flat at row {sep_y}: {row:?}"
+        );
+    }
 }

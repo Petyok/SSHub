@@ -843,7 +843,8 @@ fn app_with_populated_visual_state() -> App {
         buffer: buffer.clone(),
         remote_pty: None,
     });
-    *app.sftp_snapshot.borrow_mut() = Some(buffer);
+    *app.sftp_snapshot.borrow_mut() = Some(buffer.clone());
+    *app.dashboard_snapshot.borrow_mut() = Some(buffer);
     app.popup_closing_at = Some(now);
     app.session_enter_at = Some(now);
     app.session_exit_at = Some(now);
@@ -877,6 +878,10 @@ fn theme_activation_clears_every_old_theme_snapshot_and_slide() {
     assert!(app.popup_backdrop.borrow().is_none());
     assert!(app.session_snapshot.borrow().is_none());
     assert!(app.sftp_snapshot.borrow().is_none());
+    // The dashboard snapshot is what `render_session_enter` blits *behind* the
+    // arriving session, so a copy captured under the old theme would drag that
+    // theme's cells into the new one's frame.
+    assert!(app.dashboard_snapshot.borrow().is_none());
     assert!(app.popup_closing_at.is_none());
     assert!(app.session_enter_at.is_none());
     assert!(app.session_exit_at.is_none());
@@ -1047,9 +1052,11 @@ fn reload_keeps_the_selection_on_a_reserved_id_squatter() {
     // out of the new registry, so the pointer legitimately moves. What may not
     // move is the theme the user is looking at.
     assert_eq!(app.theme_manager.active_id(), "default");
-    assert_eq!(
-        *live,
-        *app.theme_manager.active_rc(),
+    // `semantically_eq`, not `==`: a reload is a fresh resolve run and so
+    // carries a new generation by design. What may not change is what the user
+    // is looking at.
+    assert!(
+        live.semantically_eq(&app.theme_manager.active_rc()),
         "a reload of an unchanged directory must not change the live theme"
     );
 }

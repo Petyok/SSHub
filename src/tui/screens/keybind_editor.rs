@@ -41,6 +41,7 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
             .border_style(crate::tui::popup_border_style(theme, popup)),
         popup,
     );
+    crate::tui::paint_popup_border(frame, popup, theme);
 
     // Everything below writes into the buffer directly. `set_string` clips
     // columns on its own, but an out-of-range *row* panics — and `fit_popup`
@@ -86,12 +87,20 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
         };
         // Keep the label from bleeding into the value column at `val_x`.
         let label_avail = (val_x.saturating_sub(row_x + 1)) as usize;
-        // Foreground-only marker over the selection bar drawn above.
+        // The controls below keep their own foreground, but the selection bar
+        // drawn above owns the background of a selected row.
+        let over_bar = |style: Style| {
+            if is_sel {
+                crate::tui::inherit_background(style, selection)
+            } else {
+                style
+            }
+        };
         buf.set_string(
             row_x,
             ry,
             if is_sel { "› " } else { "  " },
-            if is_sel { focus } else { label_style },
+            if is_sel { over_bar(focus) } else { label_style },
         );
         buf.set_string(
             row_x + 2,
@@ -106,13 +115,13 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
         } else {
             binds
         };
-        let val_style = if is_sel && editor.capturing {
+        let val_style = over_bar(if is_sel && editor.capturing {
             theme.style(StyleRole::KeybindValueCapturing)
         } else if is_sel {
             theme.style(StyleRole::KeybindValueBound)
         } else {
             theme.style(StyleRole::KeybindValue)
-        };
+        });
         let avail = popup
             .x
             .saturating_add(popup.width)
@@ -149,4 +158,82 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
         ),
         theme.style(StyleRole::PopupHint),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{fg_bg, marker, role_marker_theme, themed_app, RoleMarker};
+
+    const SELECTION_FG: u32 = 0xb1_0001;
+    const SELECTION_BG: u32 = 0xb1_0101;
+    const MARKER_FG: u32 = 0xb1_0002;
+    const MARKER_BG: u32 = 0xb1_0102;
+    const BOUND_FG: u32 = 0xb1_0003;
+    const BOUND_BG: u32 = 0xb1_0103;
+    const CAPTURING_FG: u32 = 0xb1_0004;
+    const CAPTURING_BG: u32 = 0xb1_0104;
+
+    /// Every role that meets on a selected row gets both channels marked, so a
+    /// cell can be checked for the *pair* it must end up with.
+    const MARKERS: &[RoleMarker] = &[
+        fg_bg(
+            "components.keybind.row_selected",
+            SELECTION_FG,
+            SELECTION_BG,
+        ),
+        fg_bg("components.keybind.marker", MARKER_FG, MARKER_BG),
+        fg_bg("components.keybind.value_bound", BOUND_FG, BOUND_BG),
+        fg_bg(
+            "components.keybind.value_capturing",
+            CAPTURING_FG,
+            CAPTURING_BG,
+        ),
+    ];
+
+    fn editor_app(capturing: bool) -> App {
+        let mut app = themed_app(role_marker_theme("keybind", MARKERS));
+        app.mode = crate::app::AppMode::KeybindEditor;
+        app.keybind_editor = Some(crate::app::KeybindEditor {
+            selected: 0,
+            scroll: 0,
+            capturing,
+            append: false,
+            query: String::new(),
+        });
+        app
+    }
+
+    /// The selection bar's background must survive under every control drawn on
+    /// the selected row, while each control keeps its own foreground.
+    ///
+    /// The bar is painted first and the controls are written over it. A control
+    /// role that carries a background of its own therefore punched a hole in the
+    /// bar; one that carries none used to be fine only by accident.
+    #[test]
+    fn selected_row_controls_keep_their_foreground_over_the_selection_background() {
+        let area = Rect::new(0, 0, 80, 24);
+        let sel_bg = marker(SELECTION_BG);
+
+        for (capturing, value_fg, what) in [
+            (false, BOUND_FG, "bound value"),
+            (true, CAPTURING_FG, "capturing value"),
+        ] {
+            let app = editor_app(capturing);
+            let buf = crate::test_support::frame_at(area, |f| render_keybind_editor(f, &app));
+
+            // The popup is centred; the marker sits at the selected row's first
+            // content column and the value column is a fixed offset from it.
+            let popup = app.last_popup_rect.get().expect("the popup was laid out");
+            let ry = popup.y + 3;
+            let marker_cell = buf.cell((popup.x + 2, ry)).unwrap();
+            assert_eq!(marker_cell.symbol(), "\u{203a}", "the focus marker");
+            assert_eq!(marker_cell.fg, marker(MARKER_FG), "marker foreground");
+            assert_eq!(marker_cell.bg, sel_bg, "marker background ({what})");
+
+            let value_cell = buf.cell((popup.x + 33, ry)).unwrap();
+            assert_eq!(value_cell.fg, marker(value_fg), "{what} foreground");
+            assert_eq!(value_cell.bg, sel_bg, "{what} background");
+        }
+    }
 }

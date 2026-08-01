@@ -553,8 +553,13 @@ fn wrap_line_count(text: &str, width: usize) -> usize {
 /// Centered popup rect helper, clamped to the frame.
 fn popup_rect(frame: &Frame, w_pct: u16, min_w: u16, h: u16) -> Rect {
     let area = frame.area();
-    let w = (area.width * w_pct / 100).max(min_w).min(area.width);
-    let h = h.min(area.height);
+    // The percentage is computed in `u32`: `area.width * w_pct` overflows a
+    // `u16` on a wide terminal long before the division brings it back down.
+    // `fit_popup` then keeps `min_w` subordinate to the width actually there.
+    let desired_w =
+        (u32::from(area.width) * u32::from(w_pct) / 100).min(u32::from(u16::MAX)) as u16;
+    let w = crate::tui::fit_popup(desired_w, min_w, area.width);
+    let h = crate::tui::fit_popup(h, 1, area.height);
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
     Rect::new(x, y, w, h)
@@ -583,6 +588,14 @@ pub fn render_pick_target(frame: &mut Frame, app: &App) {
             .border_style(crate::tui::popup_border_style(theme, popup)),
         popup,
     );
+    crate::tui::paint_popup_border(frame, popup, theme);
+
+    // Everything below writes into the buffer directly. `set_string` clips
+    // columns on its own, but an out-of-range *row* panics — and the popup
+    // rect being legal says nothing about the rows inside it.
+    if popup.width < 4 || popup.height < 3 {
+        return;
+    }
 
     let row_x = popup.x + 2;
     let inner_w = popup.width.saturating_sub(4) as usize;
@@ -685,6 +698,7 @@ pub fn render_command_prompt(frame: &mut Frame, app: &App) {
         ),
         popup,
     );
+    crate::tui::paint_popup_border(frame, popup, theme);
 }
 
 /// Dry-run preview: the resolved target list + command, with the
@@ -712,11 +726,21 @@ pub fn render_preview(frame: &mut Frame, app: &App) {
             .border_style(crate::tui::popup_border_style(theme, popup)),
         popup,
     );
+    crate::tui::paint_popup_border(frame, popup, theme);
+
+    // As in `render_pick_target`: the rows are this renderer's own problem.
+    // Five rows is the first height where the summary, one list row and the
+    // barrier hint all land inside the border.
+    if popup.width < 4 || popup.height < 5 {
+        return;
+    }
 
     let row_x = popup.x + 2;
     let inner_w = popup.width.saturating_sub(4) as usize;
     let mut y = popup.y + 1;
-    let bottom = popup.y + popup.height - 1;
+    // `popup.y + popup.height - 1` underflowed on a zero-height popup; the
+    // bottom row is `bottom()` minus the border, saturating throughout.
+    let bottom = popup.bottom().saturating_sub(1);
 
     // Summary line.
     let summary = format!(
@@ -1207,6 +1231,40 @@ mod tests {
             "a deselected host stays dim under the cursor bar"
         );
         assert_eq!(fg_at_text(&buf, "Space toggle"), marker(POPUP_LEGEND));
+    }
+
+    /// Every popup renderer has to survive a terminal too small to hold it.
+    /// The first four sizes are the matrix the maintainer specified; how much
+    /// of the layout each one leaves room for differs per renderer. `20x1` and
+    /// `40x2` are the sizes that actually reproduced `render_preview`'s panic:
+    /// below `10` columns the inner width collapses to an empty string and
+    /// `set_string` never indexes the out-of-range row.
+    const TINY: &[(u16, u16)] = &[(1, 1), (3, 2), (8, 4), (20, 6), (20, 1), (40, 2)];
+
+    /// The three pre-run popups must clip rather than panic on a tiny terminal.
+    #[test]
+    fn the_broadcast_wizard_popups_survive_a_tiny_terminal() {
+        /// One wizard stage: its label and its real renderer.
+        type Stage = (&'static str, fn(&mut Frame, &App));
+        let renderers: &[Stage] = &[
+            ("pick target", render_pick_target),
+            ("command prompt", render_command_prompt),
+            ("preview", render_preview),
+        ];
+        for edit_targets in [false, true] {
+            let mut app = themed_app(resolved_default());
+            app.broadcast_setup = Some(setup(edit_targets));
+            for (name, render) in renderers {
+                for (w, h) in TINY {
+                    let area = Rect::new(0, 0, *w, *h);
+                    // Reaching the assert at all is the proof: `frame_at` drives
+                    // the real renderer, and an out-of-range row would have
+                    // panicked before it returned a buffer.
+                    let buf = frame_at(area, |frame| render(frame, &app));
+                    assert_eq!(buf.area, area, "{name} at {w}x{h} drew outside the frame");
+                }
+            }
+        }
     }
 
     /// Legacy parity, hand-transcribed from the `crate::tui::theme` calls this

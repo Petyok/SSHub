@@ -46,7 +46,7 @@ impl<'a> GradientSampler<'a> {
     }
 
     /// Colour at relative position `t`, clamped to `0.0..=1.0`.
-    pub fn sample(&self, t: f32) -> Color {
+    pub fn sample(&self, t: f64) -> Color {
         sample_stops(self.stops, t.clamp(0.0, 1.0))
     }
 }
@@ -57,7 +57,7 @@ impl<'a> GradientSampler<'a> {
 /// binary search, no allocation. The resolver also guarantees ascending,
 /// `0.0`/`1.0`-anchored positions and opaque RGB stops, so none of that is
 /// re-checked here.
-pub(crate) fn sample_stops(stops: &[ResolvedGradientStop], t: f32) -> Color {
+pub(crate) fn sample_stops(stops: &[ResolvedGradientStop], t: f64) -> Color {
     let Some(first) = stops.first() else {
         return Color::Reset;
     };
@@ -67,7 +67,7 @@ pub(crate) fn sample_stops(stops: &[ResolvedGradientStop], t: f32) -> Color {
             lower = stop;
         } else {
             let span = stop.position - lower.position;
-            let local = if span <= f32::EPSILON {
+            let local = if span <= f64::EPSILON {
                 0.0
             } else {
                 (t - lower.position) / span
@@ -84,12 +84,12 @@ pub(crate) fn sample_stops(stops: &[ResolvedGradientStop], t: f32) -> Color {
 /// The `clamp` + `round` per channel is deliberately the resolver's convention
 /// (`resolve.rs`), so a gradient endpoint renders as the exact same byte triple
 /// as the solid colour of the same value.
-fn mix_srgb(from: Color, to: Color, t: f32) -> Color {
+fn mix_srgb(from: Color, to: Color, t: f64) -> Color {
     let (Color::Rgb(r0, g0, b0), Color::Rgb(r1, g1, b1)) = (from, to) else {
         return if t < 0.5 { from } else { to };
     };
     let channel = |a: u8, b: u8| -> u8 {
-        let value = a as f32 + (b as f32 - a as f32) * t;
+        let value = a as f64 + (b as f64 - a as f64) * t;
         value.clamp(0.0, 255.0).round() as u8
     };
     Color::Rgb(channel(r0, r1), channel(g0, g1), channel(b0, b1))
@@ -106,15 +106,15 @@ pub(crate) fn gradient_position(
     area: Rect,
     x: u16,
     y: u16,
-) -> Option<f32> {
+) -> Option<f64> {
     if !contains(area, x, y) {
         return None;
     }
-    let norm = |value: u16, origin: u16, len: u16| -> f32 {
+    let norm = |value: u16, origin: u16, len: u16| -> f64 {
         if len <= 1 {
             0.0
         } else {
-            (value - origin) as f32 / (len - 1) as f32
+            (value - origin) as f64 / (len - 1) as f64
         }
     };
     let hx = norm(x, area.x, area.width);
@@ -147,15 +147,15 @@ pub(crate) fn gradient_position(
 /// Position along the clockwise outer ring of `area`, starting at its top-left
 /// corner; `None` for interior cells. Degenerate rects fall back to their
 /// natural single-line direction.
-fn perimeter_position(area: Rect, x: u16, y: u16) -> Option<f32> {
+fn perimeter_position(area: Rect, x: u16, y: u16) -> Option<f64> {
     if area.width <= 1 && area.height <= 1 {
         return Some(0.0);
     }
     if area.height <= 1 {
-        return Some((x - area.x) as f32 / (area.width - 1) as f32);
+        return Some((x - area.x) as f64 / (area.width - 1) as f64);
     }
     if area.width <= 1 {
-        return Some((y - area.y) as f32 / (area.height - 1) as f32);
+        return Some((y - area.y) as f64 / (area.height - 1) as f64);
     }
 
     let w = area.width as u32;
@@ -180,7 +180,7 @@ fn perimeter_position(area: Rect, x: u16, y: u16) -> Option<f32> {
         return None;
     };
     let length = 2 * w + 2 * h - 4;
-    Some(index as f32 / (length - 1) as f32)
+    Some(index as f64 / (length - 1) as f64)
 }
 
 /// Paints the outer cell ring of an already rendered block.
@@ -195,12 +195,26 @@ fn perimeter_position(area: Rect, x: u16, y: u16) -> Option<f32> {
 /// crosses them — a `horizontal` gradient, for instance, paints each vertical
 /// edge as a flat block of the left/right colour.
 pub fn paint_gradient_ring(buf: &mut Buffer, area: Rect, gradient: &ResolvedGradient) {
+    paint_gradient_ring_selective(buf, area, gradient, CellSelection::All);
+}
+
+/// The same ring, restricted to the cells `selection` admits.
+///
+/// `Matching(border_colour)` is what lets a caller gradient a block's frame
+/// without touching the title, label or badge sitting on the same top row:
+/// those were written in a different colour, so they simply do not match.
+pub fn paint_gradient_ring_selective(
+    buf: &mut Buffer,
+    area: Rect,
+    gradient: &ResolvedGradient,
+    selection: CellSelection,
+) {
     paint(
         buf,
         area,
         gradient,
         PaintChannel::Foreground,
-        CellSelection::All,
+        selection,
         &[],
         true,
     );
@@ -310,7 +324,7 @@ mod tests {
 
     fn directed<const N: usize>(
         direction: GradientDirection,
-        stops: [(f32, Color); N],
+        stops: [(f64, Color); N],
     ) -> ResolvedGradient {
         ResolvedGradient {
             direction,
@@ -321,7 +335,7 @@ mod tests {
         }
     }
 
-    fn gradient<const N: usize>(stops: [(f32, Color); N]) -> ResolvedGradient {
+    fn gradient<const N: usize>(stops: [(f64, Color); N]) -> ResolvedGradient {
         directed(Horizontal, stops)
     }
 
@@ -358,8 +372,8 @@ mod tests {
         let sampler = GradientSampler::new(&ramp);
         assert_eq!(sampler.sample(-4.0), rgb(0, 0, 0));
         assert_eq!(sampler.sample(9.0), rgb(255, 255, 255));
-        assert_eq!(sampler.sample(f32::NEG_INFINITY), rgb(0, 0, 0));
-        assert_eq!(sampler.sample(f32::INFINITY), rgb(255, 255, 255));
+        assert_eq!(sampler.sample(f64::NEG_INFINITY), rgb(0, 0, 0));
+        assert_eq!(sampler.sample(f64::INFINITY), rgb(255, 255, 255));
     }
 
     #[test]
@@ -463,7 +477,7 @@ mod tests {
         let mut seen = Vec::new();
         for (index, (x, y)) in path.iter().enumerate() {
             let position = gradient_position(Perimeter, area, *x, *y).expect("ring cell");
-            let expected = index as f32 / (length - 1) as f32;
+            let expected = index as f64 / (length - 1) as f64;
             assert!(
                 (position - expected).abs() < 1e-6,
                 "cell {x},{y} at index {index}: {position} != {expected}"
@@ -711,7 +725,7 @@ mod tests {
 
         let allocations = allocations_during(|| {
             for step in 0..=1000 {
-                std::hint::black_box(sampler.sample(step as f32 / 1000.0));
+                std::hint::black_box(sampler.sample(step as f64 / 1000.0));
             }
             paint_gradient_ring(&mut buffer, area, &gradient);
             paint_gradient_line(

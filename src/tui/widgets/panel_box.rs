@@ -10,7 +10,6 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 
 use crate::theme::catalog::{PaintRole, StyleRole};
-use crate::theme::gradient::paint_gradient_ring;
 use crate::theme::model::ResolvedTheme;
 use crate::tui::text::ellipsize;
 
@@ -297,9 +296,11 @@ pub fn render_panel_box(
     buf.set_string(right_edge, bottom, "┘", bstyle);
 
     // ── 3. Gradient ring over the finished frame ────────
-    if let Some(gradient) = theme.paint_gradient(border_role) {
-        paint_gradient_ring(buf, area, gradient);
-    }
+    // The shared border contract. Title and count are still written *after*
+    // this, so the `Matching` restriction inside `paint_border` changes nothing
+    // here — it only means the same helper can be used by call sites that draw
+    // their title as part of the block.
+    crate::tui::blit::paint_border(buf, area, theme, border_role);
 
     // ── 4. Title and count, over the ring ───────────────
     if title_w > 0 {

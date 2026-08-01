@@ -399,6 +399,12 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
         )));
     let inner = border.inner(popup_area);
     frame.render_widget(border, popup_area);
+    crate::tui::blit::paint_border(
+        frame.buffer_mut(),
+        popup_area,
+        theme,
+        PaintRole::TunnelFormBorder,
+    );
 
     let buf = frame.buffer_mut();
 
@@ -590,6 +596,7 @@ pub fn render_tunnel_host_picker(frame: &mut Frame, app: &App) {
             ))),
         popup,
     );
+    crate::tui::blit::paint_border(frame.buffer_mut(), popup, theme, PaintRole::PickerBorder);
 
     let buf = frame.buffer_mut();
     let row_x = popup.x + 2;

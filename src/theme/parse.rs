@@ -602,10 +602,15 @@ impl DefinitionParser {
 
     fn parse_gradient_reference(&mut self, path: &str, node: Node<'_>) -> Option<Spanned<String>> {
         let raw = self.expect_string_at(path, node, 0..0)?;
+        // Exactly one fixed `gradients.` prefix; everything after it is the raw
+        // name, dots included. A dot cannot introduce a sub-hierarchy here
+        // because the runtime model is a flat name → gradient map, and a name
+        // written as a quoted TOML key (`[gradients."has.dot"]`) is one segment
+        // by TOML's own rules — refusing to reference it made such a gradient
+        // definable but unusable. A missing prefix or an empty rest stays an
+        // error: neither names anything.
         match raw.value.strip_prefix("gradients.") {
-            Some(name) if !name.is_empty() && !name.contains('.') => {
-                Some(Spanned::new(name.to_string(), raw.span))
-            }
+            Some(name) if !name.is_empty() => Some(Spanned::new(name.to_string(), raw.span)),
             _ => {
                 self.error_with_help(
                     Some(raw.span),
@@ -1101,6 +1106,59 @@ mod tests {
         };
         assert!(value.value.auto.as_ref().unwrap().value);
         assert!(value.value.foreground.is_none());
+    }
+
+    /// A quoted gradient key is one TOML segment, and a reference to it is one
+    /// `gradients.` prefix plus the whole raw name.
+    ///
+    /// Dots included: the runtime model is a flat name → gradient map, so a dot
+    /// introduces no sub-hierarchy. Rejecting it made a gradient that TOML
+    /// itself accepts as a single key definable but permanently unreferenceable.
+    #[test]
+    fn a_quoted_gradient_key_can_be_referenced_verbatim() {
+        const NAME: &str = "odd .\"\\ name";
+        let source = header(
+            "[gradients.\"odd .\\\"\\\\ name\"]\ndirection = \"horizontal\"\n\
+             stops = [ { at = 0.0, color = \"#102030\" }, { at = 1.0, color = \"#405060\" } ]\n\
+             [components.app]\nbackground = { gradient = \"gradients.odd .\\\"\\\\ name\" }\n",
+        );
+        let definition = definition_of(&source);
+
+        assert_eq!(definition.gradients[0].name.value, NAME);
+        let ComponentValue::Paint { value, .. } =
+            &component(&definition, "components.app.background").value
+        else {
+            panic!("paint value");
+        };
+        let PaintSlot::Gradient(reference) = &value.value else {
+            panic!("gradient reference");
+        };
+        assert_eq!(
+            reference.value, NAME,
+            "the reference must carry the whole name after the one fixed prefix"
+        );
+    }
+
+    /// The two shapes that still are not references: a different prefix, and a
+    /// prefix with nothing after it. Neither names a gradient.
+    #[test]
+    fn a_gradient_reference_needs_the_prefix_and_a_nonempty_name() {
+        for bad in ["gradients.", "gradient.g", "g", "", "Gradients.g"] {
+            let source = header(&format!(
+                "[gradients.g]\ndirection = \"horizontal\"\n\
+                 stops = [ {{ at = 0.0, color = \"#102030\" }}, {{ at = 1.0, color = \"#405060\" }} ]\n\
+                 [components.app]\nbackground = {{ gradient = \"{bad}\" }}\n"
+            ));
+            let parsed = parse_user(&source);
+            assert!(
+                parsed
+                    .diagnostics
+                    .iter()
+                    .any(|d| d.message.contains("is not a gradient reference")),
+                "`{bad}` was accepted as a reference: {:?}",
+                parsed.diagnostics
+            );
+        }
     }
 
     #[test]

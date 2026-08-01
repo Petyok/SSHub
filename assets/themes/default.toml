@@ -147,3 +147,12 @@ wordmark_accent = { foreground = "semantic.warning", modifiers = ["bold"] }
 # some other way instead of the renderer welding the modifier on.
 [components.tunnel_form]
 value_editing = { foreground = "semantic.text_highlight", modifiers = ["underlined"] }
+
+# The key generator's focused row. It is the one screen that never drew the
+# legacy palette — it used raw `Color::Yellow` with bold — so `warning` carries
+# the colour and only the weight is stated here, the same shape as
+# `animation.hub_flash` above. Its focused *value* needs no entry: the
+# catalogue's `text_bright with underline and bold` recipe already reproduces
+# the old white/bold/underlined pair.
+[components.keygen]
+label_focused = { foreground = "semantic.warning", modifiers = ["bold"] }

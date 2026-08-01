@@ -359,14 +359,35 @@ fn merge_toml_table(dst: &mut toml_edit::Table, src: &toml_edit::Table) {
 /// Falls back to `SSH_LAUNCHER_CONFIG_DIR` for backward compatibility.
 /// Migrates data from `~/.config/ssh-launcher` if the new path doesn't exist yet.
 pub fn config_dir() -> anyhow::Result<std::path::PathBuf> {
+    let dir = config_dir_path()?;
+    // Only the default HOME location has a legacy predecessor to inherit from;
+    // an explicit override names the directory the user wants, verbatim.
+    if env_dir("SSHUB_CONFIG_DIR")
+        .or_else(|| env_dir("SSH_LAUNCHER_CONFIG_DIR"))
+        .is_none()
+    {
+        let home = std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME not set"))?;
+        migrate_legacy_dir(
+            &dir,
+            &std::path::PathBuf::from(&home).join(".config/ssh-launcher"),
+        );
+    }
+    Ok(dir)
+}
+
+/// Where the config directory *is*, with no side effects at all.
+///
+/// Same override order as [`config_dir`] — `SSHUB_CONFIG_DIR`, then
+/// `SSH_LAUNCHER_CONFIG_DIR`, then `$HOME/.config/sshub` — but it neither
+/// migrates a legacy tree nor creates anything. Read-only callers such as
+/// `sshub theme list` and `sshub theme show` use this: merely asking which
+/// themes are installed must not write to the user's home directory.
+pub fn config_dir_path() -> anyhow::Result<std::path::PathBuf> {
     if let Some(dir) = env_dir("SSHUB_CONFIG_DIR").or_else(|| env_dir("SSH_LAUNCHER_CONFIG_DIR")) {
         return Ok(dir);
     }
     let home = std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME not set"))?;
-    let new_dir = std::path::PathBuf::from(&home).join(".config/sshub");
-    let legacy_dir = std::path::PathBuf::from(&home).join(".config/ssh-launcher");
-    migrate_legacy_dir(&new_dir, &legacy_dir);
-    Ok(new_dir)
+    Ok(std::path::PathBuf::from(&home).join(".config/sshub"))
 }
 
 /// Data directory for SQLite (`~/.local/share/sshub` or `SSHUB_DATA_DIR`).
@@ -396,16 +417,82 @@ fn env_dir(var: &str) -> Option<std::path::PathBuf> {
 /// so parallel tests cannot race on that env var (macOS CI surfaces this often).
 #[cfg(test)]
 pub(crate) fn with_test_config_dir<R>(dir: &std::path::Path, f: impl FnOnce() -> R) -> R {
-    use std::sync::{Mutex, OnceLock};
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    let _guard = LOCK
-        .get_or_init(|| Mutex::new(()))
+    let _guard = env_lock()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     std::env::set_var("SSHUB_CONFIG_DIR", dir);
     let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
     std::env::remove_var("SSHUB_CONFIG_DIR");
     match out {
+        Ok(value) => value,
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
+}
+
+/// The one lock every environment-mutating test helper here takes, so no two
+/// of them can be mid-mutation at the same time. Never take it twice on one
+/// thread — these helpers do not nest.
+#[cfg(test)]
+fn env_lock() -> &'static std::sync::Mutex<()> {
+    use std::sync::{Mutex, OnceLock};
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+/// Set one env var for a scope and put the previous value back on drop.
+///
+/// Only valid while [`env_lock`] is held — that is what makes it safe under
+/// `cargo test`'s thread pool.
+#[cfg(test)]
+pub(crate) struct EnvVar {
+    key: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+#[cfg(test)]
+impl EnvVar {
+    pub(crate) fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+        let previous = std::env::var_os(key);
+        std::env::set_var(key, value);
+        Self { key, previous }
+    }
+
+    pub(crate) fn unset(key: &'static str) -> Self {
+        let previous = std::env::var_os(key);
+        std::env::remove_var(key);
+        Self { key, previous }
+    }
+}
+
+#[cfg(test)]
+impl Drop for EnvVar {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+
+/// Run `f` with `HOME` pointed at `home` and both config-dir overrides cleared,
+/// so the HOME branch of [`config_dir_path`] is the one under test.
+///
+/// Two locks, because the two variables have two different sets of contenders:
+/// `crate::test_env::lock_home()` is the crate-wide `$HOME` lock that
+/// `ssh::keyfile`, `ssh::resolver` and `app::tests::misc` already take, and
+/// [`env_lock`] covers `SSHUB_CONFIG_DIR` / `SSH_LAUNCHER_CONFIG_DIR` against
+/// [`with_test_config_dir`]. HOME first, config env second — every caller takes
+/// them in that order, so the pair cannot deadlock.
+#[cfg(test)]
+pub(crate) fn with_test_home<R>(home: &std::path::Path, f: impl FnOnce() -> R) -> R {
+    let _home_guard = crate::test_env::lock_home();
+    let _guard = env_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _home = EnvVar::set("HOME", home);
+    let _primary = EnvVar::unset("SSHUB_CONFIG_DIR");
+    let _fallback = EnvVar::unset("SSH_LAUNCHER_CONFIG_DIR");
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
         Ok(value) => value,
         Err(payload) => std::panic::resume_unwind(payload),
     }
@@ -438,16 +525,42 @@ fn migrate_legacy_dir(new_dir: &Path, legacy_dir: &Path) {
 }
 
 /// Recursively copy a directory tree from `src` to `dst`.
+///
+/// Symlinks are refused outright — the root as well as every entry. The
+/// migration runs unattended on upgrade with the user's own privileges, so a
+/// link planted in the legacy directory would otherwise have its *target*
+/// copied into the new config directory (`fs::copy` follows links) or send the
+/// walk out of the tree entirely. Anything that is neither a regular file nor a
+/// real directory is rejected the same way, as [`ErrorKind::InvalidData`].
 fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    let rejected = |path: &Path, what: &str| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("refusing to copy {what}: {}", path.display()),
+        )
+    };
+
+    if fs::symlink_metadata(src)?.file_type().is_symlink() {
+        return Err(rejected(src, "a symlinked directory"));
+    }
+
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
-        let file_type = entry.file_type()?;
+        let path = entry.path();
+        // `symlink_metadata` rather than `entry.file_type()`: both report the
+        // link itself, but using the same call for the root and for every
+        // entry makes the do-not-follow semantics explicit and uniform.
+        let file_type = fs::symlink_metadata(&path)?.file_type();
         let dest_path = dst.join(entry.file_name());
-        if file_type.is_dir() {
-            copy_dir_recursive(&entry.path(), &dest_path)?;
+        if file_type.is_symlink() {
+            return Err(rejected(&path, "a symlink"));
+        } else if file_type.is_dir() {
+            copy_dir_recursive(&path, &dest_path)?;
+        } else if file_type.is_file() {
+            fs::copy(&path, &dest_path)?;
         } else {
-            fs::copy(entry.path(), &dest_path)?;
+            return Err(rejected(&path, "a special file"));
         }
     }
     Ok(())
@@ -492,6 +605,125 @@ mod tests {
                 "our change not written: {after}"
             );
         });
+    }
+
+    /// Resolving the config path is a *query*: `theme list` and `theme show`
+    /// both go through it while only reading, so it must not create the new
+    /// directory nor drag a legacy tree along behind the user's back.
+    #[test]
+    fn config_dir_path_resolves_without_touching_the_filesystem() {
+        let home = tempfile::tempdir().unwrap();
+        let legacy = home.path().join(".config/ssh-launcher");
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(legacy.join("config.toml"), "# legacy\n").unwrap();
+
+        let resolved = with_test_home(home.path(), config_dir_path);
+
+        let expected = home.path().join(".config/sshub");
+        assert_eq!(resolved.unwrap(), expected);
+        assert!(
+            !expected.exists(),
+            "resolving the path created {}",
+            expected.display()
+        );
+        assert!(
+            !expected.with_extension("migrating").exists(),
+            "resolving the path left a staging directory behind"
+        );
+        assert_eq!(
+            std::fs::read_to_string(legacy.join("config.toml")).unwrap(),
+            "# legacy\n",
+            "the legacy tree was migrated by a pure path query"
+        );
+    }
+
+    /// Both env overrides keep working, and neither is affected by HOME.
+    #[test]
+    fn config_dir_path_honours_both_env_overrides_in_order() {
+        let home = tempfile::tempdir().unwrap();
+        let primary = tempfile::tempdir().unwrap();
+        let fallback = tempfile::tempdir().unwrap();
+
+        with_test_home(home.path(), || {
+            let _guard = EnvVar::set("SSH_LAUNCHER_CONFIG_DIR", fallback.path());
+            assert_eq!(config_dir_path().unwrap(), fallback.path());
+            let _primary = EnvVar::set("SSHUB_CONFIG_DIR", primary.path());
+            assert_eq!(config_dir_path().unwrap(), primary.path());
+        });
+    }
+
+    /// A legacy entry that is a *symlink* must never be followed: the migration
+    /// runs on upgrade with the user's own privileges, and following a planted
+    /// link would copy a file from outside the legacy tree into the new config
+    /// directory (or, for a directory link, walk out of the tree entirely).
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_legacy_entry_aborts_the_migration_untouched() {
+        for kind in ["file", "dir"] {
+            let root = tempfile::tempdir().unwrap();
+            let legacy = root.path().join("legacy");
+            std::fs::create_dir_all(&legacy).unwrap();
+            std::fs::write(legacy.join("config.toml"), "# real\n").unwrap();
+
+            // The link's target lives *outside* the legacy tree — exactly the
+            // file an attacker would be trying to have copied into the new dir.
+            let outside = root.path().join("outside");
+            let link = legacy.join("planted");
+            match kind {
+                "file" => {
+                    std::fs::write(&outside, "secret\n").unwrap();
+                    std::os::unix::fs::symlink(&outside, &link).unwrap();
+                }
+                _ => {
+                    std::fs::create_dir(&outside).unwrap();
+                    std::fs::write(outside.join("secret.txt"), "secret\n").unwrap();
+                    std::os::unix::fs::symlink(&outside, &link).unwrap();
+                }
+            }
+
+            let new_dir = root.path().join("sshub");
+            migrate_legacy_dir(&new_dir, &legacy);
+
+            assert!(
+                !new_dir.exists(),
+                "{kind} symlink: the migration completed into {}",
+                new_dir.display()
+            );
+            assert!(
+                !new_dir.with_extension("migrating").exists(),
+                "{kind} symlink: the staging directory was left behind"
+            );
+            assert!(
+                outside.exists(),
+                "{kind} symlink: the link target was removed"
+            );
+            assert!(
+                link.symlink_metadata().unwrap().file_type().is_symlink(),
+                "{kind} symlink: the legacy entry was replaced"
+            );
+        }
+    }
+
+    /// The legacy root itself being a symlink is the same refusal.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_legacy_root_aborts_the_migration() {
+        let root = tempfile::tempdir().unwrap();
+        let real = root.path().join("elsewhere");
+        std::fs::create_dir(&real).unwrap();
+        std::fs::write(real.join("config.toml"), "# real\n").unwrap();
+        let legacy = root.path().join("legacy");
+        std::os::unix::fs::symlink(&real, &legacy).unwrap();
+
+        let new_dir = root.path().join("sshub");
+        migrate_legacy_dir(&new_dir, &legacy);
+
+        assert!(!new_dir.exists(), "a symlinked legacy root was followed");
+        assert!(!new_dir.with_extension("migrating").exists());
+        assert_eq!(
+            std::fs::read_to_string(real.join("config.toml")).unwrap(),
+            "# real\n"
+        );
     }
 
     /// The pure half of [`save_config`]: what would be written for `config`

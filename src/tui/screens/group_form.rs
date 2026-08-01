@@ -49,6 +49,7 @@ pub fn render_group_field_picker(frame: &mut Frame, app: &App) {
         .title(Span::styled(title, theme.style(StyleRole::PopupTitle)));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
+    crate::tui::paint_popup_border(frame, popup, theme);
 
     let mut state = ListState::default();
     state.select(Some(picker.selected.min(items.len().saturating_sub(1))));

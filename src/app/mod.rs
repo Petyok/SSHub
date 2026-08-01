@@ -688,6 +688,10 @@ impl App {
         *self.popup_backdrop.borrow_mut() = None;
         *self.session_snapshot.borrow_mut() = None;
         *self.sftp_snapshot.borrow_mut() = None;
+        // The dashboard behind an arriving session. It is a full-frame copy of
+        // the old theme's dashboard, so `render_session_enter` would blit that
+        // theme's cells into the columns the new session has not reached yet.
+        *self.dashboard_snapshot.borrow_mut() = None;
         self.popup_closing_at = None;
         self.session_enter_at = None;
         self.session_exit_at = None;

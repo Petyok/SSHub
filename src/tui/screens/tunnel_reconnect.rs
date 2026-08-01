@@ -34,6 +34,7 @@ pub fn render_tunnel_reconnect_settings(frame: &mut Frame, app: &App) {
             .border_style(crate::tui::popup_border_style(theme, popup)),
         popup,
     );
+    crate::tui::paint_popup_border(frame, popup, theme);
 
     // Everything below writes into the buffer directly. `set_string` clips
     // columns on its own, but an out-of-range *row* panics — and `fit_popup`
@@ -73,12 +74,20 @@ pub fn render_tunnel_reconnect_settings(frame: &mut Frame, app: &App) {
             theme.style(StyleRole::TableRow)
         };
         let label_avail = (val_x.saturating_sub(row_x + 1)) as usize;
-        // Foreground-only marker over the selection bar drawn above.
+        // The controls below keep their own foreground, but the selection bar
+        // drawn above owns the background of a selected row.
+        let over_bar = |style: Style| {
+            if is_sel {
+                crate::tui::inherit_background(style, selection)
+            } else {
+                style
+            }
+        };
         buf.set_string(
             row_x,
             ry,
             if is_sel { "> " } else { "  " },
-            if is_sel { focus } else { label_style },
+            if is_sel { over_bar(focus) } else { label_style },
         );
         buf.set_string(
             row_x + 2,
@@ -88,11 +97,11 @@ pub fn render_tunnel_reconnect_settings(frame: &mut Frame, app: &App) {
         );
 
         let value = app.config.tunnel_reconnect.display_field(i);
-        let val_style = if is_sel {
+        let val_style = over_bar(if is_sel {
             Style::default().fg(theme.color(ColorRole::StatusSuccess))
         } else {
             theme.style(StyleRole::PopupLegend)
-        };
+        });
         let avail = popup
             .x
             .saturating_add(popup.width)
@@ -124,4 +133,53 @@ pub fn render_tunnel_reconnect_settings(frame: &mut Frame, app: &App) {
         crate::tui::text::ellipsize(legend, inner_w),
         theme.style(StyleRole::PopupLegend),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::RoleMarker;
+    use crate::test_support::{fg, fg_bg, frame_at, marker, role_marker_theme, themed_app};
+
+    const SELECTION_FG: u32 = 0xb2_0001;
+    const SELECTION_BG: u32 = 0xb2_0101;
+    const MARKER_FG: u32 = 0xb2_0002;
+    const MARKER_BG: u32 = 0xb2_0102;
+    const SUCCESS_FG: u32 = 0xb2_0003;
+
+    /// `status.success` is a colour role, so it has no background of its own to
+    /// mark — which is exactly why the value used to punch a hole in the bar.
+    const MARKERS: &[RoleMarker] = &[
+        fg_bg(
+            "components.settings.row_selected",
+            SELECTION_FG,
+            SELECTION_BG,
+        ),
+        fg_bg("components.settings.marker", MARKER_FG, MARKER_BG),
+        fg("components.status.success", SUCCESS_FG),
+    ];
+
+    /// The selection bar's background must survive under the focus marker and
+    /// the status value, while both keep their own foreground.
+    #[test]
+    fn selected_row_controls_keep_their_foreground_over_the_selection_background() {
+        let mut app = themed_app(role_marker_theme("tunnel-reconnect", MARKERS));
+        app.mode = crate::app::AppMode::TunnelReconnectSettings;
+        app.tunnel_reconnect_selected = 0;
+
+        let area = Rect::new(0, 0, 80, 24);
+        let buf = frame_at(area, |f| render_tunnel_reconnect_settings(f, &app));
+        let popup = app.last_popup_rect.get().expect("the popup was laid out");
+        let ry = popup.y + 3;
+        let sel_bg = marker(SELECTION_BG);
+
+        let marker_cell = buf.cell((popup.x + 2, ry)).unwrap();
+        assert_eq!(marker_cell.symbol(), ">", "the focus marker");
+        assert_eq!(marker_cell.fg, marker(MARKER_FG), "marker foreground");
+        assert_eq!(marker_cell.bg, sel_bg, "marker background");
+
+        let value_cell = buf.cell((popup.x + 28, ry)).unwrap();
+        assert_eq!(value_cell.fg, marker(SUCCESS_FG), "status value foreground");
+        assert_eq!(value_cell.bg, sel_bg, "status value background");
+    }
 }

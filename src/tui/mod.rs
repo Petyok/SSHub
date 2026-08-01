@@ -30,16 +30,47 @@ pub fn fit_popup(desired: u16, min: u16, avail: u16) -> u16 {
 
 /// The foreground a popup frame is drawn in.
 ///
-/// `components.popup.border` is a `Paint` role, so it may carry a gradient —
-/// but a popup can float over a live session and `paint_gradient_ring` takes no
-/// exclusions. Sampling the role's solid fallback keeps a themed border colour
-/// without ever handing the ring painter a rect that overlaps the remote PTY
-/// viewport.
+/// `components.popup.border` is a `Paint` role, so it may carry a gradient.
+/// This is only the first half of drawing one: the block renders its frame in
+/// the role's solid fallback, and [`paint_popup_border`] then runs the gradient
+/// over exactly the cells still carrying that colour. Every caller of this
+/// function owes the popup that second pass, or a gradient theme silently
+/// flattens to its first stop.
 pub(crate) fn popup_border_style(
     theme: &crate::theme::model::ResolvedTheme,
     area: Rect,
 ) -> ratatui::style::Style {
     ratatui::style::Style::default().fg(blit::line_color(theme, PaintRole::PopupBorder, area))
+}
+
+/// The gradient pass belonging to [`popup_border_style`], run after the popup's
+/// block has been rendered into `area`.
+///
+/// A thin wrapper so the many popup call sites read as a pair; all the
+/// behaviour is in [`blit::paint_border`].
+pub(crate) fn paint_popup_border(
+    frame: &mut Frame,
+    area: Rect,
+    theme: &crate::theme::model::ResolvedTheme,
+) {
+    blit::paint_border(frame.buffer_mut(), area, theme, PaintRole::PopupBorder);
+}
+
+/// Carry `underlay`'s background onto `style`, keeping everything else.
+///
+/// A selected row is drawn in two passes: a bar in the selection role, then the
+/// row's controls over it. A control role that carries no background of its own
+/// left the cell on `Color::Reset` — punching a hole in the bar — and one that
+/// carries a different background overwrote the bar with a foreign colour. Both
+/// are wrong: the bar owns the background, the control owns the foreground.
+///
+/// Foreground and modifiers of `style` are never touched, and an `underlay`
+/// without a background of its own leaves `style` exactly as it was.
+pub(crate) fn inherit_background(style: Style, underlay: Style) -> Style {
+    match underlay.bg {
+        Some(bg) => style.bg(bg),
+        None => style,
+    }
 }
 
 /// Open a popup: clear the area it covers, then lay down its own background.
@@ -783,6 +814,7 @@ fn render_sftp_prompt_popup(frame: &mut Frame, app: &App) {
         ),
         popup_area,
     );
+    paint_popup_border(frame, popup_area, theme);
 }
 
 fn render_import_prompt_popup(frame: &mut Frame, app: &App) {
@@ -836,6 +868,7 @@ fn render_import_prompt_popup(frame: &mut Frame, app: &App) {
         ),
         popup_area,
     );
+    paint_popup_border(frame, popup_area, theme);
 }
 
 /// A one-row rect at `y`, or a zero-height rect when `y` falls outside
@@ -1178,16 +1211,26 @@ fn render_session_enter(frame: &mut Frame, app: &App) {
         return;
     }
     let area = frame.area();
+    // What the session is sliding over. Without it the columns it has not reached
+    // yet come out blank, so entering a session flashed a black screen with the
+    // host arriving over it.
+    //
+    // No usable dashboard behind it means no slide at all. A snapshot captured
+    // under the previous theme is dropped by `invalidate_theme_visual_state`,
+    // and one captured at a different terminal size holds cells for the wrong
+    // geometry — blitting either (or the `Cell::reset()` the missing case used
+    // to fall back to) puts foreign cells into the live session buffer. Showing
+    // the session without its slide is the honest outcome.
+    let behind = app.dashboard_snapshot.borrow();
+    let Some(snapshot) = behind.as_ref().filter(|b| b.area == area) else {
+        return;
+    };
     // Off starts a full screen-width to the right (fully off) and eases to 0.
     let off = ((1.0 - tween::ease_out(p)) * area.width as f32).round() as u16;
     if off == 0 {
         return;
     }
     let src = frame.buffer_mut().clone();
-    // What the session is sliding over. Without it the columns it has not reached
-    // yet come out blank, so entering a session flashed a black screen with the
-    // host arriving over it.
-    let behind = app.dashboard_snapshot.borrow();
     let fb = frame.buffer_mut();
     for y in area.y..area.y + area.height {
         // Right-to-left so each destination reads a not-yet-overwritten source.
@@ -1196,11 +1239,8 @@ fn render_session_enter(frame: &mut Frame, app: &App) {
                 if let (Some(s), Some(d)) = (src.cell((sx, y)), fb.cell_mut((x, y))) {
                     *d = s.clone();
                 }
-            } else if let Some(d) = fb.cell_mut((x, y)) {
-                match behind.as_ref().and_then(|b| b.cell((x, y))) {
-                    Some(s) => *d = s.clone(),
-                    None => d.reset(),
-                }
+            } else if let (Some(s), Some(d)) = (snapshot.cell((x, y)), fb.cell_mut((x, y))) {
+                *d = s.clone();
             }
         }
     }
@@ -1564,7 +1604,7 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
         FormKind::Keygen => {
             if let Some(form) = app.keygen_form.as_ref() {
                 frame.render_widget(
-                    screens::keygen::render_keygen_form(form, &app.save_key_label()),
+                    screens::keygen::render_keygen_form(form, &app.save_key_label(), theme, border),
                     popup_area,
                 );
             }
@@ -1596,6 +1636,10 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
             }
         }
     }
+
+    // Whichever form was rendered above drew its frame in `border`'s solid
+    // fallback; this is the gradient half of that pair.
+    paint_popup_border(frame, popup_area, theme);
 
     // Validation errors belong INSIDE the popup — the dashboard status bar is
     // hidden behind it, so a save failure otherwise looks like a stuck form.
@@ -1789,6 +1833,7 @@ fn render_help_popup(frame: &mut Frame, app: &App) {
             .title(Span::styled(" Help ", theme.style(StyleRole::PopupTitle))),
         popup_area,
     );
+    paint_popup_border(frame, popup_area, theme);
 
     // Query + fixed footer; scroll only the body between them.
     let inner = popup_area.inner(Margin::new(1, 1));
@@ -2397,6 +2442,57 @@ mod tests {
             "the vacated columns show the dashboard"
         );
         assert_ne!(sliding[(hx, hy)].symbol(), " ", "and are not blanked");
+    }
+
+    /// Drive `render_session_enter` alone over a recognisable buffer and report
+    /// what it left behind, so a blit can be told from a no-op cell by cell.
+    fn session_enter_over_pattern(app: &App, width: u16, height: u16) -> (Buffer, Buffer) {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        let mut prepared = None;
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                let buf = frame.buffer_mut();
+                for y in area.y..area.bottom() {
+                    for x in area.x..area.right() {
+                        buf[(x, y)].set_symbol(if (x + y) % 2 == 0 { "#" } else { "." });
+                    }
+                }
+                prepared = Some(buf.clone());
+                render_session_enter(frame, app);
+            })
+            .unwrap();
+        (prepared.unwrap(), terminal.backend().buffer().clone())
+    }
+
+    /// A session sliding in with no usable dashboard behind it must draw
+    /// nothing at all.
+    ///
+    /// The vacated columns used to fall back to `Cell::reset()`, so a missing
+    /// snapshot blitted hard resets — and a snapshot captured at a different
+    /// terminal size blitted cells from the wrong geometry — into the live
+    /// session buffer. Both are stale-theme leaks, not merely cosmetic.
+    #[test]
+    fn a_session_slide_without_a_fresh_dashboard_snapshot_draws_nothing() {
+        let mut app = app_with_two_sessions();
+        app.active_session = Some(0);
+        app.mode = AppMode::Session;
+        app.session_enter_at = Some(std::time::Instant::now());
+
+        // No snapshot at all.
+        *app.dashboard_snapshot.borrow_mut() = None;
+        let (prepared, after) = session_enter_over_pattern(&app, 40, 10);
+        assert_eq!(after, prepared, "a missing snapshot must be a no-op");
+
+        // A snapshot from a differently sized terminal is just as unusable.
+        *app.dashboard_snapshot.borrow_mut() = Some(Buffer::empty(Rect::new(0, 0, 20, 6)));
+        let (prepared, after) = session_enter_over_pattern(&app, 40, 10);
+        assert_eq!(after, prepared, "a stale-area snapshot must be a no-op");
+
+        // The control: a snapshot matching the render area still slides.
+        *app.dashboard_snapshot.borrow_mut() = Some(Buffer::empty(Rect::new(0, 0, 40, 10)));
+        let (prepared, after) = session_enter_over_pattern(&app, 40, 10);
+        assert_ne!(after, prepared, "a fresh snapshot must still animate");
     }
 
     #[test]
@@ -3616,6 +3712,40 @@ mod tests {
             buf[(sel_x, sel_y)].fg,
             Color::Rgb(0xff, 0x40, 0x02),
             "the highlight must not swallow the lifecycle colour"
+        );
+    }
+
+    /// A perimeter ring for a `Paint` role, as a `[gradients.*]` + role pair.
+    ///
+    /// Three stops with the first and last equal, because a `perimeter`
+    /// gradient closes on itself and validation rejects a visible seam.
+    pub(crate) fn ring_gradient(role_table: &str, role_key: &str) -> String {
+        format!(
+            "[gradients.ring]\ndirection = \"perimeter\"\n\
+             stops = [ {{ at = 0.0, color = \"#ff0000\" }}, \
+             {{ at = 0.5, color = \"#0000ff\" }}, \
+             {{ at = 1.0, color = \"#ff0000\" }} ]\n\
+             [{role_table}]\n{role_key} = {{ gradient = \"gradients.ring\" }}\n"
+        )
+    }
+
+    /// `components.picker.border` is the session picker's own frame role, so a
+    /// gradient on it has to reach the frame — the popup contract applies to
+    /// the picker's role just as much as to `popup.border`.
+    #[test]
+    fn a_gradient_picker_border_reaches_the_session_picker_frame() {
+        let mut app = app_with_picker(crate::app::SessionPickerPurpose::NewSession, "zzzznope");
+        app.session_picker.as_mut().unwrap().return_mode = AppMode::Normal;
+        wear(&mut app, &ring_gradient("components.picker", "border"));
+
+        let buf = render_to_buffer(&app, 80, 24);
+        let popup = app.last_popup_rect.get().expect("the picker drew");
+        let bottom: Vec<_> = (popup.x..popup.right())
+            .map(|x| buf[(x, popup.bottom() - 1)].fg)
+            .collect();
+        assert!(
+            bottom.windows(2).any(|pair| pair[0] != pair[1]),
+            "the picker border stayed flat: {bottom:?}"
         );
     }
 

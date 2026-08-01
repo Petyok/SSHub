@@ -68,8 +68,12 @@ fn wants_help(args: &[String]) -> bool {
 }
 
 /// The themes directory the running app would read.
+///
+/// Resolved through [`config::config_dir_path`], never `config_dir()`: every
+/// caller here only reads, and asking which themes are installed must not
+/// create `~/.config/sshub` or migrate a legacy tree into it.
 fn installed_themes_dir() -> Result<PathBuf, String> {
-    config::config_dir()
+    config::config_dir_path()
         .map(|dir| dir.join("themes"))
         .map_err(|e| format!("no config directory ({e})"))
 }
@@ -277,10 +281,30 @@ fn run_list(args: &[String]) -> Result<i32> {
 
     match format {
         OutputFormat::Plain => {
-            let width = themes.iter().map(|t| t.id.len()).max().unwrap_or(2).max(2);
-            let name_width = themes
+            // `id`, `name` and `source` are all user controlled, so the table is
+            // built from escaped copies — and the column widths are measured on
+            // those, since an escape sequence is wider than the byte it stood
+            // for and measuring the raw value would skew every following column.
+            let rows: Vec<(String, String, &str, String)> = themes
                 .iter()
-                .map(|t| t.name.len())
+                .map(|t| {
+                    (
+                        sanitize_plain(&t.id),
+                        sanitize_plain(&t.name),
+                        t.state,
+                        sanitize_plain(&t.source),
+                    )
+                })
+                .collect();
+            let width = rows
+                .iter()
+                .map(|(id, ..)| id.len())
+                .max()
+                .unwrap_or(2)
+                .max(2);
+            let name_width = rows
+                .iter()
+                .map(|(_, name, ..)| name.len())
                 .max()
                 .unwrap_or(4)
                 .max(4);
@@ -288,11 +312,8 @@ fn run_list(args: &[String]) -> Result<i32> {
                 "{:<width$}  {:<name_width$}  {:<9}  SOURCE",
                 "ID", "NAME", "STATE"
             );
-            for theme in &themes {
-                println!(
-                    "{:<width$}  {:<name_width$}  {:<9}  {}",
-                    theme.id, theme.name, theme.state, theme.source
-                );
+            for (id, name, state, source) in &rows {
+                println!("{id:<width$}  {name:<name_width$}  {state:<9}  {source}");
             }
             let diagnostics: Vec<&DiagnosticJson> = directory
                 .iter()
@@ -468,6 +489,27 @@ fn positionals_without_options(args: &[String]) -> Result<Vec<String>, i32> {
 // Rendering helpers
 // ---------------------------------------------------------------------------
 
+/// Escape terminal control characters for plain-text output.
+///
+/// Theme ids, names, source paths and diagnostic strings all come from a
+/// user-authored file, and plain output goes straight to a terminal — a raw ESC
+/// there is a cursor-moving, colour-setting instruction rather than text, and a
+/// raw newline breaks the list table apart. C0 (`U+0000..U+001F`) and DEL become
+/// a visible `\u{001b}`; every other character, including all of Unicode above
+/// DEL, is left exactly as written. The JSON and TOML formats need none of this:
+/// serde escapes control characters there already.
+fn sanitize_plain(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if ch <= '\u{001f}' || ch == '\u{007f}' {
+            let _ = write!(out, "\\u{{{:04x}}}", ch as u32);
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 fn source_label(record: &ThemeRecord) -> String {
     match &record.source {
         ThemeSource::BuiltIn => "built-in".to_string(),
@@ -550,18 +592,23 @@ impl DiagnosticJson {
         }
     }
 
+    /// The plain rendering of one diagnostic.
+    ///
+    /// `file`, `message` and `help` are all traceable to a user-authored theme
+    /// file, so each goes through [`sanitize_plain`] here — this is the one
+    /// place diagnostics become terminal output, in `theme check` and in
+    /// `theme list` alike.
     fn render(&self) -> String {
+        let file = sanitize_plain(&self.file);
+        let message = sanitize_plain(&self.message);
         let mut out = match (self.line, self.column) {
             (Some(line), Some(column)) => {
-                format!(
-                    "{}:{line}:{column} {}: {}\n",
-                    self.file, self.severity, self.message
-                )
+                format!("{file}:{line}:{column} {}: {message}\n", self.severity)
             }
-            _ => format!("{} {}: {}\n", self.file, self.severity, self.message),
+            _ => format!("{file} {}: {message}\n", self.severity),
         };
         if let Some(help) = &self.help {
-            let _ = writeln!(out, "  help: {help}");
+            let _ = writeln!(out, "  help: {}", sanitize_plain(help));
         }
         out
     }
@@ -641,7 +688,7 @@ struct NamedValueJson {
 
 #[derive(Debug, Serialize)]
 struct GradientStopJson {
-    at: f32,
+    at: f64,
     color: String,
 }
 
@@ -836,15 +883,42 @@ fn color_literal(color: Color) -> String {
     }
 }
 
+/// One complete TOML string literal, quotes and escapes included.
+///
+/// Delegated to `toml_edit` rather than hand-rolled: the previous three
+/// `replace` calls covered `\`, `"` and `\n` and silently emitted every other
+/// control character raw, which TOML forbids inside a basic string. The crate
+/// is already a dependency and owns the full escape table, so there is no
+/// second spelling of the rules to keep in sync.
+///
+/// Which literal form comes back is `toml_edit`'s choice — a value containing a
+/// quote or a backslash is shorter as a single-quoted *literal string* and is
+/// emitted that way. Both forms are valid wherever this is used, as a value and
+/// as a quoted key alike, so callers must not assume a leading `"`.
 fn toml_string(value: &str) -> String {
-    let escaped = value
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n");
-    format!("\"{escaped}\"")
+    toml_edit::Value::from(value).to_string().trim().to_string()
 }
 
-fn toml_float(value: f32) -> String {
+/// One key segment of a TOML table header or dotted key.
+///
+/// A bare key may only be ASCII letters, digits, `_` and `-`; anything else —
+/// a space, a dot, a quote, a control byte, any non-ASCII letter — has to be
+/// written as a quoted key, which is the same literal a value would use. Simple
+/// names stay bare so `[gradients.reef_ring]` keeps reading the way its author
+/// wrote it.
+fn toml_key_segment(value: &str) -> String {
+    let bare = !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    if bare {
+        value.to_string()
+    } else {
+        toml_string(value)
+    }
+}
+
+fn toml_float(value: f64) -> String {
     if value.fract() == 0.0 {
         format!("{value:.1}")
     } else {
@@ -886,7 +960,7 @@ fn resolved_toml(theme: &ResolvedTheme) -> String {
     }
 
     for (name, gradient) in gradient_exports(theme) {
-        let _ = writeln!(out, "\n[gradients.{name}]");
+        let _ = writeln!(out, "\n[gradients.{}]", toml_key_segment(&name));
         let _ = writeln!(
             out,
             "direction = {}",
@@ -921,8 +995,13 @@ fn resolved_toml(theme: &ResolvedTheme) -> String {
                     format!("{leaf} = {}", toml_string(&color_literal(*color)))
                 }
                 ResolvedPaint::Gradient(id) => {
+                    // The whole reference is one logical string, serialised as
+                    // one value. Interpolating the name inside hand-written
+                    // quotes let a name containing a quote close the literal
+                    // early and produce a file that no longer parsed.
                     let name = theme.gradient_name(*id).unwrap_or_default();
-                    format!("{leaf} = {{ gradient = \"gradients.{name}\" }}")
+                    let reference = format!("gradients.{name}");
+                    format!("{leaf} = {{ gradient = {} }}", toml_string(&reference))
                 }
             },
             RoleRef::Tint(role) => match theme.tint(role) {
@@ -988,8 +1067,11 @@ mod tests {
                 record.diagnostics
             );
             let reparsed = record.resolved().expect("the export resolves");
-            assert_eq!(
-                **reparsed, *original,
+            // `semantically_eq`, not `==`: the export is a second resolve run,
+            // so the two carry different generations by design. What has to
+            // match is everything else.
+            assert!(
+                reparsed.semantically_eq(&original),
                 "{id} export does not round-trip semantically"
             );
         }
@@ -1042,6 +1124,198 @@ mod tests {
         assert_eq!(reparsed.author(), Some("Ada Lovelace"));
     }
 
+    /// A gradient whose authored name is not a bare key still round-trips.
+    ///
+    /// The export writes both a table header and a paint reference from that
+    /// name. A hand-rolled escaper that only knew `\`, `"` and `\n` produced an
+    /// invalid header for a name containing a space or a dot, and the reference
+    /// was interpolated *inside* its own quotes — so a name with a quote in it
+    /// closed the string early. Either way the export no longer parsed.
+    #[test]
+    fn a_resolved_export_round_trips_a_quoted_gradient_key() {
+        // Space, dot, double quote and backslash: each breaks a different part
+        // of the old writer.
+        const NAME: &str = "odd .\"\\ name";
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("quoted.toml");
+        std::fs::write(
+            &path,
+            "schema_version = 1\nname = \"Quoted\"\n\n\
+             [gradients.\"odd .\\\"\\\\ name\"]\ndirection = \"horizontal\"\n\
+             stops = [ { at = 0.0, color = \"#102030\" }, { at = 1.0, color = \"#405060\" } ]\n\n\
+             [components.app]\nbackground = { gradient = \"gradients.odd .\\\"\\\\ name\" }\n",
+        )
+        .unwrap();
+
+        let registry = ThemeRegistry::load_check_target(&path, ValidationMode::Strict).unwrap();
+        let original = registry
+            .get("quoted")
+            .and_then(|record| record.resolved())
+            .expect("the fixture resolves")
+            .clone();
+        assert_eq!(
+            original.gradient_names,
+            vec![NAME.to_string()],
+            "the fixture really carries the awkward name"
+        );
+
+        // The export has to parse again — under `Strict`, so an unknown role or
+        // a broken reference is an error rather than a warning.
+        let exported = resolved_toml(&original);
+        let round = dir.path().join("quoted-export.toml");
+        std::fs::write(&round, &exported).unwrap();
+        let registry = ThemeRegistry::load_check_target(&round, ValidationMode::Strict).unwrap();
+        let record = registry.get("quoted-export").expect("the export registers");
+        assert!(
+            record.is_valid(),
+            "the export does not parse:\n{exported}\n{:#?}",
+            record.diagnostics
+        );
+        let reparsed = record.resolved().expect("the export resolves");
+
+        // Same name, and the paint role still points at that same gradient.
+        assert_eq!(reparsed.gradient_names, vec![NAME.to_string()]);
+        let ResolvedPaint::Gradient(id) =
+            reparsed.paint(crate::theme::catalog::PaintRole::AppBackground)
+        else {
+            panic!("the reparsed app background is no longer a gradient");
+        };
+        assert_eq!(reparsed.gradient_name(*id), Some(NAME));
+        assert_eq!(
+            reparsed.gradient(*id).map(|g| g.stops().to_vec()),
+            original.gradients().first().map(|g| g.stops().to_vec()),
+            "the reference points at a different gradient after the round trip"
+        );
+    }
+
+    /// Two stops a hair apart stay two stops, from validation through the
+    /// runtime to the export and back.
+    ///
+    /// `0.5` and `0.50000001` are distinct `f64` values and equal `f32` ones,
+    /// so storing positions as `f32` silently merged them: validation accepted
+    /// the file, then the resolver collapsed the pair, `sample` saw a zero-width
+    /// span, and the export wrote the same number twice — a theme that no longer
+    /// round-tripped and a gradient the author could not explain.
+    #[test]
+    fn near_identical_gradient_stops_survive_validation_runtime_and_export() {
+        const NEAR: f64 = 0.50000001;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hairline.toml");
+        std::fs::write(
+            &path,
+            "schema_version = 1\nname = \"Hairline\"\n\n\
+             [gradients.hair]\ndirection = \"horizontal\"\n\
+             stops = [ { at = 0.0, color = \"#000000\" }, { at = 0.5, color = \"#204060\" }, \
+             { at = 0.50000001, color = \"#a0c0e0\" }, { at = 1.0, color = \"#ffffff\" } ]\n\n\
+             [components.app]\nbackground = { gradient = \"gradients.hair\" }\n",
+        )
+        .unwrap();
+
+        let registry = ThemeRegistry::load_check_target(&path, ValidationMode::Strict).unwrap();
+        let record = registry.get("hairline").expect("the fixture registers");
+        assert!(
+            record.is_valid(),
+            "validation rejected the hairline stops: {:#?}",
+            record.diagnostics
+        );
+        let theme = record.resolved().expect("the fixture resolves").clone();
+
+        // Runtime: four stops, strictly ascending. Under `f32` the middle pair
+        // compared equal here.
+        let stops = theme.gradients()[0].stops().to_vec();
+        assert_eq!(stops.len(), 4, "a stop went missing");
+        for pair in stops.windows(2) {
+            assert!(
+                pair[0].position() < pair[1].position(),
+                "stops collapsed onto one position: {:?} then {:?}",
+                pair[0].position(),
+                pair[1].position()
+            );
+        }
+        assert_eq!(stops[2].position(), NEAR);
+
+        // Sampling: each of the two near stops still yields its *own* colour.
+        // A collapsed pair has a zero-width span, so both sampled as the first.
+        let gradient = &theme.gradients()[0];
+        assert_eq!(gradient.sample(0.5), Color::Rgb(0x20, 0x40, 0x60), "at 0.5");
+        assert_eq!(
+            gradient.sample(NEAR),
+            Color::Rgb(0xa0, 0xc0, 0xe0),
+            "at {NEAR}"
+        );
+
+        // Export: the two positions are written apart and come back apart.
+        let exported = resolved_toml(&theme);
+        assert!(
+            exported.contains("at = 0.50000001"),
+            "the export lost the hairline position:\n{exported}"
+        );
+        let round = dir.path().join("hairline-export.toml");
+        std::fs::write(&round, &exported).unwrap();
+        let registry = ThemeRegistry::load_check_target(&round, ValidationMode::Strict).unwrap();
+        let reparsed = registry
+            .get("hairline-export")
+            .and_then(|record| record.resolved())
+            .expect("the export resolves");
+        let reparsed_stops = reparsed.gradients()[0].stops().to_vec();
+        assert_eq!(
+            reparsed_stops
+                .iter()
+                .map(|s| s.position())
+                .collect::<Vec<_>>(),
+            vec![0.0, 0.5, NEAR, 1.0],
+            "the round trip moved a stop"
+        );
+
+        // And the JSON export carries the same value, since it is the same f64.
+        let json = serde_json::to_string(&ResolvedJson::new(&theme)).unwrap();
+        assert!(
+            json.contains("0.50000001"),
+            "the JSON export rounded:\n{json}"
+        );
+    }
+
+    /// The bare-key rule the gradient table header is written with.
+    #[test]
+    fn toml_key_segments_are_bare_only_when_they_may_be() {
+        // ASCII letters, digits, `_` and `-` are the whole bare-key alphabet.
+        for bare in ["reef_ring", "a", "Ring-2", "0", "_x-9Z"] {
+            assert_eq!(toml_key_segment(bare), bare, "`{bare}` may stay bare");
+        }
+        // Everything else goes through the same serialiser as a value, so a
+        // dot, a space, a quote, a control byte or any non-ASCII letter is
+        // represented rather than pasted in raw. `toml_edit` picks whichever
+        // literal is shortest, so the quote character is its choice — a value
+        // containing `"` comes back as a single-quoted literal string, which is
+        // just as valid a TOML key.
+        for quoted in [
+            "",
+            "has.dot",
+            "a b",
+            "q\"uote",
+            "back\\slash",
+            "n\u{00fc}ance",
+            "tab\there",
+            "ctl\u{0007}",
+        ] {
+            let out = toml_key_segment(quoted);
+            assert_eq!(out, toml_string(quoted), "`{quoted:?}` must be quoted");
+            let first = out.chars().next().expect("a literal is never empty");
+            assert!(
+                (first == '"' || first == '\'') && out.ends_with(first) && out.len() >= 2,
+                "`{quoted:?}` did not produce a complete string literal: {out}"
+            );
+            // And it really is that value: parsing the literal back yields the
+            // original, which is the property the export depends on.
+            let parsed: toml_edit::Value = out.parse().expect("a valid TOML value");
+            assert_eq!(
+                parsed.as_str(),
+                Some(quoted),
+                "{out} does not mean {quoted:?}"
+            );
+        }
+    }
+
     #[test]
     fn a_resolved_export_names_its_gradients_the_way_the_author_did() {
         let aqua = builtin("aqua");
@@ -1052,6 +1326,32 @@ mod tests {
             "a gradient role must reference the gradient by name:\n{toml}"
         );
         assert!(!toml.contains("extends"), "a resolved export has no parent");
+    }
+
+    /// A diagnostic quotes a file path, a message and a help line that all
+    /// ultimately come from a user-authored theme file, so none of them may
+    /// carry a raw control byte into the operator's terminal.
+    #[test]
+    fn a_rendered_diagnostic_escapes_control_characters() {
+        let diagnostic = DiagnosticJson {
+            severity: "error",
+            file: "/tmp/ev\u{1b}[31mil.toml".to_string(),
+            line: Some(3),
+            column: Some(7),
+            message: "bad\nvalue\u{7f}".to_string(),
+            help: Some("try\u{1b}]0;pwned\u{7}this".to_string()),
+        };
+
+        let out = diagnostic.render();
+        assert!(
+            !out.chars().any(|c| c.is_control() && c != '\n'),
+            "a raw control byte survived rendering: {out:?}"
+        );
+        assert!(out.contains("ev\\u{001b}[31mil.toml"), "{out}");
+        assert!(out.contains("bad\\u{000a}value\\u{007f}"), "{out}");
+        assert!(out.contains("try\\u{001b}]0;pwned\\u{0007}this"), "{out}");
+        // Only the two line terminators the renderer writes itself remain.
+        assert_eq!(out.matches('\n').count(), 2, "{out:?}");
     }
 
     #[test]

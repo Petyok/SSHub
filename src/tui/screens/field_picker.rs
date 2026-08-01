@@ -80,6 +80,7 @@ pub fn render_field_picker(frame: &mut Frame, app: &App) {
             .border_style(crate::tui::popup_border_style(theme, popup)),
         popup,
     );
+    crate::tui::paint_popup_border(frame, popup, theme);
 
     // Everything below writes into the buffer directly. `set_string` clips
     // columns on its own, but an out-of-range *row* panics — and `fit_popup`

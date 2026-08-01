@@ -91,6 +91,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             ))),
         popup,
     );
+    crate::tui::blit::paint_border(frame.buffer_mut(), popup, theme, PaintRole::PickerBorder);
 
     // Everything below writes into the buffer directly. `set_stringn` clips
     // horizontally on its own, but an out-of-range *row* panics with "index

@@ -30,6 +30,7 @@ pub fn render_group_manage_popup(frame: &mut Frame, app: &App) {
         .title(Span::styled(" Groups ", theme.style(StyleRole::PopupTitle)));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
+    crate::tui::paint_popup_border(frame, popup, theme);
 
     if inner.height == 0 {
         return;

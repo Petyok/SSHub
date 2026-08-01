@@ -369,6 +369,89 @@ fn theme_list_does_not_bootstrap_databases() {
     assert!(!dir.path().join("metadata.db").exists());
 }
 
+/// A theme whose `name` carries terminal control characters.
+///
+/// The control bytes are written as TOML escapes rather than raw bytes so the
+/// fixture stays a valid basic string — after parsing the name really does hold
+/// an ESC, a newline and a DEL.
+const HOSTILE_NAME_THEME: &str = "schema_version = 1\n\
+     name = \"ev\\u001Bil\\nnext\\u007F\"\n\n[semantic]\naccent = \"#123456\"\n";
+
+/// Plain `theme list` prints a user-controlled name, so a theme file must not be
+/// able to smuggle escape sequences into the operator's terminal.
+#[test]
+fn theme_list_plain_escapes_control_characters_in_a_theme_name() {
+    let d = dir();
+    install_theme(d.path(), "hostile", HOSTILE_NAME_THEME);
+
+    let out = sshub(d.path()).args(["theme", "list"]).assert().success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+
+    assert!(
+        !stdout.contains('\u{1b}'),
+        "a raw ESC reached the terminal:\n{stdout:?}"
+    );
+    assert!(
+        !stdout.contains('\u{7f}'),
+        "a raw DEL reached the terminal:\n{stdout:?}"
+    );
+    assert!(
+        stdout.contains("ev\\u{001b}il\\u{000a}next\\u{007f}"),
+        "the name was not escaped visibly:\n{stdout}"
+    );
+    // The name's own newline must not add a row: every theme stays one line.
+    let rows = stdout.lines().filter(|l| l.contains("hostile")).count();
+    assert_eq!(rows, 1, "the name broke the table across rows:\n{stdout}");
+}
+
+/// `theme list` and `theme show` only read, so they must not bring the config
+/// directory into existence — nor drag a legacy `~/.config/ssh-launcher` tree
+/// into it as a side effect of being asked what is installed.
+///
+/// The isolation is a real subprocess with its own `HOME` and no
+/// `SSHUB_CONFIG_DIR`, so nothing here mutates this process's environment.
+#[test]
+fn theme_read_commands_never_create_the_config_directory() {
+    let home = dir();
+    let legacy_themes = home.path().join(".config/ssh-launcher/themes");
+    std::fs::create_dir_all(&legacy_themes).unwrap();
+    std::fs::write(legacy_themes.join("legacy.toml"), VALID_THEME).unwrap();
+    let new_dir = home.path().join(".config/sshub");
+
+    for args in [
+        vec!["theme", "list"],
+        vec!["theme", "show", "aqua"],
+        vec!["theme", "show", "missing"],
+    ] {
+        Command::cargo_bin("sshub")
+            .unwrap()
+            .env("HOME", home.path())
+            .env("SSHUB_DATA_DIR", home.path().join("data"))
+            .env_remove("SSHUB_CONFIG_DIR")
+            .env_remove("SSH_LAUNCHER_CONFIG_DIR")
+            .env("SSHUB_SSH_CONFIG", fixture_ssh_config())
+            // The exit code is not the point here — `show missing` is expected
+            // to fail. What matters is what the run left on disk.
+            .args(&args)
+            .output()
+            .unwrap();
+
+        assert!(
+            !new_dir.exists(),
+            "`sshub {}` created {}",
+            args.join(" "),
+            new_dir.display()
+        );
+        assert!(
+            !new_dir.with_extension("migrating").exists(),
+            "`sshub {}` left a migration staging directory behind",
+            args.join(" ")
+        );
+    }
+    // And the legacy tree it did not migrate is still exactly as it was.
+    assert!(legacy_themes.join("legacy.toml").exists());
+}
+
 #[test]
 fn theme_show_unknown_id_exits_one() {
     let dir = dir();

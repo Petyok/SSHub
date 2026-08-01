@@ -99,3 +99,60 @@ fn registry_records_are_readable_from_outside_the_crate() {
     assert!(registry.get("aqua").is_some());
     assert!(registry.get("no-such-theme").is_none());
 }
+
+/// A `GradientId` belongs to the *resolve run* that minted it, not merely to a
+/// theme id.
+///
+/// The ids used to be a bare table index, so an id captured before a theme
+/// reload still indexed happily into the new table — silently naming a
+/// different gradient, or the same one after the author had edited it. Two
+/// independent resolve runs of the *same* built-in are the sharpest case:
+/// identical id, identical content, identical table position, and still the
+/// foreign id has to be refused.
+#[test]
+fn a_gradient_id_is_rejected_by_a_theme_from_another_resolve_run() {
+    let load = || {
+        ThemeRegistry::builtins(ValidationMode::Strict)
+            .expect("built-ins load")
+            .resolved(&ThemeId::parse("aqua").expect("aqua is a valid id"))
+            .expect("aqua resolves")
+    };
+    let a = load();
+    let b = load();
+
+    // Same theme, same content — only the resolve run differs.
+    assert_eq!(a.id(), b.id());
+    assert_eq!(a.gradients(), b.gradients());
+
+    let id = ROLE_SPECS
+        .iter()
+        .find_map(|spec| match spec.role {
+            RoleRef::Paint(role) => match a.paint(role) {
+                ResolvedPaint::Gradient(id) => Some(*id),
+                ResolvedPaint::Solid(_) => None,
+            },
+            _ => None,
+        })
+        .expect("aqua paints at least one role with a gradient");
+
+    // Its own run answers.
+    assert!(
+        a.gradient(id).is_some(),
+        "the minting theme must resolve it"
+    );
+    assert!(a.gradient_name(id).is_some());
+
+    // The other run refuses, index in range or not.
+    assert!(
+        b.gradient(id).is_none(),
+        "a foreign resolve run answered a gradient id"
+    );
+    assert!(
+        b.gradient_name(id).is_none(),
+        "a foreign resolve run named a gradient id"
+    );
+
+    // A clone stays the same run, so it must keep answering.
+    let cloned = a.clone();
+    assert!(cloned.gradient(id).is_some(), "a clone changed generation");
+}
