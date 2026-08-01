@@ -1531,6 +1531,7 @@ pub struct KnownHostsState {
     pub query: String,
     pub confirming_delete: bool,
     pub notice: Option<String>,
+    pub notice_is_error: bool,
 }
 
 impl KnownHostsState {
@@ -1553,5 +1554,47 @@ impl KnownHostsState {
                 .map(|(i, _)| i)
                 .collect()
         }
+    }
+}
+
+#[cfg(test)]
+mod known_hosts_state_tests {
+    use super::KnownHostsState;
+    use crate::known_hosts::KnownHostEntry;
+
+    fn entry(hosts: &str, fingerprint: Option<&str>) -> KnownHostEntry {
+        KnownHostEntry {
+            marker: None,
+            hosts: hosts.to_string(),
+            key_type: "ssh-ed25519".to_string(),
+            fingerprint: fingerprint.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn filtered_indices_matches_host_and_fingerprint() {
+        let state = KnownHostsState {
+            entries: vec![
+                entry("alpha.example.com", Some("SHA256:aaaa")),
+                entry("beta.example.com", Some("SHA256:bbbb")),
+                entry("|1|salt|hash", Some("SHA256:cccc")),
+            ],
+            selected: 0,
+            query: String::new(),
+            confirming_delete: false,
+            notice: None,
+            notice_is_error: false,
+        };
+        assert_eq!(state.filtered_indices(), vec![0, 1, 2]);
+
+        let mut by_host = state;
+        by_host.query = "beta".into();
+        assert_eq!(by_host.filtered_indices(), vec![1]);
+
+        by_host.query = "bbbb".into();
+        assert_eq!(by_host.filtered_indices(), vec![1]);
+
+        by_host.query = "hashed".into();
+        assert_eq!(by_host.filtered_indices(), vec![2]);
     }
 }

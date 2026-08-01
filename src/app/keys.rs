@@ -741,6 +741,7 @@ impl App {
             query: String::new(),
             confirming_delete: false,
             notice: None,
+            notice_is_error: false,
         });
         self.mode = AppMode::KnownHosts;
     }
@@ -765,9 +766,11 @@ impl App {
                             state.entries = entries;
                             state.selected = 0;
                             state.notice = Some(format!("Removed all keys for {}", entry.hosts));
+                            state.notice_is_error = false;
                         }
                         Err(e) => {
                             state.notice = Some(format!("{e}"));
+                            state.notice_is_error = true;
                         }
                     }
                 }
@@ -801,10 +804,12 @@ impl App {
             }
             KeyCode::PageUp => {
                 state.selected = state.selected.saturating_sub(10);
+                state.notice = None;
             }
             KeyCode::PageDown => {
                 let filtered = state.filtered_indices();
                 state.selected = (state.selected + 10).min(filtered.len().saturating_sub(1));
+                state.notice = None;
             }
             KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 state.notice = None;
@@ -812,6 +817,7 @@ impl App {
                 if let Some(&fi) = filtered.get(state.selected) {
                     if let Some(reason) = state.entries[fi].deletion_block_reason() {
                         state.notice = Some(reason.to_string());
+                        state.notice_is_error = true;
                     } else {
                         state.confirming_delete = true;
                     }
@@ -822,10 +828,12 @@ impl App {
                 state.entries = crate::known_hosts::load_known_hosts(&path).unwrap_or_default();
                 state.selected = 0;
                 state.notice = Some("Refreshed".to_string());
+                state.notice_is_error = false;
             }
             KeyCode::Backspace => {
                 state.query.pop();
                 state.selected = 0;
+                state.notice = None;
             }
             KeyCode::Char(c)
                 if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)

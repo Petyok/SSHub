@@ -132,7 +132,7 @@ pub fn render_known_hosts(frame: &mut Frame, app: &App) {
             theme::amber(),
         );
     } else if let Some(notice) = &state.notice {
-        let style = if notice.starts_with("Cannot") || notice.contains("failed") {
+        let style = if state.notice_is_error {
             theme::red()
         } else {
             theme::green()

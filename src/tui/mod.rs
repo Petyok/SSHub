@@ -1981,6 +1981,7 @@ mod tests {
                         query: String::new(),
                         confirming_delete: false,
                         notice: None,
+                        notice_is_error: false,
                     });
                 }
                 // Must not panic; we don't care about the pixels here.

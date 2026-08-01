@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -30,13 +31,6 @@ pub struct KnownHostEntry {
 impl KnownHostEntry {
     pub fn is_hashed(&self) -> bool {
         self.hosts.starts_with("|1|")
-    }
-
-    pub fn is_deletable(&self) -> bool {
-        !self.is_hashed()
-            && self.marker.is_none()
-            && !self.hosts.contains('*')
-            && !self.hosts.contains('?')
     }
 
     pub fn deletion_block_reason(&self) -> Option<&'static str> {
@@ -166,6 +160,9 @@ pub fn load_known_hosts(path: &Path) -> Result<Vec<KnownHostEntry>> {
     let mut entries = parse_known_hosts(&content);
     let mut fps = fingerprints(path);
     for entry in &mut entries {
+        if entry.marker.is_some() {
+            continue;
+        }
         let norm = normalize_key_type(&entry.key_type);
         let key = (entry.hosts.clone(), norm);
         if let Some(list) = fps.get_mut(&key) {
@@ -178,6 +175,45 @@ pub fn load_known_hosts(path: &Path) -> Result<Vec<KnownHostEntry>> {
 }
 
 pub fn remove_host(name: &str, path: &Path) -> Result<()> {
+    // Preflight on a temp copy: ssh-keygen -R matches host patterns, so deleting
+    // `host.example.com` also removes `*.example.com`. The UI refuses deleting
+    // wildcard rows; refuse here too when -R would take them as collateral.
+    let original = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    {
+        let mut probe = tempfile::NamedTempFile::new().context("temp known_hosts for -R probe")?;
+        probe.write_all(&original)?;
+        probe.flush()?;
+        run_keygen_r(name, probe.path())?;
+        let after = std::fs::read_to_string(probe.path()).unwrap_or_default();
+        let before_entries = parse_known_hosts(&String::from_utf8_lossy(&original));
+        let after_entries = parse_known_hosts(&after);
+        let wildcards_removed: Vec<_> = before_entries
+            .iter()
+            .filter(|e| e.hosts.contains('*') || e.hosts.contains('?'))
+            .filter(|e| {
+                !after_entries
+                    .iter()
+                    .any(|a| a.hosts == e.hosts && a.key_type == e.key_type && a.marker == e.marker)
+            })
+            .map(|e| e.hosts.as_str())
+            .collect();
+        // ssh-keygen -R writes <path>.old beside the probe; drop it so /tmp
+        // does not accumulate backups from every refused delete.
+        let mut old = probe.path().as_os_str().to_os_string();
+        old.push(".old");
+        let _ = std::fs::remove_file(old);
+        if !wildcards_removed.is_empty() {
+            anyhow::bail!(
+                "Deleting {name} would also remove wildcard entries ({}) — edit known_hosts manually",
+                wildcards_removed.join(", ")
+            );
+        }
+    }
+
+    run_keygen_r(name, path)
+}
+
+fn run_keygen_r(name: &str, path: &Path) -> Result<()> {
     let mut ran = false;
     for host in name.split(',') {
         let host = host.trim();
@@ -390,5 +426,109 @@ debug1: Server host key: ssh-ed25519 SHA256:wTZYfLI5nCdGqxsM2v45Z90mFjK3kCQh8mFj
     #[test]
     fn fingerprint_from_log_returns_none_when_absent() {
         assert_eq!(host_key_fingerprint_from_log("debug1: Connecting..."), None);
+    }
+
+    #[test]
+    fn deletion_block_reason_table() {
+        let plain = KnownHostEntry {
+            marker: None,
+            hosts: "example.com".to_string(),
+            key_type: "ssh-ed25519".to_string(),
+            fingerprint: None,
+        };
+        assert_eq!(plain.deletion_block_reason(), None);
+
+        let hashed = KnownHostEntry {
+            hosts: "|1|abc|def".to_string(),
+            ..plain.clone()
+        };
+        assert!(hashed.deletion_block_reason().unwrap().contains("hashed"));
+
+        let ca = KnownHostEntry {
+            marker: Some(Marker::CertAuthority),
+            hosts: "*.example.com".to_string(),
+            ..plain.clone()
+        };
+        assert!(ca
+            .deletion_block_reason()
+            .unwrap()
+            .contains("cert-authority"));
+
+        let revoked = KnownHostEntry {
+            marker: Some(Marker::Revoked),
+            ..plain.clone()
+        };
+        assert!(revoked.deletion_block_reason().unwrap().contains("revoked"));
+
+        let wildcard = KnownHostEntry {
+            hosts: "*.example.com".to_string(),
+            ..plain.clone()
+        };
+        assert!(wildcard
+            .deletion_block_reason()
+            .unwrap()
+            .contains("wildcard"));
+
+        let port = KnownHostEntry {
+            hosts: "[host.example.com]:2222".to_string(),
+            ..plain
+        };
+        assert_eq!(port.deletion_block_reason(), None);
+    }
+
+    #[test]
+    fn fingerprint_join_skips_marker_entries() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "@revoked dup.example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBbSwmRXm0WEQzC3oHnJkV0tBk3kCQh8mFjWz3nLx9oK").unwrap();
+        writeln!(file, "dup.example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHnXmK4oXsQmBpDPn8l0V3aFk7R2sYw9cT5uN1eMx6Qb").unwrap();
+        file.flush().unwrap();
+
+        let entries = load_known_hosts(file.path()).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert!(entries[0].marker.is_some());
+        assert_eq!(
+            entries[0].fingerprint, None,
+            "marker entry gets no fingerprint"
+        );
+        assert!(
+            entries[1].fingerprint.is_some(),
+            "plain entry gets the fingerprint"
+        );
+        // Derive expected from ssh-keygen so the assertion stays correct if the
+        // fixture key's fingerprint encoding ever differs across OpenSSH builds.
+        let out = Command::new("ssh-keygen")
+            .args(["-l", "-f"])
+            .arg(file.path())
+            .output()
+            .unwrap();
+        let expected = String::from_utf8_lossy(&out.stdout)
+            .split_whitespace()
+            .find(|t| t.starts_with("SHA256:"))
+            .map(str::to_string);
+        assert_eq!(
+            entries[1].fingerprint, expected,
+            "plain entry must keep its own fingerprint, not a stolen/misaligned one"
+        );
+    }
+
+    #[test]
+    fn delete_refuses_when_wildcard_would_be_collateral() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "host.example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHnXmK4oXsQmBpDPn8l0V3aFk7R2sYw9cT5uN1eMx6Qb").unwrap();
+        writeln!(file, "*.example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBbSwmRXm0WEQzC3oHnJkV0tBk3kCQh8mFjWz3nLx9oK").unwrap();
+        writeln!(file, "keepme.other.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHnXmK4oXsQmBpDPn8l0V3aFk7R2sYw9cT5uN1eMx6Qb").unwrap();
+        file.flush().unwrap();
+
+        let err = remove_host("host.example.com", file.path()).unwrap_err();
+        assert!(
+            err.to_string().contains("wildcard"),
+            "expected wildcard refusal, got {err}"
+        );
+        let after = std::fs::read_to_string(file.path()).unwrap();
+        assert!(
+            after.contains("host.example.com"),
+            "real file must be untouched after refusal"
+        );
+        assert!(after.contains("*.example.com"));
     }
 }
