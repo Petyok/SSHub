@@ -143,6 +143,7 @@ impl FilePasswordStore {
                 "refusing symlink credentials temporary file: {}",
                 tmp.display()
             );
+            fs::remove_file(&tmp)?;
         }
 
         #[cfg(unix)]
@@ -151,8 +152,7 @@ impl FilePasswordStore {
             use std::os::unix::fs::OpenOptionsExt;
             let mut file = std::fs::OpenOptions::new()
                 .write(true)
-                .create(true)
-                .truncate(true)
+                .create_new(true)
                 .mode(0o600)
                 .open(&tmp)
                 .map_err(|e| {
@@ -162,7 +162,12 @@ impl FilePasswordStore {
         }
         #[cfg(not(unix))]
         {
-            fs::write(&tmp, &content)?;
+            use std::io::Write;
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp)?;
+            file.write_all(content.as_bytes())?;
             crate::secure_fs::restrict_file(&tmp);
         }
 

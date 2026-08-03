@@ -311,8 +311,7 @@ pub fn load_config_at(path: &Path) -> anyhow::Result<AppConfig> {
     }
 
     if !path.exists() {
-        fs::write(path, default_config_toml()?)?;
-        crate::secure_fs::restrict_file(path);
+        write_private_file(path, default_config_toml()?.as_bytes())?;
     }
 
     let content = fs::read_to_string(path)?;
@@ -363,16 +362,31 @@ pub fn save_config_at(path: &Path, config: &AppConfig) -> anyhow::Result<()> {
     merge_toml_table(doc.as_table_mut(), new_doc.as_table());
 
     let tmp = path.with_extension("toml.tmp");
-    if tmp.exists() {
-        anyhow::ensure!(
-            !std::fs::symlink_metadata(&tmp)?.file_type().is_symlink(),
-            "refusing symlink config temporary file: {}",
-            tmp.display()
-        );
-    }
-    fs::write(&tmp, doc.to_string())?;
-    crate::secure_fs::restrict_file(&tmp);
+    write_private_file(&tmp, doc.to_string().as_bytes())?;
     fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+fn write_private_file(path: &Path, content: &[u8]) -> anyhow::Result<()> {
+    use std::io::Write;
+    if path.exists() {
+        anyhow::ensure!(
+            !fs::symlink_metadata(path)?.file_type().is_symlink(),
+            "refusing symlink temporary file: {}",
+            path.display()
+        );
+        fs::remove_file(path)?;
+    }
+    #[cfg(unix)]
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(path)?;
+    file.write_all(content)?;
+    file.sync_all()?;
+    crate::secure_fs::restrict_file(path);
     Ok(())
 }
 

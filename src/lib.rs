@@ -212,6 +212,7 @@ fn run_picker_loop(
             profile::picker::PickerOutcome::Continue => {}
             profile::picker::PickerOutcome::Quit => return Ok(None),
             profile::picker::PickerOutcome::Launch(record) => {
+                crate::profile::require_profile_dir(&roots, &record)?;
                 let ssh_config = crate::profile::ssh_config_path_for_profile(&roots, &record)?;
                 let paths = profile::profile_paths(&roots, &record, ssh_config);
                 return Ok(Some(paths));

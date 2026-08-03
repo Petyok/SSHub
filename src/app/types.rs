@@ -295,7 +295,7 @@ pub const SETTINGS_ITEMS: [(&str, &str); 5] = [
     ),
     (
         "Session logging",
-        "save PTY output under ~/.local/share/sshub/logs",
+        "save PTY output under the selected profile logs",
     ),
 ];
 

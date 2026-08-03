@@ -80,13 +80,8 @@ impl ProfileState {
                 "duplicate profile name in {}",
                 path.display()
             );
-            anyhow::ensure!(
-                !record.id.trim().is_empty()
-                    && record.id.len() <= 128
-                    && !record.id.chars().any(char::is_control),
-                "invalid profile id in {}",
-                path.display()
-            );
+            validate_profile_id(&record.id)
+                .with_context(|| format!("invalid profile id in {}", path.display()))?;
             anyhow::ensure!(
                 ids.insert(&record.id),
                 "duplicate profile id in {}",
@@ -104,15 +99,7 @@ impl ProfileState {
         let content = toml::to_string_pretty(self)
             .map_err(|e| anyhow::anyhow!("failed to serialize profile state: {e}"))?;
         let tmp = path.with_extension("toml.tmp");
-        if tmp.exists() {
-            anyhow::ensure!(
-                !std::fs::symlink_metadata(&tmp)?.file_type().is_symlink(),
-                "refusing symlink state temporary file: {}",
-                tmp.display()
-            );
-        }
-        std::fs::write(&tmp, content)?;
-        crate::secure_fs::restrict_file(&tmp);
+        write_exclusive_private(&tmp, content.as_bytes())?;
         std::fs::rename(&tmp, &path)?;
         Ok(())
     }
@@ -131,6 +118,29 @@ impl ProfileState {
             .and_then(|id| self.by_id(id))
             .or_else(|| self.profiles.first())
     }
+}
+
+fn write_exclusive_private(path: &Path, content: &[u8]) -> Result<()> {
+    use std::io::Write;
+    if path.exists() {
+        anyhow::ensure!(
+            !std::fs::symlink_metadata(path)?.file_type().is_symlink(),
+            "refusing symlink temporary file: {}",
+            path.display()
+        );
+        std::fs::remove_file(path)?;
+    }
+    #[cfg(unix)]
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(path)?;
+    file.write_all(content)?;
+    file.sync_all()?;
+    crate::secure_fs::restrict_file(path);
+    Ok(())
 }
 
 /// Validate a profile name as a safe directory component.
@@ -152,6 +162,21 @@ pub fn validate_profile_name(name: &str) -> Result<()> {
     anyhow::ensure!(
         !trimmed.chars().any(char::is_control),
         "profile name must not contain control characters"
+    );
+    Ok(())
+}
+
+pub(super) fn validate_profile_id(id: &str) -> Result<()> {
+    anyhow::ensure!(!id.is_empty() && id.len() <= 128, "invalid profile id");
+    anyhow::ensure!(
+        id != "."
+            && id != ".."
+            && !id.starts_with('.')
+            && !id.contains('/')
+            && !id.contains('\\')
+            && !id.contains('\0')
+            && !id.chars().any(char::is_control),
+        "invalid profile id"
     );
     Ok(())
 }
@@ -305,7 +330,7 @@ pub fn profile_paths(
     }
 }
 
-fn require_profile_dir(roots: &RootDirs, record: &ProfileRecord) -> Result<()> {
+pub(crate) fn require_profile_dir(roots: &RootDirs, record: &ProfileRecord) -> Result<()> {
     let path = ProfilePaths::profile_dir(&roots.data_root, &record.name);
     let metadata = std::fs::symlink_metadata(&path)
         .with_context(|| format!("profile directory missing: {}", path.display()))?;
@@ -908,11 +933,32 @@ mod tests {
     }
 
     #[test]
+    fn picker_animation_reads_last_used_profile_preference() {
+        let dir = tempfile::tempdir().unwrap();
+        let roots = roots(dir.path());
+        let state = ensure_layout(&roots).unwrap();
+        let record = state.last_used_record().unwrap().clone();
+        std::fs::write(
+            ProfilePaths::profile_dir(dir.path(), &record.name).join("config.toml"),
+            "[appearance]\ndisable_animation = true\n",
+        )
+        .unwrap();
+        assert!(!picker_animation_enabled(&roots, &state));
+    }
+
+    #[test]
     fn state_load_rejects_traversal_profile_names() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join(STATE_FILE),
             "[[profiles]]\nid = \"id\"\nname = \"../escape\"\n",
+        )
+        .unwrap();
+        assert!(ProfileState::load(dir.path()).is_err());
+
+        std::fs::write(
+            dir.path().join(STATE_FILE),
+            "[[profiles]]\nid = \"../escape\"\nname = \"safe\"\n",
         )
         .unwrap();
         assert!(ProfileState::load(dir.path()).is_err());

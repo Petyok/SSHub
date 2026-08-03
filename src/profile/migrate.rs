@@ -36,7 +36,7 @@ pub fn read_profile_id(dir: &Path) -> Option<String> {
     std::fs::read_to_string(dir.join(PROFILE_ID_FILE))
         .ok()
         .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+        .filter(|s| super::validate_profile_id(s).is_ok())
 }
 
 /// True when the legacy top-level layout has anything worth migrating.
