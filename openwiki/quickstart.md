@@ -42,8 +42,9 @@ Legacy `SSH_LAUNCHER_*` env vars are still honored as fallbacks, and `~/.config/
 - [Data model & storage](architecture/data-model.md) — `launcher.db` vs `metadata.db`, schema migrations, the hybrid ssh_config/managed host model, config file, and file watching.
 
 ### Workflows
-- [TUI dashboard](workflows/tui.md) — tabs, overlays, keybindings, and screens.
-- [Sessions & SFTP](workflows/sessions-sftp.md) — embedded PTY sessions, askpass, session logging, mosh, and the dual-pane SFTP browser.
+- [TUI dashboard](workflows/tui.md) — tabs, overlays, keybindings, searchable pickers, and screens.
+- [Known hosts manager](workflows/known-hosts.md) — fingerprints, guarded known_hosts deletion, and first-connect verification.
+- [Sessions & SFTP](workflows/sessions-sftp.md) — embedded PTY sessions, OSC 52 relay boundary, askpass, session logging, mosh, and the dual-pane SFTP browser.
 - [Tunnels](workflows/tunnels.md) — local/remote/dynamic tunnels and keep-alive reconnect with backoff.
 - [Headless CLI](workflows/cli.md) — full command tree, JSON output, exit codes.
 
@@ -67,4 +68,5 @@ Pinned workflow: [docs/implementation-flow.md](../docs/implementation-flow.md) (
 
 - **Demo pipeline details** (`demo/` tapes, `record.sh`, `seed-demo.sh`) — only summarized under [integrations](integrations/external-terminals.md); deferred because it is contributor tooling, not product behavior.
 - **Host-sync design** (`docs/host-sync-design.md`) — P2P sync design for epic #13; not yet implemented, documented only in the design doc.
+- **Changelog audit follow-ups** — public-key push/key generation, npm packaging details, motion/panel behavior, PuTTY/mRemoteNG import, and release-license history remain pending in [the changelog coverage notebook](changelog-coverage.md).
 - **Detached tunnel PID-file hardening** (`src/tunnel/spawn.rs`) — acknowledged races (no locking, recycled PIDs) noted in [tunnels](workflows/tunnels.md); behavior may change.

@@ -22,11 +22,12 @@ The TUI is a bento-grid dashboard rendered by `src/tui/` on top of the [App stat
 
 ## Key overlays
 
-- **Fuzzy palette** (`/`, `screens/palette.rs`) — nucleo-powered quick-connect over all hosts.
+- **Fuzzy palette** (`/`, `screens/palette.rs`) — nucleo-powered quick-connect over all hosts. An unknown validated `[user@]host[:port]` (including bracketed IPv6) becomes an ad-hoc connect row; the destination is passed after `--` and is not saved.
+- **Session picker** (`Alt+S`, `screens/session_picker.rs`) — searches open sessions and jumps to one; the same picker supports new sessions and the SFTP left-pane host selection. `Ctrl+Shift+T` from the picker opens a local-shell tab.
 - **Tag filter** (`#`, `screens/tag_filter.rs`) — multi-tag AND filter.
 - **Settings** (`Ctrl+H`, `screens/settings.rs`) — session logging, opaque background, OS logos, quit confirmation, startup animation. Writes `[appearance]` / `[session_logging]` in `config.toml`.
 - **Keybind editor** (`Ctrl+K`, `screens/keybind_editor.rs`) — rebinds any action; persisted to `[keybinds]` in `config.toml` via `src/keybinds.rs`.
-- **Help** (`?`, `screens/help.rs`) — scrollable keybinding reference; also the only in-app place that warns session logs capture echoed secrets (see [secrets](../security/secrets.md)).
+- **Help** (`?`, `screens/help.rs`) — searchable, scrollable keybinding reference; `Esc` clears a query before closing. The keybinding editor is searchable too and rebinds the filtered action; its row actions use `Ctrl+A` / `Ctrl+R` / `Ctrl+X`. Help is now `?` only; older `help = ["?", "Shift+H"]` settings migrate once because `H` opens the [known-hosts manager](known-hosts.md). Help is also the only in-app place that warns session logs capture echoed secrets (see [secrets](../security/secrets.md)).
 - **Group manager** (`Shift+G`, `screens/group_manage.rs`) and **host form** (`a`/`e`, `screens/host_form.rs`) — CRUD for [hosts, groups & identities](../domain/hosts-identities.md).
 - **Session host picker** (`Ctrl+T`, `screens/session_host_picker.rs`) — opens a new [embedded session](sessions-sftp.md) tab.
 
