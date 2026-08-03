@@ -214,20 +214,30 @@ worktree-rm name mode="":
 # its squashed commit (note: after reverting a merge, re-landing the same
 # history needs a revert of the revert).
 #
-#   just release          # minor feature release: bump Y (Z->0) -> vX.Y.0
-#   just release minor    # same as above
-#   just release patch    # hotfix: publish the CURRENT vX.Y.Z as-is, no bump
+#   just release minor    # minor feature release: bump Y (Z->0) -> vX.Y.0
+#   just release patch    # publish the CURRENT vX.Y.Z as-is, no bump
 #   just release 0.7.0    # release an explicit version (jump ahead)
+#
+# No default on purpose: a bare `just release` used to mean `minor`, which
+# silently bumped the version when you meant to ship what Cargo.toml already
+# says (that is `patch`). Now it refuses and makes you say which one.
 #
 # `patch` ships whatever version development currently carries (the running
 # odometer Z from the pre-commit hook) straight to main — for hotfixes you don't
 # want to disguise as a new minor. So main is NOT always X.Y.0.
 # Run from a clean `development`. Pushing to protected `main` relies on your
 # owner/admin bypass.
-release kind="minor":
+release kind="":
     #!/usr/bin/env bash
     set -euo pipefail
-    case "{{kind}}" in minor|patch) ;; [0-9]*.[0-9]*.[0-9]*) ;; *) echo "usage: just release [minor|patch|X.Y.Z]" >&2; exit 1;; esac
+    if [ -z "{{kind}}" ]; then
+      echo "just release needs an explicit kind:" >&2
+      echo "  patch  — ship the CURRENT Cargo.toml version as-is" >&2
+      echo "  minor  — bump Y, reset Z -> vX.Y.0" >&2
+      echo "  X.Y.Z  — release exactly that version" >&2
+      exit 1
+    fi
+    case "{{kind}}" in minor|patch) ;; [0-9]*.[0-9]*.[0-9]*) ;; *) echo "usage: just release minor|patch|X.Y.Z" >&2; exit 1;; esac
     [ "$(git rev-parse --abbrev-ref HEAD)" = development ] || { echo "run from development" >&2; exit 1; }
     git diff --quiet && git diff --cached --quiet || { echo "working tree not clean" >&2; exit 1; }
     git fetch origin --quiet
