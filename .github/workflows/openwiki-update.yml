@@ -27,13 +27,12 @@ jobs:
       - name: Run OpenWiki
         run: >-
           openwiki code --update --print
-          "Audit entire repository against existing OpenWiki docs. Do not skip
-          source files or recently merged features. Ensure Known Hosts Manager
-          is documented, including src/known_hosts.rs,
-          src/tui/screens/known_hosts.rs, its keybinding, deletion behavior,
-          first-connect fingerprint flow, and security implications. Review
-          all source areas for other undocumented features and update indexes
-          and cross-links accordingly."
+          "Use CHANGELOG.md as primary change ledger. Audit every feature, fix,
+          and behavior change since the recorded OpenWiki gitHead against the
+          source tree and existing wiki. Map each relevant changelog entry to
+          accurate documentation, add missing pages when needed, and update
+          indexes and cross-links. Do not stop after documenting one feature or
+          only the files already referenced by existing resource metadata."
         env:
           OPENWIKI_PROVIDER: openrouter
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
