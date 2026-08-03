@@ -40,9 +40,9 @@ Canonical source: [docs/implementation-flow.md](docs/implementation-flow.md). Th
 ### Workflow
 
 1. Claim the issue on GitHub before coding. Sign every issue/PR comment: `_Written by {Model} ({Platform}) on behalf of the maintainer._`
-2. Branch `feature/*` (or `fix/*`) from `development`. Never from `main`. Never bump `Cargo.toml` version.
+2. Branch `feature/*` (or `fix/*`) from `development`. Never from `main`. For epics, use `feature/<epic>` as integration branch and child `poc/*` or stage branches; never bump `Cargo.toml` version on non-development branches.
 3. Small, logical commits. Conventional commit titles (`feat:`, `fix:`, `test:`, `docs:`, etc.).
-4. PR targets `development` only. Body includes `Closes #N`, what changed, how tested, and the signature.
+4. Production PRs target `development`; exploratory child PoC/stage PRs may target their epic integration branch. Body includes `Closes #N`, what changed, how tested, and the signature.
 
 ### Verify before every push
 

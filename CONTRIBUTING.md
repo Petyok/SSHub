@@ -15,8 +15,12 @@ Thanks for your interest in contributing. Here's how to get started.
   release. Never target it with a PR.
 - `development` is the integration branch. All work lands here first.
 - Features/fixes go on `feature/*` branches **cut from `development`**.
+- Large epics may use an integration branch with child `poc/*` or stage
+  branches; see the stacked-branch rules in the implementation flow.
 
-Flow: `feature/* → development → main (release, maintainer-only)`.
+Normal flow: `feature/* → development → main (release, maintainer-only)`.
+Epic flow: `feature/<epic> → development`, with child `poc/*` / stage branches
+reviewed into the epic branch before its final production PR.
 
 **Full checklist:** [docs/implementation-flow.md](docs/implementation-flow.md) — issue → claim → branch → verify → adversarial review → PR → merge.
 
