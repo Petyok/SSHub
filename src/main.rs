@@ -1,5 +1,7 @@
 use anyhow::Result;
 
+use sshub::profile::{self, ProfilePaths, StartupOptions};
+
 /// Confirmation flag required for destructive subcommands (e.g. `db purge`).
 const CONFIRM_FLAG: &str = "--yes-i-am-stupid";
 
@@ -12,16 +14,20 @@ fn main() -> Result<()> {
 
     let args: Vec<String> = std::env::args().skip(1).collect();
 
+    // Global profile flags (`--profile NAME`, `--manage-profiles`) apply to
+    // both the TUI and headless subcommands, so parse them before dispatch.
+    let (startup, args) = profile::extract_startup_flags(args)?;
+
     // Subcommands must be handled before the global flags and the TUI launch
     // path, so that `sshub <cmd> --help` reaches the subcommand's own help
     // (via cli::run_subcommand) instead of the global `--help` below.
     if args.first().map(String::as_str) == Some("db") {
-        return run_db(&args[1..]);
+        return run_db(&startup, &args[1..]);
     }
 
     if let Some(cmd) = args.first() {
         if sshub::cli::is_subcommand(cmd) {
-            let code = run_cli(&args)?;
+            let code = run_cli(&startup, &args)?;
             std::process::exit(code);
         }
     }
@@ -51,20 +57,33 @@ fn main() -> Result<()> {
     if args.iter().any(|a| a == "--dry-run") {
         return Ok(());
     }
-    sshub::run()
+    sshub::run_with(startup)
 }
 
-fn run_cli(args: &[String]) -> Result<i32> {
+/// Resolve the profile for a headless invocation: `--profile NAME` selects
+/// directly (unknown names fail with the list of available profiles); without
+/// it the last-used profile is chosen. Headless commands never show the picker.
+fn resolve_cli_profile(startup: &StartupOptions) -> Result<ProfilePaths> {
+    match profile::resolve_startup(startup, false)? {
+        profile::Startup::Silent(paths) => Ok(paths),
+        profile::Startup::Picker { .. } => {
+            unreachable!("non-interactive resolution never returns Picker")
+        }
+    }
+}
+
+fn run_cli(startup: &StartupOptions, args: &[String]) -> Result<i32> {
     let cmd = args[0].as_str();
     let rest = &args[1..];
-    let mut ctx = sshub::cli::CliContext::bootstrap()?;
+    let paths = resolve_cli_profile(startup)?;
+    let mut ctx = sshub::cli::CliContext::bootstrap_with(paths)?;
     sshub::cli::run_subcommand(&mut ctx, cmd, rest)
 }
 
 /// Handle `sshub db <subcommand>`.
-fn run_db(args: &[String]) -> Result<()> {
+fn run_db(startup: &StartupOptions, args: &[String]) -> Result<()> {
     match args.first().map(String::as_str) {
-        Some("purge") => run_db_purge(args.iter().any(|a| a == CONFIRM_FLAG)),
+        Some("purge") => run_db_purge(startup, args.iter().any(|a| a == CONFIRM_FLAG)),
         Some(other) => {
             eprintln!("sshub: unknown db subcommand '{other}'");
             eprintln!("       try: sshub db purge {CONFIRM_FLAG}");
@@ -78,9 +97,9 @@ fn run_db(args: &[String]) -> Result<()> {
     }
 }
 
-/// `sshub db purge` — wipe the launcher database. Refuses without the
-/// confirmation flag because it is irreversible.
-fn run_db_purge(confirmed: bool) -> Result<()> {
+/// `sshub db purge` — wipe the launcher database of the selected profile.
+/// Refuses without the confirmation flag because it is irreversible.
+fn run_db_purge(startup: &StartupOptions, confirmed: bool) -> Result<()> {
     if !confirmed {
         eprintln!("This permanently deletes your SSHub database:");
         eprintln!("  - all managed hosts, groups, identities, and tunnels");
@@ -89,13 +108,19 @@ fn run_db_purge(confirmed: bool) -> Result<()> {
         eprintln!();
         eprintln!("If you really mean it, re-run:");
         eprintln!("    sshub db purge {CONFIRM_FLAG}");
+        eprintln!("(add --profile NAME to target a specific profile)");
         std::process::exit(1);
     }
 
-    let removed = sshub::purge_database()?;
+    let paths = resolve_cli_profile(startup)?;
+    let removed = sshub::purge_profile_database(&paths)?;
     if removed.is_empty() {
-        println!("Nothing to purge - no database found.");
+        println!(
+            "Nothing to purge - no database found for profile '{}'.",
+            paths.name
+        );
     } else {
+        println!("profile: {}", paths.name);
         for path in &removed {
             println!("removed {}", path.display());
         }
@@ -111,12 +136,20 @@ fn print_help() {
 
 USAGE:
     sshub [OPTIONS]                         Launch TUI (default)
-    sshub <command> [args]                  Headless CLI subcommands
+    sshub [OPTIONS] <command> [args]        Headless CLI subcommands
 
 OPTIONS:
     -h, --help              Print help
     -V, --version           Print version
         --dry-run           Exit immediately (smoke / CI)
+        --profile NAME      Use the named profile (skips the picker)
+        --manage-profiles   Open the profile picker even with one profile
+
+PROFILES:
+    Each profile is an isolated workspace: its own hosts database, imported
+    ssh_config source, and settings (theme, keybinds). With a single profile
+    startup is unchanged; with several, a picker appears after the splash.
+    Data lives under ~/.local/share/sshub/profiles/<name>/.
 
 HOST (read/write):
     sshub host list [--tag TAG]... [--group GROUP] [--sort MODE] [--format plain|json]
@@ -172,6 +205,9 @@ ENVIRONMENT:
     SSHUB_SSH_CONFIG          Override SSH config path (fallback: SSH_LAUNCHER_SSH_CONFIG)
     SSHUB_DRY_RUN             Exit immediately (fallback: SSH_LAUNCHER_DRY_RUN)
     SSHUB_AUTO_QUIT           Headless smoke (fallback: SSH_LAUNCHER_AUTO_QUIT): 1 = quit after first draw, q = quit via q key
+
+    Directory overrides disable profiles (compat mode): the override directory
+    is used verbatim and --profile is rejected.
 "#
     );
 }

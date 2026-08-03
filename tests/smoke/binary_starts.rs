@@ -18,6 +18,38 @@ fn version_exits_zero() {
 }
 
 #[test]
+fn profile_flag_selects_named_workspace_before_database_open() {
+    let home = tempfile::tempdir().unwrap();
+    let data = home.path().join(".local/share/sshub");
+    let profiles = data.join("profiles");
+    std::fs::create_dir_all(profiles.join("default")).unwrap();
+    std::fs::create_dir_all(profiles.join("work")).unwrap();
+    std::fs::write(
+        data.join("state.toml"),
+        "last_used = \"work-id\"\n\n[[profiles]]\nid = \"default-id\"\nname = \"default\"\n\n[[profiles]]\nid = \"work-id\"\nname = \"work\"\n",
+    )
+    .unwrap();
+    std::fs::write(profiles.join("default/config.toml"), "").unwrap();
+    std::fs::write(profiles.join("work/config.toml"), "").unwrap();
+
+    let mut command = Command::cargo_bin("sshub").unwrap();
+    command
+        .env("HOME", home.path())
+        .env(
+            "SSHUB_SSH_CONFIG",
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ssh_config"),
+        )
+        .env_remove("SSHUB_DATA_DIR")
+        .env_remove("SSHUB_CONFIG_DIR")
+        .args(["--profile=work", "host", "list"])
+        .assert()
+        .success();
+
+    assert!(profiles.join("work/launcher.db").exists());
+    assert!(!profiles.join("default/launcher.db").exists());
+}
+
+#[test]
 fn help_exits_zero() {
     Command::cargo_bin("sshub")
         .unwrap()

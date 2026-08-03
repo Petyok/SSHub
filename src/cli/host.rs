@@ -177,21 +177,20 @@ fn cmd_connect(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
 
     let mut log_path: Option<String> = None;
     if log_enabled && !is_mosh {
-        if let Ok(data_dir) = crate::config::data_dir() {
-            match allocate_log_path(&data_dir, &host_name, entry.managed_id()) {
-                Ok(path) => {
-                    if let Some(wrapped) = wrap_script_command(&path, &argv) {
-                        argv = wrapped;
-                        log_path = Some(path.parent().unwrap_or(&path).display().to_string());
-                    } else {
-                        eprintln!(
-                            "sshub: warning: session logging requested but script(1) unavailable; continuing without transcript"
-                        );
-                    }
+        let data_dir = ctx.profile.session_log_base().to_path_buf();
+        match allocate_log_path(&data_dir, &host_name, entry.managed_id()) {
+            Ok(path) => {
+                if let Some(wrapped) = wrap_script_command(&path, &argv) {
+                    argv = wrapped;
+                    log_path = Some(path.parent().unwrap_or(&path).display().to_string());
+                } else {
+                    eprintln!(
+                        "sshub: warning: session logging requested but script(1) unavailable; continuing without transcript"
+                    );
                 }
-                Err(e) => {
-                    eprintln!("sshub: warning: session logging unavailable: {e:#}");
-                }
+            }
+            Err(e) => {
+                eprintln!("sshub: warning: session logging unavailable: {e:#}");
             }
         }
     } else if log_enabled && is_mosh {
@@ -628,6 +627,12 @@ fn cmd_delete(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     let managed = ctx.managed_host_by_name(&name)?;
     match ctx.store.delete_host(managed.id)? {
         DeleteHostOutcome::Deleted => {
+            if let Err(err) = ctx
+                .password_store
+                .delete(&crate::credentials::host_key(managed.id))
+            {
+                eprintln!("warning: host deleted but credential cleanup failed: {err}");
+            }
             ctx.reload_hosts()?;
             Ok(0)
         }

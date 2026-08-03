@@ -13,6 +13,11 @@ pub fn exported_conf_path() -> Result<PathBuf> {
     Ok(config::config_dir()?.join("exported.conf"))
 }
 
+/// Export path inside an explicit directory (profile-aware variant).
+pub fn exported_conf_path_in(dir: &Path) -> PathBuf {
+    dir.join("exported.conf")
+}
+
 /// Write launcher-native hosts to `path` using atomic replace + `.bak` backup.
 pub fn export_launcher_hosts_to(store: &LauncherStore, path: &Path) -> Result<PathBuf> {
     let content = render_launcher_hosts(store)?;

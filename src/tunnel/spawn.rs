@@ -1,12 +1,10 @@
 use std::fs;
-use std::io::Write;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result};
 
-use crate::config;
 use crate::secure_fs;
 use crate::session::{askpass, PendingSecret};
 use crate::store::{ManagedHost, Tunnel, TunnelType};
@@ -165,11 +163,20 @@ pub fn read_tunnel_pid(path: &Path) -> Result<Option<u32>> {
 }
 
 pub fn write_tunnel_pid(path: &Path, pid: u32) -> Result<()> {
+    use std::io::Write;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
         secure_fs::restrict_dir(parent);
     }
-    let mut f = fs::File::create(path).with_context(|| format!("create {}", path.display()))?;
+    #[cfg(unix)]
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut f = options
+        .open(path)
+        .with_context(|| format!("create {}", path.display()))?;
     write!(f, "{pid}")?;
     secure_fs::restrict_file(path);
     Ok(())
@@ -291,11 +298,6 @@ pub fn stop_detached_tunnel(data_dir: &Path, tunnel_id: i64) -> Result<bool> {
     }
     remove_tunnel_pid(&pid_path)?;
     Ok(was_live)
-}
-
-/// Resolved data directory for tunnel PID files.
-pub fn tunnel_data_dir() -> Result<PathBuf> {
-    config::data_dir()
 }
 
 #[cfg(test)]

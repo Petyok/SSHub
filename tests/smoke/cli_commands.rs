@@ -44,6 +44,16 @@ fn unknown_command_exits_two() {
 }
 
 #[test]
+fn profile_flag_is_rejected_in_compatibility_mode() {
+    let d = dir();
+    sshub(d.path())
+        .args(["--profile", "work", "host", "list"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unavailable"));
+}
+
+#[test]
 fn audit_list_empty_exits_zero() {
     let d = dir();
     sshub(d.path()).args(["audit", "list"]).assert().success();

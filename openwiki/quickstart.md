@@ -18,7 +18,7 @@ SSHub (`sshub`, v0.9.3 in `Cargo.toml`) is a keyboard-driven terminal UI for man
 ```bash
 cargo install sshub          # or: git clone … && just install
 sshub                        # launch TUI
-sshub --help                 # global options (--dry-run, --version)
+sshub --help                 # global options (--profile, --manage-profiles, --dry-run, --version)
 sshub list                   # headless CLI (see workflows/cli.md)
 ```
 
@@ -28,12 +28,20 @@ Linux builds need `libdbus-1-dev` + `pkg-config` (Secret Service keyring backend
 
 | Resource | Default path | Override |
 |---|---|---|
-| Config | `~/.config/sshub/config.toml` | `SSHUB_CONFIG_DIR` |
-| Databases | `~/.local/share/sshub/launcher.db` (+ `metadata.db`) | `SSHUB_DATA_DIR` |
+| Config | `~/.local/share/sshub/profiles/<name>/config.toml` | `SSHUB_CONFIG_DIR` in compatibility mode |
+| Databases | `~/.local/share/sshub/profiles/<name>/{launcher,metadata}.db` | `SSHUB_DATA_DIR` in compatibility mode |
 | SSH config | `~/.ssh/config` | `SSHUB_SSH_CONFIG` |
-| Session logs | `~/.local/share/sshub/logs/<host-dir>/` | — |
+| Session logs | `~/.local/share/sshub/profiles/<name>/logs/<host-dir>/` | — |
+| Profile state | `~/.local/share/sshub/state.toml` | — |
 
-Legacy `SSH_LAUNCHER_*` env vars are still honored as fallbacks, and `~/.config/ssh-launcher` is auto-migrated to `~/.config/sshub` (`src/config.rs`).
+Startup uses one profile workspace. One profile starts silently; multiple profiles
+show a picker after the splash. Use `sshub --profile NAME` to bypass it or
+`sshub --manage-profiles` to manage profiles. Picker supports create, rename,
+delete, and last-used selection. Headless commands without `--profile` use the
+last-used profile and never open the picker. Legacy `SSH_LAUNCHER_*` env vars remain
+fallbacks; setting `SSHUB_DATA_DIR` or `SSHUB_CONFIG_DIR` uses compatibility
+mode without profile discovery. Legacy top-level data migrates into
+`profiles/default` (`src/profile/migrate.rs`).
 
 ## Where to go next
 

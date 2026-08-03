@@ -184,7 +184,15 @@ pub fn run_export(ctx: &CliContext, args: &[String]) -> Result<i32> {
 
     let path = match out_path {
         Some(p) => std::path::PathBuf::from(p),
-        None => crate::ssh::exported_conf_path()?,
+        None => {
+            let dir = ctx
+                .profile
+                .config_file
+                .parent()
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or_else(|| ctx.profile.root.clone());
+            crate::ssh::exported_conf_path_in(&dir)
+        }
     };
 
     if let Some(parent) = path.parent() {

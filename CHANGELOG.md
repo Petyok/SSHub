@@ -4,6 +4,16 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Isolated profiles** (issue #17) - each profile owns its hosts databases,
+  settings, fallback credentials, session logs, and tunnel runtime state; each
+  profile can select its own SSH config source while the default remains
+  shared. Multiple profiles use a startup picker; `--profile NAME`
+  selects one directly and `--manage-profiles` opens profile management with a
+  single profile. Existing directory overrides remain compatibility mode, and
+  legacy top-level data migrates safely into `profiles/default`.
+
 ## [0.13.0] - 2026-08-03
 
 ### Added
@@ -331,7 +341,7 @@ All notable changes to SSHub are documented in this file.
   ssh-only. Graceful error when `mosh` is not installed.
   (Schema v13.)
 - **Session logging** — opt-in capture of embedded SSH session PTY output to plain-text
-  files under `~/.local/share/sshub/logs/<host-dir>/`, with rotated segment files inside
+  profile-owned files under `~/.local/share/sshub/profiles/<name>/logs/<host-dir>/`, with rotated segment files inside
   (managed hosts use `{sanitized-name}-{id}`). Toggle globally in Settings (`Ctrl+H`) or
   per host in the host form (`inherit` / `on` / `off`). Size-based rotation and per-host
   retention cap are configurable in `config.toml`. The audit tab shows the log directory

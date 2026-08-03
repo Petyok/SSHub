@@ -7,10 +7,14 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 
 use crate::app::{resolve_pending_secret_for_managed, HostEntry};
-use crate::config::{self, AppConfig};
-use crate::credentials::{OsKeyring, PasswordStore};
+use crate::config::AppConfig;
+use crate::credentials::{
+    check_keyring_available, migrate_fallback_to_keyring, FilePasswordStore,
+    NamespacedPasswordStore, OsKeyring, PasswordStore,
+};
 use crate::hosts::load_merged_hosts;
 use crate::metadata::MetadataDb;
+use crate::profile::ProfilePaths;
 use crate::ssh::SshConfigResolver;
 use crate::store::{HostGroup, Identity, LauncherStore, ManagedHost, Tunnel};
 
@@ -21,18 +25,41 @@ pub struct CliContext {
     pub resolver: SshConfigResolver,
     pub password_store: Box<dyn PasswordStore>,
     pub hosts: Vec<HostEntry>,
+    /// Resolved profile workspace for this invocation.
+    pub profile: ProfilePaths,
 }
 
 impl CliContext {
+    /// Compat entry point: silently resolves the last-used (or only) profile.
+    /// Headless commands never show the picker.
     pub fn bootstrap() -> Result<Self> {
-        let config = config::load_config()?;
-        let data_dir = config::data_dir()?;
-        std::fs::create_dir_all(&data_dir)?;
+        let opts = crate::profile::StartupOptions::default();
+        match crate::profile::resolve_startup(&opts, false)? {
+            crate::profile::Startup::Silent(paths) => Self::bootstrap_with(paths),
+            crate::profile::Startup::Picker { .. } => {
+                unreachable!("non-interactive resolution never returns Picker")
+            }
+        }
+    }
 
-        let metadata = Arc::new(MetadataDb::open(data_dir.join("metadata.db"))?);
-        let store = Arc::new(LauncherStore::open(data_dir.join("launcher.db"))?);
-        let resolver = SshConfigResolver::default();
-        let password_store: Box<dyn PasswordStore> = Box::new(OsKeyring);
+    /// Bootstrap against an explicitly resolved profile.
+    pub fn bootstrap_with(paths: ProfilePaths) -> Result<Self> {
+        let config = crate::config::load_config_at(&paths.config_file)?;
+        std::fs::create_dir_all(&paths.root)?;
+
+        let metadata = Arc::new(MetadataDb::open(paths.metadata_db())?);
+        let store = Arc::new(LauncherStore::open(paths.launcher_db())?);
+        let resolver = SshConfigResolver::with_config_path(paths.ssh_config.clone());
+        let prefix = paths.credential_prefix();
+        let password_store: Box<dyn PasswordStore> = if check_keyring_available() {
+            let _ = migrate_fallback_to_keyring(&paths.credentials_file());
+            Box::new(NamespacedPasswordStore::new(Box::new(OsKeyring), prefix))
+        } else {
+            Box::new(NamespacedPasswordStore::new(
+                Box::new(FilePasswordStore::new(paths.credentials_file())),
+                prefix,
+            ))
+        };
 
         let mut ctx = Self {
             config,
@@ -41,6 +68,7 @@ impl CliContext {
             resolver,
             password_store,
             hosts: Vec::new(),
+            profile: paths,
         };
         ctx.reload_hosts()?;
         Ok(ctx)

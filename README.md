@@ -62,7 +62,7 @@ The settings overlay (`Ctrl+H`) — toggle an opaque background, OS logos, quit 
 - **Audit** — log of all connection events with filtering by status (ok/fail) and time range (today/week/month)
 - **Settings overlay** (`Ctrl+H`) — toggle an opaque background (for transparent terminals), OS logos, quit confirmation, and the startup animation
 - **Audit** — log of all connection events with filtering by status (ok/fail) and time range (today/week/month); session connect events record the path to the session log when logging is enabled
-- **Session logging** — opt-in capture of PTY session output to `~/.local/share/sshub/logs/<host-dir>/` (managed hosts use `{name}-{id}`; pure `~/.ssh/config` aliases without a launcher row may share a directory when sanitized names collide). Enable globally in Settings (`Ctrl+H`) or override per host (`inherit` / `on` / `off`). **Logs capture everything echoed to the terminal, including passwords if they appear on screen.**
+- **Session logging** — opt-in capture of PTY session output to `~/.local/share/sshub/profiles/<name>/logs/<host-dir>/` (managed hosts use `{name}-{id}`; pure `~/.ssh/config` aliases without a launcher row may share a directory when sanitized names collide). Enable globally in Settings (`Ctrl+H`) or override per host (`inherit` / `on` / `off`). **Logs capture everything echoed to the terminal, including passwords if they appear on screen.**
 - **Mosh transport** — per-host `Transport` field in the host form (`ssh` or `mosh`). Embedded sessions use `mosh` when selected; tunnels and SFTP stay ssh-only.
 - **Settings overlay** (`Ctrl+H`) — toggle session logging, opaque background (for transparent terminals), OS logos, quit confirmation, and the startup animation
 - **Hybrid sources** — hosts from `~/.ssh/config` (read-only) and launcher-managed (full CRUD) merge without duplicates
@@ -131,6 +131,8 @@ sshub              # launch TUI
 sshub --version    # print version
 sshub --dry-run    # exit immediately (CI / scripts)
 sshub --help       # show options
+sshub --profile work                     # launch named profile
+sshub --manage-profiles                 # open profile picker
 ```
 
 ### Commands
@@ -140,7 +142,22 @@ sshub --help       # show options
 # the audit log. Irreversible, so it refuses unless you confirm. Your
 # ~/.ssh/config (and the hosts imported from it) are left untouched.
 sshub db purge --yes-i-am-stupid
+
+# Target a profile from the TUI or any headless command.
+sshub --profile work host list
+sshub --profile personal audit list
+sshub --profile work db purge --yes-i-am-stupid
 ```
+
+SSHUB keeps profile-owned data isolated. Each profile can select its own SSH
+config source with `[ssh].config_path`; the default remains shared
+`~/.ssh/config`. With one profile, startup remains silent;
+with multiple profiles, the picker appears after the splash. The picker can
+create, rename, and delete profiles, but switching profiles requires restarting
+SSHUB. `--profile NAME` bypasses the picker. `--manage-profiles` opens it even
+when only one profile exists. Press `Esc` in the picker to cancel startup.
+Headless commands without `--profile` use the last-used profile and never open
+the interactive picker.
 
 ## Headless CLI
 
@@ -214,11 +231,17 @@ one yourself with `sshub completions bash|zsh|fish`.
 
 | Resource   | Default path                          |
 |------------|---------------------------------------|
-| Config     | `~/.config/sshub/config.toml`         |
-| Database   | `~/.local/share/sshub/launcher.db`    |
+| Config     | `~/.local/share/sshub/profiles/<name>/config.toml` |
+| Databases  | `~/.local/share/sshub/profiles/<name>/{launcher,metadata}.db` |
+| Logs       | `~/.local/share/sshub/profiles/<name>/logs/`       |
+| Tunnels    | `~/.local/share/sshub/profiles/<name>/tunnels/`    |
+| State      | `~/.local/share/sshub/state.toml`                 |
 | SSH config | `~/.ssh/config`                       |
 
-Override via environment variables: `SSHUB_CONFIG_DIR`, `SSHUB_DATA_DIR`, `SSHUB_SSH_CONFIG`.
+Override via environment variables: `SSHUB_CONFIG_DIR`, `SSHUB_DATA_DIR`,
+`SSHUB_SSH_CONFIG`. Setting `SSHUB_CONFIG_DIR` or `SSHUB_DATA_DIR` selects
+compatibility mode, using those directories verbatim and disabling profile
+discovery. Legacy `SSH_LAUNCHER_*` variables remain supported.
 
 ## Keybindings
 
@@ -321,7 +344,8 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 
 ## Configuration
 
-`~/.config/sshub/config.toml`:
+`~/.local/share/sshub/profiles/<name>/config.toml` in profile mode
+(`~/.config/sshub/config.toml` in compatibility mode):
 
 ```toml
 [session_logging]
