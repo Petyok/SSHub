@@ -4,6 +4,8 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-08-03
+
 ### Added
 
 - **Known hosts manager** (`H` on the Keys tab, issue #7) - an overlay listing
