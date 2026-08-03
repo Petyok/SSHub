@@ -42,6 +42,7 @@ jobs:
             AGENTS.md
             CLAUDE.md
           branch: openwiki/update
+          base: development
           commit-message: "docs: update OpenWiki"
           title: "docs: update OpenWiki"
           body: |
