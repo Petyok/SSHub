@@ -57,6 +57,14 @@ pub fn legacy_installation_present(roots: &RootDirs) -> bool {
 
 /// Run the full migration. Requires `state.toml` to be absent (callers check).
 pub fn run_legacy_migration(roots: &RootDirs) -> Result<()> {
+    let store = crate::credentials::OsKeyring;
+    run_legacy_migration_with_store(roots, &store)
+}
+
+pub fn run_legacy_migration_with_store(
+    roots: &RootDirs,
+    credential_store: &dyn crate::credentials::PasswordStore,
+) -> Result<()> {
     let _lock = MigrationLock::acquire(roots)?;
 
     // Another process may have finished the migration while we waited.
@@ -86,7 +94,7 @@ pub fn run_legacy_migration(roots: &RootDirs) -> Result<()> {
 
     let profile_id = new_profile_id();
     write_profile_id(&staging, &profile_id)?;
-    rekey_credentials(&staging, &profile_id);
+    rekey_credentials(&staging, &profile_id, credential_store);
 
     std::fs::rename(&staging, &final_dir)
         .with_context(|| format!("rename {} -> {}", staging.display(), final_dir.display()))?;
@@ -219,7 +227,11 @@ fn validate_copy(roots: &RootDirs, staging: &Path, copied: &[PathBuf]) -> Result
 /// keyring entries are re-keyed from `host:{id}` to `profile:{id}:host:{id}`
 /// using the ids recorded in the migrated launcher database. Both directions
 /// are best-effort: a keyring failure must not abort the migration.
-fn rekey_credentials(staging: &Path, profile_id: &str) {
+fn rekey_credentials(
+    staging: &Path,
+    profile_id: &str,
+    credential_store: &dyn crate::credentials::PasswordStore,
+) {
     let prefix = format!("profile:{profile_id}:");
 
     let file_path = staging.join("credentials.json");
@@ -275,14 +287,13 @@ fn rekey_credentials(staging: &Path, profile_id: &str) {
             }
         }
     }
-    let store = crate::credentials::OsKeyring;
-    use crate::credentials::PasswordStore;
     for (old_key, new_key) in keys {
-        match store.get(&old_key) {
+        match credential_store.get(&old_key) {
             Ok(Some(secret)) => {
-                if store.set(&new_key, &secret).is_ok() {
-                    let _ = store.delete(&old_key);
-                }
+                // Keep legacy keys until committed state exists. If migration
+                // is interrupted and retried with a new profile ID, secrets
+                // remain recoverable under their original keys.
+                let _ = credential_store.set(&new_key, &secret);
             }
             Ok(None) => {}
             Err(_) => {}
@@ -335,7 +346,7 @@ impl MigrationLock {
                     return Ok(Self { path });
                 }
                 Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-                    if lock_is_stale(&path, max_age) {
+                    if lock_is_stale(&path, max_age) && !lock_owner_alive(&path) {
                         let _ = std::fs::remove_file(&path);
                         continue;
                     }
@@ -364,8 +375,120 @@ fn lock_is_stale(path: &Path, max_age: std::time::Duration) -> bool {
         .is_some_and(|age| age > max_age)
 }
 
+fn lock_owner_alive(path: &Path) -> bool {
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(pid) = raw.trim().parse::<u32>() else {
+        return false;
+    };
+    #[cfg(unix)]
+    {
+        unsafe { libc::kill(pid as i32, 0) == 0 }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        false
+    }
+}
+
 impl Drop for MigrationLock {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    struct FakeStore {
+        values: Mutex<HashMap<String, String>>,
+        deleted: Mutex<Vec<String>>,
+    }
+
+    impl FakeStore {
+        fn new(values: &[(&str, &str)]) -> Self {
+            Self {
+                values: Mutex::new(
+                    values
+                        .iter()
+                        .map(|(key, value)| ((*key).into(), (*value).into()))
+                        .collect(),
+                ),
+                deleted: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl crate::credentials::PasswordStore for FakeStore {
+        fn get(&self, key: &str) -> Result<Option<String>> {
+            Ok(self.values.lock().unwrap().get(key).cloned())
+        }
+
+        fn set(&self, key: &str, password: &str) -> Result<()> {
+            self.values
+                .lock()
+                .unwrap()
+                .insert(key.into(), password.into());
+            Ok(())
+        }
+
+        fn delete(&self, key: &str) -> Result<()> {
+            self.deleted.lock().unwrap().push(key.into());
+            self.values.lock().unwrap().remove(key);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn rekey_keeps_legacy_key_for_retry() {
+        let dir = tempfile::tempdir().unwrap();
+        let staging = dir.path().join("staging");
+        std::fs::create_dir_all(&staging).unwrap();
+        std::fs::write(staging.join("credentials.json"), r#"{"host:1":"secret"}"#).unwrap();
+        let conn = rusqlite::Connection::open(staging.join("launcher.db")).unwrap();
+        conn.execute("CREATE TABLE hosts (id INTEGER)", []).unwrap();
+        conn.execute("CREATE TABLE identities (id INTEGER)", [])
+            .unwrap();
+        conn.execute("INSERT INTO hosts (id) VALUES (1)", [])
+            .unwrap();
+        let store = FakeStore::new(&[("host:1", "secret")]);
+
+        rekey_credentials(&staging, "profile-id", &store);
+
+        assert!(store.deleted.lock().unwrap().is_empty());
+        assert_eq!(
+            store
+                .values
+                .lock()
+                .unwrap()
+                .get("profile:profile-id:host:1"),
+            Some(&"secret".to_string())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recursive_copy_rejects_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        let dst = dir.path().join("dst");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(dir.path().join("secret"), "secret").unwrap();
+        std::os::unix::fs::symlink(dir.path().join("secret"), src.join("link")).unwrap();
+
+        assert!(copy_dir_recursive(&src, &dst).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn live_old_lock_is_not_stale() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lock");
+        std::fs::write(&path, std::process::id().to_string()).unwrap();
+        assert!(lock_owner_alive(&path));
     }
 }

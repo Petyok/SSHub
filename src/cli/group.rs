@@ -292,6 +292,7 @@ mod tests {
             password_store: Box::new(crate::credentials::OsKeyring),
             hosts: Vec::new(),
             profile: crate::profile::ProfilePaths {
+                data_root: std::path::PathBuf::new(),
                 id: "test".into(),
                 name: "test".into(),
                 root: std::path::PathBuf::new(),

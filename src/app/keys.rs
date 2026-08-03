@@ -876,7 +876,16 @@ impl App {
                 Some(PendingDelete::Identity { id, name }) => {
                     match self.store.delete_identity(id)? {
                         crate::store::DeleteIdentityOutcome::Deleted => {
+                            let credential_cleanup = self
+                                .password_store
+                                .delete(&crate::credentials::identity_key(id))
+                                .err();
                             self.identity_notice = Some(format!("Identity '{name}' deleted"));
+                            if let Some(err) = credential_cleanup {
+                                self.identity_notice = Some(format!(
+                                    "Identity '{name}' deleted; credential cleanup failed: {err}"
+                                ));
+                            }
                             self.reload_identities()?;
                         }
                         crate::store::DeleteIdentityOutcome::InUse { host_count } => {

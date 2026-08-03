@@ -124,7 +124,9 @@ pub fn run_app_with(opts: profile::StartupOptions) -> Result<()> {
         profile::Startup::Silent(paths) => paths,
         profile::Startup::Picker { roots, state } => {
             let mut s = setup_terminal()?;
-            run_animation(&mut s.terminal)?;
+            if profile::picker_animation_enabled(&roots, &state) {
+                run_animation(&mut s.terminal)?;
+            }
             splash_done = true;
             let picker = profile::picker::ProfilePicker::new(roots.clone(), state);
             match run_picker_loop(&mut s.terminal, picker, roots)? {
@@ -155,12 +157,9 @@ fn record_last_used(paths: &profile::ProfilePaths) {
     if paths.compat {
         return;
     }
-    let Some(data_root) = paths.root.parent().and_then(|profiles| profiles.parent()) else {
-        return;
-    };
-    if let Ok(Some(mut state)) = profile::ProfileState::load(data_root) {
+    if let Ok(Some(mut state)) = profile::ProfileState::load(&paths.data_root) {
         state.last_used = Some(paths.id.clone());
-        let _ = state.save(data_root);
+        let _ = state.save(&paths.data_root);
     }
 }
 

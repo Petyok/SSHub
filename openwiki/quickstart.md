@@ -37,7 +37,8 @@ Linux builds need `libdbus-1-dev` + `pkg-config` (Secret Service keyring backend
 Startup uses one profile workspace. One profile starts silently; multiple profiles
 show a picker after the splash. Use `sshub --profile NAME` to bypass it or
 `sshub --manage-profiles` to manage profiles. Picker supports create, rename,
-delete, and last-used selection. Legacy `SSH_LAUNCHER_*` env vars remain
+delete, and last-used selection. Headless commands without `--profile` use the
+last-used profile and never open the picker. Legacy `SSH_LAUNCHER_*` env vars remain
 fallbacks; setting `SSHUB_DATA_DIR` or `SSHUB_CONFIG_DIR` uses compatibility
 mode without profile discovery. Legacy top-level data migrates into
 `profiles/default` (`src/profile/migrate.rs`).

@@ -54,7 +54,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "",
-        desc: "Use sshub --profile NAME to bypass picker, or --manage-profiles to open it.",
+        desc: "Use sshub --profile NAME to bypass picker; --manage-profiles opens it.",
     },
     HelpItem::Entry {
         key: "",

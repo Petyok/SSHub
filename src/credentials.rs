@@ -10,11 +10,6 @@ pub trait PasswordStore: Send + Sync {
     fn delete(&self, key: &str) -> Result<()>;
 }
 
-pub fn fallback_file_path() -> Result<std::path::PathBuf> {
-    let dir = crate::config::data_dir()?;
-    Ok(dir.join("credentials.json"))
-}
-
 /// Password store that prefixes every key with a namespace. Profiles use
 /// `profile:<id>:` so identically named hosts in separate profiles never
 /// share a keyring entry; compat mode uses an empty prefix (current keys).

@@ -141,7 +141,10 @@ pub fn validate_profile_name(name: &str) -> Result<()> {
         trimmed.len() <= MAX_NAME_LEN,
         "profile name must be at most {MAX_NAME_LEN} characters"
     );
-    anyhow::ensure!(trimmed != "." && trimmed != "..", "reserved profile name");
+    anyhow::ensure!(
+        trimmed != "." && trimmed != ".." && !trimmed.starts_with('.'),
+        "reserved profile name"
+    );
     anyhow::ensure!(
         !trimmed.contains('/') && !trimmed.contains('\\') && !trimmed.contains('\0'),
         "profile name must not contain path separators"
@@ -211,6 +214,8 @@ fn env_dir(var: &str) -> Option<PathBuf> {
 /// and passed down — subsystems must not rediscover paths from the environment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfilePaths {
+    /// Installation data root containing `state.toml` and `profiles/`.
+    pub data_root: PathBuf,
     /// Stable profile id (namespaces keyring credentials).
     pub id: String,
     pub name: String,
@@ -272,6 +277,7 @@ impl ProfilePaths {
 /// Paths for the synthetic compat-mode profile (no `profiles/` nesting).
 pub fn compat_paths(roots: &RootDirs, ssh_config: PathBuf) -> ProfilePaths {
     ProfilePaths {
+        data_root: roots.data_root.clone(),
         id: DEFAULT_PROFILE_NAME.to_string(),
         name: DEFAULT_PROFILE_NAME.to_string(),
         root: roots.data_root.clone(),
@@ -289,6 +295,7 @@ pub fn profile_paths(
 ) -> ProfilePaths {
     let root = ProfilePaths::profile_dir(&roots.data_root, &record.name);
     ProfilePaths {
+        data_root: roots.data_root.clone(),
         id: record.id.clone(),
         name: record.name.clone(),
         config_file: root.join("config.toml"),
@@ -349,6 +356,10 @@ pub fn extract_startup_flags(args: Vec<String>) -> Result<(StartupOptions, Vec<S
             i += 1;
         }
     }
+    anyhow::ensure!(
+        !(opts.profile.is_some() && opts.manage_profiles),
+        "--profile cannot be combined with --manage-profiles"
+    );
     Ok((opts, rest))
 }
 
@@ -370,7 +381,14 @@ pub enum Startup {
 /// picker cannot render, so the last-used profile is selected silently.
 pub fn resolve_startup(opts: &StartupOptions, interactive: bool) -> Result<Startup> {
     let roots = resolve_roots()?;
+    resolve_startup_at(opts, interactive, roots)
+}
 
+fn resolve_startup_at(
+    opts: &StartupOptions,
+    interactive: bool,
+    roots: RootDirs,
+) -> Result<Startup> {
     if roots.compat {
         anyhow::ensure!(
             opts.profile.is_none(),
@@ -455,6 +473,21 @@ pub fn ssh_config_path_for_profile(roots: &RootDirs, record: &ProfileRecord) -> 
     Ok(crate::ssh::expand_tilde("~/.ssh/config"))
 }
 
+/// Read selected profile's motion preference before the startup picker runs.
+/// Picker itself remains after splash; this preserves startup ordering while
+/// honoring reduced-motion preference for last-used profile.
+pub fn picker_animation_enabled(roots: &RootDirs, state: &ProfileState) -> bool {
+    let Some(record) = state.last_used_record() else {
+        return true;
+    };
+    let path = ProfilePaths::profile_dir(&roots.data_root, &record.name).join("config.toml");
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|content| toml::from_str::<crate::config::AppConfig>(&content).ok())
+        .map(|config| !config.appearance.disable_animation)
+        .unwrap_or(true)
+}
+
 /// Ensure the profile layout exists under `roots`: migrate a legacy install,
 /// adopt stray profile directories, or create the first `default` profile.
 /// Returns the loaded (or freshly written) state.
@@ -476,6 +509,7 @@ pub fn ensure_layout(roots: &RootDirs) -> Result<ProfileState> {
     }
 
     if let Some(state) = ProfileState::load(&roots.data_root)? {
+        sweep_deleting_profiles(&profiles_dir, Some(&state));
         return Ok(state);
     }
 
@@ -484,6 +518,7 @@ pub fn ensure_layout(roots: &RootDirs) -> Result<ProfileState> {
     if migrate::legacy_installation_present(roots) {
         migrate::run_legacy_migration(roots)?;
         if let Some(state) = ProfileState::load(&roots.data_root)? {
+            sweep_deleting_profiles(&profiles_dir, Some(&state));
             return Ok(state);
         }
     }
@@ -491,6 +526,7 @@ pub fn ensure_layout(roots: &RootDirs) -> Result<ProfileState> {
     // No state.toml yet. A `profiles/` directory may already hold profiles
     // (e.g. a crash after final rename but before state write) — adopt them.
     if profiles_dir.exists() {
+        sweep_deleting_profiles(&profiles_dir, None);
         let adopted = adopt_existing_profiles(roots)?;
         if !adopted.profiles.is_empty() {
             adopted.save(&roots.data_root)?;
@@ -504,6 +540,30 @@ pub fn ensure_layout(roots: &RootDirs) -> Result<ProfileState> {
     state.last_used = Some(record.id.clone());
     state.save(&roots.data_root)?;
     Ok(state)
+}
+
+fn sweep_deleting_profiles(profiles_dir: &Path, state: Option<&ProfileState>) {
+    let Ok(entries) = std::fs::read_dir(profiles_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(id) = name.strip_prefix(".deleting-") else {
+            continue;
+        };
+        if let Some(state) = state {
+            if let Some(record) = state.by_id(id) {
+                let target = profiles_dir.join(&record.name);
+                if !target.exists() {
+                    let _ = std::fs::rename(entry.path(), target);
+                } else {
+                    let _ = std::fs::remove_dir_all(entry.path());
+                }
+                continue;
+            }
+        }
+        let _ = std::fs::remove_dir_all(entry.path());
+    }
 }
 
 /// Build state from profile directories that exist without a `state.toml`.
@@ -654,6 +714,16 @@ pub fn rename_profile(
 /// credentials. Refuses to delete the final profile. Never touches external
 /// SSH config.
 pub fn delete_profile(roots: &RootDirs, state: &mut ProfileState, id: &str) -> Result<()> {
+    let store = crate::credentials::OsKeyring;
+    delete_profile_with_store(roots, state, id, &store)
+}
+
+pub fn delete_profile_with_store(
+    roots: &RootDirs,
+    state: &mut ProfileState,
+    id: &str,
+    credential_store: &dyn crate::credentials::PasswordStore,
+) -> Result<()> {
     anyhow::ensure!(
         state.profiles.len() > 1,
         "cannot delete the last remaining profile"
@@ -698,17 +768,27 @@ pub fn delete_profile(roots: &RootDirs, state: &mut ProfileState, id: &str) -> R
         return Err(save_err).context("save profile state after deletion");
     }
 
-    // Remove profile-owned keyring credentials while the database is still
-    // available, then discard the staged directory.
-    purge_profile_credentials(&trash, &record.id);
+    // Capture profile-owned key names while the database is still available.
+    // Delete keyring entries only after filesystem deletion commits, so a
+    // failed delete can restore the complete profile.
+    let credential_keys = profile_credential_keys(&trash, &record.id);
     if trash.exists() {
         if let Err(remove_err) = std::fs::remove_dir_all(&trash) {
-            *state = original_state;
-            let _ = state.save(&roots.data_root);
-            let _ = std::fs::rename(&trash, &dir);
+            *state = original_state.clone();
+            if let Err(restore_state_err) = state.save(&roots.data_root) {
+                anyhow::bail!(
+                    "remove staged profile directory failed: {remove_err}; restore state failed: {restore_state_err}"
+                );
+            }
+            if let Err(restore_dir_err) = std::fs::rename(&trash, &dir) {
+                anyhow::bail!(
+                    "remove staged profile directory failed: {remove_err}; restore directory failed: {restore_dir_err}"
+                );
+            }
             return Err(remove_err).context("remove staged profile directory");
         }
     }
+    purge_profile_credential_keys(&credential_keys, credential_store);
     Ok(())
 }
 
@@ -725,17 +805,17 @@ fn stop_profile_tunnels(dir: &Path) -> Result<()> {
 }
 
 /// Best-effort removal of keyring entries namespaced to a deleted profile.
-fn purge_profile_credentials(dir: &Path, profile_id: &str) {
+fn profile_credential_keys(dir: &Path, profile_id: &str) -> Vec<String> {
     let db_path = dir.join("launcher.db");
     if !db_path.exists() {
-        return;
+        return Vec::new();
     }
     let conn = match rusqlite::Connection::open_with_flags(
         &db_path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
     ) {
         Ok(conn) => conn,
-        Err(_) => return,
+        Err(_) => return Vec::new(),
     };
     let prefix = format!("profile:{profile_id}:");
     let mut keys = Vec::new();
@@ -753,9 +833,12 @@ fn purge_profile_credentials(dir: &Path, profile_id: &str) {
             }
         }
     }
-    let store = crate::credentials::OsKeyring;
+    keys
+}
+
+fn purge_profile_credential_keys(keys: &[String], store: &dyn crate::credentials::PasswordStore) {
     for key in keys {
-        let _ = crate::credentials::PasswordStore::delete(&store, &key);
+        let _ = store.delete(key);
     }
 }
 
@@ -773,7 +856,7 @@ mod tests {
 
     #[test]
     fn profile_names_reject_path_components() {
-        for name in ["", " ", ".", "..", "a/b", r"a\b", "a\0b"] {
+        for name in ["", " ", ".", "..", ".hidden", "a/b", r"a\b", "a\0b"] {
             assert!(validate_profile_name(name).is_err(), "accepted {name:?}");
         }
         assert!(validate_profile_name("work-laptop").is_ok());
@@ -842,17 +925,71 @@ mod tests {
             "work".into(),
             "host".into(),
             "list".into(),
-            "--manage-profiles".into(),
         ])
         .unwrap();
         assert_eq!(opts.profile.as_deref(), Some("work"));
-        assert!(opts.manage_profiles);
+        assert!(!opts.manage_profiles);
         assert_eq!(rest, ["host", "list"]);
 
         let (opts, rest) =
             extract_startup_flags(vec!["--profile=personal".into(), "list".into()]).unwrap();
         assert_eq!(opts.profile.as_deref(), Some("personal"));
         assert_eq!(rest, ["list"]);
+        assert!(extract_startup_flags(vec![
+            "--profile".into(),
+            "work".into(),
+            "--manage-profiles".into(),
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn profile_selection_resolves_before_database_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let roots = roots(dir.path());
+        let mut state = ensure_layout(&roots).unwrap();
+        let record = create_profile(&roots, &mut state, "work").unwrap();
+        let opts = StartupOptions {
+            profile: Some("work".into()),
+            manage_profiles: false,
+        };
+
+        let startup = resolve_startup_at(&opts, false, roots.clone()).unwrap();
+        let Startup::Silent(paths) = startup else {
+            panic!("explicit profile must resolve silently");
+        };
+        assert_eq!(paths.data_root, roots.data_root);
+        assert_eq!(paths.id, record.id);
+        assert_eq!(
+            paths.launcher_db(),
+            roots.data_root.join("profiles/work/launcher.db")
+        );
+        assert!(!paths.launcher_db().exists());
+
+        let unknown = StartupOptions {
+            profile: Some("missing".into()),
+            manage_profiles: false,
+        };
+        assert!(resolve_startup_at(&unknown, false, roots.clone()).is_err());
+        assert!(!roots
+            .data_root
+            .join("profiles/missing/launcher.db")
+            .exists());
+    }
+
+    #[test]
+    fn compatibility_mode_rejects_profile_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        let opts = StartupOptions {
+            profile: Some("work".into()),
+            manage_profiles: false,
+        };
+        let roots = RootDirs {
+            data_root: dir.path().join("data"),
+            config_root: dir.path().join("config"),
+            compat: true,
+        };
+        assert!(resolve_startup_at(&opts, false, roots).is_err());
     }
 
     #[test]

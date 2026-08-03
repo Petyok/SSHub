@@ -6,7 +6,6 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result};
 
-use crate::config;
 use crate::secure_fs;
 use crate::session::{askpass, PendingSecret};
 use crate::store::{ManagedHost, Tunnel, TunnelType};
@@ -291,11 +290,6 @@ pub fn stop_detached_tunnel(data_dir: &Path, tunnel_id: i64) -> Result<bool> {
     }
     remove_tunnel_pid(&pid_path)?;
     Ok(was_live)
-}
-
-/// Resolved data directory for tunnel PID files.
-pub fn tunnel_data_dir() -> Result<PathBuf> {
-    config::data_dir()
 }
 
 #[cfg(test)]

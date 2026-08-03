@@ -241,13 +241,6 @@ impl ProfilePicker {
         Ok(PickerOutcome::Continue)
     }
 
-    /// Record `record` as last-used in `state.toml` (called on launch).
-    pub fn mark_last_used(&self, record: &ProfileRecord) {
-        let mut state = self.state.clone();
-        state.last_used = Some(record.id.clone());
-        let _ = state.save(&self.roots.data_root);
-    }
-
     pub fn render(&self, frame: &mut Frame) {
         let area = popup_area(frame.area(), 46, 9 + self.state.profiles.len() as u16);
         frame.render_widget(Clear, area);

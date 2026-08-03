@@ -156,6 +156,8 @@ with multiple profiles, the picker appears after the splash. The picker can
 create, rename, and delete profiles, but switching profiles requires restarting
 SSHUB. `--profile NAME` bypasses the picker. `--manage-profiles` opens it even
 when only one profile exists. Press `Esc` in the picker to cancel startup.
+Headless commands without `--profile` use the last-used profile and never open
+the interactive picker.
 
 ## Headless CLI
 

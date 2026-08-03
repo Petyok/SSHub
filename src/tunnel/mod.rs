@@ -16,8 +16,8 @@ pub use audit::log_tunnel_reconnect_events;
 pub use spawn::{
     build_tunnel_argv, ensure_tunnel_pid_dir, is_local_port_bound, is_pid_alive, kill_pid,
     read_tunnel_pid, remove_tunnel_pid, spawn_detached_tunnel, splice_tunnel_ssh_options,
-    stage_tunnel_askpass, stop_detached_tunnel, tunnel_data_dir, tunnel_pid_path,
-    tunnel_runtime_state, write_tunnel_pid, TunnelRuntimeState,
+    stage_tunnel_askpass, stop_detached_tunnel, tunnel_pid_path, tunnel_runtime_state,
+    write_tunnel_pid, TunnelRuntimeState,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
