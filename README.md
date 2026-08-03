@@ -232,7 +232,7 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | `Tab`            | Toggle detail panel             |
 | `Esc`            | Back / close overlay            |
 | `Ctrl+K`         | Keybind editor                  |
-| `?` / `Shift+H`  | Help screen                     |
+| `?`              | Help screen                     |
 | `q`              | Quit                            |
 
 ### Session (embedded PTY)
@@ -310,6 +310,7 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | `r`        | Remove key from agent    |
 | `Shift+A`  | Add key to agent         |
 | `Shift+P`  | Push public key to host  |
+| `H`        | Known hosts manager      |
 
 ### Audit (tab 4)
 

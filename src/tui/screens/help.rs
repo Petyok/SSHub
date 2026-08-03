@@ -177,6 +177,10 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "Push public key to a remote host",
     },
     HelpItem::Entry {
+        key: "H",
+        desc: "Open known hosts manager",
+    },
+    HelpItem::Entry {
         key: "Ctrl+R",
         desc: "In a form: show and copy the stored secret",
     },
@@ -441,7 +445,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry { key: "", desc: "" },
     HelpItem::Entry {
-        key: "? / Shift+H",
+        key: "?",
         desc: "Toggle this help screen",
     },
     HelpItem::Entry {
