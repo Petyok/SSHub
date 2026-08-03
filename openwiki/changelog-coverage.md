@@ -49,5 +49,5 @@ This notebook audits every entry in `CHANGELOG.md` against the source tree and l
 
 - `gitHead`: `6e10d8891834a4e32c6850d0443460022e06c77c`
 - `auditedAt`: `2026-08-03`
-- `model`: `moonshotai/kimi-k3`
+- `model`: `openai/gpt-5.6-luna`
 - `unresolved`: 0.11.0 public-key push/key generation; npm installation details; 0.11.0 motion and remaining regression fixes; 0.10.0 panel focus/zoom and PuTTY/mRemoteNG import; 0.4.0 relicensing history
