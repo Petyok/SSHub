@@ -276,11 +276,6 @@ pub(crate) fn optional_path(raw: &str) -> Option<std::path::PathBuf> {
     optional_field(raw).map(std::path::PathBuf::from)
 }
 
-/// Write an OSC 52 set-clipboard sequence to stdout. Modern terminals
-/// (kitty / iTerm2 / wezterm / Alacritty / foot) interpret this as
-/// "put this base64-encoded payload on the system clipboard". The
-/// sequence is invisible to the alternate-screen UI — the host terminal
-/// consumes it before it ever lands on a buffer cell.
 /// Copy `secret` to the clipboard and return the notice to show. `what` names it
 /// ("password", "passphrase"); the value itself never reaches the message, the
 /// audit log or any diagnostic.
@@ -294,47 +289,14 @@ pub(crate) fn copy_secret_notice(secret: &str, what: &str) -> String {
     }
 }
 
+/// Put `text` on the host clipboard via OSC 52. Modern terminals (kitty /
+/// iTerm2 / wezterm / Alacritty / foot) interpret the sequence as "put this
+/// base64-encoded payload on the system clipboard"; it is invisible to the
+/// alternate-screen UI because the host terminal consumes it before it ever
+/// lands on a buffer cell. Framing lives in [`crate::osc52`], shared with the
+/// session's PTY clipboard relay.
 pub(crate) fn write_osc52(text: &str) -> std::io::Result<()> {
-    use std::io::Write;
-    let encoded = base64_encode(text.as_bytes());
-    let payload = format!("\x1b]52;c;{encoded}\x07");
-    let mut out = std::io::stdout().lock();
-    out.write_all(payload.as_bytes())?;
-    out.flush()
-}
-
-/// Tiny base64 (standard alphabet, padded). Inlined so we don't pull in
-/// another crate for a single ~20 line helper used in one place.
-pub(crate) fn base64_encode(input: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
-    let mut chunks = input.chunks_exact(3);
-    for chunk in chunks.by_ref() {
-        let b = ((chunk[0] as u32) << 16) | ((chunk[1] as u32) << 8) | (chunk[2] as u32);
-        out.push(ALPHABET[((b >> 18) & 0x3f) as usize] as char);
-        out.push(ALPHABET[((b >> 12) & 0x3f) as usize] as char);
-        out.push(ALPHABET[((b >> 6) & 0x3f) as usize] as char);
-        out.push(ALPHABET[(b & 0x3f) as usize] as char);
-    }
-    let rem = chunks.remainder();
-    match rem.len() {
-        1 => {
-            let b = (rem[0] as u32) << 16;
-            out.push(ALPHABET[((b >> 18) & 0x3f) as usize] as char);
-            out.push(ALPHABET[((b >> 12) & 0x3f) as usize] as char);
-            out.push('=');
-            out.push('=');
-        }
-        2 => {
-            let b = ((rem[0] as u32) << 16) | ((rem[1] as u32) << 8);
-            out.push(ALPHABET[((b >> 18) & 0x3f) as usize] as char);
-            out.push(ALPHABET[((b >> 12) & 0x3f) as usize] as char);
-            out.push(ALPHABET[((b >> 6) & 0x3f) as usize] as char);
-            out.push('=');
-        }
-        _ => {}
-    }
-    out
+    crate::osc52::write_text(text)
 }
 
 /// Expand a leading `~` (or `~/`) in a path to the user's home directory.

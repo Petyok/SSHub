@@ -65,6 +65,27 @@ impl Default for SessionLoggingConfig {
     }
 }
 
+/// Clipboard behaviour. Currently only governs what the *remote* side may do:
+/// SSHub's own copy shortcuts are unaffected.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClipboardConfig {
+    /// Relay OSC 52 clipboard writes emitted by applications inside a session
+    /// PTY to the host clipboard. On by default — that is what makes copying
+    /// inside a nested multiplexer or `clipboard=osc52` editor work at all.
+    /// Set to `false` to drop those writes: the remote then cannot touch the
+    /// local clipboard.
+    #[serde(default = "default_true")]
+    pub relay_from_pty: bool,
+}
+
+impl Default for ClipboardConfig {
+    fn default() -> Self {
+        Self {
+            relay_from_pty: true,
+        }
+    }
+}
+
 fn default_tunnel_reconnect_max_attempts() -> u32 {
     12
 }
@@ -247,6 +268,8 @@ pub struct AppConfig {
     pub tunnel_reconnect: TunnelReconnectConfig,
     #[serde(default)]
     pub keybinds: KeybindsConfig,
+    #[serde(default)]
+    pub clipboard: ClipboardConfig,
 }
 
 /// Path to `config.toml` inside [`config_dir`].
@@ -441,6 +464,27 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clipboard_relay_defaults_to_on_for_configs_without_the_section() {
+        // Every config written before the section existed must keep behaving
+        // exactly as it did — the relay is opt-out, not opt-in.
+        let config = parse_config_str("").unwrap();
+        assert!(config.clipboard.relay_from_pty);
+        assert!(AppConfig::default().clipboard.relay_from_pty);
+    }
+
+    #[test]
+    fn clipboard_relay_can_be_switched_off() {
+        let config = parse_config_str("[clipboard]\nrelay_from_pty = false\n").unwrap();
+        assert!(!config.clipboard.relay_from_pty);
+    }
+
+    #[test]
+    fn an_empty_clipboard_section_keeps_the_default() {
+        let config = parse_config_str("[clipboard]\n").unwrap();
+        assert!(config.clipboard.relay_from_pty);
+    }
 
     #[test]
     fn save_config_preserves_comments_and_unknown_keys() {

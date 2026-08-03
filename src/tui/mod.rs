@@ -140,14 +140,13 @@ fn apply_panel_selection(frame: &mut Frame, app: &App) {
 }
 
 fn render_inner(frame: &mut Frame, app: &App) {
-    let session_behind_picker = app.mode == AppMode::SessionPicker
-        && app
-            .session_picker
-            .as_ref()
-            .is_some_and(|p| matches!(p.return_mode, AppMode::Connecting | AppMode::Session));
+    // Only governs the picker overlay's animation below; whether a session is
+    // drawn at all is `session_is_rendered`, which the clipboard relay gate
+    // reads too.
+    let session_behind_picker = app.session_picker_over_session();
 
     // Embedded session takes over the whole frame — no dashboard chrome.
-    if matches!(app.mode, AppMode::Connecting | AppMode::Session) || session_behind_picker {
+    if app.session_is_rendered() {
         crate::session::render::render(frame, app);
         // Slide the freshly-connected session in from the right (#35). Skipped
         // for the picker-over-session case (no fresh connect happening).

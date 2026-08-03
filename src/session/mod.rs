@@ -523,6 +523,59 @@ impl Session {
         self.maybe_detect_connected();
     }
 
+    /// Throw away whatever the PTY asked us to copy, including the drop
+    /// counters. Used for every session that is not the visible one this
+    /// frame, so a background tab can neither relay now nor replay later.
+    pub(crate) fn discard_clipboard_writes(&mut self) {
+        let _ = self.parser.take_clipboard_writes();
+        let _ = self.parser.take_clipboard_drops();
+    }
+
+    /// Forward OSC 52 clipboard writes emitted by applications inside the PTY
+    /// to the terminal hosting sshub. Without this the sequence dies in our
+    /// vt100 parser: a nested multiplexer (herdr, tmux) or an editor with
+    /// `clipboard=osc52` appears to copy — the selection even highlights —
+    /// but nothing ever reaches the system clipboard.
+    ///
+    /// Only the session the user is actually looking at may relay; that
+    /// decision belongs to the frame, so this is driven from
+    /// [`crate::App::relay_visible_session_clipboard`] and every other session
+    /// discards instead. Relaying means the remote side can write to the local
+    /// clipboard, so the outcome is always visible: a clipboard change the user
+    /// didn't ask for is worth noticing, and so is one that was thrown away.
+    ///
+    /// The relay path itself never puts the payload into the notice, the
+    /// diagnostics or the session log — but the OSC 52 sequence travels in the
+    /// raw PTY stream, so an enabled session log can already contain it. This
+    /// neither adds it nor removes it.
+    ///
+    /// The sink is injectable because the real one writes to the process's
+    /// stdout, which the test harness does *not* capture (it only intercepts
+    /// the `print!` macros), so exercising it under `cargo test` would clobber
+    /// the clipboard of whoever ran the suite.
+    pub(crate) fn relay_clipboard_writes_with(
+        &mut self,
+        mut emit: impl FnMut(&str) -> std::io::Result<()>,
+    ) {
+        let mut relayed = None;
+        for payload in self.parser.take_clipboard_writes() {
+            match emit(&payload) {
+                // Several writes in one tick collapse into one notice (the last
+                // one wins), so a copy loop can't flood the corner of the screen.
+                Ok(()) => relayed = Some(parser::decoded_len(payload.as_bytes())),
+                // Prefixed `session:` so the event loop's connected-session
+                // filter keeps it — see [`keep_diagnostic`].
+                Err(e) => self
+                    .diagnostics
+                    .push(format!("session: clipboard relay failed: {e}")),
+            }
+        }
+        let drops = self.parser.take_clipboard_drops();
+        if let Some(msg) = clipboard_notice(relayed, drops) {
+            self.set_copy_notice(msg);
+        }
+    }
+
     /// Reveal the live terminal once the connect timeout elapses — but only if
     /// real PTY content has arrived (a prompt/banner/host-key question we might
     /// have failed to auto-answer). With `-v` debug now siphoned off the PTY, a
@@ -1036,6 +1089,70 @@ mod selection_tests {
     }
 }
 
+/// The one line shown after a batch of PTY clipboard writes, or `None` when
+/// nothing worth reporting happened.
+///
+/// A batch that both copied and dropped has to say both: reporting only the
+/// success would hide the loss behind good news.
+fn clipboard_notice(relayed_bytes: Option<usize>, drops: parser::ClipboardDrops) -> Option<String> {
+    let dropped = match (drops.oversize, drops.queue_full) {
+        (0, 0) => None,
+        (n, 0) => Some(format!("{n} oversized {}", plural_writes(n))),
+        (0, n) => Some(format!("{n} over the queue limit")),
+        (a, b) => Some(format!(
+            "{a} oversized {}, {b} over the queue limit",
+            plural_writes(a)
+        )),
+    };
+    match (relayed_bytes, dropped) {
+        (Some(bytes), None) => Some(format!("remote copied {bytes} bytes to clipboard")),
+        (Some(bytes), Some(d)) => Some(format!(
+            "remote copied {bytes} bytes to clipboard; dropped {d}"
+        )),
+        (None, Some(d)) => Some(format!("clipboard relay dropped {d}")),
+        (None, None) => None,
+    }
+}
+
+fn plural_writes(n: usize) -> &'static str {
+    if n == 1 {
+        "write"
+    } else {
+        "writes"
+    }
+}
+
+/// Should a session diagnostic reach the SSH log panel?
+///
+/// Before a session is connected everything is interesting — it is the record
+/// of a handshake that may be failing. Once connected the loop would otherwise
+/// bury the panel under routine chatter, so only lines that stay relevant are
+/// kept: anything the session itself reports (`session:` — exits, and the
+/// clipboard relay failing) plus unresolved auth problems.
+///
+/// The event loop calls exactly this function, so a diagnostic can be tested
+/// against the contract that actually governs it.
+pub(crate) fn keep_diagnostic(line: &str, connected: bool) -> bool {
+    !connected || line.starts_with("session:") || line.starts_with("auth: could not")
+}
+
+#[cfg(test)]
+mod diagnostic_filter_tests {
+    use super::keep_diagnostic;
+
+    #[test]
+    fn everything_survives_before_connect() {
+        assert!(keep_diagnostic("auth: trying key", false));
+    }
+
+    #[test]
+    fn connected_keeps_only_session_and_auth_failures() {
+        assert!(keep_diagnostic("session: ssh exited (code 1)", true));
+        assert!(keep_diagnostic("auth: could not read key", true));
+        assert!(!keep_diagnostic("auth: trying key", true));
+    }
+}
+
 #[cfg(test)]
 mod autoscroll_tests {
     use super::edge_autoscroll_dir;
@@ -1144,6 +1261,242 @@ mod prompt_tests {
             !s.screen_tail_snippet().contains("ERR_MARKER"),
             "stderr must not appear on the PTY grid"
         );
+    }
+
+    #[test]
+    fn draining_the_pty_does_not_relay_by_itself() {
+        // Draining happens for every session, every frame — including the ones
+        // nobody is looking at. Deciding whether a write may reach the host
+        // clipboard is the frame's job (it knows which tab is on screen), so
+        // `drain` must leave the queue alone.
+        let config = SessionConfig {
+            argv: vec![
+                "sh".into(),
+                "-c".into(),
+                r"printf '\033]52;c;R0VIRUlN\007MARKER'".into(),
+            ],
+            display_name: "t".into(),
+            meta: SessionMeta::default(),
+            pending_secret: None,
+            key_push_identity: None,
+            host_name: "t".into(),
+        };
+        let mut s = Session::spawn(config, 24, 80, None).unwrap();
+
+        for _ in 0..200 {
+            s.drain();
+            if s.screen_tail_snippet().contains("MARKER") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            s.screen_tail_snippet().contains("MARKER"),
+            "PTY output never arrived, tail: {:?}",
+            s.screen_tail_snippet()
+        );
+
+        assert!(
+            s.copy_notice.is_none(),
+            "drain must not announce a copy on its own"
+        );
+        assert_eq!(
+            s.parser.take_clipboard_writes(),
+            vec!["R0VIRUlN".to_string()],
+            "drain must leave the clipboard write for the frame to decide on"
+        );
+    }
+
+    /// Build a throwaway session for tests that only need a live `Session`.
+    fn scratch_session() -> Session {
+        let config = SessionConfig {
+            argv: vec!["true".into()],
+            display_name: "t".into(),
+            meta: SessionMeta::default(),
+            pending_secret: None,
+            key_push_identity: None,
+            host_name: "t".into(),
+        };
+        Session::spawn(config, 24, 80, None).unwrap()
+    }
+
+    #[test]
+    fn clipboard_writes_from_the_pty_are_relayed_and_announced() {
+        // An app inside the PTY (herdr, tmux, an editor with clipboard=osc52)
+        // copies by writing OSC 52 to its stdout. vt100 hands that to the
+        // default no-op callback, where it used to vanish — the selection
+        // highlighted but the clipboard never changed.
+        let mut s = scratch_session();
+        // base64("GEHEIM") == "R0VIRUlN" → 6 bytes decoded.
+        s.parser.process(b"BEFORE\x1b]52;c;R0VIRUlN\x07AFTER");
+
+        let mut sent = Vec::new();
+        s.relay_clipboard_writes_with(|payload| {
+            sent.push(payload.to_string());
+            Ok(())
+        });
+
+        assert_eq!(sent, vec!["R0VIRUlN".to_string()]);
+        assert_eq!(
+            s.copy_notice.as_ref().map(|(m, _)| m.as_str()),
+            Some("remote copied 6 bytes to clipboard"),
+            "a relayed clipboard write must be visible to the user"
+        );
+
+        // The sequence itself must never become text on the grid.
+        let tail = s.screen_tail_snippet();
+        assert!(tail.contains("BEFOREAFTER"), "tail: {tail:?}");
+        assert!(!tail.contains("52;c;"), "escape sequence leaked: {tail:?}");
+    }
+
+    #[test]
+    fn failing_clipboard_relay_is_reported_not_swallowed() {
+        // A failed relay must not claim success: no notice, but a diagnostic.
+        let mut s = scratch_session();
+        s.parser.process(b"\x1b]52;c;R0VIRUlN\x07");
+
+        s.relay_clipboard_writes_with(|_| Err(std::io::Error::other("boom")));
+
+        assert!(
+            s.copy_notice.is_none(),
+            "a failed relay must not announce a copy"
+        );
+        assert!(
+            s.take_diagnostics()
+                .iter()
+                .any(|d| d.contains("clipboard relay failed")),
+            "a failed relay must surface in diagnostics"
+        );
+    }
+
+    #[test]
+    fn a_mixed_batch_names_the_copy_and_the_drops() {
+        // A batch that both relayed something and dropped something must say
+        // so: the success message alone would hide the loss.
+        let mut s = scratch_session();
+        let mut stream = b"\x1b]52;c;R0VIRUlN\x07\x1b]52;c;".to_vec();
+        stream.extend(std::iter::repeat_n(b'A', 90_000));
+        stream.push(0x07);
+        s.parser.process(&stream);
+
+        s.relay_clipboard_writes_with(|_| Ok(()));
+
+        assert_eq!(
+            s.copy_notice.as_ref().map(|(m, _)| m.as_str()),
+            Some("remote copied 6 bytes to clipboard; dropped 1 oversized write"),
+        );
+    }
+
+    #[test]
+    fn drops_alone_are_still_announced() {
+        // Nothing was relayed, but the user must learn a copy was thrown away.
+        let mut s = scratch_session();
+        let mut stream = b"\x1b]52;c;".to_vec();
+        stream.extend(std::iter::repeat_n(b'A', 90_000));
+        stream.push(0x07);
+        for _ in 0..20 {
+            stream.extend_from_slice(b"\x1b]52;c;R0VIRUlN\x07");
+        }
+        s.parser.process(&stream);
+        // Take the queued writes away, so only the drops remain to report.
+        let _ = s.parser.take_clipboard_writes();
+
+        s.relay_clipboard_writes_with(|_| Ok(()));
+
+        assert_eq!(
+            s.copy_notice.as_ref().map(|(m, _)| m.as_str()),
+            Some("clipboard relay dropped 1 oversized write, 12 over the queue limit"),
+        );
+    }
+
+    #[test]
+    fn an_empty_payload_produces_no_notice_at_all() {
+        // `ESC]52;c;BEL` must not relay, must not clear, must not claim success.
+        let mut s = scratch_session();
+        s.parser.process(b"\x1b]52;c;\x07");
+
+        let mut sent = 0usize;
+        s.relay_clipboard_writes_with(|_| {
+            sent += 1;
+            Ok(())
+        });
+
+        assert_eq!(sent, 0);
+        assert!(s.copy_notice.is_none());
+    }
+
+    #[test]
+    fn discarded_clipboard_writes_are_never_resent() {
+        // A session that isn't the visible one drops what it saw. Bringing it
+        // to the front later must not replay the remote's old copy.
+        let mut s = scratch_session();
+        s.parser.process(b"\x1b]52;c;R0VIRUlN\x07");
+
+        s.discard_clipboard_writes();
+
+        let mut sent = Vec::new();
+        s.relay_clipboard_writes_with(|p| {
+            sent.push(p.to_string());
+            Ok(())
+        });
+        assert!(sent.is_empty(), "a discarded write must never be resent");
+        assert!(s.copy_notice.is_none(), "a discarded write must be silent");
+    }
+
+    #[test]
+    fn discarding_also_clears_drop_counters() {
+        // Otherwise the drops of an invisible session would surface the moment
+        // it becomes visible.
+        let mut s = scratch_session();
+        let mut stream = b"\x1b]52;c;".to_vec();
+        stream.extend(std::iter::repeat_n(b'A', 90_000));
+        stream.push(0x07);
+        s.parser.process(&stream);
+
+        s.discard_clipboard_writes();
+        s.relay_clipboard_writes_with(|_| Ok(()));
+
+        assert!(s.copy_notice.is_none());
+    }
+
+    #[test]
+    fn a_relay_failure_survives_the_connected_session_filter() {
+        // The event loop drops most diagnostics once a session is connected.
+        // A failed relay is exactly the case that must still reach the log, so
+        // it has to satisfy the real filter, not a look-alike.
+        let mut s = scratch_session();
+        s.parser.process(b"\x1b]52;c;R0VIRUlN\x07");
+        s.relay_clipboard_writes_with(|_| Err(std::io::Error::other("boom")));
+
+        let kept: Vec<String> = s
+            .take_diagnostics()
+            .into_iter()
+            .filter(|line| keep_diagnostic(line, true))
+            .collect();
+
+        assert!(
+            kept.iter().any(|d| d.contains("clipboard relay failed")),
+            "a failed relay must survive the connected-session filter, kept: {kept:?}"
+        );
+    }
+
+    #[test]
+    fn clipboard_queue_is_emptied_by_relaying() {
+        // Guards against re-sending the same payload on the next drain.
+        let mut s = scratch_session();
+        s.parser.process(b"\x1b]52;c;R0VIRUlN\x07");
+
+        let mut sent = 0usize;
+        s.relay_clipboard_writes_with(|_| {
+            sent += 1;
+            Ok(())
+        });
+        s.relay_clipboard_writes_with(|_| {
+            sent += 1;
+            Ok(())
+        });
+
+        assert_eq!(sent, 1, "each clipboard write must be relayed exactly once");
     }
 
     #[test]

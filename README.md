@@ -334,6 +334,9 @@ initial_delay_ms = 1000     # 1 s (R overlay edits delays in seconds)
 max_delay_ms = 60000        # 60 s
 stable_secs = 5             # uptime before a spawn counts as up
 jitter_ratio = 0.25
+
+[clipboard]
+relay_from_pty = true       # let apps inside a session copy to your clipboard
 ```
 
 ## Development
