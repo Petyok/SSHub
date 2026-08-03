@@ -129,8 +129,8 @@ impl App {
                 Ok(mut session) => {
                     let mut log_path = None;
                     if log_enabled {
-                        match crate::config::data_dir() {
-                            Ok(data_dir) => {
+                        match self.runtime_data_dir() {
+                            Some(data_dir) => {
                                 let cfg = &self.config.session_logging;
                                 match crate::session_log::SessionLogWriter::open(
                                     &data_dir,
@@ -149,9 +149,9 @@ impl App {
                                     }
                                 }
                             }
-                            Err(e) => {
+                            None => {
                                 self.host_notice =
-                                    Some(format!("Session logging unavailable: {e:#}"));
+                                    Some("Session logging unavailable: no data dir".into());
                             }
                         }
                     }

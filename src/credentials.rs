@@ -15,6 +15,39 @@ pub fn fallback_file_path() -> Result<std::path::PathBuf> {
     Ok(dir.join("credentials.json"))
 }
 
+/// Password store that prefixes every key with a namespace. Profiles use
+/// `profile:<id>:` so identically named hosts in separate profiles never
+/// share a keyring entry; compat mode uses an empty prefix (current keys).
+pub struct NamespacedPasswordStore {
+    inner: Box<dyn PasswordStore>,
+    prefix: String,
+}
+
+impl NamespacedPasswordStore {
+    pub fn new(inner: Box<dyn PasswordStore>, prefix: impl Into<String>) -> Self {
+        Self {
+            inner,
+            prefix: prefix.into(),
+        }
+    }
+
+    fn namespaced(&self, key: &str) -> String {
+        format!("{}{}", self.prefix, key)
+    }
+}
+
+impl PasswordStore for NamespacedPasswordStore {
+    fn get(&self, key: &str) -> Result<Option<String>> {
+        self.inner.get(&self.namespaced(key))
+    }
+    fn set(&self, key: &str, password: &str) -> Result<()> {
+        self.inner.set(&self.namespaced(key), password)
+    }
+    fn delete(&self, key: &str) -> Result<()> {
+        self.inner.delete(&self.namespaced(key))
+    }
+}
+
 pub fn check_keyring_available() -> bool {
     let entry = match keyring::Entry::new(SERVICE, "sshub-probe-availability") {
         Ok(entry) => entry,
@@ -33,13 +66,12 @@ pub fn check_keyring_available() -> bool {
     }
 }
 
-pub fn migrate_fallback_to_keyring() -> Result<()> {
-    let path = fallback_file_path()?;
+pub fn migrate_fallback_to_keyring(path: &std::path::Path) -> Result<()> {
     if !path.exists() {
         return Ok(());
     }
 
-    let content = fs::read_to_string(&path)?;
+    let content = fs::read_to_string(path)?;
     let map: HashMap<String, String> = serde_json::from_str(&content)?;
 
     let keyring_store = OsKeyring;
@@ -52,7 +84,7 @@ pub fn migrate_fallback_to_keyring() -> Result<()> {
     }
 
     if !failed {
-        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(path);
     }
     Ok(())
 }
@@ -110,6 +142,13 @@ impl FilePasswordStore {
         }
         let content = serde_json::to_string_pretty(map)?;
         let tmp = self.path.with_extension("json.tmp");
+        if tmp.exists() {
+            anyhow::ensure!(
+                !std::fs::symlink_metadata(&tmp)?.file_type().is_symlink(),
+                "refusing symlink credentials temporary file: {}",
+                tmp.display()
+            );
+        }
 
         #[cfg(unix)]
         {

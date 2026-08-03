@@ -8,12 +8,24 @@ tags: [storage, sqlite, schema, config, hosts, architecture]
 
 # Data Model & Storage
 
+## Profile-owned storage
+
+Normal installs keep `state.toml` at the data root and put each profile under
+`profiles/<name>/`. A profile owns its two SQLite databases, `config.toml`,
+fallback credentials, session logs, and tunnel PID state. `ProfilePaths` is
+resolved once before resource construction and passed to stores, config,
+resolver, credentials, logging, tunnels, watcher, and CLI context. Profiles
+retain stable IDs so renaming does not change credential namespaces.
+
+Directory overrides (`SSHUB_DATA_DIR` or `SSHUB_CONFIG_DIR`) select compatibility
+mode and use the override directories verbatim without `profiles/` nesting.
+
 ## Two SQLite databases
 
 | DB | Path | Contents |
 |---|---|---|
-| `launcher.db` | `$SSHUB_DATA_DIR/launcher.db` | Managed hosts, host groups, identities, tunnels, auth events (audit), UI state |
-| `metadata.db` | `$SSHUB_DATA_DIR/metadata.db` | `host_metadata` for **legacy** ssh_config-only hosts: tags, description, environment, favorite, last_connected, session_logging, transport |
+| `launcher.db` | `profiles/<name>/launcher.db` | Managed hosts, host groups, identities, tunnels, auth events (audit), UI state |
+| `metadata.db` | `profiles/<name>/metadata.db` | `host_metadata` for **legacy** ssh_config-only hosts: tags, description, environment, favorite, last_connected, session_logging, transport |
 
 The split is historical: `metadata.db` predates the launcher database and still backs per-alias metadata for hosts that exist only in `~/.ssh/config`. `LauncherStore`'s own docs admit the "MVP still uses MetadataDb" — treat the overlap (e.g. `session_logging` and `transport` exist on both `ManagedHost` and `HostMetadata`) as an acknowledged incomplete migration, not a design to copy. A best-effort one-way import from legacy `metadata.db` runs on fresh `launcher.db` creation (`src/store/migrate.rs`); a locked legacy DB must never brick launch.
 
@@ -33,7 +45,11 @@ Tables:
 
 CRUD is split across `src/store/hosts.rs`, `identities.rs`, `tunnels.rs`; DTOs (`ManagedHost`, `HostSource`, `Tunnel`, `AuthEvent`, `NewHost`, …) live in `src/store/types.rs`. Secrets are **never** in SQLite — only `has_password` flags; actual secrets are in the OS keyring (see [secrets](../security/secrets.md)).
 
-`sshub db purge --yes-i-am-stupid` deletes `launcher.db` and its sidecars (`src/lib.rs::purge_database`); `~/.ssh/config` is untouched and imported hosts reappear on next launch. Keyring entries are deliberately orphaned.
+`sshub --profile NAME db purge --yes-i-am-stupid` deletes the selected profile's
+`launcher.db` and sidecars (`src/lib.rs::purge_profile_database`);
+`~/.ssh/config` is untouched and imported hosts reappear on next launch. Profile
+credential namespaces prevent identical host names in different profiles from
+sharing keyring entries.
 
 ## Hybrid host model (`src/hosts/loader.rs`, `src/ssh/`)
 
@@ -49,7 +65,7 @@ Hosts, groups, favorites, and identities as user-facing concepts: [domain/hosts-
 
 ## Configuration (`src/config.rs`)
 
-`~/.config/sshub/config.toml` (created on first run) sections:
+`profiles/<name>/config.toml` (created on first run) sections:
 
 - Legacy `terminal` and `launch_command` keys may still occur in older config files, but are ignored after the external-terminal launcher was removed in 0.10.0. Sessions run on the embedded PTY (`src/session/`, tui-term + vt100); see [integrations](../integrations/external-terminals.md).
 - `[clipboard]` — `relay_from_pty` (default `true`) controls whether the visible embedded session relays OSC 52 clipboard writes to the hosting terminal.

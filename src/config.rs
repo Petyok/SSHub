@@ -258,6 +258,15 @@ impl Default for AppearanceConfig {
 /// User-remappable keybindings. See [`crate::keybinds`].
 pub use crate::keybinds::{KeyAction, KeybindsConfig};
 
+/// SSH source selection. `config_path` overrides the imported ssh_config
+/// location for this profile (`~` expanded); environment overrides
+/// (`SSHUB_SSH_CONFIG` / `SSH_LAUNCHER_SSH_CONFIG`) still win.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SshSourceConfig {
+    #[serde(default)]
+    pub config_path: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
@@ -270,6 +279,8 @@ pub struct AppConfig {
     pub keybinds: KeybindsConfig,
     #[serde(default)]
     pub clipboard: ClipboardConfig,
+    #[serde(default)]
+    pub ssh: SshSourceConfig,
 }
 
 /// Path to `config.toml` inside [`config_dir`].
@@ -289,18 +300,22 @@ fn default_config_toml() -> anyhow::Result<String> {
 
 /// Load config from XDG path, creating the directory and default file if missing.
 pub fn load_config() -> anyhow::Result<AppConfig> {
-    let path = config_file_path()?;
+    load_config_at(&config_file_path()?)
+}
 
+/// Load config from an explicit `config.toml` path (profile-aware entry point).
+pub fn load_config_at(path: &Path) -> anyhow::Result<AppConfig> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
         crate::secure_fs::restrict_dir(parent);
     }
 
     if !path.exists() {
-        fs::write(&path, default_config_toml()?)?;
+        fs::write(path, default_config_toml()?)?;
+        crate::secure_fs::restrict_file(path);
     }
 
-    let content = fs::read_to_string(&path)?;
+    let content = fs::read_to_string(path)?;
     let mut config = parse_config_str(&content)?;
     // One-shot keybind migrations for upgrading installs (see
     // KeybindsConfig::migrate_pre_sftp_tabs / migrate_help_frees_known_hosts).
@@ -314,17 +329,21 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
         migrated = true;
     }
     if migrated {
-        // Persist via save_config so the migration runs once — it merges through
-        // toml_edit (preserving comments + keys we don't model) and writes
-        // atomically, unlike a raw serialize+overwrite.
-        let _ = save_config(&config);
+        // Persist via save_config_at so the migration runs once — it merges
+        // through toml_edit (preserving comments + keys we don't model) and
+        // writes atomically, unlike a raw serialize+overwrite.
+        let _ = save_config_at(path, &config);
     }
     Ok(config)
 }
 
 /// Serialize and atomically write `config` back to `config.toml`.
 pub fn save_config(config: &AppConfig) -> anyhow::Result<()> {
-    let path = config_file_path()?;
+    save_config_at(&config_file_path()?, config)
+}
+
+/// Save config to an explicit `config.toml` path (profile-aware entry point).
+pub fn save_config_at(path: &Path, config: &AppConfig) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
         crate::secure_fs::restrict_dir(parent);
@@ -337,15 +356,23 @@ pub fn save_config(config: &AppConfig) -> anyhow::Result<()> {
     let new_doc: toml_edit::DocumentMut = generated
         .parse()
         .map_err(|e| anyhow::anyhow!("failed to parse serialized config: {e}"))?;
-    let mut doc: toml_edit::DocumentMut = fs::read_to_string(&path)
+    let mut doc: toml_edit::DocumentMut = fs::read_to_string(path)
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or_default();
     merge_toml_table(doc.as_table_mut(), new_doc.as_table());
 
     let tmp = path.with_extension("toml.tmp");
+    if tmp.exists() {
+        anyhow::ensure!(
+            !std::fs::symlink_metadata(&tmp)?.file_type().is_symlink(),
+            "refusing symlink config temporary file: {}",
+            tmp.display()
+        );
+    }
     fs::write(&tmp, doc.to_string())?;
-    fs::rename(&tmp, &path)?;
+    crate::secure_fs::restrict_file(&tmp);
+    fs::rename(&tmp, path)?;
     Ok(())
 }
 

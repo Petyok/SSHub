@@ -854,7 +854,16 @@ impl App {
                 Some(PendingDelete::Host { id, name }) => {
                     match self.store.delete_host(id)? {
                         DeleteHostOutcome::Deleted => {
+                            let credential_cleanup = self
+                                .password_store
+                                .delete(&crate::credentials::host_key(id))
+                                .err();
                             self.host_notice = Some(format!("Host '{name}' deleted"));
+                            if let Some(err) = credential_cleanup {
+                                self.host_notice = Some(format!(
+                                    "Host '{name}' deleted; credential cleanup failed: {err}"
+                                ));
+                            }
                             self.reload_hosts()?;
                         }
                         DeleteHostOutcome::NotLauncher => {
@@ -889,7 +898,7 @@ impl App {
                     self.enter_group_manage()?;
                 }
                 Some(PendingDelete::Tunnel { id, label }) => {
-                    let _ = self.tunnel_manager.stop_user(id);
+                    self.tunnel_manager.stop_user(id)?;
                     self.tunnel_manager.clear_user_stopped(id);
                     self.store.delete_tunnel(id)?;
                     self.tunnel_notice = Some(format!("Tunnel '{label}' deleted"));
@@ -1237,7 +1246,11 @@ impl App {
 
     /// Persist config, surfacing failures as a non-fatal host notice.
     pub(crate) fn save_config_quietly(&mut self) {
-        if let Err(e) = crate::config::save_config(&self.config) {
+        let result = match &self.profile {
+            Some(paths) => crate::config::save_config_at(&paths.config_file, &self.config),
+            None => crate::config::save_config(&self.config),
+        };
+        if let Err(e) = result {
             self.host_notice = Some(format!("Could not save config: {e}"));
         }
     }

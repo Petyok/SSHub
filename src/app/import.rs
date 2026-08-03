@@ -124,8 +124,18 @@ impl App {
         Ok(())
     }
 
-    /// Export launcher-native hosts to `config_dir/exported.conf`.
+    /// Export launcher-native hosts to the selected profile's config directory.
     pub fn export_ssh_config(&mut self) -> Result<std::path::PathBuf> {
-        export_launcher_hosts(&self.store)
+        match self
+            .profile
+            .as_ref()
+            .and_then(|paths| paths.config_file.parent())
+        {
+            Some(dir) => crate::ssh::export_launcher_hosts_to(
+                &self.store,
+                &crate::ssh::exported_conf_path_in(dir),
+            ),
+            None => export_launcher_hosts(&self.store),
+        }
     }
 }

@@ -24,7 +24,11 @@ Key pieces:
 
 ## Session logging (`src/session_log.rs`)
 
-Opt-in capture of PTY output to plain-text logs under `~/.local/share/sshub/logs/<host-dir>/`. Enabled globally in Settings or per host (`inherit` / `on` / `off` — stored on `ManagedHost` or `HostMetadata`, see [data model](../architecture/data-model.md)).
+Opt-in capture of PTY output to plain-text logs under
+`~/.local/share/sshub/profiles/<name>/logs/<host-dir>/` in profile mode.
+Compatibility-mode installs use `~/.local/share/sshub/logs/<host-dir>/`.
+Enabled globally in Settings or per host (`inherit` / `on` / `off` — stored on
+`ManagedHost` or `HostMetadata`, see [data model](../architecture/data-model.md)).
 
 - `SessionLogWriter` is append-only; rotates at `[session_logging].max_file_bytes` (default 10 MiB) with `{secs}-{pid}-{n}[-serial].log` names, prunes by mtime to `retention_files` (default 50) per host; dirs 0700 / files 0600 via `secure_fs`.
 - Managed hosts log to `{name}-{id}` directories; pure ssh_config aliases without a launcher row may share a directory when sanitized names collide.
