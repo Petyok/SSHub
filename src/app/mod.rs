@@ -182,6 +182,7 @@ pub struct App {
     pub host_notice: Option<String>,
     /// Message shown by the modal `AppMode::Notice` popup (e.g. a connect error).
     pub notice_popup: Option<String>,
+    pub known_hosts: Option<KnownHostsState>,
     pub sort_mode: SortMode,
     pub pending_delete: Option<PendingDelete>,
     pub pre_help_mode: Option<AppMode>,
@@ -658,6 +659,7 @@ impl App {
             group_notice: None,
             host_notice: None,
             notice_popup: None,
+            known_hosts: None,
             sort_mode: SortMode::default(),
             pending_delete: None,
             pre_help_mode: None,

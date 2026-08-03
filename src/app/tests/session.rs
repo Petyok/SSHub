@@ -878,3 +878,117 @@ pub(crate) fn sftp_o_still_opens_left_pane_picker_with_background_session() {
         Some(crate::app::SessionPickerPurpose::SftpLeftPane)
     );
 }
+
+// A PTY may only reach the host clipboard while the user is looking at that
+// session — otherwise a background host could change it unnoticed.
+
+// "R0VIRUlN" == base64("GEHEIM").
+fn app_with_pending_clipboard_writes(n: usize) -> App {
+    let mut app = test_app(vec![("edge", host("edge"))]);
+    app.terminal_area = ratatui::layout::Rect::new(0, 0, 80, 24);
+    for i in 0..n {
+        let cfg = crate::session::SessionConfig {
+            argv: vec!["true".into()],
+            display_name: format!("s{i}"),
+            meta: crate::session::SessionMeta::default(),
+            pending_secret: None,
+            key_push_identity: None,
+            host_name: format!("s{i}"),
+        };
+        let mut session = crate::session::Session::spawn(cfg, 24, 80, None).unwrap();
+        session.parser.process(b"\x1b]52;c;R0VIRUlN\x07");
+        app.sessions.push(session);
+    }
+    app.active_session = Some(0);
+    app
+}
+
+/// One frame's relay pass, collecting what would have reached the terminal.
+fn relay_frame(app: &mut App) -> Vec<String> {
+    let mut sent = Vec::new();
+    app.relay_pty_clipboard_with(|payload| {
+        sent.push(payload.to_string());
+        Ok(())
+    });
+    sent
+}
+
+#[test]
+pub(crate) fn only_the_visible_session_relays_its_clipboard_write() {
+    let mut app = app_with_pending_clipboard_writes(2);
+    app.mode = AppMode::Session;
+
+    assert_eq!(
+        relay_frame(&mut app).len(),
+        1,
+        "exactly the visible session may relay"
+    );
+    assert!(app.sessions[0].copy_notice.is_some());
+    assert!(
+        app.sessions[1].copy_notice.is_none(),
+        "a background tab must not announce a copy"
+    );
+}
+
+#[test]
+pub(crate) fn a_background_sessions_write_is_not_replayed_when_it_comes_to_the_front() {
+    let mut app = app_with_pending_clipboard_writes(2);
+    app.mode = AppMode::Session;
+    let _ = relay_frame(&mut app);
+
+    app.active_session = Some(1);
+    assert!(
+        relay_frame(&mut app).is_empty(),
+        "a discarded write must never be sent later"
+    );
+}
+
+#[test]
+pub(crate) fn the_dashboard_relays_nothing_and_keeps_nothing() {
+    let mut app = app_with_pending_clipboard_writes(1);
+    app.mode = AppMode::Normal;
+
+    assert!(
+        relay_frame(&mut app).is_empty(),
+        "no session is on screen, so nothing may reach the clipboard"
+    );
+
+    app.mode = AppMode::Session;
+    assert!(relay_frame(&mut app).is_empty());
+}
+
+#[test]
+pub(crate) fn the_sftp_browser_relays_nothing() {
+    let mut app = app_with_pending_clipboard_writes(1);
+    app.mode = AppMode::Normal;
+    app.active_tab = 1;
+    app.sftp = Some(crate::sftp::model::SftpState::new("/srv", "/home/me"));
+
+    assert!(relay_frame(&mut app).is_empty());
+}
+
+#[test]
+pub(crate) fn a_session_under_the_picker_is_still_visible() {
+    // The picker draws on top; the session keeps rendering behind it.
+    let mut app = app_with_pending_clipboard_writes(1);
+    app.mode = AppMode::Session;
+    app.open_session_picker(crate::app::SessionPickerPurpose::SwitchSession);
+
+    assert_eq!(relay_frame(&mut app).len(), 1);
+}
+
+#[test]
+pub(crate) fn the_config_opt_out_drops_every_relay() {
+    let mut app = app_with_pending_clipboard_writes(1);
+    app.mode = AppMode::Session;
+    app.config.clipboard.relay_from_pty = false;
+
+    assert!(
+        relay_frame(&mut app).is_empty(),
+        "relay_from_pty = false must drop PTY clipboard writes"
+    );
+    assert!(
+        app.sessions[0].copy_notice.is_none(),
+        "an opted-out relay must stay silent"
+    );
+}

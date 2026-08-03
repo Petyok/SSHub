@@ -140,14 +140,13 @@ fn apply_panel_selection(frame: &mut Frame, app: &App) {
 }
 
 fn render_inner(frame: &mut Frame, app: &App) {
-    let session_behind_picker = app.mode == AppMode::SessionPicker
-        && app
-            .session_picker
-            .as_ref()
-            .is_some_and(|p| matches!(p.return_mode, AppMode::Connecting | AppMode::Session));
+    // Only governs the picker overlay's animation below; whether a session is
+    // drawn at all is `session_is_rendered`, which the clipboard relay gate
+    // reads too.
+    let session_behind_picker = app.session_picker_over_session();
 
     // Embedded session takes over the whole frame — no dashboard chrome.
-    if matches!(app.mode, AppMode::Connecting | AppMode::Session) || session_behind_picker {
+    if app.session_is_rendered() {
         crate::session::render::render(frame, app);
         // Slide the freshly-connected session in from the right (#35). Skipped
         // for the picker-over-session case (no fresh connect happening).
@@ -333,6 +332,7 @@ fn render_inner(frame: &mut Frame, app: &App) {
         AppMode::BroadcastCommand => screens::broadcast::render_command_prompt(frame, app),
         AppMode::BroadcastPreview => screens::broadcast::render_preview(frame, app),
         AppMode::Notice => render_notice_popup(frame, app),
+        AppMode::KnownHosts => screens::known_hosts::render_known_hosts(frame, app),
         _ => {}
     }
 }
@@ -600,6 +600,7 @@ fn footer_keybinds(app: &App) -> (Vec<(String, &'static str)>, usize) {
             ("d".into(), "delete"),
             ("p/r".into(), "agent +/-"),
             ("P".into(), "push key"),
+            ("H".into(), "known hosts"),
             ("?".into(), "help"),
             ("q".into(), "quit"),
         ],
@@ -1959,11 +1960,29 @@ mod tests {
             AppMode::Help,
             AppMode::KeybindEditor,
             AppMode::ConfirmQuit,
+            AppMode::KnownHosts,
         ];
         for &mode in &modes {
             for (w, h) in [(1u16, 1u16), (10, 3), (30, 8), (49, 20)] {
                 let mut app = test_app_with_hosts();
                 app.mode = mode;
+                if mode == AppMode::KnownHosts {
+                    app.known_hosts = Some(crate::app::KnownHostsState {
+                        entries: vec![crate::known_hosts::KnownHostEntry {
+                            marker: None,
+                            hosts: "example.com".to_string(),
+                            key_type: "ssh-ed25519".to_string(),
+                            fingerprint: Some(
+                                "SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG".to_string(),
+                            ),
+                        }],
+                        selected: 0,
+                        query: String::new(),
+                        confirming_delete: false,
+                        notice: None,
+                        notice_is_error: false,
+                    });
+                }
                 // Must not panic; we don't care about the pixels here.
                 let _ = render_to_buffer(&app, w, h);
             }

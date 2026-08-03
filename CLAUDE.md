@@ -2,6 +2,14 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Multi-agent worktrees
+
+Stay in `ssh-tui/` for the primary checkout. For parallel agents, use
+`just worktree-add <name>` (creates `../.worktrees/<name>` and points its
+`target/` at shared `../.cargo-target`). Repair main symlink with
+`just setup-shared-target`. Never run concurrent cargo builds on the shared
+target. See [AGENTS.md](AGENTS.md).
+
 ## Workflow rules
 
 Pinned implementation flow: [docs/implementation-flow.md](docs/implementation-flow.md) (issue → claim → branch → verify → adversarial review → PR → merge).

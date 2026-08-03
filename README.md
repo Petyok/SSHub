@@ -7,7 +7,7 @@
 
 A terminal UI for managing and connecting to SSH hosts. Combines your `~/.ssh/config` with a built-in host database, tunnels, key management, and an audit log -- all in one keyboard-driven interface.
 
-> ⚠️ This project is 100% vibe-coded slop made with dynamic workflows using Opus 4.8 + Opus 5 + Fable 5 + Composer 2.5 + Grok 4.5. Use at your own risk.
+> ⚠️ This project is ~98.5% vibe-coded slop — see [Model credits](#model-credits) for the ever-growing pack of LLMs responsible — the other ~1.5% is real humans (see Contributors). It has — and will keep having — stupid bugs LLMs can't see. Use at your own risk.
 
 ![SSHub demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/hero.gif)
 
@@ -232,7 +232,7 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | `Tab`            | Toggle detail panel             |
 | `Esc`            | Back / close overlay            |
 | `Ctrl+K`         | Keybind editor                  |
-| `?` / `Shift+H`  | Help screen                     |
+| `?`              | Help screen                     |
 | `q`              | Quit                            |
 
 ### Session (embedded PTY)
@@ -310,6 +310,7 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | `r`        | Remove key from agent    |
 | `Shift+A`  | Add key to agent         |
 | `Shift+P`  | Push public key to host  |
+| `H`        | Known hosts manager      |
 
 ### Audit (tab 4)
 
@@ -334,6 +335,9 @@ initial_delay_ms = 1000     # 1 s (R overlay edits delays in seconds)
 max_delay_ms = 60000        # 60 s
 stable_secs = 5             # uptime before a spawn counts as up
 jitter_ratio = 0.25
+
+[clipboard]
+relay_from_pty = true       # let apps inside a session copy to your clipboard
 ```
 
 ## Development
@@ -366,6 +370,18 @@ cargo run -- --dry-run # quick sanity check
 ## Tech stack
 
 [Rust](https://www.rust-lang.org/) with [ratatui](https://ratatui.rs/) + [crossterm](https://github.com/crossterm-rs/crossterm) for the TUI, [rusqlite](https://github.com/rusqlite/rusqlite) (bundled SQLite) for storage, [nucleo](https://github.com/helix-editor/nucleo) for fuzzy search, [notify](https://github.com/notify-rs/notify) for file watching. No async runtime -- synchronous event loop with 50ms polling.
+
+## Model credits
+
+Made with dynamic workflows + adversarial-multimodel-reviews + cross-model-reviews. Models with commits, reviews, or blocked merges to their name, in order of appearance:
+
+- Opus 4.8
+- Opus 5
+- Fable 5
+- Composer 2.5
+- Grok 4.5
+- Qwen 3.8 Max
+- GPT-5.6 Luna
 
 ## License
 

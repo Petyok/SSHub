@@ -395,12 +395,17 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
+    (@fn known_hosts $($key:literal),* $(,)?) => {
+        fn default_kb_known_hosts() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
 }
 
 kb_defaults! {
     save => ["F2", "Ctrl+S"],
     quit => ["q"],
-    help => ["?", "Shift+H"],
+    help => ["?"],
     search => ["/"],
     keybind_editor => ["Ctrl+K"],
     force_quit => ["Ctrl+C"],
@@ -475,6 +480,7 @@ kb_defaults! {
     focus_panel_down => ["Alt+Down"],
     broadcast => ["b"],
     broadcast_cancel => ["x"],
+    known_hosts => ["H"],
 }
 /// An action whose keybinding is user-configurable and editable in the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -556,11 +562,12 @@ pub enum KeyAction {
     FocusPanelDown,
     Broadcast,
     BroadcastCancel,
+    KnownHosts,
 }
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 77] = [
+    pub const ALL: [KeyAction; 78] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -638,6 +645,7 @@ impl KeyAction {
         KeyAction::FocusPanelDown,
         KeyAction::Broadcast,
         KeyAction::BroadcastCancel,
+        KeyAction::KnownHosts,
     ];
 
     pub fn label(self) -> &'static str {
@@ -719,6 +727,7 @@ impl KeyAction {
             KeyAction::FocusPanelDown => "Focus panel down",
             KeyAction::Broadcast => "Broadcast command",
             KeyAction::BroadcastCancel => "Cancel broadcast",
+            KeyAction::KnownHosts => "Known hosts",
         }
     }
 }
@@ -880,6 +889,8 @@ pub struct KeybindsConfig {
     pub broadcast: Vec<String>,
     #[serde(default = "default_kb_broadcast_cancel")]
     pub broadcast_cancel: Vec<String>,
+    #[serde(default = "default_kb_known_hosts")]
+    pub known_hosts: Vec<String>,
 }
 
 impl Default for KeybindsConfig {
@@ -962,6 +973,7 @@ impl Default for KeybindsConfig {
             focus_panel_down: default_kb_focus_panel_down(),
             broadcast: default_kb_broadcast(),
             broadcast_cancel: default_kb_broadcast_cancel(),
+            known_hosts: default_kb_known_hosts(),
         }
     }
 }
@@ -1046,6 +1058,7 @@ impl KeybindsConfig {
             KeyAction::FocusPanelDown => default_kb_focus_panel_down(),
             KeyAction::Broadcast => default_kb_broadcast(),
             KeyAction::BroadcastCancel => default_kb_broadcast_cancel(),
+            KeyAction::KnownHosts => default_kb_known_hosts(),
         }
     }
 
@@ -1205,6 +1218,7 @@ impl KeybindsConfig {
             KeyAction::FocusPanelDown => &self.focus_panel_down,
             KeyAction::Broadcast => &self.broadcast,
             KeyAction::BroadcastCancel => &self.broadcast_cancel,
+            KeyAction::KnownHosts => &self.known_hosts,
         }
     }
 
@@ -1287,6 +1301,7 @@ impl KeybindsConfig {
             KeyAction::FocusPanelDown => self.focus_panel_down = binds,
             KeyAction::Broadcast => self.broadcast = binds,
             KeyAction::BroadcastCancel => self.broadcast_cancel = binds,
+            KeyAction::KnownHosts => self.known_hosts = binds,
         }
     }
 
@@ -1323,6 +1338,30 @@ impl KeybindsConfig {
             self.tab_sftp = vec!["2".to_string()];
         }
         true
+    }
+
+    /// Free `H` / `Shift+H` from Help when upgrading to the known-hosts manager.
+    ///
+    /// Pre-PR installs persist `help = ["?", "Shift+H"]`. The new default
+    /// `known_hosts = ["H"]` parses to the same keypress (`Shift` + `h`), and
+    /// Help is matched first on the Keys tab — so without this strip the
+    /// overlay is unreachable for every upgrading user. Detect the upgrade by
+    /// the absence of a `known_hosts` key in the raw config text (same pattern
+    /// as [`Self::migrate_pre_sftp_tabs`]). Idempotent once the config is
+    /// re-saved with `known_hosts` present.
+    pub fn migrate_help_frees_known_hosts(&mut self, raw_config: &str) -> bool {
+        if raw_config.contains("known_hosts") {
+            return false;
+        }
+        let before = self.help.clone();
+        self.help.retain(|b| {
+            let t = b.trim();
+            !t.eq_ignore_ascii_case("Shift+H") && t != "H"
+        });
+        if self.help.is_empty() {
+            self.help = vec!["?".to_string()];
+        }
+        self.help != before
     }
 
     /// Append `spec` to an action's bindings unless already present.
@@ -1394,6 +1433,29 @@ mod tests {
         let before = kb.tab_tunnels.clone();
         assert!(!kb.migrate_pre_sftp_tabs(raw));
         assert_eq!(kb.tab_tunnels, before);
+    }
+
+    #[test]
+    fn migrate_help_strips_shift_h_on_upgrade() {
+        let raw = "[keybinds]\nhelp = [\"?\", \"Shift+H\"]\n";
+        let mut kb = KeybindsConfig {
+            help: vec!["?".into(), "Shift+H".into()],
+            ..KeybindsConfig::default()
+        };
+        assert!(kb.migrate_help_frees_known_hosts(raw));
+        assert_eq!(kb.help, vec!["?"]);
+    }
+
+    #[test]
+    fn migrate_help_is_noop_when_known_hosts_present() {
+        let raw = "[keybinds]\nhelp = [\"?\", \"Shift+H\"]\nknown_hosts = [\"H\"]\n";
+        let mut kb = KeybindsConfig {
+            help: vec!["?".into(), "Shift+H".into()],
+            known_hosts: vec!["H".into()],
+            ..KeybindsConfig::default()
+        };
+        assert!(!kb.migrate_help_frees_known_hosts(raw));
+        assert_eq!(kb.help, vec!["?", "Shift+H"]);
     }
 
     #[test]

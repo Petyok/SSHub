@@ -190,6 +190,67 @@ impl App {
         self.sessions.get_mut(idx)
     }
 
+    /// Does this frame hand the whole screen to the session renderer?
+    ///
+    /// The single source of truth for "a session is on screen": `render_inner`
+    /// draws from it, and the OSC 52 relay gate reads it to decide whether a
+    /// PTY may reach the host clipboard at all. The session picker draws on top
+    /// of a session that keeps rendering behind it, so that case counts.
+    pub(crate) fn session_is_rendered(&self) -> bool {
+        matches!(self.mode, AppMode::Connecting | AppMode::Session)
+            || self.session_picker_over_session()
+    }
+
+    /// The session picker opened from a session (rather than the dashboard), so
+    /// the session is still painted underneath it.
+    pub(crate) fn session_picker_over_session(&self) -> bool {
+        self.mode == AppMode::SessionPicker
+            && self
+                .session_picker
+                .as_ref()
+                .is_some_and(|p| matches!(p.return_mode, AppMode::Connecting | AppMode::Session))
+    }
+
+    /// Index of the session actually painted this frame, if any.
+    pub(crate) fn visible_session_idx(&self) -> Option<usize> {
+        self.session_is_rendered()
+            .then_some(self.active_session)
+            .flatten()
+    }
+
+    /// Per-frame OSC 52 handling for every session's PTY.
+    ///
+    /// Only the session the user is looking at may put something on the host
+    /// clipboard, and only while `clipboard.relay_from_pty` is on. Every other
+    /// session discards what it saw immediately: a background tab must not be
+    /// able to change the clipboard now, and must not replay an old write when
+    /// it later comes to the front.
+    pub(crate) fn relay_visible_session_clipboard(&mut self) {
+        self.relay_pty_clipboard_with(crate::osc52::write_b64);
+    }
+
+    /// [`Self::relay_visible_session_clipboard`] with an injectable sink, so
+    /// tests can watch the relay without touching the real clipboard.
+    pub(crate) fn relay_pty_clipboard_with(
+        &mut self,
+        emit: impl FnMut(&str) -> std::io::Result<()>,
+    ) {
+        let relaying = self
+            .config
+            .clipboard
+            .relay_from_pty
+            .then(|| self.visible_session_idx())
+            .flatten();
+        let mut emit = emit;
+        for (i, session) in self.sessions.iter_mut().enumerate() {
+            if Some(i) == relaying {
+                session.relay_clipboard_writes_with(&mut emit);
+            } else {
+                session.discard_clipboard_writes();
+            }
+        }
+    }
+
     /// Return to the dashboard without tearing down background sessions.
     pub fn detach_to_dashboard(&mut self) {
         if self.sessions.is_empty() {

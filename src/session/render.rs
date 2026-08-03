@@ -435,7 +435,7 @@ fn render_connecting(
     if !cancel.is_empty() {
         hint.push_str(&format!("  ·  {cancel} cancel"));
     }
-    let center = vec![
+    let mut center = vec![
         Line::from(vec![
             Span::styled(
                 crate::tui::tween::spinner_frame(elapsed),
@@ -448,6 +448,15 @@ fn render_connecting(
         Line::raw(""),
         Line::from(Span::styled(hint, dim)),
     ];
+    if let Some(fp) = session.host_key_fingerprint().map(str::to_string) {
+        center.insert(
+            1,
+            Line::from(vec![
+                Span::styled("host key  ", mute),
+                Span::styled(fp, Style::default().fg(theme::GREEN)),
+            ]),
+        );
+    }
     render_centered_and_tail(frame, area, session, center);
 }
 

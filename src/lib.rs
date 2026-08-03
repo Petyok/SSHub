@@ -6,7 +6,9 @@ pub mod credentials;
 pub mod hosts;
 pub mod import;
 pub mod keybinds;
+pub mod known_hosts;
 pub mod metadata;
+pub(crate) mod osc52;
 pub mod osinfo;
 pub mod ping;
 pub mod search;
@@ -202,13 +204,21 @@ fn run_terminal_loop(app: &mut App, auto_quit: Option<&str>) -> Result<()> {
             if s.is_connected() && !was_connected {
                 newly_connected.push(s.display_name.clone());
             }
+        }
+
+        // Every session's PTY was drained above, but only the one on screen may
+        // put an OSC 52 write on the host clipboard; the rest is dropped now
+        // rather than queued for whenever that tab is brought to the front.
+        // Runs before diagnostics are collected so a failed relay reaches the
+        // log in this frame — a session closing right after would lose it.
+        app.relay_visible_session_clipboard();
+
+        for s in app.sessions.iter_mut() {
             let connected = s.is_connected();
             for line in s.take_diagnostics() {
-                // Handshake diagnostics only; after connect keep session-exit lines.
-                let keep = !connected
-                    || line.starts_with("session:")
-                    || line.starts_with("auth: could not");
-                if keep {
+                // Handshake diagnostics only; after connect keep session-exit
+                // lines and anything else the session itself reports.
+                if crate::session::keep_diagnostic(&line, connected) {
                     diag_entries.push((s.display_name.clone(), line));
                 }
             }

@@ -305,3 +305,29 @@ pub(crate) fn q_and_ctrl_c_quit() {
         .unwrap();
     assert!(app.should_quit);
 }
+
+#[test]
+pub(crate) fn upgrade_strips_help_shift_h_so_known_hosts_opens() {
+    // Pre-PR configs persist help=["?", "Shift+H"]. Without migration that
+    // binding collides with known_hosts=["H"] and Help wins on the Keys tab.
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = dir.path().join("config.toml");
+    std::fs::write(&cfg, "[keybinds]\nhelp = [\"?\", \"Shift+H\"]\n").unwrap();
+    crate::config::with_test_config_dir(dir.path(), || {
+        let loaded = crate::config::load_config().unwrap();
+        assert_eq!(
+            loaded.keybinds.help,
+            vec!["?".to_string()],
+            "migration must drop Shift+H from help"
+        );
+        assert_eq!(loaded.keybinds.known_hosts, vec!["H".to_string()]);
+
+        let mut app = test_app(vec![("web", host("web"))]);
+        app.config = loaded;
+        app.active_tab = 3;
+        app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::SHIFT))
+            .unwrap();
+        assert_eq!(app.mode, AppMode::KnownHosts);
+        assert!(app.known_hosts.is_some());
+    });
+}

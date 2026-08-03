@@ -111,8 +111,7 @@ impl Ssh2Transport {
 
     /// Path to `~/.ssh/known_hosts`.
     fn known_hosts_path() -> PathBuf {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        Path::new(&home).join(".ssh").join("known_hosts")
+        crate::known_hosts::known_hosts_path()
     }
 
     fn sftp_ref(&mut self) -> Result<&ssh2::Sftp> {
