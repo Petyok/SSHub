@@ -696,13 +696,10 @@ fn read_theme_file(path: &Path) -> Result<String, ThemeRegistryError> {
         });
     }
 
-    let mut bytes = Vec::with_capacity((opened_metadata.len() as usize).min(64 * 1024));
-    file.take(MAX_THEME_FILE_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|source| ThemeRegistryError::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
+    let bytes = read_limited_theme_bytes(file).map_err(|source| ThemeRegistryError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
     if bytes.len() as u64 > MAX_THEME_FILE_BYTES {
         return Err(ThemeRegistryError::TooLarge {
             path: path.to_path_buf(),
@@ -713,6 +710,16 @@ fn read_theme_file(path: &Path) -> Result<String, ThemeRegistryError> {
         path: path.to_path_buf(),
         source: io::Error::new(io::ErrorKind::InvalidData, source),
     })
+}
+
+/// Read no more than one byte beyond the published theme-file limit, so an
+/// opened file that grows after its path metadata check cannot grow memory use.
+fn read_limited_theme_bytes(reader: impl Read) -> io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    reader
+        .take(MAX_THEME_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    Ok(bytes)
 }
 
 /// The reserved-id message, which has to name a concrete replacement id: a user
@@ -741,13 +748,14 @@ fn sort_diagnostics(diagnostics: &mut Vec<ThemeDiagnostic>) {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::io::Cursor;
     use std::path::{Path, PathBuf};
 
     use ratatui::style::Color;
 
     use super::{
-        select_user_theme_files, ThemeRegistry, ThemeRegistryError, ThemeSource, ThemeStatus,
-        MAX_THEME_FILE_BYTES, MAX_USER_THEME_FILES,
+        read_limited_theme_bytes, select_user_theme_files, ThemeRegistry, ThemeRegistryError,
+        ThemeSource, ThemeStatus, MAX_THEME_FILE_BYTES, MAX_USER_THEME_FILES,
     };
     use crate::theme::model::{ThemeId, ValidationMode};
 
@@ -951,6 +959,15 @@ mod tests {
             .diagnostics()
             .iter()
             .any(|d| d.is_error() && d.message.contains("1 MiB")));
+    }
+
+    #[test]
+    fn bounded_handle_read_stops_after_the_limit_plus_one_byte() {
+        let reader = Cursor::new(vec![b'x'; MAX_THEME_FILE_BYTES as usize + 2]);
+
+        let bytes = read_limited_theme_bytes(reader).unwrap();
+
+        assert_eq!(bytes.len() as u64, MAX_THEME_FILE_BYTES + 1);
     }
 
     #[test]

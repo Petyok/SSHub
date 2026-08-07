@@ -587,10 +587,11 @@ fn copy_regular_file(src: &Path, dst: &Path) -> std::io::Result<()> {
     }
 
     let mut destination_options = fs::OpenOptions::new();
-    destination_options.write(true).create(true).truncate(true);
+    destination_options.write(true).create_new(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        destination_options.custom_flags(libc::O_NOFOLLOW);
         destination_options.mode(source_metadata.permissions().mode());
     }
     let mut destination = destination_options.open(dst)?;
@@ -758,6 +759,45 @@ mod tests {
             !destination.exists(),
             "the symlink target was copied into {}",
             destination.display()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_regular_file_rejects_a_symlink_destination_without_touching_its_target() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("legacy/credentials.json");
+        std::fs::create_dir(source.parent().unwrap()).unwrap();
+        std::fs::write(&source, "MIGRATED SECRET\n").unwrap();
+        let victim = root.path().join("outside-victim");
+        std::fs::write(&victim, "KEEP ME\n").unwrap();
+        let destination = root.path().join("sshub/credentials.json");
+        std::fs::create_dir(destination.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&victim, &destination).unwrap();
+
+        assert!(copy_regular_file(&source, &destination).is_err());
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "KEEP ME\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_regular_file_rejects_an_existing_destination_without_changing_it() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("legacy/credentials.json");
+        std::fs::create_dir(source.parent().unwrap()).unwrap();
+        std::fs::write(&source, "MIGRATED SECRET\n").unwrap();
+        let destination = root.path().join("sshub/credentials.json");
+        std::fs::create_dir(destination.parent().unwrap()).unwrap();
+        std::fs::write(&destination, "KEEP ME\n").unwrap();
+        std::fs::set_permissions(&destination, std::fs::Permissions::from_mode(0o640)).unwrap();
+
+        assert!(copy_regular_file(&source, &destination).is_err());
+        assert_eq!(std::fs::read_to_string(&destination).unwrap(), "KEEP ME\n");
+        assert_eq!(
+            destination.metadata().unwrap().permissions().mode() & 0o777,
+            0o640
         );
     }
 

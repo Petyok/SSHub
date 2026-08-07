@@ -161,17 +161,38 @@ pub fn render_broadcast_panel(frame: &mut Frame, area: Rect, app: &App, focused:
     let Some(bc) = app.broadcast.as_ref() else {
         return;
     };
-    let area = area.intersection(frame.area());
     if area.width < 4 || area.height < 3 {
         return;
     }
 
-    // Float overlay: wipe the cells beneath first so the dashboard grid behind
-    // the docked panel never bleeds through empty interior rows / trailing cells.
-    frame.render_widget(Clear, area);
+    let clip = area.intersection(frame.area());
+    if clip.width == 0 || clip.height == 0 {
+        return;
+    }
+    if clip == area {
+        frame.render_widget(Clear, area);
+        render_broadcast_panel_content(frame.buffer_mut(), area, app, bc, focused);
+        return;
+    }
+
+    // Exit slides deliberately let the original panel rectangle overhang the
+    // viewport. Keep that rectangle as the layout and paint reference, then
+    // copy only its visible cells; shrinking it would reflow the title/border.
+    let mut layer = Buffer::empty(area);
+    render_broadcast_panel_content(&mut layer, area, app, bc, focused);
+    blit::blit(frame.buffer_mut(), area, clip, &layer, 0, 0);
+}
+
+fn render_broadcast_panel_content(
+    buf: &mut Buffer,
+    area: Rect,
+    app: &App,
+    bc: &crate::app::BroadcastState,
+    focused: bool,
+) {
     let (title, badge) = header_parts(bc);
     render_panel_box(
-        frame.buffer_mut(),
+        buf,
         area,
         &title,
         BROADCAST_PANEL.with_badge(&badge),
@@ -200,19 +221,12 @@ pub fn render_broadcast_panel(frame: &mut Frame, area: Rect, app: &App, focused:
     let order = failures_first(&bc.results);
     let capacity = rows_bottom.saturating_sub(area.y + 1) as usize;
     for (y, &idx) in (area.y + 1..rows_bottom).zip(order.iter()) {
-        draw_host_row(
-            frame.buffer_mut(),
-            y,
-            inner_x,
-            right_lim,
-            &bc.results[idx],
-            app.theme(),
-        );
+        draw_host_row(buf, y, inner_x, right_lim, &bc.results[idx], app.theme());
     }
     // More hosts than rows — replace the last visible row with an overflow marker.
     if order.len() > capacity && rows_bottom > area.y + 1 {
         put_clamped(
-            frame.buffer_mut(),
+            buf,
             inner_x,
             rows_bottom - 1,
             "\u{2026}",
@@ -223,7 +237,7 @@ pub fn render_broadcast_panel(frame: &mut Frame, area: Rect, app: &App, focused:
 
     if let Some(frac) = settling_frac {
         let bar = Rect::new(inner_x, bottom.saturating_sub(1), right_lim - inner_x, 1);
-        render_countdown_bar(frame, bar, frac, app.theme());
+        render_countdown_bar_to_buffer(buf, bar, frac, app.theme());
     }
 }
 
@@ -236,15 +250,34 @@ pub fn render_broadcast_zoomed(frame: &mut Frame, area: Rect, app: &App) {
     let Some(bc) = app.broadcast.as_ref() else {
         return;
     };
-    let area = area.intersection(frame.area());
     if area.width < 6 || area.height < 4 {
         return;
     }
 
-    frame.render_widget(Clear, area);
+    let clip = area.intersection(frame.area());
+    if clip.width == 0 || clip.height == 0 {
+        return;
+    }
+    if clip == area {
+        frame.render_widget(Clear, area);
+        render_broadcast_zoomed_content(frame.buffer_mut(), area, app, bc);
+        return;
+    }
+
+    let mut layer = Buffer::empty(area);
+    render_broadcast_zoomed_content(&mut layer, area, app, bc);
+    blit::blit(frame.buffer_mut(), area, clip, &layer, 0, 0);
+}
+
+fn render_broadcast_zoomed_content(
+    buf: &mut Buffer,
+    area: Rect,
+    app: &App,
+    bc: &crate::app::BroadcastState,
+) {
     let (title, badge) = header_parts(bc);
     render_panel_box(
-        frame.buffer_mut(),
+        buf,
         area,
         &title,
         BROADCAST_PANEL.with_badge(&badge),
@@ -273,17 +306,10 @@ pub fn render_broadcast_zoomed(frame: &mut Frame, area: Rect, app: &App) {
         if y >= area.y + 1 + list_h as u16 || y >= bottom {
             break;
         }
-        draw_host_row(
-            frame.buffer_mut(),
-            y,
-            inner_x,
-            right_lim,
-            &bc.results[idx],
-            app.theme(),
-        );
+        draw_host_row(buf, y, inner_x, right_lim, &bc.results[idx], app.theme());
         if row == sel {
             for col in inner_x..right_lim {
-                if let Some(cell) = frame.buffer_mut().cell_mut((col, y)) {
+                if let Some(cell) = buf.cell_mut((col, y)) {
                     cell.modifier.insert(Modifier::REVERSED);
                 }
             }
@@ -299,18 +325,13 @@ pub fn render_broadcast_zoomed(frame: &mut Frame, area: Rect, app: &App) {
         let rule = Rect::new(inner_x, div_y, inner_w as u16, 1);
         let theme = app.theme();
         let sep: String = "\u{2500}".repeat(inner_w);
-        frame.buffer_mut().set_string(
+        buf.set_string(
             inner_x,
             div_y,
             &sep,
             Style::default().fg(blit::line_color(theme, PaintRole::SeparatorSecondary, rule)),
         );
-        blit::paint_line(
-            frame.buffer_mut(),
-            rule,
-            theme,
-            PaintRole::SeparatorSecondary,
-        );
+        blit::paint_line(buf, rule, theme, PaintRole::SeparatorSecondary);
     }
 
     // ── Detail pane for the selected host ───────────────────
@@ -325,7 +346,7 @@ pub fn render_broadcast_zoomed(frame: &mut Frame, area: Rect, app: &App) {
 
     let head = format!("{} \u{2014} output", selected.host_name);
     put_clamped(
-        frame.buffer_mut(),
+        buf,
         inner_x,
         dy,
         &head,
@@ -335,18 +356,18 @@ pub fn render_broadcast_zoomed(frame: &mut Frame, area: Rect, app: &App) {
     dy += 1;
 
     let body_style = app.theme().style(StyleRole::TextPrimary);
-    let push_block = |frame: &mut Frame, dy: &mut u16, tag: &str, body: &str, tag_style: Style| {
+    let mut push_block = |dy: &mut u16, tag: &str, body: &str, tag_style: Style| {
         if body.trim().is_empty() || *dy >= bottom {
             return;
         }
-        put_clamped(frame.buffer_mut(), inner_x, *dy, tag, tag_style, inner_w);
+        put_clamped(buf, inner_x, *dy, tag, tag_style, inner_w);
         *dy += 1;
         for line in body.lines() {
             if *dy >= bottom {
                 break;
             }
             put_clamped(
-                frame.buffer_mut(),
+                buf,
                 inner_x + 2,
                 *dy,
                 line,
@@ -358,14 +379,12 @@ pub fn render_broadcast_zoomed(frame: &mut Frame, area: Rect, app: &App) {
     };
 
     push_block(
-        frame,
         &mut dy,
         "stdout:",
         &selected.stdout,
         app.theme().style(StyleRole::BroadcastStdout),
     );
     push_block(
-        frame,
         &mut dy,
         "stderr:",
         &selected.stderr,
@@ -374,7 +393,7 @@ pub fn render_broadcast_zoomed(frame: &mut Frame, area: Rect, app: &App) {
 
     if selected.stdout.trim().is_empty() && selected.stderr.trim().is_empty() && dy < bottom {
         put_clamped(
-            frame.buffer_mut(),
+            buf,
             inner_x,
             dy,
             "(no output)",
@@ -389,6 +408,10 @@ pub fn render_broadcast_zoomed(frame: &mut Frame, area: Rect, app: &App) {
 /// Thin countdown gauge along a 1-row `area`. `frac` in [0,1] = elapsed/DISMISS;
 /// the filled portion depletes as the countdown runs out.
 pub fn render_countdown_bar(frame: &mut Frame, area: Rect, frac: f32, theme: &ResolvedTheme) {
+    render_countdown_bar_to_buffer(frame.buffer_mut(), area, frac, theme);
+}
+
+fn render_countdown_bar_to_buffer(buf: &mut Buffer, area: Rect, frac: f32, theme: &ResolvedTheme) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -401,7 +424,6 @@ pub fn render_countdown_bar(frame: &mut Frame, area: Rect, frac: f32, theme: &Re
     let bar_w = total.saturating_sub(label_w);
     let filled = ((bar_w as f32) * (1.0 - frac)).round() as u16;
 
-    let buf = frame.buffer_mut();
     let y = area.y;
     // Filled (remaining) portion in the countdown role, spent portion muted.
     // Heavy vs light rules, so the split reads without colour too.
@@ -1242,6 +1264,113 @@ mod tests {
     /// below `10` columns the inner width collapses to an empty string and
     /// `set_string` never indexes the out-of-range row.
     const TINY: &[(u16, u16)] = &[(1, 1), (3, 2), (8, 4), (20, 6), (20, 1), (40, 2)];
+
+    fn assert_cropped_panel_matches_full_frame(
+        app: &App,
+        narrow_frame: Rect,
+        full_frame: Rect,
+        panel: Rect,
+        render: impl Fn(&mut Frame, Rect, &App),
+    ) {
+        let narrow = frame_at(narrow_frame, |frame| render(frame, panel, app));
+        let full = frame_at(full_frame, |frame| render(frame, panel, app));
+        let visible = panel.intersection(narrow_frame);
+
+        for y in visible.top()..visible.bottom() {
+            for x in visible.left()..visible.right() {
+                assert_eq!(
+                    narrow.cell((x, y)),
+                    full.cell((x, y)),
+                    "cropped cell at ({x}, {y}) differs from the full layout"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn broadcast_panels_crop_without_reflowing_their_original_layout() {
+        let mut app = themed_app(resolved_default());
+        app.broadcast = Some(four_states());
+        let cases = [
+            (
+                Rect::new(0, 0, 80, 24),
+                Rect::new(0, 0, 114, 24),
+                Rect::new(60, 6, 54, 13),
+            ),
+            (
+                Rect::new(0, 0, 80, 24),
+                Rect::new(0, 0, 80, 31),
+                Rect::new(10, 18, 54, 13),
+            ),
+        ];
+
+        for (narrow_frame, full_frame, panel) in cases {
+            assert_cropped_panel_matches_full_frame(
+                &app,
+                narrow_frame,
+                full_frame,
+                panel,
+                |frame, area, app| render_broadcast_panel(frame, area, app, true),
+            );
+            assert_cropped_panel_matches_full_frame(
+                &app,
+                narrow_frame,
+                full_frame,
+                panel,
+                render_broadcast_zoomed,
+            );
+        }
+    }
+
+    #[test]
+    fn docked_rect_stays_inside_tiny_dashboard_bodies() {
+        for (width, height) in TINY {
+            let frame = Rect::new(0, 0, *width, *height);
+            let body = crate::tui::dashboard_layout::dashboard_layout_zoomed(frame, 0).body;
+            let docked = docked_rect(body);
+
+            assert!(docked.x >= body.x && docked.right() <= body.right());
+            assert!(docked.y >= body.y && docked.bottom() <= body.bottom());
+            if body.width.saturating_sub(2) == 0 {
+                assert_eq!(docked.width, 0);
+            }
+            if body.height.saturating_sub(2) == 0 {
+                assert_eq!(docked.height, 0);
+            }
+        }
+    }
+
+    fn assert_renderer_clips_out_of_frame_rectangles(
+        app: &App,
+        render: impl Fn(&mut Frame, Rect, &App),
+    ) {
+        let frame = Rect::new(0, 0, 80, 24);
+        for panel in [
+            Rect::new(60, 6, 54, 13),
+            Rect::new(80, 6, 54, 13),
+            Rect::new(10, 18, 54, 13),
+            Rect::new(10, 24, 54, 13),
+        ] {
+            let buffer = frame_at(frame, |frame| render(frame, panel, app));
+            assert_eq!(buffer.area, frame);
+        }
+    }
+
+    #[test]
+    fn docked_broadcast_renderer_clips_right_and_bottom_overhangs() {
+        let mut app = themed_app(resolved_default());
+        app.broadcast = Some(four_states());
+        assert_renderer_clips_out_of_frame_rectangles(&app, |frame, area, app| {
+            render_broadcast_panel(frame, area, app, false)
+        });
+    }
+
+    #[test]
+    fn zoomed_broadcast_renderer_clips_right_and_bottom_overhangs() {
+        let mut app = themed_app(resolved_default());
+        app.broadcast = Some(four_states());
+        assert_renderer_clips_out_of_frame_rectangles(&app, render_broadcast_zoomed);
+    }
 
     #[test]
     fn the_docked_panel_survives_a_tiny_terminal() {
