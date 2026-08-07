@@ -2409,6 +2409,7 @@ dependencies = [
  "serde",
  "serde_json",
  "ssh2",
+ "strsim",
  "tempfile",
  "toml",
  "toml_edit 0.22.27",

@@ -179,6 +179,56 @@ is
 .I V
 is
 .BR all ", " connect ", " tunnel ", or " agent .
+.SS Themes
+.TP
+.B sshub theme list \fR[\fB\-\-format\fR \fBplain\fR|\fBjson\fR]
+List every built-in and user theme with its display name, source and validation
+state. Returns
+.B 0
+whenever the registry could be read, even if individual themes are
+.BR warning " or " invalid .
+.TP
+.B sshub theme show \fIID\fR \fR[\fB\-\-resolved\fR] [\fB\-\-format\fR \fBtoml\fR|\fBjson\fR]
+Print a theme. Without
+.B \-\-resolved
+this is the file's own source, comments included, which is what makes the copy
+workflow work. With
+.B \-\-resolved
+it is a complete standalone document with every semantic slot, gradient and
+component role written out and no
+.IR extends ;
+it re-reads to the same runtime theme. An unknown
+.I ID
+exits
+.BR 1 .
+.TP
+.B sshub theme check \fIFILE\fR \fR[\fB\-\-format\fR \fBplain\fR|\fBjson\fR]
+Validate a theme file in strict mode with the same parser and resolver the
+application uses. Diagnostics carry file, line and column where the TOML parser
+supplies a position, and suggest a near match for an unknown key. Independent
+problems are collected in one run. Exits
+.B 0
+when valid (warnings allowed) and
+.B 1
+on any error.
+.PP
+All three run headless: no TUI, no database, no keyring. User themes live in
+.I ~/.config/sshub/themes/*.toml
+and the file name is the theme ID;
+.I ~/.config/sshub/config.toml
+stores only
+.IR appearance.active_theme .
+Select a theme in the TUI with
+.BR Ctrl+H " \(-> " Theme... " \(-> " Enter :
+moving through the list previews live, Esc rolls back, Enter saves.
+.PP
+The full guide \(em file format, colour values and simulated opacity,
+inheritance and
+.IR \(dqauto\(dq ,
+gradient directions and the perimeter rule, the complete role catalogue, and
+worked examples \(em is in
+.I docs/theme\-system.md
+in the source tree.
 .SS Inventory and config
 .TP
 .B sshub tags \fR[\fB\-\-format\fR \fIF\fR]
@@ -281,6 +331,12 @@ Exit immediately (fallback:
 The launcher SQLite database (managed hosts, groups, identities, tunnels, audit
 log). Path honors
 .BR SSHUB_DATA_DIR .
+.TP
+.I ~/.config/sshub/themes/*.toml
+User theme files; the file name without
+.I .toml
+is the theme ID. Path honors
+.BR SSHUB_CONFIG_DIR .
 .TP
 .I ~/.ssh/config
 Read-only source of ssh_config hosts merged into the launcher.

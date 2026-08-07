@@ -282,3 +282,53 @@ pub(crate) fn cancel_broadcast_sets_the_shared_flag() {
         "cancel flips the shared AtomicBool"
     );
 }
+
+/// The live broadcast panel reaches its themed renderer through the real frame
+/// dispatch, and a failed host still reads as the error state.
+///
+/// The screen's own tests drive `render_broadcast_panel` directly; this one
+/// proves the overlay wiring in `tui::render`.
+#[test]
+fn the_broadcast_panel_renders_through_the_active_theme() {
+    use crate::broadcast::HostState;
+    use crate::test_support::{fg, marker, role_marker_theme};
+
+    const FAILED: u32 = 0xb2_0001;
+
+    let mut app = app_with_targets();
+    app.activate_resolved_theme(std::rc::Rc::new(role_marker_theme(
+        "broadcast-panel",
+        &[fg("components.broadcast.error", FAILED)],
+    )));
+
+    let tasks = vec![BroadcastTask {
+        host_id: 1,
+        host_name: "web-prod".into(),
+        argv: vec!["ssh".into(), "web-prod".into()],
+        secret: None,
+    }];
+    let (_tx, rx) = mpsc::channel();
+    let mut results = crate::broadcast::seed_results(&tasks);
+    results[0].state = HostState::Failed {
+        reason: "no route".into(),
+    };
+    app.broadcast = Some(crate::app::BroadcastState {
+        target_label: "group: prod".into(),
+        command: "uptime".into(),
+        results,
+        rx,
+        cancel: std::sync::Arc::new(AtomicBool::new(false)),
+        concurrency: 2,
+        phase: crate::app::BroadcastPhase::Running,
+        anim: None,
+        audit_written: false,
+    });
+
+    let area = ratatui::layout::Rect::new(0, 0, 100, 30);
+    let buf = crate::test_support::frame_at(area, |frame| crate::tui::render(frame, &app));
+    assert_eq!(
+        crate::test_support::fg_at_text(&buf, "failed"),
+        marker(FAILED),
+        "a failed host wears `components.broadcast.error`"
+    );
+}

@@ -399,3 +399,45 @@ fn dot_types_into_the_filter_instead_of_toggling() {
     assert_eq!(state.remote.filter, ".ss", "the dot went into the filter");
     assert!(!app.sftp_show_hidden, "and did not flip the setting");
 }
+
+/// The SFTP tab reaches its themed renderer through the real frame dispatch.
+///
+/// The screen's own tests drive `render_browser` directly; this one proves the
+/// tab wiring — that `render` selects the SFTP body and hands it the active
+/// theme — with a marker no other role carries.
+#[test]
+fn the_sftp_tab_renders_through_the_active_theme() {
+    use crate::sftp::model::{FileEntry, Focus, SftpState};
+    use crate::test_support::{fg, marker, role_marker_theme};
+
+    const DIRECTORY: u32 = 0xb1_0001;
+
+    let mut app = test_app(vec![]);
+    app.activate_resolved_theme(std::rc::Rc::new(role_marker_theme(
+        "sftp-tab",
+        &[fg("components.sftp.remote", DIRECTORY)],
+    )));
+    app.active_tab = 1;
+
+    let mut state = SftpState::new("/srv", "/data");
+    state.focus = Focus::Remote;
+    state.remote.set_entries(vec![FileEntry {
+        name: "uploads".into(),
+        is_dir: true,
+        size: 0,
+        is_symlink: false,
+        perm: None,
+    }]);
+    // Row 0 is the synthetic ".." entry, so `uploads` is not the selected one
+    // and reads its directory role rather than the selection bar.
+    state.remote.selected = 0;
+    app.sftp = Some(state);
+
+    let area = ratatui::layout::Rect::new(0, 0, 100, 30);
+    let buf = crate::test_support::frame_at(area, |frame| crate::tui::render(frame, &app));
+    assert_eq!(
+        crate::test_support::fg_at_text_from(&buf, "uploads", 1),
+        marker(DIRECTORY),
+        "a remote directory row wears `components.sftp.remote`"
+    );
+}

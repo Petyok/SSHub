@@ -29,10 +29,20 @@ pub struct AppearanceConfig {
     /// transparent. Fixes unreadable text on transparent terminals. Default off.
     #[serde(default)]
     pub opaque_background: bool,
+    /// Id of the runtime theme to activate at start-up — a built-in or the file
+    /// stem of `themes/<id>.toml`. A missing or broken id falls back to
+    /// `default` with a non-fatal hint and never rewrites this file, so the
+    /// user's choice survives a temporarily unreadable theme.
+    #[serde(default = "default_active_theme")]
+    pub active_theme: String,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_active_theme() -> String {
+    "default".to_string()
 }
 
 fn default_session_log_max_bytes() -> u64 {
@@ -251,6 +261,7 @@ impl Default for AppearanceConfig {
             identity_columns: 0,
             os_logo: true,
             opaque_background: false,
+            active_theme: default_active_theme(),
         }
     }
 }
@@ -347,28 +358,33 @@ pub fn save_config_at(path: &Path, config: &AppConfig) -> anyhow::Result<()> {
         fs::create_dir_all(parent)?;
         crate::secure_fs::restrict_dir(parent);
     }
-    // Merge our fields into the existing document rather than replacing it, so
-    // user comments and any keys we don't model survive a save (which fires on
-    // trivial UI actions like zoom).
+    let existing = fs::read_to_string(path).unwrap_or_default();
+    let merged = merge_config_document(&existing, config)?;
+
+    let tmp = path.with_extension("toml.tmp");
+    write_private_file(&tmp, merged.as_bytes())?;
+    fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+/// Merge our fields into `existing` rather than replacing it, so user comments
+/// and any keys we don't model survive a save (which fires on trivial UI
+/// actions like zoom). An `existing` that does not parse is treated as empty —
+/// a corrupt file must not block writing a valid one.
+fn merge_config_document(existing: &str, config: &AppConfig) -> anyhow::Result<String> {
     let generated = toml::to_string_pretty(config)
         .map_err(|e| anyhow::anyhow!("failed to serialize config: {e}"))?;
     let new_doc: toml_edit::DocumentMut = generated
         .parse()
         .map_err(|e| anyhow::anyhow!("failed to parse serialized config: {e}"))?;
-    let mut doc: toml_edit::DocumentMut = fs::read_to_string(path)
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or_default();
+    let mut doc: toml_edit::DocumentMut = existing.parse().unwrap_or_default();
     merge_toml_table(doc.as_table_mut(), new_doc.as_table());
-
-    let tmp = path.with_extension("toml.tmp");
-    write_private_file(&tmp, doc.to_string().as_bytes())?;
-    fs::rename(&tmp, path)?;
-    Ok(())
+    Ok(doc.to_string())
 }
 
 fn write_private_file(path: &Path, content: &[u8]) -> anyhow::Result<()> {
     use std::io::Write;
+
     if path.exists() {
         anyhow::ensure!(
             !fs::symlink_metadata(path)?.file_type().is_symlink(),
@@ -414,14 +430,35 @@ fn merge_toml_table(dst: &mut toml_edit::Table, src: &toml_edit::Table) {
 /// Falls back to `SSH_LAUNCHER_CONFIG_DIR` for backward compatibility.
 /// Migrates data from `~/.config/ssh-launcher` if the new path doesn't exist yet.
 pub fn config_dir() -> anyhow::Result<std::path::PathBuf> {
+    let dir = config_dir_path()?;
+    // Only the default HOME location has a legacy predecessor to inherit from;
+    // an explicit override names the directory the user wants, verbatim.
+    if env_dir("SSHUB_CONFIG_DIR")
+        .or_else(|| env_dir("SSH_LAUNCHER_CONFIG_DIR"))
+        .is_none()
+    {
+        let home = std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME not set"))?;
+        migrate_legacy_dir(
+            &dir,
+            &std::path::PathBuf::from(&home).join(".config/ssh-launcher"),
+        );
+    }
+    Ok(dir)
+}
+
+/// Where the config directory *is*, with no side effects at all.
+///
+/// Same override order as [`config_dir`] — `SSHUB_CONFIG_DIR`, then
+/// `SSH_LAUNCHER_CONFIG_DIR`, then `$HOME/.config/sshub` — but it neither
+/// migrates a legacy tree nor creates anything. Read-only callers such as
+/// `sshub theme list` and `sshub theme show` use this: merely asking which
+/// themes are installed must not write to the user's home directory.
+pub fn config_dir_path() -> anyhow::Result<std::path::PathBuf> {
     if let Some(dir) = env_dir("SSHUB_CONFIG_DIR").or_else(|| env_dir("SSH_LAUNCHER_CONFIG_DIR")) {
         return Ok(dir);
     }
     let home = std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME not set"))?;
-    let new_dir = std::path::PathBuf::from(&home).join(".config/sshub");
-    let legacy_dir = std::path::PathBuf::from(&home).join(".config/ssh-launcher");
-    migrate_legacy_dir(&new_dir, &legacy_dir);
-    Ok(new_dir)
+    Ok(std::path::PathBuf::from(&home).join(".config/sshub"))
 }
 
 /// Data directory for SQLite (`~/.local/share/sshub` or `SSHUB_DATA_DIR`).
@@ -451,16 +488,82 @@ fn env_dir(var: &str) -> Option<std::path::PathBuf> {
 /// so parallel tests cannot race on that env var (macOS CI surfaces this often).
 #[cfg(test)]
 pub(crate) fn with_test_config_dir<R>(dir: &std::path::Path, f: impl FnOnce() -> R) -> R {
-    use std::sync::{Mutex, OnceLock};
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    let _guard = LOCK
-        .get_or_init(|| Mutex::new(()))
+    let _guard = env_lock()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     std::env::set_var("SSHUB_CONFIG_DIR", dir);
     let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
     std::env::remove_var("SSHUB_CONFIG_DIR");
     match out {
+        Ok(value) => value,
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
+}
+
+/// The one lock every environment-mutating test helper here takes, so no two
+/// of them can be mid-mutation at the same time. Never take it twice on one
+/// thread — these helpers do not nest.
+#[cfg(test)]
+fn env_lock() -> &'static std::sync::Mutex<()> {
+    use std::sync::{Mutex, OnceLock};
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+/// Set one env var for a scope and put the previous value back on drop.
+///
+/// Only valid while [`env_lock`] is held — that is what makes it safe under
+/// `cargo test`'s thread pool.
+#[cfg(test)]
+pub(crate) struct EnvVar {
+    key: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+#[cfg(test)]
+impl EnvVar {
+    pub(crate) fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+        let previous = std::env::var_os(key);
+        std::env::set_var(key, value);
+        Self { key, previous }
+    }
+
+    pub(crate) fn unset(key: &'static str) -> Self {
+        let previous = std::env::var_os(key);
+        std::env::remove_var(key);
+        Self { key, previous }
+    }
+}
+
+#[cfg(test)]
+impl Drop for EnvVar {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+
+/// Run `f` with `HOME` pointed at `home` and both config-dir overrides cleared,
+/// so the HOME branch of [`config_dir_path`] is the one under test.
+///
+/// Two locks, because the two variables have two different sets of contenders:
+/// `crate::test_env::lock_home()` is the crate-wide `$HOME` lock that
+/// `ssh::keyfile`, `ssh::resolver` and `app::tests::misc` already take, and
+/// [`env_lock`] covers `SSHUB_CONFIG_DIR` / `SSH_LAUNCHER_CONFIG_DIR` against
+/// [`with_test_config_dir`]. HOME first, config env second — every caller takes
+/// them in that order, so the pair cannot deadlock.
+#[cfg(test)]
+pub(crate) fn with_test_home<R>(home: &std::path::Path, f: impl FnOnce() -> R) -> R {
+    let _home_guard = crate::test_env::lock_home();
+    let _guard = env_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _home = EnvVar::set("HOME", home);
+    let _primary = EnvVar::unset("SSHUB_CONFIG_DIR");
+    let _fallback = EnvVar::unset("SSH_LAUNCHER_CONFIG_DIR");
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
         Ok(value) => value,
         Err(payload) => std::panic::resume_unwind(payload),
     }
@@ -493,18 +596,79 @@ fn migrate_legacy_dir(new_dir: &Path, legacy_dir: &Path) {
 }
 
 /// Recursively copy a directory tree from `src` to `dst`.
+///
+/// Symlinks are refused outright — the root as well as every entry. The
+/// migration runs unattended on upgrade with the user's own privileges, so a
+/// link planted in the legacy directory would otherwise have its *target*
+/// copied into the new config directory (`fs::copy` follows links) or send the
+/// walk out of the tree entirely. Anything that is neither a regular file nor a
+/// real directory is rejected the same way, as [`ErrorKind::InvalidData`].
 fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    let rejected = |path: &Path, what: &str| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("refusing to copy {what}: {}", path.display()),
+        )
+    };
+
+    if fs::symlink_metadata(src)?.file_type().is_symlink() {
+        return Err(rejected(src, "a symlinked directory"));
+    }
+
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
-        let file_type = entry.file_type()?;
+        let path = entry.path();
+        // `symlink_metadata` rather than `entry.file_type()`: both report the
+        // link itself, but using the same call for the root and for every
+        // entry makes the do-not-follow semantics explicit and uniform.
+        let file_type = fs::symlink_metadata(&path)?.file_type();
         let dest_path = dst.join(entry.file_name());
-        if file_type.is_dir() {
-            copy_dir_recursive(&entry.path(), &dest_path)?;
+        if file_type.is_symlink() {
+            return Err(rejected(&path, "a symlink"));
+        } else if file_type.is_dir() {
+            // The directory is still path-based after this check. Closing that
+            // replacement race requires an fd-based openat traversal.
+            copy_dir_recursive(&path, &dest_path)?;
+        } else if file_type.is_file() {
+            copy_regular_file(&path, &dest_path)?;
         } else {
-            fs::copy(entry.path(), &dest_path)?;
+            return Err(rejected(&path, "a special file"));
         }
     }
+    Ok(())
+}
+
+/// Copy one regular file without resolving a replacement symlink on Unix.
+fn copy_regular_file(src: &Path, dst: &Path) -> std::io::Result<()> {
+    let mut source_options = fs::OpenOptions::new();
+    source_options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        source_options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let mut source = source_options.open(src)?;
+    let source_metadata = source.metadata()?;
+    if !source_metadata.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("refusing to copy a special file: {}", src.display()),
+        ));
+    }
+
+    let mut destination_options = fs::OpenOptions::new();
+    destination_options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        destination_options.custom_flags(libc::O_NOFOLLOW);
+        destination_options.mode(source_metadata.permissions().mode());
+    }
+    let mut destination = destination_options.open(dst)?;
+    std::io::copy(&mut source, &mut destination)?;
+    #[cfg(unix)]
+    destination.set_permissions(source_metadata.permissions())?;
     Ok(())
 }
 
@@ -568,6 +732,259 @@ mod tests {
                 "our change not written: {after}"
             );
         });
+    }
+
+    /// Resolving the config path is a *query*: `theme list` and `theme show`
+    /// both go through it while only reading, so it must not create the new
+    /// directory nor drag a legacy tree along behind the user's back.
+    #[test]
+    fn config_dir_path_resolves_without_touching_the_filesystem() {
+        let home = tempfile::tempdir().unwrap();
+        let legacy = home.path().join(".config/ssh-launcher");
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(legacy.join("config.toml"), "# legacy\n").unwrap();
+
+        let resolved = with_test_home(home.path(), config_dir_path);
+
+        let expected = home.path().join(".config/sshub");
+        assert_eq!(resolved.unwrap(), expected);
+        assert!(
+            !expected.exists(),
+            "resolving the path created {}",
+            expected.display()
+        );
+        assert!(
+            !expected.with_extension("migrating").exists(),
+            "resolving the path left a staging directory behind"
+        );
+        assert_eq!(
+            std::fs::read_to_string(legacy.join("config.toml")).unwrap(),
+            "# legacy\n",
+            "the legacy tree was migrated by a pure path query"
+        );
+    }
+
+    /// Both env overrides keep working, and neither is affected by HOME.
+    #[test]
+    fn config_dir_path_honours_both_env_overrides_in_order() {
+        let home = tempfile::tempdir().unwrap();
+        let primary = tempfile::tempdir().unwrap();
+        let fallback = tempfile::tempdir().unwrap();
+
+        with_test_home(home.path(), || {
+            let _guard = EnvVar::set("SSH_LAUNCHER_CONFIG_DIR", fallback.path());
+            assert_eq!(config_dir_path().unwrap(), fallback.path());
+            let _primary = EnvVar::set("SSHUB_CONFIG_DIR", primary.path());
+            assert_eq!(config_dir_path().unwrap(), primary.path());
+        });
+    }
+
+    /// A legacy entry that is a *symlink* must never be followed: the migration
+    /// runs on upgrade with the user's own privileges, and following a planted
+    /// link would copy a file from outside the legacy tree into the new config
+    /// directory (or, for a directory link, walk out of the tree entirely).
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_legacy_entry_aborts_the_migration_untouched() {
+        for kind in ["file", "dir"] {
+            let root = tempfile::tempdir().unwrap();
+            let legacy = root.path().join("legacy");
+            std::fs::create_dir_all(&legacy).unwrap();
+            std::fs::write(legacy.join("config.toml"), "# real\n").unwrap();
+
+            // The link's target lives *outside* the legacy tree — exactly the
+            // file an attacker would be trying to have copied into the new dir.
+            let outside = root.path().join("outside");
+            let link = legacy.join("planted");
+            match kind {
+                "file" => {
+                    std::fs::write(&outside, "secret\n").unwrap();
+                    std::os::unix::fs::symlink(&outside, &link).unwrap();
+                }
+                _ => {
+                    std::fs::create_dir(&outside).unwrap();
+                    std::fs::write(outside.join("secret.txt"), "secret\n").unwrap();
+                    std::os::unix::fs::symlink(&outside, &link).unwrap();
+                }
+            }
+
+            let new_dir = root.path().join("sshub");
+            migrate_legacy_dir(&new_dir, &legacy);
+
+            assert!(
+                !new_dir.exists(),
+                "{kind} symlink: the migration completed into {}",
+                new_dir.display()
+            );
+            assert!(
+                !new_dir.with_extension("migrating").exists(),
+                "{kind} symlink: the staging directory was left behind"
+            );
+            assert!(
+                outside.exists(),
+                "{kind} symlink: the link target was removed"
+            );
+            assert!(
+                link.symlink_metadata().unwrap().file_type().is_symlink(),
+                "{kind} symlink: the legacy entry was replaced"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_regular_file_rejects_a_replaced_symlink_source() {
+        let root = tempfile::tempdir().unwrap();
+        let source_dir = root.path().join("legacy");
+        std::fs::create_dir(&source_dir).unwrap();
+        let secret = root.path().join("outside-secret");
+        std::fs::write(&secret, "PRIVATE KEY MATERIAL\n").unwrap();
+        let replaced_source = source_dir.join("credentials.json");
+        std::os::unix::fs::symlink(&secret, &replaced_source).unwrap();
+        let destination = root.path().join("sshub/credentials.json");
+        std::fs::create_dir(destination.parent().unwrap()).unwrap();
+
+        let error = copy_regular_file(&replaced_source, &destination).unwrap_err();
+
+        assert_eq!(error.raw_os_error(), Some(libc::ELOOP));
+        assert!(
+            !destination.exists(),
+            "the symlink target was copied into {}",
+            destination.display()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_regular_file_rejects_a_symlink_destination_without_touching_its_target() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("legacy/credentials.json");
+        std::fs::create_dir(source.parent().unwrap()).unwrap();
+        std::fs::write(&source, "MIGRATED SECRET\n").unwrap();
+        let victim = root.path().join("outside-victim");
+        std::fs::write(&victim, "KEEP ME\n").unwrap();
+        let destination = root.path().join("sshub/credentials.json");
+        std::fs::create_dir(destination.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&victim, &destination).unwrap();
+
+        assert!(copy_regular_file(&source, &destination).is_err());
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "KEEP ME\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_regular_file_rejects_an_existing_destination_without_changing_it() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("legacy/credentials.json");
+        std::fs::create_dir(source.parent().unwrap()).unwrap();
+        std::fs::write(&source, "MIGRATED SECRET\n").unwrap();
+        let destination = root.path().join("sshub/credentials.json");
+        std::fs::create_dir(destination.parent().unwrap()).unwrap();
+        std::fs::write(&destination, "KEEP ME\n").unwrap();
+        std::fs::set_permissions(&destination, std::fs::Permissions::from_mode(0o640)).unwrap();
+
+        assert!(copy_regular_file(&source, &destination).is_err());
+        assert_eq!(std::fs::read_to_string(&destination).unwrap(), "KEEP ME\n");
+        assert_eq!(
+            destination.metadata().unwrap().permissions().mode() & 0o777,
+            0o640
+        );
+    }
+
+    /// The legacy root itself being a symlink is the same refusal.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_legacy_root_aborts_the_migration() {
+        let root = tempfile::tempdir().unwrap();
+        let real = root.path().join("elsewhere");
+        std::fs::create_dir(&real).unwrap();
+        std::fs::write(real.join("config.toml"), "# real\n").unwrap();
+        let legacy = root.path().join("legacy");
+        std::os::unix::fs::symlink(&real, &legacy).unwrap();
+
+        let new_dir = root.path().join("sshub");
+        migrate_legacy_dir(&new_dir, &legacy);
+
+        assert!(!new_dir.exists(), "a symlinked legacy root was followed");
+        assert!(!new_dir.with_extension("migrating").exists());
+        assert_eq!(
+            std::fs::read_to_string(real.join("config.toml")).unwrap(),
+            "# real\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn migration_preserves_restrictive_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let legacy = root.path().join("legacy");
+        std::fs::create_dir(&legacy).unwrap();
+        let source = legacy.join("credentials.json");
+        std::fs::write(&source, "secret\n").unwrap();
+        std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        let new_dir = root.path().join("sshub");
+        migrate_legacy_dir(&new_dir, &legacy);
+
+        let destination = new_dir.join("credentials.json");
+        assert_eq!(std::fs::read_to_string(&destination).unwrap(), "secret\n");
+        assert_eq!(
+            destination.metadata().unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[test]
+    fn migration_copies_nested_regular_files() {
+        let root = tempfile::tempdir().unwrap();
+        let legacy = root.path().join("legacy");
+        let nested = legacy.join("themes/custom");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(legacy.join("config.toml"), "# legacy\n").unwrap();
+        std::fs::write(nested.join("theme.toml"), "name = \"custom\"\n").unwrap();
+
+        let new_dir = root.path().join("sshub");
+        migrate_legacy_dir(&new_dir, &legacy);
+
+        assert_eq!(
+            std::fs::read_to_string(new_dir.join("config.toml")).unwrap(),
+            "# legacy\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(new_dir.join("themes/custom/theme.toml")).unwrap(),
+            "name = \"custom\"\n"
+        );
+    }
+
+    /// The pure half of [`save_config`]: what would be written for `config`
+    /// given `original` as the file on disk. Keeps the round-trip tests off the
+    /// filesystem (and off the process-wide `SSHUB_CONFIG_DIR`).
+    fn merge_config_for_test(original: &str, config: &AppConfig) -> anyhow::Result<String> {
+        merge_config_document(original, config)
+    }
+
+    #[test]
+    fn parse_config_theme_defaults_to_default() {
+        let config = parse_config_str("").unwrap();
+        assert_eq!(config.appearance.active_theme, "default");
+    }
+
+    #[test]
+    fn active_theme_roundtrips_without_removing_unknown_config() {
+        let original = "# keep\n[appearance]\nactive_theme = \"aqua\"\nfuture = 7\n";
+        let mut config = parse_config_str(original).unwrap();
+        config.appearance.active_theme = "fire".into();
+        let saved = merge_config_for_test(original, &config).unwrap();
+        assert!(saved.contains("# keep"), "comment lost: {saved}");
+        assert!(saved.contains("future = 7"), "unknown key lost: {saved}");
+        assert!(
+            saved.contains("active_theme = \"fire\""),
+            "our change not written: {saved}"
+        );
     }
 
     #[test]
@@ -686,6 +1103,10 @@ date_format = "%d/%m/%Y"
         let config = parse_config_str(fixture).unwrap();
         assert!(config.appearance.show_detail_panel);
         assert_eq!(config.appearance.date_format, "%Y-%m-%d %H:%M");
+        // The fixture predates `active_theme`, which is exactly the spec's
+        // backwards-compatibility case: an older config.toml must still load
+        // and simply get `default`.
+        assert_eq!(config.appearance.active_theme, "default");
     }
 
     #[test]
@@ -700,8 +1121,13 @@ date_format = "%d/%m/%Y"
     #[test]
     fn default_config_toml_roundtrips() {
         let toml = default_config_toml().unwrap();
+        assert!(
+            toml.contains("active_theme = \"default\""),
+            "active_theme missing from the generated default config: {toml}"
+        );
         let config = parse_config_str(&toml).unwrap();
         assert!(config.appearance.show_detail_panel);
         assert_eq!(config.appearance.date_format, "%Y-%m-%d %H:%M");
+        assert_eq!(config.appearance.active_theme, "default");
     }
 }

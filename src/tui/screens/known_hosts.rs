@@ -3,7 +3,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear};
 
 use crate::app::App;
-use crate::tui::theme;
+use crate::theme::catalog::{ColorRole, StyleRole};
 
 pub fn render_known_hosts(frame: &mut Frame, app: &App) {
     let Some(state) = app.known_hosts.as_ref() else {
@@ -21,11 +21,17 @@ pub fn render_known_hosts(frame: &mut Frame, app: &App) {
     let popup = crate::tui::popup_open_rect(popup, app);
 
     frame.render_widget(Clear, popup);
+    if popup.width < 4 || popup.height < 4 {
+        return;
+    }
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)
-            .title(Span::styled(" Known Hosts ", theme::heading()))
-            .border_style(theme::popup_border()),
+            .title(Span::styled(
+                " Known Hosts ",
+                app.theme().style(StyleRole::PopupTitle),
+            ))
+            .border_style(crate::tui::popup_border_style(app.theme(), popup)),
         popup,
     );
 
@@ -38,7 +44,7 @@ pub fn render_known_hosts(frame: &mut Frame, app: &App) {
         row_x,
         popup.y + 1,
         crate::tui::text::ellipsize(&query_line, content_w),
-        theme::bright(),
+        app.theme().style(StyleRole::PickerQuery),
     );
 
     let filtered: Vec<usize> = state.filtered_indices();
@@ -64,17 +70,22 @@ pub fn render_known_hosts(frame: &mut Frame, app: &App) {
         let is_sel = scroll + row == selected;
         if is_sel {
             let blank = " ".repeat(popup.width.saturating_sub(2) as usize);
-            buf.set_string(popup.x + 1, ry, &blank, theme::selected());
+            buf.set_string(
+                popup.x + 1,
+                ry,
+                &blank,
+                app.theme().style(StyleRole::PickerRowSelected),
+            );
         }
         let base = if is_sel {
-            theme::white().bg(theme::SEL_BG)
+            app.theme().style(StyleRole::PickerRowSelected)
         } else {
-            theme::text()
+            app.theme().style(StyleRole::PickerRow)
         };
         let dim = if is_sel {
-            theme::mute().bg(theme::SEL_BG)
+            app.theme().style(StyleRole::PickerRowSelected)
         } else {
-            theme::mute()
+            app.theme().style(StyleRole::TextMuted)
         };
         let marker_str = if is_sel { "\u{203a} " } else { "  " };
 
@@ -129,13 +140,13 @@ pub fn render_known_hosts(frame: &mut Frame, app: &App) {
             row_x,
             footer_y,
             crate::tui::text::ellipsize(&msg, content_w),
-            theme::amber(),
+            app.theme().style(StyleRole::PopupWarning),
         );
     } else if let Some(notice) = &state.notice {
         let style = if state.notice_is_error {
-            theme::red()
+            app.theme().style(StyleRole::PopupError)
         } else {
-            theme::green()
+            ratatui::style::Style::default().fg(app.theme().color(ColorRole::StatusSuccess))
         };
         buf.set_string(
             row_x,
@@ -149,7 +160,7 @@ pub fn render_known_hosts(frame: &mut Frame, app: &App) {
             row_x,
             footer_y,
             crate::tui::text::ellipsize(hint, content_w),
-            theme::mute(),
+            app.theme().style(StyleRole::PopupHint),
         );
     }
 
@@ -159,6 +170,43 @@ pub fn render_known_hosts(frame: &mut Frame, app: &App) {
         popup.x + popup.width.saturating_sub(count.len() as u16 + 1),
         count_y,
         &count,
-        theme::mute(),
+        app.theme().style(StyleRole::TextMuted),
     );
+    crate::tui::paint_popup_border(frame, popup, app.theme());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::KnownHostsState;
+    use crate::known_hosts::KnownHostEntry;
+    use crate::test_support::{frame_at, resolved_default, themed_app};
+
+    fn app_with_known_host() -> App {
+        let mut app = themed_app(resolved_default());
+        app.known_hosts = Some(KnownHostsState {
+            entries: vec![KnownHostEntry {
+                marker: None,
+                hosts: "server.example".into(),
+                key_type: "ssh-ed25519".into(),
+                fingerprint: Some("SHA256:example".into()),
+            }],
+            selected: 0,
+            query: String::new(),
+            confirming_delete: false,
+            notice: None,
+            notice_is_error: false,
+        });
+        app
+    }
+
+    #[test]
+    fn known_hosts_uses_runtime_theme_roles_and_survives_tiny_terminals() {
+        let app = app_with_known_host();
+        for (width, height) in [(1, 1), (3, 2), (8, 4), (20, 6), (80, 24)] {
+            let area = Rect::new(0, 0, width, height);
+            let buffer = frame_at(area, |frame| render_known_hosts(frame, &app));
+            assert_eq!(buffer.area, area);
+        }
+    }
 }

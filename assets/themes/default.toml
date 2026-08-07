@@ -1,0 +1,158 @@
+# SSHub — built-in root theme.
+#
+# `default` is the only theme without a parent: every other theme, built-in or
+# your own, inherits from it. Its job is to reproduce the appearance SSHub had
+# before the theme system existed, cell for cell, with three documented and
+# deliberate classes of exception:
+#
+#   1. cells that carried a direct ANSI colour (no `theme.rs` value existed for
+#      them) are normalised onto their semantic role;
+#   2. a handful of cells that carried *no* colour at all — two form titles, an
+#      idle form value, the form key hints and the detail-panel field marker —
+#      now carry one, so they can be themed and stay readable on a themed
+#      ground;
+#   3. two places where the old appearance was simply unusable and this theme
+#      deliberately draws something better: the selected row of the *unfocused*
+#      SFTP pane, which used to have no highlight at all, and the SFTP queue
+#      warning, which used to hide inside the panel heading exactly when it
+#      mattered most.
+#
+# Each case is recorded individually — the ones in this file are commented at
+# the override that implements them, and all of them are in the release notes.
+# Everything not covered by the three classes looks exactly as it did.
+#
+# `default` defines the complete semantic core plus a short list of component
+# overrides, and nothing else. Most of those overrides exist to *reproduce* the
+# old appearance where a semantic fallback cannot — it carries a colour but not
+# a bold, an underline or an inversion — and one of them, `selection.inactive`,
+# is the deliberate improvement named above. Every one of the 234
+# component roles already carries a documented fallback in the Rust catalogue
+# (see docs/theme-system.md for the full generated table), so restating them all
+# here would create a second hand-maintained copy of the same table — the one
+# thing the V1 contract rules out. Change a semantic slot below and every
+# component that inherits from it follows automatically.
+#
+# The overrides `default` does carry use only `semantic.*` references and the
+# sentinels "terminal", "auto" and "native" — never a hex literal and never
+# `palette.*`, so that every default assignment stays overridable through the
+# semantic core.
+
+schema_version = 1
+name = "Default"
+description = "SSHub's original dark palette — deep greens, muted cyan, transparent surfaces."
+
+[semantic]
+# "terminal" is the emulator's own default colour (ratatui's `Color::Reset`).
+# SSHub has always left the app ground, the panel surfaces and the raised
+# chrome unpainted, which is what keeps it readable inside a transparent or
+# image-backed terminal.
+background = "terminal"
+surface = "terminal"
+surface_raised = "terminal"
+
+# The opaque companion of `background`. It is what gradient mixing, fades and
+# the `opaque_background` switch fall back to while `background` is transparent.
+canvas = "#0b0d10"
+
+border = "#1f2a24"
+border_focus = "#6fb3b8"
+border_popup = "#6a7a72"
+
+text = "#d6e1d4"
+text_bright = "#c7e8c9"
+text_highlight = "#f4f8f3"
+text_muted = "#6a7a72"
+text_dim = "#3d4a44"
+# Foreground for inverted chrome (brand, active tab, status-bar mode); it is
+# painted on `text_bright`, not on a background slot.
+text_inverse = "#06080a"
+
+accent = "#9ec99b"
+selection_bg = "#182b22"
+selection_fg = "#c7e8c9"
+
+# Status colours. `connecting` and `exited` are separate slots even though they
+# start out equal to `warning` and `error`: a theme may want a session state to
+# read differently from a validation state.
+success = "#7cb992"
+warning = "#d6a76b"
+error = "#c97a7a"
+info = "#6fb3b8"
+connecting = "#d6a76b"
+exited = "#c97a7a"
+unknown = "#3d4a44"
+
+# The two host-list roles whose semantic fallback does not reproduce what SSHub
+# actually drew, stated here rather than worked around in the renderer.
+#
+# `host_selected` falls back to `text_highlight on selection_bg`, but the
+# selected *host name* has always been drawn in `selection_fg` — `text_highlight`
+# is the selected *group* label. `group` falls back to `info` (cyan), a colour
+# the tree has never used for a group label.
+#
+# Both are semantic references, so a theme that retunes the core still moves
+# them with it.
+[components.dashboard.host_list]
+host_selected = { foreground = "semantic.selection_fg", background = "semantic.selection_bg" }
+group = { foreground = "semantic.text_highlight" }
+
+# Every popup title SSHub ever drew went through `theme::heading()` — bright
+# *and* bold. The `text_bright` fallback carries the colour but not the weight,
+# so without this the whole overlay layer would quietly lose its emphasis.
+#
+# Semantic reference plus modifier, so a theme that retunes the core moves the
+# colour with it and only the weight is stated here.
+[components.popup]
+title = { foreground = "semantic.text_bright", modifiers = ["bold"] }
+
+# The help sheet's section headings came from the same `theme::heading()` as the
+# popup titles, and lose their weight to the same plain fallback.
+[components.help]
+section = { foreground = "semantic.text_bright", modifiers = ["bold"] }
+
+# The zoom toast is a cyan chip the terminal inverts — `theme::cyan()` plus
+# `REVERSED`. The colour is the `info` fallback; only the inversion has to be
+# stated, and it belongs in the theme rather than being welded into the
+# renderer, so a theme can drop it.
+[components.status_bar]
+toast = { foreground = "semantic.info", modifiers = ["reversed"] }
+
+# The unfocused SFTP pane's selected row. Before the theme system it had no
+# highlight at all — `active = is_sel && focused` gated the bar — so the cursor
+# position vanished in exactly the pane the user was about to Tab back into.
+# The semantic fallback (`text` on `surface_raised`) cannot fix that here,
+# because SSHub leaves `surface_raised` on the terminal's own ground: the row
+# would still be indistinguishable from its neighbours.
+#
+# So `default` states it: the same selection bar as the focused pane, with muted
+# rather than bright text. Position stays readable, and which pane has the
+# keyboard stays unambiguous. This is a deliberate improvement over the frozen
+# appearance, recorded in `DEFAULT_PARITY_OVERRIDES`, not a reproduction.
+[components.selection]
+inactive = { foreground = "semantic.text_muted", background = "semantic.selection_bg" }
+
+# The animation's two amber-and-bold cells: the pulsing `hub` label and the
+# `u b` of the wordmark. The colour is the `warning` fallback; only the weight
+# has to be stated, because the semantic core has no "warning with bold"
+# recipe — the same shape as `popup.title` above. Their bright siblings
+# (`hub_ready`, `wordmark`) get their weight from the `text_bright with bold`
+# recipe in the catalogue instead, which is where a recipe already exists.
+[components.animation]
+hub_flash = { foreground = "semantic.warning", modifiers = ["bold"] }
+wordmark_accent = { foreground = "semantic.warning", modifiers = ["bold"] }
+
+# The tunnel form marks the field it is editing by underlining its value in
+# `theme::WHITE` — highlight text, no bold. `text_highlight` carries the
+# colour; the underline is stated here so a theme can mark the edited field
+# some other way instead of the renderer welding the modifier on.
+[components.tunnel_form]
+value_editing = { foreground = "semantic.text_highlight", modifiers = ["underlined"] }
+
+# The key generator's focused row. It is the one screen that never drew the
+# legacy palette — it used raw `Color::Yellow` with bold — so `warning` carries
+# the colour and only the weight is stated here, the same shape as
+# `animation.hub_flash` above. Its focused *value* needs no entry: the
+# catalogue's `text_bright with underline and bold` recipe already reproduces
+# the old white/bold/underlined pair.
+[components.keygen]
+label_focused = { foreground = "semantic.warning", modifiers = ["bold"] }

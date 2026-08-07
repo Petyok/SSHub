@@ -342,3 +342,452 @@ fn import_putty_reg_file_imports_host() {
         .success()
         .stdout(predicate::str::contains("smokebox"));
 }
+
+// ---------------------------------------------------------------------------
+// `sshub theme` — headless theme CLI.
+//
+// Every case below must work without a database: the theme commands are
+// dispatched before `CliContext::bootstrap`, so a data directory that cannot
+// hold a database at all is still a green run.
+// ---------------------------------------------------------------------------
+
+/// A minimal but valid user theme. It carries no `extends`, so it inherits the
+/// built-in `default` implicitly — the normal shape of a hand-written theme.
+const VALID_THEME: &str =
+    "schema_version = 1\nname = \"Mine\"\n\n[semantic]\naccent = \"#123456\"\n";
+
+/// Writes `themes/<id>.toml` below the isolated config directory.
+fn install_theme(dir: &Path, id: &str, body: &str) -> PathBuf {
+    let themes = dir.join("themes");
+    std::fs::create_dir_all(&themes).unwrap();
+    let path = themes.join(format!("{id}.toml"));
+    std::fs::write(&path, body).unwrap();
+    path
+}
+
+#[test]
+fn theme_list_does_not_bootstrap_databases() {
+    let dir = dir();
+    let not_a_directory = dir.path().join("blocked-data");
+    std::fs::write(&not_a_directory, "file").unwrap();
+    sshub(dir.path())
+        .env("SSHUB_DATA_DIR", &not_a_directory)
+        .args(["theme", "list", "--format", "json"])
+        .assert()
+        .success();
+    assert!(!dir.path().join("launcher.db").exists());
+    assert!(!dir.path().join("metadata.db").exists());
+}
+
+/// A theme whose `name` carries terminal control characters.
+///
+/// The control bytes are written as TOML escapes rather than raw bytes so the
+/// fixture stays a valid basic string — after parsing the name really does hold
+/// an ESC, a newline and a DEL.
+const HOSTILE_NAME_THEME: &str = "schema_version = 1\n\
+     name = \"ev\\u001Bil\\nnext\\u007F\"\n\n[semantic]\naccent = \"#123456\"\n";
+
+/// Plain `theme list` prints a user-controlled name, so a theme file must not be
+/// able to smuggle escape sequences into the operator's terminal.
+#[test]
+fn theme_list_plain_escapes_control_characters_in_a_theme_name() {
+    let d = dir();
+    install_theme(d.path(), "hostile", HOSTILE_NAME_THEME);
+
+    let out = sshub(d.path()).args(["theme", "list"]).assert().success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+
+    assert!(
+        !stdout.contains('\u{1b}'),
+        "a raw ESC reached the terminal:\n{stdout:?}"
+    );
+    assert!(
+        !stdout.contains('\u{7f}'),
+        "a raw DEL reached the terminal:\n{stdout:?}"
+    );
+    assert!(
+        stdout.contains("ev\\u{001b}il\\u{000a}next\\u{007f}"),
+        "the name was not escaped visibly:\n{stdout}"
+    );
+    // The name's own newline must not add a row: every theme stays one line.
+    let rows = stdout.lines().filter(|l| l.contains("hostile")).count();
+    assert_eq!(rows, 1, "the name broke the table across rows:\n{stdout}");
+}
+
+/// `theme list` and `theme show` only read, so they must not bring the config
+/// directory into existence — nor drag a legacy `~/.config/ssh-launcher` tree
+/// into it as a side effect of being asked what is installed.
+///
+/// The isolation is a real subprocess with its own `HOME` and no
+/// `SSHUB_CONFIG_DIR`, so nothing here mutates this process's environment.
+#[test]
+fn theme_read_commands_never_create_the_config_directory() {
+    let home = dir();
+    let legacy_themes = home.path().join(".config/ssh-launcher/themes");
+    std::fs::create_dir_all(&legacy_themes).unwrap();
+    std::fs::write(legacy_themes.join("legacy.toml"), VALID_THEME).unwrap();
+    let new_dir = home.path().join(".config/sshub");
+
+    for args in [
+        vec!["theme", "list"],
+        vec!["theme", "show", "aqua"],
+        vec!["theme", "show", "missing"],
+    ] {
+        Command::cargo_bin("sshub")
+            .unwrap()
+            .env("HOME", home.path())
+            .env("SSHUB_DATA_DIR", home.path().join("data"))
+            .env_remove("SSHUB_CONFIG_DIR")
+            .env_remove("SSH_LAUNCHER_CONFIG_DIR")
+            .env("SSHUB_SSH_CONFIG", fixture_ssh_config())
+            // The exit code is not the point here — `show missing` is expected
+            // to fail. What matters is what the run left on disk.
+            .args(&args)
+            .output()
+            .unwrap();
+
+        assert!(
+            !new_dir.exists(),
+            "`sshub {}` created {}",
+            args.join(" "),
+            new_dir.display()
+        );
+        assert!(
+            !new_dir.with_extension("migrating").exists(),
+            "`sshub {}` left a migration staging directory behind",
+            args.join(" ")
+        );
+    }
+    // And the legacy tree it did not migrate is still exactly as it was.
+    assert!(legacy_themes.join("legacy.toml").exists());
+}
+
+#[test]
+fn theme_show_unknown_id_exits_one() {
+    let dir = dir();
+    sshub(dir.path())
+        .args(["theme", "show", "missing"])
+        .assert()
+        .code(1);
+}
+
+#[test]
+fn theme_check_valid_file_succeeds_in_both_formats() {
+    let d = dir();
+    let path = d.path().join("mine.toml");
+    std::fs::write(&path, VALID_THEME).unwrap();
+
+    sshub(d.path())
+        .args(["theme", "check"])
+        .arg(&path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("OK: mine"));
+
+    sshub(d.path())
+        .args(["theme", "check"])
+        .arg(&path)
+        .args(["--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"valid\": true"));
+}
+
+#[test]
+fn theme_list_succeeds_in_both_formats() {
+    let d = dir();
+    sshub(d.path())
+        .args(["theme", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("default"))
+        .stdout(predicate::str::contains("aqua"));
+
+    sshub(d.path())
+        .args(["theme", "list", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"id\": \"aqua\""));
+}
+
+#[test]
+fn theme_show_succeeds_in_toml_and_json() {
+    let d = dir();
+    sshub(d.path())
+        .args(["theme", "show", "aqua"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "# copied from theme 'aqua'; change `name` before installing under a new filename",
+        ))
+        // The embedded source is printed verbatim, comments and all.
+        .stdout(predicate::str::contains("[gradients.reef_ring]"));
+
+    sshub(d.path())
+        .args(["theme", "show", "aqua", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"id\": \"aqua\""));
+
+    sshub(d.path())
+        .args(["theme", "show", "aqua", "--resolved"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[semantic]"))
+        .stdout(predicate::str::contains("extends").not());
+
+    sshub(d.path())
+        .args(["theme", "show", "aqua", "--resolved", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"semantic\""));
+}
+
+#[test]
+fn theme_show_never_prints_an_invalid_user_themes_source() {
+    let d = dir();
+    let secret = "private-token-do-not-print";
+    install_theme(
+        d.path(),
+        "broken",
+        &format!("schema_version = 1\nname = [\"{secret}\"\n"),
+    );
+
+    for format in ["toml", "json"] {
+        sshub(d.path())
+            .args(["theme", "show", "broken", "--format", format])
+            .assert()
+            .code(1)
+            .stdout(predicate::str::contains(secret).not())
+            .stderr(predicate::str::contains(secret).not());
+    }
+}
+
+#[test]
+fn theme_show_resolved_output_passes_check() {
+    let d = dir();
+    let out = sshub(d.path())
+        .args(["theme", "show", "aqua", "--resolved"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let copy = d.path().join("aqua-custom.toml");
+    std::fs::write(&copy, out).unwrap();
+
+    sshub(d.path())
+        .args(["theme", "check"])
+        .arg(&copy)
+        .assert()
+        .success();
+}
+
+#[test]
+fn theme_check_rejects_the_toml_format() {
+    let d = dir();
+    let path = d.path().join("mine.toml");
+    std::fs::write(&path, VALID_THEME).unwrap();
+    sshub(d.path())
+        .args(["theme", "check"])
+        .arg(&path)
+        .args(["--format", "toml"])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn theme_list_rejects_the_toml_format() {
+    let d = dir();
+    sshub(d.path())
+        .args(["theme", "list", "--format", "toml"])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn theme_show_rejects_the_plain_format() {
+    let d = dir();
+    sshub(d.path())
+        .args(["theme", "show", "aqua", "--format", "plain"])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn theme_check_malformed_file_exits_one_with_a_position() {
+    let d = dir();
+    let path = d.path().join("broken.toml");
+    std::fs::write(
+        &path,
+        "schema_version = 1\nname = \"Broken\"\n\n[semantic]\nbordr = \"#123456\"\n",
+    )
+    .unwrap();
+    sshub(d.path())
+        .args(["theme", "check"])
+        .arg(&path)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("broken.toml:5:1"))
+        .stdout(predicate::str::contains("bordr"));
+}
+
+#[test]
+fn theme_misuse_exits_two() {
+    let d = dir();
+    // No subcommand at all.
+    sshub(d.path()).args(["theme"]).assert().code(2);
+    // Unknown subcommand.
+    sshub(d.path())
+        .args(["theme", "frobnicate"])
+        .assert()
+        .code(2);
+    // Missing mandatory argument.
+    sshub(d.path()).args(["theme", "check"]).assert().code(2);
+    sshub(d.path()).args(["theme", "show"]).assert().code(2);
+    // Unknown option.
+    sshub(d.path())
+        .args(["theme", "list", "--verbose"])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn theme_list_reports_invalid_entries_and_still_exits_zero() {
+    let d = dir();
+    install_theme(d.path(), "good", VALID_THEME);
+    install_theme(
+        d.path(),
+        "bad",
+        "schema_version = 1\nname = \"Bad\"\n\n[semantic]\nbordr = \"#123456\"\n",
+    );
+
+    sshub(d.path())
+        .args(["theme", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("good"))
+        .stdout(predicate::str::contains("bad"))
+        .stdout(predicate::str::contains("invalid"));
+}
+
+#[test]
+fn theme_list_reports_a_user_file_squatting_a_builtin_id() {
+    let d = dir();
+    // The one file the user is confused about: it looks installed, but the
+    // reserved id keeps it from ever being canonical.
+    install_theme(d.path(), "aqua", VALID_THEME);
+
+    let out = sshub(d.path())
+        .args(["theme", "list"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out = String::from_utf8(out).unwrap();
+    assert!(
+        out.contains("aqua.toml"),
+        "the squatting file must be listed, not hidden behind the built-in:\n{out}"
+    );
+    assert!(
+        out.contains("already taken") || out.contains("reserved"),
+        "the collision must be explained:\n{out}"
+    );
+}
+
+#[test]
+fn theme_list_registry_io_error_exits_one() {
+    let d = dir();
+    // `themes` is a regular file, so the directory cannot be read at all.
+    std::fs::write(d.path().join("themes"), "not a directory").unwrap();
+    sshub(d.path()).args(["theme", "list"]).assert().code(1);
+}
+
+#[test]
+fn theme_check_warns_about_a_sibling_parent_without_failing() {
+    let d = dir();
+    let pack = d.path().join("pack");
+    std::fs::create_dir_all(&pack).unwrap();
+    std::fs::write(
+        pack.join("base.toml"),
+        "schema_version = 1\nname = \"Base\"\n\n[semantic]\naccent = \"#101010\"\n",
+    )
+    .unwrap();
+    let child = pack.join("child.toml");
+    std::fs::write(
+        &child,
+        "schema_version = 1\nname = \"Child\"\nextends = \"base\"\n",
+    )
+    .unwrap();
+
+    sshub(d.path())
+        .args(["theme", "check"])
+        .arg(&child)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("base.toml"))
+        .stdout(predicate::str::contains("warning"));
+}
+
+#[test]
+fn theme_help_is_theme_specific_and_needs_no_context() {
+    let d = dir();
+    // A data directory that cannot hold a database proves help never bootstraps.
+    let blocked = d.path().join("blocked-data");
+    std::fs::write(&blocked, "file").unwrap();
+
+    sshub(d.path())
+        .env("SSHUB_DATA_DIR", &blocked)
+        .args(["theme", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("sshub theme"))
+        .stdout(predicate::str::contains("check"))
+        .stdout(predicate::str::contains("list"))
+        .stdout(predicate::str::contains("show"));
+
+    sshub(d.path())
+        .env("SSHUB_DATA_DIR", &blocked)
+        .args(["theme", "check", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("sshub theme check"));
+}
+
+#[test]
+fn global_help_lists_the_theme_command() {
+    let d = dir();
+    sshub(d.path())
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("sshub theme check"));
+}
+
+/// A target that is readable while its directory is not listable: the checker
+/// cannot know whether the siblings this theme needs exist, so it must fail
+/// rather than guess "no siblings" and report success.
+#[cfg(unix)]
+#[test]
+fn theme_check_unlistable_directory_exits_one() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let d = dir();
+    let closed = d.path().join("closed");
+    std::fs::create_dir(&closed).unwrap();
+    let file = closed.join("child.toml");
+    std::fs::write(&file, VALID_THEME).unwrap();
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o444)).unwrap();
+    std::fs::set_permissions(&closed, std::fs::Permissions::from_mode(0o111)).unwrap();
+
+    // Root ignores the permission bits, so the state under test cannot be built.
+    if std::fs::read_dir(&closed).is_ok() {
+        std::fs::set_permissions(&closed, std::fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+
+    let assertion = sshub(d.path()).args(["theme", "check"]).arg(&file).assert();
+    std::fs::set_permissions(&closed, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assertion.code(1);
+}

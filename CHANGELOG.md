@@ -6,6 +6,51 @@ All notable changes to SSHub are documented in this file.
 
 ### Added
 
+- **Runtime theme system** (PR #86 by @michabbb) - SSHub's colours are TOML
+  files now, not constants. A theme sets any of three layers - your own
+  `[palette]`, a fixed 23-slot `[semantic]` core, and per-role `[components]`
+  overrides - plus named static `[gradients]`; everything left out is inherited
+  from `default`, so changing a single semantic slot recolours every component
+  that uses it. Every one of the 234 component roles the TUI paints is
+  addressable, from the dashboard and the popups to tunnels, SFTP, the audit
+  log, the identity cards and the startup animation. Colours are hex, explicit
+  `rgb`, or references with `brightness` and simulated `opacity` over an
+  explicit ground; `"terminal"`, `"auto"` and `"native"` are the three
+  sentinels. Themes live in `~/.config/sshub/themes/*.toml` (the file name is
+  the ID) and `config.toml` stores only `appearance.active_theme`.
+- **Theme picker** (Ctrl+H → Theme…) - moving through the list previews each
+  theme on the *whole* interface next to a two-box detail preview, `Esc` rolls
+  back to what was active, `r` re-reads the directory, and only `Enter` writes.
+  Invalid themes stay listed with their reason instead of vanishing, and a theme
+  that mentions roles this version does not know is usable with a warning.
+- **Five built-in themes**, embedded in the binary and readable with
+  `sshub theme show`: `default`, `summer`, `aqua`, `fire` and `high-contrast`.
+  `default` reproduces the previous appearance cell for cell with three
+  deliberate classes of exception. Cells that carried a direct ANSI colour are
+  normalised onto their semantic role. A handful of cells that carried *no*
+  colour at all now carry one - the host and identity form titles, an idle form
+  value, the form key hints and the detail-panel field marker - because they
+  were unthemeable and, on a themed popup ground, not guaranteed readable. And
+  two places are deliberately **improved** rather than reproduced: the selected
+  row of the unfocused SFTP pane, which previously had no highlight at all so
+  the cursor vanished in exactly the pane you were about to Tab back into, and
+  the SFTP queue warning, which used to sit inside the panel heading and is now
+  drawn as its own line. Each case is recorded individually in
+  `assets/themes/default.toml` and the design spec.
+- **Static gradients** - named multi-stop gradients in five directions
+  (`horizontal`, `vertical`, `diagonal_down`, `diagonal_up`, `perimeter`) on
+  frames, separators and backgrounds, painted by buffer post-processing with no
+  per-cell allocation. Explicit theme surfaces never recolour the embedded
+  remote session; the opt-in legacy `opaque_background` switch may still fill
+  transparent PTY reset cells with `semantic.canvas`.
+- **`sshub theme` CLI** - `check`, `list` and `show`, all headless (no TUI, no
+  database). `theme check` validates strictly and reports `file:line:column`
+  with `did you mean` suggestions; `theme show --resolved` writes a standalone
+  document that re-reads to the same theme.
+- **Theme documentation** - the full guide is
+  [docs/theme-system.md](docs/theme-system.md), with the generated role
+  catalogue and two worked example themes; the measured cost of gradient
+  rendering is in [docs/theme-render-benchmark.md](docs/theme-render-benchmark.md).
 - **Isolated profiles** (issue #17) - each profile owns its hosts databases,
   settings, fallback credentials, session logs, and tunnel runtime state; each
   profile can select its own SSH config source while the default remains

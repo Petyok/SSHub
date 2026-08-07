@@ -625,7 +625,7 @@ fn fold_replays_the_subtree_while_nav_rows_collapse_at_once() {
 #[test]
 fn ping_class_change_flashes_the_status_dot() {
     let mut app = test_app(vec![("a", host("a"))]);
-    let settled = crate::tui::theme::GREEN;
+    let settled = crate::tui::theme::legacy::GREEN;
 
     // Nothing known about the host yet: no flash to play.
     assert_eq!(app.ping_flash_color("a", settled), settled);
@@ -639,10 +639,10 @@ fn ping_class_change_flashes_the_status_dot() {
     app.ping_data
         .insert("a".into(), vec![crate::ping::PING_UNREACHABLE]);
     app.detect_ping_changes();
-    let flashing = app.ping_flash_color("a", crate::tui::theme::RED);
+    let flashing = app.ping_flash_color("a", crate::tui::theme::legacy::RED);
     assert_ne!(
         flashing,
-        crate::tui::theme::RED,
+        crate::tui::theme::legacy::RED,
         "expected the dot mid-flash, not its resting colour"
     );
 
@@ -666,8 +666,52 @@ fn ping_class_change_flashes_the_status_dot() {
         ),
     );
     assert_eq!(
-        app.ping_flash_color("a", crate::tui::theme::RED),
-        crate::tui::theme::RED
+        app.ping_flash_color("a", crate::tui::theme::legacy::RED),
+        crate::tui::theme::legacy::RED
+    );
+}
+
+/// The flash peaks on the active `text.bright` **role**, not on the semantic
+/// token it falls back to.
+///
+/// The two are identical under `default`, so only a theme that overrides
+/// `components.text.bright` away from `semantic.text_bright` can tell a role
+/// lookup from a token lookup.
+#[test]
+fn ping_flash_peaks_on_the_text_bright_role_not_the_semantic_token() {
+    use crate::theme::catalog::StyleRole;
+    use std::rc::Rc;
+
+    let theme = crate::test_support::resolved_source(
+        "markers",
+        "schema_version = 1\nname = \"Markers\"\nextends = \"default\"\n\n\
+         [components.text]\nbright = { foreground = \"#ff00ff\" }\n",
+    );
+    assert_ne!(
+        theme.style(StyleRole::TextBright).fg,
+        Some(theme.semantic().text_bright),
+        "the override must differ from the token, or this test proves nothing"
+    );
+
+    let mut app = test_app(vec![("a", host("a"))]);
+    app.activate_resolved_theme(Rc::new(theme));
+
+    // Freeze the flash at its very start, where the lerp is all peak colour.
+    app.ping_flash.insert(
+        "a".into(),
+        (crate::ping::PingClass::Online, std::time::Instant::now()),
+    );
+    let settled = crate::tui::theme::legacy::GREEN;
+    let flashing = app.ping_flash_color("a", settled);
+
+    // At p ~ 0 the lerp sits on the peak, so the flash must carry the role's
+    // magenta and nothing of the semantic token.
+    let ratatui::style::Color::Rgb(r, g, b) = flashing else {
+        panic!("expected an RGB flash colour, got {flashing:?}");
+    };
+    assert!(
+        r > 0xf0 && g < 0x40 && b > 0xf0,
+        "the flash should peak on the `text.bright` role (#ff00ff), got #{r:02x}{g:02x}{b:02x}"
     );
 }
 
@@ -683,8 +727,8 @@ fn ping_flash_is_off_under_reduced_motion() {
         (crate::ping::PingClass::Online, std::time::Instant::now()),
     );
     assert_eq!(
-        app.ping_flash_color("a", crate::tui::theme::GREEN),
-        crate::tui::theme::GREEN
+        app.ping_flash_color("a", crate::tui::theme::legacy::GREEN),
+        crate::tui::theme::legacy::GREEN
     );
 }
 
