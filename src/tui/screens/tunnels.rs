@@ -613,6 +613,7 @@ pub fn render_tunnel_host_picker(frame: &mut Frame, app: &App) {
 
     // Separator.
     let sep: String = std::iter::repeat_n('\u{2500}', inner_w).collect();
+    let rule = Rect::new(row_x, popup.y + 2, inner_w as u16, 1);
     buf.set_string(
         row_x,
         popup.y + 2,
@@ -620,9 +621,10 @@ pub fn render_tunnel_host_picker(frame: &mut Frame, app: &App) {
         Style::default().fg(crate::tui::blit::line_color(
             theme,
             PaintRole::SeparatorSecondary,
-            Rect::new(row_x, popup.y + 2, inner_w as u16, 1),
+            rule,
         )),
     );
+    crate::tui::blit::paint_line(buf, rule, theme, PaintRole::SeparatorSecondary);
 
     let list_top = popup.y + 3;
     let visible = popup.height.saturating_sub(5) as usize;
@@ -720,8 +722,8 @@ mod tests {
     use super::*;
     use crate::store::Tunnel;
     use crate::test_support::{
-        fg, fg_at_text, fg_bg, frame_at, marker, resolved_default, role_marker_theme, themed_app,
-        RoleMarker,
+        fg, fg_at_text, fg_bg, frame_at, marker, resolved_default, resolved_source,
+        role_marker_theme, themed_app, RoleMarker,
     };
     use crate::theme::model::ResolvedTheme;
 
@@ -1237,6 +1239,45 @@ mod tests {
         });
         let (ex, ey) = crate::test_support::find_text(&buf, "(no matching hosts)");
         assert_eq!(buf[(ex, ey)].fg, marker(PICKER_EMPTY));
+    }
+
+    #[test]
+    fn a_gradient_separator_sweeps_the_tunnel_host_picker_rule() {
+        use crate::app::TunnelHostPicker;
+
+        let theme = resolved_source(
+            "tunnel-picker-gradient",
+            r##"schema_version = 1
+name = "Tunnel Picker Gradient"
+extends = "default"
+
+[gradients.sweep]
+direction = "horizontal"
+stops = [ { at = 0.0, color = "#000000" }, { at = 1.0, color = "#ffffff" } ]
+
+[components.separator]
+secondary = { gradient = "gradients.sweep" }
+"##,
+        );
+        let mut app = form_app(theme, false);
+        managed_hosts(&mut app, &["web-prod"]);
+        app.tunnel_host_picker = Some(TunnelHostPicker {
+            query: String::new(),
+            selected: 0,
+        });
+        let buf = frame_at(Rect::new(0, 0, 80, 24), |f| {
+            render_tunnel_host_picker(f, &app);
+        });
+        let popup = app.last_popup_rect.get().expect("the picker drew");
+        let sep_y = popup.y + 2;
+        let row: Vec<_> = (popup.x + 2..popup.right() - 1)
+            .map(|x| buf.cell((x, sep_y)).unwrap().fg)
+            .collect();
+
+        assert!(
+            row.windows(2).any(|pair| pair[0] != pair[1]),
+            "the tunnel host picker separator stayed flat at row {sep_y}: {row:?}"
+        );
     }
 
     /// An unselected picker row reads `picker.row`. Proved on a two-host app so

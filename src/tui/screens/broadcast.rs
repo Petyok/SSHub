@@ -161,6 +161,7 @@ pub fn render_broadcast_panel(frame: &mut Frame, area: Rect, app: &App, focused:
     let Some(bc) = app.broadcast.as_ref() else {
         return;
     };
+    let area = area.intersection(frame.area());
     if area.width < 4 || area.height < 3 {
         return;
     }
@@ -235,6 +236,7 @@ pub fn render_broadcast_zoomed(frame: &mut Frame, area: Rect, app: &App) {
     let Some(bc) = app.broadcast.as_ref() else {
         return;
     };
+    let area = area.intersection(frame.area());
     if area.width < 6 || area.height < 4 {
         return;
     }
@@ -418,8 +420,8 @@ pub fn render_countdown_bar(frame: &mut Frame, area: Rect, frac: f32, theme: &Re
 
 /// Resting docked rect: bottom-right corner of the dashboard body.
 pub fn docked_rect(body: Rect) -> Rect {
-    let w = 54u16.min(body.width.saturating_sub(2)).max(20);
-    let h = 13u16.min(body.height.saturating_sub(2)).max(6);
+    let w = crate::tui::fit_popup(54, 20, body.width.saturating_sub(2));
+    let h = crate::tui::fit_popup(13, 6, body.height.saturating_sub(2));
     let x = body.x + body.width.saturating_sub(w).saturating_sub(1);
     let y = body.y + body.height.saturating_sub(h).saturating_sub(1);
     Rect::new(x, y, w, h)
@@ -1240,6 +1242,54 @@ mod tests {
     /// below `10` columns the inner width collapses to an empty string and
     /// `set_string` never indexes the out-of-range row.
     const TINY: &[(u16, u16)] = &[(1, 1), (3, 2), (8, 4), (20, 6), (20, 1), (40, 2)];
+
+    #[test]
+    fn the_docked_panel_survives_a_tiny_terminal() {
+        for zoomed in [false, true] {
+            let mut app = themed_app(resolved_default());
+            app.broadcast = Some(four_states());
+            for (w, h) in TINY {
+                let area = Rect::new(0, 0, *w, *h);
+                let body = crate::tui::dashboard_layout::dashboard_layout_zoomed(area, 0).body;
+                let buf = frame_at(area, |f| {
+                    if zoomed {
+                        render_broadcast_zoomed(f, body, &app);
+                    } else {
+                        render_broadcast_panel(f, docked_rect(body), &app, false);
+                    }
+                });
+                assert_eq!(buf.area, area, "docked at {w}x{h} zoomed={zoomed}");
+
+                if !zoomed {
+                    let buf = frame_at(area, |f| {
+                        render_broadcast_panel(f, spawn_rect(body), &app, false);
+                    });
+                    assert_eq!(buf.area, area, "spawned at {w}x{h}");
+
+                    for panel_present in [false, true] {
+                        let mut toast_app = themed_app(resolved_default());
+                        toast_app.broadcast_toasts = vec![crate::app::BroadcastToast {
+                            host: "bad-host".into(),
+                            text: "no route".into(),
+                            born: Instant::now()
+                                .checked_sub(TOAST_ANIM)
+                                .expect("the test clock is past the epoch"),
+                        }];
+                        if panel_present {
+                            toast_app.broadcast = Some(four_states());
+                        }
+                        let buf = frame_at(area, |f| {
+                            render_broadcast_toasts(f, body, &toast_app);
+                        });
+                        assert_eq!(
+                            buf.area, area,
+                            "toast at {w}x{h} panel_present={panel_present}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     /// The three pre-run popups must clip rather than panic on a tiny terminal.
     #[test]
