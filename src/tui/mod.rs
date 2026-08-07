@@ -491,18 +491,14 @@ fn apply_panel_selection(frame: &mut Frame, app: &App) {
 
 /// Whether the picker is floating over a session rather than the dashboard.
 fn session_behind_picker(app: &App) -> bool {
-    app.mode == AppMode::SessionPicker
-        && app
-            .session_picker
-            .as_ref()
-            .is_some_and(|p| matches!(p.return_mode, AppMode::Connecting | AppMode::Session))
+    app.session_picker_over_session()
 }
 
 /// Whether this frame is the full-screen session view rather than the
 /// dashboard. Shared with the app-background pass, so the region it protects
 /// cannot be claimed on a frame that never drew a session.
 fn shows_session_view(app: &App) -> bool {
-    crate::app::is_session_mode(app.mode) || session_behind_picker(app)
+    app.session_is_rendered()
 }
 
 /// Whether this frame takes the exact branch that blits a session-tab slide.
@@ -715,6 +711,7 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
         AppMode::BroadcastCommand => screens::broadcast::render_command_prompt(frame, app),
         AppMode::BroadcastPreview => screens::broadcast::render_preview(frame, app),
         AppMode::Notice => render_notice_popup(frame, app),
+        AppMode::KnownHosts => screens::known_hosts::render_known_hosts(frame, app),
         _ => {}
     }
 }
@@ -991,6 +988,7 @@ fn footer_keybinds(app: &App) -> (Vec<(String, &'static str)>, usize) {
             ("d".into(), "delete"),
             ("p/r".into(), "agent +/-"),
             ("P".into(), "push key"),
+            ("H".into(), "known hosts"),
             ("?".into(), "help"),
             ("q".into(), "quit"),
         ],
@@ -3569,11 +3567,29 @@ mod tests {
             AppMode::Help,
             AppMode::KeybindEditor,
             AppMode::ConfirmQuit,
+            AppMode::KnownHosts,
         ];
         for &mode in &modes {
             for (w, h) in [(1u16, 1u16), (10, 3), (30, 8), (49, 20)] {
                 let mut app = test_app_with_hosts();
                 app.mode = mode;
+                if mode == AppMode::KnownHosts {
+                    app.known_hosts = Some(crate::app::KnownHostsState {
+                        entries: vec![crate::known_hosts::KnownHostEntry {
+                            marker: None,
+                            hosts: "example.com".to_string(),
+                            key_type: "ssh-ed25519".to_string(),
+                            fingerprint: Some(
+                                "SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG".to_string(),
+                            ),
+                        }],
+                        selected: 0,
+                        query: String::new(),
+                        confirming_delete: false,
+                        notice: None,
+                        notice_is_error: false,
+                    });
+                }
                 // Must not panic; we don't care about the pixels here.
                 let _ = render_to_buffer(&app, w, h);
             }

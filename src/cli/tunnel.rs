@@ -12,7 +12,7 @@ use crate::cli::parse::{fail, fail_code, parse_format, take_flag, take_opt, Outp
 use crate::store::{NewTunnel, Tunnel, TunnelType};
 use crate::tunnel::{
     ensure_tunnel_pid_dir, log_tunnel_reconnect_events, spawn_detached_tunnel,
-    stop_detached_tunnel, tunnel_data_dir, tunnel_runtime_state, TunnelManager,
+    stop_detached_tunnel, tunnel_runtime_state, TunnelManager,
 };
 
 pub fn run(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
@@ -36,7 +36,7 @@ pub fn run(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
 fn cmd_list(ctx: &CliContext, args: &[String]) -> Result<()> {
     let fmt = parse_format(args).map_err(anyhow::Error::msg)?;
     let tunnels = ctx.store.list_tunnels()?;
-    let pid_dir = ensure_tunnel_pid_dir(&tunnel_data_dir()?)?;
+    let pid_dir = ensure_tunnel_pid_dir(ctx.profile.tunnel_base())?;
 
     let rows: Vec<TunnelListRow> = tunnels
         .iter()
@@ -82,7 +82,7 @@ fn cmd_show(ctx: &CliContext, args: &[String]) -> Result<()> {
     let fmt = parse_format(args).map_err(anyhow::Error::msg)?;
     let token = positional_one(args, "show")?;
     let tunnel = ctx.resolve_tunnel(token)?;
-    let pid_dir = ensure_tunnel_pid_dir(&tunnel_data_dir()?)?;
+    let pid_dir = ensure_tunnel_pid_dir(ctx.profile.tunnel_base())?;
     let state = tunnel_runtime_state(tunnel.id, tunnel.local_port, &pid_dir);
     let host_name = tunnel
         .host_id
@@ -170,8 +170,8 @@ fn cmd_delete(ctx: &mut CliContext, args: &[String]) -> Result<()> {
     }
     let token = positional_one(&a, "delete")?;
     let tunnel = ctx.resolve_tunnel(token)?;
-    let data_dir = tunnel_data_dir()?;
-    let _ = stop_detached_tunnel(&data_dir, tunnel.id);
+    let data_dir = ctx.profile.tunnel_base().to_path_buf();
+    stop_detached_tunnel(&data_dir, tunnel.id)?;
     ctx.store.delete_tunnel(tunnel.id)?;
     println!("deleted tunnel {}", tunnel.id);
     Ok(())
@@ -191,7 +191,7 @@ fn cmd_start(ctx: &CliContext, args: &[String]) -> Result<()> {
         return run_foreground(ctx, &tunnel, &host, secret);
     }
 
-    let data_dir = tunnel_data_dir()?;
+    let data_dir = ctx.profile.tunnel_base().to_path_buf();
     let pid = spawn_detached_tunnel(&tunnel, &host, secret.as_ref(), &data_dir)?;
     let _ = ctx.store.log_auth_event(
         host_name,
@@ -283,7 +283,7 @@ fn run_foreground(
 fn cmd_stop(ctx: &CliContext, args: &[String]) -> Result<()> {
     let token = positional_one(args, "stop")?;
     let tunnel = ctx.resolve_tunnel(token)?;
-    let data_dir = tunnel_data_dir()?;
+    let data_dir = ctx.profile.tunnel_base().to_path_buf();
     let stopped = stop_detached_tunnel(&data_dir, tunnel.id)?;
     let host_name = tunnel
         .host_id

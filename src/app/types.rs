@@ -344,7 +344,7 @@ pub const SETTINGS_ITEMS: [SettingDescriptor; 6] = [
     SettingDescriptor {
         item: SettingItem::Toggle(SettingToggle::SessionLogging),
         label: "Session logging",
-        hint: "save PTY output under ~/.local/share/sshub/logs",
+        hint: "save PTY output under the selected profile logs",
     },
 ];
 
@@ -413,6 +413,8 @@ pub enum AppMode {
     /// A modal message popup (e.g. a connection error). Any key dismisses it;
     /// the text lives in `App::notice_popup`.
     Notice,
+    /// Known-hosts manager overlay (Keys tab).
+    KnownHosts,
 }
 
 /// Live background-run state; App holds `broadcast: Option<BroadcastState>`.
@@ -1579,5 +1581,80 @@ impl HostDetailEdit {
             DetailEditField::Environment => &mut self.environment,
             DetailEditField::SessionLogging => &mut self.environment,
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct KnownHostsState {
+    pub entries: Vec<crate::known_hosts::KnownHostEntry>,
+    pub selected: usize,
+    pub query: String,
+    pub confirming_delete: bool,
+    pub notice: Option<String>,
+    pub notice_is_error: bool,
+}
+
+impl KnownHostsState {
+    pub fn filtered_indices(&self) -> Vec<usize> {
+        if self.query.is_empty() {
+            (0..self.entries.len()).collect()
+        } else {
+            let q = self.query.to_lowercase();
+            self.entries
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| {
+                    e.display_host().to_lowercase().contains(&q)
+                        || e.fingerprint
+                            .as_deref()
+                            .unwrap_or("")
+                            .to_lowercase()
+                            .contains(&q)
+                })
+                .map(|(i, _)| i)
+                .collect()
+        }
+    }
+}
+
+#[cfg(test)]
+mod known_hosts_state_tests {
+    use super::KnownHostsState;
+    use crate::known_hosts::KnownHostEntry;
+
+    fn entry(hosts: &str, fingerprint: Option<&str>) -> KnownHostEntry {
+        KnownHostEntry {
+            marker: None,
+            hosts: hosts.to_string(),
+            key_type: "ssh-ed25519".to_string(),
+            fingerprint: fingerprint.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn filtered_indices_matches_host_and_fingerprint() {
+        let state = KnownHostsState {
+            entries: vec![
+                entry("alpha.example.com", Some("SHA256:aaaa")),
+                entry("beta.example.com", Some("SHA256:bbbb")),
+                entry("|1|salt|hash", Some("SHA256:cccc")),
+            ],
+            selected: 0,
+            query: String::new(),
+            confirming_delete: false,
+            notice: None,
+            notice_is_error: false,
+        };
+        assert_eq!(state.filtered_indices(), vec![0, 1, 2]);
+
+        let mut by_host = state;
+        by_host.query = "beta".into();
+        assert_eq!(by_host.filtered_indices(), vec![1]);
+
+        by_host.query = "bbbb".into();
+        assert_eq!(by_host.filtered_indices(), vec![1]);
+
+        by_host.query = "hashed".into();
+        assert_eq!(by_host.filtered_indices(), vec![2]);
     }
 }

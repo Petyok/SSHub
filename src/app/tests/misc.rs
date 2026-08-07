@@ -92,6 +92,7 @@ pub(crate) fn paste_in_normal_mode_is_ignored() {
 
 #[test]
 pub(crate) fn base64_encode_known_vectors() {
+    use crate::osc52::base64_encode;
     // Test the standard test vectors plus a few padding cases.
     assert_eq!(base64_encode(b""), "");
     assert_eq!(base64_encode(b"f"), "Zg==");

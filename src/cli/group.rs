@@ -291,6 +291,15 @@ mod tests {
             resolver: crate::ssh::SshConfigResolver::default(),
             password_store: Box::new(crate::credentials::OsKeyring),
             hosts: Vec::new(),
+            profile: crate::profile::ProfilePaths {
+                data_root: std::path::PathBuf::new(),
+                id: "test".into(),
+                name: "test".into(),
+                root: std::path::PathBuf::new(),
+                config_file: std::path::PathBuf::new(),
+                ssh_config: std::path::PathBuf::new(),
+                compat: true,
+            },
         }
     }
 }

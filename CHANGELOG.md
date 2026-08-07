@@ -51,9 +51,69 @@ All notable changes to SSHub are documented in this file.
   [docs/theme-system.md](docs/theme-system.md), with the generated role
   catalogue and two worked example themes; the measured cost of gradient
   rendering is in [docs/theme-render-benchmark.md](docs/theme-render-benchmark.md).
+- **Isolated profiles** (issue #17) - each profile owns its hosts databases,
+  settings, fallback credentials, session logs, and tunnel runtime state; each
+  profile can select its own SSH config source while the default remains
+  shared. Multiple profiles use a startup picker; `--profile NAME`
+  selects one directly and `--manage-profiles` opens profile management with a
+  single profile. Existing directory overrides remain compatibility mode, and
+  legacy top-level data migrates safely into `profiles/default`.
+
+## [0.13.0] - 2026-08-03
+
+### Added
+
+- **Known hosts manager** (`H` on the Keys tab, issue #7) - an overlay listing
+  every entry in `~/.ssh/known_hosts`: host (or `(hashed)`), `@cert-authority` /
+  `@revoked` marker, key type, and `SHA256:` fingerprint (joined from
+  `ssh-keygen -l`; marker rows stay blank because `ssh-keygen -l` omits them).
+  Type to filter by host or fingerprint, `Ctrl+D` to delete all keys for a host
+  via `ssh-keygen -R` (with confirmation; hashed / `@cert-authority` /
+  `@revoked` / wildcard rows are refused, and plain deletes that would also
+  remove a matching wildcard are refused), `Ctrl+R` to refresh from disk. The
+  connect screen now shows the server host key fingerprint from the `-v` output
+  while connecting (cached first-wins so a banner flood cannot replace it), so a
+  first-connect fingerprint can be read and compared without digging through the
+  scrollback.
+
+### Changed
+
+- Help is bound to `?` only. `H` (Shift+H) opens the known hosts manager. Existing
+  configs that still have `help = ["?", "Shift+H"]` are migrated once on load so
+  the new binding is reachable.
 
 ### Fixed
 
+- **Copying inside a session reaches your clipboard again when the copy comes
+  from the app running in the PTY** (PR #88 by @michabbb) - a nested multiplexer
+  (herdr, tmux), or an editor set to `clipboard=osc52`, would highlight a
+  selection and report a copy while the clipboard never changed. Those apps copy
+  by writing
+  `ESC ] 52 ; c ; <base64> BEL` to their stdout, which is our PTY; `vt100` parses
+  it and hands it to `Callbacks::copy_to_clipboard`, and the default `()` impl
+  that SSHub used is a no-op - so the sequence was parsed and dropped, with no
+  passthrough to our own stdout. The parser now collects those writes and the
+  session re-emits them toward the hosting terminal. This matters most where the
+  inner app owns the selection: SSHub's own Shift+drag can't stand in for it,
+  because SSHub sees one flat character grid and reads every intermediate line
+  out to the full terminal width - across a split layout that drags in the
+  neighbouring panes and their borders.
+
+  Since this lets the remote side write to your clipboard, it is narrow and
+  visible: only the session you are actually looking at may relay, so a
+  background tab, the dashboard, SFTP or the tunnels view drop what their PTY
+  asked for on the spot - and never replay it when you switch to that tab.
+  Payloads are capped at 64 KiB and the queue is bounded, with both kinds of
+  drop counted apart and named in the notice, so a copy that was thrown away is
+  never hidden behind the success message. An empty write is ignored outright:
+  a remote cannot clear your clipboard. Clipboard *reads* stay refused:
+  `ESC]52;c;?BEL` is still unanswered, so no host can ask what you have copied.
+
+  The relay is on by default and can be switched off with `relay_from_pty =
+  false` under a new `[clipboard]` section in `config.toml`; configs written
+  before that section existed keep the default. Note that the OSC 52 sequence
+  travels in the raw PTY stream, so an enabled session log can already contain
+  it - relaying does not add it to the log, but it does not remove it either.
 - **The README GIFs and screenshots are recorded from the terminal stream now,
   not screenshotted** - and four of the five GIFs had no animation in them at
   all. Two separate faults: every tape except `hero` switched
@@ -326,7 +386,7 @@ All notable changes to SSHub are documented in this file.
   ssh-only. Graceful error when `mosh` is not installed.
   (Schema v13.)
 - **Session logging** — opt-in capture of embedded SSH session PTY output to plain-text
-  files under `~/.local/share/sshub/logs/<host-dir>/`, with rotated segment files inside
+  profile-owned files under `~/.local/share/sshub/profiles/<name>/logs/<host-dir>/`, with rotated segment files inside
   (managed hosts use `{sanitized-name}-{id}`). Toggle globally in Settings (`Ctrl+H`) or
   per host in the host form (`inherit` / `on` / `off`). Size-based rotation and per-host
   retention cap are configurable in `config.toml`. The audit tab shows the log directory

@@ -4,10 +4,11 @@
 [![crates.io downloads](https://img.shields.io/crates/d/sshub.svg?label=crates.io%20downloads)](https://crates.io/crates/sshub)
 [![npm](https://img.shields.io/npm/v/sshub-tui.svg)](https://www.npmjs.com/package/sshub-tui)
 [![npm downloads](https://img.shields.io/npm/dm/sshub-tui.svg?label=npm%20downloads%2Fmonth)](https://www.npmjs.com/package/sshub-tui)
+[![vibecoded](https://img.shields.io/badge/vibecoded-~98.5%25-ff69b4)](#model-credits)
 
 A terminal UI for managing and connecting to SSH hosts. Combines your `~/.ssh/config` with a built-in host database, tunnels, key management, and an audit log -- all in one keyboard-driven interface.
 
-> ⚠️ This project is ~98.6% vibe-coded slop made with dynamic workflows + adversarial-multimodel-reviews + cross-model-reviews using Opus 4.8 + Opus 5 + Fable 5 + Composer 2.5 + Grok 4.5 + Qwen 3.8 Max Preview — the other ~1.4% is real humans (see Contributors). It has — and will keep having — stupid bugs LLMs can't see. Use at your own risk.
+> ⚠️ This project is ~98.5% vibe-coded slop — see [Model credits](#model-credits) for the ever-growing pack of LLMs responsible — the other ~1.5% is real humans (see Contributors). It has — and will keep having — stupid bugs LLMs can't see. Use at your own risk.
 
 ![SSHub demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/hero.gif)
 
@@ -62,7 +63,7 @@ The settings overlay (`Ctrl+H`) — toggle an opaque background, OS logos, quit 
 - **Audit** — log of all connection events with filtering by status (ok/fail) and time range (today/week/month)
 - **Settings overlay** (`Ctrl+H`) — toggle an opaque background (for transparent terminals), OS logos, quit confirmation, and the startup animation
 - **Audit** — log of all connection events with filtering by status (ok/fail) and time range (today/week/month); session connect events record the path to the session log when logging is enabled
-- **Session logging** — opt-in capture of PTY session output to `~/.local/share/sshub/logs/<host-dir>/` (managed hosts use `{name}-{id}`; pure `~/.ssh/config` aliases without a launcher row may share a directory when sanitized names collide). Enable globally in Settings (`Ctrl+H`) or override per host (`inherit` / `on` / `off`). **Logs capture everything echoed to the terminal, including passwords if they appear on screen.**
+- **Session logging** — opt-in capture of PTY session output to `~/.local/share/sshub/profiles/<name>/logs/<host-dir>/` (managed hosts use `{name}-{id}`; pure `~/.ssh/config` aliases without a launcher row may share a directory when sanitized names collide). Enable globally in Settings (`Ctrl+H`) or override per host (`inherit` / `on` / `off`). **Logs capture everything echoed to the terminal, including passwords if they appear on screen.**
 - **Mosh transport** — per-host `Transport` field in the host form (`ssh` or `mosh`). Embedded sessions use `mosh` when selected; tunnels and SFTP stay ssh-only.
 - **Settings overlay** (`Ctrl+H`) — toggle session logging, opaque background (for transparent terminals), OS logos, quit confirmation, and the startup animation
 - **Hybrid sources** — hosts from `~/.ssh/config` (read-only) and launcher-managed (full CRUD) merge without duplicates
@@ -131,6 +132,8 @@ sshub              # launch TUI
 sshub --version    # print version
 sshub --dry-run    # exit immediately (CI / scripts)
 sshub --help       # show options
+sshub --profile work                     # launch named profile
+sshub --manage-profiles                 # open profile picker
 ```
 
 ### Commands
@@ -140,7 +143,22 @@ sshub --help       # show options
 # the audit log. Irreversible, so it refuses unless you confirm. Your
 # ~/.ssh/config (and the hosts imported from it) are left untouched.
 sshub db purge --yes-i-am-stupid
+
+# Target a profile from the TUI or any headless command.
+sshub --profile work host list
+sshub --profile personal audit list
+sshub --profile work db purge --yes-i-am-stupid
 ```
+
+SSHUB keeps profile-owned data isolated. Each profile can select its own SSH
+config source with `[ssh].config_path`; the default remains shared
+`~/.ssh/config`. With one profile, startup remains silent;
+with multiple profiles, the picker appears after the splash. The picker can
+create, rename, and delete profiles, but switching profiles requires restarting
+SSHUB. `--profile NAME` bypasses the picker. `--manage-profiles` opens it even
+when only one profile exists. Press `Esc` in the picker to cancel startup.
+Headless commands without `--profile` use the last-used profile and never open
+the interactive picker.
 
 ## Headless CLI
 
@@ -219,12 +237,18 @@ one yourself with `sshub completions bash|zsh|fish`.
 
 | Resource   | Default path                          |
 |------------|---------------------------------------|
-| Config     | `~/.config/sshub/config.toml`         |
-| Themes     | `~/.config/sshub/themes/*.toml`       |
-| Database   | `~/.local/share/sshub/launcher.db`    |
+| Config     | `~/.local/share/sshub/profiles/<name>/config.toml` |
+| Themes     | `~/.local/share/sshub/profiles/<name>/themes/*.toml` |
+| Databases  | `~/.local/share/sshub/profiles/<name>/{launcher,metadata}.db` |
+| Logs       | `~/.local/share/sshub/profiles/<name>/logs/`       |
+| Tunnels    | `~/.local/share/sshub/profiles/<name>/tunnels/`    |
+| State      | `~/.local/share/sshub/state.toml`                 |
 | SSH config | `~/.ssh/config`                       |
 
-Override via environment variables: `SSHUB_CONFIG_DIR`, `SSHUB_DATA_DIR`, `SSHUB_SSH_CONFIG`.
+Override via environment variables: `SSHUB_CONFIG_DIR`, `SSHUB_DATA_DIR`,
+`SSHUB_SSH_CONFIG`. Setting `SSHUB_CONFIG_DIR` or `SSHUB_DATA_DIR` selects
+compatibility mode, using those directories verbatim and disabling profile
+discovery. Legacy `SSH_LAUNCHER_*` variables remain supported.
 
 ## Keybindings
 
@@ -238,7 +262,7 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | `Tab`            | Toggle detail panel             |
 | `Esc`            | Back / close overlay            |
 | `Ctrl+K`         | Keybind editor                  |
-| `?` / `Shift+H`  | Help screen                     |
+| `?`              | Help screen                     |
 | `q`              | Quit                            |
 
 ### Session (embedded PTY)
@@ -316,6 +340,7 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | `r`        | Remove key from agent    |
 | `Shift+A`  | Add key to agent         |
 | `Shift+P`  | Push public key to host  |
+| `H`        | Known hosts manager      |
 
 ### Audit (tab 4)
 
@@ -328,14 +353,15 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 
 SSHub's colours live in TOML theme files you can copy, edit and switch at
 runtime. Five themes ship built into the binary — **`default`**, **`summer`**,
-**`aqua`**, **`fire`** and **`high-contrast`** — and your own go in
-`~/.config/sshub/themes/*.toml`, where the file name is the theme's ID.
+**`aqua`**, **`fire`** and **`high-contrast`** — and your own go in the
+selected profile's `themes/*.toml` directory (or `~/.config/sshub/themes/` in
+compatibility mode), where the file name is the theme's ID.
 
 ```bash
-mkdir -p ~/.config/sshub/themes
-sshub theme show aqua > ~/.config/sshub/themes/mine.toml   # copy a built-in
-$EDITOR ~/.config/sshub/themes/mine.toml                   # change `name`, then colours
-sshub theme check ~/.config/sshub/themes/mine.toml         # validate before you look
+mkdir -p ~/.local/share/sshub/profiles/<name>/themes
+sshub theme show aqua > ~/.local/share/sshub/profiles/<name>/themes/mine.toml
+$EDITOR ~/.local/share/sshub/profiles/<name>/themes/mine.toml
+sshub theme check ~/.local/share/sshub/profiles/<name>/themes/mine.toml
 ```
 
 Select it in the TUI with **Ctrl+H → Theme… → Enter**: moving through the list
@@ -364,7 +390,8 @@ key, the CLI exit codes, and two copy-pasteable example themes.
 
 ## Configuration
 
-`~/.config/sshub/config.toml`:
+`~/.local/share/sshub/profiles/<name>/config.toml` in profile mode
+(`~/.config/sshub/config.toml` in compatibility mode):
 
 ```toml
 [session_logging]
@@ -378,6 +405,9 @@ initial_delay_ms = 1000     # 1 s (R overlay edits delays in seconds)
 max_delay_ms = 60000        # 60 s
 stable_secs = 5             # uptime before a spawn counts as up
 jitter_ratio = 0.25
+
+[clipboard]
+relay_from_pty = true       # let apps inside a session copy to your clipboard
 ```
 
 ## Development
@@ -410,6 +440,18 @@ cargo run -- --dry-run # quick sanity check
 ## Tech stack
 
 [Rust](https://www.rust-lang.org/) with [ratatui](https://ratatui.rs/) + [crossterm](https://github.com/crossterm-rs/crossterm) for the TUI, [rusqlite](https://github.com/rusqlite/rusqlite) (bundled SQLite) for storage, [nucleo](https://github.com/helix-editor/nucleo) for fuzzy search, [notify](https://github.com/notify-rs/notify) for file watching. No async runtime -- synchronous event loop with 50ms polling.
+
+## Model credits
+
+Made with dynamic workflows + adversarial-multimodel-reviews + cross-model-reviews. Models with commits, reviews, or blocked merges to their name, in order of appearance:
+
+- Opus 4.8
+- Opus 5
+- Fable 5
+- Composer 2.5
+- Grok 4.5
+- Qwen 3.8 Max
+- GPT-5.6 Luna
 
 ## License
 

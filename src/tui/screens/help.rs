@@ -71,6 +71,24 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "Back / close overlay",
     },
     HelpItem::Blank,
+    HelpItem::Section("profiles"),
+    HelpItem::Entry {
+        key: "",
+        desc: "Startup selects one isolated profile; one profile starts silently.",
+    },
+    HelpItem::Entry {
+        key: "",
+        desc: "Multiple profiles show a picker after the splash.",
+    },
+    HelpItem::Entry {
+        key: "",
+        desc: "Use sshub --profile NAME to bypass picker; --manage-profiles opens it.",
+    },
+    HelpItem::Entry {
+        key: "",
+        desc: "Picker: Enter launch, n create, r rename, d delete, Esc cancel.",
+    },
+    HelpItem::Blank,
     HelpItem::Section("hosts (tab 1)"),
     HelpItem::Entry {
         key: "a",
@@ -203,6 +221,10 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     HelpItem::Entry {
         key: "Shift+P",
         desc: "Push public key to a remote host",
+    },
+    HelpItem::Entry {
+        key: "H",
+        desc: "Open known hosts manager",
     },
     HelpItem::Entry {
         key: "Ctrl+R",
@@ -387,7 +409,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "",
-        desc: "Session logs (opt-in): ~/.local/share/sshub/logs/<host-dir>/ — managed hosts use {name}-{id}; pure ssh_config aliases may share a dir when names sanitize the same. Captures all PTY output including secrets echoed on screen.",
+        desc: "Session logs (opt-in): profile logs/<host-dir>/; captures all PTY output including secrets echoed on screen.",
     },
     HelpItem::Entry { key: "", desc: "" },
     HelpItem::Entry {
@@ -469,7 +491,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry { key: "", desc: "" },
     HelpItem::Entry {
-        key: "? / Shift+H",
+        key: "?",
         desc: "Toggle this help screen",
     },
     HelpItem::Entry {

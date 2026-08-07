@@ -9,6 +9,7 @@ pub mod keybind_editor;
 pub mod keychain;
 pub mod keygen;
 pub mod keys;
+pub mod known_hosts;
 pub mod palette;
 pub mod push_key_pickers;
 pub mod session_picker;

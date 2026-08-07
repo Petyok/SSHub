@@ -92,6 +92,7 @@ impl App {
             AppMode::BroadcastCommand => self.handle_key_broadcast_command(key),
             AppMode::BroadcastPreview => self.handle_key_broadcast_preview(key),
             AppMode::Notice => self.handle_key_notice(key),
+            AppMode::KnownHosts => self.handle_key_known_hosts(key),
             AppMode::Connecting | AppMode::Session => self.handle_key_session(key),
             AppMode::Normal => match self.active_tab {
                 1 => self.handle_key_sftp(key),
@@ -605,6 +606,9 @@ impl App {
             _ if self.is_action(KeyAction::Help, &key) => {
                 self.open_help();
             }
+            _ if self.is_action(KeyAction::KnownHosts, &key) => {
+                self.open_known_hosts();
+            }
             _ => {}
         }
         Ok(())
@@ -729,13 +733,138 @@ impl App {
         Ok(())
     }
 
+    pub(crate) fn open_known_hosts(&mut self) {
+        let path = crate::known_hosts::known_hosts_path();
+        let entries = crate::known_hosts::load_known_hosts(&path).unwrap_or_default();
+        self.known_hosts = Some(KnownHostsState {
+            entries,
+            selected: 0,
+            query: String::new(),
+            confirming_delete: false,
+            notice: None,
+            notice_is_error: false,
+        });
+        self.mode = AppMode::KnownHosts;
+    }
+
+    pub(crate) fn handle_key_known_hosts(&mut self, key: KeyEvent) -> Result<()> {
+        let is_yes = self.is_action(KeyAction::ConfirmYes, &key);
+        let Some(state) = self.known_hosts.as_mut() else {
+            self.mode = AppMode::Normal;
+            return Ok(());
+        };
+
+        if state.confirming_delete {
+            if is_yes {
+                let filtered = state.filtered_indices();
+                if let Some(&fi) = filtered.get(state.selected) {
+                    let entry = state.entries[fi].clone();
+                    let path = crate::known_hosts::known_hosts_path();
+                    match crate::known_hosts::remove_host(&entry.hosts, &path) {
+                        Ok(()) => {
+                            let entries =
+                                crate::known_hosts::load_known_hosts(&path).unwrap_or_default();
+                            state.entries = entries;
+                            state.selected = 0;
+                            state.notice = Some(format!("Removed all keys for {}", entry.hosts));
+                            state.notice_is_error = false;
+                        }
+                        Err(e) => {
+                            state.notice = Some(format!("{e}"));
+                            state.notice_is_error = true;
+                        }
+                    }
+                }
+                state.confirming_delete = false;
+            } else {
+                state.confirming_delete = false;
+            }
+            return Ok(());
+        }
+
+        match key.code {
+            KeyCode::Esc => {
+                if !state.query.is_empty() {
+                    state.query.clear();
+                    state.selected = 0;
+                } else {
+                    self.known_hosts = None;
+                    self.mode = AppMode::Normal;
+                }
+            }
+            KeyCode::Up => {
+                state.selected = state.selected.saturating_sub(1);
+                state.notice = None;
+            }
+            KeyCode::Down => {
+                let filtered = state.filtered_indices();
+                if state.selected + 1 < filtered.len() {
+                    state.selected += 1;
+                }
+                state.notice = None;
+            }
+            KeyCode::PageUp => {
+                state.selected = state.selected.saturating_sub(10);
+                state.notice = None;
+            }
+            KeyCode::PageDown => {
+                let filtered = state.filtered_indices();
+                state.selected = (state.selected + 10).min(filtered.len().saturating_sub(1));
+                state.notice = None;
+            }
+            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                state.notice = None;
+                let filtered = state.filtered_indices();
+                if let Some(&fi) = filtered.get(state.selected) {
+                    if let Some(reason) = state.entries[fi].deletion_block_reason() {
+                        state.notice = Some(reason.to_string());
+                        state.notice_is_error = true;
+                    } else {
+                        state.confirming_delete = true;
+                    }
+                }
+            }
+            KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let path = crate::known_hosts::known_hosts_path();
+                state.entries = crate::known_hosts::load_known_hosts(&path).unwrap_or_default();
+                state.selected = 0;
+                state.notice = Some("Refreshed".to_string());
+                state.notice_is_error = false;
+            }
+            KeyCode::Backspace => {
+                state.query.pop();
+                state.selected = 0;
+                state.notice = None;
+            }
+            KeyCode::Char(c)
+                if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
+                    && !c.is_control() =>
+            {
+                state.query.push(c);
+                state.selected = 0;
+                state.notice = None;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     pub(crate) fn handle_key_confirm_delete(&mut self, key: KeyEvent) -> Result<()> {
         if self.is_action(KeyAction::ConfirmYes, &key) {
             match self.pending_delete.take() {
                 Some(PendingDelete::Host { id, name }) => {
                     match self.store.delete_host(id)? {
                         DeleteHostOutcome::Deleted => {
+                            let credential_cleanup = self
+                                .password_store
+                                .delete(&crate::credentials::host_key(id))
+                                .err();
                             self.host_notice = Some(format!("Host '{name}' deleted"));
+                            if let Some(err) = credential_cleanup {
+                                self.host_notice = Some(format!(
+                                    "Host '{name}' deleted; credential cleanup failed: {err}"
+                                ));
+                            }
                             self.reload_hosts()?;
                         }
                         DeleteHostOutcome::NotLauncher => {
@@ -748,7 +877,16 @@ impl App {
                 Some(PendingDelete::Identity { id, name }) => {
                     match self.store.delete_identity(id)? {
                         crate::store::DeleteIdentityOutcome::Deleted => {
+                            let credential_cleanup = self
+                                .password_store
+                                .delete(&crate::credentials::identity_key(id))
+                                .err();
                             self.identity_notice = Some(format!("Identity '{name}' deleted"));
+                            if let Some(err) = credential_cleanup {
+                                self.identity_notice = Some(format!(
+                                    "Identity '{name}' deleted; credential cleanup failed: {err}"
+                                ));
+                            }
                             self.reload_identities()?;
                         }
                         crate::store::DeleteIdentityOutcome::InUse { host_count } => {
@@ -770,7 +908,7 @@ impl App {
                     self.enter_group_manage()?;
                 }
                 Some(PendingDelete::Tunnel { id, label }) => {
-                    let _ = self.tunnel_manager.stop_user(id);
+                    self.tunnel_manager.stop_user(id)?;
                     self.tunnel_manager.clear_user_stopped(id);
                     self.store.delete_tunnel(id)?;
                     self.tunnel_notice = Some(format!("Tunnel '{label}' deleted"));
@@ -1183,7 +1321,11 @@ impl App {
 
     /// Persist config, surfacing failures as a non-fatal host notice.
     pub(crate) fn save_config_quietly(&mut self) {
-        if let Err(e) = crate::config::save_config(&self.config) {
+        let result = match &self.profile {
+            Some(paths) => crate::config::save_config_at(&paths.config_file, &self.config),
+            None => crate::config::save_config(&self.config),
+        };
+        if let Err(e) = result {
             self.host_notice = Some(format!("Could not save config: {e}"));
         }
     }

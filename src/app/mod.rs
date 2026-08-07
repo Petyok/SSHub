@@ -180,6 +180,9 @@ pub struct App {
     /// Live theme-picker state; `Some` exactly while `mode` is
     /// [`AppMode::ThemePicker`].
     pub theme_picker: Option<ThemePickerState>,
+    /// Resolved profile workspace (databases, config, logs, tunnels). `None`
+    /// only in unit tests that inject deps directly.
+    pub profile: Option<crate::profile::ProfilePaths>,
     /// Active tag filters. A host matches when it carries every selected tag
     /// (AND). Empty means no tag filtering.
     pub tag_filters: Vec<String>,
@@ -256,6 +259,7 @@ pub struct App {
     pub host_notice: Option<String>,
     /// Message shown by the modal `AppMode::Notice` popup (e.g. a connect error).
     pub notice_popup: Option<String>,
+    pub known_hosts: Option<KnownHostsState>,
     pub sort_mode: SortMode,
     pub pending_delete: Option<PendingDelete>,
     pub pre_help_mode: Option<AppMode>,
@@ -750,24 +754,55 @@ impl App {
     }
 
     /// Build app with default resolver and on-disk metadata db.
+    ///
+    /// Compat entry point: paths come from directory overrides (or the legacy
+    /// defaults) with no profile discovery. Kept for e2e tests and the
+    /// `SSHUB_DATA_DIR`-style installs; the real startup path goes through
+    /// [`App::new_with_profile`].
     pub fn new(config: AppConfig) -> Result<Self> {
-        let data_dir = config::data_dir()?;
+        let roots = crate::profile::resolve_roots()?;
+        let ssh_config = crate::ssh::ssh_config_path()
+            .unwrap_or_else(|_| crate::ssh::expand_tilde("~/.ssh/config"));
+        let paths = crate::profile::compat_paths(&roots, ssh_config);
+        Self::new_with_profile(config, paths)
+    }
+
+    /// Build app on a resolved profile workspace (databases, config, logs,
+    /// tunnels, and credential namespace all follow `paths`).
+    pub fn new_with_profile(
+        config: AppConfig,
+        paths: crate::profile::ProfilePaths,
+    ) -> Result<Self> {
+        let data_dir = paths.root.clone();
+        let themes_dir = paths
+            .config_file
+            .parent()
+            .map(|parent| parent.join("themes"))
+            .ok_or_else(|| anyhow::anyhow!("profile config path has no parent"))?;
         std::fs::create_dir_all(&data_dir)?;
 
-        let launcher_path = data_dir.join("launcher.db");
+        let launcher_path = paths.launcher_db();
         let first_run = !launcher_path.exists();
 
-        let db_path = data_dir.join("metadata.db");
-        let metadata = Arc::new(MetadataDb::open(db_path)?);
+        let metadata = Arc::new(MetadataDb::open(paths.metadata_db())?);
         let store = Arc::new(LauncherStore::open(launcher_path)?);
-        let resolver = Box::new(SshConfigResolver::default());
+        let resolver = Box::new(SshConfigResolver::with_config_path(
+            paths.ssh_config.clone(),
+        ));
         let keyring_available = crate::credentials::check_keyring_available();
+        let prefix = paths.credential_prefix();
         let password_store: Box<dyn crate::credentials::PasswordStore> = if keyring_available {
-            let _ = crate::credentials::migrate_fallback_to_keyring();
-            Box::new(crate::credentials::OsKeyring)
+            let _ = crate::credentials::migrate_fallback_to_keyring(&paths.credentials_file());
+            Box::new(crate::credentials::NamespacedPasswordStore::new(
+                Box::new(crate::credentials::OsKeyring),
+                prefix,
+            ))
         } else {
-            Box::new(crate::credentials::FilePasswordStore::new(
-                data_dir.join("credentials.json"),
+            Box::new(crate::credentials::NamespacedPasswordStore::new(
+                Box::new(crate::credentials::FilePasswordStore::new(
+                    paths.credentials_file(),
+                )),
+                prefix,
             ))
         };
 
@@ -780,6 +815,7 @@ impl App {
                 password_store,
             },
         );
+        app.profile = Some(paths);
         if !keyring_available {
             app.host_notice =
                 Some("OS keyring unavailable. Using credentials.json fallback.".into());
@@ -789,13 +825,7 @@ impl App {
         // place when the first frame draws. Non-fatal by construction: no
         // branch here may `?`, because `default` is embedded and SSHub must
         // start even with a broken themes directory.
-        match config::config_dir() {
-            Ok(dir) => app.load_themes_from(&dir.join("themes")),
-            Err(e) => append_host_notice(
-                &mut app.host_notice,
-                format!("Theme: no config directory ({e}); using the built-in themes"),
-            ),
-        }
+        app.load_themes_from(&themes_dir);
 
         app.reload_hosts()?;
         app.refresh_auth_cache();
@@ -831,6 +861,7 @@ impl App {
             search_query: String::new(),
             mode: AppMode::Normal,
             config,
+            profile: None,
             tag_filters: Vec::new(),
             tag_filter_selected: 0,
             watcher_rx: None,
@@ -871,6 +902,7 @@ impl App {
             group_notice: None,
             host_notice: None,
             notice_popup: None,
+            known_hosts: None,
             sort_mode: SortMode::default(),
             pending_delete: None,
             pre_help_mode: None,
@@ -983,6 +1015,16 @@ impl App {
 
     pub fn set_watcher_rx(&mut self, rx: Receiver<WatchEvent>) {
         self.watcher_rx = Some(rx);
+    }
+
+    /// Base directory for session logs and other profile runtime files.
+    /// Falls back to the legacy data dir for apps built without a profile
+    /// (unit tests injecting deps).
+    pub fn runtime_data_dir(&self) -> Option<std::path::PathBuf> {
+        self.profile
+            .as_ref()
+            .map(|p| p.root.clone())
+            .or_else(|| config::data_dir().ok())
     }
 
     /// Refresh the auth events cache if more than 10 seconds have elapsed.

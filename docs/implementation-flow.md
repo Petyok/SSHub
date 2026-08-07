@@ -70,6 +70,33 @@ git checkout -b feature/short-description
 - **Name:** `feature/*` for features; `fix/*` for bugfixes is fine.
 - **Do not** bump `Cargo.toml` version on the feature branch — versioning is automated on `development` and at release.
 
+### Epic and PoC branches
+
+Large epics and feasibility work may use a stacked branch topology:
+
+```text
+development
+└── feature/host-sync              # integration branch
+    ├── poc/model                  # child PoC branch
+    ├── poc/oplog
+    └── poc/transport
+```
+
+- Create the epic integration branch from `development`.
+- Create independent PoCs or stages from the integration branch.
+- A dependent PoC may branch from another PoC only when it needs that PoC's
+  proven contract.
+- Child PoC PRs may target the epic integration branch for review. They are
+  exploratory and must report measurements and `PASS`, `FAIL`, or `BLOCKED`;
+  they are not release PRs.
+- Merge or cherry-pick only validated results into the integration branch.
+- Open one final production PR from the integration branch to `development`.
+- Do not merge failed spikes or leave throwaway APIs in the final branch.
+- Delete child branches after their result is merged or documented and closed.
+
+For small features, keep the normal direct flow:
+`feature/* -> development -> main`.
+
 ## 3. Implement
 
 - Keep PRs focused: one feature or fix per PR.
@@ -126,7 +153,7 @@ This catches doc drift, wrong API names, regressions, and scope creep that unit 
 
 | Field | Rule |
 |-------|------|
-| **Target** | `development` only |
+| **Target** | `development` for production PRs; an epic integration branch is allowed for exploratory child PoCs/stages |
 | **Title** | Conventional commits: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `build:`, `ci:`, `chore:` |
 | **Body** | What changed and why; how you tested; `Closes #N`; security notes if relevant |
 | **Scope** | One logical change set |
