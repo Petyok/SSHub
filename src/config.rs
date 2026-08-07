@@ -556,13 +556,47 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
         if file_type.is_symlink() {
             return Err(rejected(&path, "a symlink"));
         } else if file_type.is_dir() {
+            // The directory is still path-based after this check. Closing that
+            // replacement race requires an fd-based openat traversal.
             copy_dir_recursive(&path, &dest_path)?;
         } else if file_type.is_file() {
-            fs::copy(&path, &dest_path)?;
+            copy_regular_file(&path, &dest_path)?;
         } else {
             return Err(rejected(&path, "a special file"));
         }
     }
+    Ok(())
+}
+
+/// Copy one regular file without resolving a replacement symlink on Unix.
+fn copy_regular_file(src: &Path, dst: &Path) -> std::io::Result<()> {
+    let mut source_options = fs::OpenOptions::new();
+    source_options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        source_options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let mut source = source_options.open(src)?;
+    let source_metadata = source.metadata()?;
+    if !source_metadata.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("refusing to copy a special file: {}", src.display()),
+        ));
+    }
+
+    let mut destination_options = fs::OpenOptions::new();
+    destination_options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        destination_options.mode(source_metadata.permissions().mode());
+    }
+    let mut destination = destination_options.open(dst)?;
+    std::io::copy(&mut source, &mut destination)?;
+    #[cfg(unix)]
+    destination.set_permissions(source_metadata.permissions())?;
     Ok(())
 }
 
@@ -704,6 +738,29 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn copy_regular_file_rejects_a_replaced_symlink_source() {
+        let root = tempfile::tempdir().unwrap();
+        let source_dir = root.path().join("legacy");
+        std::fs::create_dir(&source_dir).unwrap();
+        let secret = root.path().join("outside-secret");
+        std::fs::write(&secret, "PRIVATE KEY MATERIAL\n").unwrap();
+        let replaced_source = source_dir.join("credentials.json");
+        std::os::unix::fs::symlink(&secret, &replaced_source).unwrap();
+        let destination = root.path().join("sshub/credentials.json");
+        std::fs::create_dir(destination.parent().unwrap()).unwrap();
+
+        let error = copy_regular_file(&replaced_source, &destination).unwrap_err();
+
+        assert_eq!(error.raw_os_error(), Some(libc::ELOOP));
+        assert!(
+            !destination.exists(),
+            "the symlink target was copied into {}",
+            destination.display()
+        );
+    }
+
     /// The legacy root itself being a symlink is the same refusal.
     #[cfg(unix)]
     #[test]
@@ -723,6 +780,51 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(real.join("config.toml")).unwrap(),
             "# real\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn migration_preserves_restrictive_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let legacy = root.path().join("legacy");
+        std::fs::create_dir(&legacy).unwrap();
+        let source = legacy.join("credentials.json");
+        std::fs::write(&source, "secret\n").unwrap();
+        std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        let new_dir = root.path().join("sshub");
+        migrate_legacy_dir(&new_dir, &legacy);
+
+        let destination = new_dir.join("credentials.json");
+        assert_eq!(std::fs::read_to_string(&destination).unwrap(), "secret\n");
+        assert_eq!(
+            destination.metadata().unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[test]
+    fn migration_copies_nested_regular_files() {
+        let root = tempfile::tempdir().unwrap();
+        let legacy = root.path().join("legacy");
+        let nested = legacy.join("themes/custom");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(legacy.join("config.toml"), "# legacy\n").unwrap();
+        std::fs::write(nested.join("theme.toml"), "name = \"custom\"\n").unwrap();
+
+        let new_dir = root.path().join("sshub");
+        migrate_legacy_dir(&new_dir, &legacy);
+
+        assert_eq!(
+            std::fs::read_to_string(new_dir.join("config.toml")).unwrap(),
+            "# legacy\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(new_dir.join("themes/custom/theme.toml")).unwrap(),
+            "name = \"custom\"\n"
         );
     }
 
