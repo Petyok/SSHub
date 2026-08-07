@@ -358,12 +358,12 @@ pub fn save_config_at(path: &Path, config: &AppConfig) -> anyhow::Result<()> {
         fs::create_dir_all(parent)?;
         crate::secure_fs::restrict_dir(parent);
     }
-    let existing = fs::read_to_string(&path).unwrap_or_default();
+    let existing = fs::read_to_string(path).unwrap_or_default();
     let merged = merge_config_document(&existing, config)?;
 
     let tmp = path.with_extension("toml.tmp");
     write_private_file(&tmp, merged.as_bytes())?;
-    fs::rename(&tmp, &path)?;
+    fs::rename(&tmp, path)?;
     Ok(())
 }
 
