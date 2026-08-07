@@ -4,6 +4,27 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The README GIFs and screenshots are recorded from the terminal stream now,
+  not screenshotted** - and four of the five GIFs had no animation in them at
+  all. Two separate faults: every tape except `hero` switched
+  `disable_animation` on in its hidden setup (a way to skip the intro animation
+  that predates the motion pass, and also the reduced-motion toggle, so it
+  silenced every slide), and the recorder itself sampled the screen on a timer.
+  VHS renders the session in a headless browser and screenshots it; SSHub redraws
+  at ~60fps while animating, its capture rate collapsed under that, and because
+  the video is written at a constant frame rate the frames it missed came out as
+  a sped-up recording - measured at 0.28x real time on `navigate`, with
+  transitions down to three frames. Recording the PTY byte stream with its
+  timestamps (asciicast, rendered by `agg`) makes the timeline exact by
+  construction: all five now play at 1.00x, animations included, and take 3.1 MB
+  instead of 7.2 MB. `demo/record.py` replaces the tapes and checks each take
+  against the timing its scenario asked for.
+- **The SFTP browser showed your full home path**, and the recordings published
+  it: the local pane now collapses `$HOME` to `~`, the way the config scope line
+  already did. The remote pane is untouched, since its paths are the server's.
+
 ## [0.11.0] - 2026-07-30
 
 ### Added

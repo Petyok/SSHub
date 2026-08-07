@@ -231,6 +231,7 @@ fn render_browser(
         local_rect,
         &state.local,
         left_title,
+        state.left_host.is_none(),
         state.focus == Focus::Local,
         state.searching && state.focus == Focus::Local,
         StyleRole::SftpLocal,
@@ -244,6 +245,7 @@ fn render_browser(
         remote_rect,
         &state.remote,
         "remote",
+        false,
         state.focus == Focus::Remote,
         state.searching && state.focus == Focus::Remote,
         StyleRole::SftpRemote,
@@ -279,6 +281,10 @@ fn render_pane(
     rect: Rect,
     pane: &Pane,
     title: &str,
+    // Whether `pane` is this machine's filesystem, so its path can be shown with
+    // `$HOME` collapsed. The left pane may be pointed at a second server instead,
+    // whose paths have nothing to do with our home directory.
+    is_local: bool,
     focused: bool,
     searching: bool,
     // The pane's own directory-entry role: `sftp.local` on the left,
@@ -304,7 +310,12 @@ fn render_pane(
     };
     // Subtitle makes an *applied* filter obvious even when not actively typing.
     let count = if pane.filter.is_empty() {
-        format!("{} · {}{}", pane.cwd.display(), vis_n, hidden_note)
+        let shown = if is_local {
+            crate::app::contract_home(&pane.cwd)
+        } else {
+            pane.cwd.display().to_string()
+        };
+        format!("{} · {}{}", shown, vis_n, hidden_note)
     } else {
         format!(
             "filter: {} ({}/{}){}",
