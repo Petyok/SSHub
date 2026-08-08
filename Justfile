@@ -10,6 +10,32 @@ test:
     cargo test --test e2e
     cargo test --test config_load
 
+# Coverage, plus the functions no test executes even once (docs/coverage-map.md).
+coverage:
+    #!/usr/bin/env bash
+    # Regenerates the tables in docs/coverage-map.md — read that file for why the
+    # never-executed list matters more than the percentage, and for the two ways
+    # this report is easy to misread.
+    #
+    # Needs cargo-llvm-cov plus llvm-cov/llvm-profdata. With rustup that is
+    # `cargo install cargo-llvm-cov` + `rustup component add llvm-tools-preview`;
+    # on a distro toolchain (no rustup) install the system `llvm` package
+    # instead — the recipe finds those binaries itself.
+    set -euo pipefail
+    command -v cargo-llvm-cov >/dev/null || { echo "cargo-llvm-cov not installed — see the comments in this recipe" >&2; exit 1; }
+    # Distro toolchains have no llvm-tools-preview; point cargo-llvm-cov at the
+    # system binaries when they are the only ones present.
+    if ! command -v rustup >/dev/null; then
+        export LLVM_COV="${LLVM_COV:-$(command -v llvm-cov)}"
+        export LLVM_PROFDATA="${LLVM_PROFDATA:-$(command -v llvm-profdata)}"
+    fi
+    out=$(mktemp -d)/cov.json
+    cargo llvm-cov --json --output-path "$out"
+    cargo llvm-cov --summary-only
+    echo
+    echo "Functions no test executes even once (src/ only, largest first):"
+    scripts/uncovered-functions.py "$out"
+
 # Build release binary (install depends on this recipe — no cargo in the install script).
 build:
     cargo build --release
