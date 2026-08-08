@@ -156,22 +156,8 @@ impl Ssh2Transport {
                 }
                 match keytype_name(key_type) {
                     Some(kt_name) => {
-                        let hostspec = if port == 22 {
-                            host.to_string()
-                        } else {
-                            format!("[{host}]:{port}")
-                        };
-                        // Prefix a newline if the existing file doesn't already
-                        // end in one, so we never concatenate onto a prior entry.
-                        let needs_nl = std::fs::read(&path)
-                            .ok()
-                            .map(|b| !b.is_empty() && b.last() != Some(&b'\n'))
-                            .unwrap_or(false);
-                        let line = format!(
-                            "{}{hostspec} {kt_name} {}\n",
-                            if needs_nl { "\n" } else { "" },
-                            b64encode(key)
-                        );
+                        let existing = std::fs::read(&path).unwrap_or_default();
+                        let line = known_hosts_entry(host, port, kt_name, key, &existing);
                         let mut f = std::fs::OpenOptions::new()
                             .create(true)
                             .append(true)
@@ -523,6 +509,30 @@ fn temp_sibling(path: &Path) -> PathBuf {
 
 /// OpenSSH known_hosts key-type token for a libssh2 host-key type, if we can
 /// serialize it ourselves. None → let libssh2 write the file instead.
+/// Render one OpenSSH `known_hosts` entry for a host key learned on first use.
+///
+/// This is hand-rolled rather than delegated to libssh2's `write_file` (which
+/// rewrites the whole file and drops lines it cannot parse), so the format is
+/// sshub's own invention and has to be checked against OpenSSH — see
+/// `entries_are_readable_by_ssh_keygen` below and docs/oracle-tests.md.
+///
+/// `existing` is the current file content: one that does not end in a newline
+/// gets one prepended, so an entry can never be concatenated onto the previous
+/// line. Port 22 is written bare, any other port in the `[host]:port` form.
+fn known_hosts_entry(host: &str, port: u16, key_type: &str, key: &[u8], existing: &[u8]) -> String {
+    let hostspec = if port == 22 {
+        host.to_string()
+    } else {
+        format!("[{host}]:{port}")
+    };
+    let lead = if !existing.is_empty() && existing.last() != Some(&b'\n') {
+        "\n"
+    } else {
+        ""
+    };
+    format!("{lead}{hostspec} {key_type} {}\n", b64encode(key))
+}
+
 fn keytype_name(kt: ssh2::HostKeyType) -> Option<&'static str> {
     use ssh2::HostKeyType::*;
     match kt {
@@ -559,4 +569,125 @@ fn b64encode(data: &[u8]) -> String {
         });
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+
+    /// Minimal standard-base64 decode — only needed to turn a real `.pub` file
+    /// back into the raw key blob `known_hosts_entry` takes. The encoder it
+    /// mirrors lives in `b64encode` above.
+    fn b64decode(s: &str) -> Vec<u8> {
+        const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let (mut out, mut acc, mut bits) = (Vec::new(), 0u32, 0u8);
+        for c in s.bytes().filter(|c| *c != b'=') {
+            let v = A.iter().position(|a| *a == c).expect("base64 alphabet") as u32;
+            acc = (acc << 6) | v;
+            bits += 6;
+            if bits >= 8 {
+                bits -= 8;
+                out.push((acc >> bits) as u8);
+            }
+        }
+        out
+    }
+
+    /// Differential test against OpenSSH: the entries sshub writes must be ones
+    /// `ssh-keygen` finds by host *and* parses back to the same key. `-F` alone
+    /// is not enough — it matches on the host column and happily reports a line
+    /// whose key blob is garbage. `-l` is what parses the blob, and it *skips*
+    /// unparseable lines silently, so the count of fingerprints is the assertion
+    /// that catches a corrupt one.
+    #[test]
+    fn entries_are_readable_by_ssh_keygen() {
+        // `-?` is an invalid flag: it prints usage and exits without touching
+        // anything. Only a spawn failure means the binary is missing.
+        if Command::new("ssh-keygen").arg("-?").output().is_err() {
+            eprintln!("skipping: no ssh-keygen binary");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let key = dir.path().join("k");
+        let gen = Command::new("ssh-keygen")
+            .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+            .arg(&key)
+            .output()
+            .unwrap();
+        assert!(gen.status.success(), "ssh-keygen -t ed25519 failed");
+
+        let pubfile = std::fs::read_to_string(key.with_extension("pub")).unwrap();
+        let blob = b64decode(pubfile.split_whitespace().nth(1).unwrap());
+
+        // Append twice, each entry built against the file as it stands at that
+        // moment — the way `verify_host_key` does it. The first lands on a
+        // hand-edited file whose last line has no terminator, which is the case
+        // the leading-newline logic exists for; the second lands on a file that
+        // now ends cleanly and must not gain a blank line.
+        let kh = dir.path().join("known_hosts");
+        let mut file = String::from("# a hand-edited file with no trailing newline");
+        file.push_str(&known_hosts_entry(
+            "realhost",
+            22,
+            "ssh-ed25519",
+            &blob,
+            file.as_bytes(),
+        ));
+        file.push_str(&known_hosts_entry(
+            "realhost",
+            2222,
+            "ssh-ed25519",
+            &blob,
+            file.as_bytes(),
+        ));
+        std::fs::write(&kh, &file).unwrap();
+
+        assert_eq!(
+            file.lines().count(),
+            3,
+            "an entry was concatenated onto the previous line, or added a blank one:\n{file}"
+        );
+
+        for hostspec in ["realhost", "[realhost]:2222"] {
+            let found = Command::new("ssh-keygen")
+                .args(["-F", hostspec, "-f"])
+                .arg(&kh)
+                .output()
+                .unwrap();
+            assert!(
+                found.status.success() && !found.stdout.is_empty(),
+                "ssh-keygen -F did not find {hostspec} in the entry we wrote"
+            );
+        }
+
+        // Fingerprint of the source key, per OpenSSH itself.
+        let want = Command::new("ssh-keygen")
+            .arg("-lf")
+            .arg(key.with_extension("pub"))
+            .output()
+            .unwrap();
+        let want_fp = String::from_utf8(want.stdout).unwrap();
+        let want_fp = want_fp.split_whitespace().nth(1).unwrap().to_string();
+
+        let listed = Command::new("ssh-keygen")
+            .arg("-lf")
+            .arg(&kh)
+            .output()
+            .unwrap();
+        let listed = String::from_utf8(listed.stdout).unwrap();
+        let fps: Vec<&str> = listed.lines().collect();
+        assert_eq!(
+            fps.len(),
+            2,
+            "ssh-keygen -l skipped an entry it could not parse:\n{listed}"
+        );
+        for line in fps {
+            assert_eq!(
+                line.split_whitespace().nth(1),
+                Some(want_fp.as_str()),
+                "entry does not round-trip to the source key: {line}"
+            );
+        }
+    }
 }
