@@ -17,12 +17,14 @@ SSHub has **no async runtime**. Everything is driven by one synchronous event lo
 1. **Drain sessions** — every open embedded session's PTY is drained and resized; a `Connecting` session is promoted to `Session` on first output.
 2. **Draw** — `terminal.draw` renders via `tui::render`.
 3. **Drain input** — `poll_keys_and_watcher` drains *all* queued crossterm events per frame (the code notes that draining only one would make "paste into an embedded session crawl at ~20 chars/sec"), then non-blocking `try_recv` drains of every worker channel:
+<!-- openwiki: broken internal link [#file-watcher] heading anchor "file-watcher" does not exist in /openwiki/architecture/overview.md. Fix the href or restore the target, then delete this comment. -->
    - config [file watcher](#file-watcher) → `app.reload_hosts()`
    - ping worker (30 s interval, ring buffer of 30 samples per host)
    - SFTP worker events → `apply_sftp_event` (see [sessions & SFTP](../workflows/sessions-sftp.md))
    - SSH probe logs, OS-detect worker results
    - `tick_tunnels()` keep-alive (see [tunnels](../workflows/tunnels.md))
    - auth-events cache refresh (10 s)
+   - broadcast worker events → `tick_broadcast()` (see [broadcast commands](../workflows/broadcast.md))
 
 A headless variant (`run_headless_loop`) renders once on a ratatui `TestBackend` and quits — used by `SSHUB_AUTO_QUIT`/`--dry-run` and by smoke tests (see [testing strategy](../testing/strategy.md)).
 

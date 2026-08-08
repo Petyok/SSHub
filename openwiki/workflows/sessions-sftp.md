@@ -35,7 +35,7 @@ Per-host `SessionTransport::{Ssh, Mosh}` selected in the host form. Embedded ses
 
 ## SFTP (`src/sftp/`)
 
-A dual-pane (remote/local) file browser with a staged transfer queue: navigate both sides, queue uploads/downloads (files or whole folders, recursive), and run the queue with a progress bar. In-place ops: delete `d`, new folder `n`, rename/move `R`, chmod `M` (octal).
+A dual-pane file browser with a staged transfer queue: the left pane is local and the right pane is remote by default. Navigate both sides, queue uploads/downloads (files or whole folders, recursive), and run the queue with a progress bar. The left pane can instead browse a second remote host, allowing host-to-host transfers through a local temporary file relay; `o` selects the second host and `O` returns to local files. In-place ops: delete `d`, new folder `n`, rename/move `R`, chmod `M` (octal).
 
 - **`transport.rs`** — `SftpTransport` trait (test seam) with `Ssh2Transport` over the `ssh2` crate (libssh2, vendored OpenSSL so `cargo install` needs no system libssh2). TOFU host-key policy mirroring `accept-new`: unknown keys are appended to `~/.ssh/known_hosts` **manually** because libssh2's `write_file` would drop unparsable lines; a *changed* key is a hard MITM error. Auth order: stored passphrase → `userauth_pubkey_file`; password → `userauth_password`; else agent / unencrypted key.
 - **`worker.rs`** — the blocking transport lives on a dedicated thread (`spawn_sftp_worker`) serving `SftpCommand::{ListDir, RunQueue, Remove, Mkdir, Rename, Chmod, Cancel}` and emitting `SftpEvent::{Connected, ConnectFailed, DirListing, Progress, TransferDone, QueueDone, OpDone, Error}`. Progress events are throttled at 64 KiB; recursive transfers pre-plan the tree (still polling Cancel); symlinks are never descended.
@@ -45,5 +45,6 @@ Limitations: **ProxyJump hosts are refused** (libssh2 transport can't chain; `sr
 
 ## Change guidance
 
-- Session regressions: `src/app/tests/session.rs` + `tests/e2e/connect_managed.rs`.
+- Session regressions: `src/app/tests/session.rs` + `tests/e2e/connect_managed.rs`. `Ctrl+Shift+T` also opens a local-shell PTY tab through `src/app/local_shell.rs`, using the same detach and close lifecycle without SSH host resolution.
+- SFTP regressions: second-server selection and pane switching are owned by `src/app/sftp.rs` and `src/sftp/model.rs`; cover them with `src/app/tests/sftp.rs`.
 - SFTP logic changes belong in `model.rs` (pure) where possible; transport changes go through the `SftpTransport` trait so tests can substitute a fake. See `tests/e2e/quick_connect.rs` and `src/app/tests/sftp.rs`.
