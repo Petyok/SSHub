@@ -400,6 +400,16 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
+    (@fn known_hosts_delete $($key:literal),* $(,)?) => {
+        fn default_kb_known_hosts_delete() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
+    (@fn known_hosts_refresh $($key:literal),* $(,)?) => {
+        fn default_kb_known_hosts_refresh() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
 }
 
 kb_defaults! {
@@ -481,6 +491,8 @@ kb_defaults! {
     broadcast => ["b"],
     broadcast_cancel => ["x"],
     known_hosts => ["H"],
+    known_hosts_delete => ["Ctrl+D"],
+    known_hosts_refresh => ["Ctrl+R"],
 }
 /// An action whose keybinding is user-configurable and editable in the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -563,11 +575,13 @@ pub enum KeyAction {
     Broadcast,
     BroadcastCancel,
     KnownHosts,
+    KnownHostsDelete,
+    KnownHostsRefresh,
 }
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 78] = [
+    pub const ALL: [KeyAction; 80] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -646,6 +660,8 @@ impl KeyAction {
         KeyAction::Broadcast,
         KeyAction::BroadcastCancel,
         KeyAction::KnownHosts,
+        KeyAction::KnownHostsDelete,
+        KeyAction::KnownHostsRefresh,
     ];
 
     pub fn label(self) -> &'static str {
@@ -728,6 +744,8 @@ impl KeyAction {
             KeyAction::Broadcast => "Broadcast command",
             KeyAction::BroadcastCancel => "Cancel broadcast",
             KeyAction::KnownHosts => "Known hosts",
+            KeyAction::KnownHostsDelete => "Known hosts: delete",
+            KeyAction::KnownHostsRefresh => "Known hosts: refresh",
         }
     }
 }
@@ -891,6 +909,10 @@ pub struct KeybindsConfig {
     pub broadcast_cancel: Vec<String>,
     #[serde(default = "default_kb_known_hosts")]
     pub known_hosts: Vec<String>,
+    #[serde(default = "default_kb_known_hosts_delete")]
+    pub known_hosts_delete: Vec<String>,
+    #[serde(default = "default_kb_known_hosts_refresh")]
+    pub known_hosts_refresh: Vec<String>,
 }
 
 impl Default for KeybindsConfig {
@@ -974,6 +996,8 @@ impl Default for KeybindsConfig {
             broadcast: default_kb_broadcast(),
             broadcast_cancel: default_kb_broadcast_cancel(),
             known_hosts: default_kb_known_hosts(),
+            known_hosts_delete: default_kb_known_hosts_delete(),
+            known_hosts_refresh: default_kb_known_hosts_refresh(),
         }
     }
 }
@@ -1059,6 +1083,8 @@ impl KeybindsConfig {
             KeyAction::Broadcast => default_kb_broadcast(),
             KeyAction::BroadcastCancel => default_kb_broadcast_cancel(),
             KeyAction::KnownHosts => default_kb_known_hosts(),
+            KeyAction::KnownHostsDelete => default_kb_known_hosts_delete(),
+            KeyAction::KnownHostsRefresh => default_kb_known_hosts_refresh(),
         }
     }
 
@@ -1219,6 +1245,8 @@ impl KeybindsConfig {
             KeyAction::Broadcast => &self.broadcast,
             KeyAction::BroadcastCancel => &self.broadcast_cancel,
             KeyAction::KnownHosts => &self.known_hosts,
+            KeyAction::KnownHostsDelete => &self.known_hosts_delete,
+            KeyAction::KnownHostsRefresh => &self.known_hosts_refresh,
         }
     }
 
@@ -1302,6 +1330,8 @@ impl KeybindsConfig {
             KeyAction::Broadcast => self.broadcast = binds,
             KeyAction::BroadcastCancel => self.broadcast_cancel = binds,
             KeyAction::KnownHosts => self.known_hosts = binds,
+            KeyAction::KnownHostsDelete => self.known_hosts_delete = binds,
+            KeyAction::KnownHostsRefresh => self.known_hosts_refresh = binds,
         }
     }
 

@@ -14,6 +14,15 @@ All notable changes to SSHub are documented in this file.
   single profile. Existing directory overrides remain compatibility mode, and
   legacy top-level data migrates safely into `profiles/default`.
 
+### Fixed
+
+- **Known hosts manager follow-ups** (issue #89) - fingerprint each
+  `known_hosts` line independently so inline key comments no longer leave the
+  fingerprint column blank; load/refresh errors surface in the overlay instead
+  of masquerading as an empty file; refuse edits on a symlinked `known_hosts`;
+  refuse deleting negated-pattern (`!host`) rows; wire delete and refresh to
+  remappable `KeyAction`s (`Ctrl+D` / `Ctrl+R` by default).
+
 ## [0.13.0] - 2026-08-03
 
 ### Added

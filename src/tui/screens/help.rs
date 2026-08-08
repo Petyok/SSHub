@@ -199,6 +199,14 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "Open known hosts manager",
     },
     HelpItem::Entry {
+        key: "Ctrl+D",
+        desc: "In known hosts: delete selected host keys",
+    },
+    HelpItem::Entry {
+        key: "Ctrl+R",
+        desc: "In known hosts: refresh from disk",
+    },
+    HelpItem::Entry {
         key: "Ctrl+R",
         desc: "In a form: show and copy the stored secret",
     },

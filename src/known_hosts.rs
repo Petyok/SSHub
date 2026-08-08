@@ -1,7 +1,7 @@
-use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::process::Stdio;
 
 use anyhow::{Context, Result};
 
@@ -38,6 +38,8 @@ impl KnownHostEntry {
             Some("Cannot delete hashed entry \u{2014} run ssh-keygen -R <host> manually, or set HashKnownHosts no")
         } else if self.marker.is_some() {
             Some("Cannot delete @cert-authority / @revoked entries \u{2014} edit ~/.ssh/known_hosts manually")
+        } else if self.hosts.starts_with('!') {
+            Some("Cannot delete negated-pattern entries \u{2014} edit ~/.ssh/known_hosts manually")
         } else if self.hosts.contains('*') || self.hosts.contains('?') {
             Some("Cannot delete wildcard entries \u{2014} edit ~/.ssh/known_hosts manually")
         } else {
@@ -63,45 +65,39 @@ pub fn known_hosts_path() -> PathBuf {
     Path::new(&home).join(".ssh").join("known_hosts")
 }
 
+fn parse_line(line: &str) -> Option<KnownHostEntry> {
+    let mut fields = line.split_whitespace();
+    let first = fields.next()?;
+
+    let (marker, hosts) = match first {
+        "@cert-authority" => (Some(Marker::CertAuthority), fields.next()),
+        "@revoked" => (Some(Marker::Revoked), fields.next()),
+        _ => (None, Some(first)),
+    };
+
+    let hosts = hosts?;
+    let key_type = fields.next()?;
+    fields.next()?;
+
+    Some(KnownHostEntry {
+        marker,
+        hosts: hosts.to_string(),
+        key_type: key_type.to_string(),
+        fingerprint: None,
+    })
+}
+
 pub fn parse_known_hosts(content: &str) -> Vec<KnownHostEntry> {
-    let mut entries = Vec::new();
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let mut fields = line.split_whitespace();
-        let first = match fields.next() {
-            Some(f) => f,
-            None => continue,
-        };
-
-        let (marker, hosts) = match first {
-            "@cert-authority" => (Some(Marker::CertAuthority), fields.next()),
-            "@revoked" => (Some(Marker::Revoked), fields.next()),
-            _ => (None, Some(first)),
-        };
-
-        let hosts = match hosts {
-            Some(h) => h,
-            None => continue,
-        };
-        let key_type = match fields.next() {
-            Some(t) => t,
-            None => continue,
-        };
-        if fields.next().is_none() {
-            continue;
-        }
-
-        entries.push(KnownHostEntry {
-            marker,
-            hosts: hosts.to_string(),
-            key_type: key_type.to_string(),
-            fingerprint: None,
-        });
-    }
-    entries
+    content
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+            parse_line(line)
+        })
+        .collect()
 }
 
 fn normalize_key_type(raw: &str) -> String {
@@ -119,62 +115,66 @@ fn normalize_key_type(raw: &str) -> String {
     }
 }
 
-fn fingerprints(path: &Path) -> HashMap<(String, String), Vec<String>> {
-    let mut map: HashMap<(String, String), Vec<String>> = HashMap::new();
-    let Ok(output) = Command::new("ssh-keygen")
-        .args(["-l", "-f"])
-        .arg(path)
-        .output()
-    else {
-        return map;
-    };
+/// Fingerprint one `known_hosts` line via `ssh-keygen -l -f -`, independent of
+/// whatever comment ssh-keygen would use as the display name on the whole file.
+fn fingerprint_line(line: &str) -> Option<String> {
+    let mut child = Command::new("ssh-keygen")
+        .args(["-l", "-f", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(line.as_bytes());
+        let _ = stdin.write_all(b"\n");
+    }
+    let output = child.wait_with_output().ok()?;
     if !output.status.success() {
-        return map;
+        return None;
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        let mut parts = line.split_whitespace();
-        let _bits = parts.next();
-        let fp = match parts.next() {
-            Some(fp) if fp.starts_with("SHA256:") => fp,
-            _ => continue,
-        };
-        let name = match parts.next() {
-            Some(n) => n,
-            None => continue,
-        };
-        let type_raw = match parts.next() {
-            Some(t) => t.trim_start_matches('(').trim_end_matches(')'),
-            None => continue,
-        };
-        map.entry((name.to_string(), type_raw.to_string()))
-            .or_default()
-            .push(fp.to_string());
-    }
-    map
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().find(|t| t.starts_with("SHA256:")))
+        .map(str::to_string)
 }
 
 pub fn load_known_hosts(path: &Path) -> Result<Vec<KnownHostEntry>> {
     let content =
         std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let mut entries = parse_known_hosts(&content);
-    let mut fps = fingerprints(path);
-    for entry in &mut entries {
-        if entry.marker.is_some() {
+    let mut entries = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
-        let norm = normalize_key_type(&entry.key_type);
-        let key = (entry.hosts.clone(), norm);
-        if let Some(list) = fps.get_mut(&key) {
-            if !list.is_empty() {
-                entry.fingerprint = Some(list.remove(0));
-            }
+        let mut entry = match parse_line(trimmed) {
+            Some(e) => e,
+            None => continue,
+        };
+        if entry.marker.is_none() {
+            entry.fingerprint = fingerprint_line(trimmed);
         }
+        entries.push(entry);
     }
     Ok(entries)
 }
 
+fn ensure_regular_known_hosts_file(path: &Path) -> Result<()> {
+    let meta =
+        std::fs::symlink_metadata(path).with_context(|| format!("stat {}", path.display()))?;
+    if meta.file_type().is_symlink() {
+        anyhow::bail!(
+            "refusing to edit symlinked known_hosts at {} — edit the link target manually",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
 pub fn remove_host(name: &str, path: &Path) -> Result<()> {
+    ensure_regular_known_hosts_file(path)?;
     // Preflight on a temp copy: ssh-keygen -R matches host patterns, so deleting
     // `host.example.com` also removes `*.example.com`. The UI refuses deleting
     // wildcard rows; refuse here too when -R would take them as collateral.
@@ -469,11 +469,54 @@ debug1: Server host key: ssh-ed25519 SHA256:wTZYfLI5nCdGqxsM2v45Z90mFjK3kCQh8mFj
             .unwrap()
             .contains("wildcard"));
 
+        let negated = KnownHostEntry {
+            hosts: "!host.example.com".to_string(),
+            ..plain.clone()
+        };
+        assert!(negated.deletion_block_reason().unwrap().contains("negated"));
+
         let port = KnownHostEntry {
             hosts: "[host.example.com]:2222".to_string(),
             ..plain
         };
         assert_eq!(port.deletion_block_reason(), None);
+    }
+
+    #[test]
+    fn fingerprint_joins_lines_with_inline_comments() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "host-a.example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBbSwmRXm0WEQzC3oHnJkV0tBk3kCQh8mFjWz3nLx9oK user@comment-here"
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "host-b.example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHnXmK4oXsQmBpDPn8l0V3aFk7R2sYw9cT5uN1eMx6Qb"
+        )
+        .unwrap();
+        file.flush().unwrap();
+
+        let entries = load_known_hosts(file.path()).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert!(
+            entries[0].fingerprint.is_some(),
+            "commented entry must still get a fingerprint"
+        );
+        assert!(entries[1].fingerprint.is_some());
+    }
+
+    #[test]
+    fn remove_host_refuses_symlinked_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("known_hosts");
+        std::fs::write(&target, "host.example.com ssh-ed25519 AAAA\n").unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let err = remove_host("host.example.com", &link).unwrap_err();
+        assert!(err.to_string().contains("symlink"));
+        let contents = std::fs::read_to_string(&target).unwrap();
+        assert!(contents.contains("host.example.com"));
     }
 
     #[test]

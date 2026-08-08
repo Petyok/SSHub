@@ -734,20 +734,29 @@ impl App {
 
     pub(crate) fn open_known_hosts(&mut self) {
         let path = crate::known_hosts::known_hosts_path();
-        let entries = crate::known_hosts::load_known_hosts(&path).unwrap_or_default();
-        self.known_hosts = Some(KnownHostsState {
-            entries,
+        let mut state = KnownHostsState {
+            entries: Vec::new(),
             selected: 0,
             query: String::new(),
             confirming_delete: false,
             notice: None,
             notice_is_error: false,
-        });
+        };
+        match crate::known_hosts::load_known_hosts(&path) {
+            Ok(entries) => state.entries = entries,
+            Err(e) => {
+                state.notice = Some(format!("Could not read {}: {e}", path.display()));
+                state.notice_is_error = true;
+            }
+        }
+        self.known_hosts = Some(state);
         self.mode = AppMode::KnownHosts;
     }
 
     pub(crate) fn handle_key_known_hosts(&mut self, key: KeyEvent) -> Result<()> {
         let is_yes = self.is_action(KeyAction::ConfirmYes, &key);
+        let delete = self.is_action(KeyAction::KnownHostsDelete, &key);
+        let refresh = self.is_action(KeyAction::KnownHostsRefresh, &key);
         let Some(state) = self.known_hosts.as_mut() else {
             self.mode = AppMode::Normal;
             return Ok(());
@@ -760,14 +769,22 @@ impl App {
                     let entry = state.entries[fi].clone();
                     let path = crate::known_hosts::known_hosts_path();
                     match crate::known_hosts::remove_host(&entry.hosts, &path) {
-                        Ok(()) => {
-                            let entries =
-                                crate::known_hosts::load_known_hosts(&path).unwrap_or_default();
-                            state.entries = entries;
-                            state.selected = 0;
-                            state.notice = Some(format!("Removed all keys for {}", entry.hosts));
-                            state.notice_is_error = false;
-                        }
+                        Ok(()) => match crate::known_hosts::load_known_hosts(&path) {
+                            Ok(entries) => {
+                                state.entries = entries;
+                                state.selected = 0;
+                                state.notice =
+                                    Some(format!("Removed all keys for {}", entry.hosts));
+                                state.notice_is_error = false;
+                            }
+                            Err(e) => {
+                                state.notice = Some(format!(
+                                    "Removed keys for {}, but reload failed: {e}",
+                                    entry.hosts
+                                ));
+                                state.notice_is_error = true;
+                            }
+                        },
                         Err(e) => {
                             state.notice = Some(format!("{e}"));
                             state.notice_is_error = true;
@@ -777,6 +794,36 @@ impl App {
                 state.confirming_delete = false;
             } else {
                 state.confirming_delete = false;
+            }
+            return Ok(());
+        }
+
+        if delete {
+            state.notice = None;
+            let filtered = state.filtered_indices();
+            if let Some(&fi) = filtered.get(state.selected) {
+                if let Some(reason) = state.entries[fi].deletion_block_reason() {
+                    state.notice = Some(reason.to_string());
+                    state.notice_is_error = true;
+                } else {
+                    state.confirming_delete = true;
+                }
+            }
+            return Ok(());
+        }
+        if refresh {
+            let path = crate::known_hosts::known_hosts_path();
+            match crate::known_hosts::load_known_hosts(&path) {
+                Ok(entries) => {
+                    state.entries = entries;
+                    state.selected = 0;
+                    state.notice = Some("Refreshed".to_string());
+                    state.notice_is_error = false;
+                }
+                Err(e) => {
+                    state.notice = Some(format!("Refresh failed: {e}"));
+                    state.notice_is_error = true;
+                }
             }
             return Ok(());
         }
@@ -810,25 +857,6 @@ impl App {
                 let filtered = state.filtered_indices();
                 state.selected = (state.selected + 10).min(filtered.len().saturating_sub(1));
                 state.notice = None;
-            }
-            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                state.notice = None;
-                let filtered = state.filtered_indices();
-                if let Some(&fi) = filtered.get(state.selected) {
-                    if let Some(reason) = state.entries[fi].deletion_block_reason() {
-                        state.notice = Some(reason.to_string());
-                        state.notice_is_error = true;
-                    } else {
-                        state.confirming_delete = true;
-                    }
-                }
-            }
-            KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                let path = crate::known_hosts::known_hosts_path();
-                state.entries = crate::known_hosts::load_known_hosts(&path).unwrap_or_default();
-                state.selected = 0;
-                state.notice = Some("Refreshed".to_string());
-                state.notice_is_error = false;
             }
             KeyCode::Backspace => {
                 state.query.pop();
