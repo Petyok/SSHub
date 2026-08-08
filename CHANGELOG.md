@@ -14,6 +14,15 @@ All notable changes to SSHub are documented in this file.
   single profile. Existing directory overrides remain compatibility mode, and
   legacy top-level data migrates safely into `profiles/default`.
 
+### Fixed
+
+- **Quoted `Host` aliases in `~/.ssh/config`** were listed with their quotes
+  intact (`Host "web"` became the alias `"web"`), so `ssh -G` rejected them with
+  `hostname contains invalid characters` — the host showed up in the list but
+  could not be connected to. Aliases are now unquoted the way OpenSSH unquotes
+  them. Found by a new differential test that resolves every listed alias
+  through the real `ssh` binary; see [docs/oracle-tests.md](docs/oracle-tests.md).
+
 ## [0.13.0] - 2026-08-03
 
 ### Added
