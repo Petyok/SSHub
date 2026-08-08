@@ -55,6 +55,14 @@ cargo clippy --all-targets
 
 All must pass. CI runs the same and fails on any warning.
 
+### Oracle tests
+
+Code that re-implements what an external tool already knows (`ssh -G`,
+`ssh-keygen`, a foreign export format) must be tested **against that tool**, not
+against a mock or an agent-authored fixture — a mock only proves the code agrees
+with itself, which is exactly what an agent produces when it invents logic.
+Verify the new test fails without the fix. See [docs/oracle-tests.md](docs/oracle-tests.md).
+
 ### Adversarial review
 
 After local green, run an independent adversarial review on the diff (2+ critics for focused changes, 3+ for features). Fix verified blockers/highs before pushing. Verdict must be `SAFE TO COMMIT` or equivalent.
