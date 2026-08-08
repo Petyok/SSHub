@@ -1,6 +1,8 @@
 {
-  "updatedAt": "2026-07-20T10:55:26.657Z",
+  "updatedAt": "2026-08-08T08:54:15.327Z",
   "command": "update",
-  "gitHead": "69e661360e64340efda0bfee954064f65f004885",
-  "model": "moonshotai/kimi-k3"
+  "gitHead": "a27dddf362653f4639344b929cef169aad08f6f8",
+  "model": "openai/gpt-5.6-luna",
+  "status": "complete",
+  "language": "en"
 }

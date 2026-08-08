@@ -7,7 +7,7 @@ tags: [sshub, tui, ssh, rust, overview]
 
 # SSHub Quickstart
 
-SSHub (`sshub`, v0.9.3 in `Cargo.toml`) is a keyboard-driven terminal UI for managing and connecting to SSH hosts. It merges your read-only `~/.ssh/config` with a fully managed host database (SQLite), and adds embedded in-TUI SSH sessions, an SFTP file browser, SSH tunnels with keep-alive reconnect, ssh-agent identity management, OS auto-detection with logos, and a connection audit log. It also ships a full headless CLI for scripting. License: AGPL-3.0-or-later.
+SSHub (`sshub`, v0.13.0 in `Cargo.toml`) is a keyboard-driven terminal UI for managing and connecting to SSH hosts. It merges your read-only `~/.ssh/config` with a fully managed host database (SQLite), and adds embedded in-TUI SSH sessions, local-shell tabs, SFTP including a second-server pane, SSH tunnels with keep-alive reconnect, concurrent broadcast commands, ssh-agent identity management, OS auto-detection with logos, and a connection audit log. It also ships a full headless CLI for scripting. License: AGPL-3.0-or-later.
 
 - Crate: `sshub` on crates.io (`cargo install sshub`); repo: github.com/Petyok/SSHub
 - Stack: Rust 2021, ratatui 0.30 + crossterm (TUI), portable-pty + vt100/tui-term (embedded sessions), rusqlite bundled (SQLite), ssh2/libssh2 with vendored OpenSSL (SFTP), nucleo (fuzzy search), notify (file watcher), keyring (OS secret store). **No async runtime** — a synchronous event loop polls every 50 ms (`src/lib.rs`).
@@ -22,7 +22,7 @@ sshub --help                 # global options (--dry-run, --version)
 sshub list                   # headless CLI (see workflows/cli.md)
 ```
 
-Linux builds need `libdbus-1-dev` + `pkg-config` (Secret Service keyring backend). At runtime an unlocked Secret Service provider (gnome-keyring, KWallet) is required for password persistence; otherwise SSHub warns and ssh falls back to prompting.
+Linux builds need `libdbus-1-dev` + `pkg-config` (Secret Service keyring backend). At runtime an unlocked Secret Service provider (gnome-keyring, KWallet) is preferred for password persistence; otherwise SSHub warns and uses the owner-only `credentials.json` fallback when available, with ssh prompting as a last resort.
 
 ## Data paths
 
@@ -45,6 +45,7 @@ Legacy `SSH_LAUNCHER_*` env vars are still honored as fallbacks, and `~/.config/
 - [TUI dashboard](workflows/tui.md) — tabs, overlays, keybindings, and screens.
 - [Sessions & SFTP](workflows/sessions-sftp.md) — embedded PTY sessions, askpass, session logging, mosh, and the dual-pane SFTP browser.
 - [Tunnels](workflows/tunnels.md) — local/remote/dynamic tunnels and keep-alive reconnect with backoff.
+- [Broadcast commands](workflows/broadcast.md) — group/tag targeting, concurrent remote commands, cancellation, progress, and audit events.
 - [Headless CLI](workflows/cli.md) — full command tree, JSON output, exit codes.
 
 ### Domain
@@ -58,6 +59,17 @@ Legacy `SSH_LAUNCHER_*` env vars are still honored as fallbacks, and `~/.config/
 ### Integrations & security
 - [External terminal launchers & demo](integrations/external-terminals.md) — kitty/ghostty/custom launchers and the VHS demo pipeline.
 - [Secrets, credentials & file security](security/secrets.md) — OS keyring, askpass staging, TOFU host keys, session-log exposure warning, permission hardening.
+
+## Task routing
+
+| Change area or user intent | Wiki page | Exact source entry points | Important symbols or types | Focused tests | Minimal validation |
+|---|---|---|---|---|---|
+| TUI mode, keybinding, or dashboard panel | [TUI dashboard](workflows/tui.md) | `src/app/keys.rs`, `src/app/mod.rs`, `src/tui/mod.rs`, `src/tui/screens/` | `AppMode`, `KeyAction`, `App::handle_key` | `src/app/tests/`, relevant `tests/e2e/` | `cargo test --test e2e --quiet` |
+| Broadcast fleet command | [Broadcast commands](workflows/broadcast.md) | `src/broadcast/mod.rs`, `src/app/broadcast.rs`, `src/tui/screens/broadcast.rs` | `spawn_broadcast`, `BroadcastEvent`, `App::tick_broadcast` | `src/app/tests/broadcast.rs` | `cargo test broadcast --quiet` |
+| Host, group, identity, or SSH-config behavior | [Hosts, groups & identities](domain/hosts-identities.md) and [data model](architecture/data-model.md) | `src/store/`, `src/hosts/loader.rs`, `src/ssh/` | `ManagedHost`, `HostGroup`, `Identity`, `HostResolver` | `tests/e2e/host_crud.rs`, `group_crud.rs`, `hybrid_compat.rs`, `ssh_config_sync.rs` | `cargo test --test e2e --quiet host_crud` |
+| Embedded session or SFTP behavior | [Sessions & SFTP](workflows/sessions-sftp.md) | `src/session/`, `src/app/session.rs`, `src/app/sftp.rs`, `src/sftp/` | `Session`, `PtyRuntime`, `SftpTransport`, `SftpEvent` | `src/app/tests/session.rs`, `src/app/tests/sftp.rs` | `cargo test session --quiet` |
+| Headless command or output contract | [Headless CLI](workflows/cli.md) | `src/main.rs`, `src/cli/mod.rs`, `src/cli/parse.rs`, `src/cli/output.rs` | `run_cli`, `CliContext`, exit codes 0/1/2 | `tests/smoke/cli_commands.rs` | `cargo test --test smoke --quiet cli_commands` |
+| Secrets, keyring, or askpass | [Secrets & security](security/secrets.md) | `src/credentials.rs`, `src/session/askpass.rs`, `src/secure_fs.rs` | `PasswordStore`, `OsKeyring`, `maybe_run_askpass` | `tests/e2e/keychain.rs`, session tests | `cargo test keychain --quiet` |
 
 ## Contributing pointers
 

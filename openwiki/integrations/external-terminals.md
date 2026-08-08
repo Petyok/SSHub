@@ -1,24 +1,16 @@
 ---
 type: Integration
 title: Integrations — external terminal launchers and the demo pipeline
-description: SSHub's external integrations — the TerminalLauncher abstraction for spawning sessions in kitty/ghostty/custom terminals (src/launcher) and the VHS-based demo recording pipeline under demo/ that produces README GIFs and screenshots.
-resource: src/launcher/mod.rs
+description: SSHub's external integrations — legacy terminal configuration retained for compatibility and the VHS-based demo recording pipeline under demo/ that produces README GIFs and screenshots.
+resource: src/config.rs
 tags: [integrations, terminal, kitty, ghostty, demo]
 ---
 
 # Integrations
 
-## External terminal launchers (`src/launcher/`)
+## External terminal configuration
 
-`TerminalLauncher` (`src/launcher/trait.rs`) is the abstraction for spawning SSH sessions in an external terminal window. `launcher_from_config` picks an implementation from the top-level `terminal` key in `config.toml` (e.g. `terminal = "kitty"`), with `launch_command` as a sibling top-level key used only when `terminal = "custom"`:
-
-- **Kitty** (`kitty.rs`) — `kitty --class sshub-session --title "SSH: X" --hold -e <argv>`.
-- **Ghostty** (`ghostty.rs`) — `ghostty -e <argv>`.
-- **Custom** (`custom.rs`) — user command template with whitelisted placeholders (`{host} {user} {hostname} {port} {ssh_command} {ssh_args}`), POSIX-safe quoting; direct-argv fast path, `sh -c` wrapping only when shell operators are present.
-
-The trait's only required method is `launch_ssh_argv`; default methods cover alias launches (`launch`), explicit-argv managed launches (`launch_managed`), and mosh-aware variants (`launch_with_transport`) built on `build_ssh_argv`/`build_mosh_argv` ([hosts](../domain/hosts-identities.md)).
-
-> **Status:** since sessions moved to the [embedded PTY](../workflows/sessions-sftp.md), the launcher is effectively dead at runtime in the TUI (kept as an `AppDeps` seam and exercised by tests/`MockLauncher`). Treat it as a legacy/escape-hatch integration, not the primary connect path — check current usage in `src/app/connect.rs` before extending it.
+The `terminal` and `launch_command` settings remain in `src/config.rs` for compatibility with the legacy external-launcher design, but the current source tree has no `src/launcher/` implementation. Production TUI sessions use the embedded PTY in `src/session/`; the headless `host connect` path runs `ssh` or `mosh` directly. Treat external-terminal launcher behavior as historical configuration, not a supported runtime extension point. Verify `src/app/connect.rs` and `src/main.rs` before changing this boundary.
 
 ## Demo pipeline (`demo/`)
 

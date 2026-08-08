@@ -15,6 +15,7 @@ The TUI is a bento-grid dashboard rendered by `src/tui/` on top of the [App stat
 | # | Tab | Screen | Backed by |
 |---|---|---|---|
 | 1 | Hosts | `screens/hosts.rs` | [hosts & groups](../domain/hosts-identities.md); detail panel with OS logo, fact sheet, latency sparkline |
+<!-- openwiki: broken internal link [sessions-sftp.md#sftp] heading anchor "sftp" does not exist in "sessions-sftp.md". Fix the href or restore the target, then delete this comment. -->
 | 2 | SFTP | `screens/sftp.rs` | [dual-pane transfer browser](sessions-sftp.md#sftp) |
 | 3 | Tunnels | `screens/tunnels.rs` | [tunnel manager](tunnels.md) |
 | 4 | Identities ("Keys") | `screens/keys.rs` | [identities & ssh-agent](../domain/hosts-identities.md#identities) |
@@ -29,10 +30,11 @@ The TUI is a bento-grid dashboard rendered by `src/tui/` on top of the [App stat
 - **Help** (`?`, `screens/help.rs`) — scrollable keybinding reference; also the only in-app place that warns session logs capture echoed secrets (see [secrets](../security/secrets.md)).
 - **Group manager** (`Shift+G`, `screens/group_manage.rs`) and **host form** (`a`/`e`, `screens/host_form.rs`) — CRUD for [hosts, groups & identities](../domain/hosts-identities.md).
 - **Session host picker** (`Ctrl+T`, `screens/session_host_picker.rs`) — opens a new [embedded session](sessions-sftp.md) tab.
+- **Broadcast wizard** (`b`, `screens/broadcast.rs`) — selects group/tag targets, previews a command, and opens the concurrent [broadcast workflow](broadcast.md). The live run is a docked panel and can be focused or zoomed.
 
 ## Default keybindings (highlights)
 
-Global: `Esc` back, `q` quit, `?` help, `Ctrl+K` keybind editor. `Tab` toggles the detail panel only on the Hosts tab; on SFTP it switches panes, and it has no detail-panel effect on Tunnels/Identities/Audit.
+Global: `Esc` back, `q` quit, `?` help, `Ctrl+K` keybind editor, `b` opens the broadcast wizard from the Hosts tab. `Tab` toggles the detail panel only on the Hosts tab; on SFTP it switches panes, and it has no detail-panel effect on Tunnels/Identities/Audit.
 Hosts: `Enter` connect, `a`/`e`/`d`/`D` add/edit/delete/duplicate, `f` favorite, `s` sort mode, `/` search, `#` tags, `Shift+I`/`Shift+E` import/export ssh config, `Shift+T` Termius import.
 Sessions: `Ctrl+D` detach (SSH keeps running), `Ctrl+W` close tab, `Ctrl+[`/`Ctrl+]` cycle tabs, `Ctrl+Shift+S` focus session from dashboard.
 Tunnels: `Enter` start/stop/cancel-reconnect, `R` reconnect settings, `x` kill process.
