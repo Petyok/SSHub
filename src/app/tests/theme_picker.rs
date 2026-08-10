@@ -296,7 +296,8 @@ fn theme_setting_index() -> usize {
 fn typed_settings_preserve_every_existing_toggle() {
     let mut app = test_app(vec![]);
     for item in [
-        SettingToggle::OpaqueBackground,
+        SettingToggle::TransparentSshubBackground,
+        SettingToggle::TransparentSessionBackground,
         SettingToggle::OsLogo,
         SettingToggle::ConfirmQuit,
         SettingToggle::DisableAnimation,
@@ -314,7 +315,8 @@ fn theme_row_is_an_action_and_space_does_not_toggle_it() {
     app.mode = AppMode::Settings;
     app.settings_selected = theme_setting_index();
     let before = (
-        app.config.appearance.opaque_background,
+        app.config.appearance.transparent_sshub_background,
+        app.config.appearance.transparent_session_background,
         app.config.appearance.os_logo,
         app.config.appearance.confirm_quit,
         app.config.appearance.disable_animation,
@@ -324,7 +326,8 @@ fn theme_row_is_an_action_and_space_does_not_toggle_it() {
     assert_eq!(app.mode, AppMode::Settings);
     assert_eq!(
         (
-            app.config.appearance.opaque_background,
+            app.config.appearance.transparent_sshub_background,
+            app.config.appearance.transparent_session_background,
             app.config.appearance.os_logo,
             app.config.appearance.confirm_quit,
             app.config.appearance.disable_animation,

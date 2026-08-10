@@ -110,8 +110,8 @@ pub fn format_local_time(epoch_secs: i64) -> String {
 
 /// Frame entry point. Renders the UI, then backs the still-transparent cells:
 /// with the theme's own `components.app.background` where it resolved to a real
-/// colour, and — when `appearance.opaque_background` is on — with
-/// `semantic.canvas` behind whatever is left.
+/// colour, and with `semantic.canvas` behind whatever is left — unless the user
+/// asked for a see-through interface, in which case nothing is backed at all.
 pub fn render(frame: &mut Frame, app: &App) {
     render_with_transition_clock(frame, app, std::time::Instant::now());
 }
@@ -193,48 +193,177 @@ fn render_with_transition_clock(frame: &mut Frame, app: &App, now: std::time::In
     }
 }
 
-/// Back the cells no widget painted, in two deliberately separate passes.
+/// Back the cells no widget painted, in three deliberately separate passes.
+///
+/// SSHub is **opaque out of the box**; transparency is the user's explicit
+/// choice, per surface. That direction is deliberate: whether a theme leaves
+/// anything transparent to fill depends on the theme, so a switch asking to
+/// *fill* is inert under a theme that already paints everything. Asking to
+/// *release* is the question every theme can answer.
 ///
 /// 1. A theme that resolved `components.app.background` to a real colour or a
 ///    gradient paints every still-`Color::Reset` cell of SSHub's **own**
 ///    surfaces — never the remote PTY viewport, whose cells carry the host's
 ///    ANSI colours and whose "unpainted" cells are the host's default
 ///    background, not ours.
-/// 2. The legacy `opaque_background` switch then fills whatever is *left* with
-///    `semantic.canvas`, PTY included. It keeps its old meaning exactly: it is
-///    the user asking for an opaque backdrop on a transparent terminal, and it
-///    cannot suppress a surface the theme set explicitly (pass 1 ran first).
+/// 2. [`apply_pty_ground`] then owns exactly those protected regions, backing
+///    the remote grid with the theme's own PTY pair.
+/// 3. Whatever is *left* is filled with `semantic.canvas` — the cells a theme
+///    resolving to `"terminal"` never claimed. It cannot suppress a surface the
+///    theme set explicitly, because pass 1 ran first, and it excludes the
+///    protected regions because pass 2 owns them. That exclusion is load-bearing
+///    rather than defensive: with `transparent_session_background` on, pass 2
+///    returns without writing anything, and the canvas would otherwise land on
+///    the grid the user just asked to see through.
 ///
-/// Both passes select on `Color::Reset`, so neither can touch a cell a widget
-/// already coloured.
+/// `appearance.transparent_sshub_background` needs nothing here beyond skipping
+/// pass 3: `App::theme` already hands these passes a theme whose ground roles
+/// resolve to `Color::Reset` (see [`ResolvedTheme::with_ground_released`]), so
+/// pass 1 finds nothing to paint and the widgets have drawn no panel bodies. The
+/// canvas fill is the one thing that would still put a colour down, and it is
+/// exactly what the user asked to be rid of.
+///
+/// Every pass selects on `Color::Reset`, so none can touch a cell a widget
+/// already coloured: releasing the ground does not stop a widget from drawing
+/// its own border or text.
 fn apply_app_background(frame: &mut Frame, app: &App, composition: &FrameComposition) {
     let theme = app.theme();
     let area = frame.area();
     let exclusions = &composition.protected;
+    let transparent = app.config.appearance.transparent_sshub_background;
     let buf = frame.buffer_mut();
 
-    match theme.paint(PaintRole::AppBackground) {
-        // `"terminal"`: the theme asked for no ground of its own.
-        ResolvedPaint::Solid(Color::Reset) => {}
-        ResolvedPaint::Solid(color) => {
-            fill_reset_background(buf, area, *color, exclusions);
-        }
-        ResolvedPaint::Gradient(_) => {
-            if let Some(gradient) = theme.paint_gradient(PaintRole::AppBackground) {
-                paint_gradient_area(
-                    buf,
-                    area,
-                    gradient,
-                    PaintChannel::Background,
-                    CellSelection::Matching(Color::Reset),
-                    exclusions,
-                );
+    if !transparent {
+        match theme.paint(PaintRole::AppBackground) {
+            // `"terminal"`: the theme asked for no ground of its own, and pass 3
+            // backs it with the canvas instead.
+            ResolvedPaint::Solid(Color::Reset) => {}
+            ResolvedPaint::Solid(color) => {
+                fill_reset_background(buf, area, *color, exclusions);
+            }
+            ResolvedPaint::Gradient(_) => {
+                if let Some(gradient) = theme.paint_gradient(PaintRole::AppBackground) {
+                    paint_gradient_area(
+                        buf,
+                        area,
+                        gradient,
+                        PaintChannel::Background,
+                        CellSelection::Matching(Color::Reset),
+                        exclusions,
+                    );
+                }
             }
         }
     }
 
-    if app.config.appearance.opaque_background {
-        fill_reset_background(buf, area, theme.semantic().canvas, &[]);
+    apply_pty_ground(buf, app, app.base_theme(), exclusions);
+
+    if !transparent {
+        fill_reset_background(buf, area, theme.semantic().canvas, exclusions);
+    }
+}
+
+/// Back the remote grid with the theme's own ground, foreground included.
+///
+/// Runs over `protected` — the resting viewport plus the travelling bands of an
+/// exit or session-tab slide — so a session in transit is backed exactly like
+/// one at rest.
+///
+/// The pair comes from `semantic.pty_background` / `semantic.pty_foreground`,
+/// which `default` defines as references to `background` / `text`: a theme that
+/// paints its own ground therefore paints it here too. Where a theme leaves its
+/// ground to the emulator, the canvas and the plain text colour stand in, so
+/// the grid is opaque out of the box under every theme.
+///
+/// `appearance.transparent_session_background` is the user overriding all of
+/// that and handing the grid straight back to the emulator — the surface a
+/// terminal wallpaper shows through best, and the reason the switch exists
+/// separately from the one for SSHub's own surfaces.
+fn apply_pty_ground(
+    buf: &mut Buffer,
+    app: &App,
+    theme: &crate::theme::model::ResolvedTheme,
+    protected: &[Rect],
+) {
+    if app.config.appearance.transparent_session_background {
+        return;
+    }
+    let Some(ground) = PtyGround::of(theme) else {
+        return;
+    };
+
+    for region in protected {
+        fill_reset_pair(buf, *region, ground);
+    }
+}
+
+/// The opaque `(background, foreground)` pair painted under the remote grid.
+///
+/// A named type rather than a bare `(Color, Color)`, because the two are not
+/// two colours that happen to travel together: the pair *is* the invariant. Its
+/// only constructor establishes it, so no caller can assemble a half-usable one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PtyGround {
+    background: Color,
+    foreground: Color,
+}
+
+impl PtyGround {
+    /// Resolve the pair for `theme`, substituting a usable value for either
+    /// channel the theme left to the emulator.
+    ///
+    /// `"terminal"` is legal for every semantic slot but `background`, so a
+    /// theme may pair a painted ground with an emulator-owned foreground — and
+    /// taking that at face value re-opens the reported bug, because a written
+    /// background over a `Reset` foreground is the emulator's own colour on our
+    /// ground. Each channel therefore falls back on its own: the canvas for the
+    /// ground, the plain text colour for what sits on it.
+    ///
+    /// `None` when even a fallback resolves to `Color::Reset` — a theme may set
+    /// `text = "terminal"` too, and there is no honest colour left to invent.
+    /// Writing the half that *is* usable would be the reported bug all over
+    /// again, so nothing is written and the grid stays the emulator's.
+    fn of(theme: &crate::theme::model::ResolvedTheme) -> Option<Self> {
+        let semantic = theme.semantic();
+        let usable = |colour: Color, fallback: Color| {
+            let chosen = if colour == Color::Reset {
+                fallback
+            } else {
+                colour
+            };
+            (chosen != Color::Reset).then_some(chosen)
+        };
+        Some(Self {
+            background: usable(semantic.pty_background, semantic.canvas)?,
+            foreground: usable(semantic.pty_foreground, semantic.text)?,
+        })
+    }
+}
+
+/// Write a `(background, foreground)` pair into the channels of `area` that are
+/// still `Color::Reset`, testing each channel on its own.
+///
+/// The channels are always offered together, and that is the point. Filling only
+/// the background leaves the remote's default foreground to the emulator, which
+/// then writes its own — near-white on a light theme's cream ground. It also
+/// breaks reverse video: a `REVERSED` cell with both channels at `Reset` would
+/// swap our ground against a foreground that was never defined.
+///
+/// A cell the remote coloured explicitly keeps that colour in the channel it
+/// set, and receives the pair's value only in the channel it left alone.
+fn fill_reset_pair(buf: &mut Buffer, area: Rect, ground: PtyGround) {
+    let target = area.intersection(buf.area);
+    for y in target.y..target.bottom() {
+        for x in target.x..target.right() {
+            if let Some(cell) = buf.cell_mut((x, y)) {
+                if cell.bg == Color::Reset {
+                    cell.bg = ground.background;
+                }
+                if cell.fg == Color::Reset {
+                    cell.fg = ground.foreground;
+                }
+            }
+        }
     }
 }
 
@@ -251,6 +380,10 @@ fn apply_app_background(frame: &mut Frame, app: &App, composition: &FrameComposi
 struct FrameComposition {
     /// How far the exit slide has carried its snapshot, if one is playing.
     exit_offset: Option<u16>,
+    /// How far the enter slide still has to carry the session in, if one is
+    /// playing. Read by `render_session_enter` so the blit and the ownership
+    /// derived from it are one animation frame.
+    enter_offset: Option<u16>,
     /// Eased progress of a session-tab slide, if its snapshot is still visible.
     tab_slide_progress: Option<f32>,
     /// Every region of the composed frame that carries remote output, and which
@@ -264,6 +397,7 @@ impl FrameComposition {
         let tab_slide_progress = will_render_session_tab_slide(app)
             .then(|| session_tab_slide_progress(app, now))
             .flatten();
+        let enter_offset = session_enter_offset(app, area, now);
 
         // 1. The live viewport, while the session view *is* the frame. Both the
         //    rect and the decision come from `session::render`, so the protected
@@ -272,10 +406,21 @@ impl FrameComposition {
         //    but are SSHub's own chrome, and a theme is allowed to back them.
         //    During a tab slide the live layer is shifted, so the transition's
         //    translated ownership regions below replace this resting rect.
+        //
+        //    An enter slide shifts it too: the session arrives from the right
+        //    while the dashboard is restored on its left, so the resting rect
+        //    reaches over cells that are SSHub's own this frame. Protecting
+        //    those would hand the grid's ground to the dashboard.
         if tab_slide_progress.is_none() && shows_session_view(app) {
             if let Some(session) = app.active_session() {
                 if crate::session::render::shows_remote_pty(session) {
-                    protected.push(crate::session::render::remote_pty_rect(area));
+                    let resting = crate::session::render::remote_pty_rect(area);
+                    match enter_offset {
+                        Some(offset) => {
+                            protected.extend(translated_region(resting, i32::from(offset), area))
+                        }
+                        None => protected.push(resting),
+                    }
                 }
             }
         }
@@ -299,10 +444,41 @@ impl FrameComposition {
 
         Self {
             exit_offset,
+            enter_offset,
             tab_slide_progress,
             protected,
         }
     }
+}
+
+/// How far an enter slide still has to travel, or `None` when none is playing.
+///
+/// Every condition `render_session_enter` declines on is repeated here, because
+/// the offset and the ownership derived from it have to agree exactly: a slide
+/// that is captured but not blitted protects cells nothing owns, and one that is
+/// blitted but not captured paints over remote output.
+fn session_enter_offset(app: &App, area: Rect, now: std::time::Instant) -> Option<u16> {
+    if !app.motion_enabled() || session_behind_picker(app) || !shows_session_view(app) {
+        return None;
+    }
+    let at = app.session_enter_at?;
+    let p = tween::progress(at, SESSION_ANIM, now);
+    if p >= 1.0 {
+        return None;
+    }
+    // No usable dashboard behind it means no slide at all — see the reasoning in
+    // `render_session_enter`.
+    if !app
+        .dashboard_snapshot
+        .borrow()
+        .as_ref()
+        .is_some_and(|b| b.area == area)
+    {
+        return None;
+    }
+    // Off starts a full screen-width to the right (fully off) and eases to 0.
+    let off = ((1.0 - tween::ease_out(p)) * area.width as f32).round() as u16;
+    (off > 0).then_some(off)
 }
 
 fn session_tab_slide_progress(app: &App, now: std::time::Instant) -> Option<f32> {
@@ -515,7 +691,7 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
         // Slide the freshly-connected session in from the right (#35). Skipped
         // for the picker-over-session case (no fresh connect happening).
         if !session_behind_picker {
-            render_session_enter(frame, app);
+            render_session_enter(frame, app, composition);
         }
         if will_render_session_tab_slide(app) {
             render_session_tab_slide(frame, app, composition);
@@ -1196,18 +1372,13 @@ fn render_popup_close(frame: &mut Frame, app: &App) {
 /// [`SESSION_ANIM`] (#35). Snapshots the session buffer, then blits it shifted
 /// right by an easing offset, leaving the vacated left band blank so the view
 /// reads as pushing in from the right.
-fn render_session_enter(frame: &mut Frame, app: &App) {
-    if !app.motion_enabled() {
-        return;
-    }
-    let Some(at) = app.session_enter_at else {
+fn render_session_enter(frame: &mut Frame, app: &App, composition: &FrameComposition) {
+    // The captured offset, never a fresh clock reading: what this blit puts down
+    // has to be exactly what `composition.protected` covers, or the ownership of
+    // the leading columns is a millisecond — and therefore a column — off.
+    let Some(off) = composition.enter_offset else {
         return;
     };
-    let now = std::time::Instant::now();
-    let p = tween::progress(at, SESSION_ANIM, now);
-    if p >= 1.0 {
-        return;
-    }
     let area = frame.area();
     // What the session is sliding over. Without it the columns it has not reached
     // yet come out blank, so entering a session flashed a black screen with the
@@ -1223,11 +1394,6 @@ fn render_session_enter(frame: &mut Frame, app: &App) {
     let Some(snapshot) = behind.as_ref().filter(|b| b.area == area) else {
         return;
     };
-    // Off starts a full screen-width to the right (fully off) and eases to 0.
-    let off = ((1.0 - tween::ease_out(p)) * area.width as f32).round() as u16;
-    if off == 0 {
-        return;
-    }
     let src = frame.buffer_mut().clone();
     let fb = frame.buffer_mut();
     for y in area.y..area.y + area.height {
@@ -2457,7 +2623,8 @@ mod tests {
                     }
                 }
                 prepared = Some(buf.clone());
-                render_session_enter(frame, app);
+                let composition = FrameComposition::capture(app, area, std::time::Instant::now());
+                render_session_enter(frame, app, &composition);
             })
             .unwrap();
         (prepared.unwrap(), terminal.backend().buffer().clone())
@@ -2649,9 +2816,9 @@ mod tests {
     // ── Theme-driven app background ─────────────────────────
     //
     // Three background states (terminal / explicit solid / explicit gradient)
-    // crossed with the legacy `opaque_background` switch, plus the rule that
-    // decides the whole task: only the legacy switch may ever reach the remote
-    // PTY viewport.
+    // crossed with the two transparency switches, plus the rule that decides
+    // the whole task: SSHub's own ground never reaches the remote PTY viewport,
+    // which has a ground — and a switch — of its own.
 
     /// An app whose live theme is the user file `body`, kept alive by the
     /// returned temp dir. Never touches the real HOME or config.
@@ -2803,16 +2970,17 @@ mod tests {
     #[test]
     fn theme_background_terminal_leaves_the_canvas_transparent() {
         // `default` resolves `components.app.background` to "terminal", so no
-        // theme painting happens at all and the frame stays see-through.
+        // theme painting happens at all. The canvas fill would still back it,
+        // which is what asking for transparency switches off.
         let mut app = app_with_builtin_theme("default");
-        app.config.appearance.opaque_background = false;
+        app.config.appearance.transparent_sshub_background = true;
         assert!(any_background_is_reset(&render_to_buffer(&app, 80, 24)));
     }
 
     #[test]
     fn theme_background_explicit_solid_paints_the_whole_dashboard() {
         let mut app = app_with_builtin_theme("aqua");
-        app.config.appearance.opaque_background = false;
+        app.config.appearance.transparent_sshub_background = false;
         let buffer = render_to_buffer(&app, 80, 24);
         assert_all_backgrounds_non_reset(&buffer);
         let expected = match app.theme().paint(PaintRole::AppBackground) {
@@ -2825,7 +2993,7 @@ mod tests {
     #[test]
     fn theme_background_explicit_gradient_is_sampled_per_cell() {
         let (mut app, _dir) = app_with_user_theme("washed", GRADIENT_BACKGROUND_THEME);
-        app.config.appearance.opaque_background = false;
+        app.config.appearance.transparent_sshub_background = false;
         let buffer = render_to_buffer(&app, 80, 24);
         // The footer row is chrome SSHub leaves transparent, so the whole row
         // is app background — and it must sweep rather than sit on one colour.
@@ -2838,9 +3006,10 @@ mod tests {
     }
 
     #[test]
-    fn theme_background_legacy_opaque_switch_fills_with_canvas() {
-        let mut app = app_with_builtin_theme("default");
-        app.config.appearance.opaque_background = true;
+    fn the_canvas_backs_a_theme_that_claims_no_ground() {
+        // Opaque out of the box: `default` paints nothing itself, so the canvas
+        // is what keeps SSHub readable without the user asking for anything.
+        let app = app_with_builtin_theme("default");
         let buffer = render_to_buffer(&app, 80, 24);
         assert_all_backgrounds_non_reset(&buffer);
         assert_eq!(
@@ -2850,14 +3019,13 @@ mod tests {
     }
 
     #[test]
-    fn theme_background_opaque_switch_cannot_override_an_explicit_surface() {
-        // The switch fills what is *left*; a theme that painted the app surface
+    fn the_canvas_fill_cannot_override_an_explicit_surface() {
+        // The canvas fills what is *left*; a theme that painted the app surface
         // keeps it (spec: it "kann eine ausdrücklich gesetzte App-Fläche nicht
         // unterdrücken").
         // `fire` is the built-in whose canvas differs from its background, so
         // the two fills are distinguishable cell by cell.
-        let mut app = app_with_builtin_theme("fire");
-        app.config.appearance.opaque_background = true;
+        let app = app_with_builtin_theme("fire");
         let buffer = render_to_buffer(&app, 80, 24);
         let expected = match app.theme().paint(PaintRole::AppBackground) {
             ResolvedPaint::Solid(color) => *color,
@@ -2872,24 +3040,37 @@ mod tests {
     }
 
     #[test]
-    fn explicit_theme_background_skips_remote_pty_even_when_reset() {
+    fn the_app_surface_never_reaches_the_remote_pty() {
+        // `aqua` sweeps a gradient across `components.app.background`. The grid
+        // gets the theme's flat PTY ground instead — a gradient under arbitrary
+        // remote output has no stable contrast against the remote's own colours.
         let mut app = session_app_with_theme("aqua");
-        app.config.appearance.opaque_background = false;
+        app.config.appearance.transparent_sshub_background = false;
         let buffer = render_to_buffer(&app, 80, 24);
         // The session's own chrome rows are SSHub-owned and get painted.
         assert_ne!(buffer[(1, 0)].bg, ratatui::style::Color::Reset);
-        let probe = remote_pty_probe(buffer.area);
+
+        let pty = crate::session::render::remote_pty_rect(buffer.area);
+        let row: Vec<_> = (pty.x..pty.right())
+            .map(|x| buffer[(x, pty.y + 1)].bg)
+            .collect();
+        assert!(
+            row.windows(2).all(|pair| pair[0] == pair[1]),
+            "a gradient reached the remote PTY: {row:?}"
+        );
         assert_eq!(
-            buffer[probe].bg,
-            ratatui::style::Color::Reset,
-            "the theme repainted the remote PTY at {probe:?}"
+            row[0],
+            app.theme().semantic().pty_background,
+            "the grid must carry the theme's PTY ground, flat"
         );
     }
 
     #[test]
     fn a_gradient_background_never_reaches_the_remote_pty() {
         let (mut app, _dir) = app_with_user_theme("washed", GRADIENT_BACKGROUND_THEME);
-        app.config.appearance.opaque_background = false;
+        // Release the grid, so a gradient that did reach it would show up as a
+        // painted cell instead of hiding behind the grid's own ground.
+        app.config.appearance.transparent_session_background = true;
         enter_live_session(&mut app);
         let buffer = render_to_buffer(&app, 80, 24);
         // The session chrome above the grid is SSHub's, and the sweep reaches it.
@@ -2918,14 +3099,23 @@ mod tests {
         }
     }
 
-    /// What the PTY's background may legitimately be: still transparent, or —
-    /// only when the legacy switch is on — the canvas. Never the app
-    /// background, and never a gradient sample.
-    fn allowed_pty_background(app: &App, opaque: bool) -> ratatui::style::Color {
-        if opaque {
-            app.theme().semantic().canvas
+    /// What the PTY's background may legitimately be: transparent once
+    /// `transparent_session_background` released it, the theme's own PTY ground
+    /// otherwise, or the canvas where the theme claims no ground of its own.
+    ///
+    /// Never the *app* background and never a gradient sample: those belong to
+    /// SSHub's surfaces, and `fire` is in the matrix precisely because its
+    /// canvas, its app background and its PTY ground are three distinguishable
+    /// colours.
+    fn allowed_pty_background(app: &App, transparent: bool) -> ratatui::style::Color {
+        if transparent {
+            return ratatui::style::Color::Reset;
+        }
+        let semantic = app.theme().semantic();
+        if semantic.pty_background != ratatui::style::Color::Reset {
+            semantic.pty_background
         } else {
-            ratatui::style::Color::Reset
+            semantic.canvas
         }
     }
 
@@ -2935,9 +3125,9 @@ mod tests {
         // ends the 360 ms fade, so switching to an already-open session inside
         // that window runs the *dashboard's* fade over a session frame.
         for (theme_id, _dir) in explicit_background_themes() {
-            for opaque in [false, true] {
+            for transparent in [false, true] {
                 let (mut app, _dir) = app_on(theme_id);
-                app.config.appearance.opaque_background = opaque;
+                app.config.appearance.transparent_session_background = transparent;
                 enter_live_session(&mut app);
                 write_remote_marker(&mut app);
                 app.dashboard_at = Some(std::time::Instant::now());
@@ -2949,8 +3139,8 @@ mod tests {
                 assert_remote_cell_untouched_by_theme(
                     &buffer,
                     at,
-                    allowed_pty_background(&app, opaque),
-                    &format!("splash fade, {theme_id}, opaque={opaque}"),
+                    allowed_pty_background(&app, transparent),
+                    &format!("splash fade, {theme_id}, transparent={transparent}"),
                 );
             }
         }
@@ -2962,9 +3152,9 @@ mod tests {
         // *mode* says a session is still on screen — but its snapshot is, and
         // the background pass runs after the blit that puts it there.
         for (theme_id, _dir) in explicit_background_themes() {
-            for opaque in [false, true] {
+            for transparent in [false, true] {
                 let (mut app, _dir) = app_on(theme_id);
-                app.config.appearance.opaque_background = opaque;
+                app.config.appearance.transparent_session_background = transparent;
                 let area = Rect::new(0, 0, 80, 24);
                 let pty = crate::session::render::remote_pty_rect(area);
                 *app.session_snapshot.borrow_mut() = Some(remote_snapshot(area));
@@ -2982,8 +3172,8 @@ mod tests {
                 assert_remote_cell_untouched_by_theme(
                     &buffer,
                     at,
-                    allowed_pty_background(&app, opaque),
-                    &format!("exit slide, {theme_id}, opaque={opaque}"),
+                    allowed_pty_background(&app, transparent),
+                    &format!("exit slide, {theme_id}, transparent={transparent}"),
                 );
                 // The dashboard the slide is revealing, on the same row, is
                 // still painted — the protection must be the travelling band,
@@ -3017,7 +3207,7 @@ mod tests {
     ) -> (App, std::time::Instant, (u16, u16)) {
         let mut app = app_with_two_sessions();
         app.activate_theme(theme_id);
-        app.config.appearance.opaque_background = false;
+        app.config.appearance.transparent_sshub_background = false;
         app.mode = AppMode::Connecting;
         app.active_session = Some(1);
         let started = std::time::Instant::now();
@@ -3069,7 +3259,9 @@ mod tests {
         assert_remote_cell_untouched_by_theme(
             &buffer,
             expected,
-            Color::Reset,
+            // The travelling cell is backed like the resting viewport: `aqua`
+            // paints its own ground, so the band carries it too.
+            allowed_pty_background(&app, false),
             "running to connecting tab slide",
         );
     }
@@ -3493,21 +3685,576 @@ mod tests {
         // an unpainted band out of the dashboard.
         let mut app = session_app_with_theme("aqua");
         app.mode = AppMode::Normal;
-        app.config.appearance.opaque_background = false;
+        app.config.appearance.transparent_sshub_background = false;
         let buffer = render_to_buffer(&app, 80, 24);
         assert_all_backgrounds_non_reset(&buffer);
     }
 
+    /// Every cell outside the remote grid, i.e. SSHub's own surfaces.
+    fn sshub_surface_cells(buffer: &Buffer, in_session: bool) -> Vec<(u16, u16)> {
+        let pty = in_session.then(|| crate::session::render::remote_pty_rect(buffer.area));
+        (buffer.area.y..buffer.area.bottom())
+            .flat_map(|y| (buffer.area.x..buffer.area.right()).map(move |x| (x, y)))
+            .filter(|&(x, y)| !pty.is_some_and(|r| r.contains((x, y).into())))
+            .collect()
+    }
+
     #[test]
-    fn only_the_legacy_opaque_switch_covers_the_remote_pty() {
-        let mut app = session_app_with_theme("aqua");
-        app.config.appearance.opaque_background = true;
+    fn sshub_surfaces_are_opaque_out_of_the_box_under_every_theme() {
+        // The shipped state is opaque; transparency is the user's explicit
+        // choice. A theme that leaves its ground to the emulator therefore
+        // still gets a filled app, through the canvas.
+        for theme in ["default", "fire", "summer", "aqua", "high-contrast"] {
+            let app = app_with_builtin_theme(theme);
+            let buffer = render_to_buffer(&app, 80, 24);
+            let bare: Vec<_> = sshub_surface_cells(&buffer, false)
+                .into_iter()
+                .filter(|&(x, y)| buffer[(x, y)].bg == ratatui::style::Color::Reset)
+                .collect();
+            assert!(
+                bare.is_empty(),
+                "{theme}: {} cells stayed transparent by default, starting at {:?}",
+                bare.len(),
+                bare.first()
+            );
+        }
+    }
+
+    #[test]
+    fn the_user_can_make_sshubs_own_surfaces_transparent_whatever_the_theme_paints() {
+        for theme in ["default", "fire", "summer", "aqua"] {
+            let mut app = app_with_builtin_theme(theme);
+            app.config.appearance.transparent_sshub_background = true;
+            let buffer = render_to_buffer(&app, 80, 24);
+            let freed = sshub_surface_cells(&buffer, false)
+                .into_iter()
+                .filter(|&(x, y)| buffer[(x, y)].bg == ratatui::style::Color::Reset)
+                .count();
+            // How much comes free depends on the theme, because a widget only
+            // draws a panel body where the theme gave it one: `default` paints
+            // no surfaces at all, the others do and have them released too (see
+            // `releasing_sshub_reaches_the_panel_bodies_a_theme_paints_itself`).
+            // The lower bound is what every theme has in common — the ground the
+            // pass above would otherwise have laid down.
+            assert!(
+                freed > 300,
+                "{theme}: only {freed} cells went transparent, expected the app ground"
+            );
+        }
+    }
+
+    #[test]
+    fn releasing_sshub_reaches_the_panel_bodies_a_theme_paints_itself() {
+        // `fire` fills its panels through `semantic.surface`, and the widgets
+        // draw that themselves — more cells than the ground pass ever covers.
+        // Releasing only what the pass painted would leave the dashboard as
+        // brown as before, which is not what the switch promises.
+        let opaque = app_with_builtin_theme("fire");
+        let grounds = {
+            let s = opaque.theme().semantic();
+            [s.background, s.canvas, s.surface, s.surface_raised]
+        };
+        let mut app = app_with_builtin_theme("fire");
+        app.config.appearance.transparent_sshub_background = true;
+        let buffer = render_to_buffer(&app, 80, 24);
+        for ground in grounds {
+            assert_ne!(ground, ratatui::style::Color::Reset);
+            let left: Vec<_> = sshub_surface_cells(&buffer, false)
+                .into_iter()
+                .filter(|&(x, y)| buffer[(x, y)].bg == ground)
+                .collect();
+            assert!(
+                left.is_empty(),
+                "{} cells still carry the ground {ground:?}, starting at {:?}",
+                left.len(),
+                left.first()
+            );
+        }
+    }
+
+    /// `with_ground_released` names one style recipe literally
+    /// (`TextOnSurfaceRaised`). A recipe added later that also seats its text on
+    /// a ground slot would be missed in silence: the match's wildcard arm simply
+    /// would not fire, and a panel body would stay opaque with no test to say so.
+    ///
+    /// So the claim is checked against the release itself, over the roles the
+    /// catalogue really has — not over a hand-kept list of recipes, which would
+    /// have the same blind spot as the code it is meant to guard.
+    #[test]
+    fn every_role_seated_on_a_ground_slot_is_actually_released() {
+        use crate::theme::catalog::{RoleFallback, RoleRef, ROLE_SPECS};
+
+        let app = app_with_builtin_theme("fire");
+        let base = app.base_theme();
+        let released = base.with_ground_released();
+        let grounds = {
+            let s = base.semantic();
+            [s.background, s.canvas, s.surface, s.surface_raised]
+        };
+        for ground in grounds {
+            assert_ne!(ground, Color::Reset, "fire must paint every ground slot");
+        }
+
+        let mut checked = 0;
+        for spec in ROLE_SPECS {
+            let RoleRef::Style(role) = spec.role else {
+                continue;
+            };
+            let RoleFallback::Style(recipe) = spec.fallback else {
+                continue;
+            };
+            // Does this role's *fallback* seat its text on a ground?
+            let seated = crate::theme::model::semantic_style(base.semantic(), recipe)
+                .bg
+                .is_some_and(|bg| grounds.contains(&bg));
+            if !seated {
+                continue;
+            }
+            checked += 1;
+            assert_eq!(
+                released.style(role).bg,
+                Some(Color::Reset),
+                "{}: seated on a ground slot but still opaque after the release — \
+                 add its recipe to the match in `with_ground_released`",
+                spec.path
+            );
+        }
+        assert!(
+            checked > 0,
+            "no role was seated on a ground slot; this test stopped proving anything"
+        );
+    }
+
+    #[test]
+    fn a_selection_sharing_the_surface_colour_survives_the_release() {
+        // The case a colour comparison over the finished frame cannot get
+        // right: a theme may legitimately give `selection_bg` and `surface` the
+        // same value, and after the release the two are no longer alike — one
+        // is wallpaper, the other still has to mark the selected row. Only the
+        // catalogue fallback can tell them apart, and it does so before
+        // anything is drawn.
+        let mut app = app_with_builtin_theme("fire");
+        wear(
+            &mut app,
+            "[semantic]\nsurface = \"#2b2b2b\"\nselection_bg = \"#2b2b2b\"\n",
+        );
+        app.config.appearance.transparent_sshub_background = true;
+        let buffer = render_to_buffer(&app, 80, 24);
+        let bar = sshub_surface_cells(&buffer, false)
+            .into_iter()
+            .filter(|&(x, y)| buffer[(x, y)].bg == ratatui::style::Color::Rgb(0x2b, 0x2b, 0x2b))
+            .count();
+        assert!(
+            bar > 0,
+            "the selection bar was released along with the surface it shares a colour with"
+        );
+    }
+
+    #[test]
+    fn releasing_sshub_keeps_the_colours_that_are_not_ground() {
+        // Selection bars, status colours and inverted chrome are *drawing*, not
+        // ground: a see-through dashboard still has to show which row is
+        // selected.
+        let mut app = app_with_builtin_theme("fire");
+        app.config.appearance.transparent_sshub_background = true;
+        let buffer = render_to_buffer(&app, 80, 24);
+        let semantic = app.theme().semantic();
+        let selection = sshub_surface_cells(&buffer, false)
+            .into_iter()
+            .filter(|&(x, y)| buffer[(x, y)].bg == semantic.selection_bg)
+            .count();
+        assert!(
+            selection > 0,
+            "the selected row lost its bar along with the ground"
+        );
+    }
+
+    #[test]
+    fn the_two_transparency_switches_are_independent() {
+        let mut app = session_app_with_theme("fire");
+        app.config.appearance.transparent_sshub_background = true;
+        app.config.appearance.transparent_session_background = false;
+        let buffer = render_to_buffer(&app, 80, 24);
+        assert_eq!(
+            buffer[remote_pty_probe(buffer.area)].bg,
+            app.theme().semantic().pty_background,
+            "the grid keeps its ground while only the app went transparent"
+        );
+
+        app.config.appearance.transparent_sshub_background = false;
+        app.config.appearance.transparent_session_background = true;
+        let buffer = render_to_buffer(&app, 80, 24);
+        assert_eq!(
+            buffer[remote_pty_probe(buffer.area)].bg,
+            ratatui::style::Color::Reset,
+            "the grid went transparent while the app kept its ground"
+        );
+        let bare = sshub_surface_cells(&buffer, true)
+            .into_iter()
+            .filter(|&(x, y)| buffer[(x, y)].bg == ratatui::style::Color::Reset)
+            .count();
+        assert_eq!(bare, 0, "the app surfaces must stay opaque");
+    }
+
+    #[test]
+    fn the_canvas_pair_backs_a_grid_no_theme_claims() {
+        // `default` leaves its ground to the emulator, so the grid has no themed
+        // pair of its own and the canvas/text fallback is what keeps it opaque.
+        // Read from the theme as authored: `app.theme()` would hand back the
+        // released view here, whose canvas is `Reset` — comparing against that
+        // would accept a see-through grid as the expected value.
+        let mut app = session_app_with_theme("default");
+        let base = {
+            let s = app.base_theme().semantic();
+            (s.pty_background, s.canvas, s.text)
+        };
+        assert_eq!(
+            base.0,
+            ratatui::style::Color::Reset,
+            "this test needs a theme without a PTY ground"
+        );
+        assert_ne!(
+            base.1,
+            ratatui::style::Color::Reset,
+            "the canvas must be opaque"
+        );
+
+        app.config.appearance.transparent_sshub_background = true;
+        let buffer = render_to_buffer(&app, 80, 24);
+        let probe = remote_pty_probe(buffer.area);
+        assert_eq!(
+            (buffer[probe].bg, buffer[probe].fg),
+            (base.1, base.2),
+            "the grid must carry the authored canvas pair"
+        );
+    }
+
+    #[test]
+    fn the_user_can_hand_the_grid_back_to_the_terminal_whatever_the_theme_paints() {
+        // The grid is the largest surface on screen, so releasing it is what
+        // makes a terminal wallpaper visible again — and it is a decision of
+        // its own, separate from SSHub's surfaces around it.
+        let mut app = session_app_with_theme("fire");
+        app.config.appearance.transparent_session_background = true;
+        let buffer = render_to_buffer(&app, 80, 24);
+        let probe = remote_pty_probe(buffer.area);
+        assert_eq!(
+            (buffer[probe].bg, buffer[probe].fg),
+            (ratatui::style::Color::Reset, ratatui::style::Color::Reset),
+            "both channels must go back to the emulator, or its opacity setting \
+             cannot reach the grid"
+        );
+        // The app's own chrome is the theme's business and stays painted.
+        assert_ne!(buffer[(1, 0)].bg, ratatui::style::Color::Reset);
+    }
+
+    #[test]
+    fn releasing_the_grid_leaves_the_canvas_fill_its_own_work() {
+        // `default` is where the division of labour is visible: the grid goes
+        // back to the emulator, and the canvas still fills everything else.
+        let mut app = session_app_with_theme("default");
+        app.config.appearance.transparent_session_background = true;
+        let buffer = render_to_buffer(&app, 80, 24);
+        let pty = crate::session::render::remote_pty_rect(buffer.area);
+        assert_eq!(
+            buffer[remote_pty_probe(buffer.area)].bg,
+            ratatui::style::Color::Reset,
+            "the newer, more specific switch owns the grid"
+        );
+        let outside_left_unpainted: Vec<_> = (buffer.area.y..buffer.area.bottom())
+            .flat_map(|y| (buffer.area.x..buffer.area.right()).map(move |x| (x, y)))
+            .filter(|&(x, y)| !pty.contains((x, y).into()))
+            .filter(|&(x, y)| buffer[(x, y)].bg == ratatui::style::Color::Reset)
+            .collect();
+        assert!(
+            outside_left_unpainted.is_empty(),
+            "the switch still fills everything outside the grid, but {} cells \
+             stayed transparent, starting at {:?}",
+            outside_left_unpainted.len(),
+            outside_left_unpainted.first()
+        );
+    }
+
+    #[test]
+    fn releasing_sshubs_surfaces_leaves_a_themed_grid_untouched() {
+        // `fire` is the built-in whose canvas differs from its background, so a
+        // ground that leaked from SSHub's side would be visible cell by cell.
+        let mut app = session_app_with_theme("fire");
+        app.config.appearance.transparent_sshub_background = true;
+        let semantic = app.base_theme().semantic();
+        assert_ne!(
+            semantic.pty_background, semantic.canvas,
+            "this test needs a theme whose PTY ground and canvas differ"
+        );
+        let buffer = render_to_buffer(&app, 80, 24);
+        let probe = remote_pty_probe(buffer.area);
+        assert_eq!(
+            buffer[probe].bg, semantic.pty_background,
+            "the grid keeps the ground its theme gave it; only its own switch releases it"
+        );
+    }
+
+    #[test]
+    fn a_themed_pty_ground_keeps_the_colours_the_remote_chose() {
+        let mut app = session_app_with_theme("summer");
+        app.config.appearance.transparent_sshub_background = false;
+        write_remote_marker(&mut app);
+        let buffer = render_to_buffer(&app, 80, 24);
+        let (_, row) = remote_marker_cell(buffer.area);
+        let at = (find_remote_marker(&buffer, row), row);
+        assert_eq!(
+            buffer[at].fg, REMOTE_FG,
+            "the remote picked this foreground; the ground pass must not take it"
+        );
+    }
+
+    #[test]
+    fn a_pty_theme_opt_out_falls_back_to_the_canvas_not_to_the_emulator() {
+        // `pty_background = "terminal"` drops the theme's own grid colour, but
+        // it cannot make the grid see-through: SSHub is opaque out of the box,
+        // and releasing it is the user's call through the Settings switch.
+        let mut app = app_with_builtin_theme("summer");
+        wear(&mut app, "[semantic]\npty_background = \"terminal\"\n");
+        enter_live_session(&mut app);
+        let buffer = render_to_buffer(&app, 80, 24);
+        let probe = remote_pty_probe(buffer.area);
+        let semantic = app.theme().semantic();
+        assert_eq!(
+            (buffer[probe].bg, buffer[probe].fg),
+            (semantic.canvas, semantic.text),
+            "the opt-out falls back to the canvas pair"
+        );
+    }
+
+    /// An app mid-way into the enter slide, with a dashboard snapshot behind it.
+    ///
+    /// The theme gets a PTY ground of its own, distinct from every other colour
+    /// it paints, so a cell carrying it can only have come from the grid pass.
+    fn session_entering_at(
+        theme_id: &str,
+        elapsed: std::time::Duration,
+    ) -> (App, std::time::Instant, u16) {
+        let mut app = app_with_builtin_theme(theme_id);
+        wear(&mut app, "[semantic]\npty_background = \"#123456\"\n");
+        enter_live_session(&mut app);
+        let area = Rect::new(0, 0, 80, 24);
+        *app.dashboard_snapshot.borrow_mut() = Some(Buffer::empty(area));
+        let started = std::time::Instant::now();
+        app.session_enter_at = Some(started);
+        assert!(app.motion_enabled(), "the slide needs motion");
+        let p = elapsed.as_secs_f32() / SESSION_ANIM.as_secs_f32();
+        let off = ((1.0 - tween::ease_out(p)) * area.width as f32).round() as u16;
+        (app, started + elapsed, off)
+    }
+
+    #[test]
+    fn the_enter_slide_owns_the_right_columns_at_every_point_of_its_travel() {
+        for step in [1u32, 4, 8, 15, 19] {
+            let elapsed = SESSION_ANIM * step / 20;
+            let (app, now, off) = session_entering_at("fire", elapsed);
+            let buffer = render_frame_at(&app, 80, 24, now);
+            let pty = crate::session::render::remote_pty_rect(buffer.area);
+            let ground = app.theme().semantic().pty_background;
+            let ahead: Vec<_> = (pty.y..pty.bottom())
+                .flat_map(|y| (pty.x..pty.x + off).map(move |x| (x, y)))
+                .filter(|&(x, y)| buffer[(x, y)].bg == ground)
+                .collect();
+            assert!(
+                ahead.is_empty(),
+                "step {step}/20 (off={off}): {} cells ahead of the session carry \
+                 the grid ground, starting at {:?}",
+                ahead.len(),
+                ahead.first()
+            );
+        }
+    }
+
+    #[test]
+    fn a_slide_that_cannot_play_protects_the_resting_viewport() {
+        // No usable dashboard behind it means no blit — and then the grid sits
+        // where it rests, so that is what ownership has to cover.
+        let (app, now, _) = session_entering_at("fire", SESSION_ANIM / 2);
+        *app.dashboard_snapshot.borrow_mut() = None;
+        let buffer = render_frame_at(&app, 80, 24, now);
+        let probe = remote_pty_probe(buffer.area);
+        assert_eq!(
+            buffer[probe].bg,
+            app.theme().semantic().pty_background,
+            "the resting grid lost its ground"
+        );
+    }
+
+    #[test]
+    fn the_enter_slide_protects_only_the_columns_the_remote_actually_occupies() {
+        // The slide carries the session in from the right and restores the
+        // dashboard on its left. The resting PTY rect therefore covers cells
+        // that are dashboard this frame, and backing them with the grid's own
+        // pair paints remote ground over SSHub's own surface.
+        let (app, now, off) = session_entering_at("fire", SESSION_ANIM / 2);
+        assert!(
+            off > 0 && off < 80,
+            "the slide must be mid-flight, off={off}"
+        );
+        let buffer = render_frame_at(&app, 80, 24, now);
+        let pty = crate::session::render::remote_pty_rect(buffer.area);
+        let ground = app.theme().semantic().pty_background;
+        assert_eq!(ground, ratatui::style::Color::Rgb(0x12, 0x34, 0x56));
+
+        let ahead: Vec<_> = (pty.y..pty.bottom())
+            .flat_map(|y| (pty.x..pty.x + off).map(move |x| (x, y)))
+            .filter(|&(x, y)| buffer[(x, y)].bg == ground)
+            .collect();
+        assert!(
+            ahead.is_empty(),
+            "{} cells left of the travelling session carry the grid's ground, \
+             starting at {:?}",
+            ahead.len(),
+            ahead.first()
+        );
+    }
+
+    #[test]
+    fn a_solid_pty_ground_with_a_terminal_foreground_still_gets_a_foreground() {
+        // `"terminal"` is legal for every slot but `background`, so a theme may
+        // pair a painted ground with an emulator-owned foreground. Taking that
+        // pair at face value re-opens the reported bug: a written background
+        // over a `Reset` foreground is the emulator's near-white on our ground.
+        let mut app = app_with_builtin_theme("summer");
+        wear(
+            &mut app,
+            "[semantic]\npty_background = \"#123456\"\npty_foreground = \"terminal\"\n",
+        );
+        enter_live_session(&mut app);
         let buffer = render_to_buffer(&app, 80, 24);
         let probe = remote_pty_probe(buffer.area);
         assert_eq!(
             buffer[probe].bg,
-            app.theme().semantic().canvas,
-            "the legacy switch must still back the PTY with the canvas"
+            ratatui::style::Color::Rgb(0x12, 0x34, 0x56)
+        );
+        assert_eq!(
+            buffer[probe].fg,
+            app.theme().semantic().text,
+            "an unusable foreground must fall back to the plain text colour"
+        );
+    }
+
+    #[test]
+    fn releasing_sshubs_surfaces_leaves_the_grid_opaque() {
+        // The two switches are independent, and `default` is where that can
+        // actually break: its grid has no ground of its own and falls back to
+        // the canvas — which the released view sets to `Reset` along with every
+        // other ground. The fallback has to come from the theme as authored.
+        let base_canvas = app_with_builtin_theme("default").theme().semantic().canvas;
+        assert_ne!(base_canvas, ratatui::style::Color::Reset);
+
+        let mut app = session_app_with_theme("default");
+        app.config.appearance.transparent_sshub_background = true;
+        app.config.appearance.transparent_session_background = false;
+        let buffer = render_to_buffer(&app, 80, 24);
+        assert_eq!(
+            buffer[remote_pty_probe(buffer.area)].bg,
+            base_canvas,
+            "the grid followed the wrong switch"
+        );
+    }
+
+    #[test]
+    fn a_theme_that_leaves_every_foreground_to_the_emulator_writes_no_ground_at_all() {
+        // Last line of the pair invariant: if even the fallback resolves to
+        // `Reset`, writing the background alone would hand the foreground back
+        // to the emulator — the exact reported bug. Both channels or neither.
+        let mut app = app_with_builtin_theme("summer");
+        wear(
+            &mut app,
+            "[semantic]\npty_background = \"#123456\"\n\
+             pty_foreground = \"terminal\"\ntext = \"terminal\"\n",
+        );
+        enter_live_session(&mut app);
+        let buffer = render_to_buffer(&app, 80, 24);
+        let half = half_painted_pty_cells(&buffer);
+        assert!(
+            half.is_empty(),
+            "{} PTY cells carry a background over an emulator foreground, starting at {:?}",
+            half.len(),
+            half.first()
+        );
+        // …and not by inventing a *complete* pair either: with no honest
+        // foreground left, the grid stays the emulator's in both channels.
+        let probe = remote_pty_probe(buffer.area);
+        assert_eq!(
+            (buffer[probe].bg, buffer[probe].fg),
+            (ratatui::style::Color::Reset, ratatui::style::Color::Reset),
+            "a ground was written despite having no foreground to pair it with"
+        );
+    }
+
+    #[test]
+    fn a_reversed_remote_cell_gets_both_channels_or_it_swaps_against_nothing() {
+        let mut app = session_app_with_theme("summer");
+        app.config.appearance.transparent_sshub_background = false;
+        // Reverse video with no colours of its own: the emulator swaps whatever
+        // the two channels hold, so leaving one at `Reset` swaps our ground
+        // against a foreground that was never defined.
+        app.sessions[0].parser.process(b"\x1b[7mREVERSED");
+        let buffer = render_to_buffer(&app, 80, 24);
+        let pty = crate::session::render::remote_pty_rect(buffer.area);
+        let cell = &buffer[(pty.x, pty.y)];
+        assert!(
+            cell.modifier.contains(Modifier::REVERSED),
+            "the marker did not reach the grid reversed"
+        );
+        let semantic = app.theme().semantic();
+        assert_eq!(
+            (cell.bg, cell.fg),
+            (semantic.pty_background, semantic.pty_foreground),
+            "a reversed cell must carry the whole pair"
+        );
+    }
+
+    /// Every PTY cell that ended up with one channel painted and the other left
+    /// to the emulator. Painting only the background is what made `summer`
+    /// unreadable: the remote's default foreground stayed `Reset`, so the
+    /// emulator wrote its own near-white into our cream ground.
+    fn half_painted_pty_cells(buffer: &Buffer) -> Vec<(u16, u16)> {
+        use ratatui::style::Color;
+        let pty = crate::session::render::remote_pty_rect(buffer.area);
+        let mut found = Vec::new();
+        for y in pty.y..pty.bottom() {
+            for x in pty.x..pty.right() {
+                let cell = &buffer[(x, y)];
+                if cell.bg != Color::Reset && cell.fg == Color::Reset {
+                    found.push((x, y));
+                }
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn a_painted_pty_ground_never_leaves_the_foreground_to_the_emulator() {
+        let mut app = session_app_with_theme("summer");
+        app.config.appearance.transparent_sshub_background = true;
+        let buffer = render_to_buffer(&app, 80, 24);
+        let half = half_painted_pty_cells(&buffer);
+        assert!(
+            half.is_empty(),
+            "{} PTY cells carry a themed background over an emulator foreground, \
+             starting at {:?}",
+            half.len(),
+            half.first()
+        );
+    }
+
+    #[test]
+    fn a_theme_with_its_own_ground_backs_the_remote_pty() {
+        let mut app = session_app_with_theme("summer");
+        app.config.appearance.transparent_sshub_background = false;
+        let buffer = render_to_buffer(&app, 80, 24);
+        let probe = remote_pty_probe(buffer.area);
+        assert_eq!(
+            buffer[probe].bg,
+            app.theme().semantic().background,
+            "a theme that paints its own ground must paint it under the PTY too"
         );
     }
 
@@ -3519,27 +4266,25 @@ mod tests {
     }
 
     #[test]
-    fn opaque_background_fills_every_cell() {
+    fn sshub_is_opaque_by_default_and_transparent_on_request() {
         use ratatui::style::Color;
         let mut app = test_app_with_hosts();
 
-        // Off (default): at least one cell is left transparent (Color::Reset).
-        let transparent = render_to_buffer(&app, 120, 38);
-        let a = transparent.area;
-        let any_reset = (a.y..a.y + a.height)
-            .any(|y| (a.x..a.x + a.width).any(|x| transparent[(x, y)].bg == Color::Reset));
-        assert!(
-            any_reset,
-            "expected some transparent cell with the flag off"
-        );
-
-        // On: no cell is transparent — every Reset bg became theme::BG.
-        app.config.appearance.opaque_background = true;
+        // Shipped state: no cell is left to the emulator.
         let opaque = render_to_buffer(&app, 120, 38);
         let a = opaque.area;
         let all_opaque = (a.y..a.y + a.height)
             .all(|y| (a.x..a.x + a.width).all(|x| opaque[(x, y)].bg != Color::Reset));
-        assert!(all_opaque, "opaque mode left a transparent cell");
+        assert!(all_opaque, "the default state left a transparent cell");
+
+        // Asked for: the ground goes back, so the emulator's own background —
+        // and its opacity setting — reach the screen again.
+        app.config.appearance.transparent_sshub_background = true;
+        let transparent = render_to_buffer(&app, 120, 38);
+        let a = transparent.area;
+        let any_reset = (a.y..a.y + a.height)
+            .any(|y| (a.x..a.x + a.width).any(|x| transparent[(x, y)].bg == Color::Reset));
+        assert!(any_reset, "nothing came free with transparency on");
     }
 
     #[test]
@@ -3916,47 +4661,38 @@ mod tests {
         // terminal default background while the group/user columns were painted
         // theme::BG, producing dark vertical bars. The whole interior must now
         // be theme::BG (or SEL_BG on the selected row).
+        //
+        // The original bars were default-background holes between painted
+        // columns. Since SSHub ships opaque, such a hole can no longer appear
+        // by omission — every unclaimed cell gets the canvas — so what this
+        // guards now is that nothing *re-introduces* one, and that the columns
+        // still agree with the interior around them.
         let mut app = test_app_with_many_hosts(92);
         app.mode = AppMode::Palette;
         app.palette_results = (0..92).collect();
         app.palette_selected = 0;
         let buf = render_to_buffer(&app, 120, 38);
 
-        // Find a popup interior row (one fully inside the centered box) and
-        // assert no cell is left at the reset/default background.
-        let mut checked_rows = 0;
-        for y in 0..buf.area.height {
-            let row_has_box = (0..buf.area.width)
-                .any(|x| matches!(buf.cell((x, y)).unwrap().bg, Color::Rgb(0x0b, 0x0d, 0x10)));
-            if !row_has_box {
-                continue;
-            }
-            checked_rows += 1;
-            for x in 0..buf.area.width {
-                let bg = buf.cell((x, y)).unwrap().bg;
-                if matches!(
-                    bg,
-                    Color::Rgb(0x0b, 0x0d, 0x10) | Color::Rgb(0x18, 0x2b, 0x22)
-                ) {
-                    continue; // theme::BG or SEL_BG — fine
-                }
-                // Outside the popup, default bg is expected; only flag default
-                // bg sandwiched between theme::BG cells (i.e. inside the box).
-                let left = (0..x).rev().find_map(|xx| {
-                    matches!(buf.cell((xx, y)).unwrap().bg, Color::Rgb(0x0b, 0x0d, 0x10))
-                        .then_some(())
-                });
-                let right = (x + 1..buf.area.width).find_map(|xx| {
-                    matches!(buf.cell((xx, y)).unwrap().bg, Color::Rgb(0x0b, 0x0d, 0x10))
-                        .then_some(())
-                });
-                assert!(
-                    !(left.is_some() && right.is_some()),
-                    "default-bg hole inside palette popup at ({x},{y})"
-                );
-            }
-        }
-        assert!(checked_rows > 10, "expected to inspect the popup body rows");
+        let holes: Vec<_> = (0..buf.area.height)
+            .flat_map(|y| (0..buf.area.width).map(move |x| (x, y)))
+            .filter(|&(x, y)| buf.cell((x, y)).unwrap().bg == Color::Reset)
+            .collect();
+        assert!(
+            holes.is_empty(),
+            "{} default-bg holes, starting at {:?}",
+            holes.len(),
+            holes.first()
+        );
+
+        // The body rows really are the popup's: theme::BG interior, SEL_BG on
+        // the selected row, and nothing else wide enough to be a column bar.
+        let body_rows = (0..buf.area.height)
+            .filter(|&y| {
+                (0..buf.area.width)
+                    .any(|x| buf.cell((x, y)).unwrap().bg == Color::Rgb(0x0b, 0x0d, 0x10))
+            })
+            .count();
+        assert!(body_rows > 10, "expected to inspect the popup body rows");
     }
 
     #[test]

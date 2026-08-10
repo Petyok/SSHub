@@ -51,7 +51,8 @@ surface = "terminal"
 surface_raised = "terminal"
 
 # The opaque companion of `background`. It is what gradient mixing, fades and
-# the `opaque_background` switch fall back to while `background` is transparent.
+# the ground fill fall back to while `background` is "terminal" — and what backs
+# SSHub's own surfaces, since a fresh install is opaque.
 canvas = "#0b0d10"
 
 border = "#1f2a24"
@@ -81,6 +82,21 @@ info = "#6fb3b8"
 connecting = "#d6a76b"
 exited = "#c97a7a"
 unknown = "#3d4a44"
+
+# The ground painted under the embedded remote grid, and the default foreground
+# written into it. Both are *references*, not literals, so the rule reads: a
+# theme that paints its own ground paints it under the PTY too, and inherits a
+# foreground that matches.
+#
+# Here `background` is "terminal", so `pty_background` resolves to no colour and
+# the grid falls back to `canvas` — while `pty_foreground` follows `text` and is
+# a colour like any other. SSHub is opaque out of the box, so the fallback is
+# what the grid actually wears. Handing the grid back to the terminal (and
+# with it to the terminal's own opacity setting, the only place transparency
+# can be blended, since ANSI has no alpha) is the user's call, through
+# `appearance.transparent_session_background` in Settings.
+pty_background = "semantic.background"
+pty_foreground = "semantic.text"
 
 # The two host-list roles whose semantic fallback does not reproduce what SSHub
 # actually drew, stated here rather than worked around in the renderer.

@@ -279,7 +279,8 @@ pub enum VisualRow {
 /// position in [`SETTINGS_ITEMS`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingToggle {
-    OpaqueBackground,
+    TransparentSshubBackground,
+    TransparentSessionBackground,
     OsLogo,
     ConfirmQuit,
     DisableAnimation,
@@ -315,16 +316,21 @@ pub struct SettingDescriptor {
 /// by a test in `tui::screens::settings`) and avoid ambiguous-width chars like
 /// the em dash or `…` — some terminals draw those 2 cells wide, pushing the
 /// tail of the line onto the popup border.
-pub const SETTINGS_ITEMS: [SettingDescriptor; 6] = [
+pub const SETTINGS_ITEMS: [SettingDescriptor; 7] = [
     SettingDescriptor {
         item: SettingItem::Theme,
         label: "Theme...",
         hint: "pick the active color theme",
     },
     SettingDescriptor {
-        item: SettingItem::Toggle(SettingToggle::OpaqueBackground),
-        label: "Opaque background",
-        hint: "fixes unreadable text on transparent terminals",
+        item: SettingItem::Toggle(SettingToggle::TransparentSshubBackground),
+        label: "SSHub transparent",
+        hint: "let your terminal show through SSHub's own surfaces",
+    },
+    SettingDescriptor {
+        item: SettingItem::Toggle(SettingToggle::TransparentSessionBackground),
+        label: "Session transparent",
+        hint: "let your terminal show through the remote grid",
     },
     SettingDescriptor {
         item: SettingItem::Toggle(SettingToggle::OsLogo),

@@ -25,10 +25,29 @@ pub struct AppearanceConfig {
     /// Show the detected OS logo in the host detail view. Default true.
     #[serde(default = "default_true")]
     pub os_logo: bool,
-    /// Paint a solid background behind the whole UI instead of leaving cells
-    /// transparent. Fixes unreadable text on transparent terminals. Default off.
+    /// Let the terminal show through SSHub's own surfaces. Default off, i.e.
+    /// opaque.
+    ///
+    /// Replaces the older `opaque_background`, which asked the opposite
+    /// question and could only ever answer half of it: it filled what was
+    /// *left over*, so a theme painting every surface itself left it nothing to
+    /// do and the switch was silently inert. Which direction is open depends on
+    /// the theme; asking for transparency is the direction that is open under
+    /// every theme, because SSHub is opaque out of the box now.
+    ///
+    /// A widget that colours its own border or text keeps doing so — this is
+    /// the *ground* beneath them, not a request to stop drawing.
     #[serde(default)]
-    pub opaque_background: bool,
+    pub transparent_sshub_background: bool,
+    /// The same choice for the embedded session grid, which is the largest
+    /// surface on screen and the one a terminal wallpaper shows through best.
+    /// Default off, i.e. opaque.
+    ///
+    /// Independent of `transparent_sshub_background`: a themed app around a
+    /// see-through grid is the common case, and the reverse is legal too.
+    /// Cells the remote coloured itself are never touched by either.
+    #[serde(default)]
+    pub transparent_session_background: bool,
     /// Id of the runtime theme to activate at start-up — a built-in or the file
     /// stem of `themes/<id>.toml`. A missing or broken id falls back to
     /// `default` with a non-fatal hint and never rewrites this file, so the
@@ -260,7 +279,8 @@ impl Default for AppearanceConfig {
             confirm_quit: true,
             identity_columns: 0,
             os_logo: true,
-            opaque_background: false,
+            transparent_sshub_background: false,
+            transparent_session_background: false,
             active_theme: default_active_theme(),
         }
     }
@@ -338,6 +358,17 @@ pub fn load_config_at(path: &Path) -> anyhow::Result<AppConfig> {
     if config.keybinds.migrate_help_frees_known_hosts(&content) {
         migrated = true;
     }
+    // A retired key left in the file reads as if it still did something. Saving
+    // once drops it (see `drop_retired_keys`); the new switches keep their
+    // defaults, which is the state `opaque_background = true` used to describe.
+    //
+    // Asked of the parsed document, not of the text: a comment mentioning the
+    // old key, or a key of the user's own that merely contains the name, would
+    // otherwise trigger a save on every single launch — the merge preserves
+    // both, so the condition would never go false again.
+    if has_retired_keys(&content) {
+        migrated = true;
+    }
     if migrated {
         // Persist via save_config_at so the migration runs once — it merges
         // through toml_edit (preserving comments + keys we don't model) and
@@ -379,7 +410,43 @@ fn merge_config_document(existing: &str, config: &AppConfig) -> anyhow::Result<S
         .map_err(|e| anyhow::anyhow!("failed to parse serialized config: {e}"))?;
     let mut doc: toml_edit::DocumentMut = existing.parse().unwrap_or_default();
     merge_toml_table(doc.as_table_mut(), new_doc.as_table());
+    drop_retired_keys(&mut doc);
     Ok(doc.to_string())
+}
+
+/// Keys SSHub no longer models, removed on the next save.
+///
+/// Preserving unmodelled keys is deliberate (a user's own notes and settings
+/// from a newer build survive), but a key *we* retired is different: it stays
+/// readable and looks like it still does something. `opaque_background` is the
+/// case at hand — it asked whether to fill what a theme left empty, a question
+/// only half of the themes could answer, and was replaced by the two
+/// `transparent_*_background` switches asking the opposite one.
+fn drop_retired_keys(doc: &mut toml_edit::DocumentMut) {
+    for (table, key) in RETIRED_KEYS {
+        if let Some(table) = doc.get_mut(table).and_then(|t| t.as_table_mut()) {
+            table.remove(key);
+        }
+    }
+}
+
+/// The exact table paths [`drop_retired_keys`] removes.
+const RETIRED_KEYS: [(&str, &str); 1] = [("appearance", "opaque_background")];
+
+/// Whether `content` really holds a retired key, as a key rather than as a
+/// substring of a comment or of a name the user chose.
+///
+/// Unparseable content answers `false`: a file we cannot read is not one we
+/// should be rewriting on the strength of a text match.
+fn has_retired_keys(content: &str) -> bool {
+    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return false;
+    };
+    RETIRED_KEYS.iter().any(|(table, key)| {
+        doc.get(table)
+            .and_then(|t| t.as_table())
+            .is_some_and(|t| t.contains_key(key))
+    })
 }
 
 fn write_private_file(path: &Path, content: &[u8]) -> anyhow::Result<()> {
@@ -695,6 +762,58 @@ mod tests {
     fn an_empty_clipboard_section_keeps_the_default() {
         let config = parse_config_str("[clipboard]\n").unwrap();
         assert!(config.clipboard.relay_from_pty);
+    }
+
+    #[test]
+    fn a_retired_key_is_dropped_on_the_next_save() {
+        // Unmodelled keys survive on purpose — a user's own notes, or settings
+        // from a newer build. A key *we* retired is different: left in place it
+        // reads as if it still did something.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[appearance]\nopaque_background = true\nos_logo = false\n\n             [something_else]\nmine = 1\n",
+        )
+        .unwrap();
+
+        let config = load_config_at(&path).unwrap();
+        assert!(!config.appearance.transparent_sshub_background);
+        assert!(!config.appearance.transparent_session_background);
+
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !written.contains("opaque_background"),
+            "the retired key survived the migrating save:\n{written}"
+        );
+        assert!(
+            written.contains("mine = 1"),
+            "an unmodelled key was dropped along with it:\n{written}"
+        );
+    }
+
+    #[test]
+    fn a_lookalike_key_or_comment_never_triggers_a_migration() {
+        // The retired key is recognised as a key, not as a substring: a comment
+        // that mentions it, or a key of the user's own that merely contains the
+        // name, must leave the file alone — the merge preserves both, so a text
+        // match would re-migrate on every single launch.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let original = "# opaque_background was removed in 0.14\n\
+                        [appearance]\nmy_opaque_background = true\nos_logo = false\n";
+        std::fs::write(&path, original).unwrap();
+        let before = std::fs::metadata(&path).unwrap().modified().unwrap();
+
+        let _ = load_config_at(&path).unwrap();
+
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(after, original, "the file was rewritten for a lookalike");
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            before,
+            "the file was touched for a lookalike"
+        );
     }
 
     #[test]

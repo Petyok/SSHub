@@ -353,7 +353,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     HelpItem::Entry { key: "", desc: "" },
     HelpItem::Entry {
         key: "Ctrl+H",
-        desc: "Settings (session logging, opaque background, …)",
+        desc: "Settings (session logging, transparency, theme, …)",
     },
     HelpItem::Entry {
         key: "Ctrl+K",

@@ -12,7 +12,7 @@ Three things make that practical:
 - **Strict validation.** `sshub theme check` reads your file with the same
   parser and resolver the application uses, and reports every problem it finds
   in one run, with file, line and column.
-- **Sensible inheritance.** The 234 component roles are driven by 23 semantic
+- **Sensible inheritance.** The 234 component roles are driven by 25 semantic
   meanings — 233 of them fall back to a semantic slot, and the one exception,
   `components.os_logo.tint`, keeps the asset's own colours by default. Every
   user theme inherits from `default`, so changing `semantic.accent` alone
@@ -130,10 +130,10 @@ Palette names are yours alone. Nothing in SSHub knows them; they exist so the
 rest of the file can say `"palette.lantern"` instead of repeating a hex value.
 An entry nobody references is reported as a warning, not an error.
 
-### 4. The semantic core — the 23 meanings
+### 4. The semantic core — the 25 meanings
 
 This is the layer worth learning. 233 of SSHub's 234 component roles fall back
-to one of exactly these 23 slots, so overriding a slot re-tints every component
+to one of exactly these 25 slots, so overriding a slot re-tints every component
 that inherits from it. (The one that does not is `components.os_logo.tint`,
 whose default is `"native"` — the detected distro logos keep their own brand
 colours until you say otherwise.)
@@ -143,7 +143,8 @@ background, canvas, surface, surface_raised,
 border, border_focus, border_popup,
 text, text_bright, text_highlight, text_muted, text_dim, text_inverse,
 accent, selection_bg, selection_fg,
-success, warning, error, info, connecting, exited, unknown
+success, warning, error, info, connecting, exited, unknown,
+pty_background, pty_foreground
 ```
 
 ```toml
@@ -152,13 +153,15 @@ accent = "palette.lantern"
 border_focus = "palette.lantern"
 ```
 
-Two of them deserve a note:
+Four of them deserve a note:
 
-- **`background`** decides whether SSHub paints its own app background at all.
-  Resolve it to `"terminal"` and SSHub leaves your terminal's own background
-  showing through (including any transparency it has). Resolve it to a colour
-  and SSHub paints its own surfaces — never the remote PTY, unless the separate
-  legacy `opaque_background` switch is enabled as described below. Like every
+- **`background`** decides whether the *theme* paints its own app background.
+  Resolve it to a colour and SSHub paints its own surfaces, and — through
+  `pty_background` below — the embedded remote grid with it. Resolve it to
+  `"terminal"` and the theme claims no ground, which is not the same as showing
+  your terminal through: `canvas` backs it instead, because SSHub is opaque out
+  of the box. Letting the terminal through is the user's choice, in Settings
+  (see [Limits and troubleshooting](#limits-and-troubleshooting)). Like every
   entry in `[semantic]`, it takes a colour only; a gradient there is a validation error
   (`` `semantic.background` does not support gradients ``). To sweep the app
   background with one, put the gradient on the paint role
@@ -166,6 +169,25 @@ Two of them deserve a note:
 - **`canvas`** is the opaque companion value: the colour an otherwise
   transparent theme uses when something genuinely needs a solid ground, and the
   default mixing ground for simulated opacity.
+- **`pty_background`** and **`pty_foreground`** are the ground painted under the
+  embedded remote grid and the default foreground written into it. In `default`
+  they are declared as references — `"semantic.background"` and
+  `"semantic.text"` — so the rule reads: *a theme that paints its own ground
+  paints it under the remote grid too, and inherits a foreground that matches.*
+  You normally never set them.
+
+  They are written as a **pair** or not at all. Painting only the ground would
+  leave the remote's default foreground to your emulator, which then writes its
+  own — near-white text on a light theme's cream, which is exactly the bug this
+  pair exists to prevent.
+
+  Setting either to `"terminal"` drops the theme's own value, and the grid then
+  falls back to `canvas` / `text` — it does **not** become see-through. SSHub is
+  opaque out of the box, and handing a surface back to the emulator is the
+  user's call, through the Settings toggles below.
+
+  Only cells the remote left at its default colour are affected. Text the remote
+  coloured itself keeps its colours, in both channels.
 
 Everything else is optional. What you do not set, you inherit.
 
@@ -919,7 +941,7 @@ sshub theme show <id>    [--resolved] [--format toml|json]
 
 ```console
 $ sshub theme check ~/.config/sshub/themes/ocean.toml
-OK: ocean (extends aqua), 23 colors, 2 gradients, 19 overrides
+OK: ocean (extends aqua), 25 colors, 2 gradients, 19 overrides
 ```
 
 Failures carry file, line and column wherever the TOML parser can supply a
@@ -993,18 +1015,50 @@ advertise true colour, its own colour reduction decides what you see. SSHub
 makes no promise of colour fidelity there, but it never panics and the status
 words (`up`, `warning`, `error`) stay readable as text, not just as colour.
 
-**Explicit theme surfaces never recolour the remote PTY.** Theme backgrounds
-and gradients exclude the embedded session viewport, even where its cells are
-transparent. The colours your remote shell prints remain the remote shell's;
-the only carve-out is the opt-in legacy `opaque_background` fill below.
+**App surfaces never recolour the remote PTY.** App backgrounds and gradients
+exclude the embedded session viewport, even where its cells are transparent —
+a gradient sweeping under arbitrary remote output has no stable contrast against
+the colours that output chose. The colours your remote shell prints remain the
+remote shell's. What the grid does get is the flat pair from `pty_background` /
+`pty_foreground`, and only in the channels the remote left at its default.
 
-**`opaque_background`.** The existing Settings toggle keeps its old meaning. On
-SSHub's own surfaces, it fills transparent cells with `semantic.canvas` when
-`components.app.background` resolves to `"terminal"`; it cannot override an app
-background the theme set deliberately. The remote PTY is the intentional
-carve-out: whenever `opaque_background` is enabled, independently of the chosen
-app background, it may put `semantic.canvas` behind PTY cells whose background
-is still `Color::Reset`.
+**SSHub is opaque out of the box; transparency is a choice you make.** Where a
+theme resolves a ground to `"terminal"`, `semantic.canvas` backs it, and the
+grid falls back to the `canvas`/`text` pair — so no theme can leave you with
+unreadable text on an image-backed terminal by accident. Two Settings toggles
+(`Ctrl+H`) hand a surface back to your emulator, both off by default:
+
+| Toggle | Config key | Releases |
+| --- | --- | --- |
+| `SSHub transparent` | `transparent_sshub_background` | SSHub's own ground |
+| `Session transparent` | `transparent_session_background` | the remote grid |
+
+They are independent, and the split is deliberate: a themed app around a
+see-through grid is the common case, because the grid is the largest surface a
+terminal wallpaper shows through.
+
+Both release the *ground*, and that includes the panel bodies a theme paints
+through `semantic.surface` / `semantic.surface_raised`, which the widgets draw
+themselves. What stays is the *drawing*: selection bars, status colours,
+borders, inverted chrome — a see-through dashboard still has to show which row
+is selected. In practice about 82% of the dashboard comes free under `fire`,
+`summer` and `aqua`, and 99% under `default` and `high-contrast`, whose ground
+slots are all the same colour.
+
+Note the direction these toggles ask in. A switch asking to *fill* can only act
+where a theme left something unfilled, so it is silently inert under a theme
+that paints everything — which is exactly what the older `opaque_background`
+did, and why it is gone. Asking to *release* is a question every theme can
+answer.
+
+**There is no transparency slider, and there cannot be one.** ANSI has no
+per-cell alpha: a cell holds a colour or "default", with nothing in between, and
+the application cannot see what is behind its window to blend against it.
+Blending is your emulator's job (kitty `background_opacity`, WezTerm
+`window_background_opacity`), and it applies only to cells left at the default
+background. That is why releasing a surface means resolving it to that default
+rather than blending anything, and why the choice lives in Settings: it is the
+user who knows whether their terminal has something worth showing through.
 
 **An invalid theme never stops SSHub from starting.** If `active_theme` names a
 theme that no longer resolves, SSHub falls back to `default`, shows the reason

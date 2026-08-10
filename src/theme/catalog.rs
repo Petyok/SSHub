@@ -8,7 +8,7 @@
 
 /// One slot of the fixed semantic core of schema version 1.
 ///
-/// The 23 slots are the only names a component fallback may reference; a theme
+/// The 25 slots are the only names a component fallback may reference; a theme
 /// that overrides one of them re-tints everything inheriting from it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SemanticSlot {
@@ -35,6 +35,11 @@ pub enum SemanticSlot {
     Connecting,
     Exited,
     Unknown,
+    /// The ground painted under the embedded remote grid, and the default
+    /// foreground written into it. Appended after the original 23 so every
+    /// existing `as usize` index keeps its value.
+    PtyBackground,
+    PtyForeground,
 }
 
 impl SemanticSlot {
@@ -249,6 +254,14 @@ pub static SEMANTIC_SPECS: &[SemanticSpec] = &[
     SemanticSpec {
         key: "unknown",
         slot: SemanticSlot::Unknown,
+    },
+    SemanticSpec {
+        key: "pty_background",
+        slot: SemanticSlot::PtyBackground,
+    },
+    SemanticSpec {
+        key: "pty_foreground",
+        slot: SemanticSlot::PtyForeground,
     },
 ];
 
@@ -1012,7 +1025,7 @@ mod tests {
 
     #[test]
     fn v1_catalog_is_complete_unique_and_typed() {
-        assert_eq!(SEMANTIC_SPECS.len(), 23);
+        assert_eq!(SEMANTIC_SPECS.len(), 25);
         let paths: std::collections::BTreeSet<_> =
             ROLE_SPECS.iter().map(|spec| spec.path).collect();
         assert_eq!(paths.len(), ROLE_SPECS.len());

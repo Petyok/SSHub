@@ -620,7 +620,7 @@ impl ResolvedGradient {
     }
 }
 
-/// The fixed semantic core of schema version 1 — exactly 23 slots.
+/// The fixed semantic core of schema version 1 — exactly 25 slots.
 ///
 /// Component fallbacks only ever reference these names, so overriding one
 /// semantic slot re-tints every component that inherits from it.
@@ -653,6 +653,8 @@ pub struct ResolvedSemantic {
     pub(crate) connecting: Color,
     pub(crate) exited: Color,
     pub(crate) unknown: Color,
+    pub(crate) pty_background: Color,
+    pub(crate) pty_foreground: Color,
 }
 
 /// Number of slots in the fixed semantic core, derived from the catalogue so a
@@ -690,6 +692,8 @@ impl ResolvedSemantic {
             connecting: slots[SemanticSlot::Connecting as usize],
             exited: slots[SemanticSlot::Exited as usize],
             unknown: slots[SemanticSlot::Unknown as usize],
+            pty_background: slots[SemanticSlot::PtyBackground as usize],
+            pty_foreground: slots[SemanticSlot::PtyForeground as usize],
         }
     }
 
@@ -719,6 +723,8 @@ impl ResolvedSemantic {
             SemanticSlot::Connecting => self.connecting,
             SemanticSlot::Exited => self.exited,
             SemanticSlot::Unknown => self.unknown,
+            SemanticSlot::PtyBackground => self.pty_background,
+            SemanticSlot::PtyForeground => self.pty_foreground,
         }
     }
 }
@@ -834,7 +840,7 @@ impl ResolvedTheme {
         self.author.as_deref()
     }
 
-    /// The 23 semantic slots every component fallback is built from.
+    /// The 25 semantic slots every component fallback is built from.
     pub fn semantic(&self) -> &ResolvedSemantic {
         &self.semantic
     }
@@ -950,6 +956,60 @@ impl ResolvedTheme {
 
     pub fn style(&self, role: StyleRole) -> Style {
         self.components.styles[role as usize]
+    }
+
+    /// A copy of this theme whose **ground** is handed back to the emulator.
+    ///
+    /// Ground means the four semantic slots a surface is painted from —
+    /// `background`, `canvas`, `surface`, `surface_raised` — and every component
+    /// role that inherits its background from one of them. Everything else is
+    /// untouched: selection bars, status colours, borders and inverted chrome
+    /// are *drawing*, and a see-through interface still has to show which row is
+    /// selected.
+    ///
+    /// Selection is by **role**, not by colour. A theme may legitimately give
+    /// `selection_bg` and `surface` the same value; a colour comparison over the
+    /// finished frame would then erase the selection bar along with the ground,
+    /// and no comparison can tell the two apart after the fact. The catalogue
+    /// fallback still knows, so the decision is made here, before anything is
+    /// drawn.
+    ///
+    /// A role the theme set explicitly is released too, when its catalogue
+    /// fallback is a ground slot: `[components.panel] background = "..."` is
+    /// still that panel's ground, whoever wrote the colour. `Color` and `Tint`
+    /// roles are never touched — those paint marks and logos, not surfaces.
+    pub fn with_ground_released(&self) -> Self {
+        use crate::theme::catalog::{RoleFallback, RoleRef, ROLE_SPECS};
+
+        let ground = |slot: SemanticSlot| {
+            matches!(
+                slot,
+                SemanticSlot::Background
+                    | SemanticSlot::Canvas
+                    | SemanticSlot::Surface
+                    | SemanticSlot::SurfaceRaised
+            )
+        };
+
+        let mut released = self.clone();
+        released.semantic.background = Color::Reset;
+        released.semantic.canvas = Color::Reset;
+        released.semantic.surface = Color::Reset;
+        released.semantic.surface_raised = Color::Reset;
+
+        for spec in ROLE_SPECS {
+            match (spec.role, spec.fallback) {
+                (RoleRef::Paint(role), RoleFallback::Paint(slot)) if ground(slot) => {
+                    released.components.paints[role as usize] = ResolvedPaint::Solid(Color::Reset);
+                }
+                // The one style recipe that seats its text on a ground slot.
+                (RoleRef::Style(role), RoleFallback::Style(SemanticStyle::TextOnSurfaceRaised)) => {
+                    released.components.styles[role as usize].bg = Some(Color::Reset);
+                }
+                _ => {}
+            }
+        }
+        released
     }
 
     pub fn paint(&self, role: PaintRole) -> &ResolvedPaint {

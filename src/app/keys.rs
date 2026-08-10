@@ -1210,7 +1210,8 @@ impl App {
         match item.into() {
             SettingItem::Theme => None,
             SettingItem::Toggle(t) => Some(match t {
-                SettingToggle::OpaqueBackground => a.opaque_background,
+                SettingToggle::TransparentSshubBackground => a.transparent_sshub_background,
+                SettingToggle::TransparentSessionBackground => a.transparent_session_background,
                 SettingToggle::OsLogo => a.os_logo,
                 SettingToggle::ConfirmQuit => a.confirm_quit,
                 SettingToggle::DisableAnimation => a.disable_animation,
@@ -1230,9 +1231,13 @@ impl App {
             return false;
         };
         match toggle {
-            SettingToggle::OpaqueBackground => {
-                self.config.appearance.opaque_background =
-                    !self.config.appearance.opaque_background;
+            SettingToggle::TransparentSshubBackground => {
+                self.config.appearance.transparent_sshub_background =
+                    !self.config.appearance.transparent_sshub_background;
+            }
+            SettingToggle::TransparentSessionBackground => {
+                self.config.appearance.transparent_session_background =
+                    !self.config.appearance.transparent_session_background;
             }
             SettingToggle::OsLogo => {
                 self.config.appearance.os_logo = !self.config.appearance.os_logo

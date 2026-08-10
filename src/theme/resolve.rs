@@ -1056,6 +1056,8 @@ info = \"#6fb3b8\"
 connecting = \"#d6a76b\"
 exited = \"#c97a7a\"
 unknown = \"#3d4a44\"
+pty_background = \"semantic.background\"
+pty_foreground = \"semantic.text\"
 
 [components.focus.indicator]
 foreground = \"semantic.accent\"
@@ -1167,6 +1169,56 @@ foreground = \"semantic.accent\"
             theme.style(StyleRole::FocusIndicator).fg,
             Some(Color::Rgb(255, 0, 0))
         );
+    }
+
+    #[test]
+    fn a_semantic_slot_may_reference_another_slot_of_the_same_core() {
+        // `pty_background`/`pty_foreground` are declared in `default` as
+        // references to `background`/`text`, which is what makes "a theme that
+        // paints its own ground paints it under the PTY too" hold without every
+        // theme restating it. The resolver walks slots in catalogue order, so
+        // this also proves the order does not matter: both targets sit *before*
+        // the referring slots only by accident of the catalogue.
+        let theme = resolved(
+            "child",
+            vec![(
+                "child",
+                "schema_version = 1\nname = \"Child\"\nextends = \"default\"\n\
+                 [semantic]\nbackground = \"#102030\"\ntext = \"#405060\"\n",
+            )],
+        );
+        assert_eq!(theme.semantic().pty_background, Color::Rgb(16, 32, 48));
+        assert_eq!(theme.semantic().pty_foreground, Color::Rgb(64, 80, 96));
+    }
+
+    #[test]
+    fn a_child_may_opt_its_pty_ground_back_out_to_the_emulator() {
+        let theme = resolved(
+            "child",
+            vec![(
+                "child",
+                "schema_version = 1\nname = \"Child\"\nextends = \"default\"\n\
+                 [semantic]\nbackground = \"#102030\"\npty_background = \"terminal\"\n",
+            )],
+        );
+        assert_eq!(theme.semantic().pty_background, Color::Reset);
+        // The app surface is untouched by the opt-out: only the grid is released.
+        assert_eq!(theme.semantic().background, Color::Rgb(16, 32, 48));
+    }
+
+    #[test]
+    fn two_semantic_slots_referencing_each_other_are_reported_as_a_cycle() {
+        let definitions = definitions([
+            ("default", DEFAULT_TEST_THEME),
+            (
+                "child",
+                "schema_version = 1\nname = \"Child\"\nextends = \"default\"\n\
+                 [semantic]\npty_background = \"semantic.pty_foreground\"\n\
+                 pty_foreground = \"semantic.pty_background\"\n",
+            ),
+        ]);
+        let outcome = resolve_theme(&id("child"), &definition_refs(&definitions));
+        assert_failed_with(&outcome, "colour reference cycle");
     }
 
     #[test]

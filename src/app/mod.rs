@@ -633,8 +633,28 @@ impl App {
         }
     }
 
-    /// The theme every renderer paints with.
+    /// The theme every renderer paints with — which, when the user asked for a
+    /// see-through interface, is the active theme with its ground released.
+    ///
+    /// Decided here rather than stored in the manager, so flipping the setting
+    /// takes effect on the next frame without anything having to be rebuilt or
+    /// kept in sync.
     pub fn theme(&self) -> &ResolvedTheme {
+        if self.config.appearance.transparent_sshub_background {
+            self.theme_manager.theme_ground_released()
+        } else {
+            self.theme_manager.theme()
+        }
+    }
+
+    /// The active theme exactly as authored, whatever the transparency settings
+    /// say.
+    ///
+    /// The remote grid reads its ground from here, not from [`Self::theme`]:
+    /// the released view has every ground slot at `Color::Reset`, so a grid that
+    /// falls back to `semantic.canvas` would go see-through the moment SSHub's
+    /// own surfaces did — and the two switches are meant to be independent.
+    pub fn base_theme(&self) -> &ResolvedTheme {
         self.theme_manager.theme()
     }
 

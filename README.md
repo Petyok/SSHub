@@ -45,7 +45,7 @@ Add/edit host form, the rebindable keybindings editor (`Ctrl+K`), and the scroll
 ![Keybindings editor](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/keybindings.png)
 ![Help overlay](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/help.png)
 
-The settings overlay (`Ctrl+H`) — toggle an opaque background, OS logos, quit confirmation, and the startup animation:
+The settings overlay (`Ctrl+H`) — make SSHub's own surfaces or the remote grid transparent, toggle OS logos, quit confirmation, and the startup animation:
 
 ![Settings overlay](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/settings.png)
 
@@ -61,11 +61,11 @@ The settings overlay (`Ctrl+H`) — toggle an opaque background, OS logos, quit 
 - **Ad-hoc connect** - in the fuzzy palette (`/`), typing an unknown `[user@]host[:port]` (IPv6 in brackets supported) that matches no saved host offers a "connect without saving" row; Enter opens an embedded ssh session to it. Input is validated and injection-safe (no leading-dash hosts; destination passed after `--`)
 - **Local shell tab** - `Ctrl+Shift+T` opens a session tab running your login shell (`$SHELL`, else `/bin/sh`) with the same detach/close semantics as ssh tabs
 - **Audit** — log of all connection events with filtering by status (ok/fail) and time range (today/week/month)
-- **Settings overlay** (`Ctrl+H`) — toggle an opaque background (for transparent terminals), OS logos, quit confirmation, and the startup animation
+- **Settings overlay** (`Ctrl+H`) — let your terminal show through SSHub's own surfaces or through the remote grid (two separate switches, both off by default), toggle OS logos, quit confirmation, and the startup animation
 - **Audit** — log of all connection events with filtering by status (ok/fail) and time range (today/week/month); session connect events record the path to the session log when logging is enabled
 - **Session logging** — opt-in capture of PTY session output to `~/.local/share/sshub/profiles/<name>/logs/<host-dir>/` (managed hosts use `{name}-{id}`; pure `~/.ssh/config` aliases without a launcher row may share a directory when sanitized names collide). Enable globally in Settings (`Ctrl+H`) or override per host (`inherit` / `on` / `off`). **Logs capture everything echoed to the terminal, including passwords if they appear on screen.**
 - **Mosh transport** — per-host `Transport` field in the host form (`ssh` or `mosh`). Embedded sessions use `mosh` when selected; tunnels and SFTP stay ssh-only.
-- **Settings overlay** (`Ctrl+H`) — toggle session logging, opaque background (for transparent terminals), OS logos, quit confirmation, and the startup animation
+- **Settings overlay** (`Ctrl+H`) — toggle session logging, let your terminal show through SSHub's own surfaces or through the remote grid (two separate switches, both off by default), toggle OS logos, quit confirmation, and the startup animation
 - **Hybrid sources** — hosts from `~/.ssh/config` (read-only) and launcher-managed (full CRUD) merge without duplicates
 - **Import/Export**: import from `~/.ssh/config`, Termius backups, PuTTY (a Windows regedit `.reg` export or a Unix `~/.putty/sessions` directory), or mRemoteNG (`confCons.xml`); export managed hosts back to ssh config format. Only SSH sessions are imported (RDP/VNC/telnet entries are skipped), and encrypted mRemoteNG passwords are not decrypted (imported hosts carry no stored secret)
 - **Hot reload** — edits to `~/.ssh/config` update the host list live via file watcher
@@ -368,12 +368,13 @@ Select it in the TUI with **Ctrl+H → Theme… → Enter**: moving through the 
 previews each theme on the whole interface, `Esc` rolls back, and `Enter` saves
 `appearance.active_theme` to `config.toml`. Nothing else is written.
 
-A theme sets any of three layers — your own `[palette]`, the fixed 23-slot
+A theme sets any of three layers — your own `[palette]`, the fixed 25-slot
 `[semantic]` core, and per-role `[components]` overrides — plus named static
 `[gradients]`. Everything you leave out is inherited from `default`, so
 changing one semantic slot recolours everything that uses it. True Color
-terminals get the colours as written; the embedded remote session is never
-recoloured.
+terminals get the colours as written. The embedded remote session keeps every
+colour the remote chose itself; a theme only supplies the ground and the default
+foreground the remote left unset.
 
 Three headless commands, all without a TUI or a database:
 

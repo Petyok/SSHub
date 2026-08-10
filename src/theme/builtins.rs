@@ -229,6 +229,15 @@ mod tests {
             SemanticSlot::Error | SemanticSlot::Exited => legacy::RED,
             SemanticSlot::Info => legacy::CYAN,
             SemanticSlot::Unknown => legacy::DIM,
+            // Neither slot existed before the theme system, so neither has a
+            // legacy value to reproduce; what is asserted here is the contract
+            // they were given. `default` leaves the grid's own ground to
+            // `"terminal"` — which is *not* the same as leaving the grid to the
+            // emulator, because the canvas/text pair backs it instead — and
+            // stocks the foreground from `semantic.text`, so a derived theme
+            // that paints its ground inherits one that matches.
+            SemanticSlot::PtyBackground => Color::Reset,
+            SemanticSlot::PtyForeground => legacy::TEXT,
         }
     }
 

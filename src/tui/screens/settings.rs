@@ -155,10 +155,13 @@ mod tests {
         }
     }
 
-    /// Popup geometry for an 80x24 screen: `popup_w = 56`, six rows plus the
-    /// frame and footer, centered.
+    /// Popup geometry for an 80x24 screen: `popup_w = 56`, one row per settings
+    /// item plus the frame and footer, centered. The row count is read from
+    /// [`SETTINGS_ITEMS`] so adding a setting moves these tests with it instead
+    /// of breaking them.
     const POPUP_X: u16 = (80 - 56) / 2;
-    const POPUP_Y: u16 = (24 - (6 + 6)) / 2;
+    const POPUP_H: u16 = SETTINGS_ITEMS.len() as u16 + 6;
+    const POPUP_Y: u16 = (24 - POPUP_H) / 2;
     const LABEL_X: u16 = POPUP_X + 2 + 4;
 
     /// One rendered line of the settings popup, as a string.
@@ -228,7 +231,7 @@ mod tests {
         let mut app = themed_app(role_marker_theme("settings", MARKERS));
         app.mode = AppMode::Settings;
         app.settings_selected = 1;
-        app.config.appearance.opaque_background = true;
+        app.config.appearance.transparent_sshub_background = true;
         let buf = frame_at(area, |f| render_settings(f, &app));
         let popup = app.last_popup_rect.get().expect("the popup was laid out");
         let check_cell = buf.cell((popup.x + 2, popup.y + 2)).unwrap();
@@ -298,13 +301,13 @@ mod tests {
         let check_col: String = line.chars().skip(POPUP_X as usize + 2).take(4).collect();
         assert_eq!(check_col, "[ ] ");
         let label_col: String = line.chars().skip(LABEL_X as usize).take(17).collect();
-        assert_eq!(label_col, "Opaque background");
+        assert_eq!(label_col, "SSHub transparent");
     }
 
     /// Legend follows the kind of the highlighted row.
     #[test]
     fn the_legend_matches_the_selected_row_kind() {
-        let legend_y = POPUP_Y + (6 + 6) - 2;
+        let legend_y = POPUP_Y + POPUP_H - 2;
         assert!(render_line(0, legend_y).contains("Enter choose"));
         assert!(render_line(1, legend_y).contains("Space toggle"));
     }

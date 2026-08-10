@@ -8,7 +8,7 @@ All notable changes to SSHub are documented in this file.
 
 - **Runtime theme system** (PR #86 by @michabbb) - SSHub's colours are TOML
   files now, not constants. A theme sets any of three layers - your own
-  `[palette]`, a fixed 23-slot `[semantic]` core, and per-role `[components]`
+  `[palette]`, a fixed 25-slot `[semantic]` core, and per-role `[components]`
   overrides - plus named static `[gradients]`; everything left out is inherited
   from `default`, so changing a single semantic slot recolours every component
   that uses it. Every one of the 234 component roles the TUI paints is
@@ -40,9 +40,35 @@ All notable changes to SSHub are documented in this file.
 - **Static gradients** - named multi-stop gradients in five directions
   (`horizontal`, `vertical`, `diagonal_down`, `diagonal_up`, `perimeter`) on
   frames, separators and backgrounds, painted by buffer post-processing with no
-  per-cell allocation. Explicit theme surfaces never recolour the embedded
-  remote session; the opt-in legacy `opaque_background` switch may still fill
-  transparent PTY reset cells with `semantic.canvas`.
+  per-cell allocation. App surfaces and gradients never recolour the embedded
+  remote session.
+- **Themed PTY ground** (reported by @Petyok in PR #86 review) - the two
+  semantic slots `pty_background` and `pty_foreground` back the embedded remote
+  grid. `default` declares them as references to `background` and `text`, so a
+  theme that paints its own ground paints it under the grid too; a theme that
+  claims no ground of its own falls back to the `canvas`/`text` pair. The two
+  are always written as a pair: filling only the background left the remote's
+  default foreground to the emulator, which is what made `summer`
+  near-unreadable (near-white text on cream), and it broke reverse video.
+  Colours the remote chose itself are never touched.
+- **Transparency is a choice now, and `opaque_background` is gone**
+  (replaces it, reported by @Petyok in PR #86 review) - SSHub is opaque out of
+  the box under every theme, and two independent `Ctrl+H` toggles hand a surface
+  back to your terminal: `SSHub transparent`
+  (`appearance.transparent_sshub_background`) releases SSHub's own ground,
+  `Session transparent` (`appearance.transparent_session_background`) releases
+  the remote grid. Both default to off. The old switch asked the opposite
+  question and could only ever answer half of it: it filled what was *left
+  over*, so under a theme that paints every surface it had nothing to do and was
+  silently inert - which direction is open depends on the theme, and asking to
+  *release* is the one every theme can answer. Both toggles release the ground,
+  including the panel bodies a theme paints through `semantic.surface`, and keep
+  the drawing on it: selection bars, status colours, borders and inverted chrome
+  stay, because a see-through dashboard still has to show which row is selected. `opaque_background = true` in an existing `config.toml` is
+  ignored; it described the state that is now the default. There is no
+  transparency slider and there cannot be one - ANSI has no per-cell alpha, so
+  only your emulator can blend, and only behind cells left at the default
+  background.
 - **`sshub theme` CLI** - `check`, `list` and `show`, all headless (no TUI, no
   database). `theme check` validates strictly and reports `file:line:column`
   with `did you mean` suggestions; `theme show --resolved` writes a standalone

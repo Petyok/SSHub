@@ -29,6 +29,9 @@ pub struct ThemeManager {
     /// What is actually painting right now.
     active_id: String,
     active: Rc<ResolvedTheme>,
+    /// `active` with its ground released, derived at the same moment so the two
+    /// are always the same theme. See [`ResolvedTheme::with_ground_released`].
+    ground_released: Rc<ResolvedTheme>,
     /// The user theme directory this manager belongs to, or `None` when there
     /// genuinely is none (tests, or a config directory that could not be
     /// resolved). A *degraded* manager keeps the path that failed, because a
@@ -114,6 +117,7 @@ impl ThemeManager {
             registry,
             saved_id,
             active_id,
+            ground_released: Rc::new(active.with_ground_released()),
             active,
             themes_dir,
             startup_diagnostics,
@@ -123,6 +127,15 @@ impl ThemeManager {
     /// The theme every renderer paints with.
     pub fn theme(&self) -> &ResolvedTheme {
         &self.active
+    }
+
+    /// The active theme with its ground handed back to the emulator, for
+    /// `appearance.transparent_sshub_background`.
+    ///
+    /// Derived once per activation rather than per frame, and kept next to the
+    /// theme it belongs to, so the two can never describe different themes.
+    pub fn theme_ground_released(&self) -> &ResolvedTheme {
+        &self.ground_released
     }
 
     /// A cheap clone of the active theme, for code that must outlive the borrow
@@ -176,6 +189,7 @@ impl ThemeManager {
     /// another. There is no signature here that can express that state.
     pub fn activate_resolved(&mut self, theme: Rc<ResolvedTheme>) {
         self.active_id = theme.id().as_str().to_string();
+        self.ground_released = Rc::new(theme.with_ground_released());
         self.active = theme;
     }
 
