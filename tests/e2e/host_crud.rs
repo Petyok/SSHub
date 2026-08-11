@@ -303,3 +303,32 @@ fn delete_ssh_config_host_shows_notice() {
         .contains("launcher"));
     assert_eq!(app.hosts.len(), 1);
 }
+
+/// Issue #101: the store refuses an address ssh would read as an option. The
+/// form has to say so and stay open — the write error would otherwise travel
+/// out through `handle_key` and end the TUI run loop.
+#[test]
+fn form_refuses_an_option_like_address_without_unwinding() {
+    let file = NamedTempFile::new().unwrap();
+    let path = file.path();
+    let mut app = app_with_store(path);
+
+    app.handle_key(key_char('a')).unwrap();
+    assert_eq!(app.mode, AppMode::HostForm);
+    edit_field(&mut app, "-oProxyCommand=id"); // Address
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Password
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Username
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Label
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Name
+    edit_field(&mut app, "evil");
+
+    app.handle_key(key(KeyCode::F(2))).unwrap();
+
+    assert_eq!(app.mode, AppMode::HostForm, "the form stays open");
+    let notice = app.host_notice.clone().expect("a notice explaining why");
+    assert!(notice.contains("Address"), "{notice}");
+    assert!(notice.contains("option"), "{notice}");
+
+    let store = LauncherStore::open(path).unwrap();
+    assert!(store.get_host_by_name("evil").unwrap().is_none());
+}

@@ -202,6 +202,11 @@ impl LauncherStore {
     // --- hosts ---
 
     pub fn create_host(&self, host: &NewHost) -> Result<ManagedHost> {
+        reject_option_like("name", &host.name)?;
+        reject_option_like("address", &host.address)?;
+        if let Some(user) = &host.username {
+            reject_option_like("username", user)?;
+        }
         let now = now_ts();
         let tags_json = tags_to_json(&host.tags)?;
         let source = host.source.as_str();
@@ -304,6 +309,15 @@ impl LauncherStore {
     }
 
     pub fn update_host(&self, id: i64, update: &HostUpdate) -> Result<Option<ManagedHost>> {
+        if let Some(name) = &update.name {
+            reject_option_like("name", name)?;
+        }
+        if let Some(address) = &update.address {
+            reject_option_like("address", address)?;
+        }
+        if let Some(Some(user)) = &update.username {
+            reject_option_like("username", user)?;
+        }
         // Read-merge-write under one transaction on one connection: a
         // concurrent writer (watcher reimport, second instance) can no longer
         // slip between the read and the write and get its change overwritten.
@@ -867,6 +881,31 @@ fn status_sql(status: &str) -> String {
         "retry" => "status = 'retry'".into(),
         other => format!("status = '{other}'"),
     }
+}
+
+/// True when a value would be read by ssh as an option rather than a host.
+/// Exposed so the host form can say so while the form is still open, instead of
+/// surfacing a store error through a TUI key handler.
+pub fn is_option_like(value: &str) -> bool {
+    value.starts_with('-')
+}
+
+/// Refuse a host field that ssh would read as an *option* instead of a value.
+///
+/// `name`, `address` and `username` all end up in the connection target
+/// (`user@host`, or the bare alias for an ssh_config host), and a value starting
+/// with `-` is parsed by ssh as a flag: an address of `-oProxyCommand=id` runs
+/// `id` locally. `ssh::safe_ssh_target` neutralises such a row at connect time,
+/// but nothing legitimate looks like this, and refusing the write is where the
+/// user (or an import of a file someone else wrote) finds out. See issue #101.
+fn reject_option_like(field: &str, value: &str) -> Result<()> {
+    if is_option_like(value) {
+        anyhow::bail!(
+            "host {field} '{value}' starts with '-', which ssh reads as an option rather than \
+             a host — refusing to store it"
+        );
+    }
+    Ok(())
 }
 
 fn via_filter_sql(via: Option<&str>) -> String {
@@ -1435,6 +1474,67 @@ mod tests {
 
         // An edit may keep its own current name (exclude_id).
         assert_eq!(store.unique_host_name("web", Some(web.id)).unwrap(), "web");
+    }
+
+    /// Issue #101: a value ssh would read as an option never reaches the
+    /// database, so no later code path has to remember to defend against it.
+    #[test]
+    fn option_like_fields_are_refused_on_write() {
+        let store = LauncherStore::open_in_memory().unwrap();
+
+        let err = store
+            .create_host(&NewHost {
+                name: "evil".into(),
+                address: "-oProxyCommand=id".into(),
+                port: 22,
+                ..Default::default()
+            })
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("address"), "{err}");
+        assert!(err.contains("option"), "{err}");
+
+        assert!(store
+            .create_host(&NewHost {
+                name: "-oProxyCommand=id".into(),
+                address: "10.0.0.1".into(),
+                port: 22,
+                ..Default::default()
+            })
+            .is_err());
+        assert!(store
+            .create_host(&NewHost {
+                name: "user-flag".into(),
+                address: "10.0.0.1".into(),
+                port: 22,
+                username: Some("-oProxyCommand=id".into()),
+                ..Default::default()
+            })
+            .is_err());
+
+        // An ordinary host is untouched, and editing it into a hostile one is
+        // refused on the same terms.
+        let ok = store
+            .create_host(&NewHost {
+                name: "web".into(),
+                address: "10.0.0.1".into(),
+                port: 22,
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(store
+            .update_host(
+                ok.id,
+                &HostUpdate {
+                    address: Some("-oProxyCommand=id".into()),
+                    ..Default::default()
+                },
+            )
+            .is_err());
+        assert_eq!(
+            store.get_host_by_name("web").unwrap().unwrap().address,
+            "10.0.0.1"
+        );
     }
 
     #[test]

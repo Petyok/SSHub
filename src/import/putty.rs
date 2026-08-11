@@ -380,7 +380,7 @@ pub fn import_putty(path: &Path, store: &LauncherStore) -> Result<HostImportRepo
             continue;
         }
         let username = (!host.username.is_empty()).then(|| host.username.clone());
-        store.create_host(&NewHost {
+        let created = store.create_host(&NewHost {
             name: host.name.clone(),
             address: host.hostname.clone(),
             port: host.port,
@@ -388,8 +388,15 @@ pub fn import_putty(path: &Path, store: &LauncherStore) -> Result<HostImportRepo
             notes: Some("Imported from PuTTY".into()),
             source: HostSource::Launcher,
             ..Default::default()
-        })?;
-        report.imported += 1;
+        });
+        // Same as the mRemoteNG importer: one refused row does not cost the file.
+        match created {
+            Ok(_) => report.imported += 1,
+            Err(e) => {
+                eprintln!("sshub: skipping host '{}': {e:#}", host.name);
+                report.skipped_invalid += 1;
+            }
+        }
     }
 
     Ok(report)

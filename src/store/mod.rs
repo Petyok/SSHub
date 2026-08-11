@@ -4,6 +4,7 @@ mod migrate;
 mod tunnels;
 mod types;
 
+pub use hosts::is_option_like;
 pub use types::{
     AuthEvent, DeleteHostOutcome, DeleteIdentityOutcome, HostGroup, HostGroupUpdate, HostSource,
     HostUpdate, Identity, IdentityUpdate, ManagedHost, NewHost, NewHostGroup, NewIdentity,
