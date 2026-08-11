@@ -45,10 +45,21 @@ pub fn run(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     let tty = parse::take_flag(&mut head, "--tty");
     let fmt = parse::parse_format(&head).map_err(anyhow::Error::msg)?;
     parse::take_opt(&mut head, "--format");
-    let timeout = match parse::take_opt(&mut head, "--timeout") {
-        Some(v) => Some(Duration::from_secs(v.parse().map_err(|_| {
-            anyhow::anyhow!("invalid --timeout '{v}' (whole seconds)")
-        })?)),
+    // `take_opt` cannot tell "flag absent" from "flag without a value", and for
+    // the flag that is the whole safety net of a scripted run, silently having
+    // no timeout is the wrong way to fail.
+    let timeout = match head.iter().position(|a| a == "--timeout") {
+        Some(_) => {
+            let raw = parse::take_opt(&mut head, "--timeout")
+                .unwrap_or_else(|| parse::usage("--timeout requires a value in whole seconds"));
+            let secs: u64 = raw
+                .parse()
+                .map_err(|_| anyhow::anyhow!("invalid --timeout '{raw}' (whole seconds)"))?;
+            if secs == 0 {
+                parse::usage("--timeout must be at least 1 second");
+            }
+            Some(Duration::from_secs(secs))
+        }
         None => None,
     };
 
@@ -56,7 +67,21 @@ pub fn run(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     let Some(name) = pos.first().map(|s| s.to_string()) else {
         parse::usage("exec requires a host: sshub exec <host> -- <command>");
     };
-    let command = after_dashes.unwrap_or_else(|| pos[1..].join(" "));
+    let command = match after_dashes {
+        Some(cmd) => cmd,
+        None => {
+            // Every flag exec knows has been taken out of `head` by now, and
+            // `positional` drops what is left over, so an unknown exec flag or a
+            // flag meant for the remote command would vanish without a word.
+            if let Some(flag) = head.iter().find(|a| a.starts_with('-')) {
+                parse::usage(&format!(
+                    "'{flag}' is not an exec flag; put the remote command after `--`: \
+                     sshub exec {name} -- <command>"
+                ));
+            }
+            pos[1..].join(" ")
+        }
+    };
     if command.trim().is_empty() {
         parse::usage("exec requires a command: sshub exec <host> -- <command>");
     }
@@ -82,6 +107,11 @@ pub fn run(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
         entry.ssh_host().remote_command.as_deref(),
         &command,
         tty,
+        // BatchMode also switches off the askpass helper, so it can only go in
+        // when there is no staged secret to hand over. Without a secret exec
+        // must never sit on a prompt: ssh reads those from /dev/tty, so
+        // redirecting stdin does not save a script from hanging forever.
+        pending_secret.is_none(),
     );
 
     let mut askpass_guard = None;
@@ -114,6 +144,9 @@ pub fn run(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     });
     for (k, v) in &extra_env {
         cmd.env(k, v);
+    }
+    if timeout.is_some() {
+        spawn_group(&mut cmd);
     }
 
     // Legacy ssh_config hosts have no managed record, so fall back to the
@@ -154,6 +187,19 @@ pub fn run(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
                 None,
             );
             eprintln!("sshub: {msg}");
+            // A JSON caller gets a record even here: an empty stdout is not
+            // something a parser on the other end can act on.
+            if matches!(fmt, OutputFormat::Json) {
+                let record = ExecRecord {
+                    host: &host_name,
+                    command: &command,
+                    exit_code: 1,
+                    stdout: String::new(),
+                    stderr: format!("sshub: {msg}\n"),
+                    duration_ms: started.elapsed().as_millis(),
+                };
+                println!("{}", serde_json::to_string_pretty(&record)?);
+            }
             return Ok(1);
         }
     };
@@ -171,7 +217,12 @@ pub fn run(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     };
 
     let exit_code = if timed_out {
-        eprintln!("sshub: exec timed out, killed the remote command");
+        // The local ssh is what gets killed. A remote command started without a
+        // PTY can outlive the connection, so promising more than this would be
+        // a lie.
+        eprintln!("sshub: exec timed out after {}s, killed ssh", {
+            timeout.map(|t| t.as_secs()).unwrap_or(0)
+        });
         EXIT_TIMEOUT
     } else {
         status.code().unwrap_or(1)
@@ -213,17 +264,26 @@ pub(crate) fn help_scan(rest: &[String]) -> &[String] {
     }
 }
 
-/// Turn a connect argv into an exec argv: no PTY unless asked for, and the
-/// ad-hoc command appended after the target.
+/// Turn a connect argv into an exec argv: no PTY unless asked for, no prompts,
+/// no inherited remote command, and the ad-hoc command appended after the
+/// target.
 ///
-/// A host with a stored `remote_command` already carries it as a trailing
-/// `-- <cmd>` (see `build_ssh_argv`); that one is dropped, because the command
-/// typed on the exec line has to win.
+/// A stored per-host remote command reaches ssh two different ways, and the
+/// command typed on the exec line has to beat both:
+///
+/// - launcher-managed hosts carry it as a trailing `-- <cmd>` in the argv
+///   (see `build_ssh_argv`), which is truncated off here;
+/// - `ssh_config` hosts connect by alias, so the argv has nothing to strip and
+///   ssh reads `RemoteCommand` from the config itself — where it does not merely
+///   lose, it makes ssh refuse the run outright with "Cannot execute
+///   command-line and remote command" (exit 255). `RemoteCommand=none` is what
+///   clears it.
 pub(crate) fn exec_argv(
     mut argv: Vec<String>,
     stored_remote_command: Option<&str>,
     command: &str,
     tty: bool,
+    batch: bool,
 ) -> Vec<String> {
     if let Some(stored) = stored_remote_command.filter(|s| !s.is_empty()) {
         let n = argv.len();
@@ -234,6 +294,10 @@ pub(crate) fn exec_argv(
     // `-T` keeps this batch-friendly; `-tt` forces a PTY for the commands that
     // insist on one (sudo without NOPASSWD, top).
     argv.insert(1, if tty { "-tt" } else { "-T" }.to_string());
+    argv.splice(1..1, ["-o".to_string(), "RemoteCommand=none".to_string()]);
+    if batch {
+        argv.splice(1..1, ["-o".to_string(), "BatchMode=yes".to_string()]);
+    }
     argv.push("--".into());
     argv.push(command.to_string());
     argv
@@ -256,6 +320,12 @@ fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> JoinHandle<String> {
 
 /// Wait for `child`, killing it once `timeout` has passed. The bool is true when
 /// it was killed rather than having exited on its own.
+///
+/// Killing takes the whole process group, not just ssh: with `ProxyJump` ssh
+/// spawns an `ssh -W` helper that inherits our pipes, and killing only the
+/// parent leaves that helper holding them open — the drain threads below then
+/// never see EOF and `--timeout` never returns. See `spawn_group` for why the
+/// group only exists when a timeout was asked for.
 fn wait_or_kill(child: &mut Child, timeout: Option<Duration>) -> Result<(ExitStatus, bool)> {
     let Some(limit) = timeout else {
         return Ok((child.wait().context("wait exec child")?, false));
@@ -266,11 +336,41 @@ fn wait_or_kill(child: &mut Child, timeout: Option<Duration>) -> Result<(ExitSta
             return Ok((status, false));
         }
         if Instant::now() >= deadline {
-            let _ = child.kill();
+            kill_group(child);
             return Ok((child.wait().context("reap timed-out exec child")?, true));
         }
         std::thread::sleep(POLL_INTERVAL);
     }
+}
+
+/// Put the child in its own process group so the timeout can kill everything it
+/// spawned. Only done when a timeout was given: a process group of its own also
+/// takes the child out of the terminal's foreground group, so `Ctrl-C` would
+/// stop reaching ssh — an acceptable trade for a run that already declared a
+/// deadline, but not for one that did not.
+#[cfg(unix)]
+fn spawn_group(cmd: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    cmd.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn spawn_group(_cmd: &mut Command) {}
+
+#[cfg(unix)]
+fn kill_group(child: &Child) {
+    // SIGKILL the group; the child is its own group leader (`process_group(0)`),
+    // so its pid is the group id. Falls back to the single child if the group
+    // call fails, which is all a non-group spawn could have killed anyway.
+    let pid = child.id() as i32;
+    if unsafe { libc::killpg(pid, libc::SIGKILL) } != 0 {
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+    }
+}
+
+#[cfg(not(unix))]
+fn kill_group(child: &mut Child) {
+    let _ = child.kill();
 }
 
 #[cfg(test)]
@@ -288,33 +388,65 @@ mod tests {
             None,
             "uptime",
             false,
+            false,
         );
         assert_eq!(
             argv,
-            s(&["ssh", "-T", "-p", "2222", "root@10.0.0.1", "--", "uptime"])
+            s(&[
+                "ssh",
+                "-o",
+                "RemoteCommand=none",
+                "-T",
+                "-p",
+                "2222",
+                "root@10.0.0.1",
+                "--",
+                "uptime"
+            ])
         );
     }
 
     #[test]
     fn exec_argv_tty_flag_forces_a_pty() {
-        let argv = exec_argv(s(&["ssh", "web"]), None, "sudo reboot", true);
-        assert_eq!(argv, s(&["ssh", "-tt", "web", "--", "sudo reboot"]));
+        let argv = exec_argv(s(&["ssh", "web"]), None, "sudo reboot", true, false);
+        assert!(argv.contains(&"-tt".to_string()) && !argv.contains(&"-T".to_string()));
+        assert_eq!(&argv[argv.len() - 3..], s(&["web", "--", "sudo reboot"]));
+    }
+
+    /// Without a stored secret nothing can answer a prompt, and ssh reads its
+    /// prompts from `/dev/tty` — a script with redirected stdin still hangs.
+    #[test]
+    fn exec_argv_without_a_staged_secret_runs_in_batch_mode() {
+        let batch = exec_argv(s(&["ssh", "web"]), None, "uptime", false, true);
+        assert!(batch.windows(2).any(|w| w == s(&["-o", "BatchMode=yes"])));
+
+        // With a secret staged, BatchMode would switch the askpass helper off.
+        let staged = exec_argv(s(&["ssh", "web"]), None, "uptime", false, false);
+        assert!(!staged.iter().any(|a| a == "BatchMode=yes"));
     }
 
     #[test]
     fn exec_argv_ad_hoc_command_replaces_a_stored_remote_command() {
-        // What `build_ssh_argv` produces for a host with remote_command set.
-        let stored = s(&["ssh", "web", "--", "tmux attach"]);
-        let argv = exec_argv(stored, Some("tmux attach"), "uptime", false);
-        assert_eq!(argv, s(&["ssh", "-T", "web", "--", "uptime"]));
+        // Built by the real thing rather than hand-written, so a change to how
+        // `build_ssh_argv` emits the stored command fails this test instead of
+        // silently making the truncation below a no-op.
+        let mut host = crate::ssh::SshHost::new("web");
+        host.hostname = Some("10.0.0.7".into());
+        host.remote_command = Some("tmux attach".into());
+        let stored = crate::ssh::build_ssh_argv(&host);
+        assert_eq!(&stored[stored.len() - 2..], s(&["--", "tmux attach"]));
+
+        let argv = exec_argv(stored, Some("tmux attach"), "uptime", false, false);
+        assert_eq!(&argv[argv.len() - 3..], s(&["10.0.0.7", "--", "uptime"]));
         assert_eq!(argv.iter().filter(|a| *a == "--").count(), 1);
+        assert!(!argv.iter().any(|a| a == "tmux attach"));
     }
 
     #[test]
     fn exec_argv_keeps_a_trailing_word_that_only_looks_like_a_stored_command() {
         // No `--` before it, so it is the target, not a stored remote command.
-        let argv = exec_argv(s(&["ssh", "web"]), Some("web"), "uptime", false);
-        assert_eq!(argv, s(&["ssh", "-T", "web", "--", "uptime"]));
+        let argv = exec_argv(s(&["ssh", "web"]), Some("web"), "uptime", false, false);
+        assert_eq!(&argv[argv.len() - 3..], s(&["web", "--", "uptime"]));
     }
 
     #[test]
@@ -354,6 +486,7 @@ mod tests {
                 None,
                 "tail -n 5 /var/log/app.log",
                 tty,
+                true,
             );
             let out = Command::new("ssh")
                 .args(["-F", "/dev/null", "-G"])
@@ -383,6 +516,76 @@ mod tests {
                 "ssh read {requesttty:?} out of {argv:?}, expected one of {want_tty:?}"
             );
         }
+    }
+
+    /// The other half of the OpenSSH oracle, and the one `-F /dev/null` above
+    /// cannot see: a host whose `~/.ssh/config` sets `RemoteCommand` makes ssh
+    /// refuse a command line outright — "Cannot execute command-line and remote
+    /// command", exit 255 — rather than letting the ad-hoc command win. Asked of
+    /// the real ssh, with a real config, because that refusal is ssh's rule and
+    /// no test we write ourselves would know it.
+    #[test]
+    fn a_config_remote_command_does_not_defeat_the_ad_hoc_command() {
+        use std::io::Write;
+        if Command::new("ssh").arg("-V").output().is_err() {
+            eprintln!("skipping: no ssh binary");
+            return;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join("config");
+        let mut f = std::fs::File::create(&cfg).unwrap();
+        writeln!(
+            f,
+            "Host rc-host\n    HostName 10.0.0.8\n    RemoteCommand tmux attach"
+        )
+        .unwrap();
+        drop(f);
+
+        // Alias-form argv, the shape `ssh_argv_for_entry` builds for an
+        // ssh_config-sourced host: nothing to truncate, the stored command
+        // lives in the config file.
+        let argv = exec_argv(s(&["ssh", "rc-host"]), None, "uptime", false, true);
+        let out = Command::new("ssh")
+            .arg("-F")
+            .arg(&cfg)
+            .arg("-G")
+            .args(&argv[1..])
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "ssh refused the argv we build for a host with a config RemoteCommand: {argv:?}\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        // And the same argv without our `RemoteCommand=none` is what ssh
+        // refuses — so the option above is load-bearing, not decoration. This
+        // is the failure the feature would ship with if it were dropped.
+        let stripped: Vec<String> = argv[1..]
+            .iter()
+            .enumerate()
+            .filter(|(i, a)| {
+                a.as_str() != "RemoteCommand=none"
+                    && argv[1..].get(i + 1).map(String::as_str) != Some("RemoteCommand=none")
+            })
+            .map(|(_, a)| a.clone())
+            .collect();
+        let refused = Command::new("ssh")
+            .arg("-F")
+            .arg(&cfg)
+            .arg("-G")
+            .args(&stripped)
+            .output()
+            .unwrap();
+        assert!(
+            !refused.status.success(),
+            "expected ssh to refuse {stripped:?} against a config RemoteCommand"
+        );
+        assert!(
+            String::from_utf8_lossy(&refused.stderr).contains("remote command"),
+            "unexpected refusal: {}",
+            String::from_utf8_lossy(&refused.stderr)
+        );
     }
 
     #[test]

@@ -79,10 +79,13 @@ OPTIONS:
     -v, --verbose         Verbose ssh logging on stderr
 
 stdout/stderr pass through, stdin is inherited so pipes work, and the exit code
-is the remote command's (ssh's own failures keep ssh's 255). Never prompts.
-Session transcripts are skipped for exec — script(1) wrapping fights redirection;
-use `sshub connect` when you want one. Mosh hosts are refused: mosh has no
-one-shot command mode. Runs show up in `sshub audit list --via exec`."#
+is the remote command's (ssh's own failures keep ssh's 255). Never prompts: with
+no stored credential exec runs ssh in BatchMode, so an unknown host key fails
+instead of waiting for a human. A per-host or ssh_config remote command is
+overridden by the command given here. Session transcripts are skipped for exec —
+script(1) wrapping fights redirection; use `sshub connect` when you want one.
+Mosh hosts are refused: mosh has no one-shot command mode. Runs show up in
+`sshub audit list --via exec`."#
     );
 }
 

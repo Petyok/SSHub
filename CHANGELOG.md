@@ -11,11 +11,16 @@ All notable changes to SSHub are documented in this file.
   reassembling the ssh command line by hand and losing the stored identity,
   askpass wiring and ProxyJump the launcher already knows. stdout/stderr pass
   through, stdin is inherited so pipes work, and the exit code is the remote
-  command's (ssh's own failures keep ssh's 255). No PTY by default; `--tty`
-  forces one for commands that insist (`sudo` without NOPASSWD). `--timeout
-  SECS` kills the command and exits 124 like `timeout(1)`; `--format json`
-  buffers the run as `{host, command, exit_code, stdout, stderr, duration_ms}`.
-  A command given here overrides the host's stored remote command. Runs are
+  command's (ssh's own failures keep ssh's 255). Nothing prompts: without a
+  stored credential the run is `BatchMode`, so an unknown host key fails a
+  script instead of parking it on a question no one will answer. No PTY by
+  default; `--tty` forces one for commands that insist (`sudo` without
+  NOPASSWD). `--timeout SECS` kills the run and exits 124 like `timeout(1)` —
+  into its own process group, so a `ProxyJump` helper cannot outlive the
+  deadline holding the output pipes open; `--format json` buffers the run as
+  `{host, command, exit_code, stdout, stderr, duration_ms}`. A command given
+  here overrides one stored on the host *or* in `~/.ssh/config`, where ssh
+  would otherwise refuse the run outright. Runs are
   audited (`sshub audit list --via exec`) without recording the command itself,
   which can carry a secret in an argument. Session transcripts are skipped —
   `script(1)` wrapping fights the redirection exec exists for — and mosh hosts
