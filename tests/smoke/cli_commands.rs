@@ -791,3 +791,134 @@ fn theme_check_unlistable_directory_exits_one() {
     std::fs::set_permissions(&closed, std::fs::Permissions::from_mode(0o755)).unwrap();
     assertion.code(1);
 }
+
+// ── exec ────────────────────────────────────────────────────────────────────
+// Every case here stops before a child is spawned: argument parsing, the
+// unknown-host lookup and the mosh refusal all fail first, so nothing reaches
+// the network. A real round-trip needs a live host and is not smoke-testable.
+
+#[test]
+fn exec_help_lists_the_flags_and_exits_zero() {
+    let d = dir();
+    sshub(d.path())
+        .args(["exec", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("sshub exec"))
+        .stdout(predicate::str::contains("--tty"))
+        .stdout(predicate::str::contains("--timeout"));
+}
+
+#[test]
+fn exec_without_a_host_exits_two() {
+    let d = dir();
+    sshub(d.path())
+        .arg("exec")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("exec requires a host"));
+}
+
+#[test]
+fn exec_without_a_command_exits_two() {
+    let d = dir();
+    sshub(d.path())
+        .args(["exec", "some-host"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("exec requires a command"));
+}
+
+#[test]
+fn exec_on_an_unknown_host_fails_before_spawning() {
+    let d = dir();
+    sshub(d.path())
+        .args(["exec", "no-such-host", "--", "uptime"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not found"));
+}
+
+#[test]
+fn exec_refuses_a_mosh_host() {
+    let d = dir();
+    sshub(d.path())
+        .args([
+            "host",
+            "add",
+            "--name",
+            "mosh-box",
+            "--address",
+            "10.0.0.9",
+            "--transport",
+            "mosh",
+        ])
+        .assert()
+        .success();
+
+    sshub(d.path())
+        .args(["exec", "mosh-box", "--", "uptime"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("mosh"));
+}
+
+#[test]
+fn exec_rejects_a_command_flag_that_is_not_behind_the_separator() {
+    let d = dir();
+    // `-l` would otherwise be dropped by positional parsing and the remote
+    // command would silently run as plain `ls`.
+    sshub(d.path())
+        .args(["exec", "some-host", "ls", "-l"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("after `--`"));
+}
+
+#[test]
+fn exec_timeout_without_a_value_is_a_usage_error() {
+    let d = dir();
+    sshub(d.path())
+        .args(["exec", "some-host", "--timeout", "--", "uptime"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("--timeout requires a value"));
+
+    sshub(d.path())
+        .args(["exec", "some-host", "--timeout", "0", "--", "uptime"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("at least 1 second"));
+}
+
+/// A remote command's own flags must not be read as sshub's: the profile
+/// parser in `main.rs` runs before dispatch and used to swallow them.
+#[test]
+fn exec_does_not_let_the_profile_parser_eat_the_remote_commands_flags() {
+    let d = dir();
+    sshub(d.path())
+        .args([
+            "exec",
+            "no-such-host",
+            "--",
+            "aws",
+            "--profile",
+            "prod",
+            "s3",
+            "ls",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not found"))
+        .stderr(predicate::str::contains("profile").not());
+}
+
+#[test]
+fn global_help_lists_the_exec_command() {
+    let d = dir();
+    sshub(d.path())
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("sshub exec"));
+}

@@ -16,7 +16,16 @@ fn main() -> Result<()> {
 
     // Global profile flags (`--profile NAME`, `--manage-profiles`) apply to
     // both the TUI and headless subcommands, so parse them before dispatch.
-    let (startup, args) = profile::extract_startup_flags(args)?;
+    // Everything after a `--` belongs to a remote command (`sshub exec web --
+    // aws --profile prod s3 ls`) and is held back from that scan: otherwise the
+    // launcher would swallow the remote tool's flags and either fail with
+    // "unknown profile" or silently run the command with a flag missing.
+    let (head, tail) = match args.iter().position(|a| a == "--") {
+        Some(i) => (args[..i].to_vec(), args[i..].to_vec()),
+        None => (args, Vec::new()),
+    };
+    let (startup, mut args) = profile::extract_startup_flags(head)?;
+    args.extend(tail);
 
     // Subcommands must be handled before the global flags and the TUI launch
     // path, so that `sshub <cmd> --help` reaches the subcommand's own help
@@ -166,6 +175,9 @@ HOST (read/write):
     sshub host resolve <name> [--format plain|json]
     sshub host search <query> [--format plain|json]
     sshub host add|edit|rename|delete|duplicate …
+
+EXEC (scripted, non-interactive):
+    sshub exec <host> [--tty] [--timeout SECS] [--format plain|json] -- <command> [args…]
 
 ALIASES:
     sshub connect <name>                    Same as `host connect`

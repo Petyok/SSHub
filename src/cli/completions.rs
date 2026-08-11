@@ -17,6 +17,7 @@ const CACHE_HEADER: &str = "# sshub-completion-cache v1";
 const TOP_LEVEL: &[&str] = &[
     "host",
     "connect",
+    "exec",
     "list",
     "groups",
     "group",
@@ -248,7 +249,7 @@ _sshub_completions() {{
                 COMPREPLY=( $(compgen -W "$hosts" -- "$cur") )
             fi
             ;;
-        connect)
+        connect|exec)
             if (( COMP_CWORD == 2 )); then
                 COMPREPLY=( $(compgen -W "$hosts" -- "$cur") )
             fi
@@ -359,7 +360,7 @@ _sshub() {{
                         _describe 'host' hosts
                     fi
                     ;;
-                connect)
+                connect|exec)
                     (( CURRENT == 3 )) && _describe 'host' hosts
                     ;;
                 groups|group)
@@ -477,6 +478,9 @@ fn render_fish(host_names: &[String]) -> String {
         let q = fish_sq(name);
         out.push_str(&format!(
             "complete -c sshub -n '__fish_seen_subcommand_from host connect; and __fish_seen_subcommand_from connect show resolve delete duplicate' -a {q}\n"
+        ));
+        out.push_str(&format!(
+            "complete -c sshub -n '__fish_seen_subcommand_from exec' -a {q}\n"
         ));
         out.push_str(&format!(
             "complete -c sshub -n '__fish_seen_subcommand_from sftp; and not __fish_seen_subcommand_from ls get put rm mkdir rename chmod' -a {q}\n"

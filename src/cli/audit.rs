@@ -36,7 +36,7 @@ fn cmd_list(ctx: &CliContext, args: &[String]) -> Result<i32> {
         usage("audit list --status must be one of: all, ok, fail, retry");
     }
     if !valid_via(&via) {
-        usage("audit list --via must be one of: all, connect, tunnel, agent");
+        usage("audit list --via must be one of: all, connect, tunnel, agent, exec");
     }
 
     let since = match days {
@@ -81,7 +81,7 @@ fn cmd_stats(ctx: &CliContext, args: &[String]) -> Result<i32> {
     let include_retry = take_flag(&mut a, "--include-retry");
 
     if !valid_via(&via) {
-        usage("audit stats --via must be one of: all, connect, tunnel, agent");
+        usage("audit stats --via must be one of: all, connect, tunnel, agent, exec");
     }
 
     let via_opt = (via != "all").then_some(via.as_str());
@@ -123,7 +123,7 @@ fn valid_status(s: &str) -> bool {
 }
 
 fn valid_via(s: &str) -> bool {
-    matches!(s, "all" | "connect" | "tunnel" | "agent")
+    matches!(s, "all" | "connect" | "tunnel" | "agent" | "exec")
 }
 
 #[cfg(test)]
@@ -142,7 +142,7 @@ mod tests {
 
     #[test]
     fn via_values_are_validated() {
-        for s in ["all", "connect", "tunnel", "agent"] {
+        for s in ["all", "connect", "tunnel", "agent", "exec"] {
             assert!(valid_via(s));
         }
         for s in ["", "bogus", "local", "remote"] {
