@@ -67,7 +67,7 @@ pub fn build_ssh_argv(host: &SshHost) -> Vec<String> {
     } else {
         hostname.to_string()
     };
-    args.push(target);
+    args.push(safe_ssh_target(target));
 
     // Remote command runs on the SSH host (appended after target)
     if let Some(ref cmd) = host.remote_command {
@@ -82,7 +82,28 @@ pub fn build_ssh_argv(host: &SshHost) -> Vec<String> {
 
 /// Build argv for alias connect (`ssh name` via ssh_config).
 pub fn build_ssh_alias_argv(host: &SshHost) -> Vec<String> {
-    vec!["ssh".into(), host.name.clone()]
+    vec!["ssh".into(), safe_ssh_target(host.name.clone())]
+}
+
+/// Make a connection target one ssh cannot read as an **option**.
+///
+/// ssh takes the first non-flag argument as the host, but a stored target that
+/// begins with `-` is handed over verbatim and parsed as a flag instead: an
+/// address of `-oProxyCommand=id` becomes `ProxyCommand id`, which ssh runs
+/// *locally*. Addresses are written verbatim from imported PuTTY, Termius and
+/// mRemoteNG files (`src/import/`), so this is not the user's own typing — a
+/// crafted export would otherwise execute code on the machine that imported it.
+///
+/// The `ssh://` URI form is what OpenSSH refuses outright instead of treating as
+/// a flag, so a hostile row now fails loudly rather than running anything, while
+/// ordinary targets are untouched. `ssh -- <host>` is not an alternative: the
+/// words after `--` become the remote command.
+pub fn safe_ssh_target(target: String) -> String {
+    if target.starts_with('-') {
+        format!("ssh://{target}")
+    } else {
+        target
+    }
 }
 
 /// Build argv for `mosh` using explicit connection fields (managed / direct connect).
@@ -92,7 +113,7 @@ pub fn build_mosh_argv(host: &SshHost) -> Vec<String> {
 
 /// Build argv for alias connect (`mosh name` via ssh_config).
 pub fn build_mosh_alias_argv(host: &SshHost) -> Vec<String> {
-    vec!["mosh".into(), host.name.clone()]
+    vec!["mosh".into(), safe_ssh_target(host.name.clone())]
 }
 
 const ACCEPT_NEW_SSH_OPT: &str = "StrictHostKeyChecking=accept-new";
@@ -310,5 +331,83 @@ mod tests {
                 "htop".to_string(),
             ]
         );
+    }
+
+    /// A host stored with an option-like address must not reach ssh as an
+    /// option. Asked of the real ssh, because "does OpenSSH read this argument
+    /// as a flag or as a hostname" is OpenSSH's rule, not ours: `ssh -G`
+    /// resolves a command line and exits without connecting, so this needs no
+    /// network and no server.
+    ///
+    /// Both halves matter. Without the guard ssh reports `proxycommand id` and
+    /// would run `id` locally on the next connect; with it ssh refuses the
+    /// target outright. The unguarded half is the regression check — if
+    /// `safe_ssh_target` ever stops firing, the first assertion here is what
+    /// fails.
+    #[test]
+    fn an_option_like_address_is_not_read_as_an_ssh_option() {
+        use std::process::Command;
+        if Command::new("ssh").arg("-V").output().is_err() {
+            eprintln!("skipping: no ssh binary");
+            return;
+        }
+
+        let hostile = "-oProxyCommand=id";
+        // Shaped like a real exec/connect line so ssh has something left to
+        // treat as the hostname once it has eaten the target as a flag.
+        let resolve = |target: &str| {
+            let out = Command::new("ssh")
+                .args(["-F", "/dev/null", "-G", "-T", target, "--", "uptime"])
+                .output()
+                .unwrap();
+            (
+                out.status.success(),
+                String::from_utf8_lossy(&out.stdout).into_owned(),
+            )
+        };
+
+        // What sshub used to hand over verbatim.
+        let (ok, cfg) = resolve(hostile);
+        assert!(
+            ok && cfg.lines().any(|l| l == "proxycommand id"),
+            "OpenSSH no longer reads a leading-dash target as an option; this \
+             guard may be obsolete:\n{cfg}"
+        );
+
+        // What it hands over now.
+        let mut host = SshHost::new("evil");
+        host.hostname = Some(hostile.into());
+        let argv = build_ssh_argv(&host);
+        let target = argv.last().unwrap();
+        assert_eq!(target, "ssh://-oProxyCommand=id");
+
+        let (ok, cfg) = resolve(target);
+        assert!(
+            !ok,
+            "ssh accepted the guarded target instead of refusing it:\n{cfg}"
+        );
+        assert!(
+            !cfg.contains("proxycommand id"),
+            "ProxyCommand survived the guard:\n{cfg}"
+        );
+    }
+
+    #[test]
+    fn safe_ssh_target_leaves_ordinary_targets_alone() {
+        for target in ["10.0.0.5", "deploy@10.0.0.5", "web-01", "user@-weird"] {
+            assert_eq!(safe_ssh_target(target.to_string()), target);
+        }
+        // Only a *leading* dash can be read as a flag; `user@-weird` cannot.
+        assert_eq!(
+            safe_ssh_target("-weird".to_string()),
+            "ssh://-weird".to_string()
+        );
+    }
+
+    #[test]
+    fn alias_and_mosh_argv_guard_the_target_too() {
+        let host = SshHost::new("-oProxyCommand=id");
+        assert_eq!(build_ssh_alias_argv(&host)[1], "ssh://-oProxyCommand=id");
+        assert_eq!(build_mosh_alias_argv(&host)[1], "ssh://-oProxyCommand=id");
     }
 }

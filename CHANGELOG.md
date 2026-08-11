@@ -4,6 +4,20 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A stored host address starting with `-` reached ssh as an option, not a
+  host** (issue #101) - `sshub connect evil` on a host whose address is
+  `-oProxyCommand=id` built `ssh … -oProxyCommand=id`, and ssh dutifully ran
+  `id` *locally*. Addresses are written verbatim from imported PuTTY, Termius
+  and mRemoteNG files, so a crafted export was local code execution on the
+  machine that imported it — no typo of the user's own required. Every target
+  sshub hands to ssh or mosh (connect, exec, tunnels, alias connects) now goes
+  through one guard that rewrites a leading-dash target into the `ssh://` URI
+  form, which OpenSSH refuses outright instead of parsing as a flag; ordinary
+  targets are untouched. Confirmed against the real `ssh -G`, which still
+  reports `proxycommand id` for the old form and refuses the new one.
+
 ## [0.14.0] - 2026-08-12
 
 ### Added
