@@ -20,7 +20,15 @@ pub mod session_transport;
 pub mod sftp;
 pub mod ssh;
 pub mod store;
+/// Shared allocation counter for tests; only one `#[global_allocator]` may
+/// exist per binary, so every allocation-free proof shares this module.
+#[cfg(test)]
+pub(crate) mod test_alloc;
+/// Neutral in-memory fixtures shared by the renderer tests.
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod text_input;
+pub mod theme;
 pub mod tui;
 pub mod tunnel;
 pub mod watcher;
@@ -124,12 +132,17 @@ pub fn run_app_with(opts: profile::StartupOptions) -> Result<()> {
         profile::Startup::Silent(paths) => paths,
         profile::Startup::Picker { roots, state } => {
             let mut s = setup_terminal()?;
+            let default_theme = crate::theme::registry::ThemeRegistry::builtins(
+                crate::theme::model::ValidationMode::Strict,
+            )?
+            .resolved(&crate::theme::model::ThemeId::parse("default")?)
+            .expect("the embedded default theme exists");
             if profile::picker_animation_enabled(&roots, &state) {
-                run_animation(&mut s.terminal)?;
+                run_animation(&mut s.terminal, &default_theme)?;
             }
             splash_done = true;
             let picker = profile::picker::ProfilePicker::new(roots.clone(), state);
-            match run_picker_loop(&mut s.terminal, picker, roots)? {
+            match run_picker_loop(&mut s.terminal, picker, roots, &default_theme)? {
                 Some(paths) => {
                     session = Some(s);
                     paths
@@ -174,6 +187,7 @@ fn attach_config_watcher(app: &mut App, ssh_config: &std::path::Path) -> Result<
     Ok(())
 }
 
+/// Play the intro animation until the user dismisses it.
 /// Raw-mode terminal + alternate screen, used by both the picker session and
 /// the dashboard loop.
 struct TerminalSession {
@@ -203,9 +217,10 @@ fn run_picker_loop(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     mut picker: profile::picker::ProfilePicker,
     roots: profile::RootDirs,
+    theme: &crate::theme::model::ResolvedTheme,
 ) -> Result<Option<profile::ProfilePaths>> {
     loop {
-        terminal.draw(|frame| picker.render(frame))?;
+        terminal.draw(|frame| picker.render(frame, theme))?;
         let event = event::read()?;
         let Event::Key(key) = event else { continue };
         match picker.handle_key(key)? {
@@ -221,8 +236,10 @@ fn run_picker_loop(
     }
 }
 
+/// Play the intro animation until the user dismisses it.
 fn run_animation<B: ratatui::backend::Backend + std::io::Write>(
     terminal: &mut Terminal<B>,
+    theme: &crate::theme::model::ResolvedTheme,
 ) -> Result<()>
 where
     // ratatui 0.30 made Backend::Error an associated type with no auto
@@ -233,7 +250,7 @@ where
     let state = tui::animation::AnimationState::new(size.width, size.height);
 
     loop {
-        terminal.draw(|frame| state.render(frame))?;
+        terminal.draw(|frame| state.render(frame, theme))?;
         if event::poll(Duration::from_millis(33))? {
             if let Event::Key(key) = event::read()? {
                 match key.code {
@@ -265,7 +282,7 @@ fn run_terminal_loop(
     // Run startup animation (skip in CI/headless, when disabled in config, or
     // when the profile picker session already played it before the dashboard).
     if !splash_done && auto_quit.is_none() && !app.config.appearance.disable_animation {
-        run_animation(terminal)?;
+        run_animation(terminal, app.theme())?;
     }
 
     // The dashboard fades up from here, over the intro animation it replaces.
@@ -376,6 +393,7 @@ fn run_terminal_loop(
         // override: holding Shift while dragging bypasses the app's mouse
         // capture for native text selection.
 
+        app.refresh_agent_info();
         terminal.draw(|frame| tui::render(frame, app))?;
 
         if auto_quit.is_some() {
@@ -489,22 +507,18 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
 
     // Drain SFTP worker events. Collect first (borrowing `sftp_rx`), drop the
     // borrow, then apply — `apply_sftp_event` needs `&mut app`.
-    if app.sftp_rx.is_some() {
-        let events: Vec<crate::sftp::SftpEvent> = {
-            let rx = app.sftp_rx.as_ref().unwrap();
-            std::iter::from_fn(|| rx.try_recv().ok()).collect()
-        };
+    if let Some(rx) = app.sftp_rx.as_ref() {
+        let events: Vec<crate::sftp::SftpEvent> =
+            std::iter::from_fn(|| rx.try_recv().ok()).collect();
         for ev in events {
             app.apply_sftp_event(ev);
         }
     }
 
     // Drain the left pane's worker, when it is browsing a second server.
-    if app.sftp_rx2.is_some() {
-        let events: Vec<crate::sftp::SftpEvent> = {
-            let rx = app.sftp_rx2.as_ref().unwrap();
-            std::iter::from_fn(|| rx.try_recv().ok()).collect()
-        };
+    if let Some(rx) = app.sftp_rx2.as_ref() {
+        let events: Vec<crate::sftp::SftpEvent> =
+            std::iter::from_fn(|| rx.try_recv().ok()).collect();
         for ev in events {
             app.apply_sftp_event_left(ev);
         }

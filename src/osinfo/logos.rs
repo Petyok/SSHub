@@ -13,6 +13,9 @@ use std::sync::OnceLock;
 use ratatui::style::{Color, Style};
 use serde::Deserialize;
 
+use crate::theme::catalog::TintRole;
+use crate::theme::model::{ResolvedTheme, ResolvedTint};
+
 /// A single styled run of text within a logo line.
 pub struct OsLogoSpan {
     pub text: String,
@@ -105,6 +108,29 @@ fn logos() -> &'static HashMap<&'static str, OsLogo> {
     })
 }
 
+/// The tint the active theme applies to distro logo art.
+///
+/// `native` — the `default` — is what keeps the vendored brand colours intact:
+/// the decoders below turn the assets' RGB and ANSI-16 values into real
+/// [`Color`]s and nothing recolours them afterwards. A theme that sets a colour
+/// instead flattens the art onto that one foreground.
+pub fn os_logo_tint(theme: &ResolvedTheme) -> ResolvedTint {
+    *theme.tint(TintRole::OsLogoTint)
+}
+
+/// The style one logo span is drawn with under `tint`.
+///
+/// A run that carries no visible glyph keeps its native style: recolouring
+/// blank Braille would put the tint on cells nobody can see, and the spec's
+/// rule is that a tint replaces *visible* logo foregrounds.
+pub fn span_style(span: &OsLogoSpan, tint: ResolvedTint) -> Style {
+    match tint {
+        ResolvedTint::Native => span.style,
+        ResolvedTint::Color(color) if !line_is_blank(&span.text) => span.style.fg(color),
+        ResolvedTint::Color(_) => span.style,
+    }
+}
+
 /// Look up a resolved logo by canonical id. Returns `None` for unknown ids or
 /// canonical ids that have no vendored art (e.g. `"generic"`, `"almalinux"`).
 pub fn logo_for(id: &str) -> Option<&'static OsLogo> {
@@ -152,6 +178,13 @@ impl RawColor {
 
 /// Map an ANSI 16-colour index to a ratatui named colour, so a logo's colours
 /// follow the terminal theme (e.g. Ubuntu's bold-red is the theme's bright red).
+///
+/// **Documented native exception.** These sixteen `Color::*` constants are the
+/// only direct ANSI colours left in an SSHub renderer path, and they are not a
+/// palette: they are the *decoder* for what the vendored asset stored. The spec
+/// keeps native distro logo colours untouched while `os_logo.tint = "native"`,
+/// and recolouring them here would mean the tint could never be honoured
+/// faithfully — a themed tint is applied afterwards, by [`span_style`].
 fn ansi_index_color(i: u8) -> Color {
     match i {
         0 => Color::Black,

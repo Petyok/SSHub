@@ -10,7 +10,8 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
 use super::{ProfileRecord, ProfileState, RootDirs};
-use crate::tui::theme;
+use crate::theme::catalog::{ColorRole, StyleRole};
+use crate::theme::model::ResolvedTheme;
 
 /// Result of one key event in the picker loop.
 #[derive(Debug, PartialEq, Eq)]
@@ -241,16 +242,19 @@ impl ProfilePicker {
         Ok(PickerOutcome::Continue)
     }
 
-    pub fn render(&self, frame: &mut Frame) {
+    pub fn render(&self, frame: &mut Frame, theme: &ResolvedTheme) {
         let area = popup_area(frame.area(), 46, 9 + self.state.profiles.len() as u16);
         frame.render_widget(Clear, area);
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(theme::popup_border())
-            .title(" Select profile ")
+            .border_style(crate::tui::popup_border_style(theme, area))
+            .title(Span::styled(
+                " Select profile ",
+                theme.style(StyleRole::PopupTitle),
+            ))
             .title_alignment(Alignment::Center)
-            .style(theme::text());
+            .style(theme.style(StyleRole::TextPrimary));
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
@@ -261,9 +265,9 @@ impl ProfilePicker {
                 for (i, record) in self.state.profiles.iter().enumerate() {
                     let marker = if i == self.cursor { "▸ " } else { "  " };
                     let style = if i == self.cursor {
-                        theme::selected()
+                        theme.style(StyleRole::PickerRowSelected)
                     } else {
-                        theme::text()
+                        theme.style(StyleRole::PickerRow)
                     };
                     lines.push(Line::from(vec![
                         Span::styled(marker.to_string(), style),
@@ -274,77 +278,93 @@ impl ProfilePicker {
             View::Create { buf, cursor } => {
                 lines.push(Line::from(Span::styled(
                     "New profile name:",
-                    theme::bright(),
+                    theme.style(StyleRole::TextBright),
                 )));
-                lines.push(input_line(buf, *cursor));
+                lines.push(input_line(buf, *cursor, theme));
             }
             View::Rename { buf, cursor, .. } => {
-                lines.push(Line::from(Span::styled("New name:", theme::bright())));
-                lines.push(input_line(buf, *cursor));
+                lines.push(Line::from(Span::styled(
+                    "New name:",
+                    theme.style(StyleRole::TextBright),
+                )));
+                lines.push(input_line(buf, *cursor, theme));
             }
             View::ConfirmDelete { name, .. } => {
                 lines.push(Line::from(Span::styled(
                     format!("Delete profile '{name}' permanently?"),
-                    theme::amber(),
+                    theme.style(StyleRole::PopupWarning),
                 )));
                 lines.push(Line::from(Span::styled(
                     "All its hosts, settings, and logs are removed.",
-                    theme::mute(),
+                    theme.style(StyleRole::TextMuted),
                 )));
                 lines.push(Line::from(vec![
-                    Span::styled("y", theme::red()),
-                    Span::styled(" delete   ", theme::mute()),
-                    Span::styled("any other key", theme::bright()),
-                    Span::styled(" keep", theme::mute()),
+                    Span::styled("y", theme.style(StyleRole::PopupError)),
+                    Span::styled(" delete   ", theme.style(StyleRole::TextMuted)),
+                    Span::styled("any other key", theme.style(StyleRole::TextBright)),
+                    Span::styled(" keep", theme.style(StyleRole::TextMuted)),
                 ]));
             }
         }
 
         if let Some(msg) = &self.error {
-            lines.push(Line::from(Span::styled(msg.clone(), theme::red())));
+            lines.push(Line::from(Span::styled(
+                msg.clone(),
+                theme.style(StyleRole::PopupError),
+            )));
         } else if let Some(msg) = &self.message {
-            lines.push(Line::from(Span::styled(msg.clone(), theme::green())));
+            lines.push(Line::from(Span::styled(
+                msg.clone(),
+                ratatui::style::Style::default().fg(theme.color(ColorRole::StatusSuccess)),
+            )));
         }
 
         if matches!(self.view, View::List) {
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
-                Span::styled("↑↓/1-9", theme::footer_key()),
-                Span::styled(" select  ", theme::footer_label()),
-                Span::styled("Enter", theme::footer_key()),
-                Span::styled(" launch  ", theme::footer_label()),
-                Span::styled("n", theme::footer_key()),
-                Span::styled(" new  ", theme::footer_label()),
-                Span::styled("r", theme::footer_key()),
-                Span::styled(" rename  ", theme::footer_label()),
-                Span::styled("d", theme::footer_key()),
-                Span::styled(" delete  ", theme::footer_label()),
-                Span::styled("Esc", theme::footer_key()),
-                Span::styled(" quit", theme::footer_label()),
+                Span::styled("↑↓/1-9", theme.style(StyleRole::FooterKey)),
+                Span::styled(" select  ", theme.style(StyleRole::FooterLabel)),
+                Span::styled("Enter", theme.style(StyleRole::FooterKey)),
+                Span::styled(" launch  ", theme.style(StyleRole::FooterLabel)),
+                Span::styled("n", theme.style(StyleRole::FooterKey)),
+                Span::styled(" new  ", theme.style(StyleRole::FooterLabel)),
+                Span::styled("r", theme.style(StyleRole::FooterKey)),
+                Span::styled(" rename  ", theme.style(StyleRole::FooterLabel)),
+                Span::styled("d", theme.style(StyleRole::FooterKey)),
+                Span::styled(" delete  ", theme.style(StyleRole::FooterLabel)),
+                Span::styled("Esc", theme.style(StyleRole::FooterKey)),
+                Span::styled(" quit", theme.style(StyleRole::FooterLabel)),
             ]));
         } else if !matches!(self.view, View::ConfirmDelete { .. }) {
             lines.push(Line::from(vec![
-                Span::styled("Enter", theme::footer_key()),
-                Span::styled(" confirm  ", theme::footer_label()),
-                Span::styled("Esc", theme::footer_key()),
-                Span::styled(" cancel", theme::footer_label()),
+                Span::styled("Enter", theme.style(StyleRole::FooterKey)),
+                Span::styled(" confirm  ", theme.style(StyleRole::FooterLabel)),
+                Span::styled("Esc", theme.style(StyleRole::FooterKey)),
+                Span::styled(" cancel", theme.style(StyleRole::FooterLabel)),
             ]));
         }
 
-        let body = Paragraph::new(lines).style(theme::text());
+        let body = Paragraph::new(lines).style(theme.style(StyleRole::TextPrimary));
         frame.render_widget(body, inner);
+        crate::tui::paint_popup_border(frame, area, theme);
     }
 }
 
-fn input_line(buf: &str, cursor: usize) -> Line<'static> {
+fn input_line(buf: &str, cursor: usize, theme: &ResolvedTheme) -> Line<'static> {
     let mut shown = String::from("> ");
     shown.push_str(buf);
     shown.push(' ');
     let cursor_pos = (crate::text_input::byte_index(&shown, cursor + 2)).min(shown.len());
-    let mut spans = vec![Span::styled(shown.clone(), theme::bright())];
+    let mut spans = vec![Span::styled(
+        shown.clone(),
+        theme.style(StyleRole::FormInput),
+    )];
     // Block cursor: invert the character under the cursor.
     if let Some(ch) = shown[cursor_pos..].chars().next() {
-        spans.push(Span::styled(ch.to_string(), theme::inv()));
+        spans.push(Span::styled(
+            ch.to_string(),
+            theme.style(StyleRole::PickerRowSelected),
+        ));
     }
     Line::from(spans)
 }
@@ -578,7 +598,8 @@ mod tests {
 
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|frame| picker.render(frame)).unwrap();
+        let theme = crate::test_support::resolved_default();
+        terminal.draw(|frame| picker.render(frame, &theme)).unwrap();
         let buffer = terminal.backend().buffer();
         let text: String = buffer
             .content()
@@ -589,5 +610,20 @@ mod tests {
         assert!(text.contains("Select profile"));
         assert!(text.contains("default"));
         assert!(text.contains("work"));
+    }
+
+    #[test]
+    fn picker_renders_on_tiny_terminals() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let dir = tempfile::tempdir().unwrap();
+        let picker = ProfilePicker::new(roots(dir.path()), state_with(&["default"]));
+        let theme = crate::test_support::resolved_default();
+        for (width, height) in [(1, 1), (3, 2), (8, 4), (20, 6)] {
+            let backend = TestBackend::new(width, height);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal.draw(|frame| picker.render(frame, &theme)).unwrap();
+        }
     }
 }

@@ -64,6 +64,7 @@ impl App {
         match self.mode {
             AppMode::KeybindEditor => self.handle_key_keybind_editor(key),
             AppMode::Settings => self.handle_key_settings(key),
+            AppMode::ThemePicker => self.handle_key_theme_picker(key),
             AppMode::TunnelReconnectSettings => self.handle_key_tunnel_reconnect_settings(key),
             AppMode::ConfirmQuit => self.handle_key_confirm_quit(key),
             AppMode::Help => self.handle_key_help(key),
@@ -1202,39 +1203,57 @@ impl App {
         }
     }
 
-    /// Read the current value of the Settings toggle at row `i` (order matches
-    /// [`SETTINGS_ITEMS`]).
-    pub(crate) fn setting_value(&self, i: usize) -> bool {
+    /// Current value of a Settings row: `Some` for a boolean toggle, `None`
+    /// for an action row like [`SettingItem::Theme`], which has no value.
+    pub(crate) fn setting_value(&self, item: impl Into<SettingItem>) -> Option<bool> {
         let a = &self.config.appearance;
-        match i {
-            0 => a.opaque_background,
-            1 => a.os_logo,
-            2 => a.confirm_quit,
-            3 => a.disable_animation,
-            4 => self.config.session_logging.enabled,
-            _ => false,
+        match item.into() {
+            SettingItem::Theme => None,
+            SettingItem::Toggle(t) => Some(match t {
+                SettingToggle::TransparentSshubBackground => a.transparent_sshub_background,
+                SettingToggle::TransparentSessionBackground => a.transparent_session_background,
+                SettingToggle::OsLogo => a.os_logo,
+                SettingToggle::ConfirmQuit => a.confirm_quit,
+                SettingToggle::DisableAnimation => a.disable_animation,
+                SettingToggle::SessionLogging => self.config.session_logging.enabled,
+            }),
         }
     }
 
-    /// Flip the Settings toggle at row `i` and persist immediately.
-    fn toggle_setting(&mut self, i: usize) {
-        match i {
-            0 => {
-                self.config.appearance.opaque_background =
-                    !self.config.appearance.opaque_background;
+    /// Flip a boolean Settings row, reporting whether anything changed. Action
+    /// rows such as [`SettingItem::Theme`] are a no-op and return `false`.
+    ///
+    /// Persisting is the caller's job (see [`App::handle_key_settings`]): a
+    /// pure flip keeps the row semantics testable without writing a config
+    /// file, and it keeps an action row from touching config.toml at all.
+    pub(crate) fn toggle_setting(&mut self, item: impl Into<SettingItem>) -> bool {
+        let SettingItem::Toggle(toggle) = item.into() else {
+            return false;
+        };
+        match toggle {
+            SettingToggle::TransparentSshubBackground => {
+                self.config.appearance.transparent_sshub_background =
+                    !self.config.appearance.transparent_sshub_background;
             }
-            1 => self.config.appearance.os_logo = !self.config.appearance.os_logo,
-            2 => self.config.appearance.confirm_quit = !self.config.appearance.confirm_quit,
-            3 => {
+            SettingToggle::TransparentSessionBackground => {
+                self.config.appearance.transparent_session_background =
+                    !self.config.appearance.transparent_session_background;
+            }
+            SettingToggle::OsLogo => {
+                self.config.appearance.os_logo = !self.config.appearance.os_logo
+            }
+            SettingToggle::ConfirmQuit => {
+                self.config.appearance.confirm_quit = !self.config.appearance.confirm_quit
+            }
+            SettingToggle::DisableAnimation => {
                 self.config.appearance.disable_animation =
                     !self.config.appearance.disable_animation;
             }
-            4 => {
+            SettingToggle::SessionLogging => {
                 self.config.session_logging.enabled = !self.config.session_logging.enabled;
             }
-            _ => {}
         }
-        self.save_config_quietly();
+        true
     }
 
     pub(crate) fn handle_key_settings(&mut self, key: KeyEvent) -> Result<()> {
@@ -1247,7 +1266,59 @@ impl App {
             _ if self.is_action(KeyAction::MoveUp, &key) => {
                 self.settings_selected = (self.settings_selected + n - 1) % n;
             }
-            KeyCode::Char(' ') | KeyCode::Enter => self.toggle_setting(self.settings_selected),
+            KeyCode::Enter
+                if matches!(
+                    SETTINGS_ITEMS.get(self.settings_selected).map(|d| d.item),
+                    Some(SettingItem::Theme)
+                ) =>
+            {
+                self.open_theme_picker();
+            }
+            KeyCode::Char(' ') | KeyCode::Enter => {
+                // Action rows ignore both keys here: nothing flips, nothing is
+                // written. Space on the Theme row stays a deliberate no-op —
+                // only Enter opens the picker.
+                let item = SETTINGS_ITEMS.get(self.settings_selected).map(|d| d.item);
+                if item.is_some_and(|item| self.toggle_setting(item)) {
+                    self.save_config_quietly();
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Theme picker keys (spec, "Theme-Picker / Interaktion"). Nothing here
+    /// writes to disk except `Enter`.
+    pub(crate) fn handle_key_theme_picker(&mut self, key: KeyEvent) -> Result<()> {
+        // The page step is what the renderer can actually show, taken from the
+        // same pure geometry function the renderer uses, so a page never jumps
+        // further than the eye can follow.
+        let page = crate::tui::screens::theme_picker::visible_rows(self.terminal_area).max(1);
+        let last = self.theme_picker_rows().len().saturating_sub(1);
+        match key.code {
+            _ if self.is_action(KeyAction::Cancel, &key) => self.cancel_theme_picker(),
+            KeyCode::Enter => self.commit_theme_picker(),
+            KeyCode::Char('r') => self.reload_theme_picker(),
+            KeyCode::Home => {
+                self.select_theme_row(0);
+            }
+            KeyCode::End => {
+                self.select_theme_row(last);
+            }
+            KeyCode::PageUp => self.page_theme_selection(-(page as isize)),
+            KeyCode::PageDown => self.page_theme_selection(page as isize),
+            // The two-row footer cannot hold every ignored role at once, so it
+            // scrolls. Shift is what keeps these off the navigation keys, whose
+            // bindings match modifiers exactly.
+            KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.scroll_theme_diagnostics(1)
+            }
+            KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.scroll_theme_diagnostics(-1)
+            }
+            _ if self.is_action(KeyAction::MoveDown, &key) => self.move_theme_selection(1),
+            _ if self.is_action(KeyAction::MoveUp, &key) => self.move_theme_selection(-1),
             _ => {}
         }
         Ok(())

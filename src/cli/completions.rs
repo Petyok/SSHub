@@ -29,6 +29,7 @@ const TOP_LEVEL: &[&str] = &[
     "import",
     "export",
     "completions",
+    "theme",
     "db",
 ];
 
@@ -58,6 +59,8 @@ const AUDIT_SUB: &[&str] = &["list", "stats"];
 const DB_SUB: &[&str] = &["purge"];
 
 const COMPLETIONS_SUB: &[&str] = &["bash", "zsh", "fish"];
+
+const THEME_SUB: &[&str] = &["check", "list", "show"];
 
 pub fn run(_ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     let mut rest = args.to_vec();
@@ -229,6 +232,7 @@ _sshub_completions() {{
     local audit_sub="{audit_sub}"
     local db_sub="{db_sub}"
     local completions_sub="{completions_sub}"
+    local theme_sub="{theme_sub}"
     local hosts="{hosts}"
 
     if (( COMP_CWORD == 1 )); then
@@ -289,6 +293,11 @@ _sshub_completions() {{
                 COMPREPLY=( $(compgen -W "$completions_sub" -- "$cur") )
             fi
             ;;
+        theme)
+            if (( COMP_CWORD == 2 )); then
+                COMPREPLY=( $(compgen -W "$theme_sub" -- "$cur") )
+            fi
+            ;;
         tags|sync|import|export)
             COMPREPLY=( $(compgen -W "--format plain json --stdout -o --cache" -- "$cur") )
             ;;
@@ -305,6 +314,7 @@ complete -F _sshub_completions sshub
         audit_sub = words_csv(AUDIT_SUB),
         db_sub = words_csv(DB_SUB),
         completions_sub = words_csv(COMPLETIONS_SUB),
+        theme_sub = words_csv(THEME_SUB),
         hosts = bash_host_list(host_names),
     )
 }
@@ -314,7 +324,7 @@ fn render_zsh(host_names: &[String]) -> String {
         r#"#compdef sshub
 # sshub zsh completion
 
-local -a top_cmds host_cmds group_cmds identity_cmds tunnel_cmds sftp_cmds audit_cmds db_cmds completion_cmds hosts
+local -a top_cmds host_cmds group_cmds identity_cmds tunnel_cmds sftp_cmds audit_cmds db_cmds completion_cmds theme_cmds hosts
 
 top_cmds=({top})
 host_cmds=({host_sub})
@@ -325,6 +335,7 @@ sftp_cmds=({sftp_sub})
 audit_cmds=({audit_sub})
 db_cmds=({db_sub})
 completion_cmds=({completions_sub})
+theme_cmds=({theme_sub})
 hosts=({hosts})
 
 _sshub() {{
@@ -376,6 +387,9 @@ _sshub() {{
                 completions)
                     (( CURRENT == 3 )) && _describe 'shell' completion_cmds
                     ;;
+                theme)
+                    (( CURRENT == 3 )) && _describe 'subcommand' theme_cmds
+                    ;;
             esac
             ;;
     esac
@@ -398,6 +412,7 @@ fi
         audit_sub = AUDIT_SUB.join(" "),
         db_sub = DB_SUB.join(" "),
         completions_sub = COMPLETIONS_SUB.join(" "),
+        theme_sub = THEME_SUB.join(" "),
         hosts = zsh_host_list(host_names),
     )
 }
@@ -452,6 +467,11 @@ fn render_fish(host_names: &[String]) -> String {
             "complete -c sshub -n '__fish_seen_subcommand_from completions' -a '{sub}'\n"
         ));
     }
+    for sub in THEME_SUB {
+        out.push_str(&format!(
+            "complete -c sshub -n '__fish_seen_subcommand_from theme' -a '{sub}'\n"
+        ));
+    }
 
     for name in host_names {
         let q = fish_sq(name);
@@ -486,6 +506,27 @@ mod tests {
         assert!(script.contains("host"));
         assert!(script.contains("group"));
         assert!(script.contains("prod"));
+    }
+
+    /// One assertion per shell: a new top-level command is useless if the
+    /// generated completions do not offer its subcommands.
+    #[test]
+    fn every_shell_completes_the_theme_subcommands() {
+        let bash = render_bash(&[]);
+        assert!(
+            bash.contains("local theme_sub=\"check list show\""),
+            "bash: {bash}"
+        );
+        let zsh = render_zsh(&[]);
+        assert!(zsh.contains("theme_cmds=(check list show)"), "zsh: {zsh}");
+        let fish = render_fish(&[]);
+        assert!(
+            fish.contains("complete -c sshub -n '__fish_seen_subcommand_from theme' -a 'check'"),
+            "fish: {fish}"
+        );
+        for script in [&bash, &zsh, &fish] {
+            assert!(script.contains("theme"), "top level must list theme");
+        }
     }
 
     #[test]

@@ -1,53 +1,32 @@
-use ratatui::prelude::{Modifier, Style};
-use ratatui::style::Color;
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
+//! The identity form popup (`AppMode::IdentityForm`).
+//!
+//! The identity *list* used to live here too, as `render_keychain`,
+//! `render_identity_list` and `render_notice`. The identities tab replaced all
+//! three with the card grid in `screens/keys.rs` and nothing called them any
+//! more, so they were removed along with the four `components.keychain.*` roles
+//! that only they could reach. This form is the surface that survived, and it
+//! is styled from `components.form.*`, `components.focus.indicator` and
+//! `components.popup.*` — not from a keychain family of its own.
 
-use crate::app::{App, AppMode, IdentityFormEdit, IdentityFormField};
+use ratatui::style::Style;
+use ratatui::widgets::{Block, Borders, Paragraph};
+
+use crate::app::{IdentityFormEdit, IdentityFormField};
 use crate::text_input;
-
-pub fn render_keychain(app: &App) -> Paragraph<'static> {
-    let title = if app.mode == AppMode::IdentityForm {
-        if app.identity_form.as_ref().and_then(|f| f.id).is_some() {
-            "Edit identity"
-        } else {
-            "New identity"
-        }
-    } else {
-        "Keychain"
-    };
-    Paragraph::new(title).style(Style::default().add_modifier(Modifier::BOLD))
-}
-
-pub fn render_identity_list(app: &App) -> List<'static> {
-    let items: Vec<ListItem> = app
-        .identities
-        .iter()
-        .enumerate()
-        .map(|(idx, identity)| {
-            let selected = idx == app.identity_selected;
-            let marker = if selected { "▶ " } else { "  " };
-            let user = identity
-                .username
-                .as_deref()
-                .map(|u| format!(" ({u})"))
-                .unwrap_or_default();
-            let label = format!("{marker}{}{user}", identity.name);
-            let style = if selected {
-                Style::default().bg(Color::DarkGray).fg(Color::White)
-            } else {
-                Style::default()
-            };
-            ListItem::new(label).style(style)
-        })
-        .collect();
-    List::new(items)
-}
+use crate::theme::catalog::StyleRole;
+use crate::theme::model::ResolvedTheme;
 
 pub fn render_identity_form(
     form: &IdentityFormEdit,
     save_hint: &str,
     secret_hints: &str,
+    theme: &ResolvedTheme,
+    border: Style,
 ) -> Paragraph<'static> {
+    // Same contract as the host form, and for the same reason: this form's
+    // marker had no `theme.rs` cell of its own, only direct ANSI accents, so
+    // the global focus role is what it takes.
+    let focus = theme.style(StyleRole::FocusIndicator);
     let mut lines = Vec::with_capacity(IdentityFormField::ALL.len() + 2);
     for field in IdentityFormField::ALL {
         let active = form.field == field;
@@ -96,27 +75,20 @@ pub fn render_identity_form(
             }
         };
         let label_style = if editing {
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD)
+            theme.style(StyleRole::FormLabelEditing)
         } else if active {
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD)
+            theme.style(StyleRole::FormLabelFocused)
         } else {
-            Style::default().fg(Color::DarkGray)
+            theme.style(StyleRole::FormLabel)
         };
         let value_style = if editing {
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+            theme.style(StyleRole::FormInputEditing)
         } else if active {
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD)
+            theme.style(StyleRole::FormInputFocused)
         } else {
-            Style::default()
+            theme.style(StyleRole::FormValue)
         };
+        let prefix_style = if active { focus } else { label_style };
         // The secret field is a key passphrase when a key is set, otherwise a
         // shared login password reused across hosts.
         let has_key = !form.private_key.is_empty() || form.pasted_key.is_some();
@@ -126,7 +98,8 @@ pub fn render_identity_form(
             field.label()
         };
         lines.push(ratatui::text::Line::from(vec![
-            ratatui::text::Span::styled(format!("{prefix}{label}: "), label_style),
+            ratatui::text::Span::styled(prefix, prefix_style),
+            ratatui::text::Span::styled(format!("{label}: "), label_style),
             ratatui::text::Span::styled(display, value_style),
         ]));
     }
@@ -141,17 +114,15 @@ pub fn render_identity_form(
     };
     lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
         hint,
-        Style::default().add_modifier(Modifier::DIM),
+        theme.style(StyleRole::FormHelp),
     )));
-    Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("Identity"))
-}
-
-pub fn render_notice(notice: &str) -> Paragraph<'static> {
-    let color = if notice.starts_with("Error") || notice.starts_with("error") {
-        Color::Red
-    } else {
-        Color::Green
-    };
-    Paragraph::new(notice.to_string())
-        .style(Style::default().fg(color).add_modifier(Modifier::ITALIC))
+    Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(border)
+            .title(ratatui::text::Span::styled(
+                "Identity",
+                theme.style(StyleRole::PopupTitle),
+            )),
+    )
 }
