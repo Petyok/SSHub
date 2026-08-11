@@ -4,6 +4,8 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-08-12
+
 ### Added
 
 - **Runtime theme system** (PR #86 by @michabbb) - SSHub's colours are TOML
