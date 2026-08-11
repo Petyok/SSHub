@@ -1,9 +1,3 @@
----
-type: Documentation Index
-title: "Architecture"
-description: "Files and subdirectories in Architecture."
----
-
 # Files
 
 - [Data Model & Storage — launcher.db, metadata.db, config, and hybrid hosts](data-model.md) - SSHub persists state in two SQLite databases (launcher.db for managed hosts/groups/identities/tunnels/audit, metadata.db for legacy ssh_config hosts), a TOML config file, and merges managed hosts with read-only ~/.ssh/config aliases through the HostResolver abstraction.

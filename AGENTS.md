@@ -40,9 +40,35 @@ Canonical source: [docs/implementation-flow.md](docs/implementation-flow.md). Th
 ### Workflow
 
 1. Claim the issue on GitHub before coding. Sign every issue/PR comment: `_Written by {Model} ({Platform}) on behalf of the maintainer._`
-2. Branch `feature/*` (or `fix/*`) from `development`. Never from `main`. Never bump `Cargo.toml` version.
+2. Branch from `development` per § Branch naming. Never from `main`. For epics, use `feature/<epic>` as integration branch and child `poc/*` or stage branches; never bump `Cargo.toml` version on non-development branches.
 3. Small, logical commits. Conventional commit titles (`feat:`, `fix:`, `test:`, `docs:`, etc.).
-4. PR targets `development` only. Body includes `Closes #N`, what changed, how tested, and the signature.
+4. Production PRs target `development`; exploratory child PoC/stage PRs may target their epic integration branch. Body includes `Closes #N`, what changed, how tested, and the signature.
+
+### Branch naming
+
+`<prefix>/<slug>`, where the prefix says what the work **is** — not what it is
+attached to. A bug fix is `fix/`, however large; docs are `docs/`; `feature/` is
+for a `feat:` commit and nothing else.
+
+| Prefix | Justified by a commit of type |
+|---|---|
+| `feature/` | `feat` |
+| `fix/` | `fix` |
+| `docs/` | `docs` |
+| `chore/` | `chore`, `ci`, `build`, `refactor`, `perf`, `style`, `test` |
+| `poc/` | anything — an epic's exploratory child branch has no fixed shape |
+
+Supporting commits of other types are fine: a `fix/` branch may carry `test:`
+and `docs:` commits, it just needs at least one `fix:`.
+
+Enforced by `scripts/check-branch-name.sh`, which the `pre-commit` hook calls
+for the name shape and CI calls with every commit type on the branch (CI skips
+forks — a contributor's branch name is not ours to police). The script's own
+cases run as `scripts/check-branch-name.sh --self-test` in the same CI job.
+
+This was prose until a bug fix shipped on a `feature/` branch (#95) and nothing
+objected. Rules that only live in a Markdown file are advisory; move what you
+can into a check.
 
 ### Verify before every push
 
@@ -54,6 +80,14 @@ cargo clippy --all-targets
 ```
 
 All must pass. CI runs the same and fails on any warning.
+
+### Oracle tests
+
+Code that re-implements what an external tool already knows (`ssh -G`,
+`ssh-keygen`, a foreign export format) must be tested **against that tool**, not
+against a mock or an agent-authored fixture — a mock only proves the code agrees
+with itself, which is exactly what an agent produces when it invents logic.
+Verify the new test fails without the fix. See [docs/oracle-tests.md](docs/oracle-tests.md).
 
 ### Adversarial review
 

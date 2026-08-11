@@ -45,7 +45,7 @@ Add/edit host form, the rebindable keybindings editor (`Ctrl+K`), and the scroll
 ![Keybindings editor](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/keybindings.png)
 ![Help overlay](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/help.png)
 
-The settings overlay (`Ctrl+H`) — toggle an opaque background, OS logos, quit confirmation, and the startup animation:
+The settings overlay (`Ctrl+H`) — make SSHub's own surfaces or the remote grid transparent, toggle OS logos, quit confirmation, and the startup animation:
 
 ![Settings overlay](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/settings.png)
 
@@ -61,11 +61,11 @@ The settings overlay (`Ctrl+H`) — toggle an opaque background, OS logos, quit 
 - **Ad-hoc connect** - in the fuzzy palette (`/`), typing an unknown `[user@]host[:port]` (IPv6 in brackets supported) that matches no saved host offers a "connect without saving" row; Enter opens an embedded ssh session to it. Input is validated and injection-safe (no leading-dash hosts; destination passed after `--`)
 - **Local shell tab** - `Ctrl+Shift+T` opens a session tab running your login shell (`$SHELL`, else `/bin/sh`) with the same detach/close semantics as ssh tabs
 - **Audit** — log of all connection events with filtering by status (ok/fail) and time range (today/week/month)
-- **Settings overlay** (`Ctrl+H`) — toggle an opaque background (for transparent terminals), OS logos, quit confirmation, and the startup animation
+- **Settings overlay** (`Ctrl+H`) — let your terminal show through SSHub's own surfaces or through the remote grid (two separate switches, both off by default), toggle OS logos, quit confirmation, and the startup animation
 - **Audit** — log of all connection events with filtering by status (ok/fail) and time range (today/week/month); session connect events record the path to the session log when logging is enabled
-- **Session logging** — opt-in capture of PTY session output to `~/.local/share/sshub/logs/<host-dir>/` (managed hosts use `{name}-{id}`; pure `~/.ssh/config` aliases without a launcher row may share a directory when sanitized names collide). Enable globally in Settings (`Ctrl+H`) or override per host (`inherit` / `on` / `off`). **Logs capture everything echoed to the terminal, including passwords if they appear on screen.**
+- **Session logging** — opt-in capture of PTY session output to `~/.local/share/sshub/profiles/<name>/logs/<host-dir>/` (managed hosts use `{name}-{id}`; pure `~/.ssh/config` aliases without a launcher row may share a directory when sanitized names collide). Enable globally in Settings (`Ctrl+H`) or override per host (`inherit` / `on` / `off`). **Logs capture everything echoed to the terminal, including passwords if they appear on screen.**
 - **Mosh transport** — per-host `Transport` field in the host form (`ssh` or `mosh`). Embedded sessions use `mosh` when selected; tunnels and SFTP stay ssh-only.
-- **Settings overlay** (`Ctrl+H`) — toggle session logging, opaque background (for transparent terminals), OS logos, quit confirmation, and the startup animation
+- **Settings overlay** (`Ctrl+H`) — toggle session logging, let your terminal show through SSHub's own surfaces or through the remote grid (two separate switches, both off by default), toggle OS logos, quit confirmation, and the startup animation
 - **Hybrid sources** — hosts from `~/.ssh/config` (read-only) and launcher-managed (full CRUD) merge without duplicates
 - **Import/Export**: import from `~/.ssh/config`, Termius backups, PuTTY (a Windows regedit `.reg` export or a Unix `~/.putty/sessions` directory), or mRemoteNG (`confCons.xml`); export managed hosts back to ssh config format. Only SSH sessions are imported (RDP/VNC/telnet entries are skipped), and encrypted mRemoteNG passwords are not decrypted (imported hosts carry no stored secret)
 - **Hot reload** — edits to `~/.ssh/config` update the host list live via file watcher
@@ -132,6 +132,8 @@ sshub              # launch TUI
 sshub --version    # print version
 sshub --dry-run    # exit immediately (CI / scripts)
 sshub --help       # show options
+sshub --profile work                     # launch named profile
+sshub --manage-profiles                 # open profile picker
 ```
 
 ### Commands
@@ -141,7 +143,22 @@ sshub --help       # show options
 # the audit log. Irreversible, so it refuses unless you confirm. Your
 # ~/.ssh/config (and the hosts imported from it) are left untouched.
 sshub db purge --yes-i-am-stupid
+
+# Target a profile from the TUI or any headless command.
+sshub --profile work host list
+sshub --profile personal audit list
+sshub --profile work db purge --yes-i-am-stupid
 ```
+
+SSHUB keeps profile-owned data isolated. Each profile can select its own SSH
+config source with `[ssh].config_path`; the default remains shared
+`~/.ssh/config`. With one profile, startup remains silent;
+with multiple profiles, the picker appears after the splash. The picker can
+create, rename, and delete profiles, but switching profiles requires restarting
+SSHUB. `--profile NAME` bypasses the picker. `--manage-profiles` opens it even
+when only one profile exists. Press `Esc` in the picker to cancel startup.
+Headless commands without `--profile` use the last-used profile and never open
+the interactive picker.
 
 ## Headless CLI
 
@@ -182,6 +199,11 @@ sshub sftp get prod-web /var/log/app.log ./app.log
 sshub sftp put prod-web ./deploy.tar.gz /tmp/deploy.tar.gz
 sshub sftp rm prod-web /tmp/deploy.tar.gz --yes
 
+# Themes (see "Theming" below)
+sshub theme list
+sshub theme show aqua
+sshub theme check ~/.config/sshub/themes/mine.toml
+
 # Audit log
 sshub audit list --status fail --days 7
 sshub audit stats --days 7
@@ -215,11 +237,18 @@ one yourself with `sshub completions bash|zsh|fish`.
 
 | Resource   | Default path                          |
 |------------|---------------------------------------|
-| Config     | `~/.config/sshub/config.toml`         |
-| Database   | `~/.local/share/sshub/launcher.db`    |
+| Config     | `~/.local/share/sshub/profiles/<name>/config.toml` |
+| Themes     | `~/.local/share/sshub/profiles/<name>/themes/*.toml` |
+| Databases  | `~/.local/share/sshub/profiles/<name>/{launcher,metadata}.db` |
+| Logs       | `~/.local/share/sshub/profiles/<name>/logs/`       |
+| Tunnels    | `~/.local/share/sshub/profiles/<name>/tunnels/`    |
+| State      | `~/.local/share/sshub/state.toml`                 |
 | SSH config | `~/.ssh/config`                       |
 
-Override via environment variables: `SSHUB_CONFIG_DIR`, `SSHUB_DATA_DIR`, `SSHUB_SSH_CONFIG`.
+Override via environment variables: `SSHUB_CONFIG_DIR`, `SSHUB_DATA_DIR`,
+`SSHUB_SSH_CONFIG`. Setting `SSHUB_CONFIG_DIR` or `SSHUB_DATA_DIR` selects
+compatibility mode, using those directories verbatim and disabling profile
+discovery. Legacy `SSH_LAUNCHER_*` variables remain supported.
 
 ## Keybindings
 
@@ -320,9 +349,50 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | `f` | Cycle filter (all / ok / fail)       |
 | `r` | Cycle range (all / today / week / month) |
 
+## Theming
+
+SSHub's colours live in TOML theme files you can copy, edit and switch at
+runtime. Five themes ship built into the binary — **`default`**, **`summer`**,
+**`aqua`**, **`fire`** and **`high-contrast`** — and your own go in the
+selected profile's `themes/*.toml` directory (or `~/.config/sshub/themes/` in
+compatibility mode), where the file name is the theme's ID.
+
+```bash
+mkdir -p ~/.local/share/sshub/profiles/<name>/themes
+sshub theme show aqua > ~/.local/share/sshub/profiles/<name>/themes/mine.toml
+$EDITOR ~/.local/share/sshub/profiles/<name>/themes/mine.toml
+sshub theme check ~/.local/share/sshub/profiles/<name>/themes/mine.toml
+```
+
+Select it in the TUI with **Ctrl+H → Theme… → Enter**: moving through the list
+previews each theme on the whole interface, `Esc` rolls back, and `Enter` saves
+`appearance.active_theme` to `config.toml`. Nothing else is written.
+
+A theme sets any of three layers — your own `[palette]`, the fixed 25-slot
+`[semantic]` core, and per-role `[components]` overrides — plus named static
+`[gradients]`. Everything you leave out is inherited from `default`, so
+changing one semantic slot recolours everything that uses it. True Color
+terminals get the colours as written. The embedded remote session keeps every
+colour the remote chose itself; a theme only supplies the ground and the default
+foreground the remote left unset.
+
+Three headless commands, all without a TUI or a database:
+
+| Command | What it does |
+|---------|--------------|
+| `sshub theme list` | Every built-in and user theme with its state |
+| `sshub theme show <id> [--resolved]` | The theme's source, or a fully resolved standalone export |
+| `sshub theme check <file>` | Strict validation with `file:line:column` diagnostics |
+
+**Full guide: [docs/theme-system.md](docs/theme-system.md)** — the file format,
+colour values and simulated opacity, inheritance and `"auto"`, gradient
+directions and the `perimeter` rule, the complete role catalogue, every picker
+key, the CLI exit codes, and two copy-pasteable example themes.
+
 ## Configuration
 
-`~/.config/sshub/config.toml`:
+`~/.local/share/sshub/profiles/<name>/config.toml` in profile mode
+(`~/.config/sshub/config.toml` in compatibility mode):
 
 ```toml
 [session_logging]

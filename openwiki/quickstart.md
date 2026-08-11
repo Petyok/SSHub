@@ -18,7 +18,7 @@ SSHub (`sshub`, v0.9.3 in `Cargo.toml`) is a keyboard-driven terminal UI for man
 ```bash
 cargo install sshub          # or: git clone … && just install
 sshub                        # launch TUI
-sshub --help                 # global options (--dry-run, --version)
+sshub --help                 # global options (--profile, --manage-profiles, --dry-run, --version)
 sshub list                   # headless CLI (see workflows/cli.md)
 ```
 
@@ -28,12 +28,20 @@ Linux builds need `libdbus-1-dev` + `pkg-config` (Secret Service keyring backend
 
 | Resource | Default path | Override |
 |---|---|---|
-| Config | `~/.config/sshub/config.toml` | `SSHUB_CONFIG_DIR` |
-| Databases | `~/.local/share/sshub/launcher.db` (+ `metadata.db`) | `SSHUB_DATA_DIR` |
+| Config | `~/.local/share/sshub/profiles/<name>/config.toml` | `SSHUB_CONFIG_DIR` in compatibility mode |
+| Databases | `~/.local/share/sshub/profiles/<name>/{launcher,metadata}.db` | `SSHUB_DATA_DIR` in compatibility mode |
 | SSH config | `~/.ssh/config` | `SSHUB_SSH_CONFIG` |
-| Session logs | `~/.local/share/sshub/logs/<host-dir>/` | — |
+| Session logs | `~/.local/share/sshub/profiles/<name>/logs/<host-dir>/` | — |
+| Profile state | `~/.local/share/sshub/state.toml` | — |
 
-Legacy `SSH_LAUNCHER_*` env vars are still honored as fallbacks, and `~/.config/ssh-launcher` is auto-migrated to `~/.config/sshub` (`src/config.rs`).
+Startup uses one profile workspace. One profile starts silently; multiple profiles
+show a picker after the splash. Use `sshub --profile NAME` to bypass it or
+`sshub --manage-profiles` to manage profiles. Picker supports create, rename,
+delete, and last-used selection. Headless commands without `--profile` use the
+last-used profile and never open the picker. Legacy `SSH_LAUNCHER_*` env vars remain
+fallbacks; setting `SSHUB_DATA_DIR` or `SSHUB_CONFIG_DIR` uses compatibility
+mode without profile discovery. Legacy top-level data migrates into
+`profiles/default` (`src/profile/migrate.rs`).
 
 ## Where to go next
 
@@ -42,8 +50,9 @@ Legacy `SSH_LAUNCHER_*` env vars are still honored as fallbacks, and `~/.config/
 - [Data model & storage](architecture/data-model.md) — `launcher.db` vs `metadata.db`, schema migrations, the hybrid ssh_config/managed host model, config file, and file watching.
 
 ### Workflows
-- [TUI dashboard](workflows/tui.md) — tabs, overlays, keybindings, and screens.
-- [Sessions & SFTP](workflows/sessions-sftp.md) — embedded PTY sessions, askpass, session logging, mosh, and the dual-pane SFTP browser.
+- [TUI dashboard](workflows/tui.md) — tabs, overlays, keybindings, searchable pickers, and screens.
+- [Known hosts manager](workflows/known-hosts.md) — fingerprints, guarded known_hosts deletion, and first-connect verification.
+- [Sessions & SFTP](workflows/sessions-sftp.md) — embedded PTY sessions, OSC 52 relay boundary, askpass, session logging, mosh, and the dual-pane SFTP browser.
 - [Tunnels](workflows/tunnels.md) — local/remote/dynamic tunnels and keep-alive reconnect with backoff.
 - [Headless CLI](workflows/cli.md) — full command tree, JSON output, exit codes.
 
@@ -67,4 +76,5 @@ Pinned workflow: [docs/implementation-flow.md](../docs/implementation-flow.md) (
 
 - **Demo pipeline details** (`demo/` tapes, `record.sh`, `seed-demo.sh`) — only summarized under [integrations](integrations/external-terminals.md); deferred because it is contributor tooling, not product behavior.
 - **Host-sync design** (`docs/host-sync-design.md`) — P2P sync design for epic #13; not yet implemented, documented only in the design doc.
+- **Changelog audit follow-ups** — public-key push/key generation, npm packaging details, motion/panel behavior, PuTTY/mRemoteNG import, and release-license history remain pending in [the changelog coverage notebook](changelog-coverage.md).
 - **Detached tunnel PID-file hardening** (`src/tunnel/spawn.rs`) — acknowledged races (no locking, recycled PIDs) noted in [tunnels](workflows/tunnels.md); behavior may change.

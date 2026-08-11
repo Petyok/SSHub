@@ -1,0 +1,116 @@
+# SSHub — "Summer": a light theme.
+#
+# Copy this file to `~/.config/sshub/themes/summer-mine.toml` and edit away; the
+# file name without `.toml` becomes the theme id, so `active_theme` would then
+# be "summer-mine".
+#
+# What this theme demonstrates:
+#   * a *light* theme — the semantic core is fully re-tinted, nothing else has
+#     to be touched for the ~230 component roles to follow
+#   * a genuinely painted app background (`default` leaves it transparent)
+#   * multi-stop yellow→white gradients on borders and separators
+#   * simulated opacity for the raised chrome
+
+schema_version = 1
+# Every theme but `default` inherits. This is also the implicit default, but
+# spelling it out documents where the unset roles come from.
+extends = "default"
+name = "Summer"
+description = "Warm cream surfaces, sun yellow and white — a bright daylight theme."
+
+# [palette] is free-form: these names exist only inside this file and its
+# children. Reference them as "palette.<name>" anywhere a colour is allowed.
+[palette]
+cream = "#fff8e7"
+cream_deep = "#f6e9c9"
+white = "#ffffff"
+sun = "#f5b301"
+sun_soft = "#ffd85e"
+# Text on a light ground has to be dark; these are the inverse of `default`'s
+# text ramp.
+ink = "#3b2f14"
+ink_soft = "#6b5a30"
+ink_faint = "#a08d5e"
+# Status hues, darkened enough to stay legible on cream.
+leaf = "#3f8f4f"
+ember = "#b3401f"
+sky = "#1f6f9f"
+honey = "#a86a00"
+
+[semantic]
+# A light theme must paint its own ground: leaving `background = "terminal"`
+# would show dark text on whatever the emulator happens to use.
+background = "palette.cream"
+canvas = "palette.cream"
+surface = "palette.cream"
+surface_raised = "palette.cream_deep"
+
+border = "palette.ink_faint"
+border_focus = "palette.sun"
+border_popup = "palette.ink_soft"
+
+text = "palette.ink"
+# "bright" and "highlight" mean *more contrast*, not *lighter*, so on a light
+# theme they get darker rather than whiter.
+text_bright = "#2a2109"
+text_highlight = "#1c1605"
+text_muted = "palette.ink_soft"
+text_dim = "palette.ink_faint"
+# Painted on `text_bright`, so it has to be the light end here.
+text_inverse = "palette.white"
+
+accent = "palette.sun"
+selection_bg = "palette.sun_soft"
+selection_fg = "#2a2109"
+
+success = "palette.leaf"
+warning = "palette.honey"
+error = "palette.ember"
+info = "palette.sky"
+connecting = "palette.honey"
+exited = "palette.ember"
+unknown = "palette.ink_faint"
+
+# Gradients are always named here and then referenced as "gradients.<name>" —
+# V1 has no inline multi-stop gradients inside [components].
+[gradients.sunlight]
+direction = "horizontal"
+stops = [
+  { at = 0.0, color = "palette.sun" },
+  { at = 0.55, color = "palette.sun_soft" },
+  { at = 1.0, color = "palette.white" },
+]
+
+# The same three colours read top-to-bottom, for anything taller than it is
+# wide. `brightness` lifts a colour towards white (negative pulls it to black).
+[gradients.sunrise]
+direction = "vertical"
+stops = [
+  { at = 0.0, color = "palette.white" },
+  { at = 1.0, color = { color = "palette.sun", brightness = 0.2 } },
+]
+
+# Panel frames pick up the horizontal sweep; the unfocused frame stays a plain
+# colour so focus remains obvious.
+[components.dashboard.host_list]
+border_focused = { gradient = "gradients.sunlight" }
+
+[components.dashboard.details]
+border_focused = { gradient = "gradients.sunlight" }
+
+[components.separator]
+primary = { gradient = "gradients.sunlight" }
+
+[components.header]
+background = { gradient = "gradients.sunrise" }
+
+# `opacity` mixes towards the opaque mixing ground: `over` when given,
+# `semantic.background` otherwise. It needs an opaque ground, which is why a
+# theme that inherits `default`'s transparent background cannot use it without
+# painting its own — this theme does, so the implicit ground is fine.
+[components.footer]
+background = { color = "palette.sun", opacity = 0.22 }
+
+[components.popup]
+background = "palette.white"
+border = "palette.ink_soft"

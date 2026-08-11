@@ -8,7 +8,11 @@ tags: [architecture, event-loop, tui, ratatui, app-state]
 
 # Runtime Architecture
 
-SSHub has **no async runtime**. Everything is driven by one synchronous event loop in `src/lib.rs` (`run()` → `run_app()`), with concurrency handled by background threads communicating over `std::sync::mpsc` channels.
+SSHub has **no async runtime**. Startup first resolves one immutable profile
+workspace in `src/profile/`, optionally runs the standalone picker, then builds
+`App` with that workspace. Everything after startup is driven by one synchronous
+event loop in `src/lib.rs` (`run()` → `run_app()`), with concurrency handled by
+background threads communicating over `std::sync::mpsc` channels.
 
 ## The event loop (`src/lib.rs`)
 

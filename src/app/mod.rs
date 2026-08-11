@@ -20,6 +20,7 @@ mod session_picker;
 mod session_spawn;
 mod sftp;
 mod tags;
+mod theme_picker;
 mod tunnels;
 mod types;
 mod util;
@@ -27,9 +28,11 @@ mod util;
 #[cfg(test)]
 mod tests;
 
+pub use theme_picker::{ThemePickerState, ThemeRecordSummary, ThemeRow, ThemeRowStatus};
 pub use types::*;
 pub use util::*;
 
+use std::path::Path;
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -49,6 +52,9 @@ use crate::store::{
     IdentityUpdate, LauncherStore, ManagedHost, NewHost, NewHostGroup, NewIdentity,
 };
 use crate::text_input;
+use crate::theme::manager::ThemeManager;
+use crate::theme::model::{ResolvedTheme, ThemeDiagnostic, ValidationMode};
+use crate::theme::registry::ThemeRegistry;
 use crate::watcher::WatchEvent;
 
 /// Virtual group label for hosts without a DB group.
@@ -90,6 +96,55 @@ pub const OS_ICON_OPTIONS: [&str; 22] = [
     "linux",
 ];
 
+/// A one-line, non-fatal summary of the theme start-up diagnostics, or `None`
+/// when everything loaded cleanly.
+///
+/// Both diagnostic lists the manager collected are eligible. The directory-level
+/// warnings — an unusable file name, an unreadable `*.toml` path, the 256-file
+/// cut — are *not* filtered out: they are exactly what explains a theme missing
+/// from the picker, so hiding them would leave the user with no clue at all.
+/// Errors are reported first because an unusable active theme is the thing that
+/// actually changed what is on screen.
+fn theme_startup_notice(manager: &ThemeManager, load_error: Option<&str>) -> Option<String> {
+    let mut messages: Vec<&str> = Vec::new();
+    if let Some(error) = load_error {
+        messages.push(error);
+    }
+    let diagnostics = manager.startup_diagnostics();
+    let (errors, warnings): (Vec<&ThemeDiagnostic>, Vec<&ThemeDiagnostic>) =
+        diagnostics.iter().partition(|d| d.is_error());
+    messages.extend(
+        errors
+            .iter()
+            .chain(warnings.iter())
+            .map(|d| d.message.as_str()),
+    );
+
+    let first = messages.first()?;
+    Some(match messages.len() {
+        1 => format!("Theme: {first}"),
+        n => format!("Theme: {first} (+{} more)", n - 1),
+    })
+}
+
+/// Preserve earlier startup degradations while adding another one-line notice.
+fn append_host_notice(host_notice: &mut Option<String>, notice: String) {
+    const SEPARATOR: &str = " | ";
+
+    match host_notice {
+        Some(existing)
+            if existing == &notice
+                || existing
+                    .strip_suffix(&notice)
+                    .is_some_and(|prefix| prefix.ends_with(SEPARATOR)) => {}
+        Some(existing) if !existing.is_empty() => {
+            existing.push_str(SEPARATOR);
+            existing.push_str(&notice);
+        }
+        _ => *host_notice = Some(notice),
+    }
+}
+
 /// Injectable dependencies for [`App`].
 pub struct AppDeps {
     pub resolver: Box<dyn HostResolver>,
@@ -102,10 +157,32 @@ pub struct AppDeps {
 pub struct App {
     pub hosts: Vec<HostEntry>,
     pub filtered_indices: Vec<usize>,
+    /// Char offsets the live search matched inside each filtered host's
+    /// *display name*, keyed by its `hosts` index. Computed once per filter
+    /// rebuild rather than per frame, and empty whenever no query is active.
+    pub search_matches: std::collections::HashMap<usize, Vec<u32>>,
     pub selected: usize,
     pub search_query: String,
     pub mode: AppMode,
     pub config: AppConfig,
+    /// The active runtime theme and the registry it came from. `App` owns it —
+    /// there is no global mutable theme state, so renderers take `app.theme()`
+    /// (or an explicit `&ResolvedTheme`) and tests stay deterministic.
+    ///
+    /// **Private on purpose.** Every change to what is painted has to invalidate
+    /// the buffer snapshots captured under the old theme, and a public field
+    /// would put `ThemeManager::activate_resolved` — and a wholesale
+    /// replacement — within reach of any caller, skipping that entirely. The
+    /// two mutation paths are [`App::activate_resolved_theme`] and
+    /// [`App::replace_theme_manager`]; reading goes through the accessors
+    /// below.
+    theme_manager: ThemeManager,
+    /// Live theme-picker state; `Some` exactly while `mode` is
+    /// [`AppMode::ThemePicker`].
+    pub theme_picker: Option<ThemePickerState>,
+    /// Resolved profile workspace (databases, config, logs, tunnels). `None`
+    /// only in unit tests that inject deps directly.
+    pub profile: Option<crate::profile::ProfilePaths>,
     /// Active tag filters. A host matches when it carries every selected tag
     /// (AND). Empty means no tag filtering.
     pub tag_filters: Vec<String>,
@@ -230,9 +307,10 @@ pub struct App {
     /// full-screen session view can slide in from the right (#35). `None` at rest
     /// / under reduced motion.
     pub session_enter_at: Option<std::time::Instant>,
-    /// Full-frame snapshot of the last session view, captured each frame while in
-    /// a session so it can be slid off to the right when the host is left (#35).
-    pub session_snapshot: std::cell::RefCell<Option<ratatui::buffer::Buffer>>,
+    /// Full-frame snapshot of the last session view and its capture-time PTY
+    /// ownership, so later slides protect remote output but still paint SSHub
+    /// chrome (#35).
+    pub session_snapshot: std::cell::RefCell<Option<SessionSnapshot>>,
     /// Full-frame snapshot of the last dashboard, captured each frame while off
     /// the session view, so the session sliding in has something to slide *over*
     /// (#35). Without it the columns the slide has not reached yet are blank, and
@@ -555,25 +633,196 @@ impl App {
         }
     }
 
+    /// The theme every renderer paints with — which, when the user asked for a
+    /// see-through interface, is the active theme with its ground released.
+    ///
+    /// Decided here rather than stored in the manager, so flipping the setting
+    /// takes effect on the next frame without anything having to be rebuilt or
+    /// kept in sync.
+    pub fn theme(&self) -> &ResolvedTheme {
+        if self.config.appearance.transparent_sshub_background {
+            self.theme_manager.theme_ground_released()
+        } else {
+            self.theme_manager.theme()
+        }
+    }
+
+    /// The active theme exactly as authored, whatever the transparency settings
+    /// say.
+    ///
+    /// The remote grid reads its ground from here, not from [`Self::theme`]:
+    /// the released view has every ground slot at `Color::Reset`, so a grid that
+    /// falls back to `semantic.canvas` would go see-through the moment SSHub's
+    /// own surfaces did — and the two switches are meant to be independent.
+    pub fn base_theme(&self) -> &ResolvedTheme {
+        self.theme_manager.theme()
+    }
+
+    /// Id of the theme currently painting — which during a picker preview is
+    /// not the saved one.
+    pub fn active_theme_id(&self) -> &str {
+        self.theme_manager.active_id()
+    }
+
+    /// Id `config.toml` holds, i.e. what the next start would load.
+    pub fn saved_theme_id(&self) -> &str {
+        self.theme_manager.saved_id()
+    }
+
+    /// Every theme that was found, valid or not — what the picker lists.
+    pub fn theme_registry(&self) -> &ThemeRegistry {
+        self.theme_manager.registry()
+    }
+
+    /// The directory user themes were loaded from, or `None` for a manager that
+    /// belongs to no directory (tests, or no config directory).
+    pub fn themes_dir(&self) -> Option<&Path> {
+        self.theme_manager.themes_dir()
+    }
+
+    /// Swap the whole theme manager, invalidating what the old theme painted.
+    ///
+    /// The *other* half of the seam. [`App::activate_resolved_theme`] moves the
+    /// active theme within one manager; this replaces the manager itself
+    /// (registry, saved id and start-up diagnostics), which activation cannot
+    /// express. Both end in [`App::invalidate_theme_visual_state`], and with
+    /// `theme_manager` private they are the only two ways the painted theme can
+    /// change at all.
+    fn replace_theme_manager(&mut self, manager: ThemeManager) {
+        self.theme_manager = manager;
+        self.invalidate_theme_visual_state();
+    }
+
+    /// Drop every buffer snapshot and in-flight slide that was captured under
+    /// the theme being replaced.
+    ///
+    /// The frame pipeline's background painters select cells by their *current*
+    /// colour (`CellSelection::Matching(Color::Reset)`) and the slides blit
+    /// cells captured on an earlier frame. A snapshot that outlived its theme
+    /// would therefore be matched — and composited — against colours no longer
+    /// on screen, so it has to go **before** the next frame runs rather than
+    /// when its animation happens to expire.
+    ///
+    /// Only visual leftovers are cleared. State that carries a pending
+    /// *decision* (`fold_anim`, whose collapse is applied when it ends) is
+    /// deliberately left alone: dropping it would lose a user action, not a
+    /// stale colour.
+    pub(crate) fn invalidate_theme_visual_state(&mut self) {
+        *self.popup_snapshot.borrow_mut() = None;
+        *self.popup_backdrop.borrow_mut() = None;
+        *self.session_snapshot.borrow_mut() = None;
+        *self.sftp_snapshot.borrow_mut() = None;
+        // The dashboard behind an arriving session. It is a full-frame copy of
+        // the old theme's dashboard, so `render_session_enter` would blit that
+        // theme's cells into the columns the new session has not reached yet.
+        *self.dashboard_snapshot.borrow_mut() = None;
+        self.popup_closing_at = None;
+        self.session_enter_at = None;
+        self.session_exit_at = None;
+        self.session_tab_switch = None;
+        self.sftp_anim = None;
+        self.tab_switch = None;
+        self.zoom_anim = None;
+        // A live preview activates on every arrow key while the picker popup is
+        // open. Its backdrop has just been dropped, so leaving the mode clock
+        // inside `POPUP_ANIM` would re-capture one and replay the drop-in for
+        // each keystroke; settling the clock keeps the popup where it is.
+        self.mode_entered_at = std::time::Instant::now()
+            .checked_sub(crate::tui::POPUP_ANIM)
+            .unwrap_or_else(std::time::Instant::now);
+    }
+
+    /// Load the user's themes from `themes_dir` and activate
+    /// `appearance.active_theme`.
+    ///
+    /// Deliberately infallible. A `ThemeRegistryError` — an unreadable themes
+    /// directory, say — degrades to the embedded built-ins plus a non-fatal
+    /// hint rather than propagating, so a broken `themes/` can never stop SSHub
+    /// from starting. A missing or invalid theme id likewise falls back to
+    /// `default` while `saved_id` keeps the configured value, and `config.toml`
+    /// is never rewritten: repairing the theme file is enough to get it back.
+    ///
+    /// Public because it is the **only** loading entry point: it changes what
+    /// is painted, so it goes through [`App::replace_theme_manager`] and runs
+    /// the snapshot invalidation itself. Nothing that reaches around that
+    /// invalidation is exposed. `App::new` calls it with the installed
+    /// directory; an end-to-end test calls it with a temporary one, which is
+    /// how a workflow test stays off the real config directory.
+    pub fn load_themes_from(&mut self, themes_dir: &Path) {
+        let saved_id = self.config.appearance.active_theme.clone();
+        let (manager, load_error) =
+            match ThemeRegistry::load_installed(themes_dir, ValidationMode::Compatible) {
+                Ok(registry) => (
+                    ThemeManager::from_registry(registry, themes_dir.to_path_buf(), saved_id),
+                    None,
+                ),
+                Err(e) => (
+                    // `builtins_at`, not `builtins`: the degraded manager must
+                    // keep pointing at the directory that failed, or a reload
+                    // after the user repairs it has nowhere to look.
+                    ThemeManager::builtins_at(saved_id, themes_dir.to_path_buf()),
+                    Some(format!(
+                        "{} could not be read ({e}); using the built-in themes",
+                        themes_dir.display()
+                    )),
+                ),
+            };
+        self.replace_theme_manager(manager);
+        if let Some(notice) = theme_startup_notice(&self.theme_manager, load_error.as_deref()) {
+            append_host_notice(&mut self.host_notice, notice);
+        }
+    }
+
     /// Build app with default resolver and on-disk metadata db.
+    ///
+    /// Compat entry point: paths come from directory overrides (or the legacy
+    /// defaults) with no profile discovery. Kept for e2e tests and the
+    /// `SSHUB_DATA_DIR`-style installs; the real startup path goes through
+    /// [`App::new_with_profile`].
     pub fn new(config: AppConfig) -> Result<Self> {
-        let data_dir = config::data_dir()?;
+        let roots = crate::profile::resolve_roots()?;
+        let ssh_config = crate::ssh::ssh_config_path()
+            .unwrap_or_else(|_| crate::ssh::expand_tilde("~/.ssh/config"));
+        let paths = crate::profile::compat_paths(&roots, ssh_config);
+        Self::new_with_profile(config, paths)
+    }
+
+    /// Build app on a resolved profile workspace (databases, config, logs,
+    /// tunnels, and credential namespace all follow `paths`).
+    pub fn new_with_profile(
+        config: AppConfig,
+        paths: crate::profile::ProfilePaths,
+    ) -> Result<Self> {
+        let data_dir = paths.root.clone();
+        let themes_dir = paths
+            .config_file
+            .parent()
+            .map(|parent| parent.join("themes"))
+            .ok_or_else(|| anyhow::anyhow!("profile config path has no parent"))?;
         std::fs::create_dir_all(&data_dir)?;
 
-        let launcher_path = data_dir.join("launcher.db");
+        let launcher_path = paths.launcher_db();
         let first_run = !launcher_path.exists();
 
-        let db_path = data_dir.join("metadata.db");
-        let metadata = Arc::new(MetadataDb::open(db_path)?);
+        let metadata = Arc::new(MetadataDb::open(paths.metadata_db())?);
         let store = Arc::new(LauncherStore::open(launcher_path)?);
-        let resolver = Box::new(SshConfigResolver::default());
+        let resolver = Box::new(SshConfigResolver::with_config_path(
+            paths.ssh_config.clone(),
+        ));
         let keyring_available = crate::credentials::check_keyring_available();
+        let prefix = paths.credential_prefix();
         let password_store: Box<dyn crate::credentials::PasswordStore> = if keyring_available {
-            let _ = crate::credentials::migrate_fallback_to_keyring();
-            Box::new(crate::credentials::OsKeyring)
+            let _ = crate::credentials::migrate_fallback_to_keyring(&paths.credentials_file());
+            Box::new(crate::credentials::NamespacedPasswordStore::new(
+                Box::new(crate::credentials::OsKeyring),
+                prefix,
+            ))
         } else {
-            Box::new(crate::credentials::FilePasswordStore::new(
-                data_dir.join("credentials.json"),
+            Box::new(crate::credentials::NamespacedPasswordStore::new(
+                Box::new(crate::credentials::FilePasswordStore::new(
+                    paths.credentials_file(),
+                )),
+                prefix,
             ))
         };
 
@@ -586,11 +835,17 @@ impl App {
                 password_store,
             },
         );
-
+        app.profile = Some(paths);
         if !keyring_available {
             app.host_notice =
                 Some("OS keyring unavailable. Using credentials.json fallback.".into());
         }
+
+        // Themes load before the hosts so a start-up theme hint is already in
+        // place when the first frame draws. Non-fatal by construction: no
+        // branch here may `?`, because `default` is embedded and SSHub must
+        // start even with a broken themes directory.
+        app.load_themes_from(&themes_dir);
 
         app.reload_hosts()?;
         app.refresh_auth_cache();
@@ -612,13 +867,21 @@ impl App {
 
     /// Build app from explicit dependencies (tests inject mocks here).
     pub fn new_with_deps(config: AppConfig, deps: AppDeps) -> Self {
+        // Built-ins only: no config directory is read here, so the many tests
+        // that inject deps stay offline and `AppDeps` gains no new field.
+        // `App::new` swaps this for the installed registry.
+        let theme_manager = ThemeManager::builtins(config.appearance.active_theme.clone());
         Self {
+            theme_manager,
+            theme_picker: None,
             hosts: Vec::new(),
             filtered_indices: Vec::new(),
+            search_matches: std::collections::HashMap::new(),
             selected: 0,
             search_query: String::new(),
             mode: AppMode::Normal,
             config,
+            profile: None,
             tag_filters: Vec::new(),
             tag_filter_selected: 0,
             watcher_rx: None,
@@ -772,6 +1035,16 @@ impl App {
 
     pub fn set_watcher_rx(&mut self, rx: Receiver<WatchEvent>) {
         self.watcher_rx = Some(rx);
+    }
+
+    /// Base directory for session logs and other profile runtime files.
+    /// Falls back to the legacy data dir for apps built without a profile
+    /// (unit tests injecting deps).
+    pub fn runtime_data_dir(&self) -> Option<std::path::PathBuf> {
+        self.profile
+            .as_ref()
+            .map(|p| p.root.clone())
+            .or_else(|| config::data_dir().ok())
     }
 
     /// Refresh the auth events cache if more than 10 seconds have elapsed.

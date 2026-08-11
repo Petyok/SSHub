@@ -1,9 +1,3 @@
----
-type: Documentation Index
-title: "Integrations"
-description: "Files and subdirectories in Integrations."
----
-
 # Files
 
-- [Integrations — external terminal launchers and the demo pipeline](external-terminals.md) - SSHub's external integrations — the TerminalLauncher abstraction for spawning sessions in kitty/ghostty/custom terminals (src/launcher) and the VHS-based demo recording pipeline under demo/ that produces README GIFs and screenshots.
+- [Integrations — terminal stream demos and external touchpoints](external-terminals.md) - SSHub's current integration surface includes embedded PTY demo recording, OS keyring, SSH tooling, and GitHub/crates.io automation; the former external-terminal launcher was removed in 0.10.0.

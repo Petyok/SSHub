@@ -1,0 +1,5016 @@
+0,0, ,reset,reset,reset,0
+1,0,▄,rgb:c7e8c9,reset,reset,0
+2,0,▖,rgb:c7e8c9,reset,reset,0
+3,0,▄,rgb:c7e8c9,reset,reset,0
+4,0,▖,rgb:c7e8c9,reset,reset,0
+5,0,▖,rgb:c7e8c9,reset,reset,0
+6,0,▖,rgb:c7e8c9,reset,reset,0
+7,0,▖,rgb:7cb992,reset,reset,0
+8,0,▖,rgb:7cb992,reset,reset,0
+9,0,▌,rgb:7cb992,reset,reset,0
+10,0, ,reset,reset,reset,0
+11,0, ,reset,reset,reset,0
+12,0, ,reset,reset,reset,0
+13,0, ,reset,reset,reset,0
+14,0, ,reset,reset,reset,0
+15,0, ,reset,reset,reset,0
+16,0, ,reset,reset,reset,0
+17,0, ,reset,reset,reset,0
+18,0, ,reset,reset,reset,0
+19,0, ,reset,reset,reset,0
+20,0, ,reset,reset,reset,0
+21,0, ,reset,reset,reset,0
+22,0, ,reset,reset,reset,0
+23,0, ,reset,reset,reset,0
+24,0, ,reset,reset,reset,0
+25,0, ,reset,reset,reset,0
+26,0, ,reset,reset,reset,0
+27,0, ,reset,reset,reset,0
+28,0, ,reset,reset,reset,0
+29,0, ,reset,reset,reset,0
+30,0, ,reset,reset,reset,0
+31,0, ,reset,reset,reset,0
+32,0, ,reset,reset,reset,0
+33,0, ,reset,reset,reset,0
+34,0, ,reset,reset,reset,0
+35,0, ,reset,reset,reset,0
+36,0, ,reset,reset,reset,0
+37,0, ,reset,reset,reset,0
+38,0, ,reset,reset,reset,0
+39,0, ,reset,reset,reset,0
+40,0, ,reset,reset,reset,0
+41,0, ,reset,reset,reset,0
+42,0, ,reset,reset,reset,0
+43,0, ,reset,reset,reset,0
+44,0, ,reset,reset,reset,0
+45,0, ,reset,reset,reset,0
+46,0, ,reset,reset,reset,0
+47,0, ,reset,reset,reset,0
+48,0, ,reset,reset,reset,0
+49,0, ,reset,reset,reset,0
+50,0, ,reset,reset,reset,0
+51,0, ,reset,reset,reset,0
+52,0, ,reset,reset,reset,0
+53,0, ,reset,reset,reset,0
+54,0, ,reset,reset,reset,0
+55,0, ,reset,reset,reset,0
+56,0, ,reset,reset,reset,0
+57,0, ,reset,reset,reset,0
+58,0, ,reset,reset,reset,0
+59,0, ,reset,reset,reset,0
+60,0, ,reset,reset,reset,0
+61,0, ,reset,reset,reset,0
+62,0, ,reset,reset,reset,0
+63,0, ,reset,reset,reset,0
+64,0, ,reset,reset,reset,0
+65,0, ,reset,reset,reset,0
+66,0, ,reset,reset,reset,0
+67,0, ,reset,reset,reset,0
+68,0, ,reset,reset,reset,0
+69,0, ,reset,reset,reset,0
+70,0, ,reset,reset,reset,0
+71,0, ,reset,reset,reset,0
+72,0, ,reset,reset,reset,0
+73,0, ,reset,reset,reset,0
+74,0, ,reset,reset,reset,0
+75,0, ,reset,reset,reset,0
+76,0, ,reset,reset,reset,0
+77,0, ,reset,reset,reset,0
+78,0, ,reset,reset,reset,0
+79,0, ,reset,reset,reset,0
+80,0, ,reset,reset,reset,0
+81,0, ,reset,reset,reset,0
+82,0, ,reset,reset,reset,0
+83,0, ,reset,reset,reset,0
+84,0, ,reset,reset,reset,0
+85,0, ,reset,reset,reset,0
+86,0, ,reset,reset,reset,0
+87,0, ,reset,reset,reset,0
+88,0, ,reset,reset,reset,0
+89,0, ,reset,reset,reset,0
+90,0, ,reset,reset,reset,0
+91,0, ,reset,reset,reset,0
+92,0, ,reset,reset,reset,0
+93,0, ,reset,reset,reset,0
+94,0, ,reset,reset,reset,0
+95,0, ,reset,reset,reset,0
+96,0, ,reset,reset,reset,0
+97,0, ,reset,reset,reset,0
+98,0, ,reset,reset,reset,0
+99,0, ,reset,reset,reset,0
+100,0, ,reset,reset,reset,0
+101,0, ,reset,reset,reset,0
+102,0, ,reset,reset,reset,0
+103,0, ,reset,reset,reset,0
+104,0, ,reset,reset,reset,0
+105,0, ,reset,reset,reset,0
+106,0, ,reset,reset,reset,0
+107,0, ,reset,reset,reset,0
+108,0, ,reset,reset,reset,0
+109,0, ,reset,reset,reset,0
+110,0, ,reset,reset,reset,0
+111,0, ,reset,reset,reset,0
+112,0, ,reset,reset,reset,0
+113,0, ,reset,reset,reset,0
+114,0, ,reset,reset,reset,0
+115,0, ,reset,reset,reset,0
+116,0, ,reset,reset,reset,0
+117,0, ,reset,reset,reset,0
+118,0, ,reset,reset,reset,0
+119,0, ,reset,reset,reset,0
+120,0, ,reset,reset,reset,0
+121,0, ,reset,reset,reset,0
+122,0, ,reset,reset,reset,0
+123,0, ,reset,reset,reset,0
+124,0, ,reset,reset,reset,0
+125,0, ,reset,reset,reset,0
+126,0, ,reset,reset,reset,0
+127,0, ,reset,reset,reset,0
+128,0, ,reset,reset,reset,0
+129,0, ,reset,reset,reset,0
+130,0, ,reset,reset,reset,0
+131,0, ,reset,reset,reset,0
+0,1, ,reset,reset,reset,0
+1,1,▚,rgb:c7e8c9,reset,reset,0
+2,1, ,rgb:c7e8c9,reset,reset,0
+3,1,▚,rgb:c7e8c9,reset,reset,0
+4,1, ,rgb:c7e8c9,reset,reset,0
+5,1,▙,rgb:7cb992,reset,reset,0
+6,1,▌,rgb:7cb992,reset,reset,0
+7,1,▌,rgb:7cb992,reset,reset,0
+8,1,▌,rgb:7cb992,reset,reset,0
+9,1,▛,rgb:7cb992,reset,reset,0
+10,1,▖,rgb:7cb992,reset,reset,0
+11,1, ,reset,reset,reset,0
+12,1, ,reset,reset,reset,0
+13,1, ,reset,reset,reset,0
+14,1, ,reset,reset,reset,0
+15,1, ,reset,reset,reset,0
+16,1,h,rgb:6a7a72,reset,reset,0
+17,1,o,rgb:6a7a72,reset,reset,0
+18,1,s,rgb:6a7a72,reset,reset,0
+19,1,t,rgb:6a7a72,reset,reset,0
+20,1,s,rgb:6a7a72,reset,reset,0
+21,1,:,rgb:6a7a72,reset,reset,0
+22,1, ,rgb:6a7a72,reset,reset,0
+23,1,1,rgb:d6e1d4,reset,reset,0
+24,1, ,rgb:3d4a44,reset,reset,0
+25,1, ,rgb:3d4a44,reset,reset,0
+26,1,·,rgb:3d4a44,reset,reset,0
+27,1, ,rgb:3d4a44,reset,reset,0
+28,1, ,rgb:3d4a44,reset,reset,0
+29,1,0,rgb:7cb992,reset,reset,0
+30,1, ,rgb:7cb992,reset,reset,0
+31,1,o,rgb:7cb992,reset,reset,0
+32,1,n,rgb:7cb992,reset,reset,0
+33,1,l,rgb:7cb992,reset,reset,0
+34,1,i,rgb:7cb992,reset,reset,0
+35,1,n,rgb:7cb992,reset,reset,0
+36,1,e,rgb:7cb992,reset,reset,0
+37,1, ,rgb:3d4a44,reset,reset,0
+38,1, ,rgb:3d4a44,reset,reset,0
+39,1,·,rgb:3d4a44,reset,reset,0
+40,1, ,rgb:3d4a44,reset,reset,0
+41,1, ,rgb:3d4a44,reset,reset,0
+42,1,0,rgb:d6a76b,reset,reset,0
+43,1, ,rgb:d6a76b,reset,reset,0
+44,1,s,rgb:d6a76b,reset,reset,0
+45,1,l,rgb:d6a76b,reset,reset,0
+46,1,o,rgb:d6a76b,reset,reset,0
+47,1,w,rgb:d6a76b,reset,reset,0
+48,1, ,rgb:3d4a44,reset,reset,0
+49,1, ,rgb:3d4a44,reset,reset,0
+50,1,·,rgb:3d4a44,reset,reset,0
+51,1, ,rgb:3d4a44,reset,reset,0
+52,1, ,rgb:3d4a44,reset,reset,0
+53,1,0,rgb:c97a7a,reset,reset,0
+54,1, ,rgb:c97a7a,reset,reset,0
+55,1,u,rgb:c97a7a,reset,reset,0
+56,1,n,rgb:c97a7a,reset,reset,0
+57,1,r,rgb:c97a7a,reset,reset,0
+58,1,e,rgb:c97a7a,reset,reset,0
+59,1,a,rgb:c97a7a,reset,reset,0
+60,1,c,rgb:c97a7a,reset,reset,0
+61,1,h,rgb:c97a7a,reset,reset,0
+62,1,a,rgb:c97a7a,reset,reset,0
+63,1,b,rgb:c97a7a,reset,reset,0
+64,1,l,rgb:c97a7a,reset,reset,0
+65,1,e,rgb:c97a7a,reset,reset,0
+66,1, ,reset,reset,reset,0
+67,1, ,reset,reset,reset,0
+68,1, ,reset,reset,reset,0
+69,1, ,reset,reset,reset,0
+70,1, ,reset,reset,reset,0
+71,1, ,reset,reset,reset,0
+72,1, ,reset,reset,reset,0
+73,1, ,reset,reset,reset,0
+74,1, ,reset,reset,reset,0
+75,1, ,reset,reset,reset,0
+76,1, ,reset,reset,reset,0
+77,1, ,reset,reset,reset,0
+78,1, ,reset,reset,reset,0
+79,1, ,reset,reset,reset,0
+80,1, ,reset,reset,reset,0
+81,1, ,reset,reset,reset,0
+82,1, ,reset,reset,reset,0
+83,1, ,reset,reset,reset,0
+84,1, ,reset,reset,reset,0
+85,1, ,reset,reset,reset,0
+86,1, ,reset,reset,reset,0
+87,1, ,reset,reset,reset,0
+88,1, ,reset,reset,reset,0
+89,1, ,reset,reset,reset,0
+90,1, ,reset,reset,reset,0
+91,1, ,reset,reset,reset,0
+92,1, ,reset,reset,reset,0
+93,1, ,reset,reset,reset,0
+94,1, ,reset,reset,reset,0
+95,1, ,reset,reset,reset,0
+96,1, ,reset,reset,reset,0
+97,1, ,reset,reset,reset,0
+98,1, ,reset,reset,reset,0
+99,1, ,reset,reset,reset,0
+100,1, ,reset,reset,reset,0
+101,1, ,reset,reset,reset,0
+102,1, ,reset,reset,reset,0
+103,1, ,reset,reset,reset,0
+104,1, ,reset,reset,reset,0
+105,1, ,reset,reset,reset,0
+106,1, ,reset,reset,reset,0
+107,1, ,reset,reset,reset,0
+108,1, ,reset,reset,reset,0
+109,1, ,reset,reset,reset,0
+110,1, ,reset,reset,reset,0
+111,1, ,reset,reset,reset,0
+112,1, ,reset,reset,reset,0
+113,1, ,reset,reset,reset,0
+114,1, ,reset,reset,reset,0
+115,1, ,reset,reset,reset,0
+116,1, ,reset,reset,reset,0
+117,1, ,reset,reset,reset,0
+118,1, ,reset,reset,reset,0
+119,1,M,rgb:6a7a72,reset,reset,0
+120,1,o,rgb:6a7a72,reset,reset,0
+121,1,n,rgb:6a7a72,reset,reset,0
+122,1, ,rgb:6a7a72,reset,reset,0
+123,1,0,rgb:6a7a72,reset,reset,0
+124,1,0,rgb:6a7a72,reset,reset,0
+125,1,:,rgb:6a7a72,reset,reset,0
+126,1,0,rgb:6a7a72,reset,reset,0
+127,1,0,rgb:6a7a72,reset,reset,0
+128,1,:,rgb:6a7a72,reset,reset,0
+129,1,0,rgb:6a7a72,reset,reset,0
+130,1,0,rgb:6a7a72,reset,reset,0
+131,1, ,reset,reset,reset,0
+0,2, ,reset,reset,reset,0
+1,2,▄,rgb:c7e8c9,reset,reset,0
+2,2,▌,rgb:c7e8c9,reset,reset,0
+3,2,▄,rgb:c7e8c9,reset,reset,0
+4,2,▌,rgb:c7e8c9,reset,reset,0
+5,2,▌,rgb:c7e8c9,reset,reset,0
+6,2,▌,rgb:c7e8c9,reset,reset,0
+7,2,▙,rgb:7cb992,reset,reset,0
+8,2,▌,rgb:7cb992,reset,reset,0
+9,2,▙,rgb:7cb992,reset,reset,0
+10,2,▘,rgb:7cb992,reset,reset,0
+11,2, ,reset,reset,reset,0
+12,2, ,reset,reset,reset,0
+13,2, ,reset,reset,reset,0
+14,2, ,reset,reset,reset,0
+15,2, ,reset,reset,reset,0
+16,2, ,reset,reset,reset,0
+17,2, ,reset,reset,reset,0
+18,2, ,reset,reset,reset,0
+19,2, ,reset,reset,reset,0
+20,2, ,reset,reset,reset,0
+21,2, ,reset,reset,reset,0
+22,2, ,reset,reset,reset,0
+23,2, ,reset,reset,reset,0
+24,2, ,reset,reset,reset,0
+25,2, ,reset,reset,reset,0
+26,2, ,reset,reset,reset,0
+27,2, ,reset,reset,reset,0
+28,2, ,reset,reset,reset,0
+29,2, ,reset,reset,reset,0
+30,2, ,reset,reset,reset,0
+31,2, ,reset,reset,reset,0
+32,2, ,reset,reset,reset,0
+33,2, ,reset,reset,reset,0
+34,2, ,reset,reset,reset,0
+35,2, ,reset,reset,reset,0
+36,2, ,reset,reset,reset,0
+37,2, ,reset,reset,reset,0
+38,2, ,reset,reset,reset,0
+39,2, ,reset,reset,reset,0
+40,2, ,reset,reset,reset,0
+41,2, ,reset,reset,reset,0
+42,2, ,reset,reset,reset,0
+43,2, ,reset,reset,reset,0
+44,2, ,reset,reset,reset,0
+45,2, ,reset,reset,reset,0
+46,2, ,reset,reset,reset,0
+47,2, ,reset,reset,reset,0
+48,2, ,reset,reset,reset,0
+49,2, ,reset,reset,reset,0
+50,2, ,reset,reset,reset,0
+51,2, ,reset,reset,reset,0
+52,2, ,reset,reset,reset,0
+53,2, ,reset,reset,reset,0
+54,2, ,reset,reset,reset,0
+55,2, ,reset,reset,reset,0
+56,2, ,reset,reset,reset,0
+57,2, ,reset,reset,reset,0
+58,2, ,reset,reset,reset,0
+59,2, ,reset,reset,reset,0
+60,2, ,reset,reset,reset,0
+61,2, ,reset,reset,reset,0
+62,2, ,reset,reset,reset,0
+63,2, ,reset,reset,reset,0
+64,2, ,reset,reset,reset,0
+65,2, ,reset,reset,reset,0
+66,2, ,reset,reset,reset,0
+67,2, ,reset,reset,reset,0
+68,2, ,reset,reset,reset,0
+69,2, ,reset,reset,reset,0
+70,2, ,reset,reset,reset,0
+71,2, ,reset,reset,reset,0
+72,2, ,reset,reset,reset,0
+73,2, ,reset,reset,reset,0
+74,2, ,reset,reset,reset,0
+75,2, ,reset,reset,reset,0
+76,2, ,reset,reset,reset,0
+77,2, ,reset,reset,reset,0
+78,2, ,reset,reset,reset,0
+79,2, ,reset,reset,reset,0
+80,2, ,reset,reset,reset,0
+81,2, ,reset,reset,reset,0
+82,2, ,reset,reset,reset,0
+83,2, ,reset,reset,reset,0
+84,2, ,reset,reset,reset,0
+85,2, ,reset,reset,reset,0
+86,2, ,reset,reset,reset,0
+87,2, ,reset,reset,reset,0
+88,2, ,reset,reset,reset,0
+89,2, ,reset,reset,reset,0
+90,2, ,reset,reset,reset,0
+91,2, ,reset,reset,reset,0
+92,2, ,reset,reset,reset,0
+93,2, ,reset,reset,reset,0
+94,2, ,reset,reset,reset,0
+95,2, ,reset,reset,reset,0
+96,2, ,reset,reset,reset,0
+97,2, ,reset,reset,reset,0
+98,2, ,reset,reset,reset,0
+99,2, ,reset,reset,reset,0
+100,2, ,reset,reset,reset,0
+101,2, ,reset,reset,reset,0
+102,2, ,reset,reset,reset,0
+103,2, ,reset,reset,reset,0
+104,2, ,reset,reset,reset,0
+105,2, ,reset,reset,reset,0
+106,2, ,reset,reset,reset,0
+107,2, ,reset,reset,reset,0
+108,2, ,reset,reset,reset,0
+109,2, ,reset,reset,reset,0
+110,2, ,reset,reset,reset,0
+111,2, ,reset,reset,reset,0
+112,2, ,reset,reset,reset,0
+113,2, ,reset,reset,reset,0
+114,2, ,reset,reset,reset,0
+115,2, ,reset,reset,reset,0
+116,2, ,reset,reset,reset,0
+117,2, ,reset,reset,reset,0
+118,2, ,reset,reset,reset,0
+119,2, ,reset,reset,reset,0
+120,2, ,reset,reset,reset,0
+121,2, ,reset,reset,reset,0
+122,2, ,reset,reset,reset,0
+123,2, ,reset,reset,reset,0
+124,2, ,reset,reset,reset,0
+125,2, ,reset,reset,reset,0
+126,2, ,reset,reset,reset,0
+127,2, ,reset,reset,reset,0
+128,2, ,reset,reset,reset,0
+129,2, ,reset,reset,reset,0
+130,2, ,reset,reset,reset,0
+131,2, ,reset,reset,reset,0
+0,3,─,rgb:3d4a44,reset,reset,0
+1,3,─,rgb:3d4a44,reset,reset,0
+2,3,─,rgb:3d4a44,reset,reset,0
+3,3,─,rgb:3d4a44,reset,reset,0
+4,3,─,rgb:3d4a44,reset,reset,0
+5,3,─,rgb:3d4a44,reset,reset,0
+6,3,─,rgb:3d4a44,reset,reset,0
+7,3,─,rgb:3d4a44,reset,reset,0
+8,3,─,rgb:3d4a44,reset,reset,0
+9,3,─,rgb:3d4a44,reset,reset,0
+10,3,─,rgb:3d4a44,reset,reset,0
+11,3,─,rgb:3d4a44,reset,reset,0
+12,3,─,rgb:3d4a44,reset,reset,0
+13,3,─,rgb:3d4a44,reset,reset,0
+14,3,─,rgb:3d4a44,reset,reset,0
+15,3,─,rgb:3d4a44,reset,reset,0
+16,3,─,rgb:3d4a44,reset,reset,0
+17,3,─,rgb:3d4a44,reset,reset,0
+18,3,─,rgb:3d4a44,reset,reset,0
+19,3,─,rgb:3d4a44,reset,reset,0
+20,3,─,rgb:3d4a44,reset,reset,0
+21,3,─,rgb:3d4a44,reset,reset,0
+22,3,─,rgb:3d4a44,reset,reset,0
+23,3,─,rgb:3d4a44,reset,reset,0
+24,3,─,rgb:3d4a44,reset,reset,0
+25,3,─,rgb:3d4a44,reset,reset,0
+26,3,─,rgb:3d4a44,reset,reset,0
+27,3,─,rgb:3d4a44,reset,reset,0
+28,3,─,rgb:3d4a44,reset,reset,0
+29,3,─,rgb:3d4a44,reset,reset,0
+30,3,─,rgb:3d4a44,reset,reset,0
+31,3,─,rgb:3d4a44,reset,reset,0
+32,3,─,rgb:3d4a44,reset,reset,0
+33,3,─,rgb:3d4a44,reset,reset,0
+34,3,─,rgb:3d4a44,reset,reset,0
+35,3,─,rgb:3d4a44,reset,reset,0
+36,3,─,rgb:3d4a44,reset,reset,0
+37,3,─,rgb:3d4a44,reset,reset,0
+38,3,─,rgb:3d4a44,reset,reset,0
+39,3,─,rgb:3d4a44,reset,reset,0
+40,3,─,rgb:3d4a44,reset,reset,0
+41,3,─,rgb:3d4a44,reset,reset,0
+42,3,─,rgb:3d4a44,reset,reset,0
+43,3,─,rgb:3d4a44,reset,reset,0
+44,3,─,rgb:3d4a44,reset,reset,0
+45,3,─,rgb:3d4a44,reset,reset,0
+46,3,─,rgb:3d4a44,reset,reset,0
+47,3,─,rgb:3d4a44,reset,reset,0
+48,3,─,rgb:3d4a44,reset,reset,0
+49,3,─,rgb:3d4a44,reset,reset,0
+50,3,─,rgb:3d4a44,reset,reset,0
+51,3,─,rgb:3d4a44,reset,reset,0
+52,3,─,rgb:3d4a44,reset,reset,0
+53,3,─,rgb:3d4a44,reset,reset,0
+54,3,─,rgb:3d4a44,reset,reset,0
+55,3,─,rgb:3d4a44,reset,reset,0
+56,3,─,rgb:3d4a44,reset,reset,0
+57,3,─,rgb:3d4a44,reset,reset,0
+58,3,─,rgb:3d4a44,reset,reset,0
+59,3,─,rgb:3d4a44,reset,reset,0
+60,3,─,rgb:3d4a44,reset,reset,0
+61,3,─,rgb:3d4a44,reset,reset,0
+62,3,─,rgb:3d4a44,reset,reset,0
+63,3,─,rgb:3d4a44,reset,reset,0
+64,3,─,rgb:3d4a44,reset,reset,0
+65,3,─,rgb:3d4a44,reset,reset,0
+66,3,─,rgb:3d4a44,reset,reset,0
+67,3,─,rgb:3d4a44,reset,reset,0
+68,3,─,rgb:3d4a44,reset,reset,0
+69,3,─,rgb:3d4a44,reset,reset,0
+70,3,─,rgb:3d4a44,reset,reset,0
+71,3,─,rgb:3d4a44,reset,reset,0
+72,3,─,rgb:3d4a44,reset,reset,0
+73,3,─,rgb:3d4a44,reset,reset,0
+74,3,─,rgb:3d4a44,reset,reset,0
+75,3,─,rgb:3d4a44,reset,reset,0
+76,3,─,rgb:3d4a44,reset,reset,0
+77,3,─,rgb:3d4a44,reset,reset,0
+78,3,─,rgb:3d4a44,reset,reset,0
+79,3,─,rgb:3d4a44,reset,reset,0
+80,3,─,rgb:3d4a44,reset,reset,0
+81,3,─,rgb:3d4a44,reset,reset,0
+82,3,─,rgb:3d4a44,reset,reset,0
+83,3,─,rgb:3d4a44,reset,reset,0
+84,3,─,rgb:3d4a44,reset,reset,0
+85,3,─,rgb:3d4a44,reset,reset,0
+86,3,─,rgb:3d4a44,reset,reset,0
+87,3,─,rgb:3d4a44,reset,reset,0
+88,3,─,rgb:3d4a44,reset,reset,0
+89,3,─,rgb:3d4a44,reset,reset,0
+90,3,─,rgb:3d4a44,reset,reset,0
+91,3,─,rgb:3d4a44,reset,reset,0
+92,3,─,rgb:3d4a44,reset,reset,0
+93,3,─,rgb:3d4a44,reset,reset,0
+94,3,─,rgb:3d4a44,reset,reset,0
+95,3,─,rgb:3d4a44,reset,reset,0
+96,3,─,rgb:3d4a44,reset,reset,0
+97,3,─,rgb:3d4a44,reset,reset,0
+98,3,─,rgb:3d4a44,reset,reset,0
+99,3,─,rgb:3d4a44,reset,reset,0
+100,3,─,rgb:3d4a44,reset,reset,0
+101,3,─,rgb:3d4a44,reset,reset,0
+102,3,─,rgb:3d4a44,reset,reset,0
+103,3,─,rgb:3d4a44,reset,reset,0
+104,3,─,rgb:3d4a44,reset,reset,0
+105,3,─,rgb:3d4a44,reset,reset,0
+106,3,─,rgb:3d4a44,reset,reset,0
+107,3,─,rgb:3d4a44,reset,reset,0
+108,3,─,rgb:3d4a44,reset,reset,0
+109,3,─,rgb:3d4a44,reset,reset,0
+110,3,─,rgb:3d4a44,reset,reset,0
+111,3,─,rgb:3d4a44,reset,reset,0
+112,3,─,rgb:3d4a44,reset,reset,0
+113,3,─,rgb:3d4a44,reset,reset,0
+114,3,─,rgb:3d4a44,reset,reset,0
+115,3,─,rgb:3d4a44,reset,reset,0
+116,3,─,rgb:3d4a44,reset,reset,0
+117,3,─,rgb:3d4a44,reset,reset,0
+118,3,─,rgb:3d4a44,reset,reset,0
+119,3,─,rgb:3d4a44,reset,reset,0
+120,3,─,rgb:3d4a44,reset,reset,0
+121,3,─,rgb:3d4a44,reset,reset,0
+122,3,─,rgb:3d4a44,reset,reset,0
+123,3,─,rgb:3d4a44,reset,reset,0
+124,3,─,rgb:3d4a44,reset,reset,0
+125,3,─,rgb:3d4a44,reset,reset,0
+126,3,─,rgb:3d4a44,reset,reset,0
+127,3,─,rgb:3d4a44,reset,reset,0
+128,3,─,rgb:3d4a44,reset,reset,0
+129,3,─,rgb:3d4a44,reset,reset,0
+130,3,─,rgb:3d4a44,reset,reset,0
+131,3,─,rgb:3d4a44,reset,reset,0
+0,4, ,reset,reset,reset,0
+1,4,[,rgb:3d4a44,reset,reset,0
+2,4,1,rgb:06080a,rgb:c7e8c9,reset,0
+3,4,],rgb:3d4a44,reset,reset,0
+4,4, ,rgb:6a7a72,reset,reset,0
+5,4,h,rgb:6a7a72,reset,reset,0
+6,4,o,rgb:6a7a72,reset,reset,0
+7,4,s,rgb:6a7a72,reset,reset,0
+8,4,t,rgb:6a7a72,reset,reset,0
+9,4,s,rgb:6a7a72,reset,reset,0
+10,4, ,rgb:3d4a44,reset,reset,0
+11,4, ,rgb:3d4a44,reset,reset,0
+12,4, ,rgb:3d4a44,reset,reset,0
+13,4, ,rgb:3d4a44,reset,reset,0
+14,4,2,rgb:6a7a72,reset,reset,0
+15,4, ,rgb:3d4a44,reset,reset,0
+16,4, ,rgb:3d4a44,reset,reset,0
+17,4,s,rgb:3d4a44,reset,reset,0
+18,4,f,rgb:3d4a44,reset,reset,0
+19,4,t,rgb:3d4a44,reset,reset,0
+20,4,p,rgb:3d4a44,reset,reset,0
+21,4, ,rgb:3d4a44,reset,reset,0
+22,4, ,rgb:3d4a44,reset,reset,0
+23,4, ,rgb:3d4a44,reset,reset,0
+24,4, ,rgb:3d4a44,reset,reset,0
+25,4,3,rgb:6a7a72,reset,reset,0
+26,4, ,rgb:3d4a44,reset,reset,0
+27,4, ,rgb:3d4a44,reset,reset,0
+28,4,t,rgb:3d4a44,reset,reset,0
+29,4,u,rgb:3d4a44,reset,reset,0
+30,4,n,rgb:3d4a44,reset,reset,0
+31,4,n,rgb:3d4a44,reset,reset,0
+32,4,e,rgb:3d4a44,reset,reset,0
+33,4,l,rgb:3d4a44,reset,reset,0
+34,4,s,rgb:3d4a44,reset,reset,0
+35,4, ,rgb:3d4a44,reset,reset,0
+36,4, ,rgb:3d4a44,reset,reset,0
+37,4, ,rgb:3d4a44,reset,reset,0
+38,4, ,rgb:3d4a44,reset,reset,0
+39,4,4,rgb:6a7a72,reset,reset,0
+40,4, ,rgb:3d4a44,reset,reset,0
+41,4, ,rgb:3d4a44,reset,reset,0
+42,4,i,rgb:3d4a44,reset,reset,0
+43,4,d,rgb:3d4a44,reset,reset,0
+44,4,e,rgb:3d4a44,reset,reset,0
+45,4,n,rgb:3d4a44,reset,reset,0
+46,4,t,rgb:3d4a44,reset,reset,0
+47,4,i,rgb:3d4a44,reset,reset,0
+48,4,t,rgb:3d4a44,reset,reset,0
+49,4,i,rgb:3d4a44,reset,reset,0
+50,4,e,rgb:3d4a44,reset,reset,0
+51,4,s,rgb:3d4a44,reset,reset,0
+52,4, ,rgb:3d4a44,reset,reset,0
+53,4, ,rgb:3d4a44,reset,reset,0
+54,4, ,rgb:3d4a44,reset,reset,0
+55,4, ,rgb:3d4a44,reset,reset,0
+56,4,5,rgb:6a7a72,reset,reset,0
+57,4, ,rgb:3d4a44,reset,reset,0
+58,4, ,rgb:3d4a44,reset,reset,0
+59,4,a,rgb:3d4a44,reset,reset,0
+60,4,u,rgb:3d4a44,reset,reset,0
+61,4,d,rgb:3d4a44,reset,reset,0
+62,4,i,rgb:3d4a44,reset,reset,0
+63,4,t,rgb:3d4a44,reset,reset,0
+64,4, ,rgb:3d4a44,reset,reset,0
+65,4, ,rgb:3d4a44,reset,reset,0
+66,4, ,rgb:3d4a44,reset,reset,0
+67,4, ,reset,reset,reset,0
+68,4, ,reset,reset,reset,0
+69,4, ,reset,reset,reset,0
+70,4, ,reset,reset,reset,0
+71,4, ,reset,reset,reset,0
+72,4, ,reset,reset,reset,0
+73,4, ,reset,reset,reset,0
+74,4, ,reset,reset,reset,0
+75,4, ,reset,reset,reset,0
+76,4, ,reset,reset,reset,0
+77,4, ,reset,reset,reset,0
+78,4, ,reset,reset,reset,0
+79,4, ,reset,reset,reset,0
+80,4, ,reset,reset,reset,0
+81,4, ,reset,reset,reset,0
+82,4, ,reset,reset,reset,0
+83,4, ,reset,reset,reset,0
+84,4, ,reset,reset,reset,0
+85,4, ,reset,reset,reset,0
+86,4, ,reset,reset,reset,0
+87,4, ,reset,reset,reset,0
+88,4, ,reset,reset,reset,0
+89,4, ,reset,reset,reset,0
+90,4, ,reset,reset,reset,0
+91,4, ,reset,reset,reset,0
+92,4, ,reset,reset,reset,0
+93,4, ,reset,reset,reset,0
+94,4, ,reset,reset,reset,0
+95,4, ,reset,reset,reset,0
+96,4, ,reset,reset,reset,0
+97,4, ,reset,reset,reset,0
+98,4, ,reset,reset,reset,0
+99,4, ,reset,reset,reset,0
+100,4, ,reset,reset,reset,0
+101,4, ,reset,reset,reset,0
+102,4, ,reset,reset,reset,0
+103,4, ,reset,reset,reset,0
+104,4, ,reset,reset,reset,0
+105,4, ,reset,reset,reset,0
+106,4, ,reset,reset,reset,0
+107,4, ,reset,reset,reset,0
+108,4, ,reset,reset,reset,0
+109,4, ,reset,reset,reset,0
+110,4, ,reset,reset,reset,0
+111,4, ,reset,reset,reset,0
+112,4, ,reset,reset,reset,0
+113,4, ,reset,reset,reset,0
+114,4, ,reset,reset,reset,0
+115,4, ,reset,reset,reset,0
+116,4, ,reset,reset,reset,0
+117,4, ,reset,reset,reset,0
+118,4, ,reset,reset,reset,0
+119,4, ,reset,reset,reset,0
+120,4, ,reset,reset,reset,0
+121,4, ,reset,reset,reset,0
+122,4, ,reset,reset,reset,0
+123,4, ,reset,reset,reset,0
+124,4, ,reset,reset,reset,0
+125,4, ,reset,reset,reset,0
+126,4, ,reset,reset,reset,0
+127,4, ,reset,reset,reset,0
+128,4, ,reset,reset,reset,0
+129,4, ,reset,reset,reset,0
+130,4, ,reset,reset,reset,0
+131,4, ,reset,reset,reset,0
+0,5,─,rgb:3d4a44,reset,reset,0
+1,5,─,rgb:3d4a44,reset,reset,0
+2,5,─,rgb:3d4a44,reset,reset,0
+3,5,─,rgb:3d4a44,reset,reset,0
+4,5,─,rgb:3d4a44,reset,reset,0
+5,5,─,rgb:3d4a44,reset,reset,0
+6,5,─,rgb:3d4a44,reset,reset,0
+7,5,─,rgb:3d4a44,reset,reset,0
+8,5,─,rgb:3d4a44,reset,reset,0
+9,5,─,rgb:3d4a44,reset,reset,0
+10,5,─,rgb:3d4a44,reset,reset,0
+11,5,─,rgb:3d4a44,reset,reset,0
+12,5,─,rgb:3d4a44,reset,reset,0
+13,5,─,rgb:3d4a44,reset,reset,0
+14,5,─,rgb:3d4a44,reset,reset,0
+15,5,─,rgb:3d4a44,reset,reset,0
+16,5,─,rgb:3d4a44,reset,reset,0
+17,5,─,rgb:3d4a44,reset,reset,0
+18,5,─,rgb:3d4a44,reset,reset,0
+19,5,─,rgb:3d4a44,reset,reset,0
+20,5,─,rgb:3d4a44,reset,reset,0
+21,5,─,rgb:3d4a44,reset,reset,0
+22,5,─,rgb:3d4a44,reset,reset,0
+23,5,─,rgb:3d4a44,reset,reset,0
+24,5,─,rgb:3d4a44,reset,reset,0
+25,5,─,rgb:3d4a44,reset,reset,0
+26,5,─,rgb:3d4a44,reset,reset,0
+27,5,─,rgb:3d4a44,reset,reset,0
+28,5,─,rgb:3d4a44,reset,reset,0
+29,5,─,rgb:3d4a44,reset,reset,0
+30,5,─,rgb:3d4a44,reset,reset,0
+31,5,─,rgb:3d4a44,reset,reset,0
+32,5,─,rgb:3d4a44,reset,reset,0
+33,5,─,rgb:3d4a44,reset,reset,0
+34,5,─,rgb:3d4a44,reset,reset,0
+35,5,─,rgb:3d4a44,reset,reset,0
+36,5,─,rgb:3d4a44,reset,reset,0
+37,5,─,rgb:3d4a44,reset,reset,0
+38,5,─,rgb:3d4a44,reset,reset,0
+39,5,─,rgb:3d4a44,reset,reset,0
+40,5,─,rgb:3d4a44,reset,reset,0
+41,5,─,rgb:3d4a44,reset,reset,0
+42,5,─,rgb:3d4a44,reset,reset,0
+43,5,─,rgb:3d4a44,reset,reset,0
+44,5,─,rgb:3d4a44,reset,reset,0
+45,5,─,rgb:3d4a44,reset,reset,0
+46,5,─,rgb:3d4a44,reset,reset,0
+47,5,─,rgb:3d4a44,reset,reset,0
+48,5,─,rgb:3d4a44,reset,reset,0
+49,5,─,rgb:3d4a44,reset,reset,0
+50,5,─,rgb:3d4a44,reset,reset,0
+51,5,─,rgb:3d4a44,reset,reset,0
+52,5,─,rgb:3d4a44,reset,reset,0
+53,5,─,rgb:3d4a44,reset,reset,0
+54,5,─,rgb:3d4a44,reset,reset,0
+55,5,─,rgb:3d4a44,reset,reset,0
+56,5,─,rgb:3d4a44,reset,reset,0
+57,5,─,rgb:3d4a44,reset,reset,0
+58,5,─,rgb:3d4a44,reset,reset,0
+59,5,─,rgb:3d4a44,reset,reset,0
+60,5,─,rgb:3d4a44,reset,reset,0
+61,5,─,rgb:3d4a44,reset,reset,0
+62,5,─,rgb:3d4a44,reset,reset,0
+63,5,─,rgb:3d4a44,reset,reset,0
+64,5,─,rgb:3d4a44,reset,reset,0
+65,5,─,rgb:3d4a44,reset,reset,0
+66,5,─,rgb:3d4a44,reset,reset,0
+67,5,─,rgb:3d4a44,reset,reset,0
+68,5,─,rgb:3d4a44,reset,reset,0
+69,5,─,rgb:3d4a44,reset,reset,0
+70,5,─,rgb:3d4a44,reset,reset,0
+71,5,─,rgb:3d4a44,reset,reset,0
+72,5,─,rgb:3d4a44,reset,reset,0
+73,5,─,rgb:3d4a44,reset,reset,0
+74,5,─,rgb:3d4a44,reset,reset,0
+75,5,─,rgb:3d4a44,reset,reset,0
+76,5,─,rgb:3d4a44,reset,reset,0
+77,5,─,rgb:3d4a44,reset,reset,0
+78,5,─,rgb:3d4a44,reset,reset,0
+79,5,─,rgb:3d4a44,reset,reset,0
+80,5,─,rgb:3d4a44,reset,reset,0
+81,5,─,rgb:3d4a44,reset,reset,0
+82,5,─,rgb:3d4a44,reset,reset,0
+83,5,─,rgb:3d4a44,reset,reset,0
+84,5,─,rgb:3d4a44,reset,reset,0
+85,5,─,rgb:3d4a44,reset,reset,0
+86,5,─,rgb:3d4a44,reset,reset,0
+87,5,─,rgb:3d4a44,reset,reset,0
+88,5,─,rgb:3d4a44,reset,reset,0
+89,5,─,rgb:3d4a44,reset,reset,0
+90,5,─,rgb:3d4a44,reset,reset,0
+91,5,─,rgb:3d4a44,reset,reset,0
+92,5,─,rgb:3d4a44,reset,reset,0
+93,5,─,rgb:3d4a44,reset,reset,0
+94,5,─,rgb:3d4a44,reset,reset,0
+95,5,─,rgb:3d4a44,reset,reset,0
+96,5,─,rgb:3d4a44,reset,reset,0
+97,5,─,rgb:3d4a44,reset,reset,0
+98,5,─,rgb:3d4a44,reset,reset,0
+99,5,─,rgb:3d4a44,reset,reset,0
+100,5,─,rgb:3d4a44,reset,reset,0
+101,5,─,rgb:3d4a44,reset,reset,0
+102,5,─,rgb:3d4a44,reset,reset,0
+103,5,─,rgb:3d4a44,reset,reset,0
+104,5,─,rgb:3d4a44,reset,reset,0
+105,5,─,rgb:3d4a44,reset,reset,0
+106,5,─,rgb:3d4a44,reset,reset,0
+107,5,─,rgb:3d4a44,reset,reset,0
+108,5,─,rgb:3d4a44,reset,reset,0
+109,5,─,rgb:3d4a44,reset,reset,0
+110,5,─,rgb:3d4a44,reset,reset,0
+111,5,─,rgb:3d4a44,reset,reset,0
+112,5,─,rgb:3d4a44,reset,reset,0
+113,5,─,rgb:3d4a44,reset,reset,0
+114,5,─,rgb:3d4a44,reset,reset,0
+115,5,─,rgb:3d4a44,reset,reset,0
+116,5,─,rgb:3d4a44,reset,reset,0
+117,5,─,rgb:3d4a44,reset,reset,0
+118,5,─,rgb:3d4a44,reset,reset,0
+119,5,─,rgb:3d4a44,reset,reset,0
+120,5,─,rgb:3d4a44,reset,reset,0
+121,5,─,rgb:3d4a44,reset,reset,0
+122,5,─,rgb:3d4a44,reset,reset,0
+123,5,─,rgb:3d4a44,reset,reset,0
+124,5,─,rgb:3d4a44,reset,reset,0
+125,5,─,rgb:3d4a44,reset,reset,0
+126,5,─,rgb:3d4a44,reset,reset,0
+127,5,─,rgb:3d4a44,reset,reset,0
+128,5,─,rgb:3d4a44,reset,reset,0
+129,5,─,rgb:3d4a44,reset,reset,0
+130,5,─,rgb:3d4a44,reset,reset,0
+131,5,─,rgb:3d4a44,reset,reset,0
+0,6, ,reset,reset,reset,0
+1,6, ,reset,reset,reset,0
+2,6,┌,rgb:6fb3b8,reset,reset,0
+3,6,─,rgb:6fb3b8,reset,reset,0
+4,6,─,rgb:6fb3b8,reset,reset,0
+5,6, ,rgb:6fb3b8,reset,reset,0
+6,6,h,rgb:c7e8c9,reset,reset,0
+7,6,o,rgb:c7e8c9,reset,reset,0
+8,6,s,rgb:c7e8c9,reset,reset,0
+9,6,t,rgb:c7e8c9,reset,reset,0
+10,6,s,rgb:c7e8c9,reset,reset,0
+11,6, ,rgb:6fb3b8,reset,reset,0
+12,6,─,rgb:6fb3b8,reset,reset,0
+13,6,─,rgb:6fb3b8,reset,reset,0
+14,6, ,rgb:6fb3b8,reset,reset,0
+15,6,1,rgb:3d4a44,reset,reset,0
+16,6, ,rgb:6fb3b8,reset,reset,0
+17,6,─,rgb:6fb3b8,reset,reset,0
+18,6,─,rgb:6fb3b8,reset,reset,0
+19,6,─,rgb:6fb3b8,reset,reset,0
+20,6,─,rgb:6fb3b8,reset,reset,0
+21,6,─,rgb:6fb3b8,reset,reset,0
+22,6,─,rgb:6fb3b8,reset,reset,0
+23,6,─,rgb:6fb3b8,reset,reset,0
+24,6,─,rgb:6fb3b8,reset,reset,0
+25,6,─,rgb:6fb3b8,reset,reset,0
+26,6,─,rgb:6fb3b8,reset,reset,0
+27,6,─,rgb:6fb3b8,reset,reset,0
+28,6,─,rgb:6fb3b8,reset,reset,0
+29,6,─,rgb:6fb3b8,reset,reset,0
+30,6,─,rgb:6fb3b8,reset,reset,0
+31,6,─,rgb:6fb3b8,reset,reset,0
+32,6,─,rgb:6fb3b8,reset,reset,0
+33,6,─,rgb:6fb3b8,reset,reset,0
+34,6,─,rgb:6fb3b8,reset,reset,0
+35,6,─,rgb:6fb3b8,reset,reset,0
+36,6,─,rgb:6fb3b8,reset,reset,0
+37,6,─,rgb:6fb3b8,reset,reset,0
+38,6,─,rgb:6fb3b8,reset,reset,0
+39,6,─,rgb:6fb3b8,reset,reset,0
+40,6,─,rgb:6fb3b8,reset,reset,0
+41,6,─,rgb:6fb3b8,reset,reset,0
+42,6,─,rgb:6fb3b8,reset,reset,0
+43,6,┐,rgb:6fb3b8,reset,reset,0
+44,6, ,reset,reset,reset,0
+45,6,┌,rgb:1f2a24,reset,reset,0
+46,6,─,rgb:1f2a24,reset,reset,0
+47,6,─,rgb:1f2a24,reset,reset,0
+48,6, ,rgb:1f2a24,reset,reset,0
+49,6,h,rgb:c7e8c9,reset,reset,0
+50,6,o,rgb:c7e8c9,reset,reset,0
+51,6,s,rgb:c7e8c9,reset,reset,0
+52,6,t,rgb:c7e8c9,reset,reset,0
+53,6, ,rgb:c7e8c9,reset,reset,0
+54,6,·,rgb:c7e8c9,reset,reset,0
+55,6, ,rgb:c7e8c9,reset,reset,0
+56,6,w,rgb:c7e8c9,reset,reset,0
+57,6,e,rgb:c7e8c9,reset,reset,0
+58,6,b,rgb:c7e8c9,reset,reset,0
+59,6,-,rgb:c7e8c9,reset,reset,0
+60,6,p,rgb:c7e8c9,reset,reset,0
+61,6,r,rgb:c7e8c9,reset,reset,0
+62,6,o,rgb:c7e8c9,reset,reset,0
+63,6,d,rgb:c7e8c9,reset,reset,0
+64,6, ,rgb:1f2a24,reset,reset,0
+65,6,─,rgb:1f2a24,reset,reset,0
+66,6,─,rgb:1f2a24,reset,reset,0
+67,6,─,rgb:1f2a24,reset,reset,0
+68,6,─,rgb:1f2a24,reset,reset,0
+69,6,─,rgb:1f2a24,reset,reset,0
+70,6,─,rgb:1f2a24,reset,reset,0
+71,6,─,rgb:1f2a24,reset,reset,0
+72,6,─,rgb:1f2a24,reset,reset,0
+73,6,─,rgb:1f2a24,reset,reset,0
+74,6,─,rgb:1f2a24,reset,reset,0
+75,6,─,rgb:1f2a24,reset,reset,0
+76,6,─,rgb:1f2a24,reset,reset,0
+77,6,─,rgb:1f2a24,reset,reset,0
+78,6,─,rgb:1f2a24,reset,reset,0
+79,6,─,rgb:1f2a24,reset,reset,0
+80,6,─,rgb:1f2a24,reset,reset,0
+81,6,─,rgb:1f2a24,reset,reset,0
+82,6,─,rgb:1f2a24,reset,reset,0
+83,6,─,rgb:1f2a24,reset,reset,0
+84,6,─,rgb:1f2a24,reset,reset,0
+85,6,─,rgb:1f2a24,reset,reset,0
+86,6,┐,rgb:1f2a24,reset,reset,0
+87,6, ,reset,reset,reset,0
+88,6,┌,rgb:1f2a24,reset,reset,0
+89,6,─,rgb:1f2a24,reset,reset,0
+90,6,─,rgb:1f2a24,reset,reset,0
+91,6, ,rgb:1f2a24,reset,reset,0
+92,6,r,rgb:c7e8c9,reset,reset,0
+93,6,e,rgb:c7e8c9,reset,reset,0
+94,6,c,rgb:c7e8c9,reset,reset,0
+95,6,e,rgb:c7e8c9,reset,reset,0
+96,6,n,rgb:c7e8c9,reset,reset,0
+97,6,t,rgb:c7e8c9,reset,reset,0
+98,6, ,rgb:c7e8c9,reset,reset,0
+99,6,s,rgb:c7e8c9,reset,reset,0
+100,6,e,rgb:c7e8c9,reset,reset,0
+101,6,s,rgb:c7e8c9,reset,reset,0
+102,6,s,rgb:c7e8c9,reset,reset,0
+103,6,i,rgb:c7e8c9,reset,reset,0
+104,6,o,rgb:c7e8c9,reset,reset,0
+105,6,n,rgb:c7e8c9,reset,reset,0
+106,6,s,rgb:c7e8c9,reset,reset,0
+107,6, ,rgb:1f2a24,reset,reset,0
+108,6,─,rgb:1f2a24,reset,reset,0
+109,6,─,rgb:1f2a24,reset,reset,0
+110,6,─,rgb:1f2a24,reset,reset,0
+111,6,─,rgb:1f2a24,reset,reset,0
+112,6,─,rgb:1f2a24,reset,reset,0
+113,6,─,rgb:1f2a24,reset,reset,0
+114,6,─,rgb:1f2a24,reset,reset,0
+115,6,─,rgb:1f2a24,reset,reset,0
+116,6,─,rgb:1f2a24,reset,reset,0
+117,6,─,rgb:1f2a24,reset,reset,0
+118,6,─,rgb:1f2a24,reset,reset,0
+119,6,─,rgb:1f2a24,reset,reset,0
+120,6,─,rgb:1f2a24,reset,reset,0
+121,6,─,rgb:1f2a24,reset,reset,0
+122,6,─,rgb:1f2a24,reset,reset,0
+123,6,─,rgb:1f2a24,reset,reset,0
+124,6,─,rgb:1f2a24,reset,reset,0
+125,6,─,rgb:1f2a24,reset,reset,0
+126,6,─,rgb:1f2a24,reset,reset,0
+127,6,─,rgb:1f2a24,reset,reset,0
+128,6,─,rgb:1f2a24,reset,reset,0
+129,6,┐,rgb:1f2a24,reset,reset,0
+130,6, ,reset,reset,reset,0
+131,6, ,reset,reset,reset,0
+0,7, ,reset,reset,reset,0
+1,7, ,reset,reset,reset,0
+2,7,│,rgb:6fb3b8,reset,reset,0
+3,7, ,reset,reset,reset,0
+4,7, ,rgb:c7e8c9,rgb:182b22,reset,0
+5,7,○,rgb:3d4a44,rgb:182b22,reset,0
+6,7, ,rgb:c7e8c9,rgb:182b22,reset,0
+7,7,w,rgb:c7e8c9,rgb:182b22,reset,0
+8,7,e,rgb:c7e8c9,rgb:182b22,reset,0
+9,7,b,rgb:c7e8c9,rgb:182b22,reset,0
+10,7,-,rgb:c7e8c9,rgb:182b22,reset,0
+11,7,p,rgb:c7e8c9,rgb:182b22,reset,0
+12,7,r,rgb:c7e8c9,rgb:182b22,reset,0
+13,7,o,rgb:c7e8c9,rgb:182b22,reset,0
+14,7,d,rgb:c7e8c9,rgb:182b22,reset,0
+15,7, ,rgb:c7e8c9,rgb:182b22,reset,0
+16,7, ,rgb:c7e8c9,rgb:182b22,reset,0
+17,7, ,rgb:c7e8c9,rgb:182b22,reset,0
+18,7, ,rgb:c7e8c9,rgb:182b22,reset,0
+19,7, ,rgb:c7e8c9,rgb:182b22,reset,0
+20,7, ,rgb:c7e8c9,rgb:182b22,reset,0
+21,7, ,rgb:c7e8c9,rgb:182b22,reset,0
+22,7,★,rgb:d6a76b,rgb:182b22,reset,0
+23,7, ,rgb:c7e8c9,rgb:182b22,reset,0
+24,7,1,rgb:3d4a44,rgb:182b22,reset,0
+25,7,0,rgb:3d4a44,rgb:182b22,reset,0
+26,7,.,rgb:3d4a44,rgb:182b22,reset,0
+27,7,0,rgb:3d4a44,rgb:182b22,reset,0
+28,7,.,rgb:3d4a44,rgb:182b22,reset,0
+29,7,0,rgb:3d4a44,rgb:182b22,reset,0
+30,7,.,rgb:3d4a44,rgb:182b22,reset,0
+31,7,1,rgb:3d4a44,rgb:182b22,reset,0
+32,7, ,rgb:3d4a44,rgb:182b22,reset,0
+33,7, ,rgb:3d4a44,rgb:182b22,reset,0
+34,7, ,rgb:3d4a44,rgb:182b22,reset,0
+35,7, ,rgb:3d4a44,rgb:182b22,reset,0
+36,7, ,rgb:3d4a44,rgb:182b22,reset,0
+37,7, ,rgb:3d4a44,rgb:182b22,reset,0
+38,7, ,rgb:c7e8c9,rgb:182b22,reset,0
+39,7, ,rgb:c7e8c9,rgb:182b22,reset,0
+40,7, ,rgb:c7e8c9,rgb:182b22,reset,0
+41,7, ,rgb:c7e8c9,rgb:182b22,reset,0
+42,7, ,reset,reset,reset,0
+43,7,│,rgb:6fb3b8,reset,reset,0
+44,7, ,reset,reset,reset,0
+45,7,│,rgb:1f2a24,reset,reset,0
+46,7, ,reset,reset,reset,0
+47,7,w,rgb:c7e8c9,reset,reset,0
+48,7,e,rgb:c7e8c9,reset,reset,0
+49,7,b,rgb:c7e8c9,reset,reset,0
+50,7,-,rgb:c7e8c9,reset,reset,0
+51,7,p,rgb:c7e8c9,reset,reset,0
+52,7,r,rgb:c7e8c9,reset,reset,0
+53,7,o,rgb:c7e8c9,reset,reset,0
+54,7,d,rgb:c7e8c9,reset,reset,0
+55,7, ,rgb:c7e8c9,reset,reset,0
+56,7,★,rgb:c7e8c9,reset,reset,0
+57,7, ,reset,reset,reset,0
+58,7, ,reset,reset,reset,0
+59,7, ,reset,reset,reset,0
+60,7, ,reset,reset,reset,0
+61,7, ,reset,reset,reset,0
+62,7, ,reset,reset,reset,0
+63,7, ,reset,reset,reset,0
+64,7, ,reset,reset,reset,0
+65,7, ,reset,reset,reset,0
+66,7, ,reset,reset,reset,0
+67,7, ,reset,reset,reset,0
+68,7, ,reset,reset,reset,0
+69,7, ,reset,reset,reset,0
+70,7, ,reset,reset,reset,0
+71,7, ,reset,reset,reset,0
+72,7, ,reset,reset,reset,0
+73,7, ,reset,reset,reset,0
+74,7, ,reset,reset,reset,0
+75,7, ,reset,reset,reset,0
+76,7, ,reset,reset,reset,0
+77,7, ,reset,reset,reset,0
+78,7, ,reset,reset,reset,0
+79,7, ,reset,reset,reset,0
+80,7, ,reset,reset,reset,0
+81,7, ,reset,reset,reset,0
+82,7, ,reset,reset,reset,0
+83,7, ,reset,reset,reset,0
+84,7, ,reset,reset,reset,0
+85,7, ,reset,reset,reset,0
+86,7,│,rgb:1f2a24,reset,reset,0
+87,7, ,reset,reset,reset,0
+88,7,│,rgb:1f2a24,reset,reset,0
+89,7, ,reset,reset,reset,0
+90,7,n,rgb:3d4a44,reset,reset,0
+91,7,o,rgb:3d4a44,reset,reset,0
+92,7, ,rgb:3d4a44,reset,reset,0
+93,7,s,rgb:3d4a44,reset,reset,0
+94,7,e,rgb:3d4a44,reset,reset,0
+95,7,s,rgb:3d4a44,reset,reset,0
+96,7,s,rgb:3d4a44,reset,reset,0
+97,7,i,rgb:3d4a44,reset,reset,0
+98,7,o,rgb:3d4a44,reset,reset,0
+99,7,n,rgb:3d4a44,reset,reset,0
+100,7,s,rgb:3d4a44,reset,reset,0
+101,7, ,rgb:3d4a44,reset,reset,0
+102,7,y,rgb:3d4a44,reset,reset,0
+103,7,e,rgb:3d4a44,reset,reset,0
+104,7,t,rgb:3d4a44,reset,reset,0
+105,7, ,reset,reset,reset,0
+106,7, ,reset,reset,reset,0
+107,7, ,reset,reset,reset,0
+108,7, ,reset,reset,reset,0
+109,7, ,reset,reset,reset,0
+110,7, ,reset,reset,reset,0
+111,7, ,reset,reset,reset,0
+112,7, ,reset,reset,reset,0
+113,7, ,reset,reset,reset,0
+114,7, ,reset,reset,reset,0
+115,7, ,reset,reset,reset,0
+116,7, ,reset,reset,reset,0
+117,7, ,reset,reset,reset,0
+118,7, ,reset,reset,reset,0
+119,7, ,reset,reset,reset,0
+120,7, ,reset,reset,reset,0
+121,7, ,reset,reset,reset,0
+122,7, ,reset,reset,reset,0
+123,7, ,reset,reset,reset,0
+124,7, ,reset,reset,reset,0
+125,7, ,reset,reset,reset,0
+126,7, ,reset,reset,reset,0
+127,7, ,reset,reset,reset,0
+128,7, ,reset,reset,reset,0
+129,7,│,rgb:1f2a24,reset,reset,0
+130,7, ,reset,reset,reset,0
+131,7, ,reset,reset,reset,0
+0,8, ,reset,reset,reset,0
+1,8, ,reset,reset,reset,0
+2,8,│,rgb:6fb3b8,reset,reset,0
+3,8, ,reset,reset,reset,0
+4,8, ,reset,reset,reset,0
+5,8, ,reset,reset,reset,0
+6,8, ,reset,reset,reset,0
+7,8, ,reset,reset,reset,0
+8,8, ,reset,reset,reset,0
+9,8, ,reset,reset,reset,0
+10,8, ,reset,reset,reset,0
+11,8, ,reset,reset,reset,0
+12,8, ,reset,reset,reset,0
+13,8, ,reset,reset,reset,0
+14,8, ,reset,reset,reset,0
+15,8, ,reset,reset,reset,0
+16,8, ,reset,reset,reset,0
+17,8, ,reset,reset,reset,0
+18,8, ,reset,reset,reset,0
+19,8, ,reset,reset,reset,0
+20,8, ,reset,reset,reset,0
+21,8, ,reset,reset,reset,0
+22,8, ,reset,reset,reset,0
+23,8, ,reset,reset,reset,0
+24,8, ,reset,reset,reset,0
+25,8, ,reset,reset,reset,0
+26,8, ,reset,reset,reset,0
+27,8, ,reset,reset,reset,0
+28,8, ,reset,reset,reset,0
+29,8, ,reset,reset,reset,0
+30,8, ,reset,reset,reset,0
+31,8, ,reset,reset,reset,0
+32,8, ,reset,reset,reset,0
+33,8, ,reset,reset,reset,0
+34,8, ,reset,reset,reset,0
+35,8, ,reset,reset,reset,0
+36,8, ,reset,reset,reset,0
+37,8, ,reset,reset,reset,0
+38,8, ,reset,reset,reset,0
+39,8, ,reset,reset,reset,0
+40,8, ,reset,reset,reset,0
+41,8, ,reset,reset,reset,0
+42,8, ,reset,reset,reset,0
+43,8,│,rgb:6fb3b8,reset,reset,0
+44,8, ,reset,reset,reset,0
+45,8,│,rgb:1f2a24,reset,reset,0
+46,8, ,reset,reset,reset,0
+47,8,u,rgb:d6e1d4,reset,reset,0
+48,8,b,rgb:d6e1d4,reset,reset,0
+49,8,u,rgb:d6e1d4,reset,reset,0
+50,8,n,rgb:d6e1d4,reset,reset,0
+51,8,t,rgb:d6e1d4,reset,reset,0
+52,8,u,rgb:d6e1d4,reset,reset,0
+53,8,@,rgb:d6e1d4,reset,reset,0
+54,8,1,rgb:d6e1d4,reset,reset,0
+55,8,0,rgb:d6e1d4,reset,reset,0
+56,8,.,rgb:d6e1d4,reset,reset,0
+57,8,0,rgb:d6e1d4,reset,reset,0
+58,8,.,rgb:d6e1d4,reset,reset,0
+59,8,0,rgb:d6e1d4,reset,reset,0
+60,8,.,rgb:d6e1d4,reset,reset,0
+61,8,1,rgb:d6e1d4,reset,reset,0
+62,8,:,rgb:d6e1d4,reset,reset,0
+63,8,2,rgb:d6e1d4,reset,reset,0
+64,8,2,rgb:d6e1d4,reset,reset,0
+65,8, ,reset,reset,reset,0
+66,8, ,reset,reset,reset,0
+67,8, ,reset,reset,reset,0
+68,8, ,reset,reset,reset,0
+69,8, ,reset,reset,reset,0
+70,8, ,reset,reset,reset,0
+71,8, ,reset,reset,reset,0
+72,8, ,reset,reset,reset,0
+73,8, ,reset,reset,reset,0
+74,8, ,reset,reset,reset,0
+75,8, ,reset,reset,reset,0
+76,8, ,reset,reset,reset,0
+77,8, ,reset,reset,reset,0
+78,8, ,reset,reset,reset,0
+79,8, ,reset,reset,reset,0
+80,8, ,reset,reset,reset,0
+81,8, ,reset,reset,reset,0
+82,8, ,reset,reset,reset,0
+83,8, ,reset,reset,reset,0
+84,8, ,reset,reset,reset,0
+85,8, ,reset,reset,reset,0
+86,8,│,rgb:1f2a24,reset,reset,0
+87,8, ,reset,reset,reset,0
+88,8,│,rgb:1f2a24,reset,reset,0
+89,8, ,reset,reset,reset,0
+90,8, ,reset,reset,reset,0
+91,8, ,reset,reset,reset,0
+92,8, ,reset,reset,reset,0
+93,8, ,reset,reset,reset,0
+94,8, ,reset,reset,reset,0
+95,8, ,reset,reset,reset,0
+96,8, ,reset,reset,reset,0
+97,8, ,reset,reset,reset,0
+98,8, ,reset,reset,reset,0
+99,8, ,reset,reset,reset,0
+100,8, ,reset,reset,reset,0
+101,8, ,reset,reset,reset,0
+102,8, ,reset,reset,reset,0
+103,8, ,reset,reset,reset,0
+104,8, ,reset,reset,reset,0
+105,8, ,reset,reset,reset,0
+106,8, ,reset,reset,reset,0
+107,8, ,reset,reset,reset,0
+108,8, ,reset,reset,reset,0
+109,8, ,reset,reset,reset,0
+110,8, ,reset,reset,reset,0
+111,8, ,reset,reset,reset,0
+112,8, ,reset,reset,reset,0
+113,8, ,reset,reset,reset,0
+114,8, ,reset,reset,reset,0
+115,8, ,reset,reset,reset,0
+116,8, ,reset,reset,reset,0
+117,8, ,reset,reset,reset,0
+118,8, ,reset,reset,reset,0
+119,8, ,reset,reset,reset,0
+120,8, ,reset,reset,reset,0
+121,8, ,reset,reset,reset,0
+122,8, ,reset,reset,reset,0
+123,8, ,reset,reset,reset,0
+124,8, ,reset,reset,reset,0
+125,8, ,reset,reset,reset,0
+126,8, ,reset,reset,reset,0
+127,8, ,reset,reset,reset,0
+128,8, ,reset,reset,reset,0
+129,8,│,rgb:1f2a24,reset,reset,0
+130,8, ,reset,reset,reset,0
+131,8, ,reset,reset,reset,0
+0,9, ,reset,reset,reset,0
+1,9, ,reset,reset,reset,0
+2,9,│,rgb:6fb3b8,reset,reset,0
+3,9, ,reset,reset,reset,0
+4,9, ,reset,reset,reset,0
+5,9, ,reset,reset,reset,0
+6,9, ,reset,reset,reset,0
+7,9, ,reset,reset,reset,0
+8,9, ,reset,reset,reset,0
+9,9, ,reset,reset,reset,0
+10,9, ,reset,reset,reset,0
+11,9, ,reset,reset,reset,0
+12,9, ,reset,reset,reset,0
+13,9, ,reset,reset,reset,0
+14,9, ,reset,reset,reset,0
+15,9, ,reset,reset,reset,0
+16,9, ,reset,reset,reset,0
+17,9, ,reset,reset,reset,0
+18,9, ,reset,reset,reset,0
+19,9, ,reset,reset,reset,0
+20,9, ,reset,reset,reset,0
+21,9, ,reset,reset,reset,0
+22,9, ,reset,reset,reset,0
+23,9, ,reset,reset,reset,0
+24,9, ,reset,reset,reset,0
+25,9, ,reset,reset,reset,0
+26,9, ,reset,reset,reset,0
+27,9, ,reset,reset,reset,0
+28,9, ,reset,reset,reset,0
+29,9, ,reset,reset,reset,0
+30,9, ,reset,reset,reset,0
+31,9, ,reset,reset,reset,0
+32,9, ,reset,reset,reset,0
+33,9, ,reset,reset,reset,0
+34,9, ,reset,reset,reset,0
+35,9, ,reset,reset,reset,0
+36,9, ,reset,reset,reset,0
+37,9, ,reset,reset,reset,0
+38,9, ,reset,reset,reset,0
+39,9, ,reset,reset,reset,0
+40,9, ,reset,reset,reset,0
+41,9, ,reset,reset,reset,0
+42,9, ,reset,reset,reset,0
+43,9,│,rgb:6fb3b8,reset,reset,0
+44,9, ,reset,reset,reset,0
+45,9,│,rgb:1f2a24,reset,reset,0
+46,9, ,reset,reset,reset,0
+47,9,u,rgb:6fb3b8,reset,reset,0
+48,9,n,rgb:6fb3b8,reset,reset,0
+49,9,k,rgb:6fb3b8,reset,reset,0
+50,9,n,rgb:6fb3b8,reset,reset,0
+51,9,o,rgb:6fb3b8,reset,reset,0
+52,9,w,rgb:6fb3b8,reset,reset,0
+53,9,n,rgb:6fb3b8,reset,reset,0
+54,9, ,rgb:6fb3b8,reset,reset,0
+55,9,o,rgb:6fb3b8,reset,reset,0
+56,9,s,rgb:6fb3b8,reset,reset,0
+57,9, ,reset,reset,reset,0
+58,9, ,reset,reset,reset,0
+59,9, ,reset,reset,reset,0
+60,9, ,reset,reset,reset,0
+61,9, ,reset,reset,reset,0
+62,9, ,reset,reset,reset,0
+63,9, ,reset,reset,reset,0
+64,9, ,reset,reset,reset,0
+65,9, ,reset,reset,reset,0
+66,9, ,reset,reset,reset,0
+67,9, ,reset,reset,reset,0
+68,9, ,reset,reset,reset,0
+69,9, ,reset,reset,reset,0
+70,9, ,reset,reset,reset,0
+71,9, ,reset,reset,reset,0
+72,9, ,reset,reset,reset,0
+73,9, ,reset,reset,reset,0
+74,9, ,reset,reset,reset,0
+75,9, ,reset,reset,reset,0
+76,9, ,reset,reset,reset,0
+77,9, ,reset,reset,reset,0
+78,9, ,reset,reset,reset,0
+79,9, ,reset,reset,reset,0
+80,9, ,reset,reset,reset,0
+81,9, ,reset,reset,reset,0
+82,9, ,reset,reset,reset,0
+83,9, ,reset,reset,reset,0
+84,9, ,reset,reset,reset,0
+85,9, ,reset,reset,reset,0
+86,9,│,rgb:1f2a24,reset,reset,0
+87,9, ,reset,reset,reset,0
+88,9,│,rgb:1f2a24,reset,reset,0
+89,9, ,reset,reset,reset,0
+90,9,s,rgb:3d4a44,reset,reset,0
+91,9,h,rgb:3d4a44,reset,reset,0
+92,9,o,rgb:3d4a44,reset,reset,0
+93,9,w,rgb:3d4a44,reset,reset,0
+94,9, ,rgb:3d4a44,reset,reset,0
+95,9,f,rgb:3d4a44,reset,reset,0
+96,9,u,rgb:3d4a44,reset,reset,0
+97,9,l,rgb:3d4a44,reset,reset,0
+98,9,l,rgb:3d4a44,reset,reset,0
+99,9, ,rgb:3d4a44,reset,reset,0
+100,9,a,rgb:3d4a44,reset,reset,0
+101,9,u,rgb:3d4a44,reset,reset,0
+102,9,d,rgb:3d4a44,reset,reset,0
+103,9,i,rgb:3d4a44,reset,reset,0
+104,9,t,rgb:3d4a44,reset,reset,0
+105,9, ,rgb:3d4a44,reset,reset,0
+106,9,l,rgb:3d4a44,reset,reset,0
+107,9,o,rgb:3d4a44,reset,reset,0
+108,9,g,rgb:3d4a44,reset,reset,0
+109,9, ,rgb:3d4a44,reset,reset,0
+110,9,→,rgb:3d4a44,reset,reset,0
+111,9, ,reset,reset,reset,0
+112,9, ,reset,reset,reset,0
+113,9, ,reset,reset,reset,0
+114,9, ,reset,reset,reset,0
+115,9, ,reset,reset,reset,0
+116,9, ,reset,reset,reset,0
+117,9, ,reset,reset,reset,0
+118,9, ,reset,reset,reset,0
+119,9, ,reset,reset,reset,0
+120,9, ,reset,reset,reset,0
+121,9, ,reset,reset,reset,0
+122,9, ,reset,reset,reset,0
+123,9, ,reset,reset,reset,0
+124,9, ,reset,reset,reset,0
+125,9, ,reset,reset,reset,0
+126,9, ,reset,reset,reset,0
+127,9, ,reset,reset,reset,0
+128,9, ,reset,reset,reset,0
+129,9,│,rgb:1f2a24,reset,reset,0
+130,9, ,reset,reset,reset,0
+131,9, ,reset,reset,reset,0
+0,10, ,reset,reset,reset,0
+1,10, ,reset,reset,reset,0
+2,10,│,rgb:6fb3b8,reset,reset,0
+3,10, ,reset,reset,reset,0
+4,10, ,reset,reset,reset,0
+5,10, ,reset,reset,reset,0
+6,10, ,reset,reset,reset,0
+7,10, ,reset,reset,reset,0
+8,10, ,reset,reset,reset,0
+9,10, ,reset,reset,reset,0
+10,10, ,reset,reset,reset,0
+11,10, ,reset,reset,reset,0
+12,10, ,reset,reset,reset,0
+13,10, ,reset,reset,reset,0
+14,10, ,reset,reset,reset,0
+15,10, ,reset,reset,reset,0
+16,10, ,reset,reset,reset,0
+17,10, ,reset,reset,reset,0
+18,10, ,reset,reset,reset,0
+19,10, ,reset,reset,reset,0
+20,10, ,reset,reset,reset,0
+21,10, ,reset,reset,reset,0
+22,10, ,reset,reset,reset,0
+23,10, ,reset,reset,reset,0
+24,10, ,reset,reset,reset,0
+25,10, ,reset,reset,reset,0
+26,10, ,reset,reset,reset,0
+27,10, ,reset,reset,reset,0
+28,10, ,reset,reset,reset,0
+29,10, ,reset,reset,reset,0
+30,10, ,reset,reset,reset,0
+31,10, ,reset,reset,reset,0
+32,10, ,reset,reset,reset,0
+33,10, ,reset,reset,reset,0
+34,10, ,reset,reset,reset,0
+35,10, ,reset,reset,reset,0
+36,10, ,reset,reset,reset,0
+37,10, ,reset,reset,reset,0
+38,10, ,reset,reset,reset,0
+39,10, ,reset,reset,reset,0
+40,10, ,reset,reset,reset,0
+41,10, ,reset,reset,reset,0
+42,10, ,reset,reset,reset,0
+43,10,│,rgb:6fb3b8,reset,reset,0
+44,10, ,reset,reset,reset,0
+45,10,│,rgb:1f2a24,reset,reset,0
+46,10, ,reset,reset,reset,0
+47,10,#,rgb:3d4a44,reset,reset,0
+48,10,p,rgb:3d4a44,reset,reset,0
+49,10,r,rgb:3d4a44,reset,reset,0
+50,10,o,rgb:3d4a44,reset,reset,0
+51,10,d,rgb:3d4a44,reset,reset,0
+52,10, ,reset,reset,reset,0
+53,10, ,reset,reset,reset,0
+54,10, ,reset,reset,reset,0
+55,10, ,reset,reset,reset,0
+56,10, ,reset,reset,reset,0
+57,10, ,reset,reset,reset,0
+58,10, ,reset,reset,reset,0
+59,10, ,reset,reset,reset,0
+60,10, ,reset,reset,reset,0
+61,10, ,reset,reset,reset,0
+62,10, ,reset,reset,reset,0
+63,10, ,reset,reset,reset,0
+64,10, ,reset,reset,reset,0
+65,10, ,reset,reset,reset,0
+66,10, ,reset,reset,reset,0
+67,10, ,reset,reset,reset,0
+68,10, ,reset,reset,reset,0
+69,10, ,reset,reset,reset,0
+70,10, ,reset,reset,reset,0
+71,10, ,reset,reset,reset,0
+72,10, ,reset,reset,reset,0
+73,10, ,reset,reset,reset,0
+74,10, ,reset,reset,reset,0
+75,10, ,reset,reset,reset,0
+76,10, ,reset,reset,reset,0
+77,10, ,reset,reset,reset,0
+78,10, ,reset,reset,reset,0
+79,10, ,reset,reset,reset,0
+80,10, ,reset,reset,reset,0
+81,10, ,reset,reset,reset,0
+82,10, ,reset,reset,reset,0
+83,10, ,reset,reset,reset,0
+84,10, ,reset,reset,reset,0
+85,10, ,reset,reset,reset,0
+86,10,│,rgb:1f2a24,reset,reset,0
+87,10, ,reset,reset,reset,0
+88,10,│,rgb:1f2a24,reset,reset,0
+89,10, ,reset,reset,reset,0
+90,10, ,reset,reset,reset,0
+91,10, ,reset,reset,reset,0
+92,10, ,reset,reset,reset,0
+93,10, ,reset,reset,reset,0
+94,10, ,reset,reset,reset,0
+95,10, ,reset,reset,reset,0
+96,10, ,reset,reset,reset,0
+97,10, ,reset,reset,reset,0
+98,10, ,reset,reset,reset,0
+99,10, ,reset,reset,reset,0
+100,10, ,reset,reset,reset,0
+101,10, ,reset,reset,reset,0
+102,10, ,reset,reset,reset,0
+103,10, ,reset,reset,reset,0
+104,10, ,reset,reset,reset,0
+105,10, ,reset,reset,reset,0
+106,10, ,reset,reset,reset,0
+107,10, ,reset,reset,reset,0
+108,10, ,reset,reset,reset,0
+109,10, ,reset,reset,reset,0
+110,10, ,reset,reset,reset,0
+111,10, ,reset,reset,reset,0
+112,10, ,reset,reset,reset,0
+113,10, ,reset,reset,reset,0
+114,10, ,reset,reset,reset,0
+115,10, ,reset,reset,reset,0
+116,10, ,reset,reset,reset,0
+117,10, ,reset,reset,reset,0
+118,10, ,reset,reset,reset,0
+119,10, ,reset,reset,reset,0
+120,10, ,reset,reset,reset,0
+121,10, ,reset,reset,reset,0
+122,10, ,reset,reset,reset,0
+123,10, ,reset,reset,reset,0
+124,10, ,reset,reset,reset,0
+125,10, ,reset,reset,reset,0
+126,10, ,reset,reset,reset,0
+127,10, ,reset,reset,reset,0
+128,10, ,reset,reset,reset,0
+129,10,│,rgb:1f2a24,reset,reset,0
+130,10, ,reset,reset,reset,0
+131,10, ,reset,reset,reset,0
+0,11, ,reset,reset,reset,0
+1,11, ,reset,reset,reset,0
+2,11,│,rgb:6fb3b8,reset,reset,0
+3,11, ,reset,reset,reset,0
+4,11, ,reset,reset,reset,0
+5,11, ,reset,reset,reset,0
+6,11, ,reset,reset,reset,0
+7,11, ,reset,reset,reset,0
+8,11, ,reset,reset,reset,0
+9,11, ,reset,reset,reset,0
+10,11, ,reset,reset,reset,0
+11,11, ,reset,reset,reset,0
+12,11, ,reset,reset,reset,0
+13,11, ,reset,reset,reset,0
+14,11, ,reset,reset,reset,0
+15,11, ,reset,reset,reset,0
+16,11, ,reset,reset,reset,0
+17,11, ,reset,reset,reset,0
+18,11, ,reset,reset,reset,0
+19,11, ,reset,reset,reset,0
+20,11, ,reset,reset,reset,0
+21,11, ,reset,reset,reset,0
+22,11, ,reset,reset,reset,0
+23,11, ,reset,reset,reset,0
+24,11, ,reset,reset,reset,0
+25,11, ,reset,reset,reset,0
+26,11, ,reset,reset,reset,0
+27,11, ,reset,reset,reset,0
+28,11, ,reset,reset,reset,0
+29,11, ,reset,reset,reset,0
+30,11, ,reset,reset,reset,0
+31,11, ,reset,reset,reset,0
+32,11, ,reset,reset,reset,0
+33,11, ,reset,reset,reset,0
+34,11, ,reset,reset,reset,0
+35,11, ,reset,reset,reset,0
+36,11, ,reset,reset,reset,0
+37,11, ,reset,reset,reset,0
+38,11, ,reset,reset,reset,0
+39,11, ,reset,reset,reset,0
+40,11, ,reset,reset,reset,0
+41,11, ,reset,reset,reset,0
+42,11, ,reset,reset,reset,0
+43,11,│,rgb:6fb3b8,reset,reset,0
+44,11, ,reset,reset,reset,0
+45,11,│,rgb:1f2a24,reset,reset,0
+46,11, ,reset,reset,reset,0
+47,11, ,reset,reset,reset,0
+48,11, ,reset,reset,reset,0
+49,11, ,reset,reset,reset,0
+50,11, ,reset,reset,reset,0
+51,11, ,reset,reset,reset,0
+52,11, ,reset,reset,reset,0
+53,11, ,reset,reset,reset,0
+54,11, ,reset,reset,reset,0
+55,11, ,reset,reset,reset,0
+56,11, ,reset,reset,reset,0
+57,11, ,reset,reset,reset,0
+58,11, ,reset,reset,reset,0
+59,11, ,reset,reset,reset,0
+60,11, ,reset,reset,reset,0
+61,11, ,reset,reset,reset,0
+62,11, ,reset,reset,reset,0
+63,11, ,reset,reset,reset,0
+64,11, ,reset,reset,reset,0
+65,11, ,reset,reset,reset,0
+66,11, ,reset,reset,reset,0
+67,11, ,reset,reset,reset,0
+68,11, ,reset,reset,reset,0
+69,11, ,reset,reset,reset,0
+70,11, ,reset,reset,reset,0
+71,11, ,reset,reset,reset,0
+72,11, ,reset,reset,reset,0
+73,11, ,reset,reset,reset,0
+74,11, ,reset,reset,reset,0
+75,11, ,reset,reset,reset,0
+76,11, ,reset,reset,reset,0
+77,11, ,reset,reset,reset,0
+78,11, ,reset,reset,reset,0
+79,11, ,reset,reset,reset,0
+80,11, ,reset,reset,reset,0
+81,11, ,reset,reset,reset,0
+82,11, ,reset,reset,reset,0
+83,11, ,reset,reset,reset,0
+84,11, ,reset,reset,reset,0
+85,11, ,reset,reset,reset,0
+86,11,│,rgb:1f2a24,reset,reset,0
+87,11, ,reset,reset,reset,0
+88,11,│,rgb:1f2a24,reset,reset,0
+89,11, ,reset,reset,reset,0
+90,11, ,reset,reset,reset,0
+91,11, ,reset,reset,reset,0
+92,11, ,reset,reset,reset,0
+93,11, ,reset,reset,reset,0
+94,11, ,reset,reset,reset,0
+95,11, ,reset,reset,reset,0
+96,11, ,reset,reset,reset,0
+97,11, ,reset,reset,reset,0
+98,11, ,reset,reset,reset,0
+99,11, ,reset,reset,reset,0
+100,11, ,reset,reset,reset,0
+101,11, ,reset,reset,reset,0
+102,11, ,reset,reset,reset,0
+103,11, ,reset,reset,reset,0
+104,11, ,reset,reset,reset,0
+105,11, ,reset,reset,reset,0
+106,11, ,reset,reset,reset,0
+107,11, ,reset,reset,reset,0
+108,11, ,reset,reset,reset,0
+109,11, ,reset,reset,reset,0
+110,11, ,reset,reset,reset,0
+111,11, ,reset,reset,reset,0
+112,11, ,reset,reset,reset,0
+113,11, ,reset,reset,reset,0
+114,11, ,reset,reset,reset,0
+115,11, ,reset,reset,reset,0
+116,11, ,reset,reset,reset,0
+117,11, ,reset,reset,reset,0
+118,11, ,reset,reset,reset,0
+119,11, ,reset,reset,reset,0
+120,11, ,reset,reset,reset,0
+121,11, ,reset,reset,reset,0
+122,11, ,reset,reset,reset,0
+123,11, ,reset,reset,reset,0
+124,11, ,reset,reset,reset,0
+125,11, ,reset,reset,reset,0
+126,11, ,reset,reset,reset,0
+127,11, ,reset,reset,reset,0
+128,11, ,reset,reset,reset,0
+129,11,│,rgb:1f2a24,reset,reset,0
+130,11, ,reset,reset,reset,0
+131,11, ,reset,reset,reset,0
+0,12, ,reset,reset,reset,0
+1,12, ,reset,reset,reset,0
+2,12,│,rgb:6fb3b8,reset,reset,0
+3,12, ,reset,reset,reset,0
+4,12, ,reset,reset,reset,0
+5,12, ,reset,reset,reset,0
+6,12, ,reset,reset,reset,0
+7,12, ,reset,reset,reset,0
+8,12, ,reset,reset,reset,0
+9,12, ,reset,reset,reset,0
+10,12, ,reset,reset,reset,0
+11,12, ,reset,reset,reset,0
+12,12, ,reset,reset,reset,0
+13,12, ,reset,reset,reset,0
+14,12, ,reset,reset,reset,0
+15,12, ,reset,reset,reset,0
+16,12, ,reset,reset,reset,0
+17,12, ,reset,reset,reset,0
+18,12, ,reset,reset,reset,0
+19,12, ,reset,reset,reset,0
+20,12, ,reset,reset,reset,0
+21,12, ,reset,reset,reset,0
+22,12, ,reset,reset,reset,0
+23,12, ,reset,reset,reset,0
+24,12, ,reset,reset,reset,0
+25,12, ,reset,reset,reset,0
+26,12, ,reset,reset,reset,0
+27,12, ,reset,reset,reset,0
+28,12, ,reset,reset,reset,0
+29,12, ,reset,reset,reset,0
+30,12, ,reset,reset,reset,0
+31,12, ,reset,reset,reset,0
+32,12, ,reset,reset,reset,0
+33,12, ,reset,reset,reset,0
+34,12, ,reset,reset,reset,0
+35,12, ,reset,reset,reset,0
+36,12, ,reset,reset,reset,0
+37,12, ,reset,reset,reset,0
+38,12, ,reset,reset,reset,0
+39,12, ,reset,reset,reset,0
+40,12, ,reset,reset,reset,0
+41,12, ,reset,reset,reset,0
+42,12, ,reset,reset,reset,0
+43,12,│,rgb:6fb3b8,reset,reset,0
+44,12, ,reset,reset,reset,0
+45,12,│,rgb:1f2a24,reset,reset,0
+46,12, ,reset,reset,reset,0
+47,12, ,reset,reset,reset,0
+48,12, ,reset,reset,reset,0
+49,12, ,reset,reset,reset,0
+50,12, ,reset,reset,reset,0
+51,12, ,reset,reset,reset,0
+52,12, ,reset,reset,reset,0
+53,12, ,reset,reset,reset,0
+54,12, ,reset,reset,reset,0
+55,12, ,reset,reset,reset,0
+56,12, ,reset,reset,reset,0
+57,12, ,reset,reset,reset,0
+58,12, ,reset,reset,reset,0
+59,12, ,reset,reset,reset,0
+60,12, ,reset,reset,reset,0
+61,12, ,reset,reset,reset,0
+62,12, ,reset,reset,reset,0
+63,12, ,reset,reset,reset,0
+64,12, ,reset,reset,reset,0
+65,12, ,reset,reset,reset,0
+66,12, ,reset,reset,reset,0
+67,12, ,reset,reset,reset,0
+68,12, ,reset,reset,reset,0
+69,12, ,reset,reset,reset,0
+70,12, ,reset,reset,reset,0
+71,12, ,reset,reset,reset,0
+72,12, ,reset,reset,reset,0
+73,12, ,reset,reset,reset,0
+74,12, ,reset,reset,reset,0
+75,12, ,reset,reset,reset,0
+76,12, ,reset,reset,reset,0
+77,12, ,reset,reset,reset,0
+78,12, ,reset,reset,reset,0
+79,12, ,reset,reset,reset,0
+80,12, ,reset,reset,reset,0
+81,12, ,reset,reset,reset,0
+82,12, ,reset,reset,reset,0
+83,12, ,reset,reset,reset,0
+84,12, ,reset,reset,reset,0
+85,12, ,reset,reset,reset,0
+86,12,│,rgb:1f2a24,reset,reset,0
+87,12, ,reset,reset,reset,0
+88,12,│,rgb:1f2a24,reset,reset,0
+89,12, ,reset,reset,reset,0
+90,12, ,reset,reset,reset,0
+91,12, ,reset,reset,reset,0
+92,12, ,reset,reset,reset,0
+93,12, ,reset,reset,reset,0
+94,12, ,reset,reset,reset,0
+95,12, ,reset,reset,reset,0
+96,12, ,reset,reset,reset,0
+97,12, ,reset,reset,reset,0
+98,12, ,reset,reset,reset,0
+99,12, ,reset,reset,reset,0
+100,12, ,reset,reset,reset,0
+101,12, ,reset,reset,reset,0
+102,12, ,reset,reset,reset,0
+103,12, ,reset,reset,reset,0
+104,12, ,reset,reset,reset,0
+105,12, ,reset,reset,reset,0
+106,12, ,reset,reset,reset,0
+107,12, ,reset,reset,reset,0
+108,12, ,reset,reset,reset,0
+109,12, ,reset,reset,reset,0
+110,12, ,reset,reset,reset,0
+111,12, ,reset,reset,reset,0
+112,12, ,reset,reset,reset,0
+113,12, ,reset,reset,reset,0
+114,12, ,reset,reset,reset,0
+115,12, ,reset,reset,reset,0
+116,12, ,reset,reset,reset,0
+117,12, ,reset,reset,reset,0
+118,12, ,reset,reset,reset,0
+119,12, ,reset,reset,reset,0
+120,12, ,reset,reset,reset,0
+121,12, ,reset,reset,reset,0
+122,12, ,reset,reset,reset,0
+123,12, ,reset,reset,reset,0
+124,12, ,reset,reset,reset,0
+125,12, ,reset,reset,reset,0
+126,12, ,reset,reset,reset,0
+127,12, ,reset,reset,reset,0
+128,12, ,reset,reset,reset,0
+129,12,│,rgb:1f2a24,reset,reset,0
+130,12, ,reset,reset,reset,0
+131,12, ,reset,reset,reset,0
+0,13, ,reset,reset,reset,0
+1,13, ,reset,reset,reset,0
+2,13,│,rgb:6fb3b8,reset,reset,0
+3,13, ,reset,reset,reset,0
+4,13, ,reset,reset,reset,0
+5,13, ,reset,reset,reset,0
+6,13, ,reset,reset,reset,0
+7,13, ,reset,reset,reset,0
+8,13, ,reset,reset,reset,0
+9,13, ,reset,reset,reset,0
+10,13, ,reset,reset,reset,0
+11,13, ,reset,reset,reset,0
+12,13, ,reset,reset,reset,0
+13,13, ,reset,reset,reset,0
+14,13, ,reset,reset,reset,0
+15,13, ,reset,reset,reset,0
+16,13, ,reset,reset,reset,0
+17,13, ,reset,reset,reset,0
+18,13, ,reset,reset,reset,0
+19,13, ,reset,reset,reset,0
+20,13, ,reset,reset,reset,0
+21,13, ,reset,reset,reset,0
+22,13, ,reset,reset,reset,0
+23,13, ,reset,reset,reset,0
+24,13, ,reset,reset,reset,0
+25,13, ,reset,reset,reset,0
+26,13, ,reset,reset,reset,0
+27,13, ,reset,reset,reset,0
+28,13, ,reset,reset,reset,0
+29,13, ,reset,reset,reset,0
+30,13, ,reset,reset,reset,0
+31,13, ,reset,reset,reset,0
+32,13, ,reset,reset,reset,0
+33,13, ,reset,reset,reset,0
+34,13, ,reset,reset,reset,0
+35,13, ,reset,reset,reset,0
+36,13, ,reset,reset,reset,0
+37,13, ,reset,reset,reset,0
+38,13, ,reset,reset,reset,0
+39,13, ,reset,reset,reset,0
+40,13, ,reset,reset,reset,0
+41,13, ,reset,reset,reset,0
+42,13, ,reset,reset,reset,0
+43,13,│,rgb:6fb3b8,reset,reset,0
+44,13, ,reset,reset,reset,0
+45,13,│,rgb:1f2a24,reset,reset,0
+46,13, ,reset,reset,reset,0
+47,13, ,reset,reset,reset,0
+48,13, ,reset,reset,reset,0
+49,13, ,reset,reset,reset,0
+50,13, ,reset,reset,reset,0
+51,13, ,reset,reset,reset,0
+52,13, ,reset,reset,reset,0
+53,13, ,reset,reset,reset,0
+54,13, ,reset,reset,reset,0
+55,13, ,reset,reset,reset,0
+56,13, ,reset,reset,reset,0
+57,13, ,reset,reset,reset,0
+58,13, ,reset,reset,reset,0
+59,13, ,reset,reset,reset,0
+60,13, ,reset,reset,reset,0
+61,13, ,reset,reset,reset,0
+62,13, ,reset,reset,reset,0
+63,13, ,reset,reset,reset,0
+64,13, ,reset,reset,reset,0
+65,13, ,reset,reset,reset,0
+66,13, ,reset,reset,reset,0
+67,13, ,reset,reset,reset,0
+68,13, ,reset,reset,reset,0
+69,13, ,reset,reset,reset,0
+70,13, ,reset,reset,reset,0
+71,13, ,reset,reset,reset,0
+72,13, ,reset,reset,reset,0
+73,13, ,reset,reset,reset,0
+74,13, ,reset,reset,reset,0
+75,13, ,reset,reset,reset,0
+76,13, ,reset,reset,reset,0
+77,13, ,reset,reset,reset,0
+78,13, ,reset,reset,reset,0
+79,13, ,reset,reset,reset,0
+80,13, ,reset,reset,reset,0
+81,13, ,reset,reset,reset,0
+82,13, ,reset,reset,reset,0
+83,13, ,reset,reset,reset,0
+84,13, ,reset,reset,reset,0
+85,13, ,reset,reset,reset,0
+86,13,│,rgb:1f2a24,reset,reset,0
+87,13, ,reset,reset,reset,0
+88,13,└,rgb:1f2a24,reset,reset,0
+89,13,─,rgb:1f2a24,reset,reset,0
+90,13,─,rgb:1f2a24,reset,reset,0
+91,13,─,rgb:1f2a24,reset,reset,0
+92,13,─,rgb:1f2a24,reset,reset,0
+93,13,─,rgb:1f2a24,reset,reset,0
+94,13,─,rgb:1f2a24,reset,reset,0
+95,13,─,rgb:1f2a24,reset,reset,0
+96,13,─,rgb:1f2a24,reset,reset,0
+97,13,─,rgb:1f2a24,reset,reset,0
+98,13,─,rgb:1f2a24,reset,reset,0
+99,13,─,rgb:1f2a24,reset,reset,0
+100,13,─,rgb:1f2a24,reset,reset,0
+101,13,─,rgb:1f2a24,reset,reset,0
+102,13,─,rgb:1f2a24,reset,reset,0
+103,13,─,rgb:1f2a24,reset,reset,0
+104,13,─,rgb:1f2a24,reset,reset,0
+105,13,─,rgb:1f2a24,reset,reset,0
+106,13,─,rgb:1f2a24,reset,reset,0
+107,13,─,rgb:1f2a24,reset,reset,0
+108,13,─,rgb:1f2a24,reset,reset,0
+109,13,─,rgb:1f2a24,reset,reset,0
+110,13,─,rgb:1f2a24,reset,reset,0
+111,13,─,rgb:1f2a24,reset,reset,0
+112,13,─,rgb:1f2a24,reset,reset,0
+113,13,─,rgb:1f2a24,reset,reset,0
+114,13,─,rgb:1f2a24,reset,reset,0
+115,13,─,rgb:1f2a24,reset,reset,0
+116,13,─,rgb:1f2a24,reset,reset,0
+117,13,─,rgb:1f2a24,reset,reset,0
+118,13,─,rgb:1f2a24,reset,reset,0
+119,13,─,rgb:1f2a24,reset,reset,0
+120,13,─,rgb:1f2a24,reset,reset,0
+121,13,─,rgb:1f2a24,reset,reset,0
+122,13,─,rgb:1f2a24,reset,reset,0
+123,13,─,rgb:1f2a24,reset,reset,0
+124,13,─,rgb:1f2a24,reset,reset,0
+125,13,─,rgb:1f2a24,reset,reset,0
+126,13,─,rgb:1f2a24,reset,reset,0
+127,13,─,rgb:1f2a24,reset,reset,0
+128,13,─,rgb:1f2a24,reset,reset,0
+129,13,┘,rgb:1f2a24,reset,reset,0
+130,13, ,reset,reset,reset,0
+131,13, ,reset,reset,reset,0
+0,14, ,reset,reset,reset,0
+1,14, ,reset,reset,reset,0
+2,14,│,rgb:6fb3b8,reset,reset,0
+3,14, ,reset,reset,reset,0
+4,14, ,reset,reset,reset,0
+5,14, ,reset,reset,reset,0
+6,14, ,reset,reset,reset,0
+7,14, ,reset,reset,reset,0
+8,14, ,reset,reset,reset,0
+9,14, ,reset,reset,reset,0
+10,14, ,reset,reset,reset,0
+11,14, ,reset,reset,reset,0
+12,14, ,reset,reset,reset,0
+13,14, ,reset,reset,reset,0
+14,14, ,reset,reset,reset,0
+15,14, ,reset,reset,reset,0
+16,14, ,reset,reset,reset,0
+17,14, ,reset,reset,reset,0
+18,14, ,reset,reset,reset,0
+19,14, ,reset,reset,reset,0
+20,14, ,reset,reset,reset,0
+21,14, ,reset,reset,reset,0
+22,14, ,reset,reset,reset,0
+23,14, ,reset,reset,reset,0
+24,14, ,reset,reset,reset,0
+25,14, ,reset,reset,reset,0
+26,14, ,reset,reset,reset,0
+27,14, ,reset,reset,reset,0
+28,14, ,reset,reset,reset,0
+29,14, ,reset,reset,reset,0
+30,14, ,reset,reset,reset,0
+31,14, ,reset,reset,reset,0
+32,14, ,reset,reset,reset,0
+33,14, ,reset,reset,reset,0
+34,14, ,reset,reset,reset,0
+35,14, ,reset,reset,reset,0
+36,14, ,reset,reset,reset,0
+37,14, ,reset,reset,reset,0
+38,14, ,reset,reset,reset,0
+39,14, ,reset,reset,reset,0
+40,14, ,reset,reset,reset,0
+41,14, ,reset,reset,reset,0
+42,14, ,reset,reset,reset,0
+43,14,│,rgb:6fb3b8,reset,reset,0
+44,14, ,reset,reset,reset,0
+45,14,└,rgb:1f2a24,reset,reset,0
+46,14,─,rgb:1f2a24,reset,reset,0
+47,14,─,rgb:1f2a24,reset,reset,0
+48,14,─,rgb:1f2a24,reset,reset,0
+49,14,─,rgb:1f2a24,reset,reset,0
+50,14,─,rgb:1f2a24,reset,reset,0
+51,14,─,rgb:1f2a24,reset,reset,0
+52,14,─,rgb:1f2a24,reset,reset,0
+53,14,─,rgb:1f2a24,reset,reset,0
+54,14,─,rgb:1f2a24,reset,reset,0
+55,14,─,rgb:1f2a24,reset,reset,0
+56,14,─,rgb:1f2a24,reset,reset,0
+57,14,─,rgb:1f2a24,reset,reset,0
+58,14,─,rgb:1f2a24,reset,reset,0
+59,14,─,rgb:1f2a24,reset,reset,0
+60,14,─,rgb:1f2a24,reset,reset,0
+61,14,─,rgb:1f2a24,reset,reset,0
+62,14,─,rgb:1f2a24,reset,reset,0
+63,14,─,rgb:1f2a24,reset,reset,0
+64,14,─,rgb:1f2a24,reset,reset,0
+65,14,─,rgb:1f2a24,reset,reset,0
+66,14,─,rgb:1f2a24,reset,reset,0
+67,14,─,rgb:1f2a24,reset,reset,0
+68,14,─,rgb:1f2a24,reset,reset,0
+69,14,─,rgb:1f2a24,reset,reset,0
+70,14,─,rgb:1f2a24,reset,reset,0
+71,14,─,rgb:1f2a24,reset,reset,0
+72,14,─,rgb:1f2a24,reset,reset,0
+73,14,─,rgb:1f2a24,reset,reset,0
+74,14,─,rgb:1f2a24,reset,reset,0
+75,14,─,rgb:1f2a24,reset,reset,0
+76,14,─,rgb:1f2a24,reset,reset,0
+77,14,─,rgb:1f2a24,reset,reset,0
+78,14,─,rgb:1f2a24,reset,reset,0
+79,14,─,rgb:1f2a24,reset,reset,0
+80,14,─,rgb:1f2a24,reset,reset,0
+81,14,─,rgb:1f2a24,reset,reset,0
+82,14,─,rgb:1f2a24,reset,reset,0
+83,14,─,rgb:1f2a24,reset,reset,0
+84,14,─,rgb:1f2a24,reset,reset,0
+85,14,─,rgb:1f2a24,reset,reset,0
+86,14,┘,rgb:1f2a24,reset,reset,0
+87,14, ,reset,reset,reset,0
+88,14,┌,rgb:1f2a24,reset,reset,0
+89,14,─,rgb:1f2a24,reset,reset,0
+90,14,─,rgb:1f2a24,reset,reset,0
+91,14, ,rgb:1f2a24,reset,reset,0
+92,14,a,rgb:c7e8c9,reset,reset,0
+93,14,u,rgb:c7e8c9,reset,reset,0
+94,14,t,rgb:c7e8c9,reset,reset,0
+95,14,h,rgb:c7e8c9,reset,reset,0
+96,14, ,rgb:c7e8c9,reset,reset,0
+97,14,e,rgb:c7e8c9,reset,reset,0
+98,14,v,rgb:c7e8c9,reset,reset,0
+99,14,e,rgb:c7e8c9,reset,reset,0
+100,14,n,rgb:c7e8c9,reset,reset,0
+101,14,t,rgb:c7e8c9,reset,reset,0
+102,14,s,rgb:c7e8c9,reset,reset,0
+103,14, ,rgb:1f2a24,reset,reset,0
+104,14,─,rgb:1f2a24,reset,reset,0
+105,14,─,rgb:1f2a24,reset,reset,0
+106,14,─,rgb:1f2a24,reset,reset,0
+107,14,─,rgb:1f2a24,reset,reset,0
+108,14,─,rgb:1f2a24,reset,reset,0
+109,14,─,rgb:1f2a24,reset,reset,0
+110,14,─,rgb:1f2a24,reset,reset,0
+111,14,─,rgb:1f2a24,reset,reset,0
+112,14,─,rgb:1f2a24,reset,reset,0
+113,14,─,rgb:1f2a24,reset,reset,0
+114,14,─,rgb:1f2a24,reset,reset,0
+115,14,─,rgb:1f2a24,reset,reset,0
+116,14,─,rgb:1f2a24,reset,reset,0
+117,14,─,rgb:1f2a24,reset,reset,0
+118,14,─,rgb:1f2a24,reset,reset,0
+119,14,─,rgb:1f2a24,reset,reset,0
+120,14,─,rgb:1f2a24,reset,reset,0
+121,14,─,rgb:1f2a24,reset,reset,0
+122,14,─,rgb:1f2a24,reset,reset,0
+123,14,─,rgb:1f2a24,reset,reset,0
+124,14,─,rgb:1f2a24,reset,reset,0
+125,14,─,rgb:1f2a24,reset,reset,0
+126,14,─,rgb:1f2a24,reset,reset,0
+127,14,─,rgb:1f2a24,reset,reset,0
+128,14,─,rgb:1f2a24,reset,reset,0
+129,14,┐,rgb:1f2a24,reset,reset,0
+130,14, ,reset,reset,reset,0
+131,14, ,reset,reset,reset,0
+0,15, ,reset,reset,reset,0
+1,15, ,reset,reset,reset,0
+2,15,│,rgb:6fb3b8,reset,reset,0
+3,15, ,reset,reset,reset,0
+4,15, ,reset,reset,reset,0
+5,15, ,reset,reset,reset,0
+6,15, ,reset,reset,reset,0
+7,15, ,reset,reset,reset,0
+8,15, ,reset,reset,reset,0
+9,15, ,reset,reset,reset,0
+10,15, ,reset,reset,reset,0
+11,15, ,reset,reset,reset,0
+12,15, ,reset,reset,reset,0
+13,15, ,reset,reset,reset,0
+14,15, ,reset,reset,reset,0
+15,15, ,reset,reset,reset,0
+16,15, ,reset,reset,reset,0
+17,15, ,reset,reset,reset,0
+18,15, ,reset,reset,reset,0
+19,15, ,reset,reset,reset,0
+20,15, ,reset,reset,reset,0
+21,15, ,reset,reset,reset,0
+22,15, ,reset,reset,reset,0
+23,15, ,reset,reset,reset,0
+24,15, ,reset,reset,reset,0
+25,15, ,reset,reset,reset,0
+26,15, ,reset,reset,reset,0
+27,15, ,reset,reset,reset,0
+28,15, ,reset,reset,reset,0
+29,15, ,reset,reset,reset,0
+30,15, ,reset,reset,reset,0
+31,15, ,reset,reset,reset,0
+32,15, ,reset,reset,reset,0
+33,15, ,reset,reset,reset,0
+34,15, ,reset,reset,reset,0
+35,15, ,reset,reset,reset,0
+36,15, ,reset,reset,reset,0
+37,15, ,reset,reset,reset,0
+38,15, ,reset,reset,reset,0
+39,15, ,reset,reset,reset,0
+40,15, ,reset,reset,reset,0
+41,15, ,reset,reset,reset,0
+42,15, ,reset,reset,reset,0
+43,15,│,rgb:6fb3b8,reset,reset,0
+44,15, ,reset,reset,reset,0
+45,15,┌,rgb:1f2a24,reset,reset,0
+46,15,─,rgb:1f2a24,reset,reset,0
+47,15,─,rgb:1f2a24,reset,reset,0
+48,15, ,rgb:1f2a24,reset,reset,0
+49,15,a,rgb:c7e8c9,reset,reset,0
+50,15,g,rgb:c7e8c9,reset,reset,0
+51,15,e,rgb:c7e8c9,reset,reset,0
+52,15,n,rgb:c7e8c9,reset,reset,0
+53,15,t,rgb:c7e8c9,reset,reset,0
+54,15, ,rgb:1f2a24,reset,reset,0
+55,15,─,rgb:1f2a24,reset,reset,0
+56,15,─,rgb:1f2a24,reset,reset,0
+57,15,─,rgb:1f2a24,reset,reset,0
+58,15,─,rgb:1f2a24,reset,reset,0
+59,15,─,rgb:1f2a24,reset,reset,0
+60,15,─,rgb:1f2a24,reset,reset,0
+61,15,─,rgb:1f2a24,reset,reset,0
+62,15,─,rgb:1f2a24,reset,reset,0
+63,15,─,rgb:1f2a24,reset,reset,0
+64,15,─,rgb:1f2a24,reset,reset,0
+65,15,─,rgb:1f2a24,reset,reset,0
+66,15,─,rgb:1f2a24,reset,reset,0
+67,15,─,rgb:1f2a24,reset,reset,0
+68,15,─,rgb:1f2a24,reset,reset,0
+69,15,─,rgb:1f2a24,reset,reset,0
+70,15,─,rgb:1f2a24,reset,reset,0
+71,15,─,rgb:1f2a24,reset,reset,0
+72,15,─,rgb:1f2a24,reset,reset,0
+73,15,─,rgb:1f2a24,reset,reset,0
+74,15,─,rgb:1f2a24,reset,reset,0
+75,15,─,rgb:1f2a24,reset,reset,0
+76,15,─,rgb:1f2a24,reset,reset,0
+77,15,─,rgb:1f2a24,reset,reset,0
+78,15,─,rgb:1f2a24,reset,reset,0
+79,15,─,rgb:1f2a24,reset,reset,0
+80,15,─,rgb:1f2a24,reset,reset,0
+81,15,─,rgb:1f2a24,reset,reset,0
+82,15,─,rgb:1f2a24,reset,reset,0
+83,15,─,rgb:1f2a24,reset,reset,0
+84,15,─,rgb:1f2a24,reset,reset,0
+85,15,─,rgb:1f2a24,reset,reset,0
+86,15,┐,rgb:1f2a24,reset,reset,0
+87,15, ,reset,reset,reset,0
+88,15,│,rgb:1f2a24,reset,reset,0
+89,15, ,reset,reset,reset,0
+90,15,n,rgb:3d4a44,reset,reset,0
+91,15,o,rgb:3d4a44,reset,reset,0
+92,15, ,rgb:3d4a44,reset,reset,0
+93,15,a,rgb:3d4a44,reset,reset,0
+94,15,u,rgb:3d4a44,reset,reset,0
+95,15,d,rgb:3d4a44,reset,reset,0
+96,15,i,rgb:3d4a44,reset,reset,0
+97,15,t,rgb:3d4a44,reset,reset,0
+98,15, ,rgb:3d4a44,reset,reset,0
+99,15,d,rgb:3d4a44,reset,reset,0
+100,15,a,rgb:3d4a44,reset,reset,0
+101,15,t,rgb:3d4a44,reset,reset,0
+102,15,a,rgb:3d4a44,reset,reset,0
+103,15, ,reset,reset,reset,0
+104,15, ,reset,reset,reset,0
+105,15, ,reset,reset,reset,0
+106,15, ,reset,reset,reset,0
+107,15, ,reset,reset,reset,0
+108,15, ,reset,reset,reset,0
+109,15, ,reset,reset,reset,0
+110,15, ,reset,reset,reset,0
+111,15, ,reset,reset,reset,0
+112,15, ,reset,reset,reset,0
+113,15, ,reset,reset,reset,0
+114,15, ,reset,reset,reset,0
+115,15, ,reset,reset,reset,0
+116,15, ,reset,reset,reset,0
+117,15, ,reset,reset,reset,0
+118,15, ,reset,reset,reset,0
+119,15, ,reset,reset,reset,0
+120,15, ,reset,reset,reset,0
+121,15, ,reset,reset,reset,0
+122,15, ,reset,reset,reset,0
+123,15, ,reset,reset,reset,0
+124,15, ,reset,reset,reset,0
+125,15, ,reset,reset,reset,0
+126,15, ,reset,reset,reset,0
+127,15, ,reset,reset,reset,0
+128,15, ,reset,reset,reset,0
+129,15,│,rgb:1f2a24,reset,reset,0
+130,15, ,reset,reset,reset,0
+131,15, ,reset,reset,reset,0
+0,16, ,reset,reset,reset,0
+1,16, ,reset,reset,reset,0
+2,16,│,rgb:6fb3b8,reset,reset,0
+3,16, ,reset,reset,reset,0
+4,16, ,reset,reset,reset,0
+5,16, ,reset,reset,reset,0
+6,16, ,reset,reset,reset,0
+7,16, ,reset,reset,reset,0
+8,16, ,reset,reset,reset,0
+9,16, ,reset,reset,reset,0
+10,16, ,reset,reset,reset,0
+11,16, ,reset,reset,reset,0
+12,16, ,reset,reset,reset,0
+13,16, ,reset,reset,reset,0
+14,16, ,reset,reset,reset,0
+15,16, ,reset,reset,reset,0
+16,16, ,reset,reset,reset,0
+17,16, ,reset,reset,reset,0
+18,16, ,reset,reset,reset,0
+19,16, ,reset,reset,reset,0
+20,16, ,reset,reset,reset,0
+21,16, ,reset,reset,reset,0
+22,16, ,reset,reset,reset,0
+23,16, ,reset,reset,reset,0
+24,16, ,reset,reset,reset,0
+25,16, ,reset,reset,reset,0
+26,16, ,reset,reset,reset,0
+27,16, ,reset,reset,reset,0
+28,16, ,reset,reset,reset,0
+29,16, ,reset,reset,reset,0
+30,16, ,reset,reset,reset,0
+31,16, ,reset,reset,reset,0
+32,16, ,reset,reset,reset,0
+33,16, ,reset,reset,reset,0
+34,16, ,reset,reset,reset,0
+35,16, ,reset,reset,reset,0
+36,16, ,reset,reset,reset,0
+37,16, ,reset,reset,reset,0
+38,16, ,reset,reset,reset,0
+39,16, ,reset,reset,reset,0
+40,16, ,reset,reset,reset,0
+41,16, ,reset,reset,reset,0
+42,16, ,reset,reset,reset,0
+43,16,│,rgb:6fb3b8,reset,reset,0
+44,16, ,reset,reset,reset,0
+45,16,│,rgb:1f2a24,reset,reset,0
+46,16, ,reset,reset,reset,0
+47,16,s,rgb:3d4a44,reset,reset,0
+48,16,o,rgb:3d4a44,reset,reset,0
+49,16,c,rgb:3d4a44,reset,reset,0
+50,16,k,rgb:3d4a44,reset,reset,0
+51,16,e,rgb:3d4a44,reset,reset,0
+52,16,t,rgb:3d4a44,reset,reset,0
+53,16, ,rgb:3d4a44,reset,reset,0
+54,16, ,rgb:3d4a44,reset,reset,0
+55,16,n,rgb:c97a7a,reset,reset,0
+56,16,o,rgb:c97a7a,reset,reset,0
+57,16,t,rgb:c97a7a,reset,reset,0
+58,16, ,rgb:c97a7a,reset,reset,0
+59,16,f,rgb:c97a7a,reset,reset,0
+60,16,o,rgb:c97a7a,reset,reset,0
+61,16,u,rgb:c97a7a,reset,reset,0
+62,16,n,rgb:c97a7a,reset,reset,0
+63,16,d,rgb:c97a7a,reset,reset,0
+64,16, ,reset,reset,reset,0
+65,16, ,reset,reset,reset,0
+66,16, ,reset,reset,reset,0
+67,16, ,reset,reset,reset,0
+68,16, ,reset,reset,reset,0
+69,16, ,reset,reset,reset,0
+70,16, ,reset,reset,reset,0
+71,16, ,reset,reset,reset,0
+72,16, ,reset,reset,reset,0
+73,16, ,reset,reset,reset,0
+74,16, ,reset,reset,reset,0
+75,16, ,reset,reset,reset,0
+76,16, ,reset,reset,reset,0
+77,16, ,reset,reset,reset,0
+78,16, ,reset,reset,reset,0
+79,16, ,reset,reset,reset,0
+80,16, ,reset,reset,reset,0
+81,16, ,reset,reset,reset,0
+82,16, ,reset,reset,reset,0
+83,16, ,reset,reset,reset,0
+84,16, ,reset,reset,reset,0
+85,16, ,reset,reset,reset,0
+86,16,│,rgb:1f2a24,reset,reset,0
+87,16, ,reset,reset,reset,0
+88,16,│,rgb:1f2a24,reset,reset,0
+89,16, ,reset,reset,reset,0
+90,16, ,reset,reset,reset,0
+91,16, ,reset,reset,reset,0
+92,16, ,reset,reset,reset,0
+93,16, ,reset,reset,reset,0
+94,16, ,reset,reset,reset,0
+95,16, ,reset,reset,reset,0
+96,16, ,reset,reset,reset,0
+97,16, ,reset,reset,reset,0
+98,16, ,reset,reset,reset,0
+99,16, ,reset,reset,reset,0
+100,16, ,reset,reset,reset,0
+101,16, ,reset,reset,reset,0
+102,16, ,reset,reset,reset,0
+103,16, ,reset,reset,reset,0
+104,16, ,reset,reset,reset,0
+105,16, ,reset,reset,reset,0
+106,16, ,reset,reset,reset,0
+107,16, ,reset,reset,reset,0
+108,16, ,reset,reset,reset,0
+109,16, ,reset,reset,reset,0
+110,16, ,reset,reset,reset,0
+111,16, ,reset,reset,reset,0
+112,16, ,reset,reset,reset,0
+113,16, ,reset,reset,reset,0
+114,16, ,reset,reset,reset,0
+115,16, ,reset,reset,reset,0
+116,16, ,reset,reset,reset,0
+117,16, ,reset,reset,reset,0
+118,16, ,reset,reset,reset,0
+119,16, ,reset,reset,reset,0
+120,16, ,reset,reset,reset,0
+121,16, ,reset,reset,reset,0
+122,16, ,reset,reset,reset,0
+123,16, ,reset,reset,reset,0
+124,16, ,reset,reset,reset,0
+125,16, ,reset,reset,reset,0
+126,16, ,reset,reset,reset,0
+127,16, ,reset,reset,reset,0
+128,16, ,reset,reset,reset,0
+129,16,│,rgb:1f2a24,reset,reset,0
+130,16, ,reset,reset,reset,0
+131,16, ,reset,reset,reset,0
+0,17, ,reset,reset,reset,0
+1,17, ,reset,reset,reset,0
+2,17,│,rgb:6fb3b8,reset,reset,0
+3,17, ,reset,reset,reset,0
+4,17, ,reset,reset,reset,0
+5,17, ,reset,reset,reset,0
+6,17, ,reset,reset,reset,0
+7,17, ,reset,reset,reset,0
+8,17, ,reset,reset,reset,0
+9,17, ,reset,reset,reset,0
+10,17, ,reset,reset,reset,0
+11,17, ,reset,reset,reset,0
+12,17, ,reset,reset,reset,0
+13,17, ,reset,reset,reset,0
+14,17, ,reset,reset,reset,0
+15,17, ,reset,reset,reset,0
+16,17, ,reset,reset,reset,0
+17,17, ,reset,reset,reset,0
+18,17, ,reset,reset,reset,0
+19,17, ,reset,reset,reset,0
+20,17, ,reset,reset,reset,0
+21,17, ,reset,reset,reset,0
+22,17, ,reset,reset,reset,0
+23,17, ,reset,reset,reset,0
+24,17, ,reset,reset,reset,0
+25,17, ,reset,reset,reset,0
+26,17, ,reset,reset,reset,0
+27,17, ,reset,reset,reset,0
+28,17, ,reset,reset,reset,0
+29,17, ,reset,reset,reset,0
+30,17, ,reset,reset,reset,0
+31,17, ,reset,reset,reset,0
+32,17, ,reset,reset,reset,0
+33,17, ,reset,reset,reset,0
+34,17, ,reset,reset,reset,0
+35,17, ,reset,reset,reset,0
+36,17, ,reset,reset,reset,0
+37,17, ,reset,reset,reset,0
+38,17, ,reset,reset,reset,0
+39,17, ,reset,reset,reset,0
+40,17, ,reset,reset,reset,0
+41,17, ,reset,reset,reset,0
+42,17, ,reset,reset,reset,0
+43,17,│,rgb:6fb3b8,reset,reset,0
+44,17, ,reset,reset,reset,0
+45,17,│,rgb:1f2a24,reset,reset,0
+46,17, ,reset,reset,reset,0
+47,17,k,rgb:3d4a44,reset,reset,0
+48,17,e,rgb:3d4a44,reset,reset,0
+49,17,y,rgb:3d4a44,reset,reset,0
+50,17,s,rgb:3d4a44,reset,reset,0
+51,17, ,rgb:3d4a44,reset,reset,0
+52,17, ,rgb:3d4a44,reset,reset,0
+53,17, ,rgb:3d4a44,reset,reset,0
+54,17, ,rgb:3d4a44,reset,reset,0
+55,17,0,rgb:c7e8c9,reset,reset,0
+56,17, ,rgb:c7e8c9,reset,reset,0
+57,17,l,rgb:c7e8c9,reset,reset,0
+58,17,o,rgb:c7e8c9,reset,reset,0
+59,17,a,rgb:c7e8c9,reset,reset,0
+60,17,d,rgb:c7e8c9,reset,reset,0
+61,17,e,rgb:c7e8c9,reset,reset,0
+62,17,d,rgb:c7e8c9,reset,reset,0
+63,17, ,reset,reset,reset,0
+64,17, ,reset,reset,reset,0
+65,17, ,reset,reset,reset,0
+66,17, ,reset,reset,reset,0
+67,17, ,reset,reset,reset,0
+68,17, ,reset,reset,reset,0
+69,17, ,reset,reset,reset,0
+70,17, ,reset,reset,reset,0
+71,17, ,reset,reset,reset,0
+72,17, ,reset,reset,reset,0
+73,17, ,reset,reset,reset,0
+74,17, ,reset,reset,reset,0
+75,17, ,reset,reset,reset,0
+76,17, ,reset,reset,reset,0
+77,17, ,reset,reset,reset,0
+78,17, ,reset,reset,reset,0
+79,17, ,reset,reset,reset,0
+80,17, ,reset,reset,reset,0
+81,17, ,reset,reset,reset,0
+82,17, ,reset,reset,reset,0
+83,17, ,reset,reset,reset,0
+84,17, ,reset,reset,reset,0
+85,17, ,reset,reset,reset,0
+86,17,│,rgb:1f2a24,reset,reset,0
+87,17, ,reset,reset,reset,0
+88,17,│,rgb:1f2a24,reset,reset,0
+89,17, ,reset,reset,reset,0
+90,17, ,reset,reset,reset,0
+91,17, ,reset,reset,reset,0
+92,17, ,reset,reset,reset,0
+93,17, ,reset,reset,reset,0
+94,17, ,reset,reset,reset,0
+95,17, ,reset,reset,reset,0
+96,17, ,reset,reset,reset,0
+97,17, ,reset,reset,reset,0
+98,17, ,reset,reset,reset,0
+99,17, ,reset,reset,reset,0
+100,17, ,reset,reset,reset,0
+101,17, ,reset,reset,reset,0
+102,17, ,reset,reset,reset,0
+103,17, ,reset,reset,reset,0
+104,17, ,reset,reset,reset,0
+105,17, ,reset,reset,reset,0
+106,17, ,reset,reset,reset,0
+107,17, ,reset,reset,reset,0
+108,17, ,reset,reset,reset,0
+109,17, ,reset,reset,reset,0
+110,17, ,reset,reset,reset,0
+111,17, ,reset,reset,reset,0
+112,17, ,reset,reset,reset,0
+113,17, ,reset,reset,reset,0
+114,17, ,reset,reset,reset,0
+115,17, ,reset,reset,reset,0
+116,17, ,reset,reset,reset,0
+117,17, ,reset,reset,reset,0
+118,17, ,reset,reset,reset,0
+119,17, ,reset,reset,reset,0
+120,17, ,reset,reset,reset,0
+121,17, ,reset,reset,reset,0
+122,17, ,reset,reset,reset,0
+123,17, ,reset,reset,reset,0
+124,17, ,reset,reset,reset,0
+125,17, ,reset,reset,reset,0
+126,17, ,reset,reset,reset,0
+127,17, ,reset,reset,reset,0
+128,17, ,reset,reset,reset,0
+129,17,│,rgb:1f2a24,reset,reset,0
+130,17, ,reset,reset,reset,0
+131,17, ,reset,reset,reset,0
+0,18, ,reset,reset,reset,0
+1,18, ,reset,reset,reset,0
+2,18,│,rgb:6fb3b8,reset,reset,0
+3,18, ,reset,reset,reset,0
+4,18, ,reset,reset,reset,0
+5,18, ,reset,reset,reset,0
+6,18, ,reset,reset,reset,0
+7,18, ,reset,reset,reset,0
+8,18, ,reset,reset,reset,0
+9,18, ,reset,reset,reset,0
+10,18, ,reset,reset,reset,0
+11,18, ,reset,reset,reset,0
+12,18, ,reset,reset,reset,0
+13,18, ,reset,reset,reset,0
+14,18, ,reset,reset,reset,0
+15,18, ,reset,reset,reset,0
+16,18, ,reset,reset,reset,0
+17,18, ,reset,reset,reset,0
+18,18, ,reset,reset,reset,0
+19,18, ,reset,reset,reset,0
+20,18, ,reset,reset,reset,0
+21,18, ,reset,reset,reset,0
+22,18, ,reset,reset,reset,0
+23,18, ,reset,reset,reset,0
+24,18, ,reset,reset,reset,0
+25,18, ,reset,reset,reset,0
+26,18, ,reset,reset,reset,0
+27,18, ,reset,reset,reset,0
+28,18, ,reset,reset,reset,0
+29,18, ,reset,reset,reset,0
+30,18, ,reset,reset,reset,0
+31,18, ,reset,reset,reset,0
+32,18, ,reset,reset,reset,0
+33,18, ,reset,reset,reset,0
+34,18, ,reset,reset,reset,0
+35,18, ,reset,reset,reset,0
+36,18, ,reset,reset,reset,0
+37,18, ,reset,reset,reset,0
+38,18, ,reset,reset,reset,0
+39,18, ,reset,reset,reset,0
+40,18, ,reset,reset,reset,0
+41,18, ,reset,reset,reset,0
+42,18, ,reset,reset,reset,0
+43,18,│,rgb:6fb3b8,reset,reset,0
+44,18, ,reset,reset,reset,0
+45,18,│,rgb:1f2a24,reset,reset,0
+46,18, ,reset,reset,reset,0
+47,18,f,rgb:3d4a44,reset,reset,0
+48,18,o,rgb:3d4a44,reset,reset,0
+49,18,r,rgb:3d4a44,reset,reset,0
+50,18,w,rgb:3d4a44,reset,reset,0
+51,18,a,rgb:3d4a44,reset,reset,0
+52,18,r,rgb:3d4a44,reset,reset,0
+53,18,d,rgb:3d4a44,reset,reset,0
+54,18, ,rgb:3d4a44,reset,reset,0
+55,18,0,rgb:c7e8c9,reset,reset,0
+56,18, ,rgb:c7e8c9,reset,reset,0
+57,18,h,rgb:c7e8c9,reset,reset,0
+58,18,o,rgb:c7e8c9,reset,reset,0
+59,18,s,rgb:c7e8c9,reset,reset,0
+60,18,t,rgb:c7e8c9,reset,reset,0
+61,18,s,rgb:c7e8c9,reset,reset,0
+62,18, ,reset,reset,reset,0
+63,18, ,reset,reset,reset,0
+64,18, ,reset,reset,reset,0
+65,18, ,reset,reset,reset,0
+66,18, ,reset,reset,reset,0
+67,18, ,reset,reset,reset,0
+68,18, ,reset,reset,reset,0
+69,18, ,reset,reset,reset,0
+70,18, ,reset,reset,reset,0
+71,18, ,reset,reset,reset,0
+72,18, ,reset,reset,reset,0
+73,18, ,reset,reset,reset,0
+74,18, ,reset,reset,reset,0
+75,18, ,reset,reset,reset,0
+76,18, ,reset,reset,reset,0
+77,18, ,reset,reset,reset,0
+78,18, ,reset,reset,reset,0
+79,18, ,reset,reset,reset,0
+80,18, ,reset,reset,reset,0
+81,18, ,reset,reset,reset,0
+82,18, ,reset,reset,reset,0
+83,18, ,reset,reset,reset,0
+84,18, ,reset,reset,reset,0
+85,18, ,reset,reset,reset,0
+86,18,│,rgb:1f2a24,reset,reset,0
+87,18, ,reset,reset,reset,0
+88,18,│,rgb:1f2a24,reset,reset,0
+89,18, ,reset,reset,reset,0
+90,18, ,reset,reset,reset,0
+91,18, ,reset,reset,reset,0
+92,18, ,reset,reset,reset,0
+93,18, ,reset,reset,reset,0
+94,18, ,reset,reset,reset,0
+95,18, ,reset,reset,reset,0
+96,18, ,reset,reset,reset,0
+97,18, ,reset,reset,reset,0
+98,18, ,reset,reset,reset,0
+99,18, ,reset,reset,reset,0
+100,18, ,reset,reset,reset,0
+101,18, ,reset,reset,reset,0
+102,18, ,reset,reset,reset,0
+103,18, ,reset,reset,reset,0
+104,18, ,reset,reset,reset,0
+105,18, ,reset,reset,reset,0
+106,18, ,reset,reset,reset,0
+107,18, ,reset,reset,reset,0
+108,18, ,reset,reset,reset,0
+109,18, ,reset,reset,reset,0
+110,18, ,reset,reset,reset,0
+111,18, ,reset,reset,reset,0
+112,18, ,reset,reset,reset,0
+113,18, ,reset,reset,reset,0
+114,18, ,reset,reset,reset,0
+115,18, ,reset,reset,reset,0
+116,18, ,reset,reset,reset,0
+117,18, ,reset,reset,reset,0
+118,18, ,reset,reset,reset,0
+119,18, ,reset,reset,reset,0
+120,18, ,reset,reset,reset,0
+121,18, ,reset,reset,reset,0
+122,18, ,reset,reset,reset,0
+123,18, ,reset,reset,reset,0
+124,18, ,reset,reset,reset,0
+125,18, ,reset,reset,reset,0
+126,18, ,reset,reset,reset,0
+127,18, ,reset,reset,reset,0
+128,18, ,reset,reset,reset,0
+129,18,│,rgb:1f2a24,reset,reset,0
+130,18, ,reset,reset,reset,0
+131,18, ,reset,reset,reset,0
+0,19, ,reset,reset,reset,0
+1,19, ,reset,reset,reset,0
+2,19,│,rgb:6fb3b8,reset,reset,0
+3,19, ,reset,reset,reset,0
+4,19, ,reset,reset,reset,0
+5,19, ,reset,reset,reset,0
+6,19, ,reset,reset,reset,0
+7,19, ,reset,reset,reset,0
+8,19, ,reset,reset,reset,0
+9,19, ,reset,reset,reset,0
+10,19, ,reset,reset,reset,0
+11,19, ,reset,reset,reset,0
+12,19, ,reset,reset,reset,0
+13,19, ,reset,reset,reset,0
+14,19, ,reset,reset,reset,0
+15,19, ,reset,reset,reset,0
+16,19, ,reset,reset,reset,0
+17,19, ,reset,reset,reset,0
+18,19, ,reset,reset,reset,0
+19,19, ,reset,reset,reset,0
+20,19, ,reset,reset,reset,0
+21,19, ,reset,reset,reset,0
+22,19, ,reset,reset,reset,0
+23,19, ,reset,reset,reset,0
+24,19, ,reset,reset,reset,0
+25,19, ,reset,reset,reset,0
+26,19, ,reset,reset,reset,0
+27,19, ,reset,reset,reset,0
+28,19, ,reset,reset,reset,0
+29,19, ,reset,reset,reset,0
+30,19, ,reset,reset,reset,0
+31,19, ,reset,reset,reset,0
+32,19, ,reset,reset,reset,0
+33,19, ,reset,reset,reset,0
+34,19, ,reset,reset,reset,0
+35,19, ,reset,reset,reset,0
+36,19, ,reset,reset,reset,0
+37,19, ,reset,reset,reset,0
+38,19, ,reset,reset,reset,0
+39,19, ,reset,reset,reset,0
+40,19, ,reset,reset,reset,0
+41,19, ,reset,reset,reset,0
+42,19, ,reset,reset,reset,0
+43,19,│,rgb:6fb3b8,reset,reset,0
+44,19, ,reset,reset,reset,0
+45,19,│,rgb:1f2a24,reset,reset,0
+46,19, ,reset,reset,reset,0
+47,19,c,rgb:3d4a44,reset,reset,0
+48,19,o,rgb:3d4a44,reset,reset,0
+49,19,n,rgb:3d4a44,reset,reset,0
+50,19,f,rgb:3d4a44,reset,reset,0
+51,19,i,rgb:3d4a44,reset,reset,0
+52,19,g,rgb:3d4a44,reset,reset,0
+53,19, ,rgb:3d4a44,reset,reset,0
+54,19, ,rgb:3d4a44,reset,reset,0
+55,19,~,rgb:d6e1d4,reset,reset,0
+56,19,/,rgb:d6e1d4,reset,reset,0
+57,19,.,rgb:d6e1d4,reset,reset,0
+58,19,s,rgb:d6e1d4,reset,reset,0
+59,19,s,rgb:d6e1d4,reset,reset,0
+60,19,h,rgb:d6e1d4,reset,reset,0
+61,19,/,rgb:d6e1d4,reset,reset,0
+62,19,c,rgb:d6e1d4,reset,reset,0
+63,19,o,rgb:d6e1d4,reset,reset,0
+64,19,n,rgb:d6e1d4,reset,reset,0
+65,19,f,rgb:d6e1d4,reset,reset,0
+66,19,i,rgb:d6e1d4,reset,reset,0
+67,19,g,rgb:d6e1d4,reset,reset,0
+68,19, ,reset,reset,reset,0
+69,19, ,reset,reset,reset,0
+70,19, ,reset,reset,reset,0
+71,19, ,reset,reset,reset,0
+72,19, ,reset,reset,reset,0
+73,19, ,reset,reset,reset,0
+74,19, ,reset,reset,reset,0
+75,19, ,reset,reset,reset,0
+76,19, ,reset,reset,reset,0
+77,19, ,reset,reset,reset,0
+78,19, ,reset,reset,reset,0
+79,19, ,reset,reset,reset,0
+80,19, ,reset,reset,reset,0
+81,19, ,reset,reset,reset,0
+82,19, ,reset,reset,reset,0
+83,19, ,reset,reset,reset,0
+84,19, ,reset,reset,reset,0
+85,19, ,reset,reset,reset,0
+86,19,│,rgb:1f2a24,reset,reset,0
+87,19, ,reset,reset,reset,0
+88,19,└,rgb:1f2a24,reset,reset,0
+89,19,─,rgb:1f2a24,reset,reset,0
+90,19,─,rgb:1f2a24,reset,reset,0
+91,19,─,rgb:1f2a24,reset,reset,0
+92,19,─,rgb:1f2a24,reset,reset,0
+93,19,─,rgb:1f2a24,reset,reset,0
+94,19,─,rgb:1f2a24,reset,reset,0
+95,19,─,rgb:1f2a24,reset,reset,0
+96,19,─,rgb:1f2a24,reset,reset,0
+97,19,─,rgb:1f2a24,reset,reset,0
+98,19,─,rgb:1f2a24,reset,reset,0
+99,19,─,rgb:1f2a24,reset,reset,0
+100,19,─,rgb:1f2a24,reset,reset,0
+101,19,─,rgb:1f2a24,reset,reset,0
+102,19,─,rgb:1f2a24,reset,reset,0
+103,19,─,rgb:1f2a24,reset,reset,0
+104,19,─,rgb:1f2a24,reset,reset,0
+105,19,─,rgb:1f2a24,reset,reset,0
+106,19,─,rgb:1f2a24,reset,reset,0
+107,19,─,rgb:1f2a24,reset,reset,0
+108,19,─,rgb:1f2a24,reset,reset,0
+109,19,─,rgb:1f2a24,reset,reset,0
+110,19,─,rgb:1f2a24,reset,reset,0
+111,19,─,rgb:1f2a24,reset,reset,0
+112,19,─,rgb:1f2a24,reset,reset,0
+113,19,─,rgb:1f2a24,reset,reset,0
+114,19,─,rgb:1f2a24,reset,reset,0
+115,19,─,rgb:1f2a24,reset,reset,0
+116,19,─,rgb:1f2a24,reset,reset,0
+117,19,─,rgb:1f2a24,reset,reset,0
+118,19,─,rgb:1f2a24,reset,reset,0
+119,19,─,rgb:1f2a24,reset,reset,0
+120,19,─,rgb:1f2a24,reset,reset,0
+121,19,─,rgb:1f2a24,reset,reset,0
+122,19,─,rgb:1f2a24,reset,reset,0
+123,19,─,rgb:1f2a24,reset,reset,0
+124,19,─,rgb:1f2a24,reset,reset,0
+125,19,─,rgb:1f2a24,reset,reset,0
+126,19,─,rgb:1f2a24,reset,reset,0
+127,19,─,rgb:1f2a24,reset,reset,0
+128,19,─,rgb:1f2a24,reset,reset,0
+129,19,┘,rgb:1f2a24,reset,reset,0
+130,19, ,reset,reset,reset,0
+131,19, ,reset,reset,reset,0
+0,20, ,reset,reset,reset,0
+1,20, ,reset,reset,reset,0
+2,20,│,rgb:6fb3b8,reset,reset,0
+3,20, ,reset,reset,reset,0
+4,20, ,reset,reset,reset,0
+5,20, ,reset,reset,reset,0
+6,20, ,reset,reset,reset,0
+7,20, ,reset,reset,reset,0
+8,20, ,reset,reset,reset,0
+9,20, ,reset,reset,reset,0
+10,20, ,reset,reset,reset,0
+11,20, ,reset,reset,reset,0
+12,20, ,reset,reset,reset,0
+13,20, ,reset,reset,reset,0
+14,20, ,reset,reset,reset,0
+15,20, ,reset,reset,reset,0
+16,20, ,reset,reset,reset,0
+17,20, ,reset,reset,reset,0
+18,20, ,reset,reset,reset,0
+19,20, ,reset,reset,reset,0
+20,20, ,reset,reset,reset,0
+21,20, ,reset,reset,reset,0
+22,20, ,reset,reset,reset,0
+23,20, ,reset,reset,reset,0
+24,20, ,reset,reset,reset,0
+25,20, ,reset,reset,reset,0
+26,20, ,reset,reset,reset,0
+27,20, ,reset,reset,reset,0
+28,20, ,reset,reset,reset,0
+29,20, ,reset,reset,reset,0
+30,20, ,reset,reset,reset,0
+31,20, ,reset,reset,reset,0
+32,20, ,reset,reset,reset,0
+33,20, ,reset,reset,reset,0
+34,20, ,reset,reset,reset,0
+35,20, ,reset,reset,reset,0
+36,20, ,reset,reset,reset,0
+37,20, ,reset,reset,reset,0
+38,20, ,reset,reset,reset,0
+39,20, ,reset,reset,reset,0
+40,20, ,reset,reset,reset,0
+41,20, ,reset,reset,reset,0
+42,20, ,reset,reset,reset,0
+43,20,│,rgb:6fb3b8,reset,reset,0
+44,20, ,reset,reset,reset,0
+45,20,└,rgb:1f2a24,reset,reset,0
+46,20,─,rgb:1f2a24,reset,reset,0
+47,20,─,rgb:1f2a24,reset,reset,0
+48,20,─,rgb:1f2a24,reset,reset,0
+49,20,─,rgb:1f2a24,reset,reset,0
+50,20,─,rgb:1f2a24,reset,reset,0
+51,20,─,rgb:1f2a24,reset,reset,0
+52,20,─,rgb:1f2a24,reset,reset,0
+53,20,─,rgb:1f2a24,reset,reset,0
+54,20,─,rgb:1f2a24,reset,reset,0
+55,20,─,rgb:1f2a24,reset,reset,0
+56,20,─,rgb:1f2a24,reset,reset,0
+57,20,─,rgb:1f2a24,reset,reset,0
+58,20,─,rgb:1f2a24,reset,reset,0
+59,20,─,rgb:1f2a24,reset,reset,0
+60,20,─,rgb:1f2a24,reset,reset,0
+61,20,─,rgb:1f2a24,reset,reset,0
+62,20,─,rgb:1f2a24,reset,reset,0
+63,20,─,rgb:1f2a24,reset,reset,0
+64,20,─,rgb:1f2a24,reset,reset,0
+65,20,─,rgb:1f2a24,reset,reset,0
+66,20,─,rgb:1f2a24,reset,reset,0
+67,20,─,rgb:1f2a24,reset,reset,0
+68,20,─,rgb:1f2a24,reset,reset,0
+69,20,─,rgb:1f2a24,reset,reset,0
+70,20,─,rgb:1f2a24,reset,reset,0
+71,20,─,rgb:1f2a24,reset,reset,0
+72,20,─,rgb:1f2a24,reset,reset,0
+73,20,─,rgb:1f2a24,reset,reset,0
+74,20,─,rgb:1f2a24,reset,reset,0
+75,20,─,rgb:1f2a24,reset,reset,0
+76,20,─,rgb:1f2a24,reset,reset,0
+77,20,─,rgb:1f2a24,reset,reset,0
+78,20,─,rgb:1f2a24,reset,reset,0
+79,20,─,rgb:1f2a24,reset,reset,0
+80,20,─,rgb:1f2a24,reset,reset,0
+81,20,─,rgb:1f2a24,reset,reset,0
+82,20,─,rgb:1f2a24,reset,reset,0
+83,20,─,rgb:1f2a24,reset,reset,0
+84,20,─,rgb:1f2a24,reset,reset,0
+85,20,─,rgb:1f2a24,reset,reset,0
+86,20,┘,rgb:1f2a24,reset,reset,0
+87,20, ,reset,reset,reset,0
+88,20,┌,rgb:1f2a24,reset,reset,0
+89,20,─,rgb:1f2a24,reset,reset,0
+90,20,─,rgb:1f2a24,reset,reset,0
+91,20, ,rgb:1f2a24,reset,reset,0
+92,20,p,rgb:c7e8c9,reset,reset,0
+93,20,i,rgb:c7e8c9,reset,reset,0
+94,20,n,rgb:c7e8c9,reset,reset,0
+95,20,g,rgb:c7e8c9,reset,reset,0
+96,20, ,rgb:c7e8c9,reset,reset,0
+97,20,a,rgb:c7e8c9,reset,reset,0
+98,20,l,rgb:c7e8c9,reset,reset,0
+99,20,l,rgb:c7e8c9,reset,reset,0
+100,20, ,rgb:c7e8c9,reset,reset,0
+101,20,h,rgb:c7e8c9,reset,reset,0
+102,20,o,rgb:c7e8c9,reset,reset,0
+103,20,s,rgb:c7e8c9,reset,reset,0
+104,20,t,rgb:c7e8c9,reset,reset,0
+105,20,s,rgb:c7e8c9,reset,reset,0
+106,20, ,rgb:1f2a24,reset,reset,0
+107,20,─,rgb:1f2a24,reset,reset,0
+108,20,─,rgb:1f2a24,reset,reset,0
+109,20,─,rgb:1f2a24,reset,reset,0
+110,20,─,rgb:1f2a24,reset,reset,0
+111,20,─,rgb:1f2a24,reset,reset,0
+112,20,─,rgb:1f2a24,reset,reset,0
+113,20,─,rgb:1f2a24,reset,reset,0
+114,20,─,rgb:1f2a24,reset,reset,0
+115,20,─,rgb:1f2a24,reset,reset,0
+116,20,─,rgb:1f2a24,reset,reset,0
+117,20,─,rgb:1f2a24,reset,reset,0
+118,20,─,rgb:1f2a24,reset,reset,0
+119,20,─,rgb:1f2a24,reset,reset,0
+120,20,─,rgb:1f2a24,reset,reset,0
+121,20,─,rgb:1f2a24,reset,reset,0
+122,20,─,rgb:1f2a24,reset,reset,0
+123,20,─,rgb:1f2a24,reset,reset,0
+124,20,─,rgb:1f2a24,reset,reset,0
+125,20,─,rgb:1f2a24,reset,reset,0
+126,20,─,rgb:1f2a24,reset,reset,0
+127,20,─,rgb:1f2a24,reset,reset,0
+128,20,─,rgb:1f2a24,reset,reset,0
+129,20,┐,rgb:1f2a24,reset,reset,0
+130,20, ,reset,reset,reset,0
+131,20, ,reset,reset,reset,0
+0,21, ,reset,reset,reset,0
+1,21, ,reset,reset,reset,0
+2,21,│,rgb:6fb3b8,reset,reset,0
+3,21, ,reset,reset,reset,0
+4,21, ,reset,reset,reset,0
+5,21, ,reset,reset,reset,0
+6,21, ,reset,reset,reset,0
+7,21, ,reset,reset,reset,0
+8,21, ,reset,reset,reset,0
+9,21, ,reset,reset,reset,0
+10,21, ,reset,reset,reset,0
+11,21, ,reset,reset,reset,0
+12,21, ,reset,reset,reset,0
+13,21, ,reset,reset,reset,0
+14,21, ,reset,reset,reset,0
+15,21, ,reset,reset,reset,0
+16,21, ,reset,reset,reset,0
+17,21, ,reset,reset,reset,0
+18,21, ,reset,reset,reset,0
+19,21, ,reset,reset,reset,0
+20,21, ,reset,reset,reset,0
+21,21, ,reset,reset,reset,0
+22,21, ,reset,reset,reset,0
+23,21, ,reset,reset,reset,0
+24,21, ,reset,reset,reset,0
+25,21, ,reset,reset,reset,0
+26,21, ,reset,reset,reset,0
+27,21, ,reset,reset,reset,0
+28,21, ,reset,reset,reset,0
+29,21, ,reset,reset,reset,0
+30,21, ,reset,reset,reset,0
+31,21, ,reset,reset,reset,0
+32,21, ,reset,reset,reset,0
+33,21, ,reset,reset,reset,0
+34,21, ,reset,reset,reset,0
+35,21, ,reset,reset,reset,0
+36,21, ,reset,reset,reset,0
+37,21, ,reset,reset,reset,0
+38,21, ,reset,reset,reset,0
+39,21, ,reset,reset,reset,0
+40,21, ,reset,reset,reset,0
+41,21, ,reset,reset,reset,0
+42,21, ,reset,reset,reset,0
+43,21,│,rgb:6fb3b8,reset,reset,0
+44,21, ,reset,reset,reset,0
+45,21,┌,rgb:1f2a24,reset,reset,0
+46,21,─,rgb:1f2a24,reset,reset,0
+47,21,─,rgb:1f2a24,reset,reset,0
+48,21, ,rgb:1f2a24,reset,reset,0
+49,21,l,rgb:c7e8c9,reset,reset,0
+50,21,a,rgb:c7e8c9,reset,reset,0
+51,21,t,rgb:c7e8c9,reset,reset,0
+52,21,e,rgb:c7e8c9,reset,reset,0
+53,21,n,rgb:c7e8c9,reset,reset,0
+54,21,c,rgb:c7e8c9,reset,reset,0
+55,21,y,rgb:c7e8c9,reset,reset,0
+56,21, ,rgb:c7e8c9,reset,reset,0
+57,21,·,rgb:c7e8c9,reset,reset,0
+58,21, ,rgb:c7e8c9,reset,reset,0
+59,21,w,rgb:c7e8c9,reset,reset,0
+60,21,e,rgb:c7e8c9,reset,reset,0
+61,21,b,rgb:c7e8c9,reset,reset,0
+62,21,-,rgb:c7e8c9,reset,reset,0
+63,21,p,rgb:c7e8c9,reset,reset,0
+64,21,r,rgb:c7e8c9,reset,reset,0
+65,21,o,rgb:c7e8c9,reset,reset,0
+66,21,d,rgb:c7e8c9,reset,reset,0
+67,21, ,rgb:1f2a24,reset,reset,0
+68,21,─,rgb:1f2a24,reset,reset,0
+69,21,─,rgb:1f2a24,reset,reset,0
+70,21,─,rgb:1f2a24,reset,reset,0
+71,21,─,rgb:1f2a24,reset,reset,0
+72,21,─,rgb:1f2a24,reset,reset,0
+73,21,─,rgb:1f2a24,reset,reset,0
+74,21,─,rgb:1f2a24,reset,reset,0
+75,21,─,rgb:1f2a24,reset,reset,0
+76,21,─,rgb:1f2a24,reset,reset,0
+77,21,─,rgb:1f2a24,reset,reset,0
+78,21,─,rgb:1f2a24,reset,reset,0
+79,21,─,rgb:1f2a24,reset,reset,0
+80,21,─,rgb:1f2a24,reset,reset,0
+81,21,─,rgb:1f2a24,reset,reset,0
+82,21,─,rgb:1f2a24,reset,reset,0
+83,21,─,rgb:1f2a24,reset,reset,0
+84,21,─,rgb:1f2a24,reset,reset,0
+85,21,─,rgb:1f2a24,reset,reset,0
+86,21,┐,rgb:1f2a24,reset,reset,0
+87,21, ,reset,reset,reset,0
+88,21,│,rgb:1f2a24,reset,reset,0
+89,21, ,reset,reset,reset,0
+90,21,▁,rgb:3d4a44,reset,reset,0
+91,21,▁,rgb:3d4a44,reset,reset,0
+92,21,▁,rgb:3d4a44,reset,reset,0
+93,21,▁,rgb:3d4a44,reset,reset,0
+94,21,▁,rgb:3d4a44,reset,reset,0
+95,21,▁,rgb:3d4a44,reset,reset,0
+96,21,▁,rgb:3d4a44,reset,reset,0
+97,21,▁,rgb:3d4a44,reset,reset,0
+98,21,▁,rgb:3d4a44,reset,reset,0
+99,21,▁,rgb:3d4a44,reset,reset,0
+100,21,▁,rgb:3d4a44,reset,reset,0
+101,21,▁,rgb:3d4a44,reset,reset,0
+102,21,▁,rgb:3d4a44,reset,reset,0
+103,21,▁,rgb:3d4a44,reset,reset,0
+104,21,▁,rgb:3d4a44,reset,reset,0
+105,21,▁,rgb:3d4a44,reset,reset,0
+106,21,▁,rgb:3d4a44,reset,reset,0
+107,21,▁,rgb:3d4a44,reset,reset,0
+108,21,▁,rgb:3d4a44,reset,reset,0
+109,21,▁,rgb:3d4a44,reset,reset,0
+110,21, ,reset,reset,reset,0
+111,21, ,reset,reset,reset,0
+112,21, ,reset,reset,reset,0
+113,21, ,reset,reset,reset,0
+114,21, ,reset,reset,reset,0
+115,21, ,reset,reset,reset,0
+116,21, ,reset,reset,reset,0
+117,21, ,reset,reset,reset,0
+118,21, ,reset,reset,reset,0
+119,21, ,reset,reset,reset,0
+120,21, ,reset,reset,reset,0
+121,21, ,reset,reset,reset,0
+122,21, ,reset,reset,reset,0
+123,21, ,reset,reset,reset,0
+124,21, ,reset,reset,reset,0
+125,21, ,reset,reset,reset,0
+126,21, ,reset,reset,reset,0
+127,21, ,reset,reset,reset,0
+128,21, ,reset,reset,reset,0
+129,21,│,rgb:1f2a24,reset,reset,0
+130,21, ,reset,reset,reset,0
+131,21, ,reset,reset,reset,0
+0,22, ,reset,reset,reset,0
+1,22, ,reset,reset,reset,0
+2,22,│,rgb:6fb3b8,reset,reset,0
+3,22, ,reset,reset,reset,0
+4,22, ,reset,reset,reset,0
+5,22, ,reset,reset,reset,0
+6,22, ,reset,reset,reset,0
+7,22, ,reset,reset,reset,0
+8,22, ,reset,reset,reset,0
+9,22, ,reset,reset,reset,0
+10,22, ,reset,reset,reset,0
+11,22, ,reset,reset,reset,0
+12,22, ,reset,reset,reset,0
+13,22, ,reset,reset,reset,0
+14,22, ,reset,reset,reset,0
+15,22, ,reset,reset,reset,0
+16,22, ,reset,reset,reset,0
+17,22, ,reset,reset,reset,0
+18,22, ,reset,reset,reset,0
+19,22, ,reset,reset,reset,0
+20,22, ,reset,reset,reset,0
+21,22, ,reset,reset,reset,0
+22,22, ,reset,reset,reset,0
+23,22, ,reset,reset,reset,0
+24,22, ,reset,reset,reset,0
+25,22, ,reset,reset,reset,0
+26,22, ,reset,reset,reset,0
+27,22, ,reset,reset,reset,0
+28,22, ,reset,reset,reset,0
+29,22, ,reset,reset,reset,0
+30,22, ,reset,reset,reset,0
+31,22, ,reset,reset,reset,0
+32,22, ,reset,reset,reset,0
+33,22, ,reset,reset,reset,0
+34,22, ,reset,reset,reset,0
+35,22, ,reset,reset,reset,0
+36,22, ,reset,reset,reset,0
+37,22, ,reset,reset,reset,0
+38,22, ,reset,reset,reset,0
+39,22, ,reset,reset,reset,0
+40,22, ,reset,reset,reset,0
+41,22, ,reset,reset,reset,0
+42,22, ,reset,reset,reset,0
+43,22,│,rgb:6fb3b8,reset,reset,0
+44,22, ,reset,reset,reset,0
+45,22,│,rgb:1f2a24,reset,reset,0
+46,22, ,reset,reset,reset,0
+47,22,▁,rgb:3d4a44,reset,reset,0
+48,22,▁,rgb:3d4a44,reset,reset,0
+49,22,▁,rgb:3d4a44,reset,reset,0
+50,22,▁,rgb:3d4a44,reset,reset,0
+51,22,▁,rgb:3d4a44,reset,reset,0
+52,22,▁,rgb:3d4a44,reset,reset,0
+53,22,▁,rgb:3d4a44,reset,reset,0
+54,22,▁,rgb:3d4a44,reset,reset,0
+55,22,▁,rgb:3d4a44,reset,reset,0
+56,22,▁,rgb:3d4a44,reset,reset,0
+57,22,▁,rgb:3d4a44,reset,reset,0
+58,22,▁,rgb:3d4a44,reset,reset,0
+59,22,▁,rgb:3d4a44,reset,reset,0
+60,22,▁,rgb:3d4a44,reset,reset,0
+61,22,▁,rgb:3d4a44,reset,reset,0
+62,22,▁,rgb:3d4a44,reset,reset,0
+63,22,▁,rgb:3d4a44,reset,reset,0
+64,22,▁,rgb:3d4a44,reset,reset,0
+65,22,▁,rgb:3d4a44,reset,reset,0
+66,22,▁,rgb:3d4a44,reset,reset,0
+67,22, ,reset,reset,reset,0
+68,22, ,reset,reset,reset,0
+69,22, ,reset,reset,reset,0
+70,22, ,reset,reset,reset,0
+71,22, ,reset,reset,reset,0
+72,22, ,reset,reset,reset,0
+73,22, ,reset,reset,reset,0
+74,22, ,reset,reset,reset,0
+75,22, ,reset,reset,reset,0
+76,22, ,reset,reset,reset,0
+77,22, ,reset,reset,reset,0
+78,22, ,reset,reset,reset,0
+79,22, ,reset,reset,reset,0
+80,22, ,reset,reset,reset,0
+81,22, ,reset,reset,reset,0
+82,22, ,reset,reset,reset,0
+83,22, ,reset,reset,reset,0
+84,22, ,reset,reset,reset,0
+85,22, ,reset,reset,reset,0
+86,22,│,rgb:1f2a24,reset,reset,0
+87,22, ,reset,reset,reset,0
+88,22,│,rgb:1f2a24,reset,reset,0
+89,22, ,reset,reset,reset,0
+90,22,w,rgb:3d4a44,reset,reset,0
+91,22,a,rgb:3d4a44,reset,reset,0
+92,22,i,rgb:3d4a44,reset,reset,0
+93,22,t,rgb:3d4a44,reset,reset,0
+94,22,i,rgb:3d4a44,reset,reset,0
+95,22,n,rgb:3d4a44,reset,reset,0
+96,22,g,rgb:3d4a44,reset,reset,0
+97,22, ,rgb:3d4a44,reset,reset,0
+98,22,f,rgb:3d4a44,reset,reset,0
+99,22,o,rgb:3d4a44,reset,reset,0
+100,22,r,rgb:3d4a44,reset,reset,0
+101,22, ,rgb:3d4a44,reset,reset,0
+102,22,p,rgb:3d4a44,reset,reset,0
+103,22,i,rgb:3d4a44,reset,reset,0
+104,22,n,rgb:3d4a44,reset,reset,0
+105,22,g,rgb:3d4a44,reset,reset,0
+106,22, ,rgb:3d4a44,reset,reset,0
+107,22,d,rgb:3d4a44,reset,reset,0
+108,22,a,rgb:3d4a44,reset,reset,0
+109,22,t,rgb:3d4a44,reset,reset,0
+110,22,a,rgb:3d4a44,reset,reset,0
+111,22,.,rgb:3d4a44,reset,reset,0
+112,22,.,rgb:3d4a44,reset,reset,0
+113,22,.,rgb:3d4a44,reset,reset,0
+114,22, ,reset,reset,reset,0
+115,22, ,reset,reset,reset,0
+116,22, ,reset,reset,reset,0
+117,22, ,reset,reset,reset,0
+118,22, ,reset,reset,reset,0
+119,22, ,reset,reset,reset,0
+120,22, ,reset,reset,reset,0
+121,22, ,reset,reset,reset,0
+122,22, ,reset,reset,reset,0
+123,22, ,reset,reset,reset,0
+124,22, ,reset,reset,reset,0
+125,22, ,reset,reset,reset,0
+126,22, ,reset,reset,reset,0
+127,22, ,reset,reset,reset,0
+128,22, ,reset,reset,reset,0
+129,22,│,rgb:1f2a24,reset,reset,0
+130,22, ,reset,reset,reset,0
+131,22, ,reset,reset,reset,0
+0,23, ,reset,reset,reset,0
+1,23, ,reset,reset,reset,0
+2,23,│,rgb:6fb3b8,reset,reset,0
+3,23, ,reset,reset,reset,0
+4,23, ,reset,reset,reset,0
+5,23, ,reset,reset,reset,0
+6,23, ,reset,reset,reset,0
+7,23, ,reset,reset,reset,0
+8,23, ,reset,reset,reset,0
+9,23, ,reset,reset,reset,0
+10,23, ,reset,reset,reset,0
+11,23, ,reset,reset,reset,0
+12,23, ,reset,reset,reset,0
+13,23, ,reset,reset,reset,0
+14,23, ,reset,reset,reset,0
+15,23, ,reset,reset,reset,0
+16,23, ,reset,reset,reset,0
+17,23, ,reset,reset,reset,0
+18,23, ,reset,reset,reset,0
+19,23, ,reset,reset,reset,0
+20,23, ,reset,reset,reset,0
+21,23, ,reset,reset,reset,0
+22,23, ,reset,reset,reset,0
+23,23, ,reset,reset,reset,0
+24,23, ,reset,reset,reset,0
+25,23, ,reset,reset,reset,0
+26,23, ,reset,reset,reset,0
+27,23, ,reset,reset,reset,0
+28,23, ,reset,reset,reset,0
+29,23, ,reset,reset,reset,0
+30,23, ,reset,reset,reset,0
+31,23, ,reset,reset,reset,0
+32,23, ,reset,reset,reset,0
+33,23, ,reset,reset,reset,0
+34,23, ,reset,reset,reset,0
+35,23, ,reset,reset,reset,0
+36,23, ,reset,reset,reset,0
+37,23, ,reset,reset,reset,0
+38,23, ,reset,reset,reset,0
+39,23, ,reset,reset,reset,0
+40,23, ,reset,reset,reset,0
+41,23, ,reset,reset,reset,0
+42,23, ,reset,reset,reset,0
+43,23,│,rgb:6fb3b8,reset,reset,0
+44,23, ,reset,reset,reset,0
+45,23,│,rgb:1f2a24,reset,reset,0
+46,23, ,reset,reset,reset,0
+47,23,n,rgb:3d4a44,reset,reset,0
+48,23,o,rgb:3d4a44,reset,reset,0
+49,23, ,rgb:3d4a44,reset,reset,0
+50,23,l,rgb:3d4a44,reset,reset,0
+51,23,a,rgb:3d4a44,reset,reset,0
+52,23,t,rgb:3d4a44,reset,reset,0
+53,23,e,rgb:3d4a44,reset,reset,0
+54,23,n,rgb:3d4a44,reset,reset,0
+55,23,c,rgb:3d4a44,reset,reset,0
+56,23,y,rgb:3d4a44,reset,reset,0
+57,23, ,rgb:3d4a44,reset,reset,0
+58,23,d,rgb:3d4a44,reset,reset,0
+59,23,a,rgb:3d4a44,reset,reset,0
+60,23,t,rgb:3d4a44,reset,reset,0
+61,23,a,rgb:3d4a44,reset,reset,0
+62,23, ,reset,reset,reset,0
+63,23, ,reset,reset,reset,0
+64,23, ,reset,reset,reset,0
+65,23, ,reset,reset,reset,0
+66,23, ,reset,reset,reset,0
+67,23, ,reset,reset,reset,0
+68,23, ,reset,reset,reset,0
+69,23, ,reset,reset,reset,0
+70,23, ,reset,reset,reset,0
+71,23, ,reset,reset,reset,0
+72,23, ,reset,reset,reset,0
+73,23, ,reset,reset,reset,0
+74,23, ,reset,reset,reset,0
+75,23, ,reset,reset,reset,0
+76,23, ,reset,reset,reset,0
+77,23, ,reset,reset,reset,0
+78,23, ,reset,reset,reset,0
+79,23, ,reset,reset,reset,0
+80,23, ,reset,reset,reset,0
+81,23, ,reset,reset,reset,0
+82,23, ,reset,reset,reset,0
+83,23, ,reset,reset,reset,0
+84,23, ,reset,reset,reset,0
+85,23, ,reset,reset,reset,0
+86,23,│,rgb:1f2a24,reset,reset,0
+87,23, ,reset,reset,reset,0
+88,23,│,rgb:1f2a24,reset,reset,0
+89,23, ,reset,reset,reset,0
+90,23, ,reset,reset,reset,0
+91,23, ,reset,reset,reset,0
+92,23, ,reset,reset,reset,0
+93,23, ,reset,reset,reset,0
+94,23, ,reset,reset,reset,0
+95,23, ,reset,reset,reset,0
+96,23, ,reset,reset,reset,0
+97,23, ,reset,reset,reset,0
+98,23, ,reset,reset,reset,0
+99,23, ,reset,reset,reset,0
+100,23, ,reset,reset,reset,0
+101,23, ,reset,reset,reset,0
+102,23, ,reset,reset,reset,0
+103,23, ,reset,reset,reset,0
+104,23, ,reset,reset,reset,0
+105,23, ,reset,reset,reset,0
+106,23, ,reset,reset,reset,0
+107,23, ,reset,reset,reset,0
+108,23, ,reset,reset,reset,0
+109,23, ,reset,reset,reset,0
+110,23, ,reset,reset,reset,0
+111,23, ,reset,reset,reset,0
+112,23, ,reset,reset,reset,0
+113,23, ,reset,reset,reset,0
+114,23, ,reset,reset,reset,0
+115,23, ,reset,reset,reset,0
+116,23, ,reset,reset,reset,0
+117,23, ,reset,reset,reset,0
+118,23, ,reset,reset,reset,0
+119,23, ,reset,reset,reset,0
+120,23, ,reset,reset,reset,0
+121,23, ,reset,reset,reset,0
+122,23, ,reset,reset,reset,0
+123,23, ,reset,reset,reset,0
+124,23, ,reset,reset,reset,0
+125,23, ,reset,reset,reset,0
+126,23, ,reset,reset,reset,0
+127,23, ,reset,reset,reset,0
+128,23, ,reset,reset,reset,0
+129,23,│,rgb:1f2a24,reset,reset,0
+130,23, ,reset,reset,reset,0
+131,23, ,reset,reset,reset,0
+0,24, ,reset,reset,reset,0
+1,24, ,reset,reset,reset,0
+2,24,│,rgb:6fb3b8,reset,reset,0
+3,24, ,reset,reset,reset,0
+4,24, ,reset,reset,reset,0
+5,24, ,reset,reset,reset,0
+6,24, ,reset,reset,reset,0
+7,24, ,reset,reset,reset,0
+8,24, ,reset,reset,reset,0
+9,24, ,reset,reset,reset,0
+10,24, ,reset,reset,reset,0
+11,24, ,reset,reset,reset,0
+12,24, ,reset,reset,reset,0
+13,24, ,reset,reset,reset,0
+14,24, ,reset,reset,reset,0
+15,24, ,reset,reset,reset,0
+16,24, ,reset,reset,reset,0
+17,24, ,reset,reset,reset,0
+18,24, ,reset,reset,reset,0
+19,24, ,reset,reset,reset,0
+20,24, ,reset,reset,reset,0
+21,24, ,reset,reset,reset,0
+22,24, ,reset,reset,reset,0
+23,24, ,reset,reset,reset,0
+24,24, ,reset,reset,reset,0
+25,24, ,reset,reset,reset,0
+26,24, ,reset,reset,reset,0
+27,24, ,reset,reset,reset,0
+28,24, ,reset,reset,reset,0
+29,24, ,reset,reset,reset,0
+30,24, ,reset,reset,reset,0
+31,24, ,reset,reset,reset,0
+32,24, ,reset,reset,reset,0
+33,24, ,reset,reset,reset,0
+34,24, ,reset,reset,reset,0
+35,24, ,reset,reset,reset,0
+36,24, ,reset,reset,reset,0
+37,24, ,reset,reset,reset,0
+38,24, ,reset,reset,reset,0
+39,24, ,reset,reset,reset,0
+40,24, ,reset,reset,reset,0
+41,24, ,reset,reset,reset,0
+42,24, ,reset,reset,reset,0
+43,24,│,rgb:6fb3b8,reset,reset,0
+44,24, ,reset,reset,reset,0
+45,24,└,rgb:1f2a24,reset,reset,0
+46,24,─,rgb:1f2a24,reset,reset,0
+47,24,─,rgb:1f2a24,reset,reset,0
+48,24,─,rgb:1f2a24,reset,reset,0
+49,24,─,rgb:1f2a24,reset,reset,0
+50,24,─,rgb:1f2a24,reset,reset,0
+51,24,─,rgb:1f2a24,reset,reset,0
+52,24,─,rgb:1f2a24,reset,reset,0
+53,24,─,rgb:1f2a24,reset,reset,0
+54,24,─,rgb:1f2a24,reset,reset,0
+55,24,─,rgb:1f2a24,reset,reset,0
+56,24,─,rgb:1f2a24,reset,reset,0
+57,24,─,rgb:1f2a24,reset,reset,0
+58,24,─,rgb:1f2a24,reset,reset,0
+59,24,─,rgb:1f2a24,reset,reset,0
+60,24,─,rgb:1f2a24,reset,reset,0
+61,24,─,rgb:1f2a24,reset,reset,0
+62,24,─,rgb:1f2a24,reset,reset,0
+63,24,─,rgb:1f2a24,reset,reset,0
+64,24,─,rgb:1f2a24,reset,reset,0
+65,24,─,rgb:1f2a24,reset,reset,0
+66,24,─,rgb:1f2a24,reset,reset,0
+67,24,─,rgb:1f2a24,reset,reset,0
+68,24,─,rgb:1f2a24,reset,reset,0
+69,24,─,rgb:1f2a24,reset,reset,0
+70,24,─,rgb:1f2a24,reset,reset,0
+71,24,─,rgb:1f2a24,reset,reset,0
+72,24,─,rgb:1f2a24,reset,reset,0
+73,24,─,rgb:1f2a24,reset,reset,0
+74,24,─,rgb:1f2a24,reset,reset,0
+75,24,─,rgb:1f2a24,reset,reset,0
+76,24,─,rgb:1f2a24,reset,reset,0
+77,24,─,rgb:1f2a24,reset,reset,0
+78,24,─,rgb:1f2a24,reset,reset,0
+79,24,─,rgb:1f2a24,reset,reset,0
+80,24,─,rgb:1f2a24,reset,reset,0
+81,24,─,rgb:1f2a24,reset,reset,0
+82,24,─,rgb:1f2a24,reset,reset,0
+83,24,─,rgb:1f2a24,reset,reset,0
+84,24,─,rgb:1f2a24,reset,reset,0
+85,24,─,rgb:1f2a24,reset,reset,0
+86,24,┘,rgb:1f2a24,reset,reset,0
+87,24, ,reset,reset,reset,0
+88,24,└,rgb:1f2a24,reset,reset,0
+89,24,─,rgb:1f2a24,reset,reset,0
+90,24,─,rgb:1f2a24,reset,reset,0
+91,24,─,rgb:1f2a24,reset,reset,0
+92,24,─,rgb:1f2a24,reset,reset,0
+93,24,─,rgb:1f2a24,reset,reset,0
+94,24,─,rgb:1f2a24,reset,reset,0
+95,24,─,rgb:1f2a24,reset,reset,0
+96,24,─,rgb:1f2a24,reset,reset,0
+97,24,─,rgb:1f2a24,reset,reset,0
+98,24,─,rgb:1f2a24,reset,reset,0
+99,24,─,rgb:1f2a24,reset,reset,0
+100,24,─,rgb:1f2a24,reset,reset,0
+101,24,─,rgb:1f2a24,reset,reset,0
+102,24,─,rgb:1f2a24,reset,reset,0
+103,24,─,rgb:1f2a24,reset,reset,0
+104,24,─,rgb:1f2a24,reset,reset,0
+105,24,─,rgb:1f2a24,reset,reset,0
+106,24,─,rgb:1f2a24,reset,reset,0
+107,24,─,rgb:1f2a24,reset,reset,0
+108,24,─,rgb:1f2a24,reset,reset,0
+109,24,─,rgb:1f2a24,reset,reset,0
+110,24,─,rgb:1f2a24,reset,reset,0
+111,24,─,rgb:1f2a24,reset,reset,0
+112,24,─,rgb:1f2a24,reset,reset,0
+113,24,─,rgb:1f2a24,reset,reset,0
+114,24,─,rgb:1f2a24,reset,reset,0
+115,24,─,rgb:1f2a24,reset,reset,0
+116,24,─,rgb:1f2a24,reset,reset,0
+117,24,─,rgb:1f2a24,reset,reset,0
+118,24,─,rgb:1f2a24,reset,reset,0
+119,24,─,rgb:1f2a24,reset,reset,0
+120,24,─,rgb:1f2a24,reset,reset,0
+121,24,─,rgb:1f2a24,reset,reset,0
+122,24,─,rgb:1f2a24,reset,reset,0
+123,24,─,rgb:1f2a24,reset,reset,0
+124,24,─,rgb:1f2a24,reset,reset,0
+125,24,─,rgb:1f2a24,reset,reset,0
+126,24,─,rgb:1f2a24,reset,reset,0
+127,24,─,rgb:1f2a24,reset,reset,0
+128,24,─,rgb:1f2a24,reset,reset,0
+129,24,┘,rgb:1f2a24,reset,reset,0
+130,24, ,reset,reset,reset,0
+131,24, ,reset,reset,reset,0
+0,25, ,reset,reset,reset,0
+1,25, ,reset,reset,reset,0
+2,25,│,rgb:6fb3b8,reset,reset,0
+3,25, ,reset,reset,reset,0
+4,25, ,reset,reset,reset,0
+5,25, ,reset,reset,reset,0
+6,25, ,reset,reset,reset,0
+7,25, ,reset,reset,reset,0
+8,25, ,reset,reset,reset,0
+9,25, ,reset,reset,reset,0
+10,25, ,reset,reset,reset,0
+11,25, ,reset,reset,reset,0
+12,25, ,reset,reset,reset,0
+13,25, ,reset,reset,reset,0
+14,25, ,reset,reset,reset,0
+15,25, ,reset,reset,reset,0
+16,25, ,reset,reset,reset,0
+17,25, ,reset,reset,reset,0
+18,25, ,reset,reset,reset,0
+19,25, ,reset,reset,reset,0
+20,25, ,reset,reset,reset,0
+21,25, ,reset,reset,reset,0
+22,25, ,reset,reset,reset,0
+23,25, ,reset,reset,reset,0
+24,25, ,reset,reset,reset,0
+25,25, ,reset,reset,reset,0
+26,25, ,reset,reset,reset,0
+27,25, ,reset,reset,reset,0
+28,25, ,reset,reset,reset,0
+29,25, ,reset,reset,reset,0
+30,25, ,reset,reset,reset,0
+31,25, ,reset,reset,reset,0
+32,25, ,reset,reset,reset,0
+33,25, ,reset,reset,reset,0
+34,25, ,reset,reset,reset,0
+35,25, ,reset,reset,reset,0
+36,25, ,reset,reset,reset,0
+37,25, ,reset,reset,reset,0
+38,25, ,reset,reset,reset,0
+39,25, ,reset,reset,reset,0
+40,25, ,reset,reset,reset,0
+41,25, ,reset,reset,reset,0
+42,25, ,reset,reset,reset,0
+43,25,│,rgb:6fb3b8,reset,reset,0
+44,25, ,reset,reset,reset,0
+45,25,┌,rgb:1f2a24,reset,reset,0
+46,25,─,rgb:1f2a24,reset,reset,0
+47,25,─,rgb:1f2a24,reset,reset,0
+48,25, ,rgb:1f2a24,reset,reset,0
+49,25,s,rgb:c7e8c9,reset,reset,0
+50,25,s,rgb:c7e8c9,reset,reset,0
+51,25,h,rgb:c7e8c9,reset,reset,0
+52,25, ,rgb:c7e8c9,reset,reset,0
+53,25,l,rgb:c7e8c9,reset,reset,0
+54,25,o,rgb:c7e8c9,reset,reset,0
+55,25,g,rgb:c7e8c9,reset,reset,0
+56,25, ,rgb:c7e8c9,reset,reset,0
+57,25,·,rgb:c7e8c9,reset,reset,0
+58,25, ,rgb:c7e8c9,reset,reset,0
+59,25,w,rgb:c7e8c9,reset,reset,0
+60,25,e,rgb:c7e8c9,reset,reset,0
+61,25,b,rgb:c7e8c9,reset,reset,0
+62,25,-,rgb:c7e8c9,reset,reset,0
+63,25,p,rgb:c7e8c9,reset,reset,0
+64,25,r,rgb:c7e8c9,reset,reset,0
+65,25,o,rgb:c7e8c9,reset,reset,0
+66,25,d,rgb:c7e8c9,reset,reset,0
+67,25, ,rgb:1f2a24,reset,reset,0
+68,25,─,rgb:1f2a24,reset,reset,0
+69,25,─,rgb:1f2a24,reset,reset,0
+70,25,─,rgb:1f2a24,reset,reset,0
+71,25,─,rgb:1f2a24,reset,reset,0
+72,25,─,rgb:1f2a24,reset,reset,0
+73,25,─,rgb:1f2a24,reset,reset,0
+74,25,─,rgb:1f2a24,reset,reset,0
+75,25,─,rgb:1f2a24,reset,reset,0
+76,25,─,rgb:1f2a24,reset,reset,0
+77,25,─,rgb:1f2a24,reset,reset,0
+78,25,─,rgb:1f2a24,reset,reset,0
+79,25,─,rgb:1f2a24,reset,reset,0
+80,25,─,rgb:1f2a24,reset,reset,0
+81,25,─,rgb:1f2a24,reset,reset,0
+82,25,─,rgb:1f2a24,reset,reset,0
+83,25,─,rgb:1f2a24,reset,reset,0
+84,25,─,rgb:1f2a24,reset,reset,0
+85,25,─,rgb:1f2a24,reset,reset,0
+86,25,─,rgb:1f2a24,reset,reset,0
+87,25,─,rgb:1f2a24,reset,reset,0
+88,25,─,rgb:1f2a24,reset,reset,0
+89,25,─,rgb:1f2a24,reset,reset,0
+90,25,─,rgb:1f2a24,reset,reset,0
+91,25,─,rgb:1f2a24,reset,reset,0
+92,25,─,rgb:1f2a24,reset,reset,0
+93,25,─,rgb:1f2a24,reset,reset,0
+94,25,─,rgb:1f2a24,reset,reset,0
+95,25,─,rgb:1f2a24,reset,reset,0
+96,25,─,rgb:1f2a24,reset,reset,0
+97,25,─,rgb:1f2a24,reset,reset,0
+98,25,─,rgb:1f2a24,reset,reset,0
+99,25,─,rgb:1f2a24,reset,reset,0
+100,25,─,rgb:1f2a24,reset,reset,0
+101,25,─,rgb:1f2a24,reset,reset,0
+102,25,─,rgb:1f2a24,reset,reset,0
+103,25,─,rgb:1f2a24,reset,reset,0
+104,25,─,rgb:1f2a24,reset,reset,0
+105,25,─,rgb:1f2a24,reset,reset,0
+106,25,─,rgb:1f2a24,reset,reset,0
+107,25,─,rgb:1f2a24,reset,reset,0
+108,25,─,rgb:1f2a24,reset,reset,0
+109,25,─,rgb:1f2a24,reset,reset,0
+110,25,─,rgb:1f2a24,reset,reset,0
+111,25,─,rgb:1f2a24,reset,reset,0
+112,25,─,rgb:1f2a24,reset,reset,0
+113,25,─,rgb:1f2a24,reset,reset,0
+114,25,─,rgb:1f2a24,reset,reset,0
+115,25,─,rgb:1f2a24,reset,reset,0
+116,25,─,rgb:1f2a24,reset,reset,0
+117,25,─,rgb:1f2a24,reset,reset,0
+118,25,─,rgb:1f2a24,reset,reset,0
+119,25,─,rgb:1f2a24,reset,reset,0
+120,25,─,rgb:1f2a24,reset,reset,0
+121,25,─,rgb:1f2a24,reset,reset,0
+122,25,─,rgb:1f2a24,reset,reset,0
+123,25,─,rgb:1f2a24,reset,reset,0
+124,25,─,rgb:1f2a24,reset,reset,0
+125,25,─,rgb:1f2a24,reset,reset,0
+126,25,─,rgb:1f2a24,reset,reset,0
+127,25,─,rgb:1f2a24,reset,reset,0
+128,25,─,rgb:1f2a24,reset,reset,0
+129,25,┐,rgb:1f2a24,reset,reset,0
+130,25, ,reset,reset,reset,0
+131,25, ,reset,reset,reset,0
+0,26, ,reset,reset,reset,0
+1,26, ,reset,reset,reset,0
+2,26,│,rgb:6fb3b8,reset,reset,0
+3,26, ,reset,reset,reset,0
+4,26, ,reset,reset,reset,0
+5,26, ,reset,reset,reset,0
+6,26, ,reset,reset,reset,0
+7,26, ,reset,reset,reset,0
+8,26, ,reset,reset,reset,0
+9,26, ,reset,reset,reset,0
+10,26, ,reset,reset,reset,0
+11,26, ,reset,reset,reset,0
+12,26, ,reset,reset,reset,0
+13,26, ,reset,reset,reset,0
+14,26, ,reset,reset,reset,0
+15,26, ,reset,reset,reset,0
+16,26, ,reset,reset,reset,0
+17,26, ,reset,reset,reset,0
+18,26, ,reset,reset,reset,0
+19,26, ,reset,reset,reset,0
+20,26, ,reset,reset,reset,0
+21,26, ,reset,reset,reset,0
+22,26, ,reset,reset,reset,0
+23,26, ,reset,reset,reset,0
+24,26, ,reset,reset,reset,0
+25,26, ,reset,reset,reset,0
+26,26, ,reset,reset,reset,0
+27,26, ,reset,reset,reset,0
+28,26, ,reset,reset,reset,0
+29,26, ,reset,reset,reset,0
+30,26, ,reset,reset,reset,0
+31,26, ,reset,reset,reset,0
+32,26, ,reset,reset,reset,0
+33,26, ,reset,reset,reset,0
+34,26, ,reset,reset,reset,0
+35,26, ,reset,reset,reset,0
+36,26, ,reset,reset,reset,0
+37,26, ,reset,reset,reset,0
+38,26, ,reset,reset,reset,0
+39,26, ,reset,reset,reset,0
+40,26, ,reset,reset,reset,0
+41,26, ,reset,reset,reset,0
+42,26, ,reset,reset,reset,0
+43,26,│,rgb:6fb3b8,reset,reset,0
+44,26, ,reset,reset,reset,0
+45,26,│,rgb:1f2a24,reset,reset,0
+46,26, ,reset,reset,reset,0
+47,26,n,rgb:3d4a44,reset,reset,0
+48,26,o,rgb:3d4a44,reset,reset,0
+49,26, ,rgb:3d4a44,reset,reset,0
+50,26,e,rgb:3d4a44,reset,reset,0
+51,26,v,rgb:3d4a44,reset,reset,0
+52,26,e,rgb:3d4a44,reset,reset,0
+53,26,n,rgb:3d4a44,reset,reset,0
+54,26,t,rgb:3d4a44,reset,reset,0
+55,26,s,rgb:3d4a44,reset,reset,0
+56,26, ,rgb:3d4a44,reset,reset,0
+57,26,f,rgb:3d4a44,reset,reset,0
+58,26,o,rgb:3d4a44,reset,reset,0
+59,26,r,rgb:3d4a44,reset,reset,0
+60,26, ,rgb:3d4a44,reset,reset,0
+61,26,w,rgb:3d4a44,reset,reset,0
+62,26,e,rgb:3d4a44,reset,reset,0
+63,26,b,rgb:3d4a44,reset,reset,0
+64,26,-,rgb:3d4a44,reset,reset,0
+65,26,p,rgb:3d4a44,reset,reset,0
+66,26,r,rgb:3d4a44,reset,reset,0
+67,26,o,rgb:3d4a44,reset,reset,0
+68,26,d,rgb:3d4a44,reset,reset,0
+69,26, ,rgb:3d4a44,reset,reset,0
+70,26,y,rgb:3d4a44,reset,reset,0
+71,26,e,rgb:3d4a44,reset,reset,0
+72,26,t,rgb:3d4a44,reset,reset,0
+73,26, ,rgb:3d4a44,reset,reset,0
+74,26,—,rgb:3d4a44,reset,reset,0
+75,26, ,rgb:3d4a44,reset,reset,0
+76,26,E,rgb:3d4a44,reset,reset,0
+77,26,n,rgb:3d4a44,reset,reset,0
+78,26,t,rgb:3d4a44,reset,reset,0
+79,26,e,rgb:3d4a44,reset,reset,0
+80,26,r,rgb:3d4a44,reset,reset,0
+81,26, ,rgb:3d4a44,reset,reset,0
+82,26,t,rgb:3d4a44,reset,reset,0
+83,26,o,rgb:3d4a44,reset,reset,0
+84,26, ,rgb:3d4a44,reset,reset,0
+85,26,c,rgb:3d4a44,reset,reset,0
+86,26,o,rgb:3d4a44,reset,reset,0
+87,26,n,rgb:3d4a44,reset,reset,0
+88,26,n,rgb:3d4a44,reset,reset,0
+89,26,e,rgb:3d4a44,reset,reset,0
+90,26,c,rgb:3d4a44,reset,reset,0
+91,26,t,rgb:3d4a44,reset,reset,0
+92,26, ,reset,reset,reset,0
+93,26, ,reset,reset,reset,0
+94,26, ,reset,reset,reset,0
+95,26, ,reset,reset,reset,0
+96,26, ,reset,reset,reset,0
+97,26, ,reset,reset,reset,0
+98,26, ,reset,reset,reset,0
+99,26, ,reset,reset,reset,0
+100,26, ,reset,reset,reset,0
+101,26, ,reset,reset,reset,0
+102,26, ,reset,reset,reset,0
+103,26, ,reset,reset,reset,0
+104,26, ,reset,reset,reset,0
+105,26, ,reset,reset,reset,0
+106,26, ,reset,reset,reset,0
+107,26, ,reset,reset,reset,0
+108,26, ,reset,reset,reset,0
+109,26, ,reset,reset,reset,0
+110,26, ,reset,reset,reset,0
+111,26, ,reset,reset,reset,0
+112,26, ,reset,reset,reset,0
+113,26, ,reset,reset,reset,0
+114,26, ,reset,reset,reset,0
+115,26, ,reset,reset,reset,0
+116,26, ,reset,reset,reset,0
+117,26, ,reset,reset,reset,0
+118,26, ,reset,reset,reset,0
+119,26, ,reset,reset,reset,0
+120,26, ,reset,reset,reset,0
+121,26, ,reset,reset,reset,0
+122,26, ,reset,reset,reset,0
+123,26, ,reset,reset,reset,0
+124,26, ,reset,reset,reset,0
+125,26, ,reset,reset,reset,0
+126,26, ,reset,reset,reset,0
+127,26, ,reset,reset,reset,0
+128,26, ,reset,reset,reset,0
+129,26,│,rgb:1f2a24,reset,reset,0
+130,26, ,reset,reset,reset,0
+131,26, ,reset,reset,reset,0
+0,27, ,reset,reset,reset,0
+1,27, ,reset,reset,reset,0
+2,27,│,rgb:6fb3b8,reset,reset,0
+3,27, ,reset,reset,reset,0
+4,27, ,reset,reset,reset,0
+5,27, ,reset,reset,reset,0
+6,27, ,reset,reset,reset,0
+7,27, ,reset,reset,reset,0
+8,27, ,reset,reset,reset,0
+9,27, ,reset,reset,reset,0
+10,27, ,reset,reset,reset,0
+11,27, ,reset,reset,reset,0
+12,27, ,reset,reset,reset,0
+13,27, ,reset,reset,reset,0
+14,27, ,reset,reset,reset,0
+15,27, ,reset,reset,reset,0
+16,27, ,reset,reset,reset,0
+17,27, ,reset,reset,reset,0
+18,27, ,reset,reset,reset,0
+19,27, ,reset,reset,reset,0
+20,27, ,reset,reset,reset,0
+21,27, ,reset,reset,reset,0
+22,27, ,reset,reset,reset,0
+23,27, ,reset,reset,reset,0
+24,27, ,reset,reset,reset,0
+25,27, ,reset,reset,reset,0
+26,27, ,reset,reset,reset,0
+27,27, ,reset,reset,reset,0
+28,27, ,reset,reset,reset,0
+29,27, ,reset,reset,reset,0
+30,27, ,reset,reset,reset,0
+31,27, ,reset,reset,reset,0
+32,27, ,reset,reset,reset,0
+33,27, ,reset,reset,reset,0
+34,27, ,reset,reset,reset,0
+35,27, ,reset,reset,reset,0
+36,27, ,reset,reset,reset,0
+37,27, ,reset,reset,reset,0
+38,27, ,reset,reset,reset,0
+39,27, ,reset,reset,reset,0
+40,27, ,reset,reset,reset,0
+41,27, ,reset,reset,reset,0
+42,27, ,reset,reset,reset,0
+43,27,│,rgb:6fb3b8,reset,reset,0
+44,27, ,reset,reset,reset,0
+45,27,│,rgb:1f2a24,reset,reset,0
+46,27, ,reset,reset,reset,0
+47,27, ,reset,reset,reset,0
+48,27, ,reset,reset,reset,0
+49,27, ,reset,reset,reset,0
+50,27, ,reset,reset,reset,0
+51,27, ,reset,reset,reset,0
+52,27, ,reset,reset,reset,0
+53,27, ,reset,reset,reset,0
+54,27, ,reset,reset,reset,0
+55,27, ,reset,reset,reset,0
+56,27, ,reset,reset,reset,0
+57,27, ,reset,reset,reset,0
+58,27, ,reset,reset,reset,0
+59,27, ,reset,reset,reset,0
+60,27, ,reset,reset,reset,0
+61,27, ,reset,reset,reset,0
+62,27, ,reset,reset,reset,0
+63,27, ,reset,reset,reset,0
+64,27, ,reset,reset,reset,0
+65,27, ,reset,reset,reset,0
+66,27, ,reset,reset,reset,0
+67,27, ,reset,reset,reset,0
+68,27, ,reset,reset,reset,0
+69,27, ,reset,reset,reset,0
+70,27, ,reset,reset,reset,0
+71,27, ,reset,reset,reset,0
+72,27, ,reset,reset,reset,0
+73,27, ,reset,reset,reset,0
+74,27, ,reset,reset,reset,0
+75,27, ,reset,reset,reset,0
+76,27, ,reset,reset,reset,0
+77,27, ,reset,reset,reset,0
+78,27, ,reset,reset,reset,0
+79,27, ,reset,reset,reset,0
+80,27, ,reset,reset,reset,0
+81,27, ,reset,reset,reset,0
+82,27, ,reset,reset,reset,0
+83,27, ,reset,reset,reset,0
+84,27, ,reset,reset,reset,0
+85,27, ,reset,reset,reset,0
+86,27, ,reset,reset,reset,0
+87,27, ,reset,reset,reset,0
+88,27, ,reset,reset,reset,0
+89,27, ,reset,reset,reset,0
+90,27, ,reset,reset,reset,0
+91,27, ,reset,reset,reset,0
+92,27, ,reset,reset,reset,0
+93,27, ,reset,reset,reset,0
+94,27, ,reset,reset,reset,0
+95,27, ,reset,reset,reset,0
+96,27, ,reset,reset,reset,0
+97,27, ,reset,reset,reset,0
+98,27, ,reset,reset,reset,0
+99,27, ,reset,reset,reset,0
+100,27, ,reset,reset,reset,0
+101,27, ,reset,reset,reset,0
+102,27, ,reset,reset,reset,0
+103,27, ,reset,reset,reset,0
+104,27, ,reset,reset,reset,0
+105,27, ,reset,reset,reset,0
+106,27, ,reset,reset,reset,0
+107,27, ,reset,reset,reset,0
+108,27, ,reset,reset,reset,0
+109,27, ,reset,reset,reset,0
+110,27, ,reset,reset,reset,0
+111,27, ,reset,reset,reset,0
+112,27, ,reset,reset,reset,0
+113,27, ,reset,reset,reset,0
+114,27, ,reset,reset,reset,0
+115,27, ,reset,reset,reset,0
+116,27, ,reset,reset,reset,0
+117,27, ,reset,reset,reset,0
+118,27, ,reset,reset,reset,0
+119,27, ,reset,reset,reset,0
+120,27, ,reset,reset,reset,0
+121,27, ,reset,reset,reset,0
+122,27, ,reset,reset,reset,0
+123,27, ,reset,reset,reset,0
+124,27, ,reset,reset,reset,0
+125,27, ,reset,reset,reset,0
+126,27, ,reset,reset,reset,0
+127,27, ,reset,reset,reset,0
+128,27, ,reset,reset,reset,0
+129,27,│,rgb:1f2a24,reset,reset,0
+130,27, ,reset,reset,reset,0
+131,27, ,reset,reset,reset,0
+0,28, ,reset,reset,reset,0
+1,28, ,reset,reset,reset,0
+2,28,│,rgb:6fb3b8,reset,reset,0
+3,28, ,reset,reset,reset,0
+4,28, ,reset,reset,reset,0
+5,28, ,reset,reset,reset,0
+6,28, ,reset,reset,reset,0
+7,28, ,reset,reset,reset,0
+8,28, ,reset,reset,reset,0
+9,28, ,reset,reset,reset,0
+10,28, ,reset,reset,reset,0
+11,28, ,reset,reset,reset,0
+12,28, ,reset,reset,reset,0
+13,28, ,reset,reset,reset,0
+14,28, ,reset,reset,reset,0
+15,28, ,reset,reset,reset,0
+16,28, ,reset,reset,reset,0
+17,28, ,reset,reset,reset,0
+18,28, ,reset,reset,reset,0
+19,28, ,reset,reset,reset,0
+20,28, ,reset,reset,reset,0
+21,28, ,reset,reset,reset,0
+22,28, ,reset,reset,reset,0
+23,28, ,reset,reset,reset,0
+24,28, ,reset,reset,reset,0
+25,28, ,reset,reset,reset,0
+26,28, ,reset,reset,reset,0
+27,28, ,reset,reset,reset,0
+28,28, ,reset,reset,reset,0
+29,28, ,reset,reset,reset,0
+30,28, ,reset,reset,reset,0
+31,28, ,reset,reset,reset,0
+32,28, ,reset,reset,reset,0
+33,28, ,reset,reset,reset,0
+34,28, ,reset,reset,reset,0
+35,28, ,reset,reset,reset,0
+36,28, ,reset,reset,reset,0
+37,28, ,reset,reset,reset,0
+38,28, ,reset,reset,reset,0
+39,28, ,reset,reset,reset,0
+40,28, ,reset,reset,reset,0
+41,28, ,reset,reset,reset,0
+42,28, ,reset,reset,reset,0
+43,28,│,rgb:6fb3b8,reset,reset,0
+44,28, ,reset,reset,reset,0
+45,28,│,rgb:1f2a24,reset,reset,0
+46,28, ,reset,reset,reset,0
+47,28, ,reset,reset,reset,0
+48,28, ,reset,reset,reset,0
+49,28, ,reset,reset,reset,0
+50,28, ,reset,reset,reset,0
+51,28, ,reset,reset,reset,0
+52,28, ,reset,reset,reset,0
+53,28, ,reset,reset,reset,0
+54,28, ,reset,reset,reset,0
+55,28, ,reset,reset,reset,0
+56,28, ,reset,reset,reset,0
+57,28, ,reset,reset,reset,0
+58,28, ,reset,reset,reset,0
+59,28, ,reset,reset,reset,0
+60,28, ,reset,reset,reset,0
+61,28, ,reset,reset,reset,0
+62,28, ,reset,reset,reset,0
+63,28, ,reset,reset,reset,0
+64,28, ,reset,reset,reset,0
+65,28, ,reset,reset,reset,0
+66,28, ,reset,reset,reset,0
+67,28, ,reset,reset,reset,0
+68,28, ,reset,reset,reset,0
+69,28, ,reset,reset,reset,0
+70,28, ,reset,reset,reset,0
+71,28, ,reset,reset,reset,0
+72,28, ,reset,reset,reset,0
+73,28, ,reset,reset,reset,0
+74,28, ,reset,reset,reset,0
+75,28, ,reset,reset,reset,0
+76,28, ,reset,reset,reset,0
+77,28, ,reset,reset,reset,0
+78,28, ,reset,reset,reset,0
+79,28, ,reset,reset,reset,0
+80,28, ,reset,reset,reset,0
+81,28, ,reset,reset,reset,0
+82,28, ,reset,reset,reset,0
+83,28, ,reset,reset,reset,0
+84,28, ,reset,reset,reset,0
+85,28, ,reset,reset,reset,0
+86,28, ,reset,reset,reset,0
+87,28, ,reset,reset,reset,0
+88,28, ,reset,reset,reset,0
+89,28, ,reset,reset,reset,0
+90,28, ,reset,reset,reset,0
+91,28, ,reset,reset,reset,0
+92,28, ,reset,reset,reset,0
+93,28, ,reset,reset,reset,0
+94,28, ,reset,reset,reset,0
+95,28, ,reset,reset,reset,0
+96,28, ,reset,reset,reset,0
+97,28, ,reset,reset,reset,0
+98,28, ,reset,reset,reset,0
+99,28, ,reset,reset,reset,0
+100,28, ,reset,reset,reset,0
+101,28, ,reset,reset,reset,0
+102,28, ,reset,reset,reset,0
+103,28, ,reset,reset,reset,0
+104,28, ,reset,reset,reset,0
+105,28, ,reset,reset,reset,0
+106,28, ,reset,reset,reset,0
+107,28, ,reset,reset,reset,0
+108,28, ,reset,reset,reset,0
+109,28, ,reset,reset,reset,0
+110,28, ,reset,reset,reset,0
+111,28, ,reset,reset,reset,0
+112,28, ,reset,reset,reset,0
+113,28, ,reset,reset,reset,0
+114,28, ,reset,reset,reset,0
+115,28, ,reset,reset,reset,0
+116,28, ,reset,reset,reset,0
+117,28, ,reset,reset,reset,0
+118,28, ,reset,reset,reset,0
+119,28, ,reset,reset,reset,0
+120,28, ,reset,reset,reset,0
+121,28, ,reset,reset,reset,0
+122,28, ,reset,reset,reset,0
+123,28, ,reset,reset,reset,0
+124,28, ,reset,reset,reset,0
+125,28, ,reset,reset,reset,0
+126,28, ,reset,reset,reset,0
+127,28, ,reset,reset,reset,0
+128,28, ,reset,reset,reset,0
+129,28,│,rgb:1f2a24,reset,reset,0
+130,28, ,reset,reset,reset,0
+131,28, ,reset,reset,reset,0
+0,29, ,reset,reset,reset,0
+1,29, ,reset,reset,reset,0
+2,29,│,rgb:6fb3b8,reset,reset,0
+3,29, ,reset,reset,reset,0
+4,29, ,reset,reset,reset,0
+5,29, ,reset,reset,reset,0
+6,29, ,reset,reset,reset,0
+7,29, ,reset,reset,reset,0
+8,29, ,reset,reset,reset,0
+9,29, ,reset,reset,reset,0
+10,29, ,reset,reset,reset,0
+11,29, ,reset,reset,reset,0
+12,29, ,reset,reset,reset,0
+13,29, ,reset,reset,reset,0
+14,29, ,reset,reset,reset,0
+15,29, ,reset,reset,reset,0
+16,29, ,reset,reset,reset,0
+17,29, ,reset,reset,reset,0
+18,29, ,reset,reset,reset,0
+19,29, ,reset,reset,reset,0
+20,29, ,reset,reset,reset,0
+21,29, ,reset,reset,reset,0
+22,29, ,reset,reset,reset,0
+23,29, ,reset,reset,reset,0
+24,29, ,reset,reset,reset,0
+25,29, ,reset,reset,reset,0
+26,29, ,reset,reset,reset,0
+27,29, ,reset,reset,reset,0
+28,29, ,reset,reset,reset,0
+29,29, ,reset,reset,reset,0
+30,29, ,reset,reset,reset,0
+31,29, ,reset,reset,reset,0
+32,29, ,reset,reset,reset,0
+33,29, ,reset,reset,reset,0
+34,29, ,reset,reset,reset,0
+35,29, ,reset,reset,reset,0
+36,29, ,reset,reset,reset,0
+37,29, ,reset,reset,reset,0
+38,29, ,reset,reset,reset,0
+39,29, ,reset,reset,reset,0
+40,29, ,reset,reset,reset,0
+41,29, ,reset,reset,reset,0
+42,29, ,reset,reset,reset,0
+43,29,│,rgb:6fb3b8,reset,reset,0
+44,29, ,reset,reset,reset,0
+45,29,│,rgb:1f2a24,reset,reset,0
+46,29, ,reset,reset,reset,0
+47,29, ,reset,reset,reset,0
+48,29, ,reset,reset,reset,0
+49,29, ,reset,reset,reset,0
+50,29, ,reset,reset,reset,0
+51,29, ,reset,reset,reset,0
+52,29, ,reset,reset,reset,0
+53,29, ,reset,reset,reset,0
+54,29, ,reset,reset,reset,0
+55,29, ,reset,reset,reset,0
+56,29, ,reset,reset,reset,0
+57,29, ,reset,reset,reset,0
+58,29, ,reset,reset,reset,0
+59,29, ,reset,reset,reset,0
+60,29, ,reset,reset,reset,0
+61,29, ,reset,reset,reset,0
+62,29, ,reset,reset,reset,0
+63,29, ,reset,reset,reset,0
+64,29, ,reset,reset,reset,0
+65,29, ,reset,reset,reset,0
+66,29, ,reset,reset,reset,0
+67,29, ,reset,reset,reset,0
+68,29, ,reset,reset,reset,0
+69,29, ,reset,reset,reset,0
+70,29, ,reset,reset,reset,0
+71,29, ,reset,reset,reset,0
+72,29, ,reset,reset,reset,0
+73,29, ,reset,reset,reset,0
+74,29, ,reset,reset,reset,0
+75,29, ,reset,reset,reset,0
+76,29, ,reset,reset,reset,0
+77,29, ,reset,reset,reset,0
+78,29, ,reset,reset,reset,0
+79,29, ,reset,reset,reset,0
+80,29, ,reset,reset,reset,0
+81,29, ,reset,reset,reset,0
+82,29, ,reset,reset,reset,0
+83,29, ,reset,reset,reset,0
+84,29, ,reset,reset,reset,0
+85,29, ,reset,reset,reset,0
+86,29, ,reset,reset,reset,0
+87,29, ,reset,reset,reset,0
+88,29, ,reset,reset,reset,0
+89,29, ,reset,reset,reset,0
+90,29, ,reset,reset,reset,0
+91,29, ,reset,reset,reset,0
+92,29, ,reset,reset,reset,0
+93,29, ,reset,reset,reset,0
+94,29, ,reset,reset,reset,0
+95,29, ,reset,reset,reset,0
+96,29, ,reset,reset,reset,0
+97,29, ,reset,reset,reset,0
+98,29, ,reset,reset,reset,0
+99,29, ,reset,reset,reset,0
+100,29, ,reset,reset,reset,0
+101,29, ,reset,reset,reset,0
+102,29, ,reset,reset,reset,0
+103,29, ,reset,reset,reset,0
+104,29, ,reset,reset,reset,0
+105,29, ,reset,reset,reset,0
+106,29, ,reset,reset,reset,0
+107,29, ,reset,reset,reset,0
+108,29, ,reset,reset,reset,0
+109,29, ,reset,reset,reset,0
+110,29, ,reset,reset,reset,0
+111,29, ,reset,reset,reset,0
+112,29, ,reset,reset,reset,0
+113,29, ,reset,reset,reset,0
+114,29, ,reset,reset,reset,0
+115,29, ,reset,reset,reset,0
+116,29, ,reset,reset,reset,0
+117,29, ,reset,reset,reset,0
+118,29, ,reset,reset,reset,0
+119,29, ,reset,reset,reset,0
+120,29, ,reset,reset,reset,0
+121,29, ,reset,reset,reset,0
+122,29, ,reset,reset,reset,0
+123,29, ,reset,reset,reset,0
+124,29, ,reset,reset,reset,0
+125,29, ,reset,reset,reset,0
+126,29, ,reset,reset,reset,0
+127,29, ,reset,reset,reset,0
+128,29, ,reset,reset,reset,0
+129,29,│,rgb:1f2a24,reset,reset,0
+130,29, ,reset,reset,reset,0
+131,29, ,reset,reset,reset,0
+0,30, ,reset,reset,reset,0
+1,30, ,reset,reset,reset,0
+2,30,│,rgb:6fb3b8,reset,reset,0
+3,30, ,reset,reset,reset,0
+4,30, ,reset,reset,reset,0
+5,30, ,reset,reset,reset,0
+6,30, ,reset,reset,reset,0
+7,30, ,reset,reset,reset,0
+8,30, ,reset,reset,reset,0
+9,30, ,reset,reset,reset,0
+10,30, ,reset,reset,reset,0
+11,30, ,reset,reset,reset,0
+12,30, ,reset,reset,reset,0
+13,30, ,reset,reset,reset,0
+14,30, ,reset,reset,reset,0
+15,30, ,reset,reset,reset,0
+16,30, ,reset,reset,reset,0
+17,30, ,reset,reset,reset,0
+18,30, ,reset,reset,reset,0
+19,30, ,reset,reset,reset,0
+20,30, ,reset,reset,reset,0
+21,30, ,reset,reset,reset,0
+22,30, ,reset,reset,reset,0
+23,30, ,reset,reset,reset,0
+24,30, ,reset,reset,reset,0
+25,30, ,reset,reset,reset,0
+26,30, ,reset,reset,reset,0
+27,30, ,reset,reset,reset,0
+28,30, ,reset,reset,reset,0
+29,30, ,reset,reset,reset,0
+30,30, ,reset,reset,reset,0
+31,30, ,reset,reset,reset,0
+32,30, ,reset,reset,reset,0
+33,30, ,reset,reset,reset,0
+34,30, ,reset,reset,reset,0
+35,30, ,reset,reset,reset,0
+36,30, ,reset,reset,reset,0
+37,30, ,reset,reset,reset,0
+38,30, ,reset,reset,reset,0
+39,30, ,reset,reset,reset,0
+40,30, ,reset,reset,reset,0
+41,30, ,reset,reset,reset,0
+42,30, ,reset,reset,reset,0
+43,30,│,rgb:6fb3b8,reset,reset,0
+44,30, ,reset,reset,reset,0
+45,30,│,rgb:1f2a24,reset,reset,0
+46,30, ,reset,reset,reset,0
+47,30, ,reset,reset,reset,0
+48,30, ,reset,reset,reset,0
+49,30, ,reset,reset,reset,0
+50,30, ,reset,reset,reset,0
+51,30, ,reset,reset,reset,0
+52,30, ,reset,reset,reset,0
+53,30, ,reset,reset,reset,0
+54,30, ,reset,reset,reset,0
+55,30, ,reset,reset,reset,0
+56,30, ,reset,reset,reset,0
+57,30, ,reset,reset,reset,0
+58,30, ,reset,reset,reset,0
+59,30, ,reset,reset,reset,0
+60,30, ,reset,reset,reset,0
+61,30, ,reset,reset,reset,0
+62,30, ,reset,reset,reset,0
+63,30, ,reset,reset,reset,0
+64,30, ,reset,reset,reset,0
+65,30, ,reset,reset,reset,0
+66,30, ,reset,reset,reset,0
+67,30, ,reset,reset,reset,0
+68,30, ,reset,reset,reset,0
+69,30, ,reset,reset,reset,0
+70,30, ,reset,reset,reset,0
+71,30, ,reset,reset,reset,0
+72,30, ,reset,reset,reset,0
+73,30, ,reset,reset,reset,0
+74,30, ,reset,reset,reset,0
+75,30, ,reset,reset,reset,0
+76,30, ,reset,reset,reset,0
+77,30, ,reset,reset,reset,0
+78,30, ,reset,reset,reset,0
+79,30, ,reset,reset,reset,0
+80,30, ,reset,reset,reset,0
+81,30, ,reset,reset,reset,0
+82,30, ,reset,reset,reset,0
+83,30, ,reset,reset,reset,0
+84,30, ,reset,reset,reset,0
+85,30, ,reset,reset,reset,0
+86,30, ,reset,reset,reset,0
+87,30, ,reset,reset,reset,0
+88,30, ,reset,reset,reset,0
+89,30, ,reset,reset,reset,0
+90,30, ,reset,reset,reset,0
+91,30, ,reset,reset,reset,0
+92,30, ,reset,reset,reset,0
+93,30, ,reset,reset,reset,0
+94,30, ,reset,reset,reset,0
+95,30, ,reset,reset,reset,0
+96,30, ,reset,reset,reset,0
+97,30, ,reset,reset,reset,0
+98,30, ,reset,reset,reset,0
+99,30, ,reset,reset,reset,0
+100,30, ,reset,reset,reset,0
+101,30, ,reset,reset,reset,0
+102,30, ,reset,reset,reset,0
+103,30, ,reset,reset,reset,0
+104,30, ,reset,reset,reset,0
+105,30, ,reset,reset,reset,0
+106,30, ,reset,reset,reset,0
+107,30, ,reset,reset,reset,0
+108,30, ,reset,reset,reset,0
+109,30, ,reset,reset,reset,0
+110,30, ,reset,reset,reset,0
+111,30, ,reset,reset,reset,0
+112,30, ,reset,reset,reset,0
+113,30, ,reset,reset,reset,0
+114,30, ,reset,reset,reset,0
+115,30, ,reset,reset,reset,0
+116,30, ,reset,reset,reset,0
+117,30, ,reset,reset,reset,0
+118,30, ,reset,reset,reset,0
+119,30, ,reset,reset,reset,0
+120,30, ,reset,reset,reset,0
+121,30, ,reset,reset,reset,0
+122,30, ,reset,reset,reset,0
+123,30, ,reset,reset,reset,0
+124,30, ,reset,reset,reset,0
+125,30, ,reset,reset,reset,0
+126,30, ,reset,reset,reset,0
+127,30, ,reset,reset,reset,0
+128,30, ,reset,reset,reset,0
+129,30,│,rgb:1f2a24,reset,reset,0
+130,30, ,reset,reset,reset,0
+131,30, ,reset,reset,reset,0
+0,31, ,reset,reset,reset,0
+1,31, ,reset,reset,reset,0
+2,31,│,rgb:6fb3b8,reset,reset,0
+3,31, ,reset,reset,reset,0
+4,31, ,reset,reset,reset,0
+5,31, ,reset,reset,reset,0
+6,31, ,reset,reset,reset,0
+7,31, ,reset,reset,reset,0
+8,31, ,reset,reset,reset,0
+9,31, ,reset,reset,reset,0
+10,31, ,reset,reset,reset,0
+11,31, ,reset,reset,reset,0
+12,31, ,reset,reset,reset,0
+13,31, ,reset,reset,reset,0
+14,31, ,reset,reset,reset,0
+15,31, ,reset,reset,reset,0
+16,31, ,reset,reset,reset,0
+17,31, ,reset,reset,reset,0
+18,31, ,reset,reset,reset,0
+19,31, ,reset,reset,reset,0
+20,31, ,reset,reset,reset,0
+21,31, ,reset,reset,reset,0
+22,31, ,reset,reset,reset,0
+23,31, ,reset,reset,reset,0
+24,31, ,reset,reset,reset,0
+25,31, ,reset,reset,reset,0
+26,31, ,reset,reset,reset,0
+27,31, ,reset,reset,reset,0
+28,31, ,reset,reset,reset,0
+29,31, ,reset,reset,reset,0
+30,31, ,reset,reset,reset,0
+31,31, ,reset,reset,reset,0
+32,31, ,reset,reset,reset,0
+33,31, ,reset,reset,reset,0
+34,31, ,reset,reset,reset,0
+35,31, ,reset,reset,reset,0
+36,31, ,reset,reset,reset,0
+37,31, ,reset,reset,reset,0
+38,31, ,reset,reset,reset,0
+39,31, ,reset,reset,reset,0
+40,31, ,reset,reset,reset,0
+41,31, ,reset,reset,reset,0
+42,31, ,reset,reset,reset,0
+43,31,│,rgb:6fb3b8,reset,reset,0
+44,31, ,reset,reset,reset,0
+45,31,│,rgb:1f2a24,reset,reset,0
+46,31, ,reset,reset,reset,0
+47,31, ,reset,reset,reset,0
+48,31, ,reset,reset,reset,0
+49,31, ,reset,reset,reset,0
+50,31, ,reset,reset,reset,0
+51,31, ,reset,reset,reset,0
+52,31, ,reset,reset,reset,0
+53,31, ,reset,reset,reset,0
+54,31, ,reset,reset,reset,0
+55,31, ,reset,reset,reset,0
+56,31, ,reset,reset,reset,0
+57,31, ,reset,reset,reset,0
+58,31, ,reset,reset,reset,0
+59,31, ,reset,reset,reset,0
+60,31, ,reset,reset,reset,0
+61,31, ,reset,reset,reset,0
+62,31, ,reset,reset,reset,0
+63,31, ,reset,reset,reset,0
+64,31, ,reset,reset,reset,0
+65,31, ,reset,reset,reset,0
+66,31, ,reset,reset,reset,0
+67,31, ,reset,reset,reset,0
+68,31, ,reset,reset,reset,0
+69,31, ,reset,reset,reset,0
+70,31, ,reset,reset,reset,0
+71,31, ,reset,reset,reset,0
+72,31, ,reset,reset,reset,0
+73,31, ,reset,reset,reset,0
+74,31, ,reset,reset,reset,0
+75,31, ,reset,reset,reset,0
+76,31, ,reset,reset,reset,0
+77,31, ,reset,reset,reset,0
+78,31, ,reset,reset,reset,0
+79,31, ,reset,reset,reset,0
+80,31, ,reset,reset,reset,0
+81,31, ,reset,reset,reset,0
+82,31, ,reset,reset,reset,0
+83,31, ,reset,reset,reset,0
+84,31, ,reset,reset,reset,0
+85,31, ,reset,reset,reset,0
+86,31, ,reset,reset,reset,0
+87,31, ,reset,reset,reset,0
+88,31, ,reset,reset,reset,0
+89,31, ,reset,reset,reset,0
+90,31, ,reset,reset,reset,0
+91,31, ,reset,reset,reset,0
+92,31, ,reset,reset,reset,0
+93,31, ,reset,reset,reset,0
+94,31, ,reset,reset,reset,0
+95,31, ,reset,reset,reset,0
+96,31, ,reset,reset,reset,0
+97,31, ,reset,reset,reset,0
+98,31, ,reset,reset,reset,0
+99,31, ,reset,reset,reset,0
+100,31, ,reset,reset,reset,0
+101,31, ,reset,reset,reset,0
+102,31, ,reset,reset,reset,0
+103,31, ,reset,reset,reset,0
+104,31, ,reset,reset,reset,0
+105,31, ,reset,reset,reset,0
+106,31, ,reset,reset,reset,0
+107,31, ,reset,reset,reset,0
+108,31, ,reset,reset,reset,0
+109,31, ,reset,reset,reset,0
+110,31, ,reset,reset,reset,0
+111,31, ,reset,reset,reset,0
+112,31, ,reset,reset,reset,0
+113,31, ,reset,reset,reset,0
+114,31, ,reset,reset,reset,0
+115,31, ,reset,reset,reset,0
+116,31, ,reset,reset,reset,0
+117,31, ,reset,reset,reset,0
+118,31, ,reset,reset,reset,0
+119,31, ,reset,reset,reset,0
+120,31, ,reset,reset,reset,0
+121,31, ,reset,reset,reset,0
+122,31, ,reset,reset,reset,0
+123,31, ,reset,reset,reset,0
+124,31, ,reset,reset,reset,0
+125,31, ,reset,reset,reset,0
+126,31, ,reset,reset,reset,0
+127,31, ,reset,reset,reset,0
+128,31, ,reset,reset,reset,0
+129,31,│,rgb:1f2a24,reset,reset,0
+130,31, ,reset,reset,reset,0
+131,31, ,reset,reset,reset,0
+0,32, ,reset,reset,reset,0
+1,32, ,reset,reset,reset,0
+2,32,│,rgb:6fb3b8,reset,reset,0
+3,32, ,reset,reset,reset,0
+4,32, ,reset,reset,reset,0
+5,32, ,reset,reset,reset,0
+6,32, ,reset,reset,reset,0
+7,32, ,reset,reset,reset,0
+8,32, ,reset,reset,reset,0
+9,32, ,reset,reset,reset,0
+10,32, ,reset,reset,reset,0
+11,32, ,reset,reset,reset,0
+12,32, ,reset,reset,reset,0
+13,32, ,reset,reset,reset,0
+14,32, ,reset,reset,reset,0
+15,32, ,reset,reset,reset,0
+16,32, ,reset,reset,reset,0
+17,32, ,reset,reset,reset,0
+18,32, ,reset,reset,reset,0
+19,32, ,reset,reset,reset,0
+20,32, ,reset,reset,reset,0
+21,32, ,reset,reset,reset,0
+22,32, ,reset,reset,reset,0
+23,32, ,reset,reset,reset,0
+24,32, ,reset,reset,reset,0
+25,32, ,reset,reset,reset,0
+26,32, ,reset,reset,reset,0
+27,32, ,reset,reset,reset,0
+28,32, ,reset,reset,reset,0
+29,32, ,reset,reset,reset,0
+30,32, ,reset,reset,reset,0
+31,32, ,reset,reset,reset,0
+32,32, ,reset,reset,reset,0
+33,32, ,reset,reset,reset,0
+34,32, ,reset,reset,reset,0
+35,32, ,reset,reset,reset,0
+36,32, ,reset,reset,reset,0
+37,32, ,reset,reset,reset,0
+38,32, ,reset,reset,reset,0
+39,32, ,reset,reset,reset,0
+40,32, ,reset,reset,reset,0
+41,32, ,reset,reset,reset,0
+42,32, ,reset,reset,reset,0
+43,32,│,rgb:6fb3b8,reset,reset,0
+44,32, ,reset,reset,reset,0
+45,32,│,rgb:1f2a24,reset,reset,0
+46,32, ,reset,reset,reset,0
+47,32, ,reset,reset,reset,0
+48,32, ,reset,reset,reset,0
+49,32, ,reset,reset,reset,0
+50,32, ,reset,reset,reset,0
+51,32, ,reset,reset,reset,0
+52,32, ,reset,reset,reset,0
+53,32, ,reset,reset,reset,0
+54,32, ,reset,reset,reset,0
+55,32, ,reset,reset,reset,0
+56,32, ,reset,reset,reset,0
+57,32, ,reset,reset,reset,0
+58,32, ,reset,reset,reset,0
+59,32, ,reset,reset,reset,0
+60,32, ,reset,reset,reset,0
+61,32, ,reset,reset,reset,0
+62,32, ,reset,reset,reset,0
+63,32, ,reset,reset,reset,0
+64,32, ,reset,reset,reset,0
+65,32, ,reset,reset,reset,0
+66,32, ,reset,reset,reset,0
+67,32, ,reset,reset,reset,0
+68,32, ,reset,reset,reset,0
+69,32, ,reset,reset,reset,0
+70,32, ,reset,reset,reset,0
+71,32, ,reset,reset,reset,0
+72,32, ,reset,reset,reset,0
+73,32, ,reset,reset,reset,0
+74,32, ,reset,reset,reset,0
+75,32, ,reset,reset,reset,0
+76,32, ,reset,reset,reset,0
+77,32, ,reset,reset,reset,0
+78,32, ,reset,reset,reset,0
+79,32, ,reset,reset,reset,0
+80,32, ,reset,reset,reset,0
+81,32, ,reset,reset,reset,0
+82,32, ,reset,reset,reset,0
+83,32, ,reset,reset,reset,0
+84,32, ,reset,reset,reset,0
+85,32, ,reset,reset,reset,0
+86,32, ,reset,reset,reset,0
+87,32, ,reset,reset,reset,0
+88,32, ,reset,reset,reset,0
+89,32, ,reset,reset,reset,0
+90,32, ,reset,reset,reset,0
+91,32, ,reset,reset,reset,0
+92,32, ,reset,reset,reset,0
+93,32, ,reset,reset,reset,0
+94,32, ,reset,reset,reset,0
+95,32, ,reset,reset,reset,0
+96,32, ,reset,reset,reset,0
+97,32, ,reset,reset,reset,0
+98,32, ,reset,reset,reset,0
+99,32, ,reset,reset,reset,0
+100,32, ,reset,reset,reset,0
+101,32, ,reset,reset,reset,0
+102,32, ,reset,reset,reset,0
+103,32, ,reset,reset,reset,0
+104,32, ,reset,reset,reset,0
+105,32, ,reset,reset,reset,0
+106,32, ,reset,reset,reset,0
+107,32, ,reset,reset,reset,0
+108,32, ,reset,reset,reset,0
+109,32, ,reset,reset,reset,0
+110,32, ,reset,reset,reset,0
+111,32, ,reset,reset,reset,0
+112,32, ,reset,reset,reset,0
+113,32, ,reset,reset,reset,0
+114,32, ,reset,reset,reset,0
+115,32, ,reset,reset,reset,0
+116,32, ,reset,reset,reset,0
+117,32, ,reset,reset,reset,0
+118,32, ,reset,reset,reset,0
+119,32, ,reset,reset,reset,0
+120,32, ,reset,reset,reset,0
+121,32, ,reset,reset,reset,0
+122,32, ,reset,reset,reset,0
+123,32, ,reset,reset,reset,0
+124,32, ,reset,reset,reset,0
+125,32, ,reset,reset,reset,0
+126,32, ,reset,reset,reset,0
+127,32, ,reset,reset,reset,0
+128,32, ,reset,reset,reset,0
+129,32,│,rgb:1f2a24,reset,reset,0
+130,32, ,reset,reset,reset,0
+131,32, ,reset,reset,reset,0
+0,33, ,reset,reset,reset,0
+1,33, ,reset,reset,reset,0
+2,33,│,rgb:6fb3b8,reset,reset,0
+3,33, ,reset,reset,reset,0
+4,33,·,rgb:6a7a72,reset,reset,0
+5,33, ,rgb:6a7a72,reset,reset,0
+6,33,·,rgb:6a7a72,reset,reset,0
+7,33, ,rgb:6a7a72,reset,reset,0
+8,33,·,rgb:6a7a72,reset,reset,0
+9,33, ,rgb:6a7a72,reset,reset,0
+10,33,·,rgb:6a7a72,reset,reset,0
+11,33, ,rgb:6a7a72,reset,reset,0
+12,33,·,rgb:6a7a72,reset,reset,0
+13,33, ,rgb:6a7a72,reset,reset,0
+14,33,·,rgb:6a7a72,reset,reset,0
+15,33, ,rgb:6a7a72,reset,reset,0
+16,33,·,rgb:6a7a72,reset,reset,0
+17,33, ,rgb:6a7a72,reset,reset,0
+18,33,·,rgb:6a7a72,reset,reset,0
+19,33, ,rgb:6a7a72,reset,reset,0
+20,33,·,rgb:6a7a72,reset,reset,0
+21,33, ,rgb:6a7a72,reset,reset,0
+22,33,·,rgb:6a7a72,reset,reset,0
+23,33, ,rgb:6a7a72,reset,reset,0
+24,33,·,rgb:6a7a72,reset,reset,0
+25,33, ,rgb:6a7a72,reset,reset,0
+26,33,·,rgb:6a7a72,reset,reset,0
+27,33, ,rgb:6a7a72,reset,reset,0
+28,33,·,rgb:6a7a72,reset,reset,0
+29,33, ,rgb:6a7a72,reset,reset,0
+30,33,·,rgb:6a7a72,reset,reset,0
+31,33, ,rgb:6a7a72,reset,reset,0
+32,33,·,rgb:6a7a72,reset,reset,0
+33,33, ,rgb:6a7a72,reset,reset,0
+34,33,·,rgb:6a7a72,reset,reset,0
+35,33, ,rgb:6a7a72,reset,reset,0
+36,33,·,rgb:6a7a72,reset,reset,0
+37,33, ,rgb:6a7a72,reset,reset,0
+38,33,·,rgb:6a7a72,reset,reset,0
+39,33, ,rgb:6a7a72,reset,reset,0
+40,33,·,rgb:6a7a72,reset,reset,0
+41,33, ,rgb:6a7a72,reset,reset,0
+42,33, ,reset,reset,reset,0
+43,33,│,rgb:6fb3b8,reset,reset,0
+44,33, ,reset,reset,reset,0
+45,33,│,rgb:1f2a24,reset,reset,0
+46,33, ,reset,reset,reset,0
+47,33, ,reset,reset,reset,0
+48,33, ,reset,reset,reset,0
+49,33, ,reset,reset,reset,0
+50,33, ,reset,reset,reset,0
+51,33, ,reset,reset,reset,0
+52,33, ,reset,reset,reset,0
+53,33, ,reset,reset,reset,0
+54,33, ,reset,reset,reset,0
+55,33, ,reset,reset,reset,0
+56,33, ,reset,reset,reset,0
+57,33, ,reset,reset,reset,0
+58,33, ,reset,reset,reset,0
+59,33, ,reset,reset,reset,0
+60,33, ,reset,reset,reset,0
+61,33, ,reset,reset,reset,0
+62,33, ,reset,reset,reset,0
+63,33, ,reset,reset,reset,0
+64,33, ,reset,reset,reset,0
+65,33, ,reset,reset,reset,0
+66,33, ,reset,reset,reset,0
+67,33, ,reset,reset,reset,0
+68,33, ,reset,reset,reset,0
+69,33, ,reset,reset,reset,0
+70,33, ,reset,reset,reset,0
+71,33, ,reset,reset,reset,0
+72,33, ,reset,reset,reset,0
+73,33, ,reset,reset,reset,0
+74,33, ,reset,reset,reset,0
+75,33, ,reset,reset,reset,0
+76,33, ,reset,reset,reset,0
+77,33, ,reset,reset,reset,0
+78,33, ,reset,reset,reset,0
+79,33, ,reset,reset,reset,0
+80,33, ,reset,reset,reset,0
+81,33, ,reset,reset,reset,0
+82,33, ,reset,reset,reset,0
+83,33, ,reset,reset,reset,0
+84,33, ,reset,reset,reset,0
+85,33, ,reset,reset,reset,0
+86,33, ,reset,reset,reset,0
+87,33, ,reset,reset,reset,0
+88,33, ,reset,reset,reset,0
+89,33, ,reset,reset,reset,0
+90,33, ,reset,reset,reset,0
+91,33, ,reset,reset,reset,0
+92,33, ,reset,reset,reset,0
+93,33, ,reset,reset,reset,0
+94,33, ,reset,reset,reset,0
+95,33, ,reset,reset,reset,0
+96,33, ,reset,reset,reset,0
+97,33, ,reset,reset,reset,0
+98,33, ,reset,reset,reset,0
+99,33, ,reset,reset,reset,0
+100,33, ,reset,reset,reset,0
+101,33, ,reset,reset,reset,0
+102,33, ,reset,reset,reset,0
+103,33, ,reset,reset,reset,0
+104,33, ,reset,reset,reset,0
+105,33, ,reset,reset,reset,0
+106,33, ,reset,reset,reset,0
+107,33, ,reset,reset,reset,0
+108,33, ,reset,reset,reset,0
+109,33, ,reset,reset,reset,0
+110,33, ,reset,reset,reset,0
+111,33, ,reset,reset,reset,0
+112,33, ,reset,reset,reset,0
+113,33, ,reset,reset,reset,0
+114,33, ,reset,reset,reset,0
+115,33, ,reset,reset,reset,0
+116,33, ,reset,reset,reset,0
+117,33, ,reset,reset,reset,0
+118,33, ,reset,reset,reset,0
+119,33, ,reset,reset,reset,0
+120,33, ,reset,reset,reset,0
+121,33, ,reset,reset,reset,0
+122,33, ,reset,reset,reset,0
+123,33, ,reset,reset,reset,0
+124,33, ,reset,reset,reset,0
+125,33, ,reset,reset,reset,0
+126,33, ,reset,reset,reset,0
+127,33, ,reset,reset,reset,0
+128,33, ,reset,reset,reset,0
+129,33,│,rgb:1f2a24,reset,reset,0
+130,33, ,reset,reset,reset,0
+131,33, ,reset,reset,reset,0
+0,34, ,reset,reset,reset,0
+1,34, ,reset,reset,reset,0
+2,34,│,rgb:6fb3b8,reset,reset,0
+3,34, ,reset,reset,reset,0
+4,34,+,rgb:3d4a44,reset,reset,0
+5,34, ,rgb:3d4a44,reset,reset,0
+6,34,a,rgb:3d4a44,reset,reset,0
+7,34,d,rgb:3d4a44,reset,reset,0
+8,34,d,rgb:3d4a44,reset,reset,0
+9,34, ,rgb:3d4a44,reset,reset,0
+10,34,a,rgb:3d4a44,reset,reset,0
+11,34, ,rgb:3d4a44,reset,reset,0
+12,34,n,rgb:3d4a44,reset,reset,0
+13,34,e,rgb:3d4a44,reset,reset,0
+14,34,w,rgb:3d4a44,reset,reset,0
+15,34, ,rgb:3d4a44,reset,reset,0
+16,34,h,rgb:3d4a44,reset,reset,0
+17,34,o,rgb:3d4a44,reset,reset,0
+18,34,s,rgb:3d4a44,reset,reset,0
+19,34,t,rgb:3d4a44,reset,reset,0
+20,34, ,reset,reset,reset,0
+21,34, ,reset,reset,reset,0
+22,34, ,reset,reset,reset,0
+23,34, ,reset,reset,reset,0
+24,34, ,reset,reset,reset,0
+25,34, ,reset,reset,reset,0
+26,34, ,reset,reset,reset,0
+27,34, ,reset,reset,reset,0
+28,34, ,reset,reset,reset,0
+29,34, ,reset,reset,reset,0
+30,34, ,reset,reset,reset,0
+31,34, ,reset,reset,reset,0
+32,34, ,reset,reset,reset,0
+33,34, ,reset,reset,reset,0
+34,34, ,reset,reset,reset,0
+35,34, ,reset,reset,reset,0
+36,34, ,reset,reset,reset,0
+37,34, ,reset,reset,reset,0
+38,34, ,reset,reset,reset,0
+39,34, ,reset,reset,reset,0
+40,34, ,reset,reset,reset,0
+41,34, ,reset,reset,reset,0
+42,34, ,reset,reset,reset,0
+43,34,│,rgb:6fb3b8,reset,reset,0
+44,34, ,reset,reset,reset,0
+45,34,└,rgb:1f2a24,reset,reset,0
+46,34,─,rgb:1f2a24,reset,reset,0
+47,34,─,rgb:1f2a24,reset,reset,0
+48,34,─,rgb:1f2a24,reset,reset,0
+49,34,─,rgb:1f2a24,reset,reset,0
+50,34,─,rgb:1f2a24,reset,reset,0
+51,34,─,rgb:1f2a24,reset,reset,0
+52,34,─,rgb:1f2a24,reset,reset,0
+53,34,─,rgb:1f2a24,reset,reset,0
+54,34,─,rgb:1f2a24,reset,reset,0
+55,34,─,rgb:1f2a24,reset,reset,0
+56,34,─,rgb:1f2a24,reset,reset,0
+57,34,─,rgb:1f2a24,reset,reset,0
+58,34,─,rgb:1f2a24,reset,reset,0
+59,34,─,rgb:1f2a24,reset,reset,0
+60,34,─,rgb:1f2a24,reset,reset,0
+61,34,─,rgb:1f2a24,reset,reset,0
+62,34,─,rgb:1f2a24,reset,reset,0
+63,34,─,rgb:1f2a24,reset,reset,0
+64,34,─,rgb:1f2a24,reset,reset,0
+65,34,─,rgb:1f2a24,reset,reset,0
+66,34,─,rgb:1f2a24,reset,reset,0
+67,34,─,rgb:1f2a24,reset,reset,0
+68,34,─,rgb:1f2a24,reset,reset,0
+69,34,─,rgb:1f2a24,reset,reset,0
+70,34,─,rgb:1f2a24,reset,reset,0
+71,34,─,rgb:1f2a24,reset,reset,0
+72,34,─,rgb:1f2a24,reset,reset,0
+73,34,─,rgb:1f2a24,reset,reset,0
+74,34,─,rgb:1f2a24,reset,reset,0
+75,34,─,rgb:1f2a24,reset,reset,0
+76,34,─,rgb:1f2a24,reset,reset,0
+77,34,─,rgb:1f2a24,reset,reset,0
+78,34,─,rgb:1f2a24,reset,reset,0
+79,34,─,rgb:1f2a24,reset,reset,0
+80,34,─,rgb:1f2a24,reset,reset,0
+81,34,─,rgb:1f2a24,reset,reset,0
+82,34,─,rgb:1f2a24,reset,reset,0
+83,34,─,rgb:1f2a24,reset,reset,0
+84,34,─,rgb:1f2a24,reset,reset,0
+85,34,─,rgb:1f2a24,reset,reset,0
+86,34,─,rgb:1f2a24,reset,reset,0
+87,34,─,rgb:1f2a24,reset,reset,0
+88,34,─,rgb:1f2a24,reset,reset,0
+89,34,─,rgb:1f2a24,reset,reset,0
+90,34,─,rgb:1f2a24,reset,reset,0
+91,34,─,rgb:1f2a24,reset,reset,0
+92,34,─,rgb:1f2a24,reset,reset,0
+93,34,─,rgb:1f2a24,reset,reset,0
+94,34,─,rgb:1f2a24,reset,reset,0
+95,34,─,rgb:1f2a24,reset,reset,0
+96,34,─,rgb:1f2a24,reset,reset,0
+97,34,─,rgb:1f2a24,reset,reset,0
+98,34,─,rgb:1f2a24,reset,reset,0
+99,34,─,rgb:1f2a24,reset,reset,0
+100,34,─,rgb:1f2a24,reset,reset,0
+101,34,─,rgb:1f2a24,reset,reset,0
+102,34,─,rgb:1f2a24,reset,reset,0
+103,34,─,rgb:1f2a24,reset,reset,0
+104,34,─,rgb:1f2a24,reset,reset,0
+105,34,─,rgb:1f2a24,reset,reset,0
+106,34,─,rgb:1f2a24,reset,reset,0
+107,34,─,rgb:1f2a24,reset,reset,0
+108,34,─,rgb:1f2a24,reset,reset,0
+109,34,─,rgb:1f2a24,reset,reset,0
+110,34,─,rgb:1f2a24,reset,reset,0
+111,34,─,rgb:1f2a24,reset,reset,0
+112,34,─,rgb:1f2a24,reset,reset,0
+113,34,─,rgb:1f2a24,reset,reset,0
+114,34,─,rgb:1f2a24,reset,reset,0
+115,34,─,rgb:1f2a24,reset,reset,0
+116,34,─,rgb:1f2a24,reset,reset,0
+117,34,─,rgb:1f2a24,reset,reset,0
+118,34,─,rgb:1f2a24,reset,reset,0
+119,34,─,rgb:1f2a24,reset,reset,0
+120,34,─,rgb:1f2a24,reset,reset,0
+121,34,─,rgb:1f2a24,reset,reset,0
+122,34,─,rgb:1f2a24,reset,reset,0
+123,34,─,rgb:1f2a24,reset,reset,0
+124,34,─,rgb:1f2a24,reset,reset,0
+125,34,─,rgb:1f2a24,reset,reset,0
+126,34,─,rgb:1f2a24,reset,reset,0
+127,34,─,rgb:1f2a24,reset,reset,0
+128,34,─,rgb:1f2a24,reset,reset,0
+129,34,┘,rgb:1f2a24,reset,reset,0
+130,34, ,reset,reset,reset,0
+131,34, ,reset,reset,reset,0
+0,35, ,reset,reset,reset,0
+1,35, ,reset,reset,reset,0
+2,35,└,rgb:6fb3b8,reset,reset,0
+3,35,─,rgb:6fb3b8,reset,reset,0
+4,35,─,rgb:6fb3b8,reset,reset,0
+5,35,─,rgb:6fb3b8,reset,reset,0
+6,35,─,rgb:6fb3b8,reset,reset,0
+7,35,─,rgb:6fb3b8,reset,reset,0
+8,35,─,rgb:6fb3b8,reset,reset,0
+9,35,─,rgb:6fb3b8,reset,reset,0
+10,35,─,rgb:6fb3b8,reset,reset,0
+11,35,─,rgb:6fb3b8,reset,reset,0
+12,35,─,rgb:6fb3b8,reset,reset,0
+13,35,─,rgb:6fb3b8,reset,reset,0
+14,35,─,rgb:6fb3b8,reset,reset,0
+15,35,─,rgb:6fb3b8,reset,reset,0
+16,35,─,rgb:6fb3b8,reset,reset,0
+17,35,─,rgb:6fb3b8,reset,reset,0
+18,35,─,rgb:6fb3b8,reset,reset,0
+19,35,─,rgb:6fb3b8,reset,reset,0
+20,35,─,rgb:6fb3b8,reset,reset,0
+21,35,─,rgb:6fb3b8,reset,reset,0
+22,35,─,rgb:6fb3b8,reset,reset,0
+23,35,─,rgb:6fb3b8,reset,reset,0
+24,35,─,rgb:6fb3b8,reset,reset,0
+25,35,─,rgb:6fb3b8,reset,reset,0
+26,35,─,rgb:6fb3b8,reset,reset,0
+27,35,─,rgb:6fb3b8,reset,reset,0
+28,35,─,rgb:6fb3b8,reset,reset,0
+29,35,─,rgb:6fb3b8,reset,reset,0
+30,35,─,rgb:6fb3b8,reset,reset,0
+31,35,─,rgb:6fb3b8,reset,reset,0
+32,35,─,rgb:6fb3b8,reset,reset,0
+33,35,─,rgb:6fb3b8,reset,reset,0
+34,35,─,rgb:6fb3b8,reset,reset,0
+35,35,─,rgb:6fb3b8,reset,reset,0
+36,35,─,rgb:6fb3b8,reset,reset,0
+37,35,─,rgb:6fb3b8,reset,reset,0
+38,35,─,rgb:6fb3b8,reset,reset,0
+39,35,─,rgb:6fb3b8,reset,reset,0
+40,35,─,rgb:6fb3b8,reset,reset,0
+41,35,─,rgb:6fb3b8,reset,reset,0
+42,35,─,rgb:6fb3b8,reset,reset,0
+43,35,┘,rgb:6fb3b8,reset,reset,0
+44,35, ,reset,reset,reset,0
+45,35, ,reset,reset,reset,0
+46,35, ,reset,reset,reset,0
+47,35, ,reset,reset,reset,0
+48,35, ,reset,reset,reset,0
+49,35, ,reset,reset,reset,0
+50,35, ,reset,reset,reset,0
+51,35, ,reset,reset,reset,0
+52,35, ,reset,reset,reset,0
+53,35, ,reset,reset,reset,0
+54,35, ,reset,reset,reset,0
+55,35, ,reset,reset,reset,0
+56,35, ,reset,reset,reset,0
+57,35, ,reset,reset,reset,0
+58,35, ,reset,reset,reset,0
+59,35, ,reset,reset,reset,0
+60,35, ,reset,reset,reset,0
+61,35, ,reset,reset,reset,0
+62,35, ,reset,reset,reset,0
+63,35, ,reset,reset,reset,0
+64,35, ,reset,reset,reset,0
+65,35, ,reset,reset,reset,0
+66,35, ,reset,reset,reset,0
+67,35, ,reset,reset,reset,0
+68,35, ,reset,reset,reset,0
+69,35, ,reset,reset,reset,0
+70,35, ,reset,reset,reset,0
+71,35, ,reset,reset,reset,0
+72,35, ,reset,reset,reset,0
+73,35, ,reset,reset,reset,0
+74,35, ,reset,reset,reset,0
+75,35, ,reset,reset,reset,0
+76,35, ,reset,reset,reset,0
+77,35, ,reset,reset,reset,0
+78,35, ,reset,reset,reset,0
+79,35, ,reset,reset,reset,0
+80,35, ,reset,reset,reset,0
+81,35, ,reset,reset,reset,0
+82,35, ,reset,reset,reset,0
+83,35, ,reset,reset,reset,0
+84,35, ,reset,reset,reset,0
+85,35, ,reset,reset,reset,0
+86,35, ,reset,reset,reset,0
+87,35, ,reset,reset,reset,0
+88,35, ,reset,reset,reset,0
+89,35, ,reset,reset,reset,0
+90,35, ,reset,reset,reset,0
+91,35, ,reset,reset,reset,0
+92,35, ,reset,reset,reset,0
+93,35, ,reset,reset,reset,0
+94,35, ,reset,reset,reset,0
+95,35, ,reset,reset,reset,0
+96,35, ,reset,reset,reset,0
+97,35, ,reset,reset,reset,0
+98,35, ,reset,reset,reset,0
+99,35, ,reset,reset,reset,0
+100,35, ,reset,reset,reset,0
+101,35, ,reset,reset,reset,0
+102,35, ,reset,reset,reset,0
+103,35, ,reset,reset,reset,0
+104,35, ,reset,reset,reset,0
+105,35, ,reset,reset,reset,0
+106,35, ,reset,reset,reset,0
+107,35, ,reset,reset,reset,0
+108,35, ,reset,reset,reset,0
+109,35, ,reset,reset,reset,0
+110,35, ,reset,reset,reset,0
+111,35, ,reset,reset,reset,0
+112,35, ,reset,reset,reset,0
+113,35, ,reset,reset,reset,0
+114,35, ,reset,reset,reset,0
+115,35, ,reset,reset,reset,0
+116,35, ,reset,reset,reset,0
+117,35, ,reset,reset,reset,0
+118,35, ,reset,reset,reset,0
+119,35, ,reset,reset,reset,0
+120,35, ,reset,reset,reset,0
+121,35, ,reset,reset,reset,0
+122,35, ,reset,reset,reset,0
+123,35, ,reset,reset,reset,0
+124,35, ,reset,reset,reset,0
+125,35, ,reset,reset,reset,0
+126,35, ,reset,reset,reset,0
+127,35, ,reset,reset,reset,0
+128,35, ,reset,reset,reset,0
+129,35, ,reset,reset,reset,0
+130,35, ,reset,reset,reset,0
+131,35, ,reset,reset,reset,0
+0,36,━,rgb:3d4a44,reset,reset,0
+1,36,━,rgb:3d4a44,reset,reset,0
+2,36,━,rgb:3d4a44,reset,reset,0
+3,36,━,rgb:3d4a44,reset,reset,0
+4,36,━,rgb:3d4a44,reset,reset,0
+5,36,━,rgb:3d4a44,reset,reset,0
+6,36,━,rgb:3d4a44,reset,reset,0
+7,36,━,rgb:3d4a44,reset,reset,0
+8,36,━,rgb:3d4a44,reset,reset,0
+9,36,━,rgb:3d4a44,reset,reset,0
+10,36,━,rgb:3d4a44,reset,reset,0
+11,36,━,rgb:3d4a44,reset,reset,0
+12,36,━,rgb:3d4a44,reset,reset,0
+13,36,━,rgb:3d4a44,reset,reset,0
+14,36,━,rgb:3d4a44,reset,reset,0
+15,36,━,rgb:3d4a44,reset,reset,0
+16,36,━,rgb:3d4a44,reset,reset,0
+17,36,━,rgb:3d4a44,reset,reset,0
+18,36,━,rgb:3d4a44,reset,reset,0
+19,36,━,rgb:3d4a44,reset,reset,0
+20,36,━,rgb:3d4a44,reset,reset,0
+21,36,━,rgb:3d4a44,reset,reset,0
+22,36,━,rgb:3d4a44,reset,reset,0
+23,36,━,rgb:3d4a44,reset,reset,0
+24,36,━,rgb:3d4a44,reset,reset,0
+25,36,━,rgb:3d4a44,reset,reset,0
+26,36,━,rgb:3d4a44,reset,reset,0
+27,36,━,rgb:3d4a44,reset,reset,0
+28,36,━,rgb:3d4a44,reset,reset,0
+29,36,━,rgb:3d4a44,reset,reset,0
+30,36,━,rgb:3d4a44,reset,reset,0
+31,36,━,rgb:3d4a44,reset,reset,0
+32,36,━,rgb:3d4a44,reset,reset,0
+33,36,━,rgb:3d4a44,reset,reset,0
+34,36,━,rgb:3d4a44,reset,reset,0
+35,36,━,rgb:3d4a44,reset,reset,0
+36,36,━,rgb:3d4a44,reset,reset,0
+37,36,━,rgb:3d4a44,reset,reset,0
+38,36,━,rgb:3d4a44,reset,reset,0
+39,36,━,rgb:3d4a44,reset,reset,0
+40,36,━,rgb:3d4a44,reset,reset,0
+41,36,━,rgb:3d4a44,reset,reset,0
+42,36,━,rgb:3d4a44,reset,reset,0
+43,36,━,rgb:3d4a44,reset,reset,0
+44,36,━,rgb:3d4a44,reset,reset,0
+45,36,━,rgb:3d4a44,reset,reset,0
+46,36,━,rgb:3d4a44,reset,reset,0
+47,36,━,rgb:3d4a44,reset,reset,0
+48,36,━,rgb:3d4a44,reset,reset,0
+49,36,━,rgb:3d4a44,reset,reset,0
+50,36,━,rgb:3d4a44,reset,reset,0
+51,36,━,rgb:3d4a44,reset,reset,0
+52,36,━,rgb:3d4a44,reset,reset,0
+53,36,━,rgb:3d4a44,reset,reset,0
+54,36,━,rgb:3d4a44,reset,reset,0
+55,36,━,rgb:3d4a44,reset,reset,0
+56,36,━,rgb:3d4a44,reset,reset,0
+57,36,━,rgb:3d4a44,reset,reset,0
+58,36,━,rgb:3d4a44,reset,reset,0
+59,36,━,rgb:3d4a44,reset,reset,0
+60,36,━,rgb:3d4a44,reset,reset,0
+61,36,━,rgb:3d4a44,reset,reset,0
+62,36,━,rgb:3d4a44,reset,reset,0
+63,36,━,rgb:3d4a44,reset,reset,0
+64,36,━,rgb:3d4a44,reset,reset,0
+65,36,━,rgb:3d4a44,reset,reset,0
+66,36,━,rgb:3d4a44,reset,reset,0
+67,36,━,rgb:3d4a44,reset,reset,0
+68,36,━,rgb:3d4a44,reset,reset,0
+69,36,━,rgb:3d4a44,reset,reset,0
+70,36,━,rgb:3d4a44,reset,reset,0
+71,36,━,rgb:3d4a44,reset,reset,0
+72,36,━,rgb:3d4a44,reset,reset,0
+73,36,━,rgb:3d4a44,reset,reset,0
+74,36,━,rgb:3d4a44,reset,reset,0
+75,36,━,rgb:3d4a44,reset,reset,0
+76,36,━,rgb:3d4a44,reset,reset,0
+77,36,━,rgb:3d4a44,reset,reset,0
+78,36,━,rgb:3d4a44,reset,reset,0
+79,36,━,rgb:3d4a44,reset,reset,0
+80,36,━,rgb:3d4a44,reset,reset,0
+81,36,━,rgb:3d4a44,reset,reset,0
+82,36,━,rgb:3d4a44,reset,reset,0
+83,36,━,rgb:3d4a44,reset,reset,0
+84,36,━,rgb:3d4a44,reset,reset,0
+85,36,━,rgb:3d4a44,reset,reset,0
+86,36,━,rgb:3d4a44,reset,reset,0
+87,36,━,rgb:3d4a44,reset,reset,0
+88,36,━,rgb:3d4a44,reset,reset,0
+89,36,━,rgb:3d4a44,reset,reset,0
+90,36,━,rgb:3d4a44,reset,reset,0
+91,36,━,rgb:3d4a44,reset,reset,0
+92,36,━,rgb:3d4a44,reset,reset,0
+93,36,━,rgb:3d4a44,reset,reset,0
+94,36,━,rgb:3d4a44,reset,reset,0
+95,36,━,rgb:3d4a44,reset,reset,0
+96,36,━,rgb:3d4a44,reset,reset,0
+97,36,━,rgb:3d4a44,reset,reset,0
+98,36,━,rgb:3d4a44,reset,reset,0
+99,36,━,rgb:3d4a44,reset,reset,0
+100,36,━,rgb:3d4a44,reset,reset,0
+101,36,━,rgb:3d4a44,reset,reset,0
+102,36,━,rgb:3d4a44,reset,reset,0
+103,36,━,rgb:3d4a44,reset,reset,0
+104,36,━,rgb:3d4a44,reset,reset,0
+105,36,━,rgb:3d4a44,reset,reset,0
+106,36,━,rgb:3d4a44,reset,reset,0
+107,36,━,rgb:3d4a44,reset,reset,0
+108,36,━,rgb:3d4a44,reset,reset,0
+109,36,━,rgb:3d4a44,reset,reset,0
+110,36,━,rgb:3d4a44,reset,reset,0
+111,36,━,rgb:3d4a44,reset,reset,0
+112,36,━,rgb:3d4a44,reset,reset,0
+113,36,━,rgb:3d4a44,reset,reset,0
+114,36,━,rgb:3d4a44,reset,reset,0
+115,36,━,rgb:3d4a44,reset,reset,0
+116,36,━,rgb:3d4a44,reset,reset,0
+117,36,━,rgb:3d4a44,reset,reset,0
+118,36,━,rgb:3d4a44,reset,reset,0
+119,36,━,rgb:3d4a44,reset,reset,0
+120,36,━,rgb:3d4a44,reset,reset,0
+121,36,━,rgb:3d4a44,reset,reset,0
+122,36,━,rgb:3d4a44,reset,reset,0
+123,36,━,rgb:3d4a44,reset,reset,0
+124,36,━,rgb:3d4a44,reset,reset,0
+125,36,━,rgb:3d4a44,reset,reset,0
+126,36,━,rgb:3d4a44,reset,reset,0
+127,36,━,rgb:3d4a44,reset,reset,0
+128,36,━,rgb:3d4a44,reset,reset,0
+129,36,━,rgb:3d4a44,reset,reset,0
+130,36,━,rgb:3d4a44,reset,reset,0
+131,36,━,rgb:3d4a44,reset,reset,0
+0,37, ,reset,reset,reset,0
+1,37,↑,rgb:c7e8c9,reset,reset,0
+2,37,↓,rgb:c7e8c9,reset,reset,0
+3,37, ,rgb:6a7a72,reset,reset,0
+4,37,s,rgb:6a7a72,reset,reset,0
+5,37,e,rgb:6a7a72,reset,reset,0
+6,37,l,rgb:6a7a72,reset,reset,0
+7,37,e,rgb:6a7a72,reset,reset,0
+8,37,c,rgb:6a7a72,reset,reset,0
+9,37,t,rgb:6a7a72,reset,reset,0
+10,37, ,reset,reset,reset,0
+11,37, ,reset,reset,reset,0
+12,37, ,reset,reset,reset,0
+13,37,↵,rgb:c7e8c9,reset,reset,0
+14,37, ,rgb:6a7a72,reset,reset,0
+15,37,c,rgb:6a7a72,reset,reset,0
+16,37,o,rgb:6a7a72,reset,reset,0
+17,37,n,rgb:6a7a72,reset,reset,0
+18,37,n,rgb:6a7a72,reset,reset,0
+19,37,e,rgb:6a7a72,reset,reset,0
+20,37,c,rgb:6a7a72,reset,reset,0
+21,37,t,rgb:6a7a72,reset,reset,0
+22,37, ,reset,reset,reset,0
+23,37, ,reset,reset,reset,0
+24,37, ,reset,reset,reset,0
+25,37,/,rgb:c7e8c9,reset,reset,0
+26,37, ,rgb:6a7a72,reset,reset,0
+27,37,s,rgb:6a7a72,reset,reset,0
+28,37,e,rgb:6a7a72,reset,reset,0
+29,37,a,rgb:6a7a72,reset,reset,0
+30,37,r,rgb:6a7a72,reset,reset,0
+31,37,c,rgb:6a7a72,reset,reset,0
+32,37,h,rgb:6a7a72,reset,reset,0
+33,37, ,reset,reset,reset,0
+34,37, ,reset,reset,reset,0
+35,37, ,reset,reset,reset,0
+36,37,#,rgb:c7e8c9,reset,reset,0
+37,37, ,rgb:6a7a72,reset,reset,0
+38,37,t,rgb:6a7a72,reset,reset,0
+39,37,a,rgb:6a7a72,reset,reset,0
+40,37,g,rgb:6a7a72,reset,reset,0
+41,37,s,rgb:6a7a72,reset,reset,0
+42,37, ,reset,reset,reset,0
+43,37, ,reset,reset,reset,0
+44,37, ,reset,reset,reset,0
+45,37,a,rgb:c7e8c9,reset,reset,0
+46,37, ,rgb:6a7a72,reset,reset,0
+47,37,a,rgb:6a7a72,reset,reset,0
+48,37,d,rgb:6a7a72,reset,reset,0
+49,37,d,rgb:6a7a72,reset,reset,0
+50,37, ,reset,reset,reset,0
+51,37, ,reset,reset,reset,0
+52,37, ,reset,reset,reset,0
+53,37,e,rgb:c7e8c9,reset,reset,0
+54,37, ,rgb:6a7a72,reset,reset,0
+55,37,e,rgb:6a7a72,reset,reset,0
+56,37,d,rgb:6a7a72,reset,reset,0
+57,37,i,rgb:6a7a72,reset,reset,0
+58,37,t,rgb:6a7a72,reset,reset,0
+59,37, ,reset,reset,reset,0
+60,37, ,reset,reset,reset,0
+61,37, ,reset,reset,reset,0
+62,37,d,rgb:c7e8c9,reset,reset,0
+63,37, ,rgb:6a7a72,reset,reset,0
+64,37,d,rgb:6a7a72,reset,reset,0
+65,37,e,rgb:6a7a72,reset,reset,0
+66,37,l,rgb:6a7a72,reset,reset,0
+67,37, ,reset,reset,reset,0
+68,37, ,reset,reset,reset,0
+69,37, ,reset,reset,reset,0
+70,37,P,rgb:c7e8c9,reset,reset,0
+71,37, ,rgb:6a7a72,reset,reset,0
+72,37,p,rgb:6a7a72,reset,reset,0
+73,37,u,rgb:6a7a72,reset,reset,0
+74,37,s,rgb:6a7a72,reset,reset,0
+75,37,h,rgb:6a7a72,reset,reset,0
+76,37, ,rgb:6a7a72,reset,reset,0
+77,37,k,rgb:6a7a72,reset,reset,0
+78,37,e,rgb:6a7a72,reset,reset,0
+79,37,y,rgb:6a7a72,reset,reset,0
+80,37, ,reset,reset,reset,0
+81,37, ,reset,reset,reset,0
+82,37, ,reset,reset,reset,0
+83,37,+,rgb:c7e8c9,reset,reset,0
+84,37,/,rgb:c7e8c9,reset,reset,0
+85,37,-,rgb:c7e8c9,reset,reset,0
+86,37, ,rgb:6a7a72,reset,reset,0
+87,37,z,rgb:6a7a72,reset,reset,0
+88,37,o,rgb:6a7a72,reset,reset,0
+89,37,o,rgb:6a7a72,reset,reset,0
+90,37,m,rgb:6a7a72,reset,reset,0
+91,37, ,reset,reset,reset,0
+92,37, ,reset,reset,reset,0
+93,37, ,reset,reset,reset,0
+94,37,␣,rgb:c7e8c9,reset,reset,0
+95,37, ,rgb:6a7a72,reset,reset,0
+96,37,f,rgb:6a7a72,reset,reset,0
+97,37,o,rgb:6a7a72,reset,reset,0
+98,37,l,rgb:6a7a72,reset,reset,0
+99,37,d,rgb:6a7a72,reset,reset,0
+100,37, ,reset,reset,reset,0
+101,37, ,reset,reset,reset,0
+102,37, ,reset,reset,reset,0
+103,37,G,rgb:c7e8c9,reset,reset,0
+104,37, ,rgb:6a7a72,reset,reset,0
+105,37,g,rgb:6a7a72,reset,reset,0
+106,37,r,rgb:6a7a72,reset,reset,0
+107,37,o,rgb:6a7a72,reset,reset,0
+108,37,u,rgb:6a7a72,reset,reset,0
+109,37,p,rgb:6a7a72,reset,reset,0
+110,37,s,rgb:6a7a72,reset,reset,0
+111,37, ,reset,reset,reset,0
+112,37, ,reset,reset,reset,0
+113,37, ,reset,reset,reset,0
+114,37,?,rgb:c7e8c9,reset,reset,0
+115,37, ,rgb:6a7a72,reset,reset,0
+116,37,h,rgb:6a7a72,reset,reset,0
+117,37,e,rgb:6a7a72,reset,reset,0
+118,37,l,rgb:6a7a72,reset,reset,0
+119,37,p,rgb:6a7a72,reset,reset,0
+120,37, ,reset,reset,reset,0
+121,37, ,reset,reset,reset,0
+122,37, ,reset,reset,reset,0
+123,37,q,rgb:c7e8c9,reset,reset,0
+124,37, ,rgb:6a7a72,reset,reset,0
+125,37,q,rgb:6a7a72,reset,reset,0
+126,37,u,rgb:6a7a72,reset,reset,0
+127,37,i,rgb:6a7a72,reset,reset,0
+128,37,t,rgb:6a7a72,reset,reset,0
+129,37, ,reset,reset,reset,0
+130,37, ,reset,reset,reset,0
+131,37, ,reset,reset,reset,0

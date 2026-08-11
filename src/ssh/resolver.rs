@@ -115,11 +115,7 @@ pub fn parse_host_aliases(config: &str) -> Vec<String> {
         let Some(rest) = it.next() else {
             continue;
         };
-        for alias in rest.split_whitespace() {
-            if is_listable_host_alias(alias) {
-                hosts.push(alias.to_string());
-            }
-        }
+        hosts.extend(rest.split_whitespace().filter_map(listable_host_alias));
     }
     hosts
 }
@@ -147,11 +143,7 @@ fn collect_host_aliases(path: &Path, out: &mut Vec<String>, depth: u8) {
             continue;
         };
         if keyword.eq_ignore_ascii_case("host") {
-            for alias in rest.split_whitespace() {
-                if is_listable_host_alias(alias) {
-                    out.push(alias.to_string());
-                }
-            }
+            out.extend(rest.split_whitespace().filter_map(listable_host_alias));
         } else if keyword.eq_ignore_ascii_case("include") {
             for token in rest.split_whitespace() {
                 for inc in expand_include_token(token, base_dir) {
@@ -225,17 +217,22 @@ fn wildcard_match(pattern: &str, text: &str) -> bool {
     dp[p.len()][t.len()]
 }
 
-fn is_listable_host_alias(alias: &str) -> bool {
-    if alias == "*" || alias == "!*" {
-        return false;
+/// Normalize one `Host` line token into a listable alias.
+///
+/// Strips the optional surrounding double quotes OpenSSH accepts (`Host "web"`
+/// resolves as `web`, so listing it verbatim would hand `ssh -G` an alias it
+/// rejects), then drops patterns that aren't a concrete host: wildcards and
+/// negations. A quoted pattern containing whitespace needs no handling —
+/// OpenSSH itself rejects such a host as having invalid characters.
+fn listable_host_alias(token: &str) -> Option<String> {
+    let alias = token
+        .strip_prefix('"')
+        .and_then(|a| a.strip_suffix('"'))
+        .unwrap_or(token);
+    if alias.is_empty() || alias.starts_with('!') || alias.contains('*') || alias.contains('?') {
+        return None;
     }
-    if alias.starts_with('!') {
-        return false;
-    }
-    if alias.contains('*') || alias.contains('?') {
-        return false;
-    }
-    true
+    Some(alias.to_string())
 }
 
 /// Parse `ssh -G` stdout into [`SshHost`].
@@ -439,6 +436,67 @@ remotecommand tmux attach
         let output = "remotecommand none\n";
         let host = parse_ssh_g_output("test", output);
         assert_eq!(host.remote_command, None);
+    }
+
+    /// Differential test against the real OpenSSH client: every alias we list
+    /// must be one `ssh -G` resolves back to the block it came from. Guards the
+    /// hand-rolled `Host` line parser — the one part of resolution sshub does
+    /// itself, since OpenSSH has no "enumerate hosts" mode to copy.
+    #[test]
+    fn listed_aliases_round_trip_through_real_ssh() {
+        use std::io::Write;
+        if Command::new("ssh").arg("-V").output().is_err() {
+            eprintln!("skipping: no ssh binary");
+            return;
+        }
+
+        // Each entry: the config block, and the hostname `ssh -G` must report
+        // for every alias the block declares.
+        let cases: &[(&str, &str)] = &[
+            ("Host plain\n    HostName 10.0.0.1\n", "10.0.0.1"),
+            ("Host \"quoted\"\n    HostName 10.0.0.2\n", "10.0.0.2"),
+            ("Host\ttabbed\n\tHostName 10.0.0.3\n", "10.0.0.3"),
+            ("Host=equals\n    HostName 10.0.0.4\n", "10.0.0.4"),
+            (
+                "Host trailing # comment\n    HostName 10.0.0.5\n",
+                "10.0.0.5",
+            ),
+            ("Host multi-a multi-b\n    HostName 10.0.0.6\n", "10.0.0.6"),
+            (
+                "Host mixed \"mixed-q\"\n    HostName 10.0.0.7\n",
+                "10.0.0.7",
+            ),
+        ];
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config");
+        let mut f = std::fs::File::create(&path).unwrap();
+        for (block, _) in cases {
+            writeln!(f, "{block}").unwrap();
+        }
+        drop(f);
+
+        let resolver = SshConfigResolver::with_config_path(&path);
+        let listed = resolver.list_hosts().unwrap();
+
+        // Nothing silently dropped: one alias per name declared across all blocks.
+        assert_eq!(listed.len(), 9, "listed aliases: {listed:?}");
+
+        for alias in &listed {
+            let expected = cases
+                .iter()
+                .find(|(block, _)| block.contains(alias.as_str()))
+                .map(|(_, hostname)| *hostname)
+                .unwrap_or_else(|| panic!("listed alias {alias:?} matches no config block"));
+            let host = resolver
+                .resolve_host(alias)
+                .unwrap_or_else(|e| panic!("ssh -G rejected listed alias {alias:?}: {e}"));
+            assert_eq!(
+                host.hostname.as_deref(),
+                Some(expected),
+                "alias {alias:?} resolved to the wrong block"
+            );
+        }
     }
 
     #[test]

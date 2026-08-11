@@ -64,6 +64,7 @@ impl App {
         match self.mode {
             AppMode::KeybindEditor => self.handle_key_keybind_editor(key),
             AppMode::Settings => self.handle_key_settings(key),
+            AppMode::ThemePicker => self.handle_key_theme_picker(key),
             AppMode::TunnelReconnectSettings => self.handle_key_tunnel_reconnect_settings(key),
             AppMode::ConfirmQuit => self.handle_key_confirm_quit(key),
             AppMode::Help => self.handle_key_help(key),
@@ -734,20 +735,29 @@ impl App {
 
     pub(crate) fn open_known_hosts(&mut self) {
         let path = crate::known_hosts::known_hosts_path();
-        let entries = crate::known_hosts::load_known_hosts(&path).unwrap_or_default();
-        self.known_hosts = Some(KnownHostsState {
-            entries,
+        let mut state = KnownHostsState {
+            entries: Vec::new(),
             selected: 0,
             query: String::new(),
             confirming_delete: false,
             notice: None,
             notice_is_error: false,
-        });
+        };
+        match crate::known_hosts::load_known_hosts(&path) {
+            Ok(entries) => state.entries = entries,
+            Err(e) => {
+                state.notice = Some(format!("Could not read {}: {e}", path.display()));
+                state.notice_is_error = true;
+            }
+        }
+        self.known_hosts = Some(state);
         self.mode = AppMode::KnownHosts;
     }
 
     pub(crate) fn handle_key_known_hosts(&mut self, key: KeyEvent) -> Result<()> {
         let is_yes = self.is_action(KeyAction::ConfirmYes, &key);
+        let delete = self.is_action(KeyAction::KnownHostsDelete, &key);
+        let refresh = self.is_action(KeyAction::KnownHostsRefresh, &key);
         let Some(state) = self.known_hosts.as_mut() else {
             self.mode = AppMode::Normal;
             return Ok(());
@@ -760,14 +770,22 @@ impl App {
                     let entry = state.entries[fi].clone();
                     let path = crate::known_hosts::known_hosts_path();
                     match crate::known_hosts::remove_host(&entry.hosts, &path) {
-                        Ok(()) => {
-                            let entries =
-                                crate::known_hosts::load_known_hosts(&path).unwrap_or_default();
-                            state.entries = entries;
-                            state.selected = 0;
-                            state.notice = Some(format!("Removed all keys for {}", entry.hosts));
-                            state.notice_is_error = false;
-                        }
+                        Ok(()) => match crate::known_hosts::load_known_hosts(&path) {
+                            Ok(entries) => {
+                                state.entries = entries;
+                                state.selected = 0;
+                                state.notice =
+                                    Some(format!("Removed all keys for {}", entry.hosts));
+                                state.notice_is_error = false;
+                            }
+                            Err(e) => {
+                                state.notice = Some(format!(
+                                    "Removed keys for {}, but reload failed: {e}",
+                                    entry.hosts
+                                ));
+                                state.notice_is_error = true;
+                            }
+                        },
                         Err(e) => {
                             state.notice = Some(format!("{e}"));
                             state.notice_is_error = true;
@@ -777,6 +795,36 @@ impl App {
                 state.confirming_delete = false;
             } else {
                 state.confirming_delete = false;
+            }
+            return Ok(());
+        }
+
+        if delete {
+            state.notice = None;
+            let filtered = state.filtered_indices();
+            if let Some(&fi) = filtered.get(state.selected) {
+                if let Some(reason) = state.entries[fi].deletion_block_reason() {
+                    state.notice = Some(reason.to_string());
+                    state.notice_is_error = true;
+                } else {
+                    state.confirming_delete = true;
+                }
+            }
+            return Ok(());
+        }
+        if refresh {
+            let path = crate::known_hosts::known_hosts_path();
+            match crate::known_hosts::load_known_hosts(&path) {
+                Ok(entries) => {
+                    state.entries = entries;
+                    state.selected = 0;
+                    state.notice = Some("Refreshed".to_string());
+                    state.notice_is_error = false;
+                }
+                Err(e) => {
+                    state.notice = Some(format!("Refresh failed: {e}"));
+                    state.notice_is_error = true;
+                }
             }
             return Ok(());
         }
@@ -811,25 +859,6 @@ impl App {
                 state.selected = (state.selected + 10).min(filtered.len().saturating_sub(1));
                 state.notice = None;
             }
-            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                state.notice = None;
-                let filtered = state.filtered_indices();
-                if let Some(&fi) = filtered.get(state.selected) {
-                    if let Some(reason) = state.entries[fi].deletion_block_reason() {
-                        state.notice = Some(reason.to_string());
-                        state.notice_is_error = true;
-                    } else {
-                        state.confirming_delete = true;
-                    }
-                }
-            }
-            KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                let path = crate::known_hosts::known_hosts_path();
-                state.entries = crate::known_hosts::load_known_hosts(&path).unwrap_or_default();
-                state.selected = 0;
-                state.notice = Some("Refreshed".to_string());
-                state.notice_is_error = false;
-            }
             KeyCode::Backspace => {
                 state.query.pop();
                 state.selected = 0;
@@ -854,7 +883,16 @@ impl App {
                 Some(PendingDelete::Host { id, name }) => {
                     match self.store.delete_host(id)? {
                         DeleteHostOutcome::Deleted => {
+                            let credential_cleanup = self
+                                .password_store
+                                .delete(&crate::credentials::host_key(id))
+                                .err();
                             self.host_notice = Some(format!("Host '{name}' deleted"));
+                            if let Some(err) = credential_cleanup {
+                                self.host_notice = Some(format!(
+                                    "Host '{name}' deleted; credential cleanup failed: {err}"
+                                ));
+                            }
                             self.reload_hosts()?;
                         }
                         DeleteHostOutcome::NotLauncher => {
@@ -867,7 +905,16 @@ impl App {
                 Some(PendingDelete::Identity { id, name }) => {
                     match self.store.delete_identity(id)? {
                         crate::store::DeleteIdentityOutcome::Deleted => {
+                            let credential_cleanup = self
+                                .password_store
+                                .delete(&crate::credentials::identity_key(id))
+                                .err();
                             self.identity_notice = Some(format!("Identity '{name}' deleted"));
+                            if let Some(err) = credential_cleanup {
+                                self.identity_notice = Some(format!(
+                                    "Identity '{name}' deleted; credential cleanup failed: {err}"
+                                ));
+                            }
                             self.reload_identities()?;
                         }
                         crate::store::DeleteIdentityOutcome::InUse { host_count } => {
@@ -889,7 +936,7 @@ impl App {
                     self.enter_group_manage()?;
                 }
                 Some(PendingDelete::Tunnel { id, label }) => {
-                    let _ = self.tunnel_manager.stop_user(id);
+                    self.tunnel_manager.stop_user(id)?;
                     self.tunnel_manager.clear_user_stopped(id);
                     self.store.delete_tunnel(id)?;
                     self.tunnel_notice = Some(format!("Tunnel '{label}' deleted"));
@@ -1184,39 +1231,57 @@ impl App {
         }
     }
 
-    /// Read the current value of the Settings toggle at row `i` (order matches
-    /// [`SETTINGS_ITEMS`]).
-    pub(crate) fn setting_value(&self, i: usize) -> bool {
+    /// Current value of a Settings row: `Some` for a boolean toggle, `None`
+    /// for an action row like [`SettingItem::Theme`], which has no value.
+    pub(crate) fn setting_value(&self, item: impl Into<SettingItem>) -> Option<bool> {
         let a = &self.config.appearance;
-        match i {
-            0 => a.opaque_background,
-            1 => a.os_logo,
-            2 => a.confirm_quit,
-            3 => a.disable_animation,
-            4 => self.config.session_logging.enabled,
-            _ => false,
+        match item.into() {
+            SettingItem::Theme => None,
+            SettingItem::Toggle(t) => Some(match t {
+                SettingToggle::TransparentSshubBackground => a.transparent_sshub_background,
+                SettingToggle::TransparentSessionBackground => a.transparent_session_background,
+                SettingToggle::OsLogo => a.os_logo,
+                SettingToggle::ConfirmQuit => a.confirm_quit,
+                SettingToggle::DisableAnimation => a.disable_animation,
+                SettingToggle::SessionLogging => self.config.session_logging.enabled,
+            }),
         }
     }
 
-    /// Flip the Settings toggle at row `i` and persist immediately.
-    fn toggle_setting(&mut self, i: usize) {
-        match i {
-            0 => {
-                self.config.appearance.opaque_background =
-                    !self.config.appearance.opaque_background;
+    /// Flip a boolean Settings row, reporting whether anything changed. Action
+    /// rows such as [`SettingItem::Theme`] are a no-op and return `false`.
+    ///
+    /// Persisting is the caller's job (see [`App::handle_key_settings`]): a
+    /// pure flip keeps the row semantics testable without writing a config
+    /// file, and it keeps an action row from touching config.toml at all.
+    pub(crate) fn toggle_setting(&mut self, item: impl Into<SettingItem>) -> bool {
+        let SettingItem::Toggle(toggle) = item.into() else {
+            return false;
+        };
+        match toggle {
+            SettingToggle::TransparentSshubBackground => {
+                self.config.appearance.transparent_sshub_background =
+                    !self.config.appearance.transparent_sshub_background;
             }
-            1 => self.config.appearance.os_logo = !self.config.appearance.os_logo,
-            2 => self.config.appearance.confirm_quit = !self.config.appearance.confirm_quit,
-            3 => {
+            SettingToggle::TransparentSessionBackground => {
+                self.config.appearance.transparent_session_background =
+                    !self.config.appearance.transparent_session_background;
+            }
+            SettingToggle::OsLogo => {
+                self.config.appearance.os_logo = !self.config.appearance.os_logo
+            }
+            SettingToggle::ConfirmQuit => {
+                self.config.appearance.confirm_quit = !self.config.appearance.confirm_quit
+            }
+            SettingToggle::DisableAnimation => {
                 self.config.appearance.disable_animation =
                     !self.config.appearance.disable_animation;
             }
-            4 => {
+            SettingToggle::SessionLogging => {
                 self.config.session_logging.enabled = !self.config.session_logging.enabled;
             }
-            _ => {}
         }
-        self.save_config_quietly();
+        true
     }
 
     pub(crate) fn handle_key_settings(&mut self, key: KeyEvent) -> Result<()> {
@@ -1229,7 +1294,59 @@ impl App {
             _ if self.is_action(KeyAction::MoveUp, &key) => {
                 self.settings_selected = (self.settings_selected + n - 1) % n;
             }
-            KeyCode::Char(' ') | KeyCode::Enter => self.toggle_setting(self.settings_selected),
+            KeyCode::Enter
+                if matches!(
+                    SETTINGS_ITEMS.get(self.settings_selected).map(|d| d.item),
+                    Some(SettingItem::Theme)
+                ) =>
+            {
+                self.open_theme_picker();
+            }
+            KeyCode::Char(' ') | KeyCode::Enter => {
+                // Action rows ignore both keys here: nothing flips, nothing is
+                // written. Space on the Theme row stays a deliberate no-op —
+                // only Enter opens the picker.
+                let item = SETTINGS_ITEMS.get(self.settings_selected).map(|d| d.item);
+                if item.is_some_and(|item| self.toggle_setting(item)) {
+                    self.save_config_quietly();
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Theme picker keys (spec, "Theme-Picker / Interaktion"). Nothing here
+    /// writes to disk except `Enter`.
+    pub(crate) fn handle_key_theme_picker(&mut self, key: KeyEvent) -> Result<()> {
+        // The page step is what the renderer can actually show, taken from the
+        // same pure geometry function the renderer uses, so a page never jumps
+        // further than the eye can follow.
+        let page = crate::tui::screens::theme_picker::visible_rows(self.terminal_area).max(1);
+        let last = self.theme_picker_rows().len().saturating_sub(1);
+        match key.code {
+            _ if self.is_action(KeyAction::Cancel, &key) => self.cancel_theme_picker(),
+            KeyCode::Enter => self.commit_theme_picker(),
+            KeyCode::Char('r') => self.reload_theme_picker(),
+            KeyCode::Home => {
+                self.select_theme_row(0);
+            }
+            KeyCode::End => {
+                self.select_theme_row(last);
+            }
+            KeyCode::PageUp => self.page_theme_selection(-(page as isize)),
+            KeyCode::PageDown => self.page_theme_selection(page as isize),
+            // The two-row footer cannot hold every ignored role at once, so it
+            // scrolls. Shift is what keeps these off the navigation keys, whose
+            // bindings match modifiers exactly.
+            KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.scroll_theme_diagnostics(1)
+            }
+            KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.scroll_theme_diagnostics(-1)
+            }
+            _ if self.is_action(KeyAction::MoveDown, &key) => self.move_theme_selection(1),
+            _ if self.is_action(KeyAction::MoveUp, &key) => self.move_theme_selection(-1),
             _ => {}
         }
         Ok(())
@@ -1237,7 +1354,11 @@ impl App {
 
     /// Persist config, surfacing failures as a non-fatal host notice.
     pub(crate) fn save_config_quietly(&mut self) {
-        if let Err(e) = crate::config::save_config(&self.config) {
+        let result = match &self.profile {
+            Some(paths) => crate::config::save_config_at(&paths.config_file, &self.config),
+            None => crate::config::save_config(&self.config),
+        };
+        if let Err(e) = result {
             self.host_notice = Some(format!("Could not save config: {e}"));
         }
     }

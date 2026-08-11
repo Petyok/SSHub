@@ -14,7 +14,6 @@ use sshub::metadata::MetadataDb;
 use sshub::session::{Session, SessionConfig, SessionMeta, SessionPhase};
 use sshub::ssh::{HostResolver, SshHost};
 use sshub::store::LauncherStore;
-use sshub::tui::theme;
 
 struct EmptyResolver;
 
@@ -115,14 +114,21 @@ fn alt_s_filters_open_sessions_and_renders_the_selected_tab() {
     let buffer = render_to_buffer(&app);
     let y = buffer.area.y;
 
+    // Hand-transcribed from the frozen palette `src/tui/theme.rs` used to
+    // export: `theme::inv()` was `BG_DEEP` on `BRIGHT`. The palette itself is
+    // now a test-only witness inside the lib, so the two values are named here
+    // rather than imported.
+    const LEGACY_BG_DEEP: ratatui::style::Color = ratatui::style::Color::Rgb(0x06, 0x08, 0x0a);
+    const LEGACY_BRIGHT: ratatui::style::Color = ratatui::style::Color::Rgb(0xc7, 0xe8, 0xc9);
+
     let target_x = find_on_row(&buffer, y, "db-staging");
     for x in target_x..target_x + "db-staging".chars().count() as u16 {
-        assert_eq!(buffer[(x, y)].fg, theme::BG_DEEP);
-        assert_eq!(buffer[(x, y)].bg, theme::BRIGHT);
+        assert_eq!(buffer[(x, y)].fg, LEGACY_BG_DEEP);
+        assert_eq!(buffer[(x, y)].bg, LEGACY_BRIGHT);
     }
 
     let inactive_x = find_on_row(&buffer, y, "db-backup");
     for x in inactive_x..inactive_x + "db-backup".chars().count() as u16 {
-        assert_ne!(buffer[(x, y)].bg, theme::BRIGHT);
+        assert_ne!(buffer[(x, y)].bg, LEGACY_BRIGHT);
     }
 }

@@ -40,6 +40,36 @@ impl HostSearch {
         scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
         scored.into_iter().map(|(_, idx)| idx).collect()
     }
+
+    /// Char indices of `query` inside `field`, ascending and de-duplicated.
+    ///
+    /// Same pattern parse and same matcher the filter itself uses, so what the
+    /// host list highlights is exactly what made the row match — not a second,
+    /// subtly different substring search. Empty when the query is empty or this
+    /// particular field does not match (a row can be in the filter on a tag or
+    /// description while its name matched nothing).
+    pub fn display_match_indices(&mut self, field: &str, query: &str) -> Vec<u32> {
+        if query.is_empty() || field.is_empty() {
+            return Vec::new();
+        }
+        let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
+        let mut buf = Vec::new();
+        let mut indices = Vec::new();
+        if pattern
+            .indices(
+                Utf32Str::new(field, &mut buf),
+                &mut self.matcher,
+                &mut indices,
+            )
+            .is_none()
+        {
+            return Vec::new();
+        }
+        // `Pattern::indices` neither sorts nor de-duplicates across atoms.
+        indices.sort_unstable();
+        indices.dedup();
+        indices
+    }
 }
 
 fn score_field(
@@ -222,5 +252,45 @@ mod tests {
         ];
         let mut search = HostSearch::new();
         assert_eq!(search.update_query(&entries, "host"), vec![0, 1]);
+    }
+
+    /// The host list underlines what the query actually matched, so the search
+    /// has to hand back *where* it matched in the string the list renders.
+    #[test]
+    fn display_match_indices_point_at_the_matched_characters() {
+        let mut search = HostSearch::new();
+
+        // A contiguous substring: the indices are the substring's own columns.
+        assert_eq!(
+            search.display_match_indices("web-prod", "prod"),
+            vec![4, 5, 6, 7]
+        );
+
+        // A genuinely fuzzy match: scattered, still in ascending order.
+        let scattered = search.display_match_indices("db-staging", "dbg");
+        assert_eq!(scattered.first().copied(), Some(0));
+        assert!(
+            scattered.windows(2).all(|w| w[0] < w[1]),
+            "indices must be ascending and unique: {scattered:?}"
+        );
+        assert!(scattered
+            .iter()
+            .all(|&i| (i as usize) < "db-staging".chars().count()));
+
+        // Case-insensitive, like the filter itself.
+        assert_eq!(
+            search.display_match_indices("Bastion", "bas"),
+            vec![0, 1, 2]
+        );
+    }
+
+    /// No query, or a query that does not match this field, highlights nothing.
+    #[test]
+    fn display_match_indices_are_empty_without_a_match() {
+        let mut search = HostSearch::new();
+        assert!(search.display_match_indices("web-prod", "").is_empty());
+        // The entry can still be in the filter via a tag or description; the
+        // *name* simply has nothing to underline.
+        assert!(search.display_match_indices("web-prod", "zzz").is_empty());
     }
 }

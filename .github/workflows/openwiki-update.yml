@@ -25,7 +25,19 @@ jobs:
         run: npm install --global openwiki
 
       - name: Run OpenWiki
-        run: openwiki code --update --print
+        run: >-
+          openwiki code --update --print
+          "Use CHANGELOG.md as primary change ledger. Audit every feature, fix,
+          and behavior change in Unreleased and every historical release,
+          regardless of the recorded OpenWiki gitHead. Compare each entry
+          against the source tree and existing wiki. Map each relevant
+          changelog entry to accurate documentation, add missing pages when
+          needed, and update indexes and cross-links. Do not stop after
+          documenting recent entries or only files already referenced by
+          existing resource metadata.
+          Maintain openwiki/changelog-coverage.md as an audit notebook: link
+          every reviewed changelog entry to exact wiki pages, mark Covered or
+          Pending, and update its gitHead, date, model, and unresolved list."
         env:
           OPENWIKI_PROVIDER: openrouter
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -42,6 +54,7 @@ jobs:
             AGENTS.md
             CLAUDE.md
           branch: openwiki/update
+          base: development
           commit-message: "docs: update OpenWiki"
           title: "docs: update OpenWiki"
           body: |

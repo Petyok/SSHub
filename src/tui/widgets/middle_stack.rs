@@ -2,13 +2,16 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Style;
 use ratatui::widgets::Widget;
 use ratatui::Frame;
 
 use crate::app::App;
 use crate::osinfo::widget::{logo_dimensions, OsLogoWidget};
-use crate::tui::theme;
-use crate::tui::widgets::panel_box::{put_clamped, render_panel_box};
+use crate::theme::catalog::{ColorRole, PaintRole, StyleRole};
+use crate::tui::widgets::panel_box::{
+    put_clamped, render_panel_box, AGENT_PANEL, DETAILS_PANEL, LATENCY_PANEL, SSH_LOG_PANEL,
+};
 
 // ── Panel heights (sum = 19 to align with the right column) ─
 pub const HOST_H: u16 = 9;
@@ -57,6 +60,7 @@ pub(crate) fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
     // Everything below the title belongs to whichever host is selected, so a
     // moved cursor swaps the lot. Fade it up instead of flicking it over (#35).
     let fade = content_fade(app.selection_at, app.motion_enabled());
+    let theme = app.theme();
     let entry = app.selected_entry();
     let title = match entry.as_ref() {
         Some(e) => format!("host · {}", e.name()),
@@ -66,8 +70,9 @@ pub(crate) fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
         buf,
         area,
         &title,
-        None,
+        DETAILS_PANEL.plain(),
         app.focused_panel == crate::app::PanelId::Detail,
+        theme,
     );
 
     if area.height < 3 || area.width < 6 {
@@ -104,7 +109,7 @@ pub(crate) fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
         // Vertically center the logo within the card body.
         let pad = (inner_h.saturating_sub(logo_h)) / 2;
         let logo_area = Rect::new(inner_x, inner_top + pad, logo_w, logo_h);
-        OsLogoWidget::new(logo).render(logo_area, buf);
+        OsLogoWidget::new(logo, crate::osinfo::logos::os_logo_tint(theme)).render(logo_area, buf);
         text_x = inner_x + logo_w + 2;
     }
 
@@ -122,6 +127,8 @@ pub(crate) fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
     let port = ssh.port.unwrap_or(22);
     let managed = entry.managed();
 
+    let metadata = theme.style(StyleRole::DashboardDetailsMetadata);
+    let dim = theme.style(StyleRole::TextDim);
     let mut rows: Vec<(String, ratatui::style::Style)> = Vec::new();
 
     // Name (+ favourite star).
@@ -130,14 +137,14 @@ pub(crate) fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
     } else {
         entry.name().to_string()
     };
-    rows.push((name, theme::bright()));
+    rows.push((name, theme.style(StyleRole::TextBright)));
 
     // user@host:port (user omitted when unknown).
     let hostport = match ssh.user.as_deref() {
         Some(u) if !u.is_empty() => format!("{}@{}:{}", u, addr, port),
         _ => format!("{}:{}", addr, port),
     };
-    rows.push((hostport, theme::text()));
+    rows.push((hostport, theme.style(StyleRole::DashboardDetailsValue)));
 
     // OS  ·  latest ping latency (when we have a live sample).
     let latency = app
@@ -151,18 +158,18 @@ pub(crate) fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
         (None, Some(ms)) => format!("\u{b7} {ms}ms"),
         (None, None) => "unknown os".to_string(),
     };
-    rows.push((os_line, theme::cyan()));
+    rows.push((os_line, theme.style(StyleRole::DashboardDetailsLabel)));
 
     // Group / identity / proxy — managed hosts only.
     if let Some(m) = managed {
         if let Some(g) = m.group.as_ref() {
-            rows.push((format!("group: {}", g.name), theme::mute()));
+            rows.push((format!("group: {}", g.name), metadata));
         }
         if let Some(id) = m.identity.as_ref() {
-            rows.push((format!("key: {}", id.name), theme::mute()));
+            rows.push((format!("key: {}", id.name), metadata));
         }
         if let Some(pj) = m.proxy_jump.as_deref().filter(|s| !s.is_empty()) {
-            rows.push((format!("via {pj}"), theme::mute()));
+            rows.push((format!("via {pj}"), metadata));
         }
     }
 
@@ -174,13 +181,13 @@ pub(crate) fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
             .map(|t| format!("#{t}"))
             .collect::<Vec<_>>()
             .join(" ");
-        rows.push((tags, theme::dim()));
+        rows.push((tags, dim));
     }
 
     // Last connected (relative).
     if let Some(ts) = entry.last_connected() {
         let ago = crate::tui::widgets::right_stack::format_relative_time(ts);
-        rows.push((format!("last: {ago}"), theme::dim()));
+        rows.push((format!("last: {ago}"), dim));
     }
 
     // Zoomed: the card owns the whole dashboard body, so surface the full fact
@@ -188,37 +195,37 @@ pub(crate) fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
     if zoomed {
         rows.push((
             format!("transport: {}", entry.session_transport().label()),
-            theme::mute(),
+            metadata,
         ));
         rows.push((
             format!("session log: {}", entry.session_logging_override().label()),
-            theme::mute(),
+            metadata,
         ));
         if ssh.forward_agent == Some(true) {
-            rows.push(("forward agent: yes".to_string(), theme::mute()));
+            rows.push(("forward agent: yes".to_string(), metadata));
         }
         if let Some(rc) = ssh.remote_command.as_deref().filter(|s| !s.is_empty()) {
-            rows.push((format!("command: {rc}"), theme::mute()));
+            rows.push((format!("command: {rc}"), metadata));
         }
         if let Some(m) = managed {
             if let Some(id) = m.identity.as_ref() {
                 if let Some(u) = id.username.as_deref().filter(|s| !s.is_empty()) {
-                    rows.push((format!("login: {u}"), theme::mute()));
+                    rows.push((format!("login: {u}"), metadata));
                 }
                 if let Some(pk) = id.private_key.as_ref() {
-                    rows.push((format!("key file: {}", pk.display()), theme::dim()));
+                    rows.push((format!("key file: {}", pk.display()), dim));
                 }
             }
             if m.has_password {
-                rows.push(("password: stored".to_string(), theme::dim()));
+                rows.push(("password: stored".to_string(), dim));
             }
         }
-        rows.push((format!("source: {}", entry.source().as_str()), theme::dim()));
+        rows.push((format!("source: {}", entry.source().as_str()), dim));
         if let Some(env) = entry.environment().filter(|s| !s.is_empty()) {
-            rows.push((format!("env: {env}"), theme::dim()));
+            rows.push((format!("env: {env}"), dim));
         }
         if let Some(notes) = entry.description().filter(|s| !s.is_empty()) {
-            rows.push((format!("notes: {notes}"), theme::dim()));
+            rows.push((format!("notes: {notes}"), dim));
         }
     }
 
@@ -235,7 +242,20 @@ pub(crate) fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
     // blink along with what they hold.
     if area.width > 2 && area.height > 2 {
         let body = Rect::new(area.x + 1, area.y + 1, area.width - 2, area.height - 2);
-        crate::tui::blit::fade(buf, body, fade);
+        crate::tui::blit::fade(
+            buf,
+            body,
+            fade,
+            crate::tui::blit::FadeGround {
+                theme,
+                role: PaintRole::DashboardDetailsBackground,
+                // The details background's component rect is *this panel*, not
+                // the frame and not the faded slice: a gradient must restart
+                // where the panel starts and nowhere else.
+                paint_area: area,
+                exclusions: &[],
+            },
+        );
     }
 }
 
@@ -246,6 +266,7 @@ pub fn render_ssh_log_panel(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_ssh_log(buf: &mut Buffer, area: Rect, app: &App) {
+    let theme = app.theme();
     // Title reflects the host we're filtering by so it's not just "ssh log".
     let selected_name = app.selected_entry().map(|e| e.name().to_string());
     let title = match selected_name.as_deref() {
@@ -256,8 +277,9 @@ fn render_ssh_log(buf: &mut Buffer, area: Rect, app: &App) {
         buf,
         area,
         &title,
-        None,
+        SSH_LOG_PANEL.plain(),
         app.focused_panel == crate::app::PanelId::SshLog,
+        theme,
     );
     let inner_x = area.x + 2;
     let inner_w = area.width.saturating_sub(4) as usize;
@@ -277,7 +299,14 @@ fn render_ssh_log(buf: &mut Buffer, area: Rect, app: &App) {
                 Some(name) => format!("no events for {name} yet — Enter to connect"),
                 None => "select a host to see its log".to_string(),
             };
-            put_clamped(buf, inner_x, placeholder_y, &msg, theme::dim(), inner_w);
+            put_clamped(
+                buf,
+                inner_x,
+                placeholder_y,
+                &msg,
+                theme.style(StyleRole::TextDim),
+                inner_w,
+            );
         }
         return;
     }
@@ -295,9 +324,13 @@ fn render_ssh_log(buf: &mut Buffer, area: Rect, app: &App) {
     let mut vrows: Vec<VRow> = Vec::new();
     for entry in &filtered {
         let style = match entry.level {
-            crate::ssh::probe::LogLevel::Error => theme::red(),
-            crate::ssh::probe::LogLevel::Success => theme::green(),
-            crate::ssh::probe::LogLevel::Info => theme::dim(),
+            crate::ssh::probe::LogLevel::Error => {
+                Style::default().fg(theme.color(ColorRole::StatusError))
+            }
+            crate::ssh::probe::LogLevel::Success => {
+                Style::default().fg(theme.color(ColorRole::StatusSuccess))
+            }
+            crate::ssh::probe::LogLevel::Info => theme.style(StyleRole::TextDim),
         };
         let time_str = format!("{} ", crate::tui::format_local_time(entry.timestamp));
         for (j, chunk) in wrap_line(&entry.line, wrap_w).into_iter().enumerate() {
@@ -319,7 +352,7 @@ fn render_ssh_log(buf: &mut Buffer, area: Rect, app: &App) {
         let badge = format!("↑{scroll}");
         let bx = area.x + area.width.saturating_sub(badge.len() as u16 + 3);
         if bx > area.x + 2 {
-            buf.set_string(bx, area.y, &badge, theme::mute());
+            buf.set_string(bx, area.y, &badge, theme.style(StyleRole::TextMuted));
         }
     }
 
@@ -329,7 +362,7 @@ fn render_ssh_log(buf: &mut Buffer, area: Rect, app: &App) {
             break;
         }
         if let Some(t) = &vr.time {
-            buf.set_string(inner_x, row_y, t, theme::mute());
+            buf.set_string(inner_x, row_y, t, theme.style(StyleRole::TextMuted));
         }
         buf.set_string(inner_x + TIME_W as u16, row_y, &vr.text, vr.style);
     }
@@ -401,24 +434,30 @@ pub(crate) fn content_fade(at: Option<std::time::Instant>, motion: bool) -> f32 
 }
 
 pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
+    let empty_agent = crate::ssh::agent::AgentInfo::default();
+    let agent = app.agent_info.as_ref().unwrap_or(&empty_agent);
+    let theme = app.theme();
+    let text = theme.style(StyleRole::TextPrimary);
+    let bright = theme.style(StyleRole::TextBright);
+    let dim = theme.style(StyleRole::TextDim);
+    let error = Style::default().fg(theme.color(ColorRole::StatusError));
     render_panel_box(
         buf,
         area,
         "agent",
-        None,
+        AGENT_PANEL.plain(),
         app.focused_panel == crate::app::PanelId::Agent,
+        theme,
     );
 
     let inner_x = area.x + 2;
     let inner_w = area.width.saturating_sub(4) as usize;
 
-    let agent = crate::ssh::agent::detect_agent();
-
     // Zoomed: keep the socket/forward/config header, then list every loaded key
     // (type, bits, full fingerprint, comment) filling the panel height.
     if area.height >= crate::tui::widgets::panel_box::ZOOM_CONTENT_MIN {
         let bottom_guard = area.y + area.height - 1;
-        let label_style = theme::dim();
+        let label_style = dim;
         let mut y = area.y + 1;
 
         // Header row: socket path.
@@ -426,22 +465,8 @@ pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
             buf.set_string(inner_x, y, "socket  ", label_style);
             let val_x = inner_x + 8;
             let _ = match &agent.socket_path {
-                Some(path) => put_clamped(
-                    buf,
-                    val_x,
-                    y,
-                    path,
-                    theme::text(),
-                    inner_w.saturating_sub(8),
-                ),
-                None => put_clamped(
-                    buf,
-                    val_x,
-                    y,
-                    "not found",
-                    theme::red(),
-                    inner_w.saturating_sub(8),
-                ),
+                Some(path) => put_clamped(buf, val_x, y, path, text, inner_w.saturating_sub(8)),
+                None => put_clamped(buf, val_x, y, "not found", error, inner_w.saturating_sub(8)),
             };
             y += 1;
         }
@@ -465,7 +490,7 @@ pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
                 inner_x + 8,
                 y,
                 &fwd_str,
-                theme::bright(),
+                bright,
                 inner_w.saturating_sub(8),
             );
             y += 1;
@@ -479,7 +504,7 @@ pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
                 inner_x + 8,
                 y,
                 "~/.ssh/config",
-                theme::text(),
+                text,
                 inner_w.saturating_sub(8),
             );
             y += 1;
@@ -493,7 +518,7 @@ pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
         // Key-list header.
         if y < bottom_guard {
             let hdr = format!("keys ({}):", agent.keys.len());
-            put_clamped(buf, inner_x, y, &hdr, theme::bright(), inner_w);
+            put_clamped(buf, inner_x, y, &hdr, bright, inner_w);
             y += 1;
         }
 
@@ -504,7 +529,7 @@ pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
                     inner_x + 2,
                     y,
                     "no keys loaded",
-                    theme::dim(),
+                    dim,
                     inner_w.saturating_sub(2),
                 );
             }
@@ -531,9 +556,9 @@ pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
                 line.push_str(&key.comment);
             }
             let style = if di == sel {
-                theme::text().add_modifier(ratatui::style::Modifier::REVERSED)
+                text.add_modifier(ratatui::style::Modifier::REVERSED)
             } else {
-                theme::text()
+                text
             };
             put_clamped(buf, inner_x + 2, y, &line, style, key_w);
             y += 1;
@@ -544,17 +569,17 @@ pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
     // Row 1: socket path
     let row1_y = area.y + 1;
     if row1_y < area.y + area.height - 1 {
-        buf.set_string(inner_x, row1_y, "socket  ", theme::dim());
+        buf.set_string(inner_x, row1_y, "socket  ", dim);
         let label_w = 8; // "socket  ".len()
         let val_x = inner_x + label_w as u16;
         let max_path = inner_w.saturating_sub(label_w);
         match &agent.socket_path {
             Some(path) => {
                 let display: String = path.chars().take(max_path).collect();
-                buf.set_string(val_x, row1_y, &display, theme::text());
+                buf.set_string(val_x, row1_y, &display, text);
             }
             None => {
-                buf.set_string(val_x, row1_y, "not found", theme::red());
+                buf.set_string(val_x, row1_y, "not found", error);
             }
         }
     }
@@ -562,7 +587,7 @@ pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
     // Row 2: keys loaded
     let row2_y = area.y + 2;
     if row2_y < area.y + area.height - 1 {
-        buf.set_string(inner_x, row2_y, "keys    ", theme::dim());
+        buf.set_string(inner_x, row2_y, "keys    ", dim);
         let val_x = inner_x + 8;
         let key_str = format!("{} loaded", agent.keys.len());
         put_clamped(
@@ -570,7 +595,7 @@ pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
             val_x,
             row2_y,
             &key_str,
-            theme::bright(),
+            bright,
             inner_w.saturating_sub(8),
         );
     }
@@ -578,7 +603,7 @@ pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
     // Row 3: forward agent hosts count
     let row3_y = area.y + 3;
     if row3_y < area.y + area.height - 1 {
-        buf.set_string(inner_x, row3_y, "forward ", theme::dim());
+        buf.set_string(inner_x, row3_y, "forward ", dim);
         let val_x = inner_x + 8;
         let fwd_count = app
             .hosts
@@ -594,7 +619,7 @@ pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
             val_x,
             row3_y,
             &fwd_str,
-            theme::bright(),
+            bright,
             inner_w.saturating_sub(8),
         );
     }
@@ -602,14 +627,14 @@ pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
     // Row 4: config path
     let row4_y = area.y + 4;
     if row4_y < area.y + area.height - 1 {
-        buf.set_string(inner_x, row4_y, "config  ", theme::dim());
+        buf.set_string(inner_x, row4_y, "config  ", dim);
         let val_x = inner_x + 8;
         put_clamped(
             buf,
             val_x,
             row4_y,
             "~/.ssh/config",
-            theme::text(),
+            text,
             inner_w.saturating_sub(8),
         );
     }
@@ -617,12 +642,19 @@ pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
 
 // ── Latency sparkline panel ─────────────────────────────
 
-/// Sparkline block characters, ordered lowest to highest.
-const SPARK_CHARS: [char; 8] = [
-    '\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}', '\u{2587}', '\u{2588}',
-];
-
+/// The ping timeline of the selected host: a bar graph when the panel is zoomed
+/// tall enough for one, a single-row sparkline otherwise.
+///
+/// Both draw from `theme::SPARK` and band their columns by the *window peak*
+/// rather than an absolute latency, so a fast link and a slow one are both
+/// legible instead of one of them being a flat line.
 pub(crate) fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
+    let theme = app.theme();
+    let dim = theme.style(StyleRole::TextDim);
+    // The bar/sparkline ramp is the metrics family's own three colours.
+    let spark_low = Style::default().fg(theme.color(ColorRole::DashboardMetricsSparklineLow));
+    let spark_mid = Style::default().fg(theme.color(ColorRole::DashboardMetricsSparklineMedium));
+    let spark_high = Style::default().fg(theme.color(ColorRole::DashboardMetricsSparklineHigh));
     // Per-host latency: the ping timeline of the currently selected host.
     let selected = app.selected_entry().map(|e| e.name().to_string());
     let title = match selected.as_deref() {
@@ -633,8 +665,9 @@ pub(crate) fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
         buf,
         area,
         &title,
-        None,
+        LATENCY_PANEL.plain(),
         app.focused_panel == crate::app::PanelId::Latency,
+        theme,
     );
 
     let inner_x = area.x + 2;
@@ -656,18 +689,11 @@ pub(crate) fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
         let spark_y = area.y + 1;
         if spark_y < area.y + area.height - 1 {
             let baseline: String = "\u{2581}".repeat(inner_w.min(20));
-            buf.set_string(inner_x, spark_y, &baseline, theme::dim());
+            buf.set_string(inner_x, spark_y, &baseline, dim);
         }
         let info_y = area.y + 2;
         if info_y < area.y + area.height - 1 {
-            put_clamped(
-                buf,
-                inner_x,
-                info_y,
-                "no latency data",
-                theme::dim(),
-                inner_w,
-            );
+            put_clamped(buf, inner_x, info_y, "no latency data", dim, inner_w);
         }
         return;
     }
@@ -689,7 +715,14 @@ pub(crate) fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
         let stat_y = area.y + 1;
         if stat_y < bottom_guard {
             let stats = format!("min {min}  p50 {p50}  max {peak}  last {now_val} (ms)");
-            put_clamped(buf, inner_x, stat_y, &stats, theme::bright(), inner_w);
+            put_clamped(
+                buf,
+                inner_x,
+                stat_y,
+                &stats,
+                theme.style(StyleRole::TextBright),
+                inner_w,
+            );
         }
 
         // Bar graph fills the rest of the body below the stat row.
@@ -710,11 +743,11 @@ pub(crate) fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
                 }
                 // Colour by latency relative to the window peak.
                 let style = if (v as u64) * 3 < max_val {
-                    theme::green()
+                    spark_low
                 } else if (v as u64) * 3 < max_val * 2 {
-                    theme::amber()
+                    spark_mid
                 } else {
-                    theme::red()
+                    spark_high
                 };
                 let mut level = (((v as u64) * units) / max_val).clamp(1, units);
                 // The newest column grows in rather than appearing full height.
@@ -735,7 +768,12 @@ pub(crate) fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
                 if rem > 0 && full < graph_h {
                     let y = bottom - full;
                     if y >= graph_top {
-                        buf.set_string(x, y, SPARK_CHARS[rem - 1].to_string().as_str(), style);
+                        buf.set_string(
+                            x,
+                            y,
+                            crate::tui::theme::SPARK[rem - 1].to_string().as_str(),
+                            style,
+                        );
                     }
                 }
             }
@@ -760,23 +798,28 @@ pub(crate) fn render_latency_panel(buf: &mut Buffer, area: Rect, app: &App) {
                 if i == last {
                     idx = (idx as f32 * grow).round() as usize;
                 }
-                SPARK_CHARS[idx]
+                crate::tui::theme::SPARK[idx]
             })
             .collect();
-        buf.set_string(inner_x, spark_y, &sparkline, theme::green());
+        buf.set_string(inner_x, spark_y, &sparkline, spark_low);
     }
 
     // Stats row (avg = p50 median).
     let info_y = area.y + 2;
     if info_y < area.y + area.height - 1 {
         let stats = format!("now {}ms  avg {}ms  peak {}ms", now_val, p50, peak);
-        put_clamped(buf, inner_x, info_y, &stats, theme::dim(), inner_w);
+        put_clamped(buf, inner_x, info_y, &stats, dim, inner_w);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::wrap_line;
+    use super::*;
+    use crate::test_support::{
+        assert_panel_wears, buffer_at, find_text, find_text_from, frame_at, panel_marker_theme,
+        resolved_source, themed_app, PanelFamily, PanelProof,
+    };
+    use ratatui::style::Color;
 
     #[test]
     fn wraps_on_word_boundaries() {
@@ -794,5 +837,277 @@ mod tests {
     fn never_empty_and_short_fits() {
         assert_eq!(wrap_line("", 10), vec!["".to_string()]);
         assert_eq!(wrap_line("hi", 10), vec!["hi".to_string()]);
+    }
+
+    const AREA: Rect = Rect {
+        x: 0,
+        y: 0,
+        width: 60,
+        height: 14,
+    };
+
+    /// The details, metrics and status roles the middle column writes with,
+    /// each on a colour nobody else uses.
+    fn middle_marker_theme() -> crate::theme::model::ResolvedTheme {
+        resolved_source(
+            "markers",
+            "schema_version = 1\nname = \"Markers\"\nextends = \"default\"\n\n\
+             [components.dashboard.details]\n\
+             label = { foreground = \"#ff0000\" }\n\
+             value = { foreground = \"#00ff00\" }\n\
+             metadata = { foreground = \"#0000ff\" }\n\n\
+             [components.dashboard.metrics]\n\
+             sparkline_low = \"#111100\"\n\
+             sparkline_medium = \"#222200\"\n\
+             sparkline_high = \"#333300\"\n\n\
+             [components.text]\n\
+             bright = { foreground = \"#ffff00\" }\n\
+             dim = { foreground = \"#00ffff\" }\n",
+        )
+    }
+
+    /// `find_text`, but never on the frame's top row — a panel title often
+    /// repeats the very word the body is being checked for.
+    fn find_in_body(buf: &ratatui::buffer::Buffer, needle: &str) -> (u16, u16) {
+        find_text_from(buf, needle, buf.area.top() + 1)
+    }
+
+    /// The host details card writes value, label and metadata from their own
+    /// three roles rather than from one shared text style.
+    #[test]
+    fn the_details_card_separates_value_label_and_metadata() {
+        let mut app = themed_app(middle_marker_theme());
+        // `metadata` only reaches a cell on a managed host: the group, key and
+        // proxy rows are the only thing that carries it. Without one, the
+        // marker would resolve and never be drawn. `proxy_jump` is used rather
+        // than a group so the host stays the first navigable row.
+        app.hosts = vec![crate::app::HostEntry::from_managed(
+            crate::store::ManagedHost {
+                id: 1,
+                name: "web-prod".into(),
+                label: None,
+                address: "10.0.0.1".into(),
+                port: 22,
+                group_id: None,
+                identity_id: None,
+                group: None,
+                groups: Vec::new(),
+                identity: None,
+                os_icon: None,
+                tags: Vec::new(),
+                notes: None,
+                proxy_jump: Some("bastion".into()),
+                forward_agent: false,
+                remote_command: None,
+                environment: None,
+                sort_order: 0,
+                favorite: false,
+                last_connected: None,
+                source: crate::store::HostSource::Launcher,
+                ssh_config_hash: None,
+                has_password: false,
+                username: None,
+                session_logging: crate::session_log::SessionLoggingOverride::Inherit,
+                transport: Default::default(),
+                created_at: 0,
+                updated_at: 0,
+            },
+        )];
+        app.rebuild_filter();
+        let buf = buffer_at(AREA, |buf| render_host_panel(buf, AREA, &app));
+
+        // `user@host:port` is the value row.
+        let (x, y) = find_text(&buf, "10.0.0.1:22");
+        assert_eq!(
+            buf.cell((x, y)).unwrap().fg,
+            Color::Rgb(0x00, 0xff, 0x00),
+            "the address row takes `details.value`"
+        );
+
+        // The name row above it is the card's bright headline. Searched in the
+        // body: the panel *title* is `host \u{b7} web-prod` and carries
+        // `details.title` instead.
+        let (nx, ny) = find_in_body(&buf, "web-prod");
+        assert_eq!(
+            buf.cell((nx, ny)).unwrap().fg,
+            Color::Rgb(0xff, 0xff, 0x00),
+            "the host name takes `text.bright`"
+        );
+
+        // The os/latency row is the label role.
+        let (lx, ly) = find_text(&buf, "unknown os");
+        assert_eq!(
+            buf.cell((lx, ly)).unwrap().fg,
+            Color::Rgb(0xff, 0x00, 0x00),
+            "the os row takes `details.label`"
+        );
+
+        // The `via <jump>` row is the metadata role — the marker's only surface.
+        let (mx, my) = find_text(&buf, "via bastion");
+        assert_eq!(
+            buf.cell((mx, my)).unwrap().fg,
+            Color::Rgb(0x00, 0x00, 0xff),
+            "the group row takes `details.metadata`"
+        );
+    }
+
+    /// The four middle-column panels each wear their own family, in **both**
+    /// focus states, and none of them draws a badge.
+    #[test]
+    fn the_middle_panels_wear_their_own_roles_in_both_focus_states() {
+        use crate::app::PanelId;
+
+        let mut app = themed_app(panel_marker_theme());
+        let body = (2, AREA.height - 2);
+
+        for focused in [false, true] {
+            let elsewhere = PanelId::Hosts;
+
+            app.focused_panel = if focused { PanelId::Detail } else { elsewhere };
+            let buf = buffer_at(AREA, |buf| render_host_panel(buf, AREA, &app));
+            assert_panel_wears(
+                &buf,
+                AREA,
+                PanelProof {
+                    family: PanelFamily::Details,
+                    focused,
+                    title: "host \u{b7}",
+                    count: None,
+                    body,
+                },
+            );
+
+            app.focused_panel = if focused { PanelId::SshLog } else { elsewhere };
+            let buf = frame_at(AREA, |frame| render_ssh_log_panel(frame, AREA, &app));
+            assert_panel_wears(
+                &buf,
+                AREA,
+                PanelProof {
+                    family: PanelFamily::SshLog,
+                    focused,
+                    title: "ssh log",
+                    count: None,
+                    body,
+                },
+            );
+
+            app.focused_panel = if focused { PanelId::Agent } else { elsewhere };
+            let buf = buffer_at(AREA, |buf| render_agent_panel(buf, AREA, &app));
+            assert_panel_wears(
+                &buf,
+                AREA,
+                PanelProof {
+                    family: PanelFamily::Agent,
+                    focused,
+                    title: "agent",
+                    count: None,
+                    body,
+                },
+            );
+
+            app.focused_panel = if focused { PanelId::Latency } else { elsewhere };
+            let buf = buffer_at(AREA, |buf| render_latency_panel(buf, AREA, &app));
+            assert_panel_wears(
+                &buf,
+                AREA,
+                PanelProof {
+                    family: PanelFamily::Latency,
+                    focused,
+                    title: "latency",
+                    count: None,
+                    body,
+                },
+            );
+        }
+    }
+
+    /// The latency bars ramp through the three `metrics.sparkline_*` colours,
+    /// which is the only place those roles reach a cell.
+    #[test]
+    fn the_latency_bars_take_the_three_metrics_sparkline_colours() {
+        let mut app = themed_app(middle_marker_theme());
+        // A spread wide enough that the ramp uses all three bands: the panel
+        // colours each column by its value against the window peak.
+        app.ping_data
+            .insert("web-prod".into(), vec![10, 20, 30, 200, 400, 600, 800, 900]);
+
+        let buf = buffer_at(AREA, |buf| render_latency_panel(buf, AREA, &app));
+
+        let mut seen = std::collections::HashSet::new();
+        for y in AREA.top()..AREA.bottom() {
+            for x in AREA.left()..AREA.right() {
+                seen.insert(buf.cell((x, y)).unwrap().fg);
+            }
+        }
+        for (name, want) in [
+            ("sparkline_low", Color::Rgb(0x11, 0x11, 0x00)),
+            ("sparkline_medium", Color::Rgb(0x22, 0x22, 0x00)),
+            ("sparkline_high", Color::Rgb(0x33, 0x33, 0x00)),
+        ] {
+            assert!(
+                seen.contains(&want),
+                "`metrics.{name}` never reached a cell; saw {seen:?}"
+            );
+        }
+    }
+
+    /// The SSH log's empty state is the dim text role, and the agent panel's
+    /// labels and values are separate roles.
+    #[test]
+    fn the_ssh_log_and_agent_panels_take_their_text_roles() {
+        let app = themed_app(middle_marker_theme());
+
+        let buf = frame_at(AREA, |frame| render_ssh_log_panel(frame, AREA, &app));
+        let (x, y) = find_text(&buf, "no events for");
+        assert_eq!(
+            buf.cell((x, y)).unwrap().fg,
+            Color::Rgb(0x00, 0xff, 0xff),
+            "the ssh-log placeholder takes `text.dim`"
+        );
+
+        // Below `ZOOM_CONTENT_MIN`, so the compact `label  value` rows render.
+        let compact = Rect::new(0, 0, 60, 8);
+        let buf = buffer_at(compact, |buf| render_agent_panel(buf, compact, &app));
+        let (lx, ly) = find_text(&buf, "socket");
+        assert_eq!(
+            buf.cell((lx, ly)).unwrap().fg,
+            Color::Rgb(0x00, 0xff, 0xff),
+            "the agent panel's labels take `text.dim`"
+        );
+        let (kx, ky) = find_text(&buf, "loaded");
+        assert_eq!(
+            buf.cell((kx, ky)).unwrap().fg,
+            Color::Rgb(0xff, 0xff, 0x00),
+            "the agent panel's key count takes `text.bright`"
+        );
+    }
+
+    #[test]
+    fn the_agent_panel_renders_the_apps_agent_snapshot() {
+        let mut app = themed_app(middle_marker_theme());
+        let compact = Rect::new(0, 0, 60, 8);
+        app.agent_info = Some(crate::ssh::agent::AgentInfo {
+            socket_path: Some("/tmp/fixed-agent.sock".into()),
+            keys: vec![crate::ssh::agent::AgentKey {
+                bits: "256".into(),
+                fingerprint: "SHA256:fixed".into(),
+                comment: "ci key".into(),
+                key_type: "ED25519".into(),
+            }],
+            forwarding_hosts: 0,
+        });
+
+        let connected_buf = buffer_at(compact, |buf| render_agent_panel(buf, compact, &app));
+        assert!(find_text(&connected_buf, "/tmp/fixed-agent.sock").0 > 0);
+        assert!(find_text(&connected_buf, "1 loaded").0 > 0);
+
+        app.agent_info = None;
+        let disconnected_buf = buffer_at(compact, |buf| render_agent_panel(buf, compact, &app));
+        let (x, y) = find_text(&disconnected_buf, "not found");
+        assert_eq!(
+            disconnected_buf.cell((x, y)).unwrap().fg,
+            app.theme().color(ColorRole::StatusError)
+        );
+        assert!(find_text(&disconnected_buf, "0 loaded").0 > 0);
     }
 }

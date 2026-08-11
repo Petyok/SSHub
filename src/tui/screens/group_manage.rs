@@ -1,10 +1,10 @@
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
 use crate::app::App;
-use crate::tui::theme;
+use crate::theme::catalog::StyleRole;
 
 /// Centered, themed popup listing the groups as a tree. Rendered as an overlay
 /// over the dashboard so it matches the rest of the app's chrome.
@@ -20,13 +20,17 @@ pub fn render_group_manage_popup(frame: &mut Frame, app: &App) {
 
     let popup = crate::tui::popup_open_rect(popup, app);
 
-    frame.render_widget(Clear, popup);
+    let theme = app.theme();
+    let legend = theme.style(StyleRole::PopupLegend);
+
+    crate::tui::open_popup(frame, popup, theme);
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(theme::popup_border())
-        .title(Span::styled(" Groups ", theme::heading()));
+        .border_style(crate::tui::popup_border_style(theme, popup))
+        .title(Span::styled(" Groups ", theme.style(StyleRole::PopupTitle)));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
+    crate::tui::paint_popup_border(frame, popup, theme);
 
     if inner.height == 0 {
         return;
@@ -45,7 +49,7 @@ pub fn render_group_manage_popup(frame: &mut Frame, app: &App) {
         frame.render_widget(
             Paragraph::new(Span::styled(
                 "No groups yet — press 'a' to add one.",
-                theme::mute(),
+                legend,
             )),
             list_area,
         );
@@ -63,23 +67,23 @@ pub fn render_group_manage_popup(frame: &mut Frame, app: &App) {
                 let indent = "  ".repeat(depth);
                 let arrow = if depth > 0 { "\u{2514} " } else { "" }; // └
                 ListItem::new(Line::from(vec![
-                    Span::styled(format!(" {indent}{arrow}"), theme::mute()),
-                    Span::styled(group.name.clone(), theme::text()),
-                    Span::styled(format!("  ({count})"), theme::mute()),
+                    Span::styled(format!(" {indent}{arrow}"), legend),
+                    Span::styled(group.name.clone(), theme.style(StyleRole::TableRow)),
+                    Span::styled(format!("  ({count})"), legend),
                 ]))
             })
             .collect();
 
         let mut state = ListState::default();
         state.select(Some(app.group_manage_selected.min(app.groups.len() - 1)));
-        let list = List::new(items).highlight_style(theme::selected());
+        let list = List::new(items).highlight_style(theme.style(StyleRole::TableRowSelected));
         frame.render_stateful_widget(list, list_area, &mut state);
     }
 
     frame.render_widget(
         Paragraph::new(Span::styled(
             " a add · e edit · d delete · Esc back",
-            theme::dim(),
+            theme.style(StyleRole::PopupHint),
         )),
         hint_area,
     );

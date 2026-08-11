@@ -20,4 +20,5 @@ mod search_and_navigate;
 mod session_switcher;
 mod ssh_config_sync;
 mod termius_import;
+mod theme_picker;
 mod tunnel_form;

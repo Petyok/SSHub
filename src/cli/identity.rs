@@ -226,7 +226,9 @@ fn cmd_delete(ctx: &CliContext, args: &[String]) -> Result<i32> {
     let identity = ctx.identity_by_name(&name)?;
     match ctx.store.delete_identity(identity.id)? {
         DeleteIdentityOutcome::Deleted => {
-            let _ = ctx.password_store.delete(&identity_key(identity.id));
+            if let Err(err) = ctx.password_store.delete(&identity_key(identity.id)) {
+                eprintln!("warning: identity deleted but credential cleanup failed: {err}");
+            }
             println!("deleted identity '{name}'");
             Ok(0)
         }

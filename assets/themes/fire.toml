@@ -1,0 +1,119 @@
+# SSHub — "Fire": coal and embers.
+#
+# What this theme demonstrates:
+#   * decorative gradients (red → orange → gold) that deliberately do *not*
+#     bleed into the status colours: a warning must never be readable as
+#     "just part of the border"
+#   * the two diagonal directions
+#   * `brightness` as a cheap way to derive a lighter or darker variant of a
+#     palette colour instead of hand-picking another hex value
+
+schema_version = 1
+extends = "default"
+name = "Fire"
+description = "Charcoal surfaces lit by red, orange and gold — with status colours kept distinct."
+
+[palette]
+coal = "#12100f"
+coal_deep = "#0a0908"
+ash = "#1e1a18"
+ash_raised = "#2a2422"
+soot = "#4a403c"
+smoke = "#8a7a72"
+bone = "#efe3d8"
+
+ember = "#c0392b"
+flame = "#e8622a"
+gold = "#f0b429"
+# Derived rather than duplicated: the same gold, mixed 25% towards white.
+gold_pale = { color = "palette.gold", brightness = 0.25 }
+
+# Status hues are chosen *outside* the decorative red/orange/gold ramp so a
+# failure never blends into a border. Success stays green, info stays blue.
+signal_ok = "#6fbf73"
+signal_warn = "#d7a02c"
+signal_err = "#ff5f56"
+signal_info = "#66a3d2"
+
+[semantic]
+background = "palette.coal"
+canvas = "palette.coal_deep"
+surface = "palette.ash"
+surface_raised = "palette.ash_raised"
+
+border = "palette.soot"
+border_focus = "palette.flame"
+border_popup = "palette.smoke"
+
+text = "#ddd0c6"
+text_bright = "palette.bone"
+text_highlight = "#fffaf5"
+text_muted = "palette.smoke"
+text_dim = "palette.soot"
+text_inverse = "palette.coal_deep"
+
+accent = "palette.gold"
+selection_bg = "#3a1f14"
+selection_fg = "palette.gold_pale"
+
+success = "palette.signal_ok"
+warning = "palette.signal_warn"
+error = "palette.signal_err"
+info = "palette.signal_info"
+# A connecting session is transient heat, an exited one is a hard stop — both
+# stay distinguishable from the decorative ramp.
+connecting = "palette.flame"
+exited = "palette.signal_err"
+unknown = "palette.soot"
+
+[gradients.blaze]
+direction = "horizontal"
+stops = [
+  { at = 0.0, color = "palette.ember" },
+  { at = 0.5, color = "palette.flame" },
+  { at = 1.0, color = "palette.gold" },
+]
+
+# `diagonal_down` runs from the top-left to the bottom-right of the painted
+# rect; `diagonal_up` runs from the bottom-left to the top-right.
+[gradients.updraft]
+direction = "diagonal_up"
+stops = [
+  { at = 0.0, color = { color = "palette.ember", brightness = -0.25 } },
+  { at = 0.6, color = "palette.flame" },
+  { at = 1.0, color = "palette.gold_pale" },
+]
+
+[gradients.cinder]
+direction = "diagonal_down"
+stops = [
+  { at = 0.0, color = "palette.gold" },
+  { at = 1.0, color = { color = "palette.ember", brightness = -0.1 } },
+]
+
+[components.dashboard.host_list]
+border_focused = { gradient = "gradients.blaze" }
+
+[components.dashboard.details]
+border_focused = { gradient = "gradients.updraft" }
+
+[components.dashboard.latency]
+border_focused = { gradient = "gradients.cinder" }
+
+[components.separator]
+primary = { gradient = "gradients.blaze" }
+
+[components.header]
+background = { color = "palette.ember", opacity = 0.3, over = "palette.ash_raised" }
+separator = { gradient = "gradients.blaze" }
+
+[components.footer]
+background = { color = "palette.ember", opacity = 0.3, over = "palette.ash_raised" }
+
+# A `Style` role takes `foreground`, `background` and `modifiers` — never a
+# bare colour and never a gradient. Omitted fields keep their inherited value,
+# and `modifiers` replaces the inherited list wholesale (`[]` clears it,
+# `"auto"` restores the built-in recipe).
+[components.tunnels.table_header]
+foreground = "palette.gold"
+modifiers = ["bold", "underlined"]

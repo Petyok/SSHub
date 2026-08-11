@@ -11,6 +11,7 @@ pub mod metadata;
 pub(crate) mod osc52;
 pub mod osinfo;
 pub mod ping;
+pub mod profile;
 pub mod search;
 pub mod secure_fs;
 pub mod session;
@@ -19,7 +20,15 @@ pub mod session_transport;
 pub mod sftp;
 pub mod ssh;
 pub mod store;
+/// Shared allocation counter for tests; only one `#[global_allocator]` may
+/// exist per binary, so every allocation-free proof shares this module.
+#[cfg(test)]
+pub(crate) mod test_alloc;
+/// Neutral in-memory fixtures shared by the renderer tests.
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod text_input;
+pub mod theme;
 pub mod tui;
 pub mod tunnel;
 pub mod watcher;
@@ -57,14 +66,14 @@ use ratatui::Terminal;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
-/// Delete the launcher database (and any SQLite sidecar files) under the
-/// resolved data directory. Returns the paths that were actually removed.
+/// Delete the launcher database (and any SQLite sidecar files) of `profile`.
+/// Returns the paths that were actually removed.
 ///
 /// Only the SSHub-managed database is touched — `~/.ssh/config` and the hosts
 /// imported from it are left alone, and they reappear on the next launch.
 /// Passwords stored in the OS keyring are not removed (they become orphaned).
-pub fn purge_database() -> Result<Vec<std::path::PathBuf>> {
-    let base = config::data_dir()?.join("launcher.db");
+pub fn purge_profile_database(profile: &profile::ProfilePaths) -> Result<Vec<std::path::PathBuf>> {
+    let base = profile.launcher_db();
     let mut removed = Vec::new();
     for suffix in ["", "-wal", "-shm", "-journal"] {
         let path = if suffix.is_empty() {
@@ -84,43 +93,153 @@ pub fn purge_database() -> Result<Vec<std::path::PathBuf>> {
 
 /// Run the application (entry point for the binary).
 pub fn run() -> Result<()> {
+    run_with(profile::StartupOptions::default())
+}
+
+/// Run with parsed global startup flags (`--profile`, `--manage-profiles`).
+pub fn run_with(opts: profile::StartupOptions) -> Result<()> {
     if std::env::var("SSHUB_DRY_RUN").is_ok() || std::env::var("SSH_LAUNCHER_DRY_RUN").is_ok() {
         return Ok(());
     }
-    run_app()
+    run_app_with(opts)
 }
 
 /// Load config, build [`App`], and run the main event loop.
 pub fn run_app() -> Result<()> {
-    let config = config::load_config()?;
-    let mut app = App::new(config)?;
-    attach_config_watcher(&mut app)?;
+    run_app_with(profile::StartupOptions::default())
+}
 
+/// Startup flow: resolve the profile (picker when several exist), load its
+/// config, build the [`App`], run the dashboard.
+///
+/// ```text
+/// parse global flags -> terminal -> intro splash -> profile picker (if any)
+///   -> load profile config -> App::new_with_profile -> dashboard
+/// ```
+pub fn run_app_with(opts: profile::StartupOptions) -> Result<()> {
     let auto_quit = std::env::var("SSHUB_AUTO_QUIT")
         .or_else(|_| std::env::var("SSH_LAUNCHER_AUTO_QUIT"))
         .ok();
+
+    // The picker is a terminal UI; without one (CI smoke, piped commands) the
+    // last-used profile is selected silently.
+    let interactive = stdout().is_terminal() && auto_quit.is_none();
+    let startup = profile::resolve_startup(&opts, interactive)?;
+
+    let mut session: Option<TerminalSession> = None;
+    let mut splash_done = false;
+    let paths = match startup {
+        profile::Startup::Silent(paths) => paths,
+        profile::Startup::Picker { roots, state } => {
+            let mut s = setup_terminal()?;
+            let default_theme = crate::theme::registry::ThemeRegistry::builtins(
+                crate::theme::model::ValidationMode::Strict,
+            )?
+            .resolved(&crate::theme::model::ThemeId::parse("default")?)
+            .expect("the embedded default theme exists");
+            if profile::picker_animation_enabled(&roots, &state) {
+                run_animation(&mut s.terminal, &default_theme)?;
+            }
+            splash_done = true;
+            let picker = profile::picker::ProfilePicker::new(roots.clone(), state);
+            match run_picker_loop(&mut s.terminal, picker, roots, &default_theme)? {
+                Some(paths) => {
+                    session = Some(s);
+                    paths
+                }
+                None => return Ok(()), // Esc: cancel startup cleanly
+            }
+        }
+    };
+
+    let config = config::load_config_at(&paths.config_file)?;
+    let mut app = App::new_with_profile(config, paths.clone())?;
+    record_last_used(&paths);
+    attach_config_watcher(&mut app, &paths.ssh_config)?;
 
     if !stdout().is_terminal() {
         return run_headless_loop(&mut app, auto_quit.as_deref());
     }
 
-    run_terminal_loop(&mut app, auto_quit.as_deref())
+    run_terminal_loop(&mut app, auto_quit.as_deref(), session, splash_done)
 }
 
-fn attach_config_watcher(app: &mut App) -> Result<()> {
-    let ssh_config = ssh::ssh_config_path()?;
+/// Persist the launched profile as last-used (drives the next picker cursor).
+/// Best-effort: a failure here must not block startup.
+fn record_last_used(paths: &profile::ProfilePaths) {
+    if paths.compat {
+        return;
+    }
+    if let Ok(Some(mut state)) = profile::ProfileState::load(&paths.data_root) {
+        state.last_used = Some(paths.id.clone());
+        let _ = state.save(&paths.data_root);
+    }
+}
+
+fn attach_config_watcher(app: &mut App, ssh_config: &std::path::Path) -> Result<()> {
     if !ssh_config.exists() {
         return Ok(());
     }
-    match watcher::spawn_config_watcher(&ssh_config) {
+    match watcher::spawn_config_watcher(ssh_config) {
         Ok(rx) => app.set_watcher_rx(rx),
         Err(err) => eprintln!("warning: config watcher disabled: {err:#}"),
     }
     Ok(())
 }
 
+/// Play the intro animation until the user dismisses it.
+/// Raw-mode terminal + alternate screen, used by both the picker session and
+/// the dashboard loop.
+struct TerminalSession {
+    terminal: Terminal<CrosstermBackend<std::io::Stdout>>,
+    _guard: TerminalGuard,
+}
+
+fn setup_terminal() -> Result<TerminalSession> {
+    enable_raw_mode()?;
+    stdout().execute(EnterAlternateScreen)?;
+    stdout().execute(EnableMouseCapture)?;
+    // Deliver pastes as a single Event::Paste blob instead of per-key events,
+    // so multi-line content doesn't fire Enter mid-field.
+    stdout().execute(EnableBracketedPaste)?;
+    let terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
+    let guard = TerminalGuard::new();
+    install_panic_hook();
+    Ok(TerminalSession {
+        terminal,
+        _guard: guard,
+    })
+}
+
+/// Event loop for the profile picker. Returns the launched profile, or `None`
+/// when the user cancelled startup.
+fn run_picker_loop(
+    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    mut picker: profile::picker::ProfilePicker,
+    roots: profile::RootDirs,
+    theme: &crate::theme::model::ResolvedTheme,
+) -> Result<Option<profile::ProfilePaths>> {
+    loop {
+        terminal.draw(|frame| picker.render(frame, theme))?;
+        let event = event::read()?;
+        let Event::Key(key) = event else { continue };
+        match picker.handle_key(key)? {
+            profile::picker::PickerOutcome::Continue => {}
+            profile::picker::PickerOutcome::Quit => return Ok(None),
+            profile::picker::PickerOutcome::Launch(record) => {
+                crate::profile::require_profile_dir(&roots, &record)?;
+                let ssh_config = crate::profile::ssh_config_path_for_profile(&roots, &record)?;
+                let paths = profile::profile_paths(&roots, &record, ssh_config);
+                return Ok(Some(paths));
+            }
+        }
+    }
+}
+
+/// Play the intro animation until the user dismisses it.
 fn run_animation<B: ratatui::backend::Backend + std::io::Write>(
     terminal: &mut Terminal<B>,
+    theme: &crate::theme::model::ResolvedTheme,
 ) -> Result<()>
 where
     // ratatui 0.30 made Backend::Error an associated type with no auto
@@ -131,7 +250,7 @@ where
     let state = tui::animation::AnimationState::new(size.width, size.height);
 
     loop {
-        terminal.draw(|frame| state.render(frame))?;
+        terminal.draw(|frame| state.render(frame, theme))?;
         if event::poll(Duration::from_millis(33))? {
             if let Event::Key(key) = event::read()? {
                 match key.code {
@@ -148,20 +267,22 @@ where
     Ok(())
 }
 
-fn run_terminal_loop(app: &mut App, auto_quit: Option<&str>) -> Result<()> {
-    enable_raw_mode()?;
-    stdout().execute(EnterAlternateScreen)?;
-    stdout().execute(EnableMouseCapture)?;
-    // Deliver pastes as a single Event::Paste blob instead of per-key events,
-    // so multi-line content doesn't fire Enter mid-field.
-    stdout().execute(EnableBracketedPaste)?;
-    let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
-    let _guard = TerminalGuard::new();
-    install_panic_hook();
+fn run_terminal_loop(
+    app: &mut App,
+    auto_quit: Option<&str>,
+    session: Option<TerminalSession>,
+    splash_done: bool,
+) -> Result<()> {
+    let mut session = match session {
+        Some(session) => session,
+        None => setup_terminal()?,
+    };
+    let terminal = &mut session.terminal;
 
-    // Run startup animation (skip in CI/headless or when disabled in config)
-    if auto_quit.is_none() && !app.config.appearance.disable_animation {
-        run_animation(&mut terminal)?;
+    // Run startup animation (skip in CI/headless, when disabled in config, or
+    // when the profile picker session already played it before the dashboard).
+    if !splash_done && auto_quit.is_none() && !app.config.appearance.disable_animation {
+        run_animation(terminal, app.theme())?;
     }
 
     // The dashboard fades up from here, over the intro animation it replaces.
@@ -272,6 +393,7 @@ fn run_terminal_loop(app: &mut App, auto_quit: Option<&str>) -> Result<()> {
         // override: holding Shift while dragging bypasses the app's mouse
         // capture for native text selection.
 
+        app.refresh_agent_info();
         terminal.draw(|frame| tui::render(frame, app))?;
 
         if auto_quit.is_some() {
@@ -385,22 +507,18 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
 
     // Drain SFTP worker events. Collect first (borrowing `sftp_rx`), drop the
     // borrow, then apply — `apply_sftp_event` needs `&mut app`.
-    if app.sftp_rx.is_some() {
-        let events: Vec<crate::sftp::SftpEvent> = {
-            let rx = app.sftp_rx.as_ref().unwrap();
-            std::iter::from_fn(|| rx.try_recv().ok()).collect()
-        };
+    if let Some(rx) = app.sftp_rx.as_ref() {
+        let events: Vec<crate::sftp::SftpEvent> =
+            std::iter::from_fn(|| rx.try_recv().ok()).collect();
         for ev in events {
             app.apply_sftp_event(ev);
         }
     }
 
     // Drain the left pane's worker, when it is browsing a second server.
-    if app.sftp_rx2.is_some() {
-        let events: Vec<crate::sftp::SftpEvent> = {
-            let rx = app.sftp_rx2.as_ref().unwrap();
-            std::iter::from_fn(|| rx.try_recv().ok()).collect()
-        };
+    if let Some(rx) = app.sftp_rx2.as_ref() {
+        let events: Vec<crate::sftp::SftpEvent> =
+            std::iter::from_fn(|| rx.try_recv().ok()).collect();
         for ev in events {
             app.apply_sftp_event_left(ev);
         }

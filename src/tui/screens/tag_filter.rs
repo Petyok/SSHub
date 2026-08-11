@@ -4,10 +4,10 @@
 
 use ratatui::layout::Rect;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Clear};
+use ratatui::widgets::{Block, Borders};
 
 use crate::app::App;
-use crate::tui::theme;
+use crate::theme::catalog::StyleRole;
 
 /// Render the tag-filter overlay.
 pub fn render(frame: &mut Frame, app: &App) {
@@ -47,14 +47,29 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     let popup = crate::tui::popup_open_rect(popup, app);
 
-    frame.render_widget(Clear, popup);
+    let theme = app.theme();
+    let legend = theme.style(StyleRole::PopupLegend);
+    let selection = theme.style(StyleRole::PickerRowSelected);
+    let row = theme.style(StyleRole::PickerRow);
+    // See `field_picker`: this marker was drawn in the row's selection style.
+    let focus = theme.style(StyleRole::PickerMarker);
+
+    crate::tui::open_popup(frame, popup, theme);
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)
-            .title(Span::styled(title, theme::heading()))
-            .border_style(theme::popup_border()),
+            .title(Span::styled(title, theme.style(StyleRole::PopupTitle)))
+            .border_style(crate::tui::popup_border_style(theme, popup)),
         popup,
     );
+    crate::tui::paint_popup_border(frame, popup, theme);
+
+    // Everything below writes into the buffer directly. `set_string` clips
+    // columns on its own, but an out-of-range *row* panics — and `fit_popup`
+    // only keeps the outer box legal, not its inner rows.
+    if popup.width < 4 || popup.height < 4 {
+        return;
+    }
 
     let content_w = popup.width.saturating_sub(3) as usize;
     let row_x = popup.x + 2;
@@ -65,7 +80,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         row_x,
         popup.y + 1,
         crate::tui::text::ellipsize(&query_line, content_w),
-        theme::bright(),
+        theme.style(StyleRole::PickerQuery),
     );
 
     if !has_tags {
@@ -73,7 +88,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             row_x,
             popup.y + 3,
             crate::tui::text::ellipsize(empty_note, content_w),
-            theme::mute(),
+            legend,
         );
     } else {
         let list_top = popup.y + 3;
@@ -82,21 +97,26 @@ pub fn render(frame: &mut Frame, app: &App) {
             let ry = list_top + i as u16;
             let is_sel = i == app.tag_filter_selected;
             let is_active = app.is_tag_active(label);
-            let style = if is_sel {
-                theme::selected()
-            } else {
-                theme::text()
-            };
+            let style = if is_sel { selection } else { row };
             if is_sel {
                 let blank = " ".repeat(popup.width.saturating_sub(2) as usize);
-                buf.set_string(popup.x + 1, ry, &blank, theme::selected());
+                buf.set_string(popup.x + 1, ry, &blank, selection);
             }
-            let marker = if is_sel { "› " } else { "  " };
             let suffix = if is_active { "  ✓" } else { "" };
+            // Foreground-only marker over the selection bar drawn above.
             buf.set_string(
                 row_x,
                 ry,
-                crate::tui::text::ellipsize(&format!("{marker}{label}{suffix}"), content_w),
+                if is_sel { "› " } else { "  " },
+                if is_sel { focus } else { style },
+            );
+            buf.set_string(
+                row_x + 2,
+                ry,
+                crate::tui::text::ellipsize(
+                    &format!("{label}{suffix}"),
+                    content_w.saturating_sub(2),
+                ),
                 style,
             );
         }
@@ -107,6 +127,6 @@ pub fn render(frame: &mut Frame, app: &App) {
         row_x,
         hint_y,
         crate::tui::text::ellipsize(hint, content_w),
-        theme::mute(),
+        legend,
     );
 }

@@ -16,6 +16,8 @@ Host passwords and identity key passphrases live in the OS keyring through the `
 - On Linux this needs the D-Bus Secret Service (build: `libdbus-1-dev`; runtime: an unlocked gnome-keyring/KWallet or similar). Without a provider, SSHub warns and ssh falls back to interactive prompting.
 - [Termius import](../domain/hosts-identities.md#termius-import) re-stores imported secrets with write-verification and reports `keyring_failures` instead of dropping them silently.
 - `sshub db purge` orphans keyring entries by design (only SQLite is wiped).
+- If Secret Service is unavailable, SSHub uses an owner-only plaintext `credentials.json` in the data directory, written through a 0600 temporary file and atomic rename. The status reports the fallback; when a keyring becomes available, entries migrate back and the file is removed only after all entries succeed.
+- Secret fields can be prefilled masked from the store. `Ctrl+R` reveals and copies, while `Ctrl+Y` copies without revealing; both actions report only that a value was copied. Leaving the field hides it again, and clearing a previously stored field explicitly deletes the credential.
 
 ## SSH_ASKPASS staging (`src/session/askpass.rs`)
 
@@ -26,7 +28,11 @@ Secrets reach ssh without appearing in argv or PTY history:
 3. ssh re-executes sshub; `main.rs` calls `maybe_run_askpass()` **first** (before touching argv or the TUI), prints the staged secret, and exits.
 4. The file is removed on Drop. Caveat: a SIGKILL can leave a stale staged file behind (no atexit cleanup) — see quickstart [backlog](../quickstart.md#backlog).
 
-The same mechanism feeds [tunnel](../workflows/tunnels.md) spawns (`stage_tunnel_askpass`) and `ssh-keygen -y` passphrase probing (`src/ssh/keyfile.rs`) — explicitly because "`ps` would expose it" in argv.
+The same mechanism feeds [tunnel](../workflows/tunnels.md) spawns (`stage_tunnel_askpass`) and `ssh-keygen -y` passphrase probing (`src/ssh/keyfile.rs`) — explicitly because "`ps` would expose it" in argv. The helper path is re-resolved when an in-place upgrade replaces the running executable, so password authentication does not require a restart; genuine helper lookup failures are written to the session log.
+
+## Clipboard relay boundary
+
+[Embedded sessions](../workflows/sessions-sftp.md) relay OSC 52 clipboard writes only from the session currently visible. Empty payloads, clipboard reads, background tabs, and non-session views are refused or dropped; payloads and queue capacity are bounded. This is enabled by default but can be disabled with `[clipboard] relay_from_pty = false`. Because the sequence is in the raw PTY stream, enabled session logs may contain it.
 
 ## Host-key policy
 

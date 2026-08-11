@@ -10,6 +10,32 @@ test:
     cargo test --test e2e
     cargo test --test config_load
 
+# Coverage, plus the functions no test executes even once (docs/coverage-map.md).
+coverage:
+    #!/usr/bin/env bash
+    # Regenerates the tables in docs/coverage-map.md — read that file for why the
+    # never-executed list matters more than the percentage, and for the two ways
+    # this report is easy to misread.
+    #
+    # Needs cargo-llvm-cov plus llvm-cov/llvm-profdata. With rustup that is
+    # `cargo install cargo-llvm-cov` + `rustup component add llvm-tools-preview`;
+    # on a distro toolchain (no rustup) install the system `llvm` package
+    # instead — the recipe finds those binaries itself.
+    set -euo pipefail
+    command -v cargo-llvm-cov >/dev/null || { echo "cargo-llvm-cov not installed — see the comments in this recipe" >&2; exit 1; }
+    # Distro toolchains have no llvm-tools-preview; point cargo-llvm-cov at the
+    # system binaries when they are the only ones present.
+    if ! command -v rustup >/dev/null; then
+        export LLVM_COV="${LLVM_COV:-$(command -v llvm-cov)}"
+        export LLVM_PROFDATA="${LLVM_PROFDATA:-$(command -v llvm-profdata)}"
+    fi
+    out=$(mktemp -d)/cov.json
+    cargo llvm-cov --json --output-path "$out"
+    cargo llvm-cov --summary-only
+    echo
+    echo "Functions no test executes even once (src/ only, largest first):"
+    scripts/uncovered-functions.py "$out"
+
 # Build release binary (install depends on this recipe — no cargo in the install script).
 build:
     cargo build --release
@@ -214,20 +240,30 @@ worktree-rm name mode="":
 # its squashed commit (note: after reverting a merge, re-landing the same
 # history needs a revert of the revert).
 #
-#   just release          # minor feature release: bump Y (Z->0) -> vX.Y.0
-#   just release minor    # same as above
-#   just release patch    # hotfix: publish the CURRENT vX.Y.Z as-is, no bump
+#   just release minor    # minor feature release: bump Y (Z->0) -> vX.Y.0
+#   just release patch    # publish the CURRENT vX.Y.Z as-is, no bump
 #   just release 0.7.0    # release an explicit version (jump ahead)
+#
+# No default on purpose: a bare `just release` used to mean `minor`, which
+# silently bumped the version when you meant to ship what Cargo.toml already
+# says (that is `patch`). Now it refuses and makes you say which one.
 #
 # `patch` ships whatever version development currently carries (the running
 # odometer Z from the pre-commit hook) straight to main — for hotfixes you don't
 # want to disguise as a new minor. So main is NOT always X.Y.0.
 # Run from a clean `development`. Pushing to protected `main` relies on your
 # owner/admin bypass.
-release kind="minor":
+release kind="":
     #!/usr/bin/env bash
     set -euo pipefail
-    case "{{kind}}" in minor|patch) ;; [0-9]*.[0-9]*.[0-9]*) ;; *) echo "usage: just release [minor|patch|X.Y.Z]" >&2; exit 1;; esac
+    if [ -z "{{kind}}" ]; then
+      echo "just release needs an explicit kind:" >&2
+      echo "  patch  — ship the CURRENT Cargo.toml version as-is" >&2
+      echo "  minor  — bump Y, reset Z -> vX.Y.0" >&2
+      echo "  X.Y.Z  — release exactly that version" >&2
+      exit 1
+    fi
+    case "{{kind}}" in minor|patch) ;; [0-9]*.[0-9]*.[0-9]*) ;; *) echo "usage: just release minor|patch|X.Y.Z" >&2; exit 1;; esac
     [ "$(git rev-parse --abbrev-ref HEAD)" = development ] || { echo "run from development" >&2; exit 1; }
     git diff --quiet && git diff --cached --quiet || { echo "working tree not clean" >&2; exit 1; }
     git fetch origin --quiet

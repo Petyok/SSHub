@@ -1,6 +1,26 @@
 use super::*;
 
 #[test]
+fn agent_snapshot_refreshes_when_stale_without_waiting_for_the_keys_tab() {
+    let mut app = test_app(vec![]);
+    let now = std::time::Instant::now();
+    app.agent_info = None;
+    app.agent_info_updated = now - std::time::Duration::from_secs(31);
+
+    app.refresh_agent_info_with(now, || crate::ssh::agent::AgentInfo {
+        socket_path: Some("/tmp/refreshed-agent.sock".into()),
+        keys: vec![],
+        forwarding_hosts: 0,
+    });
+
+    assert_eq!(
+        app.agent_info.as_ref().unwrap().socket_path.as_deref(),
+        Some("/tmp/refreshed-agent.sock")
+    );
+    assert_eq!(app.agent_info_updated, now);
+}
+
+#[test]
 pub(crate) fn identity_grid_navigation_moves_by_row_and_column() {
     let mut app = test_app(vec![("web", host("web"))]);
     app.terminal_area = ratatui::layout::Rect::new(0, 0, 140, 40); // wide → 2 cols

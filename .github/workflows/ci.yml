@@ -9,6 +9,34 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Enforces AGENTS.md § Branch naming, which was prose only until a bug fix
+  # shipped on a `feature/` branch and nothing objected. Skipped for forks: a
+  # contributor's branch name is not ours to police.
+  branch:
+    name: Branch naming
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Check the checker
+        run: scripts/check-branch-name.sh --self-test
+      - name: Check the branch
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Conventional-commit type of every commit the PR adds, deduplicated.
+          types=$(git log --format=%s "$BASE_SHA..$HEAD_SHA" \
+            | sed -nE 's/^([a-z]+)(\([^)]*\))?!?:.*/\1/p' | sort -u | tr '\n' ' ')
+          echo "branch: $HEAD_REF"
+          echo "commit types: ${types:-<none>}"
+          scripts/check-branch-name.sh "$HEAD_REF" $types
+
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
