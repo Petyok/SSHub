@@ -46,6 +46,9 @@ pub struct CsvKeyFile {
 #[derive(Debug, Default)]
 pub struct CsvImportReport {
     pub hosts_imported: usize,
+    /// Rows the store refused: a name, address or username starting with `-`,
+    /// which ssh would read as an option rather than a host (issue #101).
+    pub skipped_invalid: usize,
     pub identities_created: usize,
     /// Hosts that already existed by name. We do NOT touch their other
     /// fields, but we always refresh their stored credentials from the CSV
@@ -310,7 +313,7 @@ pub fn import_csv_export(
             None => {
                 let identity_id = resolve_key_hint(&row.ssh_key, &key_by_hint);
                 let username = (!row.username.is_empty()).then(|| row.username.clone());
-                let host = store.create_host(&NewHost {
+                let created = store.create_host(&NewHost {
                     name: name.clone(),
                     address: row.host.clone(),
                     port: row.port,
@@ -320,7 +323,17 @@ pub fn import_csv_export(
                     source: HostSource::Launcher,
                     has_password,
                     ..Default::default()
-                })?;
+                });
+                // A row the store refuses (a field ssh would read as an option,
+                // issue #101) is dropped on its own; the rest of the CSV lands.
+                let host = match created {
+                    Ok(host) => host,
+                    Err(e) => {
+                        eprintln!("sshub: skipping host '{name}': {e:#}");
+                        report.skipped_invalid += 1;
+                        continue;
+                    }
+                };
                 report.hosts_imported += 1;
                 host.id
             }
