@@ -38,7 +38,11 @@ All notable changes to SSHub are documented in this file.
   through one guard that rewrites a leading-dash target into the `ssh://` URI
   form, which OpenSSH refuses outright instead of parsing as a flag; ordinary
   targets are untouched. Confirmed against the real `ssh -G`, which still
-  reports `proxycommand id` for the old form and refuses the new one.
+  reports `proxycommand id` for the old form and refuses the new one. Such a
+  value is now also refused at the write: `host add`, the TUI form and every
+  importer reject a `name`, `address` or `username` starting with `-`, so the
+  row never lands. An import drops only the poisoned entry — the rest of the
+  file still lands, and the summary counts what was refused.
 
 ## [0.14.0] - 2026-08-12
 

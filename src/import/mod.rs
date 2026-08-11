@@ -13,4 +13,8 @@ pub struct HostImportReport {
     pub skipped_existing: usize,
     /// Entries skipped because they are not SSH connections (RDP/VNC/telnet/…).
     pub skipped_non_ssh: usize,
+    /// Entries the store refused: a name, address or username starting with
+    /// `-`, which ssh would read as an option rather than a host (issue #101).
+    /// One poisoned row does not cost the rest of the file.
+    pub skipped_invalid: usize,
 }

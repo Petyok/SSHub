@@ -221,6 +221,12 @@ fn print_host_import_report(r: &crate::import::HostImportReport) {
         "imported: {} host(s), {} skipped (already exist), {} skipped (non-ssh)",
         r.imported, r.skipped_existing, r.skipped_non_ssh
     );
+    if r.skipped_invalid > 0 {
+        println!(
+            "           {} skipped (refused: a field ssh would read as an option)",
+            r.skipped_invalid
+        );
+    }
 }
 
 /// Summary line for a Termius CSV export import.
@@ -229,6 +235,12 @@ fn print_csv_import_report(r: &crate::import::termius_csv::CsvImportReport) {
         "imported: {} host(s), {} identity(ies) created, {} skipped (already exist)",
         r.hosts_imported, r.identities_created, r.skipped
     );
+    if r.skipped_invalid > 0 {
+        println!(
+            "           {} skipped (refused: a field ssh would read as an option)",
+            r.skipped_invalid
+        );
+    }
 }
 
 /// Preview printer for `--dry-run`: one `  name  user@host:port` line per host
@@ -270,6 +282,7 @@ mod tests {
             imported: 3,
             skipped_existing: 1,
             skipped_non_ssh: 2,
+            skipped_invalid: 1,
         };
         print_host_import_report(&report);
     }

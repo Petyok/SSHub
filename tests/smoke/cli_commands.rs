@@ -922,3 +922,54 @@ fn global_help_lists_the_exec_command() {
         .success()
         .stdout(predicate::str::contains("sshub exec"));
 }
+
+/// Issue #101: a host field ssh would read as an option is refused at the
+/// write, and an import file carrying one loses that row only — not the file.
+#[test]
+fn import_refuses_an_option_like_address_and_keeps_the_rest() {
+    let d = dir();
+    let xml = d.path().join("confCons.xml");
+    std::fs::write(
+        &xml,
+        r#"<?xml version="1.0" encoding="utf-8"?>
+<mrng:Connections xmlns:mrng="http://mremoteng.org" Name="Connections" ConfVersion="2.6">
+  <Node Name="good" Type="Connection" Hostname="10.0.0.1" Username="admin" Protocol="SSH2" />
+  <Node Name="evil" Type="Connection" Hostname="-oProxyCommand=id" Protocol="SSH2" />
+</mrng:Connections>
+"#,
+    )
+    .unwrap();
+
+    sshub(d.path())
+        .args(["import", "--from", "mremoteng"])
+        .arg(&xml)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 host(s)"))
+        .stdout(predicate::str::contains("refused"))
+        .stderr(predicate::str::contains("skipping host 'evil'"));
+
+    sshub(d.path())
+        .args(["host", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("good"))
+        .stdout(predicate::str::contains("evil").not());
+}
+
+#[test]
+fn host_add_refuses_an_option_like_address() {
+    let d = dir();
+    sshub(d.path())
+        .args([
+            "host",
+            "add",
+            "--name",
+            "evil",
+            "--address",
+            "-oProxyCommand=id",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("ssh reads as an option"));
+}
