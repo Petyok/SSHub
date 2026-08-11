@@ -86,7 +86,9 @@ pub fn build_tunnel_argv(
     } else {
         host.address.clone()
     };
-    args.push(target);
+    // Same guard as the connect path: an address stored with a leading `-` would
+    // reach ssh as an option, not a host. See `ssh::safe_ssh_target`.
+    args.push(crate::ssh::safe_ssh_target(target));
     Ok(args)
 }
 
