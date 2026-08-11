@@ -167,6 +167,9 @@ HOST (read/write):
     sshub host search <query> [--format plain|json]
     sshub host add|edit|rename|delete|duplicate …
 
+EXEC (scripted, non-interactive):
+    sshub exec <host> [--tty] [--timeout SECS] [--format plain|json] -- <command> [args…]
+
 ALIASES:
     sshub connect <name>                    Same as `host connect`
     sshub list …                            Same as `host list`

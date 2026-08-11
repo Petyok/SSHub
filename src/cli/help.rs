@@ -10,6 +10,7 @@ pub fn print_command_help(cmd: &str) {
     match cmd {
         "host" => print_host(),
         "connect" => print_connect(),
+        "exec" => print_exec(),
         "list" => print_list(),
         "groups" => print_groups(),
         "group" => print_group(),
@@ -59,6 +60,29 @@ fn print_connect() {
 
 USAGE:
     sshub connect <name> [-v|--verbose]"#
+    );
+}
+
+fn print_exec() {
+    println!(
+        r#"sshub exec - run one command on a saved host and return its exit code
+
+USAGE:
+    sshub exec <host> [OPTIONS] -- <command> [args...]
+    sshub exec <host> [OPTIONS] "<command>"
+
+OPTIONS:
+    --tty                 Force a PTY (-tt) for commands that insist on one
+    --timeout SECS        Kill the command after SECS and exit 124, like timeout(1)
+    --format plain|json   json buffers the run as {{host, command, exit_code,
+                          stdout, stderr, duration_ms}}; plain (default) streams
+    -v, --verbose         Verbose ssh logging on stderr
+
+stdout/stderr pass through, stdin is inherited so pipes work, and the exit code
+is the remote command's (ssh's own failures keep ssh's 255). Never prompts.
+Session transcripts are skipped for exec — script(1) wrapping fights redirection;
+use `sshub connect` when you want one. Mosh hosts are refused: mosh has no
+one-shot command mode. Runs show up in `sshub audit list --via exec`."#
     );
 }
 
@@ -153,9 +177,9 @@ fn print_audit() {
         r#"sshub audit - inspect the connection audit log
 
 USAGE:
-    sshub audit list  [--status all|ok|fail|retry] [--via all|connect|tunnel|agent]
+    sshub audit list  [--status all|ok|fail|retry] [--via all|connect|tunnel|agent|exec]
                       [--host NAME] [--limit N] [--days N] [--format plain|json]
-    sshub audit stats [--days N] [--via all|connect|tunnel|agent] [--include-retry]
+    sshub audit stats [--days N] [--via all|connect|tunnel|agent|exec] [--include-retry]
                       [--format plain|json]"#
     );
 }

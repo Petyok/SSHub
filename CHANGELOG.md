@@ -4,6 +4,23 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`sshub exec <host> -- <command>`** (issue #85) - run one command on a saved
+  host from a script and get its output and exit code back, instead of
+  reassembling the ssh command line by hand and losing the stored identity,
+  askpass wiring and ProxyJump the launcher already knows. stdout/stderr pass
+  through, stdin is inherited so pipes work, and the exit code is the remote
+  command's (ssh's own failures keep ssh's 255). No PTY by default; `--tty`
+  forces one for commands that insist (`sudo` without NOPASSWD). `--timeout
+  SECS` kills the command and exits 124 like `timeout(1)`; `--format json`
+  buffers the run as `{host, command, exit_code, stdout, stderr, duration_ms}`.
+  A command given here overrides the host's stored remote command. Runs are
+  audited (`sshub audit list --via exec`) without recording the command itself,
+  which can carry a secret in an argument. Session transcripts are skipped —
+  `script(1)` wrapping fights the redirection exec exists for — and mosh hosts
+  are refused, having no one-shot command mode.
+
 ## [0.14.0] - 2026-08-12
 
 ### Added

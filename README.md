@@ -179,6 +179,12 @@ sshub host add --name prod-web --address 10.0.0.5 --port 22 \
     --username deploy --group prod --tags web,prod
 sshub host delete --name prod-web --yes      # destructive: needs --yes
 
+# Run a command on a host (scripted; exit code is the remote command's)
+sshub exec prod-web -- systemctl is-active nginx
+sshub exec prod-web -- 'tail -n 200 /var/log/nginx/error.log' > errors.log
+echo "$payload" | sshub exec db-01 -- 'psql -f -'
+sshub exec prod-web --timeout 30 --format json -- uptime
+
 # Groups and identities
 sshub groups                                 # list host groups
 sshub group add --name prod

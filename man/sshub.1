@@ -93,6 +93,36 @@ Delete a launcher host. Requires
 .TP
 .B sshub host duplicate \fINAME\fR
 Duplicate a host (legacy ssh_config hosts are copied into the launcher).
+.SS Exec (scripted)
+.TP
+.B sshub exec \fIHOST\fR \fR[\fB\-\-tty\fR] [\fB\-\-timeout\fR \fISECS\fR] [\fB\-\-format\fR \fIF\fR] [\fB\-v\fR] \fB\-\-\fR \fICOMMAND\fR \fR[\fIARGS\fR...]
+Run one command on a saved host and exit with the remote command's exit code
+(ssh's own failures keep ssh's 255). stdout and stderr pass through, stdin is
+inherited so pipes work, and nothing ever prompts. Everything after
+.B \-\-
+is the command; a single quoted string
+.RB ( "sshub exec web-01 \(dquptime\(dq" )
+works too.
+.B \-\-tty
+forces a PTY
+.RB ( "ssh \-tt" )
+for commands that insist on one; without it exec runs
+.BR "ssh \-T" .
+.B \-\-timeout
+kills the command after
+.I SECS
+and exits 124, like
+.BR timeout (1).
+.B \-\-format
+.B json
+buffers the run as
+.IR {host, " " command, " " exit_code, " " stdout, " " stderr, " " duration_ms} ;
+plain (the default) streams. A per-host stored remote command is overridden by
+the command given here. Session transcripts are skipped for exec \(em
+.BR script (1)
+wrapping fights output redirection. Mosh hosts are refused: mosh has no one-shot
+command mode. Runs are audited as
+.BR "via exec" .
 .SS Aliases
 .TP
 .B sshub connect \fINAME\fR
@@ -178,7 +208,7 @@ is
 .BR all ", " ok ", " fail ", or " retry ;
 .I V
 is
-.BR all ", " connect ", " tunnel ", or " agent .
+.BR all ", " connect ", " tunnel ", " agent ", or " exec .
 .SS Themes
 .TP
 .B sshub theme list \fR[\fB\-\-format\fR \fBplain\fR|\fBjson\fR]
@@ -304,6 +334,10 @@ Success.
 Operational failure (not found, a destructive command refused without
 .BR \-\-yes ,
 spawn error, non-zero ssh exit, hard import error).
+.TP
+.B 124
+.B sshub exec \-\-timeout
+killed the remote command.
 .TP
 .B 2
 Usage error, bad flags, deleting a non-launcher host, or deleting an identity

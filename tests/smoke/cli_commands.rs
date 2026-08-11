@@ -791,3 +791,84 @@ fn theme_check_unlistable_directory_exits_one() {
     std::fs::set_permissions(&closed, std::fs::Permissions::from_mode(0o755)).unwrap();
     assertion.code(1);
 }
+
+// ── exec ────────────────────────────────────────────────────────────────────
+// Every case here stops before a child is spawned: argument parsing, the
+// unknown-host lookup and the mosh refusal all fail first, so nothing reaches
+// the network. A real round-trip needs a live host and is not smoke-testable.
+
+#[test]
+fn exec_help_lists_the_flags_and_exits_zero() {
+    let d = dir();
+    sshub(d.path())
+        .args(["exec", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("sshub exec"))
+        .stdout(predicate::str::contains("--tty"))
+        .stdout(predicate::str::contains("--timeout"));
+}
+
+#[test]
+fn exec_without_a_host_exits_two() {
+    let d = dir();
+    sshub(d.path())
+        .arg("exec")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("exec requires a host"));
+}
+
+#[test]
+fn exec_without_a_command_exits_two() {
+    let d = dir();
+    sshub(d.path())
+        .args(["exec", "some-host"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("exec requires a command"));
+}
+
+#[test]
+fn exec_on_an_unknown_host_fails_before_spawning() {
+    let d = dir();
+    sshub(d.path())
+        .args(["exec", "no-such-host", "--", "uptime"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not found"));
+}
+
+#[test]
+fn exec_refuses_a_mosh_host() {
+    let d = dir();
+    sshub(d.path())
+        .args([
+            "host",
+            "add",
+            "--name",
+            "mosh-box",
+            "--address",
+            "10.0.0.9",
+            "--transport",
+            "mosh",
+        ])
+        .assert()
+        .success();
+
+    sshub(d.path())
+        .args(["exec", "mosh-box", "--", "uptime"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("mosh"));
+}
+
+#[test]
+fn global_help_lists_the_exec_command() {
+    let d = dir();
+    sshub(d.path())
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("sshub exec"));
+}
