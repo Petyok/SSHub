@@ -9,6 +9,19 @@
 set -euo pipefail
 
 branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+
+# Branch naming (AGENTS.md § Branch naming). Only the shape is checked here:
+# the commit that justifies the prefix may not be written yet, so the
+# substantive check ("some commit on the branch is a `fix:`") runs in CI, which
+# sees the whole branch. Both call the same script.
+repo_root=$(git rev-parse --show-toplevel)
+if [ -x "$repo_root/scripts/check-branch-name.sh" ]; then
+    "$repo_root/scripts/check-branch-name.sh" "$branch" || {
+        echo "pre-commit: rename the branch, or commit with --no-verify if you know better." >&2
+        exit 1
+    }
+fi
+
 [ "$branch" = "development" ] || exit 0
 
 # Skip while a merge/rebase/cherry-pick is in progress — those commits shouldn't
