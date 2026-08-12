@@ -46,7 +46,22 @@ Releasing is one command, run from a clean `development`:
 
 Each release first **settles everything on `development`**: it sets the release version (Cargo.toml + lock), rolls the CHANGELOG (`[Unreleased]` → `[X.Y.Z] - <date>`, with a fresh empty `[Unreleased]` back on top) and commits that as `chore: prep release vX.Y.Z` (`--no-verify`, so the patch-bump hook doesn't move the version it just set). It then **merges `development` into `main` with a real merge commit** (`git merge --no-ff development -m "chore: release vX.Y.Z"`) and tags it (the tag triggers the release workflow → binaries + crates.io). The first-parent line of `main` is therefore one commit per release (`git log --first-parent main`), while blame/bisect/revert see the full feature history; reverting a whole release is `git revert -m 1 <merge>`, reverting one feature is a revert of its squashed dev commit (after reverting a merge, re-landing that history needs a revert of the revert). Finally the recipe **fast-forwards `development` to the release merge** (`git merge --ff-only main`), so both branches point at the same commit, ahead/behind stays clean, and the next dev commit hook-bumps to `X.Y.Z+1`. Docs fixes no longer need manual syncing to `main` — they ride the next release; if `main` ever gets a direct commit anyway, merge `main` into `development` before the next release. Pushing to protected `main` relies on the owner's admin bypass.
 
-`just release patch` ships **whatever `development` currently holds** — it's the fast path when `development` == what you want on `main`. If `development` carries unreleased work you don't want in the hotfix, land the fix on `development` alone first (or handle the cherry-pick manually) before releasing.
+`just release patch` ships **whatever `development` currently holds** — it's the fast path when `development` == what you want on `main`. If `development` carries unreleased work you don't want in the hotfix, use the cherry-pick flow below.
+
+### Hotfix release that excludes work already on `development`
+
+For "ship these fixes now, hold that feature back". `just release` cannot do it: it refuses to run outside `development` and releases everything sitting there. Cut the release from `main` instead — worked example: [v0.14.2](https://github.com/Petyok/SSHub/pull/108), three fixes shipped while `sshub exec` stayed behind.
+
+1. **Branch from the released state**, not from `development`: `git checkout -b fix/release-X.Y.Z origin/main`.
+2. **Cherry-pick the fixes**, the squashed commit of each PR rather than its merge commit (`git cherry-pick <sha>`, no `-m 1`) — the history reads as the fixes themselves. Conflicts are normal and are the point: a test file that grew a block for the held-back feature will conflict, and the resolution is to keep only what ships.
+3. **Scrub the excluded feature out of what ships.** Its CHANGELOG entry stays behind on `development`, and any *other* entry that merely mentions the feature must lose that mention — a released changelog naming a command the released binary does not have is a bug report waiting to happen. Grep the tree (`src/`, `man/`, `README.md`, completions, help text) before believing it is gone.
+4. **Set the version and roll the CHANGELOG by hand**: `just bump set X.Y.Z`, then `[Unreleased]` → `## [X.Y.Z] - <date>` with a fresh empty `[Unreleased]` on top. Commit as `chore: prep release vX.Y.Z`.
+5. **Verify the release tree, not `development`**: `cargo fmt --check`, `cargo clippy --all-targets`, `just test`, and a `--release` build that proves the excluded feature is actually absent (`sshub <cmd>` exits 2, `sshub --help` never names it).
+6. **Open a PR into `main` for CI only** — and do not merge it with the button: the button writes `Merge pull request …`, and `main`'s first-parent line must read one `chore: release vX.Y.Z` per release. GitHub marks the PR merged on its own once the commits land.
+7. **Merge and tag locally**: `git merge --no-ff fix/release-X.Y.Z -m "chore: release vX.Y.Z"` on `main`, push, then `git tag -a vX.Y.Z` and push the tag — the tag is what triggers binaries, crates.io and npm, so nothing is published until that push.
+8. **Merge `main` back into `development` right away** (not `--ff-only`; `development` has commits `main` does not). The CHANGELOG conflicts by design: keep the held-back entries under `[Unreleased]`, take the released section as it shipped, and let `development` adopt the released version so the patch odometer continues from it.
+
+Skipping step 8 is the one mistake that bites later: `main` then carries a fix `development` lacks, and the next `development → main` merge can quietly revert it.
 
 ## Build & test commands
 
