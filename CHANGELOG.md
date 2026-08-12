@@ -6,6 +6,16 @@ All notable changes to SSHub are documented in this file.
 
 ### Fixed
 
+- **A theme picked in the picker was forgotten on the next start** - `Enter`
+  wrote `appearance.active_theme` to the global `~/.config/sshub/config.toml`,
+  but a profile-mode install reads its settings from
+  `~/.local/share/sshub/profiles/<name>/config.toml` — the file every *other*
+  setting is already written to. The theme therefore applied, looked saved, and
+  the next start silently served whatever the profile file still held. The
+  picker now persists through the same profile-aware writer as the rest of the
+  settings, and the regression test drives the real `Enter` rather than the
+  injectable writer the other picker tests use, which is why nothing caught it.
+
 - **A stored host address starting with `-` reached ssh as an option, not a
   host** (issue #101) - `sshub connect evil` on a host whose address is
   `-oProxyCommand=id` built `ssh … -oProxyCommand=id`, and ssh dutifully ran

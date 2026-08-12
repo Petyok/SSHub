@@ -85,6 +85,33 @@ impl ThemeEnv {
         Self { root, app }
     }
 
+    /// Put this app in profile mode, exactly as a real start with a profile
+    /// does: `config.toml` lives inside the profile directory, and that is the
+    /// file startup reads back.
+    fn with_profile(mut self) -> Self {
+        let root = self.root.path().join("profile");
+        std::fs::create_dir_all(&root).unwrap();
+        self.app.profile = Some(sshub::profile::ProfilePaths {
+            data_root: self.root.path().to_path_buf(),
+            id: "p-test".into(),
+            name: "default".into(),
+            config_file: root.join("config.toml"),
+            root,
+            ssh_config: self.root.path().join("ssh_config"),
+            compat: false,
+        });
+        self
+    }
+
+    fn profile_config_path(&self) -> PathBuf {
+        self.app
+            .profile
+            .as_ref()
+            .expect("profile mode")
+            .config_file
+            .clone()
+    }
+
     fn themes_dir(&self) -> PathBuf {
         self.root.path().join("themes")
     }
@@ -469,4 +496,38 @@ fn browsing_the_picker_never_touches_the_disk() {
     assert!(!env.root.path().join("config.toml").exists());
     assert_eq!(env.app.saved_theme_id(), "default");
     assert_eq!(env.app.mode, AppMode::Settings);
+}
+
+/// Saving a theme has to write the file startup reads. With a profile active
+/// that is the profile's own `config.toml`; writing the global one instead
+/// looks like it worked and then serves the previous theme on the next start —
+/// the picked theme survives exactly until the app is closed.
+///
+/// Drives the real `Enter` (not the injectable writer every other test here
+/// uses), because the bug was the writer the real path picked.
+#[test]
+fn committing_a_theme_writes_the_profile_config_startup_reads() {
+    let mut env =
+        ThemeEnv::new(&[("aqua-ish", theme_with_accent("Aqua-ish", "#00b7c3"))]).with_profile();
+    let config_path = env.profile_config_path();
+
+    env.open_picker();
+    env.select("aqua-ish");
+    env.press(KeyCode::Enter);
+
+    assert_eq!(
+        env.app.mode,
+        AppMode::Settings,
+        "a successful commit closes the picker"
+    );
+    let saved = std::fs::read_to_string(&config_path)
+        .unwrap_or_else(|e| panic!("nothing was written to {}: {e}", config_path.display()));
+    assert!(
+        saved.contains("active_theme = \"aqua-ish\""),
+        "the profile config does not carry the picked theme:\n{saved}"
+    );
+
+    // And what a restart would load from that file is the same theme.
+    let reloaded = sshub::config::load_config_at(&config_path).unwrap();
+    assert_eq!(reloaded.appearance.active_theme, "aqua-ish");
 }
