@@ -164,10 +164,14 @@ the interactive picker.
 
 Beyond the TUI, `sshub` exposes a full command-line interface for scripting and
 automation: hosts, groups, identities, tunnels, SFTP, and the audit log, no
-terminal UI required. Add `--format json` to any listing or show command for
+terminal UI required. `sshub exec <host> -- <command>` runs a single command on
+a saved host and hands back its output and exit code, so a script gets the
+stored identity, credential and ProxyJump without rebuilding the ssh command
+line by hand. Add `--format json` to any listing or show command for
 machine-readable output (plain text is the default). Exit codes are stable:
-`0` success, `1` operational failure, `2` usage or bad flags. Destructive
-commands refuse to run without `--yes`.
+`0` success, `1` operational failure, `2` usage or bad flags, and `124` when
+`exec --timeout` kills the run (as `timeout(1)` does). Destructive commands
+refuse to run without `--yes`.
 
 ```bash
 # Hosts
