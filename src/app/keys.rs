@@ -1352,12 +1352,20 @@ impl App {
         Ok(())
     }
 
+    /// The `config.toml` this run reads and writes: the profile's own file when
+    /// a profile resolved startup, else the global one.
+    ///
+    /// Startup loads exactly this file (`lib.rs`), so a writer that picks a
+    /// different one saves where nothing will ever read: the setting appears to
+    /// take, and the next start silently serves the old value. Every persist
+    /// path goes through here for that reason.
+    pub(crate) fn config_target(&self) -> Option<std::path::PathBuf> {
+        self.profile.as_ref().map(|p| p.config_file.clone())
+    }
+
     /// Persist config, surfacing failures as a non-fatal host notice.
     pub(crate) fn save_config_quietly(&mut self) {
-        let result = match &self.profile {
-            Some(paths) => crate::config::save_config_at(&paths.config_file, &self.config),
-            None => crate::config::save_config(&self.config),
-        };
+        let result = save_config_to(self.config_target().as_deref(), &self.config);
         if let Err(e) = result {
             self.host_notice = Some(format!("Could not save config: {e}"));
         }
@@ -1387,5 +1395,18 @@ impl App {
     /// Whether `key` matches the configured "save" binding (default F2/Ctrl+S).
     pub fn is_save_key(&self, key: &KeyEvent) -> bool {
         self.is_action(KeyAction::Save, key)
+    }
+}
+
+/// Write `config` to the file this run owns: the profile's `config.toml`, or the
+/// global one in compatibility mode. The single place that chooses, so no call
+/// site can pick the file startup does not read.
+pub(crate) fn save_config_to(
+    target: Option<&std::path::Path>,
+    config: &AppConfig,
+) -> anyhow::Result<()> {
+    match target {
+        Some(path) => crate::config::save_config_at(path, config),
+        None => crate::config::save_config(config),
     }
 }

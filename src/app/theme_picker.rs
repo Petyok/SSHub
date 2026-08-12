@@ -460,8 +460,16 @@ impl App {
     }
 
     /// `Enter`: persist the previewed theme through the real config writer.
+    ///
+    /// Through [`App::config_target`], like every other setting: writing to the
+    /// global `config.toml` while a profile is active saves the theme where
+    /// startup never looks, so it survives until the app is closed and then
+    /// silently reverts to whatever the profile file still holds.
     pub(crate) fn commit_theme_picker(&mut self) {
-        self.commit_theme_picker_with(crate::config::save_config);
+        let target = self.config_target();
+        self.commit_theme_picker_with(move |config| {
+            super::keys::save_config_to(target.as_deref(), config)
+        });
     }
 
     /// `Enter` with an injectable writer.
