@@ -7,7 +7,7 @@ tags: [sshub, tui, ssh, rust, overview]
 
 # SSHub Quickstart
 
-SSHub (`sshub`, v0.9.3 in `Cargo.toml`) is a keyboard-driven terminal UI for managing and connecting to SSH hosts. It merges your read-only `~/.ssh/config` with a fully managed host database (SQLite), and adds embedded in-TUI SSH sessions, an SFTP file browser, SSH tunnels with keep-alive reconnect, ssh-agent identity management, OS auto-detection with logos, and a connection audit log. It also ships a full headless CLI for scripting. License: AGPL-3.0-or-later.
+SSHub (`sshub`, v0.14.0 in `Cargo.toml`) is a keyboard-driven terminal UI for managing and connecting to SSH hosts. It merges your read-only `~/.ssh/config` with a fully managed host database (SQLite), and adds embedded in-TUI SSH sessions, an SFTP file browser, SSH tunnels with keep-alive reconnect, ssh-agent identity management, OS auto-detection with logos, and a connection audit log. It also ships a full headless CLI for scripting. License: AGPL-3.0-or-later.
 
 - Crate: `sshub` on crates.io (`cargo install sshub`); repo: github.com/Petyok/SSHub
 - Stack: Rust 2021, ratatui 0.30 + crossterm (TUI), portable-pty + vt100/tui-term (embedded sessions), rusqlite bundled (SQLite), ssh2/libssh2 with vendored OpenSSL (SFTP), nucleo (fuzzy search), notify (file watcher), keyring (OS secret store). **No async runtime** — a synchronous event loop polls every 50 ms (`src/lib.rs`).
@@ -29,6 +29,7 @@ Linux builds need `libdbus-1-dev` + `pkg-config` (Secret Service keyring backend
 | Resource | Default path | Override |
 |---|---|---|
 | Config | `~/.local/share/sshub/profiles/<name>/config.toml` | `SSHUB_CONFIG_DIR` in compatibility mode |
+| User themes | `~/.config/sshub/themes/*.toml` | `appearance.active_theme` selects the file stem |
 | Databases | `~/.local/share/sshub/profiles/<name>/{launcher,metadata}.db` | `SSHUB_DATA_DIR` in compatibility mode |
 | SSH config | `~/.ssh/config` | `SSHUB_SSH_CONFIG` |
 | Session logs | `~/.local/share/sshub/profiles/<name>/logs/<host-dir>/` | — |
@@ -55,6 +56,8 @@ mode without profile discovery. Legacy top-level data migrates into
 - [Sessions & SFTP](workflows/sessions-sftp.md) — embedded PTY sessions, OSC 52 relay boundary, askpass, session logging, mosh, and the dual-pane SFTP browser.
 - [Tunnels](workflows/tunnels.md) — local/remote/dynamic tunnels and keep-alive reconnect with backoff.
 - [Headless CLI](workflows/cli.md) — full command tree, JSON output, exit codes.
+- [Runtime themes](workflows/themes.md) — TOML themes, picker lifecycle, transparency, gradients, and `sshub theme`.
+- [Isolated profiles](workflows/profiles.md) — profile selection, workspace ownership, compatibility mode, and migration.
 
 ### Domain
 - [Hosts, groups & identities](domain/hosts-identities.md) — host sources, nested groups and Favorites, identities, ssh-agent, and Termius import.
@@ -67,6 +70,15 @@ mode without profile discovery. Legacy top-level data migrates into
 ### Integrations & security
 - [External terminal launchers & demo](integrations/external-terminals.md) — kitty/ghostty/custom launchers and the VHS demo pipeline.
 - [Secrets, credentials & file security](security/secrets.md) — OS keyring, askpass staging, TOFU host keys, session-log exposure warning, permission hardening.
+
+## Task routing
+
+| Change area or user intent | Wiki page | Exact source entry points | Important symbols or types | Focused tests | Minimal validation |
+|---|---|---|---|---|---|
+| Theme file, picker, color, gradient, or transparency | [Runtime themes](workflows/themes.md) | `src/theme/manager.rs`, `src/theme/registry.rs`, `src/app/theme_picker.rs`, `src/cli/theme.rs` | `ThemeManager`, `ThemeRegistry`, `App::activate_resolved_theme` | `tests/e2e/theme_picker.rs`, `tests/smoke/theme_public_api.rs` | `cargo test --test smoke theme` |
+| Profile startup, paths, migration, or isolation | [Isolated profiles](workflows/profiles.md) | `src/profile/mod.rs`, `src/profile/migrate.rs`, `src/profile/picker.rs` | `resolve_startup`, `ProfilePaths`, `profile_paths` | profile unit tests and `tests/smoke/config_load.rs` | `cargo test --lib profile` |
+| Known-host trust rows or SSH config alias resolution | [Known hosts](workflows/known-hosts.md), [Hosts & identities](domain/hosts-identities.md) | `src/known_hosts.rs`, `src/ssh/resolver.rs`, `src/app/keys.rs` | known-host parser, `HostResolver`, `SshConfigResolver` | known-host and resolver tests | `cargo test --test smoke resolver` |
+| Embedded session or SFTP behavior | [Sessions & SFTP](workflows/sessions-sftp.md) | `src/session/mod.rs`, `src/session/render.rs`, `src/sftp/model.rs`, `src/sftp/worker.rs` | `SessionPhase`, `SftpTransport`, `spawn_sftp_worker` | `src/app/tests/session.rs`, `src/app/tests/sftp.rs` | `cargo test --lib session sftp` |
 
 ## Contributing pointers
 

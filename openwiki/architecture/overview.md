@@ -21,6 +21,7 @@ background threads communicating over `std::sync::mpsc` channels.
 1. **Drain sessions** — every open embedded session's PTY is drained and resized; a `Connecting` session is promoted to `Session` on first output.
 2. **Draw** — `terminal.draw` renders via `tui::render`.
 3. **Drain input** — `poll_keys_and_watcher` drains *all* queued crossterm events per frame (the code notes that draining only one would make "paste into an embedded session crawl at ~20 chars/sec"), then non-blocking `try_recv` drains of every worker channel:
+<!-- openwiki: broken internal link [#file-watcher] heading anchor "file-watcher" does not exist in /openwiki/architecture/overview.md. Fix the href or restore the target, then delete this comment. -->
    - config [file watcher](#file-watcher) → `app.reload_hosts()`
    - ping worker (30 s interval, ring buffer of 30 samples per host)
    - SFTP worker events → `apply_sftp_event` (see [sessions & SFTP](../workflows/sessions-sftp.md))

@@ -8,6 +8,8 @@ tags: [storage, sqlite, schema, config, hosts, architecture]
 
 # Data Model & Storage
 
+Profile mode scopes the two SQLite databases and configuration described here beneath one selected workspace; see [isolated profiles](../workflows/profiles.md) for path resolution, migration, and credential namespace boundaries.
+
 ## Profile-owned storage
 
 Normal installs keep `state.toml` at the data root and put each profile under
@@ -69,7 +71,7 @@ Hosts, groups, favorites, and identities as user-facing concepts: [domain/hosts-
 
 - Legacy `terminal` and `launch_command` keys may still occur in older config files, but are ignored after the external-terminal launcher was removed in 0.10.0. Sessions run on the embedded PTY (`src/session/`, tui-term + vt100); see [integrations](../integrations/external-terminals.md).
 - `[clipboard]` — `relay_from_pty` (default `true`) controls whether the visible embedded session relays OSC 52 clipboard writes to the hosting terminal.
-- `[appearance]` — opaque background, OS logos, quit confirmation, startup animation
+- `[appearance]` — active theme, independent SSHub/session transparency, OS logos, quit confirmation, startup animation, and reduced motion
 - `[session_logging]` — `enabled`, `max_file_bytes` (default 10 MiB), `retention_files` (50)
 - `[tunnel_reconnect]` — `max_attempts`, `initial_delay_ms`, `max_delay_ms`, `stable_secs`, `jitter_ratio` (consumed by `config::tunnel_backoff_delay`; see [tunnels](../workflows/tunnels.md))
 - `[keybinds]` — user rebinds from the Ctrl+K editor (`src/keybinds.rs`)
@@ -80,4 +82,5 @@ Hosts, groups, favorites, and identities as user-facing concepts: [domain/hosts-
 
 - Adding a column or table: bump `SCHEMA_VERSION`, add a `migrate_vN_to_vN+1` step, and prefer `pragma_table_info` guards — tests open in-memory stores (`LauncherStore::open_in_memory`) and run all migrations from scratch.
 - In-memory tests point the launcher path into a temp dir so the legacy metadata import can't pick up a stray `./metadata.db` from the CWD.
+<!-- openwiki: broken internal link [overview.md#file-watcher] heading anchor "file-watcher" does not exist in "overview.md". Fix the href or restore the target, then delete this comment. -->
 - The [file watcher](overview.md#file-watcher) only reloads hosts; config.toml changes require restart.

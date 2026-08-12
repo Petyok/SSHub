@@ -31,7 +31,8 @@ Lint gate (run before **every** push; [CI](ci-cd.md) runs the same): `cargo fmt`
 | `release [minor|patch|X.Y.Z]` | Full release: settle version on `development`, roll CHANGELOG, `--no-ff` merge to `main`, tag `vX.Y.Z`, push, ff `development` |
 | `sync` | Merge `development`→`main` without a release (no tag/bump/changelog) |
 | `setup-hooks` | One-time `git config core.hooksPath .githooks` per checkout |
-| `record-gifs *tapes` | VHS + ffmpeg demo recording (see [integrations](../integrations/external-terminals.md#demo-pipeline)) |
+<!-- openwiki: broken internal link [../integrations/external-terminals.md#demo-pipeline] heading anchor "demo-pipeline" does not exist in "../integrations/external-terminals.md". Fix the href or restore the target, then delete this comment. -->
+| `record-gifs *tapes` | Terminal-stream demo recording with asciicast and `agg` (see [integrations](../integrations/external-terminals.md#demo-pipeline)) |
 | `dry-run` | Headless sanity check |
 
 ## Versioning — odometer `vX.Y.Z`

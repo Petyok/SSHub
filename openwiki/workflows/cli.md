@@ -26,6 +26,7 @@ Parsing is hand-rolled (`src/cli/parse.rs`), output DTOs in `src/cli/output.rs`.
 | `group` (alias `groups`) | `list show add edit delete` | Nested groups via parent |
 | `identity` | `list show add edit delete agent-remove` | `add --private-key`, `--password-stdin` for secrets; `agent-remove` = `ssh-add -d` |
 | `tunnel` | `list show create start stop delete` | `start` is detached by default (PID files), `--foreground` runs with keep-alive ([tunnels](tunnels.md)) |
+<!-- openwiki: broken internal link [sessions-sftp.md#sftp] heading anchor "sftp" does not exist in "sessions-sftp.md". Fix the href or restore the target, then delete this comment. -->
 | `sftp` | `ls get put rm mkdir rename chmod` | One-shot over a direct host; no ProxyJump ([sessions & SFTP](sessions-sftp.md#sftp)) |
 | `audit` | `list stats` | `--status ok|fail`, `--days N`, `--via all|connect|tunnel|agent|exec` (`connect` means interactive connects only) |
 | `tags` | — | List all tags |

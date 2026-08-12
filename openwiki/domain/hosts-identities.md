@@ -10,13 +10,15 @@ tags: [domain, hosts, groups, identities, ssh-agent, termius]
 
 ## Hosts
 
+<!-- openwiki: broken internal link [../architecture/data-model.md#hybrid-host-model] heading anchor "hybrid-host-model" does not exist in "../architecture/data-model.md". Fix the href or restore the target, then delete this comment. -->
 A host is the central entity. Storage and merging rules live in [data model](../architecture/data-model.md#hybrid-host-model); the user-facing model:
 
 - **Managed hosts** (`HostSource::Launcher`) — full CRUD from the [host form](../workflows/tui.md) or [CLI](../workflows/cli.md); fields include address, port, username, tags, description, environment, per-host session-logging override, and `transport` (ssh/mosh).
+<!-- openwiki: broken internal link [../architecture/overview.md#file-watcher] heading anchor "file-watcher" does not exist in "../architecture/overview.md". Fix the href or restore the target, then delete this comment. -->
 - **ssh_config hosts** (`HostSource::SshConfig`) — imported/synced from `~/.ssh/config`; editable metadata but the connection fields track the config file (hot-reloaded by the [file watcher](../architecture/overview.md#file-watcher)).
 - **Legacy aliases** — ssh_config entries with no DB row; surfaced read-only with metadata from `metadata.db`.
 
-Resolution always goes through `HostResolver` / `SshConfigResolver` (`src/ssh/resolver.rs`), which lists `Host` aliases (following `Include`, depth-capped at 16) and resolves effective options with `ssh -G`. `build_ssh_argv` / `build_mosh_argv` (`src/ssh/host.rs`) turn a resolved host into the spawn argv used by [embedded sessions](../workflows/sessions-sftp.md).
+Resolution always goes through `HostResolver` / `SshConfigResolver` (`src/ssh/resolver.rs`), which lists `Host` aliases (following `Include`, depth-capped at 16), unquotes aliases the way OpenSSH does, and resolves effective options with `ssh -G`. This normalization is important because a listed alias must remain connectable, not merely visible. `build_ssh_argv` / `build_mosh_argv` (`src/ssh/host.rs`) turn a resolved host into the spawn argv used by [embedded sessions](../workflows/sessions-sftp.md).
 
 **OS auto-detection** (`src/osinfo/`): on first connect a background worker runs `cat /etc/os-release || uname -s` over ssh (BatchMode without a secret, askpass with one), `parse_os` maps it to a canonical id stored in `hosts.os_icon`, and the host card renders a vendored ANSI/Braille logo (`OsLogoWidget`). Failures are silent by design.
 
