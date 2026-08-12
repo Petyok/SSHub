@@ -26,6 +26,8 @@ All notable changes to SSHub are documented in this file.
   `script(1)` wrapping fights the redirection exec exists for — and mosh hosts
   are refused, having no one-shot command mode.
 
+## [0.14.2] - 2026-08-12
+
 ### Fixed
 
 - **A theme picked in the picker was forgotten on the next start** - `Enter`
@@ -44,7 +46,7 @@ All notable changes to SSHub are documented in this file.
   `id` *locally*. Addresses are written verbatim from imported PuTTY, Termius
   and mRemoteNG files, so a crafted export was local code execution on the
   machine that imported it — no typo of the user's own required. Every target
-  sshub hands to ssh or mosh (connect, exec, tunnels, alias connects) now goes
+  sshub hands to ssh or mosh (connect, tunnels, alias connects) now goes
   through one guard that rewrites a leading-dash target into the `ssh://` URI
   form, which OpenSSH refuses outright instead of parsing as a flag; ordinary
   targets are untouched. Confirmed against the real `ssh -G`, which still
