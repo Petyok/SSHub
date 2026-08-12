@@ -226,6 +226,23 @@ impl App {
             self.host_form = Some(form);
             return Ok(());
         }
+        // The store refuses these outright (issue #101); say so with the form
+        // still open rather than letting a write error unwind the TUI.
+        let option_like_field = [
+            ("Name", name),
+            ("Address", address),
+            ("Username", form.username.trim()),
+        ]
+        .into_iter()
+        .find(|(_, value)| crate::store::is_option_like(value))
+        .map(|(field, _)| field);
+        if let Some(field) = option_like_field {
+            self.host_notice = Some(format!(
+                "{field} cannot start with '-' — ssh would read it as an option, not a host"
+            ));
+            self.host_form = Some(form);
+            return Ok(());
+        }
 
         let port: u16 = match form.port.trim().parse() {
             Ok(p) if p > 0 => p,
