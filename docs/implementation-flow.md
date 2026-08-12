@@ -168,8 +168,9 @@ Example test plan bullets:
 ## 9. After merge
 
 - GitHub deletes the head branch automatically (keep “Delete branch” checked).
-- Issue closes; roadmap checkbox on #14 ticks when `Closes #N` matched.
+- Roadmap checkbox on #14 ticks when `Closes #N` matched. The issue itself closes when the commits reach the **default** branch, i.e. at the next release — merging into `development` links the PR to the issue but leaves it open.
 - Work rides the next release to `main` via `just release` (maintainer). See [CLAUDE.md § Versioning](../CLAUDE.md#versioning-vxyz).
+- Need a fix released while something else on `development` is held back? That is the cherry-pick flow in [CLAUDE.md § Hotfix release that excludes work already on `development`](../CLAUDE.md#hotfix-release-that-excludes-work-already-on-development), not `just release`.
 
 ## Respect the community
 
@@ -200,6 +201,7 @@ payment, so it is not optional and it is not a nice-to-have.
 |----------|--------|
 | Where do PRs go? | `development` |
 | Where do releases go? | `main` (tags `vX.Y.Z`) |
+| Ship a fix but hold back a feature? | [Hotfix flow](../CLAUDE.md#hotfix-release-that-excludes-work-already-on-development) — cut from `main`, cherry-pick, tag by hand |
 | Full test command? | `just test` |
 | Roadmap? | [Issue #14](https://github.com/Petyok/SSHub/issues/14) |
 | Architecture docs? | [openwiki/quickstart.md](../openwiki/quickstart.md) |
