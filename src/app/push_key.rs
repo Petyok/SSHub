@@ -9,9 +9,17 @@ use crate::store::Identity;
 impl App {
     pub(crate) fn trigger_push_key_from_hosts(&mut self) -> Result<()> {
         let Some(_entry) = self.selected_entry().cloned() else {
+            // A group header (or an empty list) has nothing to push to. Silence
+            // here reads as "the key is broken", so say what's wrong.
+            self.host_notice =
+                Some("Select a host row first — a group header has no key target.".into());
             return Ok(());
         };
 
+        // `self.identities` is lazily filled (Keys tab, host form, group form),
+        // so before the first visit to those it is empty and push-key bailed out
+        // with "no key identities" on the hosts tab.
+        self.reload_identities()?;
         let key_identities = self.push_key_identities();
         if key_identities.is_empty() {
             self.host_notice =
@@ -26,6 +34,7 @@ impl App {
 
     pub(crate) fn trigger_push_key_from_keys(&mut self) -> Result<()> {
         let Some(identity) = self.selected_identity().cloned() else {
+            self.identity_notice = Some("No identity selected.".into());
             return Ok(());
         };
 
