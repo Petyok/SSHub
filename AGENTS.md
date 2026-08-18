@@ -13,22 +13,36 @@ The scheduled OpenWiki GitHub Actions workflow refreshes the repository wiki. Do
 Main agent checkout stays in this folder (`ssh-tui/`). Extra agents use git
 worktrees so they do not fight over the same working tree.
 
-Rust `target/` is **shared** across the main checkout and all worktrees to
-save disk (one ~12G artifact dir, not one per agent):
+Rust build output is **shared** across the main checkout and all worktrees to
+save disk (~1.2G per full dev+test+release cycle, not one such dir per agent):
 
 ```text
 sshub-dev/
-  .cargo-target/          ← real cargo artifacts
+  .cargo-target/          ← real cargo artifacts (build.target-dir)
   .worktrees/<agent>/     ← isolated checkouts
   ssh-tui/                ← main checkout (this repo)
-    target -> ../.cargo-target
+    .cargo/config.toml    ← untracked, points at ../.cargo-target
 ```
 
+Each checkout carries its own untracked `.cargo/config.toml` with an absolute
+`build.target-dir`. There is **no `target` symlink** — `cargo clean` deletes a
+symlink, after which cargo silently builds into a private `./target` and the
+shared dir quietly becomes one copy per agent. If you find a `target` symlink,
+do not repair it: run `just setup-shared-target`, which migrates it.
+
 ```bash
-just setup-shared-target          # one-time / repair symlink on main checkout
-just worktree-add agent-foo       # ../.worktrees/agent-foo on feature/agent-foo
-just worktree-rm agent-foo        # remove worktree; keeps shared target
+just setup-shared-target          # once per checkout/worktree (writes .cargo/config.toml)
+just worktree-add agent-foo       # ../.worktrees/agent-foo on feature/agent-foo (runs the above)
+just worktree-rm agent-foo        # remove worktree; sweeps its stale artifacts
+just sweep                        # prune shared target back under 4GB (cargo never does)
 ```
+
+The `vendored` feature (OpenSSL compiled from source) is **on by default**,
+because `cargo install sshub` and the release tarballs must build with no system
+OpenSSL present. Local work opts out with `--no-default-features` to link the
+system libs instead — ~120 MB less target/ per profile and most of a cold
+build's wall clock. `just test` already does. Never pass that flag on anything
+that ships: `just build`, CI, and the release workflow stay on the default.
 
 Do **not** run two `cargo`/`just test` builds at once against the shared
 target — fingerprint races. Serialize builds (one agent compiling at a time).

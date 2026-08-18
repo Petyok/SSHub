@@ -5,10 +5,10 @@ default:
 
 # Run all test targets (unit + integration). CI-friendly; no TTY required.
 test:
-    cargo test
-    cargo test --test smoke
-    cargo test --test e2e
-    cargo test --test config_load
+    cargo test --no-default-features
+    cargo test --no-default-features --test smoke
+    cargo test --no-default-features --test e2e
+    cargo test --no-default-features --test config_load
 
 # Coverage, plus the functions no test executes even once (docs/coverage-map.md).
 coverage:
@@ -136,39 +136,59 @@ setup-hooks:
     git config core.hooksPath .githooks
     @echo "git hooks enabled (core.hooksPath = .githooks)"
 
-# Point ./target at ../.cargo-target (sibling of the git root). Keeps one Rust
-# artifact dir for the main checkout + all agent worktrees. Safe to re-run.
-# If ./target is a real directory and ../.cargo-target is empty/missing, moves
-# the existing artifacts into the shared dir first (preserves the cache).
+# Point this checkout's build output at the shared ../.cargo-target (sibling of
+# the main checkout). One Rust artifact dir for the main checkout + every agent
+# worktree. Safe to re-run; run it once per checkout/worktree.
+#
+# Uses .cargo/config.toml (untracked) rather than a `target` symlink: `cargo
+# clean` DELETES the symlink, after which cargo silently starts building into a
+# private ./target again — that is how one shared 1 GB dir turns into N copies.
+# The path written is absolute because worktrees sit one level deeper than the
+# main checkout, so no single relative path is correct for both.
 setup-shared-target:
     #!/usr/bin/env bash
     set -euo pipefail
-    repo="$(git rev-parse --show-toplevel)"
-    parent="$(dirname "$repo")"
-    shared="$parent/.cargo-target"
-    cd "$repo"
-    if [ -L target ]; then
-      cur="$(readlink target)"
-      want="../.cargo-target"
-      if [ "$cur" = "$want" ] || [ "$(readlink -f target)" = "$(readlink -f "$shared")" ]; then
-        echo "target already -> $shared"
-        exit 0
-      fi
-      echo "target is a symlink to '$cur', expected '$want' or $shared" >&2
+    root="$(git rev-parse --show-toplevel)"
+    cd "$root"
+    # --git-common-dir points at the MAIN checkout's .git from any worktree.
+    common="$(realpath "$(git rev-parse --git-common-dir)")"
+    shared="$(dirname "$(dirname "$common")")/.cargo-target"
+    mkdir -p "$shared" .cargo
+    cfg=.cargo/config.toml
+    if [ -f "$cfg" ] && ! grep -q '^target-dir' "$cfg"; then
+      echo "$cfg exists without a target-dir — add [build] target-dir by hand" >&2
       exit 1
     fi
-    if [ -d target ]; then
-      if [ -e "$shared" ]; then
-        echo "both ./target and $shared exist — move/merge by hand, then re-run" >&2
-        exit 1
-      fi
-      echo "moving ./target -> $shared"
-      mv target "$shared"
-    else
-      mkdir -p "$shared"
+    # Migrate whatever ./target is today, then get it out of the way.
+    if [ -L target ]; then
+      rm -f target
+    elif [ -d target ]; then
+      echo "moving ./target into $shared"
+      cp -a target/. "$shared"/ && rm -rf target
     fi
-    ln -sfn ../.cargo-target target
-    echo "target -> $shared ($(du -sh "$shared" | cut -f1))"
+    printf '[build]\ntarget-dir = "%s"\n' "$shared" > "$cfg"
+    echo "target-dir -> $shared ($(du -sh "$shared" | cut -f1))"
+
+# Prune the shared target dir. Cargo NEVER deletes artifacts of branches you
+# moved off, so the dir only grows: a full dev+test+release cycle is ~1.2 GB and
+# every stale fingerprint stays forever. Keeps it under a size cap, dropping the
+# oldest artifacts first.
+#
+#   just sweep           # cap at 4GB
+#   just sweep 2GB
+#
+# By age instead of size: cargo sweep --time 7 ../.cargo-target
+sweep size="4GB":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v cargo-sweep >/dev/null || { echo "needs: cargo install cargo-sweep" >&2; exit 1; }
+    common="$(realpath "$(git rev-parse --git-common-dir)")"
+    shared="$(dirname "$(dirname "$common")")/.cargo-target"
+    before="$(du -sh "$shared" | cut -f1)"
+    # cargo-sweep wants the PROJECT path (it resolves target-dir itself), not the
+    # target dir — pointed at the latter it looks for a Cargo.toml inside it.
+    cargo sweep --maxsize {{size}} "$(git rev-parse --show-toplevel)"
+    echo "$shared: $before -> $(du -sh "$shared" | cut -f1)"
 
 # Add an isolated worktree under ../.worktrees/<name> on branch <branch>
 # (default: feature/<name>), then link its target/ at the shared cargo dir.
@@ -199,10 +219,10 @@ worktree-add name branch="":
     else
       git worktree add -b "$branch" "$dest"
     fi
-    ln -sfn "$shared" "$dest/target"
+    (cd "$dest" && just setup-shared-target)
     echo "worktree: $dest"
     echo "branch:   $branch"
-    echo "target:   $dest/target -> $shared"
+    echo "target:   $shared (shared)"
     echo "cd $dest"
 
 # Remove a worktree created by worktree-add. Does NOT delete the shared
@@ -230,6 +250,8 @@ worktree-rm name mode="":
     fi
     rmdir "$parent/.worktrees" 2>/dev/null || true
     echo "removed $dest"
+    # That branch's artifacts are now unreachable but still in the shared dir.
+    command -v cargo-sweep >/dev/null && just sweep || true
 
 # Cut a release: merge development -> main with a --no-ff merge commit, tag,
 # and push. The tag triggers the release workflow (binaries + crates.io
