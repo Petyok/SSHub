@@ -26,6 +26,23 @@ All notable changes to SSHub are documented in this file.
   `script(1)` wrapping fights the redirection exec exists for — and mosh hosts
   are refused, having no one-shot command mode.
 
+### Fixed
+
+- **Shift+P on the hosts tab did nothing until Identities had been visited
+  once** - `App::identities` is filled lazily, only by the Keys tab, the host
+  form and the group form. Before any of those, push-key read an empty cache,
+  concluded there were no key identities and returned; a trip to Identities and
+  back "fixed" it, which reads as a haunted keybind. It now reloads the
+  identities itself, so the picker opens on the first press of a fresh start.
+
+- **Dashboard notices were invisible unless a panel was zoomed** - `host_notice`
+  had exactly one surface left after the status bar was removed (#58), and that
+  toast was gated on `panel_zoomed`. Push-key errors, import/export results and
+  SFTP failures were all set and then never drawn, so every refused action
+  looked like a dead key. The toast now renders zoomed or not. Two silent
+  push-key bail-outs also gained a message: a group header has no key target,
+  and an empty Keys selection has no identity to push.
+
 ## [0.14.2] - 2026-08-12
 
 ### Fixed
