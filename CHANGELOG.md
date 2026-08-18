@@ -4,6 +4,8 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-08-18
+
 ### Added
 
 - **`cargo install sshub --no-default-features` links the system OpenSSL** -
