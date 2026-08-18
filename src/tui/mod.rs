@@ -801,13 +801,12 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
     let (keybinds, pinned) = footer_keybinds(app);
     widgets::footer::render_footer(frame, areas.footer, &keybinds, pinned, theme);
 
-    // Issue #18: a zoomed panel hides the normal notice surface (status bar),
-    // so surface transient feedback (e.g. "copied N chars") as a toast pinned
-    // to the right of the footer until the next key press clears it.
-    if app.panel_zoomed {
-        if let Some(notice) = &app.host_notice {
-            render_zoom_toast(frame, areas.footer, notice, app);
-        }
+    // The status bar that used to print `host_notice` is gone (dead code, #58),
+    // so this toast is the *only* surface left: gating it on `panel_zoomed` made
+    // every dashboard notice invisible — push-key errors, import/export results,
+    // SFTP failures — and a silent failure reads as a broken keybind.
+    if let Some(notice) = &app.host_notice {
+        render_notice_toast(frame, areas.footer, notice, app);
     }
 
     // ── Overlay popups ─────────────────────────────────────────
@@ -1238,10 +1237,10 @@ fn footer_keybinds(app: &App) -> (Vec<(String, &'static str)>, usize) {
 }
 
 /// Draw a transient notice (issue #18) as a floating chip right-aligned on the
-/// row *above* the footer keybinds, used while a panel is zoomed and the normal
-/// status-bar notice surface is hidden. Sits above the hints so it never clips
-/// them.
-fn render_zoom_toast(frame: &mut Frame, footer: Rect, notice: &str, app: &App) {
+/// row *above* the footer keybinds. The dashboard's only notice surface — the
+/// status bar it replaced is gone — so it renders zoomed or not. Sits above the
+/// hints so it never clips them.
+fn render_notice_toast(frame: &mut Frame, footer: Rect, notice: &str, app: &App) {
     let label = format!(" {notice} ");
     let w = label.chars().count() as u16;
     if footer.width < w || footer.y == 0 {

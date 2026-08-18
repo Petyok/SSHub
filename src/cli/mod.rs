@@ -1,6 +1,7 @@
 pub mod audit;
 pub mod completions;
 pub mod context;
+pub mod exec;
 pub mod filter;
 pub mod group;
 pub mod help;
@@ -24,6 +25,7 @@ pub fn is_subcommand(cmd: &str) -> bool {
         cmd,
         "host"
             | "connect"
+            | "exec"
             | "list"
             | "tunnel"
             | "group"
@@ -42,12 +44,20 @@ pub fn is_subcommand(cmd: &str) -> bool {
 /// Dispatch a subcommand. `rest` is argv AFTER the subcommand token. main.rs
 /// owns bootstrap and passes `ctx` in; this fn must NOT call CliContext::bootstrap.
 pub fn run_subcommand(ctx: &mut CliContext, cmd: &str, rest: &[String]) -> Result<i32> {
-    if rest.iter().any(|a| a == "--help" || a == "-h") {
+    // `exec` passes everything after `--` to the remote shell, so a `-h` in
+    // there is the remote command's flag, not a request for our help.
+    let help_args = if cmd == "exec" {
+        exec::help_scan(rest)
+    } else {
+        rest
+    };
+    if help_args.iter().any(|a| a == "--help" || a == "-h") {
         help::print_command_help(cmd);
         return Ok(0);
     }
     match cmd {
         "host" => host::run_host(ctx, rest),
+        "exec" => exec::run(ctx, rest),
         // aliases:
         "connect" => host::run_host(ctx, &prepend("connect", rest)),
         "list" => host::run_host(ctx, &prepend("list", rest)),

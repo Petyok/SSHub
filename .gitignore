@@ -15,3 +15,4 @@
 # VHS intermediates (mp4 masters + palettes) produced by demo/record.sh
 /demo/build/
 npm/dist/
+.cargo/

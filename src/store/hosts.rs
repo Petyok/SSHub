@@ -830,9 +830,10 @@ impl LauncherStore {
             }
             if let Some(v) = via.filter(|v| *v != "all") {
                 match v {
-                    "connect" => conds.push("via NOT IN ('tunnel', 'agent')".into()),
+                    "connect" => conds.push("via NOT IN ('tunnel', 'agent', 'exec')".into()),
                     "tunnel" => conds.push("via = 'tunnel'".into()),
                     "agent" => conds.push("via = 'agent'".into()),
+                    "exec" => conds.push("via = 'exec'".into()),
                     other => conds.push(format!("via = '{other}'")),
                 }
             }
@@ -911,9 +912,10 @@ fn reject_option_like(field: &str, value: &str) -> Result<()> {
 fn via_filter_sql(via: Option<&str>) -> String {
     match via {
         None | Some("all") => String::new(),
-        Some("connect") => " AND via NOT IN ('tunnel', 'agent')".into(),
+        Some("connect") => " AND via NOT IN ('tunnel', 'agent', 'exec')".into(),
         Some("tunnel") => " AND via = 'tunnel'".into(),
         Some("agent") => " AND via = 'agent'".into(),
+        Some("exec") => " AND via = 'exec'".into(),
         Some(v) => format!(" AND via = '{v}'"),
     }
 }
