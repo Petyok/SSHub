@@ -795,3 +795,30 @@ fn fresh_ping_sample_grows_into_the_sparkline() {
     );
     assert_eq!(app.ping_grow("a"), 1.0);
 }
+
+/// Regression: Shift+P on the hosts tab used to do nothing until the Keys tab
+/// had been visited once, because `App::identities` is lazily loaded.
+#[test]
+fn push_key_from_hosts_opens_picker_without_visiting_keys_tab() {
+    let mut app = test_app(vec![("web", host("web"))]);
+    app.store
+        .create_identity(&crate::store::NewIdentity {
+            name: "with-key".into(),
+            username: None,
+            private_key: Some(std::path::PathBuf::from("~/.ssh/id_ed25519")),
+            certificate: None,
+            sort_order: 1,
+            has_password: false,
+        })
+        .unwrap();
+    assert!(app.identities.is_empty(), "cache starts cold");
+
+    app.trigger_push_key_from_hosts().unwrap();
+
+    assert_eq!(
+        app.mode,
+        AppMode::PushKeyIdentityPicker,
+        "{:?}",
+        app.host_notice
+    );
+}

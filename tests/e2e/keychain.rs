@@ -332,6 +332,53 @@ fn push_key_host_picker_flow() {
     assert!(app.push_key_host_picker.is_none());
 }
 
+/// Shift+P on a group header can't open the picker — but it must say so, not
+/// look like a dead keybind.
+#[test]
+fn push_key_on_group_header_explains_itself() {
+    let file = NamedTempFile::new().unwrap();
+    let db_path = file.path();
+    let store = LauncherStore::open(db_path).unwrap();
+    let group = store
+        .create_group(&sshub::store::NewHostGroup {
+            name: "grp".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let host = store
+        .create_host(&NewHost {
+            name: "test-host".into(),
+            address: "127.0.0.1".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    store.add_host_to_group(host.id, group.id).unwrap();
+    store
+        .create_identity(&sshub::store::NewIdentity {
+            name: "test-key".into(),
+            private_key: Some("/tmp/fake-key".into()),
+            ..Default::default()
+        })
+        .unwrap();
+
+    let mut app = app_with_store(db_path);
+    app.reload_identities().unwrap();
+    app.selected = app
+        .nav_rows
+        .iter()
+        .position(|r| matches!(r, sshub::app::NavRow::Header(_)))
+        .expect("a group header row");
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('P'), KeyModifiers::SHIFT))
+        .unwrap();
+
+    assert_eq!(app.mode, AppMode::Normal);
+    assert!(
+        app.host_notice.is_some(),
+        "a header selection must explain why no picker opened"
+    );
+}
+
 #[test]
 fn push_key_identity_picker_flow() {
     let file = NamedTempFile::new().unwrap();
