@@ -35,6 +35,16 @@ path = "demo/seed_demo.rs"
 name = "sshub"
 path = "src/lib.rs"
 
+[features]
+# Vendored OpenSSL is what makes `cargo install sshub` and the release tarballs
+# self-contained, so it stays ON by default -- anything published must build
+# without a system OpenSSL present. It is a feature only so local development
+# can opt OUT with `--no-default-features` (see the `test` recipe in the
+# Justfile): linking the system libs saves ~120 MB of target/ per profile and
+# most of a cold build's wall clock. Nothing that ships may pass that flag.
+default = ["vendored"]
+vendored = ["ssh2/vendored-openssl"]
+
 [dependencies]
 anyhow = "1"
 crossterm = "0.29"
@@ -55,10 +65,10 @@ nucleo = "0.3"
 portable-pty = "0.9"
 ratatui = "0.30"
 rusqlite = { version = "0.32", features = ["bundled"] }
-# Native SFTP transport (libssh2). vendored-openssl compiles OpenSSL from source
-# so `cargo install sshub` stays self-contained (same tradeoff as rusqlite
-# "bundled" above — no system OpenSSL/libssh2 needed).
-ssh2 = { version = "0.9", features = ["vendored-openssl"] }
+# Native SFTP transport (libssh2). OpenSSL comes from the `vendored` feature
+# above (on by default), which compiles it from source so `cargo install sshub`
+# stays self-contained — same tradeoff as rusqlite "bundled" above.
+ssh2 = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Levenshtein suggestions for misspelled theme role/field names in diagnostics.
@@ -103,3 +113,11 @@ path = "tests/smoke/config_load.rs"
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+[profile.dev]
+# Full DWARF for every dependency is ~40% of target/. Line tables keep
+# backtraces readable for our own code; nobody steps through libc with a debugger.
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

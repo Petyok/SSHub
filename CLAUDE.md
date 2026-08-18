@@ -5,10 +5,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Multi-agent worktrees
 
 Stay in `ssh-tui/` for the primary checkout. For parallel agents, use
-`just worktree-add <name>` (creates `../.worktrees/<name>` and points its
-`target/` at shared `../.cargo-target`). Repair main symlink with
-`just setup-shared-target`. Never run concurrent cargo builds on the shared
-target. See [AGENTS.md](AGENTS.md).
+`just worktree-add <name>` (creates `../.worktrees/<name>` and points its build
+output at shared `../.cargo-target`). Every checkout needs `just
+setup-shared-target` once — it writes an untracked `.cargo/config.toml`; there
+is no `target` symlink to repair (`cargo clean` used to delete it and split the
+shared dir into per-agent copies). Never run concurrent cargo builds on the
+shared target. Vendored OpenSSL is a default feature (shipped builds need it);
+local builds opt out with `--no-default-features` for speed and disk. See
+[AGENTS.md](AGENTS.md).
 
 ## Workflow rules
 
