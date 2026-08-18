@@ -198,8 +198,12 @@ sweep size="4GB":
 worktree-add name branch="":
     #!/usr/bin/env bash
     set -euo pipefail
-    repo="$(git rev-parse --show-toplevel)"
-    parent="$(dirname "$repo")"
+    # --git-common-dir points at the MAIN checkout's .git from any worktree, so
+    # these resolve identically whether you run this from ssh-tui/ or from an
+    # existing worktree. `git rev-parse --show-toplevel` does NOT: run from a
+    # worktree it yields .worktrees/<name>, and you get .worktrees/.worktrees/.
+    main="$(dirname "$(realpath "$(git rev-parse --git-common-dir)")")"
+    parent="$(dirname "$main")"
     shared="$parent/.cargo-target"
     name="{{name}}"
     branch="{{branch}}"
@@ -232,8 +236,9 @@ worktree-add name branch="":
 worktree-rm name mode="":
     #!/usr/bin/env bash
     set -euo pipefail
-    repo="$(git rev-parse --show-toplevel)"
-    parent="$(dirname "$repo")"
+    # See worktree-add: --show-toplevel is wrong when run from a worktree.
+    main="$(dirname "$(realpath "$(git rev-parse --git-common-dir)")")"
+    parent="$(dirname "$main")"
     name="{{name}}"
     mode="{{mode}}"
     dest="$parent/.worktrees/$name"

@@ -6,6 +6,14 @@ All notable changes to SSHub are documented in this file.
 
 ### Added
 
+- **`cargo install sshub --no-default-features` links the system OpenSSL** -
+  the vendored OpenSSL that keeps a default `cargo install` self-contained is
+  now the `vendored` feature rather than a hard dependency edge, so anyone who
+  already has OpenSSL — distro packagers above all, who must link the system
+  library and patch it on a CVE without rebuilding SSHub — can opt out. It
+  stays on by default, so nothing changes for a plain install except that the
+  choice now exists; opting out also drops most of a cold build's wall clock.
+
 - **`sshub exec <host> -- <command>`** (issue #85) - run one command on a saved
   host from a script and get its output and exit code back, instead of
   reassembling the ssh command line by hand and losing the stored identity,
