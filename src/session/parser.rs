@@ -484,7 +484,14 @@ mod tests {
             stream.extend_from_slice(b"\x1b[5n");
         }
         let mut p = parser_with(10, 80, &stream);
-        assert_eq!(p.take_replies().len(), REPLY_QUEUE_MAX_BYTES);
+        // The invariant is the bound, not an exact number: only whole replies
+        // are queued, so where the cap lands depends on how long they are.
+        let queued = p.take_replies().len();
+        assert!(queued <= REPLY_QUEUE_MAX_BYTES, "over the cap: {queued}");
+        assert!(
+            queued > REPLY_QUEUE_MAX_BYTES - 4,
+            "cap not actually reached: {queued}"
+        );
     }
 
     #[test]

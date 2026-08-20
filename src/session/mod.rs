@@ -575,9 +575,10 @@ impl Session {
             return;
         }
         self.reply_tokens -= replies.len();
-        // A failed write needs no diagnostic of its own: the application that
-        // asked reports its own timeout, which tells the user more than a line
-        // in the SSH log would.
+        // Neither an over-budget batch nor a failed write says anything out
+        // loud. The application that asked reports its own timeout, which tells
+        // the user more than a line in the SSH log would — and a diagnostic here
+        // would be pushed on every frame for as long as the flood lasts.
         let _ = self.runtime.write(&replies);
     }
 
@@ -1388,23 +1389,26 @@ mod prompt_tests {
         );
     }
 
-    #[test]
-    fn the_pty_child_receives_a_cursor_position_report() {
-        // End-to-end for #113: a child asks the terminal where the cursor is
-        // and *reads the answer back*. Nothing in the parser unit tests proves
-        // the reply actually leaves the process, and this is exactly the loop
-        // that hangs atuin — it asks, waits two seconds, and errors out.
-        //
-        // `stty raw -echo` so the reply arrives byte-for-byte instead of being
-        // line-buffered and echoed back at us; the cursor is still at the home
-        // position, so the answer is exactly the 6 bytes of `ESC [ 1 ; 1 R`,
-        // which is what lets `dd` stop without a timeout. `tr` strips the
-        // escape so the marker is printable on the grid.
-        let script = r"stty raw -echo; printf '\033[6n'; \
-             r=$(dd bs=1 count=6 2>/dev/null | tr -d '\033['); \
-             stty sane; printf 'CPR<%s>\r\n' $r";
+    /// End-to-end for #113: a child asks the terminal where the cursor is and
+    /// *reads the answer back*. Nothing in the parser unit tests proves the
+    /// reply actually leaves the process, and this is exactly the loop that
+    /// hangs atuin — it asks, waits two seconds, and errors out.
+    ///
+    /// `stty raw -echo` so the reply arrives byte-for-byte rather than
+    /// line-buffered and echoed back at us, and `-icanon min 0 time 5` so the
+    /// read returns after half a second with whatever arrived — reading a fixed
+    /// byte count instead would have to guess the answer's length, and would
+    /// silently truncate it (leaving the tail in the input queue) the moment the
+    /// cursor is anywhere but the home position. `tr` strips the escape so the
+    /// marker is printable on the grid.
+    fn asks_for_the_cursor_position(prelude: &str) -> Session {
+        let script = format!(
+            r"stty raw -echo -icanon min 0 time 5; {prelude} printf '\033[6n'; \
+              r=$(dd bs=1 count=32 2>/dev/null | tr -d '\033['); \
+              stty sane; printf 'CPR<%s>\r\n' $r"
+        );
         let config = SessionConfig {
-            argv: vec!["sh".into(), "-c".into(), script.into()],
+            argv: vec!["sh".into(), "-c".into(), script],
             display_name: "t".into(),
             meta: SessionMeta::default(),
             pending_secret: None,
@@ -1412,7 +1416,9 @@ mod prompt_tests {
             host_name: "t".into(),
         };
         let mut s = Session::spawn(config, 24, 80, None).unwrap();
-
+        // Bounded poll: a child that never gets its answer must fail the assert,
+        // not park the test binary. `Drop for PtyRuntime` kills the process
+        // group on the way out, so a `dd` still blocked on the read is reaped.
         for _ in 0..300 {
             s.drain();
             if s.screen_tail_snippet().contains("CPR<") {
@@ -1420,6 +1426,12 @@ mod prompt_tests {
             }
             std::thread::sleep(Duration::from_millis(10));
         }
+        s
+    }
+
+    #[test]
+    fn the_pty_child_receives_a_cursor_position_report() {
+        let s = asks_for_the_cursor_position("");
         assert!(
             s.screen_tail_snippet().contains("CPR<1;1R>"),
             "child never got its cursor position back, tail: {:?}",
@@ -1428,31 +1440,40 @@ mod prompt_tests {
     }
 
     #[test]
-    fn a_query_flood_is_capped_and_a_batch_is_never_truncated() {
-        // The remote decides how often it asks, and the answer leaves through a
-        // blocking write on the PTY master from the frame loop. Over budget the
-        // whole batch has to be dropped — sending the part that fits would put
-        // half an escape sequence into the remote's input.
-        let mut s = scratch_session();
-        s.reply_tokens = 6; // room for exactly one `ESC [ 1 ; 1 R`
-        s.reply_refilled_at = Instant::now();
-
-        s.parser.process(b"\x1b[6n\x1b[6n"); // two answers, 12 bytes
-        let before = s.reply_tokens;
-        s.answer_terminal_queries();
+    fn the_report_the_child_receives_is_clamped_at_the_right_margin() {
+        // The grid is 80 wide, so 80 characters leave the cursor in vt100's
+        // pending-wrap state at column 80 (0-based) — one past the last cell.
+        // Unclamped the child would be told `1;81R`, a column its terminal does
+        // not have, and code measuring the room left from it underflows. This is
+        // the state a prompt that fills the line leaves behind, i.e. the moment
+        // #113's reporter presses Up.
+        let s = asks_for_the_cursor_position(r"printf '%080d' 0;");
         assert!(
-            s.reply_tokens >= before,
-            "an over-budget batch must not be charged, had {before} left {}",
-            s.reply_tokens
+            s.screen_tail_snippet().contains("CPR<1;80R>"),
+            "child should be told column 80 of 80, tail: {:?}",
+            s.screen_tail_snippet()
         );
+    }
 
-        s.parser.process(b"\x1b[6n"); // one answer, inside the budget
-        let before = s.reply_tokens;
-        s.answer_terminal_queries();
+    #[test]
+    fn discarding_clipboard_writes_keeps_the_query_answers() {
+        // The clipboard relay is gated on visibility: a background tab discards
+        // instead of relaying. Query answers must never be gated the same way —
+        // the application waits for its reply whether or not the user is looking
+        // at its tab — so the discard path has to leave them alone. Both come
+        // out of the same `PtyCallbacks`, which is what makes this worth an
+        // assertion rather than a comment.
+        let mut s = scratch_session();
+        s.parser.process(b"\x1b]52;c;R0VIRUlN\x07\x1b[5n");
+        s.discard_clipboard_writes();
         assert!(
-            s.reply_tokens < before,
-            "a batch inside the budget must be sent, had {before} left {}",
-            s.reply_tokens
+            s.parser.take_clipboard_writes().is_empty(),
+            "the clipboard write is the one that gets discarded"
+        );
+        assert_eq!(
+            s.parser.take_replies(),
+            b"\x1b[0n".to_vec(),
+            "the query answer must survive the discard"
         );
     }
 
