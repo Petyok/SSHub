@@ -970,16 +970,16 @@ const DEBUG_LOG_CAP: usize = 64 * 1024;
 /// a handful of times per keystroke, so neither is ever felt; the sustained rate
 /// is a fraction of what a person typing already writes into the same PTY.
 ///
-/// It exists because the remote decides how often it asks, and the answer goes
-/// out through a blocking `write_all` on the master from the single-threaded
-/// frame loop. A remote that asks in a loop and never reads its own stdin makes
-/// `ssh` stop reading ours, and an unthrottled reply stream would then fill the
-/// master and park every tab, input and rendering included.
+/// It exists because the remote decides how often it asks, and the write queue
+/// it answers into is shared with the user's keystrokes. Unthrottled, a host in
+/// a query loop fills the PTY write queue on its own and
+/// the typing gets dropped instead. Keeping the answers to a trickle leaves the
+/// queue for the person at the keyboard.
 ///
-/// ponytail: a token bucket, not a non-blocking writer — it turns a freeze a
-/// hostile remote could reach in under a second into one needing hours of its
-/// cooperation. Moving every PTY write onto its own thread is the real
-/// ceiling-lifter, and where to go if keystrokes ever need the same guarantee.
+/// What it does *not* do is prevent the freeze: measured against the blocking
+/// write this bucket only moved the wedge from under a second to ~80 s
+/// (4096 + 256/s reaching the master's ~20 KiB limit at t≈64 s). That is what
+/// the writer thread is for.
 const REPLY_BURST_BYTES: usize = 4096;
 const REPLY_BYTES_PER_SEC: usize = 256;
 
