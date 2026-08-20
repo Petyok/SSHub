@@ -21,8 +21,18 @@ All notable changes to SSHub are documented in this file.
   (the kitty keyboard protocol itself, secondary device attributes) stay
   unanswered on purpose: silence is what tells a caller they are unsupported.
   The remote decides how often it asks, so the answers are rate-limited — a
-  burst costs nothing, but a host stuck in a query loop cannot flood the PTY it
-  is asking through.
+  burst costs nothing, but a host stuck in a query loop cannot crowd the user's
+  keystrokes out of the PTY write queue.
+
+- **A remote that stops reading its input can no longer freeze the app** -
+  writing to the PTY blocks once the child stops reading, and it was happening
+  on the frame loop, so a host in a terminal-query loop that never read its own
+  stdin parked every tab, input and rendering included, with no timeout and no
+  recovery. Measured: `drain()` stopped returning after ~80 s of such a flood
+  and never came back. PTY writes now go through their own thread behind a
+  bounded queue — keystrokes, the auto-typed secret, pastes and query answers
+  stay in order, and a queue that fills means nothing is reaching the remote
+  anyway. The same flood now runs indefinitely with a worst frame of 98 ms.
 
 ## [0.15.0] - 2026-08-18
 
