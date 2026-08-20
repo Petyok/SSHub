@@ -202,6 +202,10 @@ pub struct Session {
     pub host_name: String,
     /// Optional PTY transcript writer; closed on session end.
     log: Option<crate::session_log::SessionLogWriter>,
+    /// Remaining byte allowance for terminal-query answers, and when it was
+    /// last topped up. See [`REPLY_BURST_BYTES`].
+    reply_tokens: usize,
+    reply_refilled_at: Instant,
 }
 
 impl Session {
@@ -283,6 +287,8 @@ impl Session {
             host_name: config.host_name.clone(),
             config,
             log,
+            reply_tokens: REPLY_BURST_BYTES,
+            reply_refilled_at: Instant::now(),
         })
     }
 
@@ -522,8 +528,12 @@ impl Session {
             }
         }
         if had_bytes {
-            self.answer_terminal_queries();
+            // Secret first: both write to the same PTY, and a reply queued
+            // ahead of the password would be read as part of it by whatever
+            // asks for a line. Answering after leaves the reply as harmless
+            // leftover input instead.
             self.maybe_send_pending_secret();
+            self.answer_terminal_queries();
             self.maybe_reveal();
         }
         if had_stderr {
@@ -548,12 +558,27 @@ impl Session {
         if replies.is_empty() {
             return;
         }
-        if let Err(e) = self.runtime.write(&replies) {
-            // Prefixed `session:` so the event loop's connected-session filter
-            // keeps it — see [`keep_diagnostic`].
-            self.diagnostics
-                .push(format!("session: terminal query reply failed: {e}"));
+        let now = Instant::now();
+        let refill = (now.duration_since(self.reply_refilled_at).as_millis() as usize)
+            .saturating_mul(REPLY_BYTES_PER_SEC)
+            / 1000;
+        if refill > 0 {
+            self.reply_tokens = self
+                .reply_tokens
+                .saturating_add(refill)
+                .min(REPLY_BURST_BYTES);
+            self.reply_refilled_at = now;
         }
+        // Whole batch or nothing: half an escape sequence in the remote's input
+        // is worse than a query left unanswered.
+        if replies.len() > self.reply_tokens {
+            return;
+        }
+        self.reply_tokens -= replies.len();
+        // A failed write needs no diagnostic of its own: the application that
+        // asked reports its own timeout, which tells the user more than a line
+        // in the SSH log would.
+        let _ = self.runtime.write(&replies);
     }
 
     /// Throw away whatever the PTY asked us to copy, including the drop
@@ -938,6 +963,24 @@ const CONNECTED_NEEDLES: &[&str] = &["authenticated to ", "authenticated ("];
 /// Cap on the retained ssh `-v` debug buffer (bytes). Old output past this is
 /// dropped from the front so a long session can't grow it without bound.
 const DEBUG_LOG_CAP: usize = 64 * 1024;
+
+/// Token bucket over the bytes of terminal-query answers we write back into the
+/// PTY, as a burst allowance and a sustained refill rate. Real applications ask
+/// a handful of times per keystroke, so neither is ever felt; the sustained rate
+/// is a fraction of what a person typing already writes into the same PTY.
+///
+/// It exists because the remote decides how often it asks, and the answer goes
+/// out through a blocking `write_all` on the master from the single-threaded
+/// frame loop. A remote that asks in a loop and never reads its own stdin makes
+/// `ssh` stop reading ours, and an unthrottled reply stream would then fill the
+/// master and park every tab, input and rendering included.
+///
+/// ponytail: a token bucket, not a non-blocking writer — it turns a freeze a
+/// hostile remote could reach in under a second into one needing hours of its
+/// cooperation. Moving every PTY write onto its own thread is the real
+/// ceiling-lifter, and where to go if keystrokes ever need the same guarantee.
+const REPLY_BURST_BYTES: usize = 4096;
+const REPLY_BYTES_PER_SEC: usize = 256;
 
 /// Ordered (lowercase needle → plain-language reason) map for failed connects.
 /// First match wins, so keep more specific patterns before generic ones.
@@ -1381,6 +1424,35 @@ mod prompt_tests {
             s.screen_tail_snippet().contains("CPR<1;1R>"),
             "child never got its cursor position back, tail: {:?}",
             s.screen_tail_snippet()
+        );
+    }
+
+    #[test]
+    fn a_query_flood_is_capped_and_a_batch_is_never_truncated() {
+        // The remote decides how often it asks, and the answer leaves through a
+        // blocking write on the PTY master from the frame loop. Over budget the
+        // whole batch has to be dropped — sending the part that fits would put
+        // half an escape sequence into the remote's input.
+        let mut s = scratch_session();
+        s.reply_tokens = 6; // room for exactly one `ESC [ 1 ; 1 R`
+        s.reply_refilled_at = Instant::now();
+
+        s.parser.process(b"\x1b[6n\x1b[6n"); // two answers, 12 bytes
+        let before = s.reply_tokens;
+        s.answer_terminal_queries();
+        assert!(
+            s.reply_tokens >= before,
+            "an over-budget batch must not be charged, had {before} left {}",
+            s.reply_tokens
+        );
+
+        s.parser.process(b"\x1b[6n"); // one answer, inside the budget
+        let before = s.reply_tokens;
+        s.answer_terminal_queries();
+        assert!(
+            s.reply_tokens < before,
+            "a batch inside the budget must be sent, had {before} left {}",
+            s.reply_tokens
         );
     }
 

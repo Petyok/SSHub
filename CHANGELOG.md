@@ -13,11 +13,16 @@ All notable changes to SSHub are documented in this file.
   died on the first Up arrow with "The cursor position could not be read within
   a normal duration" — over plain `ssh` the real terminal replies and it works.
   The emulator now answers the cursor position report from its own grid, the
-  device status report, and the primary device attributes query, which also
-  ends the two-second stall every crossterm-based TUI took at startup while
-  probing for the kitty keyboard protocol. Queries we do not actually speak
+  device status report, and the primary device attributes query — the last of
+  which also ends the two-second stall in any TUI that probes for the kitty
+  keyboard protocol (crossterm's `supports_keyboard_enhancement`), and the
+  middle one the same hang in probes that end on `ESC [ 5 n` to be sure
+  *something* answers. Queries we do not actually speak
   (the kitty keyboard protocol itself, secondary device attributes) stay
   unanswered on purpose: silence is what tells a caller they are unsupported.
+  The remote decides how often it asks, so the answers are rate-limited — a
+  burst costs nothing, but a host stuck in a query loop cannot flood the PTY it
+  is asking through.
 
 ## [0.15.0] - 2026-08-18
 

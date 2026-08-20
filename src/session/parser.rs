@@ -1,6 +1,8 @@
 //! VT100 parser wrapper. Maintains an in-memory `vt100::Screen` that the
-//! renderer reads via `tui-term`, and relays OSC 52 clipboard writes that
-//! applications inside the PTY emit.
+//! renderer reads via `tui-term`, relays OSC 52 clipboard writes that
+//! applications inside the PTY emit, and answers the terminal status queries
+//! they send — `vt100` implements none of the latter, and an application that
+//! asks and hears nothing back blocks until its own timeout.
 
 /// Largest decoded payload we'll relay from the PTY to the host clipboard
 /// (64 KiB). Keeps a remote from flooding the clipboard with a huge write.
@@ -118,10 +120,21 @@ impl vt100::Callbacks for PtyCallbacks {
         let param = params.first().and_then(|p| p.first().copied()).unwrap_or(0);
         let reply = match (c, param) {
             // DSR 6 — cursor position report. Our grid mirrors the remote
-            // screen, so its cursor *is* the answer. Reported 1-based.
+            // screen, so its cursor *is* the answer. Reported 1-based, and
+            // clamped: vt100 parks the cursor one column *past* the right
+            // margin after a character lands in the last column (the pending
+            // wrap is only resolved when the next one arrives), so a prompt
+            // that fills the line would otherwise be reported at column
+            // `cols + 1` — a real terminal answers `cols`, and code measuring
+            // the room left underflows on anything else. Origin mode is the
+            // one case we still get wrong: vt100 handles DECOM itself and
+            // exposes no accessor, so the row here is absolute where a
+            // conformant terminal would report it relative to the region.
             ('n', 6) => {
                 let (row, col) = screen.cursor_position();
-                format!("\x1b[{};{}R", row + 1, col + 1).into_bytes()
+                let (rows, cols) = screen.size();
+                let (row, col) = ((row + 1).min(rows), (col + 1).min(cols));
+                format!("\x1b[{row};{col}R").into_bytes()
             }
             // DSR 5 — device status. Nothing can go wrong in an in-memory grid.
             ('n', 5) => b"\x1b[0n".to_vec(),
@@ -407,6 +420,19 @@ mod tests {
         // Same query from elsewhere on the grid must not hand back a constant.
         let mut p = parser_with(10, 80, b"\x1b[5;7H\x1b[6n");
         assert_eq!(p.take_replies(), b"\x1b[5;7R".to_vec());
+    }
+
+    #[test]
+    fn cursor_position_report_is_clamped_at_the_right_margin() {
+        // vt100 parks the cursor at column `cols` (0-based, i.e. one past the
+        // last cell) once a character lands in the last column, resolving the
+        // wrap only when the next one arrives. Unclamped that reports column
+        // `cols + 1` — a column the terminal does not have. A prompt that
+        // fills the line and then asks where it is gets this every time, and
+        // whoever measures the room left from it underflows.
+        let mut p = parser_with(3, 10, b"0123456789\x1b[6n");
+        assert_eq!(p.screen().cursor_position(), (0, 10), "vt100 behaviour");
+        assert_eq!(p.take_replies(), b"\x1b[1;10R".to_vec());
     }
 
     #[test]
