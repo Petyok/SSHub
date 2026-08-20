@@ -522,6 +522,7 @@ impl Session {
             }
         }
         if had_bytes {
+            self.answer_terminal_queries();
             self.maybe_send_pending_secret();
             self.maybe_reveal();
         }
@@ -536,6 +537,23 @@ impl Session {
         self.reveal_on_timeout();
         // Re-check after reveal/timeout transitions (mosh has no ssh -v marker).
         self.maybe_detect_connected();
+    }
+
+    /// Write the emulator's answers to terminal status queries back into the
+    /// PTY. Driven from [`Self::drain`] rather than from the frame, because
+    /// unlike a clipboard write there is nothing to decide: an application
+    /// waiting on a reply blocks whether or not its tab is the visible one.
+    fn answer_terminal_queries(&mut self) {
+        let replies = self.parser.take_replies();
+        if replies.is_empty() {
+            return;
+        }
+        if let Err(e) = self.runtime.write(&replies) {
+            // Prefixed `session:` so the event loop's connected-session filter
+            // keeps it — see [`keep_diagnostic`].
+            self.diagnostics
+                .push(format!("session: terminal query reply failed: {e}"));
+        }
     }
 
     /// Throw away whatever the PTY asked us to copy, including the drop
@@ -1324,6 +1342,45 @@ mod prompt_tests {
             s.parser.take_clipboard_writes(),
             vec!["R0VIRUlN".to_string()],
             "drain must leave the clipboard write for the frame to decide on"
+        );
+    }
+
+    #[test]
+    fn the_pty_child_receives_a_cursor_position_report() {
+        // End-to-end for #113: a child asks the terminal where the cursor is
+        // and *reads the answer back*. Nothing in the parser unit tests proves
+        // the reply actually leaves the process, and this is exactly the loop
+        // that hangs atuin — it asks, waits two seconds, and errors out.
+        //
+        // `stty raw -echo` so the reply arrives byte-for-byte instead of being
+        // line-buffered and echoed back at us; the cursor is still at the home
+        // position, so the answer is exactly the 6 bytes of `ESC [ 1 ; 1 R`,
+        // which is what lets `dd` stop without a timeout. `tr` strips the
+        // escape so the marker is printable on the grid.
+        let script = r"stty raw -echo; printf '\033[6n'; \
+             r=$(dd bs=1 count=6 2>/dev/null | tr -d '\033['); \
+             stty sane; printf 'CPR<%s>\r\n' $r";
+        let config = SessionConfig {
+            argv: vec!["sh".into(), "-c".into(), script.into()],
+            display_name: "t".into(),
+            meta: SessionMeta::default(),
+            pending_secret: None,
+            key_push_identity: None,
+            host_name: "t".into(),
+        };
+        let mut s = Session::spawn(config, 24, 80, None).unwrap();
+
+        for _ in 0..300 {
+            s.drain();
+            if s.screen_tail_snippet().contains("CPR<") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            s.screen_tail_snippet().contains("CPR<1;1R>"),
+            "child never got its cursor position back, tail: {:?}",
+            s.screen_tail_snippet()
         );
     }
 

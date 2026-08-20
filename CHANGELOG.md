@@ -4,6 +4,21 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The embedded terminal answers cursor-position and status queries** (issue
+  #113, reported by [@ikerib](https://github.com/ikerib)) - an application
+  asking the terminal where the cursor is (`ESC [ 6 n`) got no answer from our
+  vt100 emulator and blocked until its own timeout, so atuin's history search
+  died on the first Up arrow with "The cursor position could not be read within
+  a normal duration" — over plain `ssh` the real terminal replies and it works.
+  The emulator now answers the cursor position report from its own grid, the
+  device status report, and the primary device attributes query, which also
+  ends the two-second stall every crossterm-based TUI took at startup while
+  probing for the kitty keyboard protocol. Queries we do not actually speak
+  (the kitty keyboard protocol itself, secondary device attributes) stay
+  unanswered on purpose: silence is what tells a caller they are unsupported.
+
 ## [0.15.0] - 2026-08-18
 
 ### Added
