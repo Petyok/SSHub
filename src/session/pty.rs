@@ -8,7 +8,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -17,6 +17,19 @@ use anyhow::{anyhow, Context, Result};
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 
 const READ_BUF: usize = 4096;
+
+/// How many pending writes toward the PTY we hold before dropping them.
+///
+/// The writer sits on its own thread for one reason: `write_all` on the master
+/// blocks once the child stops reading its stdin. A remote stuck in a terminal
+/// query loop that never reads its own input makes `ssh` stop reading ours, the
+/// master fills after ~20 KiB, and doing that write on the frame loop parked
+/// every tab, input and rendering included — measured, not theorised. Off the
+/// frame loop the only cost of a wedged remote is that writes aimed at it pile
+/// up, and this is where the pile stops: a session that cannot be written to is
+/// one where dropping is the honest outcome. Human typing never queues this
+/// deep, so a full queue always means the far end is gone.
+const WRITE_QUEUE_LEN: usize = 64;
 
 /// Env var carrying the stderr FIFO path into the `sh` wrapper.
 const STDERR_FIFO_ENV: &str = "SSHUB_STDERR_FIFO";
@@ -88,7 +101,9 @@ impl Drop for StderrFifo {
 
 pub struct PtyRuntime {
     master: Box<dyn MasterPty + Send>,
-    writer: Box<dyn Write + Send>,
+    /// Sender into the writer thread. `None` only while dropping, which is what
+    /// tells the thread to exit.
+    write_tx: Option<SyncSender<Vec<u8>>>,
     rx: Receiver<PtyEvent>,
     /// Set when the reader has signalled EOF / child exit. Used so we don't
     /// keep spinning on a dead PTY.
@@ -168,7 +183,24 @@ impl PtyRuntime {
         drop(pair.slave);
 
         let mut reader = pair.master.try_clone_reader().context("clone pty reader")?;
-        let writer = pair.master.take_writer().context("take pty writer")?;
+        let mut writer = pair.master.take_writer().context("take pty writer")?;
+
+        // Everything written toward the child goes through here, in order:
+        // keystrokes, the auto-typed secret, pastes, and the emulator's answers
+        // to terminal queries. One thread keeps that ordering while taking the
+        // blocking write off the frame loop. It ends when the sender drops.
+        let (write_tx, write_rx) = mpsc::sync_channel::<Vec<u8>>(WRITE_QUEUE_LEN);
+        thread::Builder::new()
+            .name("sshub-pty-writer".into())
+            .spawn(move || {
+                for chunk in write_rx {
+                    if writer.write_all(&chunk).is_err() {
+                        break;
+                    }
+                    writer.flush().ok();
+                }
+            })
+            .context("spawn pty writer thread")?;
 
         let (tx, rx) = mpsc::channel();
         let stderr_tx = tx.clone();
@@ -238,7 +270,7 @@ impl PtyRuntime {
 
         Ok(Self {
             master: pair.master,
-            writer,
+            write_tx: Some(write_tx),
             rx,
             closed,
             reader_thread: Some(reader_thread),
@@ -254,11 +286,23 @@ impl PtyRuntime {
         self.rx.try_recv().ok()
     }
 
-    /// Write bytes to the master side. Called for each forwarded keystroke.
+    /// Hand bytes to the writer thread. Never blocks: see [`WRITE_QUEUE_LEN`]
+    /// for why the write cannot happen on the caller's thread. The cost is that
+    /// a write failure is no longer reported synchronously — a full queue is,
+    /// and it is the only failure a caller can do anything about (nothing is
+    /// reaching the remote).
     pub fn write(&mut self, bytes: &[u8]) -> Result<()> {
-        self.writer.write_all(bytes)?;
-        self.writer.flush().ok();
-        Ok(())
+        let tx = self
+            .write_tx
+            .as_ref()
+            .ok_or_else(|| anyhow!("pty writer is gone"))?;
+        match tx.try_send(bytes.to_vec()) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => {
+                Err(anyhow!("pty write queue full — the remote is not reading"))
+            }
+            Err(TrySendError::Disconnected(_)) => Err(anyhow!("pty writer has exited")),
+        }
     }
 
     pub fn resize(&self, rows: u16, cols: u16) -> Result<()> {
@@ -317,6 +361,12 @@ fn terminate_child_process(child: &mut dyn portable_pty::Child) {
 impl Drop for PtyRuntime {
     fn drop(&mut self) {
         self.terminate_child();
+        // Closing the channel is what ends the writer thread; it is deliberately
+        // not joined. A write blocked on a child that stopped reading only
+        // returns once the slave closes, and while `terminate_child` above makes
+        // that happen, waiting on it here would move the freeze we just fixed
+        // into session teardown. The thread owns nothing but its own fd.
+        self.write_tx = None;
         self.stderr_stop.store(true, Ordering::Relaxed);
         if let Some(handle) = self.stderr_reader.take() {
             let _ = handle.join();
