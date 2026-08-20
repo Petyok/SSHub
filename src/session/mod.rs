@@ -202,6 +202,10 @@ pub struct Session {
     pub host_name: String,
     /// Optional PTY transcript writer; closed on session end.
     log: Option<crate::session_log::SessionLogWriter>,
+    /// Remaining byte allowance for terminal-query answers, and when it was
+    /// last topped up. See [`REPLY_BURST_BYTES`].
+    reply_tokens: usize,
+    reply_refilled_at: Instant,
 }
 
 impl Session {
@@ -283,6 +287,8 @@ impl Session {
             host_name: config.host_name.clone(),
             config,
             log,
+            reply_tokens: REPLY_BURST_BYTES,
+            reply_refilled_at: Instant::now(),
         })
     }
 
@@ -522,7 +528,12 @@ impl Session {
             }
         }
         if had_bytes {
+            // Secret first: both write to the same PTY, and a reply queued
+            // ahead of the password would be read as part of it by whatever
+            // asks for a line. Answering after leaves the reply as harmless
+            // leftover input instead.
             self.maybe_send_pending_secret();
+            self.answer_terminal_queries();
             self.maybe_reveal();
         }
         if had_stderr {
@@ -536,6 +547,39 @@ impl Session {
         self.reveal_on_timeout();
         // Re-check after reveal/timeout transitions (mosh has no ssh -v marker).
         self.maybe_detect_connected();
+    }
+
+    /// Write the emulator's answers to terminal status queries back into the
+    /// PTY. Driven from [`Self::drain`] rather than from the frame, because
+    /// unlike a clipboard write there is nothing to decide: an application
+    /// waiting on a reply blocks whether or not its tab is the visible one.
+    fn answer_terminal_queries(&mut self) {
+        let replies = self.parser.take_replies();
+        if replies.is_empty() {
+            return;
+        }
+        let now = Instant::now();
+        let refill = (now.duration_since(self.reply_refilled_at).as_millis() as usize)
+            .saturating_mul(REPLY_BYTES_PER_SEC)
+            / 1000;
+        if refill > 0 {
+            self.reply_tokens = self
+                .reply_tokens
+                .saturating_add(refill)
+                .min(REPLY_BURST_BYTES);
+            self.reply_refilled_at = now;
+        }
+        // Whole batch or nothing: half an escape sequence in the remote's input
+        // is worse than a query left unanswered.
+        if replies.len() > self.reply_tokens {
+            return;
+        }
+        self.reply_tokens -= replies.len();
+        // Neither an over-budget batch nor a failed write says anything out
+        // loud. The application that asked reports its own timeout, which tells
+        // the user more than a line in the SSH log would — and a diagnostic here
+        // would be pushed on every frame for as long as the flood lasts.
+        let _ = self.runtime.write(&replies);
     }
 
     /// Throw away whatever the PTY asked us to copy, including the drop
@@ -920,6 +964,24 @@ const CONNECTED_NEEDLES: &[&str] = &["authenticated to ", "authenticated ("];
 /// Cap on the retained ssh `-v` debug buffer (bytes). Old output past this is
 /// dropped from the front so a long session can't grow it without bound.
 const DEBUG_LOG_CAP: usize = 64 * 1024;
+
+/// Token bucket over the bytes of terminal-query answers we write back into the
+/// PTY, as a burst allowance and a sustained refill rate. Real applications ask
+/// a handful of times per keystroke, so neither is ever felt; the sustained rate
+/// is a fraction of what a person typing already writes into the same PTY.
+///
+/// It exists because the remote decides how often it asks, and the write queue
+/// it answers into is shared with the user's keystrokes. Unthrottled, a host in
+/// a query loop fills the PTY write queue on its own and
+/// the typing gets dropped instead. Keeping the answers to a trickle leaves the
+/// queue for the person at the keyboard.
+///
+/// What it does *not* do is prevent the freeze: measured against the blocking
+/// write this bucket only moved the wedge from under a second to ~80 s
+/// (4096 + 256/s reaching the master's ~20 KiB limit at t≈64 s). That is what
+/// the writer thread is for.
+const REPLY_BURST_BYTES: usize = 4096;
+const REPLY_BYTES_PER_SEC: usize = 256;
 
 /// Ordered (lowercase needle → plain-language reason) map for failed connects.
 /// First match wins, so keep more specific patterns before generic ones.
@@ -1324,6 +1386,94 @@ mod prompt_tests {
             s.parser.take_clipboard_writes(),
             vec!["R0VIRUlN".to_string()],
             "drain must leave the clipboard write for the frame to decide on"
+        );
+    }
+
+    /// End-to-end for #113: a child asks the terminal where the cursor is and
+    /// *reads the answer back*. Nothing in the parser unit tests proves the
+    /// reply actually leaves the process, and this is exactly the loop that
+    /// hangs atuin — it asks, waits two seconds, and errors out.
+    ///
+    /// `stty raw -echo` so the reply arrives byte-for-byte rather than
+    /// line-buffered and echoed back at us, and `-icanon min 0 time 5` so the
+    /// read returns after half a second with whatever arrived — reading a fixed
+    /// byte count instead would have to guess the answer's length, and would
+    /// silently truncate it (leaving the tail in the input queue) the moment the
+    /// cursor is anywhere but the home position. `tr` strips the escape so the
+    /// marker is printable on the grid.
+    fn asks_for_the_cursor_position(prelude: &str) -> Session {
+        let script = format!(
+            r"stty raw -echo -icanon min 0 time 5; {prelude} printf '\033[6n'; \
+              r=$(dd bs=1 count=32 2>/dev/null | tr -d '\033['); \
+              stty sane; printf 'CPR<%s>\r\n' $r"
+        );
+        let config = SessionConfig {
+            argv: vec!["sh".into(), "-c".into(), script],
+            display_name: "t".into(),
+            meta: SessionMeta::default(),
+            pending_secret: None,
+            key_push_identity: None,
+            host_name: "t".into(),
+        };
+        let mut s = Session::spawn(config, 24, 80, None).unwrap();
+        // Bounded poll: a child that never gets its answer must fail the assert,
+        // not park the test binary. `Drop for PtyRuntime` kills the process
+        // group on the way out, so a `dd` still blocked on the read is reaped.
+        for _ in 0..300 {
+            s.drain();
+            if s.screen_tail_snippet().contains("CPR<") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        s
+    }
+
+    #[test]
+    fn the_pty_child_receives_a_cursor_position_report() {
+        let s = asks_for_the_cursor_position("");
+        assert!(
+            s.screen_tail_snippet().contains("CPR<1;1R>"),
+            "child never got its cursor position back, tail: {:?}",
+            s.screen_tail_snippet()
+        );
+    }
+
+    #[test]
+    fn the_report_the_child_receives_is_clamped_at_the_right_margin() {
+        // The grid is 80 wide, so 80 characters leave the cursor in vt100's
+        // pending-wrap state at column 80 (0-based) — one past the last cell.
+        // Unclamped the child would be told `1;81R`, a column its terminal does
+        // not have, and code measuring the room left from it underflows. This is
+        // the state a prompt that fills the line leaves behind, i.e. the moment
+        // #113's reporter presses Up.
+        let s = asks_for_the_cursor_position(r"printf '%080d' 0;");
+        assert!(
+            s.screen_tail_snippet().contains("CPR<1;80R>"),
+            "child should be told column 80 of 80, tail: {:?}",
+            s.screen_tail_snippet()
+        );
+    }
+
+    #[test]
+    fn discarding_clipboard_writes_keeps_the_query_answers() {
+        // The clipboard relay is gated on visibility: a background tab discards
+        // instead of relaying. Query answers must never be gated the same way —
+        // the application waits for its reply whether or not the user is looking
+        // at its tab — so the discard path has to leave them alone. Both come
+        // out of the same `PtyCallbacks`, which is what makes this worth an
+        // assertion rather than a comment.
+        let mut s = scratch_session();
+        s.parser.process(b"\x1b]52;c;R0VIRUlN\x07\x1b[5n");
+        s.discard_clipboard_writes();
+        assert!(
+            s.parser.take_clipboard_writes().is_empty(),
+            "the clipboard write is the one that gets discarded"
+        );
+        assert_eq!(
+            s.parser.take_replies(),
+            b"\x1b[0n".to_vec(),
+            "the query answer must survive the discard"
         );
     }
 

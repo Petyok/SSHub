@@ -4,6 +4,36 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The embedded terminal answers cursor-position and status queries** (issue
+  #113, reported by [@ikerib](https://github.com/ikerib)) - an application
+  asking the terminal where the cursor is (`ESC [ 6 n`) got no answer from our
+  vt100 emulator and blocked until its own timeout, so atuin's history search
+  died on the first Up arrow with "The cursor position could not be read within
+  a normal duration" — over plain `ssh` the real terminal replies and it works.
+  The emulator now answers the cursor position report from its own grid, the
+  device status report, and the primary device attributes query — the last of
+  which also ends the two-second stall in any TUI that probes for the kitty
+  keyboard protocol (crossterm's `supports_keyboard_enhancement`), and the
+  middle one the same hang in probes that end on `ESC [ 5 n` to be sure
+  *something* answers. Queries we do not actually speak
+  (the kitty keyboard protocol itself, secondary device attributes) stay
+  unanswered on purpose: silence is what tells a caller they are unsupported.
+  The remote decides how often it asks, so the answers are rate-limited — a
+  burst costs nothing, but a host stuck in a query loop cannot crowd the user's
+  keystrokes out of the PTY write queue.
+
+- **A remote that stops reading its input can no longer freeze the app** -
+  writing to the PTY blocks once the child stops reading, and it was happening
+  on the frame loop, so a host in a terminal-query loop that never read its own
+  stdin parked every tab, input and rendering included, with no timeout and no
+  recovery. Measured: `drain()` stopped returning after ~80 s of such a flood
+  and never came back. PTY writes now go through their own thread behind a
+  bounded queue — keystrokes, the auto-typed secret, pastes and query answers
+  stay in order, and a queue that fills means nothing is reaching the remote
+  anyway. The same flood now runs indefinitely with a worst frame of 98 ms.
+
 ## [0.15.0] - 2026-08-18
 
 ### Added
