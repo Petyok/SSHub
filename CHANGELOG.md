@@ -4,6 +4,8 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-08-20
+
 ### Fixed
 
 - **The embedded terminal answers cursor-position and status queries** (issue
