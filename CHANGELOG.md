@@ -46,6 +46,16 @@ All notable changes to SSHub are documented in this file.
   alternate screen at all, so `git log` keeps scrolling sshub's buffer as before.
   On the primary screen nothing changes.
 
+- **The wheel says where tmux's own scrolling switch is** (issue #115) - on the
+  alternate screen a terminal can only turn a notch into arrow keys, and inside
+  `tmux` those land in the shell's history rather than scrolling anything, which
+  reads as "the wheel is broken". The session now says it once, in its own toast:
+  `wheel → ↑ keys here — tmux scrolls with: set -g mouse on`. Once per session,
+  not once per notch, and it fires on the notch rather than on a guess about what
+  is running — from a PTY we see a byte stream, not processes, and tmux's status
+  line is the first thing people re-style. Nothing is sent to the remote and
+  nothing is reconfigured there: what to run stays the user's call.
+
 - **A wheel that cannot scroll no longer drags the selection instead** (issue
   #115) - reported from a live `tmux`: the wheel moved the highlighted block down
   the screen while the text stayed exactly where it was. The view is allowed to

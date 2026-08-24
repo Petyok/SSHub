@@ -1049,3 +1049,68 @@ pub(crate) fn a_wheel_that_cannot_scroll_leaves_the_selection_where_it_is() {
         "when the view moves, the highlight moves with it"
     );
 }
+
+/// The wheel on the alternate screen can only send arrow keys, and in tmux those
+/// go to the shell's history instead of scrolling — so the session says once
+/// where the switch that does scroll actually lives.
+#[test]
+pub(crate) fn a_wheel_on_the_alternate_screen_names_the_tmux_switch_once() {
+    let mut app = test_app(vec![("edge", host("edge"))]);
+    app.terminal_area = ratatui::layout::Rect::new(0, 0, 80, 24);
+    let cfg = crate::session::SessionConfig {
+        argv: vec!["true".into()],
+        display_name: "edge".into(),
+        meta: crate::session::SessionMeta::default(),
+        pending_secret: None,
+        key_push_identity: None,
+        host_name: "edge".into(),
+    };
+    let mut session = crate::session::Session::spawn(cfg, 24, 80, None).unwrap();
+    session.parser.process(b"\x1b[?1049h"); // tmux / vim / less draw here
+    app.sessions.push(session);
+    app.active_session = Some(0);
+    app.mode = AppMode::Session;
+
+    let wheel = |kind| MouseEvent {
+        kind,
+        column: 10,
+        row: 10,
+        modifiers: KeyModifiers::empty(),
+    };
+    app.handle_mouse(wheel(MouseEventKind::ScrollUp)).unwrap();
+
+    let notice = app
+        .active_session()
+        .unwrap()
+        .copy_notice
+        .as_ref()
+        .map(|(m, _)| m.clone())
+        .expect("the hint fires on the notch");
+    assert!(
+        notice.contains("set -g mouse on"),
+        "the hint carries the command to run: {notice}"
+    );
+
+    // Said once: a second notch must not put it back after it was dismissed.
+    app.active_session_mut().unwrap().copy_notice = None;
+    app.handle_mouse(wheel(MouseEventKind::ScrollDown)).unwrap();
+    assert!(
+        app.active_session().unwrap().copy_notice.is_none(),
+        "one hint per session, not one per notch"
+    );
+
+    // And on the primary screen it never fires — the wheel scrolls for real.
+    let cfg = crate::session::SessionConfig {
+        argv: vec!["true".into()],
+        display_name: "plain".into(),
+        meta: crate::session::SessionMeta::default(),
+        pending_secret: None,
+        key_push_identity: None,
+        host_name: "plain".into(),
+    };
+    app.sessions
+        .push(crate::session::Session::spawn(cfg, 24, 80, None).unwrap());
+    app.active_session = Some(1);
+    app.handle_mouse(wheel(MouseEventKind::ScrollUp)).unwrap();
+    assert!(app.active_session().unwrap().copy_notice.is_none());
+}

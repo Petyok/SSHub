@@ -191,6 +191,9 @@ pub struct Session {
     /// Transient "copied" toast: (message, shown_at). Rendered in a corner for
     /// a few seconds after a copy-on-select.
     pub copy_notice: Option<(String, Instant)>,
+    /// Whether this session has already been told what the wheel does on the
+    /// alternate screen. Said once, not on every notch.
+    alt_scroll_hinted: bool,
     /// While a selection drag is held past the top/bottom edge, the view keeps
     /// scrolling on each poll tick so you can select content beyond the
     /// viewport. `(dir, col)`: dir `+1` scrolls toward newer output (bottom
@@ -281,6 +284,7 @@ impl Session {
             saw_pty_bytes: false,
             selection: None,
             copy_notice: None,
+            alt_scroll_hinted: false,
             drag_autoscroll: None,
             key_push_identity: config.key_push_identity.clone(),
             logged_exit: false,
@@ -473,6 +477,25 @@ impl Session {
         if moved != 0 {
             self.selection_scroll_shift(moved);
         }
+    }
+
+    /// Say once per session what a wheel notch on the alternate screen does,
+    /// and name the tmux switch that makes the wheel scroll tmux's own history.
+    ///
+    /// It fires on the notch rather than on "we think tmux is running": from the
+    /// PTY we see a byte stream, not processes, and tmux's status line — the
+    /// only thing that would give it away — is the first thing people re-style.
+    /// The moment of confusion is the honest trigger, and the advice holds for
+    /// whatever owns the alternate screen.
+    pub fn hint_alternate_scroll(&mut self) {
+        if self.alt_scroll_hinted {
+            return;
+        }
+        self.alt_scroll_hinted = true;
+        self.set_copy_notice(
+            "wheel \u{2192} \u{2191} keys here \u{2014} tmux scrolls with: set -g mouse on"
+                .to_string(),
+        );
     }
 
     /// Record a transient "copied" toast.

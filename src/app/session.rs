@@ -516,6 +516,10 @@ impl App {
                         crate::session::keys::alternate_scroll_keys(mouse.kind, app_cursor)
                     {
                         let _ = session.write(&bytes);
+                        // Arrow keys are all a terminal can do here, and in tmux
+                        // they land in the shell's history rather than scrolling
+                        // anything — so say once where the real switch is.
+                        session.hint_alternate_scroll();
                     }
                 }
                 MouseEventKind::ScrollUp => session.scroll_with_selection(3),
