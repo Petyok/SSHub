@@ -105,7 +105,18 @@ so an unknown host key fails instead of waiting for a human. Everything after
 .B \-\-
 is the command; a single quoted string
 .RB ( "sshub exec web-01 \(dquptime\(dq" )
-works too.
+works too. Shell operators are read by whichever shell sees them first:
+.RB ( "sshub exec web-01 \-\- ls && uptime" )
+runs
+.B ls
+on the host and
+.B uptime
+at home, exactly as
+.BR ssh (1)
+does \(em quote the whole command
+.RB ( "sshub exec web-01 \-\- \(dqls && uptime\(dq" )
+to send it all remotely. A full-screen command (vim, top, less) needs
+.BR \-\-tty .
 .B \-\-tty
 forces a PTY
 .RB ( "ssh \-tt" )

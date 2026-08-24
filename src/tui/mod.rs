@@ -1712,6 +1712,7 @@ fn render_audit_body(frame: &mut Frame, areas: &dashboard_layout::DashboardAreas
     screens::audit::render_audit(frame, areas.body, app);
 }
 
+#[derive(Clone, Copy)]
 enum FormKind {
     Host,
     Identity,
@@ -1719,10 +1720,29 @@ enum FormKind {
     Group,
 }
 
+/// Rows each form needs to show everything it draws, hint lines included.
+const fn form_rows_needed(kind: FormKind) -> u16 {
+    match kind {
+        // 16 fields + a blank + 2 hint rows + 2 borders, plus the extra hint row
+        // the password field adds.
+        FormKind::Host => 23,
+        FormKind::Identity => 14,
+        FormKind::Keygen => 14,
+        FormKind::Group => 12,
+    }
+}
+
 fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
     let area = frame.area();
     let popup_width = (area.width * 70 / 100).max(50).min(area.width);
-    let popup_height = (area.height * 70 / 100).max(18).min(area.height);
+    // Rows the form itself draws (fields + hint lines + both borders). 70% of a
+    // 24-row terminal is 16, and the host form needs 22 — the overflow fell off
+    // the bottom, taking the save/cancel and reveal hints with it, which is how
+    // a masked password ended up looking unrevealable. `form_rows_needed` is
+    // guarded by a render test at 80x24 so a new field cannot re-clip them.
+    let popup_height = (area.height * 70 / 100)
+        .max(form_rows_needed(kind))
+        .min(area.height);
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);

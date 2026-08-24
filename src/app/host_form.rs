@@ -391,6 +391,15 @@ impl App {
                 self.host_form_toggle();
             }
             KeyCode::Backspace => self.host_form_backspace(),
+            // Readline-style bulk edits (Ctrl+U kills to start, Ctrl+W eats a
+            // word) so a wrong password or user does not have to be deleted one
+            // character at a time.
+            KeyCode::Char('u') if key.modifiers == KeyModifiers::CONTROL => {
+                self.host_form_kill_to_start()
+            }
+            KeyCode::Char('w') if key.modifiers == KeyModifiers::CONTROL => {
+                self.host_form_kill_word()
+            }
             KeyCode::Char(c)
                 if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
                     && !c.is_control()
@@ -451,12 +460,47 @@ impl App {
         if form.metadata_only && form.field.is_connection_field() {
             return;
         }
-        if form.field.is_picker() || form.field.is_toggle() {
+        let c = form.cursor;
+        if c == 0 {
             return;
         }
-        let c = form.cursor;
-        if c > 0 {
-            form.cursor = text_input::backspace_at(form.active_field_mut(), c);
+        // `None` = a picker, a toggle or the tri-state: nothing to delete.
+        if let Some(v) = form.active_field_mut() {
+            form.cursor = text_input::backspace_at(v, c);
+            form.dirty = true;
+        }
+    }
+
+    pub(crate) fn host_form_kill_to_start(&mut self) {
+        let Some(form) = self.host_form.as_mut() else {
+            return;
+        };
+        if form.metadata_only && form.field.is_connection_field() {
+            return;
+        }
+        let cursor = form.cursor;
+        if cursor == 0 {
+            return;
+        }
+        if let Some(v) = form.active_field_mut() {
+            form.cursor = text_input::clear_before_cursor(v, cursor);
+            form.dirty = true;
+        }
+    }
+
+    pub(crate) fn host_form_kill_word(&mut self) {
+        let Some(form) = self.host_form.as_mut() else {
+            return;
+        };
+        if form.metadata_only && form.field.is_connection_field() {
+            return;
+        }
+        let len_before = text_input::char_len(form.active_field());
+        let cursor = form.cursor;
+        if let Some(v) = form.active_field_mut() {
+            form.cursor = text_input::delete_word_before(v, cursor);
+        }
+        if text_input::char_len(form.active_field()) != len_before {
             form.dirty = true;
         }
     }
@@ -468,24 +512,22 @@ impl App {
         if form.metadata_only && form.field.is_connection_field() {
             return;
         }
-        if form.field.is_picker() || form.field.is_toggle() {
-            return;
-        }
         let c = form.cursor;
-        form.cursor = text_input::insert_at(form.active_field_mut(), c, ch);
-        form.dirty = true;
+        if let Some(v) = form.active_field_mut() {
+            form.cursor = text_input::insert_at(v, c, ch);
+            form.dirty = true;
+        }
     }
 
     fn host_form_cursor_key(&mut self, code: KeyCode) {
         if let Some(form) = self.host_form.as_mut() {
-            if form.field.is_picker() || form.field.is_toggle() {
-                return;
-            }
             if code == KeyCode::Delete && form.metadata_only && form.field.is_connection_field() {
                 return;
             }
             let mut cursor = form.cursor;
-            let changed = text_input::handle_cursor_key(code, form.active_field_mut(), &mut cursor);
+            let changed = form
+                .active_field_mut()
+                .and_then(|v| text_input::handle_cursor_key(code, v, &mut cursor));
             form.cursor = cursor;
             if changed == Some(true) {
                 form.dirty = true;

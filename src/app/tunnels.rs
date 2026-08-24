@@ -213,6 +213,41 @@ impl App {
         Ok(())
     }
 
+    /// Ctrl+U on the tunnel form: kill the active text field back to its start.
+    pub(crate) fn tunnel_form_kill_to_start(&mut self) {
+        let Some(form) = self.tunnel_form.as_mut() else {
+            return;
+        };
+        if form.cursor > 0 {
+            let cursor = form.cursor;
+            let nc = form
+                .active_text_field_mut()
+                .map(|v| text_input::clear_before_cursor(v, cursor))
+                .unwrap_or(cursor);
+            form.cursor = nc;
+            form.dirty = true;
+        }
+    }
+
+    /// Ctrl+W on the tunnel form: delete the word before the cursor.
+    pub(crate) fn tunnel_form_kill_word(&mut self) {
+        let Some(form) = self.tunnel_form.as_mut() else {
+            return;
+        };
+        let len_before = form.active_text_field().map(text_input::char_len);
+        let cursor = form.cursor;
+        let nc = form
+            .active_text_field_mut()
+            .map(|v| text_input::delete_word_before(v, cursor))
+            .unwrap_or(cursor);
+        form.cursor = nc;
+        if len_before.is_some_and(|before| {
+            form.active_text_field().map(text_input::char_len) != Some(before)
+        }) {
+            form.dirty = true;
+        }
+    }
+
     pub(crate) fn handle_key_tunnel_form(&mut self, key: KeyEvent) -> Result<()> {
         let Some(form) = self.tunnel_form.as_ref() else {
             return Ok(());
@@ -312,6 +347,14 @@ impl App {
                         form.dirty = true;
                     }
                 }
+            }
+            // Readline-style bulk edits: Ctrl+U clears the field (a wrong port
+            // need not be backspaced digit by digit), Ctrl+W eats one word.
+            KeyCode::Char('u') if key.modifiers == KeyModifiers::CONTROL => {
+                self.tunnel_form_kill_to_start()
+            }
+            KeyCode::Char('w') if key.modifiers == KeyModifiers::CONTROL => {
+                self.tunnel_form_kill_word()
             }
             KeyCode::Char(c)
                 if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
@@ -578,6 +621,34 @@ impl App {
         Ok(())
     }
 
+    /// Re-read the tunnel list from the store, throttled to once every two
+    /// seconds.
+    ///
+    /// The list is a snapshot, and the store is shared: a second sshub window or
+    /// a `sshub tunnel` command can add, edit or delete a row under us. Until
+    /// this ran, a tunnel deleted in another window stayed in this window's
+    /// session top bar and tunnels tab for as long as the window lived.
+    ///
+    /// The selection is re-anchored by id, the way [`Self::reload_identities`]
+    /// does: it is a raw index, and another window deleting a row above it used
+    /// to slide it onto a different tunnel — with the reload now running on a
+    /// timer, the next `d` would have hit whatever moved under the cursor.
+    ///
+    /// Our own children are left alone. An edit elsewhere is a delete plus an
+    /// insert (there is no `UPDATE` for tunnels), so "this id is gone" does not
+    /// mean "this tunnel is gone", and killing the child on that signal would
+    /// take down a tunnel someone merely relabelled in another window.
+    pub(crate) fn sync_tunnels_from_store(&mut self) -> Result<()> {
+        self.tunnels_synced = std::time::Instant::now();
+        let selected_id = self.tunnels.get(self.tunnel_selected).map(|t| t.id);
+        self.reload_tunnels()?;
+        self.tunnel_selected = selected_id
+            .and_then(|id| self.tunnels.iter().position(|t| t.id == id))
+            .unwrap_or(self.tunnel_selected)
+            .min(self.tunnels.len().saturating_sub(1));
+        Ok(())
+    }
+
     pub(crate) fn tick_tunnels(&mut self) -> Result<()> {
         if !self.tunnels_auto_started {
             self.bootstrap_auto_connect_tunnels()?;
@@ -585,6 +656,9 @@ impl App {
         }
         if self.tunnel_manager.needs_tunnel_list() && self.tunnels.is_empty() {
             self.reload_tunnels()?;
+        }
+        if self.tunnels_synced.elapsed() >= std::time::Duration::from_secs(2) {
+            self.sync_tunnels_from_store()?;
         }
         let health_events = self
             .tunnel_manager

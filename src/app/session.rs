@@ -4,7 +4,9 @@ impl App {
     /// Handle a keystroke while an embedded session is active.
     ///
     /// Session tab keys are user-configurable (see [`KeyAction::SessionNewTab`]
-    /// and friends). `PgUp` / `PgDn` without Ctrl navigate scrollback locally.
+    /// and friends). `PgUp` / `PgDn` without Ctrl navigate scrollback locally,
+    /// except while the remote is on the alternate screen — there the app that
+    /// drew it owns paging and the keys are forwarded.
     pub(crate) fn handle_key_session(&mut self, key: KeyEvent) -> Result<()> {
         if self.is_action(KeyAction::LocalShell, &key) {
             self.open_local_shell()?;
@@ -87,8 +89,15 @@ impl App {
             self.active_session().map(|s| &s.phase),
             Some(crate::session::SessionPhase::Connecting { .. })
         ) && self.is_action(KeyAction::SessionCancel, &key);
-        let scroll_up = self.is_action(KeyAction::SessionScrollUp, &key);
-        let scroll_down = self.is_action(KeyAction::SessionScrollDown, &key);
+        // On the alternate screen the remote app owns paging: tmux, vim and
+        // less draw there, and the alternate grid has no scrollback of its own
+        // (vt100 gives it zero rows), so stealing PageUp/PageDown for a local
+        // scroll made the key do nothing at all. Forward it instead.
+        let alternate_screen = self
+            .active_session()
+            .is_some_and(|s| s.parser.screen().alternate_screen());
+        let scroll_up = !alternate_screen && self.is_action(KeyAction::SessionScrollUp, &key);
+        let scroll_down = !alternate_screen && self.is_action(KeyAction::SessionScrollDown, &key);
 
         if cancel_connecting {
             self.close_active_session();
@@ -109,13 +118,11 @@ impl App {
         // selection anchored to the same text as the view scrolls.
         let half = (body_rows / 2).max(1);
         if scroll_up {
-            session.parser.scroll_up(half);
-            session.selection_scroll_shift(half as i32);
+            session.scroll_with_selection(half as i32);
             return Ok(());
         }
         if scroll_down {
-            session.parser.scroll_down(half);
-            session.selection_scroll_shift(-(half as i32));
+            session.scroll_with_selection(-(half as i32));
             return Ok(());
         }
 
@@ -461,6 +468,7 @@ impl App {
 
         let mode = session.parser.screen().mouse_protocol_mode();
         let encoding = session.parser.screen().mouse_protocol_encoding();
+        let alternate_screen = session.parser.screen().alternate_screen();
         let (rows, cols) = session.parser.screen().size();
 
         // Body-local grid coordinates (header takes row 0).
@@ -470,9 +478,10 @@ impl App {
 
         // Local text selection drives the mouse when the remote app isn't
         // consuming it (plain shell → just drag to select, no Shift needed);
-        // when the remote wants the mouse (vim/tmux/…), Shift forces a local
-        // selection instead of forwarding the event.
-        let selecting = mode == vt100::MouseProtocolMode::None || shift;
+        // Shift inverts that decision in either direction. See
+        // [`crate::session::keys::selects_locally`] for why the mouse mode
+        // alone does not decide it.
+        let selecting = crate::session::keys::selects_locally(mode, alternate_screen, shift);
 
         if selecting {
             match mouse.kind {
@@ -494,14 +503,27 @@ impl App {
                         }
                     }
                 }
-                MouseEventKind::ScrollUp => {
-                    session.parser.scroll_up(3);
-                    session.selection_scroll_shift(3);
+                // xterm's alternateScroll: the alternate grid keeps no
+                // scrollback, so the notch becomes arrow keys for the app that
+                // owns the screen instead of a local scroll that can move
+                // nothing. Shift opts out — it is the wheel's way back to our
+                // own scrollback, which is what it means in a real terminal.
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                    if alternate_screen && !shift =>
+                {
+                    let app_cursor = session.parser.screen().application_cursor();
+                    if let Some(bytes) =
+                        crate::session::keys::alternate_scroll_keys(mouse.kind, app_cursor)
+                    {
+                        let _ = session.write(&bytes);
+                        // Arrow keys are all a terminal can do here, and in tmux
+                        // they land in the shell's history rather than scrolling
+                        // anything — so say once where the real switch is.
+                        session.hint_alternate_scroll();
+                    }
                 }
-                MouseEventKind::ScrollDown => {
-                    session.parser.scroll_down(3);
-                    session.selection_scroll_shift(-3);
-                }
+                MouseEventKind::ScrollUp => session.scroll_with_selection(3),
+                MouseEventKind::ScrollDown => session.scroll_with_selection(-3),
                 // Any other press clears a pending selection.
                 MouseEventKind::Down(_) => session.selection_clear(),
                 _ => {}
@@ -510,10 +532,14 @@ impl App {
         }
 
         // Remote app is consuming mouse — translate to the wire protocol.
-        let local_y = mouse.row.saturating_sub(1);
-        if let Some(bytes) =
-            crate::session::keys::encode_mouse(mouse, mouse.column, local_y, mode, encoding)
-        {
+        // Only events inside the grid go out: row 0 is our own header and
+        // anything past the last row is the footer, and reporting either as an
+        // edge row of the grid made a stray click on sshub's chrome land on the
+        // remote (tmux's status line with `status-position top`, for one).
+        if mouse.row == 0 || mouse.row.saturating_sub(1) >= rows || mouse.column >= cols {
+            return;
+        }
+        if let Some(bytes) = crate::session::keys::encode_mouse(mouse, col, row, mode, encoding) {
             let _ = session.write(&bytes);
         }
     }
