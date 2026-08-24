@@ -14,6 +14,7 @@ Host passwords and identity key passphrases live in the OS keyring through the `
 
 - `Cargo.toml` enables real backends (`apple-native`, `windows-native`, `sync-secret-service`, `crypto-rust`): without a backend feature, keyring 3.x **silently falls back to an in-memory mock** that works within one process but persists nothing — which "looks exactly like 'passwords aren't being saved'".
 - On Linux this needs the D-Bus Secret Service (build: `libdbus-1-dev`; runtime: an unlocked gnome-keyring/KWallet or similar). Without a provider, SSHub warns and ssh falls back to interactive prompting.
+<!-- openwiki: broken internal link [../domain/hosts-identities.md#termius-import] heading anchor "termius-import" does not exist in "../domain/hosts-identities.md". Fix the href or restore the target, then delete this comment. -->
 - [Termius import](../domain/hosts-identities.md#termius-import) re-stores imported secrets with write-verification and reports `keyring_failures` instead of dropping them silently.
 - `sshub db purge` orphans keyring entries by design (only SQLite is wiped).
 - If Secret Service is unavailable, SSHub uses an owner-only plaintext `credentials.json` in the data directory, written through a 0600 temporary file and atomic rename. The status reports the fallback; when a keyring becomes available, entries migrate back and the file is removed only after all entries succeed.
@@ -36,10 +37,12 @@ The same mechanism feeds [tunnel](../workflows/tunnels.md) spawns (`stage_tunnel
 
 ## Host-key policy
 
+<!-- openwiki: broken internal link [../workflows/sessions-sftp.md#sftp] heading anchor "sftp" does not exist in "../workflows/sessions-sftp.md". Fix the href or restore the target, then delete this comment. -->
 TOFU mirroring `accept-new` everywhere: ssh spawns inject `StrictHostKeyChecking=accept-new` when a secret is staged; [SFTP](../workflows/sessions-sftp.md#sftp) appends unknown keys to `~/.ssh/known_hosts` manually (libssh2's writer would drop unparsable lines) and treats a **changed** key as a hard MITM error.
 
 ## Session logs capture secrets
 
+<!-- openwiki: broken internal link [../workflows/sessions-sftp.md#session-logging] heading anchor "session-logging" does not exist in "../workflows/sessions-sftp.md". Fix the href or restore the target, then delete this comment. -->
 [Session logging](../workflows/sessions-sftp.md#session-logging) is opt-in and captures **everything echoed to the terminal — including typed passwords**. The in-app help screen carries this warning; keep it in sync if logging behavior changes.
 
 ## Filesystem permissions (`src/secure_fs.rs`)
@@ -49,5 +52,7 @@ Best-effort (Unix-only) hardening: data/log/PID directories 0700, secret-bearing
 ## Input-safety details worth preserving
 
 - `src/ssh/export.rs::conf_val` flattens CR/LF in host fields so an exported `exported.conf` can't be used to inject a `Host *` stanza.
+- Host targets supplied to ssh/mosh are guarded against leading-dash option injection; host `name`, `address`, and `username` writes are rejected at the TUI, CLI, and importer boundaries. The guard also protects legacy rows at connect time (`src/ssh/host.rs`).
 - Imports print nothing to stderr while the TUI is in raw mode (`src/ssh/import.rs`) — a diagnostic would corrupt the UI.
 - the `resolve` CLI subcommand (`cmd_resolve` in `src/cli/host.rs`, JSON shape `HostResolveJson` in `src/cli/output.rs`) exposes only `has_stored_secret`, never the secret.
+- `exec` deliberately omits the remote command from audit details because arguments can contain secrets; it uses `BatchMode` without a staged credential and refuses mosh one-shot execution. See [Headless CLI](../workflows/cli.md#command-tree).

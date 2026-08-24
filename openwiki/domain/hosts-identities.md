@@ -10,9 +10,11 @@ tags: [domain, hosts, groups, identities, ssh-agent, termius]
 
 ## Hosts
 
+<!-- openwiki: broken internal link [../architecture/data-model.md#hybrid-host-model] heading anchor "hybrid-host-model" does not exist in "../architecture/data-model.md". Fix the href or restore the target, then delete this comment. -->
 A host is the central entity. Storage and merging rules live in [data model](../architecture/data-model.md#hybrid-host-model); the user-facing model:
 
 - **Managed hosts** (`HostSource::Launcher`) — full CRUD from the [host form](../workflows/tui.md) or [CLI](../workflows/cli.md); fields include address, port, username, tags, description, environment, per-host session-logging override, and `transport` (ssh/mosh).
+<!-- openwiki: broken internal link [../architecture/overview.md#file-watcher] heading anchor "file-watcher" does not exist in "../architecture/overview.md". Fix the href or restore the target, then delete this comment. -->
 - **ssh_config hosts** (`HostSource::SshConfig`) — imported/synced from `~/.ssh/config`; editable metadata but the connection fields track the config file (hot-reloaded by the [file watcher](../architecture/overview.md#file-watcher)).
 - **Legacy aliases** — ssh_config entries with no DB row; surfaced read-only with metadata from `metadata.db`.
 
@@ -31,6 +33,12 @@ An identity (`src/store/identities.rs`) bundles a display name, username, and pr
 - **ssh-agent** (`src/ssh/agent.rs`) — wrappers over `ssh-add -l` / `-d`; the Keys tab shows loaded status and can add/remove keys (`p` / `r`; CLI: `sshub identity agent-remove`).
 - **Key files** (`src/ssh/keyfile.rs`) — `ssh-keygen -y` probing detects whether a key needs a passphrase; the passphrase is fed through a staged 0600/0700 askpass script so it never appears in `ps` argv.
 - **Probing** (`src/ssh/probe.rs`) — defines `SshLogEntry`/`LogLevel`, populated by manual log pushes from the connect/session paths. The module’s own background `ssh -v BatchMode` classifier (`spawn_ssh_probe`/`classify_line`), which used to periodically probe every known host, is dead code today (no callers) and was disabled because it "buried the events the user actually cares about" (src/app/mod.rs); there is no live auth-method/host-key display in the detail panel.
+
+## Key generation and public-key push
+
+The Keys tab can generate Ed25519 or RSA-4096 identities through `src/app/keygen.rs` and `src/tui/screens/keygen.rs`; it refuses to overwrite either an existing private key or `.pub`, registers the new identity immediately, and stores an optional passphrase through the credential path in [Secrets](../security/secrets.md). Public-key push (`Shift+P`, `src/app/push_key.rs`) selects an identity from Hosts or a host from Keys, derives the public key from `.pub` or `ssh-keygen -y`, and appends an exact-match-free line to remote `~/.ssh/authorized_keys` under `umask 077`. It reuses normal authentication, is audited, and is idempotent. The action reloads identities before opening its picker, so it also works on a fresh start before the Identities tab has been visited; missing identity or group targets produce a visible notice.
+
+Focused behavior is covered by the identity/key tests in `src/app/tests/identity_group.rs`, `src/app/tests/host_form.rs`, and `src/app/tests/keybind.rs`; keep askpass and keyring behavior aligned with [Secrets](../security/secrets.md).
 
 ## Termius import (`src/import/termius_csv.rs`)
 

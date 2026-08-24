@@ -13,6 +13,17 @@ SSHub (`sshub`, v0.9.3 in `Cargo.toml`) is a keyboard-driven terminal UI for man
 - Stack: Rust 2021, ratatui 0.30 + crossterm (TUI), portable-pty + vt100/tui-term (embedded sessions), rusqlite bundled (SQLite), ssh2/libssh2 with vendored OpenSSL (SFTP), nucleo (fuzzy search), notify (file watcher), keyring (OS secret store). **No async runtime** — a synchronous event loop polls every 50 ms (`src/lib.rs`).
 - Single binary: `src/main.rs` dispatches askpass re-exec → `db` subcommand → headless CLI subcommands → global flags → the TUI.
 
+## Task routing
+
+| Change area or user intent | Wiki page | Exact source entry points | Important symbols or types | Focused tests | Minimal validation |
+|---|---|---|---|---|---|
+| Run a scripted command | [Headless CLI](workflows/cli.md) | `src/main.rs`, `src/cli/mod.rs`, `src/cli/exec.rs` | `CliContext`, `exec::run`, `ExecRecord` | `tests/smoke/cli_commands.rs` (`exec_*`) | `cargo test --test smoke cli_commands::exec` |
+| Change embedded session I/O or terminal behavior | [Sessions & SFTP](workflows/sessions-sftp.md) | `src/session/parser.rs`, `src/session/pty.rs`, `src/session/mod.rs` | `ParserState`, `PtyRuntime`, `Session` | `src/session/parser.rs` tests; `src/app/tests/session.rs` | `cargo test session` |
+| Change themes or profile startup | [Themes and Profiles](workflows/themes-profiles.md) | `src/theme/manager.rs`, `src/profile/mod.rs`, `src/tui/screens/theme_picker.rs` | `ThemeManager`, `ProfilePaths`, `resolve_profile_workspace` | `tests/e2e/theme_picker.rs`, `src/app/tests/theme_picker.rs` | `cargo test --test e2e theme_picker` |
+| Change host, group, identity, or import behavior | [Hosts, Groups & Identities](domain/hosts-identities.md) | `src/hosts/`, `src/store/`, `src/ssh/`, `src/import/` | `HostResolver`, `LauncherStore`, `ManagedHost` | `tests/e2e/host_crud.rs`, `group_crud.rs`, `import_export.rs` | `cargo test --test e2e host_crud` |
+| Change TUI modes, keybindings, or rendering | [TUI Dashboard](workflows/tui.md) | `src/app/keys.rs`, `src/app/types.rs`, `src/tui/mod.rs` | `AppMode`, `App::active_tab`, `tui::render` | `src/app/tests/keybind.rs`, `tests/e2e/search_and_navigate.rs` | `cargo test keybind` |
+| Change release packaging or build features | [Build & Release](operations/build-release.md) | `Cargo.toml`, `Justfile`, `.github/workflows/release.yml` | `profile.release`, `vendored`, `just release` | CI build/release jobs | `cargo check --all-targets` |
+
 ## Install and run
 
 ```bash
@@ -54,7 +65,8 @@ mode without profile discovery. Legacy top-level data migrates into
 - [Known hosts manager](workflows/known-hosts.md) — fingerprints, guarded known_hosts deletion, and first-connect verification.
 - [Sessions & SFTP](workflows/sessions-sftp.md) — embedded PTY sessions, OSC 52 relay boundary, askpass, session logging, mosh, and the dual-pane SFTP browser.
 - [Tunnels](workflows/tunnels.md) — local/remote/dynamic tunnels and keep-alive reconnect with backoff.
-- [Headless CLI](workflows/cli.md) — full command tree, JSON output, exit codes.
+- [Headless CLI](workflows/cli.md) — full command tree, `exec`, JSON output, exit codes, and process/secret safety.
+- [Themes and isolated profiles](workflows/themes-profiles.md) — TOML theme resolution, preview/persistence, profile selection, migration, and state ownership.
 
 ### Domain
 - [Hosts, groups & identities](domain/hosts-identities.md) — host sources, nested groups and Favorites, identities, ssh-agent, and Termius import.
@@ -76,5 +88,5 @@ Pinned workflow: [docs/implementation-flow.md](../docs/implementation-flow.md) (
 
 - **Demo pipeline details** (`demo/` tapes, `record.sh`, `seed-demo.sh`) — only summarized under [integrations](integrations/external-terminals.md); deferred because it is contributor tooling, not product behavior.
 - **Host-sync design** (`docs/host-sync-design.md`) — P2P sync design for epic #13; not yet implemented, documented only in the design doc.
-- **Changelog audit follow-ups** — public-key push/key generation, npm packaging details, motion/panel behavior, PuTTY/mRemoteNG import, and release-license history remain pending in [the changelog coverage notebook](changelog-coverage.md).
+- **Changelog audit notebook** — every current `CHANGELOG.md` entry is reviewed and mapped in [the changelog coverage notebook](changelog-coverage.md); no unresolved entries remain.
 - **Detached tunnel PID-file hardening** (`src/tunnel/spawn.rs`) — acknowledged races (no locking, recycled PIDs) noted in [tunnels](workflows/tunnels.md); behavior may change.

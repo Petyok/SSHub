@@ -21,6 +21,7 @@ background threads communicating over `std::sync::mpsc` channels.
 1. **Drain sessions** — every open embedded session's PTY is drained and resized; a `Connecting` session is promoted to `Session` on first output.
 2. **Draw** — `terminal.draw` renders via `tui::render`.
 3. **Drain input** — `poll_keys_and_watcher` drains *all* queued crossterm events per frame (the code notes that draining only one would make "paste into an embedded session crawl at ~20 chars/sec"), then non-blocking `try_recv` drains of every worker channel:
+<!-- openwiki: broken internal link [#file-watcher] heading anchor "file-watcher" does not exist in /openwiki/architecture/overview.md. Fix the href or restore the target, then delete this comment. -->
    - config [file watcher](#file-watcher) → `app.reload_hosts()`
    - ping worker (30 s interval, ring buffer of 30 samples per host)
    - SFTP worker events → `apply_sftp_event` (see [sessions & SFTP](../workflows/sessions-sftp.md))
@@ -58,7 +59,7 @@ A headless variant (`run_headless_loop`) renders once on a ratatui `TestBackend`
 
 - **Screens** (`src/tui/screens/`): hosts, sftp, tunnels, keys (identities), audit, help, palette, settings, keybind_editor, host_form, group_form, group_manage, field_picker, session_host_picker, tag_filter, tunnel_reconnect, keychain.
 - **Widgets** (`src/tui/widgets/`): header, footer, tab_bar, status_bar, host_list, hosts_panel, detail_panel, middle_stack (host card / agent / latency + SSH log panel), right_stack (recent hosts, auth sparkline, ping), panel_box.
-- **Theme** (`src/tui/theme.rs`): fixed hex palette (BG `#0b0d10`, green accent `#9ec99b`) with semantic style helpers and a sparkline ramp. Startup animation: `src/tui/animation.rs` (33 ms loop, toggleable in Settings).
+- **Theme** (`src/theme/` and `src/tui/theme.rs`): `ThemeManager` resolves built-in or user TOML themes into semantic/component styles and gradients, including the paired PTY ground colors. Startup animation: `src/tui/animation.rs` (33 ms loop, toggleable in Settings); theme/profile lifecycle is documented in [Themes and Isolated Profiles](../workflows/themes-profiles.md).
 
 ## File watcher (`src/watcher.rs`)
 

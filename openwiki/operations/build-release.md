@@ -26,13 +26,20 @@ Lint gate (run before **every** push; [CI](ci-cd.md) runs the same): `cargo fmt`
 | `build` | Release binary (prerequisite of `install`) |
 | `install` / `uninstall` | Binary → `~/.local/bin`, completions, man page, icon + `.desktop` entry (kitty→ghostty→alacritty→foot→xterm detection) |
 | `install-completions` | bash/fish completions to auto-load dirs; sourced zsh block appended to `~/.zshrc` |
+| `npm` distribution | `npm/build.sh` packages the release binary through platform-specific optional dependencies; the wrapper installs the `sshub` command. Supported prebuilt targets are Linux x64, macOS arm64, and macOS x64; other platforms use `cargo install sshub`. |
 | `man` | Preview `man/sshub.1` via `man -l` |
 | `bump <patch|minor|major|set> [version]` | Odometer version bump in `Cargo.toml` + `Cargo.lock` (no cargo invocation) |
 | `release [minor|patch|X.Y.Z]` | Full release: settle version on `development`, roll CHANGELOG, `--no-ff` merge to `main`, tag `vX.Y.Z`, push, ff `development` |
 | `sync` | Merge `development`→`main` without a release (no tag/bump/changelog) |
 | `setup-hooks` | One-time `git config core.hooksPath .githooks` per checkout |
+<!-- openwiki: broken internal link [../integrations/external-terminals.md#demo-pipeline] heading anchor "demo-pipeline" does not exist in "../integrations/external-terminals.md". Fix the href or restore the target, then delete this comment. -->
 | `record-gifs *tapes` | VHS + ffmpeg demo recording (see [integrations](../integrations/external-terminals.md#demo-pipeline)) |
 | `dry-run` | Headless sanity check |
+
+## OpenSSL feature boundary
+
+`Cargo.toml` keeps the `vendored` feature enabled by default, selecting `ssh2/vendored-openssl` so `cargo install sshub` and release archives build without a system OpenSSL. Packagers may use `cargo install sshub --no-default-features` to link the system library and reduce cold-build cost; this is a development/packaging opt-out, not the supported self-contained release configuration. The `test` recipe uses the opt-out locally where appropriate. Check `Cargo.toml` before changing this boundary because the feature affects both SFTP transport and shipped installability.
+
 
 ## Versioning — odometer `vX.Y.Z`
 
