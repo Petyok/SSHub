@@ -454,6 +454,27 @@ impl Session {
         }
     }
 
+    /// Scroll the view by `rows` (positive = toward older output) and carry a
+    /// live selection along by however far the view *actually* moved.
+    ///
+    /// It can move less than asked, or not at all: the top of the buffer clamps,
+    /// and the alternate screen keeps no scrollback whatsoever (vt100 gives that
+    /// grid zero rows). Shifting the selection by the requested amount anyway
+    /// slid the highlight across text that stayed exactly where it was — inside
+    /// `tmux` the wheel appeared to move the selection instead of the screen.
+    pub fn scroll_with_selection(&mut self, rows: i32) {
+        let before = self.parser.scrollback() as i32;
+        if rows >= 0 {
+            self.parser.scroll_up(rows as usize);
+        } else {
+            self.parser.scroll_down(rows.unsigned_abs() as usize);
+        }
+        let moved = self.parser.scrollback() as i32 - before;
+        if moved != 0 {
+            self.selection_scroll_shift(moved);
+        }
+    }
+
     /// Record a transient "copied" toast.
     pub fn set_copy_notice(&mut self, msg: String) {
         self.copy_notice = Some((msg, Instant::now()));

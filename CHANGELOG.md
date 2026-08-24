@@ -46,6 +46,16 @@ All notable changes to SSHub are documented in this file.
   alternate screen at all, so `git log` keeps scrolling sshub's buffer as before.
   On the primary screen nothing changes.
 
+- **A wheel that cannot scroll no longer drags the selection instead** (issue
+  #115) - reported from a live `tmux`: the wheel moved the highlighted block down
+  the screen while the text stayed exactly where it was. The view is allowed to
+  move less than asked — the top of the buffer clamps, and the alternate screen
+  keeps no scrollback at all — but the selection was shifted by the full
+  requested amount regardless, so the highlight slid across static rows. It now
+  moves by however far the view actually moved, which on the alternate screen is
+  nothing. Both the wheel and PageUp/PageDown went through the same unguarded
+  path; they share one method now.
+
 - **A drag at the shell prompt selects text instead of spraying `0;47;13M`**
   (issue #115) - an app killed before it could send `ESC [ ? 1002 l` leaves mouse
   reporting on, and every later click or drag was then encoded and echoed back by

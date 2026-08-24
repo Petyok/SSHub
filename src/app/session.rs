@@ -118,13 +118,11 @@ impl App {
         // selection anchored to the same text as the view scrolls.
         let half = (body_rows / 2).max(1);
         if scroll_up {
-            session.parser.scroll_up(half);
-            session.selection_scroll_shift(half as i32);
+            session.scroll_with_selection(half as i32);
             return Ok(());
         }
         if scroll_down {
-            session.parser.scroll_down(half);
-            session.selection_scroll_shift(-(half as i32));
+            session.scroll_with_selection(-(half as i32));
             return Ok(());
         }
 
@@ -520,14 +518,8 @@ impl App {
                         let _ = session.write(&bytes);
                     }
                 }
-                MouseEventKind::ScrollUp => {
-                    session.parser.scroll_up(3);
-                    session.selection_scroll_shift(3);
-                }
-                MouseEventKind::ScrollDown => {
-                    session.parser.scroll_down(3);
-                    session.selection_scroll_shift(-3);
-                }
+                MouseEventKind::ScrollUp => session.scroll_with_selection(3),
+                MouseEventKind::ScrollDown => session.scroll_with_selection(-3),
                 // Any other press clears a pending selection.
                 MouseEventKind::Down(_) => session.selection_clear(),
                 _ => {}

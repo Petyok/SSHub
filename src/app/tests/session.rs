@@ -992,3 +992,60 @@ pub(crate) fn the_config_opt_out_drops_every_relay() {
         "an opted-out relay must stay silent"
     );
 }
+
+/// Reported from a live tmux: the wheel moved the *selection* and left the text
+/// where it was. tmux draws on the alternate screen, which keeps no scrollback,
+/// so the view could not move — but the selection was shifted by the full
+/// requested amount regardless, sliding the highlight over static rows.
+#[test]
+pub(crate) fn a_wheel_that_cannot_scroll_leaves_the_selection_where_it_is() {
+    let cfg = crate::session::SessionConfig {
+        argv: vec!["true".into()],
+        display_name: "edge".into(),
+        meta: crate::session::SessionMeta::default(),
+        pending_secret: None,
+        key_push_identity: None,
+        host_name: "edge".into(),
+    };
+    let mut session = crate::session::Session::spawn(cfg, 24, 80, None).unwrap();
+    // Alternate screen, as tmux / vim leave it.
+    session.parser.process(b"\x1b[?1049h");
+    assert!(session.parser.screen().alternate_screen());
+    session.selection_start(5, 0);
+    session.selection_extend(8, 10);
+    let before = session.selection.expect("a selection");
+
+    session.scroll_with_selection(3);
+
+    let after = session.selection.expect("still a selection");
+    assert_eq!(session.parser.scrollback(), 0, "nothing to scroll there");
+    assert_eq!(
+        (after.anchor, after.cursor),
+        (before.anchor, before.cursor),
+        "the highlight must stay on the text it was on"
+    );
+
+    // On the primary screen, with scrollback to walk, it does follow the view.
+    let cfg = crate::session::SessionConfig {
+        argv: vec!["true".into()],
+        display_name: "edge".into(),
+        meta: crate::session::SessionMeta::default(),
+        pending_secret: None,
+        key_push_identity: None,
+        host_name: "edge".into(),
+    };
+    let mut session = crate::session::Session::spawn(cfg, 24, 80, None).unwrap();
+    for i in 0..60 {
+        session.parser.process(format!("line {i}\r\n").as_bytes());
+    }
+    session.selection_start(5, 0);
+    session.selection_extend(8, 10);
+    let anchor_before = session.selection.as_ref().unwrap().anchor.0;
+    session.scroll_with_selection(3);
+    assert_eq!(session.parser.scrollback(), 3);
+    assert_eq!(
+        session.selection.as_ref().unwrap().anchor.0,
+        anchor_before + 3,
+        "when the view moves, the highlight moves with it"
+    );
+}
