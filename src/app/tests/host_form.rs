@@ -340,3 +340,71 @@ pub(crate) fn ctrl_u_and_ctrl_w_clear_the_focused_form_field() {
     assert_eq!(app.mode, AppMode::HostForm, "the form is still open");
     assert_eq!(app.host_form.as_ref().unwrap().password, "one ");
 }
+
+/// A masked password has to say how to unmask itself, on the row and in the
+/// footer, at the size a terminal actually is. 70% of a 24-row terminal is 16
+/// rows and the host form needs 22, so the hints used to fall off the bottom and
+/// the field read as a wall of dots with no way out.
+#[test]
+pub(crate) fn the_password_row_shows_the_reveal_bind_at_80x24() {
+    let (mut app, _secrets) = test_app_with_secrets(vec![]);
+    let created = app
+        .store
+        .create_host(&crate::store::NewHost {
+            has_password: true,
+            ..crate::store::NewHost::launcher("edge", "10.0.0.9")
+        })
+        .unwrap();
+    app.password_store
+        .set(&crate::credentials::host_key(created.id), "s3cret-pw")
+        .unwrap();
+    app.reload_hosts().unwrap();
+    app.enter_host_form(Some(&created), false).unwrap();
+    while app.host_form.as_ref().unwrap().field != HostFormField::Password {
+        app.handle_key(key(KeyCode::Down)).unwrap();
+    }
+
+    let (w, h) = (80u16, 24u16);
+    app.terminal_area = ratatui::layout::Rect::new(0, 0, w, h);
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+    term.draw(|f| crate::tui::render(f, &app)).unwrap();
+    let buf = term.backend().buffer().clone();
+    let screen: String = (0..h)
+        .map(|y| {
+            (0..w)
+                .map(|x| buf[(x, y)].symbol())
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let reveal = app.config.keybinds.primary(KeyAction::RevealSecret);
+    assert!(!reveal.is_empty(), "the reveal action has a default bind");
+    assert!(
+        screen.contains(reveal),
+        "the focused password row must name the reveal bind ({reveal}):\n{screen}"
+    );
+    assert!(
+        screen.contains("\u{25CF}"),
+        "the value itself stays masked until asked:\n{screen}"
+    );
+    assert!(
+        screen.contains("Esc: cancel"),
+        "the form's own footer must still be on screen at 24 rows:\n{screen}"
+    );
+
+    // And the bind does reveal, in place.
+    app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert!(app.host_form.as_ref().unwrap().password_revealed);
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+    term.draw(|f| crate::tui::render(f, &app)).unwrap();
+    let buf = term.backend().buffer().clone();
+    let revealed: String = buf.content().iter().map(|c| c.symbol()).collect();
+    assert!(
+        revealed.contains("s3cret-pw"),
+        "Ctrl+R shows the stored secret in the field"
+    );
+}

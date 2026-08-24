@@ -43,10 +43,19 @@ pub fn render_identity_form(
                 if editing && form.password_revealed {
                     text_input::with_cursor(&form.password, form.cursor)
                 } else if editing {
-                    text_input::with_cursor(
+                    // The reveal bind rides the row, not just the footer: on a
+                    // short terminal the footer is what gets clipped, and a
+                    // masked value with no visible way to unmask it reads as
+                    // "this secret cannot be seen at all".
+                    let masked = text_input::with_cursor(
                         &"\u{25CF}".repeat(form.password.chars().count()),
                         form.cursor,
-                    )
+                    );
+                    if secret_hints.is_empty() {
+                        masked
+                    } else {
+                        format!("{masked}    {}", reveal_hint(secret_hints))
+                    }
                 } else if form.password_revealed {
                     form.password.clone()
                 } else if !form.password.is_empty() {
@@ -127,4 +136,14 @@ pub fn render_identity_form(
                 theme.style(StyleRole::PopupTitle),
             )),
     )
+}
+
+/// The reveal half of the secret hints — the part that fits on the row next to a
+/// masked value. The full pair (show + copy) stays in the footer.
+fn reveal_hint(secret_hints: &str) -> &str {
+    secret_hints
+        .split('\u{2502}')
+        .next()
+        .unwrap_or_default()
+        .trim()
 }

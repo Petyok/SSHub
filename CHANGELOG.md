@@ -20,6 +20,17 @@ All notable changes to SSHub are documented in this file.
 
 ### Fixed
 
+- **A masked password says how to unmask itself** (issue #115) - the host and
+  identity forms arrive prefilled with the stored secret and mask it, and the
+  only mention of the bind that shows it was a footer row: 70% of a 24-row
+  terminal is 16 rows, the host form needs 22, and the overflow — reveal hint,
+  save, cancel — fell off the bottom. So the field read as a wall of dots with no
+  way out. The reveal bind now rides the password row itself while that row is
+  focused (`Ctrl+R: show + copy` by default, whatever it is bound to), and a form
+  popup is sized to the rows it actually draws instead of a flat 70%, so its own
+  footer stops being the first thing clipped. A render test at 80x24 holds both,
+  so adding a field cannot quietly re-clip them.
+
 - **The wheel and PageUp/PageDown reach the remote app on the alternate screen**
   (issue #115) - inside `vim`, `less`, `man`, `tmux` or anything else drawing on
   the alternate screen, neither did anything: that grid keeps no scrollback of

@@ -139,14 +139,22 @@ pub fn render_host_form(
                 "Password",
                 // Masked while typing too, now that the field arrives prefilled
                 // with the stored secret: walking onto it must not expose one.
-                // The reveal bind is the way to see it.
+                // The reveal bind is the way to see it — and it says so on the
+                // row itself, because the footer that used to be its only
+                // mention is the first thing a short terminal clips, which left
+                // a wall of dots and no way to know a reveal exists at all.
                 if editing && form.password_revealed {
                     text_input::with_cursor(&form.password, form.cursor)
                 } else if editing {
-                    text_input::with_cursor(
+                    let masked = text_input::with_cursor(
                         &"\u{25CF}".repeat(form.password.chars().count()),
                         form.cursor,
-                    )
+                    );
+                    if secret_hints.is_empty() {
+                        masked
+                    } else {
+                        format!("{masked}    {}", reveal_hint(secret_hints))
+                    }
                 } else {
                     password_display(&form.password, form.has_password, form.password_revealed)
                 },
@@ -256,4 +264,14 @@ fn identity_label(index: usize, identities: &[Identity]) -> String {
         .get(index)
         .map(|i| i.name.clone())
         .unwrap_or_else(|| "(none)".to_string())
+}
+
+/// The reveal half of the secret hints — the part that fits on the row next to a
+/// masked value. The full pair (show + copy) stays in the footer.
+fn reveal_hint(secret_hints: &str) -> &str {
+    secret_hints
+        .split('\u{2502}')
+        .next()
+        .unwrap_or_default()
+        .trim()
 }
