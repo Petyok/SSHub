@@ -4,7 +4,9 @@ impl App {
     /// Handle a keystroke while an embedded session is active.
     ///
     /// Session tab keys are user-configurable (see [`KeyAction::SessionNewTab`]
-    /// and friends). `PgUp` / `PgDn` without Ctrl navigate scrollback locally.
+    /// and friends). `PgUp` / `PgDn` without Ctrl navigate scrollback locally,
+    /// except while the remote is on the alternate screen — there the app that
+    /// drew it owns paging and the keys are forwarded.
     pub(crate) fn handle_key_session(&mut self, key: KeyEvent) -> Result<()> {
         if self.is_action(KeyAction::LocalShell, &key) {
             self.open_local_shell()?;
@@ -87,8 +89,15 @@ impl App {
             self.active_session().map(|s| &s.phase),
             Some(crate::session::SessionPhase::Connecting { .. })
         ) && self.is_action(KeyAction::SessionCancel, &key);
-        let scroll_up = self.is_action(KeyAction::SessionScrollUp, &key);
-        let scroll_down = self.is_action(KeyAction::SessionScrollDown, &key);
+        // On the alternate screen the remote app owns paging: tmux, vim and
+        // less draw there, and the alternate grid has no scrollback of its own
+        // (vt100 gives it zero rows), so stealing PageUp/PageDown for a local
+        // scroll made the key do nothing at all. Forward it instead.
+        let alternate_screen = self
+            .active_session()
+            .is_some_and(|s| s.parser.screen().alternate_screen());
+        let scroll_up = !alternate_screen && self.is_action(KeyAction::SessionScrollUp, &key);
+        let scroll_down = !alternate_screen && self.is_action(KeyAction::SessionScrollDown, &key);
 
         if cancel_connecting {
             self.close_active_session();
@@ -461,6 +470,7 @@ impl App {
 
         let mode = session.parser.screen().mouse_protocol_mode();
         let encoding = session.parser.screen().mouse_protocol_encoding();
+        let alternate_screen = session.parser.screen().alternate_screen();
         let (rows, cols) = session.parser.screen().size();
 
         // Body-local grid coordinates (header takes row 0).
@@ -471,8 +481,10 @@ impl App {
         // Local text selection drives the mouse when the remote app isn't
         // consuming it (plain shell → just drag to select, no Shift needed);
         // when the remote wants the mouse (vim/tmux/…), Shift forces a local
-        // selection instead of forwarding the event.
-        let selecting = mode == vt100::MouseProtocolMode::None || shift;
+        // selection instead of forwarding the event. See
+        // [`crate::session::keys::selects_locally`] for why the mouse mode
+        // alone does not decide it.
+        let selecting = crate::session::keys::selects_locally(mode, alternate_screen, shift);
 
         if selecting {
             match mouse.kind {
@@ -492,6 +504,18 @@ impl App {
                             Ok(()) => session.set_copy_notice(format!("copied {chars} chars")),
                             Err(e) => session.set_copy_notice(format!("copy failed: {e}")),
                         }
+                    }
+                }
+                // xterm's alternateScroll: the alternate grid keeps no
+                // scrollback, so the notch becomes arrow keys for the app that
+                // owns the screen instead of a local scroll that can move
+                // nothing.
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown if alternate_screen => {
+                    let app_cursor = session.parser.screen().application_cursor();
+                    if let Some(bytes) =
+                        crate::session::keys::alternate_scroll_keys(mouse.kind, app_cursor)
+                    {
+                        let _ = session.write(&bytes);
                     }
                 }
                 MouseEventKind::ScrollUp => {

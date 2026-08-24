@@ -413,7 +413,15 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "PgUp/PgDn",
-        desc: "Scroll session history",
+        desc: "Scroll session history (goes to the remote app on its alternate screen: tmux, vim, less)",
+    },
+    HelpItem::Entry {
+        key: "drag",
+        desc: "Select and copy terminal text; Shift+drag when the remote app owns the mouse",
+    },
+    HelpItem::Entry {
+        key: "Shift+mouse",
+        desc: "Your terminal's own selection and middle-click paste — sshub holds the mouse otherwise",
     },
     HelpItem::Entry {
         key: "",
