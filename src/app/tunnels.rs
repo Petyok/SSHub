@@ -621,6 +621,30 @@ impl App {
         Ok(())
     }
 
+    /// Re-read the tunnel list from the store, throttled to once every two
+    /// seconds.
+    ///
+    /// The list is a snapshot, and the store is shared: a second sshub window
+    /// or a `sshub tunnel` command can add, edit or delete a row under us. Until
+    /// this ran, a tunnel deleted in another window stayed in this window's
+    /// session top bar and tunnels tab for as long as the window lived. A child
+    /// we still own for a row that no longer exists is stopped — otherwise it
+    /// keeps its local port bound with nothing left to describe it.
+    pub(crate) fn sync_tunnels_from_store(&mut self) -> Result<()> {
+        self.tunnels_synced = std::time::Instant::now();
+        let before: Vec<i64> = self.tunnels.iter().map(|t| t.id).collect();
+        self.reload_tunnels()?;
+        for id in before {
+            if !self.tunnels.iter().any(|t| t.id == id) && self.tunnel_manager.has_child(id) {
+                let _ = self.tunnel_manager.stop_user(id);
+            }
+        }
+        if self.tunnel_selected >= self.tunnels.len() {
+            self.tunnel_selected = self.tunnels.len().saturating_sub(1);
+        }
+        Ok(())
+    }
+
     pub(crate) fn tick_tunnels(&mut self) -> Result<()> {
         if !self.tunnels_auto_started {
             self.bootstrap_auto_connect_tunnels()?;
@@ -628,6 +652,9 @@ impl App {
         }
         if self.tunnel_manager.needs_tunnel_list() && self.tunnels.is_empty() {
             self.reload_tunnels()?;
+        }
+        if self.tunnels_synced.elapsed() >= std::time::Duration::from_secs(2) {
+            self.sync_tunnels_from_store()?;
         }
         let health_events = self
             .tunnel_manager
