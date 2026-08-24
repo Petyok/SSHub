@@ -189,7 +189,7 @@ pub fn render_host_form(
         lines.push(Line::from(Span::styled(secret_hints.to_string(), help)));
     }
     lines.push(Line::from(Span::styled(
-        "Tab/↓: next field    Enter: open picker (Group/Identity)",
+        "Tab/↓: next field    Enter: open picker (Group/Identity)    Ctrl+U: clear field",
         help,
     )));
     lines.push(Line::from(Span::styled(

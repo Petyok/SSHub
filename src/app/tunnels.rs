@@ -213,6 +213,41 @@ impl App {
         Ok(())
     }
 
+    /// Ctrl+U on the tunnel form: kill the active text field back to its start.
+    pub(crate) fn tunnel_form_kill_to_start(&mut self) {
+        let Some(form) = self.tunnel_form.as_mut() else {
+            return;
+        };
+        if form.cursor > 0 {
+            let cursor = form.cursor;
+            let nc = form
+                .active_text_field_mut()
+                .map(|v| text_input::clear_before_cursor(v, cursor))
+                .unwrap_or(cursor);
+            form.cursor = nc;
+            form.dirty = true;
+        }
+    }
+
+    /// Ctrl+W on the tunnel form: delete the word before the cursor.
+    pub(crate) fn tunnel_form_kill_word(&mut self) {
+        let Some(form) = self.tunnel_form.as_mut() else {
+            return;
+        };
+        let len_before = form.active_text_field().map(text_input::char_len);
+        let cursor = form.cursor;
+        let nc = form
+            .active_text_field_mut()
+            .map(|v| text_input::delete_word_before(v, cursor))
+            .unwrap_or(cursor);
+        form.cursor = nc;
+        if len_before.is_some_and(|before| {
+            form.active_text_field().map(text_input::char_len) != Some(before)
+        }) {
+            form.dirty = true;
+        }
+    }
+
     pub(crate) fn handle_key_tunnel_form(&mut self, key: KeyEvent) -> Result<()> {
         let Some(form) = self.tunnel_form.as_ref() else {
             return Ok(());
@@ -312,6 +347,14 @@ impl App {
                         form.dirty = true;
                     }
                 }
+            }
+            // Readline-style bulk edits: Ctrl+U clears the field (a wrong port
+            // need not be backspaced digit by digit), Ctrl+W eats one word.
+            KeyCode::Char('u') if key.modifiers == KeyModifiers::CONTROL => {
+                self.tunnel_form_kill_to_start()
+            }
+            KeyCode::Char('w') if key.modifiers == KeyModifiers::CONTROL => {
+                self.tunnel_form_kill_word()
             }
             KeyCode::Char(c)
                 if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)

@@ -143,6 +143,15 @@ impl App {
             }
             KeyCode::BackTab | KeyCode::Up => self.identity_form_field_prev(),
             KeyCode::Backspace => self.identity_form_backspace(),
+            // Readline-style bulk edits: Ctrl+U kills to the field start,
+            // Ctrl+W eats one word back — a wrong passphrase must not have to
+            // be deleted character by character.
+            KeyCode::Char('u') if key.modifiers == KeyModifiers::CONTROL => {
+                self.identity_form_kill_to_start()
+            }
+            KeyCode::Char('w') if key.modifiers == KeyModifiers::CONTROL => {
+                self.identity_form_kill_word()
+            }
             KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End | KeyCode::Delete => {
                 self.identity_form_cursor_key(key.code)
             }
@@ -408,6 +417,35 @@ impl App {
         let c = form.cursor;
         if c > 0 {
             form.cursor = text_input::backspace_at(form.active_field_mut(), c);
+            form.dirty = true;
+        }
+    }
+
+    /// Ctrl+U: kill everything before the cursor — one chord wipes a whole
+    /// wrong passphrase instead of holding backspace.
+    pub(crate) fn identity_form_kill_to_start(&mut self) {
+        let Some(form) = self.identity_form.as_mut() else {
+            return;
+        };
+        // A pasted key blob goes wholesale (mirrors the backspace guard).
+        form.clear_pasted_key_marker();
+        let cursor = form.cursor;
+        if cursor > 0 {
+            form.cursor = text_input::clear_before_cursor(form.active_field_mut(), cursor);
+            form.dirty = true;
+        }
+    }
+
+    /// Ctrl+W: delete the word before the cursor.
+    pub(crate) fn identity_form_kill_word(&mut self) {
+        let Some(form) = self.identity_form.as_mut() else {
+            return;
+        };
+        form.clear_pasted_key_marker();
+        let len_before = text_input::char_len(form.active_field());
+        let cursor = form.cursor;
+        form.cursor = text_input::delete_word_before(form.active_field_mut(), cursor);
+        if text_input::char_len(form.active_field()) != len_before {
             form.dirty = true;
         }
     }

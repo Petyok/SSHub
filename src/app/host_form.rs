@@ -391,6 +391,15 @@ impl App {
                 self.host_form_toggle();
             }
             KeyCode::Backspace => self.host_form_backspace(),
+            // Readline-style bulk edits (Ctrl+U kills to start, Ctrl+W eats a
+            // word) so a wrong password or user does not have to be deleted one
+            // character at a time.
+            KeyCode::Char('u') if key.modifiers == KeyModifiers::CONTROL => {
+                self.host_form_kill_to_start()
+            }
+            KeyCode::Char('w') if key.modifiers == KeyModifiers::CONTROL => {
+                self.host_form_kill_word()
+            }
             KeyCode::Char(c)
                 if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
                     && !c.is_control()
@@ -457,6 +466,41 @@ impl App {
         let c = form.cursor;
         if c > 0 {
             form.cursor = text_input::backspace_at(form.active_field_mut(), c);
+            form.dirty = true;
+        }
+    }
+
+    pub(crate) fn host_form_kill_to_start(&mut self) {
+        let Some(form) = self.host_form.as_mut() else {
+            return;
+        };
+        if form.metadata_only && form.field.is_connection_field() {
+            return;
+        }
+        if form.field.is_picker() || form.field.is_toggle() {
+            return;
+        }
+        let cursor = form.cursor;
+        if cursor > 0 {
+            form.cursor = text_input::clear_before_cursor(form.active_field_mut(), cursor);
+            form.dirty = true;
+        }
+    }
+
+    pub(crate) fn host_form_kill_word(&mut self) {
+        let Some(form) = self.host_form.as_mut() else {
+            return;
+        };
+        if form.metadata_only && form.field.is_connection_field() {
+            return;
+        }
+        if form.field.is_picker() || form.field.is_toggle() {
+            return;
+        }
+        let len_before = text_input::char_len(form.active_field());
+        let cursor = form.cursor;
+        form.cursor = text_input::delete_word_before(form.active_field_mut(), cursor);
+        if text_input::char_len(form.active_field()) != len_before {
             form.dirty = true;
         }
     }

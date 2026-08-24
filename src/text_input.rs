@@ -49,6 +49,37 @@ pub fn delete_at(value: &mut String, cursor: usize) -> usize {
     cursor
 }
 
+/// Kill everything before `cursor` (readline's `unix-line-discard`, Ctrl+U).
+/// With the cursor parked at the end of a field this wipes the whole value in
+/// one chord instead of one backspace per character. Returns the new cursor.
+pub fn clear_before_cursor(value: &mut String, cursor: usize) -> usize {
+    let clamped = cursor.min(char_len(value));
+    let idx = byte_index(value, clamped);
+    value.replace_range(..idx, "");
+    0
+}
+
+/// Delete the word before `cursor` (readline's Ctrl+W). A word is a run of
+/// non-space characters; surrounding spaces go with it, so repeated chords
+/// keep eating back through a value. Returns the new cursor.
+pub fn delete_word_before(value: &mut String, cursor: usize) -> usize {
+    let len = char_len(value);
+    let mut pos = cursor.min(len);
+    while pos > 0 && value[..byte_index(value, pos)].ends_with(' ') {
+        pos -= 1;
+    }
+    while pos > 0 {
+        let prev = byte_index(value, pos - 1);
+        if value.as_bytes()[prev] == b' ' {
+            break;
+        }
+        pos -= 1;
+    }
+    let idx = byte_index(value, pos);
+    value.replace_range(idx..byte_index(value, cursor.min(len)), "");
+    pos
+}
+
 /// Handle a cursor-movement / forward-delete key on a `(value, cursor)` pair —
 /// the shared body of every form's Left/Right/Home/End/Delete handling.
 /// Returns `None` when the key isn't one of those; `Some(changed)` otherwise,
@@ -173,5 +204,63 @@ mod tests {
         let c = delete_at(&mut v, len);
         assert_eq!(v, "риет");
         assert_eq!(c, len);
+    }
+
+    #[test]
+    fn clear_before_cursor_wipes_the_whole_field_from_the_end() {
+        let mut v = "s3cret-pw".to_string();
+        let len = char_len(&v);
+        let c = clear_before_cursor(&mut v, len);
+        assert_eq!(v, "");
+        assert_eq!(c, 0);
+    }
+
+    #[test]
+    fn clear_before_cursor_keeps_the_tail() {
+        let mut v = "user@host".to_string();
+        let c = clear_before_cursor(&mut v, 4); // kill "user"
+        assert_eq!(v, "@host");
+        assert_eq!(c, 0);
+    }
+
+    #[test]
+    fn clear_before_cursor_is_multibyte_safe_and_clamps() {
+        let mut v = "привет".to_string();
+        // Cursor past the end clamps instead of panicking on a byte boundary.
+        let c = clear_before_cursor(&mut v, 99);
+        assert_eq!(v, "");
+        assert_eq!(c, 0);
+
+        let mut v = "🙂🙂".to_string();
+        let _ = clear_before_cursor(&mut v, 1); // kill one emoji
+        assert_eq!(v, "🙂");
+    }
+
+    #[test]
+    fn delete_word_before_eats_one_word_plus_trailing_space() {
+        let mut v = "docker compose up".to_string();
+        let end = char_len(&v);
+        let c = delete_word_before(&mut v, end);
+        assert_eq!(v, "docker compose ");
+        assert_eq!(c, char_len("docker compose "));
+
+        // Second chord eats the previous word too.
+        assert_eq!(delete_word_before(&mut v, c), char_len("docker "));
+        assert_eq!(v, "docker ");
+    }
+
+    #[test]
+    fn delete_word_before_stops_at_start_and_handles_empty_gap() {
+        let mut v = String::from("word");
+        let end = char_len(&v);
+        let c = delete_word_before(&mut v, end);
+        assert_eq!(v, "");
+        assert_eq!(c, 0);
+
+        // Nothing to delete: no-op, cursor unchanged.
+        let mut v = String::new();
+        let c = delete_word_before(&mut v, 0);
+        assert_eq!(v, "");
+        assert_eq!(c, 0);
     }
 }
