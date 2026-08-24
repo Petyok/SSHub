@@ -187,6 +187,8 @@ sshub exec prod-web -- systemctl is-active nginx
 sshub exec prod-web -- 'tail -n 200 /var/log/nginx/error.log' > errors.log
 echo "$payload" | sshub exec db-01 -- 'psql -f -'
 sshub exec prod-web --timeout 30 --format json -- uptime
+sshub exec prod-web -- 'ls && uptime'        # quote it: bare `&&` runs locally
+sshub exec prod-web --tty -- top             # full-screen commands need a PTY
 
 # Groups and identities
 sshub groups                                 # list host groups
