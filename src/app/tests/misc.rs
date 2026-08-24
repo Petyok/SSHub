@@ -822,3 +822,93 @@ fn push_key_from_hosts_opens_picker_without_visiting_keys_tab() {
         app.host_notice
     );
 }
+
+/// Another sshub window (or `sshub tunnel delete`) writes to the same store, so
+/// this window's snapshot has to be re-read: the deleted tunnel used to sit in
+/// the session top bar and the tunnels tab for as long as the window lived.
+#[test]
+fn a_tunnel_deleted_elsewhere_leaves_this_windows_list_on_the_next_sync() {
+    let mut app = test_app(vec![("edge", host("edge"))]);
+    let id = app
+        .store
+        .create_tunnel(&crate::store::NewTunnel {
+            host_id: None,
+            tunnel_type: crate::store::TunnelType::Local,
+            local_port: 5432,
+            remote_host: "127.0.0.1".into(),
+            remote_port: 5432,
+            label: Some("pg".into()),
+            auto_connect: false,
+        })
+        .unwrap();
+    app.reload_tunnels().unwrap();
+    assert_eq!(app.tunnels.len(), 1);
+    app.tunnel_selected = 0;
+
+    // The other window removes the row from the shared SQLite file.
+    assert!(app.store.delete_tunnel(id).unwrap());
+    assert_eq!(app.tunnels.len(), 1, "our snapshot is still stale");
+
+    app.sync_tunnels_from_store().unwrap();
+
+    assert!(app.tunnels.is_empty());
+    assert_eq!(
+        app.tunnel_selected, 0,
+        "selection clamped to the short list"
+    );
+}
+
+/// The selection is an index, so a row deleted *above* the cursor in another
+/// window used to slide a different tunnel under it — and the next `d` would
+/// have deleted that one.
+#[test]
+fn the_tunnel_selection_follows_its_row_across_a_sync() {
+    let mut app = test_app(vec![]);
+    for port in [5432u16, 6379, 8080] {
+        app.store
+            .create_tunnel(&crate::store::NewTunnel {
+                host_id: None,
+                tunnel_type: crate::store::TunnelType::Local,
+                local_port: port,
+                remote_host: "127.0.0.1".into(),
+                remote_port: port,
+                label: Some(format!("t{port}")),
+                auto_connect: false,
+            })
+            .unwrap();
+    }
+    app.reload_tunnels().unwrap();
+    assert_eq!(app.tunnels.len(), 3);
+
+    // Point at a known row, then have "another window" delete a different one.
+    let want = app.tunnels[2].id;
+    app.tunnel_selected = 2;
+    let other = app.tunnels[0].id;
+    assert!(app.store.delete_tunnel(other).unwrap());
+
+    app.sync_tunnels_from_store().unwrap();
+
+    assert_eq!(app.tunnels.len(), 2);
+    assert_eq!(
+        app.tunnels[app.tunnel_selected].id, want,
+        "the cursor stayed on the tunnel it was on, not on whatever took its index"
+    );
+}
+
+/// A bracketed paste has to land in the focused form field: the tunnel form was
+/// reported as "cannot paste into the port", which turned out to be the host
+/// terminal's mouse paste being swallowed by our mouse capture, not this path.
+#[test]
+fn a_paste_reaches_the_tunnel_form_port_field() {
+    let mut app = test_app(vec![("edge", host("edge"))]);
+    app.active_tab = 2;
+    app.handle_key(key(KeyCode::Char('a'))).unwrap();
+    assert_eq!(app.mode, AppMode::TunnelForm);
+    if let Some(f) = app.tunnel_form.as_mut() {
+        f.active_field = TunnelFormField::LocalPort;
+        f.cursor = 0;
+    }
+    app.handle_paste("8080").unwrap();
+    let f = app.tunnel_form.as_ref().unwrap();
+    assert_eq!(f.local_port, "8080", "paste landed: {:?}", f.local_port);
+}

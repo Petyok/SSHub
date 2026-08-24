@@ -45,15 +45,14 @@ pub(crate) fn write_text(text: &str) -> std::io::Result<()> {
 pub(crate) fn base64_encode(input: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
-    let mut chunks = input.chunks_exact(3);
-    for chunk in chunks.by_ref() {
+    let (chunks, rem) = input.as_chunks::<3>();
+    for chunk in chunks {
         let b = ((chunk[0] as u32) << 16) | ((chunk[1] as u32) << 8) | (chunk[2] as u32);
         out.push(ALPHABET[((b >> 18) & 0x3f) as usize] as char);
         out.push(ALPHABET[((b >> 12) & 0x3f) as usize] as char);
         out.push(ALPHABET[((b >> 6) & 0x3f) as usize] as char);
         out.push(ALPHABET[(b & 0x3f) as usize] as char);
     }
-    let rem = chunks.remainder();
     match rem.len() {
         1 => {
             let b = (rem[0] as u32) << 16;

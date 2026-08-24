@@ -413,7 +413,23 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "PgUp/PgDn",
-        desc: "Scroll session history",
+        desc: "Scroll session history; goes to the remote app while it holds the alternate screen (tmux, vim, less)",
+    },
+    HelpItem::Entry {
+        key: "wheel",
+        desc: "Scroll history; on the alternate screen it becomes arrow keys for the remote app (tmux needs `set -g mouse on` to scroll its own)",
+    },
+    HelpItem::Entry {
+        key: "drag",
+        desc: "Select terminal text, copied on release; Shift inverts it when the remote app owns the mouse (some terminals keep Shift for their own selection and paste)",
+    },
+    HelpItem::Entry {
+        key: "[forms]",
+        desc: "",
+    },
+    HelpItem::Entry {
+        key: "Ctrl+U / Ctrl+W",
+        desc: "Host / identity / tunnel form: kill everything before the cursor / the word before it",
     },
     HelpItem::Entry {
         key: "",

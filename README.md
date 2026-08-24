@@ -187,6 +187,8 @@ sshub exec prod-web -- systemctl is-active nginx
 sshub exec prod-web -- 'tail -n 200 /var/log/nginx/error.log' > errors.log
 echo "$payload" | sshub exec db-01 -- 'psql -f -'
 sshub exec prod-web --timeout 30 --format json -- uptime
+sshub exec prod-web -- 'ls && uptime'        # quote it: bare `&&` runs locally
+sshub exec prod-web --tty -- top             # full-screen commands need a PTY
 
 # Groups and identities
 sshub groups                                 # list host groups
@@ -285,6 +287,16 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | `Ctrl+[` / `Ctrl+]`   | Previous / next session tab         |
 | `Ctrl+Shift+S`         | Focus session from dashboard        |
 | `Alt+S`                | Switch to an open session (searchable) |
+| `PgUp`/`PgDn`, wheel   | Scroll session history; both go to the remote app while it holds the alternate screen (tmux, vim, less), where the wheel becomes arrow keys |
+| drag                   | Select terminal text, copied on release; `Shift` inverts it when the remote app owns the mouse |
+
+`Ctrl+W` closes a session tab, but inside a form it kills the word before the
+cursor (`Ctrl+U` kills everything before it) — the host, identity and tunnel
+forms take readline's editing chords.
+
+The wheel inside `tmux` reaches tmux's own scrollback only with
+`set -g mouse on`; without it tmux never asks for the mouse, so the notch
+arrives as arrow keys, exactly as in a real terminal.
 
 ### Hosts (tab 1)
 

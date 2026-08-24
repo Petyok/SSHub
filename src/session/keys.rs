@@ -97,6 +97,44 @@ fn arrow_seq(final_byte: char, mods: KeyModifiers, application_cursor: bool) -> 
 
 // ── Mouse encoding ────────────────────────────────────────────
 
+/// Whether a mouse event should drive a *local* selection / scroll instead of
+/// being forwarded to the remote.
+///
+/// The remote's mouse mode is not enough on its own: an app killed before it
+/// could send `?1002l` leaves reporting on, and every later drag at the shell
+/// prompt was encoded and echoed back by the shell as `0;47;13M` gibberish. An
+/// app that genuinely wants the mouse is normally also on the alternate screen
+/// (vim, htop, tmux, less all draw there), so the two together decide it.
+///
+/// Shift **inverts** whatever that decision was, which is the escape hatch in
+/// both directions: it takes a local selection over a full-screen app, and it
+/// forwards the mouse to an app that asked for it without taking the alternate
+/// screen (an inline picker drawn in place). With no mouse mode at all there is
+/// nothing to forward, so Shift changes nothing there.
+pub fn selects_locally(mode: MouseProtocolMode, alternate_screen: bool, shift: bool) -> bool {
+    if mode == MouseProtocolMode::None {
+        return true;
+    }
+    alternate_screen == shift
+}
+
+/// xterm's `alternateScroll`: the alternate grid keeps no scrollback of its own,
+/// so a wheel notch there becomes three arrow keys for the app that owns the
+/// screen. Without it the wheel scrolled nothing at all in `less`, `man` or a
+/// remote pager. `None` for anything that isn't a wheel event.
+pub fn alternate_scroll_keys(kind: MouseEventKind, application_cursor: bool) -> Option<Vec<u8>> {
+    let code = match kind {
+        MouseEventKind::ScrollUp => KeyCode::Up,
+        MouseEventKind::ScrollDown => KeyCode::Down,
+        _ => return None,
+    };
+    let one = encode(
+        KeyEvent::new(code, KeyModifiers::empty()),
+        application_cursor,
+    )?;
+    Some(one.repeat(3))
+}
+
 /// Encode a mouse event into the byte sequence expected by the remote app,
 /// or `None` if either the remote hasn't enabled mouse reporting or the
 /// event isn't relevant under the active protocol mode.
@@ -367,6 +405,57 @@ mod tests {
             encode_normal(k(KeyCode::Char('é'))).unwrap(),
             "é".as_bytes().to_vec()
         );
+    }
+
+    // ── Mouse routing tests ──────────────────────────────────
+
+    #[test]
+    fn a_shell_prompt_selects_locally_even_with_mouse_reporting_left_on() {
+        // The leak an app killed mid-run leaves behind: mode is still on, but
+        // the prompt is on the primary screen, so a drag must select text
+        // rather than spray SGR reports at the shell.
+        assert!(selects_locally(
+            MouseProtocolMode::ButtonMotion,
+            false,
+            false
+        ));
+        assert!(selects_locally(MouseProtocolMode::None, false, false));
+        assert!(selects_locally(MouseProtocolMode::None, true, false));
+    }
+
+    #[test]
+    fn a_full_screen_app_that_asked_for_the_mouse_gets_it() {
+        assert!(!selects_locally(
+            MouseProtocolMode::ButtonMotion,
+            true,
+            false
+        ));
+        // Shift is the escape hatch back to a local selection.
+        assert!(selects_locally(MouseProtocolMode::ButtonMotion, true, true));
+    }
+
+    #[test]
+    fn shift_forwards_to_an_inline_app_that_kept_the_primary_screen() {
+        // The other direction of the same escape hatch: a picker drawn in place
+        // that asked for the mouse is indistinguishable from a leaked mode, so
+        // Shift is what lets the user hand it the mouse anyway.
+        assert!(!selects_locally(
+            MouseProtocolMode::ButtonMotion,
+            false,
+            true
+        ));
+        // With no mouse mode there is nothing to forward, Shift or not.
+        assert!(selects_locally(MouseProtocolMode::None, false, true));
+        assert!(selects_locally(MouseProtocolMode::None, true, true));
+    }
+
+    #[test]
+    fn alternate_scroll_sends_three_arrows_per_notch() {
+        let up = alternate_scroll_keys(MouseEventKind::ScrollUp, false).unwrap();
+        assert_eq!(up, b"\x1b[A\x1b[A\x1b[A".to_vec());
+        let down = alternate_scroll_keys(MouseEventKind::ScrollDown, true).unwrap();
+        assert_eq!(down, b"\x1bOB\x1bOB\x1bOB".to_vec());
+        assert!(alternate_scroll_keys(MouseEventKind::Moved, false).is_none());
     }
 
     // ── Mouse encoding tests ─────────────────────────────────

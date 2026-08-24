@@ -78,6 +78,12 @@ OPTIONS:
                           stdout, stderr, duration_ms}}; plain (default) streams
     -v, --verbose         Verbose ssh logging on stderr
 
+Shell operators belong to whichever shell reads them: `sshub exec web -- ls &&
+uptime` runs `ls` on the host and `uptime` at home, exactly as `ssh` does. Quote
+the whole thing to send it all remotely: `sshub exec web -- 'ls && uptime'`. A
+full-screen command (vim, top, less) needs `--tty`; without it there is no
+terminal on the far side and it will complain or misdraw.
+
 stdout/stderr pass through, stdin is inherited so pipes work, and the exit code
 is the remote command's (ssh's own failures keep ssh's 255). Never prompts: with
 no stored credential exec runs ssh in BatchMode, so an unknown host key fails

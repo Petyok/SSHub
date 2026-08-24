@@ -535,7 +535,10 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
         buf.set_string(
             inner.x + 1,
             footer_top,
-            crate::tui::text::ellipsize("type to edit  Tab/\u{2193}: next field", avail),
+            crate::tui::text::ellipsize(
+                "type to edit  Tab/\u{2193}: next field  Ctrl+U/W: kill line/word",
+                avail,
+            ),
             theme.style(StyleRole::TunnelFormHelp),
         );
         let save_esc = format!("{}: save", app.save_key_label());

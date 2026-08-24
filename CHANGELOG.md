@@ -4,6 +4,110 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-08-24
+
+### Added
+
+- **Ctrl+U and Ctrl+W kill a form field in one chord** (issue #115) - a wrong
+  password, a wrong username or a mistyped port could only be removed one
+  Backspace per character, which for a long masked secret is a dozen keystrokes
+  with no way to tell when the field is finally empty. The host form, the
+  identity form and the tunnel form now take readline's binds: Ctrl+U kills
+  everything before the cursor (the whole value with the cursor parked at the
+  end), Ctrl+W eats one word back. Both live in `text_input` beside the existing
+  backspace/cursor helpers, so they are multibyte-safe and clamp a cursor past
+  the end instead of panicking on a byte boundary. The three form footers, the
+  help overlay and the README name both chords; they are fixed editing keys, not
+  rebindable actions, like Backspace and the arrows they sit next to.
+
+### Fixed
+
+- **A masked password says how to unmask itself** (issue #115) - the host and
+  identity forms arrive prefilled with the stored secret and mask it, and the
+  only mention of the bind that shows it was a footer row: 70% of a 24-row
+  terminal is 16 rows, the host form needs 22, and the overflow — reveal hint,
+  save, cancel — fell off the bottom. So the field read as a wall of dots with no
+  way out. The reveal bind now rides the password row itself while that row is
+  focused (`Ctrl+R: show + copy` by default, whatever it is bound to), and a form
+  popup is sized to the rows it actually draws instead of a flat 70%, so its own
+  footer stops being the first thing clipped. A render test at 80x24 holds both,
+  so adding a field cannot quietly re-clip them.
+
+- **The wheel and PageUp/PageDown reach the remote app on the alternate screen**
+  (issue #115) - inside `vim`, `less`, `man`, `tmux` or anything else drawing on
+  the alternate screen, neither did anything: that grid keeps no scrollback of
+  its own (vt100 gives it zero rows), and sshub was spending both on a local
+  scroll that had nothing to move. They now go to the app that drew the screen,
+  and a wheel notch there becomes three arrow keys — xterm's `alternateScroll`,
+  which is what makes a wheel scroll a remote pager at all. Shift opts out and
+  keeps the wheel on sshub's own scrollback. Two limits worth knowing: `tmux`
+  scrolls its *own* history only with `set -g mouse on` (without it tmux never
+  asks for the mouse, so the notch arrives as arrow keys — the same as in a real
+  terminal, where they reach the shell as history navigation), and a pager
+  started with `-X` (git's default `LESS=FRX`, `journalctl`) never takes the
+  alternate screen at all, so `git log` keeps scrolling sshub's buffer as before.
+  On the primary screen nothing changes.
+
+- **The wheel says where tmux's own scrolling switch is** (issue #115) - on the
+  alternate screen a terminal can only turn a notch into arrow keys, and inside
+  `tmux` those land in the shell's history rather than scrolling anything, which
+  reads as "the wheel is broken". The session now says it once, in its own toast:
+  `wheel → ↑ keys here — tmux scrolls with: set -g mouse on`. Once per session,
+  not once per notch, and it fires on the notch rather than on a guess about what
+  is running — from a PTY we see a byte stream, not processes, and tmux's status
+  line is the first thing people re-style. Nothing is sent to the remote and
+  nothing is reconfigured there: what to run stays the user's call.
+
+- **A wheel that cannot scroll no longer drags the selection instead** (issue
+  #115) - reported from a live `tmux`: the wheel moved the highlighted block down
+  the screen while the text stayed exactly where it was. The view is allowed to
+  move less than asked — the top of the buffer clamps, and the alternate screen
+  keeps no scrollback at all — but the selection was shifted by the full
+  requested amount regardless, so the highlight slid across static rows. It now
+  moves by however far the view actually moved, which on the alternate screen is
+  nothing. Both the wheel and PageUp/PageDown went through the same unguarded
+  path; they share one method now.
+
+- **A drag at the shell prompt selects text instead of spraying `0;47;13M`**
+  (issue #115) - an app killed before it could send `ESC [ ? 1002 l` leaves mouse
+  reporting on, and every later click or drag was then encoded and echoed back by
+  the remote shell as mouse-report gibberish. Forwarding now needs the remote to
+  be on the alternate screen as well as to have asked for the mouse — vim, htop
+  and tmux all draw there, so the app that wants the mouse still gets it, while a
+  leaked mode at a prompt selects text like it should. Shift **inverts** that
+  decision either way: it takes a local selection over a full-screen app, and it
+  hands the mouse to an app that asked for it without leaving the primary screen
+  (an inline picker), which is also the recovery path if the guess is ever wrong.
+  Terminals that keep Shift+mouse for their own selection give you theirs
+  instead. A stray click on sshub's own header or footer row no longer reports
+  itself to the remote as an edge row of the grid.
+
+- **A tunnel changed in another sshub window no longer lingers here** (issue
+  #115) - the tunnel list is a snapshot and the store is shared, so a tunnel
+  deleted or edited in a second window, or by `sshub tunnel`, stayed in this
+  window's session top bar and tunnels tab for as long as the window lived. The
+  list is now re-read from the store every two seconds, with the selection
+  re-anchored by id so a row deleted above the cursor cannot slide a different
+  tunnel under the next `d`. Running children are left alone: an edit elsewhere
+  is a delete plus an insert (tunnels have no `UPDATE`), so a vanished id does
+  not mean a vanished tunnel. Cross-window *run state* stays per-window — the
+  TUI's tunnels are its own children, with no pid file to see another window's by.
+
+- **`Ctrl+U`, `End` or Backspace on the host form's *Session log* row no longer
+  edits the address** - every non-text row (the pickers, the toggles, the
+  tri-state) was handed `&mut address` as its "active field", so editing keys
+  aimed at them rewrote the address invisibly; with Ctrl+U in hand it went from
+  one character per press to the whole value in one chord. The accessor now
+  returns `Option`, which makes the compiler ask each caller what a non-text row
+  means, and answers "nothing to edit".
+
+- **`sshub exec` says out loud which shell reads a `&&`** (issue #115) - `sshub
+  exec web -- ls && uptime` runs `ls` on the host and `uptime` at home, because
+  the local shell splits the line before sshub ever sees it — the same as with
+  `ssh`, and reported as a bug because nothing said so. `--help`, the man page
+  and the README now show the quoted form (`-- 'ls && uptime'`) next to the note
+  that a full-screen command (vim, top, less) needs `--tty`. Behaviour unchanged.
+
 ## [0.15.1] - 2026-08-20
 
 ### Fixed
