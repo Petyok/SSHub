@@ -858,6 +858,43 @@ fn a_tunnel_deleted_elsewhere_leaves_this_windows_list_on_the_next_sync() {
     );
 }
 
+/// The selection is an index, so a row deleted *above* the cursor in another
+/// window used to slide a different tunnel under it — and the next `d` would
+/// have deleted that one.
+#[test]
+fn the_tunnel_selection_follows_its_row_across_a_sync() {
+    let mut app = test_app(vec![]);
+    for port in [5432u16, 6379, 8080] {
+        app.store
+            .create_tunnel(&crate::store::NewTunnel {
+                host_id: None,
+                tunnel_type: crate::store::TunnelType::Local,
+                local_port: port,
+                remote_host: "127.0.0.1".into(),
+                remote_port: port,
+                label: Some(format!("t{port}")),
+                auto_connect: false,
+            })
+            .unwrap();
+    }
+    app.reload_tunnels().unwrap();
+    assert_eq!(app.tunnels.len(), 3);
+
+    // Point at a known row, then have "another window" delete a different one.
+    let want = app.tunnels[2].id;
+    app.tunnel_selected = 2;
+    let other = app.tunnels[0].id;
+    assert!(app.store.delete_tunnel(other).unwrap());
+
+    app.sync_tunnels_from_store().unwrap();
+
+    assert_eq!(app.tunnels.len(), 2);
+    assert_eq!(
+        app.tunnels[app.tunnel_selected].id, want,
+        "the cursor stayed on the tunnel it was on, not on whatever took its index"
+    );
+}
+
 /// A bracketed paste has to land in the focused form field: the tunnel form was
 /// reported as "cannot paste into the port", which turned out to be the host
 /// terminal's mouse paste being swallowed by our mouse capture, not this path.

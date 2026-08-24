@@ -59,9 +59,10 @@ pub fn clear_before_cursor(value: &mut String, cursor: usize) -> usize {
     0
 }
 
-/// Delete the word before `cursor` (readline's Ctrl+W). A word is a run of
-/// non-space characters; surrounding spaces go with it, so repeated chords
-/// keep eating back through a value. Returns the new cursor.
+/// Delete the word before `cursor` (readline's `backward-kill-word`, Ctrl+W). A
+/// word is a run of non-space characters; the spaces *after* it go with it, the
+/// one in front stays, so repeated chords keep eating back through a value one
+/// word at a time. Returns the new cursor.
 pub fn delete_word_before(value: &mut String, cursor: usize) -> usize {
     let len = char_len(value);
     let mut pos = cursor.min(len);

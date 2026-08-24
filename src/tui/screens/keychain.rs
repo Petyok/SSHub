@@ -104,7 +104,9 @@ pub fn render_identity_form(
         ]));
     }
     lines.push(ratatui::text::Line::from(""));
-    let base = format!("type to edit │ paste a key or its path into Private key │ Tab/↓: next │ Ctrl+U: clear field │ {save_hint}: save │ Esc: cancel");
+    // Save/cancel stay at the end: the middle of this row is what truncation
+    // eats first on a narrow terminal (see the 0.9.x footer fix).
+    let base = format!("type to edit │ paste a key or its path into Private key │ Tab/↓: next │ {save_hint}: save │ Esc: cancel │ Ctrl+U/W: kill line/word");
     // On the passphrase field the secret binds come first: the value is masked,
     // so that is the moment the user needs to know how to see or copy it.
     let hint = if form.field == IdentityFormField::Password && !secret_hints.is_empty() {

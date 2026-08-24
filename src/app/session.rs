@@ -480,8 +480,7 @@ impl App {
 
         // Local text selection drives the mouse when the remote app isn't
         // consuming it (plain shell → just drag to select, no Shift needed);
-        // when the remote wants the mouse (vim/tmux/…), Shift forces a local
-        // selection instead of forwarding the event. See
+        // Shift inverts that decision in either direction. See
         // [`crate::session::keys::selects_locally`] for why the mouse mode
         // alone does not decide it.
         let selecting = crate::session::keys::selects_locally(mode, alternate_screen, shift);
@@ -509,8 +508,11 @@ impl App {
                 // xterm's alternateScroll: the alternate grid keeps no
                 // scrollback, so the notch becomes arrow keys for the app that
                 // owns the screen instead of a local scroll that can move
-                // nothing.
-                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown if alternate_screen => {
+                // nothing. Shift opts out — it is the wheel's way back to our
+                // own scrollback, which is what it means in a real terminal.
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                    if alternate_screen && !shift =>
+                {
                     let app_cursor = session.parser.screen().application_cursor();
                     if let Some(bytes) =
                         crate::session::keys::alternate_scroll_keys(mouse.kind, app_cursor)
@@ -534,10 +536,14 @@ impl App {
         }
 
         // Remote app is consuming mouse — translate to the wire protocol.
-        let local_y = mouse.row.saturating_sub(1);
-        if let Some(bytes) =
-            crate::session::keys::encode_mouse(mouse, mouse.column, local_y, mode, encoding)
-        {
+        // Only events inside the grid go out: row 0 is our own header and
+        // anything past the last row is the footer, and reporting either as an
+        // edge row of the grid made a stray click on sshub's chrome land on the
+        // remote (tmux's status line with `status-position top`, for one).
+        if mouse.row == 0 || mouse.row.saturating_sub(1) >= rows || mouse.column >= cols {
+            return;
+        }
+        if let Some(bytes) = crate::session::keys::encode_mouse(mouse, col, row, mode, encoding) {
             let _ = session.write(&bytes);
         }
     }

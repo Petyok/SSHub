@@ -103,16 +103,19 @@ fn arrow_seq(final_byte: char, mods: KeyModifiers, application_cursor: bool) -> 
 /// The remote's mouse mode is not enough on its own: an app killed before it
 /// could send `?1002l` leaves reporting on, and every later drag at the shell
 /// prompt was encoded and echoed back by the shell as `0;47;13M` gibberish. An
-/// app that genuinely wants the mouse is also on the alternate screen (vim,
-/// htop, tmux, less all draw there), so the two together decide it, and Shift
-/// always forces a local selection.
+/// app that genuinely wants the mouse is normally also on the alternate screen
+/// (vim, htop, tmux, less all draw there), so the two together decide it.
 ///
-/// Ceiling: an app that asks for the mouse while staying on the primary screen
-/// (`fzf --height`) gets local selection instead — the same trade xterm makes
-/// for its alternateScroll heuristic.
+/// Shift **inverts** whatever that decision was, which is the escape hatch in
+/// both directions: it takes a local selection over a full-screen app, and it
+/// forwards the mouse to an app that asked for it without taking the alternate
+/// screen (an inline picker drawn in place). With no mouse mode at all there is
+/// nothing to forward, so Shift changes nothing there.
 pub fn selects_locally(mode: MouseProtocolMode, alternate_screen: bool, shift: bool) -> bool {
-    let remote_wants_mouse = mode != MouseProtocolMode::None && alternate_screen;
-    !remote_wants_mouse || shift
+    if mode == MouseProtocolMode::None {
+        return true;
+    }
+    alternate_screen == shift
 }
 
 /// xterm's `alternateScroll`: the alternate grid keeps no scrollback of its own,
@@ -429,6 +432,21 @@ mod tests {
         ));
         // Shift is the escape hatch back to a local selection.
         assert!(selects_locally(MouseProtocolMode::ButtonMotion, true, true));
+    }
+
+    #[test]
+    fn shift_forwards_to_an_inline_app_that_kept_the_primary_screen() {
+        // The other direction of the same escape hatch: a picker drawn in place
+        // that asked for the mouse is indistinguishable from a leaked mode, so
+        // Shift is what lets the user hand it the mouse anyway.
+        assert!(!selects_locally(
+            MouseProtocolMode::ButtonMotion,
+            false,
+            true
+        ));
+        // With no mouse mode there is nothing to forward, Shift or not.
+        assert!(selects_locally(MouseProtocolMode::None, false, true));
+        assert!(selects_locally(MouseProtocolMode::None, true, true));
     }
 
     #[test]

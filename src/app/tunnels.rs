@@ -624,24 +624,28 @@ impl App {
     /// Re-read the tunnel list from the store, throttled to once every two
     /// seconds.
     ///
-    /// The list is a snapshot, and the store is shared: a second sshub window
-    /// or a `sshub tunnel` command can add, edit or delete a row under us. Until
+    /// The list is a snapshot, and the store is shared: a second sshub window or
+    /// a `sshub tunnel` command can add, edit or delete a row under us. Until
     /// this ran, a tunnel deleted in another window stayed in this window's
-    /// session top bar and tunnels tab for as long as the window lived. A child
-    /// we still own for a row that no longer exists is stopped — otherwise it
-    /// keeps its local port bound with nothing left to describe it.
+    /// session top bar and tunnels tab for as long as the window lived.
+    ///
+    /// The selection is re-anchored by id, the way [`Self::reload_identities`]
+    /// does: it is a raw index, and another window deleting a row above it used
+    /// to slide it onto a different tunnel — with the reload now running on a
+    /// timer, the next `d` would have hit whatever moved under the cursor.
+    ///
+    /// Our own children are left alone. An edit elsewhere is a delete plus an
+    /// insert (there is no `UPDATE` for tunnels), so "this id is gone" does not
+    /// mean "this tunnel is gone", and killing the child on that signal would
+    /// take down a tunnel someone merely relabelled in another window.
     pub(crate) fn sync_tunnels_from_store(&mut self) -> Result<()> {
         self.tunnels_synced = std::time::Instant::now();
-        let before: Vec<i64> = self.tunnels.iter().map(|t| t.id).collect();
+        let selected_id = self.tunnels.get(self.tunnel_selected).map(|t| t.id);
         self.reload_tunnels()?;
-        for id in before {
-            if !self.tunnels.iter().any(|t| t.id == id) && self.tunnel_manager.has_child(id) {
-                let _ = self.tunnel_manager.stop_user(id);
-            }
-        }
-        if self.tunnel_selected >= self.tunnels.len() {
-            self.tunnel_selected = self.tunnels.len().saturating_sub(1);
-        }
+        self.tunnel_selected = selected_id
+            .and_then(|id| self.tunnels.iter().position(|t| t.id == id))
+            .unwrap_or(self.tunnel_selected)
+            .min(self.tunnels.len().saturating_sub(1));
         Ok(())
     }
 

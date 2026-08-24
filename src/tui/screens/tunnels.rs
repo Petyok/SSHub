@@ -536,7 +536,7 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
             inner.x + 1,
             footer_top,
             crate::tui::text::ellipsize(
-                "type to edit  Tab/\u{2193}: next field  Ctrl+U: clear",
+                "type to edit  Tab/\u{2193}: next field  Ctrl+U/W: kill line/word",
                 avail,
             ),
             theme.style(StyleRole::TunnelFormHelp),

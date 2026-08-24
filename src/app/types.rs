@@ -1497,23 +1497,30 @@ impl HostFormEdit {
         }
     }
 
-    pub(crate) fn active_field_mut(&mut self) -> &mut String {
+    /// The active field's buffer, or `None` on a field that holds no text — a
+    /// picker, a toggle or the tri-state. It used to hand out `&mut address` for
+    /// those, so every edit key aimed at them silently rewrote the address
+    /// instead: `End` then `Ctrl+U` on *Session log* emptied it in two
+    /// keystrokes. `Option` makes the compiler ask each caller what a non-text
+    /// field means, the way [`TunnelFormEdit::active_text_field_mut`] already
+    /// does.
+    pub(crate) fn active_field_mut(&mut self) -> Option<&mut String> {
         match self.field {
-            HostFormField::Address => &mut self.address,
-            HostFormField::Username => &mut self.username,
-            HostFormField::Label => &mut self.label,
-            HostFormField::Name => &mut self.name,
-            HostFormField::Port => &mut self.port,
-            HostFormField::Group | HostFormField::Identity | HostFormField::OsIcon => {
-                &mut self.address
-            }
-            HostFormField::Tags => &mut self.tags,
-            HostFormField::ProxyJump => &mut self.proxy_jump,
-            HostFormField::RemoteCommand => &mut self.remote_command,
-            HostFormField::ForwardAgent
+            HostFormField::Address => Some(&mut self.address),
+            HostFormField::Username => Some(&mut self.username),
+            HostFormField::Label => Some(&mut self.label),
+            HostFormField::Name => Some(&mut self.name),
+            HostFormField::Port => Some(&mut self.port),
+            HostFormField::Tags => Some(&mut self.tags),
+            HostFormField::ProxyJump => Some(&mut self.proxy_jump),
+            HostFormField::RemoteCommand => Some(&mut self.remote_command),
+            HostFormField::Password => Some(&mut self.password),
+            HostFormField::Group
+            | HostFormField::Identity
+            | HostFormField::OsIcon
+            | HostFormField::ForwardAgent
             | HostFormField::Transport
-            | HostFormField::SessionLogging => &mut self.address,
-            HostFormField::Password => &mut self.password,
+            | HostFormField::SessionLogging => None,
         }
     }
 }

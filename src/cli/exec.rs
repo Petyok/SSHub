@@ -456,6 +456,23 @@ mod tests {
         assert_eq!(cmd.as_deref(), Some("tail -n 5 log"));
     }
 
+    /// The docs now promise that quoting sends a shell operator to the far side
+    /// (`-- 'ls && uptime'`), so the operator has to survive as one argv word —
+    /// unquoted, the local shell splits the line before we are even started.
+    #[test]
+    fn a_quoted_shell_operator_reaches_ssh_as_one_word() {
+        let (head, cmd) = split_at_dashes(&s(&["web", "--", "ls && uptime"]));
+        assert_eq!(head, s(&["web"]));
+        assert_eq!(cmd.as_deref(), Some("ls && uptime"));
+
+        let argv = exec_argv(s(&["ssh", "web"]), None, "ls && uptime", false, false);
+        assert_eq!(
+            &argv[argv.len() - 2..],
+            &s(&["--", "ls && uptime"])[..],
+            "the operator must stay in one word: {argv:?}"
+        );
+    }
+
     #[test]
     fn split_at_dashes_without_a_separator_leaves_the_command_to_the_positionals() {
         let (head, cmd) = split_at_dashes(&s(&["web", "uptime"]));

@@ -281,3 +281,62 @@ pub(crate) fn secret_field_hints_name_the_binds_and_follow_rebinds() {
         "a rebind shows through and an unbound action says nothing"
     );
 }
+
+/// Ctrl+U wipes the field the user is looking at — and *only* that field. Every
+/// non-text row used to be handed `&mut address` as its "active field", so
+/// `End` then `Ctrl+U` on *Session log* emptied the address behind the user's
+/// back (Backspace did the same, one character at a time).
+#[test]
+pub(crate) fn ctrl_u_on_a_non_text_row_leaves_the_address_alone() {
+    let mut app = test_app(vec![]);
+    app.enter_host_form(None, false).unwrap();
+    if let Some(form) = app.host_form.as_mut() {
+        form.address = "10.0.0.1".into();
+        form.field = HostFormField::SessionLogging;
+        form.cursor = 0;
+    }
+
+    for k in [KeyCode::End, KeyCode::Char('u'), KeyCode::Backspace] {
+        let ev = if k == KeyCode::Char('u') {
+            KeyEvent::new(k, KeyModifiers::CONTROL)
+        } else {
+            key(k)
+        };
+        app.handle_key(ev).unwrap();
+    }
+
+    let form = app.host_form.as_ref().unwrap();
+    assert_eq!(form.address, "10.0.0.1");
+    assert_eq!(form.field, HostFormField::SessionLogging);
+    assert!(!form.dirty, "nothing was edited, so nothing is dirty");
+}
+
+/// The chords the bug report asked for, at the layer they were reported: the
+/// key has to reach the field, not just the helper in `text_input`.
+#[test]
+pub(crate) fn ctrl_u_and_ctrl_w_clear_the_focused_form_field() {
+    let mut app = test_app(vec![]);
+    app.enter_host_form(None, false).unwrap();
+    if let Some(form) = app.host_form.as_mut() {
+        form.field = HostFormField::Username;
+        form.username = "deploy".into();
+        form.cursor = text_input::char_len(&form.username);
+    }
+    app.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL))
+        .unwrap();
+    let form = app.host_form.as_ref().unwrap();
+    assert_eq!(form.username, "", "Ctrl+U killed the whole username");
+    assert_eq!(form.cursor, 0);
+    assert!(form.dirty);
+
+    // Ctrl+W is not eaten upstream by the session's "close tab" bind.
+    if let Some(form) = app.host_form.as_mut() {
+        form.field = HostFormField::Password;
+        form.password = "one two".into();
+        form.cursor = text_input::char_len(&form.password);
+    }
+    app.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.mode, AppMode::HostForm, "the form is still open");
+    assert_eq!(app.host_form.as_ref().unwrap().password, "one ");
+}
