@@ -4,6 +4,8 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-08-24
+
 ### Added
 
 - **Ctrl+U and Ctrl+W kill a form field in one chord** (issue #115) - a wrong
