@@ -410,6 +410,16 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
+    (@fn snippets_manage $($key:literal),* $(,)?) => {
+        fn default_kb_snippets_manage() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
+    (@fn session_snippets $($key:literal),* $(,)?) => {
+        fn default_kb_session_snippets() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
 }
 
 kb_defaults! {
@@ -493,6 +503,8 @@ kb_defaults! {
     known_hosts => ["H"],
     known_hosts_delete => ["Ctrl+D"],
     known_hosts_refresh => ["Ctrl+R"],
+    snippets_manage => ["Shift+S"],
+    session_snippets => ["Ctrl+N"],
 }
 /// An action whose keybinding is user-configurable and editable in the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -577,11 +589,13 @@ pub enum KeyAction {
     KnownHosts,
     KnownHostsDelete,
     KnownHostsRefresh,
+    SnippetsManage,
+    SessionSnippets,
 }
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 80] = [
+    pub const ALL: [KeyAction; 82] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -662,6 +676,8 @@ impl KeyAction {
         KeyAction::KnownHosts,
         KeyAction::KnownHostsDelete,
         KeyAction::KnownHostsRefresh,
+        KeyAction::SnippetsManage,
+        KeyAction::SessionSnippets,
     ];
 
     pub fn label(self) -> &'static str {
@@ -746,6 +762,8 @@ impl KeyAction {
             KeyAction::KnownHosts => "Known hosts",
             KeyAction::KnownHostsDelete => "Known hosts: delete",
             KeyAction::KnownHostsRefresh => "Known hosts: refresh",
+            KeyAction::SnippetsManage => "Manage command snippets",
+            KeyAction::SessionSnippets => "Session: run a command snippet",
         }
     }
 }
@@ -913,6 +931,10 @@ pub struct KeybindsConfig {
     pub known_hosts_delete: Vec<String>,
     #[serde(default = "default_kb_known_hosts_refresh")]
     pub known_hosts_refresh: Vec<String>,
+    #[serde(default = "default_kb_snippets_manage")]
+    pub snippets_manage: Vec<String>,
+    #[serde(default = "default_kb_session_snippets")]
+    pub session_snippets: Vec<String>,
 }
 
 impl Default for KeybindsConfig {
@@ -998,6 +1020,8 @@ impl Default for KeybindsConfig {
             known_hosts: default_kb_known_hosts(),
             known_hosts_delete: default_kb_known_hosts_delete(),
             known_hosts_refresh: default_kb_known_hosts_refresh(),
+            snippets_manage: default_kb_snippets_manage(),
+            session_snippets: default_kb_session_snippets(),
         }
     }
 }
@@ -1085,6 +1109,8 @@ impl KeybindsConfig {
             KeyAction::KnownHosts => default_kb_known_hosts(),
             KeyAction::KnownHostsDelete => default_kb_known_hosts_delete(),
             KeyAction::KnownHostsRefresh => default_kb_known_hosts_refresh(),
+            KeyAction::SnippetsManage => default_kb_snippets_manage(),
+            KeyAction::SessionSnippets => default_kb_session_snippets(),
         }
     }
 
@@ -1247,6 +1273,8 @@ impl KeybindsConfig {
             KeyAction::KnownHosts => &self.known_hosts,
             KeyAction::KnownHostsDelete => &self.known_hosts_delete,
             KeyAction::KnownHostsRefresh => &self.known_hosts_refresh,
+            KeyAction::SnippetsManage => &self.snippets_manage,
+            KeyAction::SessionSnippets => &self.session_snippets,
         }
     }
 
@@ -1332,6 +1360,8 @@ impl KeybindsConfig {
             KeyAction::KnownHosts => self.known_hosts = binds,
             KeyAction::KnownHostsDelete => self.known_hosts_delete = binds,
             KeyAction::KnownHostsRefresh => self.known_hosts_refresh = binds,
+            KeyAction::SnippetsManage => self.snippets_manage = binds,
+            KeyAction::SessionSnippets => self.session_snippets = binds,
         }
     }
 

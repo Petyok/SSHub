@@ -705,6 +705,12 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
             }
             screens::session_picker::render(frame, app);
         }
+        if app.mode == AppMode::SnippetPicker {
+            if app.motion_enabled() {
+                *app.popup_backdrop.borrow_mut() = Some(frame.buffer_mut().clone());
+            }
+            screens::snippet_picker::render(frame, app);
+        }
         return;
     }
 
@@ -887,6 +893,12 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
         AppMode::BroadcastPreview => screens::broadcast::render_preview(frame, app),
         AppMode::Notice => render_notice_popup(frame, app),
         AppMode::KnownHosts => screens::known_hosts::render_known_hosts(frame, app),
+        AppMode::SnippetManage => screens::snippet_manage::render_snippet_manage_popup(frame, app),
+        AppMode::SnippetForm => {
+            // Keep the snippet list behind the form for context.
+            screens::snippet_manage::render_snippet_manage_popup(frame, app);
+            screens::snippet_form::render_snippet_form(frame, app);
+        }
         _ => {}
     }
 }
@@ -1918,6 +1930,7 @@ fn render_confirm_delete_popup(frame: &mut Frame, app: &App) {
         Some(PendingDelete::Identity { name, .. }) => format!("Delete identity '{name}'?"),
         Some(PendingDelete::Group { name, .. }) => format!("Delete group '{name}'?"),
         Some(PendingDelete::Tunnel { label, .. }) => format!("Delete tunnel '{label}'?"),
+        Some(PendingDelete::Snippet { name, .. }) => format!("Delete snippet '{name}'?"),
         Some(PendingDelete::SftpEntry { name, is_dir, .. }) => {
             if *is_dir {
                 format!("Delete folder '{name}' and all its contents?")

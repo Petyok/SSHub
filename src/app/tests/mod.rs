@@ -140,6 +140,7 @@ mod keybind;
 mod misc;
 mod session;
 mod sftp;
+mod snippets;
 mod tags;
 mod theme_picker;
 mod transport;

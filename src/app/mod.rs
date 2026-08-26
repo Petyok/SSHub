@@ -19,6 +19,7 @@ mod session;
 mod session_picker;
 mod session_spawn;
 mod sftp;
+mod snippets;
 mod tags;
 mod theme_picker;
 mod tunnels;
@@ -256,6 +257,15 @@ pub struct App {
     pub broadcast_panel_gone_at: Option<std::time::Instant>,
     pub group_manage_selected: usize,
     pub group_notice: Option<String>,
+    /// Command-snippet library, loaded from the store on demand.
+    pub snippets: Vec<crate::store::Snippet>,
+    /// Highlighted row in the snippet manager ([`AppMode::SnippetManage`]).
+    pub snippet_manage_selected: usize,
+    /// In-progress snippet add/edit form ([`AppMode::SnippetForm`]).
+    pub snippet_form: Option<SnippetFormEdit>,
+    /// Live snippet picker state ([`AppMode::SnippetPicker`]).
+    pub snippet_picker: Option<SnippetPickerState>,
+    pub snippet_notice: Option<String>,
     pub host_notice: Option<String>,
     /// Message shown by the modal `AppMode::Notice` popup (e.g. a connect error).
     pub notice_popup: Option<String>,
@@ -924,6 +934,11 @@ impl App {
             broadcast_panel_gone_at: None,
             group_manage_selected: 0,
             group_notice: None,
+            snippets: Vec::new(),
+            snippet_manage_selected: 0,
+            snippet_form: None,
+            snippet_picker: None,
+            snippet_notice: None,
             host_notice: None,
             notice_popup: None,
             known_hosts: None,

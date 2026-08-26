@@ -32,6 +32,11 @@ impl App {
             self.open_sftp_for_active_session();
             return Ok(());
         }
+        if self.is_action(KeyAction::SessionSnippets, &key) {
+            let return_mode = self.mode;
+            self.open_snippet_picker(return_mode)?;
+            return Ok(());
+        }
         // While connecting, toggle the debug (`-v`) log view. Only meaningful
         // before the shell reveals, so ignore it once the session is running.
         if self.is_action(KeyAction::SessionToggleLog, &key)
@@ -206,6 +211,17 @@ impl App {
     pub(crate) fn session_is_rendered(&self) -> bool {
         matches!(self.mode, AppMode::Connecting | AppMode::Session)
             || self.session_picker_over_session()
+            || self.snippet_picker_over_session()
+    }
+
+    /// The snippet picker is always floated over the session it was opened from,
+    /// so the session keeps painting underneath it.
+    pub(crate) fn snippet_picker_over_session(&self) -> bool {
+        self.mode == AppMode::SnippetPicker
+            && self
+                .snippet_picker
+                .as_ref()
+                .is_some_and(|p| matches!(p.return_mode, AppMode::Connecting | AppMode::Session))
     }
 
     /// The session picker opened from a session (rather than the dashboard), so

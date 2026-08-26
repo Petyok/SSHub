@@ -4,6 +4,16 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Command snippets library** (issue #2) - store frequently-used commands
+  (name, command, optional description and tags) and run them without retyping.
+  `Shift+S` on the dashboard opens a manager to add/edit/delete snippets; inside
+  a live session `Ctrl+N` opens a fuzzy picker where `Enter` runs the selected
+  command in the PTY and `Tab` inserts it without a trailing newline so you can
+  edit before running. Both keys are rebindable in the keybindings editor
+  (`Ctrl+K`). Snippets are stored in the launcher database (schema v14).
+
 ## [0.15.2] - 2026-08-24
 
 ### Added
