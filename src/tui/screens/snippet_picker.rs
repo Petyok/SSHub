@@ -18,7 +18,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     let area = frame.area();
     let width = crate::tui::fit_popup(area.width * 70 / 100, 46, area.width.saturating_sub(2));
-    let visible = state.results.len().min(MAX_VISIBLE_ROWS).max(1) as u16;
+    let visible = state.results.len().clamp(1, MAX_VISIBLE_ROWS) as u16;
     // border-top + prompt + separator + rows + hint + border-bottom.
     let height = crate::tui::fit_popup(visible + 5, 6, area.height.saturating_sub(2));
     let x = area.x + (area.width.saturating_sub(width)) / 2;
