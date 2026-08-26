@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: i64 = 13;
+const SCHEMA_VERSION: i64 = 14;
 
 /// Name of the reserved, auto-created "Favorites" group. Membership in it is the
 /// source of truth for a host's favourite status.
@@ -125,6 +125,10 @@ pub(crate) fn run_migrations(conn: &Connection, launcher_path: &Path) -> Result<
 
     if current < 13 {
         migrate_v12_to_v13(conn)?;
+    }
+
+    if current < 14 {
+        migrate_v13_to_v14(conn)?;
     }
 
     // Runs last so all columns it writes to (e.g. environment) already exist.
@@ -486,6 +490,21 @@ fn migrate_v12_to_v13(conn: &Connection) -> Result<()> {
     if !has_transport {
         conn.execute_batch("ALTER TABLE hosts ADD COLUMN transport TEXT NOT NULL DEFAULT 'ssh';")?;
     }
+    Ok(())
+}
+
+fn migrate_v13_to_v14(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS snippets (
+            id           INTEGER PRIMARY KEY,
+            name         TEXT NOT NULL,
+            command      TEXT NOT NULL,
+            description  TEXT,
+            tags         TEXT NOT NULL DEFAULT '[]',
+            created_at   INTEGER NOT NULL,
+            updated_at   INTEGER NOT NULL
+        );",
+    )?;
     Ok(())
 }
 
