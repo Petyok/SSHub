@@ -105,14 +105,22 @@ impl App {
     }
 
     pub(crate) fn handle_key_snippet_form(&mut self, key: KeyEvent) -> Result<()> {
-        if self.snippet_form.is_none() {
+        let Some(field) = self.snippet_form.as_ref().map(|f| f.field) else {
             self.mode = AppMode::SnippetManage;
             return Ok(());
-        }
+        };
         match key.code {
             KeyCode::Esc => self.cancel_snippet_form()?,
             _ if self.is_save_key(&key) => self.save_snippet_form()?,
-            KeyCode::Enter => self.save_snippet_form()?,
+            // Enter advances through the fields and saves on the last one, the
+            // same convention as the host / identity / keygen forms.
+            KeyCode::Enter => {
+                if field == SnippetFormField::Tags {
+                    self.save_snippet_form()?;
+                } else {
+                    self.snippet_form_move_field(1);
+                }
+            }
             KeyCode::Up | KeyCode::BackTab => self.snippet_form_move_field(-1),
             KeyCode::Down | KeyCode::Tab => self.snippet_form_move_field(1),
             KeyCode::Backspace if key.modifiers.is_empty() => self.snippet_form_backspace(),
@@ -139,11 +147,20 @@ impl App {
     }
 
     pub(crate) fn cancel_snippet_form(&mut self) -> Result<()> {
+        if self.snippet_form.as_ref().is_some_and(|f| f.dirty) {
+            self.mode = AppMode::ConfirmDiscard;
+            Ok(())
+        } else {
+            self.discard_snippet_form()
+        }
+    }
+
+    pub(crate) fn discard_snippet_form(&mut self) -> Result<()> {
         self.snippet_form = None;
         self.enter_snippet_manage()
     }
 
-    fn save_snippet_form(&mut self) -> Result<()> {
+    pub(crate) fn save_snippet_form(&mut self) -> Result<()> {
         let Some(form) = self.snippet_form.take() else {
             self.mode = AppMode::SnippetManage;
             return Ok(());
@@ -280,27 +297,31 @@ impl App {
             return Ok(());
         };
         let return_mode = state.return_mode;
-        let is_ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Esc => self.close_snippet_picker(return_mode),
             KeyCode::Enter => self.inject_selected_snippet(true, return_mode),
             KeyCode::Tab => self.inject_selected_snippet(false, return_mode),
-            KeyCode::Down => self.move_snippet_picker_selection(1),
-            KeyCode::Up => self.move_snippet_picker_selection(-1),
-            KeyCode::Char('n') if is_ctrl => self.move_snippet_picker_selection(1),
-            KeyCode::Char('p') if is_ctrl => self.move_snippet_picker_selection(-1),
+            // Plain letters are query text, even ones bound to nav (j/k); list
+            // movement lives on the rebindable MoveUp/MoveDown actions below,
+            // matched after this arm so a typed name is never eaten as a key
+            // (the same ordering the quick-connect palette uses).
+            KeyCode::Char(c)
+                if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
+                    && !c.is_control() =>
+            {
+                if let Some(state) = self.snippet_picker.as_mut() {
+                    state.query.push(c);
+                }
+                self.rebuild_snippet_picker_results();
+            }
             KeyCode::Backspace => {
                 if let Some(state) = self.snippet_picker.as_mut() {
                     state.query.pop();
                 }
                 self.rebuild_snippet_picker_results();
             }
-            KeyCode::Char(c) if !is_ctrl && !c.is_control() => {
-                if let Some(state) = self.snippet_picker.as_mut() {
-                    state.query.push(c);
-                }
-                self.rebuild_snippet_picker_results();
-            }
+            _ if self.is_action(KeyAction::MoveUp, &key) => self.move_snippet_picker_selection(-1),
+            _ if self.is_action(KeyAction::MoveDown, &key) => self.move_snippet_picker_selection(1),
             _ => {}
         }
         Ok(())
@@ -312,8 +333,8 @@ impl App {
                 state.selected = 0;
                 return;
             }
-            let len = state.results.len() as isize;
-            state.selected = (state.selected as isize + delta).rem_euclid(len) as usize;
+            let max = state.results.len() as isize - 1;
+            state.selected = (state.selected as isize + delta).clamp(0, max) as usize;
         }
     }
 
@@ -340,6 +361,10 @@ impl App {
 
     /// Type the selected snippet's command into the active session's PTY, with a
     /// trailing carriage return when `send_enter` (so the shell runs it).
+    ///
+    /// Failures surface through the [`AppMode::Notice`] modal rather than
+    /// `host_notice`: the session view early-returns before the dashboard toast
+    /// is drawn, so a dropped write would otherwise be invisible.
     fn inject_selected_snippet(&mut self, send_enter: bool, return_mode: AppMode) {
         let command = self.snippet_picker.as_ref().and_then(|state| {
             state
@@ -348,22 +373,34 @@ impl App {
                 .and_then(|&idx| self.snippets.get(idx))
                 .map(|s| s.command.clone())
         });
-        self.close_snippet_picker(return_mode);
+        self.snippet_picker = None;
 
         let Some(command) = command else {
+            // Empty picker or no match: nothing to run, return to the session.
+            self.mode = return_mode;
             return;
         };
         let Some(session) = self.active_session_mut() else {
-            self.host_notice = Some("No active session to run the snippet in".into());
+            self.show_notice_popup("No active session to run the snippet in.".into());
             return;
         };
         let mut bytes = command.into_bytes();
         if send_enter {
             bytes.push(b'\r');
         }
-        if let Err(e) = session.write(&bytes) {
-            self.host_notice = Some(format!("Could not send snippet to the session: {e}"));
+        match session.write(&bytes) {
+            Ok(()) => self.mode = return_mode,
+            Err(e) => {
+                self.show_notice_popup(format!("Could not send the snippet to the session:\n{e}"))
+            }
         }
+    }
+
+    /// Show a modal notice popup (dismissed by any key). Used for snippet
+    /// injection failures, which happen while the session view owns the frame.
+    fn show_notice_popup(&mut self, message: String) {
+        self.notice_popup = Some(message);
+        self.mode = AppMode::Notice;
     }
 }
 
@@ -378,36 +415,46 @@ pub(crate) fn rank_snippets(snippets: &[Snippet], query: &str) -> Vec<usize> {
         return (0..snippets.len()).collect();
     }
 
-    let mut matcher = Matcher::new(Config::DEFAULT);
-    let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
-    let mut buf = Vec::new();
-    let mut scored: Vec<(u32, usize)> = Vec::new();
-
-    for (idx, snippet) in snippets.iter().enumerate() {
-        let mut best: Option<u32> = None;
-        let mut score_field = |field: &str, best: &mut Option<u32>| {
-            if field.is_empty() {
-                return;
-            }
-            buf.clear();
-            if let Some(score) = pattern.score(Utf32Str::new(field, &mut buf), &mut matcher) {
-                *best = Some(best.map_or(score, |cur| cur.max(score)));
-            }
-        };
-        score_field(&snippet.name, &mut best);
-        score_field(&snippet.command, &mut best);
-        let tags = snippet.tags.join(" ");
-        score_field(&tags, &mut best);
-        if let Some(description) = snippet.description.as_deref() {
-            score_field(description, &mut best);
-        }
-        if let Some(score) = best {
-            scored.push((score, idx));
-        }
+    // Reuse one matcher across keystrokes (like `HostSearch`) rather than
+    // rebuilding it on every query. The picker runs on the single-threaded event
+    // loop; a thread-local keeps tests (which call this in parallel) isolated.
+    thread_local! {
+        static MATCHER: std::cell::RefCell<Matcher> =
+            std::cell::RefCell::new(Matcher::new(Config::DEFAULT));
     }
 
-    scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
-    scored.into_iter().map(|(_, idx)| idx).collect()
+    MATCHER.with(|cell| {
+        let mut matcher = cell.borrow_mut();
+        let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
+        let mut buf = Vec::new();
+        let mut scored: Vec<(u32, usize)> = Vec::new();
+
+        for (idx, snippet) in snippets.iter().enumerate() {
+            let mut best: Option<u32> = None;
+            let mut score_field = |field: &str, best: &mut Option<u32>| {
+                if field.is_empty() {
+                    return;
+                }
+                buf.clear();
+                if let Some(score) = pattern.score(Utf32Str::new(field, &mut buf), &mut matcher) {
+                    *best = Some(best.map_or(score, |cur| cur.max(score)));
+                }
+            };
+            score_field(&snippet.name, &mut best);
+            score_field(&snippet.command, &mut best);
+            let tags = snippet.tags.join(" ");
+            score_field(&tags, &mut best);
+            if let Some(description) = snippet.description.as_deref() {
+                score_field(description, &mut best);
+            }
+            if let Some(score) = best {
+                scored.push((score, idx));
+            }
+        }
+
+        scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        scored.into_iter().map(|(_, idx)| idx).collect()
+    })
 }
 
 #[cfg(test)]

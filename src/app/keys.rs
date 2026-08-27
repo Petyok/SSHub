@@ -654,6 +654,11 @@ impl App {
                     if self.tunnel_form.is_some() && self.mode == AppMode::ConfirmDiscard {
                         self.mode = AppMode::TunnelForm;
                     }
+                } else if self.snippet_form.is_some() {
+                    self.save_snippet_form()?;
+                    if self.snippet_form.is_some() && self.mode == AppMode::ConfirmDiscard {
+                        self.mode = AppMode::SnippetForm;
+                    }
                 }
             }
             _ if self.is_action(KeyAction::ConfirmNo, &key) => {
@@ -667,6 +672,8 @@ impl App {
                 } else if self.tunnel_form.is_some() {
                     self.tunnel_form = None;
                     self.mode = AppMode::Normal;
+                } else if self.snippet_form.is_some() {
+                    self.discard_snippet_form()?;
                 }
             }
             _ if self.is_action(KeyAction::Cancel, &key) => {
@@ -679,6 +686,8 @@ impl App {
                     self.mode = AppMode::KeygenForm;
                 } else if self.tunnel_form.is_some() {
                     self.mode = AppMode::TunnelForm;
+                } else if self.snippet_form.is_some() {
+                    self.mode = AppMode::SnippetForm;
                 } else {
                     self.mode = AppMode::Normal;
                 }
@@ -959,10 +968,12 @@ impl App {
                     self.mode = AppMode::Normal;
                 }
                 Some(PendingDelete::Snippet { id, name }) => {
-                    if self.store.delete_snippet(id)? {
+                    let deleted = self.store.delete_snippet(id)?;
+                    // enter_snippet_manage clears snippet_notice, so set it after.
+                    self.enter_snippet_manage()?;
+                    if deleted {
                         self.snippet_notice = Some(format!("Snippet '{name}' deleted"));
                     }
-                    self.enter_snippet_manage()?;
                 }
                 Some(PendingDelete::SftpEntry {
                     side, path, is_dir, ..

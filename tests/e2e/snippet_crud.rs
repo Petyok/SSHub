@@ -53,12 +53,12 @@ fn type_text(app: &mut App, text: &str) {
     }
 }
 
-/// Fill the snippet form (already open, focused on Name) and save with Enter.
+/// Fill the snippet form (already open, focused on Name) and save with F2.
 fn fill_and_save(app: &mut App, name: &str, command: &str) {
     type_text(app, name);
     app.handle_key(key(KeyCode::Tab)).unwrap(); // → Command
     type_text(app, command);
-    app.handle_key(key(KeyCode::Enter)).unwrap(); // save
+    app.handle_key(key(KeyCode::F(2))).unwrap(); // save (Enter would just advance)
 }
 
 #[test]
@@ -92,9 +92,9 @@ fn empty_name_or_command_is_rejected() {
 
     app.handle_key(key_shift_char('S')).unwrap();
     app.handle_key(key_char('a')).unwrap();
-    // Name only, no command → save is refused, form stays open.
+    // Name only, no command → save (F2) is refused, form stays open with notice.
     type_text(&mut app, "incomplete");
-    app.handle_key(key(KeyCode::Enter)).unwrap();
+    app.handle_key(key(KeyCode::F(2))).unwrap();
     assert_eq!(app.mode, AppMode::SnippetForm);
     assert!(app.snippet_notice.is_some());
     assert!(app.snippets.is_empty());
@@ -117,7 +117,7 @@ fn edit_snippet_updates_command() {
     app.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL))
         .unwrap(); // clear field
     type_text(&mut app, "df -h /");
-    app.handle_key(key(KeyCode::Enter)).unwrap();
+    app.handle_key(key(KeyCode::F(2))).unwrap(); // save
     assert_eq!(app.mode, AppMode::SnippetManage);
 
     let store = LauncherStore::open(file.path()).unwrap();
@@ -177,4 +177,81 @@ fn manager_navigation_clamps() {
     assert_eq!(app.snippet_manage_selected, 1); // clamped at the end
     app.handle_key(key_char('k')).unwrap();
     assert_eq!(app.snippet_manage_selected, 0);
+}
+
+#[test]
+fn enter_advances_fields_and_saves_on_last() {
+    let file = NamedTempFile::new().unwrap();
+    let mut app = app_with_store(file.path());
+
+    app.handle_key(key_shift_char('S')).unwrap();
+    app.handle_key(key_char('a')).unwrap();
+    // Enter walks Name → Command → Description → Tags without saving...
+    type_text(&mut app, "tail log");
+    app.handle_key(key(KeyCode::Enter)).unwrap(); // → Command
+    type_text(&mut app, "tail -f /var/log/syslog");
+    app.handle_key(key(KeyCode::Enter)).unwrap(); // → Description
+    app.handle_key(key(KeyCode::Enter)).unwrap(); // → Tags
+    assert_eq!(
+        app.mode,
+        AppMode::SnippetForm,
+        "still editing, not saved yet"
+    );
+    // ...and Enter on the last field (Tags) saves.
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert_eq!(app.mode, AppMode::SnippetManage);
+    assert!(app.snippets.iter().any(|s| s.name == "tail log"));
+}
+
+#[test]
+fn esc_with_edits_prompts_discard_then_can_save_or_drop() {
+    let file = NamedTempFile::new().unwrap();
+    let mut app = app_with_store(file.path());
+
+    // Dirty form + Esc → ConfirmDiscard; 'n' (No) drops the edits.
+    app.handle_key(key_shift_char('S')).unwrap();
+    app.handle_key(key_char('a')).unwrap();
+    type_text(&mut app, "throwaway");
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert_eq!(app.mode, AppMode::ConfirmDiscard);
+    app.handle_key(key_char('n')).unwrap();
+    assert_eq!(app.mode, AppMode::SnippetManage);
+    assert!(app.snippets.is_empty());
+
+    // Dirty form + Esc → ConfirmDiscard; 'y' (Yes) saves (when valid).
+    app.handle_key(key_char('a')).unwrap();
+    type_text(&mut app, "keeper");
+    app.handle_key(key(KeyCode::Tab)).unwrap(); // → Command
+    type_text(&mut app, "echo hi");
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert_eq!(app.mode, AppMode::ConfirmDiscard);
+    app.handle_key(key_char('y')).unwrap();
+    assert_eq!(app.mode, AppMode::SnippetManage);
+    assert!(app.snippets.iter().any(|s| s.name == "keeper"));
+
+    // A pristine form (no edits) closes straight back, no prompt.
+    app.handle_key(key_char('e')).unwrap();
+    assert_eq!(app.mode, AppMode::SnippetForm);
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert_eq!(app.mode, AppMode::SnippetManage);
+}
+
+#[test]
+fn delete_sets_a_visible_notice() {
+    let file = NamedTempFile::new().unwrap();
+    let mut app = app_with_store(file.path());
+
+    app.handle_key(key_shift_char('S')).unwrap();
+    app.handle_key(key_char('a')).unwrap();
+    fill_and_save(&mut app, "gone", "echo gone");
+    assert_eq!(app.mode, AppMode::SnippetManage);
+
+    app.handle_key(key_char('d')).unwrap();
+    app.handle_key(key_char('y')).unwrap();
+    assert_eq!(app.mode, AppMode::SnippetManage);
+    // The notice survives the return to the manager (set after re-entry).
+    assert_eq!(
+        app.snippet_notice.as_deref(),
+        Some("Snippet 'gone' deleted")
+    );
 }

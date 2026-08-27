@@ -874,6 +874,9 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
                 render_form_popup(frame, app, FormKind::Identity);
             } else if app.tunnel_form.is_some() {
                 screens::tunnels::render_tunnel_form(frame, app);
+            } else if app.snippet_form.is_some() {
+                screens::snippet_manage::render_snippet_manage_popup(frame, app);
+                screens::snippet_form::render_snippet_form(frame, app);
             }
             render_confirm_discard_popup(frame, app);
         }

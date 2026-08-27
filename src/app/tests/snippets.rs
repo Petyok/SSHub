@@ -40,7 +40,12 @@ fn app_with_session_and_snippets() -> App {
         key_push_identity: None,
         host_name: "edge".into(),
     };
-    let session = crate::session::Session::spawn(config, 24, 80, None).unwrap();
+    let mut session = crate::session::Session::spawn(config, 24, 80, None).unwrap();
+    // The picker only opens over a *running* session; a bare `cat` never emits
+    // output to trip the reveal, so mark it running explicitly.
+    session.phase = crate::session::SessionPhase::Running {
+        started_at: std::time::Instant::now(),
+    };
     app.sessions.push(session);
     app.active_session = Some(0);
     app.mode = AppMode::Session;
@@ -136,6 +141,8 @@ fn injecting_with_no_session_reports_a_notice() {
 
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()))
         .unwrap();
-    assert_eq!(app.mode, AppMode::Session);
-    assert!(app.host_notice.is_some());
+    // Failure surfaces as a modal Notice (visible over the session view),
+    // not a dashboard-only host_notice.
+    assert_eq!(app.mode, AppMode::Notice);
+    assert!(app.notice_popup.is_some());
 }
