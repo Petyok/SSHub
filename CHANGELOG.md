@@ -6,6 +6,16 @@ All notable changes to SSHub are documented in this file.
 
 ### Added
 
+- **Version badge shows the install channel** — the tab-bar version now reads
+  `v0.15.2 · npm`, `· cargo` or `· source`, so a support conversation can tell
+  how the binary got onto the machine. npm is detected via an
+  `SSHUB_INSTALL_CHANNEL` env marker set by the npm shim (the prebuilt binary
+  is byte-identical to the release-tarball one, so paths cannot tell them
+  apart); `cargo` and `source` (`cargo run` out of a build dir, `just install`
+  into `~/.local/bin`) come from path heuristics. Distro packages and manual
+  copies show no suffix, and an explicit `SSHUB_VERSION_LABEL` still wins
+  verbatim (demo recordings keep byte-exact labels).
+
 - **Command snippets library** (issue #2) - store frequently-used commands
   (name, command, optional description and tags) and run them without retyping.
   `Shift+S` on the dashboard opens a manager to add/edit/delete snippets; inside
