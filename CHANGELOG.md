@@ -16,6 +16,13 @@ All notable changes to SSHub are documented in this file.
   copies show no suffix, and an explicit `SSHUB_VERSION_LABEL` still wins
   verbatim (demo recordings keep byte-exact labels).
 
+### Fixed
+
+- **"Group '…' deleted" confirmation now actually shows** — the notice was
+  set before `enter_group_manage()`, which clears any pending notice in the
+  same frame, so deleting a group from the manager (`Shift+G`) flashed nothing.
+  The notice is now set after re-entering the manager.
+
 ## [0.15.2] - 2026-08-24
 
 ### Added

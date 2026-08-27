@@ -422,6 +422,9 @@ fn delete_group_cancel_preserves_group() {
     app.handle_key(key_char('y')).unwrap();
     assert_eq!(app.mode, AppMode::GroupManage);
     assert!(!app.groups.iter().any(|g| g.name == "keep-me"));
+    // The confirmation notice survives the return to the manager (it is set
+    // after enter_group_manage, which clears any pending notice).
+    assert_eq!(app.group_notice.as_deref(), Some("Group 'keep-me' deleted"));
 }
 
 #[test]
