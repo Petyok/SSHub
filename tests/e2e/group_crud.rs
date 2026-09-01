@@ -373,7 +373,7 @@ fn rename_and_delete_group_via_shortcuts() {
 }
 
 #[test]
-fn delete_group_cancel_preserves_group() {
+fn delete_group_cancel_confirm_and_notice() {
     let file = NamedTempFile::new().unwrap();
     let mut app = app_with_store(file.path());
 
@@ -422,8 +422,8 @@ fn delete_group_cancel_preserves_group() {
     app.handle_key(key_char('y')).unwrap();
     assert_eq!(app.mode, AppMode::GroupManage);
     assert!(!app.groups.iter().any(|g| g.name == "keep-me"));
-    // The confirmation notice survives the return to the manager (it is set
-    // after enter_group_manage, which clears any pending notice).
+    // The confirmation notice is set (its rendering is covered by a unit test
+    // in the group_manage screen module).
     assert_eq!(app.group_notice.as_deref(), Some("Group 'keep-me' deleted"));
 }
 
