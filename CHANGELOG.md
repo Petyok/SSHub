@@ -24,6 +24,18 @@ All notable changes to SSHub are documented in this file.
   edit before running. Both keys are rebindable in the keybindings editor
   (`Ctrl+K`). Snippets are stored in the launcher database (schema v14).
 
+### Fixed
+
+- **SFTP lost username and key authentication for hosts imported from
+  ssh_config** (#120) - interactive sessions hand the alias to the system `ssh`,
+  which applies `~/.ssh/config` itself, but the native SFTP transport is
+  libssh2 and needs explicit credentials. Launcher rows imported from ssh_config
+  kept only address/port/proxy_jump, so both the TUI browser and headless
+  `sshub sftp` tried to authenticate as the local user with no identity file.
+  Both surfaces now resolve the alias live through the same `ssh -G` machinery
+  the import used and let the resolved config fill what the store does not
+  manage; SSHub-managed usernames and attached identities keep winning when set.
+
 ## [0.15.2] - 2026-08-24
 
 ### Added

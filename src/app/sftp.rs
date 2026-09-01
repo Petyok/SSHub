@@ -695,10 +695,7 @@ impl App {
     /// ProxyJump hosts (unsupported by the libssh2 transport in v1) with a
     /// notice instead of a doomed connection attempt.
     fn sftp_connect_to(&mut self, entry: HostEntry) -> Result<()> {
-        let ssh_host = match &entry {
-            HostEntry::Managed(m) => managed_to_ssh_host(m),
-            HostEntry::Legacy { host, .. } => host.clone(),
-        };
+        let ssh_host = sftp_ssh_host(self.resolver.as_ref(), &entry);
 
         if ssh_host.proxy_jump.is_some() {
             self.host_notice =
@@ -803,10 +800,7 @@ impl App {
             self.host_notice = Some("connect the SFTP browser first".into());
             return Ok(());
         }
-        let ssh_host = match &entry {
-            HostEntry::Managed(m) => managed_to_ssh_host(m),
-            HostEntry::Legacy { host, .. } => host.clone(),
-        };
+        let ssh_host = sftp_ssh_host(self.resolver.as_ref(), &entry);
         if ssh_host.proxy_jump.is_some() {
             self.host_notice =
                 Some("SFTP via ProxyJump isn't supported yet — pick a direct host.".into());
