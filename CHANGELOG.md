@@ -18,10 +18,22 @@ All notable changes to SSHub are documented in this file.
 
 ### Fixed
 
-- **"Group '…' deleted" confirmation now actually shows** — the notice was
-  set before `enter_group_manage()`, which clears any pending notice in the
-  same frame, so deleting a group from the manager (`Shift+G`) flashed nothing.
-  The notice is now set after re-entering the manager.
+- **"Group '…' deleted" confirmation now actually shows** (#121) - the notice
+  was set before `enter_group_manage()`, which clears any pending notice in the
+  same frame, and the manager popup never drew it besides. Deleting a group from
+  the manager (`Shift+G`) flashed nothing. The notice is now set after
+  re-entering the manager, and `render_group_manage_popup` draws it in a row of
+  its own.
+
+- **SFTP lost username and key authentication for hosts imported from
+  ssh_config** (#120) - interactive sessions hand the alias to the system `ssh`,
+  which applies `~/.ssh/config` itself, but the native SFTP transport is
+  libssh2 and needs explicit credentials. Launcher rows imported from ssh_config
+  kept only address/port/proxy_jump, so both the TUI browser and headless
+  `sshub sftp` tried to authenticate as the local user with no identity file.
+  Both surfaces now resolve the alias live through the same `ssh -G` machinery
+  the import used and let the resolved config fill what the store does not
+  manage; SSHub-managed usernames and attached identities keep winning when set.
 
 ## [0.15.2] - 2026-08-24
 
