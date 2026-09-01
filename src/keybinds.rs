@@ -410,6 +410,11 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
+    (@fn logs_browser $($key:literal),* $(,)?) => {
+        fn default_kb_logs_browser() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
 }
 
 kb_defaults! {
@@ -493,6 +498,7 @@ kb_defaults! {
     known_hosts => ["H"],
     known_hosts_delete => ["Ctrl+D"],
     known_hosts_refresh => ["Ctrl+R"],
+    logs_browser => ["Shift+L"],
 }
 /// An action whose keybinding is user-configurable and editable in the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -577,11 +583,12 @@ pub enum KeyAction {
     KnownHosts,
     KnownHostsDelete,
     KnownHostsRefresh,
+    LogsBrowser,
 }
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 80] = [
+    pub const ALL: [KeyAction; 81] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -662,6 +669,7 @@ impl KeyAction {
         KeyAction::KnownHosts,
         KeyAction::KnownHostsDelete,
         KeyAction::KnownHostsRefresh,
+        KeyAction::LogsBrowser,
     ];
 
     pub fn label(self) -> &'static str {
@@ -746,6 +754,7 @@ impl KeyAction {
             KeyAction::KnownHosts => "Known hosts",
             KeyAction::KnownHostsDelete => "Known hosts: delete",
             KeyAction::KnownHostsRefresh => "Known hosts: refresh",
+            KeyAction::LogsBrowser => "Browse session logs",
         }
     }
 }
@@ -913,6 +922,8 @@ pub struct KeybindsConfig {
     pub known_hosts_delete: Vec<String>,
     #[serde(default = "default_kb_known_hosts_refresh")]
     pub known_hosts_refresh: Vec<String>,
+    #[serde(default = "default_kb_logs_browser")]
+    pub logs_browser: Vec<String>,
 }
 
 impl Default for KeybindsConfig {
@@ -998,6 +1009,7 @@ impl Default for KeybindsConfig {
             known_hosts: default_kb_known_hosts(),
             known_hosts_delete: default_kb_known_hosts_delete(),
             known_hosts_refresh: default_kb_known_hosts_refresh(),
+            logs_browser: default_kb_logs_browser(),
         }
     }
 }
@@ -1085,6 +1097,7 @@ impl KeybindsConfig {
             KeyAction::KnownHosts => default_kb_known_hosts(),
             KeyAction::KnownHostsDelete => default_kb_known_hosts_delete(),
             KeyAction::KnownHostsRefresh => default_kb_known_hosts_refresh(),
+            KeyAction::LogsBrowser => default_kb_logs_browser(),
         }
     }
 
@@ -1247,6 +1260,7 @@ impl KeybindsConfig {
             KeyAction::KnownHosts => &self.known_hosts,
             KeyAction::KnownHostsDelete => &self.known_hosts_delete,
             KeyAction::KnownHostsRefresh => &self.known_hosts_refresh,
+            KeyAction::LogsBrowser => &self.logs_browser,
         }
     }
 
@@ -1332,6 +1346,7 @@ impl KeybindsConfig {
             KeyAction::KnownHosts => self.known_hosts = binds,
             KeyAction::KnownHostsDelete => self.known_hosts_delete = binds,
             KeyAction::KnownHostsRefresh => self.known_hosts_refresh = binds,
+            KeyAction::LogsBrowser => self.logs_browser = binds,
         }
     }
 

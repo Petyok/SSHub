@@ -137,6 +137,7 @@ mod host_detail;
 mod host_form;
 mod identity_group;
 mod keybind;
+mod log_browser;
 mod misc;
 mod session;
 mod sftp;

@@ -31,6 +31,12 @@ impl App {
             return Ok(());
         }
 
+        // Session-log browser from any dashboard tab.
+        if self.mode == AppMode::Normal && self.is_action(KeyAction::LogsBrowser, &key) {
+            self.open_log_browser()?;
+            return Ok(());
+        }
+
         // Keybinding editor from the dashboard navigation screens.
         if self.mode == AppMode::Normal && self.is_action(KeyAction::KeybindEditor, &key) {
             self.keybind_editor = Some(KeybindEditor {
@@ -93,6 +99,7 @@ impl App {
             AppMode::BroadcastPreview => self.handle_key_broadcast_preview(key),
             AppMode::Notice => self.handle_key_notice(key),
             AppMode::KnownHosts => self.handle_key_known_hosts(key),
+            AppMode::LogBrowser => self.handle_key_log_browser(key),
             AppMode::Connecting | AppMode::Session => self.handle_key_session(key),
             AppMode::Normal => match self.active_tab {
                 1 => self.handle_key_sftp(key),

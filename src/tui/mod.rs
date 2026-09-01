@@ -887,6 +887,7 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
         AppMode::BroadcastPreview => screens::broadcast::render_preview(frame, app),
         AppMode::Notice => render_notice_popup(frame, app),
         AppMode::KnownHosts => screens::known_hosts::render_known_hosts(frame, app),
+        AppMode::LogBrowser => screens::log_browser::render(frame, app),
         _ => {}
     }
 }

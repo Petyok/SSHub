@@ -13,6 +13,7 @@ mod import;
 mod keygen;
 mod keys;
 mod local_shell;
+mod log_browser;
 mod mouse;
 mod push_key;
 mod session;
@@ -256,6 +257,8 @@ pub struct App {
     pub broadcast_panel_gone_at: Option<std::time::Instant>,
     pub group_manage_selected: usize,
     pub group_notice: Option<String>,
+    /// Session-log browser state ([`AppMode::LogBrowser`]).
+    pub log_browser: Option<LogBrowserState>,
     pub host_notice: Option<String>,
     /// Message shown by the modal `AppMode::Notice` popup (e.g. a connect error).
     pub notice_popup: Option<String>,
@@ -924,6 +927,7 @@ impl App {
             broadcast_panel_gone_at: None,
             group_manage_selected: 0,
             group_notice: None,
+            log_browser: None,
             host_notice: None,
             notice_popup: None,
             known_hosts: None,
