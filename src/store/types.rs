@@ -319,3 +319,24 @@ pub struct NewTunnel {
     pub label: Option<String>,
     pub auto_connect: bool,
 }
+
+/// A named jump-point into a session log, keyed by on-disk location so it
+/// survives the host row being deleted and re-added.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogBookmark {
+    pub id: i64,
+    pub host_dir: String,
+    pub file_name: String,
+    pub line: i64,
+    pub name: String,
+    pub created_at: i64,
+}
+
+/// Fields for creating a new log bookmark.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NewLogBookmark {
+    pub host_dir: String,
+    pub file_name: String,
+    pub line: i64,
+    pub name: String,
+}
