@@ -736,6 +736,10 @@ mod tests {
         // The audit tab fades its result rows over the app ground when the
         // filter changes; the ground itself is Task 12's shared chrome.
         (AUDIT, "AppBackground"),
+        // The group manager draws its delete-confirmation notice in the shared
+        // StatusInfo colour (the same published status role right_stack reads),
+        // not a migration of a group-manager-specific theme.rs call.
+        (GROUP_MANAGE, "StatusInfo"),
     ];
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
