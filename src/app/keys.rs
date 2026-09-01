@@ -929,11 +929,15 @@ impl App {
                     self.mode = AppMode::Normal;
                 }
                 Some(PendingDelete::Group { id, name }) => {
-                    if self.store.delete_group(id)? {
-                        self.group_notice = Some(format!("Group '{name}' deleted"));
+                    let deleted = self.store.delete_group(id)?;
+                    if deleted {
                         self.reload_hosts()?;
                     }
+                    // enter_group_manage clears group_notice, so set it after.
                     self.enter_group_manage()?;
+                    if deleted {
+                        self.group_notice = Some(format!("Group '{name}' deleted"));
+                    }
                 }
                 Some(PendingDelete::Tunnel { id, label }) => {
                     self.tunnel_manager.stop_user(id)?;
