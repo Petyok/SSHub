@@ -37,6 +37,11 @@ impl App {
             return Ok(());
         }
 
+        // Session-log browser from any dashboard tab.
+        if self.mode == AppMode::Normal && self.is_action(KeyAction::LogsBrowser, &key) {
+            self.open_log_browser()?;
+            return Ok(());
+        }
         // Command-snippet library manager from any dashboard tab.
         if self.mode == AppMode::Normal && self.is_action(KeyAction::SnippetsManage, &key) {
             self.enter_snippet_manage()?;
@@ -105,6 +110,7 @@ impl App {
             AppMode::BroadcastPreview => self.handle_key_broadcast_preview(key),
             AppMode::Notice => self.handle_key_notice(key),
             AppMode::KnownHosts => self.handle_key_known_hosts(key),
+            AppMode::LogBrowser => self.handle_key_log_browser(key),
             AppMode::SnippetManage => self.handle_key_snippet_manage(key),
             AppMode::SnippetForm => self.handle_key_snippet_form(key),
             AppMode::SnippetPicker => self.handle_key_snippet_picker(key),

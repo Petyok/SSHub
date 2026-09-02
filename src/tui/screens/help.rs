@@ -368,6 +368,10 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "Edit all keybindings (navigation, tabs, session, …)",
     },
     HelpItem::Entry {
+        key: "Shift+L",
+        desc: "Browse session logs (search with /, bookmark with b)",
+    },
+    HelpItem::Entry {
         key: "Shift+S",
         desc: "Manage command snippets (add/edit/delete)",
     },

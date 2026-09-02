@@ -421,6 +421,8 @@ pub enum AppMode {
     Notice,
     /// Known-hosts manager overlay (Keys tab).
     KnownHosts,
+    /// Session-log browser overlay: hosts, segments, and a searchable viewer.
+    LogBrowser,
     /// Command-snippet library manager overlay (list + add/edit/delete).
     SnippetManage,
     /// Add/edit form for a single command snippet.
@@ -428,6 +430,54 @@ pub enum AppMode {
     /// Fuzzy snippet picker floated over a live session; Enter runs the
     /// selected command in the PTY, Tab inserts it without a newline.
     SnippetPicker,
+}
+
+/// Which pane the log browser is showing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogBrowserView {
+    /// List of host directories that have logs.
+    Hosts,
+    /// Segments (rotated files) for the selected host.
+    Segments,
+    /// The text of one segment, with search and bookmarks.
+    Viewer,
+}
+
+/// Live state for [`AppMode::LogBrowser`].
+#[derive(Debug, Clone)]
+pub struct LogBrowserState {
+    pub view: LogBrowserView,
+    /// `logs/` root this browser reads from (captured at open so tests can
+    /// point it at a temp dir instead of the real data dir).
+    pub logs_root: std::path::PathBuf,
+    pub hosts: Vec<crate::log_browser::LogHost>,
+    pub host_sel: usize,
+    /// Directory name of the host being viewed.
+    pub current_host: Option<String>,
+    pub segments: Vec<crate::log_browser::LogSegment>,
+    pub seg_sel: usize,
+    /// File name of the segment being viewed.
+    pub current_seg: Option<String>,
+    pub lines: Vec<String>,
+    pub truncated: bool,
+    /// Index of the top visible line in the viewer.
+    pub scroll: usize,
+    /// Search query being typed / last committed.
+    pub query: String,
+    /// True while typing in the viewer search field.
+    pub searching: bool,
+    /// Line indices matching the committed query.
+    pub matches: Vec<usize>,
+    /// Position within `matches` for n / N navigation.
+    pub match_idx: usize,
+    /// `Some(name-in-progress)` while naming a bookmark for the current line.
+    pub naming: Option<String>,
+    /// Whether the bookmarks list is open over the viewer.
+    pub show_bookmarks: bool,
+    pub bookmark_sel: usize,
+    /// Bookmarks for the whole library, newest first.
+    pub bookmarks: Vec<crate::store::LogBookmark>,
+    pub notice: Option<String>,
 }
 
 /// Live background-run state; App holds `broadcast: Option<BroadcastState>`.

@@ -13,6 +13,7 @@ mod import;
 mod keygen;
 mod keys;
 mod local_shell;
+mod log_browser;
 mod mouse;
 mod push_key;
 mod session;
@@ -257,6 +258,8 @@ pub struct App {
     pub broadcast_panel_gone_at: Option<std::time::Instant>,
     pub group_manage_selected: usize,
     pub group_notice: Option<String>,
+    /// Session-log browser state ([`AppMode::LogBrowser`]).
+    pub log_browser: Option<LogBrowserState>,
     /// Command-snippet library, loaded from the store on demand.
     pub snippets: Vec<crate::store::Snippet>,
     /// Highlighted row in the snippet manager ([`AppMode::SnippetManage`]).
@@ -934,6 +937,7 @@ impl App {
             broadcast_panel_gone_at: None,
             group_manage_selected: 0,
             group_notice: None,
+            log_browser: None,
             snippets: Vec::new(),
             snippet_manage_selected: 0,
             snippet_form: None,

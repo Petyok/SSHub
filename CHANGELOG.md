@@ -6,6 +6,19 @@ All notable changes to SSHub are documented in this file.
 
 ### Added
 
+- **Session log browser** (PR #123 by @56steve, issue #76) - browse the session logs SSHub already
+  writes, without leaving the TUI. `Shift+L` on the dashboard
+  opens a browser: pick a host, pick a rotated segment, then read it in a
+  viewer that strips terminal escape codes so a raw PTY transcript reads as
+  plain text. Inside the viewer, `/` searches (case-insensitive), `n` / `N`
+  step through matches, and `b` bookmarks the current line with a name (blank
+  names fall back to "line N"). `m` opens the bookmarks list for the host to
+  jump straight back to a saved line, even in another of that host's segments.
+  Reads are capped so a large transcript is never slurped whole. Bookmarks live
+  in the launcher database (schema v14), keyed by the on-disk log location so
+  they survive a host being removed and re-added. `Shift+L` is rebindable in
+  the keybindings editor (`Ctrl+K`).
+
 - **Version badge shows the install channel** — the tab-bar version now reads
   `v0.15.2 · npm`, `· cargo` or `· source`, so a support conversation can tell
   how the binary got onto the machine. npm is detected via an
