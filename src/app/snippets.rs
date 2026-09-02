@@ -251,8 +251,13 @@ impl App {
         if let Some(form) = self.snippet_form.as_mut() {
             let mut cursor = form.cursor;
             let value = Self::snippet_form_field_mut(form);
-            text_input::handle_cursor_key(code, value, &mut cursor);
+            // Delete can remove a character; mark the form dirty so an Esc after
+            // it still routes through the discard prompt (matches the host form).
+            let changed = text_input::handle_cursor_key(code, value, &mut cursor);
             form.cursor = cursor;
+            if changed == Some(true) {
+                form.dirty = true;
+            }
         }
     }
 

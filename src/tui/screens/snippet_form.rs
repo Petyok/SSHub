@@ -55,15 +55,12 @@ pub fn render_snippet_form(frame: &mut Frame, app: &App) {
         } else {
             theme.style(StyleRole::GroupFormValue)
         };
-        // Show a block cursor on the focused field so typing has an anchor.
-        let shown = if value.is_empty() {
-            if focused {
-                "\u{2588}".to_string()
-            } else {
-                "(empty)".to_string()
-            }
-        } else if focused {
-            format!("{value}\u{2588}")
+        // Show the cursor at its real position on the focused field, using the
+        // same `_` caret every other form draws.
+        let shown = if focused {
+            crate::text_input::with_cursor(value, form.cursor)
+        } else if value.is_empty() {
+            "(empty)".to_string()
         } else {
             value.to_string()
         };

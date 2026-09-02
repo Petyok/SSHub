@@ -146,3 +146,80 @@ fn injecting_with_no_session_reports_a_notice() {
     assert_eq!(app.mode, AppMode::Notice);
     assert!(app.notice_popup.is_some());
 }
+
+/// The Running-phase gate (the round-one security fix): Ctrl+N must not open the
+/// picker while the session is still connecting, so Enter can't type a snippet
+/// into ssh's password or host-key prompt.
+#[test]
+fn ctrl_n_is_inert_over_a_connecting_session() {
+    let mut app = test_app(vec![("edge", host("edge"))]);
+    app.terminal_area = ratatui::layout::Rect::new(0, 0, 80, 24);
+    app.store()
+        .create_snippet(&NewSnippet {
+            name: "noop".into(),
+            command: ":".into(),
+            description: None,
+            tags: vec![],
+        })
+        .unwrap();
+    let config = crate::session::SessionConfig {
+        argv: vec!["cat".into()],
+        display_name: "edge".into(),
+        meta: crate::session::SessionMeta::default(),
+        pending_secret: None,
+        key_push_identity: None,
+        host_name: "edge".into(),
+    };
+    // Session::spawn leaves the phase in `Connecting` until output reveals it.
+    let session = crate::session::Session::spawn(config, 24, 80, None).unwrap();
+    assert!(matches!(
+        session.phase,
+        crate::session::SessionPhase::Connecting { .. }
+    ));
+    app.sessions.push(session);
+    app.active_session = Some(0);
+    app.mode = AppMode::Connecting;
+
+    app.handle_key(ctrl('n')).unwrap();
+    assert_ne!(app.mode, AppMode::SnippetPicker);
+    assert!(app.snippet_picker.is_none());
+}
+
+/// Delete removes a character, so it must mark the form dirty: an Esc after it
+/// then routes through the discard prompt instead of dropping the edit silently.
+#[test]
+fn delete_marks_the_form_dirty() {
+    let mut app = test_app(vec![]);
+    app.handle_key(KeyEvent::new(KeyCode::Char('S'), KeyModifiers::SHIFT))
+        .unwrap();
+    app.handle_key(ch('a')).unwrap();
+    assert_eq!(app.mode, AppMode::SnippetForm);
+    for c in "abc".chars() {
+        app.handle_key(ch(c)).unwrap();
+    }
+    // Move to the start and press Delete to remove a character.
+    app.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::empty()))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::empty()))
+        .unwrap();
+    assert!(app.snippet_form.as_ref().unwrap().dirty);
+    // Esc now prompts to discard rather than dropping the edit.
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()))
+        .unwrap();
+    assert_eq!(app.mode, AppMode::ConfirmDiscard);
+}
+
+/// A bracketed paste into the snippet form lands in the focused field and marks
+/// it dirty (the two new modes were missing from the paste whitelist).
+#[test]
+fn paste_reaches_the_snippet_form() {
+    let mut app = test_app(vec![]);
+    app.handle_key(KeyEvent::new(KeyCode::Char('S'), KeyModifiers::SHIFT))
+        .unwrap();
+    app.handle_key(ch('a')).unwrap();
+    assert_eq!(app.mode, AppMode::SnippetForm);
+    app.handle_paste("echo hi").unwrap();
+    let form = app.snippet_form.as_ref().unwrap();
+    assert_eq!(form.name, "echo hi");
+    assert!(form.dirty);
+}

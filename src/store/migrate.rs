@@ -562,6 +562,36 @@ mod tests {
     }
 
     #[test]
+    fn migration_v13_to_v14_creates_snippets() {
+        let dir = temp_dir();
+        let db_path = dir.path().join("launcher.db");
+        let conn = Connection::open(&db_path).unwrap();
+        run_migrations(&conn, &db_path).unwrap();
+
+        // Simulate a pre-v14 database: drop the table and roll the recorded
+        // version back to 13, then re-run the chain.
+        conn.execute_batch("DROP TABLE snippets;").unwrap();
+        set_schema_version(&conn, 13).unwrap();
+        run_migrations(&conn, &db_path).unwrap();
+
+        let has_snippets: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='snippets'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(has_snippets, 1);
+
+        let version: i64 = conn
+            .query_row("SELECT version FROM schema_version LIMIT 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    #[test]
     fn migration_imports_legacy_metadata_rows() {
         let dir = temp_dir();
         let metadata_path = dir.path().join("metadata.db");

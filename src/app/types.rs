@@ -1390,7 +1390,7 @@ pub struct SnippetFormEdit {
     pub name: String,
     pub command: String,
     pub description: String,
-    /// Space/comma-separated tag list as typed; parsed on save.
+    /// Whitespace-separated tag list as typed; split on save.
     pub tags: String,
     pub field: SnippetFormField,
     /// Character cursor within the focused text field.
