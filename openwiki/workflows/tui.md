@@ -15,6 +15,7 @@ The TUI is a bento-grid dashboard rendered by `src/tui/` on top of the [App stat
 | # | Tab | Screen | Backed by |
 |---|---|---|---|
 | 1 | Hosts | `screens/hosts.rs` | [hosts & groups](../domain/hosts-identities.md); detail panel with OS logo, fact sheet, latency sparkline |
+<!-- openwiki: broken internal link [sessions-sftp.md#sftp] heading anchor "sftp" does not exist in "sessions-sftp.md". Fix the href or restore the target, then delete this comment. -->
 | 2 | SFTP | `screens/sftp.rs` | [dual-pane transfer browser](sessions-sftp.md#sftp) |
 | 3 | Tunnels | `screens/tunnels.rs` | [tunnel manager](tunnels.md) |
 | 4 | Identities ("Keys") | `screens/keys.rs` | [identities & ssh-agent](../domain/hosts-identities.md#identities) |

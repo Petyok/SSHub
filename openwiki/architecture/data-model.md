@@ -80,4 +80,5 @@ Hosts, groups, favorites, and identities as user-facing concepts: [domain/hosts-
 
 - Adding a column or table: bump `SCHEMA_VERSION`, add a `migrate_vN_to_vN+1` step, and prefer `pragma_table_info` guards — tests open in-memory stores (`LauncherStore::open_in_memory`) and run all migrations from scratch.
 - In-memory tests point the launcher path into a temp dir so the legacy metadata import can't pick up a stray `./metadata.db` from the CWD.
+<!-- openwiki: broken internal link [overview.md#file-watcher] heading anchor "file-watcher" does not exist in "overview.md". Fix the href or restore the target, then delete this comment. -->
 - The [file watcher](overview.md#file-watcher) only reloads hosts; config.toml changes require restart.
