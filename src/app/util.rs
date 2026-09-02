@@ -272,6 +272,28 @@ pub(crate) fn managed_to_ssh_host(m: &ManagedHost) -> SshHost {
     host
 }
 
+/// Build the [`SshHost`] the native (libssh2) SFTP transport connects with.
+///
+/// Interactive SSH sessions hand the alias to the system `ssh`, which applies
+/// `~/.ssh/config` itself; libssh2 cannot. Launcher rows imported from
+/// ssh_config keep only address/port/proxy_jump (`build_import_row`), so for
+/// those resolve the alias live through the same `ssh -G` machinery the
+/// import used and let the resolved config fill what the store does not
+/// manage. SSHub-managed fields always win when present.
+pub(crate) fn sftp_ssh_host(resolver: &dyn HostResolver, entry: &HostEntry) -> SshHost {
+    let mut host = entry.ssh_host();
+    if let HostEntry::Managed(m) = entry {
+        if m.source == HostSource::SshConfig {
+            if let Ok(resolved) = resolver.resolve_host(&m.name) {
+                host.user = host.user.or(resolved.user);
+                host.identity_file = host.identity_file.or(resolved.identity_file);
+                host.certificate_file = host.certificate_file.or(resolved.certificate_file);
+            }
+        }
+    }
+    host
+}
+
 pub(crate) fn optional_path(raw: &str) -> Option<std::path::PathBuf> {
     optional_field(raw).map(std::path::PathBuf::from)
 }
@@ -668,5 +690,164 @@ mod tests {
             contract_prefix(std::path::Path::new("/srv/www"), home),
             "/srv/www"
         );
+    }
+}
+
+#[cfg(test)]
+mod sftp_ssh_host_tests {
+    use super::*;
+    use crate::metadata::HostMetadata;
+    use crate::store::{LauncherStore, NewHost, SshConfigHostImport};
+
+    /// A resolver standing in for `ssh -G`: returns one fixed host, or fails.
+    struct StubResolver {
+        result: Option<SshHost>,
+        fail: bool,
+    }
+
+    impl HostResolver for StubResolver {
+        fn list_hosts(&self) -> Result<Vec<String>> {
+            Ok(vec![])
+        }
+
+        fn resolve_host(&self, name: &str) -> Result<SshHost> {
+            if self.fail {
+                anyhow::bail!("no ssh_config entry for {name}");
+            }
+            Ok(self.result.clone().unwrap())
+        }
+    }
+
+    fn config_resolved(name: &str) -> SshHost {
+        let mut host = SshHost::new(name);
+        host.user = Some("deploy".into());
+        host.identity_file = Some("/home/u/.ssh/id_deploy".into());
+        host.certificate_file = Some("/home/u/.ssh/id_deploy-cert.pub".into());
+        // ssh -G echoes a default port; the launcher row must stay authoritative.
+        host.port = Some(2222);
+        host
+    }
+
+    fn ssh_config_entry(store: &LauncherStore) -> HostEntry {
+        store
+            .upsert_ssh_config_host(&SshConfigHostImport {
+                name: "myserver".into(),
+                address: "example.com".into(),
+                port: 22,
+                proxy_jump: None,
+                forward_agent: false,
+                remote_command: None,
+                ssh_config_hash: "h1".into(),
+                tags: vec![],
+                notes: None,
+                environment: None,
+                favorite: false,
+                last_connected: None,
+                session_logging: crate::session_log::SessionLoggingOverride::Inherit,
+                transport: crate::session_transport::SessionTransport::Ssh,
+            })
+            .unwrap();
+        let row = &store
+            .list_hosts_filtered(Some(HostSource::SshConfig))
+            .unwrap()[0];
+        HostEntry::from_managed(row.clone())
+    }
+
+    #[test]
+    fn imported_host_fills_credentials_from_ssh_config() {
+        let store = LauncherStore::open_in_memory().unwrap();
+        let entry = ssh_config_entry(&store);
+        let resolver = StubResolver {
+            result: Some(config_resolved("myserver")),
+            fail: false,
+        };
+
+        let host = sftp_ssh_host(&resolver, &entry);
+        assert_eq!(host.user.as_deref(), Some("deploy"));
+        assert_eq!(
+            host.identity_file.as_deref(),
+            Some("/home/u/.ssh/id_deploy")
+        );
+        assert_eq!(
+            host.certificate_file.as_deref(),
+            Some("/home/u/.ssh/id_deploy-cert.pub")
+        );
+        // Address/port stay owned by the launcher row.
+        assert_eq!(host.hostname.as_deref(), Some("example.com"));
+        assert_eq!(host.port, Some(22));
+    }
+
+    #[test]
+    fn managed_username_wins_over_ssh_config() {
+        let store = LauncherStore::open_in_memory().unwrap();
+        let mut entry = ssh_config_entry(&store);
+        {
+            let m = match &mut entry {
+                HostEntry::Managed(m) => m,
+                HostEntry::Legacy { .. } => unreachable!(),
+            };
+            m.username = Some("root".into());
+        }
+        let resolver = StubResolver {
+            result: Some(config_resolved("myserver")),
+            fail: false,
+        };
+
+        let host = sftp_ssh_host(&resolver, &entry);
+        assert_eq!(host.user.as_deref(), Some("root"));
+        // The key the config carries is still filled in — the row had none.
+        assert_eq!(
+            host.identity_file.as_deref(),
+            Some("/home/u/.ssh/id_deploy")
+        );
+    }
+
+    #[test]
+    fn launcher_hosts_never_consult_the_resolver() {
+        let store = LauncherStore::open_in_memory().unwrap();
+        store
+            .create_host(&NewHost::launcher("selfhosted", "10.0.0.9"))
+            .unwrap();
+        let row = &store
+            .list_hosts_filtered(Some(HostSource::Launcher))
+            .unwrap()[0];
+        let entry = HostEntry::from_managed(row.clone());
+        let resolver = StubResolver {
+            result: Some(config_resolved("myserver")),
+            fail: false,
+        };
+
+        let host = sftp_ssh_host(&resolver, &entry);
+        // No ssh_config bleed into fully managed hosts.
+        assert_eq!(host.user, None);
+        assert_eq!(host.identity_file, None);
+    }
+
+    #[test]
+    fn legacy_entries_pass_through_and_resolution_failure_degrades_gracefully() {
+        let legacy = HostEntry::Legacy {
+            host: config_resolved("legacy"),
+            meta: HostMetadata::new("legacy"),
+        };
+        let failing = StubResolver {
+            result: None,
+            fail: true,
+        };
+
+        // Legacy hosts already carry resolved credentials; a failing resolver
+        // must not damage them (the overlay never runs for Legacy).
+        let host = sftp_ssh_host(&failing, &legacy);
+        assert_eq!(
+            host.identity_file.as_deref(),
+            Some("/home/u/.ssh/id_deploy")
+        );
+
+        // An imported host with an unreadable config keeps its old behaviour:
+        // no creds, no panic.
+        let store = LauncherStore::open_in_memory().unwrap();
+        let entry = ssh_config_entry(&store);
+        let host = sftp_ssh_host(&failing, &entry);
+        assert_eq!(host.user, None);
+        assert_eq!(host.identity_file, None);
     }
 }

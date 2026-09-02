@@ -372,6 +372,10 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "Browse session logs (search with /, bookmark with b)",
     },
     HelpItem::Entry {
+        key: "Shift+S",
+        desc: "Manage command snippets (add/edit/delete)",
+    },
+    HelpItem::Entry {
         key: "",
         desc: "Defaults listed below; rebind any action in the editor.",
     },
@@ -398,6 +402,10 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     HelpItem::Entry {
         key: "Ctrl+Shift+F",
         desc: "Open SFTP for this host (session keeps running)",
+    },
+    HelpItem::Entry {
+        key: "Ctrl+N",
+        desc: "Run a command snippet (fuzzy pick; Enter runs, Tab inserts)",
     },
     HelpItem::Entry {
         key: "Ctrl+[ / Ctrl+]",

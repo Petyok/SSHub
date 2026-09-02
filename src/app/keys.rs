@@ -6,6 +6,12 @@ impl App {
             return self.handle_key_session_picker(key);
         }
 
+        // The snippet picker floats over a live session; route its keys before
+        // session mode below claims every keystroke for the PTY.
+        if self.mode == AppMode::SnippetPicker {
+            return self.handle_key_snippet_picker(key);
+        }
+
         // When an embedded session is active, Ctrl+C inside the terminal must
         // reach the remote shell — not quit sshub. Session mode intercepts all
         // keys (except detach / tab keys) before this check.
@@ -34,6 +40,11 @@ impl App {
         // Session-log browser from any dashboard tab.
         if self.mode == AppMode::Normal && self.is_action(KeyAction::LogsBrowser, &key) {
             self.open_log_browser()?;
+            return Ok(());
+        }
+        // Command-snippet library manager from any dashboard tab.
+        if self.mode == AppMode::Normal && self.is_action(KeyAction::SnippetsManage, &key) {
+            self.enter_snippet_manage()?;
             return Ok(());
         }
 
@@ -100,6 +111,9 @@ impl App {
             AppMode::Notice => self.handle_key_notice(key),
             AppMode::KnownHosts => self.handle_key_known_hosts(key),
             AppMode::LogBrowser => self.handle_key_log_browser(key),
+            AppMode::SnippetManage => self.handle_key_snippet_manage(key),
+            AppMode::SnippetForm => self.handle_key_snippet_form(key),
+            AppMode::SnippetPicker => self.handle_key_snippet_picker(key),
             AppMode::Connecting | AppMode::Session => self.handle_key_session(key),
             AppMode::Normal => match self.active_tab {
                 1 => self.handle_key_sftp(key),
@@ -646,6 +660,11 @@ impl App {
                     if self.tunnel_form.is_some() && self.mode == AppMode::ConfirmDiscard {
                         self.mode = AppMode::TunnelForm;
                     }
+                } else if self.snippet_form.is_some() {
+                    self.save_snippet_form()?;
+                    if self.snippet_form.is_some() && self.mode == AppMode::ConfirmDiscard {
+                        self.mode = AppMode::SnippetForm;
+                    }
                 }
             }
             _ if self.is_action(KeyAction::ConfirmNo, &key) => {
@@ -659,6 +678,8 @@ impl App {
                 } else if self.tunnel_form.is_some() {
                     self.tunnel_form = None;
                     self.mode = AppMode::Normal;
+                } else if self.snippet_form.is_some() {
+                    self.discard_snippet_form()?;
                 }
             }
             _ if self.is_action(KeyAction::Cancel, &key) => {
@@ -671,6 +692,8 @@ impl App {
                     self.mode = AppMode::KeygenForm;
                 } else if self.tunnel_form.is_some() {
                     self.mode = AppMode::TunnelForm;
+                } else if self.snippet_form.is_some() {
+                    self.mode = AppMode::SnippetForm;
                 } else {
                     self.mode = AppMode::Normal;
                 }
@@ -936,11 +959,15 @@ impl App {
                     self.mode = AppMode::Normal;
                 }
                 Some(PendingDelete::Group { id, name }) => {
-                    if self.store.delete_group(id)? {
-                        self.group_notice = Some(format!("Group '{name}' deleted"));
+                    let deleted = self.store.delete_group(id)?;
+                    if deleted {
                         self.reload_hosts()?;
                     }
+                    // enter_group_manage clears group_notice, so set it after.
                     self.enter_group_manage()?;
+                    if deleted {
+                        self.group_notice = Some(format!("Group '{name}' deleted"));
+                    }
                 }
                 Some(PendingDelete::Tunnel { id, label }) => {
                     self.tunnel_manager.stop_user(id)?;
@@ -949,6 +976,14 @@ impl App {
                     self.tunnel_notice = Some(format!("Tunnel '{label}' deleted"));
                     self.reload_tunnels()?;
                     self.mode = AppMode::Normal;
+                }
+                Some(PendingDelete::Snippet { id, name }) => {
+                    let deleted = self.store.delete_snippet(id)?;
+                    // enter_snippet_manage clears snippet_notice, so set it after.
+                    self.enter_snippet_manage()?;
+                    if deleted {
+                        self.snippet_notice = Some(format!("Snippet '{name}' deleted"));
+                    }
                 }
                 Some(PendingDelete::SftpEntry {
                     side, path, is_dir, ..
@@ -963,12 +998,16 @@ impl App {
         } else if self.is_action(KeyAction::ConfirmNo, &key)
             || self.is_action(KeyAction::Cancel, &key)
         {
-            let was_group = matches!(self.pending_delete, Some(PendingDelete::Group { .. }));
+            let return_mode = match self.pending_delete {
+                Some(PendingDelete::Group { .. }) => Some(AppMode::GroupManage),
+                Some(PendingDelete::Snippet { .. }) => Some(AppMode::SnippetManage),
+                _ => None,
+            };
             self.pending_delete = None;
-            if was_group {
-                self.enter_group_manage()?;
-            } else {
-                self.mode = AppMode::Normal;
+            match return_mode {
+                Some(AppMode::GroupManage) => self.enter_group_manage()?,
+                Some(AppMode::SnippetManage) => self.enter_snippet_manage()?,
+                _ => self.mode = AppMode::Normal,
             }
         }
         Ok(())
