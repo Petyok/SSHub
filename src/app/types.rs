@@ -421,6 +421,13 @@ pub enum AppMode {
     Notice,
     /// Known-hosts manager overlay (Keys tab).
     KnownHosts,
+    /// Command-snippet library manager overlay (list + add/edit/delete).
+    SnippetManage,
+    /// Add/edit form for a single command snippet.
+    SnippetForm,
+    /// Fuzzy snippet picker floated over a live session; Enter runs the
+    /// selected command in the PTY, Tab inserts it without a newline.
+    SnippetPicker,
 }
 
 /// Live background-run state; App holds `broadcast: Option<BroadcastState>`.
@@ -736,6 +743,10 @@ pub enum PendingDelete {
     Tunnel {
         id: i64,
         label: String,
+    },
+    Snippet {
+        id: i64,
+        name: String,
     },
     /// A file/directory in the SFTP browser (remote via the worker, local via
     /// `std::fs`). Directories are removed recursively.
@@ -1369,6 +1380,73 @@ pub struct IdentityFormEdit {
     pub editing: bool,
     pub edit_snapshot: String,
     pub dirty: bool,
+}
+
+/// In-progress command-snippet form while in [`AppMode::SnippetForm`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnippetFormEdit {
+    /// `None` when creating a new snippet, `Some(id)` when editing an existing.
+    pub id: Option<i64>,
+    pub name: String,
+    pub command: String,
+    pub description: String,
+    /// Whitespace-separated tag list as typed; split on save.
+    pub tags: String,
+    pub field: SnippetFormField,
+    /// Character cursor within the focused text field.
+    pub cursor: usize,
+    pub dirty: bool,
+}
+
+/// Editable command-snippet form field index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SnippetFormField {
+    #[default]
+    Name = 0,
+    Command = 1,
+    Description = 2,
+    Tags = 3,
+}
+
+impl SnippetFormField {
+    pub const ALL: [SnippetFormField; 4] = [
+        SnippetFormField::Name,
+        SnippetFormField::Command,
+        SnippetFormField::Description,
+        SnippetFormField::Tags,
+    ];
+
+    pub(crate) fn next(self) -> Self {
+        let idx = Self::ALL.iter().position(|&f| f == self).unwrap_or(0);
+        Self::ALL[(idx + 1) % Self::ALL.len()]
+    }
+
+    pub(crate) fn prev(self) -> Self {
+        let idx = Self::ALL.iter().position(|&f| f == self).unwrap_or(0);
+        Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SnippetFormField::Name => "Name",
+            SnippetFormField::Command => "Command",
+            SnippetFormField::Description => "Description (optional)",
+            SnippetFormField::Tags => "Tags (space-separated, optional)",
+        }
+    }
+}
+
+/// Live state for the fuzzy snippet picker ([`AppMode::SnippetPicker`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnippetPickerState {
+    /// Current fuzzy query typed by the user.
+    pub query: String,
+    /// Indices into [`App::snippets`] for the current match set.
+    pub results: Vec<usize>,
+    /// Highlighted row within `results`.
+    pub selected: usize,
+    /// Mode to return to when the picker closes (the session it floats over).
+    pub return_mode: AppMode,
 }
 
 /// In-progress SSH key generation form while in [`AppMode::KeygenForm`].

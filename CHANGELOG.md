@@ -16,6 +16,14 @@ All notable changes to SSHub are documented in this file.
   copies show no suffix, and an explicit `SSHUB_VERSION_LABEL` still wins
   verbatim (demo recordings keep byte-exact labels).
 
+- **Command snippets library** (PR #118 by @56steve, closes #2) - store frequently-used commands
+  (name, command, optional description and tags) and run them without retyping.
+  `Shift+S` on the dashboard opens a manager to add/edit/delete snippets; inside
+  a live session `Ctrl+N` opens a fuzzy picker where `Enter` runs the selected
+  command in the PTY and `Tab` inserts it without a trailing newline so you can
+  edit before running. Both keys are rebindable in the keybindings editor
+  (`Ctrl+K`). Snippets are stored in the launcher database (schema v14).
+
 ### Fixed
 
 - **"Group '…' deleted" confirmation now actually shows** (PR #121 by @56steve) - the notice

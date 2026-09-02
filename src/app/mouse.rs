@@ -28,6 +28,8 @@ impl App {
                 | AppMode::Palette
                 | AppMode::SessionPicker
                 | AppMode::ImportPrompt
+                | AppMode::SnippetForm
+                | AppMode::SnippetPicker
         );
         if !text_entry {
             return Ok(());

@@ -18,6 +18,7 @@ mod metadata_persist;
 mod quick_connect;
 mod search_and_navigate;
 mod session_switcher;
+mod snippet_crud;
 mod ssh_config_sync;
 mod termius_import;
 mod theme_picker;
