@@ -4369,6 +4369,34 @@ mod tests {
                 let _ = render_to_buffer(&app, w, h);
             }
         }
+
+        // The log browser's viewer + open bookmarks overlay nests a popup inside
+        // the viewer's content area, whose own clamp must not assert on a sliver.
+        {
+            use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+            use std::io::Write;
+            let tmp = tempfile::tempdir().unwrap();
+            let logs = tmp.path().join("logs");
+            let host_dir = logs.join("web-1");
+            std::fs::create_dir_all(&host_dir).unwrap();
+            std::fs::File::create(host_dir.join("100-1-0.log"))
+                .unwrap()
+                .write_all(b"line one\nline two\n")
+                .unwrap();
+            let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::empty());
+            for (w, h) in [(1u16, 1u16), (10, 3), (30, 8), (49, 20)] {
+                let mut app = test_app_with_hosts();
+                app.open_log_browser_at(logs.clone()).unwrap();
+                app.handle_key(enter).unwrap(); // host -> segments
+                app.handle_key(enter).unwrap(); // segment -> viewer
+                app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::empty()))
+                    .unwrap(); // start a bookmark
+                app.handle_key(enter).unwrap(); // blank name -> "line N"
+                app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::empty()))
+                    .unwrap(); // open the bookmarks overlay
+                let _ = render_to_buffer(&app, w, h);
+            }
+        }
     }
 
     /// The picker keeps the dashboard's themed keybind footer for every purpose

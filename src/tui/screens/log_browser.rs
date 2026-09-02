@@ -136,12 +136,18 @@ fn render_hosts(frame: &mut Frame, app: &App, inner: Rect) {
 fn render_segments(frame: &mut Frame, app: &App, inner: Rect) {
     let theme = app.theme();
     let s = app.log_browser.as_ref().unwrap();
+    // Reserve the footer row, plus a notice row above it when one is pending
+    // (e.g. opening a segment that turned out to be gone).
+    let notice_h = u16::from(s.notice.is_some());
     let list_area = Rect::new(
         inner.x,
         inner.y,
         inner.width,
-        inner.height.saturating_sub(1),
+        inner.height.saturating_sub(1 + notice_h),
     );
+    if notice_h == 1 && inner.height >= 2 {
+        notice_line(frame, app, inner, inner.height - 2);
+    }
 
     if s.segments.is_empty() {
         frame.render_widget(
@@ -287,8 +293,14 @@ fn render_bookmarks_overlay(frame: &mut Frame, app: &App, over: Rect) {
         .map(|b| (b.name.clone(), b.line + 1))
         .collect();
 
-    let w = (over.width * 70 / 100).clamp(20, over.width);
-    let h = (marks.len() as u16 + 2).clamp(3, over.height);
+    // Nothing sensible fits in a sliver, and clamping with a min above the
+    // available size would trip u16::clamp's `min <= max` assert and abort the
+    // whole TUI, so bail on a too-small area and keep every minimum subordinate.
+    if over.width < 4 || over.height < 3 {
+        return;
+    }
+    let w = (over.width * 70 / 100).clamp(20.min(over.width), over.width);
+    let h = (marks.len() as u16 + 2).clamp(3.min(over.height), over.height);
     let x = over.x + (over.width.saturating_sub(w)) / 2;
     let y = over.y + (over.height.saturating_sub(h)) / 2;
     let popup = Rect::new(x, y, w, h);

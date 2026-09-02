@@ -107,19 +107,38 @@ pub fn parse_started_secs(file_name: &str) -> Option<u64> {
 
 /// Read up to `cap` bytes of `path`, strip terminal control sequences, and
 /// return display lines plus whether the file was longer than `cap`.
-pub fn read_segment_lines(path: &Path, cap: u64) -> (Vec<String>, bool) {
-    let Ok(file) = fs::File::open(path) else {
-        return (Vec::new(), false);
-    };
+///
+/// Returns `None` when the file is missing or unreadable, so callers can tell a
+/// genuinely empty segment from one that has been pruned or cannot be opened.
+pub fn read_segment_lines(path: &Path, cap: u64) -> Option<(Vec<String>, bool)> {
+    let file = fs::File::open(path).ok()?;
     let len = file.metadata().map(|m| m.len()).unwrap_or(0);
     let mut buf = Vec::new();
-    if file.take(cap).read_to_end(&mut buf).is_err() {
-        return (Vec::new(), false);
-    }
-    let text = String::from_utf8_lossy(&buf);
+    file.take(cap).read_to_end(&mut buf).ok()?;
+    // Drop a trailing partial multibyte char left by the byte cap so it does not
+    // render as U+FFFD.
+    let valid = match std::str::from_utf8(&buf) {
+        Ok(_) => buf.len(),
+        Err(e) => e.valid_up_to(),
+    };
+    let text = String::from_utf8_lossy(&buf[..valid]);
     let clean = strip_ansi(&text);
-    let lines = clean.split('\n').map(|l| l.to_string()).collect();
-    (lines, len > cap)
+    // A single trailing newline would otherwise add one phantom empty line and
+    // throw off the "line N/N" count.
+    let body = clean.strip_suffix('\n').unwrap_or(&clean);
+    let lines = body.split('\n').map(|l| l.to_string()).collect();
+    Some((lines, len > cap))
+}
+
+/// Whether `name` is a single `*.log` path component safe to join onto the logs
+/// root: no path separators, no `..`, and the `.log` suffix a segment always
+/// carries. Guards the bookmark-stored file name against escaping the directory.
+pub fn is_safe_segment_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != ".."
+        && !name.contains('/')
+        && !name.contains('\\')
+        && name.ends_with(".log")
 }
 
 /// Case-insensitive substring search; returns matching line indices in order.
@@ -153,8 +172,10 @@ pub fn strip_ansi(input: &str) -> String {
                         }
                     }
                 }
-                // OSC: terminated by BEL (0x07) or ST (ESC \).
-                Some(']') => {
+                // String sequences (OSC / DCS / APC / PM / SOS) carry a payload
+                // terminated by BEL (0x07) or ST (ESC \); drop the whole thing
+                // so e.g. a tmux DCS passthrough does not spill into the view.
+                Some(']') | Some('P') | Some('_') | Some('^') | Some('X') => {
                     while let Some(f) = chars.next() {
                         if f == '\u{07}' {
                             break;
@@ -169,7 +190,8 @@ pub fn strip_ansi(input: &str) -> String {
                 Some('(') | Some(')') => {
                     chars.next();
                 }
-                // Any other two-char escape: drop the introducer only.
+                // Any other two-char escape (ESC 7/8/M/D/E/H/=, …): the second
+                // byte was already consumed by `chars.next()` above.
                 _ => {}
             },
             '\n' | '\t' => out.push(c),
@@ -238,10 +260,12 @@ mod tests {
             f.write_all(b"\x1b[32m$ ls -la\x1b[0m\nfile-a\nFILE-B\n")
                 .unwrap();
         }
-        let (lines, truncated) = read_segment_lines(&seg, VIEWER_READ_CAP);
+        let (lines, truncated) = read_segment_lines(&seg, VIEWER_READ_CAP).unwrap();
         assert!(!truncated);
         assert_eq!(lines[0], "$ ls -la");
         assert_eq!(lines[1], "file-a");
+        // The trailing newline does not add a phantom empty line.
+        assert_eq!(lines.len(), 3);
 
         let hits = search_lines(&lines, "file");
         assert_eq!(hits, vec![1, 2]); // case-insensitive
@@ -256,8 +280,34 @@ mod tests {
             let mut f = fs::File::create(&seg).unwrap();
             f.write_all(&[b'a'; 100]).unwrap();
         }
-        let (lines, truncated) = read_segment_lines(&seg, 10);
+        let (lines, truncated) = read_segment_lines(&seg, 10).unwrap();
         assert!(truncated);
         assert_eq!(lines[0].len(), 10);
+    }
+
+    #[test]
+    fn safe_segment_name_rejects_path_escapes() {
+        assert!(is_safe_segment_name("1700000000-1-0.log"));
+        assert!(!is_safe_segment_name("../secret.log"));
+        assert!(!is_safe_segment_name("/etc/passwd"));
+        assert!(!is_safe_segment_name("sub/dir.log"));
+        assert!(!is_safe_segment_name("notalog.txt"));
+        assert!(!is_safe_segment_name(""));
+    }
+
+    #[test]
+    fn read_missing_segment_is_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(read_segment_lines(&tmp.path().join("gone.log"), VIEWER_READ_CAP).is_none());
+    }
+
+    #[test]
+    fn strip_ansi_drops_dcs_payload() {
+        // A DCS string (ESC P … ST) must not leak its payload into the view.
+        let raw = "before\u{1b}Psome-dcs-payload\u{1b}\\after";
+        assert_eq!(strip_ansi(raw), "beforeafter");
+        // APC (ESC _ … ST) likewise.
+        let apc = "a\u{1b}_deadbeef\u{1b}\\b";
+        assert_eq!(strip_ansi(apc), "ab");
     }
 }

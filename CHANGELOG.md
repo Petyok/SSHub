@@ -6,7 +6,7 @@ All notable changes to SSHub are documented in this file.
 
 ### Added
 
-- **Session log browser** (issue #76) - browse the session logs SSHub already
+- **Session log browser** (PR #123 by @56steve, issue #76) - browse the session logs SSHub already
   writes, without leaving the TUI. `Shift+L` on the dashboard
   opens a browser: pick a host, pick a rotated segment, then read it in a
   viewer that strips terminal escape codes so a raw PTY transcript reads as

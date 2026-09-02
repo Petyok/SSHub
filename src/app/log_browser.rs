@@ -161,7 +161,14 @@ impl App {
         let Some(seg) = s.segments.get(s.seg_sel) else {
             return;
         };
-        let (lines, truncated) = lb::read_segment_lines(&seg.path, lb::VIEWER_READ_CAP);
+        let Some((lines, truncated)) = lb::read_segment_lines(&seg.path, lb::VIEWER_READ_CAP)
+        else {
+            // Missing or unreadable (e.g. pruned by retention). Stay on the
+            // segment list and say so rather than opening a blank viewer.
+            let name = seg.file_name.clone();
+            s.notice = Some(format!("Segment '{name}' is gone or unreadable"));
+            return;
+        };
         s.current_seg = Some(seg.file_name.clone());
         s.lines = lines;
         s.truncated = truncated;
@@ -357,8 +364,14 @@ impl App {
     fn log_key_searching(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
             KeyCode::Esc => {
+                // Cancel the whole search so the query, the highlight and the
+                // n / N match list can't disagree: clear all three.
                 if let Some(s) = self.log_browser.as_mut() {
                     s.searching = false;
+                    s.query.clear();
+                    s.matches.clear();
+                    s.match_idx = 0;
+                    s.notice = None;
                 }
             }
             KeyCode::Enter => self.log_commit_search(),
@@ -439,6 +452,16 @@ impl App {
         let Some((file_name, line)) = target else {
             return;
         };
+        // Defense in depth: a bookmark's file name is joined onto the logs root,
+        // so reject anything that isn't a single `*.log` path component before
+        // touching the filesystem (an absolute or `../` name could escape).
+        if !lb::is_safe_segment_name(&file_name) {
+            if let Some(s) = self.log_browser.as_mut() {
+                s.notice = Some("Bookmark points at an invalid path".into());
+                s.show_bookmarks = false;
+            }
+            return;
+        }
 
         // A bookmark can point at a different segment of the same host; load it.
         let need_load = self
@@ -453,19 +476,31 @@ impl App {
                     .map(|h| s.logs_root.join(h).join(&file_name))
             });
             if let Some(path) = seg_path {
-                let (lines, truncated) = lb::read_segment_lines(&path, lb::VIEWER_READ_CAP);
-                if let Some(s) = self.log_browser.as_mut() {
-                    s.lines = lines;
-                    s.truncated = truncated;
-                    s.current_seg = Some(file_name.clone());
-                    s.matches.clear();
-                    s.query.clear();
-                    s.match_idx = 0;
-                    s.seg_sel = s
-                        .segments
-                        .iter()
-                        .position(|sg| sg.file_name == file_name)
-                        .unwrap_or(s.seg_sel);
+                match lb::read_segment_lines(&path, lb::VIEWER_READ_CAP) {
+                    Some((lines, truncated)) => {
+                        if let Some(s) = self.log_browser.as_mut() {
+                            s.lines = lines;
+                            s.truncated = truncated;
+                            s.current_seg = Some(file_name.clone());
+                            s.matches.clear();
+                            s.query.clear();
+                            s.match_idx = 0;
+                            s.seg_sel = s
+                                .segments
+                                .iter()
+                                .position(|sg| sg.file_name == file_name)
+                                .unwrap_or(s.seg_sel);
+                        }
+                    }
+                    None => {
+                        // The bookmarked segment is gone: say so, don't pretend
+                        // to jump, and leave the current segment untouched.
+                        if let Some(s) = self.log_browser.as_mut() {
+                            s.notice = Some(format!("Segment '{file_name}' is gone or unreadable"));
+                            s.show_bookmarks = false;
+                        }
+                        return;
+                    }
                 }
             }
         }

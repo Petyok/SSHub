@@ -182,3 +182,91 @@ fn empty_logs_root_opens_with_no_hosts() {
         LogBrowserView::Hosts
     );
 }
+
+#[test]
+fn blank_bookmark_name_falls_back_to_line_number() {
+    let (mut app, _tmp, root) = app_with_logs();
+    app.open_log_browser_at(root).unwrap();
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    app.handle_key(key(KeyCode::Down)).unwrap(); // older, multi-line segment
+    app.handle_key(key(KeyCode::Enter)).unwrap(); // viewer
+    app.handle_key(key(KeyCode::Down)).unwrap(); // line index 1
+
+    app.handle_key(ch('b')).unwrap();
+    // Save with an empty name.
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    let saved = app.store().list_log_bookmarks().unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].name, "line 2"); // 0-based line 1 -> "line 2"
+}
+
+#[test]
+fn capital_n_steps_backwards_through_matches() {
+    let (mut app, _tmp, root) = app_with_logs();
+    app.open_log_browser_at(root).unwrap();
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    app.handle_key(key(KeyCode::Down)).unwrap();
+    app.handle_key(key(KeyCode::Enter)).unwrap(); // viewer on the 4-line segment
+
+    app.handle_key(ch('/')).unwrap();
+    type_text(&mut app, "build");
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert_eq!(app.log_browser.as_ref().unwrap().scroll, 1); // first match
+
+    // N (Shift+n) walks to the previous match, wrapping to the last.
+    app.handle_key(KeyEvent::new(KeyCode::Char('N'), KeyModifiers::SHIFT))
+        .unwrap();
+    assert_eq!(app.log_browser.as_ref().unwrap().scroll, 2);
+}
+
+#[test]
+fn esc_cancels_search_and_clears_state() {
+    let (mut app, _tmp, root) = app_with_logs();
+    app.open_log_browser_at(root).unwrap();
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    app.handle_key(key(KeyCode::Down)).unwrap();
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+
+    // Commit one search, then start typing a second and cancel it.
+    app.handle_key(ch('/')).unwrap();
+    type_text(&mut app, "build");
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert!(!app.log_browser.as_ref().unwrap().matches.is_empty());
+
+    app.handle_key(ch('/')).unwrap();
+    type_text(&mut app, "zzz");
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    let s = app.log_browser.as_ref().unwrap();
+    assert!(!s.searching);
+    assert!(s.query.is_empty());
+    assert!(s.matches.is_empty()); // no query, no highlight, no n/N target
+}
+
+#[test]
+fn bookmark_jump_loads_another_segment_of_the_same_host() {
+    let (mut app, _tmp, root) = app_with_logs();
+    app.open_log_browser_at(root).unwrap();
+    app.handle_key(key(KeyCode::Enter)).unwrap(); // segments: [2000, 1000]
+    app.handle_key(key(KeyCode::Down)).unwrap(); // select older 1000
+    app.handle_key(key(KeyCode::Enter)).unwrap(); // viewer on 1000
+    app.handle_key(key(KeyCode::Down)).unwrap();
+    app.handle_key(key(KeyCode::Down)).unwrap(); // line index 2
+    app.handle_key(ch('b')).unwrap();
+    type_text(&mut app, "here");
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+
+    // Move to the newer segment, then jump to the bookmark in the older one.
+    app.handle_key(key(KeyCode::Esc)).unwrap(); // back to segments
+    app.handle_key(key(KeyCode::Up)).unwrap(); // select newer 2000
+    app.handle_key(key(KeyCode::Enter)).unwrap(); // viewer on 2000
+    assert_eq!(
+        app.log_browser.as_ref().unwrap().current_seg.as_deref(),
+        Some("2000-1-0.log")
+    );
+    app.handle_key(ch('m')).unwrap();
+    app.handle_key(key(KeyCode::Enter)).unwrap(); // jump
+
+    let s = app.log_browser.as_ref().unwrap();
+    assert_eq!(s.current_seg.as_deref(), Some("1000-1-0.log"));
+    assert_eq!(s.scroll, 2);
+}
