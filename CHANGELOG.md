@@ -4,6 +4,8 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-09-05
+
 ### Added
 
 - **Session log browser** (PR #123 by @56steve, issue #76) - browse the session logs SSHub already
