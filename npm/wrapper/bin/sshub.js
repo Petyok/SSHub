@@ -56,8 +56,13 @@ function main() {
 
   // `stdio: 'inherit'` hands over the real tty, which the TUI needs, and puts
   // the child in the same process group so Ctrl+C reaches it from the terminal
-  // rather than through us.
-  const result = spawnSync(bin, process.argv.slice(2), { stdio: 'inherit' });
+  // rather than through us. The env marker tells the binary it was installed
+  // via npm: the prebuilt binary is byte-identical to the release-tarball one,
+  // so its own path heuristics cannot tell the two apart.
+  const result = spawnSync(bin, process.argv.slice(2), {
+    stdio: 'inherit',
+    env: { ...process.env, SSHUB_INSTALL_CHANNEL: 'npm' },
+  });
   if (result.error) {
     die(`could not start ${bin}: ${result.error.message}`);
   }

@@ -1,14 +1,17 @@
 mod hosts;
 mod identities;
+mod log_bookmarks;
 mod migrate;
+mod snippets;
 mod tunnels;
 mod types;
 
 pub use hosts::is_option_like;
 pub use types::{
     AuthEvent, DeleteHostOutcome, DeleteIdentityOutcome, HostGroup, HostGroupUpdate, HostSource,
-    HostUpdate, Identity, IdentityUpdate, ManagedHost, NewHost, NewHostGroup, NewIdentity,
-    NewTunnel, SshConfigHostImport, Tunnel, TunnelType, UpsertSshConfigOutcome,
+    HostUpdate, Identity, IdentityUpdate, LogBookmark, ManagedHost, NewHost, NewHostGroup,
+    NewIdentity, NewLogBookmark, NewSnippet, NewTunnel, Snippet, SnippetUpdate,
+    SshConfigHostImport, Tunnel, TunnelType, UpsertSshConfigOutcome,
 };
 
 use anyhow::{Context, Result};

@@ -319,3 +319,55 @@ pub struct NewTunnel {
     pub label: Option<String>,
     pub auto_connect: bool,
 }
+
+/// A named jump-point into a session log, keyed by on-disk location so it
+/// survives the host row being deleted and re-added.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogBookmark {
+    pub id: i64,
+    pub host_dir: String,
+    pub file_name: String,
+    pub line: i64,
+    pub name: String,
+    pub created_at: i64,
+}
+
+/// Fields for creating a new log bookmark.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NewLogBookmark {
+    pub host_dir: String,
+    pub file_name: String,
+    pub line: i64,
+    pub name: String,
+}
+
+/// A reusable command snippet in the launcher-managed library.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Snippet {
+    pub id: i64,
+    pub name: String,
+    pub command: String,
+    pub description: Option<String>,
+    pub tags: Vec<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// Fields for creating a new snippet.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NewSnippet {
+    pub name: String,
+    pub command: String,
+    pub description: Option<String>,
+    pub tags: Vec<String>,
+}
+
+/// Partial update for a snippet. A `None` field is left unchanged; a nullable
+/// field wraps `Option<Option<_>>` so "not provided" and "cleared" are distinct.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SnippetUpdate {
+    pub name: Option<String>,
+    pub command: Option<String>,
+    pub description: Option<Option<String>>,
+    pub tags: Option<Vec<String>>,
+}

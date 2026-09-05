@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: i64 = 13;
+const SCHEMA_VERSION: i64 = 15;
 
 /// Name of the reserved, auto-created "Favorites" group. Membership in it is the
 /// source of truth for a host's favourite status.
@@ -125,6 +125,14 @@ pub(crate) fn run_migrations(conn: &Connection, launcher_path: &Path) -> Result<
 
     if current < 13 {
         migrate_v12_to_v13(conn)?;
+    }
+
+    if current < 14 {
+        migrate_v13_to_v14(conn)?;
+    }
+
+    if current < 15 {
+        migrate_v14_to_v15(conn)?;
     }
 
     // Runs last so all columns it writes to (e.g. environment) already exist.
@@ -489,6 +497,38 @@ fn migrate_v12_to_v13(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn migrate_v13_to_v14(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS snippets (
+            id           INTEGER PRIMARY KEY,
+            name         TEXT NOT NULL,
+            command      TEXT NOT NULL,
+            description  TEXT,
+            tags         TEXT NOT NULL DEFAULT '[]',
+            created_at   INTEGER NOT NULL,
+            updated_at   INTEGER NOT NULL
+        );",
+    )?;
+    Ok(())
+}
+
+fn migrate_v14_to_v15(conn: &Connection) -> Result<()> {
+    // Named jump-points into session logs. Keyed by the on-disk host directory
+    // and segment file name plus a line offset, not a host row id, so a
+    // bookmark survives deleting and re-adding the host.
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS log_bookmarks (
+            id          INTEGER PRIMARY KEY,
+            host_dir    TEXT NOT NULL,
+            file_name   TEXT NOT NULL,
+            line        INTEGER NOT NULL,
+            name        TEXT NOT NULL,
+            created_at  INTEGER NOT NULL
+        );",
+    )?;
+    Ok(())
+}
+
 pub(crate) fn now_ts() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -540,6 +580,72 @@ mod tests {
             })
             .unwrap();
         assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn migration_v13_to_v14_creates_snippets() {
+        let dir = temp_dir();
+        let db_path = dir.path().join("launcher.db");
+        let conn = Connection::open(&db_path).unwrap();
+        run_migrations(&conn, &db_path).unwrap();
+
+        // Simulate a pre-v14 database: drop the table and roll the recorded
+        // version back to 13, then re-run the chain.
+        conn.execute_batch("DROP TABLE snippets;").unwrap();
+        set_schema_version(&conn, 13).unwrap();
+        run_migrations(&conn, &db_path).unwrap();
+
+        let has_snippets: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='snippets'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(has_snippets, 1);
+
+        let version: i64 = conn
+            .query_row("SELECT version FROM schema_version LIMIT 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn migration_from_v13_creates_both_snippets_and_log_bookmarks() {
+        // Guards the #118/#123 merge order: a database jumping straight from v13
+        // to the current version in one launch must run both new steps, so both
+        // tables exist. A fresh DB (current = 0) exercises the same chain.
+        for start in [0_i64, 13] {
+            let dir = temp_dir();
+            let db_path = dir.path().join("launcher.db");
+            let conn = Connection::open(&db_path).unwrap();
+            run_migrations(&conn, &db_path).unwrap();
+            if start == 13 {
+                conn.execute_batch("DROP TABLE snippets; DROP TABLE log_bookmarks;")
+                    .unwrap();
+                set_schema_version(&conn, 13).unwrap();
+                run_migrations(&conn, &db_path).unwrap();
+            }
+
+            let tables: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master
+                     WHERE type='table' AND name IN ('snippets', 'log_bookmarks')",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(tables, 2, "both tables must exist (start={start})");
+
+            let version: i64 = conn
+                .query_row("SELECT version FROM schema_version LIMIT 1", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(version, SCHEMA_VERSION);
+        }
     }
 
     #[test]

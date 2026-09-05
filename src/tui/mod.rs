@@ -705,6 +705,12 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
             }
             screens::session_picker::render(frame, app);
         }
+        if app.mode == AppMode::SnippetPicker {
+            if app.motion_enabled() {
+                *app.popup_backdrop.borrow_mut() = Some(frame.buffer_mut().clone());
+            }
+            screens::snippet_picker::render(frame, app);
+        }
         return;
     }
 
@@ -868,6 +874,9 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
                 render_form_popup(frame, app, FormKind::Identity);
             } else if app.tunnel_form.is_some() {
                 screens::tunnels::render_tunnel_form(frame, app);
+            } else if app.snippet_form.is_some() {
+                screens::snippet_manage::render_snippet_manage_popup(frame, app);
+                screens::snippet_form::render_snippet_form(frame, app);
             }
             render_confirm_discard_popup(frame, app);
         }
@@ -887,6 +896,13 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
         AppMode::BroadcastPreview => screens::broadcast::render_preview(frame, app),
         AppMode::Notice => render_notice_popup(frame, app),
         AppMode::KnownHosts => screens::known_hosts::render_known_hosts(frame, app),
+        AppMode::LogBrowser => screens::log_browser::render(frame, app),
+        AppMode::SnippetManage => screens::snippet_manage::render_snippet_manage_popup(frame, app),
+        AppMode::SnippetForm => {
+            // Keep the snippet list behind the form for context.
+            screens::snippet_manage::render_snippet_manage_popup(frame, app);
+            screens::snippet_form::render_snippet_form(frame, app);
+        }
         _ => {}
     }
 }
@@ -1918,6 +1934,7 @@ fn render_confirm_delete_popup(frame: &mut Frame, app: &App) {
         Some(PendingDelete::Identity { name, .. }) => format!("Delete identity '{name}'?"),
         Some(PendingDelete::Group { name, .. }) => format!("Delete group '{name}'?"),
         Some(PendingDelete::Tunnel { label, .. }) => format!("Delete tunnel '{label}'?"),
+        Some(PendingDelete::Snippet { name, .. }) => format!("Delete snippet '{name}'?"),
         Some(PendingDelete::SftpEntry { name, is_dir, .. }) => {
             if *is_dir {
                 format!("Delete folder '{name}' and all its contents?")
@@ -4365,6 +4382,34 @@ mod tests {
         ] {
             for (w, h) in [(1u16, 1u16), (10, 3), (30, 8), (49, 20)] {
                 let app = app_with_picker(purpose, "x");
+                let _ = render_to_buffer(&app, w, h);
+            }
+        }
+
+        // The log browser's viewer + open bookmarks overlay nests a popup inside
+        // the viewer's content area, whose own clamp must not assert on a sliver.
+        {
+            use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+            use std::io::Write;
+            let tmp = tempfile::tempdir().unwrap();
+            let logs = tmp.path().join("logs");
+            let host_dir = logs.join("web-1");
+            std::fs::create_dir_all(&host_dir).unwrap();
+            std::fs::File::create(host_dir.join("100-1-0.log"))
+                .unwrap()
+                .write_all(b"line one\nline two\n")
+                .unwrap();
+            let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::empty());
+            for (w, h) in [(1u16, 1u16), (10, 3), (30, 8), (49, 20)] {
+                let mut app = test_app_with_hosts();
+                app.open_log_browser_at(logs.clone()).unwrap();
+                app.handle_key(enter).unwrap(); // host -> segments
+                app.handle_key(enter).unwrap(); // segment -> viewer
+                app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::empty()))
+                    .unwrap(); // start a bookmark
+                app.handle_key(enter).unwrap(); // blank name -> "line N"
+                app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::empty()))
+                    .unwrap(); // open the bookmarks overlay
                 let _ = render_to_buffer(&app, w, h);
             }
         }

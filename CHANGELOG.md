@@ -4,6 +4,60 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-09-05
+
+### Added
+
+- **Session log browser** (PR #123 by @56steve, issue #76) - browse the session logs SSHub already
+  writes, without leaving the TUI. `Shift+L` on the dashboard
+  opens a browser: pick a host, pick a rotated segment, then read it in a
+  viewer that strips terminal escape codes so a raw PTY transcript reads as
+  plain text. Inside the viewer, `/` searches (case-insensitive), `n` / `N`
+  step through matches, and `b` bookmarks the current line with a name (blank
+  names fall back to "line N"). `m` opens the bookmarks list for the host to
+  jump straight back to a saved line, even in another of that host's segments.
+  Reads are capped so a large transcript is never slurped whole. Bookmarks live
+  in the launcher database (schema v14), keyed by the on-disk log location so
+  they survive a host being removed and re-added. `Shift+L` is rebindable in
+  the keybindings editor (`Ctrl+K`).
+
+- **Version badge shows the install channel** — the tab-bar version now reads
+  `v0.15.2 · npm`, `· cargo` or `· source`, so a support conversation can tell
+  how the binary got onto the machine. npm is detected via an
+  `SSHUB_INSTALL_CHANNEL` env marker set by the npm shim (the prebuilt binary
+  is byte-identical to the release-tarball one, so paths cannot tell them
+  apart); `cargo` and `source` (`cargo run` out of a build dir, `just install`
+  into `~/.local/bin`) come from path heuristics. Distro packages and manual
+  copies show no suffix, and an explicit `SSHUB_VERSION_LABEL` still wins
+  verbatim (demo recordings keep byte-exact labels).
+
+- **Command snippets library** (PR #118 by @56steve, closes #2) - store frequently-used commands
+  (name, command, optional description and tags) and run them without retyping.
+  `Shift+S` on the dashboard opens a manager to add/edit/delete snippets; inside
+  a live session `Ctrl+N` opens a fuzzy picker where `Enter` runs the selected
+  command in the PTY and `Tab` inserts it without a trailing newline so you can
+  edit before running. Both keys are rebindable in the keybindings editor
+  (`Ctrl+K`). Snippets are stored in the launcher database (schema v14).
+
+### Fixed
+
+- **"Group '…' deleted" confirmation now actually shows** (PR #121 by @56steve) - the notice
+  was set before `enter_group_manage()`, which clears any pending notice in the
+  same frame, and the manager popup never drew it besides. Deleting a group from
+  the manager (`Shift+G`) flashed nothing. The notice is now set after
+  re-entering the manager, and `render_group_manage_popup` draws it in a row of
+  its own.
+
+- **SFTP lost username and key authentication for hosts imported from
+  ssh_config** (#120) - interactive sessions hand the alias to the system `ssh`,
+  which applies `~/.ssh/config` itself, but the native SFTP transport is
+  libssh2 and needs explicit credentials. Launcher rows imported from ssh_config
+  kept only address/port/proxy_jump, so both the TUI browser and headless
+  `sshub sftp` tried to authenticate as the local user with no identity file.
+  Both surfaces now resolve the alias live through the same `ssh -G` machinery
+  the import used and let the resolved config fill what the store does not
+  manage; SSHub-managed usernames and attached identities keep winning when set.
+
 ## [0.15.2] - 2026-08-24
 
 ### Added

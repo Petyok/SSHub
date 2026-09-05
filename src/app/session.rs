@@ -32,6 +32,21 @@ impl App {
             self.open_sftp_for_active_session();
             return Ok(());
         }
+        // Only over a *running* session: opening the picker mid-handshake would
+        // let Enter write the snippet into ssh's password / host-key prompt (the
+        // text is taken as the secret), and over an exited session it would
+        // swallow the "press any key to close" keystroke. When the phase isn't
+        // Running this falls through to the normal keystroke handling below.
+        if self.is_action(KeyAction::SessionSnippets, &key)
+            && matches!(
+                self.active_session().map(|s| &s.phase),
+                Some(crate::session::SessionPhase::Running { .. })
+            )
+        {
+            let return_mode = self.mode;
+            self.open_snippet_picker(return_mode)?;
+            return Ok(());
+        }
         // While connecting, toggle the debug (`-v`) log view. Only meaningful
         // before the shell reveals, so ignore it once the session is running.
         if self.is_action(KeyAction::SessionToggleLog, &key)
@@ -206,6 +221,17 @@ impl App {
     pub(crate) fn session_is_rendered(&self) -> bool {
         matches!(self.mode, AppMode::Connecting | AppMode::Session)
             || self.session_picker_over_session()
+            || self.snippet_picker_over_session()
+    }
+
+    /// The snippet picker is always floated over the session it was opened from,
+    /// so the session keeps painting underneath it.
+    pub(crate) fn snippet_picker_over_session(&self) -> bool {
+        self.mode == AppMode::SnippetPicker
+            && self
+                .snippet_picker
+                .as_ref()
+                .is_some_and(|p| matches!(p.return_mode, AppMode::Connecting | AppMode::Session))
     }
 
     /// The session picker opened from a session (rather than the dashboard), so
