@@ -1,0 +1,636 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:cbec095865f03901034a81626fe09be505f6c6746c16a03a3315723e57f4edd7",
+  "claims": [
+    {
+      "id": "claim_d0f16c365d73470fac8b2da24afe2a1e",
+      "statement": "SSHub has no async runtime: startup resolves one immutable profile workspace (optionally via the standalone picker), builds App, and everything afterwards is driven by a single synchronous event loop in src/lib.rs (run() -> run_with() -> run_app_with() -> run_terminal_loop()), with concurrency handled by background threads communicating over std::sync::mpsc.",
+      "evidence": [
+        {
+          "resource": "repo://src/lib.rs#L271-L290",
+          "version": "repo-lines-v1:sha256:ed34afe99e7dce033efd6a1c8315a8c1d88e2c825d93e2418086c6a5363d93c7:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4MTc1ZGM5YmI4ZmFlOTlmOTdkNzZkYzEyMzg5MzdjMGQ0NjZjOTk5Mjk4ZjlmMmMyZjA0OGU0ZmJiMmNkN2QiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUzOTMyOGUwMDM3N2JiYWU3Y2Q4YjRiOGI1OTljYmRjOGFjZmNlMmQ5N2QzYzA3NmRkMzY3NWRlZjdmOGFlNTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM1ZjZmNDY2ZTU5Y2ZjMzA3MDNjNDVmNzJhZjY1ZGU1NGFjMzYzZDM1NGNjMWEzMzMwMzUwYWNkNDUyNDM0YzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhhMTBkODc2ZDQxY2EwZjRlMGMwMTJkYzQ2OWQyN2M3OGMzZTI2NTA2ZmZjYTBhOTg2NjcwOGJjMmI0MmRlYjgifQ"
+        },
+        {
+          "resource": "repo://src/lib.rs#L96-L166",
+          "version": "repo-lines-v1:sha256:e92a43b55ddbf4a017731b201226f1f8d9bdc74fc81788b6a72af1681797c3a1:eyJzZWxlY3RlZExpbmVDb3VudCI6NzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIzYzViYmVlYjFhNTE4Y2Y3NjgxYWQ5ZmFkOGJiMjU2ZmNiZjFjZTc5Y2Q0ZDg5YTlhMDM0NjMyZDViY2MzYzMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRiNzUzNzgzZTQ3ZjJmMThlZWY3MTYyYjg3YjEzZjYwNDNlMWIzNTI1ZGUzNTMwMDJlOTRkMzU0MTQ4ZGQ3NDkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA3YTE5YmRhMDA3OWFkMWJjMTY1NjNiYzhiMTM0ODliOWFkODE0NGNiNTc4OWQ0Y2FjYzI5MjNkNzhmMDkxNjIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_4bd0f3140a214847b6825ed4a4be3f90",
+      "statement": "Each iteration of run_terminal_loop (POLL_INTERVAL = 50 ms) reads the terminal size, drains every open session's PTY (feeding the vt100 parser, session log, and stderr debug tail) and resizes all sessions when the host terminal changed size, relays OSC 52 clipboard writes for the visible session only, promotes app.mode from Connecting to Session once the active session's phase is Running, draws via terminal.draw(|frame| tui::render(frame, app)), then runs poll_keys_and_watcher, and exits via shutdown_all when should_quit is set.",
+      "evidence": [
+        {
+          "resource": "repo://src/lib.rs#L292-L411",
+          "version": "repo-lines-v1:sha256:99533e546119f652e28e599200288e0aeb230081eae7eb67d60d03f0ff1e1b4f:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJiOTRjYWE2MWQ0Zjk2NmVkNjg0NzVjNzk0OGZmNjZjNWNlN2QzMGRkMDczZDU3YjY3ODIzNDRjOTdkN2I5ZGY3IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0ODkzZjQwZTM3ODFlYjg5NmM4MmQwNDZhMDgwNjdhMTFlMzVjZGYyZjFkZmFmMjZmZWE5MGI4ZGI2Njc2NDEzIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJmNmUzNWQwMzUzYTc2ZDIwMDVmZTNjZGIyNTIyZTQwODljZmU2YjgxY2I4OTQ5N2Q4MzNiNmE5ZGM3ZDJjMWI2IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIxMWZiMzZmMDQ2ZDQxZWJhMWYzMjM0Yzk4NDJhYjRiMmQzNDc1MjZkMTY0Nzk2OGI1ODVlOTBjMTE4ZWFlNWRhIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_e6d7a367831b46beb3a790a493188909",
+      "statement": "poll_keys_and_watcher uses a 50 ms idle poll window but shortens it to 16 ms while App::animating() reports any in-flight effect, and when a crossterm event is ready it drains ALL queued events per frame (Key -> handle_key, Mouse -> handle_mouse, Paste -> handle_paste) because one event per 50 ms frame would make pasting into an embedded session crawl at ~20 chars/sec.",
+      "evidence": [
+        {
+          "resource": "repo://src/lib.rs#L450-L472",
+          "version": "repo-lines-v1:sha256:d9b3e516a111e1f5e18ad25c1b34b610dbcd243efa547bc474894e86c1bb3bfe:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk4NDcxYTJiNjI5ZjA4YzBlOTdlZmY3YTE3Mjc4MDVjNTkyNzY2MDU3YjYyMjIwNDEyN2RjY2EwMGU4Y2ExYjIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM1ZjZmNDY2ZTU5Y2ZjMzA3MDNjNDVmNzJhZjY1ZGU1NGFjMzYzZDM1NGNjMWEzMzMwMzUwYWNkNDUyNDM0YzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY3ZDk0Y2VmNjNhNGI0ODc1NGI2YjlkN2MxNmU0ZDI3OGM2NGRjN2MwY2Q4MzM4ODA5NDA1ZGI5MWY3MGU2ZjcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0ec0ecfcc5b84090b650d6365087c576",
+      "statement": "After input, poll_keys_and_watcher drains every worker channel non-blockingly in a fixed order: config watcher events collapse into one app.reload_hosts(); ping results fold into a per-host ring capped at 30 samples (PING_UNREACHABLE = u32::MAX as sentinel, cleared when the host recovers); SFTP events are collected first then applied via apply_sftp_event / apply_sftp_event_left (the borrow must end before applying); OS-detect events are likewise collected then applied via apply_os_detect, which persists the os_icon and reloads hosts.",
+      "evidence": [
+        {
+          "resource": "repo://src/lib.rs#L474-L544",
+          "version": "repo-lines-v1:sha256:616729a6fe002274949aef9c41711b5cf36be45e42d7f098a76a3bcbd17a24ca:eyJzZWxlY3RlZExpbmVDb3VudCI6NzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE2MGRlNmQwMDE4Y2FjNjZlODk0ZTFlMWQyNmNhN2MzZDc1ODJhOGRjYzk4YTM2YTU4ZWM2Zjc5YmIxZjNiOTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk5OWJkZWZlZWFjYTYzNDBlMDI5MGRjODZlODg5Yzg5ZDVlMTg5YWE1YmE0NGI1ODViM2I3MDczNGY0YTYyZDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVhNjNiZjc2MTY4Mjg3ZWExM2VmYWFiYzdkYTVkZmI4MzUyZGNiNmExMjk5ZjU4YjM3NzE1MWEwMjdhZGY5MWIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_79eeeb2e9c7b4dc0b869a1c97aa34dac",
+      "statement": "The probe_rx drain in poll_keys_and_watcher is a retired seam: nothing ever sets probe_rx (the 60-second `ssh -v` prober was removed because it buried user-relevant events under hundreds of probe lines), so the SSH log is fed only by user-initiated events; clearing the SSH log drops the receiver.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/keys.rs#L346-L351",
+          "version": "repo-lines-v1:sha256:62a4c48f80c6e898d257021191c6d77566600eb18fe53ee995d52d010d4752c5:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZTZhYWIwOWExOTYxZWQ5YjZhNTMzOGY2ZTRkNzI4YWM1NDVmNTVjMzdlZDRmNWQzZmFiNGJlOWMyY2ZlMThmZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNTUyMmM0MmNkMTljNmQwM2Q4MDhjNDUyNzIwNTUyODI1YjdlYTFjNWI0OTFiMjE4NTExY2FjNzQxNWNmOWQ5YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMjdkODJlZTRhNDFhZjQ1NDNiZTQ5ZjBlNDIwY2FiNGJlYWNlY2U0NDgyMDE5NzAyOTNhYThlN2FiM2EwYjk2NiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNTA5NjAwYjFjODJlOTY4ODg2YmFhZjc1ODlhNWJiOWUyZTZjMzhmMjRhYWJlYzAyNDQ5Y2QxYWQwZjE0NGQ1ZSJ9"
+        },
+        {
+          "resource": "repo://src/app/mod.rs#L1124-L1129",
+          "version": "repo-lines-v1:sha256:61e031c7fac95986cc5de2d84c4aab3f018fb10d2d181def58e3f24ec855ef36:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNmJiZDU2NTU4OWY1N2Q3OGJhNWNkNWRlZDYyNzgyYzdiODhmMzNhNmExNzlkY2ExYWY5NmUzYWNlNDg5ODFmYSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZmZkZWFiOWJkZGM3Nzg2YmU0NmExMzAyMzEzNDliZmExNTdiYTYzZjc4Y2IwY2YxNTE5NDdhMjQzYWI4Nzk3ZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOGRjYTM5NTJlMjQxMmYwYjNiYTU0Y2JjN2UyMGIyMzFkNDMwMGZmMjIyNGVmNWZhMTE3NDc2NTczZmVhYmI1NiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOTk5YmRlZmVlYWNhNjM0MGUwMjkwZGM4NmU4ODljODlkNWUxODlhYTViYTQ0YjU4NWIzYjcwNzM0ZjRhNjJkOCJ9"
+        },
+        {
+          "resource": "repo://src/app/mod.rs#L449-L449",
+          "version": "repo-lines-v1:sha256:a66e4ac0987071d2c7cec85a6a89e130e3419c0b1103faae2629c958bc22081e:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYTY2ZTRhYzA5ODcwNzFkMmM3Y2VjODVhNmE4OWUxMzBlMzQxOWMwYjExMDNmYWFlMjYyOWM5NThiYzIyMDgxZSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYTY2ZTRhYzA5ODcwNzFkMmM3Y2VjODVhNmE4OWUxMzBlMzQxOWMwYjExMDNmYWFlMjYyOWM5NThiYzIyMDgxZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOGM1MGI5YjJjNjE2NmM5ZTI0YTViOTljOGRlOTU5ZmFiNTgzN2Q5ZjI0ZTBjYjQ3NTcxNjZiYWZjOTE2YzlhOCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNzJhNGE2MjJjNzA0OTM5YmUwNWJiYWYwNjE5ZGZkZjQxYWQ1YWI5NDQ5ZWRhYWE0NzRjYTZmNmIyZjBmZTY0MSJ9"
+        },
+        {
+          "resource": "repo://src/lib.rs#L528-L534",
+          "version": "repo-lines-v1:sha256:4e57f51526a233618b3ae6ea989cb91da07f5f9e6709f1c0798e726edaa994c5:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZDMzYWIwNzFmOGQ4ZDkyMjkxNGIxZTI2ODgyMmYwZTEzM2NlYTMwOGY0YWY0ZTQyYWE4Y2YxNjJmYzQ2ZmVjZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDg5M2Y0MGUzNzgxZWI4OTZjODJkMDQ2YTA4MDY3YTExZTM1Y2RmMmYxZGZhZjI2ZmVhOTBiOGRiNjY3NjQxMyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOTk5YmRlZmVlYWNhNjM0MGUwMjkwZGM4NmU4ODljODlkNWUxODlhYTViYTQ0YjU4NWIzYjcwNzM0ZjRhNjJkOCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYTczNjg3MTQ4ZjcxMmJjOTQ3OGU0ZDAwMzBiMWFkYzI0ZDg5M2EwMTRmYjU1YjUxZWMwYjVkOWE0Y2U3MmY0OCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_64a88be79f264ce08be01962bf019015",
+      "statement": "tick_broadcast() runs every frame: it expires finished error toasts even with no live run, drains the broadcast worker channel and folds events into the result table, spawns a toast per failed/non-zero-exit host, arms the settle countdown when every row is terminal, and writes the audit trail exactly once guarded by audit_written.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/broadcast.rs#L495-L590",
+          "version": "repo-lines-v1:sha256:b5f07bc1d7d878e631f5daf6cb1c0532559ca974c51085c4fd150d30157308aa:eyJzZWxlY3RlZExpbmVDb3VudCI6OTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNmZWI0MTZkZGEyNjBiODI5N2E5NjRhZDc5NGYxMTdkODg3NGJkOTQ4ZGM0MTE3YjJjZjQ3MDRjYWE5OGVmOGIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMwNDMyZGE1NDYxNjNhMzZmN2ZiOWNjMjM1ZmUzMzU0YTE4NzQ1MjhiYzliNjUwNmYzNTZlMWNiMjY1ODYxNzAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY1Yzc3YTZhYjU5ZmViZGM0YzlmNzA5MTRmNzg0MzllYTRhMmFmMTdhMWViNjFjZWI1MDhmMmE0OThiMzBkODciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM1MTBkMDhlODM1MTg4ODUwYmUwNWFhM2QzZmU3Y2EzNTE5YjgyYzg1MzQzOGYxZGYyNGFiYThiMjcyMzIwZTkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5a9f32bd91644a2db94e88877c951fa3",
+      "statement": "tick_tunnels() runs every frame and performs the one-shot keep-alive auto-connect bootstrap, TunnelManager::check_health via try_wait (stabilizing spawns after stable_secs), reconnect scheduling with audit logging, and a 2-second resync (tunnels_synced) that re-reads the tunnel list from the SQLite store because another sshub window or the CLI writes the same file.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/tunnels.rs#L652-L668",
+          "version": "repo-lines-v1:sha256:81c08929bdef61b07eacbc3dac23a5f962ff0498a984d9e9becd5264ff188130:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhMTVmZjcxN2QyZmE0ZDBmZWM1ODIwNGFlNjg1MDdiOGNiZDdiNzFkN2JmODA3Yjg3MDAzNjUxNjFkNjkyMjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE2MmVlNTdlNDFhOGMyMGFlMDE2NGRmMjYxNDM5ZGNjNDk5ZDM1MjA4MzQxNTE1MTZkMDQ3ZThkZWFlOGE0NjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZmZTg1MzVkZmNlM2RjMTE3ODA1YzMzZjY2YmFhYTFkMmI0NzljZjBlOTRhYTY1ZjBjYmU5MjNmNDgxZjFmYjMifQ"
+        },
+        {
+          "resource": "repo://src/tunnel/mod.rs#L220-L281",
+          "version": "repo-lines-v1:sha256:1123dd95c634323a20eeaaeca4d058047e2d4595918dbb613689c3994546aebb:eyJzZWxlY3RlZExpbmVDb3VudCI6NjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc2NzVjM2ZhMjlmOTY3NGQ3ODE0NTE3MmU3NmQyMGZjYTI5NTgzYjVhMmZmN2VlMDUwMGQyNGMwNDE1NTI3NTEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRmMWViNjg5NTgyZWI3OTY3NWE3NzE1MzAwZDA2ZThlOWRmNDE3MjIxY2U1ZmUwZmJjMDA5OTJmZTcwYmYwZWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjljYmRmY2JkYTVjNTJlMWI4OTAwYTY4ZjFlOGMxN2E0MjlmODg4MTZhOGE3YjhmNDE3MjYyZjlhYTc1NGViYjgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f1b5a1575ac846e5888a6e97780419e7",
+      "statement": "refresh_auth_cache() refreshes the audit events cache every 10 seconds, re-querying with the audit tab's current status filter and range so the periodic refresh preserves the user's filtered view instead of clobbering it.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/mod.rs#L1074-L1092",
+          "version": "repo-lines-v1:sha256:cee4396d4be7ac365519d280fc5a461a66b0ddaf3d65347092d0389799347fb2:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk2NTgwZGY3MWE0NmJiMzU2N2NkODMwYzZjMjViNGE0ZGFhMjA2NTU1ZTM3MzVjZTZjOTQyMTk5MmY2ZjVkZjAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2YjA0NDkxNDY5NzIyZTgzNjNhOTRlNDA0NDUzOGUwMTNhMmEyMTdlMzZiMWU1NjhiYTYwYWNiN2I0YzhmMmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImMzYzU4YzU5OThmODQ3NTg1YmJkYzg1ZDIyYmQ4NWFiNDVjY2E2MjU1NTc3MjQxOGJkMmMxMGFlNGFlNmI5MTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZkNjVhOTg3NzY0NzRjN2E2YWI2ODhjZGVlMDI5MzQyNTkwMmQ5YjQwYWMwNzcyOWEyMWYwYTlkNzdlMjBiZWYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_eab18a3cd4e6469b958554845fdfaded",
+      "statement": "detect_tab_switch() is deliberately the last step of poll_keys_and_watcher: it must run after the background drains so a mode change arriving from a worker event (e.g. an SFTP ConnectFailed) stamps mode_entered_at in the same tick; it compares per-tick mirrors (anim_prev_tab, anim_prev_mode, anim_prev_audit, and siblings) against current state to arm tab-switch/popup/session slides and to retire finished ones, freeing their snapshot buffers.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/mod.rs#L539-L651",
+          "version": "repo-lines-v1:sha256:20809b84210c8a0cfa5492f50f5c921ad0b8091b54b16865f64a0d332555d6e5:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEzLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIwZDk3YzE2MjBiOTllNjBmM2JmOWU2ZWVlNDM4ZDE5MDQ0NzI3MDNiNzhhM2U5NjAzMWE2ZmMwMDIzNWIzODRkIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0ODkzZjQwZTM3ODFlYjg5NmM4MmQwNDZhMDgwNjdhMTFlMzVjZGYyZjFkZmFmMjZmZWE5MGI4ZGI2Njc2NDEzIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI5OTliZGVmZWVhY2E2MzQwZTAyOTBkYzg2ZTg4OWM4OWQ1ZTE4OWFhNWJhNDRiNTg1YjNiNzA3MzRmNGE2MmQ4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIyZjg4YmMxZGVlMjE3MjdjYjU5MjU3MGU0MWQ4MWRkMmIwZTg4Mjc0N2ExNDViMjFkNTBiOTRiNDY1ZTE0OGYxIn0"
+        },
+        {
+          "resource": "repo://src/lib.rs#L561-L568",
+          "version": "repo-lines-v1:sha256:0d00b7b1e9d69fa5709136b82e5dff9937518654b6750d71324dc8ad466d2c1f:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZjZkZmZmZmQ2OGVhMWVkNWI5ZTJmNjNhNjE2MzM0ZDQwYmRhYmZlZjRkODg4MzZkZTA5NmU2YmI0YWUwMGQ2MSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZDg5NzcxZmUxYjY2Mjg4NzVhYTIzZTdkYmU0YWE3MTQ2MWQwMGNkZmI2NmRkZjExYjlkODIwYWM1ODk3ZmRmNiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMmIyZmI4MGJiZmI2ZDI0MTc4NWFlOWE3MDJmMWI0YTg2MzAyYjE2OTM1ZjEzMWIwOGI0OWY1M2FiNTIyYjUyYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMzkwNjUxMjU2MDM3NDE1ZjlkZWE3ZWY4YzIxYjA0MWI0Y2EzZDEzNjFiYTBjMmQ2ZmRlY2FhNDNiM2I0YjczYSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_e4d22a7546ef4424933df7563db59a96",
+      "statement": "When stdout is not a terminal, run_headless_loop renders one frame on a ratatui TestBackend (80x24) and then either applies SSHUB_AUTO_QUIT or bails with 'sshub requires an interactive terminal'; SSHUB_AUTO_QUIT=q sends the q key and confirms the quit dialog if it appeared, failing the run if should_quit was not set. SSHUB_DRY_RUN (or legacy SSH_LAUNCHER_DRY_RUN) short-circuits run_with() to Ok(()), and `--dry-run` is handled in src/main.rs before the TUI is entered; tests/smoke/run_app_quit.rs drives exactly this path.",
+      "evidence": [
+        {
+          "resource": "repo://src/lib.rs#L101-L106",
+          "version": "repo-lines-v1:sha256:58d514dbefc5f4dd557f216b1adf26b802ddcd93fd7ecb1318be6a9bdface60e:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMmViNGZmNTRkMDdmN2IzYzY3NWQ3NDE4YTQ3MmYxNjBkMTUzYzRkMGRmMzhlMGE2NmYzYjk4YjA5ZTdjNGIxMCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMWI4MjhhZWJhNzI3YTk2ZDAwNDE5OWZmODRiYTA3MDc2MGNmNjUxMzViYzA4MGYwM2Q5Nzk4NGZjMTZmY2EzMSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMGY3MTdiODIxOTdjNmQ1MmZiZjFkM2RmNGMxNTA3Njg5OTljMTU0YjNiMGU5OGY3NWQ2YTMyZGViM2Q3NzUxNyJ9"
+        },
+        {
+          "resource": "repo://src/lib.rs#L416-L448",
+          "version": "repo-lines-v1:sha256:5ba29d6e1dc295a592f286f699df23f54c5ef6c0d53737da27b17edbc9c3f749:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNmYTc2ZTkxYTdlN2YyNzQ5NzdjZjA5MTU1OTBlNjQ1ZjIxYWU1NWYzOTJlNWViOTNmNDUyZWQ0NWE5NWViYTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM1ZjZmNDY2ZTU5Y2ZjMzA3MDNjNDVmNzJhZjY1ZGU1NGFjMzYzZDM1NGNjMWEzMzMwMzUwYWNkNDUyNDM0YzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA3MWIwMTRmNzhlMDM5YTU0NzkyMDA3YWJmYTVjMmVlZDJmOGE3NWI4MGI0MWM3ZTljNmU4MmUzNmQ3Nzc1Y2MifQ"
+        },
+        {
+          "resource": "repo://src/main.rs#L74-L77",
+          "version": "repo-lines-v1:sha256:83ad68daa6dacc35dfd808d3607bf212db9cdb1f903736a7bfbc8fee7e5af552:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYzE5ZWRiYzM2YzgyYjllMmJjOTNiZTViOWRmYTlmMDQ2ZjU1MDJjMzQxNDQyN2ZiODE2Y2ViMmQxZGM2NjA0NiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYWYxMmNiNTk1M2Q0YWVmMzk0N2MzNTBhZDk2ODIzMjdjNWFmNGU3YWE4MmUzMWZiZGJjNzZiYzQxYzUyZWEwNiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOTk5YmRlZmVlYWNhNjM0MGUwMjkwZGM4NmU4ODljODlkNWUxODlhYTViYTQ0YjU4NWIzYjcwNzM0ZjRhNjJkOCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMzY5N2M4ZmQwMWY3ZjRhYjc3YTU5ZDA3MzMzZGZlODI5MDk5MjE4M2NiYzU5MjUxZWMyMDMwMDgyYTMzZmI4YiJ9"
+        },
+        {
+          "resource": "repo://tests/smoke/run_app_quit.rs#L21-L29",
+          "version": "repo-lines-v1:sha256:2ca7aaa97361ab323d949cc8c47f31a66bdabdde8882ce8decb20278e33964d9:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZDJjZDRkYjQ4YTM1MGU4ZjBiNDc5NDRjNDZlM2ZmZGJiYTEzMmQyMjkwYTkxZDcwMTJiNTZlYjQ2YzhhYjRmNiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZmVlYTRmZjdhMzA5MTBiOGExMmY1MzEzMDdjNzEzOWZmNDcxMWI3MTkyOGViNDNkY2Q3NzUzNDY2M2FlZmVjZSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjAsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_c2f6378abf17401ca7c5deece62c1ef9",
+      "statement": "The profile picker runs only when stdout is a terminal and no SSHUB_AUTO_QUIT is set (headless invocations select the last-used profile silently); the picker's intro animation honours the last-used profile's appearance.disable_animation via profile::picker_animation_enabled. setup_terminal enables raw mode, the alternate screen, mouse capture, and bracketed paste; TerminalGuard restores all of it on drop, and an installed panic hook disables raw mode before delegating to the default hook so a panic never leaves the terminal wedged.",
+      "evidence": [
+        {
+          "resource": "repo://src/lib.rs#L127-L165",
+          "version": "repo-lines-v1:sha256:bab81ece97fb5702d79fbc2065f5c7bbf3b2925658d70a675705f1674f762e9a:eyJzZWxlY3RlZExpbmVDb3VudCI6MzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIxYTE3MWYyZTgwZmUyM2Y5Yzg3YmU4Y2Y2ZmZjNjUwYTlmMDk4ZmE0OWZlODU1Zjg2YWRkYWUwZjJiMGEyNGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJiZDViMmUzZjVhYjU4ZmZmZTRlNzE0OTJjZjE4NjMzNzQ3ZTBkZWM0MDU0YmYxZmI4YjgzOWUwZmI1ODQ4NWEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjEyMzg0NTU2ZTQ0MDM0MGM3YjdiZWMyOTZmODU0MzE5M2JkOTkwNWVkMTBmZTg4NzUzOWU4NTYxZTE5ODdjNWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ2NWFmZGI4YWNlN2NjNTliMjRhYmM2Y2M0OThjZjQ0MmYzZmY3ZmRhNWY4MTU0ODRjYWUwNjZjOTY3YWRhOWQifQ"
+        },
+        {
+          "resource": "repo://src/lib.rs#L199-L213",
+          "version": "repo-lines-v1:sha256:8c0308bbcedfde2be11d214cd9fb671a2d2026e59e4e308d88f203a05fae1fcd:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA4ZmFjZGEwN2MxMGM5OTAyMjFlNGViZTRhMDg4MjcyYmYzZTA5OGM2NDAxNmYzZDZmOThlZTc1NGQyZDQ5MWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjExOTE0NmE4MTNmZmUwMGZkMTAyYzA2NGE4NGMyYThjYWY3N2RiMTI3MTBhNWI0ZWI0ZmUzZGE0YTYxMWZlMWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFiYTkzNzdkNzdiNGJlYmQxMmMwYzQxMzdmYTExODE5YTZhYzA2ZTI0MzZiOTNjMjQ3MjIwZWRkNjUyZTllMzUifQ"
+        },
+        {
+          "resource": "repo://src/lib.rs#L571-L608",
+          "version": "repo-lines-v1:sha256:9567b16c0a9aa5c127663e3ca6d6676f0c3fb4091d89abd46260175b78d51ed0:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIxMWY4NTdmODU3OThjYWFiOTlhNzRlODE5MmNjNDhjZDEyNzUxOTAwNWZmMjM4M2M5ZTZjMzliOTJkN2Y5YzEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM1ZjZmNDY2ZTU5Y2ZjMzA3MDNjNDVmNzJhZjY1ZGU1NGFjMzYzZDM1NGNjMWEzMzMwMzUwYWNkNDUyNDM0YzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjYzMTQ0OTFkMmJjN2Q4ODU5YjU0ZTc3MjZlNjFiYjFhNzI0M2VmMmU5Y2U5YzIwMGVhNmM2MjFkMmUwYTNiOGQifQ"
+        },
+        {
+          "resource": "repo://src/profile/mod.rs#L501-L514",
+          "version": "repo-lines-v1:sha256:6bee2c77e6e0ebe583abf6d8b305b40137dfcd2b22667b1f98edbbbb210a6f53:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEyYWY2ZmU0OTJiYzM1ZjExZDQ1OTMxYmJmZDhmMGEwZWE4ZWVhODY3OTkwNGMwMzRkMjE3ZDE4YWFiYmJhNmYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjIxNTdhZmZjNGE0NWU5OWMyODVlZGU4ZjM2YzM0ZWRiZjFjYTllZWQ4MmI3ZDg0ODQwODQyODExYjUwYmZjMTAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRmNDM2NmFhNTdjYjM2OTIyNTViYWFlNGY2OWQ1OTY3MmJmMDY4YzhiMzY1ZjExYWY3YzgzNDI5NWNiNDVhYjcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_85b15e72ee2641e2b8e6d6fed4d8de43",
+      "statement": "AppDeps has exactly four injected fields — resolver (Box<dyn HostResolver> -> SshConfigResolver), metadata (Arc<dyn MetadataStore> -> MetadataDb), store (Arc<LauncherStore>), password_store (Box<dyn PasswordStore> -> OsKeyring behind NamespacedPasswordStore with a credentials-file fallback) — and they are the main test seams. The former fifth dependency TerminalLauncher and src/launcher/ were deleted in 0.10.0; the CLI `sshub host connect` path spawns ssh/mosh directly via std::process::Command, bypassing any launcher abstraction.",
+      "evidence": [
+        {
+          "resource": "repo://CHANGELOG.md#L687-L693",
+          "version": "repo-lines-v1:sha256:fb5b3d5a5f321b39c39a926fd0a85a34e5290df1cfe901b7b67344b5e3d000b3:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMGM1MzhhMzQwY2I5MGI0MzYzZWYxOTk5ODAxY2YxMDAxMGZiNzBmMGE1NDJjODhkNGQ4NDkxYWVhZWFjYTE0MiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYTQ0ZWUyYTkwOWFkMTU2OGQwMjIwZWMxYjdkN2I1NGM2MWEzOTQ2NjY4ZmE2NTdjMWE0NDY3OWY4YjQ1YWU2MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNzA0ZjFhNzk2ODk1M2NmZDAyMmIyMmNiNGUyNmFkNDMyMDAyNGIwMDZkOTg0YzRhY2Q3MTllZWI4Mzg2MTQ2YyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiM2ExOTM2YWNjMDQ1Mjc2ZDBlYjZkYTA1YTRkZDhmOTMwMDBlYTY5MDQ4NjQ1ZDQyMDJiNWE4NjE4MjY4YWExMCJ9"
+        },
+        {
+          "resource": "repo://src/app/mod.rs#L150-L156",
+          "version": "repo-lines-v1:sha256:4ec05c712ba921bd74fc79476df91fbb69485f64f5e14955f2eabf29ed178a96:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNDk2YzZmNmZhNjI4ZjFkNWU4YjQwY2RmYTZkMTFkMDk5Mjg0NzI0NGJlYmNkZWM0ZjI1Y2RhZmFjN2YxYTlhNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMTllNzYzNTVjZjExOTk0ODBjM2Y5OTgzNmIxNDg2Yzg0MWQ4OTFmYWFkOTA0YzYwOGUwOTMwMjJkMzc1N2FlZSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYTM2NjA0NGJlMmQ2YWE1MmFkZDEzYTZmM2EyZmE2YTVlMDRmYzlmOTllNDkxODU2NzY0NjQxN2RjZWJlNmMyMiJ9"
+        },
+        {
+          "resource": "repo://src/cli/host.rs#L140-L240",
+          "version": "repo-lines-v1:sha256:bb59db0feb660bfb414049fdf15e38b5116df80f96e8b9feb81700df2eab1b04:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAxLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI3OGU0NmFjY2ZkZGVlNTZkMmFiODk3OTIyN2RhYmNjYjc2Mzk2M2VhOTNiZDVkYTczNmU4M2RlMmM4YmZiYjk4IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJiMWIwNDRmMjljYmRkMjlhOWJkN2YwZmEzMmFiNTAwNmFmMmRjMjA2YzE1YTcyZTAyODE0YTAyMTE2MzRjNzk3IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIzY2RiYzAzYmMxM2U4MDIyZDMzMDc2ZjA4MmYwZTIwZmE0N2JhMWNlNjkxNmM4YTZhZjQ0ZDMxNWNkZDQ3MzI4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI1MWEwZDZhNTA2MTM3NjdmMGE4ZGRjY2I4MWQ2NDZiMzcwZDI3M2Q1NjNmYTU1MmYwZGJlZDMxODUzYjk5NGE5In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_a7f1562ab44a49a7879e90ac67f43267",
+      "statement": "AppMode has exactly 38 variants; every overlay is a mode, and handle_key dispatches on self.mode to per-mode handlers (with SessionPicker, SnippetPicker, and Connecting/Session routed early so a live PTY keeps Ctrl+C). is_overlay_mode treats everything except Normal | Connecting | Session as a popup, which is what the render pipeline's popup snapshot slides key off.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/keys.rs#L4-L20",
+          "version": "repo-lines-v1:sha256:916f0eb4676897344d98f1dfe74859f829308c3d7deff62208f4869ae608b929:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI5Yzk0NTIxNDI2NDhmYTg3MDExN2U2YTFmMGQzOTJjOWEyNjNjZGI1OWRiOTI3MjY1OGQ4YWY3YjhhODk0ZDEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2YjA0NDkxNDY5NzIyZTgzNjNhOTRlNDA0NDUzOGUwMTNhMmEyMTdlMzZiMWU1NjhiYTYwYWNiN2I0YzhmMmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA5N2YxYjQyNTcyYzZmZTZiMjFhYzRmOTU4MWM3ODRiYjE3NTAxNTkxYjI2NGQ0Y2I0NWQyMjE2ZmVmZWI0MzMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjYzYmVjODUzOWIwYmJjN2QxNzVlMjk0OTZiM2ExZWI5MTYyMmU0ODM2OWY4MzBmNTc3MmQzNWI2Y2QwYTBkYWIifQ"
+        },
+        {
+          "resource": "repo://src/app/keys.rs#L81-L126",
+          "version": "repo-lines-v1:sha256:9269e3bd9bca9451ba12c8331d454f2fd2dc054090e08b0f65094e16849526cb:eyJzZWxlY3RlZExpbmVDb3VudCI6NDYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJjN2Y1OWU1NWUxODUwZTE5MDJhNzJlYWMyOTJjNzIyNTJkZTk2M2JjODdiOWZkOGJiNmJiNmVkNzRmYjc2NzciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImEyZmNiM2M4YTY2M2U5MzZjYTFiOWFmMWM4OTUzYjJjOTlkYTU0N2Q4Yjc0MDhkMmVhYjJhY2M3MWFiODFhN2QiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE2MjZjNWVlYThlODZhNmM4OTVkNWI1MTM2MmQ3YmE2ZWM1NGU5YzdiOWVkNGQyNjRhN2Q0NGViNTg3ODk2MzAifQ"
+        },
+        {
+          "resource": "repo://src/app/mod.rs#L491-L504",
+          "version": "repo-lines-v1:sha256:82ce174c3c23acaa0ebcfbea07e4898e808ceb5dfdbd3228fc030a97e66a41d8:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVmNzdkZjBhNzVhYzViODhjMGNlZGJiODg5YzQ3OGY3MGQxYmNjMjk1M2I2NjIzOTVjZTRhNDU0MTZmMjAwYmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjgxMGUwYzZiMDE5MjBkOWM4OGJkMWI0NjFiMjNhYTM5YTUzZWE1MTE5OTVkMjU4MGFlNDNiMDQ2MTRmYzcyNGIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRmMjZhMThmMDEyZmJjYzNhZDQwMjU3ZWNhYmZlODU4YWY1ZjA0ZDZmOWYxYzAwMzY2YTg4ZTkxM2ZmNzNlNjUifQ"
+        },
+        {
+          "resource": "repo://src/app/types.rs#L367-L433",
+          "version": "repo-lines-v1:sha256:7e1fe9029b76288b2969e2f2b2f6ce7bfb34a9516cbe3ff326435a5c8d13c68a:eyJzZWxlY3RlZExpbmVDb3VudCI6NjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU3MTZhZjcwOWZlZDM0OWNiNzdjYjRkYTYyZjk2ZjI3NTEyMmE4MzEzMTRlNGM1NmNkZjdlOGI4ZmZhNDFjZTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM2MzdkMTlmZmFiMzc0ODU1NjY0YTYyMDQ5MDNmYWFlZmUzYzAyNzliMTc2NDc2OTk2ZmFiZDQ0YTIwMTg4NzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA3YjQxZGQxOWEzYzMxZWEzNGQ2MDg0NWUyZGE4MTMzY2I2ZGFiMzNkNjVkZThmNmE2ZTMyODdjNzk5ZDlhYWIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_51e2856e0b82475789f19943706a6f95",
+      "statement": "App.active_tab is a bare usize (0-4 = hosts, sftp, tunnels, identities, audit), not an enum — there is no type safety when adding tabs; render_tab_body falls back to the hosts body for out-of-range indices, and the anim_prev_tab mirror lets detect_tab_switch notice tab changes made by the many code paths that assign active_tab directly.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/mod.rs#L296-L301",
+          "version": "repo-lines-v1:sha256:38cb23e52170292b0a0c6e4ad6b21598ae687fa2c6a787aa9fea4be471bfd08b:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiY2NmNzVlYjk5NWY5ZWEyNjgyOTYwNzgxNzVjYWE1NDRmOWFiYjcyZTFjNGFjMzU3ZmE1YzczNjI5ZTJjMTI4YiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiM2ZmYTI0ODQ4NzM1ZWIwMWUwZmI4MGRjMGVjZGU3ZjQ2MmM1MDFiMjQyMjU5M2VkYzVkYjMwMTI2MWIxNmE0ZiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiODJlMWM5N2JkNDViNjRlOTE1ZWI5MjAzNDkyZGEyYzYwNjNiODZiNzQ2ODVhOTI1OTRhOWJlMmMzZGFkN2Y2OSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZWVlMWUyNDEzMTE1NDU1YzZkNjI3ZDE3OGU3YTkyMDhlYmUyZmYxNTFkNzBhODBlYzllNjBkY2E4NzAxZDNhNCJ9"
+        },
+        {
+          "resource": "repo://src/app/mod.rs#L539-L551",
+          "version": "repo-lines-v1:sha256:74365c0ed6e3f1a4ad092ae0ea5936c231df7fe9bbeff609daaf88b956cf82cc:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBkOTdjMTYyMGI5OWU2MGYzYmY5ZTZlZWU0MzhkMTkwNDQ3MjcwM2I3OGEzZTk2MDMxYTZmYzAwMjM1YjM4NGQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2YjA0NDkxNDY5NzIyZTgzNjNhOTRlNDA0NDUzOGUwMTNhMmEyMTdlMzZiMWU1NjhiYTYwYWNiN2I0YzhmMmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk5OWJkZWZlZWFjYTYzNDBlMDI5MGRjODZlODg5Yzg5ZDVlMTg5YWE1YmE0NGI1ODViM2I3MDczNGY0YTYyZDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImIwNjJjMjc5M2IwN2MzNTNhNmVkNTI3NzIyNzFjNmNjYzI4ZTY3NTFkMWE2MWVkYzIyNzk0OGRiZTkwYzBkNTEifQ"
+        },
+        {
+          "resource": "repo://src/tui/mod.rs#L1543-L1558",
+          "version": "repo-lines-v1:sha256:256c6c307bb30894cbb29f68ca345493fa42f89caffb97a60059e06be5be6254:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQzZjQzNjE1ZjA3Mjg5ZDljMWM0ZjM0ZWJiYTYwYWU5Njc4ZDRlMmQ0ZjJkMzIzYjNlMjJmZTE2N2EyYTNiOTEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg3YTQ2MzRmNzgzMGMzZmJjNjA2OTdkOTYwY2U5NDJjNGQxYTgxMzAwNTQxMDM3NWI4YTkzYmRjYWVhZWU1MzEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVkOTFjZGQ5Y2Q2YTQ4NmQ4ZmE5NTI4ZmRmZDYyNGRmNmIxNzQ2N2Q4NDExMmZhZGEwZDkxZTFkMDU2NTQyOTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a250e7cda3324368ad6ad5b6be36bbce",
+      "statement": "App::new_with_deps (the test constructor) uses built-in themes only, reads no config directory, and spawns no workers; the OS-detect worker is started only by the on-disk constructor new_with_profile, so dependency-injecting tests stay offline and never leak a live ssh-probing thread. First run with no hosts drops straight into Help mode.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/mod.rs#L846-L883",
+          "version": "repo-lines-v1:sha256:212f757584d5ca93bd9811860cec26387916def522e56e9b8068bfb7d089704c:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwZGRiNTdlNGQ3MDg3OWQ5MWUyYWJlNTBjYjBhNDYzYzY0ODAyMzI0ZWNjMTQ1NjIzNmFjMjJmZDEzZjZkNjIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhlMDQ5MWU4MmVmYzQ0M2E0YzU1NjY4MDU4MjhmMGIxZGRiNzExYjJjMjBhYTlhMTBjZGYzMmMwOGMxZjQ1OGUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI3OGViZTU5ZThiNDRhN2RmN2IwYWY1NGVlOWNmMzBhYThjNmUzNmNkYjhlNjJhNjMxNGYzY2EwN2I5OWYxOGYifQ"
+        },
+        {
+          "resource": "repo://src/app/mod.rs#L885-L890",
+          "version": "repo-lines-v1:sha256:2581d80fee624d56af2a2cfd7e0731329d8e757f4fed66551714d20563af5d9c:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMjE4ZDdmNDExMDFlNWE2ZDg0YjNhOTA5ZjQxZDRhMzExNzgxMzBhMjc0MDY1MWExZjZmNjdiZWZhMTI4ZTVhOCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNzE0ZTkwN2QyNGMzOWIxNzM5NDYyMmFiNGJjOGYxNjk3ZDhiNDMyMzYzYjg0MGY1MTQwYTQxZGE3ZjAwNmY4MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOWMzMDFmNjMxNGYzMjRmZjM1ODFmMzM2YmVkZmE0MWJkNmQ5N2Q1NWFhNmU1ZTYyMDIxMDlhMmQ3MjkxZGNkMiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYzA1MzQ5YzFkM2Q5YTQzNGUxOTdkMDdlMTI4MmYzZWNkYmZmM2I1ZWFlMWUwYjhhMTczYTMwMWI0OGQ5ZWE2YyJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_a76e920d6c5c4d76999d1260707891c9",
+      "statement": "App privately owns the ThemeManager (no global mutable theme state); renderers read app.theme(), and the only two mutation paths — App::activate_resolved_theme and App::replace_theme_manager — both run invalidate_theme_visual_state(), which drops every buffer snapshot and in-flight slide captured under the old theme before the next frame, because the background passes select cells by colour and the slide blits would otherwise composite cells from two themes.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/mod.rs#L170-L184",
+          "version": "repo-lines-v1:sha256:65b2cdca57d38748db13c898ba5ef31f333af584cb790c54d00c9fbf53e1d456:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEyYmJlOTFjNzY0YzAyYjNhYjI0YTk2ZGFlY2ZlMTk1Zjg4YThjNTk5NTM3ZDYzY2JmZjI4MWRiZTNkMDY2NTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM3OTY4MmQzMzFiYzA0ZDEzNzExZjdhZDAxZWY5Mzg2M2M1ZmEyZmE2N2UyZDNhZDEwNjBkYTJjMTcwN2EzMDUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ1N2M5MzBlMTVlMmVlODA0NGMwZTZkYmQ4MjUxYTg2MDYxYjkwYTUyMGE1ODRmYmI1Mjk4ZTBlMTMzY2YxNmUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdkZDVmMmFmNmJmNjFjM2FhN2NmOTIwYjE1MDkwNWEwOGU0ZjAxYjM0OWQ1NWRmNzVjOWQ2NzA5ZTNmNzczZGQifQ"
+        },
+        {
+          "resource": "repo://src/app/mod.rs#L700-L750",
+          "version": "repo-lines-v1:sha256:1b0b0f3d1f571f9bf3a500a7ab523c7851156db396cd78645cb158812037c22e:eyJzZWxlY3RlZExpbmVDb3VudCI6NTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVhYTZlMWZhMmQ2MjIwNzc3YmY5MTNmZDYwZjI1Y2Q3MzQzYmYwNjlmN2UzNWJlNGZmMDBkNzhiYTVkNGFiODQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIxZTk4OTk4NzgyYzk3YTkyNmM3NzliZWEwMDExOGI3MGFlZjY0YzM0ZTZhYmFmNTFlNmU5ODZiNWIwOTJmMDAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg1YjY3MzZhNjAwNDFmODJmZWQ1OWE3ZGNiNGVkOGVjZTUzNzI1MGQ1ZDk0NjhjYWJhOTY3NDIxNDE5ZGI2YzQifQ"
+        },
+        {
+          "resource": "repo://src/app/theme_picker.rs#L339-L349",
+          "version": "repo-lines-v1:sha256:7070e6181c1fe1195836ec383320217147bd63eeefcda333db3508b66e601fc8:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkwY2M1MGQ4YTYwZjI3OTA2YmFiY2RmNGZiZTZhYTU5MzkzOTk1NmQ1YzY1ZGIzMmUyMWEwMGMzYTRiYjg4NWIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRlNTE2Zjc4NTAzYzNjOWFkODk5NzU4MDVjOGZiZDM3Mzc3YzBjNTFjZWQyMzI2MjBkZjZmZjAxMDcwZjRkYTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFkZmU4YzgxZTBhZGYxY2Q2YzM3ZDk5OGJkMTY0OGIyM2I0MGZlM2NkZjhhYzQ1OWU1N2JhOGU4ODEzMjdjNjgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_017d514b4ca948008381853101390862",
+      "statement": "The theme fallback policy lives in ThemeManager alone: an unknown or unresolvable appearance.active_theme degrades non-fatally to the embedded `default` theme, keeps saved_id verbatim, and never rewrites config.toml, so repairing the theme file restores the user's choice. load_themes_from is deliberately infallible — an unreadable themes/ directory degrades to built-ins plus a one-line notice and the degraded manager keeps the failed directory path so a later reload can find it.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/mod.rs#L752-L791",
+          "version": "repo-lines-v1:sha256:792635eee70182c05af6f97bbdb5cf6ebc19314acc78a76da3e6f154b5d27710:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc3YzJlNWYwNmYyMmEzMDIwNWE2NTAwNWM3YmE5NzVjZDhmZmIxMzkwZWE3ZWIxYmVjNTUxYjU1OGUzMTQzOTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjczYzNlMjNmOWYxZDZjZmY5MWYzOTBkY2M4YzdkOTU5MTAzZThkMjVlMzEwNWE3N2I4OTQzMzAzODBjNWQ2ZTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdlMzhmOTI1OWUzYTNmNzc0YjY1NzEyMWVkYTViOWUxZGY1ZTYxYTQ4ODBmZDMwNDJjMTk5YzM5YjUzM2UzN2QifQ"
+        },
+        {
+          "resource": "repo://src/theme/manager.rs#L16-L17",
+          "version": "repo-lines-v1:sha256:7f38832cc0910b0c963eaafbda0757e423334141d6ca8986e7e4ee636b4614d7:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYzRlZWRlNzFiMjExMDk4MjQ3NWI1YmFmMzQ0NzRiM2Y1NGRhYjMwYTdlMjU3ZDk3MGYwN2ZmZjZkMzgzNTU1ZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZDRjZjZhOGQ2NTg1NTU5YmU3MmNjN2U5OTYyOTkwMzM1MTM1MTVjOTQzMjQ3MWEwMzc4ZTliNjgxZjI1Mzg0NCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMDY0ZGQ3NzBjNzc3NzRhOWJhZGYxMmU5YmE5ZGYyOTUxYmQ3ODRiZmVhNTJkMzQ2ODFhZmJhMGNkNjM2NmUwMyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNTlkMGFhZTcxYzI4NmNlZmM2NmRiZTA5NjVmMTMyNDllNjcyMTNhODZjMmIwMDVhNDg3YTg2OWQzODkzYmRmYiJ9"
+        },
+        {
+          "resource": "repo://src/theme/manager.rs#L68-L114",
+          "version": "repo-lines-v1:sha256:ca1e0ac0711a35fdd9a0f2fe3be15aa7d6e67babb4b823075199d6761be7022f:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc2ZTkwZWYyOWQ5MDU2NjExYmE5ODA4ZGUwOTE2ZGU2ODg1ZmQ0ZTg4YjQ4OWQ1NTBlYzk1MWNlMDA2NjRlYzkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM1Y2RlZjgwODVhZTc0YWI2MzZkNjQ1OWY1YzZkNWZiZmIwZGIyNjRmMWIwZDc1YmFjNTE5YzliM2Y2NzE3YWMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImU5YjU1NmQ0ZjU2YzRmZWFkN2U2YjRiZDg2ZDAyMWMwNGY5M2UwNTljMjg4ZmYyNzA3N2IxZGEzNGQ3NGRiYmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM1YzYyZDUzNzdiN2IxNWMxOWE0NzU5MjNhZWQ2MTcxZDNiZjAxNjAyNGVjNDM5OTA2ZDliM2NhMDI1NzFjNzEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b9f54298e303475688c78ffcbfa7f1b2",
+      "statement": "The ThemePicker overlay previews a theme on the whole UI on every navigation step but only Enter persists: activate, write config.toml through the profile-aware writer, then mark_saved() which adopts the derived active_id (activate id is derived from the theme, never a free parameter). Esc restores the original theme by id, falling back to the Rc captured at open, and `r` reloads the themes directory, replacing the registry and keeping a tombstone for rows that vanished.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/theme_picker.rs#L145-L168",
+          "version": "repo-lines-v1:sha256:8cc9ce3acad47235f55be06a1c4f3d425afd96b25d05f62c57236e129bb7f47f:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRjOTk1ZDBmZjIyZDRiZjUyYjZjNDM1YjMxY2Q0ZGFhM2U1OGE4ZjVkMzAxMzgwMjk1MDAyZWY2MDMzOWIwZjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI1ZWFmZTA5ZmU5MzRjZmRiZTU4MGFkNGFiOWZiYWQ3ZTk3NDU0MTFmYzZiODk0NmZmMmNkYzM3YzY2YmUxMzEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjcwMmIwYmM2NWIyZjJkZTQ5ZDI4MWQxMzUwNWI0MGQ3OWQ0NTczYzU1OTYwOTEyY2U4NWFkZWEyMjA0OTNiNTYifQ"
+        },
+        {
+          "resource": "repo://src/app/theme_picker.rs#L351-L443",
+          "version": "repo-lines-v1:sha256:07b36736f8309f26462194ac16bc177cdc176dcdd39adfc1c855f0894478ffe9:eyJzZWxlY3RlZExpbmVDb3VudCI6OTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI2ZWRmZTlhNmEzYjMwYTAzNjVhMDk5MDlhOGIxYjk0NjMzOGZjZTkzMDA2MTY2ZDk1MmRmNmI4OWNiMjE1OWIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjYyZGEyMjJmYTU1MzZmMmYzOTAzZDUyODNhZDk4NDFiOWY2NzJjZWVmZjBkYmI4YTQ3YTZkZTU1NzFlMzNmOGMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQyZjU2MzVkNThjNGNjMTUxZWJkYTM0NjUxZGU5ZDFhZDkzMWZhMDVkODRkODZlYjhmNjAxNWE5MTEyNzZmZjkifQ"
+        },
+        {
+          "resource": "repo://src/app/theme_picker.rs#L445-L460",
+          "version": "repo-lines-v1:sha256:fd6a064cff79c4926aed6f6cdb2c2b4478cddd50e8a306ce612522ded47d765d:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU1MGYwZmQ0ZTQ1MzYwZjU4NDc2MWFkZTkwY2RmZDY2OTUzYzNiNjI0ODBjYzNjODllYzk4ZjVlYzlkYmQxYjEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk5OWJkZWZlZWFjYTYzNDBlMDI5MGRjODZlODg5Yzg5ZDVlMTg5YWE1YmE0NGI1ODViM2I3MDczNGY0YTYyZDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdlNGVlNzJjN2M1MTNiODVmYjYzMDUxMDg3MWU3ZWRmYTg3MjA5NGVlMTA1YWY5YmY5ZmNmOWYyNjQ5NGFiZjQifQ"
+        },
+        {
+          "resource": "repo://src/app/theme_picker.rs#L462-L500",
+          "version": "repo-lines-v1:sha256:c3363372f09dd44f98bcfe8224feaef9e0afd8b46efd88fc4cd73007d565a592:eyJzZWxlY3RlZExpbmVDb3VudCI6MzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgxYjA4MDRjOTQzMDY3YTczNDZjZWY1N2YzMGZlZThjNzNiNDlmNGQ1YjNlZDczMmUzZjBmN2VjNzZjMWYxMmYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2YjA0NDkxNDY5NzIyZTgzNjNhOTRlNDA0NDUzOGUwMTNhMmEyMTdlMzZiMWU1NjhiYTYwYWNiN2I0YzhmMmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ2YTRiZmRiNWE0NWU1YmQ1MzcxZDI2YWUwMDNiODc0MGY3MGY3OGYzMDU5NjEzZTczZTFlYjUxNzE5MGEyNDIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVmMGE5MDdiNTZlYjMxYTEyNDk5NGUyZjhiNzkyNWIwNTRmMDkxN2YwNTk3YWJmZDcwZjA4MDdlMzhmODRkYWQifQ"
+        },
+        {
+          "resource": "repo://src/theme/manager.rs#L190-L219",
+          "version": "repo-lines-v1:sha256:84fba8dac071136b3212ce23ad820255ea963018fa2a92966fde34ec9d95d8a9:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRmZDg1OTc3Y2ZiNjJkMWE0YzllN2E5MDc4ZjMyZjNiYmI0NTc3NmIxY2IwZjc4NTU3YmVhZmM4NTkwMTZlYmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNlZjFjZDVlOTU4ZWI4ZWMyOWY0MjY2YmUxOWFiNjEzMzY5ZTU3ZTBlODRhNmIxMzdjMTI2MmE2YmJiN2U0ZWQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUwNGYxZWJmMjg4MjBmM2M3YTY4MWUzYzFlY2FmN2FiZmJlNGNkYWE4Y2E3YWVkYTVjMWEzNzBmNTllZWIzMTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c0060d690bc54a7baaa775fcd5a819e8",
+      "statement": "App::theme() returns the active theme with its ground released when appearance.transparent_sshub_background is set (derived once per activation alongside the active theme), while App::base_theme() returns the theme as authored and is what the remote PTY grid reads — keeping the SSHub-surfaces transparency switch and the session-grid switch independent.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/mod.rs#L653-L676",
+          "version": "repo-lines-v1:sha256:4a02a24167e9e43007b53b998b0f86ffdf24f22f36217f63120c0eb7e05ba912:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmYmQ2MGE3YTg0NmQ2MjdmOTYyZGZhOWVkNzc1ZTNjZjk5MzY1ODUxNTIyYmIwMzk4OTUxN2ZlNmJjZDBiMTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk5OWJkZWZlZWFjYTYzNDBlMDI5MGRjODZlODg5Yzg5ZDVlMTg5YWE1YmE0NGI1ODViM2I3MDczNGY0YTYyZDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE0MWZmZTQ5MTFlMzI0ZjUxMTc3NTRmYjU4YmU0OTIzNjVhMTNkYzdiNGU3NGY2YmYwNTk3ZDk2YWU4OTczNWQifQ"
+        },
+        {
+          "resource": "repo://src/theme/manager.rs#L132-L139",
+          "version": "repo-lines-v1:sha256:92e68241952de8ffe541208c960170d5f1c51aef902f05299436f8cd223a0cc5:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiODA0YTk1MDhiMWE3MTU5OTQwMDY4ZmVkYmYzNDY3MDhlODU4MDYwNGJkNzE5NTlhZjAwMWM0ZGMwMGZiZGEzMiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDg5M2Y0MGUzNzgxZWI4OTZjODJkMDQ2YTA4MDY3YTExZTM1Y2RmMmYxZGZhZjI2ZmVhOTBiOGRiNjY3NjQxMyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYjU4NTc0ODc2NzUwYmIxN2IwNGM3ZjkxNTM3ODVmMWM5YWM4OGI1Zjk2ZDY0MDJhODM1MGZhZmI5YjQ0MWRkNCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiM2RiNTU0YjAzNmY5ZGFmNjQ0NTZlOWU4ZDZiYjkwZDk0YWRlMmU2MGUyYjIyZTc4YjU5NDExNDhjYjdiNTRjOSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_9bbe0ae522404d87beea6e7a2918679f",
+      "statement": "The pre-theme-system fixed palette survives only under #[cfg(test)] as src/tui/theme.rs `legacy` — the hand-transcribed witness for the `default` parity proofs; productive code can only obtain colours from ResolvedTheme. What stayed in src/tui/theme.rs is logic, not colour: the string-to-status-role mapping and the sparkline glyph ramp.",
+      "evidence": [
+        {
+          "resource": "repo://src/tui/theme.rs#L1-L68",
+          "version": "repo-lines-v1:sha256:c92ff5d0698d1275d5788405455f6767812c51c681dabaab5f27c55095461701:eyJzZWxlY3RlZExpbmVDb3VudCI6NjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRkNjllNDJmMWE0NGJkMzdkYzIxYTllMTUxMzc3ODlkNTE3YzIwY2NkYzAzMjQzM2JlMWRhZWU4OWI4ZDVlNjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ2ZmUxYzNlYTQ2MmFiOGYwZDQ5MTNmNzFiNjIxYjFiZDlhODhlZjBkMmVjNzk4NGE2N2I0YmYxYTUwMWYzYjAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMjliZWVkYzhkNWMxMTE0MmU2NGJiNjdhYTliZTJhZjRlM2FmZTZiMDA5MGI0Nzk4MjFkZTVhNjJmMTcyNGIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7c3289e3723a4d1c93f8bce3be5b344f",
+      "statement": "tui::render resolves a FrameComposition once per frame from a single clock reading — the session enter/exit slide offsets, the session-tab slide progress, and the `protected` regions carrying remote output — because the slide's blit and the protection of what it blitted must agree or the leading columns of a session slide get painted with theme background. The pipeline then renders the session view or dashboard, refreshes session_snapshot (in session view) or dashboard_snapshot (off it), runs popup snapshot/open/close passes, apply_app_background, apply_panel_selection, and the splash fade.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/mod.rs#L307-L334",
+          "version": "repo-lines-v1:sha256:2eb5f29be9521883d22c548d96b95d3bf635de3a42a7c234f3aab73dc8f8fb1f:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM4NmY1MjYwOTVlMDJiOTBjNDRjZGViNmUwODFjMTg1ODY5MzEwZjA0YmQyZWY5MWNlYWE3ZDVjMzQ4N2I1M2YiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBiYzAzNDJlMjE0ZGZlN2FjNTU1MmU5OTI4YTI2Zjc0Y2I4ZjJlOTk1NjU2NjdmYmI5MzA4NjZhMTVmZmViY2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjUxYWFjMmFjNmE5MDIyODJkNTgwNjRiMjgxMTg3ZDU5YzQyMTQzMTI5ZjM1OTZiNDNmZTIzOTJjODlmMWY3YmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJmYmEwNzYzYmU2NjJhN2M0ZTkyNmRiYWRiZmE1NGMzYjQzNDZhYzE0MjQxZTIwMzZiYTRjZWU5NTM0NDNiOTIifQ"
+        },
+        {
+          "resource": "repo://src/tui/mod.rs#L111-L194",
+          "version": "repo-lines-v1:sha256:73c2d4fa002d14fe50325d00aa3d1a45c0a7ed51e48d6792fe2d9f048068b9f4:eyJzZWxlY3RlZExpbmVDb3VudCI6ODQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRiZTcyY2M4Njg1ZWQ4NDRjZjRiNGYwZTI4ZDk2OWM4MDdiYTk3NThlMDVkYzhlYjc0NWRiYmY2MDcwZDg4ZTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQzYmE3MTU3Y2I5MzE5YmRkMjQyZTkyMGMyNzY3OTgwODgxMTk4NjAwNjAzOGU0Y2IwY2YyZDZkNWNhNDg4OWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ5OTYyNzU4YzhjN2JmNzNkYzQ1NWYyYTNhZDliNjc1ODczNzViMjE4NmUzOGEzY2NiNWQ0YzM3ZWQ4ZWZjNmQifQ"
+        },
+        {
+          "resource": "repo://src/tui/mod.rs#L370-L452",
+          "version": "repo-lines-v1:sha256:7f01d60ff4ddefe3ef64727ad92101d13dfdfaf4004d5a5e9fe4f87d1552d6c6:eyJzZWxlY3RlZExpbmVDb3VudCI6ODMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkyMmU0NjQwNjRjOGI1NzE2ZTIwNmU5ZmFmYTVkOGQ1YWVkMjYwNjg2NmQ3MmYyM2MzMTMzM2NiNWIwNDU5ZTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUwMWY4MmE2NDkzMGJmNTAxMTZiMjcyZTIwZGNkNDc2YTI3ZDkwYTk5NDc2NGE4NmE1ZTFiOWMzZWZiY2ZkNGQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b5a9f1a1af60450c990d578acb00e26d",
+      "statement": "Overlay popups always draw at rest through popup_open_rect (which records the rect in app.last_popup_rect); capture_popup_snapshot snapshots the popup each frame, render_popup_open drops a fresh popup in from off the top of the screen (restoring the captured dashboard backdrop behind it), and render_popup_close throws a just-closed popup's snapshot upward, both over POPUP_ANIM (260 ms). Overlay-to-overlay transitions (e.g. a form bouncing to its discard-confirm) replay neither. fit_popup clamps with desired.clamp(min.min(avail), avail) because a plain u16::clamp would assert and crash the TUI on terminals smaller than a popup minimum; open_popup paints Clear plus the theme's PopupBackground role.",
+      "evidence": [
+        {
+          "resource": "repo://src/tui/mod.rs#L1284-L1384",
+          "version": "repo-lines-v1:sha256:c3356c229eba2d9f7663fd1e78195ac01b9a98bd01b0951fc57b1e54481d0669:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAxLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI3NTM5Mzk3NzBjNTYxNTNlYmI0MDNiYjZkZDMxYWNkMGI0YTYwN2Q5MWRmNWQ3OWM0MTdiZTUwOTFiZjU0NjRlIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxMmJlOWRjZWE2YTkwMmRjYTA3ZjhmMmE2ODIxZDY2MzNhMzM5MDQwYzAxNmJhMmEwOTBmNTVhZTVmNDVkNDZmIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIyYzNkNDg1MTIwY2QyNWU3YmY4ODU4ZTQ3NGZkODQ0NTQ1NjEyZDE2YmQ3NWZmOGY1ZDBhMTczN2YxYTA0YzRlIn0"
+        },
+        {
+          "resource": "repo://src/tui/mod.rs#L23-L29",
+          "version": "repo-lines-v1:sha256:a91e4b4036ffa58331a0168279947732ce23aff8b1feca571956c2b6f60082fb:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYzBlN2I5Y2UzN2Q4MDE5MDUzM2YxN2NmOTM5OGUxMWQ1NTQ4OWE3YWE3NjFmYmFhMzFlNTJlMWIyYjE1ZGJkZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYTQyOGQ5ODY3NzdjMTU5ZmU4ZjdmNjA0N2ZmMGNmZGNlMjFmOTM3NGQzNjAzYjAyNmFiZWZhYmYzMmY5ZTFkZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMmM2ZWZiM2U0NjcyYjFiZWMwNzMxMWY2M2VlMTg4ZjBmYzdjNjk5NjJjOTkwZjNkYTA4M2EwOGJiZTc2NzdiOSJ9"
+        },
+        {
+          "resource": "repo://src/tui/mod.rs#L76-L97",
+          "version": "repo-lines-v1:sha256:97a952ffb05cb77983a327e3a0970a9853d6bf329feabb2aa3acfa8ac83674ee:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUwMGUzZjc1OGQwZDA2MGE4MDdkNzlmNzA1NTI2NjM1MzUzODg4YjYzYjEwMTQ4OTY4NTcyNTkwZGRjMGIzZGQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ1NDQyZjMxNTc1NjZmYTk4ODYxOTM1NDgzMzRjNjRjOGE5MGY1YzM5NTg2ZDkwYmE3MTA2NDhmYzk1Y2NjODgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ac7942527e8446a68792bd917dde31c1",
+      "statement": "apply_app_background backs still-Color::Reset cells in three separate passes after all widgets draw: (1) the theme's components.app.background (solid or gradient) paints SSHub's own surfaces excluding protected PTY regions; (2) apply_pty_ground backs exactly those protected regions (resting viewport plus travelling slide bands) with the theme's semantic.pty_background/pty_foreground pair, filling both channels with per-channel fallbacks and skipping entirely under transparent_session_background; (3) semantic.canvas fills whatever remains for themes that resolved their ground to \"terminal\", skipped under transparent_sshub_background. Every pass selects on Color::Reset so no widget-coloured cell is touched, and excluding the protected regions is load-bearing under transparent_session_background.",
+      "evidence": [
+        {
+          "resource": "repo://src/tui/mod.rs#L196-L341",
+          "version": "repo-lines-v1:sha256:0916a666f258e0e04cf1075763f387eebd93fe8d28ec07d56f668a60f4c398f9:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQ2LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJjNzhiNjk4YmI3MjljZmQ5NTI4ZmRlNDgyYjYzM2NjOTZjMmEwMDIyZTdiOWZmYzg5NmI3NDk5NGFlNWYzNTdjIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxOWU3NjM1NWNmMTE5OTQ4MGMzZjk5ODM2YjE0ODZjODQxZDg5MWZhYWQ5MDRjNjA4ZTA5MzAyMmQzNzU3YWVlIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0M2M1MjNjNWFhNTllZDYwMzMwOTNiY2YzZjg2ZjM4NjJhOGM4NWRjMGE4ZDdlNmVhYjlkZGJhMDU3Nzg2MTgyIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_4a69182baa38456298c8e425b905b6ae",
+      "statement": "The animation layer is two dependency-free modules: src/tui/tween.rs provides SlideAnim (eased Rect interpolation with Easing::Out/InOut), progress, color_lerp (RGB-only; non-RGB colours switch at the halfway mark), pulse_now, and wall-clock braille spinners; src/tui/blit.rs provides the cell-level blit/snapshot/fade primitives behind the slides (blitting cells rather than shifting a Rect lets layers travel past the screen edge). Named durations gate each effect: SPLASH_FADE 360 ms, CONTENT_FADE 140 ms, SFTP_NAV_ANIM/SFTP_QUEUE_ANIM 200 ms, PING_FLASH 420 ms, FOLD_ANIM 180 ms, SELECT_ANIM 120 ms, TAB_ANIM 220 ms, POPUP_ANIM 260 ms, SESSION_ANIM 280 ms, SFTP_ANIM 260 ms.",
+      "evidence": [
+        {
+          "resource": "repo://src/tui/blit.rs#L1-L120",
+          "version": "repo-lines-v1:sha256:7623a7c79fd13e638baa175ce26310f84f02c34038bbe38bb881e7cf5be60c3c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI0YjEyZWZjZTAwYWQxYTIxNjAxMTZiYTYzNDQ4YmJkZWVlYjcxNWZkZDBiYzJiM2YzYzQ5YWFkMzBmOWZkNjRlIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIzOGEwMjlmNDUyYWQ5OTNmYjEyMDNkZGFmZWE1NWU5M2NiNWI3Zjg2ZDk1NWI1MGYwNWViN2I0OTdjNDNlZDJmIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIzNDYzZjRmMmM4YzRhYzIxNjQ2YzhhOTAzMjQ1OWQ5NmNmZjZhN2M5YzM1OTk2OWI4ZmNjNjQ3OWU3Y2MxY2FiIn0"
+        },
+        {
+          "resource": "repo://src/tui/mod.rs#L1500-L1541",
+          "version": "repo-lines-v1:sha256:c02fb8eb2f09e3b8ba83e5459fd21655867b92c46a0c32173b982688a345b877:eyJzZWxlY3RlZExpbmVDb3VudCI6NDIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcwM2JkNTQ4ZDEwNWVjMGEwNjEwMDMzZWY3NjUzMDg5NTFkNDY3N2EyMTFhMTdkYjg5Y2M0NTg0YjBkNTZkOGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE1OTM3Njc5MWU2OTQ3NmY3YTA3MTg5NmRjMjViOTEzN2VmODQyM2UzZTk2MzQwY2NmYWMzMzIzZDQyY2E1MWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFjNDA5MGE3Zjg4ZDcxODFkNGMzMWIxMGY3NzFmY2E5NWMzMTk3YWU1NjExMzllMjE4YzU1ZTQwNWY5NTlmMmUifQ"
+        },
+        {
+          "resource": "repo://src/tui/tween.rs#L11-L150",
+          "version": "repo-lines-v1:sha256:b631f980902f0896aa1d3ca7b1583c51f05b96343c2718f7d60538754d919d12:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI1MWQ5ODg3YTlmN2UwZTY3MDFkNzE1ZmNlYTYxNTJjMzZhYWRjMTJhYjdhZDI2NDljMzkwNTdkYjBjYmM0YTcxIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI1MjM1ZTI1MmZlYzgzNDI3ZjE0ODE3ZGFmY2M1YTA1ODQ0ZTExZTAzMDBmZWMzMTdhODg5ODU3MmVjZTllOWRlIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJhNGJmZmU0YzJiMzU0YWFmNDYzMTU3ZWVmYjJkYWY5MDBmMDFmMjVkZTVjMTIzMjk4NTdiMjY4NDExZTJkNGFjIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_f56e38dbc6f94f4eb4198a4336ce411f",
+      "statement": "Session transitions animate via buffer snapshots: entering a session slides the freshly rendered view in from the right over dashboard_snapshot (the slide is skipped entirely when no same-area snapshot exists, because blitting a stale-theme or wrong-size buffer puts foreign cells into the live buffer); leaving slides the captured session_snapshot off to the right over the dashboard already drawn beneath; and session-tab switches travel only the PTY body via blit, keeping the header session strip fixed as the visual reference.",
+      "evidence": [
+        {
+          "resource": "repo://src/tui/mod.rs#L1386-L1498",
+          "version": "repo-lines-v1:sha256:371514eb199b3a9c9319d152b68b1a020002234ccbaaef16d0b4ae558358ec9d:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEzLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIzMWYzMzBmOGI5OGJkMTRlYWM4MTUyZDY2NWZjMTcwOGQ0NWY4N2NlY2MxNTkzYjYzYTc5NjUzYWM3NmQ0MDUyIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxOWU3NjM1NWNmMTE5OTQ4MGMzZjk5ODM2YjE0ODZjODQxZDg5MWZhYWQ5MDRjNjA4ZTA5MzAyMmQzNzU3YWVlIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJkZTFiZjc4OGFkYjk3ZDIzNzc4ODUyMzNjZDhiMGNkMzhmYjcyYjM2ZWNlNzgxNzI5ZTEwMWE4YTlmZWI1M2JlIn0"
+        },
+        {
+          "resource": "repo://src/tui/mod.rs#L454-L482",
+          "version": "repo-lines-v1:sha256:bd8ab2c2d9376de0253adda02a2cd44f0460a67c3d3fe835b2550addfe13839a:eyJzZWxlY3RlZExpbmVDb3VudCI6MjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdjNDAxZWM5NzczYzg1YjViZDFkNmVhMjZhMmQ2N2ZlMDgxMGFlMzEyY2NiM2I2ZmJhYzgzZWNiNTdjMWFmMzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNkYzNjNGJhZmI1NmMyNGRhZjQyODczMzZhNTc4OTIxN2VhZjY3MjNmNDcwNWE2YTAzMTIwMTQ1MTg2Yzk3ZDYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f024b7e39480463182518a3e17dc9508",
+      "statement": "appearance.disable_animation (App::motion_enabled) is the single reduced-motion gate, also flipped in Settings: animation call sites jump straight to the final state, the intro splash is skipped, and App::animating() — which aggregates every in-flight slide/morph/fade/scroll chase across broadcast, tabs, popups, sessions, SFTP, pings, and header counters — returns false so the event loop never shortens its poll window to 16 ms for nothing.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/broadcast.rs#L16-L115",
+          "version": "repo-lines-v1:sha256:33cff79a62ecaaf5bb1bd6a5c4399a83759a002e6239f549b01c84c0df66c548:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJkYzk5NWQwZmYyMmQ0YmY1MmI2YzQzNWIzMWNkNGRhYTNlNThhOGY1ZDMwMTM4MDI5NTAwMmVmNjAzMzliMGY2IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJkMWMyZTE0ZWZlNjJkMzBjMzBlNjI1MWNiMDc3YzBhNDZhZjJiNDU1YmEwZjU4NjYzNDBmY2NhOTc5MzVlNGUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI1NzY1YzNmMTI3MzMzNmI3ZDFjYzdmOTY1ZjE4MTI5ZWMzMjE3YjY4OWQ4YjUzODRkMjhkZWZhN2VkYjBlNjM4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIzM2QxZjkyNDQwMDIxMGNmZWY4YTJiYzc1YTkxNTBlZTUxZDZkOWIwNGEyOWJmYTQ4YmNjNTYwN2QxMmIyMzQ3In0"
+        },
+        {
+          "resource": "repo://src/app/mod.rs#L506-L514",
+          "version": "repo-lines-v1:sha256:f874af388487132bbc95705fb2a8962d2ee76999e7b3671a34b0fe6d25a457bc:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZGM5OTVkMGZmMjJkNGJmNTJiNmM0MzViMzFjZDRkYWEzZTU4YThmNWQzMDEzODAyOTUwMDJlZjYwMzM5YjBmNiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDg5M2Y0MGUzNzgxZWI4OTZjODJkMDQ2YTA4MDY3YTExZTM1Y2RmMmYxZGZhZjI2ZmVhOTBiOGRiNjY3NjQxMyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMzAxYjRmMDViNmRhMjFjODJlNDFhOGY3MjEzNGVhOTg3NjkwZjQ1YTA3NzA3ZDE1MjMyZTk2YzMyYjVkMjZjOSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiODM1OTk2ODNjYmNlZGI0NDRlN2JiM2NjNmMwZjNkOGE0ZTAzYmI0NTA5OTMwMWExNTZiNmIzZTY4OGU4MWYzYyJ9"
+        },
+        {
+          "resource": "repo://src/config.rs#L13-L17",
+          "version": "repo-lines-v1:sha256:b7ab7b0fc47b6fe3078778c698e7d41f59fc13c4e1fde965a9c983c70c2314be:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiN2NjYzUzOGY0YzA0MTAzNzRiMzgzZDQ2MDhhNjUwYWY2OTY2ZDgxM2FiMDc0MjQxYjRlM2VkZDFiNzI2ZDZjMyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMTg4YWIwNGQ2Y2I4OGFmN2Q3ZjlkMjIwZmNjZWZlY2Y1ODQ0MzQyYmVjNTc0NThkNmI1NTlmZTdkMzUwZTYwYSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMWU3ZmNiYzg1MGM4YmIzNzNmNzNlMjQ4M2JhYTBiOGI2YTE4YjRkNzYwNDQwMjVkNmYxN2QxN2RjMGFlOTBhNyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiY2JiNTViNTBlMzY2M2NlOTM3ZWZkYmVkZTE4YWUyNjRiZTA4Y2E2ZjUxZjk5OTc2ODY0NTdmNjQzYWM1NzhkZSJ9"
+        },
+        {
+          "resource": "repo://src/lib.rs#L450-L457",
+          "version": "repo-lines-v1:sha256:049776f7f55e17f11f452e2c338dcc52fc75da0bb49e8d03c686bf9de086ee76:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOTg0NzFhMmI2MjlmMDhjMGU5N2VmZjdhMTcyNzgwNWM1OTI3NjYwNTdiNjIyMjA0MTI3ZGNjYTAwZThjYTFiMiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYWQ5ZTEyNTQ2NDI1NTc2ZDNkZWFlOGM5YjlkYmYxMjhkNWQ2ZGRhZjVkN2ZlODU3OTM0OTI3ZGVmZmEzYjlkZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMzVmNmY0NjZlNTljZmMzMDcwM2M0NWY3MmFmNjVkZTU0YWMzNjNkMzU0Y2MxYTMzMzAzNTBhY2Q0NTI0MzRjNCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOWZmOTgzNDQ0NWU4YmZkOGE5ZTBkOTAwNTc5ZGYxODc1ODRkYTE0ZGVhM2JiOWVhNWY0YjkzMDBmMDMwOTg5MiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_844b0518d02247f7870ad875a0dc1a95",
+      "statement": "The startup intro animation (src/tui/animation.rs, ~10 s timeline) runs in run_animation with a 33 ms poll loop, exits on Enter/Space/Esc/q, is skipped under auto-quit or appearance.disable_animation, and is not replayed when the profile picker session already played it before the dashboard.",
+      "evidence": [
+        {
+          "resource": "repo://src/lib.rs#L240-L290",
+          "version": "repo-lines-v1:sha256:e54a700dc1b0bce6f8915dd1897cd2547126dd3cf256e82844e62df6d77733a5:eyJzZWxlY3RlZExpbmVDb3VudCI6NTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNiZWZhNGJkNzVmOTliNmYyNThlZGZlYTA3MGJlZTRjOTc3ZTk2Njg5NjM5Njg5NDYyNmZiZjBjMjJmZGQ4YTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUzOTMyOGUwMDM3N2JiYWU3Y2Q4YjRiOGI1OTljYmRjOGFjZmNlMmQ5N2QzYzA3NmRkMzY3NWRlZjdmOGFlNTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhhMTBkODc2ZDQxY2EwZjRlMGMwMTJkYzQ2OWQyN2M3OGMzZTI2NTA2ZmZjYTBhOTg2NjcwOGJjMmI0MmRlYjgifQ"
+        },
+        {
+          "resource": "repo://src/tui/animation.rs#L9-L9",
+          "version": "repo-lines-v1:sha256:ee1e7d8d7f3820f51be134e6f371c47d9f7212edc74242485cc63a1d90b82793:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZWUxZTdkOGQ3ZjM4MjBmNTFiZTEzNGU2ZjM3MWM0N2Q5ZjcyMTJlZGM3NDI0MjQ4NWNjNjNhMWQ5MGI4Mjc5MyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZWUxZTdkOGQ3ZjM4MjBmNTFiZTEzNGU2ZjM3MWM0N2Q5ZjcyMTJlZGM3NDI0MjQ4NWNjNjNhMWQ5MGI4Mjc5MyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMjc3ZjlmOWY2ZmUyMjI3Yjc2NDBiMGE3YTNlYjg2MmNiYTNjYTNkOGY1MTU5ZjlkZDhkNjg2MjcxZGZmY2ExMyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiODRhY2NiYjI5NDY0OGFmNDNkMjc5MjAzNTc2MzhlNmJiZWU4ODBmZWExNjFlZDMyNDg1NDg5YWQ3OTYzMGM5MiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_9d5aedc905ad4265b68d36c85adf7ea7",
+      "statement": "Background worker catalogue: config file watcher (notify recommended watcher + 300 ms debounce thread, drained via watcher_rx -> reload_hosts); ping worker (one thread, sequential `ping -c 1 -W 1` pass every 30 s, drained via ping_rx); SFTP worker per connection (right pane sftp_rx and a second instance sftp_rx2 only while the left pane browses another server); OS-detect worker (single thread blocking on OsDetectCmd, os_detect_rx); broadcast pool of min(concurrency, tasks) worker threads with DEFAULT_CONCURRENCY 8 over a shared preloaded task queue (drained by tick_broadcast); and per embedded session three PTY threads — reader, stderr siphon, and bounded-queue writer. Tunnels are the exception: TunnelManager owns child processes but is ticked synchronously each frame via check_health/try_wait, not a thread pool.",
+      "evidence": [
+        {
+          "resource": "repo://src/broadcast/mod.rs#L26-L332",
+          "version": "repo-lines-v1:sha256:4cf2d4b46433da2bdcab08365c8f5ddc4f34b4aa3adcde1c2c16024b44b6258e:eyJzZWxlY3RlZExpbmVDb3VudCI6MzA3LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI3ODYxOWZmYWMxZWVhZDdmZTU0ZjhiY2FlYWIwZjE3Nzg5OGZiNTMwM2EyNWY3NmUzYmI0MmQ1MTU4MWUyYWY4IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJhYzc4NDdiNzVlMTJiOGQ5ZmMyM2QwZTczNDQwNTE5MzRkMThiYWUyZTJjMzk3OWQ0MzQ2NDExYjg3OTk5YjFhIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJmNzYzOGM5OWRkZDk5MDMyZTdiNWFiNDY0ODYzNjcyYzA0ZGJlYmI3ZGQ2ZmQ0Y2ZiMDhlYjQyYzhlNDQwM2VkIn0"
+        },
+        {
+          "resource": "repo://src/osinfo/detect.rs#L104-L119",
+          "version": "repo-lines-v1:sha256:db560a5e44699b3d29f7cbc9c2f912de09eb7996dae8e36520ae192f720042c6:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhlYjBjMWY1MDMyNWMwNzc4NDgyNTk2YWUyOWU4NTFiYmMzODIxOWI1MjJkMDJjMWZlYjkyOWQ4NTBlZjAzZWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE4OGM0MzJlOTNiYThkMWUzMDA5ZTgzZDE1ZjQ0Y2ZkYTgxNjMyNTBlMTdlYjNiNjEwOGYzMjBmNDM5ODViODYifQ"
+        },
+        {
+          "resource": "repo://src/ping.rs#L40-L60",
+          "version": "repo-lines-v1:sha256:67dcf67966f85202ba4027506ac44577bdb7bb4cd349454bb0d8d3c59a675adf:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFkYjcyZmQwNGQxNTdjNmM3NDI2MWMzMzYzZmI3NThkNTNiMmIxNmM5ZWI0MzdlNmFmZWUyN2UwZTdmMTI0MzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNlNTRlOTFjMTc3M2JmM2ZlMGUwM2QzYzZkZTZhMjVmNGZjNDZhOWY1OTM4ZWQ5YzJlOGU5NGE0ZWMwMTgxZTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUwZGE0MmY5MjgxMWEzNzRiNTkwMDVlMzg1OWVmMWE4MDNjN2Y5NDFlNDdjMDcwMmJkZjI3OGU1NmQ2NGQ0MTUifQ"
+        },
+        {
+          "resource": "repo://src/session/pty.rs#L188-L269",
+          "version": "repo-lines-v1:sha256:d54faad1f1af8e404839904e76cffdb91e107dd4ec65c60c24b718ef8bc3e1ae:eyJzZWxlY3RlZExpbmVDb3VudCI6ODIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU5MWMyOTk1NjMyY2Y1OGRlMGRkMTQ5YzZlOGE4YzE4ZDJmZTFjNDk2YWZjMjVjMmRjYjc0YWIxNjE5NTBkYjAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU5YzEzNTkwNjY1NjMyM2QxYzVlYTQxNjU0ZWU2NmFmYjU4NWFjZGNmYWVhY2ExMjFkNWUzMGJmMTkzZWVkZDciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU5ZDI5NDY4MTFiNjk2M2ZlNjAyNjQyMWYxMDAzN2RjZmQyODcwNzhhMWRjYTIyNzIyMTgxNDM3OGRkZTlkODIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJkODU1OTljODUzNmJlYTY4ZDBkMTg5Y2IyNDY1YjAyYzZmNDk4ZWUyZGYyNjFjNzQ4YmEwNTkyZWE1M2EyMjUifQ"
+        },
+        {
+          "resource": "repo://src/sftp/worker.rs#L1-L96",
+          "version": "repo-lines-v1:sha256:77182f43b9b4b5898c7f029e3640fa6ff999a0e5ad4a6f317420445b5a3d0839:eyJzZWxlY3RlZExpbmVDb3VudCI6OTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVjYzU2NmQzNDQyODE2ZWI5NjA3NTY4YmY0MDRjNjEwNzM4ODQ3ZGIwMDUxYmU3OWE3ZDc0MjJlNzhjMDNlODQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImYzOGFmNTk3NzRkZmJkYWM1N2I1Y2JiNzIzMGFmNTQxOGEyNzQ2MDNiNDY0ZDI2ZTM1YjBmYWY4NmYwNGEyNGEifQ"
+        },
+        {
+          "resource": "repo://src/watcher.rs#L17-L51",
+          "version": "repo-lines-v1:sha256:ce5247072d9f74dfe5ad873e65e6c56ade1524d52c7995703a62294b2dbd3aaa:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRiZmNkMTkzOWY5OTZmZGY4NTI2NjU0ZTM1YjJhYzgyZDM3YTYxMWYxZWY3MjM0MGFlMWM3Nzk4YmYwNjZiZDEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjZmZDM2Zjk5MTY5ZmVmYTZhZGU1NGFkMzVhNjY1YjU1ZDI5OWUwOTJmZTM2ZjEyYjlmMjdhYjE4NTkzMGFjNTkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY3OGFmN2RkMjJlMDYxZDVhODQ0NDJlNzI4ZWQ2ZmIzNDk0MmE5OGUzNDAxYzIzZmM3MWM2NGE4ODM3ZWNjMDIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_bca61dd311204af7af294710013fc669",
+      "statement": "Workers self-terminate by channel drop: the ping, SFTP, and OS-detect threads end on a send failure or a closed command channel. Restarting the ping worker after reload_hosts drops the previous Receiver, winding the old thread down on its next send instead of leaving it pinging deleted addresses; the SFTP worker connects once then services commands (ListDir, RunQueue, Remove, Mkdir, Rename, Chmod, Cancel) until the channel closes, and progress events are throttled to one per 64 KiB.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/mod.rs#L1112-L1124",
+          "version": "repo-lines-v1:sha256:157be1252ca5e586a6b5ae8a48cb584bc35aeca27b74bb21446d98fb9feec004:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkzOTZjNmQ2MjMzMDE1ZmVmMDMzNmI2ZDNhN2JkOGY5MGJmNjU3YTljOWFkOGE3ZjBiZWMxZjk1MzJmMWI3YWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZiYmQ1NjU1ODlmNTdkNzhiYTVjZDVkZWQ2Mjc4MmM3Yjg4ZjMzYTZhMTc5ZGNhMWFmOTZlM2FjZTQ4OTgxZmEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY1YjlmZmE3ZTU2MGU5NWYwZDM0MDQzMzMyYmEwMDhmYjE5NzRiNDE5NTQ1NmI4NjMxYTFiNzMyYjJiZmU1YjUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE5YmUxZWRiNTBmYWYwMTcxNzgwOWRjMTQzN2MyODM0ZDQ1NzdjYmY4MTYzOTM1Y2MxNjUxMjU0NjQ1YzRiMjQifQ"
+        },
+        {
+          "resource": "repo://src/app/mod.rs#L1171-L1174",
+          "version": "repo-lines-v1:sha256:21ad3dadb26e78140567003a665fd7a51371ca3e803b5da3e3566ac39804e658:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNzA2OGM3YTA5NTQ5MGUwOWJiNDNmOTFhZTI3MDYyYjgzYjY2ZTdhMzVlMDQ3MGJiZTIzMTJkMjE3NmFmMDBjOCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZTZiMDQ0OTE0Njk3MjJlODM2M2E5NGU0MDQ0NTM4ZTAxM2EyYTIxN2UzNmIxZTU2OGJhNjBhY2I3YjRjOGYyZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNjgzMzY4OThkZTI1NjQ1NmIzOTgzMzg1NjgyMDQyYjEyYjE4Y2JiOGI3ZDY1NWFkYWUwMzAyMmY0ZGYzODAxZSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMTYyZWU1N2U0MWE4YzIwYWUwMTY0ZGYyNjE0MzlkY2M0OTlkMzUyMDgzNDE1MTUxNmQwNDdlOGRlYWU4YTQ2NiJ9"
+        },
+        {
+          "resource": "repo://src/osinfo/detect.rs#L121-L130",
+          "version": "repo-lines-v1:sha256:9cb5b24e3e988204a62ab146d67415dd70175dcff109eef8b7bd3372dbe4677b:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjljNmNiNjIxMzdjYWVhMGY2YjIzZGMwZTc2NGM4NGNmZjQwNzhlYTY5YWI2MTk3MThmZjFlMDEzMDdjZjBhNDciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRlMGFlNzU5Y2I1YzYyZjkzZWNkMDE0NjcyMWU2M2NlYTMxMjcxMzY0ODVjNGZjN2VmMDZkYTAxYjlkNzA5NjQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU2ZWY0ZTM5NzUwOGNhOTgyZTIwYjhiNGUxZTAxZjA1Yjg4M2EzYTE0YjU2NDY2NWVkZjNmZTIyMzMyN2Q1ZDAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdmNDY2MGEwYjdkNTJkNTMyMTNlNzdkZjI1YmU1NWUwMTI4OGZiNzNlNTExOGU2MzVmZWQ1Yjg2N2FjNTY3NDEifQ"
+        },
+        {
+          "resource": "repo://src/ping.rs#L42-L60",
+          "version": "repo-lines-v1:sha256:27afd4a410791d8f119bf7c34ece36911417c58779c1a2dded54eb456ffffbbb:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU4MDgzZDMxYWQ3ZmRjMGI4MjY0NzRmODlmZTdjZDBmMjZhZmU0YjQ0ZDRlODVlOTNmOWUyM2FlZTRjYjZiMDAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNjNzVkMWFlYzQ2OGQ0NDFjMjExYmRlYWQ3ZGYwOWYyOGYzNjM2YWQ1NjJkMzlmYTgxNTVhOTA3ZjY2M2UwZmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUwZGE0MmY5MjgxMWEzNzRiNTkwMDVlMzg1OWVmMWE4MDNjN2Y5NDFlNDdjMDcwMmJkZjI3OGU1NmQ2NGQ0MTUifQ"
+        },
+        {
+          "resource": "repo://src/sftp/worker.rs#L70-L96",
+          "version": "repo-lines-v1:sha256:0fdccb1833ae09c600a0cec475f3d01608bb561e6a87383a9143416becca6181:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI2YjhlMWIxMzM1NzBjOTlkOGNlZTE0ZGEzMTc3NzM1OTZmNjkwY2FhMDdhNjBmY2U2YzgzMDU2NDFlNzllZGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijc1MjlkY2UyYTNkYTllM2I2MjZjZjI4MmMzMzQ2N2IwYzNiN2M0N2Q2NTA1ZTFjNGIwZGNhZjQyYzdmZWIwOGIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImYzOGFmNTk3NzRkZmJkYWM1N2I1Y2JiNzIzMGFmNTQxOGEyNzQ2MDNiNDY0ZDI2ZTM1YjBmYWY4NmYwNGEyNGEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_918b1df1eb3f4fea8ca464d2ddd77690",
+      "statement": "The OS-detect worker is silent on failure: an unrecognised or failed probe leaves the host's os_icon empty and the probe is retried on the next connect. Probes are kicked off only for managed hosts whose os_icon is still empty, and the os_detect_inflight set prevents duplicate probes for one host; apply_os_detect persists the result and reloads hosts.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/connect.rs#L216-L258",
+          "version": "repo-lines-v1:sha256:fffee6e0bc82f78b10ff4cff2dd13f32c404104176f77368d58b17eaa93a5b9e:eyJzZWxlY3RlZExpbmVDb3VudCI6NDMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU3NGQ1MjkyOGI5MTBiZDI2OTRhZWIxZmFhYTU5NTA0NDdiYmJjZjVkN2QwNzUwMzRhNWFhMzYzOTVhMmE3ZTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQyMzRiODNhZmYyNmNmMjUxYzg5NmY1M2ZiMTgyODcyZmQxODU2ZDg1OGRhZmE2Y2QxMDUzOTM0ZWY2Nzg5NjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        },
+        {
+          "resource": "repo://src/osinfo/detect.rs#L1-L10",
+          "version": "repo-lines-v1:sha256:6a6cb298861ef6a824c4c3536d97aca5c9b65b8b381bdf2969b920afe5b75037:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJkNDI4Y2RlMmUzZjUwYjQ0Yjk5ZDVlN2E5ZmI3MTBkZGUwNGNhNTBmNTE5YjEyMGU5ZTRmMGNiNGMwNDdhNTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNhMTMwYzJlNjE2ZmNmNTFlNmY3MDI0MTUzNDY4MWU2ZmQ0YmQ1NzdiY2QwMDc1ZWZiYTZkYjRkNDViNTY4MzAifQ"
+        },
+        {
+          "resource": "repo://src/osinfo/detect.rs#L121-L130",
+          "version": "repo-lines-v1:sha256:9cb5b24e3e988204a62ab146d67415dd70175dcff109eef8b7bd3372dbe4677b:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjljNmNiNjIxMzdjYWVhMGY2YjIzZGMwZTc2NGM4NGNmZjQwNzhlYTY5YWI2MTk3MThmZjFlMDEzMDdjZjBhNDciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRlMGFlNzU5Y2I1YzYyZjkzZWNkMDE0NjcyMWU2M2NlYTMxMjcxMzY0ODVjNGZjN2VmMDZkYTAxYjlkNzA5NjQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU2ZWY0ZTM5NzUwOGNhOTgyZTIwYjhiNGUxZTAxZjA1Yjg4M2EzYTE0YjU2NDY2NWVkZjNmZTIyMzMyN2Q1ZDAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdmNDY2MGEwYjdkNTJkNTMyMTNlNzdkZjI1YmU1NWUwMTI4OGZiNzNlNTExOGU2MzVmZWQ1Yjg2N2FjNTY3NDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_325fba4542a545c29516775fe550f00a",
+      "statement": "The broadcast pool guarantees exactly one terminal event (Finished or Failed) per task, including under cancel — un-started tasks emit Failed{reason:\"cancelled\"} and in-flight children are killed. Workers pull tasks from a preloaded channel whose sender is dropped (shared behind a Mutex so recv never blocks); the real SshCommandRunner shells ssh non-interactively (BatchMode splice, ConnectTimeout=8, StrictHostKeyChecking=accept-new) with a 60 s run cap and an AtomicBool cancel checked on a 50 ms try_wait poll.",
+      "evidence": [
+        {
+          "resource": "repo://src/broadcast/mod.rs#L286-L350",
+          "version": "repo-lines-v1:sha256:54ee5bcdd69e977a3f817a2b8f0fcfa3c52b25ff5bd4b4b9ca2574d1fc973a71:eyJzZWxlY3RlZExpbmVDb3VudCI6NjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjViZWI2ZjY2MTMxMjU5ZmI3MGRiMDU5ZWZjYmY1MTI3NGJlNTcwMGM0ODY1NzI1MGU2OWIzNzZkOTU5MGYyNDIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRhNGRiNWM3OWJjMGYwOWY4MDUxN2I0MzBkNDU5NjJmOGI2NzNjYzYwZWY4MDYwOWEwMzBiOTI0YmFjMjNlYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ4ODU5MjEwZWJjYjEyY2Y2OGM2MTYyMjJmYzU2MGMxZjY4ZTJmYTMxZjYzMDQ5M2RmODA5NTg4ODdkNTdhZjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNkMjI1ZmEwZWUxZTIwOGZiYjIyNmM4MjQwODkxNDA1YjU2MDE4MTA0YzNkOWU3YzI4ZjA0MDM5MTlkOWM0NjgifQ"
+        },
+        {
+          "resource": "repo://src/broadcast/mod.rs#L82-L115",
+          "version": "repo-lines-v1:sha256:811d7b6634863f1656f9e37ca75a18f5b524f670677c074f22fef5516d9f5718:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA0Njk0NDhiYmYzMTgyYTI0NjFhNzFjM2Y0YzM0ZmVhYzIyMDZmYzRiNWZhZjk2ZTA5YWYxMDY1Y2M0NTBiOTEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNlOWQ1ODEyYzE4MGQ3NmFmMmU1MGRiYWI2Yjg1MTcyZjg4MjZiZDhkZjNjMzEyZmE5OWM0MWFlNzZlMDU4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJhMGU3MmFiNTVjNDNlZmJkYmM3NGExMTk4NGE1MmE3YWJhM2UyNjQ2YzljMGI5YzdhMTExNjFlODU0Y2I4NzMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a3c64dc5b20b4d63b442984e5ca81b9c",
+      "statement": "PTY writes go through a dedicated writer thread behind a sync_channel bounded at WRITE_QUEUE_LEN = 64 — the 0.15.1 fix for the frame loop freezing: write_all on the PTY master blocks once the child stops reading its stdin, which parked every tab when it happened on the frame loop. All writes toward the child (keystrokes, auto-typed secret, pastes, emulator query answers) keep their order through the queue; PtyRuntime::write uses try_send so a full queue is an immediate 'the remote is not reading' error. Drop closes the channel but deliberately does not join the writer, because joining would move a blocked write's freeze into session teardown.",
+      "evidence": [
+        {
+          "resource": "repo://src/session/pty.rs#L188-L203",
+          "version": "repo-lines-v1:sha256:7690a770dbd69f6c35d3aa8fa8796b2b584f4bc27f4ccce923a79fa10da1aa28:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU5MWMyOTk1NjMyY2Y1OGRlMGRkMTQ5YzZlOGE4YzE4ZDJmZTFjNDk2YWZjMjVjMmRjYjc0YWIxNjE5NTBkYjAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJlMTg5NzBmZjI2YTkwNTk1MzI4YmI4ZDVjOWM0YWE1NjU0Yjg5OGM5NTgwMTY1ZDFiZDIyNGU5OTkwYjY4ZDkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU5ZDI5NDY4MTFiNjk2M2ZlNjAyNjQyMWYxMDAzN2RjZmQyODcwNzhhMWRjYTIyNzIyMTgxNDM3OGRkZTlkODIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhjNjY3Mzc2ZWMyODhmNThkOThjMzUwMWJjMGM4NmViNDRkMzRmMmRkMDIxMjE4NzY1MzZlN2ZjMmFiNmVhYzgifQ"
+        },
+        {
+          "resource": "repo://src/session/pty.rs#L21-L32",
+          "version": "repo-lines-v1:sha256:346ad20d0ff54f14b245c7fabcd0225396d2977b7c9fb2ba9d70b207d4497420:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM1MmVkMWQyN2QxNTdkYWNjZjExYTQ1YmRkMjkyNzk0YjBlNmMyYmJmNGFlOTk2ZDU0Y2I2ZmFkNGZjOWM2M2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU3MWQyZThiZWE5ZTcwODk0Y2I5ZmY3ZjFlMGMzN2M2Njg2OThlNWNhYWI0ODBmOTQzODcwYTI1MjgwMWVmNzkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE1Y2VkMjE4OTFlZTZjMjcyODlkOGQzZmRlYWJiZGViYTU0YzFmZjkzZWI4OTVhY2I0YmNiY2Y5OTlhMjBkYzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg4ZTNhMTdlZGM2MjFiZmFlM2RjMDllYTliZTFiYmMzYzgyNjU3NWViN2ExNWZlZGViNDBjZjk0YzMwNmQ1MGQifQ"
+        },
+        {
+          "resource": "repo://src/session/pty.rs#L289-L306",
+          "version": "repo-lines-v1:sha256:1f1d2e8b834c3e1b891252182f86b3bc229416835eab56c5c685236763c2a5cc:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVlYmE1ZmMwOTJhNTNkMjBjNDZhNWFjYWY5ODE2MDYyYjUyYTBhODE3M2JiYTM3ODExZjUzZTM2NzA3MGE1MjEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNiZjI0NWI2MTAyMTk5YjkxZTI2MmI5MjA1NTg4ZmY0YjMwMzgyYzViOWI0N2VkZWFmZTA0ODlkZDQ1Y2U5YWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImU1MTA1Mzc4YjE3NWM5ZTdkMjA4MjJiMzhjY2I4Nzc3ZTM1NzQ0OWE0MGJiNmYyODM5MmFlYThkODJkMmY4NTQifQ"
+        },
+        {
+          "resource": "repo://src/session/pty.rs#L361-L378",
+          "version": "repo-lines-v1:sha256:8b9931052eac117a026ba04093a34dbb62b94b0cf64e9d8c7a99aa6f46e55d72:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJiNzllMWNjNDUxOGZjZWEyMzA5MGMyN2M4YWMxZDNmZWExNDk0MGFmYjAyY2IzOWQwYmY1YTdkZjg0YzYyYTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjgyNzgzZjhhY2Q1MjZiOWJhNzI2Mjk2Y2ViZDVjMDkzOTFhYTA0OThhMGFkY2M0NzEwYTEwYjI4NTA0N2Q5NGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7634e5fff46a43d5ac329819145bd162",
+      "statement": "The child's stderr is siphoned through a mkfifo side channel (0600, opened O_RDWR|O_NONBLOCK so an empty FIFO yields EAGAIN rather than a premature EOF) via an `sh -c 'exec \"$@\" 2>\"$SSHUB_STDERR_FIFO\"'` wrapper that keeps ssh's PID for signal delivery — so `ssh -v` handshake output lands in the session's debug_log (connect spinner, host-key fingerprint scan) instead of the render grid, with a 20 ms poll non-blocking stderr reader honouring a stop flag. If the FIFO cannot be set up the connect degrades to the plain PTY rather than failing.",
+      "evidence": [
+        {
+          "resource": "repo://src/session/pty.rs#L127-L165",
+          "version": "repo-lines-v1:sha256:19f5fdefd06b5c06a5a0dba8f8b582029c89c3ecc4df2404fdb736747c2bec4a:eyJzZWxlY3RlZExpbmVDb3VudCI6MzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM5ODMwNWU4ZDBjNzIzYmYwZTg4NGYyOWNmODcyMGNlNDRlNGVhNWEzOTU4MjVkMzJkNzI3NzA3ZjZlMTFlNDkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM5YmYwODFjYTQxMDBhYWRiMGY5YWYwY2MwN2E5ZWQyMzNkMjhlZGM1ZGRmNDllYTU4YTcwOGQzOWQ4ZWNmYWQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg4MWE4MWNlZTRmNTUwZTM1OTEyZjhiZGRhMjY5MzBjOTNkZDhmZTJkYzliMjEzM2FlOGVkYzk0ODhiYTA0MDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJmMTBiMzU1MWVkZjY5NWRmODM3Y2Y3MzE5MTUyMTljM2VlN2M1ODVhZDRkZmMzZTM1NzA0MmY0NzZlOGNhYTQifQ"
+        },
+        {
+          "resource": "repo://src/session/pty.rs#L236-L269",
+          "version": "repo-lines-v1:sha256:f574bbdb3913888f77de141b99b183b1bd4d515e6e8b1e4e6d00e5d98a0621df:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJkNmM5NGE4NmY4MjU3YTNhOTI2MzQ0MDdiMjJhMjQxMjI1NGYxOWQzODZiMDQ5MzRiZGRiOTU5YzZlOGFlZDUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU5YzEzNTkwNjY1NjMyM2QxYzVlYTQxNjU0ZWU2NmFmYjU4NWFjZGNmYWVhY2ExMjFkNWUzMGJmMTkzZWVkZDciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNmZmI0ZDIzMjhhMmJlY2Y3YmY3MDk3NzMyMGRkMzBjY2EzNjk1NzBmM2U4YWNlNjRiNjRkZTJkNWI3NmJkOGQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJkODU1OTljODUzNmJlYTY4ZDBkMTg5Y2IyNDY1YjAyYzZmNDk4ZWUyZGYyNjFjNzQ4YmEwNTkyZWE1M2EyMjUifQ"
+        },
+        {
+          "resource": "repo://src/session/pty.rs#L52-L100",
+          "version": "repo-lines-v1:sha256:17b8c30222517dcd185a57ec015d6aa7791107bfd7d4d65b315acefd68c2735a:eyJzZWxlY3RlZExpbmVDb3VudCI6NDksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM4MzE0MTdhOGJjNjc4MTQxMWQ4ZjdjZDM5YmE5ODhhMTdmYzRiMzM5YTVkZTQ0ZDY0NWRlMDI3MzE0ZGE5MjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAzZjU4YjAyMGM0NTRlMmU3OThhOTQ0NDI2YjhmNTgyMjVmMDRlMDlkNzJjOTVhY2FlOTUwNWI0ZGJjNWE5ZmYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk2MDY4M2E2MDdkYjliYTljNjRkNjc4NTdlMDU1Njg0YzUwNDM0YTU0ZGExZjQ4NzY2OWI2MmQ3OWUwN2IzMDcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c5f31e7a4ef34b85bd2f8e8378598882",
+      "statement": "Session::drain is called every frame for every session: it non-blockingly pulls PtyEvent::{Bytes, Stderr, Exited} from the PTY reader channel, feeds the vt100 parser and the optional session log, accumulates capped stderr debug output and scans it for the host-key fingerprint, reap-exits into SessionPhase::Exited with the child's real status, and after bytes land auto-types the pending secret exactly once and answers terminal status queries (rate-limited by a reply-token budget) so a wedged remote cannot crowd out keystrokes.",
+      "evidence": [
+        {
+          "resource": "repo://src/session/mod.rs#L511-L594",
+          "version": "repo-lines-v1:sha256:0d656c78440a330b41ea5079f924875da3e1d8d368712f52ab1d66dbf6bf1e32:eyJzZWxlY3RlZExpbmVDb3VudCI6ODQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg4Yjg0NjRkYjAxNjk0MTBkNjZjMjM1MGZhODEzNGM1ZDg0ZGM3ZGEwMzgyNTg4MjE4ZmYzNGU5MWQwOWNmZTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ1YjczODIxYTg5ZDhjZDhhZTQwNTk1Zjk2MTFjZTAzNjg0YmRhNjZhZTY1NTI2NWU2YjM2ZjAxYmFlY2M1NzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNiMGU5NWI2MDNkYmIwYTc2YzIyN2U0MzFiOTE4NjE1Y2VjZTcwODhlYzU0OTRjYTY2OTY0NDRiYmJlMWE0MmQifQ"
+        },
+        {
+          "resource": "repo://src/session/mod.rs#L910-L934",
+          "version": "repo-lines-v1:sha256:3b72757045af52e72bedeb9b09a98fc1db285cfc2ee8398f0c453d974149f3bb:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2ODA2Y2M0ODU5NDkyMGM5ZTAzZTg5NGVhZWM2MGNmZGY4NDhjZjljOGU3ZTdlODNiNGNkOTcyMjllMTNlYzUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImU5OWYyNWNmOTVlMzNhYWQwODEwODI2NWI3ZDQ1ZThiZWE4ZTMwNTI5NDJmNzRkMTI1NzY2Yzc1MDY5NWQ5NGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI1MGViY2FjZDRlNDY2ZDQ2MTQ0MWQ0ZWYyYzFmYWZkYjhjMmIzYzFhYjc4NDBkZmQ0YWIyYzE5ZjA4N2M5YTgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a5555655600b4e6e8862f32641232a22",
+      "statement": "OSC 52 clipboard writes requested by applications inside a PTY are relayed only for the session the user is looking at, and only while clipboard.relay_from_pty is on; background sessions discard requests immediately rather than queueing them for later. The relay runs before diagnostics are collected in the frame so a failed relay still reaches the SSH log this frame.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/session.rs#L254-L285",
+          "version": "repo-lines-v1:sha256:88f419923551a418526f176eaa56920972b0a222ffcc6e1580ead8cca8d938e0:eyJzZWxlY3RlZExpbmVDb3VudCI6MzIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjViMTNkNjcyZWNmYWQ2MDM1ZmYxODE4OWU0ZWE4OTQwOTEyMTk0YmRlZjA0MGRhZGU3YTc5ZjJlYTM5ZWVmMWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjcwMmNjNzYzOTUxNzJlNDkwZGM2YjlhMWNhZGI0NmRmZjk1ZmZlZGYzNzlkZTRmZGU2YjNkMTdhYzY3ODJiYzYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI1NzY2ZjAzZDkyMTc1OTczNjNiNmJiMzk2NmRmYWM5OTUyZjNhOGM4ODBiZjYyZTRjNGQ4MmY0MTIwZGIxMTgifQ"
+        },
+        {
+          "resource": "repo://src/lib.rs#L331-L347",
+          "version": "repo-lines-v1:sha256:528e3df50b2eb97cfb476019657ebf7fbae38627db2460f87e59cf0423155960:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImViMjhjZmY4ZjMxOGJhY2Y3MGM0NzM4MjBmNWIwNDdiZjk0NDUyYWU5ZTQ3YzYyYjRmNjc5M2ZlYjU4ZTg1NTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2YjA0NDkxNDY5NzIyZTgzNjNhOTRlNDA0NDUzOGUwMTNhMmEyMTdlMzZiMWU1NjhiYTYwYWNiN2I0YzhmMmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRhOWY4NmQyOGU3ODRmOWZkMzFmYjcyZDE1ZjYwY2JjZWFhZmRkNjY5Y2JkNWI2ZGE3ODg4YTAyMzMyMWViYjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE5MmMzY2FlM2UyMWJiMDVmMzJlNTVlYzBhYTgyNjhmYzg4MzA3NzFlMmNmOTdkZGU0NjgxNDY0YTk1NzdmZTMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_198dc5d8ae4442329e76d5f8cf5eb3af",
+      "statement": "Quitting calls App::shutdown_all, which clears the session list; dropping each Session drops its PtyRuntime, which kills the child's whole process group (SIGHUP then SIGTERM escalation, then kill/wait) and joins the reader and stderr threads, while the writer thread is deliberately not joined.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/session.rs#L444-L449",
+          "version": "repo-lines-v1:sha256:24dec9a0fb8070bd532096eb42089e934cbd5ea4fef6522d65bd5bdf977f49a1:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYzcwNjE5NDY2NWFkYjk2YjA0MDM1NmFiNWY0ZGE2MWE0NjFjNjc0ZDA2ZTNhMWY3N2VlMjA1ZmU5ZjFmYzU2ZSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDg5M2Y0MGUzNzgxZWI4OTZjODJkMDQ2YTA4MDY3YTExZTM1Y2RmMmYxZGZhZjI2ZmVhOTBiOGRiNjY3NjQxMyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMjM1NzYyZTQxZWE3N2NlMGRhYjFiZTEwZGM5Mjc4NDZhNGExYTBjOTY2NWJkZTkyZjhhMDNlMjUxM2JhMGNjYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMjUwMDQxMmZjZWU2NGQ2OTUwZTdiNTMxN2M5MTg5NTE0ZGQ4NjA5YTI1MzA2Njg1MzUxYTYzNWRjZmE5ZTBmNSJ9"
+        },
+        {
+          "resource": "repo://src/session/pty.rs#L334-L359",
+          "version": "repo-lines-v1:sha256:9db4f30b3d7bcbbbf97245c07aaddae6cf0cb4c51791575b74dcbeec89c2e12e:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNmOWVjZjI4NmRlZDQwZTZlYmZhODdjNTRmZTU0NmMwYzc2NzM4NjdmNWEwMjE1NWEzZDc2ZjVmNTQ1Y2E4MjAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk5OWJkZWZlZWFjYTYzNDBlMDI5MGRjODZlODg5Yzg5ZDVlMTg5YWE1YmE0NGI1ODViM2I3MDczNGY0YTYyZDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjljZGYwNWE2ZjQ2YWU0ZmExZWE1YjJhZDc1YTE3ZTRlYjAwZmVkZTk3ZGEwZDlhOTFlNDJjZTU4NTY3MGRjNWYifQ"
+        },
+        {
+          "resource": "repo://src/session/pty.rs#L361-L378",
+          "version": "repo-lines-v1:sha256:8b9931052eac117a026ba04093a34dbb62b94b0cf64e9d8c7a99aa6f46e55d72:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJiNzllMWNjNDUxOGZjZWEyMzA5MGMyN2M4YWMxZDNmZWExNDk0MGFmYjAyY2IzOWQwYmY1YTdkZjg0YzYyYTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjgyNzgzZjhhY2Q1MjZiOWJhNzI2Mjk2Y2ViZDVjMDkzOTFhYTA0OThhMGFkY2M0NzEwYTEwYjI4NTA0N2Q5NGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9b9c251954884ec2bd5ac9478c6fa2a6",
+      "statement": "The file watcher monitors the ssh config's parent directory rather than the file — editor rename-saves swap the inode and silently detach a file-level watch — filters notify events down to the config file's name among Modify/Create/Remove kinds, and debounces with a fixed 300 ms window (WATCHER_DEBOUNCE): the first config-touching event opens the window, events arriving before it expires are swallowed, and exactly one WatchEvent::ConfigChanged is emitted, which the event loop collapses into one app.reload_hosts() (the hot-reload feature). The debounce loop is abstracted behind an EventSource trait so tests inject scripted events with a virtual clock, and a watcher that cannot start disables hot reload with a warning instead of blocking startup.",
+      "evidence": [
+        {
+          "resource": "repo://src/lib.rs#L180-L189",
+          "version": "repo-lines-v1:sha256:4ae29184c4b768bda2e46c6bdd08ef937d71ce3fde2811cab885012837b2d777:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQxNzQzOGUxNmVhNDQ0YTM4ODMxNmRlODUxZGI1NjhhZDNkZGRhOWY2MWE5MGNiMTI0OGQ2ZTgxMmZhZDlmM2YiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY3OTkyYjg5ZmIxYmMxYTZjMjA5ZTk5MDA2NzYzNGVmZTgzMjdkYzJhZDQ1NDljOTZjZjcxMDhkZTNjMzZlNWUifQ"
+        },
+        {
+          "resource": "repo://src/watcher.rs#L114-L131",
+          "version": "repo-lines-v1:sha256:e084734c34ba175a560e4239667ff70a6fe3e8f7aa6a53d1f628af49be587c1c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJlYTFhMWRiMDc0ZDY0MDY4NTU5NDM4N2YwYzQ2ZmQwMTM2ZGVjMGUzYzE2MzlhYjQ5MDFlZDkwYjMxMTg4MTEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU0M2EyOGUxNzdlZjFhYzQxN2EyYjA4MWQyNmJlZTcwNTlkNGQ2NTI2YmJjMjA4YjNlY2FhMDlkMThhNWUxNzQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI3OTk1ZjMxZTI4M2ExOWFmOTRjYTBmNTdiOGY4ODQxODQ3YWE2ODY2YjI3ZTRjNWE0NjlkOGI3MDM2ZmQwMTYifQ"
+        },
+        {
+          "resource": "repo://src/watcher.rs#L17-L51",
+          "version": "repo-lines-v1:sha256:ce5247072d9f74dfe5ad873e65e6c56ade1524d52c7995703a62294b2dbd3aaa:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRiZmNkMTkzOWY5OTZmZGY4NTI2NjU0ZTM1YjJhYzgyZDM3YTYxMWYxZWY3MjM0MGFlMWM3Nzk4YmYwNjZiZDEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjZmZDM2Zjk5MTY5ZmVmYTZhZGU1NGFkMzVhNjY1YjU1ZDI5OWUwOTJmZTM2ZjEyYjlmMjdhYjE4NTkzMGFjNTkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY3OGFmN2RkMjJlMDYxZDVhODQ0NDJlNzI4ZWQ2ZmIzNDk0MmE5OGUzNDAxYzIzZmM3MWM2NGE4ODM3ZWNjMDIifQ"
+        },
+        {
+          "resource": "repo://src/watcher.rs#L53-L112",
+          "version": "repo-lines-v1:sha256:90b1f2d15c4fde555731349db10194b646a2a86a3b8876e57d9d8d2a154f82ca:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc4ZDA2ZGUxYWI3ZWVkYWJkNTY4ZjVhYmQxODlmYzQ5Y2Y2YjRlMWZmMTg2ZTM1YjFkYWFhM2YzZTRhYjBmZjgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjMzY2RhYmM0NGY2ZTRmNDIzZjVhNDAxMTdmYzQ4OWJiOTdjOTkwMWVjNjg2NmE1YzYwMWM3ZjZmZThjYmJkYTkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM5MjA5MTk3MmMyODFkNzc1MGRlOWViNWNhNDBhMTM5ZTBkMWU5NGFjMzllYjRmMTFjOGQ4ZTdjZmJlY2FlYmYifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.5.1",
+    "at": "2026-09-11T12:46:43.817Z"
+  }
+}

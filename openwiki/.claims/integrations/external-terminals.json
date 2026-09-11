@@ -1,0 +1,344 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:8074a69097ba96fa4937def252404db9d7a6dcbffa465127a746d3b66616263b",
+  "claims": [
+    {
+      "id": "claim_5f1147cc787c4e158e72ce9152cb710c",
+      "statement": "The external-terminal launcher (TerminalLauncher for Kitty/Ghostty/custom commands) was removed in 0.10.0 and is fully deleted — no trait, no src/launcher/ directory, no test doubles; only the legacy `terminal` / `launch_command` config keys remain, silently ignored so old config.toml files keep loading (pinned by the parse_config_applies_overrides test in src/config.rs).",
+      "evidence": [
+        {
+          "resource": "repo://CHANGELOG.md#L687-L693",
+          "version": "repo-lines-v1:sha256:fb5b3d5a5f321b39c39a926fd0a85a34e5290df1cfe901b7b67344b5e3d000b3:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMGM1MzhhMzQwY2I5MGI0MzYzZWYxOTk5ODAxY2YxMDAxMGZiNzBmMGE1NDJjODhkNGQ4NDkxYWVhZWFjYTE0MiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYTQ0ZWUyYTkwOWFkMTU2OGQwMjIwZWMxYjdkN2I1NGM2MWEzOTQ2NjY4ZmE2NTdjMWE0NDY3OWY4YjQ1YWU2MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNzA0ZjFhNzk2ODk1M2NmZDAyMmIyMmNiNGUyNmFkNDMyMDAyNGIwMDZkOTg0YzRhY2Q3MTllZWI4Mzg2MTQ2YyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiM2ExOTM2YWNjMDQ1Mjc2ZDBlYjZkYTA1YTRkZDhmOTMwMDBlYTY5MDQ4NjQ1ZDQyMDJiNWE4NjE4MjY4YWExMCJ9"
+        },
+        {
+          "resource": "repo://src/config.rs#L1201-L1217",
+          "version": "repo-lines-v1:sha256:9c86261a3e742e2c3ed02e230d7ead07cf83af4cd23ba43323a33ff6933c3ab3:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkyYjVlZGY1OTQ5Y2ZlYTY3ODIyY2Y2OTExMzIzNjNkNjhkNmYxZTE2OWY1ZTBkNGY3YzE0ZTVmYTFlNmQ0ZTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjZkYjY1MTcwZmY0OTU0NzZjMzZmMmRiMzU1YjRiNGQ3NTEzYzY0YmYxODc5MDMwZTY5Nzk4ZjliYmJkYmNlNzUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImEzMjg2OTE1NTAyZmNmOTZhNTg3ZjVmNjMwYzRjOTE2Mzg3NzU5M2FjYzEyYThkMTFiMjEzMzMzY2Y5MDdjNmIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0abf74860053413ca8aaa479c36815b1",
+      "statement": "npm/wrapper/bin/sshub.js resolves the platform-specific optional dependency (linux-x64, darwin-arm64, darwin-x64 mapped from process.platform/arch) via require.resolve, repairs a dropped executable bit (chmod 0o755 when X_OK fails), and spawns the binary with spawnSync using stdio inherit so the child gets the real TTY and shares the process group for Ctrl+C; it re-raises the child's death signal on itself and exits with the child's status.",
+      "evidence": [
+        {
+          "resource": "repo://npm/wrapper/bin/sshub.js#L10-L74",
+          "version": "repo-lines-v1:sha256:fb19bfdfcd4a4113e870971b90e494bc29d1997545b9bb495e07d2d419c5d682:eyJzZWxlY3RlZExpbmVDb3VudCI6NjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY2N2E4NGFjNTA4YmNhOWQ1N2ZlYjE3ZWYxZDU5YmUzYjA5ZjRlMzJkZTdhMDk0NTI2MWU5YzFhZmUyMGJjN2MiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRlYmRlZmM4ZTg1YjUzMzJkNzk2OTZkYmI5NGQwNmRkYTc2YmU2ZjJlYWUwYzYyM2RhZjVlM2E4MjJjYzFkZDMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ2NWY0ZGYzNWNmNGU1M2RjYjNjYWQxYmM0YjFmMzA4NWQ3OTIwMTRhOGFkMTM0MTk2Mzc0ZmY4OThjZDBlNDkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRiOTY4NTI0ZGEyYWQzOWIyNzhmNmE4Yzk3ZjZkOTMwZDc0Y2JkYTI2NWI4ZTY0YWU2ZmVlMDdiMjRjOWE5YmUifQ"
+        },
+        {
+          "resource": "repo://npm/wrapper/package.json.in#L1-L38",
+          "version": "repo-lines-v1:sha256:ec500f2c93e6d1bf1e1262a288675bd5902bead93f6c701c05fdd0aeaf42af2f:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE2ZmIwOGZkYTFhY2I5NTdiNjExNmJkMzc4MTFhMWZlNDFhMDE2MTFjMDYzMWVkYmY3ODZkNjg4OWEyN2E1NWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_217ffbf4427249ffaf0198e2e9c390f9",
+      "statement": "The npm shim exports SSHUB_INSTALL_CHANNEL=npm because the shipped prebuilt binary is byte-identical to the release-tarball binary, so no path heuristic can distinguish the two install channels — the env marker is the only signal (also documented in tab_bar.rs's install_channel doc comment).",
+      "evidence": [
+        {
+          "resource": "repo://npm/wrapper/bin/sshub.js#L57-L65",
+          "version": "repo-lines-v1:sha256:4e4bd2e0274d9651c6fcb2703a64b7902332f550da119975d310d8f3ff1ec8d6:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMjgwOWM5NTI4OGRkNmViYmNlNjczZTAzNWJlNDBjZjQwMDdhMWFhZjVmNjlkYzg4NmIxNThiYjk5OGM0ZDBhYiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiM2EzZTQ2Zjk0Mjc2YjZmNmY0ZWQxZjAyYWY3OGJlZjZhMmVlMWM0MzlkZDU1ODRiOTczOTQ4MzEzMjE0ZDJiNyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOTdkODYzMmU1NGU5Mjk4YWJiOTU4NzI3ZTJkNTE0MDhhYmFmMTM2NjAzNTM3OTEwMTQwYWJmNjViMzBhYjYxMyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOTJlOTk0NjgwMjAxZTQ2NDFjOGM0OWVkMzEzNTY2ZWVjZjNiYjMyNjcwYmRhMzMzZTBiYjBmMDNmYjgzNjI1MSJ9"
+        },
+        {
+          "resource": "repo://src/tui/widgets/tab_bar.rs#L53-L65",
+          "version": "repo-lines-v1:sha256:01363ccfc6f8d260b94844e4a6d72f6f19d8a4aeec8bbbb0d7f5036ad22d56a2:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA2Nzg1NzllNmQ2YTlmMGFhMzZiMGI4YmE1ZjJkZTEwZWZkMWZjNTI1NjA0OGQ0ZmIyMzBjMDMwMGFhZmZlYTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQxYWM0NDQ1MjI4MTU4YTMzYTdjY2RjZWU3ZDgxOWQ3ZDJmY2NkYjY2MDc5OTc5ZTY1ZDZmYWYwNDNiMzU3YjIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFjODMyMzdhZDRlZDg5ODUwYmM3MGZlN2NhN2M3MGY5YjRlMGU5YWQ5MTBjYzBiYjdjMDdmZDdhMjI1ZDRlNTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_d5d0f99e2e2a45dc8322b9a0e04b572d",
+      "statement": "Install-channel detection resolves most-specific-first: SSHUB_INSTALL_CHANNEL env value wins outright, then the exe living in $CARGO_HOME/bin (or ~/.cargo/bin) yields `cargo`, a build-target dir component (`target` or `…-target` from CARGO_TARGET_DIR) or ~/.local/bin yields `source`, and anything else (distro package, manual copy) yields no channel suffix.",
+      "evidence": [
+        {
+          "resource": "repo://src/tui/widgets/tab_bar.rs#L12-L51",
+          "version": "repo-lines-v1:sha256:c205947e22b12e9d969912c2a2e7d66effdcfc88fa385ddb600fd1cd86111207:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY3OTcxYWFhZTk1NDQyNzM2ZDgyODdjNmVlNWJjNTQ0ZmEzNzJkYzA1MjNkZmY1YjA3YWI1ZTI0MDhlMWE5OWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE2ZDc5YzFhOTQzMWY1YWNmYTczN2QzMjg5ZmY0NmFjYjhkOTU0MzNjZTEyNDk5ZWIzYzZlMzE2MWQ2YjE4ZjIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdjODNkYWFkZTZkNGY1ZTdkNjA3NjlmOTM2MWRkMjgyN2ViMGIyZmNjY2ZmMGQ2NWZmMWNjZDA4Y2NjYzliNmQifQ"
+        },
+        {
+          "resource": "repo://src/tui/widgets/tab_bar.rs#L53-L110",
+          "version": "repo-lines-v1:sha256:8188854879e21fcd11e417c0c88762bb244f05babc3fcd968a550588e961bfbe:eyJzZWxlY3RlZExpbmVDb3VudCI6NTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA2Nzg1NzllNmQ2YTlmMGFhMzZiMGI4YmE1ZjJkZTEwZWZkMWZjNTI1NjA0OGQ0ZmIyMzBjMDMwMGFhZmZlYTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU0ODcxOWUzNGJhNGFiMzU4YTAyODEyYTQ0MWIzYzY3ZWNmODg3NmYwMjZkNTc3M2I0ZDdlM2IyMzBlNjFmNjUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f46026e5e451439e83e36776d3a3547e",
+      "statement": "npm/build.sh builds nothing: it downloads or copies the sshub-*.tar.gz assets attached to the vX.Y.Z GitHub release (or TARBALL_DIR artifacts in CI), extracts each into a platform package with bin/sshub chmod 755 plus rendered package.json/README/LICENSE, and verifies on Linux x86_64 that the extracted binary reports `sshub $version` and that the shim, driven like `npx sshub`, reaches the same binary and prints the same version.",
+      "evidence": [
+        {
+          "resource": "repo://npm/build.sh#L1-L122",
+          "version": "repo-lines-v1:sha256:14a74d1d73c966a5c1c1eedf8757eae9aeda95b833cc1fbf184feb7723b5e476:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIxZDk1ZmMwNGE4MGM5NTJmNDljZTQxODg2MjdjNTNiMGZiZThjNDQwNDFiOTUyZDU5MmFjZDFkZTk5ODYxNDY2IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJkMTE3ZmEwMDZiYTkyMDg1MDBiMjkzMGNlNjljYmRlNDM2YzY0N2FmYTkxN2NiNzM5NmE5YmM5MTExYTQ2ZGQyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJkNWI4NTczMDkwOWJkMmMzY2QzZDhkYzZhNzcxM2M0MjhjMDg2Y2Q1Y2U2YmU3MGJkNTEwY2RkOTc1YTRiNTkxIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_8a4a04ea41a049fface91244f9add8a6",
+      "statement": "npm publishing order matters: the three platform packages (sshub-linux-x64, sshub-darwin-arm64, sshub-darwin-x64) publish first and the sshub-tui wrapper last, because the wrapper's optionalDependencies must already exist in the registry or the wrapper resolves to no binary; re-runs skip versions already in the registry instead of failing on immutable-version conflicts.",
+      "evidence": [
+        {
+          "resource": "repo://npm/build.sh#L120-L142",
+          "version": "repo-lines-v1:sha256:5badb1db0b9964eb298803e4d593b51ef1aa26a1f0b97d9d09a832c7640bb7fc:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIyOTVkZGIzMzk0ZjdiZTI4YWQ1ODYyNGVjNWI0ZDA2ZThjODEwNDIwZTJkZjVhNzQzNDQyY2RjYmZjZTI1MGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwODVjZTQxODIxZDVmZjFkYzBmMWM4MDJiMjZhMmI5OGNiNzZhZmMzYmFmYzgwMWYwMjExOGIzOGEyY2E3OWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwOWUzN2NiNWUyN2FmNmEzZjRmM2MxODgwMTQ4NzBjM2FiMGMzYjU5OGFkODE4MDQ0ZDc5NDgyOTZhNzhiNDIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://npm/build.sh#L46-L51",
+          "version": "repo-lines-v1:sha256:01e6612bfa75980286dd0b0901065daf15d3f17dd5e6923e6e2bc196ffce1343:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiY2ZjNmE2ODU3ODFkNDdhNWIzZWZhYzQ4Zjk4M2FlY2I2ZTQwZTJmZjYxODQ5N2YzNDViOWE3NGM3NWQ5NmZkZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYWZhNDdlYjBiZDM0NmU0Y2ZkNGEwZTU2MDFlNGYyZDBjMzkxZDIzZDM3ZGFkZWE5NjNmNzhlZDZlNjI5ZTNjZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMTY1M2EyYzAxZDU5Mjc5Yzc4NzU4OTJhZDNhYmE4YWU4MjUyOGZjY2ZhMjk4YjQyNmNkMjhmM2ZhNDhlZmQ3MCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZjdhMzA0MTUyOGE1M2U0YWZkNzNjYTBmYjVlMGUxNjQxZGY5ZThlN2I3NGFlZGEyMjYwMTc2NDI1M2M3OTY1MSJ9"
+        },
+        {
+          "resource": "repo://npm/wrapper/package.json.in#L33-L37",
+          "version": "repo-lines-v1:sha256:46a83426461e6d63628fc3cce3f01f7f560d3f22832f5b2aa1f1da409489772a:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOGY0YmE2MWNkMGY5MjhlZjQ5MDkxODc3MTdlMTMwNTI1NTRiNDc2NmJhYzEzYmY1YjFiYmU1YzlhNzQ5NmFlZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjdlNTc4OGQ1ZDlkNzNkMjRhODFkYmMwYTVhNzRiZmE4MmM5YzNiM2FmOTllNTJhZjc5NmU5MGI0NjhhOGEzZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNjQwZTRmNTgxNTUzMTNjMGIyOWExYzM3MGI1ZGE3Y2YyYTI2MDUxOTBkMGZhNzdkNjhjZjVmYWE3M2YzMTYyOCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjEsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_dcea03070fa342a6a2e912e3db87321d",
+      "statement": "The release workflow publishes npm packages via OIDC trusted publishing (id-token: write, npm >= 11.5.1) rather than a long-lived NPM_TOKEN, with npm attaching provenance itself; each of the four packages requires a trusted publisher configured on npmjs.com pointing at release.yml, and crates.io publishing uses the CARGO_REGISTRY_TOKEN secret in a separate job.",
+      "evidence": [
+        {
+          "resource": "repo://.github/workflows/release.yml#L87-L126",
+          "version": "repo-lines-v1:sha256:46d93b89478e40e7af1b36bfd6e606c31bd19bd8f4e209e91c8e05d8750a4db0:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYzMzE2Y2RjOTZhYzA2ZTA0YjFhYjI4Nzk3NWQ4ZGJhM2JhNmExZThhZWIwZTYwMzdkOGJjNWUzMTFkNmJhMTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUxN2U2NTMzNThiOGRmMzEwM2Y0ZjM4NzBhNDA0ZThjNjMxZGQ0OTRmOWI0YjljN2RlYmRiYjgwM2YzZGEyZTUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhiNzIyZWRkODE3ODM4ZDc4MjNiMzRhODU0OGYwMjFhNjc5MWY1MDcxNjk0OGM1ZjYxYmU2YmFhZTBhOWY2M2EiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFmNzcyMTBkYmQyNmJmZjI4YzUwZWFiODAxMzNkMjM4OGJkYTk3ZmFiNDBhMTZhMWY3NzYwODc1MDQwMTAyMzEifQ"
+        },
+        {
+          "resource": "repo://npm/wrapper/README.md#L1-L13",
+          "version": "repo-lines-v1:sha256:0327498d65bca2897127ef221f76cdebb7da7d96ad0dff6a57a52d321ca7f3ca:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhlYmI2ZjI2ZWFjNThiODQ4OWMwODEzMzlkODAxNjU1YWFkZGU2YzY2NjE1M2FmMzZjMDM2MWQyMzAyNWZhNjAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjMyNjcwNGU0MmMxYzRlMDdlOTc1NzE3M2RmZGIzYjNmYmFkNmIxNmI2OTQzMjhmZDkzOTU3OWE5NTUxZGZiMzcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8249314e1de14b7c84b2a02f9126ab91",
+      "statement": "demo/record.py records README GIFs and screenshots from the PTY byte stream (asciicast v2 events tagged with write time) rendered by agg, replacing VHS whose timer-sampled screenshots collapsed under SSHub's ~60fps animation redraws and produced sped-up recordings (measured 0.28x real time on navigate); the timeline is exact by construction and all takes play at 1.00x with animations included.",
+      "evidence": [
+        {
+          "resource": "repo://CHANGELOG.md#L432-L446",
+          "version": "repo-lines-v1:sha256:a4d7b25dbc559463d2581d003be4499095aca6c82888ee7278c88210973bd325:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMwNDlhY2E1MzljNmVmNDczNmM0NTlkYWRmNDdkNDUyNzgyYzkwNzU0ZjJiMDhkMmIzOWUxNzhmZDU3MDRhOTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEyOTM3MjJjYzM5NDlkZWUwNmQ5ZDQ1ZWI3NDhjMTM0MzllNWM1NTViYmZmZDkwZWJiZGU4ZmZmZDY2MTJlMWYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI1ZDdiODUzMTQ5OWRkM2Y3YzViNDIwNjZiMzJjMjVlMWU1NTUxOWNiNDc0ZTI2MjU2YWM4MDIzNDU4ZDExMGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJmNjQwYTU4M2EwOTJkZWYyYWIzY2IxZWI3MDdlODc2NTcxMTU5MzgyZTgzM2VmYzUyODRmYmFiNjBjMDZlM2QifQ"
+        },
+        {
+          "resource": "repo://demo/record.py#L1-L25",
+          "version": "repo-lines-v1:sha256:78b8ef36b0902c0a678261244ad20ffea30e2baedd992095393e20e5d2a33500:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ2ODJjYmRiNGM4YjA3NTE4YmY0ODZjNTg5OTBmYzM5MTc4M2FhMjBhOTE2YmZiMjdhZDIxMWViMWQ1YzM2NDIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEzMDNlY2RkNGE0ZDEwZjE5YzczZmQ0MmZkMTI0MzdmZDMzNTRhODI2ODE2MDVkYTUyNTVhOTdhMzkwNjhkYmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU3MzkxYzBlZDNlMmM1Y2VhODQ0YmMwOWYyZmM4Y2I1NjAxZjg5NmQxZTQ1NzE0MGUwODY1OTM3OTM5OTlhZjYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ce688e245447469a8873f1bd1a3fca6c",
+      "statement": "Trimming a byte-stream demo recording cannot simply drop earlier events (ratatui writes cell diffs, so survivors would paint onto a never-drawn screen); Tape.begin() schedules a resync that narrows the PTY by one column, waits for the forced full repaint (src/lib.rs resizes all sessions on size change), restores the width, and the trim point is measured when the width is restored.",
+      "evidence": [
+        {
+          "resource": "repo://demo/record.py#L108-L122",
+          "version": "repo-lines-v1:sha256:d44ec0c0a616e5fdab59652f9e14071d7f81e39c2708574d84d8003a89995ba9:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUzYzJlNjI2NTZiZDhlNjQ3YzNhYWU4ODgzNTZjMDliNjBmNzZlNTNlZGY0MDRiNjMzOWFhODkxZjljMDg5ZWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEyYWIwOTBiY2QxNjIwZmE2MmVhZWUxNTdhNzRmY2E2MzVhYTI5ZTEyY2JmZmQ2MThiNTc5MmQ4N2JjMDNhM2YiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY0Y2EyYTRkNWNkMWI0OGVmNmFlYWQ0ZGQ4YmNkYmMzOTgxOTk2NDAxN2NjNzkxZTgxNTVkNjBjZTI4NGYwOGQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImMwNDdiMTBmN2MzMmM4NDU5NWNmNzY5YTRjM2Y5NWNjZWU0YTM5MTVmMjYxNTU5YWRlM2NhZDcyZTVkNmFkMjYifQ"
+        },
+        {
+          "resource": "repo://demo/record.py#L166-L180",
+          "version": "repo-lines-v1:sha256:ff006b8be4303912987a38e774996021fe1d206687685519ee10d21281fb0e49:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFjNzNkOTA5ODViODI5YzZlODBiMDdmYTg0YmE1NjQ0ZWUyYzA1MTc5ZTlkYTdiYzFmOWQ1YWJiZGQzMDkzZDEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwZTg2NmM4N2FkODFiZTk0MDZmZjExZTE5N2Y1OThkMmRhNjE0ZTMzMWE2OTgxNDU5YmY2OGIwNDAzZjhjZmEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImYyYTJiZTIzZjQ3NDQ2MzRiM2M5MjMwN2ViZGNkNzhhYjcxNWQ5ZDVjNmZmNWViZDU3M2MxMzE0MzZjNzQ2ZDkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM3OTU1NzY4YWUzMmMyMjI3ODQ0MTYwM2NjZjBlOTQyMDY4Zjk5ZGUyNzRiZGE5OWNiZTdiZTNkODUyMDA0MjkifQ"
+        },
+        {
+          "resource": "repo://src/lib.rs#L292-L325",
+          "version": "repo-lines-v1:sha256:b4d1ac42bb699079623923cc133beefb40a718a293cd8ecd216a91662599576e:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI5NGNhYTYxZDRmOTY2ZWQ2ODQ3NWM3OTQ4ZmY2NmM1Y2U3ZDMwZGQwNzNkNTdiNjc4MjM0NGM5N2Q3YjlkZjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU1MjJjNDJjZDE5YzZkMDNkODA4YzQ1MjcyMDU1MjgyNWI3ZWExYzViNDkxYjIxODUxMWNhYzc0MTVjZjlkOWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY2ZTM1ZDAzNTNhNzZkMjAwNWZlM2NkYjI1MjJlNDA4OWNmZTZiODFjYjg5NDk3ZDgzM2I2YTlkYzdkMmMxYjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk5MjM1N2JjY2NiY2RjMmY3YjZhMGU4MzUzNmU2MzhjZmUxOWFjMzAzZWM5YjQwMDc0NzExM2I4ZGNjODkzMTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f2284281bbfe4b919dee98649f30bee7",
+      "statement": "Demo still markers are scheduled like keystrokes but measured at record time (script-time drift would catch popups mid-slide), each reserving a beat afterwards to avoid sharing a timestamp with the next event; stills are extracted with ffmpeg as the last GIF frame at or before the mark (an idle screen emits no frames, so the next frame after a mark is whatever moved next), inheriting the GIF's 256-colour palette.",
+      "evidence": [
+        {
+          "resource": "repo://demo/record.py#L124-L140",
+          "version": "repo-lines-v1:sha256:e56b622f47806f3ca058308bd84136aa016f4f0ba718b97d98f02508e3abba92:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2OWM5YmYwMDE4OWJhOTI0ODFmZmYxY2NlYTUyNDRhOTUwNzA0Y2Y5OWYwM2ZlMWRmOWFiYTQzNTUyZjk1NTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEyYWIwOTBiY2QxNjIwZmE2MmVhZWUxNTdhNzRmY2E2MzVhYTI5ZTEyY2JmZmQ2MThiNTc5MmQ4N2JjMDNhM2YiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJhYzg0YzFkOTZlYTVjZGY4MjQ3YWNlMWM2NjJjNmNiNDJiYjBkNmI5NzcxYTgxZjNiODRiNTUwY2Y3ZWQzMWQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVjZmRjNTA3OWZkNmJmZjRjMDI0OWE4NWRhNzQ0MWUyZmM0ZmQ5OTRjYTk0YzFlYmZhYzMzM2Y3NDRkMjFjZDkifQ"
+        },
+        {
+          "resource": "repo://demo/record.py#L221-L238",
+          "version": "repo-lines-v1:sha256:59358fc11741bcc065f0e9e94dc1b43babb05dc33cfa62c85c0cd1b3767120a7:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdiNWY2ZTAzMWM0ZjJhOTRlNmQ3MGE3Zjk0NzZhOTI2ODJkZmYxODQ1MjBmNDdmMjQwMThlZDQ5Njk0MmU2MzQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxM2E3NDk1ZGY5NWEwY2QwYmI1MmM0NDRhOWMwMmE0YzJlNDdlOGY2NTk1MDI2MGVmNGZkYTViN2QwMDg4NWYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNhMTZiNTVjM2E4ZDMwZWRjZjhmNTA4ZGYwYjI1NTM3MTIyMWUzOGJkZmM5ZTAyN2ZhOTZkNGI3YjVmYjMxMzMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk5NGRjZTgyODI3MjkyNWRmZGJhZjg4YzYwODYwMTkwNDc1OTNjNjAyM2M4YzUzNDk4ZDhkOWZlZmYyOTc4YTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_270eaf06c43648b19a21bb28fbc1a928",
+      "statement": "Each demo take is checked against the pacing its scenario scripted: expected duration is the last scripted timestamp minus the trim start plus the 1.5s tail, and a take is ok only when recorded/expected stays within ±0.1 of 1.00x; an OFF take marks the run failed.",
+      "evidence": [
+        {
+          "resource": "repo://demo/record.py#L426-L444",
+          "version": "repo-lines-v1:sha256:6f2b174d54de1f0f36a985a0c9235956eaf78e7124b923f76b03f5e599cc2da5:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBhYmM2Mjg3Y2M1NDJjNTZlODc4OGU5MzJlMDEzYmQ1N2ZhM2ZiNGYxNThlMTk4NWQ1ODRiNTFlNjAzMDFlOTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNjNTEwMDY4MzBjNWM2MGU5MDc4NWQ5Yzk0MjM2MjMwMWIzZDBiZDVhMjBlMzcxMjdiMmUzOWIxYjM0NGEwMmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjUyZjNjNDhlYTcyZThjOWNiYTllNzJjNDViNThlOGIyZjI0MDkzMjNmZmEyMjFmZmRiNTcxZmQ0YWFjM2RkOTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjgyNzZiYjQxNzExNWQyYTljOWRjNThiMTUxYjJmMjFhMDIzMjk5ODc2ZTU5NDBmNDBiNTFmOTdiNmU3MzA3ZjQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_19b393924a3d4462867dedacb19445d1",
+      "statement": "Demo recordings run under a pristine per-scenario config dir (/tmp/sshub-demo-<slug>, copied from demo/home/.config/sshub) and a throwaway HOME (/tmp/sshub-demo-home) so the recorder's real username and home layout never appear in README media — the SFTP browser displays the local pane's cwd — with SSHUB_VERSION_LABEL set empty to hide the version and demo/bin prepended to PATH; motion stays on because disable_animation is the reduced-motion toggle that would hide every slide.",
+      "evidence": [
+        {
+          "resource": "repo://demo/record.py#L241-L273",
+          "version": "repo-lines-v1:sha256:c1f3c310fb74885b73c9970009c3a4c1998bf647a3b3311aadb8bbc726043cfb:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEwZWFlYjkxNjZkNmU4NWM2NWNiZGUzYWY3M2Q5ZTBkZjM4OTZkZDg1MDU0ZGY4YTY1OGRmZWE1YmFhOGE0NDUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUwNmZlNGE4Zjk2NjEyZGE3ZTE1N2UwODAwMGZjNjY1MjBjYjlmMWI2NDBkMzNlYTI4ODcyOTc1M2NlYWMwNjEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZhZDYwOGZkYmUyMTNiMzQ1Mjg0Y2NhZTM3Y2RkNjkzODZlMjNlZjA1NmRkZmQ5YWU0M2E3ZTc0MjEyNzFlMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY2NjVlZmNjNjBkZWNjZDYwNGQxZDNmNzlkOWY3OWY5YTI4NTBhMDkxOTc1MjdkYjFlMGNiMmY2MzFkNWRhNTEifQ"
+        },
+        {
+          "resource": "repo://demo/record.py#L42-L49",
+          "version": "repo-lines-v1:sha256:5ca2946a66cca7debca54f2a5eb1d97babb1d6b4430686eb568d9edac3da1fab:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNDdiM2I3OGU4OGMyODUxMWI3OWRhNmU2MDEwZjljMTUwNzJlOWNhZjU2NzFkNTlhMzMwNzI2NWNhNTI3NGY5ZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOWVlYTQ4MjIwY2RlYzQ0MjQyNGEwYzdiMmJiODUzYTg5NTlkOThiZDE5ODQ0NTg5MzVjY2IzMWQ5YmI2NGIyZiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMjFlOWZlNmIzNGFiMDZlZDkyOTkwYmIyN2Y3NzYwOWNkMWJiMmJiNWMyOTJkZmYxZjY1MmZiZGY3ZDdjMzhmZSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYjQxMGJkZWU3NjlhMjIyMDMyYjkwN2JmMTk5MjRkYTEwMTNjZDJjNjY4MGY0MzhhYjZiYjIxOGUzNjAzNDA3NyJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_b77909b3ceb8429289028d302e866db0",
+      "statement": "demo/seed-demo.sh seeds demo/home/.local/share/sshub/launcher.db by running the seed-demo Cargo example (demo/seed_demo.rs, an example rather than a bin so cargo install never installs it); the seeder wipes launcher.db and metadata.db (plus -wal/-shm) for deterministic re-seeds and creates nested groups plus seven hosts using real pingable public anycast resolver addresses (Google, Cloudflare, Quad9, OpenDNS, Level3) so cards show online, while actual connects are simulated by the fake demo/bin/ssh.",
+      "evidence": [
+        {
+          "resource": "repo://Cargo.toml#L28-L32",
+          "version": "repo-lines-v1:sha256:be7fa3a8b5e1da8681162a57bcdbdbf92e0033ee765b4f26320a144370ba62d1:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNjI2YWM3NWQ2ODU1ZTc4ZjJjZmU2MmQwNDFjYjQzZmU2ZGE1MDM2ZGI0ODNmOGU4ODY3OWIzODYxZDNlNGFmZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiODA1MTdkOTFjOGY3MDYyZDIwNDk0YWZiOTdjYTk3NjVmZjdmZDhjYzYzYjE5NzNmOTQ2NzllZThkYmVmMjE3MiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZWU0ZjM4NzY2YzdkZGY1NGNmMGRhYTY4NmY3MzdlOTk4YTVkNmFlY2YwMDE4NzE0NDJjMzMwMDU0OWJhZjI3NiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYjdmMzhiODZkOTZiNmMxOWE0NWRlNjRlOTVlZWM4MTMyNTRmMTE0ZjJkMjI1OTYwZDJkNjg0ODU1MDdiMjIyZCJ9"
+        },
+        {
+          "resource": "repo://demo/seed-demo.sh#L1-L18",
+          "version": "repo-lines-v1:sha256:5cb4789978c5f27eacd4c77217f2758aa583ce60653b829c9aa7b9647154b66c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFkOTVmYzA0YTgwYzk1MmY0OWNlNDE4ODYyN2M1M2IwZmJlOGM0NDA0MWI5NTJkNTkyYWNkMWRlOTk4NjE0NjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE5NGEzYmI5ZGNjN2Y3N2I5MjRjMjVmMGU2OTUyYjM2YzYwNTAxZTRkNzdlOGU4YWUzMmQxNzAzY2Y4OTdlZTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://demo/seed_demo.rs#L1-L8",
+          "version": "repo-lines-v1:sha256:c2bc0548ae9e0d596297b89bdbda40cf4909f638a2a4b1b8f9c4937995bc6cf5:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNWU4MzA1OWUzOWVkZTk2YWQ4YmEwN2U5NDAwYzVkYzdlNmUzZTNmYWM4OWU4NTZmNWNiNjYzZjE2MmE4OGUzNyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDFiYTQ3MTljODBiNmZlOTExYjA5MWE3YzA1MTI0YjY0ZWVlY2U5NjRlMDljMDU4ZWY4Zjk4MDVkYWNhNTQ2YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjAsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiM2UxZmQ4NzkxOWRiMDUxYmExMjg2NTBkOTc4MDlmZmQzMzkwNjMzMTk2Njg3YTM4NjU4OGE1OGY2ODM0NjkxYSJ9"
+        },
+        {
+          "resource": "repo://demo/seed_demo.rs#L28-L45",
+          "version": "repo-lines-v1:sha256:3dc3fe2535864ca65f8cc4de6dbb26afc8e68a3caff030e3a3d9edef5e9d56b8:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNjZDRkNjlkMTEwNDNjNmNkOTNjNGJjNmE5YWQ1YjRlODExZDgyNzdkOTI0NTVlZTZkMWU2NjY0MGU5ZWI1M2UiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFkNTI3OWEyMDZjZmZjNDBmODAyMzRhNjNlOGI3MmQ0YzA4YWYyMzhhMzRjMGZmNDA2NjM1MDBlODhmMzRkMTUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhlMmRjMGZjMDM1YTc4OWJjNGYxM2Y3ZTMwMGYzMjY2NDRhNTMyMmM4MWRjMjBkZjc0N2YyYWU2N2FiODdlZDkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE3ZGIyNTA3MGRkOWI2MjU2NDVmYjcwZjI1ZWRiNjAyZTYwZjk5MmU1YTM1NGU1ZjJlZjdjMjNmOGI2ZDQ1NTIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0eacd60e8e944af19e4d9a9e793f076a",
+      "statement": "demo/sftp-server.sh starts a rootless sshd on 127.0.0.1:2222 (SSHUB_SFTP_DEMO_PORT overridable) with an ephemeral ed25519 host key and client key under demo/home/.ssh, pubkey-only auth, and ForceCommand internal-sftp -d <sandbox> so logins land in a curated fake deploy tree instead of the recorder's HOME; because the host key is ephemeral, start purges the stale [127.0.0.1]:port known_hosts line via ssh-keygen -R so trust-on-first-use re-records it instead of tripping the host-key-changed (MITM) guard.",
+      "evidence": [
+        {
+          "resource": "repo://demo/sftp-server.sh#L1-L13",
+          "version": "repo-lines-v1:sha256:b885bdb18d66edc9d50ddec55e4e79f43a0d28ad8698a4ecffe4b0266af8c099:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFkOTVmYzA0YTgwYzk1MmY0OWNlNDE4ODYyN2M1M2IwZmJlOGM0NDA0MWI5NTJkNTkyYWNkMWRlOTk4NjE0NjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA2NzJmOTM2MTI5ZDZmMWI2YzEzMmEwNDE0MjVmOTZmNjEzNWFlZGVkNmM3ZTk4YzU5YTkyZjFhNWVkNTRmZGUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJkYzhiNDI1NzgyODAxNWU3ZGRlOTE3MjFlYjdlMTZiY2ZlNWEwYzFlNmU1YjE1NGU3ODljY2U5ODExNTIzMmUifQ"
+        },
+        {
+          "resource": "repo://demo/sftp-server.sh#L59-L93",
+          "version": "repo-lines-v1:sha256:8e46bf142ff32570c9384577ec2114edac704aa60c8c1283b369cbf4f4065df4:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVkNTU1OTM1YTgxNmQ4NTk5MTA4MGNlZWM3NDA4YzQyMDc0MTkzNTllZTljNGU2YTc5OGEwZTczNDdhNWEyNmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE1MzRiYWU5OGVmM2UxOWVmMDA2ZTUxODVlNzA4ZGU5N2JjYzgzNDkwODA4NTE0YjZlYTQwYTliZjE3Y2UxNzciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJmZGNhNTdmMjdkZTlhNDAzNWMzYjY2NTJkNGQyMDczZWVhYjEzNDFlNGVlNzkyYjcwODEyODMxYmViZmZmZWUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_4861140e2e0241ff84437247d06b3615",
+      "statement": "demo/bin/ssh shadows the real ssh during recordings and demo/play.sh: it emits an ssh -v-style handshake on stderr — including the Authenticated to marker that session code latches via CONNECTED_NEEDLES as the only honest connected signal — then runs interactive bash with an rcfile faking the remote box (fake uname/hostname/ls/df/uptime, deploy@<host> prompt) and redirects bash's stderr onto the PTY so the prompt is visible; it must never be installed outside demos.",
+      "evidence": [
+        {
+          "resource": "repo://demo/bin/ssh#L1-L30",
+          "version": "repo-lines-v1:sha256:e1702dffdf90b026291094e903dd744ccf5f8467c936443c6cbc3e71b8fc47fe:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFkOTVmYzA0YTgwYzk1MmY0OWNlNDE4ODYyN2M1M2IwZmJlOGM0NDA0MWI5NTJkNTkyYWNkMWRlOTk4NjE0NjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNlODAzMTZlZGZlMmZjMTMxYmYxODA0MzBiOTk5Y2VmOTgxOGZmODhjMzQ2MmU4ZjA2MjZhZjRjMzFkMGVhNmEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY1MGRlNDBiYjQ1NTVhMmRmZTViZjQ5NzEzNDU5OTI3NzFlMmU2ZDVmOWVhZDdmODA3YzBmMTI5ZTMwZTY2OGEifQ"
+        },
+        {
+          "resource": "repo://src/session/mod.rs#L1003-L1006",
+          "version": "repo-lines-v1:sha256:2c6b898e2a8d693b53cc5a017753b3b14cf1ac6173baf429571c572fac9e7df6:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiN2YwYWMzMjZmMjFlYTc1N2MxNTYwNWM1NDlkNzI4MWFjZjA0MTFjNmEyY2U0MmU1NDgzMWM0NDk3OGUxNTUzMyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYWQ0MjcxMmU5YWQwY2JhYmQ0OGRiYTMyOWEwZjVhMmEwOTMxYTg1YjhhNjZlMDU5YWI5NGIzZjQ4ZjAzNWY2NCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMTc1ODA5Yjk2NTk1MGVlY2YxZTIwOWZiZjliZDM0MmJmM2EzMWI4MjZhMTRjMDg5YWNlNjk5NGNmZTZlYjllMyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiM2M3ZDE3MTc0Njk3YWE2ODAxOTZmMzE1N2UwOTYwMzc0ZGM0NmYxZGQ2NDRmNzM3NTM1MGM4OWIxMTMzNjBiZSJ9"
+        },
+        {
+          "resource": "repo://src/session/mod.rs#L747-L770",
+          "version": "repo-lines-v1:sha256:bc52c334317a3c66700c6da7688b9386d1edb1128873ab9024f5ca9e2f52e558:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIzYzhkODhlODY5ZTNhOWI0MzBkZDFkYjQ5N2ViM2E3Mzk4YTc3NDk1NTYwNjIwMmQ2MWE2ZDJlYTliZTVkNmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVlZTExMzk0NjEyYjY1ZDVkMDgzNzFiMGM2NzA2NGNjN2U4YTI2ZmY4NTlhZjExMTgwYjk1ODQwYzE0YTRiMmQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUzMzlhMGEyN2I1MDA0MzdjOTI1ZTViZWJiZTllNzI4M2UyNjVhMDk0MWE5OWE1OTNlYWY3M2IzNmMwNTUxYjEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_278088381afc44d69af6db24368754d6",
+      "statement": "The demo tree is contributor/release tooling, not product runtime: scenarios are hero, navigate, connect, add-host, sftp (driving the sftp-server helper via setup/teardown and running with cwd sftp-local) and screenshots (stills only, scratch GIF); generated GIFs live in demo/gifs/, stills in demo/screenshots/, per-take asciicasts in demo/build/, and the whole demo tree plus media are excluded from the published crate.",
+      "evidence": [
+        {
+          "resource": "repo://Cargo.toml#L11-L22",
+          "version": "repo-lines-v1:sha256:386bc4e591a10e6228d1250198f96cf6703b21bbad6e01b473018013a5f2c222:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRkYWZhMjYwYmQ0MGFlY2ZkMGFiMDI1OGUwMDkyNWY4ZmUwNzEyYTIwZWIxNjY3NzI2YzU4Y2EwZGI1ODI0OGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY5NDE2ZTA5Zjc4YmEzMTZjMDMyNTY4MjEzYjg1NWVlNzU2ZTQxNTY1ZDkxOGYwOTUxOWM4MWZkNjIwZjQwNjAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk5YmFhM2RkZTkyM2JmZWM3NzExYjQ0MDY1ZmQ2NDJjMjY3NDYyZjYyZDFlYTY4MWFhYWE3ZjZlOGFjMTRkM2MiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc3MWZmMjA1MjNjMjYxY2RhNmNkYTFiYmY4ZGZiOTZmNDk0ZmJlYzk0ZDM3NmYyODdiMTUyOGYwYWY1NDIxNDEifQ"
+        },
+        {
+          "resource": "repo://demo/.gitignore#L1-L9",
+          "version": "repo-lines-v1:sha256:de1e85d2ec5698a20a3521d54505c9e7aba046973d83f4baecc04efe27bed631:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYTU4ZDJhZWZhYjM5MzExODhkYjgwMDJkNGJiZDhlNGJkMTEzYzljYmQ2ZjBhMDk2MGNjZmQ3ZDEwZWFlNTI1YyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZDBlOTYzNzdjZDhlNzEyNjQ5NjJmZTI2M2JkZGYyNTQ0N2EzNzk5MGQ2ZGI1Nzg4NDU3MTRjZDAyOGExNTZiNSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjAsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjAsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9"
+        },
+        {
+          "resource": "repo://demo/record.py#L391-L403",
+          "version": "repo-lines-v1:sha256:3fcebe34be839fcf331a68b56bd4079f9e3d124043ec5ab38f3af99c1ffbd991:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMzMTMxMjU1OTIxM2U4NGE3YmZjMjFlMGIxNTkyZDZjMzlkZTE1MDVhMzM3NzQ5ZmNlNTdmZjBhMGM5MTQ0NjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImFhNDE1NjdiYWFkYjY2MDE1Yjk5MWEwYjcxM2QxMGU4OWNiNDU2MjNmNjYzZmIzZmI4YTUxYTkxYzU0ZWMyMDAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjYyZGFiYWE5NzA2Y2I2YTMwY2NjZjQxM2NiYTc5OGEzYmQxNWI3YTA2MGFjNTczOGM2ZmQyMWM0Y2FjNmJjODYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5e12a2d3407547fcb2984f4420f0ad4a",
+      "statement": "The OS keyring integration exposes a PasswordStore trait seam with OsKeyring over the keyring crate (service \"sshub\"); check_keyring_available probes availability and distinguishes a missing Secret Service provider (org.freedesktop.secrets / ServiceUnknown errors) from other failures, and where no keyring exists the owner-only FilePasswordStore (credentials.json written through a 0600 temp file with atomic rename) takes over, migrating back into the keyring only after every entry succeeds (migrate_fallback_to_keyring).",
+      "evidence": [
+        {
+          "resource": "repo://src/credentials.rs#L113-L177",
+          "version": "repo-lines-v1:sha256:d5a518b043723d49043179255473d7d13fea02216d4f96ae078cdfcb1a8a3eab:eyJzZWxlY3RlZExpbmVDb3VudCI6NjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZjYzg1YTE3OWRkMDhiZWUzNWU5MDBhMzc0NjhiOTVjMmY4NzBlZWU4ZGQxODQ3ZDFhYzE4ZGFjMjgwOWQxZTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJhMmYyYjhiNTMxZDg1NTY2ZjJiNGQ5NzBlYmVmMzNmMzcwZTVkNzQxMTVjOGRkN2NlYWY2MmFlYzI3ODdkZTcifQ"
+        },
+        {
+          "resource": "repo://src/credentials.rs#L46-L62",
+          "version": "repo-lines-v1:sha256:dbd0a676c1511f1dafe39a36d968e95334a583dd59af51050fac2e6e2033428f:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhmM2JjYmQ4MjUxN2M0YTY1NDVmMWRmMTdhOWQ1MWVmMmJiZDc3MjczNzZlYWFiN2E4MWJjNmVmMjEzMTE0ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU0YTFjZjhiZDczZGNkMzAxNTRkYzZiMjE1OGY1NWY0NWVlOWZiMGFkNjY1NjJmNmJmYzVhM2Q5NGZiNmYzYzYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_20917182967d4832953af88044bdee3e",
+      "statement": "ssh-agent integration wraps SSH_AUTH_SOCK detection and ssh-add -l/-d invocations, parsing the listing into type/bits/fingerprint/comment; the Keys tab and CLI expose add/remove key operations on top of these wrappers.",
+      "evidence": [
+        {
+          "resource": "repo://src/ssh/agent.rs#L19-L49",
+          "version": "repo-lines-v1:sha256:43d2831e29e92ec65f60449581aba85548d708270ab889d5b27836fe9b8efcfa:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk4YzQ5YTVmODQ4Zjc0ZjQ2MDA5N2RkNzg4ZjRjZTg1NDFlZDQ2YTc1YjBhN2QzNTBhYTlkZmJiZGE3MWI5NWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjUzNjk0YjQ0NjE1MTE2NTE2ZGFhOGVkYjQ5YjMwMTA4Njk4MGJhMTJiNDIxODZmYjkwOWVhYzNkOGM0OTlhYTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE3ZDc2ZjhiZDIzYWI2MmQ4MzU0ZTIxMzRkNjc4MTE1MDBkNzJhOTY1MjQ3NTg0OTViNWFiMzM5MTIzMzdmNTAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7df6e89b1faa440d82708e13e2c7915f",
+      "statement": "Embedded sessions connect by shelling the system ssh (or mosh): build_ssh_argv/build_mosh_argv turn a resolved host into argv honoring port, identity file, certificate, ProxyJump and ForwardAgent, safe_ssh_target rewrites a leading-dash target to an ssh:// form OpenSSH refuses, and StrictHostKeyChecking=accept-new is injected when a secret is staged or a mosh session runs.",
+      "evidence": [
+        {
+          "resource": "repo://src/ssh/host.rs#L119-L141",
+          "version": "repo-lines-v1:sha256:76bf39b0607d1908aa8eb52c6bb20eca84602c45915e4b1cbf8c9dd4b7fbf723:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA0Y2E2Y2E4NjM3ODFmNzQ2ODZiNTY5OWY5N2Y5NDU5OTNmMjMzMmVjNWU0MDIyZGI0MjRkMzA0ZTI5MWEyZTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM0MjkxYzkyNjNmN2U0YzUwNDRlNDI3MjMxZmQxOTE4OTRiZTU2NjkyZTM0ZjAzMTEzYjc5YjhjNjFhYzRjOTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM2MWE1ZGY5MDg0ODRiYmQxMzhlMmYyZDA4OTYzYTgzMmIzZDFmZmRlM2FlYjMwN2Y4ZGNmYWI0ZDc3N2FhM2YifQ"
+        },
+        {
+          "resource": "repo://src/ssh/host.rs#L30-L107",
+          "version": "repo-lines-v1:sha256:0d9441a943f0962320bd8da6b4c8dffe8ed2e142bdfb23c7bb0d40b1f6895e6c:eyJzZWxlY3RlZExpbmVDb3VudCI6NzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMyNGU0MDMyYjRlZWI5Nzc4NWQwY2E1ZWUxOWYxZDkxOWM3YzJkOTQyMmM3MzQ3YzdmMzBhYTQzZTE0ZjFhOGIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM1ODc1ZDMzNmI5NmVlMGNkZjdlNmJmYjg4YmU0NDRhYWQzY2MwMGZkZjg1Yjg3MmZiYjRkNTA2NTAyZTMyZWEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_bdb1a838258b4985b050beb8a9ccba1f",
+      "statement": "Host option resolution delegates to the real `ssh -G` run against the SSHUB_SSH_CONFIG / SSH_LAUNCHER_SSH_CONFIG / ~/.ssh/config file, returning hostname/user/port/proxyjump/identityfile/forwardagent/remotecommand; alias listing follows Include directives with recursion depth capped at 16.",
+      "evidence": [
+        {
+          "resource": "repo://src/ssh/resolver.rs#L45-L96",
+          "version": "repo-lines-v1:sha256:85c0ab274185abce165863a553afc068c1419aeaea7885009f145cb4b7ea2b89:eyJzZWxlY3RlZExpbmVDb3VudCI6NTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFiYzhiNDUzZjJiZDMyMzQ4NjIwZjc4NzhjYjNiYjlkMGJjNmNiOTcyNTFlN2IzMWU5M2IzNjk1NzFiYzg4YTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNlYWI0MDc2ZDRmODFmMmU5MDRlMTAyNGU4MTIzZjBkMzQ4ZmNkNWFlZTNhYzQ0Zjc5ODE5ZmE3OGRkNTY5ZjkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_809f83860ea14f8ebd3421be3b7a8866",
+      "statement": "ssh-keygen serves three integration roles: per-line fingerprinting for the known-hosts manager (ssh-keygen -l -f - via stdin), guarded deletion (ssh-keygen -R), and key/passphrase probing plus key generation and public-key extraction (ssh-keygen -y) — with every passphrase-carrying invocation staging the secret through a KeygenAskpass helper (0600 secret file plus 0700 script exported as SSH_ASKPASS) instead of argv, and probing failing open (None) when ssh-keygen is missing.",
+      "evidence": [
+        {
+          "resource": "repo://src/known_hosts.rs#L118-L141",
+          "version": "repo-lines-v1:sha256:86b70538b274f144b0133c3ea7d7912b6cf3b5d128a475507238e14a9ccaaf2d:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRkYjliYzZhZjhmMThmM2Q0MGYxMDEwNTBkYzgyYmM4MGY3MDAxZDA5Yzg5ODNlOWUwYTNkMWU5NDgzY2IyN2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI4MzExZWQ5ODg2MjJkOGRjM2M0M2I2ODgwOTUwMDhhZTNlYTBmYWY1YmQ3ZjI0ODZlN2QzZWZmY2I3YjBiNDQifQ"
+        },
+        {
+          "resource": "repo://src/ssh/keyfile.rs#L79-L104",
+          "version": "repo-lines-v1:sha256:bf3b439f2522b9202926673074ec54df5d3b8d078e80d8e28108778ba403964a:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUwYjA2NDVhNzEyYzI0ZDZjN2ZjZjNkZTY2ZGViM2ZjZjZhYzQxYThmZTQyNzliZDhmYTc4NzU2OGMzNWVjYjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkyMzE4YjM0Njk3Njk4NDcxMzA3ZDA2ZGY0ODg4MmM0M2JlYWQ3OTdiNGMyZjNiYzlmY2U2ZTY0NjhhNGY1MjMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2f8b25de36684c68b1bcc10ea96374f7",
+      "statement": "The SFTP transport verifies host keys trust-on-first-use against ~/.ssh/known_hosts: an unknown key is appended — manually, because libssh2's write_file rewrites the whole file and would drop unparsable lines like @cert-authority — while a changed key is a hard MITM error ('remote host key changed - possible MITM').",
+      "evidence": [
+        {
+          "resource": "repo://src/sftp/transport.rs#L123-L184",
+          "version": "repo-lines-v1:sha256:abf4506da33658d7c58bd0b7ad92bb47e49cc01ed6db71788d11cc5f4645658e:eyJzZWxlY3RlZExpbmVDb3VudCI6NjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI5YTc0MTg5NjhhMDk5MzNjMDk3N2ZkNmI3ODYyYTA1ZGQ5MzU3YmE1NWYwMDEzZjJhYzQ0NTE1MTExOGNjMzQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjIwMWYxNjQ0YzVlOGI3MGJhZGFkNTI1Y2QyZTI5Mzc1NjYxYzVkM2ZkMDljZjFiZDgyMDk2ODAzZTk5NDg5YmUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjMyNjg4MjdlMmM3MGU4MDc4YTYzZDkwNWU0ZTVmNWZhZDNjMDczOTBmZTU4ZWFjOGQ2ZTA0OGIwMTQ5N2VkZDQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_716152f814f1471c8b6955e6af2d5340",
+      "statement": "Third-party host imports come from Termius backups (L00t.csv plus ssh_keys/, with passwords/passphrases re-stored via store_credential_verified write-verification), PuTTY saved sessions (Windows regedit /e .reg exports or Unix ~/.putty/sessions dirs; only Protocol ssh or absent imported), and mRemoteNG confCons.xml (SSH-protocol connections; encrypted passwords not decrypted) — the latter two creating hosts only via the shared HostImportReport counters.",
+      "evidence": [
+        {
+          "resource": "repo://src/import/mod.rs#L5-L20",
+          "version": "repo-lines-v1:sha256:e41761c56047ae1f3f537c7826181c2d2c0c36b78359a9d293efbd1c58aa07b9:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQyZThkYzNjZTI4ZjgzZjJhMzUxNDNmZDc0ZmUxZDMzZTU0ODBkMWVlMjdiMjliOTczMmY0NWU1NjFhNDBjZGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY1ZjhjZGNkNjM1NmQ3ZDJiMjc5MzVhZWYzNTU1NDAxMDg4MDAzMmJkMWE2NDljNjRjMmY2NmQyNWNhNDVjYTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://src/import/mremoteng.rs#L1-L6",
+          "version": "repo-lines-v1:sha256:ad891a2ef7fd5cbc59b1f5d204c9ed187d8c79586fbc909644e7d1bdc9f8533e:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZWVmZDcyYzMzY2RmNzRlMzRiYjJmNGJjMTdmMGZiYTM4NWYxOWNiNzc1NTYxMzM0NGRkY2MxODFiMjFmNzY1MyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMzkwN2U0OTA4YjkyNTU0ZGQ5NDcxOGI2NDRkZDcxYjdkNDI1MzNlNWZkYTZiMjQxMDFiNGVjYjMyOWE2NmQ4NiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjAsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiN2ZjOTliOWVhMWQ2NjZmZDIwOTVkMGMxYWJlYzY4ZGFjN2RmNmFiZjA4OTAzYjE4YWY0NjRkMzliYWRjZTcwMCJ9"
+        },
+        {
+          "resource": "repo://src/import/putty.rs#L1-L19",
+          "version": "repo-lines-v1:sha256:9ba51c60fc501a5bf1ade0f433bf706ecc8747decbbd6f8666ae4296e6f3403c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxOTlmYWZlZWViYWQ0NmExNTNkZmM4OGQ4YjNlZDNjNTYxMjZiY2FiM2I4MDZhYjc3MDRjNzYxNGJmYjcwYmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUzMTA3ZDgzNGNkMDg4MGE2NTBiY2E3ZTIyYjIzYTc1NmRiYTBmMWU0ZGNhMzE1YmNjNGM1MGRkODlkOTNiNzMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZlOWVjODA5YjAwNDRhMTE2OTNjZmNjZDkyOTI5MTI3NDFlMTMzZjQyNDI4N2Q0ODI4MDM4OGRkMTdiOWQyNDAifQ"
+        },
+        {
+          "resource": "repo://src/import/termius_csv.rs#L357-L377",
+          "version": "repo-lines-v1:sha256:db0145194d38b0bea35b07e2ec8fa86b7623ca39e09b22488204d1a6e0b417d3:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA3OTZmNjdlYzY2OGViOTViYjc4NzBjZGI1NjgyMzY0NTk3Mjc2MjUyZDJjYTg3MmI0YzBkMmU2MDNmYjhiNmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ4NjcyYTJiZTE4MDY1NDJmZmE4MDJiMmNiNGFjYjEyNjVhMTU5ZmVjMTQ2YjBlMjk3NzYwYjRmMzg1NWU5NjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJjMzk2MTFiNWQ3MzBhMDFkNmFkNzc4ODk4Nzc1NjcwNjEzNDc2ODlhZjk0NDI2ZDIwNGVjZThhZjllMTI3NWIifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.5.1",
+    "at": "2026-09-11T12:46:43.817Z"
+  }
+}

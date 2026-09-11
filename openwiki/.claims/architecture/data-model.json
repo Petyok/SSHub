@@ -1,0 +1,398 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:1b2fff0cf6ba01402642dcd849e24063d2d277d6bc157b3cae6b0bb15a38fe91",
+  "claims": [
+    {
+      "id": "claim_991711a614e24d978b915d30fe4e656b",
+      "statement": "SSHub keeps two SQLite databases in the profile directory: launcher.db (schema-managed store for hosts, groups, identities, tunnels, auth events, snippets, log bookmarks, and UI state) and metadata.db (legacy per-alias host_metadata). metadata.db predates launcher.db and still backs per-alias metadata for hosts that exist only in ~/.ssh/config.",
+      "evidence": [
+        {
+          "resource": "repo://src/metadata/db.rs#L8-L18",
+          "version": "repo-lines-v1:sha256:077066a3108982f2ec4abc1b545ef7c9f68e1c6c952785e464f819b729bda800:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZiMDZkNTU5NGI1OTQyMTM2YmY1Y2QwODYyNjVhN2I5NmM0YzEzYmIwODhhM2Y4MzI1YzVkYWIyZGQxNzRjNGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ0ZWM3YTgyYjNjOTNlZTcwZDMzY2E5NTkxZDA1M2E2YzFlZjc2NmY4OTYxOGIyZDA1NDkyZDNjMzFiMjM5ZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBiY2I1NTRkMWZhOWRkNmNhYmY1YzE0ODBlZjRlOTFkNjA3YzJhY2RjZTA0MmY3M2JiYjkyYjdiMzRmZTYxMTAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFkMjIxM2ZhNDEzMTMwMzRjN2E5ZjJmNDdkMGU4MjczODI5YmQ3NDY1NGFlMzUzODBhN2FkZGMzYmMwZWIwYTcifQ"
+        },
+        {
+          "resource": "repo://src/profile/mod.rs#L1-L16",
+          "version": "repo-lines-v1:sha256:27466cc50afc29811c0f5987a4c14e1cbd6f0f81ba836fe96625a5093c576428:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYyNWMxMmUyMTVjNmJlODZkYTM3YWRiOGI0ODU5MDI2OWUyNjU2Yjg3OGZkMWFhM2RmMjQ4OTlkNDZlNWEyNTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg1YmZjNWE3ZWQ3MGI5NTM3ZDAwNDM5MDk2YmYyZDlmYWM0OTk0OTYzM2MxN2I4N2U4MjRmYzlhODI2NGIwY2MiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY0NzMxNTFkZjhkZTNiMDBjYjllMGQzYjJkOTk4YThmM2ZlM2M0YzgwOGExODM2ZTliMTE5N2Q3NzQ5ZjljMDEifQ"
+        },
+        {
+          "resource": "repo://src/store/mod.rs#L22-L28",
+          "version": "repo-lines-v1:sha256:6441e976a1c6f80fa7fc4ea512d4c2b215ed022cdcbf7196698123ad2a4f5b9f:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNWE1ZTJiYTM1NmU3NzE4MjYxN2M1MTYzOTAwNTA0NWQ3MDY1YTliYjQ4Y2E4ZDRmYmVjZTFmNDVjNTRhZTMwMSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNjM5ZmZiOTMxOTM5N2RiNjM3YTAyMTIzYmIwNzMzOGZlMGI2OGI0NWIzZDBhNzhlNDFhM2FiNmEzZjFlOGMwNyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYjQ0Njg3ZTQ4ZTAzMzRlZTI3YmQ3MjBmYjliZGI5YjdhNWNhN2ZiODYzOTQwZWE2ZDhkOTNmYzI0ZDY2NTlkNSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_eb5c22e60bc941369c7db5b98e26b3af",
+      "statement": "launcher.db migrations run as stepwise migrate_vN_to_vN+1 functions up to SCHEMA_VERSION 15, all inside a single transaction so a crash cannot leave a half-upgraded schema; column adds are guarded with pragma_table_info so re-runs are idempotent.",
+      "evidence": [
+        {
+          "resource": "repo://src/store/migrate.rs#L251-L263",
+          "version": "repo-lines-v1:sha256:9cd482c9ed9ca8dfb44ccabe5b72713238fc006905670e2d64a8ab80b6965807:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMyYWZkNzAzOWUxNzA5NDg1NWM2NWYyMGRmODRhMzQwNDNkNWE4ODljOTJkMmJjZmQ5NjdjYjU2YWZmMWVmODUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZkYzZmYjQ1NDJiOWJkN2VjZWExOWVkNDE3NzkxMTcyN2QzYTEwMmNmYTM2MzAyMjg1OGFjOWZlYTA5OTRkMTcifQ"
+        },
+        {
+          "resource": "repo://src/store/migrate.rs#L6-L6",
+          "version": "repo-lines-v1:sha256:2214105741d5228f565c19c8c51e33fed1a3a98c9fc09c76e64b737d465e7a86:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMjIxNDEwNTc0MWQ1MjI4ZjU2NWMxOWM4YzUxZTMzZmVkMWEzYTk4YzlmYzA5Yzc2ZTY0YjczN2Q0NjVlN2E4NiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjIxNDEwNTc0MWQ1MjI4ZjU2NWMxOWM4YzUxZTMzZmVkMWEzYTk4YzlmYzA5Yzc2ZTY0YjczN2Q0NjVlN2E4NiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNTZlMGNiZTJkYjFkZTRmN2UzM2MxOGRmNjYxNmIxZTUxZjU2NzNmYTdhMDgyNDM5ZjA0ZjA3ZWE4MGYxMzc1YyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZGYxYzA2MTMyY2RjZmUyZDQxZmJkN2EzZjNkMzExOWM1ZjU1OWM5N2E0NDgwNjlkYTg2NDFiYzU5ZTE0MTRlNSJ9"
+        },
+        {
+          "resource": "repo://src/store/migrate.rs#L70-L151",
+          "version": "repo-lines-v1:sha256:2e45f52acbc1fcf7b5821770bfbcd764b9018d4e5001f948c18312f0adc52243:eyJzZWxlY3RlZExpbmVDb3VudCI6ODIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcyMTFkYmI5NTY1ZmQ3OWNiYWViZjVjNzU0ZjhkMjM5NTE3MzZlYzM2Nzk0ZjM4M2UyMTlmMmFjNjllNGUwMmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI5NGVjNTljZmQwNDIwZDg0NDQ5YjFkOTI5ODEzMTRkZWI4ZTdhNjlkMjVlZDAwMTdlOWFiZjgyNDJiYjUyMWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImIwYWYzZGNhMDlmNzhlYzkxMTdlMzRjYzk0NjljMGUyZmE0MTE0N2FmMjYyNTVlOGQ1ZWM3Nzk0YmIwMTA3M2UifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_bfba606dee2940cfbbe20fc3bdfc5ed6",
+      "statement": "Migration v13→v14 creates the snippets table (command-snippet library) and v14→v15 creates log_bookmarks; a migration test pins the merge order by verifying a database jumping straight from v13 (or from fresh) to the current version runs both steps and ends with both tables.",
+      "evidence": [
+        {
+          "resource": "repo://src/store/migrate.rs#L500-L530",
+          "version": "repo-lines-v1:sha256:e793eebb121663fc62780307726ab63bcf3a5618520bd1db0537b95c088b9e41:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNmYmRhYWJhZDQwYTgyOWJlZWNmMTE5Y2FmYWQwY2I4ZmRlY2E1NmYxY2I5MDEyZjZhOGZhODEwYjkwMzM3MzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM1ZjZmNDY2ZTU5Y2ZjMzA3MDNjNDVmNzJhZjY1ZGU1NGFjMzYzZDM1NGNjMWEzMzMwMzUwYWNkNDUyNDM0YzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY2ZTA4MTRjZTMxOTM3NjZiNTllMGNmZTZlMWI1ODgzMGJkMjhhM2JmMDk4MDgwMTlkY2I2ZGVmMDc3YmFhMDkifQ"
+        },
+        {
+          "resource": "repo://src/store/migrate.rs#L616-L649",
+          "version": "repo-lines-v1:sha256:d0c1ffa5bab209c8e7e5c22036f21774b25716c1657ab73266eb3833334b2312:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZhMzIwYzAzOWU1MjdmMjYwMjZhNWUwNTA2YTAwNmRkN2M4NWZlNDg4NDI5NDdjZGMzYjRjZWZiOTMxZTY2NDUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImEwMGRiMDQwZjI5MDliZjk3OGZmMGE5NTZhNTVlODNjNjUzNDE4ZGU2YmI2OGY4MDQxZGE5NzZmOGQzZDIyNzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ0YTM5MzIyNzk0YTdhYmE0NzQ5MjA5MTEwZjYwM2JjZDY3NjRiZmQ2MmNlMzRkNjc4NDMyMTU0ZWEwNjIyODAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7e38a9ab70b940fbb190ea30dd63909d",
+      "statement": "log_bookmarks are keyed by the on-disk log location (host_dir + file_name + line) rather than a host row id, so a bookmark survives deleting and re-adding the host; CRUD is newest-first and stores a user-facing name (blank names fall back to \"line N\").",
+      "evidence": [
+        {
+          "resource": "repo://src/store/log_bookmarks.rs#L8-L56",
+          "version": "repo-lines-v1:sha256:cfed3c256db6ad00e9d2b0c276b127f0876b97ea7f99dda64829271b592285cd:eyJzZWxlY3RlZExpbmVDb3VudCI6NDksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ1NzkyYmVhMmFlZjdjYTBjMTM1MGNiMmM4ZmZhZTA1OGEzYzg5Y2VmZDdjNjlhYjBlYWJjY2JmNzY1ZmI0MjEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU0MTdlZmZjY2Y0MzQyMDE0Mjg2NzQ5ZmVmMmVjNDRhMTE5NWI5MmNjMmUzYTYyY2RmYTZhYWZmNTYxMjQwZTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdiYzk4ZDZiMGRjNDkyYzUwMTZkZjEwODA1YTNhNTRlYjljMTg0YTVhNjEzN2U3ZjRiZWNmYTBjMjIwNTUwZDAifQ"
+        },
+        {
+          "resource": "repo://src/store/migrate.rs#L515-L530",
+          "version": "repo-lines-v1:sha256:efbf1f30f12d402c042ee432dc0c01732d54f4dce04de5c296b3782800f2996f:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwZGJjNjdhYWVhODFmNzZjYjcxZjZmMWM0Mzg3MjQzZmM5NjNiYjM4MGE4MmQzZDNlNGVjYjBkZjZmZDI5NDMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM1ZjZmNDY2ZTU5Y2ZjMzA3MDNjNDVmNzJhZjY1ZGU1NGFjMzYzZDM1NGNjMWEzMzMwMzUwYWNkNDUyNDM0YzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY2ZTA4MTRjZTMxOTM3NjZiNTllMGNmZTZlMWI1ODgzMGJkMjhhM2JmMDk4MDgwMTlkY2I2ZGVmMDc3YmFhMDkifQ"
+        },
+        {
+          "resource": "repo://src/store/types.rs#L323-L342",
+          "version": "repo-lines-v1:sha256:c33e438f71c6fe2e36b2c34fee5e37fa12409661d3472c80e64a3583e88ea76d:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI1ODZmN2RlY2I2Mjc5Mjg0YmFhMmMzY2UwYTJjNmYzZTg0ZjgzZTY3OTRkNThjMzE1YzQ0OGQ3MjlkODYyZGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFlOGE4ZmQ2OWY1MmFiZTYxMzEyNWM2MWUwMTk2ODBlODdlODE5MDEwZWI4Y2RhNGY5NmI2MzQ3NmIxYjhkYWQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFlNjY3ZGM3MzU3MTY3YjYyYjU3ODcxM2EyMDEyMjNjMzUyNmViNWJhZTZjMmNjOGRiMDQ1MjA1MGE5MmQ1ZmQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6ffce12a512940248bc97d7fdabcebde",
+      "statement": "The ui_state key/value table persists collapsed_groups (JSON array of group ids), ui_zoom (with a legacy name_zoom fallback for upgraded installs), and sftp_show_hidden (SFTP dotfile visibility), so these choices survive restarts.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/hostlist.rs#L272-L286",
+          "version": "repo-lines-v1:sha256:e8b33e5b73c170d092c8cb89ae4848cd4902b240d940d3d5ac8fdf8eb047c81c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ5ZjFkOWI1MGNiOTMzNDhmYTk5Y2Q0YmIwODU4MmI1MzMxNzMzZWQ5MjI5MjQ0Y2U0YTUxNTlmYTQ0OTUwNGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk5OWJkZWZlZWFjYTYzNDBlMDI5MGRjODZlODg5Yzg5ZDVlMTg5YWE1YmE0NGI1ODViM2I3MDczNGY0YTYyZDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBmNjg5ZTQ0MjE1NThiOTkwODVkMmNmZTQ3ZjUxNGQ0YWExMjIxZDVmZTZiMTJjNjcyM2U2ZWY4NzU4NWY3MjEifQ"
+        },
+        {
+          "resource": "repo://src/app/mod.rs#L1203-L1225",
+          "version": "repo-lines-v1:sha256:fd9f2db7d05032791c1f247e8f694c7929aa973efc1b2459af528305a6d30441:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2MGZjMzlmY2M0NGY4N2Y3ZGVhMjZjMmY3ZTM0Yjg3YWMzZjVlY2MzYWUyZmFlYTRmZWYwNjRlY2Y4ZjZlZWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNhNTM4MWI5NzA4YTg0NzRlOWQ5M2M1MWRlYzI0NzE5MzdmMGZkZDM1Njg2Zjk3NDM2NWY1ZTRjZjVkN2FmMTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjcxMTBjYjI4OTBlZDIyNTBkOWE2YWJhYzU3NzQzZTNhMDM4OTQ5NWFhZWRkMThhZjk2ZTY0YWMxMDg0ZDNlMWEifQ"
+        },
+        {
+          "resource": "repo://src/app/sftp.rs#L736-L765",
+          "version": "repo-lines-v1:sha256:1a17a8d063894bb342a53aa88d3f61d3bdde51827a1dfa1a308fe2dff2b1aa8d:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIzZTVlNjVmNTAxNDkyMjllYTM4Y2RmODczYzk4NTY5ZmIwYmY5NGU0MWNiMzNkY2NlZjE3NzgyYmZmOGEzYWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE2MmVlNTdlNDFhOGMyMGFlMDE2NGRmMjYxNDM5ZGNjNDk5ZDM1MjA4MzQxNTE1MTZkMDQ3ZThkZWFlOGE0NjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM5NGI0YzA0YjEzYjg4YzU0MGQ5Y2EyNzIxMGNlYjNlYzI3ZmQxNDVkZjA4MmUwZjJhNjc0OWMzY2I4OTgzOTgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_78f5e22453fe42b28552b08abecbebec",
+      "statement": "The built-in Favorites group is marked reserved=1 and cannot be renamed (rename is a no-op) or deleted; the migration never repurposes a user's pre-existing group named Favorites — it creates the reserved group under a distinct name — and runtime favorite lookups go through the reserved flag (favorites_group_id selects WHERE reserved = 1; the connection-scoped helper additionally matches the name). Membership in Favorites is the source of truth for favourite status: reads derive favorite from reserved memberships and writes sync hosts.favorite into a membership row.",
+      "evidence": [
+        {
+          "resource": "repo://src/store/hosts.rs#L68-L106",
+          "version": "repo-lines-v1:sha256:67c3da85b42be38d06a005e93b1c753b46026412eaf4cddffa8e863f6dff2aa3:eyJzZWxlY3RlZExpbmVDb3VudCI6MzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZjNTE0ZWE5MTg5NGE3MGNkZTU2YzE3ZTM0ODA0NjFiODg1Y2QyY2NlNTNmMjQ4YTg4ZTRkMTkyMjA5NmRhYTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2YjA0NDkxNDY5NzIyZTgzNjNhOTRlNDA0NDUzOGUwMTNhMmEyMTdlMzZiMWU1NjhiYTYwYWNiN2I0YzhmMmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjMzMTA3YzU4YjJlMGI3YzQ1ZGJjMDY4ZDMyZDQ3YzE2YmRjYzQ0MGZhNmUwMjM5ZTE4OWQyMDNiNWZkN2JiZGQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjgxYWM3ZWFiOGY1NmMxMmJmNjNkNzhmZDA2NTIyODZiNGZjMWE2YjIwMjc5MjFkNThkOTkwZWU5YzYyY2NlNDgifQ"
+        },
+        {
+          "resource": "repo://src/store/hosts.rs#L943-L943",
+          "version": "repo-lines-v1:sha256:4f7cf221af9531b2589f77d08ed4308d8d60f31ec011afe2c0bd7e91aafc08c2:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNGY3Y2YyMjFhZjk1MzFiMjU4OWY3N2QwOGVkNDMwOGQ4ZDYwZjMxZWMwMTFhZmUyYzBiZDdlOTFhYWZjMDhjMiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNGY3Y2YyMjFhZjk1MzFiMjU4OWY3N2QwOGVkNDMwOGQ4ZDYwZjMxZWMwMTFhZmUyYzBiZDdlOTFhYWZjMDhjMiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYjgzOTNlNmI0NDNjNjI4NjJhMzBhYTNhMjFjY2EzOTZmNTA5YzRmMDEyMWFjZTgyNzdjNTkwMjdmYzAzYTczNyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMWJjNWU5NDU2MDg1YjNkNThjNGUxMzZmZjBmOTgzYTFkN2JmODg0OTM2OWExZjgwOGFmMTlhNDAzMGEyZTQ0MCJ9"
+        },
+        {
+          "resource": "repo://src/store/hosts.rs#L963-L993",
+          "version": "repo-lines-v1:sha256:1bfbedf0215344a09e88e2309e3ed4090503fcaead6438a406903d573a9acacb:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQxMWM3OTc0N2Q3MjU3MDQwYWFkYTU3OTM3NmE1ZTkzMzBkYWUyM2Q3MTExZTRhMjlhZWQ0MmJjMzljYmQwNTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU1NmY1MjRjMjE2OWM0MTgxYzE1ZTEwODljZjk4MGUyYzQ1Y2U0NmY4MTA1OWIwMGI0M2Q0Yjc2YWNiYTIxYTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVjYzViOGU1MmFmOWJiY2QzYTlmZTRhZWQ0MzBhNjZmNTk1YTM2ZWFlMDdjNjZkNmQxNWE0NGRkNjhkMzBhZGYifQ"
+        },
+        {
+          "resource": "repo://src/store/migrate.rs#L419-L453",
+          "version": "repo-lines-v1:sha256:eb2cf3e00b51a48967040da858f58116bc5c7dd9a41cc2d81825d543a2ee6cba:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZjMzQ2ZTI5ODc4NGM0YmI0MGFkODcyNGEyOTRmZTBjOWM4Mzk1Nzc0Mjk2NmM0ZTk5MTA5YWM2ZTMwOWY3ZWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFkOWUxMjU0NjQyNTU3NmQzZGVhZThjOWI5ZGJmMTI4ZDVkNmRkYWY1ZDdmZTg1NzkzNDkyN2RlZmZhM2I5ZGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ5ZGMwOGFkZjJkNDA1YjUzNmNjNWEzMThjZTM3MDUzZDhkNzUwMjI5OTU5YjVlNmM4MjMyNTEzYTJhMThmOWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBhOTJjNTcwYjg2N2Y0ZjkwOTUwMjUyZGZkZGVmMjg0ZmExN2NjNjJmZjM3NWNiMjJhNDllODEyZmQ1NzZkMGEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_664056b326064a08b25ae1040937e7c9",
+      "statement": "create_host and update_host refuse a name, address, or username starting with '-' (is_option_like/reject_option_like, issue #101), because ssh would parse such a value as an option instead of a host; ssh::safe_ssh_target is the connect-time backstop that rewrites a leading-dash target into the ssh:// form OpenSSH refuses.",
+      "evidence": [
+        {
+          "resource": "repo://src/ssh/host.rs#L88-L107",
+          "version": "repo-lines-v1:sha256:0855157bae5856cb010151d37ec33abc461233c80742b5d9cd9c0057cf0028b9:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRhZDMwNDVlODI0NDA2MmYyMzYwYTU3MzdmMTZmNDkxYmNmNDJlMjJkOTg5MWIyYTk1YmRhNTJlNTUxZWVkMGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk3M2ZhMTMzYzY3NTU0MzE2NzIyZGI3YWNmNDI2NDAzNGNmZGRhMGQ5ZWNkZThhNWM0MjY3NjVkOTQxODA5YzciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM1ODc1ZDMzNmI5NmVlMGNkZjdlNmJmYjg4YmU0NDRhYWQzY2MwMGZkZjg1Yjg3MmZiYjRkNTA2NTAyZTMyZWEifQ"
+        },
+        {
+          "resource": "repo://src/store/hosts.rs#L204-L209",
+          "version": "repo-lines-v1:sha256:6ecb6543212b8103e776a20aa5aab2db644e93dfb1051ab712c13ad27b61a065:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYmYyNTU3MTUzZGFmYWVlNThmYzMxNTgwZTViODdjZmZmMzgxZjY0MTliM2E0NmMwMGZjMjA5YmE3MWExZmE0NiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZTZiMDQ0OTE0Njk3MjJlODM2M2E5NGU0MDQ0NTM4ZTAxM2EyYTIxN2UzNmIxZTU2OGJhNjBhY2I3YjRjOGYyZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMWYyNDA4YTU3YWJkMTJhY2VjZDA0OGRjNzBlNWI2YjYwZWYxMjRjNjcxOGIzMzhmNzk2M2E0MjI4OWYxMWJjNCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNjEyMmFhZGQ3NGZkZDgxNWIyMjEyZWQ5OGZhMTMzMjNlY2YyN2EyYWFjM2QyOTQwN2RmNDZhNDZjZjEzNWRkNyJ9"
+        },
+        {
+          "resource": "repo://src/store/hosts.rs#L887-L910",
+          "version": "repo-lines-v1:sha256:2c9942e77b2b2c22ec28529cd519206744a9585b8236d598359faf88787a4eed:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYwOTNiMTNkOWQ0ODNhZjFiNGRlNDIwN2QyYjYzMjg0Y2ZjODE3MDRlMjk4Njg2MWM3MWRkOWFmNDg1YWY0YWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImEwYTEyNjk5YzE4MDk4MDg0Mjk3OTNhOTNkZGU2MDcwYTU4Y2VlMzBmZmIxMmQ4MTEyY2FjNjI0MmU0YTI3NjEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_4e80461112594fe3ba81fa52b9ae154b",
+      "statement": "Secrets are never stored in SQLite — the schema holds only has_password flag columns; actual secrets live in the OS keyring behind NamespacedPasswordStore, which prefixes every key with profile:<id>: so identical host names in different profiles never share an entry (empty prefix in compat mode, credentials.json fallback when no keyring).",
+      "evidence": [
+        {
+          "resource": "repo://src/credentials.rs#L13-L44",
+          "version": "repo-lines-v1:sha256:0298f978608d0f982cc29cff910a71e284379e479087a9ae61b223ae8e37959c:eyJzZWxlY3RlZExpbmVDb3VudCI6MzIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAwYjM5ODE5MWJkMGViNmZkMTU4N2YyNzRkMzM5OTIyNzM3OGVlYTJlOTk1ODZiNjllMTk5NzE4YjQzOTZjZmYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFjYWQ3MzBmNWM2OWU4OTAzY2FjNDhhZDE4ZjViMDE2NWQ4ZTk4NTk3MmM0NWRkZGEwM2M3ODA4NmViYTdlYjgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRmNzdlNTAwMzNiNjE3ODIwNzc5ZWZlMDRmN2YzMjY0NTEzOWQ1ZGI3OWIxMmUzMGFkYTRmNWVkM2FlYmEyMTgifQ"
+        },
+        {
+          "resource": "repo://src/profile/mod.rs#L291-L299",
+          "version": "repo-lines-v1:sha256:8c82f0f66a861b4405706a5dec31015bbcf11cc973726b677beaadaa3b4bcfa4:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZGMyYzA5NWIwNjQxYjhkNzFlODE1ZmYxYmJlNWY4NzhiMjU0OWMxNGFkNTczYmU1MjYzNWE2ZjlkZjRjY2Q3MSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDg5M2Y0MGUzNzgxZWI4OTZjODJkMDQ2YTA4MDY3YTExZTM1Y2RmMmYxZGZhZjI2ZmVhOTBiOGRiNjY3NjQxMyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYjY0MzRmYWQwZDI4YzZkOWVkYzg3Y2IzYTIzMDU5YTU2NDcwZDdmNjU5ZmFkN2Y3MGYxODA4NmI4ZDY3YTAxYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTBiMmMzZmE5MzM2MDcyODU4MmQ0NjZlZDVlYTMzODNiZjk3MThiMzUxNDQyYTg2MzlhNDI2MmVkN2ZlZWE0NCJ9"
+        },
+        {
+          "resource": "repo://src/store/migrate.rs#L25-L56",
+          "version": "repo-lines-v1:sha256:f9578d9ad38acb50e62a5ac73cf5a2723b1fb900582d22adb3c67fa3fc938e3f:eyJzZWxlY3RlZExpbmVDb3VudCI6MzIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRmNTk3ZDU4YWI3NGI5YjVhYTQ4MGQ3NWZiNjg2Zjc1MzRlYzUxODBlMzU1N2YxNTYxYTk0Y2JkODZmZWNiZjEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ5OTY3ZWMxZWQzODM2ZjhlYjE3YWZmMTcyYjViZmVmN2RlNjA0ODVhNDM5YzZjYTExYzU5MWUxNzU1NzM5YWUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3MjQzZjc3ZjcwYmJlOWJjZDgxOTY2MDNkOGMwMWQ5YzUwZWI4ZjM3ZjFlYjUzNGNjZjhkOWJmNDcxN2VmODUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBiYjgzNzkxMDVhY2NkYWEyYjMyZGE1OTAyY2EzYTRiNGE5MjVkN2JiOGQ0ZjEwYjU5Y2ZkZTEyYmVhOTgwZTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_85d9adee40bd498fbb0e8a13d6aa06c6",
+      "statement": "The legacy metadata.db import runs only when the launcher.db schema version is 0 (fresh database), inserts rows as source=ssh_config hosts, and is best-effort: a corrupt or locked legacy DB is skipped with a warning instead of failing the migration (which would roll back the schema and brick later launches), and a corrupt tags blob degrades to no tags.",
+      "evidence": [
+        {
+          "resource": "repo://src/store/migrate.rs#L138-L146",
+          "version": "repo-lines-v1:sha256:6e5bc6a9a3ac54cc3dfa480c7eef9c8d09dc667400ecafc8ec617df7fd6e5487:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOWNjNGE0NzM0OTYwMTY1YjU3MzU5NmIzMWJkOTc1ZWJlYzc1NzRkNmU3M2YzOTY1NGQ5ZTg0M2ZiZWY1YzY4MiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDg5M2Y0MGUzNzgxZWI4OTZjODJkMDQ2YTA4MDY3YTExZTM1Y2RmMmYxZGZhZjI2ZmVhOTBiOGRiNjY3NjQxMyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNjUxN2IzZDNmM2M0NmFmZDUwZjNhYTBjZDkzZjNlNjM3NDMzMTBlZTQwNGFlYTBlZGY5NmM4ZTE0ODE1OWM5MSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZmZhYzc4YTA1NjU0ZWFlOTMzNDg5NmRjNjVlNmNkOTc4OWYzYjZlZmMwODg0YmU1M2JmMGIzYmYwNTNhNWZiYiJ9"
+        },
+        {
+          "resource": "repo://src/store/migrate.rs#L209-L233",
+          "version": "repo-lines-v1:sha256:b40c6da24a67af2cbabcdd67d24f99f9f70368e701c6b32ef894c6f1eb0425b6:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU0NmU3Mzg2MDhlYWVmZjMwZDQwZjE1ZjI2YmVlZmY0ZTRlZDAyNzZiODZmYWEwMmUxODZlY2IxYjMwYzIzZDMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ4OTc3MWZlMWI2NjI4ODc1YWEyM2U3ZGJlNGFhNzE0NjFkMDBjZGZiNjZkZGYxMWI5ZDgyMGFjNTg5N2ZkZjYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNiOTZhMzdmMTZiZDg2ZDljOGFlOWVjMDQ3Y2JiNmM4MWU0ZjAwZGNmY2U3NGQyOTRhM2I5OTdkYWFmMTdhMzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY3NDdlYjBlZGQ1ZWNkNWFlODM4NGQyMDJjM2M2NzhmZTYwODQyOTAzMmEzYzI5MTMxMzBiMzYxMjg1MzQ4NTkifQ"
+        },
+        {
+          "resource": "repo://src/store/migrate.rs#L710-L739",
+          "version": "repo-lines-v1:sha256:ed6778573747878bcb278235ea07a0723784ef5f0e6d252664e4cf2a353bac67:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkyYjVlZGY1OTQ5Y2ZlYTY3ODIyY2Y2OTExMzIzNjNkNjhkNmYxZTE2OWY1ZTBkNGY3YzE0ZTVmYTFlNmQ0ZTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRhOTE0NmZmMmIzYTk4ZTQ4Yjk3YjYxZDc5YWIwNmE2MjhjMTEyM2E3M2IyZDk1YmU4NzliZTM0ZThmNjJmZjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjEwYTFiYTU4MDQwMDI2ZTdiYjBkMmY0MjYyZGY4NzJiOTdmMjYwYzg1ZTlmMTAxMWZiYjhmYjZkMDYzMjBkMTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ed14f851776e4529a656ff104ad00aca",
+      "statement": "LauncherStore::open_in_memory points the nominal launcher path into a throwaway temp-dir location instead of ':memory:', so the legacy metadata import cannot silently pick up a stray ./metadata.db from the CWD during tests.",
+      "evidence": [
+        {
+          "resource": "repo://src/store/mod.rs#L61-L74",
+          "version": "repo-lines-v1:sha256:f3d32409211e2593edbc0384e1f8b67a14508559d50595cf0dc9bda2fc5e795e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNhZDc0ZThlM2E2NjA1YWNlMGVjYjdhOWIwNjRiZjE4MzgyZDRjMWFhYWYzMDljOTZjY2E2NDdjY2ZlZDBiMTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIzODY0OWM0MDdiMGIzYzQyMjdmNzdhYzdjYzUxNzBjOGZlOWRhYjlhZDFhYTAzNzcyMjQxMzI0ZTAwMzFlMzgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE2ZWZiOTI4OTkyZGUyMmFlZTUxOThmODYxOGM0YTQxZmM2YzdlOGFlOWQzZjk1NzI2NzM3MGU3NjAzN2NiZDQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_792508d3ada3456ca0aa441aebc8bef7",
+      "statement": "`sshub db purge --yes-i-am-stupid` (confirmation flag required) deletes the selected profile's launcher.db plus its -wal/-shm/-journal sidecars; ~/.ssh/config and imported hosts are untouched (they reappear on next launch) and keyring passwords are deliberately orphaned.",
+      "evidence": [
+        {
+          "resource": "repo://src/lib.rs#L70-L93",
+          "version": "repo-lines-v1:sha256:c6d09b2f202f7cde9a970c98f8d3b2830cd9fedd1bc53e15d3d7565ec0ebc474:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwN2JmYzEwMTI4ZjU4YTc0NDAwMjAzZTQ5MzZiZTU1Mjc5MGZkNmUyMmU5ZjU5ZTEwYjFkZDQ0M2QyNzIyYjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE2MjJiNzAyOWRjYTAxNmJhZTI5ODZmNWU4MDI2YjNkM2E1ODYwNGM3NjM1ZGQ3OTRiYmQ0YTgyM2MwZWRlMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVmYTY4ZGFjOGQxMjA5ODVkMGE0OWI5NTYzNjRhMmNlY2UyNGZkYmQ4YTJkMTY3ZjBjM2E3NzI1ZmNkMmIxY2IifQ"
+        },
+        {
+          "resource": "repo://src/main.rs#L117-L148",
+          "version": "repo-lines-v1:sha256:53613117a219ad6434485707e8a91abe397522de7620c1d1eddde1bef6aa1407:eyJzZWxlY3RlZExpbmVDb3VudCI6MzIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE4Y2FjMzg5NjExOWM4MDczYzU3OTBmYmE3MWYwOTlmZDFlMjgxYjUyNTY2ZmEzZjhiZTNlNDFkMjZlN2U4ODEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU5ZDZhNTBhZGY4NTc1NzFmOTgwM2E5M2U0YjM3ODUxOTQ2Yzg5MGE1OGRjM2UzYjIwNTRmMjVmMWJkYjQxN2UifQ"
+        },
+        {
+          "resource": "repo://src/main.rs#L5-L6",
+          "version": "repo-lines-v1:sha256:426d89d1d5a7930f7ef39d554a692b1143a6f1fbe497b49973e3edca8d24dd13:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiODMxYThhY2U0MGYxZmMzYmFkZWIzMjcyNWRjMWE1MzQyMzgyNzYxODEyNTFjYTRkM2RhZTk4ZGU0ZTkxY2Y1MCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYmNhMGMyNTMyYmU0ZTgyZjIzNGExZjJhZjgzMDdjMTQ3ZWI2YjZlZmQxNDc4MThjMDkyY2VjYjgyYjQ0M2Y4YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZmRlZjVmMDgyMDM3MDBjMmRmNjcyZDdmYTNlYjFlMGE5MjNiN2UwYTBiOTcxYjAzOWYxZGY3YjI5Y2ExMDdiOSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiM2ZhZmI0YmE0NDBlNzZkNzRmOTA5NTFjZjg3MDk1N2I3OGY2Mzc4OTAyOWVjM2UxMzUwYmRlOTVjNWRhOGE2YiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_e9ad7815b86b4513a99e118ced207fb3",
+      "statement": "load_merged_hosts builds the unified list in three tiers: launcher-source DB rows, ssh_config-source DB rows re-synced only when the resolved ssh_config_hash differs (launcher rows are never overwritten; unresolvable rows are left untouched), then remaining ssh_config aliases as read-only HostEntry::Legacy with metadata.db defaults ensured.",
+      "evidence": [
+        {
+          "resource": "repo://src/hosts/loader.rs#L10-L54",
+          "version": "repo-lines-v1:sha256:186ec2bb2a0e4126f1898762830bd66db524d9f840edb46fab9b5c19231f2697:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRmNDQ0MGJiNjdlNjllNTQ2YzJhYTU4NzYyZjdmMDhkMWVhMWM2NGNlMjcxOWY5ODhkNWRkZjBiZTk5OTAxNTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMzk1MTkxNDk3NjY4YzVkNGRhZDA5MGIzZjY2ZTJiYjVkNDRjY2M4YWRkZWIxYzUwN2UzYTk3MmVmNWVhOWQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://src/ssh/import.rs#L24-L50",
+          "version": "repo-lines-v1:sha256:95b31c735c35192941f4cb1d5706204b053386c6b76649f58ac6b66887854b6e:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ5ZGQzNWViMTI0NzQ1ODdkNDc3ZjliZjA2ODRkZTYxZTU3ZGI2NDBlMWUwYTE5MjY4NWU2NjA5ZTBkMDFkMTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ1OWNkYmFlYTM3NjJhNTFkZTQ5MTZmMTBjNjM5NjMwOTlkNmNiNGU4MmI3ZjM5ZmE2Mzk5NDdiYWIwMjhmYTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY4MGYyMzQ1NTBhOTE5YWVhZmYzYmVmYTkwNWVjYTMzOTQ0ZDk2ZWE0NGRkNjdjYzQwMzhhZGE1ZWE2NmY5MzQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1f91e054fe25431d8fecca722d0cb9d8",
+      "statement": "SshConfigResolver parses Host aliases itself (excluding wildcards/negated patterns, following Include directives depth-capped at 16) and shells out to `ssh -F <cfg> -G <alias>` for effective options; the user's ~/.ssh/config is never written — export renders to exported.conf via an atomic write with a .bak backup, and conf_val flattens CR/LF so a host field cannot inject a `Host *` stanza.",
+      "evidence": [
+        {
+          "resource": "repo://src/ssh/export.rs#L104-L128",
+          "version": "repo-lines-v1:sha256:7f5cc0f562e75ccd8a011ba533a3270a35521d8fb5f85732cd161251ac32154b:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNhYWFhYWY3OWIwMThiYzJhYjk3ZDMzZWE1ZWM5MDViYzk1ZGZmODllNDc3M2E1YzhlMGU2ZDZmNzY1ZGMwZTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM3OTdlYTQzYjc4N2U2NmY1MmRmNTg5M2QwZTU3YTA1ODliZjhhM2RmODJlM2EwZTkzOTJlYTgzODFlYWYzMTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdiYzk4ZDZiMGRjNDkyYzUwMTZkZjEwODA1YTNhNTRlYjljMTg0YTVhNjEzN2U3ZjRiZWNmYTBjMjIwNTUwZDAifQ"
+        },
+        {
+          "resource": "repo://src/ssh/export.rs#L45-L50",
+          "version": "repo-lines-v1:sha256:22f5cac172c8f9c7ac1b43c5a2ca0a24cc9365d89e2f32e34ee7db443266a4a2:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNDU0NzNkYjYzNDAwODU0MTY4NmIzYWY4MDZhMWE0ZTY1YmI3Nzc4MjE2NzUyODNkYWU4YjVkZTY3ZmZkODEyNSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZjVhY2ZkYjgwMjVmNjA1MjBlNTcxNmNmNjc4ODU5YmVlMzliMThlMjZmMzVhZWYxNWMzMjlkZGIxNzA3OWYyMCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMTU0OTgzYjAxMDUwYzY3MTkxNzYwYjliODQxZDkzODliMGRhMjdlZmNiM2Y3OTViZWUxOGRmYTFjYmFmM2NkNSJ9"
+        },
+        {
+          "resource": "repo://src/ssh/resolver.rs#L123-L155",
+          "version": "repo-lines-v1:sha256:43388c36c88ef5dc22ad01d42a86bf3171b875fbfe08f8c93b4425a53ec1b0ab:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhOTMyNGY3NTIzYmY5MWMxZmU1YjkyOWY5NWIxZDViMTVkZjAwOTM2MDU3NmJiMzRlNjFmNTJhMWQzZjkwYjQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNjM2QxNjEwYzJlMDVmOWFlYjk3OThiMTI1NGU0Nzk5ZTdjODdjMjBjZDViNmQ4ZDdmMWE4NDljMDMyMmNkNWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjczNGJhOTYzMGIzNDhkOGMyMGUzOWNiZWY5ZWYwYjY5YzM4YmQ1YTY0MzMxZDkyMzE2YjAxNGY4OWMyYzk1ZDkifQ"
+        },
+        {
+          "resource": "repo://src/ssh/resolver.rs#L45-L72",
+          "version": "repo-lines-v1:sha256:063b8ea52a4a9ec5d037df5f5ad910f732ead14f1ec82b3dc2ec7c438b74f70b:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFiYzhiNDUzZjJiZDMyMzQ4NjIwZjc4NzhjYjNiYjlkMGJjNmNiOTcyNTFlN2IzMWU5M2IzNjk1NzFiYzg4YTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJkM2VkNjI2NGNiYTM4NTliOTM0N2RjZmEzNGU0Zjk5MjA2YmQ2MzZhZGQ0NjkzMjRkYjM1MTVlNWM3YjUzMTIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6ab4f3b587f34451925b05c96b0790ce",
+      "statement": "[appearance] now holds active_theme (default \"default\"), the two independent transparency switches transparent_sshub_background and transparent_session_background (both default off), plus show_detail_panel, date_format, disable_animation, confirm_quit, identity_columns, and os_logo; the retired opaque_background key is ignored and dropped on the next save — recognized as a real key, so comments or lookalike names never trigger a rewrite.",
+      "evidence": [
+        {
+          "resource": "repo://src/config.rs#L417-L450",
+          "version": "repo-lines-v1:sha256:c6f0b49d721f1dd37b7675113d6d4fa2ce56251e1b4190c9c09feceb4fd6fbae:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJlNTg0NGRmNTg3YzhkNTBkYmJhMWQ5NjdkNDVhZjEzODFiYmY2N2ZlMGJiYjFmMTkxOTU3YTg1YjI0MjQ5M2IiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk4Y2NmMDk3NjI2M2M5NGQ4NTZhZWE3MDBlOGJkZTRlMmI2ZmRkOGViNDQ3OTI5OGYwMzcwZjA3ZDU2OGRkMmQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ0MjNhZDUwNmFlOWVlYzRjMjkwOWVlOTYzMWI5MGI1YmNmNmM1ZjRhYjBmMmU4YmIyOGVjYzhjOTBlMjQ1NzcifQ"
+        },
+        {
+          "resource": "repo://src/config.rs#L7-L65",
+          "version": "repo-lines-v1:sha256:d0ad03f39c9fc36ff3ca58e6766d13a399e138a3dd020aa138b721b87da6082a:eyJzZWxlY3RlZExpbmVDb3VudCI6NTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjljZDhjZDQ3M2EwZThhNTI5MjUxNmJlMGE4Y2NmY2JkZWM0ZGNkNWRlZmU0NmI3ZTgzMTBmMjUxMjliNzUyMTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjcyNzVhZjI5NTk0ODM4MTFjZjk5NzI3Yzc4MjZiNmY4MTIwMzkzNWI0MjFkZDhmNThiYzc4YWRhZTBlYjBhM2EiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkwMDViNGJhMWQ1YjBhMmEyMmY2ZTdiNGY4OGIxZDZlYTFkYjU5ZjRkZjgyZDdmN2E0Yzc3ZTZlNTM3ZTc4ZmYifQ"
+        },
+        {
+          "resource": "repo://src/config.rs#L768-L817",
+          "version": "repo-lines-v1:sha256:fd140aacb8bb0cf74f501461871b67bc41adce92c361f041897888f0ddb56290:eyJzZWxlY3RlZExpbmVDb3VudCI6NTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU1YTBmY2Q3Yjg4YzBkYWM3MDFiOGE2YjY1MWJmOTM3Y2NkY2E4NTU5ZDk4ZTllZDMyZTRkYWUyOWEyMjE0MTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImEwMGRiMDQwZjI5MDliZjk3OGZmMGE5NTZhNTVlODNjNjUzNDE4ZGU2YmI2OGY4MDQxZGE5NzZmOGQzZDIyNzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjliYzkyZWQ1ZmRiM2Y1NmZkNWY0MmI4Yjc3NmFjZTY3OTllYzNmM2ZkZGU4OTQ4MGFmY2NhZjE5MjRmODEwNGEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_fdd9c70104114a0c9ddc15eebb349f72",
+      "statement": "Legacy top-level `terminal` and `launch_command` keys from pre-0.10.0 configs are silently ignored (no deny_unknown_fields) so the rest of an old config.toml still loads; [clipboard].relay_from_pty defaults to true so configs without the section keep the OSC 52 relay.",
+      "evidence": [
+        {
+          "resource": "repo://src/config.rs#L100-L108",
+          "version": "repo-lines-v1:sha256:618102a62458ea6d7960e6683350a226d5e7ad0c515a8b19cd51823f6f6769ac:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMjZiZGZlY2Y2OGJlYzNjZGE2ZGVmYjAyZWNjMjViMzFiYzZhYjgyNmNiMWNiNjg2MjE4ZTA1MDE3NDk1YjZhMyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNjcxZTdlNzVhZGQ3MjYzYzQ4ZDE0N2NlMjliYjhjMDA5NjlhMzM3N2I1YWNmMWU3YzJlMGExMGZiNTBmMGJlZCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYzlkNDFiM2RmMDkwYWM4OTYxMDU1NTVlMTU0YzUyNmVlNjM4NDA3YTFhNjBjNTYzYmRjNGRkMTcyYmI4MmEwYSJ9"
+        },
+        {
+          "resource": "repo://src/config.rs#L1201-L1217",
+          "version": "repo-lines-v1:sha256:9c86261a3e742e2c3ed02e230d7ead07cf83af4cd23ba43323a33ff6933c3ab3:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkyYjVlZGY1OTQ5Y2ZlYTY3ODIyY2Y2OTExMzIzNjNkNjhkNmYxZTE2OWY1ZTBkNGY3YzE0ZTVmYTFlNmQ0ZTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjZkYjY1MTcwZmY0OTU0NzZjMzZmMmRiMzU1YjRiNGQ3NTEzYzY0YmYxODc5MDMwZTY5Nzk4ZjliYmJkYmNlNzUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImEzMjg2OTE1NTAyZmNmOTZhNTg3ZjVmNjMwYzRjOTE2Mzg3NzU5M2FjYzEyYThkMTFiMjEzMzMzY2Y5MDdjNmIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_44cbe7e82cb84677b5dea7812f2cc936",
+      "statement": "save_config deep-merges through toml_edit — user comments and unmodelled keys survive, a corrupt existing file is treated as empty rather than blocking the write — and persists atomically via a 0600 .toml.tmp plus rename; load_config_at runs one-shot migrations (keybind migrations, retired-key cleanup) that persist through the same merge so each runs exactly once.",
+      "evidence": [
+        {
+          "resource": "repo://src/config.rs#L332-L379",
+          "version": "repo-lines-v1:sha256:b0b5c8b2397a9966a793c2d484212d599dd84a417ea1b2e125b68ca493116b2c:eyJzZWxlY3RlZExpbmVDb3VudCI6NDgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZjMjQyZjhlZDRhNWRhNWYwMDI0YjhmOGRhMGRjZWQ3NmY2MmI3ZTM3ZGY1ODJjOWQwNTkzMTY1MTg3NWQ1MTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY5MmQxZWIxMGUwYzM2Y2RmM2E4ZGJmOWRmMjNmMjZjNjU3ZjMyZWY5MWI1ZmVjY2I4YjA3YjViMzI0YzY4ODQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ0ZTVkYTkwMzdjZTBhM2NhOTgyOWY3ZDc2NDFkYmY4ZDM1MWM3YzdmMTg0ZDgzYTNjNGE3OWVlOGZjNzUzNGQifQ"
+        },
+        {
+          "resource": "repo://src/config.rs#L381-L415",
+          "version": "repo-lines-v1:sha256:2e864db0bba158c2f6def1a110477db760f4280ff66170ebbba2292c8c4469c5:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJjZjgyMWJkZWE1ZWM5NGI1ZGM5MmUxMGY1M2RkYjk2YjUxNGYxZTcxMDNlYTgxNTUwN2MyZjlkYTlmNTE3NDYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImViMmExMmFkNWVjZmQ3NzE2ZDU4ZTFlYjg4ZDAxOTI3Yzg5MDNiYzRkYTEzYWI5NTliM2M1YjQ1ZWVlODE2ZTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjYwNjgyNDhkZTA0YmNlNGYxM2NkOTkxOTYzZWFhMjUwNjVhMWY3NzIxZTI3YTIyOTExMGEyYTI4ZGVkZjFhYWQifQ"
+        },
+        {
+          "resource": "repo://src/config.rs#L476-L494",
+          "version": "repo-lines-v1:sha256:f188716f2da147d8bb335b0b8c02b816e13e1007611f3f10c98693c7b0a1f321:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk1Nzg1MmNlNGFiNzJlMDNiOTE3YmYwOWFmZjA1OGE1MDNlZDAxYmEwZGNkOWYxMWJlNzVhZTY3OWI1ZDIyM2QiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM1ZjZmNDY2ZTU5Y2ZjMzA3MDNjNDVmNzJhZjY1ZGU1NGFjMzYzZDM1NGNjMWEzMzMwMzUwYWNkNDUyNDM0YzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImMzYzliY2YzMzJkODc5NDQ4YTYyNjkwODQ3NDg4ZWFlMDIyMzAzZTQ3MTcwZDU4ZTE0YWE4ZWM0ZTE0MGY1NjcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_927c162521af497592f3efa9e2893cfe",
+      "statement": "App::config_target returns the profile's own config.toml and every config persist path (settings toggles, keybind editor, forms, theme picker Enter) funnels through save_config_to, which writes that target (the global file only in compat mode) — the 0.14.2 fix that stopped theme/settings writes landing in the global ~/.config/sshub/config.toml under profile mode, where startup never reads them.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/keys.rs#L1401-L1418",
+          "version": "repo-lines-v1:sha256:fe6f2ca10aa3126a40dd70d18e06d4ebb93cffd47a4f847e67b8cba4ff4ddf69:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEzNGFiZTU2YzE2MzA3ZjUwZGM4N2VjYTAzNTE2NjkyNjdiNzY5MDRjMGI3MTFlZmE2MGFlNDYzZmE3ZjUxMzAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE2MmVlNTdlNDFhOGMyMGFlMDE2NGRmMjYxNDM5ZGNjNDk5ZDM1MjA4MzQxNTE1MTZkMDQ3ZThkZWFlOGE0NjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFkODRkMmQ0ODY3NmYxZmFkMmMwZGYwMjJhZGJjZjQxNGYyOGIyMDlkOGY4MzczNzdkMWFjZjY5ZTBiZWEwMzYifQ"
+        },
+        {
+          "resource": "repo://src/app/keys.rs#L1447-L1458",
+          "version": "repo-lines-v1:sha256:7322fbf2d41e7032adad132dfe4f1ecad12d162dc698f92959ddeeda1de3edf1:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE0MzA3NjgzOTk1ZWQ1MmM3ZGM5MDg0Zjc2NWNmM2VmNzAxNTBmNjhjYWI4OTMyNDM3NmViNjI2OGQyMjQ2YmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://src/app/theme_picker.rs#L462-L473",
+          "version": "repo-lines-v1:sha256:4935253a86545c9309b7b587af1b8b100a5729a7a3c2dcb428ccaaea99ae3fc2:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgxYjA4MDRjOTQzMDY3YTczNDZjZWY1N2YzMGZlZThjNzNiNDlmNGQ1YjNlZDczMmUzZjBmN2VjNzZjMWYxMmYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ2YTRiZmRiNWE0NWU1YmQ1MzcxZDI2YWUwMDNiODc0MGY3MGY3OGYzMDU5NjEzZTczZTFlYjUxNzE5MGEyNDIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUwNTE1N2ZlNDRhMjcwMGRmMmQ4MjJjNzIyODEzZjhlN2MzN2UwZGE4YTcxNDQzNGFmZGJjMjkxZTY3MzMwMzMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6c414634b6c94dd8b8415c397a00248b",
+      "statement": "A profile's imported ssh_config source is resolved in order: SSHUB_SSH_CONFIG / SSH_LAUNCHER_SSH_CONFIG env overrides, then [ssh] config_path in the profile's config.toml (~ expanded), then ~/.ssh/config (profile::ssh_config_path_for_profile).",
+      "evidence": [
+        {
+          "resource": "repo://src/config.rs#L292-L299",
+          "version": "repo-lines-v1:sha256:eb6b4e731763cb6493ead3afadd5cd7d67ac6299cdc3073c67476f19100a08a3:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYTFlMjZjNTAxMTM2MzczZDcxN2UzY2RmMzNhNDY5N2M1NmI3NTA5YTY0ZDliNTk0YWRiZDZjMDc0NWZkNjJlNyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMTM1M2FmYTRlZjllNWUzM2JiYjE2Yzg2YmI0NDJjZWYzNGQ2OWJlYTQ3MWFjOTk1NmRlMmYwMzFkNTkzNzBjMiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZDI4YTkwY2E1MWI3MzlkMWQwMTViMDYzNTc2YmJlOTliYTA2NGE3YzYwMDk2NmEyNmI0ZjEyMTlhYjQ3Yzg2MCJ9"
+        },
+        {
+          "resource": "repo://src/profile/mod.rs#L475-L499",
+          "version": "repo-lines-v1:sha256:a97135fabc70491aab0e051b2648257c7cc7ef5adfd8831d78116c54a9318472:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM5ODc3MzVkY2RkNDUxMjlmYjgwNmNmNzMyYTJkOTE0ODUxMTdjNWVhZDMyNDgyNzMyNzQ2NTU1ODE3Mzc5ZGQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFkODA3MDNjOTU3OTI5YTQzZmZiMzRkOTliMjQxZGM5ZDYxYzNkNjE5YjhmNDdkODZmNTQxNzI2YjFjNDg4NGUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_fc935601885f4ffcad29aa1aedff2c71",
+      "statement": "User themes are *.toml files in a themes/ directory beside the profile's config.toml (App::new_with_profile) — compat mode and the headless theme CLI use ~/.config/sshub/themes (or $SSHUB_CONFIG_DIR/themes, resolved read-only via config_dir_path so listing never creates or migrates anything). A theme's id is its file stem, built-in ids are reserved and never shadowable, the registry caps files at 1 MiB and 256 files, and discovery is one level deep.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/mod.rs#L807-L819",
+          "version": "repo-lines-v1:sha256:08b3eb3347da5f1e43f1015ac318bb2780d61f356c6acbf0f5de2a76e4716fa5:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM3MjU5Y2ExZDJhOTliYTI2MDNiZjNhNzY5N2VhMzI1Y2QwYjk5YzhlNWJkMzhjYjU0MzI3MmE1MmFjMDIwZmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZjOTE5MGY5YWU5NzkzMWUxZjkyMjZjMDRlMWY3MTVjZDVlYTdhMjk4ZWE3ODlhMTcyZTE5YWE1NmIzMzc1MGYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY2ODg5Y2NhZjk2NDBiMDhjZDc3YmJhNzFkMjRjMTQ1YmQ4OTQ4ZjhhNTJhYjY1NDhiMGU3Zjk0YjZiZjRkNjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY5MzI3ZjM3NjJhNjJlNWM3ODM5NjE5ZjhmYTllOWQxMjRjYWI2OGVlZTUyNWZmODljMTA1YmY4NzlhMGMxMjQifQ"
+        },
+        {
+          "resource": "repo://src/cli/theme.rs#L71-L79",
+          "version": "repo-lines-v1:sha256:1ac515f618cfd8c964f074e85c2f4231cd22a94d439e9ddbdf6cabcea887c33c:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOTExZThiNjJlMzNiYzQ4NDFjODZhNTJiYmZkNDI0YWU0MWUwYmJlYTgyNDIyZDEwZTBkMjBiOWYzMDVmYjQwYyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZmE0ZjYzOTI3MGI4ZTlmNGU2MTIxYTIzNTQyZDdkMzYxYmMwODc0YTQ2YmZlMWJmOTkzZGFlMTBkMTEwOTA1ZCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMDgwYTEyMWRlODFiMDcyMjNhNGQzNDlkNWJlNzlkOGY4NDU2Y2Q0MGFiMWY1MTE1NjU2YWZjMjYyYjlhYzNlZiJ9"
+        },
+        {
+          "resource": "repo://src/config.rs#L516-L529",
+          "version": "repo-lines-v1:sha256:02e655dcae8ecbf3aa8f7cfb9c7b9033b631be85cd1c6d7cf7175613da87cd31:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ1YTE4MGEyN2NmMjhkNzA4NzZjODlkYzBlODQ0MWE5ZGFjN2EwNWI1NGY2M2Y5YTk4NjQwZGRhYTViMWI5ZTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImU0YjM0MjI2OTIyYjQ4Y2Y3YmZjMzdiMGI3ZjgxNWMzNjRlYmNjMmQ2ZDcxMDE1MTg5OTkzMTdhZWJiZjBjMDMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdmNzdjMzgwMGUxZjAwZTFjZTljYTQ4NDVlMjMzNjU0OWZhMWZmYmUzYjcyYWYyY2FiZDBhZWQyZmUyZDYyZmEifQ"
+        },
+        {
+          "resource": "repo://src/theme/registry.rs#L1-L13",
+          "version": "repo-lines-v1:sha256:b4ab922579e1fca1ecc2b4fee81fe02b46f84fa321e8e85b1107cd939ac781be:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk2ZjVhZjc5ZDY3NjRjNzkzNDg3NTFmMDI2NDM0Y2M5N2Y3MTZjNjk0YzgyODBlNmNjNDU3NWQ1NjhiOWQzNjQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM2MzYyNjM1YWVlOWM4NDEwNTYzYjBhNmRiYTFkYjcyZjczY2ZlNjQ2YjI3ZWEzYjk0ZDNkYjM4NDY3YTczNzkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA2MmFkMWU5MDUyZjM5NGU5ZjJiNjNlZGFiMmUwNTQ5OTgwNjUzYjJmZDI5ODYwZWQ2MzhkMGFmMWQ4MWNiNzcifQ"
+        },
+        {
+          "resource": "repo://src/theme/registry.rs#L30-L40",
+          "version": "repo-lines-v1:sha256:702a89d3a69d09fdfc881b6c17301551c925745f87f310d20c1d297273c7fe08:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwMDdlYTRkZDk5YzQzODczZDU4YTk0OGExNzdmMWUzODExMmI1N2ZlZjk5NTZlNGRjMWViYWQ1MGE3ZGI1YTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU5YTc3MjQ5ZmY2MzVkOTkyMDcxMjJiYWMxYmRmMWQ5OTZhOTIzN2Y5OWVjYTIzMzJmMmQwNzliNDYwYzQzN2YiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJjZDA2YzA4Mjk0MTg5ODViMDM4NTJhZjYzMmI2MzY0ZTFjZTc0YjMzMjhmYTMxNTdkN2UyMDk3ODlhZDJlZGMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjlhZDVkMDBjYzBjZDQ3ODk0NjZhNGJjYTk4ODM3OWYwZjdhN2RiOTBjZjIwYzZjNTVlNmU3Zjc1OTc1OGJmOGMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b7274f8a2631453bb577681f85772cae",
+      "statement": "Theme loading is deliberately infallible: App::load_themes_from degrades an unreadable themes directory to the embedded built-ins with a non-fatal notice (keeping the failed directory for reload) so a broken themes dir never blocks startup, and a missing or invalid appearance.active_theme falls back to the embedded `default` while saved_id preserves the configured value and config.toml is never rewritten.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/mod.rs#L752-L791",
+          "version": "repo-lines-v1:sha256:792635eee70182c05af6f97bbdb5cf6ebc19314acc78a76da3e6f154b5d27710:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc3YzJlNWYwNmYyMmEzMDIwNWE2NTAwNWM3YmE5NzVjZDhmZmIxMzkwZWE3ZWIxYmVjNTUxYjU1OGUzMTQzOTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjczYzNlMjNmOWYxZDZjZmY5MWYzOTBkY2M4YzdkOTU5MTAzZThkMjVlMzEwNWE3N2I4OTQzMzAzODBjNWQ2ZTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdlMzhmOTI1OWUzYTNmNzc0YjY1NzEyMWVkYTViOWUxZGY1ZTYxYTQ4ODBmZDMwNDJjMTk5YzM5YjUzM2UzN2QifQ"
+        },
+        {
+          "resource": "repo://src/theme/manager.rs#L290-L304",
+          "version": "repo-lines-v1:sha256:5c8b44c7611cd8cbd500aef75c8f09c6fd8562bb853aba4c83941af7f956f126:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkyYjVlZGY1OTQ5Y2ZlYTY3ODIyY2Y2OTExMzIzNjNkNjhkNmYxZTE2OWY1ZTBkNGY3YzE0ZTVmYTFlNmQ0ZTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRkZWM0OGZjYzk3ZDVjODViZjViYzI4ZDU0MjQ4ZjE5M2UwZDBjZWRjMGE4ZTI4ODBjZjVhMWRkNTczYTkzNmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU4NTY2YWUwZTNkOWMxN2VhM2UzOWQwNmU4NTVhMzJjYTI1YmYzOTRlYTRmYzczM2Q0ZjQ2OWMyODQyOWZmYzMifQ"
+        },
+        {
+          "resource": "repo://src/theme/manager.rs#L68-L114",
+          "version": "repo-lines-v1:sha256:ca1e0ac0711a35fdd9a0f2fe3be15aa7d6e67babb4b823075199d6761be7022f:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc2ZTkwZWYyOWQ5MDU2NjExYmE5ODA4ZGUwOTE2ZGU2ODg1ZmQ0ZTg4YjQ4OWQ1NTBlYzk1MWNlMDA2NjRlYzkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM1Y2RlZjgwODVhZTc0YWI2MzZkNjQ1OWY1YzZkNWZiZmIwZGIyNjRmMWIwZDc1YmFjNTE5YzliM2Y2NzE3YWMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImU5YjU1NmQ0ZjU2YzRmZWFkN2U2YjRiZDg2ZDAyMWMwNGY5M2UwNTljMjg4ZmYyNzA3N2IxZGEzNGQ3NGRiYmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM1YzYyZDUzNzdiN2IxNWMxOWE0NzU5MjNhZWQ2MTcxZDNiZjAxNjAyNGVjNDM5OTA2ZDliM2NhMDI1NzFjNzEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_dc79d28ddd904aa7985e9120357fc15a",
+      "statement": "ProfilePaths is resolved once at startup and passed to every subsystem (they never rediscover paths from the environment); profiles retain stable ids for credential namespacing; state.toml is persisted atomically (0600 tmp + rename); and SSHUB_DATA_DIR/SSHUB_CONFIG_DIR (or SSH_LAUNCHER_* fallbacks) switch to compat mode that uses the override directories verbatim with no profiles/ nesting, no state.toml, and an empty credential prefix.",
+      "evidence": [
+        {
+          "resource": "repo://src/profile/mod.rs#L1-L21",
+          "version": "repo-lines-v1:sha256:6c3aa156cd3c6a9936c2719a156b44effe993af0e243e6eb3065b9ad9d19b4fb:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYyNWMxMmUyMTVjNmJlODZkYTM3YWRiOGI0ODU5MDI2OWUyNjU2Yjg3OGZkMWFhM2RmMjQ4OTlkNDZlNWEyNTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk4NmU3ZTMzMDBlOTYxZGU1ZTBhN2YyM2FjYmVkODA2Yjk1YmEyODFjMGExZDNhZDMwOTgyNDM5NjczOThlZTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ3Y2VlOTlhMjQ4ZmM2N2E4YWUxMTcyODBiMGQzYTM0Mzc3ZmYyZGIzMjFiNDdmODQ3MWIwYTdmNmQ4N2M4YzkifQ"
+        },
+        {
+          "resource": "repo://src/profile/mod.rs#L238-L313",
+          "version": "repo-lines-v1:sha256:e38ac6e2ccc945784f91e39a68c701f17481205f0f035211f2c90844672b8e5c:eyJzZWxlY3RlZExpbmVDb3VudCI6NzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI4NjdiMTEyMzg0MGZiNzhjNTMxNWYwZmM5NGExZWMwZmRlMTc5NzY3N2M4YzI0YmE5Njc0MzUxODM2YmRjMTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNlYTE3ZWYwOWNjY2Y5ODZmNWE3YjIwZTA4Y2RlYTU2ZWIzZGNmMTg4NWE2NTlkY2MzOWE1NzZmOTdiMGU4NGUifQ"
+        },
+        {
+          "resource": "repo://src/profile/mod.rs#L94-L105",
+          "version": "repo-lines-v1:sha256:a9dc488e9be58eea4521f51aaf2ab80079526e6c7071694bd3b1a642d4c490b1:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhiYWVlYTkyNTVhNGY1NjNjNzk5MWM1MjY0MDM3ZmUyMjZiZDZhZWQ2MDJlMWQwNDJhYjUwMzM2ZjU2NTQ4OTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIyNDFiMzk0YTc2NjM5YWFjZTRlODYwOWI0OWJjNjJkNWVmY2EzZjExNGM3N2ZhMDAyOTQ1NjEwNmY2NmQyMDUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAyZTA1NzUwMzhmM2I1NGQ2M2I5ODAyYjFjZjUwOTUzN2YwMzdlNWE1ZThiYzNjYjJmNjA0YTRjZjI4MjE3YTgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a74678c9118a4f869b81d0a93e0b746f",
+      "statement": "LauncherStore wraps a single Mutex<Connection>; opening it creates the parent directory, restricts the DB file and sidecars to owner-only, enables PRAGMA foreign_keys=ON and busy_timeout=5000, runs migrations, and seeds a \"Default\" identity.",
+      "evidence": [
+        {
+          "resource": "repo://src/store/identities.rs#L9-L27",
+          "version": "repo-lines-v1:sha256:fef429f4f8aa2b7dbd7231e3f25f735aec0a271914837ecfc772d294c6c01275:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMyMzU4NjVlNTBmYTZjYTM4NjUxM2E1MTM5NjNhMDNmYjMzYjUzN2QyMzQwNzI1ZDhlN2EyNjZlZTBlZDMxYWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNjMzU5NmU5MThiZWM2Y2NjYTE0MzcwMDMzODQxZTRjMjYwYzg5YTA2ZmMxMjViZDk0MjAxY2FmNzg0ODIxNTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhiY2ZiYWFlNzdlYjIxYzJhZTJkYWU4Mjk0NDNkYmMwNjRiNzU3ZWYyMzEwNDAzY2VmMDBhNWUzMGNkYjA3M2QifQ"
+        },
+        {
+          "resource": "repo://src/store/migrate.rs#L70-L74",
+          "version": "repo-lines-v1:sha256:c8dd6ea052e77277ced8e56134d1eaae08038416f8710b15a09360c65cb19d67:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNzIxMWRiYjk1NjVmZDc5Y2JhZWJmNWM3NTRmOGQyMzk1MTczNmVjMzY3OTRmMzgzZTIxOWYyYWM2OWU0ZTAyYiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNzk0MjViMjg2YmQxYjk2ZDMwYTA4MTIzN2ZmMmE2ZDA4Yjc2MDY0MWQxNTkzODg3ZWZjMDU3NWYxM2RkMGJhMCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYjk0ZWM1OWNmZDA0MjBkODQ0NDliMWQ5Mjk4MTMxNGRlYjhlN2E2OWQyNWVkMDAxN2U5YWJmODI0MmJiNTIxYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMDRjM2ViMGY2NTk2MmM0MjUwYWUwNGJiYTc1ZDhjMmQ4MDYxZmY0Mjc3NWFmMWVmYmFhZTQ2ZGMyOTM0ZjgyZSJ9"
+        },
+        {
+          "resource": "repo://src/store/mod.rs#L26-L52",
+          "version": "repo-lines-v1:sha256:ba0bc3cc5e7366cf1aefae2dfb4e1908ce92891253e0418ad324485ee33a5b5b:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdkNjFmMTQ3NmQ5NjlmZTI5ZTEyNjliNGEwMDllNmVhZjFhNjAzYmQ5N2YwZTAyZGNmOTE0MTU1OTQ4YTU4MzkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijc4MzhkODAxM2NlYzBhNjU1ODU1ZTQxNjViOTRkMzI5MjEzODMzNzE4YzBhMjZmMGI0NzYwYzZlODRiN2ViNzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhhNzY5MTA1NDM4ZjQ5NGExMjQxMjkzMDU1NWYzNmNlOTA5YzcyNTUyNWQ4ZDQwYTJhOTUxOGYzMzhiMjg4NjUifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.5.1",
+    "at": "2026-09-11T12:46:43.817Z"
+  }
+}

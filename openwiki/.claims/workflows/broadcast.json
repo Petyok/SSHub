@@ -1,0 +1,298 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:a8d0390b3dacfc2a7e1389973e8d97172b8ee98faea22da21530a5e9cb4d83bf",
+  "claims": [
+    {
+      "id": "claim_abaa6bf9123140fbb389eba41fddb2e2",
+      "statement": "Broadcast mode runs one command across a host group or tag concurrently: `b` on the hosts tab opens a three-stage wizard driven by the AppMode variants BroadcastPickTarget → BroadcastCommand → BroadcastPreview, and pressing `y` at the preview barrier starts the run as a background job whose mode returns to Normal while the pool executes.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/broadcast.rs#L145-L205",
+          "version": "repo-lines-v1:sha256:11c47d7110009610afde3b71958a8e17d2e7293acb91b1f84ddd279d2113d051:eyJzZWxlY3RlZExpbmVDb3VudCI6NjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQxOTIyNWU1N2MwNGJhN2Q5YjQ2Njk5Njk0ZmQ3ZGI2YWFjNTY5OTY3YjRiOTJjMjE3NzQxZTllN2EzMjRiYjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjliNjg2Y2YzODMxMGVhMjZhOWVmMTYyMDgzY2QwYTg5NWU4NmYzN2NkOWUxYjNlOWRlMjRiMmZmMTVkZDdlNWQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ0MzEzMWEyYjA0OTgxOGJkZTUyOGZkYmI1ZDkwNjliNjk5ZDkxMjJjMGNiN2RkMzE5YmQyOWQ3YTQ0OTFmNzcifQ"
+        },
+        {
+          "resource": "repo://src/app/broadcast.rs#L339-L398",
+          "version": "repo-lines-v1:sha256:d0df53e9d25060613f63833723481571bfcd987cc4fdc5fc049ffafb29128326:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiZTcxNGNiNTYzMTYyNDhhZTc5NDY5NjA2NGI5NTE3ZDdjNjM4OTk0NWRhZDFhMDZkZjgyMGUxNzUxYWE5MTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ3NmIyYzMxMjhlOWI0OTc2MzNmYmNlMGY0YmQyNTgzOWNlNTAxODIwMWFiODU4MmMwOGUxNjE0YjMwYTc5YWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdiZWViNmIyZjFkZjc0ZDg5NmU1NjBiYTA2MmI3NGRmZWIxMWQwOTYyYTljZjRjZDlmNGYyMzk3ZDc5YWI2YTYifQ"
+        },
+        {
+          "resource": "repo://src/app/broadcast.rs#L404-L465",
+          "version": "repo-lines-v1:sha256:76da5b060d7c62bc034d2a8693371bc7a9c7bea070f507f985962864a5c6af98:eyJzZWxlY3RlZExpbmVDb3VudCI6NjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJkNmM4OTA2YmNlYTQ1YjQxZWI1OTk4NDJhZTJiNGI5NmQ4MzdmNzQyY2FmNDU1YWJjODI4YmVkNjNkMDBlMjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE4ZjRlOTU4ZDM0YzAyYjlkZDBkOTEyNTM3MDdhNmFkNmU3NWZmOGIyZjRmZWM0ZTg0YmEzZDg5NDMzNGQ4NzgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk2YTQxZTNjY2Y2NWQ2Yzc1NDc0NzM5NGFiZTE0MjBmYjVmOTljZGE5NjZiNWE1MDMzNDEzMmU0NDYzOGVmM2UifQ"
+        },
+        {
+          "resource": "repo://src/app/types.rs#L413-L418",
+          "version": "repo-lines-v1:sha256:b445a2fbf7b2820b33ad6f951f33e76be06a3ba6d0f0e2c1824b4414809e4c0b:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMDUzOTc4YmYzNDlmMDgwNmYxZDdjYzEwNGZhNWE3NDU1YjRkMGFlYTJlY2FlZGE5ZjRkZTYxZGNhODZlNDIxOSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDlhOWZiZjRkODIwYWM4NzZhMmQxYTAyYjY5YTk0MDFiMGM1MWVkYmNlNWMzN2UwNGM2OWQyMTE5MGQ4NWE5MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiM2FkOTA1N2UwMGVjODVmOGQ2MTNlNmU4ZmRhZDEwYjgyYjc4MGU4OGZjMmQzZjEwNWI5MzAyM2IyYWJhNWZhZSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiODM2ODJjYzgwM2JiODllZDg5YjNlZDg1YjlkYjVlZmUzZTUxYzViOTA0ODhmNmI2ODMxNmRkY2QzNjBhYmJiZCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_a6e75f5e5ad14b6fb4efebfdf62d71c8",
+      "statement": "open_broadcast refuses to start a second broadcast while any result row is still non-terminal (one run at a time), sends an already-finished panel off with the exit slide rather than yanking it, builds the target menu from user groups (the reserved Favorites group is deliberately excluded) plus the sorted, deduplicated set of host tags, and refuses with a notice when there is nothing to target.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/broadcast.rs#L145-L205",
+          "version": "repo-lines-v1:sha256:11c47d7110009610afde3b71958a8e17d2e7293acb91b1f84ddd279d2113d051:eyJzZWxlY3RlZExpbmVDb3VudCI6NjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQxOTIyNWU1N2MwNGJhN2Q5YjQ2Njk5Njk0ZmQ3ZGI2YWFjNTY5OTY3YjRiOTJjMjE3NzQxZTllN2EzMjRiYjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjliNjg2Y2YzODMxMGVhMjZhOWVmMTYyMDgzY2QwYTg5NWU4NmYzN2NkOWUxYjNlOWRlMjRiMmZmMTVkZDdlNWQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ0MzEzMWEyYjA0OTgxOGJkZTUyOGZkYmI1ZDkwNjliNjk5ZDkxMjJjMGNiN2RkMzE5YmQyOWQ3YTQ0OTFmNzcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_fe8ab2ee6c134520b037cc93c35002b8",
+      "statement": "On target pick, resolve_broadcast_candidates resolves managed hosts only (entries without a managed id are excluded) in host-list order, each selected by default, capturing per candidate `ssh_argv_for_entry(entry)` (argv[0] == \"ssh\") and the stored credential resolved immediately via `resolve_pending_secret` — the same path connect, detect, tunnels and the CLI use — so password hosts authenticate via SSH_ASKPASS instead of failing under BatchMode.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/broadcast.rs#L237-L287",
+          "version": "repo-lines-v1:sha256:21421921f814a4d13c73a5363ef96e9f261badf664e175a50beb8c702d26507f:eyJzZWxlY3RlZExpbmVDb3VudCI6NTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI2YTI4MTk0ZmNkMTQ0NjZlYmZkMmU3ODJjZjFmYTczYmQzMzY2YWMzZmM0YWVkODM3MzhhYmJmNTIxNzRjZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE2MmVlNTdlNDFhOGMyMGFlMDE2NGRmMjYxNDM5ZGNjNDk5ZDM1MjA4MzQxNTE1MTZkMDQ3ZThkZWFlOGE0NjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUxYTA1MmZjMjc0MDI2NGJhZjc0NWU3NTg2MWY5YTIwODFjNGE0NjgwMzMyY2U0YjNhZWQ2Y2IzZWQwZDcyMDgifQ"
+        },
+        {
+          "resource": "repo://src/app/types.rs#L587-L621",
+          "version": "repo-lines-v1:sha256:c440bc213de036dafd4dd18a625db0548387ae52ef77527a5c97505ef1893a97:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI3YzgxMmY0OTlhNDUzZjE5MDMxZmRiZGNiMTI1OGE5Y2Q3ZjhkOGVjZGJhNWNlYWU2OGVmZjI0ZWFkY2YyNWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjczY2IxNWI0N2RmOWJhMzE1ZTIwNmNhY2RjNGJhYTU2NjBiZmU0MzliZWFmNDdlMTIzZTQwNWQyYWQwOGYyODkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZmYjQ5NTM1Njg4MTQ2Yzc1MTA0NTQ2MmRiNTllNzI0OTRiNzA5ZTg5OWRkMzI4ZmQyZDRjZWZkOTc0ZjZlYzkifQ"
+        },
+        {
+          "resource": "repo://src/app/util.rs#L7-L75",
+          "version": "repo-lines-v1:sha256:5f0977a3844bcf4df6666c15c8fd49b3bb2fa0e769afb7da9cded59bdc6f1963:eyJzZWxlY3RlZExpbmVDb3VudCI6NjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE1YzdiMGUyYjlmNzJmMjI1YWJjZTVhNjQ2MmViN2E0NjBiMDg4ODA0MGVlMGE1N2I1MWE2MjllZjU2Njk1MGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI0ZTk2ZjczOWZlZDAxNTY3MjY3NDM2NDhlM2UzMWEzYmM2Y2UwMjVjYjZmZTM5MWFiYzM2OGU0MDk5NWMzYTAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg1MzdlYjYzNGQ4Mjg5MjY4MTFkZWQ5NDE0YTMwMTQxMDNiMGMzMDdhYWVjYmVkMmI4YWZkOTNlZjQ2NTljNDkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_4c1651d3d99e4500bdd1e2bacc968a17",
+      "statement": "`src/broadcast/mod.rs` is a pure fan-out engine with no App or TUI dependency: it owns the shared value types (BroadcastTask, HostState, HostResult, BroadcastEvent), the CommandRunner transport seam, the real SshCommandRunner, the bounded worker pool (spawn_broadcast), and the reducer/view helpers the UI layer drives, making the engine testable in isolation like osinfo::detect.",
+      "evidence": [
+        {
+          "resource": "repo://src/broadcast/mod.rs#L1-L15",
+          "version": "repo-lines-v1:sha256:93becf98db0c3b8a50c5d22c7966876c60b0c1f2bef9051128ae0f64f637fd0e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ5MTczNjEwNGE2ODk4ZDlkMGY0Y2JlMWNkMDgyNzhiOWQ1NTY3ZmIzOWQyMWRlZmU0YmVjYjlmZjBkNGM5YmMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVkZjY3OTI2ZmZiNDBmMDNjZjc0NThhYTJlYmQwNWFiYTE4NjY5MTY4M2QxMTZlZDYxYzVmYWM3ZThjOTg3M2IiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ2NTEyM2E3Zjk3YjE2ZjczMTNmNjhmOWUxZTVjODVmNWRlZWZmZmRlYzVkNDI3MWY5MTg0NmY2MTg1MDcxODkifQ"
+        },
+        {
+          "resource": "repo://src/lib.rs#L1-L2",
+          "version": "repo-lines-v1:sha256:8266b85f4726ac94a9ec42670824d8d4951012a12aa8aab0199eb6f5655ff7f4:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMTk3YmNlMGE2NjlkMGQ3ODBjMTkzZGU3MjAyMWE2YTAzNzRjOGFiZDUyNDlmNDBlYmU2MGQ3MzVlODI4YjE2NyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNWIxNDU4NWQyY2NlNmRmMmM3YjdmYTU3NDRhNDIwOWU2ODBjNjgxMTI1NTE5YzExYmY0NjUyNjEzZDQ2MmU3OSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjAsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYzEyNTI2MWI0ZjIzMTI5ZGRmYzM4NmUwMWMzMzY3ZmM0NDJjZWE2MjZiMTRmODcyNDU5ZWU5MzlhMGEzZDMyZCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_65d73b17f20049de8e34cc253dca8981",
+      "statement": "spawn_broadcast runs K = min(concurrency, tasks) worker threads (clamped to at least one; the app always passes DEFAULT_CONCURRENCY = 8) that pull BroadcastTasks off a shared Arc<Mutex<Receiver<BroadcastTask>>> and emit BroadcastEvents on one Sender; the task channel is preloaded and its sender dropped so worker recv() never blocks, and an empty task list returns an already-exhausted receiver with no workers spawned.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/broadcast.rs#L427-L434",
+          "version": "repo-lines-v1:sha256:a8cc953850892c9a3e3181d6996ffba970ed00d33f644a39bab51f98699f2a4a:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMmI2M2M5NDM0YzEwNzRhNjMxOTE5ZmIyMDdmZjBiYjk2OTA0ZDJkZWUxMzE3NDIyZDA5MTlmYTcxNmRjNTQwNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMWU3NWM3MGQ5NDYzNjI1ZTEwNzlmZDhmYzhlZTYyYWQyZTkyYzQyYmVhYWJmZDg1Yjc4ZDhlMGE0OTc5Yjk0YSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNjMzOGZkMjgxZjEwNjQ3MjE4NDNkMzRmMDc4Y2NjMmM0Y2M2OTgzZTVjODJiZDgyYmVmOTkyNjFlZDA2Y2YyMCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYjQ5YzJhZjNlODRhNTYxM2ZhYjcwY2QxZDRhYzc5ZDE2YmJmNTE2NDBjYzgwZTkwNmNiYmQxM2VmNDlmNjhiMyJ9"
+        },
+        {
+          "resource": "repo://src/broadcast/mod.rs#L25-L26",
+          "version": "repo-lines-v1:sha256:d8782c5db59717e86d688a65e4afb79cf62e9068f4effa7077c716368b6c8a21:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiY2NlNTVmMDRkYWVhNjQxNjQ4Mzk3NmFhMmMyNThjNzA0Mjc5YTljNTZmNWUzNGU1MWY4ODU2NDhhYzViYzVjNiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNzg2MTlmZmFjMWVlYWQ3ZmU1NGY4YmNhZWFiMGYxNzc4OThmYjUzMDNhMjVmNzZlM2JiNDJkNTE1ODFlMmFmOCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNTVhYjc2MjY2ZGUxYTZjZjVhYTg4Mjc5MDEyMmMzYWY5NDJjNDNjYzIyMzVlNDJjOTA4NDliOTliYzc3NmJmMiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZWIwM2IzM2I3OTI1MWNlN2ZlZjhhNzU2OTgxOGNmMmYyNzkwOTJmNTI1ZWNjMTdiZmNlOTFkMzE0ZDhmYTM1NiJ9"
+        },
+        {
+          "resource": "repo://src/broadcast/mod.rs#L286-L332",
+          "version": "repo-lines-v1:sha256:2ced52a67d1a5f3ae65ef055cb81d22a0afd5347d8f346a9521b5d44a66f4bdb:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjViZWI2ZjY2MTMxMjU5ZmI3MGRiMDU5ZWZjYmY1MTI3NGJlNTcwMGM0ODY1NzI1MGU2OWIzNzZkOTU5MGYyNDIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ4ODU5MjEwZWJjYjEyY2Y2OGM2MTYyMjJmYzU2MGMxZjY4ZTJmYTMxZjYzMDQ5M2RmODA5NTg4ODdkNTdhZjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY3NjM4Yzk5ZGRkOTkwMzJlN2I1YWI0NjQ4NjM2NzJjMDRkYmViYjdkZDZmZDRjZmIwOGViNDJjOGU0NDAzZWQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6fc251635b0343728e7d085d1226b7cc",
+      "statement": "The broadcast pool guarantees exactly one terminal event (Finished or Failed) per task, including under cancel: workers that observe the cancel flag drain the rest of the queue emitting Failed{reason:\"cancelled\"} without running them, in-flight children are killed by the runner and surface as Failed, a runner that always errors cannot panic the pool, and senders dropped when workers end let the UI's drain loop see channel closure as run completion.",
+      "evidence": [
+        {
+          "resource": "repo://src/broadcast/mod.rs#L286-L392",
+          "version": "repo-lines-v1:sha256:b96670565e7646ad4a08d337da7d8e714216eff58bc338be6bd711c04492a436:eyJzZWxlY3RlZExpbmVDb3VudCI6MTA3LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI1YmViNmY2NjEzMTI1OWZiNzBkYjA1OWVmY2JmNTEyNzRiZTU3MDBjNDg2NTcyNTBlNjliMzc2ZDk1OTBmMjQyIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJkODg1OTIxMGViY2IxMmNmNjhjNjE2MjIyZmM1NjBjMWY2OGUyZmEzMWY2MzA0OTNkZjgwOTU4ODg3ZDU3YWY5IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI1NmZlZmJlMzZiYTdjN2E0ZWNhZTI5NmYyNDg4ZjkyOTIzYTYyNmY1NjJiNzk2ODgyZTA3ZWM0Nzk0OTM0ZWFjIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_78ce53e1e5af421db01b5cc95cdc3af1",
+      "statement": "SshCommandRunner shells out to ssh with the same non-interactive splice as the OS-detect SshProbeRunner — `-o BatchMode=…`, `-o ConnectTimeout=8`, `-o StrictHostKeyChecking=accept-new` after argv[0], remote command appended as the final argv, no PTY — and enforces cancel plus the 60 s RUN_TIMEOUT with a 50 ms try_wait poll loop that kills the child, while stdout/stderr drain on dedicated threads joined after the kill so a chatty host cannot deadlock the other pipe; any completed exit code is a Finished payload.",
+      "evidence": [
+        {
+          "resource": "repo://src/broadcast/mod.rs#L117-L270",
+          "version": "repo-lines-v1:sha256:ac7d73fdb49485d6425ff86a8b202afd75f8a148567288d966045011bb7041d0:eyJzZWxlY3RlZExpbmVDb3VudCI6MTU0LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIyYzcyN2IzN2VkZjVlM2I3Yzk3MGVmNjgzMDQ1OTFiMWViMjNkNGE2YTMwMDNjNWIwZWI2YWViOTYwMGI2NWQ1IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJkZmY1MTYwOTQyMzY0Mzk2N2E4NzVmZWM2MDRkZTU4ZGYxMWE4NDdjNzRmYzIwODNkNjU2N2UzMjhhODgwNjRiIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI1YjI2MmMzNjZhOTM3YzFjNjcxOTA2ODE2NTY3YmE5OGM2ZmNmOTVkYTEyMGU2YjRjYzY2YTQ0N2NkY2JmYmY5In0"
+        },
+        {
+          "resource": "repo://src/broadcast/mod.rs#L35-L41",
+          "version": "repo-lines-v1:sha256:a341f058e63d6e47d2e95d82731a8b846c63eba795d6020a36c53a4b73a385a5:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZTI2OGQyNmU3OWFlOTAwM2JiNmI4NDAwMjEyOTUxZmYyMTc3NjgzNzEwZjljZjFjNzU4MTI2ZTA0MDFjYzcwNyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNWU0ZDM1N2IwZGMzODQzYmJjMjRkYWU3ZTQ4Y2NlNmRhMTVlYzAzOTcwYjlkZjgyYjI4YWI2ZGVmM2EzNTEyNiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMzIyNzk5MjVjNjBkMjkxYzYzYmFhZTY5YmNmMzQwN2MyMGE4ZDU1M2Y4Njc5NmU1N2JkZDkwZWYxOGFhYThlZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZWFiODE1ZTBmM2ZjMDM3MTI0YzlmM2M1MjIyNDUwMTMzMTQzMjIxYmRkYWUyNTY5YzRhZGI0ZmEyYWZjYWNhMSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_9bf8f222b76e4a8287bf29df927334e6",
+      "statement": "Broadcast auth splits per task: with no stored secret the runner uses BatchMode=yes so key/agent-only hosts fail fast instead of blocking on a /dev/tty password prompt; with a stored credential it uses BatchMode=no and stages the secret through the same SSH_ASKPASS path a live session uses (session::askpass::helper_exe plus an AskpassSecret 0600 file removed on drop), holding the guard for the whole poll loop so the staged file outlives the ssh child.",
+      "evidence": [
+        {
+          "resource": "repo://src/broadcast/mod.rs#L160-L206",
+          "version": "repo-lines-v1:sha256:8ac31437983d37bf91671e98fefac781d2ad06769ba2adc106a0de01082f855e:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBhYTlmMTAzMmIzNzkxYzA1ZDMyNjY3ZDBhZDA0ZmFiMjdiNjg3MWVlZjZkZGEyMGUwNTk3MzhmNjQxODA1OTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2YjA0NDkxNDY5NzIyZTgzNjNhOTRlNDA0NDUzOGUwMTNhMmEyMTdlMzZiMWU1NjhiYTYwYWNiN2I0YzhmMmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhlOGQwNWFkNDYwZDFkZTY3ZmE1YTI3ZGMyZGRkODI0MzZhM2U2NWYwZTc1NzMwMTc1NmUzZmRhNDdjODEzMGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNiMGVlY2MzMDU4Y2Y3ZTQ5OWQzYjBlMWQ2ZGYzOWJhMTRkYjBiNTk0ZjJiZjk2M2NjODUyNDNhNDdhYTUzMzUifQ"
+        },
+        {
+          "resource": "repo://src/broadcast/mod.rs#L43-L54",
+          "version": "repo-lines-v1:sha256:265e8f8d44f7b9a6adf3ff299cb4f016ea240a98f7075e837fb9d14cface96bb:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQyNzk3Zjc1ODcwYThmNzhmZGM2OGNkYTUwNTJkZDNmZGU4YTViNzUyYzZiNjRhNDQ4OTUwZjI0MmMyM2M5NWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjdmMmRlM2RkNjAwZjdhY2ZkZGE4MTYyNGEwZjA4YjQ1OTJiMDk0MGYzOWEyMWRkNjE3YTAzMzM0YjJiYjNiNjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRiNzBkOThjYWRiYWM2MjllMDQ0YzFiNzJkYjEzMDc4ZDNkM2RmOGE1OTFjMTQyZDBkOTNiOTQ4MDlmNWY1Y2UifQ"
+        },
+        {
+          "resource": "repo://src/session/askpass.rs#L56-L103",
+          "version": "repo-lines-v1:sha256:0a53f95abdfacc1b474d8c5d5e3fd1c569d839a8605672c5445e185ff6c4f065:eyJzZWxlY3RlZExpbmVDb3VudCI6NDgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVjN2Y0ZTU1Y2E4MWVhNTliY2NjNmFlMjM4ZDUxYWNhZWQ2YjFlNmU1MjUwMTM4NTlhZjc1OGEzMmZkZmFmMDkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFkNmY0MWNhNzg2MDBhMjBkMGRiZTI1YzE4Y2I0ZTVjMGNiMjE0NmYwMjkxMDM3MTRkZjk2Y2NhNDcxNDM3NWQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjZiYTk1NWJlZGVmOGRjMDZkYWRlNGYzYzRiYjg2MzcyODY5MDBmMTExOGM4ZDgyNTk0YzIzN2QzNTYzMmI2ZGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImYyMWNjMzlhOTgzZjc3MGEwN2Q3NzM1NzIyNTBmZjRmYzBhZTdiOTYwNWVmZTFlNzkyZjQ3YjE5OTg0ZDQ5NjIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a87ac125c69841d897c0839f12a9d038",
+      "statement": "apply_event is the pure reducer folding each BroadcastEvent into the matching HostResult row in place by host_id (Started→Running, Finished→Done{exit}+stdout/stderr, Failed→Failed{reason}), preserving row length and order, never resurrecting a terminal row on a stray Started, and ignoring unknown host ids; failures_first is a stable render-time index sort (Failed and non-zero-exit Done rank first, then Running, Pending, clean exit), and a non-zero exit counts as a failure in is_failure, failure_count, and error_text.",
+      "evidence": [
+        {
+          "resource": "repo://src/broadcast/mod.rs#L394-L491",
+          "version": "repo-lines-v1:sha256:4b35d1b082dd5be2a06db685bde45f9fe243537a023340d9d0888ab31d54cece:eyJzZWxlY3RlZExpbmVDb3VudCI6OTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE5ZTIzZGQ0NzNmMGY2NmYzZjczMmFhMzEwYjQ3YmNjOTIzODVlODJlNDg2NDM1ZmI3MjhiY2MyZTk2MzYzMzciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdiYzk4ZDZiMGRjNDkyYzUwMTZkZjEwODA1YTNhNTRlYjljMTg0YTVhNjEzN2U3ZjRiZWNmYTBjMjIwNTUwZDAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_bc912513ea3a4a5babb1cd9614fb6df0",
+      "statement": "The live run is a docked bottom-right PanelId::Broadcast panel joined to the issue #18 focus ring: on `y` the panel slides from a centered spawn_rect to docked_rect over ENTRY_ANIM = 600 ms (reduced motion sits at the dock), deliberately starts unfocused so the completion countdown is never paused by accident, is reachable via Alt+arrows from the ping panel and ssh-log strip (focus hops onto it are suppressed while no run is live), and `z`/Alt+Enter zooms it full-body into a failures-first selectable list with the selected host's stdout/stderr detail panes; the Broadcast panel is excluded from the grid zoom-morph animation and the hosts-grid zoom dispatcher because it has its own slide path and no home in the bento grid.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/broadcast.rs#L404-L465",
+          "version": "repo-lines-v1:sha256:76da5b060d7c62bc034d2a8693371bc7a9c7bea070f507f985962864a5c6af98:eyJzZWxlY3RlZExpbmVDb3VudCI6NjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJkNmM4OTA2YmNlYTQ1YjQxZWI1OTk4NDJhZTJiNGI5NmQ4MzdmNzQyY2FmNDU1YWJjODI4YmVkNjNkMDBlMjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE4ZjRlOTU4ZDM0YzAyYjlkZDBkOTEyNTM3MDdhNmFkNmU3NWZmOGIyZjRmZWM0ZTg0YmEzZDg5NDMzNGQ4NzgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk2YTQxZTNjY2Y2NWQ2Yzc1NDc0NzM5NGFiZTE0MjBmYjVmOTljZGE5NjZiNWE1MDMzNDEzMmU0NDYzOGVmM2UifQ"
+        },
+        {
+          "resource": "repo://src/app/keys.rs#L293-L320",
+          "version": "repo-lines-v1:sha256:1a0bba13ae8985f9803706de7a29505d893eecea9f34d640e843028e590c9ec2:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2OTFkZTNlNjk0ZTc5MmEwY2QyYzQ3Yzg1M2ZlMDk4YTYzMDc1NjM1NmNlZmFlOGFmMmQ0ZjM5ZDlmZGEzNTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU1MjJjNDJjZDE5YzZkMDNkODA4YzQ1MjcyMDU1MjgyNWI3ZWExYzViNDkxYjIxODUxMWNhYzc0MTVjZjlkOWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJiY2UwNzAzMGRmZGE1ZjFiYjU3NzE3OTA0YWI1Y2E2OTM3ZWI2MTZjMzA1ZjZjNmY1NTAyOGY0MjNiNDhjOTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNhYjhjODdhZDNjNmRiOWU0YzM1YjJhM2MzMTlmNTRmMGNkYmJmZmZmMWY1N2RjNTYxMjY2ZWMxODgxZTgwN2QifQ"
+        },
+        {
+          "resource": "repo://src/app/keys.rs#L376-L393",
+          "version": "repo-lines-v1:sha256:a22a69dc31f7aa3fcc5fce2f344cf9d0e5dfe21da9280238bd508009940c5ade:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3NWRmNTYyYjhkOTRhNmNkN2UyZWM0NzU0YmRkMjRkMjU1YzMxZDQxYzg4MjE1MjNmYmUyMzUzMTI1ZWU2MTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRmYzQxNGMzNmM5ZmI0ZGMwOTQ5OWYyZGI5Yjg4OWFlYzA5MWUzNGZkYTc1YTg2ZTJiZDI1Yjk4ZjQ1YTZkNjIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFiMTM5NGE2Zjk0MTllMDJjM2FmZmMwZmZhMDVkNDc5MDg2ZTQyNTM5YTcwZDA4OTU2NTE3MGY2Njg2NzkyOWQifQ"
+        },
+        {
+          "resource": "repo://src/app/types.rs#L107-L150",
+          "version": "repo-lines-v1:sha256:192b06854f38ff41a65a0ddc878e59c413894580a99394378a7e0d66a11770c4:eyJzZWxlY3RlZExpbmVDb3VudCI6NDQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFhZmFhNWNkZTc5MGYzNmFhOWViNTdkNmY1M2Y5Mzc0Zjg2MmQ2NjdkOGQxZGExMmY5NTg3NmI3Nzc1NGEyMDYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2YjA0NDkxNDY5NzIyZTgzNjNhOTRlNDA0NDUzOGUwMTNhMmEyMTdlMzZiMWU1NjhiYTYwYWNiN2I0YzhmMmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg0NmQ2ODAxNzU3OGViMDVhODBjMGQyYTY0Y2EyMGU3ZGZlZmI2NDlmMjcyNjE3YTc4YjgxOGMyMWNhNTAwZjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUifQ"
+        },
+        {
+          "resource": "repo://src/app/types.rs#L84-L88",
+          "version": "repo-lines-v1:sha256:5c4a7f76abc2d9e9b449a819e96dc3cd16f59991e3ce9b147c18f8b0407d84f3:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiM2I5YzhmYWE0ODZiODQ3Mjk5ZTMyMmY1YjYyZTc2ZjhmM2JhNWZlNzYwMWVkMzA1ZDRkM2UyZWEwOGYwMDAyOCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNGU0OTNlODliZDBhNzQzN2M3MzJkMzlmNjQ1YzY3OWM0NTY0MGFmMDEyNzUyYjNlYTExNGIxYTUxOTA4MDhjNiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNDdhNzI1ODcwMmQ2MDM1YjdlMmYxYmI4OGU4MDIwYTEwYjBkZDhhNTgwNWY2MzUzMDA4ODQwMTAzZjFlZjRjNiJ9"
+        },
+        {
+          "resource": "repo://src/tui/mod.rs#L1617-L1631",
+          "version": "repo-lines-v1:sha256:bd4fc48ade1a26b7e0ef469b3d455834c9ad9b1ac19cc7595c4f0b7f0d70ad94:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU3OGYzNGQzMDQ4ZjlhZTgzZDdkN2VmMTRjNDQzZjVhZjY4OThmOGM0OGYzOTkxZDU5NWFlNDVlMDMyMWZiOTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVlNTczN2RjNzE0YTAyNzVmOTc4NjgzYjA1M2JiMjMwYzYxZGI3NzJiOGFlZDc1NjQ0MWVjNmU3NTVkZGI3NmYifQ"
+        },
+        {
+          "resource": "repo://src/tui/mod.rs#L777-L800",
+          "version": "repo-lines-v1:sha256:aed8e614e602891b2351c32c8242f764bc8f431a3f9cadae480a38b50b21deb9:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZmNjM2NTI4NTc2ZTI1YWY3ZGUzNTY2MDc1MTEyNDg2ZjI1ZGYzMjEzMzY5ZDdhYTkyMTY0YTYwMTUwNTE5YTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNmOTU0NDc2YTdmNDE2OGQ3YzU0YjhlYWNiYjFiMWNmODc0OWNlNDk2Y2VlYjFmMzQxNjhhYzQwNzFiN2Y2YWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImEyOWZjZjE0NmZmOTg1ZjA2MDQ0ZDA0Y2UyYzkzNTgwODJlMzQ0MjM1NDY1NTIyMDk1ZDIzYzA0OTY1MGRkYWQifQ"
+        },
+        {
+          "resource": "repo://src/tui/screens/broadcast.rs#L244-L404",
+          "version": "repo-lines-v1:sha256:6b92961e6379e3d701781d39e7dacb7998e5a1d825e3922d58b37bb2cd1f9baf:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYxLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI1ZTNiMDhkYTUzMTdhNzYzYTc0YTI5YzczM2M0ODRhNzg2ZjY2MjkwMzQyMWE2MzUxZTExMDUxZjg1ZTMzYWJjIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxOWU3NjM1NWNmMTE5OTQ4MGMzZjk5ODM2YjE0ODZjODQxZDg5MWZhYWQ5MDRjNjA4ZTA5MzAyMmQzNzU3YWVlIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI2ZThiOGU2Y2Y1YTdjODViYmQ2YjE5NzhjNWI4ODdjZTA2MTM1MDAwMDU5NmEyYjVjMmZjNjJhY2VhZTM3ZDY5In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_255adf90e3774e12a14a0ed051d45260",
+      "statement": "The docked panel follows the BroadcastPhase lifecycle Running → Settling → Paused → Leaving → removed: when every row is terminal the phase arms Settling with the 6.5 s DISMISS auto-dismiss countdown (a depleting gauge with a `dismiss Ns` label), focusing the panel pauses the countdown and unfocusing re-arms it with a fresh timestamp, the elapsed countdown plays an exit slide off the right edge into Leaving, and tick_broadcast removes the panel when the slide finishes, stamping broadcast_panel_gone_at so lingering toasts animate down into the freed space.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/broadcast.rs#L471-L490",
+          "version": "repo-lines-v1:sha256:e0a45ffe9d085b529865e6de54ab785f5315260f1707bb745195268872da9f86:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkyNGY3MDIzMmYwOGJmYzQ1OTlmNTg2YzhiNjVjMjM5M2UxYjQ1NWQ5ZWYzMzBjMjZjNDgxZjhjZDZmZjg3M2QiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE0ZjZlNDk2NDQ5NDM2NmZhYjJjODI5ZDA5NDg4MjM3ODNjMTA5Y2FmMGEwYmM2M2VlMWE3YjdkOGE5MGE0ZDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM0Njk2OTFmZjZhOTBhZGNiZGU0OGYyNmFiOTZkZThhZjU0ZmU3ZWY5MTZhM2YxMWRhYjExNjYxZjBjMjI0MjAifQ"
+        },
+        {
+          "resource": "repo://src/app/broadcast.rs#L495-L645",
+          "version": "repo-lines-v1:sha256:4a19dafe4a6672ab1d9f4fa53953e25854c2be4140f4e1ebfd840661de7a6e5f:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUxLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJjZmViNDE2ZGRhMjYwYjgyOTdhOTY0YWQ3OTRmMTE3ZDg4NzRiZDk0OGRjNDExN2IyY2Y0NzA0Y2FhOThlZjhiIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0ODkzZjQwZTM3ODFlYjg5NmM4MmQwNDZhMDgwNjdhMTFlMzVjZGYyZjFkZmFmMjZmZWE5MGI4ZGI2Njc2NDEzIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI2NWM3N2E2YWI1OWZlYmRjNGM5ZjcwOTE0Zjc4NDM5ZWE0YTJhZjE3YTFlYjYxY2ViNTA4ZjJhNDk4YjMwZDg3IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJkYzVhMTkwNGU4N2VjYWRhOTcwNThiMWQyYmI4Yjg2M2UwZGFkMWNhN2IzZjVmMmYyZjhmOTI4OGQxNmM1ODQ5In0"
+        },
+        {
+          "resource": "repo://src/app/types.rs#L578-L585",
+          "version": "repo-lines-v1:sha256:6d5928cee4fa039039ea553f6958e1ead2543f9c56ff6de6a66029dc3fa70589:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYzdiODgwNDJiZmMxODFjZWUzOWMyMGViOTUyYmZlNzUzZjgxNjVjZGFiZjU3YmQzYzliZDUwYjhmNGJhMDRkOCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiODgwZDJjNTZmOGFkMzAzNWZhNGJiYTQxNmYwMjc4MjZmOWFhZWIyZWM0ZmUxOTdmOGZlZmYzZDI1ZjM2MDVlNiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiODE5ODM3MDFjZTJmMWE5ZGE4NzczOTljNDI1ZjFjODE0MDlhOWNiNzY3NGI1ODZiYTczZDc0NzYyZjQyYWY4MCJ9"
+        },
+        {
+          "resource": "repo://src/tui/screens/broadcast.rs#L406-L458",
+          "version": "repo-lines-v1:sha256:681696b9a86d2d01ae7f5d0674d8cf0291cae8116cff3ac12a3f17bf74631524:eyJzZWxlY3RlZExpbmVDb3VudCI6NTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEyMTQ3OGI2MTZjNDk3NzYzYzZlZjAzZDU2MDA1YWExN2QyY2FhMDc4NWRjZDMxYTAxOTZhNWE4NzdkNGQyNTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZmMmMwZWE0ZDgxYmQxYzMxNzU1NjMxYWQ4Y2JiYTBjY2E2NTE2OThlZjc0NDM5YTA4YjliZjVjYTAxMWJhN2EifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e4b955a2378141278ccdb78a11d49f60",
+      "statement": "Cancel is the `x` key (KeyAction::BroadcastCancel, default `x` in src/keybinds.rs), claimed before any other binding and honored regardless of focus: with a live run it sets the run's shared AtomicBool, which makes workers kill in-flight ssh children and mark un-started tasks Failed{\"cancelled\"}; with no live run it clears lingering error toasts.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/broadcast.rs#L647-L654",
+          "version": "repo-lines-v1:sha256:ca42b3382c5e396fac4f71eba6077fc16a950887e172fb9a0fec2e57c5fb0790:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOThmMzBhZmE5ZWY4ZDcyY2RmZTY1NDhjOTcxNDI5MTYwYmE2OGRjNDhlNjdhZGE1Njk0N2MyZjQ4MzFhMWVhYiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMTYyZWU1N2U0MWE4YzIwYWUwMTY0ZGYyNjE0MzlkY2M0OTlkMzUyMDgzNDE1MTUxNmQwNDdlOGRlYWU4YTQ2NiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjAsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9"
+        },
+        {
+          "resource": "repo://src/app/keys.rs#L128-L157",
+          "version": "repo-lines-v1:sha256:f5b3c6aeb49637aa1f77bcdb3ad3c99ac7f5eff28fc90b29c76a14ff291de1cd:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM1Y2QzOTQ2YmU3N2UxOWM3NDk2YTExZDlkY2MwZjczNjU1YzhlZTQyNDIyM2UyYWYwZTEyYTM4ZTA0MTQ1MWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk5OWJkZWZlZWFjYTYzNDBlMDI5MGRjODZlODg5Yzg5ZDVlMTg5YWE1YmE0NGI1ODViM2I3MDczNGY0YTYyZDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFhOTExYzc3MzU3NjIxNjUyNmQ4MDViNTA0YzBjNmQyNjA2Y2M4YzEyODdhNmEzYjBjNDY0MzM2ODBmZmFlZjUifQ"
+        },
+        {
+          "resource": "repo://src/keybinds.rs#L506-L507",
+          "version": "repo-lines-v1:sha256:d70470988d56331ca2c431edfb54e202a1939087d611df77a009b3eab31e7c69:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZmQ4ZDA0ZWEzZmRhODNiZTE5MTBjY2UzOTNhYzEwODZmYjFiZTgwODRlYzMyYTkzNDljMzJlYzcxNjYxY2QxNyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNTZmMzBhZmM1NjNlNTZjYTA5Yzk4NzRiNWU4NjYwMzBmMzY2YWZhMDcwYjA3OWY0Y2ZjN2UyZWMxNGE4MDAxNCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZDI2MDU0ODI5YjMwNTU1NDJmZmZmNjkyZTU4ZGE2NmM5MDRkNDZiYmYyNTUyOGRiNzhiODc4M2YzMDczMTQxMyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOTdjYTFmM2NkNTI5ZmI0MGY5MzQ1ZmJlN2Q3OWEwOWUxOTg3MTM0YjdlZTI2ZWMzNzNkYTQxZjkwMGZlYTIwMyJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_b1e3e220620349659cfb4261b74e3e85",
+      "statement": "Every failed host raises an error toast: for a non-zero exit the trimmed full stderr (or `exit N` when stderr is empty), for an ssh-level failure the runner's reason; toasts slide in from the right above the docked panel, hold TOAST_TTL = 10 s, slide out over TOAST_ANIM = 300 ms, size their boxes to wrapped text capped at 6 lines, wear the same error color as their row, and can outlive the panel because toast expiry runs in every tick and the stack re-anchors into the vacated bottom-right after dismissal.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/broadcast.rs#L495-L562",
+          "version": "repo-lines-v1:sha256:2ffcd5931cdecc13ebb128261bf7798ca3b154b89789435465936c3135fcc2ad:eyJzZWxlY3RlZExpbmVDb3VudCI6NjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNmZWI0MTZkZGEyNjBiODI5N2E5NjRhZDc5NGYxMTdkODg3NGJkOTQ4ZGM0MTE3YjJjZjQ3MDRjYWE5OGVmOGIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRjZGRlYzcwNzMwYjlkMjA3ODk5MzNkYzkxNmIzZmFlZWNiYzQ5NGEwZGJkNDNmYTUwMDZmNzA2ZmRjZTczOTIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY1Yzc3YTZhYjU5ZmViZGM0YzlmNzA5MTRmNzg0MzllYTRhMmFmMTdhMWViNjFjZWI1MDhmMmE0OThiMzBkODciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM0ZjdiNmQ1NGE4NzM2YTE2MmZhMDM5NWJkMWQzMGVhNWY4NGU3OGRhMzYxNTJjZmE4YWU3N2U2YzU1NTkyNTMifQ"
+        },
+        {
+          "resource": "repo://src/app/types.rs#L568-L576",
+          "version": "repo-lines-v1:sha256:467ed7f00cfcf915a840cbe55e8efa85ec592bc04ea9799438f5cdcb8a973443:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMGZkYzA3MWM4YmVmMzQwNzJkOWI1YzMwNmIyMWU0ZDM3OTdiMGEwNmFhODg3YjEyZmY4NDdhYmUyMjg1ZDRhOSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOTMzMGRjNzhjMGRjYTUzMWMzOTJiNzlkZTA0MjQxYjY4NWIyOTlmYTM3NjFjNjBiMDBkYjllNzg1OGY4NGUxNSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNTEzNWE1MjU3OWM5OTBlYTdlYjQ3MjE3ZWYyZTViMTA2YjhkYzc3MWJjYjI1ZjhjODBiNmQzNDU2MzkyOGVlZiJ9"
+        },
+        {
+          "resource": "repo://src/tui/screens/broadcast.rs#L460-L543",
+          "version": "repo-lines-v1:sha256:915e20238825bedad61a27878e207e97402299fe9b8797f98a5e900f87933a57:eyJzZWxlY3RlZExpbmVDb3VudCI6ODQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcxYzcxZjQ3ZWNjZjU0NmI2YTBhNTk0MWQ4YTIzMWY4ZmRlZDVkYzRiNWJkOGU1ZTBhMDZiYTA4MzgxN2NiYmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY5ZmEwZGMzYjU2MzNmZjM2ZGFlMjUxZjM3NDg0NGFhODc3Yzg5YjdiODYyZjVmOGY4ZTI2MDBlYWQ4YjE1NjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE4MzQ2MmVjNWYwZjRkNjQyOTZlMWU3MWY0OWRiOWVlODIyZGEyMGY2MGRiZjM2MzZjNGMzYmUwOTkxMmIyZmEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ac02193f9c914233b140429baac2169b",
+      "statement": "tick_broadcast is called once per event-loop frame after the other worker drains: it expires finished toasts before its early return, drains BroadcastState.rx via try_recv folding each event through apply_event and spawning a toast per failure, retires the entry slide, arms Settling on the first all-terminal tick, writes the audit trail once, and drives the countdown phases; while broadcast-driven motion (entry slide, toast slides, post-dismissal stack drop, zoom morph) is in flight, App::animating shortens the main loop's poll window from 50 ms to 16 ms so the ~600 ms entry slide renders at ~60 fps.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/broadcast.rs#L16-L143",
+          "version": "repo-lines-v1:sha256:ce28e168d9701c51291394881a768ab679be31dec8c7355f6657ac9bc1d0ecf7:eyJzZWxlY3RlZExpbmVDb3VudCI6MTI4LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJkYzk5NWQwZmYyMmQ0YmY1MmI2YzQzNWIzMWNkNGRhYTNlNThhOGY1ZDMwMTM4MDI5NTAwMmVmNjAzMzliMGY2IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0ODkzZjQwZTM3ODFlYjg5NmM4MmQwNDZhMDgwNjdhMTFlMzVjZGYyZjFkZmFmMjZmZWE5MGI4ZGI2Njc2NDEzIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI1NzY1YzNmMTI3MzMzNmI3ZDFjYzdmOTY1ZjE4MTI5ZWMzMjE3YjY4OWQ4YjUzODRkMjhkZWZhN2VkYjBlNjM4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2YzY2JkYzczYzk5MjM1NDRiYjgwYmY5Y2YxZDM3M2U2MDJkNjZiMDgwZjJhZDYxZjg1NjM3Mzc0YzJjZjdkIn0"
+        },
+        {
+          "resource": "repo://src/app/broadcast.rs#L495-L645",
+          "version": "repo-lines-v1:sha256:4a19dafe4a6672ab1d9f4fa53953e25854c2be4140f4e1ebfd840661de7a6e5f:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUxLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJjZmViNDE2ZGRhMjYwYjgyOTdhOTY0YWQ3OTRmMTE3ZDg4NzRiZDk0OGRjNDExN2IyY2Y0NzA0Y2FhOThlZjhiIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0ODkzZjQwZTM3ODFlYjg5NmM4MmQwNDZhMDgwNjdhMTFlMzVjZGYyZjFkZmFmMjZmZWE5MGI4ZGI2Njc2NDEzIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI2NWM3N2E2YWI1OWZlYmRjNGM5ZjcwOTE0Zjc4NDM5ZWE0YTJhZjE3YTFlYjYxY2ViNTA4ZjJhNDk4YjMwZDg3IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJkYzVhMTkwNGU4N2VjYWRhOTcwNThiMWQyYmI4Yjg2M2UwZGFkMWNhN2IzZjVmMmYyZjhmOTI4OGQxNmM1ODQ5In0"
+        },
+        {
+          "resource": "repo://src/lib.rs#L450-L457",
+          "version": "repo-lines-v1:sha256:049776f7f55e17f11f452e2c338dcc52fc75da0bb49e8d03c686bf9de086ee76:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOTg0NzFhMmI2MjlmMDhjMGU5N2VmZjdhMTcyNzgwNWM1OTI3NjYwNTdiNjIyMjA0MTI3ZGNjYTAwZThjYTFiMiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYWQ5ZTEyNTQ2NDI1NTc2ZDNkZWFlOGM5YjlkYmYxMjhkNWQ2ZGRhZjVkN2ZlODU3OTM0OTI3ZGVmZmEzYjlkZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMzVmNmY0NjZlNTljZmMzMDcwM2M0NWY3MmFmNjVkZTU0YWMzNjNkMzU0Y2MxYTMzMzAzNTBhY2Q0NTI0MzRjNCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOWZmOTgzNDQ0NWU4YmZkOGE5ZTBkOTAwNTc5ZGYxODc1ODRkYTE0ZGVhM2JiOWVhNWY0YjkzMDBmMDMwOTg5MiJ9"
+        },
+        {
+          "resource": "repo://src/lib.rs#L546-L547",
+          "version": "repo-lines-v1:sha256:8dbca11dcd68fa85432d25339f24a93997cea64e56bbfcc3607a2846606c6253:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZDJlNzY5MGM5YTI1YTUzNjc0ZDNhYmNjMTkxOTBiYTc0MTE0MTRmZDljZDE3NzBmNThkMzQ5YjRjMGNlZDY5MCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZDgxOGUxNGQ3NTUyY2ZkNWUxOGU2Y2VhZTBhNjRlNjE5YTk0MTY1ODk1MjUzNzA1YjZjN2JjYWFiNTdmMjk3NCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOTk5YmRlZmVlYWNhNjM0MGUwMjkwZGM4NmU4ODljODlkNWUxODlhYTViYTQ0YjU4NWIzYjcwNzM0ZjRhNjJkOCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMTg3YTM3NWM4MzM5MzFhM2NlNDQ2NDZjMjkwNTE0ZThiYjExZDk5ZmI2OTA3OTNkOGQ1ZDhhZDNjYWRlNGNjZiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_ede9f8c2e8fd4ab7a96b7b4b87ab2057",
+      "statement": "The audit contract writes one auth_events row per host at completion — guarded by BroadcastState.audit_written so a second tick never duplicates rows — via the same store.log_auth_event the connect/session paths use, with via = \"broadcast\" and no username, using the canonical status vocabulary: `launched` for exit 0 with note `<command> (exit N)`, `fail` for a non-zero exit with the first stderr line folded into the note (via the shared error_text helper), and `fail` with `<command> (<reason>)` for ssh-level failures including \"cancelled\"; full stdout/stderr stays ephemeral in HostResult and is not persisted.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/broadcast.rs#L564-L601",
+          "version": "repo-lines-v1:sha256:627a8c8dfc61ba6df468dc4e38b49c60a14d2d8f3840a4e1a5d3d36141c3bbff:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU3NWI0NDI5ZWFmMjAyN2NjNDRkYjJkMzAxZTRiM2I4ZjFlYjRmYWQ2YzE5NzBmODUwZjFlOTYzMDkzNTU3MDkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2YjA0NDkxNDY5NzIyZTgzNjNhOTRlNDA0NDUzOGUwMTNhMmEyMTdlMzZiMWU1NjhiYTYwYWNiN2I0YzhmMmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImVjY2NiNmEzNWM1OTAzMDJjZTZjMjU2NmQxZDVmMGRlY2NlYmVhN2NiODg1ZmE0NjdjMmY3NTMxZmZkZTBjZjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkzNzE2YWJkOTBkMzMyZTg3MGY3YWNmZmYyODE2ODEzYWQ2MzlhOGIyNWU4ODVlYzU2NTY5NGRiM2EzMjJjZWIifQ"
+        },
+        {
+          "resource": "repo://src/broadcast/mod.rs#L466-L477",
+          "version": "repo-lines-v1:sha256:371b0ee80b3a5113dbe58f16c7b062e1bc472af9c8fcb2179d44bf4753c6987c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY4NmYwZjcyNjU3YjJkMjY5N2RhZjIzYzFlNGFiOTJiM2EyYWUzNTJkZmYyY2ZiNWU0NjdlMDhlYzU3ZDc2MTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjcyYTA0Mzg1YmJmZjkzNzBlMTU3MjJiNTNlZWZhMjcxYjVlOGRkMjE2NDc1YWIxZGJmYmMyMzQ4Y2FhNmY5YzkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBhZDg2NDU0ZTg0YmE2MzlmNjU3YWUyY2YwYzQ4M2M1ZWIzZDYyZjY0NzZmYWFhNTIzNTE4ZjliYTcxZjUxMWMifQ"
+        },
+        {
+          "resource": "repo://src/store/hosts.rs#L655-L673",
+          "version": "repo-lines-v1:sha256:473d2505cf1cdcef91b0afdacf7c15dec7d9efc8e118ecd54cc633045490cb4a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNhZWRiNjVlODdkN2I4MjczZWM4ZWExNDY0YTBhZjFkZjk2MjBmYjE0ODZmNTYxMzE2MGE2NzRiN2E3OTBiNjkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjljMjM3MDg3MWQ5ZjJmYzYzNTQ2ZWFmYzg5ZDc0OGFiMzg0YzBiZmQ4ZDE0ZTA3OWIxZjc1MzFiMmRiMDFlYjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQzNzliYWFjZWUyYzhkNjgzNjg4ZjMwOTg1YTkyOTU0NmZiNjU2NmI5MGE5MjI3OGYxNjZmMTBjYThmOTJlZjMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6a12c7f1f2174723b4b6840b8997f8fe",
+      "statement": "Broadcast is covered by engine unit tests in src/broadcast/mod.rs using fake CommandRunner implementations (bounded peak concurrency, one terminal event per task, cancel marks everything terminal, failing runner never panics, reducer order/terminal-row invariants, failures-first ordering, per-task secret threading), app wiring tests in src/app/tests/broadcast.rs (wizard group/tag flow, refusal while live, tick fold + audit exactly once with correct status/note, cancel flag, themed panel render through tui::render), and an offline e2e in tests/e2e/broadcast.rs that drives the real key handlers to the [y]/[e]/[N] barrier and deliberately stops before `y`, which would spawn real ssh.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/tests/broadcast.rs#L80-L270",
+          "version": "repo-lines-v1:sha256:a6e2241dfdd723503e67f4227ce5d9f52718fa2e037180571e599fccb58861cc:eyJzZWxlY3RlZExpbmVDb3VudCI6MTkxLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJkMmNkNGRiNDhhMzUwZThmMGI0Nzk0NGM0NmUzZmZkYmJhMTMyZDIyOTBhOTFkNzAxMmI1NmViNDZjOGFiNGY2IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlZTYzNWVjYWE1YzdhNzRhMDQzOGJlNTAyZjc0YThkMjIwMGFjOWY2NWQ4ZGE5N2M3MjY4NTMyYjk5MWQzMDI1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJhODkwZGEyMGI0MTA5ZGY3ZGI1ZTBlYWRhZDY5MmJlYzU5YTUwODQwODYwNjdkZTgwNGRmNmY1ZWY5MzY1YjI3In0"
+        },
+        {
+          "resource": "repo://src/broadcast/mod.rs#L493-L998",
+          "version": "repo-lines-v1:sha256:1a1fceeb4d3d439c939be2914339bf30a01e1e880445951ff7b3453cf7f0b94e:eyJzZWxlY3RlZExpbmVDb3VudCI6NTA2LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIyNWNmNWZjMjNmMmE2ZDIzYzNlYTUxZTcyZjVlODk2Yzc1NTVmYmFhMDVjZDViMWVhMTgyYmY5NjE4YThlODFiIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJjYWU4ZjA5NWE0MTUwNDFlZWU0YjdhZGFjZDUzODI0ZWEyYzQzNWVlZjc1MzBkMzk2ZGNmNWNiODRhNjRlYmE3IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        },
+        {
+          "resource": "repo://tests/e2e/broadcast.rs#L1-L170",
+          "version": "repo-lines-v1:sha256:99991554470c401d8ae979119c64b0f5628dc3523701ad3bdb233d7c46fb304c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJjZmI2YjQzNGM0ZDY0OTliNDQxMTlkNWNmYjhhZGI2MWZiNGJmMGNmZjVhYTZjN2FkNDc1Mjc0ZDYwMTRkMTY5IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.5.1",
+    "at": "2026-09-11T12:46:43.817Z"
+  }
+}
