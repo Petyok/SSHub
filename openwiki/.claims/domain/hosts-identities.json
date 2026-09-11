@@ -1,0 +1,442 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:ae1b8961cc4017bec463dd5a8357882ed52f67148306abbd993a6210415ab0f3",
+  "claims": [
+    {
+      "id": "claim_33afbc69276a44ef9da804794f4cc137",
+      "statement": "The user-facing host list is a three-way merge produced by `load_merged_hosts`: it first syncs ssh_config rows into the DB, then loads launcher and ssh_config DB rows, then appends legacy `HostEntry::Legacy` aliases for ssh_config names that have no DB row, with metadata defaults applied.",
+      "evidence": [
+        {
+          "resource": "repo://src/hosts/loader.rs#L10-L53",
+          "version": "repo-lines-v1:sha256:03415d8e2768c4a60ca1613820bffbcbe3fd982da1f8bb9097dee5ab9986f417:eyJzZWxlY3RlZExpbmVDb3VudCI6NDQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRmNDQ0MGJiNjdlNjllNTQ2YzJhYTU4NzYyZjdmMDhkMWVhMWM2NGNlMjcxOWY5ODhkNWRkZjBiZTk5OTAxNTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY5ODM1MmRkOWQ3NzY3Y2FjNWQyMmRkODM3OTBmYzdkMGVmYjU1ZjYyYWU3YzNmZTYyOTIyYzI0MjY1YWU5OWQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwMzk1MTkxNDk3NjY4YzVkNGRhZDA5MGIzZjY2ZTJiYjVkNDRjY2M4YWRkZWIxYzUwN2UzYTk3MmVmNWVhOWQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6d7cc6da331a423aa40a3b6da5d7a67a",
+      "statement": "Import/sync can never overwrite a launcher-owned host: `upsert_ssh_config_host` returns `UpsertSshConfigOutcome::SkippedLauncher` when the name matches a `source=launcher` row, and updates to `source=ssh_config` rows preserve user metadata (tags, notes, favorite); the background sync re-upserts a row only when `compute_ssh_config_hash` reports drift.",
+      "evidence": [
+        {
+          "resource": "repo://src/ssh/import.rs#L24-L50",
+          "version": "repo-lines-v1:sha256:95b31c735c35192941f4cb1d5706204b053386c6b76649f58ac6b66887854b6e:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ5ZGQzNWViMTI0NzQ1ODdkNDc3ZjliZjA2ODRkZTYxZTU3ZGI2NDBlMWUwYTE5MjY4NWU2NjA5ZTBkMDFkMTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ1OWNkYmFlYTM3NjJhNTFkZTQ5MTZmMTBjNjM5NjMwOTlkNmNiNGU4MmI3ZjM5ZmE2Mzk5NDdiYWIwMjhmYTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY4MGYyMzQ1NTBhOTE5YWVhZmYzYmVmYTkwNWVjYTMzOTQ0ZDk2ZWE0NGRkNjdjYzQwMzhhZGE1ZWE2NmY5MzQifQ"
+        },
+        {
+          "resource": "repo://src/store/hosts.rs#L518-L556",
+          "version": "repo-lines-v1:sha256:8652f2efb3df4256d83f8f9957622492ce99fb6f51e41f4c18e492bbe470a18f:eyJzZWxlY3RlZExpbmVDb3VudCI6MzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBlZDFjNWQyNzA5ODk5ZjdhZTU5NzUyYjE1NGVlNWU3MGNiZmExNGM4OWI3MmVkOWFiNjNlOTIxYmQwODhhNzEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2YjA0NDkxNDY5NzIyZTgzNjNhOTRlNDA0NDUzOGUwMTNhMmEyMTdlMzZiMWU1NjhiYTYwYWNiN2I0YzhmMmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImEzNmZlNjc1MzY5YmZjZTYwMWE1MTVhOGJkYTQzYTcyNTQzZjg4OGY3NjUzOGM2NGJlMTU3YzZmNjYwN2ZjNjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNkZjkyYjJjODA2YjU5YjczMjAxOGUyYWVkZmY3Y2QxYmQ0MzI4MzJjNjM0MGE1ZGVjNzgzMzcxZGY0ZjVlNGEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b35dff98ff4f40d59b2cdbd55f2d74f4",
+      "statement": "Host resolution goes through the `HostResolver` trait / `SshConfigResolver`: alias listing parses `Host` lines while following `Include` directives (recursion depth-capped at 16, with `*`/`?` glob support in the final path component), and effective options come from the real `ssh -G` (hostname, user, port, proxyjump, identityfile, forwardagent, remotecommand). The config path is `~/.ssh/config` unless `SSHUB_SSH_CONFIG` (fallback `SSH_LAUNCHER_SSH_CONFIG`) overrides it.",
+      "evidence": [
+        {
+          "resource": "repo://src/ssh/resolver.rs#L126-L155",
+          "version": "repo-lines-v1:sha256:a526425050d5f780537719461c70a7b21576f5785649fdf4e97095ca41325d52:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjczNjhlZmEzMzgyNjQ1OTIzMWY4MWJhOTg4ZTFmYjViN2UwNmIzNzRmNTQ5NDI2N2Y3MzcxMTk3YmFjZmY5NDIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjMyOGVkZjg1YzFlZDIwNDRmODY1MmMwOGE5NDA0NTRiZDI2NzlhMTYyNDYyZmJhZDk3YjNhY2ExYjE1ZmRlNWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjczNGJhOTYzMGIzNDhkOGMyMGUzOWNiZWY5ZWYwYjY5YzM4YmQ1YTY0MzMxZDkyMzE2YjAxNGY4OWMyYzk1ZDkifQ"
+        },
+        {
+          "resource": "repo://src/ssh/resolver.rs#L239-L271",
+          "version": "repo-lines-v1:sha256:f31a8e8958e74a08a84f86b82a5c03a4f5293596bdac73205daad0d786a75d5d:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA0ZGViYzllMWM4MmVlOTA2NmNmYTI2YjNkY2FlYzA3ZjI3MDg4ZjdlN2U0ODQxYTE1YWM2Zjc1NTk3MzJlMzciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjEwYTMwNDE0ZjY5MGEyZWZjMTA5OThiOTQ4MWQzMTg5N2JjMDE2YzZkNTE0MjM4ODQzYzhlZGE1MTUxZTA0MWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdmOTc4NDQzNzQ0NWE0NmVhNDNhM2RjNGQ5MDU1N2YxY2JkYTc4YTEwZmFkMjUxOTExMmQ0MmYwOTRjZTU0NjEifQ"
+        },
+        {
+          "resource": "repo://src/ssh/resolver.rs#L87-L96",
+          "version": "repo-lines-v1:sha256:3cb4ab5ac761f4e4b2e1ee81ac496431adbe0451567a84146818e5f90d42a06a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY3M2QzMTkzZmY0OTk3MWZmMGI1ZGJjY2MzYjE3NzUxNzNiM2MwNTdkZTU2OGMwY2M3NjE0NDJhNWNmZWY4ZTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJhZGI3ZTcxNTUwMDlhNmQxMjZjYTZkNDU5NjgyNDM0MjQ1ZTk2M2ViZmYyOGFhMDU3OWMzMzIyOWNiZTA2YzUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNlYWI0MDc2ZDRmODFmMmU5MDRlMTAyNGU4MTIzZjBkMzQ4ZmNkNWFlZTNhYzQ0Zjc5ODE5ZmE3OGRkNTY5ZjkifQ"
+        },
+        {
+          "resource": "repo://src/ssh/resolver.rs#L9-L13",
+          "version": "repo-lines-v1:sha256:60459dac19dd9edc4d904fbe9985f37f332e0713c29377ef69abcde27f623085:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMzhhYzQ0NzlhNjEwOTc5ZmFlOGVmM2Q3NzMzNDNkOTgyYzY0M2RhNDAzNDg4MWYzNDczZGU0Y2Y5MjAyNGFjMyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiN2M0NDMyZjZlMTU1ZGYyMWQ3MDFkOGI3YzVlYzAwMGVkZDAyOTllNzU1YzM5ZGI1N2QxZGFjNGMwMmUzNjU2MCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNWFjYzliMDVhOTBhZmZmNjVmNWZkNGQwNDZkNzczMmU5YjNkMjQ4MWRiMzBiNjQ4NzA3MTM0MWRmMGQ4ZDZjOSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_9dc0b7a0e19349d8b700e67bfbf1840d",
+      "statement": "Since 0.14.0, quoted `Host` aliases are unquoted the way OpenSSH unquotes them (`listable_host_alias` strips surrounding double quotes), fixing the earlier bug where a quoted alias listed verbatim and `ssh -G` rejected it with `hostname contains invalid characters`. The hand-rolled `Host`-line parser is pinned by the differential test `listed_aliases_round_trip_through_real_ssh`, which resolves every listed alias through the real ssh binary and degrades (skips) rather than fails when ssh is absent.",
+      "evidence": [
+        {
+          "resource": "repo://docs/oracle-tests.md#L30-L58",
+          "version": "repo-lines-v1:sha256:24bcef638a0f999644c403e5a663380c710856fb0559bf3ad1429dde655ef2e0:eyJzZWxlY3RlZExpbmVDb3VudCI6MjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFmMzhiOWYzY2M3YjE1YzY2YWMwNjEyMjQ4YjgxYTI2ODc0NDcwNTRhNDJiMTYzNWE1YmViYzdmZjkyYzA4NjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVmMjI5MTUxMzQyNTkxZDkyMTBlZDZiYjE0MTEwZmZkMzU4NmFjYTQyNzZkN2IxYzg2MzVlODJjMzJmZWZkZWQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk0MTc3ZDI3NzU0NzNhMWRiZjQ2NTg1YzYwMjQxNGE4NmFiMmYwYWYxMGUyZjRiNzRlMTRmZGQ3N2RhOGE0ZmYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM1ZGRkMTk3ZGIwNWU0MDI0YmY3MDk0NmE1NzVkYTdjODg1ZWUyNDllZmM0NTEzZDZjOTRhZmM2MzM1NTVkNzUifQ"
+        },
+        {
+          "resource": "repo://src/ssh/resolver.rs#L221-L236",
+          "version": "repo-lines-v1:sha256:6837447e3a10d1901462f880c8e7c568f4af0eaf1057792ef0911ce08ff4b4bb:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkxMWU4YjYyZTMzYmM0ODQxYzg2YTUyYmJmZDQyNGFlNDFlMGJiZWE4MjQyMmQxMGUwZDIwYjlmMzA1ZmI0MGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE5NDBkMGMxM2EyOGRhZDkxOTBkMjA2ZmQ2MGRiOWViYzUyYzJlZGNhODBiNjg0YTFkN2JhZTgxNzVlMzFhNWQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUyOTk4YzJhMmE4ODFiNmQwZjYzMTY1NjFhN2RjMzRhY2NmYTAyNTdkN2EzYmM3MWQ3M2Q2NWZiM2E2Y2E5N2UifQ"
+        },
+        {
+          "resource": "repo://src/ssh/resolver.rs#L441-L500",
+          "version": "repo-lines-v1:sha256:709f9af76d173d1c43d54206834153a73b3762e20d319217750a044146424541:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJiMmQzMmVlZDIxOGZiZDk5YTgwOTEwNTk5ZmFkZTdkMzg0M2M2YzJlZjIwMTU5Y2M3OTE4MTVjZTVhYTI1YTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIzMGUxYjc0MTVjMzRhZmJkNDViM2Y5Mzc2ZWM0YmRhOTdhYmYyZTQ1MWI5MDYwZDNkZjk0ZWZmMzE4YTY5NjgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFhNDAzYjBlNWJmNzcyNGVkYWE5OTQ1NTA1MGEyODI0NjM5NGI4ZTBiZDk5MmI2ZTg0NWYxZDFhMjIyZTI3ZTYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0d00a794253149e8b320305c7295252c",
+      "statement": "The store refuses option-like host fields at write time (issue #101): `create_host` and `update_host` call `reject_option_like` on `name`, `address` and `username`, refusing any value starting with `-` that ssh would parse as a flag; `is_option_like` is exported so the host form can flag the value while the form is still open.",
+      "evidence": [
+        {
+          "resource": "repo://src/store/hosts.rs#L204-L208",
+          "version": "repo-lines-v1:sha256:5517453c63a09976aa8daa9b037c75f5988e4a5691f77ccd1331c2c483816c29:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYmYyNTU3MTUzZGFmYWVlNThmYzMxNTgwZTViODdjZmZmMzgxZjY0MTliM2E0NmMwMGZjMjA5YmE3MWExZmE0NiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZmUxYjM3ZmEzNjgzNTAxYmVkY2U5MDU3NGY3NDM1YzMwZjljODc1YjE4M2I3MDRlNjIxMjZhM2Q5YTdkZjY2YyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMWYyNDA4YTU3YWJkMTJhY2VjZDA0OGRjNzBlNWI2YjYwZWYxMjRjNjcxOGIzMzhmNzk2M2E0MjI4OWYxMWJjNCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYzNjOTllNDE3NTdjNWMxNWJkNzhjN2Y5YWQxZjE3MmY2NDBhZGJkZmI3ZmQxNzk1ZmE5ZjZiNTBhMGQwNGRhNiJ9"
+        },
+        {
+          "resource": "repo://src/store/hosts.rs#L313-L319",
+          "version": "repo-lines-v1:sha256:3794aedd4d30b04db5cc46b7e053b6aa40e224baa67d50369ce91a1b8a709826:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZmYxMDgxNmE4MmFlMTRkZjI1MzllMTMwODBjZmVmODlmZWM5Y2ExZDZlNjVjZDUxMGE5ZTJhNGU5MDg3OTAwYiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZmUxYjM3ZmEzNjgzNTAxYmVkY2U5MDU3NGY3NDM1YzMwZjljODc1YjE4M2I3MDRlNjIxMjZhM2Q5YTdkZjY2YyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZDQ5YzU4ZmUzNDYxYjc2Yjk0ZGVkMjI3NmYzZDRhMzRjYmYxZTA3NTJiZTA2NWVhNGQ3ZDI5NzcwNzg0ZmMxMSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZjhjYTcyMjVjZDg0OTdkN2M3NGQ1YTZkN2RkNWJiZGRjYzM4NWM1OTU1NmVkOTQwOTFhYjJiZGMzMzg4N2I2ZiJ9"
+        },
+        {
+          "resource": "repo://src/store/hosts.rs#L887-L910",
+          "version": "repo-lines-v1:sha256:2c9942e77b2b2c22ec28529cd519206744a9585b8236d598359faf88787a4eed:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYwOTNiMTNkOWQ0ODNhZjFiNGRlNDIwN2QyYjYzMjg0Y2ZjODE3MDRlMjk4Njg2MWM3MWRkOWFmNDg1YWY0YWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImEwYTEyNjk5YzE4MDk4MDg0Mjk3OTNhOTNkZGU2MDcwYTU4Y2VlMzBmZmIxMmQ4MTEyY2FjNjI0MmU0YTI3NjEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6d9dc13c850a4cc2bff0f857f057fbe6",
+      "statement": "Leading-dash protection is layered end to end: third-party importers treat one store refusal as one dropped row (the poisoned entry is skipped, the rest of the file lands, counted in `HostImportReport.skipped_invalid`), and `safe_ssh_target` rewrites a leading-dash connection target to the `ssh://` form OpenSSH refuses outright at connect time, so a row written before the guard fails loudly instead of executing a local command.",
+      "evidence": [
+        {
+          "resource": "repo://src/import/mod.rs#L16-L20",
+          "version": "repo-lines-v1:sha256:869b2cd056b9d48cbb44da0d6585a44c68f9d9cb23d7fc43a78debd2a56a4b50:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYzNmY2E0ZWY0MmFiNGQ5M2ZjNTZjZDA0YTRjZjM5NTEzMmNkNzI1MGY0MjAyODBjNTVlNGIyYjRiMzk3NDZjYyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZjkzZDJmZGNhYTQyYmY5OWZlZDExOGIxMjAzZDM4YWVlOTI4NDFlMTMyYTk5NjEwMzU2YjRiNmJjNmI1YmE1OSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjAsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9"
+        },
+        {
+          "resource": "repo://src/import/mremoteng.rs#L449-L457",
+          "version": "repo-lines-v1:sha256:d4eabe1a0518c2c9ecbb692df8e84b968fb2a0dc8de9c508a8a03841a344a3b0:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMGU1ZTc4OGMxZjExMTlhZmNmMTQyOGI3ZTkwNGYyM2ZjMTM4ODNkNmY0YjM5MjZmMDM2YTNlMjdhOGY0NDU1YiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZTZiMDQ0OTE0Njk3MjJlODM2M2E5NGU0MDQ0NTM4ZTAxM2EyYTIxN2UzNmIxZTU2OGJhNjBhY2I3YjRjOGYyZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMjM2YzQwOGZmZmY1N2RjMDFkZjY5Mjg0ZTZmYTczZWNmMDMwNDY4YmZhNjMwNTc0YWEwYmNmNzMwODk5ZjIzYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiY2JjZjFjMjBkNGRkNWNmZDJjZDQxYTVlYmZlNjU0OTUzNjRiN2M0ZjE4MDcxYTc2MTgxZWRmOWRkMDQ3YmYzZCJ9"
+        },
+        {
+          "resource": "repo://src/import/putty.rs#L392-L399",
+          "version": "repo-lines-v1:sha256:9d767c55d9d4f5dcf8c381a15f9102861c878a81e586919e65146d2000cc3cc5:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZDllZjdjNDYyMDUwNDc5ZDc4YmUxZjJiYWE4Mjg4MDMxMmU3ZGZlMGIwYjQ3Y2ExMjM0ZTFiMjljMGM1NjQ0NSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZTZiMDQ0OTE0Njk3MjJlODM2M2E5NGU0MDQ0NTM4ZTAxM2EyYTIxN2UzNmIxZTU2OGJhNjBhY2I3YjRjOGYyZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiY2QzZjZhYzc4YWQ0YTM5MWE2MjgyNDIyNTNmN2NhNzk5MDJkMjYzODQ3NTY1NmUzYmJhOTFhYzAxMGU2NzFmNiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiY2JjZjFjMjBkNGRkNWNmZDJjZDQxYTVlYmZlNjU0OTUzNjRiN2M0ZjE4MDcxYTc2MTgxZWRmOWRkMDQ3YmYzZCJ9"
+        },
+        {
+          "resource": "repo://src/ssh/host.rs#L88-L107",
+          "version": "repo-lines-v1:sha256:0855157bae5856cb010151d37ec33abc461233c80742b5d9cd9c0057cf0028b9:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRhZDMwNDVlODI0NDA2MmYyMzYwYTU3MzdmMTZmNDkxYmNmNDJlMjJkOTg5MWIyYTk1YmRhNTJlNTUxZWVkMGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk3M2ZhMTMzYzY3NTU0MzE2NzIyZGI3YWNmNDI2NDAzNGNmZGRhMGQ5ZWNkZThhNWM0MjY3NjVkOTQxODA5YzciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM1ODc1ZDMzNmI5NmVlMGNkZjdlNmJmYjg4YmU0NDRhYWQzY2MwMGZkZjg1Yjg3MmZiYjRkNTA2NTAyZTMyZWEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7c4b2f0568034a49a68f3ca758b3f37b",
+      "statement": "The built-in Favorites group is identified by its `reserved` flag (`favorites_group_id` selects `WHERE reserved = 1`), never by name; when a user group already owns the name \"Favorites\", the migration creates the reserved group as \"Favorites (2)\" and leaves the user's group unrepurposed. Reserved groups cannot be renamed (rename is a no-op) or deleted.",
+      "evidence": [
+        {
+          "resource": "repo://src/store/hosts.rs#L131-L140",
+          "version": "repo-lines-v1:sha256:370fba7fbe380814653c7cad48df38f6486535d3f2b737cf508e23972ee6b156:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNiNzYwNDgwMGRiODc0MThhZGIyMTJjZjY3N2I3NDM3YmIyMGFhN2NmYzgwY2U0YzFlMThjZTMyZTY3NjhlNTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIxMmM1ZTYwZDIzOTljZmY2MGFjZDkxNWRjYmMxNjMwOTcxZjM0YTY1YTU2ODk2NWZhNDljODEwYzRkYTMyNWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg1MWNlNWU2Mjk0OWU0NmE1Y2Y4ZjZkMTYwZTc3MDkwNjdmZTk2NWM1YTkxNDVhMmIyNmM5Mzk4M2M1ZjE5NDEifQ"
+        },
+        {
+          "resource": "repo://src/store/hosts.rs#L74-L106",
+          "version": "repo-lines-v1:sha256:0fa70c7ca39a370dc72e95ed4fde0302caf4b9b37329dad792300b1aa115646a:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU4N2YwZmZhODY3NzVhMGI2ZDk5NzAwNzFjNTcwNzJiZWI1YjA0ZWJjN2ZhMTFmOTc0MDc4ZGE1ODUyMGI2ZjMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2YjA0NDkxNDY5NzIyZTgzNjNhOTRlNDA0NDUzOGUwMTNhMmEyMTdlMzZiMWU1NjhiYTYwYWNiN2I0YzhmMmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRhNTczMmM1NmIxNmIyNjJmOTU5ZjgzZGI0MmQyNWM0ZWY3MmM3ZTEwN2U5MWJkNGY0NDEyNTU3OTliNTJmMjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjgxYWM3ZWFiOGY1NmMxMmJmNjNkNzhmZDA2NTIyODZiNGZjMWE2YjIwMjc5MjFkNThkOTkwZWU5YzYyY2NlNDgifQ"
+        },
+        {
+          "resource": "repo://src/store/migrate.rs#L429-L453",
+          "version": "repo-lines-v1:sha256:c0e79c9842d6aa112a1658e1dc8042cae1f376c18e7ee3992532531b28c98eda:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFiNDJmZTZjZGY4ODNkMGMzOGNmZWU4NzRlMWFjNWY5NzY2OTQ5MjM5ZjI1ZTJlNjFlMjQyMWQ0YzBlZjMyYzQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFkOWUxMjU0NjQyNTU3NmQzZGVhZThjOWI5ZGJmMTI4ZDVkNmRkYWY1ZDdmZTg1NzkzNDkyN2RlZmZhM2I5ZGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjgyYTNkZWZlMWYxMDI1YTE1NDU1NjM2YjM0ZWE5NjliZmE5ZTdhYjY1ZGFiOTJhMTg1MWNhNDdiMzdjZWQ2OTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBhOTJjNTcwYjg2N2Y0ZjkwOTUwMjUyZGZkZGVmMjg0ZmExN2NjNjJmZjM3NWNiMjJhNDllODEyZmQ1NzZkMGEifQ"
+        },
+        {
+          "resource": "repo://src/store/migrate.rs#L843-L884",
+          "version": "repo-lines-v1:sha256:8649591610c048ce691d183aa17e32846526d7e17bbd49e85910a8c663157f4a:eyJzZWxlY3RlZExpbmVDb3VudCI6NDIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI5NDg2MzdhNmNmZDZlNzI3YWJiMzUyYmIwZWZkOGUyOGQxYTgzYTk3NzVhZmQ0ZjFhNWI4M2ZjNWU5ZThkOGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImEwMGRiMDQwZjI5MDliZjk3OGZmMGE5NTZhNTVlODNjNjUzNDE4ZGU2YmI2OGY4MDQxZGE5NzZmOGQzZDIyNzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImYwNTJjZmQ4ODg3ZWE2MzI4MGIyYWE4MmY4ZTlmNTc2MTBhNzRmYWZkYTZhNWZhYTA0NmM3ZmE0MjMyYzYxM2IifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_bbc4adeb3d7c421b8b4ca20a394e8f80",
+      "statement": "The `favorite` flag and Favorites-group membership are kept consistent by `sync_favorite_membership` on every write path (favorite toggle, host updates, ssh_config upserts), `ManagedHost::favorite` is derived at load from reserved-group membership, and `set_host_groups` replaces only non-reserved memberships so saving the host form never drops favorite status.",
+      "evidence": [
+        {
+          "resource": "repo://src/store/hosts.rs#L142-L165",
+          "version": "repo-lines-v1:sha256:0e39cacbf15cd1a1f03add62516751fe173dbbd5ef193c233a55d006b05a96ea:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE4ZTU0OTk2MDVhNWIxNmJlN2QyNTJjZmY1OTZmODc5N2UwMWU5MDUwYTlmODNkYjM3MTMwMzcyMzMzOWNlMTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEyOTBkZWVkYjU2MzVlMjhlYjBkMGE0NzJlYmFhYTNlZDI3MmI2NDBjMTljYTJhNzllM2JhNjk0Y2M0Njc4YTIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImViOWEwOGJjMjlmNmViZWJlOWE1ZjAxOTAzZDk4NDVkYmNiNTg0MmE0NTVmMDdkNWY0MDAyZGFjMzJhNWM2MDUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRjYmM2ODhlNDk0YjVkNTkzZWJiYTJlMTk5MjM3N2FmYWRlZjQzZWYyNWE1MjA5YmYxMDM1OTQwNjdkZmY2NTcifQ"
+        },
+        {
+          "resource": "repo://src/store/hosts.rs#L940-L944",
+          "version": "repo-lines-v1:sha256:c4578e5a345ff771f23903001b39cc7b84fba3200701faf4026d6b171f4572be:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZjhlNzczYmJlZWVmNTU1ZjBmYzA1YmRiZmE1MjRmMjRmZjI0ZTczOWY5NGViYTBhNmMxYjExNjQyMjU2ODk2OSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiY2JlOTYwZmI1ZDNlNWFhMzUyM2UwNzVlYWI3MDc2MDQyMDE5MzhmMGExMGQyZDMyOTMxZmE4NzBlN2ZmZjA3MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiODQ0NTRkYTBiMjVlMzFmM2EzYjdhYjg3OTA4MzdmODAxYjYwMzU3YzRjOTUzZjNkNTAzMDAwZjFlYTI0MmRmZCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYTcwNDgzYmY5ZDhmMDQ5ZWQ0NjkwMWIxNjhmYzRmYzQyM2RmOGI3Njg1Mjg3OTBhMTRhMGE3ODA3ZGZlNGJhMSJ9"
+        },
+        {
+          "resource": "repo://src/store/hosts.rs#L975-L993",
+          "version": "repo-lines-v1:sha256:24d864a69e4842ed1402d223892a3d51172e654228f85c7e286b32c24f606b2e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY5YzYwNDQyNDBhODg5N2U2ZDVhNDlmNDE5OThkYmY3YThkMjY0ZDViNjJjMjQ2YjY1OTdjMjYzZmQ2YzUxYjEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY3NzUyY2M5NmU2OGZkMzI3NWJiNmJhOWRlMjIxMjc0MjU4Mjk3MjYxZDZiMjlhNWU1Yjg1NmYzZDc4MjUxY2UiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVjYzViOGU1MmFmOWJiY2QzYTlmZTRhZWQ0MzBhNjZmNTk1YTM2ZWFlMDdjNjZkNmQxNWE0NGRkNjhkMzBhZGYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ee68cde1f77645d2a10d733902825587",
+      "statement": "`materialize_identity` concretises an inherited group identity: when a host has a NULL `identity_id` and belongs to more than one non-reserved group, the primary group's `default_identity_id` is copied onto the host row so it stays stable across later membership changes; it is a no-op otherwise, and joining Favorites by favouriting never triggers it because only non-reserved groups are counted.",
+      "evidence": [
+        {
+          "resource": "repo://src/store/hosts.rs#L1012-L1056",
+          "version": "repo-lines-v1:sha256:b9c005423957f5898b51d2fafc0b5d55ce8d8cd118751d393b8f99c17d3c1931:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA1Zjg2ZDdhMjgwOTU4YTg0NDk2ZDRhOWQ1ODgzNzQyZjkxMjE2MjM1N2RjNWRkNWNlZDhmMDE4MTdkMWE0NmYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk1MDY5OTA4NWE1NzUxNTBkNjliYTFmNWU0MzVkYzUyNDIyY2VkNzFkYTI5YTI3NDYzYjRkM2RjNjI3OTc4ZGQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU2YzczYTBlNDk1NGJkNDEwMjU2YTFjZmU5YTM2NzMxOTZmNzYzMTE2OTNjYmFmMjNiYmU2YzhjZjE0OTMzOTgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a459e9749b234a179a9aa58cdcfdeb5b",
+      "statement": "An identity bundles name, username, private-key path, certificate path and `has_password`; a \"Default\" identity is seeded when the store opens, and deleting an identity that hosts still reference is refused (`DeleteIdentityOutcome::InUse` carrying the referencing host count).",
+      "evidence": [
+        {
+          "resource": "repo://src/store/identities.rs#L13-L27",
+          "version": "repo-lines-v1:sha256:a3382edbad7aabbb5ccc01a54e301bfac7bf4820c6e10c54c0d2946dfd40e047:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU3YmNiZjNkNDMxNzBmMGVlN2ZmYjI0OGM3NGVjOGQ1NzI3ZGI1YWFiNDQ5MmNhODk5NGI3MmVlMjk5OTdmMmMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQyNTE4MWNmOTdjNzZkOTY1Nzk5NzRiYTk1OGM0ZDk1N2QzY2Y1OGUxYWEyMTg0NGVkNGRiZDBlYmIyOWU4NzEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhiY2ZiYWFlNzdlYjIxYzJhZTJkYWU4Mjk0NDNkYmMwNjRiNzU3ZWYyMzEwNDAzY2VmMDBhNWUzMGNkYjA3M2QifQ"
+        },
+        {
+          "resource": "repo://src/store/identities.rs#L151-L171",
+          "version": "repo-lines-v1:sha256:09c12a254342da96a259af010a2977d193f85a41946f02aaedccb2968df19384:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY0YTNmZmJlMTU3MTc4OTM3ZjA2YjcwYzRhZGFlODkxZjdmODEyNjRiMWQ4YWFmNWY4YzY4YWJjZjI1MWQ0NGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImViOWEwOGJjMjlmNmViZWJlOWE1ZjAxOTAzZDk4NDVkYmNiNTg0MmE0NTVmMDdkNWY0MDAyZGFjMzJhNWM2MDUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJiYWM3OTZiZGQzNDZlYWU4ZTZmNjE5YWZjZGQ1NzU2Y2Q5ZTUxYjJkMGQzZjdiYjdlNTZhNjk0MzVmNTI3NmYifQ"
+        },
+        {
+          "resource": "repo://src/store/types.rs#L19-L27",
+          "version": "repo-lines-v1:sha256:1dff0f5dbb065f93872cc7b710d24b44770bcdba9c4d83c7ca8c42c1242f7ead:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNDM3MGZlMjM4MjJmMzhlZmQxYjBlMjE2YTM5MjhhNTQ2MDdmY2EwMzFmODlkODZiMTJlODljMjYxMWQ5OGZhNyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNDQyNjc3M2IyNThiMjdkZDZhNDdjZGMzNWE3ODliZmY2MmY5Y2ZjMjg5NWY1MjU3MDFkMWU1OTA4ODU5NWM5MCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYzQzMDg1NGI4MWJiZWU4Y2Y2MDg0ODI2OGJiYzIzMTJmYjA0N2ZkZTIyZDc4MzE5NWNkODA2YTIyMmQxYjdmNiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_832674ff6fef42cf8dd90fed914c5cdc",
+      "statement": "Identity passphrases and host passwords are keyed in the password store (OS keyring, with an owner-only file fallback) as `identity:{id}` and `host:{id}` respectively.",
+      "evidence": [
+        {
+          "resource": "repo://src/credentials.rs#L214-L220",
+          "version": "repo-lines-v1:sha256:6561411fedc53691ca7b9e50e1068f8221a024e9e3c9730b911361f2222308f6:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiY2ExMzdjNzc5NmM4NmFlNWJlZjZkNzQwNzQxNGE0YWYyOTg2NmJkNzhjMzY1ZWNjNzJkNGJiMzUwOGRjMDU5ZSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMTllNzYzNTVjZjExOTk0ODBjM2Y5OTgzNmIxNDg2Yzg0MWQ4OTFmYWFkOTA0YzYwOGUwOTMwMjJkMzc1N2FlZSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiN2JjOThkNmIwZGM0OTJjNTAxNmRmMTA4MDVhM2E1NGViOWMxODRhNWE2MTM3ZTdmNGJlY2ZhMGMyMjA1NTBkMCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_b96fa6a0b75f428f8aa3b38f887002b0",
+      "statement": "ssh-agent integration wraps the `ssh-add` CLI: `detect_agent` reads `SSH_AUTH_SOCK` and parses `ssh-add -l` output into type/bits/fingerprint/comment, `add_key`/`remove_key` shell out to `ssh-add path` / `ssh-add -d`; the Keys tab exposes add/remove via `p`/`r` (plus `sshub identity agent-remove`), the agent panel is refreshed at most every 30 seconds, and zoomed it lists every loaded key as a selectable row removable with `d`.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/identities.rs#L4-L20",
+          "version": "repo-lines-v1:sha256:027f625b33ffb34c5d9d9fa146b009bf323e79c44f9f7f6b472900a2e0a4d9c0:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRiY2UwZmFlMzAyNTlhM2RmMzIwYWVlMmZkNmYxN2YxM2ZlZTk0MmI1ODY0YTZiNGRkZmJiZWI3ZTlhNGViMzkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA5N2YxYjQyNTcyYzZmZTZiMjFhYzRmOTU4MWM3ODRiYjE3NTAxNTkxYjI2NGQ0Y2I0NWQyMjE2ZmVmZWI0MzMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImIxNDcxYWY0ZWYwNTVlMzYwNTBmNDkwNTcxMjQ3ZDEzYjIxZTY3NzFmNzhlYzA1MjhmZWY5YzE2ZDBlMzdiNzgifQ"
+        },
+        {
+          "resource": "repo://src/keybinds.rs#L478-L480",
+          "version": "repo-lines-v1:sha256:cc06ebbb89388d0b18cfdf4d12b83e1ab02a600754c8e8ecd4f9d090c870427a:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZTUyZDI1ZWMzMmVlN2FkMTE5ODMwNWI5MDBjMTkzZjgzZGJmZmM3ZWViZDJhNDI4MzcyNTQ3MmExY2QxZDU1MSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZWQwMjFhZWIwMzBlZjBmZDZkZjY3ZjhlMGFkMmI1MGY5MDkxMTBmMzcwMmQ1OTVhMmFjM2FkOTIzYTI2NzFmMSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMzgxZWM1MDRmNjM3YmQxZmIxNDQwMzRjM2VkZTQ4NTQyNmE5MDRhMzUwOWJhNTRkMmE1NGIzZGVhNTA3NTQzMyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMWFlM2ZhYjg1ZDE0ZGZlMTdlYzYwOWU2ZWEzM2I2ZjIyYTI3OTQ5YzYyMzA4YjllZTE1ODg3YWI2ODNmNDQyZSJ9"
+        },
+        {
+          "resource": "repo://src/ssh/agent.rs#L19-L49",
+          "version": "repo-lines-v1:sha256:43d2831e29e92ec65f60449581aba85548d708270ab889d5b27836fe9b8efcfa:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk4YzQ5YTVmODQ4Zjc0ZjQ2MDA5N2RkNzg4ZjRjZTg1NDFlZDQ2YTc1YjBhN2QzNTBhYTlkZmJiZGE3MWI5NWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjUzNjk0YjQ0NjE1MTE2NTE2ZGFhOGVkYjQ5YjMwMTA4Njk4MGJhMTJiNDIxODZmYjkwOWVhYzNkOGM0OTlhYTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE3ZDc2ZjhiZDIzYWI2MmQ4MzU0ZTIxMzRkNjc4MTE1MDBkNzJhOTY1MjQ3NTg0OTViNWFiMzM5MTIzMzdmNTAifQ"
+        },
+        {
+          "resource": "repo://src/tui/widgets/middle_stack.rs#L456-L566",
+          "version": "repo-lines-v1:sha256:dbe63d587b0d6ba3f5e77a66a86348571f516ebb14818bedfbf82d27567034cd:eyJzZWxlY3RlZExpbmVDb3VudCI6MTExLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJhOWZlYjBkNzI5YWUzMjY2YWMxYTc1OWRiZTJjOTM0NzQxYzM3NDQ2ZjlhOTBlYTBiNjk0ZmZjNDhiYjEyYmM2IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIwMmI0MDViYTFhNGRkMjJjYmQ3NzkwYzA3MzcyZTQyN2E4YTM5NDkyYmZlNzQyMjBkODFhYmEyMTlkNzE2ZjRjIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI3MWQ3NTY5ZDFkMjNlN2I5OWM5NDJmMzhkNGQwYzhmZWRkODZlZWExNGEwYjdmNGMwODg1ODFhY2Q5Y2U1ZTc0IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIxNzk5ZWE1ZWQzZWMxYjRmNTU3MzA4YTg5MzYyNTgzODJkZTlkY2UxZjU4NjI2NTVjMmVlNjc3ZTVhNDJmZGZlIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_a2439ccc13784b46a9cae176679e53f8",
+      "statement": "Key-file probing runs `ssh-keygen -y` with the candidate passphrase staged through a `KeygenAskpass` helper — a `0600` secret file plus a `0700` script exported as `SSH_ASKPASS`, both removed on drop — so the passphrase never appears in process argv; `key_is_encrypted` and `passphrase_matches` fail open (return `None`) when ssh-keygen is missing or the error is unrelated to encryption, so callers never block on an unknown.",
+      "evidence": [
+        {
+          "resource": "repo://src/ssh/keyfile.rs#L11-L104",
+          "version": "repo-lines-v1:sha256:285548f12b941e5ace0b6520be31e940a762ed20273951c039efe09b9575f910:eyJzZWxlY3RlZExpbmVDb3VudCI6OTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNjNjQyMGZmM2U4NzU0NDQyMjBjNmM5ZmM3MjIzOWZkYzg0YjEzZmFkOTQxODIyZDcwYzQ5YzQyNzRlNTFlODkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjIxZTJlM2I4NjU3MGJjM2JhOGQ3YTIwYWQ0NjUyM2JmMjVlNmYyMjAwYmU1NTZhOWJkNjA1ZjNmMTg1MzViZTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkyMzE4YjM0Njk3Njk4NDcxMzA3ZDA2ZGY0ODg4MmM0M2JlYWQ3OTdiNGMyZjNiYzlmY2U2ZTY0NjhhNGY1MjMifQ"
+        },
+        {
+          "resource": "repo://src/ssh/keyfile.rs#L113-L129",
+          "version": "repo-lines-v1:sha256:ac008d53555adf5c4e0d8aad9b5d2121d57f1b327e876090876143bdd82f58d1:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg3ZDJkZGM4OTdiOTA5OWU0ODAzZDkyYWQ4OGIxZDBkMWQzOWJkNjM5NzFhMjZmMDNmMjVhODBjOGQ3OTk5ZmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAzYzVhZjliMWU4ZWExNTYyM2Q1ZmI0MmM3NTU3OWI3MGI2MTJjYTRmZGNhZDZlNWE1ZDkwYTI4MTA0ZmUyYTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQzMjBlMDY0NGI3ODc3NWRmNGQwNjk4YWU5MzM4OWFkNWFlNjU5ZmRjM2M1Y2Q3MDQxODIzMGU2OGNmOGUxOGIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0c3fc1decc3347d98477db676bc87bdd",
+      "statement": "Key generation (`g` on the Keys tab) offers Ed25519 or RSA-4096 with an optional passphrase, comment and target path; `generate_key_pair` refuses to overwrite an existing private key or its `.pub`, and on success the identity is registered immediately (named after the comment, else the filename), the Keys tab reloads with it selected, and a set passphrase is stored under `identity:{id}`.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/keygen.rs#L35-L122",
+          "version": "repo-lines-v1:sha256:d1ab4b93c73553e994345bf5219cc7fbf79c01924d46438f61dbc6242a0dca8b:eyJzZWxlY3RlZExpbmVDb3VudCI6ODgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYyZjA3MmIyMmQwOGJlYmMyMzE5NTlmNzNiMjA1NWE0MzVkMjhiMmFkZTcwMjhkODM1YTAxYjAzNmQ0MjIyMjIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE2MmVlNTdlNDFhOGMyMGFlMDE2NGRmMjYxNDM5ZGNjNDk5ZDM1MjA4MzQxNTE1MTZkMDQ3ZThkZWFlOGE0NjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI0MzYwNzUzMTFlZGI4M2U2OTBlNzZkMzgwYzk4ODU0ZjEyNGQwZDBhMDM0ZmZmMzNiMzgyMGRjMmMwMWQyMzIifQ"
+        },
+        {
+          "resource": "repo://src/ssh/keyfile.rs#L131-L173",
+          "version": "repo-lines-v1:sha256:99ef61717ce83bc82040e37ed7f8d88bb80fa92a679656b22e48b3b7182e05ee:eyJzZWxlY3RlZExpbmVDb3VudCI6NDMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjlmYjA5Y2ZmYTAyNTZkZWQ4OGE5OGY0OTAwMmEzNzM2YmNjOGVlOThiYzQ5ZjQ4YmMzYWQ2NzkzYWRkZmVmZGIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZTc2MzU1Y2YxMTk5NDgwYzNmOTk4MzZiMTQ4NmM4NDFkODkxZmFhZDkwNGM2MDhlMDkzMDIyZDM3NTdhZWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFkZTliZmM4MTljM2Y4NzRmZTYzMWEyNWMyYTE1NmIyMTY1MDM3NGU5ZTUwMTY1ODMyM2JkMTE1ODNjZDZmMzkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1f274050ab364028a39606cca957886e",
+      "statement": "Public-key push has two entry points — `Shift+P` on the hosts list opens an identity picker, on the Keys tab it opens a host picker — and `trigger_push_key_from_hosts` calls `reload_identities` first because `self.identities` is lazily filled by the Keys/host/group forms; this 0.15.0 fix makes the picker open on the first press of a fresh start instead of bailing with \"no key identities\".",
+      "evidence": [
+        {
+          "resource": "repo://src/app/push_key.rs#L10-L33",
+          "version": "repo-lines-v1:sha256:bca449d1ca7a57cd025c31426e7a8acf9aaa1de488065715523851d09c98b3b7:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk1Y2ExNTAxZTU4M2YyMzgzYzY2NTMxYTdjYTNiOTVlYzhmNGFkZTU3YmIzOWE1MTYwNWViMTczYjBmYTJhZTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNlMzAzMDEyMTY4Y2VlZGQ4YTFkMWE2ZWNhMDE3ZTE2YjU1MzZiOWFlZmU0ZTU5ZGNkOGJkYjk5MjhkN2I5ZTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ5OWY4YzdjZDU0NzJhMDU2ZTBlMDlhZjYwZDU0YmJlYTE4OWEzM2Y3MzU5NDBmYTNiMjdjMDE3NjhiZTEwZWMifQ"
+        },
+        {
+          "resource": "repo://src/app/push_key.rs#L35-L52",
+          "version": "repo-lines-v1:sha256:93250498673439842e0b7599b6b232147ea264b13d34ce6850ae6076113b7118:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU0MjgzYWU5ZjA1OGZlMjI0ZWViMDY1OThhYzljNTYxN2Q1Mjc1ZjcwMTVhNjZhYjUzZTExMmIzMTdmZDhhYTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE2MmVlNTdlNDFhOGMyMGFlMDE2NGRmMjYxNDM5ZGNjNDk5ZDM1MjA4MzQxNTE1MTZkMDQ3ZThkZWFlOGE0NjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjEwMjE3OTM0Yjk1YTM5NjBjZTFmYTllMzZiMmEwNjcxNTdmYjU2NjExZTExYzhlNGRhMjk5MGM1NDQzZTIwZGQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f467cd68693246948db94f475385a83c",
+      "statement": "Pushing a public key reads it from the identity's `.pub` file when one exists, otherwise extracts it via `ssh-keygen -y` with the identity passphrase staged through askpass; the remote command runs under `umask 077`, creates `~/.ssh/authorized_keys` if missing, and appends only when the exact key line is absent, making the push idempotent. The push runs as a real PTY session reusing the stored-credential path, and both the launch and its failures are written to the audit log.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/push_key.rs#L196-L247",
+          "version": "repo-lines-v1:sha256:02bf22465839e3581cf4ad1030f0f688868097c7ed563281940d100ab4e50887:eyJzZWxlY3RlZExpbmVDb3VudCI6NTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYwYTE1NGVkYjhhY2U4MWRiNGEzYTFiYTA4ZmZhMDUzODdmM2UyNDc4MWVhNDc1ZjY4MWQ4MmYyZmQ5MzNkZDgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2YjA0NDkxNDY5NzIyZTgzNjNhOTRlNDA0NDUzOGUwMTNhMmEyMTdlMzZiMWU1NjhiYTYwYWNiN2I0YzhmMmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM4NDliMjM5NjBiZGIzNWQxOTlkMzhlOTRjODRjMjBkYzcyY2ZlYjE4MzAyZTg5NTY3N2Q2NDk2MGMxMzM0MGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA0OGJlZjY3ZTE1ZGUzNGIxYzhhYTJjZmJlNmRkZTIwMDZiN2VmYTE0NWUzNjVjYzcwOTNhNDJmODEwMTUxMzcifQ"
+        },
+        {
+          "resource": "repo://src/app/push_key.rs#L322-L343",
+          "version": "repo-lines-v1:sha256:03370aa1fd91f61d12fccd541bf8f3b0cb622b9dfc77019d14428212cbb8f5c6:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ4YmQxMjllNzgyNWNhNzk0NGNlNzY1Y2E0NjNhYjY0NTc1ZmZiYzk4MTBjNTA2MDRlMzQyYmIzNDk3OTgxOTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjExNDE3MTJmYjVmYmMxMGMwNzY1ZDllN2FiYjRlOGZkOTYyZmMxOWU0NjBiMjEyMWZlZDFkNDU3MmUyYjllMjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZhMDJlYTk0ZTZjNGZhNjI2M2U0M2E3ODQ2ODMxOTc5ODcyYjk5ZjNjZGQzN2JjNjZkYTA0NDRhZWYwYWIwN2UiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc4NTE2MjJlYTM4MTIwZDI3NzNmYjI2Y2IwNmYxMzEwMjkzNjBiOTQ2MmIyMDNiMTk0MDA2ZWJiMmY3OTQwZjgifQ"
+        },
+        {
+          "resource": "repo://src/ssh/keyfile.rs#L176-L202",
+          "version": "repo-lines-v1:sha256:9ed6a571cf93083d48127e9aaf9213cb4b8b1a6b1caf5dc258c3e9cbc0f6baeb:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg5ZTdmN2NhYWMwY2FiYTRmYWFjYTU4ZmNmZGI1NzI0MDZhZDY2ZjQ0ZTIwZDIxM2NiYTYyZThmYTNmYTc2MDIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJlMzQzODlmZGY3MWRkZjI2YzYxZDY3ZmZjZjgwMTMyOTBmYzE4ZDUxMTk0NDAwZjc2ZWFlY2Y4MzA3YTU2NTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE4YmY5NWQyOTFiNTE5YzFiNTA3NzZkYTQ1ZTE0ZWFjNzI4NzZjZjE3MTFhM2NhMmYxMGEzN2RjMTZiZDNjMjQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a9a310ad07aa4df39b7823e6f48550bd",
+      "statement": "`src/ssh/probe.rs` today only defines the `SshLogEntry`/`LogLevel` types fed by manual `push_ssh_log` calls from connect/session/push-key paths; its former background `ssh -v BatchMode` classifier (`spawn_ssh_probe`/`classify_line`) has no callers and was removed because periodic probes buried the user-initiated events in the SSH log, which is now capped at 200 entries.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/mod.rs#L1124-L1143",
+          "version": "repo-lines-v1:sha256:56e983319c86d8fee8781b238c738734422975798cc6588660371fc2f8f7aa89:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZiYmQ1NjU1ODlmNTdkNzhiYTVjZDVkZWQ2Mjc4MmM3Yjg4ZjMzYTZhMTc5ZGNhMWFmOTZlM2FjZTQ4OTgxZmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhkY2EzOTUyZTI0MTJmMGIzYmE1NGNiYzdlMjBiMjMxZDQzMDBmZjIyMjRlZjVmYTExNzQ3NjU3M2ZlYWJiNTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVhNDQ1MDM2ZTZiNDMyYjcyMWI1MDhjMmIzM2MzNDgyMzk2ZjFiOWNlZmY3OGNmYmU4ODNlMzc2OWIxZjU1YzIifQ"
+        },
+        {
+          "resource": "repo://src/ssh/probe.rs#L1-L16",
+          "version": "repo-lines-v1:sha256:3da87504304fa3a46ab7acd1999b6a4dfc54d3d9f4153d495aa9ffe049028484:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVmMjQ4MTAwZTNhYjE4MDRhODNmY2ZmYTM5MzhkMjVlYzQ1Y2U3MzNlYTE4ODUxODQ5OTIxNThjMTM5ZmZhMmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_548e8667c2bf41cf8d9ba39f324e77d5",
+      "statement": "There is no live auth-method display in the host detail panel, but the connecting screen shows the server host-key fingerprint: the session parses `debug1: Server host key:` from ssh's `-v` stderr (first-wins, so a later forged line cannot replace it) and the connect screen renders it.",
+      "evidence": [
+        {
+          "resource": "repo://src/known_hosts.rs#L240-L246",
+          "version": "repo-lines-v1:sha256:bd27467289c8f91370e648eb4cda7eabc25f0f25583ae2e78836c444b3cc46c0:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNDRmZjA2M2Y4MTNkZmQ1MTYwMDNkMzY1ZTdmNGFiYzM2NGQ1MGM1NGNkZmNlMmQwNDdiOWM3NDc2ZjEyOTVjYSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOWY1NjdjNDc5YjZhN2IwZjljMWIxMjY1ZTdjOTg4YmMxN2IwZmZhOTdmZmM1M2NiYWE1MmVjYzYxMTM2YmFkYiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMzVmNmY0NjZlNTljZmMzMDcwM2M0NWY3MmFmNjVkZTU0YWMzNjNkMzU0Y2MxYTMzMzAzNTBhY2Q0NTI0MzRjNCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNDUzZTA2YmU3OWJkYjAxOTQ2ODcxMDZhZTc4NGRiMWZkNGNhZWFmNWY2ZDI0NzhiMjY5MmE1MDJlNzA5ZmRjOCJ9"
+        },
+        {
+          "resource": "repo://src/session/mod.rs#L532-L543",
+          "version": "repo-lines-v1:sha256:2fa83a88ea4876dd0a5192230ca96314b52b1083fced4299b93c6d4991bb8b62:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU4MjVmOTI0NjcyNzNlMDk2Y2YxYjViZjdjOTQxNjYyZTMyZmE5ZmY3NTNjMDQyZmIwOWQ2MDBjZDZhYzU3N2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhkYjMzOWMxN2Q0Y2M1NGU3MGM0ZmNmZWNiNjExYmI5ZTdkMzYzZjI1YjE4ZTA5MjNhMWQzMDZjYzk1OTI0ZTUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImVkYjMyZjYxMDhhMmNlNTBhZWE3NzI4NTEyMmJkZGRhYzZiMWRhMTU4NWJkNzhmYzVjOWVmMDBjMjFmZTZmMmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVlZDZhMDM4MTQyOGNkODk2MGYxZTI3OWU4NGU4ODMyOTI1YzM5YjA5ZjJmNWY1Mjg3ZjgyODNjOTE3YmVlMDEifQ"
+        },
+        {
+          "resource": "repo://src/session/render.rs#L574-L585",
+          "version": "repo-lines-v1:sha256:2657566f3f2d598b91053ab2272d71d29d4efb6135cc12fade12ca213cb0c521:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjllNDA3MWU0NDU2ZmQ5ZDRlMmY4OWU3ZTQyMWYwYmExYzgyMzRjMmZlNzIxNGJkMTIwYjNiMWRhNTg5ZjFiN2UiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjExMDE0ZTMzYWRhZGM3M2IxOTQxOTk4NGViOTc2ZjgwOGZhNTM1MTFiZjQ4OWQ4ZjNmZDFjNjZmN2ViZWVmMzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUwYzczNTBmODIyYmEyZmIyMDAzYTRkZTM5MjZjOTQ3OWQzMTIyZjJlYmJjNzllNDk0YmJiNTQ4YjhhNGUzYmQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2aaff9cc62c84eac900884831b5f6208",
+      "statement": "OS auto-detection runs as a single background worker thread (same mpsc shape as the ping worker, test seam via the `ProbeRunner` trait) that shells `cat /etc/os-release 2>/dev/null || uname -s` with `ConnectTimeout=8` and `StrictHostKeyChecking=accept-new`, using `BatchMode=yes` when there is no stored secret and askpass-staged credentials when there is; an `OsDetectEvent::Detected` is emitted only when `parse_os` recognises a canonical id, and probe failures or unrecognised output stay silent — the icon remains empty and the probe is retried on the next connect.",
+      "evidence": [
+        {
+          "resource": "repo://src/osinfo/detect.rs#L1-L143",
+          "version": "repo-lines-v1:sha256:342dd81ac7dcd574a3fc220e0ae8dfe1e36d34e07e4952ce2fdad0cfaa146009:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQzLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIyZDQyOGNkZTJlM2Y1MGI0NGI5OWQ1ZTdhOWZiNzEwZGRlMDRjYTUwZjUxOWIxMjBlOWU0ZjBjYjRjMDQ3YTU3IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI3YmM5OGQ2YjBkYzQ5MmM1MDE2ZGYxMDgwNWEzYTU0ZWI5YzE4NGE1YTYxMzdlN2Y0YmVjZmEwYzIyMDU1MGQwIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_73f5021c34eb4999b04395ba415350a3",
+      "statement": "On connect, only managed hosts with an empty `os_icon` and an id not already in the `os_detect_inflight` set get an `OsDetectCmd` (legacy/ssh_config hosts are skipped, and rapid re-connects cannot spawn duplicate probes); the UI tick drains the worker's receiver and `apply_os_detect` persists the canonical id to `hosts.os_icon`, clears the inflight marker and reloads hosts.",
+      "evidence": [
+        {
+          "resource": "repo://src/app/connect.rs#L216-L258",
+          "version": "repo-lines-v1:sha256:fffee6e0bc82f78b10ff4cff2dd13f32c404104176f77368d58b17eaa93a5b9e:eyJzZWxlY3RlZExpbmVDb3VudCI6NDMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU3NGQ1MjkyOGI5MTBiZDI2OTRhZWIxZmFhYTU5NTA0NDdiYmJjZjVkN2QwNzUwMzRhNWFhMzYzOTVhMmE3ZTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQyMzRiODNhZmYyNmNmMjUxYzg5NmY1M2ZiMTgyODcyZmQxODU2ZDg1OGRhZmE2Y2QxMDUzOTM0ZWY2Nzg5NjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        },
+        {
+          "resource": "repo://src/lib.rs#L536-L544",
+          "version": "repo-lines-v1:sha256:4f1e1ac14833cf78d1fb7ff6a760e60b1104c174e8a48e267893dfb9085d783e:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNzc5ODM5NWI4Yjg2ZGFkOGNmNWMxYWEwZDg3OGQ2NDliYjc3ZTVmMmUxNWI5MDJjZTMxMGM4ZWYzZTc2NDgzNSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDg5M2Y0MGUzNzgxZWI4OTZjODJkMDQ2YTA4MDY3YTExZTM1Y2RmMmYxZGZhZjI2ZmVhOTBiOGRiNjY3NjQxMyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOTk5YmRlZmVlYWNhNjM0MGUwMjkwZGM4NmU4ODljODlkNWUxODlhYTViYTQ0YjU4NWIzYjcwNzM0ZjRhNjJkOCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZWE2M2JmNzYxNjgyODdlYTEzZWZhYWJjN2RhNWRmYjgzNTJkY2I2YTEyOTlmNThiMzc3MTUxYTAyN2FkZjkxYiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_720bf4d79d43418d802b6adad567f2a1",
+      "statement": "`sshub import --from ssh|termius|putty|mremoteng` supports `--dry-run` for termius, putty and mremoteng — parsing the source and printing a preview without touching the store — and explicitly refuses `--dry-run` for `--from ssh`; PuTTY defaults its path to `~/.putty/sessions` when that directory exists.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/inventory.rs#L47-L168",
+          "version": "repo-lines-v1:sha256:7f11fb039ca0cec78aef30a45252a32574631b516b43fc37aa3e25231dfe48d6:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIzNGNhZmMzNTY3MzVlNmI5NGI4NWM0OGI3NzQ4YjYyODk2MmIyZWI1NTc0YjFlNjYzOGViOWI1ZGUzYzAwOTQ5IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIzY2RiYzAzYmMxM2U4MDIyZDMzMDc2ZjA4MmYwZTIwZmE0N2JhMWNlNjkxNmM4YTZhZjQ0ZDMxNWNkZDQ3MzI4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIwOTBlNWQ5NjE0NTZkMzFlNjZiMmJiNTU4ZTA2OTA2MGM5OGViZThlOGE2MTE4OTkzYWFmMmE1Y2UxMTg5YmU4In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_34161fdd34834437924511ab1bdee586",
+      "statement": "The Termius importer parses `L00t.csv` plus an `ssh_keys/` directory, creating one identity per key (key material copied to `~/.ssh/termius_<name>`) and hosts linked via the `SSH_Key` hint; every password and passphrase is stored with write-verification (`store_credential_verified` sets then reads back the value), and failures are counted in the report's `keyring_failures` instead of silently dropping secrets.",
+      "evidence": [
+        {
+          "resource": "repo://src/import/termius_csv.rs#L211-L355",
+          "version": "repo-lines-v1:sha256:e761c604334023192d3f9d64401bd1547a47888c8f9c8b9870153755440e4f06:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQ1LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJmMDVhNTJkMTA0MmNhNzFlOTcwYTBhY2UxYjUzYTYyMDgyNmJmMmYzNWZjZThmMDY1MWE5Y2EwZTVhY2Y1NWM3IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJiN2Q5MmZlNmY1MjZkMWI3ZDkwY2E1MTQ3YjJhYjFiNzVlY2Y1ZDEyMTYyZmZiZTk0YTUxM2M3NjYzMjg4ZWQ4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJjNGI5NDg2NjE5MTdiYjJlM2EwZTkzYWE1Y2JiM2ZlZWM3NWJlZGZmNmZmN2M0OTUxMDgwMDhiN2QzMzA0MTc3In0"
+        },
+        {
+          "resource": "repo://src/import/termius_csv.rs#L361-L377",
+          "version": "repo-lines-v1:sha256:28501872a588f7aa56d29b2aaa2222605d92b6d8543a1a125631f02296aa2054:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRmZTY5NjZjNzc4ZjIwMzQ0YWE3NjIzMmY4MWI3N2Q0NDA4NjA3MTlkY2ZiNmQwZjVhOTgwODliNTg1OTdlNTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM3Mjc0ZTZlODIzNjgxYzNjNDNlYWY4MDc2ZDhjNTI0YTVkYmZjYmZhNmQ0ZGRiYjA4ZTZkNjUzNGU5N2Q1YzkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJjMzk2MTFiNWQ3MzBhMDFkNmFkNzc4ODk4Nzc1NjcwNjEzNDc2ODlhZjk0NDI2ZDIwNGVjZThhZjllMTI3NWIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7afdc06b3e654ecbb441c5c528c6191b",
+      "statement": "Termius re-import is refresh-safe: an existing identity is re-pointed to the key material copied from this export and its stored passphrase is refreshed, and an existing host row keeps its fields but its stored password is re-stored from the CSV (covering a previous import whose keyring write never persisted).",
+      "evidence": [
+        {
+          "resource": "repo://src/import/termius_csv.rs#L242-L256",
+          "version": "repo-lines-v1:sha256:1139f5a26f3c50be35b528b6b49f1ae83f9a668db5455373df823588680b2da6:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk1NTI0OGVlYjNjNTY4ZjQxODc2MzFlMmVkMjg5NDFlOGRlNDFmNjA0YjRkMWQ5NmFmY2E5Y2RjNDA0N2YwMmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNiNWFhMDc5NTExZGUyYzMyZGNiM2YzZmU4NDA3MjZjMjZjNjQ5MmMyOWYxZjk4ZTM5NjAxOGYzYjM1ZDcwOGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5YjY4ZGE5ZGQ0YTE0MGEyYTVlZTE4MTAyYTYxYzQ0Yjg4ZWIwOWE1NjJlOGEyZThhNTE2ZWMzNGQ1YjQ1YjgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI0NDYwYTE0MGE4NDE4N2EwMGI3MDBmMzFlNmYxNDEwYTA4Y2I0NGFjNTVlYzk4OTYwY2YwMmExMThiZTRhNzEifQ"
+        },
+        {
+          "resource": "repo://src/import/termius_csv.rs#L289-L340",
+          "version": "repo-lines-v1:sha256:a685eba75ffe7dbf337cf0ea519da5bed171a1f789081c1cf8defbaf1e9e44c9:eyJzZWxlY3RlZExpbmVDb3VudCI6NTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU2ZjVmY2MzNWNkOTAyYjZmM2M2YzQxYjAwYWNjY2U4N2NiODIzZTY5OTA0NjFhZGU5ZmQ3Y2U2ZjJkNzE5ZDIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM1Y2RlZjgwODVhZTc0YWI2MzZkNjQ1OWY1YzZkNWZiZmIwZGIyNjRmMWIwZDc1YmFjNTE5YzliM2Y2NzE3YWMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk5OWJkZWZlZWFjYTYzNDBlMDI5MGRjODZlODg5Yzg5ZDVlMTg5YWE1YmE0NGI1ODViM2I3MDczNGY0YTYyZDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI4ZGI2NTdmNjg1OGU1ZGFhNDY1NmRjMjViYjVlNmM1ZmQ4YjQ0OThmZTUxNzNlM2RhMjc2MWUzYTU4NWRmM2UifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_eba827f172864035a4f4a87d03331d9d",
+      "statement": "The PuTTY importer accepts either a Windows `regedit /e` `.reg` export (UTF-16LE BOM-decoded, `dword` ports) or a `~/.putty/sessions` directory (plain `Key=Value` files, decimal ports), percent-decodes session names, and imports only connections whose `Protocol` is `ssh` or absent; non-SSH entries are counted as skipped, the `Default Settings` pseudo-session (empty `HostName`) is dropped, and rows land as launcher hosts noted \"Imported from PuTTY\".",
+      "evidence": [
+        {
+          "resource": "repo://src/import/putty.rs#L1-L19",
+          "version": "repo-lines-v1:sha256:9ba51c60fc501a5bf1ade0f433bf706ecc8747decbbd6f8666ae4296e6f3403c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxOTlmYWZlZWViYWQ0NmExNTNkZmM4OGQ4YjNlZDNjNTYxMjZiY2FiM2I4MDZhYjc3MDRjNzYxNGJmYjcwYmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUzMTA3ZDgzNGNkMDg4MGE2NTBiY2E3ZTIyYjIzYTc1NmRiYTBmMWU0ZGNhMzE1YmNjNGM1MGRkODlkOTNiNzMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZlOWVjODA5YjAwNDRhMTE2OTNjZmNjZDkyOTI5MTI3NDFlMTMzZjQyNDI4N2Q0ODI4MDM4OGRkMTdiOWQyNDAifQ"
+        },
+        {
+          "resource": "repo://src/import/putty.rs#L355-L403",
+          "version": "repo-lines-v1:sha256:4f3bc836a3be1bfd7745d91e813fdfe6a9f1ea337d590f3cbf41cb6549ce84cb:eyJzZWxlY3RlZExpbmVDb3VudCI6NDksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI2ZTkxYWNiMzY5ZDI2ZTdjODNiMGFjYzVlMTc1ZDI1YTAwMTVkMjg1Zjk3MjVmOGQzOTJiMGRlOTg2OWU3YmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY5YmRkN2M3ZTQyMzU0NzA3YzQ1N2QyYjY4OTkzYTc3MmMwYjBhMmFjNDhmN2NhYmIxODgyY2ZlM2YzYmRlYWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM5MTgyNzhmNzVkYjAwMWJiMmQyYWFhNmRlYmU5ZmNjMzNjNDg4YmRmM2Q2MmQ0MDMwZDY1NTQxZWNlMzU5ZGMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a5691ac91b954e169d96032f9ba16ace",
+      "statement": "The mRemoteNG importer parses `confCons.xml` with a hand-rolled byte-scanning XML reader (no XML crate): `Type=\"Container\"` nodes build the folder breadcrumb that becomes the host's tags, `Type=\"Connection\"` nodes with an `SSH*` protocol become hosts and every other protocol is counted as skipped; encrypted `Password` attributes are not decrypted and imported rows carry no stored secret.",
+      "evidence": [
+        {
+          "resource": "repo://src/import/mremoteng.rs#L1-L24",
+          "version": "repo-lines-v1:sha256:aa2429ed6f5c21f4b332641a4248e25f71c9c12f66c6cd2ac7e46c0e4894e736:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVlZmQ3MmMzM2NkZjc0ZTM0YmIyZjRiYzE3ZjBmYmEzODVmMTljYjc3NTU2MTMzNDRkZGNjMTgxYjIxZjc2NTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEyZTVkMDg4ZjAzNThiMjA4ZTkyNjE2ZjA0OGIzODI4MzlkYjkxMTE4ZTM3MzdjMGJmY2M0ZDhhM2UzNjRjMzgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZlOWVjODA5YjAwNDRhMTE2OTNjZmNjZDkyOTI5MTI3NDFlMTMzZjQyNDI4N2Q0ODI4MDM4OGRkMTdiOWQyNDAifQ"
+        },
+        {
+          "resource": "repo://src/import/mremoteng.rs#L417-L461",
+          "version": "repo-lines-v1:sha256:6578b6e6d149ec4ce21e8bf1434c18333dfea1ef255a3a8e23e80fb9e6b9aa61:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ0YmYyYWY4Zjk4ZjQzZDdmN2EwNjFiMDM1ZTgxM2Q0OGJiNGQ3MzI1ZThhYjQ3MDE5Mzg4OTU0Yjg0ZTlkN2IiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE1ZTM0MmQ1M2E0Y2UwZThlYTk3YWVlMDgzMDZlY2QzZWVjNDZkMWRiY2Q5MDRjZDU2YWVkMWRmZDdkM2E2NWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM5MTgyNzhmNzVkYjAwMWJiMmQyYWFhNmRlYmU5ZmNjMzNjNDg4YmRmM2Q2MmQ0MDMwZDY1NTQxZWNlMzU5ZGMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_024f4f5d5e1141cdb60f17ed99a43ef5",
+      "statement": "The PuTTY, mRemoteNG and Termius importers never overwrite hosts: a row whose name already exists is skipped (`skipped_existing`), non-SSH entries are counted separately (`skipped_non_ssh`), and store refusals are isolated per row (`skipped_invalid`) so one poisoned entry never costs the rest of the file; these importers create hosts only and carry no credential counters.",
+      "evidence": [
+        {
+          "resource": "repo://src/import/mod.rs#L5-L20",
+          "version": "repo-lines-v1:sha256:e41761c56047ae1f3f537c7826181c2d2c0c36b78359a9d293efbd1c58aa07b9:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQyZThkYzNjZTI4ZjgzZjJhMzUxNDNmZDc0ZmUxZDMzZTU0ODBkMWVlMjdiMjliOTczMmY0NWU1NjFhNDBjZGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY1ZjhjZGNkNjM1NmQ3ZDJiMjc5MzVhZWYzNTU1NDAxMDg4MDAzMmJkMWE2NDljNjRjMmY2NmQyNWNhNDVjYTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://src/import/mremoteng.rs#L433-L448",
+          "version": "repo-lines-v1:sha256:48e651e4c3d90ba2d15ebd9f72aa871ce8ecb03b98e13fb7dfbb98d86509f262:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ4OWNlODcxYjk3ODQ3OGIxOGFjZjE5ZTI3MmUzMmVkZmRmMGEwOWZkYTY3YzA0YTBmNThjYjVhZGRlODAxODEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM1Y2RlZjgwODVhZTc0YWI2MzZkNjQ1OWY1YzZkNWZiZmIwZGIyNjRmMWIwZDc1YmFjNTE5YzliM2Y2NzE3YWMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjlmZWVhMjlmNzUyNzU4ZGFkMTEzY2YxYjAzZTgxZTE5YzE3ZWE1MjcyZDgxMTdkODU3NWJiZTViMDU5ZmNkNmQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNhNzYwZTVjZDkyOTI4N2M0YzE5OTRmNzg5OGQwZThiMjRjYWRhOTU0ZWUwYzJlYzRhZWVjY2M0NDBhNjliYTIifQ"
+        },
+        {
+          "resource": "repo://src/import/putty.rs#L374-L391",
+          "version": "repo-lines-v1:sha256:728977a43fb29348da29d58f21c0a804295438b1a0e0d079725fb6220df14e21:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFjNjE2Mzc0NWI1MGQyYjU0YWI1NmFkODQxOWIxMjEzYjM3ODAyNTMzN2YzMTkwZWI2MDFhNzQ1NTViZmI2NWIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU5YzEzNTkwNjY1NjMyM2QxYzVlYTQxNjU0ZWU2NmFmYjU4NWFjZGNmYWVhY2ExMjFkNWUzMGJmMTkzZWVkZDciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjlmZWVhMjlmNzUyNzU4ZGFkMTEzY2YxYjAzZTgxZTE5YzE3ZWE1MjcyZDgxMTdkODU3NWJiZTViMDU5ZmNkNmQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU5YzYxNzljZWMwMjI4ZjFjNWU5ZDBlZGQ1NzM1YTQ1ZTg2NDJiZmFlYmMwYzJmYjhhY2UxYTQ4NjRmYjE2N2EifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b43b5953418c425798fa50d4660e5c66",
+      "statement": "Export never writes the user's own `~/.ssh/config`: launcher hosts are exported to `exported.conf` in the config directory using atomic replace with a `.bak` backup.",
+      "evidence": [
+        {
+          "resource": "repo://src/ssh/export.rs#L11-L28",
+          "version": "repo-lines-v1:sha256:60a812877fcdb8425da9df7b4bd236471385b975796a1f7f88eb68967f55d13f:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImViMjcwMjc1NTk4NjVmMzZiNTc0YTNmYjkyN2RhZTA1MmRmMjQ5MDYxYzYwZGIwODQ3N2VlNjg5MTI4NTkwZjEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI5NGFkZGM2M2Y3NDE1YWUxOGUyOTA5ZGE4ZjExNDM5YWI2NGM4ZDg2NThmODM1MjE3OGU4OTNhZGVmMWM3ZTAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjcxMWI1MGRlOGFjYTg0N2Y4NDhhM2U4MmIxNzI0ZmI5OTMwZTIwNTA2NTQ3ZmM4MTU3OTMyODA2ZDE2ZDNkY2QiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBlZTVkZjFlOThmYzIwZjUxY2M1MjllZmUwZGI0M2FkZDY0YzI3NGE1MzRlNmNmZjM5YWJkOWEyZjFkZjM2MjcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a11745e71d9c4d09b870772cb8bf009e",
+      "statement": "The domain's core flows are pinned by focused tests: `tests/e2e/keychain.rs` covers the keygen form flow, successful generation and the push-key host/identity pickers including the group-header bail-out; `tests/smoke/cli_commands.rs` covers PuTTY and mRemoteNG CLI imports including a `--dry-run` that leaves the store untouched; `tests/e2e/termius_import.rs` covers the Shift+T import flow and connect-time password resolution.",
+      "evidence": [
+        {
+          "resource": "repo://tests/e2e/keychain.rs#L166-L421",
+          "version": "repo-lines-v1:sha256:76262710c56f6e3d6ba3991381f044662575fb4a2b15a63d01c350b557371383:eyJzZWxlY3RlZExpbmVDb3VudCI6MjU2LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIzNjBhNzA1ZjdjNzM4ZDU1MTAyMDlmZGVjMzFjM2ZmYWQ2NzJhNzU5MDlkOTM2YmZkMjNiZjczYWZlNTNmZGVjIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI3ZjlhZDQ2M2JlNzFjNWY0MjA5NDZhZmJmMDdkMGZlOWY1ZjExZGE4MmYxZTk0OTAzY2MzMzk1ZDhjMWEwYjM4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        },
+        {
+          "resource": "repo://tests/e2e/termius_import.rs#L50-L124",
+          "version": "repo-lines-v1:sha256:9f01f152e88b124454ee00f546f8e8c67895c01690432be77d8396e82e57a8cd:eyJzZWxlY3RlZExpbmVDb3VudCI6NzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM1ODY2YWNlMjY0OTRmMDdiMmFmMjg4YzJhMzQxMzk0ZjMzYzFhYzU1NGIyYjdkMjMwMTY0MjMxNDdlYWY3ZDUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYwZWViZDVkZWE0ZDQwMGM0MjA3NmM4NDc3OThiN2UzMjI5Y2M0YTcwZjEwMjhlNzNmMDgxMGIxODE5YjgyOGUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjdmOWFkNDYzYmU3MWM1ZjQyMDk0NmFmYmYwN2QwZmU5ZjVmMTFkYTgyZjFlOTQ5MDNjYzMzOTVkOGMxYTBiMzgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNkNmUyMTk5NmM1ODRiZjMzZDkwZWU3MTcwYTk3MWU3YjY5Y2E0MzMxZjMyZWYwMGIyNWFiZWJiM2E4ZWMwMTAifQ"
+        },
+        {
+          "resource": "repo://tests/smoke/cli_commands.rs#L286-L344",
+          "version": "repo-lines-v1:sha256:7cda0a6fee474161b0a75f06eb003b46d9a76e5fd50a08b2e74ed150dba0cdd5:eyJzZWxlY3RlZExpbmVDb3VudCI6NTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkwOGQwYjFhN2RjMWY3Zjc4MTIyMTMyZTczZDA4MWU4OWM3YTMwYWEzNzJiN2I2YmMxNzBhZWQ2NDdmY2YyZTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ3MDllYWUyMDFkM2VjNmNmMjAxNDNkZjY0OWQ1MjA4N2U0ZjRhZmZkNjc1ODcwMzE5NmM3ODNjNjk0MjU0ODYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ4YjM4YWUxM2NkNDcxODQzNjdjYzJjM2NmZmIzNzEwZjViZGY5ZjFmMjliYjJkYTRhNmY4MGYzODM2M2U2YjUifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.5.1",
+    "at": "2026-09-11T12:46:43.817Z"
+  }
+}

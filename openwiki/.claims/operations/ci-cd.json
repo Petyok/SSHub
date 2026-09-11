@@ -1,0 +1,210 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:d9d09cd2a0cb35a2271b5a0b777266d80b53eec0823d9c84bca7a0118d3aceb8",
+  "claims": [
+    {
+      "id": "claim_b61c2c510afc42e493c38ef4e944530e",
+      "statement": "The ci.yml `branch` job enforces branch naming only for same-repo pull requests (forks are skipped), first running `scripts/check-branch-name.sh --self-test` to check the checker, then deriving the conventional-commit type of every commit in `BASE_SHA..HEAD_SHA` and passing those types to the script so the prefix is checked against the branch's actual commits, not just its shape.",
+      "evidence": [
+        {
+          "resource": "repo://.github/workflows/ci.yml#L15-L38",
+          "version": "repo-lines-v1:sha256:0bb5ee7794537460055a9e184899985268ca2f1bd8de03823827e66ac782d81f:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRhNmVhYmE5ODY0MWZmMTNjY2E0MTZkMzhmODIzZTZjNTI4MWNkNzJiN2FiMmVmMDJmNjdjNGFiYWNmZWMyODgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRhNTEwN2YxYTdhZTIxYjExN2Y0ZjcwMTVmZjcxYmRiMWJiOTgxNjBmNTQ3YjljOTAxNjE3NWNjMGExZDQ0MmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjEwMmM3MTllZjZjYjBiM2ZkMDQ3OTIxMjQyYmUyMGY1NDNkYjcwOWVkNTc4ZGYwMzBjZmQ0NGZjODVmNGU2NWQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY4M2QwMzkwOTY1OWQzMzk3ODhkNTg4OWM0MDYxNDE5NDAwZDAxZGFlZDBmZmNjMmNhMzg0ZTg1MWVhYjc3MzIifQ"
+        },
+        {
+          "resource": "repo://scripts/check-branch-name.sh#L10-L17",
+          "version": "repo-lines-v1:sha256:a273f42b8531986b680f45fe1d1ed61917cb198f687f29f3561c29a773826095:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNzUyNDA0YTU1NmUyYjM5ZTgxZGY5NzM5MDhmZDdhYWE4NTMyNDljZDk0ZWUyMjI2ZWIzZGI1Zjg1MjZjYzgyOSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMWZmMTAzZGQzY2I1Nzc2MjRhMTJhNzY4MTlhYjUyNmIxYzYzYTk2OGJhZWVlODE0YmFiYWJjNTZjYzNhNTIwNiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNzU4YjIzNDEwM2IxYmRhY2RkNTAwOGM3NTIxMzk3NDc1ZjlkZTE1Mjc0Njg1ZDc4ZDk0ZTc5Yzk3YjhmNDg2YyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZjliYTY3NzZmYzJiNDhmNTNmYzI5ZTI5MWZiMmQ0ODIzY2E0MGQxMjZhNzk4MjIxNDgwZGI0MjJhMDY1MDRhMCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_c94a2e3add2247dba2892cd5a37a887c",
+      "statement": "`scripts/check-branch-name.sh` exempts names owned by git or a workflow (main, master, development, HEAD, openwiki/update), requires `<prefix>/<slug>` shape with a known prefix, and — only when commit types are supplied — requires at least one commit type that justifies the prefix: feature←feat, fix←fix, docs←docs, chore←chore/ci/build/refactor/perf/style/test, poc←anything; supporting commits of other types alongside are fine.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/check-branch-name.sh#L21-L33",
+          "version": "repo-lines-v1:sha256:de87d49733f44249aeaf86aa90481c7575b3e4ed64259e8d6103f2f7d993aae8:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ0ODZmNDFhOWIwMTI5MGIzZDA0NDUyY2FlNjhmMGU4YzJkMmU4MTA2NzIyNzliNDYyNmYwZWE3OGQ4MTg0MGIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2YWIyNTNjNWY5NjAxN2VhNmU1ODhkYjUxMWMyM2Q2MTAyNDhhZTdhNDExZDI1MzJiYWNiMjIwMGNiYTU3MjkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY5YmE2Nzc2ZmMyYjQ4ZjUzZmMyOWUyOTFmYjJkNDgyM2NhNDBkMTI2YTc5ODIyMTQ4MGRiNDIyYTA2NTA0YTAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFlZDMxMjhiNGQwNDhmNDk3YjhiYjlmZGEwMzhiNTFiMmVlOWVjYjk5MjAyODgxNGQ1ODBmMzQwMzhiMjQzYTIifQ"
+        },
+        {
+          "resource": "repo://scripts/check-branch-name.sh#L43-L77",
+          "version": "repo-lines-v1:sha256:c2ef5e63713108e5a51a63b978841ae9919b3ea79ec965e73214c4266dbf8bf3:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIyNjBjOTQ5ZmI5NjM5ZmQxNmU0ZWU4ODRjYmY2Yzg4NWI3MzI2MTg3MjY5YjliNGZmODdlY2UwMzc5ZjE1ODUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM3NWVmYTBmMDQxYTc3MmMxMThiZWM0NDllNWUzNzExMTc5NTMwMGNkZmZhNTA3OTU1YzE4YTNlMjk4ZDU1YjAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNiODliYzg3NjY4MWY5MzllMjQ1NTZmN2FjZGI0MmRiOTA0YmRiNWYyNjE3NzMzNWY0NDA5MjQ2ZWU1NjgxOTAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI2YmUwNzUxY2Q3ZjI1YTcyNWQwN2Q0MzQxZGY1ZDU4NTcwNTViNDBjM2MzODkzYWNkNDI4YzBmYTlhZTIyZTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b94f9f4e5e594c70980fc80cb8753857",
+      "statement": "Branch-name checking is deliberately split in two modes: the tracked pre-commit hook checks shape only (the commit justifying the prefix may not be written yet), while CI sees the whole branch and enforces substance — the check that catches a pure bug fix on a `feature/` branch (#95), which turned the AGENTS.md prose into a check — and the script's self-test case table runs in the same CI job so the checker itself cannot silently rot.",
+      "evidence": [
+        {
+          "resource": "repo://.githooks/pre-commit#L13-L23",
+          "version": "repo-lines-v1:sha256:2ac9a634f1ed3102c941d8ca382cbd83f3275e85f91355942dc18f683149f6b0:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkzOTgwY2Y2ZGI4ZTgyNjE1MGNiYjYyZWZjOWI3NGVlY2M4Yjc3MGQwYjQ5OTc4ZTlhZmZjOWE0MTU3MjY1NjkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM3NjlkMjM3Y2Q0MjBiOWQzOGI5ODFhMGE0ZjY3NzAxOTBhNGE4M2RjYTFmZTU2YzRmNWJhMWUyY2JjMGVmNzYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwNDMzODZkNGQ3ODJlM2Q4ZWYwYzM1NTdlZWUyYWQ5ZjJhMjY4NTdiM2IzNTc1MWEzODc3MDllMmJmY2Q2NzkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFmZTA2OTY2ODJkOWFiYjA3ZTA0MmY1MWZhZTNlMmIyZjgwMjM3NzU5N2MxOWNjZDgzZGVhODZhODQzMTNiNjcifQ"
+        },
+        {
+          "resource": "repo://AGENTS.md#L81-L88",
+          "version": "repo-lines-v1:sha256:5c99a9ff58efec30c1202e12987e5cbc19aaa84969563c1495348e828f533a43:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYjkxYjNhYTdmZjMzNjU2M2RmMWJmOTA0MGEzMjRmNWRhZDAxYThmYjMyZTliNTUwYmQ3MWZiMWNiNjJlY2I0NCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjRhYTcwZWZkMDczNTk4NjdhYTQzMDU5MzVlZTdhM2IyZTk4YjFlY2Y4MDRlZGEzMmVkMTliOTUyNzgxMzdlYyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMTUwNDc2MTcwN2E2ZjBmNDkwYjNmOGRlZjdhNDcwNDQwOGRiYmFlNTljZDAwMWE3MWM2MTU0YjU2MGJlNTgyNiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMmNiNTY2N2EyZDRiMjIyYmRiNzkyNTUwZDM2MmU3ZTFlNTU3N2YwZTViODU0YTA4ODY2Mzc3M2FhOTJkNTNlMCJ9"
+        },
+        {
+          "resource": "repo://scripts/check-branch-name.sh#L80-L118",
+          "version": "repo-lines-v1:sha256:e29575195249695545b6079ec6c9da227f5923025b4975f984600cdee51e4d32:eyJzZWxlY3RlZExpbmVDb3VudCI6MzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImExMmEwMTM5YjBmYWNiYjcyZmM3OGFkNjBmZTc0YjAwNmRlNmRjZjRiZmI5Y2NhMTFmODQ3Zjg1YTU3MDg4ODAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE1NjFkNjRkNWM3MGNkNWVkNDczYTQ1MDA3Mzk4YmU2ZjY5MmM0NDlhOTEwMjRmOTYzODhhZTUyMmRjM2JiMGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjExYmU2OTBjMzczOGQ0YWUwNjBjY2M2M2Y4YjI5NzY0YzZmMjY2MzM5YTYwNWNiOGEyZTg5ODI2NzY4MDE4MDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5095272a86584bf2a432968d4bd56ccf",
+      "statement": "The ci.yml `test` job is a fail-fast:false matrix over ubuntu-latest and macos-latest that installs libdbus-1-dev + pkg-config on Linux for the keyring Secret Service backend, then runs `cargo build --all-targets` and `cargo test` with default features — vendored OpenSSL stays on, since anything that ships must build without system OpenSSL (local `just test` opts out with --no-default-features for speed; CI does not).",
+      "evidence": [
+        {
+          "resource": "repo://.github/workflows/ci.yml#L40-L57",
+          "version": "repo-lines-v1:sha256:9d2e17d5ee63044cacb7cbe0b750c47ce85abd3fb7667eb73a2cc13d74155b65:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIyMDA1Nzc3NzZjNjY4YjcwMWQ3MTY1YTk3MmNiYWJiNmVkZWQxMjhiYjg1ZmE3MGMzMjYwYjU4ZTBlOWIwNDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg5MGM5NzRiNTVkODQzZTIyZTQyYzA2MThlZmQzZTliZWYxYmE0MDUyYjk4NWY1ZWE1YmQzZmE2YTU0ZDllMWYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQyYmU0NDZlNzY1YjMzNjUyN2I2NzQxMmIzYmFjZjQ1N2FmMmZmYzYyNTEwNDI2ZDkwNDNmNWE5ODk5ZTkxNzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE2ZDc4YzdhMmYwODUxNDIxZmZlMDczZjhmYzZmNWZkZmNkZjVjZjQ0ZDZjYTU1YWVhOGU5MWNkNDg5ZTE2OTMifQ"
+        },
+        {
+          "resource": "repo://Cargo.toml#L38-L46",
+          "version": "repo-lines-v1:sha256:e226c47e919c89c2b1523f4130bcb22c44b745e9cae4e63d4bbf80ff164ef87b:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYjZmNmMxYzczZTQ2ODViNmY1NTc5MmFlNTM5MjU1M2ZmNzlkM2NjMDY3YjBiNzRlMDY4Njk4ZjZiMmM3NmI4MiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYzdlNzE4NDM4M2MzMDA1MDc5MDczMmY1ODkzMmVlMjdhYTRjMDNlMmU1OTgwZTEzMzYyM2I1NDM0YzY1YjAzZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMDM5Njg4ODI0ZGRlNDdjZDQ4YjVjNjVkYTM5YzE4MTU4YmMyZDcyZDJjMDYzYzJjZWFmNjE5MjllZDQ0NjE5NyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNzI2MjZjMmFmYzJkZWVmZTc2ODRhMDg1NDc2MTgzMjRlZGQ2NWU5NDE2MzI2MDA5ZmFlOTU4ODRkYWQyZDRjYyJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_cd3a19e9ebce407ca36ec3975fd7e095",
+      "statement": "The ci.yml `lint` job runs `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings`: the tree has been warning-free since #50, so any clippy warning now fails the build (without the flag the pile regrew — 42 warnings on the `e2e` target masked a real one in new code); the job installs libdbus unconditionally because --all-targets compiles everything.",
+      "evidence": [
+        {
+          "resource": "repo://.github/workflows/ci.yml#L59-L76",
+          "version": "repo-lines-v1:sha256:27228789a75b7524b4cb77001f6207b19083ccea8073b8b4a4d186c9ed4469ea:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY4ZmI3Mjc3ZmRkMjBkMmY4NDY2ZmM3M2I1ZTQyNzA0Nzg5YjA5OTkxNjYyODlkY2IxOTM1YzAwNDg1MTZlZGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM2Zjk4NzEzYTBiYTZmNGRiZDVkNmNhYzY3OTAxZmI0NGZmMmMwZGVmNWFkNDgxZTJjMzZmM2M3NmYxOGNhMDAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY1ZGVjNjAyZjcxNWMyYjc4YmM3YzA5OGNhZjdjOTgyNWJhNzRmM2RiODc1NmY4YmFhNTQ4NTI5NzZiNzYxYWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a525d68137984976936761fce4e0f84e",
+      "statement": "release.yml triggers on a `v*` tag push (created by `just release`, which merges development → main and tags with --follow-tags) with top-level contents:write, and its release, npm, and publish jobs all `needs: build`, so nothing is published to any channel until all three target binaries have been built.",
+      "evidence": [
+        {
+          "resource": "repo://.github/workflows/release.yml#L3-L13",
+          "version": "repo-lines-v1:sha256:72842f58117a2006dbbd8c38e528b5f3a4d65eb38fb5a1053d760ed0b261d5fa:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU5NmRjNDgxNDlmNWE4M2QxZWQ2ZGJiMzliYmM3ZTJiOTAyYWEzZDM0ZDZiZDVhZTRiMjkxYjY4ZGYwY2E3OWEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU5ZDgwMTU0ZWQ0MmZjNWM3NzliMTMzMTU3OGI1OGI4OWM4MDFlYWNlNzRmMjRjZDQ4ZWI0YTIzNTc5NDBhOTUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjoyLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVmOWNhZTQxNDE4YTVmOGY0YTFhODI5ZmRkZDAyYmY3NzQ4MmUwYjkwMmQzYzBiNGZmYzExYTg3NGZlNGQxZTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE1N2ZkZWEyMDkxMGRmY2U2MTY0ZGRmYTRlNDU5ODA2M2EzZTlkYzlhMWEzODgzOGFlYmMxMzA5ZTlhOTkwZWQifQ"
+        },
+        {
+          "resource": "repo://Justfile#L337-L346",
+          "version": "repo-lines-v1:sha256:e0c6d25384bb913fecf4a46becbcd5da6c6131c7a32f156e1082d2e90b86b76e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIxMjBlZjZjYjJiMWQ0YjNlMzA5OTA1MzgwODJjODJjNWY0MWM3OTAyZjQyY2ExMTI2ODE0YzU1ZWE2MDUyNzQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRjMzA0ZjdiYmY0NzA1MjQxMTA1MTI2MTM1ZTA0Yjg3ZWRhNGRmZGJlYzNlNDBlMzM3ZjE3NDcxMjM3YmY3MWQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE1N2QzN2VmZGMyYmY1ZDY4NjQ4YTgxMjRlMzFmNjZkNDllNmUxMzFlMmEwN2IzODUyODQ2YTQyMWY4ZWNmM2QiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAyOTRjOTk3NGU4MjhjY2ExOWYwYjBhZjY5NWMxNWZiNTZiNDQ4MTViNGJmNWNiYjdjNmQwZTliMzhlZWEyODEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_02a575391ceb492f927b63c9acc0aa95",
+      "statement": "The release build matrix covers x86_64-unknown-linux-gnu (ubuntu) plus aarch64-apple-darwin and x86_64-apple-darwin (macos), and every leg validates its binary before packaging: the two natively-runnable targets run `sshub --dry-run` (which exits without opening the TUI) as a liveness check against strip-induced breakage, while the Intel Mac binary — which an arm64 runner cannot execute — is checked structurally via a `file` Mach-O type check plus `codesign --sign -` and `codesign --verify --strict`, because cross-compiled x86_64 Mach-Os carry no linker ad-hoc signature (verify alone only reported 'code object is not signed at all', as happened for v0.11.0).",
+      "evidence": [
+        {
+          "resource": "repo://.github/workflows/release.yml#L14-L63",
+          "version": "repo-lines-v1:sha256:9aa2a09ff5a75e87a079c26d70ab7e530cd44eb0019a3f35128713619c2fb96a:eyJzZWxlY3RlZExpbmVDb3VudCI6NTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlZTNjNjBkYjI1M2NiY2VhNzI0YWFkZDkxOGViOTQ2NjRmN2M2N2U3ODRmNzk2Zjc4NGNmMTAyMjA3ZDI2YmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNhNzg5N2YxZTFjZGI1YWY2MGVjYjA4Mjg4MzRhMmNmZTYzYzM4MGM5YzE5NzA5NDA3YjA3NmY5ZGYzMDE5NDYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFjNWRjZGMwN2Y3OTNkMjQ5N2VlOWRmM2U2YzI4OTI4MGRhOThjY2I4NzFlMGI3NDc0NjgxNzdkMjRkMWVkYzUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFlNTBhMGVhOWZhZWM0NWMwODk4OTBhZWQzMzYyMjZjM2RlZDU0NGRhYmVjOWFiZjlhMTk4Mzc5ZGJjM2Q4MmUifQ"
+        },
+        {
+          "resource": "repo://src/main.rs#L74-L76",
+          "version": "repo-lines-v1:sha256:0eb36cb45b4b19a3743be0e647f09bb183285cb30a57c642a74a10398d8e46b8:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYzE5ZWRiYzM2YzgyYjllMmJjOTNiZTViOWRmYTlmMDQ2ZjU1MDJjMzQxNDQyN2ZiODE2Y2ViMmQxZGM2NjA0NiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDg5M2Y0MGUzNzgxZWI4OTZjODJkMDQ2YTA4MDY3YTExZTM1Y2RmMmYxZGZhZjI2ZmVhOTBiOGRiNjY3NjQxMyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOTk5YmRlZmVlYWNhNjM0MGUwMjkwZGM4NmU4ODljODlkNWUxODlhYTViYTQ0YjU4NWIzYjcwNzM0ZjRhNjJkOCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZWFlYTkyYzlkN2VhZDQ4Njc0ODUxNTM2ZjE4NGJjMGVlOTA5YmY4MGUxM2IwYjQwOTg3MDcwYmE1NGFiMzIxYiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_2c0570529fa94374bd5a03dc7c7e8579",
+      "statement": "The release job merges all build artifacts (download-artifact with merge-multiple) and creates the GitHub release via softprops/action-gh-release@v2, attaching the sshub-*.tar.gz files with CHANGELOG.md as the release body and generate_release_notes disabled, so the changelog section `just release` rolled is the release text.",
+      "evidence": [
+        {
+          "resource": "repo://.github/workflows/release.yml#L73-L85",
+          "version": "repo-lines-v1:sha256:892be980d4aec704bba44e734a75c5ae31205e55eec5b16793ef1a1e01722b7a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYzMmUyNTRlMDAzZGRiMzY4ZjUxYWM3NTg0MTc3YjdhY2RiYmZjYTQzYTcyMGJmZWIyYTY1MWYxZTFjNDBjNDUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdkYTc2YWFhZjdmNjZkMDJhMjQxOWFkYTJhZTlmODI5MDYzNjNmMWIwMDI0YmM5Mjc4ZDk1NDI4NzA0YTEyN2UiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFkNGNjMjkxNmRmMTRkOTJhM2ZjOTUzNDdhY2NjZGM4ZjIzNDJlMDUwZTlhMDA3OTZiZTYyNDdmNGQyNjMwZjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM0OTM0NTBhMWQ5ZGI0NDVhZWIzZjU4ZGY4ZDQ4YWNiZDZhZDAwMThkZjMyNzdlM2E1MTFhZDQwMjg4Y2UyNTYifQ"
+        },
+        {
+          "resource": "repo://CHANGELOG.md#L5-L7",
+          "version": "repo-lines-v1:sha256:fa4b7983e9f75d8415ffe5ae4a5f6e06d8737dcaedd71681be378cc7e57d8a23:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMGE4YWJjMTI4NDNjNDg0Y2ZkZGIzMjU1ODYyNWE4ZmU1YTI1NzU4MTQ2ZTc0OWMwMWI4MWMxMzUyNjRmNGY1MyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNWI3Zjk0YWE5YzhjNWI0ODQwYmYwNDczZmI5MWUxN2MwNzlmN2YxMjdkNjQxOTdlNmI0MDY0MTcwMjA0MGJiMiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYjdkMzgyNzBmMTMyMjQ4OTdkZGFlNWQxNDhhZmU1ODIxZGNhY2NiMmQwMDEzOWIzOWE3M2Q4MTRhNTVkNDZkMCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNjA4NzdhN2MzODZhOGUwNDhhYTI5MmUxZGE0ODc3OTAxN2U4ZmQyNWI3ZjI3NGI5OTE5ODM1ZmRhOWM2NjA3ZSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_87c7785bde764a7c85a4f4fcee941b1f",
+      "statement": "The npm job publishes with OIDC trusted publishing (id-token: write, no long-lived NPM_TOKEN; npm ≥ 11.5.1 is installed because Node bundles an older one) and runs `npm/build.sh \"${GITHUB_REF_NAME#v}\" --publish`, taking the version from the tag rather than Cargo.toml so a tag/version mismatch fails in CI; npm/build.sh repacks the release tarballs byte-for-byte, publishes the three platform packages first and the sshub-tui wrapper last (the wrapper's pinned optionalDependencies must exist when it lands), skips versions already in the registry (idempotent re-runs), and each of the four packages needs a trusted-publisher entry on npmjs.com or the step fails with ENEEDAUTH.",
+      "evidence": [
+        {
+          "resource": "repo://.github/workflows/release.yml#L87-L126",
+          "version": "repo-lines-v1:sha256:46d93b89478e40e7af1b36bfd6e606c31bd19bd8f4e209e91c8e05d8750a4db0:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYzMzE2Y2RjOTZhYzA2ZTA0YjFhYjI4Nzk3NWQ4ZGJhM2JhNmExZThhZWIwZTYwMzdkOGJjNWUzMTFkNmJhMTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUxN2U2NTMzNThiOGRmMzEwM2Y0ZjM4NzBhNDA0ZThjNjMxZGQ0OTRmOWI0YjljN2RlYmRiYjgwM2YzZGEyZTUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhiNzIyZWRkODE3ODM4ZDc4MjNiMzRhODU0OGYwMjFhNjc5MWY1MDcxNjk0OGM1ZjYxYmU2YmFhZTBhOWY2M2EiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFmNzcyMTBkYmQyNmJmZjI4YzUwZWFiODAxMzNkMjM4OGJkYTk3ZmFiNDBhMTZhMWY3NzYwODc1MDQwMTAyMzEifQ"
+        },
+        {
+          "resource": "repo://npm/build.sh#L120-L141",
+          "version": "repo-lines-v1:sha256:7e255d4d18285b29e6c709e0ebd66c0ee02abf36b427b59de0aa56fac2a40871:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIyOTVkZGIzMzk0ZjdiZTI4YWQ1ODYyNGVjNWI0ZDA2ZThjODEwNDIwZTJkZjVhNzQzNDQyY2RjYmZjZTI1MGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQxMTdmYTAwNmJhOTIwODUwMGIyOTMwY2U2OWNiZGU0MzZjNjQ3YWZhOTE3Y2I3Mzk2YTliYzkxMTFhNDZkZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwOWUzN2NiNWUyN2FmNmEzZjRmM2MxODgwMTQ4NzBjM2FiMGMzYjU5OGFkODE4MDQ0ZDc5NDgyOTZhNzhiNDIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjMwODVjZTQxODIxZDVmZjFkYzBmMWM4MDJiMjZhMmI5OGNiNzZhZmMzYmFmYzgwMWYwMjExOGIzOGEyY2E3OWIifQ"
+        },
+        {
+          "resource": "repo://npm/build.sh#L43-L51",
+          "version": "repo-lines-v1:sha256:fecee81aba8cdc30041f514b7d1ae9d6ef58d6b66977bcd2e8a77a9bbeb8b4ee:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZjVlMjgxNTRiYWYyMDkyMTBmOTI4NTI5OGJkODg5ZTA4OTUxNWQwMmQ2NTZiNTZjZGIwZWRiODBjY2U2MzAwZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYWZhNDdlYjBiZDM0NmU0Y2ZkNGEwZTU2MDFlNGYyZDBjMzkxZDIzZDM3ZGFkZWE5NjNmNzhlZDZlNjI5ZTNjZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZjAxNzgzNDhiMmY1NTM3MTUzMGU0MTczZmViMGQ5NGVjYmM0M2UzNzgwMGI5Mjg3MWJkMGUyZmUwMmEzZDY4MSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZjdhMzA0MTUyOGE1M2U0YWZkNzNjYTBmYjVlMGUxNjQxZGY5ZThlN2I3NGFlZGEyMjYwMTc2NDI1M2M3OTY1MSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_971e76f422034bc993fd7b477c4c5aca",
+      "statement": "The crates.io publish job runs `cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}` after installing libdbus/pkg-config (the crate must compile to publish), which fails loudly if the tag's version was already published so a re-run cannot silently no-op; only versions carried by main when the tag is pushed get published, since the tag sits on the release merge into main.",
+      "evidence": [
+        {
+          "resource": "repo://.github/workflows/release.yml#L128-L141",
+          "version": "repo-lines-v1:sha256:c9420ffa4c7431bd7e0d80c58ff6b26b8d8ff7ef87f15429245c33ae110b59f3:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU4MjU0YzkxNmE0NDgxMjNlMmQzZDk1ZWJhYTJlNGIxZGIwZmE3YjU0M2UxMmMzZTFiMTFjZjM2MjE2ZjIwMGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMzOGVmZGM1MjQxNDZlNGU0NDlmZTc5YWU5MzRlMTE0OTM2MGQxZGFjMWMzNjlkZTgzY2EyMDI4MjllZTlkMWUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJhYTIzNWQ5ZjdiODIxYzUyYzhmN2E0ZDVhOWE2NDFjMTI1ZjA0Mzg2ZjQxNWJhMWRmNWZjMDBiNGY4YjczYzUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://Justfile#L337-L346",
+          "version": "repo-lines-v1:sha256:e0c6d25384bb913fecf4a46becbcd5da6c6131c7a32f156e1082d2e90b86b76e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIxMjBlZjZjYjJiMWQ0YjNlMzA5OTA1MzgwODJjODJjNWY0MWM3OTAyZjQyY2ExMTI2ODE0YzU1ZWE2MDUyNzQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRjMzA0ZjdiYmY0NzA1MjQxMTA1MTI2MTM1ZTA0Yjg3ZWRhNGRmZGJlYzNlNDBlMzM3ZjE3NDcxMjM3YmY3MWQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE1N2QzN2VmZGMyYmY1ZDY4NjQ4YTgxMjRlMzFmNjZkNDllNmUxMzFlMmEwN2IzODUyODQ2YTQyMWY4ZWNmM2QiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAyOTRjOTk3NGU4MjhjY2ExOWYwYjBhZjY5NWMxNWZiNTZiNDQ4MTViNGJmNWNiYjdjNmQwZTliMzhlZWEyODEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ed1d182d30b2441a9a9271591d10e583",
+      "statement": "openwiki-update.yml runs on workflow_dispatch and a daily 08:00 cron (`0 8 * * *`) with contents:write + pull-requests:write: it installs the openwiki npm CLI and runs `openwiki code --update --print` with a prompt that makes CHANGELOG.md the primary change ledger (audit every Unreleased and historical entry regardless of the recorded gitHead, compare against the source tree and wiki, add missing pages, update indexes and cross-links) and maintains openwiki/changelog-coverage.md as the audit notebook; it uses the OpenRouter provider with OPENROUTER_API_KEY and model z-ai/glm-5.3-flash, with LangSmith tracing enabled only when LANGSMITH_API_KEY is non-empty.",
+      "evidence": [
+        {
+          "resource": "repo://.github/workflows/openwiki-update.yml#L3-L47",
+          "version": "repo-lines-v1:sha256:ec81a2449380b47a4971b00cdf2cbc78e9ffb2b98dc6b952379207843625b26c:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU5NmRjNDgxNDlmNWE4M2QxZWQ2ZGJiMzliYmM3ZTJiOTAyYWEzZDM0ZDZiZDVhZTRiMjkxYjY4ZGYwY2E3OWEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY4MmZiYTE5MWJkNDllMzYwNDM3NDdlMWU5ZTlmYmFmMmZkYjA2YjliYWJlNWY3ZDA3MDAyMzlhYTYzYWIxNTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjoyLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM1YjFmMjRlNjE4MDVlZTFhOWJjNzgwNDdlMWU0YjNkODYxNTdkNmUzN2Q4YWMwYmNiZWJkNWU2NWU1ZWYxYWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImEzNTc0NmFhY2Y2ODI2ODUyOGYxZDJkNjY0NDM2MTkzZDZmMDFlYmQ3MGY4NTNmMmE4YTMzYjYyODY1NmRlNWYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_81b5b6f9fe5646a2b940882fa6ccfa8f",
+      "statement": "The OpenWiki bot opens its PR via peter-evans/create-pull-request (pinned to the v7 commit SHA) from branch `openwiki/update` onto `development`, with add-paths limited to `openwiki`, `AGENTS.md`, and `CLAUDE.md` and commit message/title `docs: update OpenWiki` — so bot-maintained agent-rule files ride along with the wiki output.",
+      "evidence": [
+        {
+          "resource": "repo://.github/workflows/openwiki-update.yml#L49-L62",
+          "version": "repo-lines-v1:sha256:0a5ca310457668a78955de68d9c39eb6570fbf6d93082d20724f4b7a81bb80d3:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxY2ZmNGFkMzNiYTkxYjE0OGUxYjFiODI5MGI4ZmZmMjdiMjAzZmFiZmVlNTg3MDI4MmRlMzY3MzgzYjFiZTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQzZWZkOTM4MmYyMmZlM2VkY2I4NDkyZDcxMDlmOTIyZWQ5ZGM2M2JiZTFhZWE5OGFlZDFkMTAxMTRiYmJmNWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY0Nzc5NmQzMTczMmZiY2U4OTk4YTJmN2U3YjFiYjk3NTVjMjNlNTg1MDMyMGI5MDkzN2Q4MmMzZmQwZTYyYTAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7c644904a66d445ea88624419d783a65",
+      "statement": "strix-pentest.yml is manual-only (workflow_dispatch with a scan_mode input defaulting to quick — no PR trigger, because Strix scans consume substantial OpenRouter credits and may run for many minutes): it checks out with full history, installs Strix via the strix.ai installer, and runs `strix -n -t ./ --scan-mode \"${{ inputs.scan_mode || 'quick' }}\"` with STRIX_LLM hardcoded to openai/gpt-5.6-luna, LLM_API_KEY mapped to the existing OPENROUTER_API_KEY secret, and LLM_API_BASE set to the OpenRouter API.",
+      "evidence": [
+        {
+          "resource": "repo://.github/workflows/strix-pentest.yml#L24-L30",
+          "version": "repo-lines-v1:sha256:fd876619cd0f184d02319d346755f86b316350f36b1ad6c9e9cc73ab947b87a9:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiM2EzNzJkZWE3M2ExMGRkZDgwNDNjNWQ3NzVhMWQ1ZmFlNDU3MTgxYWU0OTExNjEwMmU5MGVkM2M4M2U1ZWEyYiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMGEyZGJhYTJmNDI3YzgzZGQ0ZmMzNGMxMDkwZTdiMGUzMzRjYThjNGE3OGQ0Zjc2MTVlZTBjYzEzZGMxZGMzMSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiN2EzN2U1MDRhZjM5N2JiOGFiMTJjODVmMzQxN2Y4M2YzMjZkZDkyNDBhZDQwMGZkZWRiZjQ2MTcwNWJkZTgyYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjAsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9"
+        },
+        {
+          "resource": "repo://.github/workflows/strix-pentest.yml#L3-L12",
+          "version": "repo-lines-v1:sha256:7953d856952044c476d07d9b63504e9f10a0c5d0b4c91cc49369cfc782a77145:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA5ODNjNDJkYWNiZTUxOWE3OTVmNjRlNmYwNWM0MTdhNmQ4YjNkY2IzZjIzNTZlYWI4YjYyMTgxZmZkOWFhYWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjoyLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNmZjA1NThhZTI4NDAyNmQ4ODNhYjQ5N2RkZjY3ZGZlYWZkMGU4NmNiOTc2ZTQ3N2VlM2IxMzJiY2QxYzU0YjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM5OTg1YTE2YjkzYzRmMjIyMDc5NDdmNWNhNmY1NTZjYTY5ODNiOTQyOWRmYzg2OGU5YTY3OTYwNDRkYWU5Y2IifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e775d01a26234db2a47c64ee86218b71",
+      "statement": "The four workflows consume exactly three repository secrets — CARGO_REGISTRY_TOKEN (crates.io publish), OPENROUTER_API_KEY (wiki bot provider key, reused as Strix's LLM_API_KEY), and LANGSMITH_API_KEY (tracing) — while npm publish needs no long-lived token at all (OIDC trusted publishing) and STRIX_LLM is a workflow env value, not a secret.",
+      "evidence": [
+        {
+          "resource": "repo://.github/workflows/openwiki-update.yml#L41-L47",
+          "version": "repo-lines-v1:sha256:a36daaea5d9cb2d3815b0f8043244941e2008f32441076a9d94df4391014edf0:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiN2IwNzg0OGE0MzY2NjU2YjJiYTYxOTdiZTAyYjkyMDgxNDU0NmY5ZDlhZDBiNTMzOWU0YzI2YTJjOTQ2NTExNSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNjgyZmJhMTkxYmQ0OWUzNjA0Mzc0N2UxZTllOWZiYWYyZmRiMDZiOWJhYmU1ZjdkMDcwMDIzOWFhNjNhYjE1NiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNjY1Njc2ODA2MTc5YzIyYTE1NmNkNzY5NTdhMWE5ZmYxYWFkNjAxODJiOWViMzg2ZmM2ZjgxNDNmYmJjOWUzMCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYTM1NzQ2YWFjZjY4MjY4NTI4ZjFkMmQ2NjQ0MzYxOTNkNmYwMWViZDcwZjg1M2YyYThhMzNiNjI4NjU2ZGU1ZiJ9"
+        },
+        {
+          "resource": "repo://.github/workflows/release.yml#L136-L141",
+          "version": "repo-lines-v1:sha256:23066db526185ea975d381af0c0dc1ede133126a0005914f8be40775e73018b9:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOGVmZjlhOTQwN2JmNDFkYjUxNjM0MjAwMzkxYWYzNTI0ODM1YzE4NzQ3MWUzNGM0OTdjYjdmNDdhZjczZmE3NyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMzM4ZWZkYzUyNDE0NmU0ZTQ0OWZlNzlhZTkzNGUxMTQ5MzYwZDFkYWMxYzM2OWRlODNjYTIwMjgyOWVlOWQxZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZDdmMDhmNzMwYmZmNWRjMmE2ZmRjMTU3MmE3MTAzZTk1YWZhZTRhODVlZTNlNDliZTZiZGMyYWUwMThjN2JhZSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjAsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9"
+        },
+        {
+          "resource": "repo://.github/workflows/release.yml#L91-L108",
+          "version": "repo-lines-v1:sha256:083b9c6cb57c18684c47bd16bf3b4e7580dd4a9366aa5e0d537d4a78a455f940:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQyOWNiYjFkNDgwNTQ2NGY5NjFlMjA3MDYyNWFlN2EzMjBiZmQzNmI3MWZhZTIyNzgxZTJiYWM2NTRiMDM0ZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNjYTA2YTQ1ZjQyNTlhNzM2ZjQ1OTRjNjliZTM1Y2FjZjcyYTZjZjhjZTFmNTE2N2JjN2Q5ZTg3ZWJkMGFhODAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRmYTgxYzMwOTdkMGFjNzY0MGM0MjYyMjJlMTY5MmM2ZmIyYmM5MTRiZDRhMDQzMGI2ZWUzYTdmM2Q1ZjkxMDAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJjZWNkOTE3OTRhYmMzNDg5YWQ3MTVlMDc5NWFhN2RmZTQxMDQ0YTcwYTBiMzI4ZmRjY2RiNjdmMzZjMjQ3ZjAifQ"
+        },
+        {
+          "resource": "repo://.github/workflows/strix-pentest.yml#L24-L29",
+          "version": "repo-lines-v1:sha256:ebda3a338ecf1069068d082cc4851e700a10e4c64bf4da133667986494b90f75:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiM2EzNzJkZWE3M2ExMGRkZDgwNDNjNWQ3NzVhMWQ1ZmFlNDU3MTgxYWU0OTExNjEwMmU5MGVkM2M4M2U1ZWEyYiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNjk2NTg1ZjA1YjZmNDgyYWRmNGE5YmFiNzZmMWQ2NDUyNDU0ZmM0NzM3OTg1OGYxN2Q1MTAzMzQ5ODk4ZmI4MiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiN2EzN2U1MDRhZjM5N2JiOGFiMTJjODVmMzQxN2Y4M2YzMjZkZDkyNDBhZDQwMGZkZWRiZjQ2MTcwNWJkZTgyYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjEsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMGEyZGJhYTJmNDI3YzgzZGQ0ZmMzNGMxMDkwZTdiMGUzMzRjYThjNGE3OGQ0Zjc2MTVlZTBjYzEzZGMxZGMzMSJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.5.1",
+    "at": "2026-09-11T12:46:43.817Z"
+  }
+}

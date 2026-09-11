@@ -1,0 +1,274 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:4abf5e74cce6bcf4b6a219080e3c7ec8eaf1618aaf51cd6cc3eb1fac2b4a629f",
+  "claims": [
+    {
+      "id": "claim_5f6a1b4a3c1d468eb512254eee5a286a",
+      "statement": "The `vendored` feature (ssh2/vendored-openssl, OpenSSL compiled from source) is a Cargo default feature so `cargo install sshub` and the release tarballs build with no system OpenSSL present; local development and tests opt out with `--no-default-features` (saving ~120 MB of target/ per profile and most of a cold build's wall clock), and nothing that ships — `just build`, CI, or the release workflow — may pass that flag. `just test` runs all four test targets with `--no-default-features`.",
+      "evidence": [
+        {
+          "resource": "repo://AGENTS.md#L43-L48",
+          "version": "repo-lines-v1:sha256:cf23bf2b45f78f643283de91f7c5e651b7ac7cbba151306e75ac774e56bf756d:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMDYzNDA5ZTI0ZWYyZWM0OTkzNjJiYWIyYzYzNTRhMjljYWRmNDExNDNmMzJiZGUzZjQ3ZjdiMTYxNmRjYTdlMSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNmQwMDhlODYyNGEyYTg4MTc2ZGJlNmUwZDg3ZTNkMDFjMDg1YmQ3NjFiZTRkZGQwYjk2NzFiZjhkNWU0OTYzMiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYWExMThhODQ3YjdkM2ViODc0OGMzMWFjNzNkNGRhYjE4YWJmNjUwMWY1N2Q4ZTcxYzgxMmM3MTY5YzQ5OTZhNyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNjkwM2JjYzQzOGI1MWQ1N2M1NDg5ODZiZTdjN2NlZjEyYjBiZTlhMjhjYTI0MjE2YzEyMDNhN2M3MWE1OGRlMiJ9"
+        },
+        {
+          "resource": "repo://Cargo.toml#L38-L46",
+          "version": "repo-lines-v1:sha256:e226c47e919c89c2b1523f4130bcb22c44b745e9cae4e63d4bbf80ff164ef87b:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYjZmNmMxYzczZTQ2ODViNmY1NTc5MmFlNTM5MjU1M2ZmNzlkM2NjMDY3YjBiNzRlMDY4Njk4ZjZiMmM3NmI4MiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYzdlNzE4NDM4M2MzMDA1MDc5MDczMmY1ODkzMmVlMjdhYTRjMDNlMmU1OTgwZTEzMzYyM2I1NDM0YzY1YjAzZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMDM5Njg4ODI0ZGRlNDdjZDQ4YjVjNjVkYTM5YzE4MTU4YmMyZDcyZDJjMDYzYzJjZWFmNjE5MjllZDQ0NjE5NyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNzI2MjZjMmFmYzJkZWVmZTc2ODRhMDg1NDc2MTgzMjRlZGQ2NWU5NDE2MzI2MDA5ZmFlOTU4ODRkYWQyZDRjYyJ9"
+        },
+        {
+          "resource": "repo://Justfile#L6-L11",
+          "version": "repo-lines-v1:sha256:a2f03dc0feb9cedf17859d45f3827eccb39d7fe9cc3b9b8872a8c548627717f4:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNjhlZGM2NWYzZjNlYzJiMmQ0MGM3Yjk4YmIyZTQwZDljZWUzNWMzMGUwMDhhZGY5MjBmMzNlNDU1OTA4MDNjZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZTc5NTEzYzNlYjJhNDUzODA4YzRjN2UwNmJmYjFhNTI0N2IzYzM2MmM3NGUyNjgzNjgxODVkMjNhN2JhM2YxZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOTJhZjEyNGMxZTc5MmJkMDJmZWIzMzk4OTRkNzcyZGNmMDQ4MmMzZGJlODIzMjlkMDg5YmQxMjIxNDRjNjhhYSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNjZhMzczMTg5YzkzYTFlZDU3MTA1YTY0NDM1ZjA2OTQ5MmI1MGE3Mjc5NTA2ODQxZmEwY2MwMWU0NjE5NmQzOSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_29920455885742dd9afb36a791de4fd2",
+      "statement": "[profile.release] sets lto=\"thin\", codegen-units=1, and strip=\"symbols\": release builds are slow but the binary is optimized across crate boundaries (this is what the tarballs, cargo install, and npm ship), and strip=symbols removes the symbol table from an already debug-info-free release build, so RUST_BACKTRACE output is empty in any shipped binary — a readable panic backtrace requires a debug build. The dev profile uses debug=\"line-tables-only\" (full DWARF was ~40% of target/), and panic stays on unwind so a worker-thread panic kills only that thread (TUI stays alive) and cleanup Drops run, including AskpassSecret's removal of the host's askpass password file.",
+      "evidence": [
+        {
+          "resource": "repo://Cargo.toml#L99-L123",
+          "version": "repo-lines-v1:sha256:00d182bb39395869d0694e47f69be3dcef1de0efe6306c007b441ce52473bb8a:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRjMGVhYTliMWU2ZGExNTk4Y2M1MjQ1ZjRkMDMzZWNhZTZkMTdlYTNiMDdmOGIxM2RhYjllNzAyMjVjMDRlZjEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ0YzllYzI2OTEwOTZkNGY5YjhlNzExYjc3NzJjYjc4YjY0MWU5MThkZTY5NDIzYzkyMGUyMjg5MWMwNzEyZDMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUwNDZjZmRjOTFlODhhMzgwMTVkYmFlZGRiNmIyODgwMDVmYzMxNmRiMDFhNWM0MmM3M2JjZTU3OTdkOTQyMDciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0cc26b3e465847e284700d15b3d1be29",
+      "statement": "`just bump <patch|minor|major|set> [version]` implements odometer versioning (Z rolls 0–9 carrying into Y; Y rolls 0–99 carrying into X, e.g. 0.9.9+patch→1.0.0, 0.99.9+patch→1.0.0) by sed-editing the version in Cargo.toml and the sshub entry in Cargo.lock — no cargo invocation, keeping the pre-commit hook fast and offline; `set` validates the X.Y.Z shape.",
+      "evidence": [
+        {
+          "resource": "repo://CLAUDE.md#L31-L43",
+          "version": "repo-lines-v1:sha256:4c219e398ebee7fe5d17baa03edbcd229c53d19f4a658a1a2b8f0b6ee4986e99:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI0NTYyMjNmMTJiMTI0YjAyYTQ0Y2U4MzlhMjIyNmU4ZTY4ZTdmY2VhYzQzNGQxMTkyY2FmMTRmOWZkNGQwOWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk1NWY5NDg0NDM5MjQ5NWQ5MmMzOGViOGZhOWMzYzc1OWM4YzY5OGU1OGJjOWE4MmE1MGUyYmRkZWI2NjYxNmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY3MGQ1NjQ1YzU1Y2YyMDY0YjkzMmQyZWZiMTY5YjE0ZWU4Y2RmZjNjZTAxNjBmNDFhNGZiZTkwMGYxMjk3MmQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE4MjRlYWI1ZWUxYmExNTBkZDA3OTI4YWFlMmY4MGM3MjdmOTA1M2M0OTFlMzk0NGJhY2E4NjVhOWI2ZmJhZTUifQ"
+        },
+        {
+          "resource": "repo://Justfile#L104-L131",
+          "version": "repo-lines-v1:sha256:8d515b666cb7130b897b965b7402c8849d983f1b3dd4d4c4aac97f66a1feb810:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgzNzc3MDE3Zjg2ZjhlNjdhOThlNTViYmFmZDEzNDFhZWEzOWFmZTU0ODIyOGRmNmVmY2E1NDkzNDk4NjliNTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEyOWQ1MDA5OTY5OTZjMWQ1NDBhMTg2MWUzYjg1ZjI5ZDlhZGNlYWNmNjFjZTA2NTRiZmIzMmExMmRlNWY4NjgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFlMWFmYjFkZWQ2YzAyODY3ZTNlZGFiOWM1ZjlkOTE2NTQ4MjRkODg0MDEwOGE4NTk5MTk4YzAxOTQ1NzBlYzgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ1NGJmMWQ3MTg5Nzc1ZjEyZmEwYzgxMDNhYWVlMzkyZWNmMTZiYTcyMDMyMWViNDA3NzgzYmUyODM4ODU2YjkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1662c1c7ec2e45948075ada492fce072",
+      "statement": "The tracked .githooks/pre-commit hook auto-bumps the patch version on every commit to development (runs `just bump patch`, re-stages Cargo.toml + Cargo.lock) and is enabled per checkout via `just setup-hooks` (git config core.hooksPath .githooks); it exits 0 on any other branch, while a merge/rebase/cherry-pick is in progress, or when `just` is not installed, so it can never block a contributor; it also checks the branch-name shape via scripts/check-branch-name.sh (the substantive commit-type check runs in CI).",
+      "evidence": [
+        {
+          "resource": "repo://.githooks/pre-commit#L1-L40",
+          "version": "repo-lines-v1:sha256:abf55da8c99272a5628307ae5227b60cf3051dabe05c49dbc849a2af1eaebd4b:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFkOTVmYzA0YTgwYzk1MmY0OWNlNDE4ODYyN2M1M2IwZmJlOGM0NDA0MWI5NTJkNTkyYWNkMWRlOTk4NjE0NjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI4OGRjNjBiYjYyODhhOGZlZDJkNDUwZWY1NTQ0MmU4MWI4YjY2NWQ2MDZjMjc0ZDc3ZTRjYzYwNjk4MGU4YTUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://CONTRIBUTING.md#L65-L68",
+          "version": "repo-lines-v1:sha256:151c0cb6f896e8855a27b4cdb1422863e0f8ac40fe82ae468f032cf9af945403:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNDRlNjM2YThhZGY3NjA1ODQ5MTAzOTc2ZjVlYTdiOWRmYzA4ZmY0Y2FkOTAwOWZlOTVkMGM3MDhhNjlkYWNlNSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOTlhNjJiYmZiNjk4MGIxMzYzNTY2N2UxMjk3ZTc3YTY3YWFlY2JiMWUwMDVjOWJhOGIzZDIxYTk0NjY1NzNiOCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZjAzM2MxNTJlODRkMzg2YjA2ZWIxYTcxNmU3MzAwOTIwYTVhYjNlMjhmZTk3ZjkzMzQ4MDJiODExODU2Njk3NCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOWQ2YzY5OGYzYTcxZmUwNWRkMDc4ZWNkNmQxZDJiZjhhMWU3NzJjYTIxMzRkZDYyM2FmYjkxYjA0M2E3MzEwZCJ9"
+        },
+        {
+          "resource": "repo://Justfile#L133-L137",
+          "version": "repo-lines-v1:sha256:c8111a9b9a0ac5167eced8837e59848d79c336a5d00960f1f04f18adc5b42c6f:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiM2UxMjY0OWY2MzUwYjYwNzBhMjg3ZWNlZjFkZGE4MjY2MzBhMTdmZmFmMDdiN2MzZWQ2ZTI5MDljN2ZkOWJmNSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNmJlNjM1MzdmMmYxMjNjNGYwMTBhZmU5NTRjNjdhMTA5ZjA2N2QwMzQ1MTgwMzJkYTdiNzIyMmRmOTQ2YjZmZiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMmY3ZTZiYjIwOWZmYzUxODc3NWQwYTU1YTYxM2I0MTg1MWU4Y2JjM2I4ZTZjZWMyNzFiZTc2ZWJjYzE2Njg4OSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYWFhMTNjMzI2ZTBlMTA1OGM0YzU5NDQ4YzYxNjU0M2U0MTQ3NjJjNGQyM2U5ZGMwMjdmOGVjNTE3MzhkZWI3YiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_5353ca776f6e4d23bc1a89d104ee7ecc",
+      "statement": "`just release <minor|patch|X.Y.Z>` (run from a clean development; an explicit kind is required because a bare `just release` used to silently mean minor) settles the release version ON development (so the dev odometer continues from the released X.Y.Z instead of going stale and colliding with existing tags), rolls the CHANGELOG ([Unreleased] → [X.Y.Z] - <date> with a fresh empty [Unreleased] on top), commits as `chore: prep release vX.Y.Z` with --no-verify so the patch-bump hook cannot re-bump, refuses an already-tagged vX.Y.Z (restoring the version files), then --no-ff merges development into main, pushes an annotated vX.Y.Z tag, and fast-forwards development to the release merge.",
+      "evidence": [
+        {
+          "resource": "repo://CLAUDE.md#L45-L53",
+          "version": "repo-lines-v1:sha256:485f04bdbb7ae9cb4d12943ac850c8ea217973fdb44ea3f1779e2d93016cdd5d:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZDUyZmI1OWE5OGJiZDFiYzA0N2ZmZGVhMDlhNGJmY2JlOTQ3MjA3NWU0M2RjNDEwYjQxZDJjYTRjNTM1YWYxOSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYjZiMzQ3NzhhOTA2OWE5ZTEzMWFkMjI0ZmJiYjAwMmEzMTMxNTllNjE4YzNkMTM0ZWQ2NDNkYzQxMDg5Y2E3ZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZWYzZjA3Y2U5NmRiZWJlZWViOWJiYTEzNDYxYWIxYTEwMzc0NzlhNmIwNzNkYWRiY2E5MDI0YjJhMTc4ZGE3OCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiN2RhYWE3ZThlYzM2ZmFhOWYzMWQ1NTRlY2UwNmJlOTc1MjFmYzBmYTRhZDkyMzQwMzNhZGY5MzNhYmM4NmJiZSJ9"
+        },
+        {
+          "resource": "repo://Justfile#L261-L346",
+          "version": "repo-lines-v1:sha256:98fcfa92d1b93a8aab41ade962922cc5222a8db9b6e84ce3566f2082fc41738a:eyJzZWxlY3RlZExpbmVDb3VudCI6ODYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0YmFlZmY0NmMwZTU4YzhiYmNkZjBkODdjOTJkMGMzMWYzM2YyYTk5OWU5YzdiOGVlMGQ3OWJlZjJhZTUzZDMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRjMzA0ZjdiYmY0NzA1MjQxMTA1MTI2MTM1ZTA0Yjg3ZWRhNGRmZGJlYzNlNDBlMzM3ZjE3NDcxMjM3YmY3MWQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZjZDdlNmFhOGUxODVhYjU3NzVlYWQ4MjU3MjFmNGU3ZDc2MzFkY2MzY2U0MzMwYjE5MzM5ZGFjYmExZjgwMTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAyOTRjOTk3NGU4MjhjY2ExOWYwYjBhZjY5NWMxNWZiNTZiNDQ4MTViNGJmNWNiYjdjNmQwZTliMzhlZWEyODEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_337b827417ac48b78c1348c6ade21aed",
+      "statement": "Release kind semantics: `minor` bumps Y and resets Z to land vX.Y.0; `patch` ships development's current X.Y.Z unchanged (the hotfix fast path, so main is NOT always X.Y.0); an explicit X.Y.Z sets that exact version with no bump dance. Because patch publishes whatever development currently holds, land only the fix first if development carries unreleased work.",
+      "evidence": [
+        {
+          "resource": "repo://CLAUDE.md#L39-L39",
+          "version": "repo-lines-v1:sha256:ac691ec22c65a2ab6530538d498163abc046ee91a1106fb195d7006cc6e92ff6:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYWM2OTFlYzIyYzY1YTJhYjY1MzA1MzhkNDk4MTYzYWJjMDQ2ZWU5MWExMTA2ZmIxOTVkNzAwNmNjNmU5MmZmNiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYWM2OTFlYzIyYzY1YTJhYjY1MzA1MzhkNDk4MTYzYWJjMDQ2ZWU5MWExMTA2ZmIxOTVkNzAwNmNjNmU5MmZmNiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYWUxMDExMzU4NGQ1YjRiNmY1NWRmZThmZjk4MzJiYTI4Y2YzNWVjMDcxNGRjNThmNTdiMTNjZWQ0MjEyOGI4MyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNTYxNzJjNmQwODA4YTMxYWQ0NTFhM2JiODVhZDBmNDFhNTgzYWI0NDAwZjYxYzU4ODkxYjkwZjIzNTU4MWQ3NCJ9"
+        },
+        {
+          "resource": "repo://CLAUDE.md#L47-L49",
+          "version": "repo-lines-v1:sha256:5c266057b17791a08dc93336340d7c863760cea844ea45a74b1ebf7c65bee0c7:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMWJlYWU3YjBlMDgyYzgxYmVjNjAwMTVhMTM3MjlmYzY3ZTNjY2FiZWFhMWE2ZmUyYjAzNWQ3NzNmMDAxYTE1MiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYTZiYTMwNzllOGUxMGU4ZjQzNmE1NGY5NDdjMzU0MmE1MWUyZGU2ZTRhZTZhY2Y5MmY3MjQ1YzU5ZTk4YmJhNSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYTgyNGVhYjVlZTFiYTE1MGRkMDc5MjhhYWUyZjgwYzcyN2Y5MDUzYzQ5MWUzOTQ0YmFjYTg2NWE5YjZmYmFlNSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNWNmNzEzODcxMmJmM2JmOWFjMDM0MDk4MDJhNTQzNzEyYzc0YjcxZmQ4ODQwZmY3NjhiNTQ1OTg1ZGFjZDRiMyJ9"
+        },
+        {
+          "resource": "repo://Justfile#L270-L306",
+          "version": "repo-lines-v1:sha256:f492779abb42ff3a630c3711a7b8bcf722a3556d81d89bf6ce577fd09844da1d:eyJzZWxlY3RlZExpbmVDb3VudCI6MzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYwYjkzZWZmYWQ5NTgzYjVhYzhjYWY1NTQ3ZTAxMWZkNzc5NzQ5ZGIyNmFkNzNlMDU1N2RhOTc5MDYxOThlMGIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQyZDVkZTI3MWU1ODNjNjVkNzcxYzk3MTZkYjJjOWY2YjdjNmY5NjNhMDU0MTQwOGRmMjJjMTQ1Y2Q5ODA2ZTciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ0MzE3ZmFhOTlmOTJjMjljMzQ2YzUxNzAzZDk3ZmIwMDY4NTA3ZDNiYjFkOWY4MDlhMWQyNWFhNGY1NjY5YjIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkzYzljOTkyMGQ4ZDJhNjdmOTg3NGMwYzdiZTRmMTdhM2UxNDdhNzA2MWNkMTY1MDQ4NmY0YzNiOGVjNTc4YTYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6d2a750ecd8e4617a15e938e03e3084e",
+      "statement": "Because development is fast-forwarded to main after every release/sync, main is always an ancestor of development and the next release merges cleanly; main's first-parent line shows one commit per release, reverting a whole release is `git revert -m 1 <merge>`, reverting one feature is reverting its squashed dev commit, and re-landing history after a merge revert requires a revert of the revert. Pushing to protected main relies on the owner's admin bypass.",
+      "evidence": [
+        {
+          "resource": "repo://CLAUDE.md#L51-L51",
+          "version": "repo-lines-v1:sha256:e35b3d1c7425aff458fca7bd810ebf12184df4102a1d2e07e33ef076edd811c1:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZTM1YjNkMWM3NDI1YWZmNDU4ZmNhN2JkODEwZWJmMTIxODRkZjQxMDJhMWQyZTA3ZTMzZWYwNzZlZGQ4MTFjMSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZTM1YjNkMWM3NDI1YWZmNDU4ZmNhN2JkODEwZWJmMTIxODRkZjQxMDJhMWQyZTA3ZTMzZWYwNzZlZGQ4MTFjMSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNDFmODUyNTZiNTVlNDU5ZTBkMTRmYWQ5MTdjZTUzYTAyYjEyMWMxZWEyODU1ZjQ4NzdhN2EzMjBmMmQ4YTY2MyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNDJmYzE2MDg1NTQ0MWNiNmYwNTExYTM1NDgzMzRjMzdiN2EwN2VjNGMwZjY4ODMzNWQ0N2U3YjYwODU4MzhhZiJ9"
+        },
+        {
+          "resource": "repo://Justfile#L331-L346",
+          "version": "repo-lines-v1:sha256:e031c82ecd7d392b181f2728fedbc29bafb3718f1efc4d0846e8c5b2ee32e4d5:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhhNDNjYmNkZWJhNGYxY2QxMDFkMDA4OTdhMmI1MmJiYTg3ODcyYzQ5MTlmZTVjNzRhOGM0MjAxNzUyM2U4MDgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRjMzA0ZjdiYmY0NzA1MjQxMTA1MTI2MTM1ZTA0Yjg3ZWRhNGRmZGJlYzNlNDBlMzM3ZjE3NDcxMjM3YmY3MWQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjMwZjk2MjBjYzcyM2RlNTJkYjEzNGViMDE4NDc3Y2JiZjQ3MDVlNjYzYTY3ZTA5NDMwMzliMTMzZTc2NmIxNTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAyOTRjOTk3NGU4MjhjY2ExOWYwYjBhZjY5NWMxNWZiNTZiNDQ4MTViNGJmNWNiYjdjNmQwZTliMzhlZWEyODEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6d8932fa2dd348fc962f082cda62150c",
+      "statement": "`just sync` merges development into main between releases WITHOUT cutting a release: no version bump, no CHANGELOG roll, and no tag, so the release workflow (which triggers on v* tags) is not fired; it creates a single `chore: sync development into main` first-parent merge and then fast-forwards development back so the next release still merges cleanly.",
+      "evidence": [
+        {
+          "resource": "repo://Justfile#L348-L378",
+          "version": "repo-lines-v1:sha256:c6f125ee383a94be5d694d5fe95b0c27dc434a624201d37b0bb298a883843a72:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ2ZDMzMTczNDc4MWRiNDNmZWMyMDAyZjExYTAwMDhlMjBlYjIzMDAwOGU2YjcwZjQ3MTY0YTQyZmQ3MjZhNWEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdiNTk3YjEzODVkMTRhNGNjYmE0ODI0MzE0YzQ5ZDMzYjEyYmNhMDdjZjNhZGQ2Mjc4N2YxM2NmNzljMTExNmEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY5ODE1OTk3Mjk5NDI0YjIyYWUyYzFmNTg1YmVjY2I5NTk3MWZiOTYzMzhhOGRiZDNmMTIyMTE2Y2Y0Y2I2ZmQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVmN2JhZGZkMGNhN2VhMjI3YmZjMDc1OTk3NzQzNzJhYjYzZjU2NDJmNDNlODM1MmI1YmZmMjUyN2JkZGE2ZGQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8dcb394b35094c859b2591db0d28cd2a",
+      "statement": "Hotfixes that must exclude work already on development cannot use `just release` (it refuses to run outside development and ships everything there); the CLAUDE.md flow branches fix/release-X.Y.Z from origin/main, cherry-picks the squashed per-PR commits, scrubs the excluded feature out of what ships (its CHANGELOG entries stay behind and other entries mentioning it must lose the mention — grep src/, man/, README.md, completions, help text), verifies the release tree (a --release build proving the feature is absent), opens a PR into main for CI only without using the merge button (main's first-parent must read one `chore: release vX.Y.Z` per release), merges and tags locally, and finally merges main back into development right away — skipping that merge lets the next development→main merge quietly revert the fix.",
+      "evidence": [
+        {
+          "resource": "repo://CLAUDE.md#L55-L68",
+          "version": "repo-lines-v1:sha256:779973be482795afb1e93de48f1f3e54a0fdf584e8a2dce350f0457fc0aa6bfe:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMzZGJlNGUxZWE0YWVhYTZhMjcxNzRkYzRmMGQzODUyMWQ4YmNmMjE1MzM3OGQzOGQzYzA1ZGJiNjQ1MzdmYWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjlkNDY4ZmRiMTcwZjBhNDY1YzVjMmEwYjg4ODY3YmMwZjAzOGM3MWY4MzYxNTdjODM5ZDljNThmNGI1ZDVmMzkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQyZmMxNjA4NTU0NDFjYjZmMDUxMWEzNTQ4MzM0YzM3YjdhMDdlYzRjMGY2ODgzMzVkNDdlN2I2MDg1ODM4YWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFhNDkxNzExZTBhOTA1NWMzNDFiYWVlNDMwMjhlYjcxNzAwZWFlM2JjNWUyNzdmODI3NzNiM2RjMWJiYTI1MmYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7935c8d5f6604bb9a6f2067bcc8ccfab",
+      "statement": "Multi-agent build infrastructure: every checkout/worktree points build output at one shared sibling `../.cargo-target` via an untracked .cargo/config.toml with an ABSOLUTE build.target-dir written by `just setup-shared-target` (run once per checkout; migrates an existing ./target and any target symlink). There is deliberately no `target` symlink because `cargo clean` deletes it, after which cargo silently builds into a private ./target and the shared dir becomes one copy per agent. `just worktree-add <name> [branch]` creates ../.worktrees/<name> on feature/<name> (default) sharing that target, resolving the main checkout via `git rev-parse --git-common-dir` because `--show-toplevel` is wrong when run from a worktree; `just worktree-rm` force-removes it (branch kept unless delete-branch) and sweeps stale artifacts; `just sweep [size=4GB]` prunes the shared dir with cargo-sweep --maxsize, which must be invoked on the project path (cargo-sweep resolves target-dir itself). Never run two cargo builds or two `just test` at once against the shared target — fingerprint races; serialize builds.",
+      "evidence": [
+        {
+          "resource": "repo://AGENTS.md#L14-L51",
+          "version": "repo-lines-v1:sha256:79ed8a87d6912d3e22086831ee265c44f92dfba18d5620867a810e1fb21456dc:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTJmMzhmMTQyNDI2MWM1NmQ3YjNkN2M1YzJjY2U1MzkwZDcyZWQ2ODZjOGRiOTllOGQ5MTQzYmQxNTdhNGQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEzNDdjNmQwZjIwZWQyNjU2MzAyNjE1YzFhMGE5ZTNkMThjM2UwMDY0YzgzZGRlOWI1OTE1OWQyYWNkZDUwYzAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY5MzkxMmNkM2MzM2VkZmQyM2QzNzY0ZTE3YWIyOTc0N2IzNzkzNzQyMzZjNjRhNzZiMGE1ZmZlNDhhZDM4MGUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjYwODQ5NWYzMzBlOGRmMjY5YTZkZWNlYjMyZDhhYTk2OTA1MmMwN2IxZWI5MGExYzFjNDA2NTA0NDAxNWFmNjcifQ"
+        },
+        {
+          "resource": "repo://Justfile#L139-L259",
+          "version": "repo-lines-v1:sha256:535c3cd5d1d3fb0ebb40e9268ba7fb556acac76ebb73de131bcc40215f95278c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIxLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJhOTlmMjdjMmViZDZlYjY1OTA3ZTgwZjNlNmQyMjBiNmFlNDUzZTM1YTQ5MGY0NjhmYjkwOTExMWNiMzQ4NjE1IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI4Njc5ZWJlOTA2MmNhY2EzOTk2MGVjMmY4YzA1Y2YxNzNhNWFlOGUyODQzYmYxM2MyZWY3ZWUyMDFiNTkzOGZhIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJjMTVlYTlmZTE2Nzg0YjM0MDc2NzlkZjdhMzFmYWM4MDEwYzg3YTQ4MzhmMGYxZjk4NTI0NjkxNjhhYjBiZWU4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI5MjUxMWY1OTEzNjI4ZDUzNTQ1YmE2NjFkN2M0MjIwZDRjYjM2M2ZhYTdiNWFlZDk3MmNhNjliYzNmZjJlNmIzIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_6bb18d8f1db147a8ab3bd63adea2f67e",
+      "statement": "`just npm-build [version]` (npm/build.sh) assembles the npm distribution in npm/dist with NO compilation: it downloads the sshub-*.tar.gz artifacts attached to the vX.Y.Z GitHub release (gh release download; TARBALL_DIR=dir uses local copies, which CI passes), extracts each binary into a per-platform package (sshub-linux-x64, sshub-darwin-arm64, sshub-darwin-x64) with package.json/README rendered from npm/platform/*.in including os/cpu matchers, assembles the sshub-tui wrapper around npm/wrapper/bin/sshub.js (package.json.in pins the three platform packages as optionalDependencies), then verifies on Linux x64 that the extracted binary reports the packaged version and that the shim — driven via a node_modules symlink exactly the way npx would — reaches it and reports the same, and npm-packs each package dry-run.",
+      "evidence": [
+        {
+          "resource": "repo://Justfile#L43-L53",
+          "version": "repo-lines-v1:sha256:fecbdec21377214b9f58cdddf3c5bc20748aef9a5ffc17cb60794a4c6df7d72d:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk0MzdmNWMzMjY1YzViMzA2NWNjN2M1NDI4YjNiY2I1ZTNmY2E1MGVjNWIwN2E1NGIxNWQ0ZWQxMjVmNmRmNDgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhMGIzZjdhYjJiNTBkZTU3Zjg2NmRiZGMyZGEwNTlmNWI4MWIzNTliMTFiMzAwNTc0OGRiMDJkZWE4M2U5YjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjYzNTEzMDY1NmJiNTYwMWJkMTNhM2JlNzcyZjc3NmVkMmFiZWE2ODBmY2NkZWNkMGQ0MmVlMDA4NDk1MDgwNDkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVmZTliOWNiMjZmMjA4NGJjNjI5ZjY3YWUwNjRkNGEyYjc0ZmI2MmMxNDhkMWM4MWY0ODQ5YTJiM2IwMDNiOWMifQ"
+        },
+        {
+          "resource": "repo://npm/build.sh#L1-L122",
+          "version": "repo-lines-v1:sha256:14a74d1d73c966a5c1c1eedf8757eae9aeda95b833cc1fbf184feb7723b5e476:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIxZDk1ZmMwNGE4MGM5NTJmNDljZTQxODg2MjdjNTNiMGZiZThjNDQwNDFiOTUyZDU5MmFjZDFkZTk5ODYxNDY2IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJkMTE3ZmEwMDZiYTkyMDg1MDBiMjkzMGNlNjljYmRlNDM2YzY0N2FmYTkxN2NiNzM5NmE5YmM5MTExYTQ2ZGQyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJkNWI4NTczMDkwOWJkMmMzY2QzZDhkYzZhNzcxM2M0MjhjMDg2Y2Q1Y2U2YmU3MGJkNTEwY2RkOTc1YTRiNTkxIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_1a5156fdb0d3462c93ce078de03099c5",
+      "statement": "`just npm-publish [version]` runs the same script with --publish and publishes the three platform packages FIRST and the `sshub-tui` wrapper LAST, because the wrapper's optionalDependencies must exist by the time it lands — the other order resolves the wrapper to no binary and installs fail for everyone in that window; versions already in the registry are skipped rather than fatal, so re-runs after partial failure are idempotent. The wrapper package is named sshub-tui because npm rejects the bare `sshub` name as too close to the existing ssh2/sshpk packages, while the command it installs is still `sshub`.",
+      "evidence": [
+        {
+          "resource": "repo://npm/build.sh#L130-L142",
+          "version": "repo-lines-v1:sha256:64277bd3f128787c5bad379acba7848fe330c9054c9b579a5a98377bd63b38cd:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgwMWQ1NjEwZWM5MzgzMzkxMjVkMTM0ZWEwNGU4MDVjMTBkOGFiMzJkMjk1MGIyMjk5NzAzZmEzYWM2ZTg3MDkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwODVjZTQxODIxZDVmZjFkYzBmMWM4MDJiMjZhMmI5OGNiNzZhZmMzYmFmYzgwMWYwMjExOGIzOGEyY2E3OWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ3MGQxN2Q0OWI4NjEwNzdjYjc3MTQ3Yjc1MTYwODA3OGNjNWRiNzQ1NzI1MTE5MTg4YTZlOWExZDExOGVjNzEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://npm/build.sh#L42-L51",
+          "version": "repo-lines-v1:sha256:89642d2343e6e7f522e92dd9181c4f90ccc07907a9ad75f7100eea1095ec805a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU5YmUzMTc5ZjEzMzM5ZTI5ZWM1MjMzNDQ4MThjMWY4NDFlZGFiMDdhMWQwZGE5MjUwODAwZWJjZGQ1NDdkNTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFmYTQ3ZWIwYmQzNDZlNGNmZDRhMGU1NjAxZTRmMmQwYzM5MWQyM2QzN2RhZGVhOTYzZjc4ZWQ2ZTYyOWUzY2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjIwMWQwNWZmNjYxZmM3NzZlNjIyOWRkODMzNzFiMDQ0ZmY5NzAyMDRkNjgyMTAwZDkyZjU0MmMzOTk3ZWFlOGMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY3YTMwNDE1MjhhNTNlNGFmZDczY2EwZmI1ZTBlMTY0MWRmOWU4ZTdiNzRhZWRhMjI2MDE3NjQyNTNjNzk2NTEifQ"
+        },
+        {
+          "resource": "repo://npm/wrapper/README.md#L11-L12",
+          "version": "repo-lines-v1:sha256:cf7400ee328cc5c2a30a63e46b3d837280b720ba6066b21f7d42e514e837b8fa:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOGU2NzU1YmEyZWU2YWYwZTkzYmU1M2JlZWEzMjlhNTM2ZmRiZDQzZTcyMjBmZmFhNTQxYzI2YjI2MzhlZmQ1ZSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiM2ZjZGFhNzY4ZTNmYWE2MGY1OWUwYzgyM2Y2NjY1MmViMTUyNDJjZDU5ZDhhMGJiOTZhZDFlZGRhZWQzYmM0MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYTRiY2E4OTlkYzVlZTMyMDMyNGVkZGUyZGE2YWM2NWEzZWJkYjA3ODYxM2FhMzU1NzA5OTY1YTE4NTAwNWU2YyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiM2E3YzMyODc1NjA4OTRmOTA3YmY0MmNmODY1MmE0N2I0YmUyMWM4Y2QyYTU3YTUwNzAwNWUyMDA3YTU2MDI1OSJ9"
+        },
+        {
+          "resource": "repo://npm/wrapper/package.json.in",
+          "version": "repo-file-v1:sha256:ec500f2c93e6d1bf1e1262a288675bd5902bead93f6c701c05fdd0aeaf42af2f"
+        }
+      ]
+    },
+    {
+      "id": "claim_8515a9e3e72143108ad2b0c0f86c9e9d",
+      "statement": "The npm shim (sshub-tui's bin/sshub.js) never downloads anything: it maps process.platform-arch to the one platform optional-dependency that installed (die() with build-from-source guidance on unsupported platforms or a missing package), require.resolves its bin/sshub, repairs a dropped executable bit, and spawns the binary with stdio:'inherit' (hands the real tty to the TUI; same process group so Ctrl+C reaches the child) plus SSHUB_INSTALL_CHANNEL=npm — the env marker the version badge reads, because the prebuilt binary is byte-identical to the release-tarball one and path heuristics cannot tell the install channels apart; it propagates the child's signal and exit status.",
+      "evidence": [
+        {
+          "resource": "repo://npm/wrapper/bin/sshub.js",
+          "version": "repo-file-v1:sha256:727f424ad3f10e25e84310f0fb9ac6faaabfd326d321d61a5f6518e38dcf096a"
+        }
+      ]
+    },
+    {
+      "id": "claim_934f88389f2d4f68a3321506deca98f6",
+      "statement": "A pushed vX.Y.Z tag is the single trigger for every distribution channel: release.yml's build matrix (linux-x64, macOS arm64, macOS x64) runs `cargo build --release` on default features, smoke-tests each binary it ships (--dry-run, or codesign+verify for the Intel Mac binary an arm64 runner cannot execute), attaches the tarballs to a GitHub release whose body is CHANGELOG.md, publishes to crates.io with CARGO_REGISTRY_TOKEN (fails loudly on re-run), and its npm job runs npm/build.sh \"<tag version>\" --publish with the same artifacts as TARBALL_DIR — the version comes from the tag so a mismatch fails in CI instead of reaching the registry — authenticated by npm trusted publishing (OIDC, short-lived tokens + provenance, needing npm >= 11.5.1 and a per-package trusted-publisher config, else ENEEDAUTH).",
+      "evidence": [
+        {
+          "resource": "repo://.github/workflows/release.yml",
+          "version": "repo-file-v1:sha256:0e3815daf92c1dea0a2ca767a5516798181cef9e2e4405a50242e27b3e2d53f2"
+        },
+        {
+          "resource": "repo://Justfile#L261-L264",
+          "version": "repo-lines-v1:sha256:25c0011485df9926e6be4b7f04cd33dd74adae71be48649e364b52f5d59cb727:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMzRiYWVmZjQ2YzBlNThjOGJiY2RmMGQ4N2M5MmQwYzMxZjMzZjJhOTk5ZTljN2I4ZWUwZDc5YmVmMmFlNTNkMyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiODZhOTlmYmNhMzU2YmVlNTljYjNiZjg5OGUzMjgxZjUwMzdmNDIzNWM5Zjg2MDZkZTRjYjNiNzkyOWIxMDU4YSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZmNkN2U2YWE4ZTE4NWFiNTc3NWVhZDgyNTcyMWY0ZTdkNzYzMWRjYzNjZTQzMzBiMTkzMzlkYWNiYTFmODAxNCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiN2M0Yzc5ZDY0YTZhNDE2MGNmMzI2ZjE0NjA3YTQ1MDRmMTZiZDcyMDYwY2VlZmMzOTVmNzg1Y2E5YzQ5OWFiZSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_933ebfda2ec042df8c7d1099be916bc8",
+      "statement": "`just coverage` runs cargo-llvm-cov twice (JSON export + summary) and pipes the JSON into scripts/uncovered-functions.py, regenerating docs/coverage-map.md's tables: the src/ functions NO test executes even once, largest first (the useful number, since a never-entered function has never been observed working). It needs cargo-llvm-cov plus llvm-tools-preview on rustup, or the system llvm-cov/llvm-profdata on a distro toolchain (the recipe sets LLVM_COV/LLVM_PROFDATA itself). The script handles the traps that produced wrong numbers before: counts summed per mangled name across test binaries, line segments (not zero counts) as the arbiter of degenerate entries, and single-line spans discarded as non-functions. There is deliberately no coverage-percentage floor in CI.",
+      "evidence": [
+        {
+          "resource": "repo://Justfile#L13-L37",
+          "version": "repo-lines-v1:sha256:c7d743c891442a232eea57ebd323e647a5f4d05f29506250fc64ace250575aa0:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjlkZWNmMDI0NjBkNTI2ZDE0ZWI5N2Y5NTdjNTRjNmFkMDQyYWQ5ZDYzYzIyNjkwMWY5ZDhjNTczYjRiNTc3ZmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFlNTMzMDM4Y2RjYTc2YTM1NjFiNjNmNDRkNTM0ZGJkMzBhNmNjZjFiMjZiODEyNGJmMTcxZWU0ZTM5MzJiOTIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjljMDM4MjI5OTZiNmJmMmY1N2ZjYTgyMmU2NmMwZWE0MTllMzIzYjVkYjNmMzM3M2NmMGE4ODY5MmM5OTAyMzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNjYjczNjFhNTQxNjk2ZDcyYjJkMzZhMDU1MzQ4NTViNTEyNDVhODc4MzBhMGY5YWFkYjcxNTEyMzJiOGQ0MGQifQ"
+        },
+        {
+          "resource": "repo://docs/coverage-map.md#L83-L86",
+          "version": "repo-lines-v1:sha256:f7fa79b81e1352331ca6ba98ec180ee6dea3037a963dad6d64388861c78aae03:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYTRiOTFjZDcxNGM3NjkwMjZlYjdjMDgzNmQxMDIzNDcwMGQ0ODEzMTk0YjdhNzgzN2MzZDlmYzhkMDY5YzM1MiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNWRmMDFmMWJlMTVkMGM3ZmEyMjNlOTJhZmUyY2EwODZjNDI3YmU3NTYwYWM5YmNhZTc3ZjMyZWJjNjdlMzg0OCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNGYxN2Q4NzY2MjliY2UwMTAwZTJmZjg5NjczMDFjZTAzMDdhZGIxMTI0MTE3YzE0NWEwMjUwODUyOTY3MWQ2YyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNGFkZWUzYzdjZTZhNWM5YjAzZmY2MjdhODgyMWI0OGZmODI5N2VlOWM0N2E2ZjljZDAxZjU5NGNlNTEwNDJjZiJ9"
+        },
+        {
+          "resource": "repo://scripts/uncovered-functions.py#L39-L105",
+          "version": "repo-lines-v1:sha256:d5b0f9d2bf09d0085cec467265e0b07eb6920ecaffd44661d36212c83280759a:eyJzZWxlY3RlZExpbmVDb3VudCI6NjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImExNThkMzM2MjNkNTk1YmVlMDEyOTA0OTBhNDg0MTdjZTVlMWUxNjIxZmFlZmU5Y2YyZGVmZWY3YmI0ZTBkNjIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE2MjMzYjNmZmVhMzJhMjNkZjUzMDY1MzQzNDhmMmRlZTc3NmE1YTZmNzRmYjUzMzE3NWRkYzUzOWE4ZmU0NjQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIyOWI4NTEwNzdlZDkwNzA3YWE5NzAzY2I0NDk2MTdmZDcwNzkxNDg4NTJmNmY4ODgzMWE5ZjljY2JmNjVkZmMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNkNDEzNDBjYzIzOWExNTljZTliNjAyMmU5ZjYzMjI4MzJlMmVhZDc2Y2FlOWU0NzU0ZDIxMGViOGZiNmQ1ZTgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f98f2516d8d347448fed4691d265048c",
+      "statement": "The lint gate — `cargo fmt`, `cargo fmt --check`, `cargo clippy --all-targets` — must pass before every push, and CI runs the same (clippy with -D warnings, failing on any warning); CI also runs the test suite on Ubuntu and macOS and a branch-naming job that self-tests scripts/check-branch-name.sh and checks every commit type on the branch (skipping forks).",
+      "evidence": [
+        {
+          "resource": "repo://.github/workflows/ci.yml#L59-L76",
+          "version": "repo-lines-v1:sha256:27228789a75b7524b4cb77001f6207b19083ccea8073b8b4a4d186c9ed4469ea:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY4ZmI3Mjc3ZmRkMjBkMmY4NDY2ZmM3M2I1ZTQyNzA0Nzg5YjA5OTkxNjYyODlkY2IxOTM1YzAwNDg1MTZlZGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM2Zjk4NzEzYTBiYTZmNGRiZDVkNmNhYzY3OTAxZmI0NGZmMmMwZGVmNWFkNDgxZTJjMzZmM2M3NmYxOGNhMDAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY1ZGVjNjAyZjcxNWMyYjc4YmM3YzA5OGNhZjdjOTgyNWJhNzRmM2RiODc1NmY4YmFhNTQ4NTI5NzZiNzYxYWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://AGENTS.md#L90-L99",
+          "version": "repo-lines-v1:sha256:0bb267ddde60754a7d63cae4fdc4655d95ec7249b4a934c28023c10c341ba6ec:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY1YzkyYjAwMjE0YjFhNDBjMWFmYjQ3NWE2NjFiYTYwYTIzMjU0MGM1ZjJhNDg1Y2ZlNmIxYmZkMjg4NzI2ZGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY5MWJhNjc3YTRmMDBiNzAwMDY5N2I1MjYxNThlN2YzNzE5MDNlNzlhNjE3OTdiMWQyODIzZmFkZWNiYjQ5MDgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA0ZTYwMDJkMGEwNDQxMmI1MTU1OWZlZDI4NGFjOWU0ZWM3NDU5MDc1NjQ0YjM1YjkwNTliZThkM2UwNzljZDciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg5MWIxMWY3NDk2YjFkZWFmOTFhMDUwMDQzMDAzN2Y3OTQ0NzUxOTJjMTNhYjUzMDZjMmQ1NDlkZTA0OWU5MjcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f08df0416e5a4d3f81fa6a5fcb2c7868",
+      "statement": "`just install` (depends on build and install-completions) installs the release binary to ~/.local/bin plus the man page, icon, and a .desktop launcher entry with terminal detection kitty→ghostty→alacritty→foot→xterm; `install-completions` writes bash/fish completions into auto-loaded dirs and appends a marked, idempotent sourcing block to ~/.zshrc (compinit ensured before compdef); `just uninstall` removes all of it, including stripping the zsh block.",
+      "evidence": [
+        {
+          "resource": "repo://Justfile#L380-L416",
+          "version": "repo-lines-v1:sha256:458295ad7d67ac828797c0401837595be4d8ab713f767cee343ca2180aa8d652:eyJzZWxlY3RlZExpbmVDb3VudCI6MzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjlhZTAwMGI5MDQ5ZjQyZjE4ZDhjY2UyOTc3NTMzYTI4MmE3ZDFiNzk0OTQ3Y2I2OThmMDJiOWYxYzUzNTgxYjAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI1MzA1YTZiMjMxOTllMGEzNzQ0MDUwNzI0MTVkNDc4Mzc1ZGM2Yzg0YmI2OWVlNzVmMGUyNGQwMTcwMzU0YzIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE0NTA0MjRjMTFlYjZjYjAyMTgxNDg5NjY5YzlhYjUyN2U5ZDJmMmMyZDE5NzVmNzk3YjI0YmIzYjNmZjUxNTAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://Justfile#L69-L101",
+          "version": "repo-lines-v1:sha256:1ffc9dd30dc83410b2f85caa3bfdc15227b6171975d581488455c9bfe4e01b30:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRlOWZhNDhkNWUwYzc2M2Y1YzA0NDM0OGMwZWEzZjc4ZWUxYmYzMTVlNDZiMWE1NjlkMGIzMmI0OWJhNjE0MmMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg0ZTc2MDQyNmE4ZTNhODYwZGQxNTBlNmMxMTc4YmFhNmJmMTgyNGM1N2ZlODI3M2IwMmI0YTVjZTQ1M2FhNzEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJlNWU0ODJmNzkzYTBlZWZkZmRlMjc1NDZmOGU2YzBkZmQwOGExMjU1Nzg2YzAzODVmZjI2OGFmMGIyMDA0N2IiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJiMmYyYWY3ZjE0YjdjNGYyOGFlY2I0YTczNDQyN2EzMTc5MTQ5NDVjMTJkYzAyOGVkNzc1MjRlODY1MjQyNDkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ff0e3467838d4921ad943ae735725443",
+      "statement": "Branch model: feature/fix/docs/chore/poc branches are cut from development (never main, which receives releases only and must never be a PR target), PRs target development, release merges go development→main, and merged branches are deleted (GitHub auto-delete). Names are <prefix>/<slug> keyed to what the work IS (feature/=feat, fix/=fix, docs/=docs, chore/=chore/ci/build/refactor/perf/style/test, poc/=anything), enforced by scripts/check-branch-name.sh in the pre-commit hook (shape only) and in CI (substantive commit-type check; forks skipped); never bump Cargo.toml on a non-development branch — versioning is automated.",
+      "evidence": [
+        {
+          "resource": "repo://AGENTS.md#L64-L88",
+          "version": "repo-lines-v1:sha256:5722c993adb6a0a30ef6b9c971b3ebdd49f2ac70333d91a2429a876ef2157783:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIyN2NkZjZjNDBmYTg0MGQyZjRiY2ZlOGQzYzg2MWUxZmMzMmY0MDgxN2U5NzNiY2ZmYmE5MGUyMGY0ZmY0ZTEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI0YWE3MGVmZDA3MzU5ODY3YWE0MzA1OTM1ZWU3YTNiMmU5OGIxZWNmODA0ZWRhMzJlZDE5Yjk1Mjc4MTM3ZWMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ4YmFlMTU1YTAzYzFiMTg1ZGI2Y2EyYjAxM2E1YjljZGVmM2M5NmRhYmY0MTdiMDNiZmFmYTUzOTcyMzM4ODAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJjYjU2NjdhMmQ0YjIyMmJkYjc5MjU1MGQzNjJlN2UxZTU1NzdmMGU1Yjg1NGEwODg2NjM3NzNhYTkyZDUzZTAifQ"
+        },
+        {
+          "resource": "repo://CONTRIBUTING.md#L12-L25",
+          "version": "repo-lines-v1:sha256:3462363540a08f76c90190f1d106fa034bfb603bef74d7b67bd3012e294c8645:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFiMjFjMDVlZDM5NTlkMTRmYzY0NTkxNTFiZTI3MGNjNTA2M2ZkY2M4NDBlY2IwN2QyZDRmMWQwYTA4ODA2ODkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRlMjc4MDZmNTZkYWY5ZDhjMjg3YTA4ZGE3MjQ4MzAwOTU0MTA2ZjdiOTNhYWRmODBhZmEwMDhjZjA5ZWJhNDUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImEzYTM1Mjc1ZWRjZDJkODM3MTIzYjZlMjlmNzExNTM3NThjOTliZjY1NTQwZGI4MTg3YTg5YTNjNzc2MmYwODAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBiOWI2MGUyMTZkMzVjZDNiNjU4ZDVhNWQwNjcyNTNkNWUxMzBkZDVjYmJkNWJiMjc0NDExMDZhM2E0YTI3OTUifQ"
+        },
+        {
+          "resource": "repo://Justfile#L283-L295",
+          "version": "repo-lines-v1:sha256:a32a95cc3b91b10aa2d2206b7520f8dd2e318135f1ac914f89d406cf02fafbc3:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJjMTJmN2YzMzdjOGIzZjQxNjNmYTA0NTNmMzg3ODM0MTc3ZWQzMDJjNjA2ZmMzYThiYmRiOWI4MmFkMTZkNGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEzYjcyNDE2MTM0YjgzNTk5NjZmZTcxZTFlNzE2YTA3MWYyMDU5YzFiMGJmZWI3ZDdhMWM5ZGE4NzdiMGM0OWUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRlMzYxOGM4NzQwOGNkNmRlZDNjYzZjZTAxMDNjOGEwNjliZjMxMzdhNDVkYzEyYTIwNDAzYWU5YmU5NmZhMzYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY3ZTBhYmEzYzNkNzNkNTExZDcwNDQ2OTY4ZTYzMmQ1Njk1YzM5NjhjZTEzMDI5MjI1MjI4NjZjYTUxN2I3YjcifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.5.1",
+    "at": "2026-09-11T12:46:43.817Z"
+  }
+}
