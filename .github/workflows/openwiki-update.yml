@@ -2,8 +2,11 @@ name: OpenWiki Update
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 8 * * *"
+    inputs:
+      scan_mode:
+        description: "Strix scan mode"
+        required: false
+        default: quick
 
 permissions:
   contents: write
