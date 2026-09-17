@@ -293,6 +293,8 @@ pub enum SettingItem {
     /// Opens the theme picker. Renders the active theme id instead of a
     /// checkbox; `Space` must not do anything to it.
     Theme,
+    /// Opens profile creation or the profile manager.
+    Profiles,
     Toggle(SettingToggle),
 }
 
@@ -316,7 +318,7 @@ pub struct SettingDescriptor {
 /// by a test in `tui::screens::settings`) and avoid ambiguous-width chars like
 /// the em dash or `…` — some terminals draw those 2 cells wide, pushing the
 /// tail of the line onto the popup border.
-pub const SETTINGS_ITEMS: [SettingDescriptor; 7] = [
+pub const SETTINGS_ITEMS: [SettingDescriptor; 8] = [
     SettingDescriptor {
         item: SettingItem::Theme,
         label: "Theme...",
@@ -351,6 +353,11 @@ pub const SETTINGS_ITEMS: [SettingDescriptor; 7] = [
         item: SettingItem::Toggle(SettingToggle::SessionLogging),
         label: "Session logging",
         hint: "save PTY output under the selected profile logs",
+    },
+    SettingDescriptor {
+        item: SettingItem::Profiles,
+        label: "Profiles...",
+        hint: "create or switch isolated workspaces",
     },
 ];
 
@@ -394,6 +401,8 @@ pub enum AppMode {
     /// Theme picker overlay, opened with `Enter` on the Settings Theme row.
     /// Navigation previews a theme on the whole UI; only `Enter` persists.
     ThemePicker,
+    /// In-app profile creation and manager overlay.
+    ProfilePicker,
     /// Keep-alive reconnect backoff settings (Tunnels tab).
     TunnelReconnectSettings,
     /// Quit confirmation dialog.

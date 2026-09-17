@@ -757,7 +757,17 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
 
     // Tab bar
     let scope_path = "~/.config/sshub";
-    widgets::tab_bar::render_tab_bar(frame, areas.tab_bar, app.active_tab + 1, scope_path, theme);
+    widgets::tab_bar::render_tab_bar(
+        frame,
+        areas.tab_bar,
+        app.active_tab + 1,
+        scope_path,
+        app.profile
+            .as_ref()
+            .filter(|p| !p.compat)
+            .map(|p| p.name.as_str()),
+        theme,
+    );
 
     // Horizontal rule 2
     let rule2 = row_in(area, areas.tab_bar.y + areas.tab_bar.height);
@@ -804,7 +814,7 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
     widgets::footer::render_hrule(frame, rule3, true, theme, PaintRole::FooterSeparator);
 
     // Footer keybinds (tab-specific)
-    let (keybinds, pinned) = footer_keybinds(app);
+    let (keybinds, pinned) = footer_keybinds(app, areas.footer.width);
     widgets::footer::render_footer(frame, areas.footer, &keybinds, pinned, theme);
 
     // The status bar that used to print `host_notice` is gone (dead code, #58),
@@ -885,6 +895,11 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
         AppMode::KeybindEditor => screens::keybind_editor::render_keybind_editor(frame, app),
         AppMode::Settings => screens::settings::render_settings(frame, app),
         AppMode::ThemePicker => screens::theme_picker::render(frame, app),
+        AppMode::ProfilePicker => {
+            if let Some(picker) = &app.profile_picker {
+                picker.render(frame, app.theme());
+            }
+        }
         AppMode::TunnelReconnectSettings => {
             screens::tunnel_reconnect::render_tunnel_reconnect_settings(frame, app);
         }
@@ -1107,7 +1122,10 @@ fn compute_header_stats(app: &App) -> [usize; 4] {
 }
 
 /// The footer's pairs, plus how many trailing ones must never be dropped.
-fn footer_keybinds(app: &App) -> (Vec<(String, &'static str)>, usize) {
+fn footer_keybinds(
+    app: &App,
+    footer_width: u16,
+) -> (Vec<(String, std::borrow::Cow<'_, str>)>, usize) {
     let mut binds: Vec<(String, &'static str)> = match app.active_tab {
         0 => vec![
             ("\u{2191}\u{2193}".into(), "select"),
@@ -1248,8 +1266,64 @@ fn footer_keybinds(app: &App) -> (Vec<(String, &'static str)>, usize) {
         }
     }
     let pinned_len = pinned.len();
-    binds.extend(pinned);
-    (binds, pinned_len)
+    let mut binds: Vec<_> = binds
+        .into_iter()
+        .map(|(key, label)| (key, std::borrow::Cow::Borrowed(label)))
+        .collect();
+    // The action only exists on a real profile workspace: directory-override
+    // (compat) installs and dependency-injected Apps without a profile cannot
+    // open it, and advertising it would push useful hints off the row.
+    let profile_key = app
+        .config
+        .keybinds
+        .primary(crate::config::KeyAction::ProfilesManage);
+    let mut profile_hint = None;
+    if app.profile.as_ref().is_some_and(|p| !p.compat) && !profile_key.is_empty() {
+        let full = format!(
+            "{} ({})",
+            app.profile_action_label(),
+            app.active_profile_name()
+        );
+        let fits = |label: &str, head_len: usize| {
+            let pairs = head_len + pinned.len() + 1;
+            let omitted_width = if head_len < binds.len() {
+                1 + widgets::footer::GAP
+            } else {
+                0
+            };
+            let width: u16 = binds
+                .iter()
+                .take(head_len)
+                .map(widgets::footer::pair_width)
+                .sum::<u16>()
+                + pinned.iter().map(widgets::footer::pair_width).sum::<u16>()
+                + widgets::footer::pair_width(&(&profile_key, label))
+                + widgets::footer::GAP * (pairs as u16 - 1)
+                + omitted_width
+                + 1;
+            width <= footer_width
+        };
+        // Full labels need room for the entire row. The compact hint may replace
+        // optional middle pairs, but must leave the first two actions, the pinned
+        // tail and the renderer's omission marker intact.
+        if fits(&full, binds.len()) {
+            profile_hint = Some((profile_key.to_string(), std::borrow::Cow::Owned(full)));
+        } else if fits("profiles", binds.len().min(2)) {
+            profile_hint = Some((
+                profile_key.to_string(),
+                std::borrow::Cow::Owned("profiles".into()),
+            ));
+        }
+    }
+    if let Some(hint) = &profile_hint {
+        binds.push(hint.clone());
+    }
+    binds.extend(
+        pinned
+            .into_iter()
+            .map(|(key, label)| (key, std::borrow::Cow::Borrowed(label))),
+    );
+    (binds, pinned_len + usize::from(profile_hint.is_some()))
 }
 
 /// Draw a transient notice (issue #18) as a floating chip right-aligned on the
@@ -2008,10 +2082,10 @@ fn format_utc_clock() -> String {
 /// and fixed footer), kept in one place so the key handler can't scroll past what
 /// the renderer will show (the excess would be invisible "debt" that Up has to
 /// unwind before the view moves).
-pub(crate) fn help_max_scroll(area: Rect, query: &str) -> u16 {
+pub(crate) fn help_max_scroll(area: Rect, query: &str, profile_key: &str) -> u16 {
     let popup_height = (area.height * 60 / 100).max(16).min(area.height);
     let body_height = popup_height.saturating_sub(4);
-    screens::help::help_line_count(query).saturating_sub(body_height)
+    screens::help::help_line_count(query, profile_key).saturating_sub(body_height)
 }
 
 fn render_help_popup(frame: &mut Frame, app: &App) {
@@ -2051,9 +2125,15 @@ fn render_help_popup(frame: &mut Frame, app: &App) {
         inner.width,
         inner.height.saturating_sub(2),
     );
-    let scroll = app.help_scroll.min(help_max_scroll(area, &app.help_query));
+    let profile_key = app
+        .config
+        .keybinds
+        .primary(crate::config::KeyAction::ProfilesManage);
+    let scroll = app
+        .help_scroll
+        .min(help_max_scroll(area, &app.help_query, profile_key));
     frame.render_widget(
-        screens::help::render_help(scroll, &app.help_query, theme),
+        screens::help::render_help(scroll, &app.help_query, theme, profile_key),
         body,
     );
 
@@ -2071,6 +2151,251 @@ mod tests {
     use super::*;
     use crate::app::{AppDeps, HostEntry};
     use crate::config::AppConfig;
+
+    #[test]
+    fn tab_bar_profile_label_tracks_selected_workspace() {
+        let mut app = test_app_with_hosts();
+        let dir = tempfile::tempdir().unwrap();
+        let roots = crate::profile::RootDirs {
+            data_root: dir.path().join("data"),
+            config_root: dir.path().join("config"),
+            compat: false,
+        };
+        let mut state = crate::profile::ProfileState::default();
+        let alpha = crate::profile::create_profile(&roots, &mut state, "alpha").unwrap();
+        let beta = crate::profile::create_profile(&roots, &mut state, "beta").unwrap();
+        for record in [&alpha, &beta] {
+            app.profile = Some(crate::profile::profile_paths(
+                &roots,
+                record,
+                dir.path().join("ssh_config"),
+            ));
+            for width in [80, 180] {
+                let buffer = render_to_buffer(&app, width, 24);
+                let area =
+                    dashboard_layout::dashboard_layout_zoomed(buffer.area, app.ui_zoom).tab_bar;
+                let row: String = (area.x..area.right())
+                    .map(|x| buffer[(x, area.y)].symbol())
+                    .collect();
+                assert!(row.contains(&format!("profile: {}", record.name)), "{row}");
+                assert!(row.contains("identities") && row.contains("audit"), "{row}");
+                if record.name == "beta" {
+                    assert!(!row.contains("alpha"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tab_bar_profile_label_bounds_cjk_and_combining_names() {
+        let mut app = test_app_with_hosts();
+        let dir = tempfile::tempdir().unwrap();
+        let roots = crate::profile::RootDirs {
+            data_root: dir.path().join("data"),
+            config_root: dir.path().join("config"),
+            compat: false,
+        };
+        let mut state = crate::profile::ProfileState::default();
+        for (name, narrow) in [
+            ("界".repeat(20), format!("{}…", "界".repeat(6))),
+            ("e\u{301}".repeat(20), format!("{}…", "e\u{301}".repeat(12))),
+        ] {
+            let record = crate::profile::create_profile(&roots, &mut state, &name).unwrap();
+            app.profile = Some(crate::profile::profile_paths(
+                &roots,
+                &record,
+                dir.path().join("ssh_config"),
+            ));
+            for width in [80, 120, 180] {
+                let buffer = render_to_buffer(&app, width, 24);
+                let area =
+                    dashboard_layout::dashboard_layout_zoomed(buffer.area, app.ui_zoom).tab_bar;
+                let start = if width < 132 { 57 } else { 67 };
+                let adjusted;
+                let expected_name = if width == 80 {
+                    &narrow
+                } else if width == 120 {
+                    let scope = (start..area.right())
+                        .find(|&x| {
+                            (x..(x + 6).min(area.right()))
+                                .map(|col| buffer[(col, area.y)].symbol())
+                                .collect::<String>()
+                                == "scope:"
+                        })
+                        .expect("scope badge should remain visible at 120 columns");
+                    let budget = (scope - start - 9 - 2) as usize;
+                    if Span::raw(&name).width() > budget {
+                        let (unit, unit_width) = if name.starts_with('界') {
+                            ("界", 2)
+                        } else {
+                            ("e\u{301}", 1)
+                        };
+                        adjusted = format!("{}…", unit.repeat((budget - 1) / unit_width));
+                        &adjusted
+                    } else {
+                        &name
+                    }
+                } else {
+                    &name
+                };
+                let label = format!("profile: {expected_name}");
+                let mut expected = Buffer::empty(buffer.area);
+                let style = Style::default().fg(app.theme().semantic().text_highlight);
+                expected.set_string(start, area.y, &label, style);
+                let end = start + Span::raw(&label).width() as u16;
+                for x in start..end {
+                    assert_eq!(
+                        buffer[(x, area.y)].symbol(),
+                        expected[(x, area.y)].symbol(),
+                        "name={name} width={width} x={x}"
+                    );
+                }
+                // Wide-character continuation cells intentionally have no style.
+                assert_eq!(buffer[(start + 9, area.y)].fg, style.fg.unwrap());
+                let row: String = (area.x..start)
+                    .map(|x| buffer[(x, area.y)].symbol())
+                    .collect();
+                assert!(row.contains("audit"), "audit tab must remain intact: {row}");
+            }
+        }
+    }
+
+    #[test]
+    fn tab_bar_long_profile_preserves_scope_and_version() {
+        let app = test_app_with_hosts();
+        for name in [format!("alpha{}", "a".repeat(90)), "alpha".into()] {
+            for width in [80, 120] {
+                let mut terminal = Terminal::new(TestBackend::new(width, 1)).unwrap();
+                terminal
+                    .draw(|frame| {
+                        widgets::tab_bar::render_tab_bar(
+                            frame,
+                            Rect::new(0, 0, width, 1),
+                            1,
+                            "~/.config/sshub",
+                            Some(&name),
+                            app.theme(),
+                        )
+                    })
+                    .unwrap();
+                let buffer = terminal.backend().buffer();
+                let row: String = (0..width).map(|x| buffer[(x, 0)].symbol()).collect();
+                assert!(row.contains("identities") && row.contains("audit"), "{row}");
+                assert!(row.contains("profile: alpha"), "{row}");
+                if name.len() > 12 {
+                    assert!(row.contains('…'), "{row}");
+                }
+                if width == 120 {
+                    assert!(row.contains("scope: ~/.config/sshub"), "{row}");
+                    assert!(
+                        row.contains(concat!("v", env!("CARGO_PKG_VERSION"))),
+                        "{row}"
+                    );
+                    let scope = row.find("scope:").unwrap();
+                    let profile = &row[..scope];
+                    assert!(profile.ends_with("  "), "{row}");
+                    if name.len() > 12 {
+                        assert!(profile.trim_end().ends_with('…'), "{row}");
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn profile_footer_and_settings_show_current_workspace_and_remapped_key() {
+        let mut app = test_app_with_hosts();
+        let dir = tempfile::tempdir().unwrap();
+        let roots = crate::profile::RootDirs {
+            data_root: dir.path().join("data"),
+            config_root: dir.path().join("config"),
+            compat: false,
+        };
+        let mut state = crate::profile::ProfileState::default();
+        let record = crate::profile::create_profile(&roots, &mut state, "default").unwrap();
+        app.profile = Some(crate::profile::profile_paths(
+            &roots,
+            &record,
+            dir.path().join("ssh_config"),
+        ));
+        app.config
+            .keybinds
+            .set(crate::config::KeyAction::ProfilesManage, vec!["F6".into()]);
+        let buffer = render_to_buffer(&app, 180, 40);
+        assert!(buffer_contains(&buffer, "F6 Add profile (default)"));
+        app.profile_count = 2;
+        app.mode = AppMode::Settings;
+        let buffer = render_to_buffer(&app, 180, 40);
+        assert!(buffer_contains(&buffer, "Manage profiles default"));
+        assert!(buffer_contains(&buffer, "F6 Manage profiles (default)"));
+    }
+
+    #[test]
+    fn profile_footer_does_not_advertise_unavailable_management() {
+        let mut app = test_app_with_hosts();
+        assert!(!buffer_contains(&render_to_buffer(&app, 180, 40), "Alt+P"));
+        let dir = tempfile::tempdir().unwrap();
+        app.profile = Some(crate::profile::compat_paths(
+            &crate::profile::RootDirs {
+                data_root: dir.path().join("data"),
+                config_root: dir.path().join("config"),
+                compat: true,
+            },
+            dir.path().join("ssh_config"),
+        ));
+        assert!(!buffer_contains(&render_to_buffer(&app, 180, 40), "Alt+P"));
+    }
+
+    #[test]
+    fn profile_footer_keeps_connect_resume_help_quit_at_eighty_columns() {
+        let mut app = app_with_two_sessions();
+        let dir = tempfile::tempdir().unwrap();
+        let roots = crate::profile::RootDirs {
+            data_root: dir.path().join("data"),
+            config_root: dir.path().join("config"),
+            compat: false,
+        };
+        let mut state = crate::profile::ProfileState::default();
+        let record = crate::profile::create_profile(&roots, &mut state, "default").unwrap();
+        app.profile = Some(crate::profile::profile_paths(
+            &roots,
+            &record,
+            dir.path().join("ssh_config"),
+        ));
+        let buffer = render_to_buffer(&app, 80, 24);
+        // On a busy 80-column row the profile action yields before the pairs
+        // the footer guarantees; on a roomier one the compact pair shows up.
+        for hint in ["↵ connect", "resume", "? help", "q quit"] {
+            assert!(buffer_contains(&buffer, hint), "missing {hint}");
+        }
+        let buffer = render_to_buffer(&app, 120, 24);
+        assert!(buffer_contains(&buffer, "Alt+P profiles"));
+        for hint in ["↵ connect", "resume", "? help", "q quit"] {
+            assert!(buffer_contains(&buffer, hint), "missing {hint} at 120");
+        }
+    }
+
+    #[test]
+    fn profile_picker_overlay_renders_on_tiny_terminals() {
+        let dir = tempfile::tempdir().unwrap();
+        let roots = crate::profile::RootDirs {
+            data_root: dir.path().join("data"),
+            config_root: dir.path().join("config"),
+            compat: false,
+        };
+        let mut state = crate::profile::ProfileState::default();
+        let record = crate::profile::create_profile(&roots, &mut state, "default").unwrap();
+        let mut app = test_app_with_hosts();
+        app.profile = Some(crate::profile::profile_paths(
+            &roots,
+            &record,
+            dir.path().join("ssh_config"),
+        ));
+        app.open_profile_manager();
+        for (width, height) in [(1, 1), (3, 2), (8, 4), (20, 6), (40, 10), (120, 38)] {
+            let _ = render_to_buffer(&app, width, height);
+        }
+    }
+
     use crate::metadata::{HostMetadata, MetadataDb};
     use crate::ssh::{HostResolver, SshHost};
     use crate::store::LauncherStore;
@@ -2377,6 +2702,10 @@ mod tests {
                     areas.tab_bar,
                     app.active_tab + 1,
                     GOLDEN_SCOPE,
+                    app.profile
+                        .as_ref()
+                        .filter(|p| !p.compat)
+                        .map(|p| p.name.as_str()),
                     theme,
                 );
                 let rule2 = row_in(area, areas.tab_bar.y + areas.tab_bar.height);
@@ -2392,7 +2721,7 @@ mod tests {
                     theme,
                     PaintRole::FooterSeparator,
                 );
-                let (keybinds, pinned) = footer_keybinds(app);
+                let (keybinds, pinned) = footer_keybinds(app, areas.footer.width);
                 widgets::footer::render_footer(frame, areas.footer, &keybinds, pinned, theme);
             })
             .unwrap();

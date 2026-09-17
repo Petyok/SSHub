@@ -13,8 +13,42 @@ pub enum WatchEvent {
     ConfigChanged,
 }
 
-/// Start file watcher on SSH config. Implemented in phase F6.
-pub fn spawn_config_watcher(ssh_config_path: &Path) -> Result<Receiver<WatchEvent>> {
+/// Own both the notification source and its debounce worker. Dropping the
+/// notification source disconnects the worker even when the config is idle.
+pub struct ConfigWatcher {
+    rx: Receiver<WatchEvent>,
+    watcher: Option<notify::RecommendedWatcher>,
+    worker: Option<thread::JoinHandle<()>>,
+}
+
+impl std::fmt::Debug for ConfigWatcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConfigWatcher").finish_non_exhaustive()
+    }
+}
+
+impl ConfigWatcher {
+    pub fn try_recv(&self) -> Result<WatchEvent, mpsc::TryRecvError> {
+        self.rx.try_recv()
+    }
+
+    pub fn recv_timeout(&self, timeout: Duration) -> Result<WatchEvent, RecvTimeoutError> {
+        self.rx.recv_timeout(timeout)
+    }
+}
+
+impl Drop for ConfigWatcher {
+    fn drop(&mut self) {
+        // Release notify's sender first, waking either recv or recv_timeout.
+        drop(self.watcher.take());
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+/// Start a file watcher whose lifetime is bound to its owner.
+pub fn spawn_config_watcher(ssh_config_path: &Path) -> Result<ConfigWatcher> {
     let config_path = ssh_config_path.to_path_buf();
 
     // Editors save by writing a temp file and renaming it over the config, which
@@ -41,13 +75,16 @@ pub fn spawn_config_watcher(ssh_config_path: &Path) -> Result<Receiver<WatchEven
         .with_context(|| format!("watch SSH config at {}", config_path.display()))?;
 
     let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
+    let worker = thread::spawn(move || {
         let source = ChannelSource { rx: notify_rx };
         debounce_loop(&source, tx, &config_path, WATCHER_DEBOUNCE);
-        drop(watcher);
     });
 
-    Ok(rx)
+    Ok(ConfigWatcher {
+        rx,
+        watcher: Some(watcher),
+        worker: Some(worker),
+    })
 }
 
 /// Time and input source for the debounce loop. Abstracted so tests inject a
@@ -509,6 +546,32 @@ mod tests {
 
         let emitted = run_debounce(script, config, window);
         assert_eq!(emitted, vec![WatchEvent::ConfigChanged]);
+    }
+
+    #[test]
+    fn dropping_idle_watcher_stops_worker_without_file_event() {
+        let file = NamedTempFile::new().unwrap();
+        let mut watcher = spawn_config_watcher(file.path()).unwrap();
+        let worker = watcher.worker.take().unwrap();
+        let (stopped_tx, stopped_rx) = mpsc::channel();
+        watcher.worker = Some(thread::spawn(move || {
+            worker.join().unwrap();
+            stopped_tx.send(()).unwrap();
+        }));
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let dropper = thread::spawn(move || {
+            drop(watcher);
+            // A detached worker (or a Drop that only drops the receiver) cannot
+            // satisfy this: completion must already be visible when Drop returns.
+            stopped_rx
+                .try_recv()
+                .expect("watcher worker was not joined");
+            finished_tx.send(()).unwrap();
+        });
+        finished_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("dropping an idle watcher must join its worker without a file change");
+        dropper.join().unwrap();
     }
 
     #[test]

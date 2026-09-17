@@ -4,6 +4,17 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **In-app profile management** (issue #124) - `Alt+P` or Settings opens profile
+  creation/management without restarting SSHub. The dashboard shows the current
+  workspace and remappable shortcut; one-profile installs open creation directly.
+  Switching rebuilds profile-owned state in the same terminal only after the
+  replacement loads, preserving the current workspace on failure. Live sessions,
+  SFTP/transfers, broadcasts, tunnels and reconnects block switching; the active
+  profile cannot be renamed or deleted. Single-profile silent startup, the
+  multi-profile startup picker, CLI selection and directory overrides are unchanged.
+
 ## [0.16.0] - 2026-09-05
 
 ### Added

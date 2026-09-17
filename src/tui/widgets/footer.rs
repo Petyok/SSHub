@@ -8,9 +8,9 @@ use crate::theme::catalog::{PaintRole, StyleRole};
 use crate::theme::model::ResolvedTheme;
 
 /// Gap between two hint pairs.
-const GAP: u16 = 3;
+pub(crate) const GAP: u16 = 3;
 
-fn pair_width<K: AsRef<str>, L: AsRef<str>>((key, label): &(K, L)) -> u16 {
+pub(crate) fn pair_width<K: AsRef<str>, L: AsRef<str>>((key, label): &(K, L)) -> u16 {
     key.as_ref().chars().count() as u16 + 1 + label.as_ref().chars().count() as u16
 }
 

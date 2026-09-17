@@ -1,6 +1,39 @@
 use super::*;
 
 #[test]
+fn alt_p_creates_second_profile_from_single_profile() {
+    let dir = tempfile::tempdir().unwrap();
+    let roots = crate::profile::RootDirs {
+        data_root: dir.path().join("data"),
+        config_root: dir.path().join("config"),
+        compat: false,
+    };
+    let mut state = crate::profile::ProfileState::default();
+    let active = crate::profile::create_profile(&roots, &mut state, "default").unwrap();
+    let mut app = test_app(vec![]);
+    app.profile = Some(crate::profile::profile_paths(
+        &roots,
+        &active,
+        dir.path().join("ssh_config"),
+    ));
+    app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::ALT))
+        .unwrap();
+    for c in "work".chars() {
+        app.handle_key(key_char(c)).unwrap();
+    }
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    let saved = crate::profile::ProfileState::load(&roots.data_root)
+        .unwrap()
+        .unwrap();
+    assert!(
+        saved.by_name("work").is_some(),
+        "Alt+P must open Create directly"
+    );
+    assert_eq!(saved.profiles.len(), 2);
+    assert_eq!(app.profile.as_ref().unwrap().id, active.id);
+}
+
+#[test]
 pub(crate) fn keyevent_to_spec_roundtrips() {
     let f2 = KeyEvent::new(KeyCode::F(2), KeyModifiers::empty());
     assert_eq!(keyevent_to_spec(&f2).as_deref(), Some("F2"));
@@ -467,7 +500,11 @@ pub(crate) fn help_scroll_stops_at_render_ceiling() {
     app.handle_key(key_char('?')).unwrap();
     assert_eq!(app.mode, AppMode::Help);
 
-    let max = crate::tui::help_max_scroll(app.terminal_area, &app.help_query);
+    let max = crate::tui::help_max_scroll(
+        app.terminal_area,
+        &app.help_query,
+        app.config.keybinds.primary(KeyAction::ProfilesManage),
+    );
     assert!(max > 0, "help content must overflow a 24-row terminal");
     for _ in 0..500 {
         app.handle_key(key(KeyCode::Down)).unwrap();

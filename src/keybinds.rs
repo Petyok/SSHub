@@ -415,6 +415,11 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
+    (@fn profiles_manage $($key:literal),* $(,)?) => {
+        fn default_kb_profiles_manage() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
     (@fn snippets_manage $($key:literal),* $(,)?) => {
         fn default_kb_snippets_manage() -> Vec<String> {
             vec![$($key.to_string()),*]
@@ -511,6 +516,7 @@ kb_defaults! {
     logs_browser => ["Shift+L"],
     snippets_manage => ["Shift+S"],
     session_snippets => ["Ctrl+N"],
+    profiles_manage => ["Alt+P"],
 }
 /// An action whose keybinding is user-configurable and editable in the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -598,11 +604,12 @@ pub enum KeyAction {
     LogsBrowser,
     SnippetsManage,
     SessionSnippets,
+    ProfilesManage,
 }
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 83] = [
+    pub const ALL: [KeyAction; 84] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -686,6 +693,7 @@ impl KeyAction {
         KeyAction::LogsBrowser,
         KeyAction::SnippetsManage,
         KeyAction::SessionSnippets,
+        KeyAction::ProfilesManage,
     ];
 
     pub fn label(self) -> &'static str {
@@ -773,6 +781,7 @@ impl KeyAction {
             KeyAction::LogsBrowser => "Browse session logs",
             KeyAction::SnippetsManage => "Manage command snippets",
             KeyAction::SessionSnippets => "Session: run a command snippet",
+            KeyAction::ProfilesManage => "Add or manage profiles",
         }
     }
 }
@@ -946,6 +955,8 @@ pub struct KeybindsConfig {
     pub snippets_manage: Vec<String>,
     #[serde(default = "default_kb_session_snippets")]
     pub session_snippets: Vec<String>,
+    #[serde(default = "default_kb_profiles_manage")]
+    pub profiles_manage: Vec<String>,
 }
 
 impl Default for KeybindsConfig {
@@ -1034,6 +1045,7 @@ impl Default for KeybindsConfig {
             logs_browser: default_kb_logs_browser(),
             snippets_manage: default_kb_snippets_manage(),
             session_snippets: default_kb_session_snippets(),
+            profiles_manage: default_kb_profiles_manage(),
         }
     }
 }
@@ -1124,6 +1136,7 @@ impl KeybindsConfig {
             KeyAction::LogsBrowser => default_kb_logs_browser(),
             KeyAction::SnippetsManage => default_kb_snippets_manage(),
             KeyAction::SessionSnippets => default_kb_session_snippets(),
+            KeyAction::ProfilesManage => default_kb_profiles_manage(),
         }
     }
 
@@ -1289,6 +1302,7 @@ impl KeybindsConfig {
             KeyAction::LogsBrowser => &self.logs_browser,
             KeyAction::SnippetsManage => &self.snippets_manage,
             KeyAction::SessionSnippets => &self.session_snippets,
+            KeyAction::ProfilesManage => &self.profiles_manage,
         }
     }
 
@@ -1377,6 +1391,7 @@ impl KeybindsConfig {
             KeyAction::LogsBrowser => self.logs_browser = binds,
             KeyAction::SnippetsManage => self.snippets_manage = binds,
             KeyAction::SessionSnippets => self.session_snippets = binds,
+            KeyAction::ProfilesManage => self.profiles_manage = binds,
         }
     }
 

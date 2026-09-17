@@ -126,8 +126,8 @@ pub(crate) fn help_filter_matches_and_esc_clears() {
     }
     assert_eq!(app.help_query, "fav");
     assert_eq!(app.help_scroll, 0);
-    let n = crate::tui::screens::help::help_line_count(&app.help_query);
-    assert!(n < crate::tui::screens::help::help_line_count(""));
+    let n = crate::tui::screens::help::help_line_count(&app.help_query, "Alt+P");
+    assert!(n < crate::tui::screens::help::help_line_count("", "Alt+P"));
     assert!(n > 0);
 
     // j/k are query input, not scroll.

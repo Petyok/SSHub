@@ -90,13 +90,17 @@ pub fn render_settings(frame: &mut Frame, app: &App) {
             }
             // Action row: the current value stands in for the checkbox.
             None => {
-                let label = crate::tui::text::ellipsize(desc.label, label_w);
+                let (action_label, current_value) = match desc.item {
+                    SettingItem::Profiles => {
+                        (app.profile_action_label(), app.active_profile_name())
+                    }
+                    _ => (desc.label, app.active_theme_id()),
+                };
+                let label = crate::tui::text::ellipsize(action_label, label_w);
                 buf.set_string(label_x, ry, &label, label_style);
                 let used = label.chars().count() + 1;
-                let value = crate::tui::text::ellipsize(
-                    app.active_theme_id(),
-                    label_w.saturating_sub(used),
-                );
+                let value =
+                    crate::tui::text::ellipsize(current_value, label_w.saturating_sub(used));
                 buf.set_string(
                     label_x + used as u16,
                     ry,
@@ -117,7 +121,10 @@ pub fn render_settings(frame: &mut Frame, app: &App) {
         crate::tui::text::ellipsize(hint, inner_w),
         theme.style(StyleRole::PopupHint),
     );
-    let action = matches!(selected.map(|d| &d.item), Some(SettingItem::Theme));
+    let action = matches!(
+        selected.map(|d| &d.item),
+        Some(SettingItem::Theme | SettingItem::Profiles)
+    );
     let legend_text = if action {
         "Enter choose \u{b7} \u{2191}\u{2193} move \u{b7} Esc close"
     } else {

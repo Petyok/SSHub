@@ -139,6 +139,7 @@ mod identity_group;
 mod keybind;
 mod log_browser;
 mod misc;
+mod profile_manager;
 mod session;
 mod sftp;
 mod snippets;
