@@ -4,6 +4,21 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Remembering a credential is now opt-in** — the auth modal pre-ticked
+  "Remember after successful authentication", and the *prompt class* alone
+  decides where the answer is filed: anything typed at `Password:` is saved to
+  the host row, whatever it actually was. A key passphrase typed at a password
+  prompt therefore ended up stored as the host's password without the user
+  asking for it. The box is still offered where a target exists, but starts
+  clear.
+- **An unreadable credential store no longer looks like an empty one** — the
+  host and identity forms filled their secret field with a lookup that
+  collapsed a keyring error into `""`, so a store that could not be reached
+  rendered exactly like "no password stored". Both forms now say so instead;
+  an untouched save still writes nothing either way.
+
 ## [0.17.1] - 2026-09-18
 
 ### Fixed

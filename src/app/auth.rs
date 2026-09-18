@@ -100,6 +100,11 @@ impl App {
         } else {
             PromptClass::classify(&prompt)
         };
+        // Offered, never pre-ticked: the prompt class alone decides *where* a
+        // remembered answer lands (`Password:` -> the host row, whatever the
+        // user actually typed), so persisting a credential must be a
+        // deliberate act. A pre-checked box stored key passphrases as host
+        // passwords for people who never asked for either.
         let can_remember = auth.save_target(class).is_some();
         self.auth_modal = Some(AuthModal {
             session: index,
@@ -107,7 +112,7 @@ impl App {
             class,
             attempt: auth.attempts,
             can_remember,
-            remember: can_remember,
+            remember: false,
             value: String::new(),
             cursor: 0,
             checkbox_focused: false,
@@ -553,8 +558,11 @@ mod tests {
             });
             let eligible = managed && prompt != "Verification code:";
             assert_eq!(app.auth_modal.as_ref().unwrap().can_remember, eligible);
-            assert_eq!(app.auth_modal.as_ref().unwrap().remember, eligible);
-            if eligible && !remember {
+            assert!(
+                !app.auth_modal.as_ref().unwrap().remember,
+                "remembering is opt-in: the box starts clear even when eligible"
+            );
+            if eligible && remember {
                 app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty()))
                     .unwrap();
                 app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::empty()))
@@ -839,7 +847,14 @@ mod tests {
             app.auth_modal.is_some()
         });
         assert!(app.auth_modal.as_ref().unwrap().can_remember);
-        // remember defaults to true for eligible targets; keep it checked.
+        // Remembering is opt-in, so tick the box the way a user would.
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty()))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::empty()))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty()))
+            .unwrap();
+        assert!(app.auth_modal.as_ref().unwrap().remember);
         app.handle_paste("synthetic-secret").unwrap();
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()))
             .unwrap();

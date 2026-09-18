@@ -546,11 +546,21 @@ impl App {
     /// form field, so editing a stored password starts from what is stored
     /// instead of from nothing.
     pub(crate) fn stored_secret(&self, key: &str) -> String {
-        self.password_store
-            .get(key)
-            .ok()
-            .flatten()
-            .unwrap_or_default()
+        self.stored_secret_checked(key).0
+    }
+
+    /// The stored secret plus whether the store could be read at all.
+    ///
+    /// A keyring that errors and a keyring that holds nothing both yield an
+    /// empty string, and a form showing an empty field for the second reason
+    /// is honest while the first is a lie — it was what made a live password
+    /// look deleted. Callers that show the value to a user take the flag and
+    /// say so instead.
+    pub(crate) fn stored_secret_checked(&self, key: &str) -> (String, bool) {
+        match self.password_store.get(key) {
+            Ok(value) => (value.unwrap_or_default(), true),
+            Err(_) => (String::new(), false),
+        }
     }
 
     /// Store `secret` under `key`, or remove the entry when it is empty. A form

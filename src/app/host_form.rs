@@ -49,7 +49,14 @@ impl App {
                 text_input::char_len(&managed.address)
             };
 
-            let stored_password = self.stored_secret(&crate::credentials::host_key(managed.id));
+            let (stored_password, secret_readable) =
+                self.stored_secret_checked(&crate::credentials::host_key(managed.id));
+            if !secret_readable {
+                self.host_notice = Some(
+                    "Could not read the stored password from your credential store —                      the field is blank, and nothing is changed unless you type one"
+                        .into(),
+                );
+            }
 
             HostFormEdit {
                 id: Some(managed.id),

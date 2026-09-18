@@ -267,7 +267,14 @@ impl App {
 
     pub(crate) fn enter_identity_form(&mut self, existing: Option<&Identity>) -> Result<()> {
         let form = if let Some(identity) = existing {
-            let stored = self.stored_secret(&crate::credentials::identity_key(identity.id));
+            let (stored, secret_readable) =
+                self.stored_secret_checked(&crate::credentials::identity_key(identity.id));
+            if !secret_readable {
+                self.host_notice = Some(
+                    "Could not read the stored passphrase from your credential store —                      the field is blank, and nothing is changed unless you type one"
+                        .into(),
+                );
+            }
 
             IdentityFormEdit {
                 id: Some(identity.id),
