@@ -124,6 +124,57 @@ fn identity_with_stored_passphrase(app: &mut App, secret: &str) -> i64 {
     created.id
 }
 
+/// A credential store that cannot be read must not look like an empty one.
+///
+/// Oracle: the `env -i` Secret Service failure (no session bus) — `get` errors
+/// rather than returning `None`. Showing a blank field for that is a lie that
+/// reads as "the password is gone", which is exactly how a live credential
+/// gets mistaken for a lost one.
+#[test]
+pub(crate) fn an_unreadable_store_says_so_instead_of_showing_an_empty_field() {
+    struct FailingStore;
+    impl crate::credentials::PasswordStore for FailingStore {
+        fn get(&self, _key: &str) -> anyhow::Result<Option<String>> {
+            Err(anyhow::anyhow!("keyring: no session bus"))
+        }
+        fn set(&self, _key: &str, _value: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        fn delete(&self, _key: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut app = App::new_with_deps(
+        AppConfig::default(),
+        AppDeps {
+            resolver: Box::new(MockResolver::new(vec![])),
+            metadata: Arc::new(MetadataDb::default()),
+            store: test_store(),
+            password_store: Box::new(FailingStore),
+        },
+    );
+    app.reload_hosts().unwrap();
+    let created = app
+        .store
+        .create_host(&crate::store::NewHost::launcher("h1", "10.0.0.1"))
+        .unwrap();
+    app.reload_hosts().unwrap();
+
+    app.enter_host_form(Some(&created), false).unwrap();
+    let form = app.host_form.as_ref().unwrap();
+    assert_eq!(form.password, "", "nothing readable to show");
+    assert_eq!(
+        form.password_original, "",
+        "an untouched save must still be a no-op"
+    );
+    let notice = app.host_notice.as_deref().unwrap_or_default();
+    assert!(
+        notice.contains("Could not read the stored password"),
+        "the failure must be visible, got {notice:?}"
+    );
+}
+
 #[test]
 pub(crate) fn identity_form_prefills_the_stored_passphrase() {
     let (mut app, _secrets) = test_app_with_secrets(vec![]);
