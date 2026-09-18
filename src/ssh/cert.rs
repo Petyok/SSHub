@@ -220,7 +220,8 @@ fn parse_cert_time(raw: &str) -> Option<i64> {
         tm_yday: 0,
         tm_isdst: -1,
         tm_gmtoff: 0,
-        tm_zone: std::ptr::null(),
+        // macOS tm_zone is *mut c_char vs Linux *const c_char; *mut coerces to *const so null_mut() is portable.
+        tm_zone: std::ptr::null_mut(),
     };
     // SAFETY: `tm` is a fully-initialized local; `mktime` only reads it (and
     // normalizes a copy for the DST probe) under the process timezone, which
