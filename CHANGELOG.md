@@ -6,6 +6,12 @@ All notable changes to SSHub are documented in this file.
 
 ### Added
 
+- **Hardware security-key badges on the keys screen** (issue #80) - identities
+  whose key path carries the `ssh-keygen -t *-sk` `-sk`/`_sk` marker now show
+  `ed25519-sk`/`ecdsa-sk` (generic `sk` for unfamiliar bases) badges instead of
+  the base algorithm, so hardware-backed keys are distinguishable at a glance.
+  `ml-dsa` filenames no longer degrade to the `dsa` badge. Connect-time
+  presence/PIN handling stays deferred to the hardware PoC.
 - **SSH certificates are first-class on identities** (issue #75) - an identity
   can carry a certificate path (identity form, `sshub identity add/edit`, same
   column the importer already filled). The keys tab badges each certificate
