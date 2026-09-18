@@ -20,6 +20,25 @@ pub fn resolve_pending_secret(
         );
     };
 
+    // ssh offers the key before it offers a password, so a passphrase for a
+    // keyed identity outranks a remembered host password. The askpass channel
+    // only answers a prompt of the matching class, so a `Password` offered at
+    // `Enter passphrase for …` is dropped on the floor — v0.17.0 left users
+    // typing a passphrase sshub already held. Lookup misses fall through to
+    // the host branch; the identity branch below still reports them.
+    let keyed_identity = effective_identity
+        .or(managed.identity.as_ref())
+        .filter(|identity| identity.private_key.is_some());
+    if let Some(identity) = keyed_identity {
+        let key = crate::credentials::identity_key(identity.id);
+        if let Ok(Some(pw)) = password_store.get(&key) {
+            return (
+                Some(crate::session::PendingSecret::Passphrase(pw)),
+                format!("auth: using stored passphrase ({key})"),
+            );
+        }
+    }
+
     // The remember-me modal saves the secret without touching the host row,
     // so a set flag cannot be required: presence of the secret itself
     // decides. The flag only tunes the diagnostic. Falls through to the
