@@ -51,9 +51,13 @@ pub fn render_settings(frame: &mut Frame, app: &App) {
     let label_x = row_x + 4;
     let label_w = inner_w.saturating_sub(4);
 
-    for (i, desc) in SETTINGS_ITEMS.iter().enumerate() {
-        let ry = popup.y + 1 + i as u16;
-        if ry >= popup.y + popup.height.saturating_sub(2) {
+    let visible = popup.height.saturating_sub(5) as usize;
+    let offset = app
+        .settings_selected
+        .saturating_sub(visible.saturating_sub(1));
+    for (i, desc) in SETTINGS_ITEMS.iter().enumerate().skip(offset) {
+        let ry = popup.y + 1 + (i - offset) as u16;
+        if ry >= popup.y + popup.height.saturating_sub(3) {
             break;
         }
         let is_sel = i == app.settings_selected;
@@ -93,10 +97,17 @@ pub fn render_settings(frame: &mut Frame, app: &App) {
                 let label = crate::tui::text::ellipsize(desc.label, label_w);
                 buf.set_string(label_x, ry, &label, label_style);
                 let used = label.chars().count() + 1;
-                let value = crate::tui::text::ellipsize(
-                    app.active_theme_id(),
-                    label_w.saturating_sub(used),
-                );
+                let current = match desc.item {
+                    SettingItem::Theme => app.active_theme_id().to_owned(),
+                    SettingItem::CommandHistoryLimit => app
+                        .config
+                        .command_history
+                        .max_entries_per_host
+                        .clamp(1, crate::store::MAX_HOST_HISTORY)
+                        .to_string(),
+                    _ => String::new(),
+                };
+                let value = crate::tui::text::ellipsize(&current, label_w.saturating_sub(used));
                 buf.set_string(
                     label_x + used as u16,
                     ry,
@@ -117,11 +128,15 @@ pub fn render_settings(frame: &mut Frame, app: &App) {
         crate::tui::text::ellipsize(hint, inner_w),
         theme.style(StyleRole::PopupHint),
     );
-    let action = matches!(selected.map(|d| &d.item), Some(SettingItem::Theme));
-    let legend_text = if action {
-        "Enter choose \u{b7} \u{2191}\u{2193} move \u{b7} Esc close"
-    } else {
-        "Space toggle \u{b7} \u{2191}\u{2193} move \u{b7} Esc close"
+    let legend_text = match selected.map(|d| d.item) {
+        Some(SettingItem::Theme) => "Enter choose · ↑↓ move · Esc close",
+        Some(SettingItem::CommandHistoryLimit) => "←→ limit · ↑↓ move · Esc close",
+        Some(
+            SettingItem::ClearSessionHistory
+            | SettingItem::ClearHostHistory
+            | SettingItem::ClearAllHistory,
+        ) => "Enter clear · ↑↓ move · Esc close",
+        _ => "Space toggle \u{b7} \u{2191}\u{2193} move \u{b7} Esc close",
     };
     let legend_y = popup.y + popup.height.saturating_sub(2);
     buf.set_string(

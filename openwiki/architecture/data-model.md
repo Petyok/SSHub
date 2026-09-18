@@ -31,7 +31,7 @@ The split is historical: `metadata.db` predates the launcher database and still 
 
 ## launcher.db schema (`src/store/`)
 
-`LauncherStore` wraps a `Mutex<Connection>` (rusqlite, bundled SQLite) with `PRAGMA foreign_keys=ON` and `busy_timeout=5000`. Migrations use a custom `schema_version` table — base v2 schema plus stepwise `migrate_vN_to_vN+1` functions up to **SCHEMA_VERSION 13**, all in one transaction; column adds are guarded with `pragma_table_info` so re-runs are safe.
+`LauncherStore` wraps a `Mutex<Connection>` (rusqlite, bundled SQLite) with `PRAGMA foreign_keys=ON` and `busy_timeout=5000`. Migrations use a custom `schema_version` table — base v2 schema plus stepwise `migrate_vN_to_vN+1` functions up to **SCHEMA_VERSION 16**, all in one transaction; column adds are guarded with `pragma_table_info` so re-runs are safe.
 
 Tables:
 
@@ -42,8 +42,9 @@ Tables:
 - `tunnels` — tunnel definitions (see [tunnels](../workflows/tunnels.md)).
 - `auth_events` — the audit log, including `log_path` for session-connect events when logging is enabled.
 - `ui_state` — collapsed groups, ui_zoom.
+- `command_history` — **local-only**, schema v16, excluded from host export/sync: `host_id` (FK to `hosts` ON DELETE CASCADE), `command`, `last_used`, `use_count`, `created_at`, `UNIQUE(host_id, command)`, index `(host_id, last_used DESC)`. Written only when `[command_history].enabled` is on and only for managed hosts; commands pass the shared classifier in `src/command_safety.rs` first.
 
-CRUD is split across `src/store/hosts.rs`, `identities.rs`, `tunnels.rs`; DTOs (`ManagedHost`, `HostSource`, `Tunnel`, `AuthEvent`, `NewHost`, …) live in `src/store/types.rs`. Secrets are **never** in SQLite — only `has_password` flags; actual secrets are in the OS keyring (see [secrets](../security/secrets.md)).
+CRUD is split across `src/store/hosts.rs`, `identities.rs`, `tunnels.rs`; DTOs (`ManagedHost`, `HostSource`, `Tunnel`, `AuthEvent`, `NewHost`, …) live in `src/store/types.rs`. Managed credentials stay outside SQLite (only `has_password` flags are stored); actual credentials use the credential store (see [secrets](../security/secrets.md)). Opt-in command history is different: its best-effort classifier can miss unfamiliar credentials, so persisted command text may still contain secrets.
 
 `sshub --profile NAME db purge --yes-i-am-stupid` deletes the selected profile's
 `launcher.db` and sidecars (`src/lib.rs::purge_profile_database`);
@@ -71,6 +72,7 @@ Hosts, groups, favorites, and identities as user-facing concepts: [domain/hosts-
 - `[clipboard]` — `relay_from_pty` (default `true`) controls whether the visible embedded session relays OSC 52 clipboard writes to the hosting terminal.
 - `[appearance]` — opaque background, OS logos, quit confirmation, startup animation
 - `[session_logging]` — `enabled`, `max_file_bytes` (default 10 MiB), `retention_files` (50)
+- `[command_history]` — `enabled` (default **false**), `max_entries_per_host` (default 200, hard cap 2000); see [security/secrets](../security/secrets.md) rationale for why this is opt-in.
 - `[tunnel_reconnect]` — `max_attempts`, `initial_delay_ms`, `max_delay_ms`, `stable_secs`, `jitter_ratio` (consumed by `config::tunnel_backoff_delay`; see [tunnels](../workflows/tunnels.md))
 - `[keybinds]` — user rebinds from the Ctrl+K editor (`src/keybinds.rs`)
 

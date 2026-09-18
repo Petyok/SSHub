@@ -1282,7 +1282,11 @@ impl App {
     pub(crate) fn setting_value(&self, item: impl Into<SettingItem>) -> Option<bool> {
         let a = &self.config.appearance;
         match item.into() {
-            SettingItem::Theme => None,
+            SettingItem::Theme
+            | SettingItem::CommandHistoryLimit
+            | SettingItem::ClearSessionHistory
+            | SettingItem::ClearHostHistory
+            | SettingItem::ClearAllHistory => None,
             SettingItem::Toggle(t) => Some(match t {
                 SettingToggle::TransparentSshubBackground => a.transparent_sshub_background,
                 SettingToggle::TransparentSessionBackground => a.transparent_session_background,
@@ -1290,6 +1294,7 @@ impl App {
                 SettingToggle::ConfirmQuit => a.confirm_quit,
                 SettingToggle::DisableAnimation => a.disable_animation,
                 SettingToggle::SessionLogging => self.config.session_logging.enabled,
+                SettingToggle::CommandHistory => self.config.command_history.enabled,
             }),
         }
     }
@@ -1326,12 +1331,64 @@ impl App {
             SettingToggle::SessionLogging => {
                 self.config.session_logging.enabled = !self.config.session_logging.enabled;
             }
+            SettingToggle::CommandHistory => {
+                self.config.command_history.enabled = !self.config.command_history.enabled;
+            }
         }
         true
     }
 
     pub(crate) fn handle_key_settings(&mut self, key: KeyEvent) -> Result<()> {
         let n = SETTINGS_ITEMS.len();
+        let item = SETTINGS_ITEMS.get(self.settings_selected).map(|d| d.item);
+        if item == Some(SettingItem::CommandHistoryLimit)
+            && matches!(key.code, KeyCode::Left | KeyCode::Right)
+        {
+            let value = self
+                .config
+                .command_history
+                .max_entries_per_host
+                .clamp(1, crate::store::MAX_HOST_HISTORY);
+            self.config.command_history.max_entries_per_host = if key.code == KeyCode::Left {
+                value.saturating_sub(1).max(1)
+            } else {
+                (value + 1).min(crate::store::MAX_HOST_HISTORY)
+            };
+            self.save_config_quietly();
+            return Ok(());
+        }
+        if key.code == KeyCode::Enter {
+            let result = match item {
+                Some(SettingItem::ClearSessionHistory) => {
+                    if let Some(session) = self.active_session_mut() {
+                        session.history.clear();
+                    }
+                    Some(Ok(()))
+                }
+                Some(SettingItem::ClearHostHistory) => {
+                    match self.selected_entry().and_then(|entry| entry.managed_id()) {
+                        Some(id) => Some(self.store.clear_command_history(Some(id))),
+                        None => {
+                            self.host_notice = Some("Select a managed host first.".into());
+                            return Ok(());
+                        }
+                    }
+                }
+                Some(SettingItem::ClearAllHistory) => Some(self.store.clear_command_history(None)),
+                _ => None,
+            };
+            if let Some(result) = result {
+                self.host_notice = Some(
+                    if result.is_ok() {
+                        "Command history cleared."
+                    } else {
+                        "Could not clear command history."
+                    }
+                    .into(),
+                );
+                return Ok(());
+            }
+        }
         match key.code {
             _ if self.is_action(KeyAction::Cancel, &key) => self.mode = AppMode::Normal,
             _ if self.is_action(KeyAction::MoveDown, &key) => {
