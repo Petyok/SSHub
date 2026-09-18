@@ -1773,15 +1773,18 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
         FormKind::Host => {
             if let Some(form) = app.host_form.as_ref() {
                 // Muted placeholders: what a save would actually use for each
-                // cleared field (nearest ancestor group, else global default).
+                // cleared field. Resolved across every selected group with the
+                // same most-specific-wins ordering as `resolve_connection`,
+                // so the placeholder matches the restored value.
                 let primary = app
                     .groups
                     .iter()
                     .find(|g| form.group_ids.contains(&g.id))
                     .map(|g| g.id);
+                let selected: Vec<i64> = form.group_ids.iter().copied().collect();
                 let inherited = app
                     .store()
-                    .inherited_for_group(primary)
+                    .inherited_for_groups(primary, &selected)
                     .unwrap_or_else(|_| crate::store::ResolvedConnection::global_default());
                 frame.render_widget(
                     screens::host_form::render_host_form(

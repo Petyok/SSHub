@@ -119,10 +119,21 @@ impl App {
                 .as_ref()
                 .map(|h| resolve_pending_secret_for_managed(h, self.password_store.as_ref()))
                 .unwrap_or((None, String::new()));
-            match self
-                .tunnel_manager
-                .start(&tunnel, host.as_ref(), secret.as_ref())
-            {
+            // Effective connection (host-explicit → group chain → global), the
+            // same resolution every connect path uses; a failure falls back to
+            // the stored row rather than refusing the tunnel.
+            let start_result = match host.as_ref() {
+                Some(h) => {
+                    let resolved = self
+                        .store
+                        .resolve_connection(h)
+                        .unwrap_or_else(|_| crate::store::ResolvedConnection::from_stored(h));
+                    self.tunnel_manager
+                        .start(&tunnel, h, &resolved, secret.as_ref())
+                }
+                None => Err(anyhow::anyhow!("No host associated with tunnel")),
+            };
+            match start_result {
                 Ok(()) => {
                     self.tunnel_notice = Some(format!("Started tunnel :{}", tunnel.local_port));
                     let _ = self.store.log_auth_event(
@@ -558,10 +569,18 @@ impl App {
                 .as_ref()
                 .map(|h| resolve_pending_secret_for_managed(h, self.password_store.as_ref()))
                 .unwrap_or((None, String::new()));
-            match self
-                .tunnel_manager
-                .start(&tunnel, host.as_ref(), secret.as_ref())
-            {
+            let start_result = match host.as_ref() {
+                Some(h) => {
+                    let resolved = self
+                        .store
+                        .resolve_connection(h)
+                        .unwrap_or_else(|_| crate::store::ResolvedConnection::from_stored(h));
+                    self.tunnel_manager
+                        .start(&tunnel, h, &resolved, secret.as_ref())
+                }
+                None => Err(anyhow::anyhow!("No host associated with tunnel")),
+            };
+            match start_result {
                 Ok(()) => {
                     let _ = self.store.log_auth_event(
                         host_name,
@@ -614,7 +633,14 @@ impl App {
         let events = self.tunnel_manager.tick_reconnect(
             &tunnels,
             &cfg,
-            |host_id| store.get_host(host_id).ok().flatten(),
+            |host_id| {
+                store.get_host(host_id).ok().flatten().map(|h| {
+                    let resolved = store
+                        .resolve_connection(&h)
+                        .unwrap_or_else(|_| crate::store::ResolvedConnection::from_stored(&h));
+                    (h, resolved)
+                })
+            },
             |host| resolve_pending_secret_for_managed(host, self.password_store.as_ref()).0,
         );
         crate::tunnel::log_tunnel_reconnect_events(&self.store, &events, &tunnels);

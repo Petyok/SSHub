@@ -141,22 +141,38 @@ impl LauncherStore {
     /// excluded) add the remaining chains. A single-group host yields exactly
     /// its primary chain, nearest first — the historical behavior.
     fn ordered_default_groups(&self, host: &ManagedHost) -> Result<Vec<HostGroup>> {
-        let primary = host.group_id;
-        let mut member_ids = Vec::new();
-        if let Some(p) = primary {
-            member_ids.push(p);
-        }
         let mut extra: Vec<i64> = host
             .groups
             .iter()
             .filter(|g| !g.reserved)
             .map(|g| g.id)
-            .filter(|id| Some(*id) != primary)
+            .filter(|id| Some(*id) != host.group_id)
             .collect();
         extra.sort_unstable();
         extra.dedup();
-        member_ids.extend(extra);
+        self.ordered_groups_for_members(host.group_id, &extra)
+    }
 
+    /// The [`ordered_default_groups`] walk over raw membership ids (the
+    /// primary group plus every extra membership, Favorites excluded by the
+    /// caller): smallest ancestor-chain distance from the host, then deeper
+    /// (more specific) group, then the primary group's chain, then smaller
+    /// group id for determinism.
+    fn ordered_groups_for_members(
+        &self,
+        primary: Option<i64>,
+        extra_member_ids: &[i64],
+    ) -> Result<Vec<HostGroup>> {
+        let mut member_ids = Vec::new();
+        if let Some(p) = primary {
+            member_ids.push(p);
+        }
+        member_ids.extend(
+            extra_member_ids
+                .iter()
+                .copied()
+                .filter(|id| Some(*id) != primary),
+        );
         // (group, chain distance from the host, group tree-depth, primary chain).
         let mut candidates: Vec<(HostGroup, usize, usize, bool)> = Vec::new();
         let mut depths: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
@@ -223,7 +239,20 @@ impl LauncherStore {
     /// Chain-only resolution for a group (host fields unset): the inherited
     /// values the host form renders as muted placeholders.
     pub fn inherited_for_group(&self, group_id: Option<i64>) -> Result<ResolvedConnection> {
-        let chain = self.group_ancestor_chain(group_id)?;
+        self.inherited_for_groups(group_id, &[])
+    }
+
+    /// Chain-only resolution across every group in `member_ids` (host fields
+    /// unset): the inherited values the host form renders as muted
+    /// placeholders when the form selects several groups. Uses the same
+    /// most-specific-wins ordering as [`LauncherStore::resolve_connection`],
+    /// so a cleared field restores exactly what the placeholder shows.
+    pub fn inherited_for_groups(
+        &self,
+        primary: Option<i64>,
+        member_ids: &[i64],
+    ) -> Result<ResolvedConnection> {
+        let chain = self.ordered_groups_for_members(primary, member_ids)?;
         let mut out = ResolvedConnection::for_group_chain(&chain);
         if let Some(id) = out.identity_id {
             out.identity = self.get_identity(id)?;
