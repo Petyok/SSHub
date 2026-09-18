@@ -20,6 +20,24 @@ All notable changes to SSHub are documented in this file.
   chord.
 
 - **Interactive SSH authentication** (issue #52) — private askpass channel and masked TUI prompts for passwords, key passphrases and one-time challenges, three-attempt cap, and success-only credential saving. Auth modals serialize one at a time; a round-trip keyring probe falls back to file storage, secrets restore presence-first, and save failures surface as audit-error rows. Unknown and changed host keys require explicit trust decisions; cancelling or a failed channel closes the connection without exposing answers in PTY output.
+- **Group-inherited connection defaults** (issue #74) — groups can now carry
+  optional defaults for all six connection fields: identity, username, port,
+  ProxyJump, transport (ssh/mosh) and agent forwarding. Resolution order per
+  field: the host's own explicit value → the nearest ancestor group that sets
+  it (child groups override parents) → the global default (port 22, ssh,
+  forwarding off). The host form shows the inherited values as muted
+  placeholders, and clearing a field restores inheritance; Space on the
+  transport/forwarding rows cycles inherit → set → set → inherit, and picker
+  row 0 is "(inherit from group)". Manage them in the TUI group form
+  (`Ctrl+G`), or via `sshub group add/edit --default-username/--default-port/
+  --default-proxy-jump/--default-transport/--default-fwd-agent` (with matching
+  `--clear-*` / `--set-*` flags), and clear host overrides with
+  `sshub host edit --clear-port/--clear-forward-agent/--clear-transport`.
+  Schema v16: the host port/forwarding/transport columns become nullable
+  (`NULL` = inherit); rows still carrying the old creation defaults
+  (22/off/ssh) migrate to `NULL` so long-standing untouched hosts start
+  inheriting, while genuinely custom values are preserved. Tags/favorites
+  never inherit, and nothing rewrites `~/.ssh/config`.
 - **Hardware security-key badges on the keys screen** (issue #80) - identities
   whose key path carries the `ssh-keygen -t *-sk` `-sk`/`_sk` marker now show
   `ed25519-sk`/`ecdsa-sk` (generic `sk` for unfamiliar bases) badges instead of
@@ -35,6 +53,24 @@ All notable changes to SSHub are documented in this file.
   certificate row, `ssh-add` receives the cert alongside the key, and a
   `does not match the private key` warning appears when the cert was not
   issued for that key. Issuing certs and auto-renewal stay out of scope.
+
+- **In-app profile management** (issue #124) - `Alt+P` or Settings opens profile
+  creation/management without restarting SSHub. The dashboard shows the current
+  workspace and remappable shortcut; one-profile installs open creation directly.
+  Switching rebuilds profile-owned state in the same terminal only after the
+  replacement loads, preserving the current workspace on failure. Live sessions,
+  SFTP/transfers, broadcasts, tunnels and reconnects block switching; the active
+  profile cannot be renamed or deleted. Single-profile silent startup, the
+  multi-profile startup picker, CLI selection and directory overrides are unchanged.
+
+- **Cross-profile transfers** - move or copy a host, group, identity or tunnel
+  to another profile from the profile manager (`t`/`T`) or `sshub transfer ...`.
+  Every transfer shows a plan preview with explicit confirm; name clashes
+  auto-rename (`name (copy N)`), and live sessions / running tunnels block the
+  affected hosts (the headless CLI only sees running tunnels, not live
+  sessions). Transferred groups flatten to top level and hosts land with
+  `Launcher` source.
+  The destination picker is fuzzy-filtered and the dialog is bounded and centered.
 
 ### Fixed
 

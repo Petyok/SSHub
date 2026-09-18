@@ -4,6 +4,7 @@ use std::sync::LazyLock;
 
 use ratatui::layout::Rect;
 use ratatui::style::Style;
+use ratatui::text::Span;
 use ratatui::Frame;
 
 use crate::theme::catalog::{ColorRole, StyleRole};
@@ -127,6 +128,7 @@ pub fn render_tab_bar(
     area: Rect,
     active_tab: usize,
     scope_path: &str,
+    profile_name: Option<&str>,
     theme: &ResolvedTheme,
 ) {
     if area.height == 0 || area.width == 0 {
@@ -172,9 +174,82 @@ pub fn render_tab_bar(
             x += label.len() as u16;
         }
 
-        // Space between tabs
-        buf.set_string(x, y, "   ", dim);
-        x += 3;
+        // Compact tab spacing leaves room for the profile and badges at 120 columns.
+        let gap = if profile_name.is_some() && area.width < 132 {
+            " "
+        } else {
+            "   "
+        };
+        buf.set_string(x, y, gap, dim);
+        x += gap.len() as u16;
+    }
+
+    if let Some(name) = profile_name {
+        // Reserve installation metadata before sizing the profile name so a
+        // long name cannot evict the badges. Tabs always keep their own space.
+        let right = area.right().saturating_sub(1);
+        let available = right.saturating_sub(x) as usize;
+        const PREFIX: &str = "profile: ";
+        if available > PREFIX.len() {
+            let name_width = Span::raw(name).width();
+            let version = version_label();
+            let scope_len = 7 + Span::raw(scope_path).width();
+            let version_width = version.map(|label| Span::raw(label).width()).unwrap_or(0);
+            let badges_width = scope_len
+                + if version.is_some() {
+                    2 + version_width
+                } else {
+                    0
+                };
+            let reserve_badges = PREFIX.len() + 8 + 2 + badges_width <= available;
+            let name_budget =
+                available - PREFIX.len() - if reserve_badges { badges_width + 2 } else { 0 };
+            let name = if name_width <= name_budget {
+                std::borrow::Cow::Borrowed(name)
+            } else {
+                let span = Span::raw(name);
+                let mut shortened = String::new();
+                let mut width = 0;
+                for grapheme in span.styled_graphemes(Style::default()) {
+                    let next_width = Span::raw(grapheme.symbol).width();
+                    if width + next_width > name_budget.saturating_sub(1) {
+                        break;
+                    }
+                    shortened.push_str(grapheme.symbol);
+                    width += next_width;
+                }
+                shortened.push('…');
+                std::borrow::Cow::Owned(shortened)
+            };
+            buf.set_string(x, y, PREFIX, dim);
+            let profile_style = Style::default().fg(theme.semantic().text_highlight);
+            buf.set_stringn(
+                x + PREFIX.len() as u16,
+                y,
+                &name,
+                name_budget,
+                profile_style,
+            );
+            if reserve_badges {
+                let scope_right = if let Some(version) = version {
+                    let version_x = right - version_width as u16;
+                    buf.set_stringn(
+                        version_x,
+                        y,
+                        version,
+                        version_width,
+                        Style::default().fg(theme.color(ColorRole::StatusSuccess)),
+                    );
+                    version_x - 2
+                } else {
+                    right
+                };
+                let scope_x = scope_right - scope_len as u16;
+                buf.set_string(scope_x, y, "scope: ", dim);
+                buf.set_stringn(scope_x + 7, y, scope_path, scope_len - 7, profile_style);
+            }
+        }
+        return;
     }
 
     // Version + scope path — far right. The version (when shown) sits at the

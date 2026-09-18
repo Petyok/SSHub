@@ -14,7 +14,9 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use serde::Serialize;
 
-use crate::app::{prepare_cli_connect_argv, resolve_pending_secret, session_argv_for_entry};
+use crate::app::{
+    prepare_cli_connect_argv, resolve_pending_secret, resolved_session_argv, session_argv_for_entry,
+};
 use crate::cli::context::CliContext;
 use crate::cli::parse::{self, OutputFormat};
 use crate::session::askpass::AskpassSecret;
@@ -87,9 +89,17 @@ pub fn run(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     }
 
     let entry = ctx.host_by_name(&name)?.clone();
+    let resolved = match entry.managed() {
+        Some(m) => Some(ctx.store.resolve_connection(m)?),
+        None => None,
+    };
+    let effective_transport = resolved
+        .as_ref()
+        .map(|r| r.transport)
+        .unwrap_or_else(|| entry.session_transport());
     // mosh has no one-shot command mode: `mosh host -- cmd` opens an interactive
     // session anyway, which for a script means a hang, not an error.
-    if matches!(entry.session_transport(), SessionTransport::Mosh) {
+    if matches!(effective_transport, SessionTransport::Mosh) {
         anyhow::bail!(
             "host '{name}' uses the mosh transport, which cannot run a one-shot command — \
              use `sshub connect {name}`, or switch the host to the ssh transport"
@@ -97,13 +107,15 @@ pub fn run(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     }
 
     let host_name = entry.name().to_string();
-    let (pending_secret, _) = resolve_pending_secret(&entry, ctx.password_store.as_ref());
+    let effective_identity = resolved.as_ref().and_then(|r| r.identity.as_ref());
+    let (pending_secret, _) =
+        resolve_pending_secret(&entry, effective_identity, ctx.password_store.as_ref());
+    let base_argv = match (entry.managed(), resolved.as_ref()) {
+        (Some(m), Some(r)) => resolved_session_argv(m, r),
+        _ => session_argv_for_entry(&entry),
+    };
     let argv = exec_argv(
-        prepare_cli_connect_argv(
-            session_argv_for_entry(&entry),
-            pending_secret.is_some(),
-            verbose,
-        ),
+        prepare_cli_connect_argv(base_argv, pending_secret.is_some(), verbose),
         entry.ssh_host().remote_command.as_deref(),
         &command,
         tty,

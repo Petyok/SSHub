@@ -691,7 +691,7 @@ mod tests {
         let entry = crate::app::HostEntry::Managed(created);
         // Lookup leg: the saved secret must resolve to a pending secret.
         let (pending, _diag) =
-            crate::app::resolve_pending_secret(&entry, app.password_store.as_ref());
+            crate::app::resolve_pending_secret(&entry, None, app.password_store.as_ref());
         assert!(
             matches!(&pending, Some(PendingSecret::Password(pw)) if pw == "saved-pw"),
             "remember-me-saved password must resolve on the next connect"

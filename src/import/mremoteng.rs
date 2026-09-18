@@ -439,7 +439,7 @@ pub fn import_mremoteng(path: &Path, store: &LauncherStore) -> Result<HostImport
         let new_host = NewHost {
             name: host.name.clone(),
             address: host.hostname.clone(),
-            port: host.port,
+            port: Some(host.port),
             username,
             tags: host.folders.clone(),
             notes: Some("Imported from mRemoteNG".into()),
@@ -603,7 +603,7 @@ mod tests {
         assert_eq!(web1.source, HostSource::Launcher);
 
         let db = store.get_host_by_name("db").unwrap().unwrap();
-        assert_eq!(db.port, 2222);
+        assert_eq!(db.port, Some(2222));
         assert!(db.tags.is_empty());
 
         // Re-running the same import touches nothing new.

@@ -12,11 +12,9 @@ impl App {
             self.identities = self.store.list_identities()?;
         }
 
-        let default_identity_index = self
-            .identities
-            .iter()
-            .position(|i| i.name == "Default")
-            .unwrap_or(0);
+        // NOTE: no identity prefill here on purpose. New hosts start on the
+        // "(inherit from group)" picker row and edits keep unset as inherit;
+        // group defaults resolve dynamically at connect time.
 
         let form = if let Some(managed) = existing {
             // Multi-select: pre-check every non-reserved group the host belongs
@@ -32,10 +30,13 @@ impl App {
                 .group_id
                 .and_then(|gid| self.groups.iter().position(|g| g.id == gid))
                 .unwrap_or(0);
+            // Row 0 of the identity picker is "(inherit from group)"; rows
+            // 1..=len are the identities. Unset (or dangling) inherits.
             let identity_index = managed
                 .identity_id
                 .and_then(|iid| self.identities.iter().position(|i| i.id == iid))
-                .unwrap_or(default_identity_index);
+                .map(|p| p + 1)
+                .unwrap_or(0);
 
             let start_field = if metadata_only {
                 HostFormField::Label
@@ -60,7 +61,7 @@ impl App {
                     .unwrap_or_default(),
                 label: managed.label.clone().unwrap_or_default(),
                 name: managed.name.clone(),
-                port: managed.port.to_string(),
+                port: managed.port.map(|p| p.to_string()).unwrap_or_default(),
                 group_index,
                 group_ids,
                 identity_index,
@@ -83,10 +84,10 @@ impl App {
                 dirty: false,
             }
         } else {
-            // Prefill group + identity from the group the user is currently in.
-            // A new host added inside a group inherits the group's default identity.
-            // Only prefill from a real (non-reserved) group; a selection under
-            // Favorites must not pre-check anything.
+            // Prefill the group from the navigator selection (Favorites never
+            // pre-checks anything). Identity starts on the "(inherit from
+            // group)" row: group defaults resolve dynamically at connect
+            // time, so pinning today's default would only freeze the host.
             let selected_group_id = self
                 .selected_host_group_id()
                 .filter(|gid| self.groups.iter().any(|g| g.id == *gid));
@@ -95,11 +96,7 @@ impl App {
             let group_index = selected_group_id
                 .and_then(|gid| self.groups.iter().position(|g| g.id == gid))
                 .unwrap_or(0);
-            let identity_index = selected_group_id
-                .and_then(|gid| self.groups.iter().find(|g| g.id == gid))
-                .and_then(|g| g.default_identity_id)
-                .and_then(|iid| self.identities.iter().position(|i| i.id == iid))
-                .unwrap_or(default_identity_index);
+            let identity_index = 0;
 
             HostFormEdit {
                 id: None,
@@ -107,15 +104,15 @@ impl App {
                 username: String::new(),
                 label: String::new(),
                 name: String::new(),
-                port: "22".into(),
+                port: String::new(),
                 group_index,
                 group_ids,
                 identity_index,
                 tags: String::new(),
                 proxy_jump: String::new(),
-                forward_agent: false,
+                forward_agent: None,
                 remote_command: String::new(),
-                transport: crate::session_transport::SessionTransport::Ssh,
+                transport: None,
                 session_logging: crate::session_log::SessionLoggingOverride::Inherit,
                 os_icon_index: 0,
                 password: String::new(),
@@ -168,7 +165,13 @@ impl App {
             .map(|g| g.id)
             .collect();
         let group_id = group_ids.first().copied();
-        let identity_id = self.identities.get(form.identity_index).map(|i| i.id);
+        // Picker row 0 is "(inherit from group)" → None; rows 1..=len index
+        // the identity list. Saving None restores inheritance on edits.
+        let identity_id = form
+            .identity_index
+            .checked_sub(1)
+            .and_then(|i| self.identities.get(i))
+            .map(|i| i.id);
         let tags = parse_tags(&form.tags);
         let label = optional_field(&form.label);
         // Compared against what the store held when the form opened: prefilling
@@ -244,12 +247,18 @@ impl App {
             return Ok(());
         }
 
-        let port: u16 = match form.port.trim().parse() {
-            Ok(p) if p > 0 => p,
-            _ => {
-                self.host_notice = Some("Port must be a positive number".into());
-                self.host_form = Some(form);
-                return Ok(());
+        // An emptied port restores inheritance (None): the effective value
+        // comes from the group chain, else the global default (22).
+        let port: Option<u16> = if form.port.trim().is_empty() {
+            None
+        } else {
+            match form.port.trim().parse() {
+                Ok(p) if p > 0 => Some(p),
+                _ => {
+                    self.host_notice = Some("Port must be a positive number".into());
+                    self.host_form = Some(form);
+                    return Ok(());
+                }
             }
         };
 
@@ -442,10 +451,22 @@ impl App {
             return;
         }
         if form.field == HostFormField::ForwardAgent {
-            form.forward_agent = !form.forward_agent;
+            // inherit → on → off → inherit: clearing restores inheritance.
+            form.forward_agent = match form.forward_agent {
+                None => Some(true),
+                Some(true) => Some(false),
+                Some(false) => None,
+            };
             form.dirty = true;
         } else if form.field == HostFormField::Transport {
-            form.transport = form.transport.next();
+            // inherit → ssh → mosh → inherit.
+            form.transport = match form.transport {
+                None => Some(crate::session_transport::SessionTransport::Ssh),
+                Some(crate::session_transport::SessionTransport::Ssh) => {
+                    Some(crate::session_transport::SessionTransport::Mosh)
+                }
+                Some(crate::session_transport::SessionTransport::Mosh) => None,
+            };
             form.dirty = true;
         } else if form.field == HostFormField::SessionLogging {
             form.session_logging = form.session_logging.next();

@@ -7,7 +7,7 @@ use anyhow::Result;
 
 use crate::config::{tunnel_backoff_delay, tunnel_failure_attempt, TunnelReconnectConfig};
 use crate::session::PendingSecret;
-use crate::store::{ManagedHost, Tunnel};
+use crate::store::{ManagedHost, ResolvedConnection, Tunnel};
 
 pub mod audit;
 pub mod spawn;
@@ -114,15 +114,15 @@ impl TunnelManager {
     pub fn start(
         &mut self,
         tunnel: &Tunnel,
-        host: Option<&ManagedHost>,
+        host: &ManagedHost,
+        resolved: &ResolvedConnection,
         secret: Option<&PendingSecret>,
     ) -> Result<()> {
         if self.processes.contains_key(&tunnel.id) {
             self.stop_process(tunnel.id)?;
         }
 
-        let host = host.ok_or_else(|| anyhow::anyhow!("No host associated with tunnel"))?;
-        let args = build_tunnel_argv(tunnel, host, secret.is_some())?;
+        let args = build_tunnel_argv(tunnel, host, resolved, secret.is_some())?;
 
         let mut cmd = Command::new(&args[0]);
         cmd.args(&args[1..])
@@ -215,6 +215,15 @@ impl TunnelManager {
 
     pub fn needs_tunnel_list(&self) -> bool {
         !self.processes.is_empty() || !self.reconnect.is_empty()
+    }
+
+    /// Owned children and scheduled retries must finish before replacing their profile.
+    pub fn has_active_work(&self) -> bool {
+        !self.processes.is_empty()
+            || self
+                .reconnect
+                .values()
+                .any(|state| state.phase == ReconnectPhase::Reconnecting)
     }
 
     pub fn check_health(
@@ -380,7 +389,7 @@ impl TunnelManager {
         &mut self,
         tunnels: &[Tunnel],
         cfg: &TunnelReconnectConfig,
-        resolve_host: impl Fn(i64) -> Option<ManagedHost>,
+        resolve_host: impl Fn(i64) -> Option<(ManagedHost, ResolvedConnection)>,
         resolve_secret: impl Fn(&ManagedHost) -> Option<PendingSecret>,
     ) -> Vec<ReconnectEvent> {
         let now = Instant::now();
@@ -422,9 +431,21 @@ impl TunnelManager {
                 events.push(ReconnectEvent::Attempt { tunnel_id, attempt });
             }
 
-            let host = tunnel.host_id.and_then(&resolve_host);
-            let secret = host.as_ref().and_then(&resolve_secret);
-            match self.start(tunnel, host.as_ref(), secret.as_ref()) {
+            let hosted = tunnel.host_id.and_then(&resolve_host);
+            let secret = hosted
+                .as_ref()
+                .map(|(host, _)| host)
+                .and_then(&resolve_secret);
+            let Some((host, resolved)) = hosted.as_ref() else {
+                events.extend(self.record_tunnel_failure(
+                    tunnel_id,
+                    "No host associated with tunnel",
+                    cfg,
+                    Duration::ZERO,
+                ));
+                continue;
+            };
+            match self.start(tunnel, host, resolved, secret.as_ref()) {
                 Ok(()) => {}
                 Err(e) => {
                     let err = format!("{e:#}");
@@ -528,6 +549,62 @@ impl Drop for TunnelManager {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn active_work_excludes_exhausted_reconnects() {
+        let mut mgr = TunnelManager::new();
+        let cfg = TunnelReconnectConfig {
+            max_attempts: 2,
+            ..Default::default()
+        };
+        assert!(!mgr.has_active_work());
+        mgr.on_auto_start_failed(1, "offline", &cfg);
+        assert!(mgr.has_active_work());
+        mgr.on_auto_start_failed(1, "offline", &cfg);
+        mgr.on_auto_start_failed(1, "offline", &cfg);
+        assert!(mgr.is_gave_up(1));
+        assert!(!mgr.has_active_work());
+        assert!(mgr.needs_tunnel_list());
+        mgr.on_auto_start_failed(2, "offline", &cfg);
+        assert!(mgr.has_active_work());
+        mgr.mark_user_stopped(2);
+        assert!(!mgr.has_active_work());
+    }
+
+    #[test]
+    fn owned_child_blocks_even_with_exhausted_reconnect() {
+        let mut mgr = TunnelManager::new();
+        let cfg = TunnelReconnectConfig {
+            max_attempts: 1,
+            ..Default::default()
+        };
+        mgr.on_auto_start_failed(1, "offline", &cfg);
+        mgr.on_auto_start_failed(1, "offline", &cfg);
+        assert!(mgr.is_gave_up(1));
+        let child = Command::new("sh")
+            .args(["-c", "read value"])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        mgr.processes.insert(
+            1,
+            TunnelProcess {
+                child,
+                started_at: Instant::now(),
+                status: TunnelStatus::Up,
+                proving: true,
+                stderr_tail: Arc::new(Mutex::new(String::new())),
+                _askpass: None,
+            },
+        );
+        assert!(mgr.has_active_work());
+        assert!(!mgr.is_running(1));
+        mgr.processes.get_mut(&1).unwrap().proving = false;
+        assert!(mgr.has_active_work());
+        assert!(mgr.is_running(1));
+        mgr.stop_user(1).unwrap();
+        assert!(!mgr.has_active_work());
+    }
 
     #[test]
     fn mark_user_stopped_clears_reconnect_state() {

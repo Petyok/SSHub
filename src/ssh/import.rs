@@ -102,7 +102,7 @@ fn build_sync_import(
         favorite: existing.favorite,
         last_connected: existing.last_connected,
         session_logging: existing.session_logging,
-        transport: existing.transport,
+        transport: existing.transport.unwrap_or_default(),
     }
 }
 
@@ -297,7 +297,7 @@ mod tests {
                 name: "alpha".into(),
                 label: None,
                 address: "192.168.0.1".into(),
-                port: 22,
+                port: Some(22),
                 group_id: None,
                 identity_id: Some(default_id),
                 tags: vec![],
@@ -360,7 +360,7 @@ mod tests {
 
         let host = store.get_host_by_name("web").unwrap().unwrap();
         assert_eq!(host.address, "9.9.9.9");
-        assert_eq!(host.port, 2222);
+        assert_eq!(host.port, Some(2222));
         assert_eq!(host.tags, vec!["keep"]);
         assert_eq!(host.notes.as_deref(), Some("note"));
         assert!(host.favorite);

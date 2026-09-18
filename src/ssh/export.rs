@@ -36,12 +36,17 @@ pub fn render_launcher_hosts(store: &LauncherStore) -> Result<String> {
     let hosts = store.list_hosts_filtered(Some(HostSource::Launcher))?;
     let mut out = String::from(EXPORT_HEADER);
     for host in hosts {
-        out.push_str(&render_host_block(&host));
+        // Materialize the effective values: an exported static config cannot
+        // express inheritance, so group defaults are baked into each block.
+        // Resolution never fails closed here — fall back to the stored row.
+        let resolved = store
+            .resolve_connection(&host)
+            .unwrap_or_else(|_| crate::store::ResolvedConnection::from_stored(&host));
+        out.push_str(&render_host_block(&host, &resolved));
         out.push('\n');
     }
     Ok(out)
 }
-
 /// Collapse anything that could break out of a single ssh_config line. A field
 /// carrying an embedded newline would otherwise inject arbitrary directives
 /// (e.g. a `Host *` stanza) into the exported file, so flatten CR/LF to spaces.
@@ -49,43 +54,53 @@ fn conf_val(s: &str) -> String {
     s.replace(['\n', '\r'], " ")
 }
 
-fn render_host_block(host: &ManagedHost) -> String {
+fn render_host_block(host: &ManagedHost, resolved: &crate::store::ResolvedConnection) -> String {
     let mut lines = vec![format!("Host {}", conf_val(&host.name))];
     lines.push(format!("    HostName {}", conf_val(&host.address)));
 
-    let user = host
-        .username
-        .as_deref()
-        .or_else(|| host.identity.as_ref().and_then(|i| i.username.as_deref()));
+    let user = resolved.username.as_deref().or_else(|| {
+        resolved
+            .identity
+            .as_ref()
+            .and_then(|i| i.username.as_deref())
+    });
     if let Some(user) = user {
         lines.push(format!("    User {}", conf_val(user)));
     }
 
-    if host.port != 22 {
-        lines.push(format!("    Port {}", host.port));
+    if resolved.port != 22 {
+        lines.push(format!("    Port {}", resolved.port));
     }
 
-    if let Some(key) = host.identity.as_ref().and_then(|i| i.private_key.as_ref()) {
+    if let Some(key) = resolved
+        .identity
+        .as_ref()
+        .and_then(|i| i.private_key.as_ref())
+    {
         lines.push(format!(
             "    IdentityFile {}",
             conf_val(&key.to_string_lossy())
         ));
     }
 
-    if let Some(cert) = host.identity.as_ref().and_then(|i| i.certificate.as_ref()) {
+    if let Some(cert) = resolved
+        .identity
+        .as_ref()
+        .and_then(|i| i.certificate.as_ref())
+    {
         lines.push(format!(
             "    CertificateFile {}",
             conf_val(&cert.to_string_lossy())
         ));
     }
 
-    if let Some(jump) = &host.proxy_jump {
+    if let Some(jump) = &resolved.proxy_jump {
         if !jump.is_empty() {
             lines.push(format!("    ProxyJump {}", conf_val(jump)));
         }
     }
 
-    if host.forward_agent {
+    if resolved.forward_agent {
         lines.push("    ForwardAgent yes".to_string());
     }
 
@@ -152,7 +167,7 @@ mod tests {
                 name: "dev-partners".into(),
                 label: Some("Dev Partners".into()),
                 address: "10.100.19.123".into(),
-                port: 22,
+                port: Some(22),
                 group_id: None,
                 identity_id: Some(default_id),
                 tags: vec![],
@@ -188,7 +203,7 @@ mod tests {
             .create_host(&NewHost {
                 name: "cert-host".into(),
                 address: "10.0.0.1".into(),
-                port: 22,
+                port: Some(22),
                 identity_id: Some(default_id),
                 ..Default::default()
             })
@@ -206,7 +221,7 @@ mod tests {
             .create_host(&NewHost {
                 name: "tmux-host".into(),
                 address: "10.0.0.1".into(),
-                port: 22,
+                port: Some(22),
                 remote_command: Some("tmux attach".into()),
                 ..Default::default()
             })

@@ -168,10 +168,18 @@ sshub --profile work db purge --yes-i-am-stupid
 SSHUB keeps profile-owned data isolated. Each profile can select its own SSH
 config source with `[ssh].config_path`; the default remains shared
 `~/.ssh/config`. With one profile, startup remains silent;
-with multiple profiles, the picker appears after the splash. The picker can
-create, rename, and delete profiles, but switching profiles requires restarting
-SSHUB. `--profile NAME` bypasses the picker. `--manage-profiles` opens it even
-when only one profile exists. Press `Esc` in the picker to cancel startup.
+with multiple profiles, the picker appears after the splash. From the dashboard,
+press `Alt+P` (remappable) or open Settings (`Ctrl+H`) → **Add profile** /
+**Manage profiles** to create, rename, delete, or switch workspaces without
+restarting SSHub. The footer shows the current profile and shortcut. With one
+profile, the action opens creation directly; `Esc` returns to your workspace.
+The active profile cannot be renamed or deleted. Switching requires closing SSH
+and local shell sessions, disconnecting SFTP and transfers, dismissing broadcasts,
+and stopping tunnels (including pending reconnects). A failed load leaves your
+current workspace open and displays the error in the manager.
+
+`--profile NAME` bypasses the startup picker. `--manage-profiles` opens it even
+when only one profile exists. Press `Esc` in the startup picker to cancel startup.
 Headless commands without `--profile` use the last-used profile and never open
 the interactive picker.
 
@@ -211,6 +219,17 @@ sshub groups                                 # list host groups
 sshub group add --name prod
 sshub identity add --name work --username alice --private-key ~/.ssh/id_ed25519
 sshub identity agent-remove --name work      # ssh-add -d for the identity's key
+
+# Group connection defaults (issue #74): everything under prod/ goes via the
+# bastion as deploy. Resolution per field: host value → best default on any
+# group the host belongs to (nearest chain wins; ties break toward the deeper
+# group, then the primary group's chain) → global default (port 22, ssh,
+# forwarding off). Clearing a host field restores inheritance; tags and
+# favorites never inherit.
+sshub group edit --name prod --set-default-username deploy \
+    --set-default-proxy-jump bastion --set-default-port 2222
+sshub group edit --name prod --clear-default-port   # drop one default
+sshub host edit --name db-01 --clear-port           # re-inherit the group port
 
 # Tunnels
 sshub tunnel list
@@ -289,6 +308,7 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | `Tab`            | Toggle detail panel             |
 | `Esc`            | Back / close overlay            |
 | `Ctrl+K`         | Keybind editor                  |
+| `Alt+P`          | Add / manage profiles from dashboard |
 | `?`              | Help screen                     |
 | `q`              | Quit                            |
 

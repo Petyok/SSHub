@@ -104,7 +104,7 @@ fn host_create_edit_delete_roundtrip() {
         .unwrap()
         .expect("persisted");
     assert_eq!(created.address, "10.0.0.50");
-    assert_eq!(created.port, 2222);
+    assert_eq!(created.port, Some(2222));
     assert_eq!(created.label.as_deref(), Some("Dev Server"));
 
     app.handle_key(key_char('e')).unwrap();

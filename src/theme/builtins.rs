@@ -996,6 +996,22 @@ mod tests {
                 role: RoleRef::Style(StyleRole::FormInput),
                 expect: MigratedExpect::Style(legacy::bright()),
             },
+            MigratedRoleUse {
+                id: "transfer_popup.hint",
+                renderer: MOD,
+                was: "theme::mute() on the staged transfer dialog's Esc hint lines",
+                ident: "TextMuted",
+                role: RoleRef::Style(StyleRole::TextMuted),
+                expect: MigratedExpect::Style(legacy::mute()),
+            },
+            MigratedRoleUse {
+                id: "transfer_popup.heading",
+                renderer: MOD,
+                was: "theme::bright() on the staged transfer dialog's heading line",
+                ident: "TextBright",
+                role: RoleRef::Style(StyleRole::TextBright),
+                expect: MigratedExpect::Style(legacy::bright()),
+            },
             // ── Fuzzy palette ──────────────────────────────────
             MigratedRoleUse {
                 id: "palette.background",
@@ -2977,7 +2993,7 @@ mod tests {
         assert_eq!(total, ids.len(), "two rows share an id");
         // Pinned so the number quoted in reports cannot drift from the table.
         assert_eq!(
-            total, 225,
+            total, 227,
             "the inventory changed size; add or remove the row deliberately"
         );
 

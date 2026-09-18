@@ -21,6 +21,13 @@ impl App {
             return Ok(());
         }
 
+        if self.mode == AppMode::ProfilePicker {
+            if let Some(picker) = self.profile_picker.as_mut() {
+                picker.handle_paste(text);
+            }
+            return Ok(());
+        }
+
         // Only insert into modes that own a focused text field. Everywhere else
         // a paste is meaningless and must NOT be run as commands.
         let text_entry = matches!(

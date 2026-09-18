@@ -85,6 +85,14 @@ impl App {
                 name: group.name.clone(),
                 cursor: text_input::char_len(&group.name),
                 default_identity_id: group.default_identity_id,
+                default_username: group.default_username.clone().unwrap_or_default(),
+                default_port: group
+                    .default_port
+                    .map(|p| p.to_string())
+                    .unwrap_or_default(),
+                default_proxy_jump: group.default_proxy_jump.clone().unwrap_or_default(),
+                default_transport: group.default_transport,
+                default_forward_agent: group.default_forward_agent,
                 parent_id: group.parent_id,
                 field: GroupFormField::Name,
                 return_to_manage,
@@ -95,6 +103,11 @@ impl App {
                 name: String::new(),
                 cursor: 0,
                 default_identity_id: None,
+                default_username: String::new(),
+                default_port: String::new(),
+                default_proxy_jump: String::new(),
+                default_transport: None,
+                default_forward_agent: None,
                 parent_id: None,
                 field: GroupFormField::Name,
                 return_to_manage,
@@ -150,29 +163,56 @@ impl App {
             return Ok(());
         };
 
-        let name = form.name.trim();
+        let name = form.name.trim().to_string();
         if name.is_empty() {
             self.host_notice = Some("Group name is required".into());
             self.group_form = Some(form);
             return Ok(());
         }
 
+        // Empty means "no default" (hosts fall through to the next ancestor
+        // or the global default); a non-empty port must parse.
+        let default_port: Option<u16> = if form.default_port.trim().is_empty() {
+            None
+        } else {
+            match form.default_port.trim().parse() {
+                Ok(p) if p > 0 => Some(p),
+                _ => {
+                    self.host_notice = Some("Default port must be a positive number".into());
+                    self.group_form = Some(form);
+                    return Ok(());
+                }
+            }
+        };
+        let default_username = optional_field(&form.default_username);
+        let default_proxy_jump = optional_field(&form.default_proxy_jump);
+
         if let Some(id) = form.id {
             self.store.update_group(
                 id,
                 &HostGroupUpdate {
-                    name: Some(name.to_string()),
+                    name: Some(name),
                     sort_order: None,
                     default_identity_id: Some(form.default_identity_id),
+                    default_username: Some(default_username),
+                    default_port: Some(default_port),
+                    default_proxy_jump: Some(default_proxy_jump),
+                    default_transport: Some(form.default_transport),
+                    default_forward_agent: Some(form.default_forward_agent),
                     parent_id: Some(form.parent_id),
                 },
             )?;
         } else {
             let sort_order = self.groups.len() as i32;
             self.store.create_group(&NewHostGroup {
-                name: name.to_string(),
+                name,
                 sort_order,
                 default_identity_id: form.default_identity_id,
+                default_username,
+                default_port,
+                default_proxy_jump,
+                default_transport: form.default_transport,
+                default_forward_agent: form.default_forward_agent,
                 parent_id: form.parent_id,
             })?;
         }
@@ -199,31 +239,45 @@ impl App {
             // Move focus between fields.
             KeyCode::Up | KeyCode::BackTab => self.group_form_move_field(-1),
             KeyCode::Down | KeyCode::Tab => self.group_form_move_field(1),
-            // Enter: save on the name field, open the dropdown on picker fields.
+            // Enter: save on the name field, open the dropdown on Parent /
+            // Identity, cycle the tri-state on Transport / ForwardAgent.
             KeyCode::Enter => match field {
                 Some(GroupFormField::Name) => self.save_group_form()?,
-                Some(kind) => self.open_group_field_picker(kind),
-                None => {}
-            },
-            // Space also opens the dropdown on picker fields.
-            KeyCode::Char(' ') if field != Some(GroupFormField::Name) => {
-                if let Some(kind) = field {
-                    self.open_group_field_picker(kind);
+                Some(GroupFormField::Parent) | Some(GroupFormField::Identity) => {
+                    if let Some(kind) = field {
+                        self.open_group_field_picker(kind);
+                    }
                 }
-            }
+                Some(GroupFormField::Transport) | Some(GroupFormField::ForwardAgent) => {
+                    self.group_form_cycle_tristate();
+                }
+                _ => {}
+            },
+            // Space opens the dropdown on picker fields, cycles tri-states.
+            KeyCode::Char(' ') if field.is_some_and(|f| !f.is_text()) => match field {
+                Some(GroupFormField::Parent) | Some(GroupFormField::Identity) => {
+                    if let Some(kind) = field {
+                        self.open_group_field_picker(kind);
+                    }
+                }
+                Some(GroupFormField::Transport) | Some(GroupFormField::ForwardAgent) => {
+                    self.group_form_cycle_tristate();
+                }
+                _ => {}
+            },
             KeyCode::Backspace
-                if key.modifiers.is_empty() && field == Some(GroupFormField::Name) =>
+                if key.modifiers.is_empty() && field.is_some_and(|f| f.is_text()) =>
             {
                 self.group_form_backspace()
             }
             KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End | KeyCode::Delete
-                if field == Some(GroupFormField::Name) =>
+                if field.is_some_and(|f| f.is_text()) =>
             {
                 self.group_form_cursor_key(key.code)
             }
-            // Typing only edits the name field.
+            // Typing edits whichever text field is focused.
             KeyCode::Char(c)
-                if field == Some(GroupFormField::Name)
+                if field.is_some_and(|f| f.is_text())
                     && (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
                     && !c.is_control() =>
             {
@@ -248,7 +302,7 @@ impl App {
     /// Open the dropdown list picker for the group form's Parent or Identity
     /// field, pre-selecting the current value.
     pub(crate) fn open_group_field_picker(&mut self, kind: GroupFormField) {
-        if kind == GroupFormField::Name {
+        if !matches!(kind, GroupFormField::Parent | GroupFormField::Identity) {
             return;
         }
         let Some(form) = self.group_form.as_ref() else {
@@ -271,7 +325,8 @@ impl App {
                     .position(|i| i.id == id)
                     .map_or(0, |p| p + 1),
             },
-            GroupFormField::Name => 0,
+            // Text and tri-state fields never open the picker (guarded above).
+            _ => 0,
         };
         self.group_field_picker = Some(GroupFieldPicker { kind, selected });
         self.mode = AppMode::GroupFieldPicker;
@@ -306,7 +361,8 @@ impl App {
                     .collect();
                 ("(none)".into(), opts)
             }
-            GroupFormField::Name => ("(none)".into(), Vec::new()),
+            // Text and tri-state fields never open the picker (guarded above).
+            _ => ("(none)".into(), Vec::new()),
         }
     }
 
@@ -340,7 +396,8 @@ impl App {
                     match kind {
                         GroupFormField::Parent => form.parent_id = new_id,
                         GroupFormField::Identity => form.default_identity_id = new_id,
-                        GroupFormField::Name => {}
+                        // Text and tri-state fields never open the picker.
+                        _ => {}
                     }
                 }
                 self.close_group_field_picker();
@@ -384,26 +441,76 @@ impl App {
         }
         out
     }
-
+    /// Insert into whichever text field is focused (cursor tracks that field).
     pub(crate) fn group_form_insert(&mut self, ch: char) {
         let Some(form) = self.group_form.as_mut() else {
             return;
         };
-        form.cursor = text_input::insert_at(&mut form.name, form.cursor, ch);
+        let field = form.field;
+        let target = match field {
+            GroupFormField::Name => &mut form.name,
+            GroupFormField::Username => &mut form.default_username,
+            GroupFormField::Port => &mut form.default_port,
+            GroupFormField::ProxyJump => &mut form.default_proxy_jump,
+            _ => return,
+        };
+        form.cursor = text_input::insert_at(target, form.cursor, ch);
     }
 
     pub(crate) fn group_form_backspace(&mut self) {
         let Some(form) = self.group_form.as_mut() else {
             return;
         };
-        form.cursor = text_input::backspace_at(&mut form.name, form.cursor);
+        let field = form.field;
+        let target = match field {
+            GroupFormField::Name => &mut form.name,
+            GroupFormField::Username => &mut form.default_username,
+            GroupFormField::Port => &mut form.default_port,
+            GroupFormField::ProxyJump => &mut form.default_proxy_jump,
+            _ => return,
+        };
+        form.cursor = text_input::backspace_at(target, form.cursor);
     }
 
     fn group_form_cursor_key(&mut self, code: KeyCode) {
         if let Some(form) = self.group_form.as_mut() {
+            let field = form.field;
+            let target = match field {
+                GroupFormField::Name => &mut form.name,
+                GroupFormField::Username => &mut form.default_username,
+                GroupFormField::Port => &mut form.default_port,
+                GroupFormField::ProxyJump => &mut form.default_proxy_jump,
+                _ => return,
+            };
             let mut cursor = form.cursor;
-            text_input::handle_cursor_key(code, &mut form.name, &mut cursor);
+            text_input::handle_cursor_key(code, target, &mut cursor);
             form.cursor = cursor;
+        }
+    }
+
+    /// Cycle the focused tri-state default: inherit → set → set → inherit.
+    pub(crate) fn group_form_cycle_tristate(&mut self) {
+        let Some(form) = self.group_form.as_mut() else {
+            return;
+        };
+        match form.field {
+            GroupFormField::Transport => {
+                form.default_transport = match form.default_transport {
+                    None => Some(crate::session_transport::SessionTransport::Ssh),
+                    Some(crate::session_transport::SessionTransport::Ssh) => {
+                        Some(crate::session_transport::SessionTransport::Mosh)
+                    }
+                    Some(crate::session_transport::SessionTransport::Mosh) => None,
+                };
+            }
+            GroupFormField::ForwardAgent => {
+                form.default_forward_agent = match form.default_forward_agent {
+                    None => Some(true),
+                    Some(true) => Some(false),
+                    Some(false) => None,
+                };
+            }
+            _ => {}
         }
     }
 }

@@ -23,12 +23,15 @@ pub fn run(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
         Some("delete") => cmd_delete(ctx, &args[1..])?,
         Some("start") => cmd_start(ctx, &args[1..])?,
         Some("stop") => cmd_stop(ctx, &args[1..])?,
+        Some("transfer") => return super::transfer::cmd_tunnel_transfer(ctx, &args[1..]),
         Some(other) => {
             fail(&format!(
-                "unknown tunnel subcommand '{other}' (try: list, show, create, delete, start, stop)"
+                "unknown tunnel subcommand '{other}' (try: list, show, create, delete, start, stop, transfer)"
             ));
         }
-        None => fail("tunnel requires a subcommand (list, show, create, delete, start, stop)"),
+        None => {
+            fail("tunnel requires a subcommand (list, show, create, delete, start, stop, transfer)")
+        }
     }
     Ok(0)
 }
@@ -192,7 +195,11 @@ fn cmd_start(ctx: &CliContext, args: &[String]) -> Result<()> {
     }
 
     let data_dir = ctx.profile.tunnel_base().to_path_buf();
-    let pid = spawn_detached_tunnel(&tunnel, &host, secret.as_ref(), &data_dir)?;
+    let resolved = ctx
+        .store
+        .resolve_connection(&host)
+        .unwrap_or_else(|_| crate::store::ResolvedConnection::from_stored(&host));
+    let pid = spawn_detached_tunnel(&tunnel, &host, &resolved, secret.as_ref(), &data_dir)?;
     let _ = ctx.store.log_auth_event(
         host_name,
         None,
@@ -222,7 +229,10 @@ fn run_foreground(
     let local_port = tunnel.local_port;
 
     let mut mgr = TunnelManager::new();
-    mgr.start(tunnel, Some(host), secret.as_ref())
+    let resolved = store
+        .resolve_connection(host)
+        .unwrap_or_else(|_| crate::store::ResolvedConnection::from_stored(host));
+    mgr.start(tunnel, host, &resolved, secret.as_ref())
         .context("tunnel start failed")?;
     let _ = store.log_auth_event(
         &host_name,
@@ -251,7 +261,14 @@ fn run_foreground(
         let reconnect = mgr.tick_reconnect(
             &tunnels,
             &cfg,
-            |host_id| store.get_host(host_id).ok().flatten(),
+            |host_id| {
+                store.get_host(host_id).ok().flatten().map(|h| {
+                    let resolved = store
+                        .resolve_connection(&h)
+                        .unwrap_or_else(|_| crate::store::ResolvedConnection::from_stored(&h));
+                    (h, resolved)
+                })
+            },
             |h| resolve_pending_secret_for_managed(h, password_store).0,
         );
         log_tunnel_reconnect_events(&store, &reconnect, &tunnels);

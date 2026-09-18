@@ -155,10 +155,8 @@ pub fn run_app_with(opts: profile::StartupOptions) -> Result<()> {
         }
     };
 
-    let config = config::load_config_at(&paths.config_file)?;
-    let mut app = App::new_with_profile(config, paths.clone())?;
+    let mut app = load_profile_app(&paths)?;
     record_last_used(&paths);
-    attach_config_watcher(&mut app, &paths.ssh_config)?;
 
     if !stdout().is_terminal() {
         return run_headless_loop(&mut app, auto_quit.as_deref());
@@ -176,6 +174,48 @@ fn record_last_used(paths: &profile::ProfilePaths) {
     if let Ok(Some(mut state)) = profile::ProfileState::load(&paths.data_root) {
         state.last_used = Some(paths.id.clone());
         let _ = state.save(&paths.data_root);
+    }
+}
+
+fn load_profile_app(paths: &profile::ProfilePaths) -> Result<App> {
+    let config = config::load_config_at(&paths.config_file)?;
+    let mut app = App::new_with_profile(config, paths.clone())?;
+    attach_config_watcher(&mut app, &paths.ssh_config)?;
+    Ok(app)
+}
+
+/// Prepare the replacement before dropping any of the current workspace.
+/// The loader seam keeps the transaction testable without SSH or OS keyring I/O.
+fn apply_pending_profile(
+    app: &mut App,
+    load: impl FnOnce(&profile::ProfilePaths) -> Result<App>,
+) -> bool {
+    let Some(paths) = app.pending_profile.take() else {
+        return false;
+    };
+    let candidate = if let Some(message) = app.profile_switch_blocker() {
+        Err(anyhow::anyhow!(message))
+    } else {
+        load(&paths)
+    };
+    match candidate {
+        Ok(mut candidate) => {
+            candidate.terminal_area = app.terminal_area;
+            candidate.dashboard_at = Some(std::time::Instant::now());
+            *app = candidate;
+            record_last_used(&paths);
+            true
+        }
+        Err(error) => {
+            let message = format!("Cannot switch profiles: {error:#}");
+            if let Some(picker) = app.profile_picker.as_mut() {
+                picker.set_error(message);
+            } else {
+                app.host_notice = Some(message);
+                app.host_notice_at = Some(std::time::Instant::now());
+            }
+            false
+        }
     }
 }
 
@@ -225,7 +265,14 @@ fn run_picker_loop(
     loop {
         terminal.draw(|frame| picker.render(frame, theme))?;
         let event = event::read()?;
-        let Event::Key(key) = event else { continue };
+        let key = match event {
+            Event::Key(key) => key,
+            Event::Paste(text) => {
+                picker.handle_paste(&text);
+                continue;
+            }
+            _ => continue,
+        };
         match picker.handle_key(key)? {
             profile::picker::PickerOutcome::Continue => {}
             profile::picker::PickerOutcome::Quit => return Ok(None),
@@ -406,6 +453,7 @@ fn run_terminal_loop(
         }
 
         poll_keys_and_watcher(app)?;
+        apply_pending_profile(app, load_profile_app);
 
         if app.should_quit {
             app.shutdown_all();
@@ -468,7 +516,10 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
                 Event::Paste(text) => app.handle_paste(&text)?,
                 _ => {}
             }
-            if app.should_quit || !event::poll(std::time::Duration::ZERO)? {
+            if app.should_quit
+                || app.pending_profile.is_some()
+                || !event::poll(std::time::Duration::ZERO)?
+            {
                 break;
             }
         }

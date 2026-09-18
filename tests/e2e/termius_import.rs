@@ -84,7 +84,7 @@ fn shift_t_opens_prompt_and_imports_csv_export() {
     assert_eq!(web.address, "10.0.0.1");
     assert_eq!(web.username.as_deref(), Some("admin"));
     let db = store.get_host_by_name("db").unwrap().unwrap();
-    assert_eq!(db.port, 5432);
+    assert_eq!(db.port, Some(5432));
 
     assert!(app.hosts.iter().any(|h| h.name() == "web"));
     assert!(app.hosts.iter().any(|h| h.name() == "db"));
@@ -194,7 +194,8 @@ fn imported_host_password_is_resolved_at_connect_time() {
         .find(|h| h.name() == "dev-alumni")
         .cloned()
         .expect("imported host present after reload");
-    let (secret, diag) = sshub::app::resolve_pending_secret(&entry, &pw);
+    let effective = entry.managed().and_then(|m| m.identity.as_ref());
+    let (secret, diag) = sshub::app::resolve_pending_secret(&entry, effective, &pw);
     match secret {
         Some(sshub::session::PendingSecret::Password(p)) => assert_eq!(p, "StrongPassw0rd"),
         other => panic!("expected a resolved password, got {other:?} ({diag})"),

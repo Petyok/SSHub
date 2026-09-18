@@ -1,6 +1,39 @@
 use super::*;
 
 #[test]
+fn alt_p_creates_second_profile_from_single_profile() {
+    let dir = tempfile::tempdir().unwrap();
+    let roots = crate::profile::RootDirs {
+        data_root: dir.path().join("data"),
+        config_root: dir.path().join("config"),
+        compat: false,
+    };
+    let mut state = crate::profile::ProfileState::default();
+    let active = crate::profile::create_profile(&roots, &mut state, "default").unwrap();
+    let mut app = test_app(vec![]);
+    app.profile = Some(crate::profile::profile_paths(
+        &roots,
+        &active,
+        dir.path().join("ssh_config"),
+    ));
+    app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::ALT))
+        .unwrap();
+    for c in "work".chars() {
+        app.handle_key(key_char(c)).unwrap();
+    }
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    let saved = crate::profile::ProfileState::load(&roots.data_root)
+        .unwrap()
+        .unwrap();
+    assert!(
+        saved.by_name("work").is_some(),
+        "Alt+P must open Create directly"
+    );
+    assert_eq!(saved.profiles.len(), 2);
+    assert_eq!(app.profile.as_ref().unwrap().id, active.id);
+}
+
+#[test]
 pub(crate) fn keyevent_to_spec_roundtrips() {
     let f2 = KeyEvent::new(KeyCode::F(2), KeyModifiers::empty());
     assert_eq!(keyevent_to_spec(&f2).as_deref(), Some("F2"));
@@ -226,7 +259,7 @@ pub(crate) fn sort_mode_label_orders_by_display_name() {
             name: "z-host".into(),
             label: Some("Zulu".into()),
             address: "10.0.0.1".into(),
-            port: 22,
+            port: Some(22),
             group_id: None,
             identity_id: Some(default_id),
             tags: vec![],
@@ -239,7 +272,7 @@ pub(crate) fn sort_mode_label_orders_by_display_name() {
             name: "a-host".into(),
             label: Some("Alpha".into()),
             address: "10.0.0.2".into(),
-            port: 22,
+            port: Some(22),
             group_id: None,
             identity_id: Some(default_id),
             tags: vec![],
@@ -337,7 +370,7 @@ pub(crate) fn nested_groups_build_tree_and_collapse_subtree() {
         .create_host(&NewHost {
             name: "p1".into(),
             address: "10.0.0.1".into(),
-            port: 22,
+            port: Some(22),
             group_id: Some(parent.id),
             ..Default::default()
         })
@@ -346,7 +379,7 @@ pub(crate) fn nested_groups_build_tree_and_collapse_subtree() {
         .create_host(&NewHost {
             name: "e1".into(),
             address: "10.0.0.2".into(),
-            port: 22,
+            port: Some(22),
             group_id: Some(child.id),
             ..Default::default()
         })
@@ -410,7 +443,7 @@ pub(crate) fn shift_arrow_jumps_between_group_headers() {
         .create_host(&NewHost {
             name: "a1".into(),
             address: "10.0.0.1".into(),
-            port: 22,
+            port: Some(22),
             group_id: Some(g1.id),
             ..Default::default()
         })
@@ -419,7 +452,7 @@ pub(crate) fn shift_arrow_jumps_between_group_headers() {
         .create_host(&NewHost {
             name: "b1".into(),
             address: "10.0.0.2".into(),
-            port: 22,
+            port: Some(22),
             group_id: Some(g2.id),
             ..Default::default()
         })
@@ -467,7 +500,11 @@ pub(crate) fn help_scroll_stops_at_render_ceiling() {
     app.handle_key(key_char('?')).unwrap();
     assert_eq!(app.mode, AppMode::Help);
 
-    let max = crate::tui::help_max_scroll(app.terminal_area, &app.help_query);
+    let max = crate::tui::help_max_scroll(
+        app.terminal_area,
+        &app.help_query,
+        app.config.keybinds.primary(KeyAction::ProfilesManage),
+    );
     assert!(max > 0, "help content must overflow a 24-row terminal");
     for _ in 0..500 {
         app.handle_key(key(KeyCode::Down)).unwrap();
@@ -565,7 +602,7 @@ fn fold_replays_the_subtree_while_nav_rows_collapse_at_once() {
             .create_host(&NewHost {
                 name: format!("p{i}"),
                 address: format!("10.0.0.{i}"),
-                port: 22,
+                port: Some(22),
                 group_id: Some(group.id),
                 ..Default::default()
             })

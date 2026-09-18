@@ -298,7 +298,7 @@ pub fn render_palette(
         let host_addr = entry
             .managed()
             .map(|m| {
-                let port = m.port;
+                let port = m.port.unwrap_or(22);
                 if port == 22 {
                     m.address.clone()
                 } else {

@@ -97,7 +97,8 @@ pub(crate) fn keyless_identity_secret_is_a_login_password() {
         .unwrap();
 
     let entry = HostEntry::Managed(store.get_host(host_id).unwrap().unwrap());
-    let (secret, diag) = resolve_pending_secret(&entry, &pw);
+    let effective = entry.managed().and_then(|m| m.identity.as_ref());
+    let (secret, diag) = resolve_pending_secret(&entry, effective, &pw);
     assert!(
         matches!(secret, Some(crate::session::PendingSecret::Password(ref p)) if p == "s3cret"),
         "keyless identity should yield a login password, got {secret:?} / {diag}"
@@ -128,7 +129,9 @@ pub(crate) fn missing_stored_secret_yields_an_explicit_will_prompt_diagnostic() 
     nh.identity_id = Some(id);
     let host_id = store.create_host(&nh).unwrap().id;
     let entry = HostEntry::Managed(store.get_host(host_id).unwrap().unwrap());
-    let (secret, diag) = resolve_pending_secret(&entry, &crate::credentials::NoopPasswordStore);
+    let effective = entry.managed().and_then(|m| m.identity.as_ref());
+    let (secret, diag) =
+        resolve_pending_secret(&entry, effective, &crate::credentials::NoopPasswordStore);
     assert!(secret.is_none(), "empty store must yield no secret");
     assert!(
         diag.contains("will prompt"),
