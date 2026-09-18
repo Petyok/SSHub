@@ -943,6 +943,16 @@ impl Session {
         let _ = self.runtime.resize(pty_rows, pty_cols);
     }
 
+    /// Bare `Running` gate for explicit snippet insertion. `Running` may be a
+    /// timeout reveal rather than proof of authentication, but insertion only
+    /// ever writes bytes the user explicitly chose (a picker selection), so
+    /// it is safe to offer on mosh sessions that never produce the ssh `-v`
+    /// connected marker. History capture and ghost text stay on the honest
+    /// `is_live_authenticated` signal.
+    pub(crate) fn is_running(&self) -> bool {
+        matches!(self.phase, SessionPhase::Running { .. }) && !self.runtime.is_closed()
+    }
+
     /// Running may be a timeout reveal, not proof that SSH authenticated.
     pub(crate) fn is_live_authenticated(&self) -> bool {
         matches!(self.phase, SessionPhase::Running { .. })

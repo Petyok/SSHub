@@ -50,12 +50,11 @@ impl App {
             self.open_sftp_for_active_session();
             return Ok(());
         }
-        // Running alone can be the timeout fail-open. Require authentication
-        // before offering commands that could otherwise answer an SSH prompt.
+        // Snippet insertion only writes bytes the user explicitly picked, so the
+        // bare-Running gate applies (mosh never earns `connected`): history and
+        // ghost stay on the honest `is_live_authenticated` signal elsewhere.
         if self.is_action(KeyAction::SessionSnippets, &key)
-            && self
-                .active_session()
-                .is_some_and(|s| s.is_live_authenticated())
+            && self.active_session().is_some_and(|s| s.is_running())
         {
             let return_mode = self.mode;
             self.open_snippet_picker(return_mode)?;

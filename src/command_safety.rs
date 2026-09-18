@@ -64,6 +64,32 @@ pub fn classify_command(command: &str) -> CommandSafety {
     if lower.contains("://") && lower.contains('@') {
         return reject("URL credentials");
     }
+    // Generic secret-header rule: `curl -H 'X-Api-Key: abc'` carries a
+    // credential with no '=' and no listed marker. Any `-H`/`--header` value
+    // shaped like `<name>: <value>` is treated as secret-bearing. This
+    // deliberately over-redacts benign custom headers: for a secrets
+    // classifier, dropping a safe command is the correct direction.
+    let mut words = command.split_whitespace();
+    while let Some(word) = words.next() {
+        let word = word.trim_matches(['\'', '"']);
+        if word == "-H" || word == "--header" {
+            if words
+                .next()
+                .is_some_and(|value| value.trim_matches(['\'', '"']).contains(':'))
+            {
+                return reject("secret header");
+            }
+        } else if let Some(value) = word.strip_prefix("--header=") {
+            if value.trim_matches(['\'', '"']).contains(':') {
+                return reject("secret header");
+            }
+        } else if let Some(value) = word.strip_prefix("-H") {
+            // Attached form: `-H'X-Key: abc'`.
+            if !value.is_empty() && value.trim_matches(['\'', '"']).contains(':') {
+                return reject("secret header");
+            }
+        }
+    }
     let curl = lower
         .split_whitespace()
         .any(|word| word.trim_matches(['\'', '"']).rsplit('/').next() == Some("curl"));
@@ -92,6 +118,7 @@ mod tests {
             "git status --short",
             "printf '%s' 'hello world'",
             "journalctl -u nginx --since today",
+            "curl -H foobar https://example.org",
         ] {
             assert_eq!(classify_command(command), CommandSafety::Safe);
         }
@@ -106,8 +133,11 @@ mod tests {
             "curl -ualice:opaque https://example.org",
             "/usr/bin/curl -u alice:opaque https://example.org",
             "curl --user=user:credential https://example.org",
-            "curl -H 'Authorization: Bearer abc' https://example.org",
-            "PGPASSWORD=abc psql",
+            "curl -H 'X-Api-Key: abc123' https://example.org",
+            "curl -H 'X-Key: abc123' https://example.org",
+            "curl --header 'X-Custom-Token: abc' https://example.org",
+            "curl --header 'X-Key: abc123' https://example.org",
+            "curl -H'X-Key: abc123' https://example.org",
             "APP_TOKEN=abc command",
             "AWS_SECRET_ACCESS_KEY=abc aws s3 ls",
             "docker login -p abc",

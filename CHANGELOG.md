@@ -5,21 +5,19 @@ All notable changes to SSHub are documented in this file.
 ## [Unreleased]
 ### Added
 
-- **Session command suggestions** (issue #72) - in a live session, `Ctrl+Space` opens a local
-  suggestion picker backed by bounded in-memory session history (last 100 commands), the snippet
-  library, and opt-in per-host persisted history (off by default, managed hosts only, owner-only
-  `launcher.db`, schema v16). A shared conservative redaction classifier drops credential-like,
-  multiline or prompt-context input entirely instead of trying to redact it; no remote commands
-  are run to build suggestions. `Tab` inserts without executing, `Enter` inserts and executes,
-  `Esc` never writes to the PTY, and the picker closes safely when the session exits or is
-  detached. Settings gains persistence toggle, per-host limit, and explicit clear actions; the
-  chord is rebindable (`Ctrl+K`) and listed in help and README.
-- **Session ghost-text completions** - once a live session has recorded a safe command, typing its
-  prefix shows the rest inline (dim suffix after the cursor) without opening the picker. `Tab`
-  (or `Ctrl+F`) accepts, `Esc` dismisses for that line. Nothing renders over full-screen apps,
-  scrolled-back views, selections, or prompt contexts that look like credential entry, and a
-  manually typed pre-auth password never indexes while no longer costing the first post-auth
-  command.
+- **Session command suggestions** (issue #72) - ghost-text completions inline in a live session:
+  typing the prefix of a previously recorded safe command shows the rest as a dim suffix after
+  the cursor. `Tab` (or `Ctrl+F`) accepts, `Esc` dismisses for that line. Nothing renders over
+  full-screen apps, scrolled-back views, selections, or prompt contexts that look like
+  credential entry. Suggestions come from bounded in-memory session history (last 100 commands),
+  the snippet library, and opt-in per-host persisted history (off by default, managed hosts only,
+  owner-only `launcher.db`, schema v16). A shared conservative redaction classifier drops
+  credential-like, multiline or prompt-context input entirely instead of trying to redact it; no
+  remote commands are run to build suggestions. A manually typed pre-auth password never indexes
+  while no longer costing the first post-auth command. Snippet browsing stays in the `Ctrl+N`
+  snippet picker (`Enter` runs, `Tab` inserts for editing). Settings gains persistence toggle,
+  per-host limit, and explicit clear actions. There is no suggestion picker and no `Ctrl+Space`
+  chord.
 
 
 ## [0.16.0] - 2026-09-05

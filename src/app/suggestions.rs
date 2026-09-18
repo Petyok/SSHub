@@ -16,8 +16,8 @@ impl App {
             self.suggestion_notice("No active session for insertion.");
             return;
         };
-        if !session.is_live_authenticated() {
-            self.suggestion_notice("Session is not authenticated and running.");
+        if !session.is_running() {
+            self.suggestion_notice("Session is not running.");
             return;
         }
         session.observe_paste(command);

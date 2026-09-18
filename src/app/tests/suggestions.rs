@@ -338,15 +338,20 @@ fn persistence_is_opt_in_managed_only_and_disabling_keeps_rows() {
 }
 
 #[test]
-fn suggestions_require_authenticated_session_not_timeout_reveal() {
+fn suggestions_require_running_session_not_connecting() {
     // Oracle: a real PTY child — the exact-bytes proof that insertion into a
-    // non-live session sends nothing and records nothing.
+    // non-running session sends nothing and records nothing. Snippet
+    // insertion uses the bare-Running gate (mosh never earns `connected`),
+    // so only a session that has not revealed at all refuses here.
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("input");
     let mut app = fixture_capture(&path, false);
+    app.active_session_mut().unwrap().phase = crate::session::SessionPhase::Connecting {
+        started_at: Instant::now(),
+    };
     assert!(
-        !app.active_session().unwrap().is_live_authenticated(),
-        "setup: Running without connect evidence is not live"
+        !app.active_session().unwrap().is_running(),
+        "setup: connecting session is not running"
     );
     app.insert_session_command("ls", true, true);
     assert!(
@@ -358,6 +363,31 @@ fn suggestions_require_authenticated_session_not_timeout_reveal() {
         std::fs::read(&path).unwrap_or_default(),
         Vec::<u8>::new(),
         "refused insert writes no PTY bytes"
+    );
+}
+
+#[test]
+fn snippet_insert_allowed_on_running_without_connected_evidence() {
+    // Oracle: a real PTY child — the exact-bytes proof that explicit snippet
+    // insertion is offered on bare Running (the mosh case: no ssh `-v`
+    // connected marker, so `is_live_authenticated` is false). Recording stays
+    // on the honest signal, so history must stay empty.
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("input");
+    let mut app = fixture_capture(&path, false);
+    assert!(
+        !app.active_session().unwrap().is_live_authenticated(),
+        "setup: Running without connect evidence is not live"
+    );
+    assert!(
+        app.active_session().unwrap().is_running(),
+        "setup: session is bare Running"
+    );
+    app.insert_session_command("ls", false, true);
+    received(&mut app, &path, b"ls");
+    assert!(
+        app.active_session().unwrap().history.entries.is_empty(),
+        "unlive insert writes bytes but records nothing"
     );
 }
 

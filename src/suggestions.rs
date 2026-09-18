@@ -37,7 +37,10 @@ impl SuggestionProvider for LocalSuggestions {
         }
         MATCHER.with(|cell| {
             let mut matcher = cell.borrow_mut();
-            let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
+            // Fold case for ranking only (`Smart` would go case-sensitive on
+            // uppercase queries): consumers that need an exact boundary (the
+            // ghost suffix split) enforce exact-case themselves.
+            let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
             let lower_query = query.to_lowercase();
             let mut buffer = Vec::new();
             let mut candidates = Vec::new();

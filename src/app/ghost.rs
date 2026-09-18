@@ -12,8 +12,8 @@ use crate::session::history::HistoryEntry;
 use crate::suggestions::{LocalSuggestions, SuggestionContext, SuggestionProvider};
 
 /// Cached per-host persisted history for the ghost context:
-/// `((host id, opt-in flag), rows)`. `None` is cold.
-pub(crate) type GhostHostCache = Option<((Option<i64>, bool), Vec<HistoryEntry>)>;
+/// `((host id, opt-in flag, per-host limit), rows)`. `None` is cold.
+pub(crate) type GhostHostCache = Option<((Option<i64>, bool, usize), Vec<HistoryEntry>)>;
 
 /// Minimum typed characters before a ghost may appear. A single character
 /// matches nearly everything and the ghost would only add noise.
@@ -54,29 +54,28 @@ impl App {
 
     /// Per-host persisted history for the ghost context, cached so the render
     /// pass (which only holds `&App`) never hits the store per frame. The key
-    /// is the active session's host id plus the opt-in flag; a mismatch
-    /// (session switch, settings toggle) or an explicit invalidate reloads.
+    /// is the active session's host id plus the opt-in flag and the per-host
+    /// limit; a mismatch (session switch, settings toggle, limit edit) or an
+    /// explicit invalidate reloads.
     fn ghost_host_history(&self) -> Vec<HistoryEntry> {
         let host_id = self.active_session().and_then(|s| s.meta.host_id);
         let enabled = self.config.command_history.enabled;
+        let limit = self.config.command_history.max_entries_per_host;
         let mut cache = self.ghost_host_cache.borrow_mut();
         let cold = match cache.as_ref() {
-            Some(((id, en), _)) => *id != host_id || *en != enabled,
+            Some(((id, en, lim), _)) => *id != host_id || *en != enabled || *lim != limit,
             None => true,
         };
         if cold {
             let rows = if enabled {
                 match host_id {
-                    Some(id) => self
-                        .store
-                        .command_history(id, self.config.command_history.max_entries_per_host)
-                        .unwrap_or_default(),
+                    Some(id) => self.store.command_history(id, limit).unwrap_or_default(),
                     None => Vec::new(),
                 }
             } else {
                 Vec::new()
             };
-            *cache = Some(((host_id, enabled), rows));
+            *cache = Some(((host_id, enabled, limit), rows));
         }
         cache
             .as_ref()
@@ -103,27 +102,32 @@ impl App {
             return None;
         }
         let host_history = self.ghost_host_history();
-        let top = LocalSuggestions
-            .suggestions(
-                &SuggestionContext {
-                    session_history: session.history.entries.as_slice(),
-                    host_history: &host_history,
-                    snippets: &self.snippets,
-                },
-                query,
-            )
-            .into_iter()
-            .next()?;
+        let ranked = LocalSuggestions.suggestions(
+            &SuggestionContext {
+                session_history: session.history.entries.as_slice(),
+                host_history: &host_history,
+                snippets: &self.snippets,
+            },
+            query,
+        );
         // Tier-0 prefix contract: only a suggestion that EXTENDS the typed
         // line can render inline. Fuzzy tier-1/2 matches are list-picker
         // concepts; painting one after the cursor would show text the accept
-        // path cannot produce by suffix append.
-        if !top.text.to_lowercase().starts_with(&query.to_lowercase()) {
-            return None;
+        // path cannot produce by suffix append. Ranking folds case, but the
+        // boundary must be exact-case: folding only for the prefix test would
+        // slice the suffix at the wrong bytes (typed `DO` off `docker ps`
+        // would accept as `DOcker ps`), so the first exact-case prefix match
+        // in rank order wins and a case-only match shows no ghost.
+        let mut chosen = None;
+        for top in ranked.into_iter() {
+            if top.text.starts_with(query) {
+                chosen = Some(top);
+                break;
+            }
         }
-        // Split the typed prefix off by bytes. Case folding can shift byte
-        // lengths in exotic scripts; a misaligned boundary hides the ghost
-        // rather than slicing mid-char (or the wrong suffix).
+        let top = chosen?;
+        // `starts_with` guarantees the char boundary, so this cannot slice
+        // mid-char (or the wrong suffix).
         let suffix = top.text.get(query.len()..)?.to_owned();
         // Fully typed: nothing to complete, and Tab must reach the shell.
         if suffix.is_empty() {

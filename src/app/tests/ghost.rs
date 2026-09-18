@@ -618,6 +618,36 @@ fn ctrl_f_accepts_like_tab() {
 }
 
 #[test]
+fn ghost_hides_case_only_prefix_match() {
+    // Oracle: none exists per docs/oracle-tests.md (app/tui have no external
+    // oracle); the typed-line/ghost assertions below are the contract.
+    // Ranking folds case, but the suffix boundary must be exact-case: typed
+    // `DO` off `docker ps` would otherwise accept as `DOcker ps`.
+    let mut app = fixture(None);
+    submit(&mut app, "docker ps");
+    type_text(&mut app, "DO");
+    assert!(
+        app.ghost_match().is_none(),
+        "case-only prefix must not ghost, got {:?}",
+        app.ghost_match()
+    );
+}
+
+#[test]
+fn ghost_accepts_mixed_case_exact_prefix() {
+    // Oracle: same as its sibling — the contract is the suffix boundary on
+    // exact bytes: typed `DO` off recorded `DOcker ps` completes `cker ps`
+    // (and accepting it writes exactly those bytes, not a folded rewrite).
+    let mut app = fixture(None);
+    submit(&mut app, "DOcker ps");
+    type_text(&mut app, "DO");
+    let ghost = app.ghost_match().expect("exact-case prefix must ghost");
+    assert_eq!(ghost.text, "DOcker ps");
+    assert_eq!(ghost.suffix, "cker ps");
+    assert_eq!(ghost.shown, "cker ps");
+}
+
+#[test]
 fn fully_typed_line_has_no_ghost_and_tab_forwards() {
     // Oracle: a real PTY child — nothing left to complete, so Tab must reach
     // the shell instead of being swallowed by a zero-width ghost.
@@ -665,6 +695,44 @@ fn ghost_completes_from_opt_in_host_history() {
         "persisted history is opt-in only"
     );
 }
+
+#[test]
+fn ghost_host_cache_reloads_on_limit_change() {
+    // Oracle: the real LauncherStore (in-memory SQLite) — the rows must exist
+    // there AND the ghost must follow a limit edit with no session switch,
+    // toggle, or new command, proving the limit is part of the cache key.
+    let mut app = fixture(None);
+    app.config.command_history.enabled = true;
+    let created = app
+        .store
+        .create_host(&crate::store::NewHost::launcher("db", "10.0.0.7"))
+        .unwrap();
+    app.active_session_mut().unwrap().meta.host_id = Some(created.id);
+    app.store
+        .record_command(Some(created.id), "qq old", 100)
+        .unwrap();
+    app.store
+        .record_command(Some(created.id), "qq new", 100)
+        .unwrap();
+    // Narrow window: only the newest row is visible, and it does not extend
+    // the typed line, so no ghost — this call warms the cache at limit 1.
+    app.config.command_history.max_entries_per_host = 1;
+    type_text(&mut app, "qq o");
+    assert!(
+        app.ghost_match().is_none(),
+        "limit 1 hides the older row, got {:?}",
+        app.ghost_match()
+    );
+    // Widening the limit must reload the cache on the next frame: the older
+    // row extends the typed line exactly.
+    app.config.command_history.max_entries_per_host = 100;
+    let ghost = app
+        .ghost_match()
+        .expect("widened limit must surface the older row");
+    assert_eq!(ghost.text, "qq old");
+    assert_eq!(ghost.suffix, "ld");
+}
+
 #[test]
 fn manual_password_before_latch_still_records_first_post_auth_command() {
     // Oracle: a real PTY child shaped like a password-auth login as seen
