@@ -61,6 +61,17 @@ The settings overlay (`Ctrl+H`) — make SSHub's own surfaces or the remote grid
 - **Ad-hoc connect** - in the fuzzy palette (`/`), typing an unknown `[user@]host[:port]` (IPv6 in brackets supported) that matches no saved host offers a "connect without saving" row; Enter opens an embedded ssh session to it. Input is validated and injection-safe (no leading-dash hosts; destination passed after `--`)
 - **Local shell tab** - `Ctrl+Shift+T` opens a session tab running your login shell (`$SHELL`, else `/bin/sh`) with the same detach/close semantics as ssh tabs
 - **Command snippets** — a library of reusable commands (name, command, optional description and tags). Manage them from the dashboard with `Shift+S` (add/edit/delete); inside a live session `Ctrl+N` opens a fuzzy picker where `Enter` runs the selected command in the PTY and `Tab` inserts it without a trailing newline so you can edit before running
+- **Session command suggestions** — press `Ctrl+Space` in a live session to open a local history
+  and snippet picker: `Enter` inserts the selected command and runs it, `Tab` inserts it without a
+  trailing newline, and `Esc` closes without touching the remote. Suggestions come from this
+  session's in-memory history (always on, last 100 commands), your snippet library, and — only if
+  you opt in under Settings (`Ctrl+H`) — a per-managed-host command history stored in the
+  owner-only launcher database. Persistence is off by default. Credential filtering and prompt
+  detection are best-effort, not a guarantee: unfamiliar secrets may survive, so enable disk
+  history only if that risk is acceptable. Flagged commands and multiline pastes are never indexed;
+  paste bytes still reach the PTY unchanged. Remote hosts are never probed for suggestions, and
+  history stays local-only, outside host sync. Clear history per session, per host or globally
+  from Settings. Disabling persistence stops reads and writes but does not delete existing rows.
 - **Audit** — log of all connection events with filtering by status (ok/fail) and time range (today/week/month); session connect events record the path to the session log when logging is enabled
 - **Session logging** — opt-in capture of PTY session output to `~/.local/share/sshub/profiles/<name>/logs/<host-dir>/` (managed hosts use `{name}-{id}`; pure `~/.ssh/config` aliases without a launcher row may share a directory when sanitized names collide). Enable globally in Settings (`Ctrl+H`) or override per host (`inherit` / `on` / `off`). **Logs capture everything echoed to the terminal, including passwords if they appear on screen.**
 - **Session log browser** (`Shift+L`): read those session logs inside the TUI. Pick a host, pick a rotated segment, and view it with terminal escape codes stripped so the transcript reads as plain text. In the viewer, `/` searches (case-insensitive), `n` / `N` step through matches, and `b` bookmarks the current line by name. `m` lists a host's bookmarks to jump straight back to a saved line. Reads are capped so a large transcript is never loaded whole.

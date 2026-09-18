@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: i64 = 15;
+const SCHEMA_VERSION: i64 = 16;
 
 /// Name of the reserved, auto-created "Favorites" group. Membership in it is the
 /// source of truth for a host's favourite status.
@@ -133,6 +133,19 @@ pub(crate) fn run_migrations(conn: &Connection, launcher_path: &Path) -> Result<
 
     if current < 15 {
         migrate_v14_to_v15(conn)?;
+    }
+    if current < 16 {
+        conn.execute_batch(
+            "CREATE TABLE command_history (
+            id INTEGER PRIMARY KEY,
+            host_id INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+            command TEXT NOT NULL CHECK(length(CAST(command AS BLOB)) BETWEEN 1 AND 4096),
+            last_used INTEGER NOT NULL,
+            use_count INTEGER NOT NULL DEFAULT 1,
+            created_at INTEGER NOT NULL,
+            UNIQUE(host_id, command));
+            CREATE INDEX command_history_host_recent ON command_history(host_id,last_used DESC);",
+        )?;
     }
 
     // Runs last so all columns it writes to (e.g. environment) already exist.
@@ -589,9 +602,12 @@ mod tests {
         let conn = Connection::open(&db_path).unwrap();
         run_migrations(&conn, &db_path).unwrap();
 
-        // Simulate a pre-v14 database: drop the table and roll the recorded
-        // version back to 13, then re-run the chain.
-        conn.execute_batch("DROP TABLE snippets;").unwrap();
+        // Simulate a pre-v14 database: remove every post-v13 table before
+        // rolling the recorded version back and re-running the chain.
+        conn.execute_batch(
+            "DROP TABLE snippets; DROP TABLE log_bookmarks; DROP TABLE command_history;",
+        )
+        .unwrap();
         set_schema_version(&conn, 13).unwrap();
         run_migrations(&conn, &db_path).unwrap();
 
@@ -623,8 +639,10 @@ mod tests {
             let conn = Connection::open(&db_path).unwrap();
             run_migrations(&conn, &db_path).unwrap();
             if start == 13 {
-                conn.execute_batch("DROP TABLE snippets; DROP TABLE log_bookmarks;")
-                    .unwrap();
+                conn.execute_batch(
+                    "DROP TABLE snippets; DROP TABLE log_bookmarks; DROP TABLE command_history;",
+                )
+                .unwrap();
                 set_schema_version(&conn, 13).unwrap();
                 run_migrations(&conn, &db_path).unwrap();
             }

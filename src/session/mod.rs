@@ -5,6 +5,7 @@
 //! and renders the terminal grid fullscreen inside the existing ratatui app.
 
 pub mod askpass;
+pub mod history;
 pub mod keys;
 pub mod parser;
 pub mod pty;
@@ -143,6 +144,8 @@ pub struct Session {
     pub phase: SessionPhase,
     pub runtime: PtyRuntime,
     pub parser: ParserState,
+    pub history: history::SessionHistory,
+    pub(crate) local_shell: bool,
     /// First argv element the user actually saw — the `$ ssh …` line of
     /// the ConnectScreen renders from this.
     pub display_argv: Vec<String>,
@@ -219,6 +222,30 @@ impl Session {
         cols: u16,
         log: Option<crate::session_log::SessionLogWriter>,
     ) -> Result<Self> {
+        Self::spawn_inner(config, rows, cols, log, true)
+    }
+
+    /// Like [`Self::spawn`] but with the child's stderr merged onto the PTY
+    /// instead of siphoned into the ssh `-v` debug log. Local shells need
+    /// this: interactive shells print PS1 to stderr, and with the siphon
+    /// the grid stays blank so the session never leaves Connecting.
+    pub fn spawn_with_merged_stderr(
+        config: SessionConfig,
+        rows: u16,
+        cols: u16,
+        log: Option<crate::session_log::SessionLogWriter>,
+    ) -> Result<Self> {
+        Self::spawn_inner(config, rows, cols, log, false)
+    }
+
+    /// Spawn the child on a freshly allocated PTY and start the reader thread.
+    fn spawn_inner(
+        config: SessionConfig,
+        rows: u16,
+        cols: u16,
+        log: Option<crate::session_log::SessionLogWriter>,
+        siphon_stderr: bool,
+    ) -> Result<Self> {
         // Reserve 1 row for header + 1 row for footer; ensure non-zero PTY.
         let pty_rows = rows.saturating_sub(2).max(1);
         let pty_cols = cols.max(1);
@@ -246,7 +273,7 @@ impl Session {
             }
         }
 
-        let runtime = PtyRuntime::spawn(&config.argv, pty_rows, pty_cols, &env)?;
+        let runtime = PtyRuntime::spawn(&config.argv, pty_rows, pty_cols, &env, siphon_stderr)?;
         let parser = ParserState::new(pty_rows, pty_cols);
 
         let display_argv = config.argv.clone();
@@ -271,6 +298,8 @@ impl Session {
             },
             runtime,
             parser,
+            history: history::SessionHistory::default(),
+            local_shell: false,
             display_argv,
             pending_secret: config.pending_secret.clone(),
             secret_sent: false,
@@ -519,6 +548,9 @@ impl Session {
             match event {
                 PtyEvent::Bytes(bytes) => {
                     self.parser.process(&bytes);
+                    if !self.history_capture_allowed() {
+                        self.history.input.invalidate_pending_input();
+                    }
                     if let Some(log) = self.log.as_mut() {
                         if log.append(&bytes).is_err() {
                             self.diagnostics
@@ -589,7 +621,7 @@ impl Session {
         // Safety net: reveal after the timeout even with no output at all, so a
         // session blocked on auth never hangs the connect screen forever.
         self.reveal_on_timeout();
-        // Re-check after reveal/timeout transitions (mosh has no ssh -v marker).
+        // Re-check after reveal/timeout transitions (a reveal is not auth evidence).
         self.maybe_detect_connected();
     }
 
@@ -751,26 +783,22 @@ impl Session {
     /// (siphoned off the PTY), so no screen scrubbing is needed: the PTY only
     /// ever carries the post-auth shell (banner + prompt).
     ///
-    /// Mosh does not run `ssh -v`, so latch once the live shell is showing
-    /// (`Running` phase) instead.
+    /// Mosh does not run `ssh -v`, so it never produces this marker — and
+    /// `Running` alone (a timeout reveal counts) is not post-auth evidence.
+    /// Mosh stays unauthenticated until real connected evidence arrives.
     fn maybe_detect_connected(&mut self) {
         if self.connected {
-            return;
-        }
-        if self.is_mosh_session() {
-            if matches!(self.phase, SessionPhase::Running { .. }) {
-                self.connected = true;
-            }
             return;
         }
         let text = self.debug_log.to_ascii_lowercase();
         if CONNECTED_NEEDLES.iter().any(|n| text.contains(n)) {
             self.connected = true;
+            // Authentication consumed whatever was typed pre-auth (a typed
+            // password, never a command) and a fresh shell line begins: drop
+            // the stale uncertainty so the first post-auth command records.
+            // Transition-only — later output must not wipe a live input line.
+            self.history.input.reset();
         }
-    }
-
-    fn is_mosh_session(&self) -> bool {
-        self.config.argv.first().map(String::as_str) == Some("mosh")
     }
 
     /// The accumulated ssh `-v` debug output (host-key search, kex, auth).
@@ -915,6 +943,44 @@ impl Session {
         let _ = self.runtime.resize(pty_rows, pty_cols);
     }
 
+    /// Running may be a timeout reveal, not proof that SSH authenticated.
+    pub(crate) fn is_live_authenticated(&self) -> bool {
+        matches!(self.phase, SessionPhase::Running { .. })
+            && (self.is_connected() || self.local_shell)
+            && !self.runtime.is_closed()
+    }
+
+    /// Conservative prompt-context guard for best-effort history capture.
+    pub fn history_capture_allowed(&self) -> bool {
+        let screen = self.parser.screen();
+        let line = line_before_cursor(screen).to_ascii_lowercase();
+        self.is_live_authenticated()
+            && !screen.alternate_screen()
+            && self.parser.scrollback() == 0
+            && ![
+                "password",
+                "passphrase",
+                "verification code",
+                "one-time",
+                "token",
+                "secret",
+            ]
+            .iter()
+            .any(|needle| line.contains(needle))
+    }
+
+    /// Observe only explicit local input; auth responses and terminal replies
+    /// deliberately bypass this path.
+    pub fn observe_key(&mut self, key: crossterm::event::KeyEvent) -> Option<String> {
+        let allowed = self.history_capture_allowed();
+        self.history.input.key(key, allowed)
+    }
+
+    pub fn observe_paste(&mut self, text: &str) {
+        let allowed = self.history_capture_allowed();
+        self.history.input.paste(text, allowed);
+    }
+
     /// Write raw bytes (already-encoded keystroke) to the PTY.
     pub fn write(&mut self, bytes: &[u8]) -> Result<()> {
         self.runtime.write(bytes)
@@ -1002,8 +1068,15 @@ const HOST_VERIFY_NEEDLES: &[&str] = &[
 
 /// Real markers ssh (`-v`) prints once it has genuinely authenticated to the
 /// remote. Seeing any of these is the only honest "connected" signal. Lower
-/// case only.
-const CONNECTED_NEEDLES: &[&str] = &["authenticated to ", "authenticated ("];
+/// case only. The mux entry covers ControlMaster slaves: auth happened on
+/// the master, so the slave never prints `Authenticated to` — but
+/// `mux_client_request_session` proves the master accepted our channel and
+/// the PTY goes straight to a live shell (verified against OpenSSH_10.5p1).
+const CONNECTED_NEEDLES: &[&str] = &[
+    "authenticated to ",
+    "authenticated (",
+    "mux_client_request_session",
+];
 
 /// Cap on the retained ssh `-v` debug buffer (bytes). Old output past this is
 /// dropped from the front so a long session can't grow it without bound.
@@ -1320,7 +1393,7 @@ mod prompt_tests {
     use super::*;
 
     #[test]
-    fn mosh_reports_connected_when_running() {
+    fn mosh_running_alone_does_not_latch_connected() {
         let config = SessionConfig {
             argv: vec!["sh".into(), "-c".into(), "sleep 120".into()],
             display_name: "mosh-host".into(),
@@ -1336,57 +1409,210 @@ mod prompt_tests {
         };
         assert!(!s.is_connected());
         s.drain();
-        assert!(s.is_connected());
+        // Running alone is not post-auth evidence (mosh has no ssh -v
+        // marker): connected stays false until real evidence arrives.
+        assert!(!s.is_connected());
     }
 
     #[test]
-    fn stderr_is_siphoned_off_the_pty() {
-        // stdout must land on the PTY grid; stderr must be routed through the
-        // side FIFO into debug_log — never onto the grid.
+    fn mosh_running_without_post_auth_evidence_rejects_history_capture() {
+        // Running alone is not post-auth evidence for mosh: history capture
+        // must stay gated until trustworthy connected evidence arrives.
+        let config = SessionConfig {
+            argv: vec!["sh".into(), "-c".into(), "sleep 120".into()],
+            display_name: "mosh-host".into(),
+            meta: SessionMeta::default(),
+            pending_secret: None,
+            key_push_identity: None,
+            host_name: "mosh-host".into(),
+        };
+        let mut s = Session::spawn(config, 10, 40, None).unwrap();
+        s.config.argv = vec!["mosh".into(), "host".into()];
+        s.phase = SessionPhase::Running {
+            started_at: Instant::now(),
+        };
+        s.drain();
+        assert!(!s.is_connected());
+        assert!(!s.is_live_authenticated());
+        assert!(!s.history_capture_allowed());
+        // Independent oracle: the history store must hold exactly 0 rows. Drive
+        // a full command through `observe_key` — every keystroke must return
+        // the app layer's "do not record" signal (`record_session_command`
+        // early-returns on `None`), so no candidate can ever reach the store.
+        assert!(s.history.entries.is_empty());
+        for ch in "echo hi".chars() {
+            let key = crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char(ch),
+                crossterm::event::KeyModifiers::NONE,
+            );
+            assert!(s.observe_key(key).is_none());
+        }
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        assert!(s.observe_key(enter).is_none());
+        assert_eq!(
+            s.history.entries.len(),
+            0,
+            "pre-auth keystrokes must leave exactly 0 history rows"
+        );
+    }
+
+    #[test]
+    fn mux_slave_latches_connected_on_master_session_marker() {
+        // Oracle: real OpenSSH_10.5p1 mux-slave stderr, captured against a
+        // tempdir sshd with the slave reusing the master via ControlMaster
+        // auto. The slave never prints `Authenticated to` — auth happened
+        // on the master — but `mux_client_request_session` proves the
+        // master accepted our channel, so the PTY goes straight to a live
+        // shell with no prompt to gate on. Without the needle the latch
+        // never fires and suggestions stay dark on a connected session.
+        if std::process::Command::new("sh")
+            .arg("-c")
+            .arg("exit 0")
+            .output()
+            .is_err()
+        {
+            eprintln!("skipping: no sh binary");
+            return;
+        }
         let config = SessionConfig {
             argv: vec![
                 "sh".into(),
                 "-c".into(),
-                "printf OUT_MARKER; printf ERR_MARKER 1>&2".into(),
+                "printf 'debug1: mux_client_request_session: master session id: 2\\n' >&2; exec sleep 30".into(),
+            ],
+            display_name: "mux-slave".into(),
+            meta: SessionMeta::default(),
+            pending_secret: None,
+            key_push_identity: None,
+            host_name: "mux-slave".into(),
+        };
+        let mut s = Session::spawn(config, 10, 40, None).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            s.drain();
+            if s.is_connected() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "mux marker never latched connected, debug: {:?}",
+                s.debug_log()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn local_shell_with_merged_stderr_reveals_on_its_prompt() {
+        // Oracle: a real interactive `/bin/sh` on a real PTY. POSIX shells
+        // print PS1 to STDERR, not stdout. `open_local_shell` spawns
+        // exactly this (`local_shell_argv` yields `vec![shell]` with no
+        // extra args) via `spawn_with_merged_stderr`, which leaves stderr
+        // on the PTY instead of siphoning it into the ssh `-v` debug log.
+        // The prompt is the only output an idle shell ever produces: with
+        // the siphon the grid stays blank and both reveal paths (which
+        // need grid bytes) park the tab on the spinner forever.
+        if std::process::Command::new("sh")
+            .arg("-c")
+            .arg("exit 0")
+            .output()
+            .is_err()
+        {
+            eprintln!("skipping: no sh binary");
+            return;
+        }
+        let config = SessionConfig {
+            argv: vec!["sh".into()],
+            display_name: "local".into(),
+            meta: SessionMeta::default(),
+            pending_secret: None,
+            key_push_identity: None,
+            host_name: "local".into(),
+        };
+        let mut s = Session::spawn_with_merged_stderr(config, 24, 80, None).unwrap();
+        s.local_shell = true;
+        // Bounded poll past REVEAL_TIMEOUT: a shell that never reveals
+        // must fail the assert, not park the test binary.
+        let mut running = false;
+        for _ in 0..100 {
+            s.drain();
+            if matches!(s.phase, SessionPhase::Running { .. }) {
+                running = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(
+            running,
+            "local `sh` never left Connecting (grid: {:?}, debug: {:?})",
+            s.screen_tail_snippet(),
+            s.debug_log()
+        );
+        assert!(
+            s.is_live_authenticated(),
+            "a revealed local shell must read as live-authenticated"
+        );
+        assert!(
+            s.screen_tail_snippet().contains('$') || s.screen_tail_snippet().contains('#'),
+            "shell prompt must be visible on the grid, tail: {:?}",
+            s.screen_tail_snippet()
+        );
+    }
+
+    #[test]
+    fn stored_password_is_typed_at_a_live_prompt_when_askpass_is_off() {
+        // The PTY-typing fallback covers every ssh too old (or too odd)
+        // to honour SSH_ASKPASS_REQUIRE. Oracle: a real child on a real
+        // PTY printing `host's password: ` and reading one line — the
+        // shape of sshd's password prompt at the session layer.
+        if std::process::Command::new("sh")
+            .arg("-c")
+            .arg("exit 0")
+            .output()
+            .is_err()
+        {
+            eprintln!("skipping: no sh binary");
+            return;
+        }
+        let config = SessionConfig {
+            argv: vec![
+                "sh".into(),
+                "-c".into(),
+                r#"printf "test@host's password: "; read -r pw; printf 'GOT:%s\n' "$pw""#.into(),
             ],
             display_name: "t".into(),
             meta: SessionMeta::default(),
-            pending_secret: None,
+            pending_secret: Some(PendingSecret::Password("s3cret".into())),
             key_push_identity: None,
             host_name: "t".into(),
         };
         let mut s = Session::spawn(config, 24, 80, None).unwrap();
-
-        // Pump the reader threads; both writes are tiny and immediate.
-        let mut got_err = false;
+        // Force the fallback: in-test the askpass helper stages fine
+        // (the test binary exists), which would skip the PTY path.
+        s.use_askpass = false;
+        let mut got = false;
         for _ in 0..200 {
             s.drain();
-            got_err = s.debug_log().contains("ERR_MARKER");
-            let got_out = s.screen_tail_snippet().contains("OUT_MARKER");
-            if got_err && got_out {
+            if s.screen_tail_snippet().contains("GOT:") {
+                got = true;
                 break;
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-
         assert!(
-            got_err,
-            "stderr should be captured in debug_log, got {:?}",
-            s.debug_log()
-        );
-        assert!(
-            s.screen_tail_snippet().contains("OUT_MARKER"),
-            "stdout should be on the PTY grid, tail: {:?}",
+            got,
+            "child never answered, tail: {:?}",
             s.screen_tail_snippet()
         );
         assert!(
-            !s.debug_log().contains("OUT_MARKER"),
-            "stdout must not leak into the debug log"
+            s.screen_tail_snippet().contains("GOT:s3cret"),
+            "fallback must type the stored secret, tail: {:?}",
+            s.screen_tail_snippet()
         );
-        assert!(
-            !s.screen_tail_snippet().contains("ERR_MARKER"),
-            "stderr must not appear on the PTY grid"
-        );
+        assert!(s.secret_was_sent());
     }
 
     #[test]
@@ -1532,6 +1758,146 @@ mod prompt_tests {
             host_name: "t".into(),
         };
         Session::spawn(config, 24, 80, None).unwrap()
+    }
+    #[test]
+    fn real_ssh_master_latches_connected_through_drain() {
+        // Oracle: a real OpenSSH client (`ssh -v`) against a tempdir `sshd`
+        // with key auth — the normal/master path (no ControlMaster). The
+        // client must print `Authenticated to …` on the siphoned stderr so
+        // `maybe_detect_connected` latches, and the banner must reveal
+        // `Running`, earning `is_live_authenticated` through `drain` alone.
+        use std::process::Command;
+        let sshd_bin = ["sshd", "/usr/sbin/sshd", "/usr/bin/sshd"]
+            .into_iter()
+            .filter_map(|bin| {
+                Command::new("sh")
+                    .arg("-c")
+                    .arg(format!("command -v {bin}"))
+                    .output()
+                    .ok()
+                    .filter(|o| o.status.success())
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+            })
+            .find(|path| path.starts_with('/'));
+        let Some(sshd_bin) = sshd_bin else {
+            eprintln!("skipping: no sshd binary");
+            return;
+        };
+        for bin in ["ssh", "ssh-keygen"] {
+            if Command::new("sh")
+                .arg("-c")
+                .arg(format!("command -v {bin} >/dev/null"))
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            eprintln!("skipping: no {bin} binary");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let host_key = dir.path().join("host_key");
+        let user_key = dir.path().join("id");
+        for (key, kind) in [(&host_key, "host"), (&user_key, "user")] {
+            let out = Command::new("ssh-keygen")
+                .args(["-t", "ed25519", "-N", "", "-f", key.to_str().unwrap(), "-q"])
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{kind} keygen failed: {out:?}");
+        }
+        let auth_keys = dir.path().join("auth_keys");
+        std::fs::copy(user_key.with_extension("pub"), &auth_keys).unwrap();
+        let port = {
+            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            probe.local_addr().unwrap().port()
+        };
+        let cfg = dir.path().join("sshd_config");
+        std::fs::write(
+            &cfg,
+            format!(
+                "Port {port}\nHostKey {}\nPidFile {}\nAuthorizedKeysFile {}\n\
+                 StrictModes no\nPasswordAuthentication no\nPubkeyAuthentication yes\n\
+                 UsePAM no\n",
+                host_key.display(),
+                dir.path().join("sshd.pid").display(),
+                auth_keys.display(),
+            ),
+        )
+        .unwrap();
+        let log = dir.path().join("sshd.log");
+        let mut sshd = Command::new(sshd_bin)
+            .args([
+                "-D",
+                "-f",
+                cfg.to_str().unwrap(),
+                "-E",
+                log.to_str().unwrap(),
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_err() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "tempdir sshd never listened: {}",
+                std::fs::read_to_string(&log).unwrap_or_default(),
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let user = std::env::var("USER").unwrap_or_else(|_| "root".into());
+        let known = dir.path().join("known_hosts");
+        let config = SessionConfig {
+            argv: vec![
+                "ssh".into(),
+                "-v".into(),
+                "-F".into(),
+                "/dev/null".into(),
+                "-i".into(),
+                user_key.to_str().unwrap().into(),
+                "-o".into(),
+                "StrictHostKeyChecking=accept-new".into(),
+                "-o".into(),
+                format!("UserKnownHostsFile={}", known.display()),
+                "-o".into(),
+                "IdentitiesOnly=yes".into(),
+                "-o".into(),
+                "BatchMode=yes".into(),
+                "-p".into(),
+                port.to_string(),
+                format!("{user}@127.0.0.1"),
+                "printf 'READY\\n'; exec sleep 60".into(),
+            ],
+            display_name: "oracle".into(),
+            meta: SessionMeta::default(),
+            pending_secret: None,
+            key_push_identity: None,
+            host_name: "oracle".into(),
+        };
+        let mut s = Session::spawn(config, 24, 80, None).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            s.drain();
+            if s.is_live_authenticated() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "real ssh master never authenticated (connected={} phase={:?} debug_tail={:?})",
+                s.is_connected(),
+                s.phase,
+                s.debug_log().chars().rev().take(400).collect::<String>(),
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(
+            s.history_capture_allowed(),
+            "capture must be allowed on a clean remote prompt"
+        );
+        let _ = sshd.kill();
+        let _ = sshd.wait();
     }
 
     #[test]

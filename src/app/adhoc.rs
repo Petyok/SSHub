@@ -170,7 +170,7 @@ impl App {
             port: target.port.or(Some(22)),
             ..Default::default()
         };
-        self.spawn_embedded_session(argv, label.clone(), meta, None, &label)
+        self.spawn_embedded_session(argv, label.clone(), meta, None, &label, false)
     }
 }
 

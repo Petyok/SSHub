@@ -132,6 +132,7 @@ pub(crate) fn legacy_meta(entry: &mut HostEntry) -> &mut crate::metadata::HostMe
 }
 
 mod broadcast;
+mod ghost;
 mod host_crud;
 mod host_detail;
 mod host_form;
@@ -142,6 +143,7 @@ mod misc;
 mod session;
 mod sftp;
 mod snippets;
+mod suggestions;
 mod tags;
 mod theme_picker;
 mod transport;

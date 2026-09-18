@@ -46,6 +46,7 @@ fn app_with_session_and_snippets() -> App {
     session.phase = crate::session::SessionPhase::Running {
         started_at: std::time::Instant::now(),
     };
+    session.local_shell = true;
     app.sessions.push(session);
     app.active_session = Some(0);
     app.mode = AppMode::Session;

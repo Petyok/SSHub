@@ -425,6 +425,11 @@ macro_rules! kb_defaults {
             vec![$($key.to_string()),*]
         }
     };
+    (@fn ghost_accept $($key:literal),* $(,)?) => {
+        fn default_kb_ghost_accept() -> Vec<String> {
+            vec![$($key.to_string()),*]
+        }
+    };
 }
 
 kb_defaults! {
@@ -511,6 +516,7 @@ kb_defaults! {
     logs_browser => ["Shift+L"],
     snippets_manage => ["Shift+S"],
     session_snippets => ["Ctrl+N"],
+    ghost_accept => ["Ctrl+F"],
 }
 /// An action whose keybinding is user-configurable and editable in the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -598,11 +604,12 @@ pub enum KeyAction {
     LogsBrowser,
     SnippetsManage,
     SessionSnippets,
+    GhostAccept,
 }
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 83] = [
+    pub const ALL: [KeyAction; 84] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -686,6 +693,7 @@ impl KeyAction {
         KeyAction::LogsBrowser,
         KeyAction::SnippetsManage,
         KeyAction::SessionSnippets,
+        KeyAction::GhostAccept,
     ];
 
     pub fn label(self) -> &'static str {
@@ -773,6 +781,7 @@ impl KeyAction {
             KeyAction::LogsBrowser => "Browse session logs",
             KeyAction::SnippetsManage => "Manage command snippets",
             KeyAction::SessionSnippets => "Session: run a command snippet",
+            KeyAction::GhostAccept => "Session: accept ghost completion",
         }
     }
 }
@@ -946,6 +955,8 @@ pub struct KeybindsConfig {
     pub snippets_manage: Vec<String>,
     #[serde(default = "default_kb_session_snippets")]
     pub session_snippets: Vec<String>,
+    #[serde(default = "default_kb_ghost_accept")]
+    pub ghost_accept: Vec<String>,
 }
 
 impl Default for KeybindsConfig {
@@ -1034,6 +1045,7 @@ impl Default for KeybindsConfig {
             logs_browser: default_kb_logs_browser(),
             snippets_manage: default_kb_snippets_manage(),
             session_snippets: default_kb_session_snippets(),
+            ghost_accept: default_kb_ghost_accept(),
         }
     }
 }
@@ -1124,6 +1136,7 @@ impl KeybindsConfig {
             KeyAction::LogsBrowser => default_kb_logs_browser(),
             KeyAction::SnippetsManage => default_kb_snippets_manage(),
             KeyAction::SessionSnippets => default_kb_session_snippets(),
+            KeyAction::GhostAccept => default_kb_ghost_accept(),
         }
     }
 
@@ -1289,6 +1302,7 @@ impl KeybindsConfig {
             KeyAction::LogsBrowser => &self.logs_browser,
             KeyAction::SnippetsManage => &self.snippets_manage,
             KeyAction::SessionSnippets => &self.session_snippets,
+            KeyAction::GhostAccept => &self.ghost_accept,
         }
     }
 
@@ -1377,6 +1391,7 @@ impl KeybindsConfig {
             KeyAction::LogsBrowser => self.logs_browser = binds,
             KeyAction::SnippetsManage => self.snippets_manage = binds,
             KeyAction::SessionSnippets => self.session_snippets = binds,
+            KeyAction::GhostAccept => self.ghost_accept = binds,
         }
     }
 
@@ -1629,5 +1644,26 @@ mod tests {
         let raw = "[keybinds]\nquit = [\"q\"]\n";
         let mut kb = KeybindsConfig::default();
         assert!(!kb.migrate_pre_sftp_tabs(raw));
+    }
+
+    #[test]
+    fn ghost_accept_defaults_and_roundtrips() {
+        // Oracle: none exists (config defaults are sshub's own invention);
+        // this pins the contract the session key handler relies on: one
+        // action, still 84 total, Ctrl+F out of the box, and old
+        // `session_suggestions` keys ignored rather than fatal.
+        assert_eq!(KeyAction::ALL.len(), 84, "picker swap must not add actions");
+        assert!(KeyAction::ALL.contains(&KeyAction::GhostAccept));
+        let kb = KeybindsConfig::default();
+        assert_eq!(kb.primary(KeyAction::GhostAccept), "Ctrl+F");
+        // A config written for the picker still loads (unknown keys ignored).
+        let cfg: KeybindsConfig = toml::from_str("session_suggestions = [\"Ctrl+Space\"]").unwrap();
+        assert_eq!(cfg.primary(KeyAction::GhostAccept), "Ctrl+F");
+        // Round trip through TOML under the new field name.
+        let mut custom = KeybindsConfig::default();
+        custom.set(KeyAction::GhostAccept, vec!["F9".into()]);
+        let text = toml::to_string(&custom).unwrap();
+        let back: KeybindsConfig = toml::from_str(&text).unwrap();
+        assert_eq!(back.ghost_accept, vec!["F9".to_string()]);
     }
 }

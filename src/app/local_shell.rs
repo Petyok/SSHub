@@ -20,7 +20,7 @@ impl App {
     pub(crate) fn open_local_shell(&mut self) -> Result<()> {
         let argv = local_shell_argv(std::env::var("SHELL").ok());
         let meta = crate::session::SessionMeta::default();
-        self.spawn_embedded_session(argv, "local".into(), meta, None, "local")
+        self.spawn_embedded_session(argv, "local".into(), meta, None, "local", true)
     }
 }
 
