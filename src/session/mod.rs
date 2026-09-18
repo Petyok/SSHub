@@ -621,6 +621,10 @@ impl Session {
             if let Some(auth) = self.auth.as_mut() {
                 auth.finish(true);
             }
+            // The PTY-typed copy must go too: with askpass active the secret
+            // is delivered invisibly and `maybe_send_pending_secret` never
+            // fires, so without this the plaintext lingers after connect.
+            self.pending_secret = None;
             // Duplicating a tab must resolve credentials again, not retain a
             // second long-lived copy in SessionConfig.
             self.config.pending_secret = None;
@@ -1453,19 +1457,36 @@ mod prompt_tests {
 
     #[test]
     fn auth_input_guard_preserves_terminal_protocol_replies() {
+        // The DSR 5 answer (`ESC[0n`) is a fixed 4 bytes, so `dd count=4` is
+        // exact, not a guess — deliberately no `-icanon min/time` bound here
+        // (cf. the variable-length CPR helper below): a child-side read
+        // timeout would turn a merely late reply into a silent early exit
+        // and an empty `od` print, i.e. a false red. The poll deadline below
+        // is the only bound, and it reports screen state so the next failure
+        // says whether the query, the reply, or the child went missing.
+        // Explicit `/bin/sh`: bare `sh` resolves via PATH (bash on macOS,
+        // dash on Ubuntu) — the script is POSIX either way, but the spawn
+        // must not depend on the runner's PATH.
         let config = SessionConfig {
-            argv: vec!["sh".into(), "-c".into(), "stty raw -echo; printf '\\033[5n'; dd bs=1 count=4 2>/dev/null | od -An -tx1; sleep 30".into()],
+            argv: vec!["/bin/sh".into(), "-c".into(), "stty raw -echo; printf '\\033[5n'; dd bs=1 count=4 2>/dev/null | od -An -tx1; sleep 30".into()],
             display_name: "offline".into(), meta: SessionMeta::default(),
             pending_secret: None, key_push_identity: None, host_name: "offline".into(),
         };
         let mut session = Session::spawn(config, 24, 80, None).unwrap();
         session.auth = Some(interactive_auth::InteractiveAuth::new().unwrap());
-        let deadline = Instant::now() + Duration::from_secs(3);
+        // 10s, not 3s: CI runners stall PTY spawn + shell startup far longer
+        // than a local box (cf. the 10s `tick_until` in app/auth.rs and the
+        // macOS-conditional watcher timeouts). The predicate is unchanged —
+        // the query MUST be answered.
+        let deadline = Instant::now() + Duration::from_secs(10);
         while !session.parser.screen().contents().contains("1b 5b 30 6e") {
             session.drain();
             assert!(
                 Instant::now() < deadline,
-                "terminal status query was not answered"
+                "terminal status query was not answered, tail: {:?}, connected: {}, terminal: {}",
+                session.screen_tail_snippet(),
+                session.is_connected(),
+                session.phase.is_terminal(),
             );
             std::thread::sleep(Duration::from_millis(1));
         }
