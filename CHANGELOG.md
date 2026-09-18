@@ -3,6 +3,8 @@
 All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
+
+## [0.17.0] - 2026-09-18
 ### Added
 
 - **Session command suggestions** (issue #72) - ghost-text completions inline in a live session:
