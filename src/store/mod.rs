@@ -1,4 +1,6 @@
+mod command_history;
 mod group_defaults;
+pub use command_history::MAX_HOST_HISTORY;
 mod hosts;
 mod identities;
 mod log_bookmarks;

@@ -385,25 +385,13 @@ impl App {
             self.mode = return_mode;
             return;
         };
-        let Some(session) = self.active_session_mut() else {
-            self.show_notice_popup("No active session to run the snippet in.".into());
-            return;
-        };
-        let mut bytes = command.into_bytes();
-        if send_enter {
-            bytes.push(b'\r');
-        }
-        match session.write(&bytes) {
-            Ok(()) => self.mode = return_mode,
-            Err(e) => {
-                self.show_notice_popup(format!("Could not send the snippet to the session:\n{e}"))
-            }
-        }
+        self.mode = return_mode;
+        self.insert_session_command(&command, send_enter, false);
     }
 
     /// Show a modal notice popup (dismissed by any key). Used for snippet
     /// injection failures, which happen while the session view owns the frame.
-    fn show_notice_popup(&mut self, message: String) {
+    pub(super) fn show_notice_popup(&mut self, message: String) {
         self.notice_popup = Some(message);
         self.mode = AppMode::Notice;
     }

@@ -298,12 +298,36 @@ pub struct SshSourceConfig {
     pub config_path: Option<String>,
 }
 
+/// Local-only command indexing; raw session logging is configured separately.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandHistoryConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_command_history_limit")]
+    pub max_entries_per_host: usize,
+}
+
+fn default_command_history_limit() -> usize {
+    200
+}
+
+impl Default for CommandHistoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_entries_per_host: default_command_history_limit(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
     pub appearance: AppearanceConfig,
     #[serde(default)]
     pub session_logging: SessionLoggingConfig,
+    #[serde(default)]
+    pub command_history: CommandHistoryConfig,
     #[serde(default)]
     pub tunnel_reconnect: TunnelReconnectConfig,
     #[serde(default)]

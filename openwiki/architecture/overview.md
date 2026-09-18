@@ -42,7 +42,7 @@ A headless variant (`run_headless_loop`) renders once on a ratatui `TestBackend`
 | `launcher` | `TerminalLauncher` | kitty/ghostty/custom ([integrations](../integrations/external-terminals.md)) |
 | `password_store` | `PasswordStore` | `OsKeyring` ([secrets](../security/secrets.md)) |
 
-- **Modes**: `AppMode` (`src/app/types.rs`) has ~26 variants — `Normal`, `Search`, `TagFilter`, `HostDetail`, `HostForm`, `IdentityForm`, `GroupForm`/`GroupManage`, `TunnelForm`, `Palette`, `Settings`, `KeybindEditor`, `Help`, `ConfirmQuit`/`ConfirmDelete`/`ConfirmDiscard`, `Connecting`, `Session`, etc. Overlays are modes; key dispatch lives in `src/app/keys.rs` and per-mode handlers in `src/app/*.rs`.
+- **Modes**: `AppMode` (`src/app/types.rs`) has ~27 variants — `Normal`, `Search`, `TagFilter`, `HostDetail`, `HostForm`, `IdentityForm`, `GroupForm`/`GroupManage`, `TunnelForm`, `Palette`, `Settings`, `KeybindEditor`, `Help`, `ConfirmQuit`/`ConfirmDelete`/`ConfirmDiscard`, `Connecting`, `Session`, `SnippetPicker`, etc. Overlays are modes; key dispatch lives in `src/app/keys.rs` and per-mode handlers in `src/app/*.rs`.
 - **Tabs are not an enum**: `App.active_tab: usize` (0–4 = hosts, sftp, tunnels, identities, audit). Be careful when adding tabs — there is no type safety here.
 - First run with no hosts drops straight into `Help` mode.
 - The `TerminalLauncher` dependency is retained but dead at runtime: sessions run in the embedded PTY (src/session/), and the CLI `sshub host connect` path spawns ssh/mosh directly via std::process::Command (src/cli/host.rs cmd_connect), bypassing TerminalLauncher entirely. The trait is exercised only by its own module unit tests and test doubles; App.launcher itself is never called from any production code path.
@@ -56,7 +56,7 @@ A headless variant (`run_headless_loop`) renders once on a ratatui `TestBackend`
 3. Otherwise the bento-grid dashboard chrome from `src/tui/dashboard_layout.rs`: header, tab bar, three-column body, footer. Tab body is dispatched by `active_tab`. (`src/tui/layout.rs`'s older `root_layout` appears superseded — likely dead code.)
 4. Overlay popups are dispatched on `app.mode`. `fit_popup` clamps popup rects because `u16::clamp` would otherwise panic and "crash the whole TUI on a terminal smaller than the popup".
 
-- **Screens** (`src/tui/screens/`): hosts, sftp, tunnels, keys (identities), audit, help, palette, settings, keybind_editor, host_form, group_form, group_manage, field_picker, session_host_picker, tag_filter, tunnel_reconnect, keychain.
+- **Screens** (`src/tui/screens/`): hosts, sftp, tunnels, keys (identities), audit, help, palette, settings, keybind_editor, host_form, group_form, group_manage, field_picker, session_picker, snippet_picker, snippet_manage, snippet_form, tag_filter, theme_picker, tunnel_reconnect, keychain.
 - **Widgets** (`src/tui/widgets/`): header, footer, tab_bar, status_bar, host_list, hosts_panel, detail_panel, middle_stack (host card / agent / latency + SSH log panel), right_stack (recent hosts, auth sparkline, ping), panel_box.
 - **Theme** (`src/tui/theme.rs`): fixed hex palette (BG `#0b0d10`, green accent `#9ec99b`) with semantic style helpers and a sparkline ramp. Startup animation: `src/tui/animation.rs` (33 ms loop, toggleable in Settings).
 

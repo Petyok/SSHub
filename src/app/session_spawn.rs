@@ -4,7 +4,9 @@ impl App {
     /// Spawn an embedded PTY session running `argv` and switch into
     /// `Connecting` mode. Shared by ad-hoc connect and local-shell: the
     /// caller passes a complete argv, so this does NOT inject `-v` /
-    /// accept-new like the ssh-only path in connect.rs.
+    /// accept-new like the ssh-only path in connect.rs. When `local_shell`
+    /// is true the freshly spawned session is marked as a local shell
+    /// before insertion, so a failed spawn can never mutate a prior session.
     pub(crate) fn spawn_embedded_session(
         &mut self,
         argv: Vec<String>,
@@ -12,6 +14,7 @@ impl App {
         meta: crate::session::SessionMeta,
         pending_secret: Option<crate::session::PendingSecret>,
         log_host_name: &str,
+        local_shell: bool,
     ) -> Result<()> {
         let now_ts = || {
             SystemTime::now()
@@ -61,8 +64,14 @@ impl App {
         };
         // No transcript: session logging is configured per saved host, and these
         // sessions have no host row (ad-hoc destination or a local shell).
-        match crate::session::Session::spawn(config, rows, cols, None) {
-            Ok(session) => {
+        let spawn = if local_shell {
+            crate::session::Session::spawn_with_merged_stderr
+        } else {
+            crate::session::Session::spawn
+        };
+        match spawn(config, rows, cols, None) {
+            Ok(mut session) => {
+                session.local_shell = local_shell;
                 self.sessions.push(session);
                 self.active_session = Some(self.sessions.len() - 1);
                 self.mode = AppMode::Connecting;
