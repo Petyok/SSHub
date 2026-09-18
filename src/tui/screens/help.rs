@@ -407,6 +407,10 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "Open SFTP for this host (session keeps running)",
     },
     HelpItem::Entry {
+        key: "Tab",
+        desc: "Accept ghost completion (history + snippets); Esc dismisses",
+    },
+    HelpItem::Entry {
         key: "Ctrl+N",
         desc: "Run a command snippet (fuzzy pick; Enter runs, Tab inserts)",
     },

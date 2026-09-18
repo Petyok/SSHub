@@ -4,6 +4,7 @@ mod auth;
 mod broadcast;
 mod connect;
 mod field_picker;
+pub(crate) mod ghost;
 mod groups;
 mod host_crud;
 mod host_detail;
@@ -22,6 +23,7 @@ mod session_picker;
 mod session_spawn;
 mod sftp;
 mod snippets;
+mod suggestions;
 mod tags;
 mod theme_picker;
 mod tunnels;
@@ -270,6 +272,13 @@ pub struct App {
     pub snippet_form: Option<SnippetFormEdit>,
     /// Live snippet picker state ([`AppMode::SnippetPicker`]).
     pub snippet_picker: Option<SnippetPickerState>,
+    /// Tracker line an Esc dismiss applies to: the ghost stays hidden until
+    /// the input line changes. `None` while nothing is dismissed.
+    pub ghost_dismissed_for: Option<String>,
+    /// Cached per-host persisted history for the ghost context (see
+    /// [`ghost::GhostHostCache`]). `RefCell` so the `&App` render pass can
+    /// warm it (SQLite, no PTY I/O) without a whole-frame `&mut`.
+    pub ghost_host_cache: std::cell::RefCell<ghost::GhostHostCache>,
     pub snippet_notice: Option<String>,
     pub host_notice: Option<String>,
     /// Message shown by the modal `AppMode::Notice` popup (e.g. a connect error).
@@ -953,6 +962,8 @@ impl App {
             snippet_manage_selected: 0,
             snippet_form: None,
             snippet_picker: None,
+            ghost_dismissed_for: None,
+            ghost_host_cache: std::cell::RefCell::new(None),
             snippet_notice: None,
             host_notice: None,
             notice_popup: None,

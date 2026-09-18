@@ -3,8 +3,21 @@
 All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
-
 ### Added
+
+- **Session command suggestions** (issue #72) - ghost-text completions inline in a live session:
+  typing the prefix of a previously recorded safe command shows the rest as a dim suffix after
+  the cursor. `Tab` (or `Ctrl+F`) accepts, `Esc` dismisses for that line. Nothing renders over
+  full-screen apps, scrolled-back views, selections, or prompt contexts that look like
+  credential entry. Suggestions come from bounded in-memory session history (last 100 commands),
+  the snippet library, and opt-in per-host persisted history (off by default, managed hosts only,
+  owner-only `launcher.db`, schema v16). A shared conservative redaction classifier drops
+  credential-like, multiline or prompt-context input entirely instead of trying to redact it; no
+  remote commands are run to build suggestions. A manually typed pre-auth password never indexes
+  while no longer costing the first post-auth command. Snippet browsing stays in the `Ctrl+N`
+  snippet picker (`Enter` runs, `Tab` inserts for editing). Settings gains persistence toggle,
+  per-host limit, and explicit clear actions. There is no suggestion picker and no `Ctrl+Space`
+  chord.
 
 - **Interactive SSH authentication** (issue #52) — private askpass channel and masked TUI prompts for passwords, key passphrases and one-time challenges, three-attempt cap, and success-only credential saving. Auth modals serialize one at a time; a round-trip keyring probe falls back to file storage, secrets restore presence-first, and save failures surface as audit-error rows. Unknown and changed host keys require explicit trust decisions; cancelling or a failed channel closes the connection without exposing answers in PTY output.
 - **Hardware security-key badges on the keys screen** (issue #80) - identities

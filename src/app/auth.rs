@@ -274,6 +274,7 @@ impl App {
                 config.meta,
                 None,
                 &config.host_name,
+                false,
             )
         }
     }
@@ -517,6 +518,7 @@ mod tests {
                 config.meta,
                 None,
                 &config.host_name,
+                false,
             )
             .unwrap();
             let mut session = app.sessions.pop().unwrap();
@@ -815,6 +817,7 @@ mod tests {
             config.meta,
             None,
             &config.host_name,
+            false,
         )
         .unwrap();
         let mut session = app.sessions.pop().unwrap();

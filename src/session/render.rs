@@ -73,8 +73,19 @@ pub fn render(frame: &mut Frame, app: &App) {
     let chunks = session_chunks(frame.area());
 
     render_header(frame, chunks[0], session, app, theme);
-    render_body(frame, chunks[1], session, &app.config.keybinds, theme);
-    render_footer(frame, chunks[2], session, theme);
+    // The ghost is computed once per frame and shared: the footer names its
+    // keys only while it is visible, and the body paints it. Computing it
+    // here (rather than inside each callee) keeps the two in agreement.
+    let ghost = app.ghost_match();
+    render_footer(frame, chunks[2], session, theme, ghost.is_some());
+    render_body(
+        frame,
+        chunks[1],
+        session,
+        &app.config.keybinds,
+        theme,
+        ghost.as_ref(),
+    );
 
     // Transient "copied" toast in the body's bottom-right corner.
     if let Some((msg, at)) = &session.copy_notice {
@@ -304,14 +315,13 @@ fn tunnel_summary(app: &App, meta: &SessionMeta) -> Option<String> {
     }
 }
 
-// ── Body ─────────────────────────────────────────────────────
-
 fn render_body(
     frame: &mut Frame,
     area: Rect,
     session: &Session,
     keybinds: &KeybindsConfig,
     theme: &ResolvedTheme,
+    ghost: Option<&crate::app::ghost::GhostMatch>,
 ) {
     // While connecting, ssh's verbose `-v` handshake is siphoned off the PTY
     // (via a side FIFO) into `debug_log`, so the grid stays clean. Show a
@@ -349,6 +359,72 @@ fn render_body(
                 }
             }
         }
+    }
+    // Ghost completion: kitty-style inline suffix after the grid cursor.
+    // Same post-pass shape as the selection above (buffer cells only), so it
+    // survives repaints without ever touching the parser, the PTY, or the
+    // remote. `ghost_match` already gated on live session, primary screen,
+    // no scrollback and no selection; painting additionally needs the grid.
+    if let Some(ghost) = ghost {
+        paint_ghost(frame.buffer_mut(), area, session, &ghost.shown, theme);
+    }
+}
+
+/// Paint `suffix` into buffer cells starting at the grid cursor, wrapping
+/// within `area` and clipping at its edge.
+///
+/// Buffer cells only: the parser, the PTY and the remote are never touched
+/// here (pinned by test: a full render performs zero PTY writes). Only the
+/// symbol and the foreground are written — every background is left alone,
+/// so the theme ground and reverse-video cells survive underneath.
+pub(crate) fn paint_ghost(
+    buf: &mut ratatui::buffer::Buffer,
+    area: Rect,
+    session: &Session,
+    suffix: &str,
+    theme: &ResolvedTheme,
+) {
+    // The first line only, and never a newline into the grid: `shown` already
+    // carries this contract, but paint is the last line of defence.
+    let first = suffix.split(['\n', '\r']).next().unwrap_or("");
+    if first.is_empty() {
+        return;
+    }
+    let (rows, cols) = session.parser.screen().size();
+    let width = cols.min(area.width);
+    let height = rows.min(area.height);
+    if width == 0 || height == 0 {
+        return;
+    }
+    let (cur_row, cur_col) = session.parser.screen().cursor_position();
+    // vt100 parks the cursor one column past the right margin once a char
+    // lands in the last cell (pending wrap, resolved by the next char): the
+    // ghost starts at the head of the next row, like the shell's own echo.
+    // The same arm covers a grid cursor past a narrower viewport.
+    let (mut r, mut c) = if cur_col >= width {
+        (cur_row.saturating_add(1), 0)
+    } else {
+        (cur_row, cur_col)
+    };
+    if r >= height {
+        return;
+    }
+    let fg = theme.style(StyleRole::TextDim).fg;
+    for ch in first.chars() {
+        if c >= width {
+            c = 0;
+            r = r.saturating_add(1);
+            if r >= height {
+                return;
+            }
+        }
+        if let Some(cell) = buf.cell_mut((area.x + c, area.y + r)) {
+            cell.set_symbol(&ch.to_string());
+            if let Some(fg) = fg {
+                cell.set_fg(fg);
+            }
+        }
+        c = c.saturating_add(1);
     }
 }
 
@@ -580,7 +656,13 @@ fn truncate(s: &str, max: usize) -> String {
 
 // ── Footer ───────────────────────────────────────────────────
 
-fn render_footer(frame: &mut Frame, area: Rect, session: &Session, theme: &ResolvedTheme) {
+fn render_footer(
+    frame: &mut Frame,
+    area: Rect,
+    session: &Session,
+    theme: &ResolvedTheme,
+    ghost_visible: bool,
+) {
     // When the child has exited the footer becomes a red banner with a
     // dismiss hint. Otherwise it shows the usual session stats line.
     if let SessionPhase::Exited { status, .. } = &session.phase {
@@ -640,9 +722,15 @@ fn render_footer(frame: &mut Frame, area: Rect, session: &Session, theme: &Resol
             theme.style(StyleRole::SessionScrollback),
         ));
     } else {
-        // Pad to the right edge with the hint.
+        // Pad to the right edge with the hint. The ghost keys are named only
+        // while a ghost is actually visible — otherwise Tab belongs to the
+        // shell and advertising it would be a lie.
         let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
-        let hint = "drag: select+copy · Shift+drag in mouse apps";
+        let hint = if ghost_visible {
+            "drag: select+copy · Shift+drag in mouse apps · Tab accept · Esc dismiss"
+        } else {
+            "drag: select+copy · Shift+drag in mouse apps"
+        };
         let pad = (area.width as usize).saturating_sub(used + hint.chars().count() + 1);
         spans.push(Span::raw(" ".repeat(pad)));
         spans.push(Span::styled(hint, mute));
@@ -900,5 +988,94 @@ mod tests {
             Color::Rgb(0x00, 0xff, 0x00),
             "the rule takes `session.border`"
         );
+    }
+
+    /// Ghost paint: dim suffix at the grid cursor, backgrounds untouched,
+    /// wrap + clip inside the viewport, newline stops the paint.
+    #[test]
+    fn ghost_paints_dim_suffix_and_leaves_backgrounds_alone() {
+        // Oracle: none exists per docs/oracle-tests.md (session/tui); the
+        // TestBackend buffer snapshot is the oracle.
+        use ratatui::style::Color;
+
+        let theme = session_marker_theme();
+        let session = spawned_session();
+        let area = Rect::new(0, 0, 80, 24);
+        let grid_before = session.parser.screen().contents();
+        let buf = draw(area, |frame| {
+            paint_ghost(frame.buffer_mut(), area, &session, "cker ps", &theme);
+        });
+        // Fresh grid: cursor at (0,0), so the ghost lands at the origin.
+        let line: String = (0..7).map(|x| buf.cell((x, 0)).unwrap().symbol()).collect();
+        assert_eq!(line, "cker ps", "ghost paints right after the cursor");
+        let dim_fg = theme
+            .style(StyleRole::TextDim)
+            .fg
+            .expect("text.dim carries a foreground");
+        for x in 0..7 {
+            let cell = buf.cell((x, 0)).unwrap();
+            assert_eq!(cell.fg, dim_fg, "ghost cell {x} takes the dim foreground");
+            assert_eq!(
+                cell.bg,
+                Color::Reset,
+                "ghost cell {x} leaves the background alone"
+            );
+        }
+        assert_eq!(
+            session.parser.screen().contents(),
+            grid_before,
+            "paint never touches the parser grid"
+        );
+    }
+
+    #[test]
+    fn ghost_wraps_at_pending_wrap_clips_at_edge_and_stops_at_newline() {
+        // Oracle: the vt100 crate for cursor placement (pending wrap parks
+        // one past the margin — asserted independently in parser tests);
+        // the buffer snapshot for the rest.
+        let theme = session_marker_theme();
+        let narrow_cfg = SessionConfig {
+            argv: vec!["true".into()],
+            display_name: "narrow".into(),
+            meta: SessionMeta::default(),
+            pending_secret: None,
+            key_push_identity: None,
+            host_name: "narrow".into(),
+        };
+        // Pending wrap: filling all 10 columns parks the cursor at column
+        // 10, so the ghost must start at row 1, col 0. (`spawn` reserves a
+        // header and a footer row, so 5 rows yield a 3-row grid.)
+        let mut session = Session::spawn(narrow_cfg, 5, 10, None).unwrap();
+        session.parser.process(b"0123456789");
+        assert_eq!(
+            session.parser.screen().cursor_position(),
+            (0, 10),
+            "oracle: vt100 pending-wrap parks past the margin"
+        );
+        let area = Rect::new(0, 0, 80, 24);
+        let buf = draw(area, |frame| {
+            paint_ghost(frame.buffer_mut(), area, &session, "ab", &theme);
+        });
+        let row1: String = (0..2).map(|x| buf.cell((x, 1)).unwrap().symbol()).collect();
+        assert_eq!(row1, "ab", "ghost starts at the head of the next row");
+        // Newline: the paint stops instead of dropping to the next row.
+        let buf = draw(area, |frame| {
+            paint_ghost(frame.buffer_mut(), area, &session, "ab\ncd", &theme);
+        });
+        let row1: String = (0..4).map(|x| buf.cell((x, 1)).unwrap().symbol()).collect();
+        assert!(row1.starts_with("ab"), "prefix paints, got {row1:?}");
+        assert!(
+            !row1.contains('c'),
+            "paint stops at the newline, got {row1:?}"
+        );
+        // Clipping: a suffix longer than the viewport paints what fits and
+        // stops — never panics, never writes outside.
+        let origin = spawned_session();
+        let tiny = Rect::new(0, 0, 3, 1);
+        let buf = draw(tiny, |frame| {
+            paint_ghost(frame.buffer_mut(), tiny, &origin, "abcdef", &theme);
+        });
+        let line: String = (0..3).map(|x| buf.cell((x, 0)).unwrap().symbol()).collect();
+        assert_eq!(line, "abc", "paint clips to the viewport");
     }
 }
