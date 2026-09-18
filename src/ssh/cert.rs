@@ -616,6 +616,10 @@ mod tests {
 
     #[test]
     fn inspect_real_cert_reports_id_principals_and_window() {
+        // `keygen_absent_…` mutates process-global SSHUB_SSH_KEYGEN; every
+        // test that reaches `keygen_program()` must rendezvous on the same
+        // lock or a parallel run can swap the binary mid-test.
+        let _lock = crate::test_env::lock_home();
         let dir = tempfile::tempdir().unwrap();
         let (_key, cert) = make_cert(
             &dir,
@@ -634,6 +638,8 @@ mod tests {
 
     #[test]
     fn expired_cert_from_real_keygen_classifies_expired() {
+        // See above: serialized against the SSHUB_SSH_KEYGEN mutator.
+        let _lock = crate::test_env::lock_home();
         let dir = tempfile::tempdir().unwrap();
         let (_key, cert) = make_cert(&dir, "old", Some("bob"), "20200101000000:20210101000000");
 
@@ -705,6 +711,8 @@ mod tests {
 
     #[test]
     fn matching_pair_reports_match() {
+        // See above: serialized against the SSHUB_SSH_KEYGEN mutator.
+        let _lock = crate::test_env::lock_home();
         let dir = tempfile::tempdir().unwrap();
         let (key, cert) = make_cert(&dir, "m", Some("alice"), "20240101000000:20300101000000");
         assert_eq!(check_key_match(&cert, &key, None), KeyMatch::Match);
@@ -713,6 +721,8 @@ mod tests {
 
     #[test]
     fn crossed_pair_reports_mismatch() {
+        // See above: serialized against the SSHUB_SSH_KEYGEN mutator.
+        let _lock = crate::test_env::lock_home();
         let dir = tempfile::tempdir().unwrap();
         let (key_a, _cert_a) = make_cert(&dir, "a", Some("alice"), "20240101000000:20300101000000");
         // Second, independent keypair in another dir so nothing is shared.
@@ -728,6 +738,18 @@ mod tests {
     #[test]
     fn keygen_absent_is_unreadable_not_panic() {
         let _lock = crate::test_env::lock_home();
+        // Drop guard: a panic mid-test must not leak the poisoned binary path
+        // into parallel readers after the lock releases.
+        struct Restore(Option<String>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                match &self.0 {
+                    Some(v) => std::env::set_var("SSHUB_SSH_KEYGEN", v),
+                    None => std::env::remove_var("SSHUB_SSH_KEYGEN"),
+                }
+            }
+        }
+        let _restore = Restore(std::env::var("SSHUB_SSH_KEYGEN").ok());
         std::env::set_var("SSHUB_SSH_KEYGEN", "/nonexistent/sshub-test-keygen");
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("absent-cert.pub");
@@ -738,7 +760,6 @@ mod tests {
         std::fs::write(&present, "ssh-ed25519-cert-v01@openssh.com AAAA\n").unwrap();
         assert_eq!(inspect_certificate(&present), Err(CertProblem::Unreadable));
         assert_eq!(check_key_match(&present, &present, None), KeyMatch::Unknown);
-        std::env::remove_var("SSHUB_SSH_KEYGEN");
     }
 
     #[test]
