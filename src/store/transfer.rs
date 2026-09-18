@@ -535,6 +535,14 @@ pub fn apply_transfer_plan(
                                     name: item.dest_name.clone(),
                                     sort_order: src_group.sort_order,
                                     default_identity_id,
+                                    // Group-level connection defaults travel
+                                    // with the group: they are plain values,
+                                    // unlike the identity, which is remapped.
+                                    default_username: src_group.default_username.clone(),
+                                    default_port: src_group.default_port,
+                                    default_proxy_jump: src_group.default_proxy_jump.clone(),
+                                    default_transport: src_group.default_transport,
+                                    default_forward_agent: src_group.default_forward_agent,
                                     // Nesting is restored only when the parent
                                     // travels too; otherwise the group is
                                     // promoted to top level (existing

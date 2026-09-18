@@ -149,7 +149,7 @@ fn reload_merges_launcher_imported_ssh_config_and_resolver_without_duplicates() 
             name: "dev-local".into(),
             label: Some("Launcher override".into()),
             address: "192.168.1.1".into(),
-            port: 2222,
+            port: Some(2222),
             group_id: None,
             identity_id: Some(default_id),
             tags: vec![],

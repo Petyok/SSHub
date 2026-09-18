@@ -3,9 +3,11 @@
 use anyhow::Result;
 use serde::Serialize;
 
+use crate::app::optional_field;
 use crate::store::{HostGroup, HostGroupUpdate, LauncherStore, NewHostGroup};
 
 use super::context::{resolve_identity_id, resolve_parent_id, CliContext};
+use super::output::parse_transport;
 use super::parse::{fail, parse_format, take_flag, take_opt, usage, OutputFormat, CONFIRM_YES};
 
 #[derive(Serialize)]
@@ -14,6 +16,11 @@ struct GroupRecord<'a> {
     name: &'a str,
     sort_order: i32,
     default_identity_id: Option<i64>,
+    default_username: &'a Option<String>,
+    default_port: Option<u16>,
+    default_proxy_jump: &'a Option<String>,
+    default_transport: Option<&'a str>,
+    default_forward_agent: Option<bool>,
     parent_id: Option<i64>,
     reserved: bool,
 }
@@ -109,6 +116,31 @@ fn cmd_add(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     let default_identity_id = take_opt(&mut rest, "--default-identity")
         .map(|n| resolve_identity_id(ctx, &n))
         .transpose()?;
+    let default_username =
+        take_opt(&mut rest, "--default-username").and_then(|s| optional_field(&s));
+    let default_port = take_opt(&mut rest, "--default-port")
+        .map(|p| {
+            p.parse::<u16>()
+                .map_err(|_| anyhow::anyhow!("invalid --default-port '{p}'"))
+                .and_then(|v| {
+                    (v > 0)
+                        .then_some(v)
+                        .ok_or_else(|| anyhow::anyhow!("invalid --default-port '{p}'"))
+                })
+        })
+        .transpose()?;
+    let default_proxy_jump =
+        take_opt(&mut rest, "--default-proxy-jump").and_then(|s| optional_field(&s));
+    let default_transport = take_opt(&mut rest, "--default-transport")
+        .map(|s| parse_transport(&s).ok_or_else(|| anyhow::anyhow!("invalid --default-transport")))
+        .transpose()?;
+    let default_forward_agent = if take_flag(&mut rest, "--default-fwd-agent") {
+        Some(true)
+    } else if take_flag(&mut rest, "--no-default-fwd-agent") {
+        Some(false)
+    } else {
+        None
+    };
     let sort_order = match take_opt(&mut rest, "--sort-order") {
         Some(s) => s
             .parse::<i32>()
@@ -120,6 +152,11 @@ fn cmd_add(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
         name: name.trim().to_string(),
         sort_order,
         default_identity_id,
+        default_username,
+        default_port,
+        default_proxy_jump,
+        default_transport,
+        default_forward_agent,
         parent_id,
     })?;
     ctx.reload_hosts()?;
@@ -160,6 +197,51 @@ fn cmd_edit(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
         default_identity_id = Some(Some(resolve_identity_id(ctx, &id_name)?));
     }
 
+    let mut default_username: Option<Option<String>> = None;
+    if take_flag(&mut rest, "--clear-default-username") {
+        default_username = Some(None);
+    } else if let Some(v) = take_opt(&mut rest, "--set-default-username") {
+        default_username = Some(optional_field(&v));
+    }
+
+    let mut default_port: Option<Option<u16>> = None;
+    if take_flag(&mut rest, "--clear-default-port") {
+        default_port = Some(None);
+    } else if let Some(p) = take_opt(&mut rest, "--set-default-port") {
+        let v: u16 = p
+            .parse()
+            .map_err(|_| anyhow::anyhow!("invalid --set-default-port '{p}'"))?;
+        if v == 0 {
+            fail("invalid --set-default-port '0'");
+        }
+        default_port = Some(Some(v));
+    }
+
+    let mut default_proxy_jump: Option<Option<String>> = None;
+    if take_flag(&mut rest, "--clear-default-proxy-jump") {
+        default_proxy_jump = Some(None);
+    } else if let Some(v) = take_opt(&mut rest, "--set-default-proxy-jump") {
+        default_proxy_jump = Some(optional_field(&v));
+    }
+
+    let mut default_transport: Option<Option<crate::session_transport::SessionTransport>> = None;
+    if take_flag(&mut rest, "--clear-default-transport") {
+        default_transport = Some(None);
+    } else if let Some(v) = take_opt(&mut rest, "--set-default-transport") {
+        default_transport =
+            Some(Some(parse_transport(&v).ok_or_else(|| {
+                anyhow::anyhow!("invalid --set-default-transport")
+            })?));
+    }
+
+    let mut default_forward_agent: Option<Option<bool>> = None;
+    if take_flag(&mut rest, "--clear-default-fwd-agent") {
+        default_forward_agent = Some(None);
+    } else if take_flag(&mut rest, "--set-default-fwd-agent") {
+        default_forward_agent = Some(Some(true));
+    } else if take_flag(&mut rest, "--no-default-fwd-agent") {
+        default_forward_agent = Some(Some(false));
+    }
     if group.reserved && set_name.is_some() {
         eprintln!("sshub: reserved group '{}' cannot be renamed", group.name);
         return Ok(1);
@@ -171,6 +253,11 @@ fn cmd_edit(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
             name: set_name,
             sort_order: set_sort,
             default_identity_id,
+            default_username,
+            default_port,
+            default_proxy_jump,
+            default_transport,
+            default_forward_agent,
             parent_id,
         },
     )?;
@@ -216,13 +303,17 @@ fn group_name_arg(args: &[String]) -> String {
         None => usage("group show requires a group name"),
     }
 }
-
 fn group_record(g: &HostGroup) -> GroupRecord<'_> {
     GroupRecord {
         id: g.id,
         name: &g.name,
         sort_order: g.sort_order,
         default_identity_id: g.default_identity_id,
+        default_username: &g.default_username,
+        default_port: g.default_port,
+        default_proxy_jump: &g.default_proxy_jump,
+        default_transport: g.default_transport.map(|t| t.label()),
+        default_forward_agent: g.default_forward_agent,
         parent_id: g.parent_id,
         reserved: g.reserved,
     }
@@ -251,6 +342,35 @@ fn print_group_plain(group: &HostGroup, store: &LauncherStore) -> Result<()> {
     } else {
         println!("default_identity:   (none)");
     }
+    println!(
+        "default_username:   {}",
+        group.default_username.as_deref().unwrap_or("(none)")
+    );
+    println!(
+        "default_port:       {}",
+        group
+            .default_port
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "(none)".into())
+    );
+    println!(
+        "default_proxy_jump: {}",
+        group.default_proxy_jump.as_deref().unwrap_or("(none)")
+    );
+    println!(
+        "default_transport:  {}",
+        group
+            .default_transport
+            .map(|t| t.label())
+            .unwrap_or("(none)")
+    );
+    println!(
+        "default_fwd_agent:  {}",
+        group
+            .default_forward_agent
+            .map(|f| if f { "on" } else { "off" })
+            .unwrap_or("(none)")
+    );
     Ok(())
 }
 

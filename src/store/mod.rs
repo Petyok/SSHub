@@ -1,4 +1,5 @@
 mod command_history;
+mod group_defaults;
 pub use command_history::MAX_HOST_HISTORY;
 mod hosts;
 mod identities;
@@ -8,7 +9,7 @@ mod snippets;
 pub mod transfer;
 mod tunnels;
 mod types;
-
+pub use group_defaults::{ResolvedConnection, DEFAULT_PORT};
 pub use hosts::is_option_like;
 pub use transfer::{
     apply_transfer_plan, build_transfer_plan, tunnel_token_matches, unique_dest_name, DestIndex,

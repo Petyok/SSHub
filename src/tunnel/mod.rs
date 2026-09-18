@@ -7,7 +7,7 @@ use anyhow::Result;
 
 use crate::config::{tunnel_backoff_delay, tunnel_failure_attempt, TunnelReconnectConfig};
 use crate::session::PendingSecret;
-use crate::store::{ManagedHost, Tunnel};
+use crate::store::{ManagedHost, ResolvedConnection, Tunnel};
 
 pub mod audit;
 pub mod spawn;
@@ -114,15 +114,15 @@ impl TunnelManager {
     pub fn start(
         &mut self,
         tunnel: &Tunnel,
-        host: Option<&ManagedHost>,
+        host: &ManagedHost,
+        resolved: &ResolvedConnection,
         secret: Option<&PendingSecret>,
     ) -> Result<()> {
         if self.processes.contains_key(&tunnel.id) {
             self.stop_process(tunnel.id)?;
         }
 
-        let host = host.ok_or_else(|| anyhow::anyhow!("No host associated with tunnel"))?;
-        let args = build_tunnel_argv(tunnel, host, secret.is_some())?;
+        let args = build_tunnel_argv(tunnel, host, resolved, secret.is_some())?;
 
         let mut cmd = Command::new(&args[0]);
         cmd.args(&args[1..])
@@ -389,7 +389,7 @@ impl TunnelManager {
         &mut self,
         tunnels: &[Tunnel],
         cfg: &TunnelReconnectConfig,
-        resolve_host: impl Fn(i64) -> Option<ManagedHost>,
+        resolve_host: impl Fn(i64) -> Option<(ManagedHost, ResolvedConnection)>,
         resolve_secret: impl Fn(&ManagedHost) -> Option<PendingSecret>,
     ) -> Vec<ReconnectEvent> {
         let now = Instant::now();
@@ -431,9 +431,21 @@ impl TunnelManager {
                 events.push(ReconnectEvent::Attempt { tunnel_id, attempt });
             }
 
-            let host = tunnel.host_id.and_then(&resolve_host);
-            let secret = host.as_ref().and_then(&resolve_secret);
-            match self.start(tunnel, host.as_ref(), secret.as_ref()) {
+            let hosted = tunnel.host_id.and_then(&resolve_host);
+            let secret = hosted
+                .as_ref()
+                .map(|(host, _)| host)
+                .and_then(&resolve_secret);
+            let Some((host, resolved)) = hosted.as_ref() else {
+                events.extend(self.record_tunnel_failure(
+                    tunnel_id,
+                    "No host associated with tunnel",
+                    cfg,
+                    Duration::ZERO,
+                ));
+                continue;
+            };
+            match self.start(tunnel, host, resolved, secret.as_ref()) {
                 Ok(()) => {}
                 Err(e) => {
                     let err = format!("{e:#}");

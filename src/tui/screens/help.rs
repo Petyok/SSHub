@@ -319,15 +319,19 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "Ctrl+G",
-        desc: "Edit selected group (name + default identity)",
+        desc: "Edit selected group (name + connection defaults)",
+    },
+    HelpItem::Entry {
+        key: "inheritance",
+        desc: "Host value → nearest group default (deeper group wins ties) → global (22/ssh/off); cleared fields inherit",
+    },
+    HelpItem::Entry {
+        key: "Space",
+        desc: "In group form: choose dropdown / cycle transport & forwarding default",
     },
     HelpItem::Entry {
         key: "e",
         desc: "On a group header: pick its default identity",
-    },
-    HelpItem::Entry {
-        key: "←/→",
-        desc: "In group form: cycle default identity",
     },
     HelpItem::Entry {
         key: "Ctrl+Shift+G",

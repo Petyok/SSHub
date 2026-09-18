@@ -219,6 +219,17 @@ sshub group add --name prod
 sshub identity add --name work --username alice --private-key ~/.ssh/id_ed25519
 sshub identity agent-remove --name work      # ssh-add -d for the identity's key
 
+# Group connection defaults (issue #74): everything under prod/ goes via the
+# bastion as deploy. Resolution per field: host value → best default on any
+# group the host belongs to (nearest chain wins; ties break toward the deeper
+# group, then the primary group's chain) → global default (port 22, ssh,
+# forwarding off). Clearing a host field restores inheritance; tags and
+# favorites never inherit.
+sshub group edit --name prod --set-default-username deploy \
+    --set-default-proxy-jump bastion --set-default-port 2222
+sshub group edit --name prod --clear-default-port   # drop one default
+sshub host edit --name db-01 --clear-port           # re-inherit the group port
+
 # Tunnels
 sshub tunnel list
 sshub tunnel create --host prod-web --type local --local-port 8080 \
