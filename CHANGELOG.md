@@ -4,6 +4,18 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **SSH certificates are first-class on identities** (issue #75) - an identity
+  can carry a certificate path (identity form, `sshub identity add/edit`, same
+  column the importer already filled). The keys tab badges each certificate
+  identity with its principals and validity (`cert alice→2030-01-01`,
+  `cert EXPIRED`, `cert missing`, …), the identity form shows the full
+  `ssh-keygen -L` detail (key id, principals, validity window) under the
+  certificate row, `ssh-add` receives the cert alongside the key, and a
+  `does not match the private key` warning appears when the cert was not
+  issued for that key. Issuing certs and auto-renewal stay out of scope.
+
 ## [0.16.0] - 2026-09-05
 
 ### Added
