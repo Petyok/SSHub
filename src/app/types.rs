@@ -285,6 +285,7 @@ pub enum SettingToggle {
     ConfirmQuit,
     DisableAnimation,
     SessionLogging,
+    CommandHistory,
 }
 
 /// What a Settings row *is*: an action that opens something, or a boolean.
@@ -295,6 +296,10 @@ pub enum SettingItem {
     Theme,
     /// Opens profile creation or the profile manager.
     Profiles,
+    CommandHistoryLimit,
+    ClearSessionHistory,
+    ClearHostHistory,
+    ClearAllHistory,
     Toggle(SettingToggle),
 }
 
@@ -318,7 +323,7 @@ pub struct SettingDescriptor {
 /// by a test in `tui::screens::settings`) and avoid ambiguous-width chars like
 /// the em dash or `…` — some terminals draw those 2 cells wide, pushing the
 /// tail of the line onto the popup border.
-pub const SETTINGS_ITEMS: [SettingDescriptor; 8] = [
+pub const SETTINGS_ITEMS: [SettingDescriptor; 13] = [
     SettingDescriptor {
         item: SettingItem::Theme,
         label: "Theme...",
@@ -358,6 +363,31 @@ pub const SETTINGS_ITEMS: [SettingDescriptor; 8] = [
         item: SettingItem::Profiles,
         label: "Profiles...",
         hint: "create or switch isolated workspaces",
+    },
+    SettingDescriptor {
+        item: SettingItem::Toggle(SettingToggle::CommandHistory),
+        label: "Persist command history",
+        hint: "store commands on disk; may include secrets",
+    },
+    SettingDescriptor {
+        item: SettingItem::CommandHistoryLimit,
+        label: "Maximum commands per host",
+        hint: "Left/Right adjusts 1-2000; applies to next write",
+    },
+    SettingDescriptor {
+        item: SettingItem::ClearSessionHistory,
+        label: "Clear current-session history",
+        hint: "Enter clears the active tab's in-memory history",
+    },
+    SettingDescriptor {
+        item: SettingItem::ClearHostHistory,
+        label: "Clear selected host history",
+        hint: "Enter deletes history for the selected managed host",
+    },
+    SettingDescriptor {
+        item: SettingItem::ClearAllHistory,
+        label: "Clear all persisted history",
+        hint: "Enter deletes local command history for every host",
     },
 ];
 

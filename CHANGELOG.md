@@ -3,8 +3,37 @@
 All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
-
 ### Added
+
+- **Session command suggestions** (issue #72) - ghost-text completions inline in a live session:
+  typing the prefix of a previously recorded safe command shows the rest as a dim suffix after
+  the cursor. `Tab` (or `Ctrl+F`) accepts, `Esc` dismisses for that line. Nothing renders over
+  full-screen apps, scrolled-back views, selections, or prompt contexts that look like
+  credential entry. Suggestions come from bounded in-memory session history (last 100 commands),
+  the snippet library, and opt-in per-host persisted history (off by default, managed hosts only,
+  owner-only `launcher.db`, schema v16). A shared conservative redaction classifier drops
+  credential-like, multiline or prompt-context input entirely instead of trying to redact it; no
+  remote commands are run to build suggestions. A manually typed pre-auth password never indexes
+  while no longer costing the first post-auth command. Snippet browsing stays in the `Ctrl+N`
+  snippet picker (`Enter` runs, `Tab` inserts for editing). Settings gains persistence toggle,
+  per-host limit, and explicit clear actions. There is no suggestion picker and no `Ctrl+Space`
+  chord.
+
+- **Hardware security-key badges on the keys screen** (issue #80) - identities
+  whose key path carries the `ssh-keygen -t *-sk` `-sk`/`_sk` marker now show
+  `ed25519-sk`/`ecdsa-sk` (generic `sk` for unfamiliar bases) badges instead of
+  the base algorithm, so hardware-backed keys are distinguishable at a glance.
+  `ml-dsa` filenames no longer degrade to the `dsa` badge. Connect-time
+  presence/PIN handling stays deferred to the hardware PoC.
+- **SSH certificates are first-class on identities** (issue #75) - an identity
+  can carry a certificate path (identity form, `sshub identity add/edit`, same
+  column the importer already filled). The keys tab badges each certificate
+  identity with its principals and validity (`cert alice→2030-01-01`,
+  `cert EXPIRED`, `cert missing`, …), the identity form shows the full
+  `ssh-keygen -L` detail (key id, principals, validity window) under the
+  certificate row, `ssh-add` receives the cert alongside the key, and a
+  `does not match the private key` warning appears when the cert was not
+  issued for that key. Issuing certs and auto-renewal stay out of scope.
 
 - **In-app profile management** (issue #124) - `Alt+P` or Settings opens profile
   creation/management without restarting SSHub. The dashboard shows the current

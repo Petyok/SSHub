@@ -1865,13 +1865,16 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
         }
         FormKind::Identity => {
             if let Some(form) = app.identity_form.as_ref() {
+                let cert = app.cert_statuses.get(&form.certificate);
                 frame.render_widget(
                     screens::keychain::render_identity_form(
                         form,
                         &app.save_key_label(),
                         &app.config.keybinds.secret_field_hints(),
+                        cert,
                         theme,
                         border,
+                        popup_area.width.saturating_sub(2),
                     ),
                     popup_area,
                 );

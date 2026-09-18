@@ -3,6 +3,7 @@ mod audit;
 mod broadcast;
 mod connect;
 mod field_picker;
+pub(crate) mod ghost;
 mod groups;
 mod host_crud;
 mod host_detail;
@@ -23,6 +24,7 @@ mod session_picker;
 mod session_spawn;
 mod sftp;
 mod snippets;
+mod suggestions;
 mod tags;
 mod theme_picker;
 mod tunnels;
@@ -277,6 +279,13 @@ pub struct App {
     pub snippet_form: Option<SnippetFormEdit>,
     /// Live snippet picker state ([`AppMode::SnippetPicker`]).
     pub snippet_picker: Option<SnippetPickerState>,
+    /// Tracker line an Esc dismiss applies to: the ghost stays hidden until
+    /// the input line changes. `None` while nothing is dismissed.
+    pub ghost_dismissed_for: Option<String>,
+    /// Cached per-host persisted history for the ghost context (see
+    /// [`ghost::GhostHostCache`]). `RefCell` so the `&App` render pass can
+    /// warm it (SQLite, no PTY I/O) without a whole-frame `&mut`.
+    pub ghost_host_cache: std::cell::RefCell<ghost::GhostHostCache>,
     pub snippet_notice: Option<String>,
     pub host_notice: Option<String>,
     /// Message shown by the modal `AppMode::Notice` popup (e.g. a connect error).
@@ -471,6 +480,14 @@ pub struct App {
     pub audit_scroll: usize,
     pub agent_info: Option<crate::ssh::agent::AgentInfo>,
     agent_info_updated: std::time::Instant,
+    /// Certificate snapshots keyed by the cert path exactly as stored/typed
+    /// (no tilde expansion — the key must match on both the lookup and the
+    /// refresh side). Refreshed on keys-tab entry, identity save, and cert
+    /// path edits; renderers only read, so `ssh-keygen` never runs per frame.
+    pub cert_statuses: std::collections::HashMap<String, crate::ssh::cert::CertStatus>,
+    /// Cert path the form detail was last probed for. Guards the per-keystroke
+    /// refresh in the identity form: only a *changed* path re-runs ssh-keygen.
+    cert_probed_path: String,
     pub tunnels: Vec<crate::store::Tunnel>,
     pub tunnel_selected: usize,
     pub tunnel_form: Option<TunnelFormEdit>,
@@ -957,6 +974,8 @@ impl App {
             snippet_manage_selected: 0,
             snippet_form: None,
             snippet_picker: None,
+            ghost_dismissed_for: None,
+            ghost_host_cache: std::cell::RefCell::new(None),
             snippet_notice: None,
             host_notice: None,
             notice_popup: None,
@@ -1053,6 +1072,8 @@ impl App {
             audit_scroll: 0,
             agent_info: None,
             agent_info_updated: std::time::Instant::now() - std::time::Duration::from_secs(60),
+            cert_statuses: std::collections::HashMap::new(),
+            cert_probed_path: String::new(),
             tunnels: Vec::new(),
             tunnel_selected: 0,
             tunnel_form: None,

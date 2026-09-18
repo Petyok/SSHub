@@ -1,6 +1,7 @@
 pub mod app;
 pub mod broadcast;
 pub mod cli;
+pub mod command_safety;
 pub mod config;
 pub mod credentials;
 pub mod hosts;
@@ -21,6 +22,7 @@ pub mod session_transport;
 pub mod sftp;
 pub mod ssh;
 pub mod store;
+pub mod suggestions;
 /// Shared allocation counter for tests; only one `#[global_allocator]` may
 /// exist per binary, so every allocation-free proof shares this module.
 #[cfg(test)]
