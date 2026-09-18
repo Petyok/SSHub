@@ -4,6 +4,8 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.17.2] - 2026-09-18
+
 ### Fixed
 
 - **Remembering a credential is now opt-in** — the auth modal pre-ticked
