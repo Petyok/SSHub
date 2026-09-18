@@ -1559,16 +1559,25 @@ mod prompt_tests {
         session.auth = Some(interactive_auth::InteractiveAuth::new().unwrap());
         // 10s, not 3s: CI runners stall PTY spawn + shell startup far longer
         // than a local box (cf. the 10s `tick_until` in app/auth.rs and the
-        // macOS-conditional watcher timeouts). The predicate is unchanged —
+        // macOS-conditional watcher timeouts). The contract is unchanged —
         // the query MUST be answered.
         let deadline = Instant::now() + Duration::from_secs(10);
-        // Drain first, then test: sampling the screen *before* `drain()` made
-        // the loop miss bytes that had already arrived, and the failure tail
-        // (taken after the drain) then showed the very reply the predicate
-        // claimed was missing.
+        // Match the hex bytes with the spacing squeezed out: GNU `od` prints
+        // ` 1b 5b 30 6e`, BSD `od` (macOS) pads to `  1b  5b  30  6e`, so a
+        // literal single-spaced needle failed every macOS run while Linux
+        // passed. Drain before testing, too — the pre-drain sample could
+        // assert on bytes it had not read yet.
+        let answered = |s: &Session| {
+            s.parser
+                .screen()
+                .contents()
+                .split_whitespace()
+                .collect::<String>()
+                .contains("1b5b306e")
+        };
         loop {
             session.drain();
-            if session.parser.screen().contents().contains("1b 5b 30 6e") {
+            if answered(&session) {
                 break;
             }
             assert!(
