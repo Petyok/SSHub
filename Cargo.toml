@@ -1,6 +1,6 @@
 [package]
 name = "sshub"
-version = "0.16.0"
+version = "0.17.0"
 edition = "2021"
 description = "SSHub — TUI launcher for SSH hosts"
 license = "AGPL-3.0-or-later"
@@ -63,7 +63,9 @@ libc = "0.2"
 notify = "7"
 nucleo = "0.3"
 portable-pty = "0.9"
-ratatui = "0.30"
+# Exact Paragraph::line_count for the auth prompt scroll range (the plain
+# width estimate hides the final line on narrow terminals).
+ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 # Native SFTP transport (libssh2). OpenSSL comes from the `vendored` feature
 # above (on by default), which compiles it from source so `cargo install sshub`

@@ -97,10 +97,45 @@ pub(crate) fn keyless_identity_secret_is_a_login_password() {
         .unwrap();
 
     let entry = HostEntry::Managed(store.get_host(host_id).unwrap().unwrap());
-    let (secret, diag) = resolve_pending_secret(&entry, &pw);
+    let effective = entry.managed().and_then(|m| m.identity.as_ref());
+    let (secret, diag) = resolve_pending_secret(&entry, effective, &pw);
     assert!(
         matches!(secret, Some(crate::session::PendingSecret::Password(ref p)) if p == "s3cret"),
         "keyless identity should yield a login password, got {secret:?} / {diag}"
+    );
+}
+
+#[test]
+pub(crate) fn missing_stored_secret_yields_an_explicit_will_prompt_diagnostic() {
+    // The `env -i` shape: the host row says a secret exists
+    // (`has_password`), but the reachable store (no keyring/D-Bus, a
+    // foreign-profile fallback file) holds nothing. The code must not
+    // silently drop the credential — it returns no secret with a
+    // diagnostic naming the manual prompt, which is exactly what the
+    // user then sees.
+    let store = test_store();
+    let id = store
+        .create_identity(&crate::store::NewIdentity {
+            name: "team".into(),
+            username: Some("ops".into()),
+            private_key: None,
+            certificate: None,
+            sort_order: 0,
+            has_password: true,
+        })
+        .unwrap()
+        .id;
+    let mut nh = NewHost::launcher("h1", "10.0.0.1");
+    nh.identity_id = Some(id);
+    let host_id = store.create_host(&nh).unwrap().id;
+    let entry = HostEntry::Managed(store.get_host(host_id).unwrap().unwrap());
+    let effective = entry.managed().and_then(|m| m.identity.as_ref());
+    let (secret, diag) =
+        resolve_pending_secret(&entry, effective, &crate::credentials::NoopPasswordStore);
+    assert!(secret.is_none(), "empty store must yield no secret");
+    assert!(
+        diag.contains("will prompt"),
+        "miss must diagnose the manual prompt, got: {diag}"
     );
 }
 

@@ -285,6 +285,7 @@ pub enum SettingToggle {
     ConfirmQuit,
     DisableAnimation,
     SessionLogging,
+    CommandHistory,
 }
 
 /// What a Settings row *is*: an action that opens something, or a boolean.
@@ -293,6 +294,12 @@ pub enum SettingItem {
     /// Opens the theme picker. Renders the active theme id instead of a
     /// checkbox; `Space` must not do anything to it.
     Theme,
+    /// Opens profile creation or the profile manager.
+    Profiles,
+    CommandHistoryLimit,
+    ClearSessionHistory,
+    ClearHostHistory,
+    ClearAllHistory,
     Toggle(SettingToggle),
 }
 
@@ -316,7 +323,7 @@ pub struct SettingDescriptor {
 /// by a test in `tui::screens::settings`) and avoid ambiguous-width chars like
 /// the em dash or `…` — some terminals draw those 2 cells wide, pushing the
 /// tail of the line onto the popup border.
-pub const SETTINGS_ITEMS: [SettingDescriptor; 7] = [
+pub const SETTINGS_ITEMS: [SettingDescriptor; 13] = [
     SettingDescriptor {
         item: SettingItem::Theme,
         label: "Theme...",
@@ -352,6 +359,36 @@ pub const SETTINGS_ITEMS: [SettingDescriptor; 7] = [
         label: "Session logging",
         hint: "save PTY output under the selected profile logs",
     },
+    SettingDescriptor {
+        item: SettingItem::Profiles,
+        label: "Profiles...",
+        hint: "create or switch isolated workspaces",
+    },
+    SettingDescriptor {
+        item: SettingItem::Toggle(SettingToggle::CommandHistory),
+        label: "Persist command history",
+        hint: "store commands on disk; may include secrets",
+    },
+    SettingDescriptor {
+        item: SettingItem::CommandHistoryLimit,
+        label: "Maximum commands per host",
+        hint: "Left/Right adjusts 1-2000; applies to next write",
+    },
+    SettingDescriptor {
+        item: SettingItem::ClearSessionHistory,
+        label: "Clear current-session history",
+        hint: "Enter clears the active tab's in-memory history",
+    },
+    SettingDescriptor {
+        item: SettingItem::ClearHostHistory,
+        label: "Clear selected host history",
+        hint: "Enter deletes history for the selected managed host",
+    },
+    SettingDescriptor {
+        item: SettingItem::ClearAllHistory,
+        label: "Clear all persisted history",
+        hint: "Enter deletes local command history for every host",
+    },
 ];
 
 /// Global keep-alive reconnect knobs (Tunnels tab, `R`). Row index maps to
@@ -381,6 +418,8 @@ pub enum AppMode {
     TunnelHostPicker,
     /// Searchable dropdown for opening a new embedded SSH session tab.
     SessionPicker,
+    /// Interactive SSH authentication and explicit host trust decisions.
+    AuthPrompt,
     /// Searchable host list for `Shift+P` started from the Keys tab.
     PushKeyHostPicker,
     /// Identity list for `Shift+P` started from the hosts list.
@@ -394,6 +433,8 @@ pub enum AppMode {
     /// Theme picker overlay, opened with `Enter` on the Settings Theme row.
     /// Navigation previews a theme on the whole UI; only `Enter` persists.
     ThemePicker,
+    /// In-app profile creation and manager overlay.
+    ProfilePicker,
     /// Keep-alive reconnect backoff settings (Tunnels tab).
     TunnelReconnectSettings,
     /// Quit confirmation dialog.
@@ -928,9 +969,12 @@ impl HostEntry {
         }
     }
 
+    /// Stored transport with the global default (ssh) for unset. Connect paths
+    /// needing the *effective* transport (group inheritance) resolve via
+    /// [`LauncherStore::resolve_connection`] instead.
     pub fn session_transport(&self) -> crate::session_transport::SessionTransport {
         match self {
-            Self::Managed(m) => m.transport,
+            Self::Managed(m) => m.transport.unwrap_or_default(),
             Self::Legacy { meta, .. } => meta.transport,
         }
     }
@@ -1053,9 +1097,11 @@ pub struct HostFormEdit {
     pub identity_index: usize,
     pub tags: String,
     pub proxy_jump: String,
-    pub forward_agent: bool,
+    /// Explicit agent forwarding (`None` = inherit; Space cycles inherit → on → off).
+    pub forward_agent: Option<bool>,
     pub remote_command: String,
-    pub transport: crate::session_transport::SessionTransport,
+    /// Explicit transport (`None` = inherit; Space cycles inherit → ssh → mosh).
+    pub transport: Option<crate::session_transport::SessionTransport>,
     pub session_logging: crate::session_log::SessionLoggingOverride,
     pub os_icon_index: usize,
     pub password: String,
@@ -1179,19 +1225,51 @@ impl HostFormField {
 }
 
 /// Focusable field in the group form. `↑/↓` (or Tab) move between them.
+/// Text fields (Name, Username, Port, ProxyJump) edit inline; Parent and
+/// Identity open a dropdown; Transport and ForwardAgent cycle a tri-state
+/// (inherit → set → set → inherit) on Space/Enter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GroupFormField {
     Name,
     Parent,
     Identity,
+    Username,
+    Port,
+    ProxyJump,
+    Transport,
+    ForwardAgent,
 }
 
 impl GroupFormField {
-    pub const ALL: [GroupFormField; 3] = [
+    pub const ALL: [GroupFormField; 8] = [
         GroupFormField::Name,
         GroupFormField::Parent,
         GroupFormField::Identity,
+        GroupFormField::Username,
+        GroupFormField::Port,
+        GroupFormField::ProxyJump,
+        GroupFormField::Transport,
+        GroupFormField::ForwardAgent,
     ];
+
+    /// Fields edited as free text (cursor + insert/backspace apply).
+    pub fn is_text(self) -> bool {
+        matches!(
+            self,
+            GroupFormField::Name
+                | GroupFormField::Username
+                | GroupFormField::Port
+                | GroupFormField::ProxyJump
+        )
+    }
+
+    /// Fields cycled in place on Space/Enter.
+    pub fn is_tri_state(self) -> bool {
+        matches!(
+            self,
+            GroupFormField::Transport | GroupFormField::ForwardAgent
+        )
+    }
 }
 
 /// In-progress group form while in [`AppMode::GroupForm`].
@@ -1202,6 +1280,16 @@ pub struct GroupFormEdit {
     pub cursor: usize,
     /// Default identity new hosts in this group inherit. Picked via a dropdown.
     pub default_identity_id: Option<i64>,
+    /// Default username (`""` = no default). Edited as text.
+    pub default_username: String,
+    /// Default port (`""` = no default). Edited as text, validated on save.
+    pub default_port: String,
+    /// Default ProxyJump (`""` = no default). Edited as text.
+    pub default_proxy_jump: String,
+    /// Default transport (`None` = no default). Space cycles inherit → ssh → mosh.
+    pub default_transport: Option<crate::session_transport::SessionTransport>,
+    /// Default agent forwarding (`None` = no default). Space cycles inherit → on → off.
+    pub default_forward_agent: Option<bool>,
     /// Parent group for nesting (`None` = top level). Picked via a dropdown.
     pub parent_id: Option<i64>,
     /// Which field is focused.

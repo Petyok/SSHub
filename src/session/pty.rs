@@ -119,7 +119,19 @@ pub struct PtyRuntime {
 }
 
 impl PtyRuntime {
-    pub fn spawn(argv: &[String], rows: u16, cols: u16, env: &[(String, String)]) -> Result<Self> {
+    /// Spawn `argv` on a fresh PTY. When `siphon_stderr` the child's stderr
+    /// is routed through a side FIFO into [`PtyEvent::Stderr`] (the ssh
+    /// `-v` split); when false stderr stays merged with stdout on the PTY,
+    /// which is what an interactive local shell needs — shells print PS1
+    /// to stderr, so siphoning leaves a blank grid the reveal logic never
+    /// fires on.
+    pub fn spawn(
+        argv: &[String],
+        rows: u16,
+        cols: u16,
+        env: &[(String, String)],
+        siphon_stderr: bool,
+    ) -> Result<Self> {
         if argv.is_empty() {
             return Err(anyhow!("empty argv"));
         }
@@ -128,7 +140,7 @@ impl PtyRuntime {
         // output never lands on the PTY grid. Falls back to the plain PTY
         // (stderr merged with stdout) if the FIFO can't be set up, so a connect
         // never fails just because of the debug split.
-        let stderr_fifo = StderrFifo::create().ok();
+        let stderr_fifo = siphon_stderr.then(StderrFifo::create).and_then(Result::ok);
 
         let (program, prog_args): (String, Vec<String>) = if stderr_fifo.is_some() {
             // sh redirects fd 2 to the FIFO (opened by path, after portable-pty's
@@ -331,7 +343,7 @@ impl PtyRuntime {
         }
     }
 
-    fn terminate_child(&mut self) {
+    pub(super) fn terminate_child(&mut self) {
         if let Some(mut child) = self.child.take() {
             terminate_child_process(&mut *child);
         }

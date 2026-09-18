@@ -234,8 +234,13 @@ impl App {
             escaped_key
         );
 
+        let resolved = match entry.managed() {
+            Some(m) => Some(self.store.resolve_connection(m)?),
+            None => None,
+        };
+        let effective_identity = resolved.as_ref().and_then(|r| r.identity.as_ref());
         let (pending_secret, credential_diag): (Option<crate::session::PendingSecret>, String) =
-            resolve_pending_secret(entry, self.password_store.as_ref());
+            resolve_pending_secret(entry, effective_identity, self.password_store.as_ref());
 
         let mut ssh_argv = self.ssh_argv_for_key_push(entry, &remote_cmd);
         if ssh_argv.first().map(String::as_str) == Some("ssh") {
@@ -317,7 +322,10 @@ impl App {
         let display_name = format!("Push Key to {}", entry.name());
         let rows = self.terminal_area.height.max(3);
         let cols = self.terminal_area.width.max(20);
-        let meta = session_meta_for_entry(entry);
+        let meta = match (entry.managed(), resolved.as_ref()) {
+            (Some(m), Some(r)) => session_meta_for_resolved(m, r),
+            _ => session_meta_for_entry(entry),
+        };
 
         let config = crate::session::SessionConfig {
             argv: ssh_argv,
@@ -366,7 +374,13 @@ impl App {
     pub(crate) fn ssh_argv_for_key_push(&self, entry: &HostEntry, remote_cmd: &str) -> Vec<String> {
         let mut base_argv = match entry {
             HostEntry::Managed(m) => {
-                let mut ssh_host = managed_to_ssh_host(m);
+                // Group defaults apply to key pushes too; a resolution
+                // failure falls back to the stored row, never aborts.
+                let ssh_host = match self.store.resolve_connection(m) {
+                    Ok(r) => resolved_to_ssh_host(m, &r),
+                    Err(_) => managed_to_ssh_host(m),
+                };
+                let mut ssh_host = ssh_host;
                 ssh_host.remote_command = None;
                 if m.source == HostSource::SshConfig {
                     crate::ssh::build_ssh_alias_argv(&ssh_host)

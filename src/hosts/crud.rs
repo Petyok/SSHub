@@ -25,14 +25,14 @@ pub fn duplicate_legacy_to_launcher(
     let port = host.port.unwrap_or(22);
 
     let mut new_host = NewHost::launcher(name.clone(), address);
-    new_host.port = port;
+    new_host.port = Some(port);
     new_host.tags = meta.tags.clone();
     new_host.notes = meta.description.clone();
     new_host.proxy_jump = host.proxy_jump.clone();
-    new_host.forward_agent = host.forward_agent.unwrap_or(false);
+    new_host.forward_agent = Some(host.forward_agent.unwrap_or(false));
     new_host.remote_command = host.remote_command.clone();
     new_host.session_logging = meta.session_logging;
-    new_host.transport = meta.transport;
+    new_host.transport = Some(meta.transport);
     new_host.identity_id = match_identity_for_ssh_host(store, host)?;
     store.create_host(&new_host)?;
     Ok(name)

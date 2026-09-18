@@ -383,7 +383,7 @@ pub fn import_putty(path: &Path, store: &LauncherStore) -> Result<HostImportRepo
         let created = store.create_host(&NewHost {
             name: host.name.clone(),
             address: host.hostname.clone(),
-            port: host.port,
+            port: Some(host.port),
             username,
             notes: Some("Imported from PuTTY".into()),
             source: HostSource::Launcher,
@@ -560,7 +560,7 @@ mod tests {
 
         let host = store.get_host_by_name("My Server").unwrap().unwrap();
         assert_eq!(host.address, "192.168.1.1");
-        assert_eq!(host.port, 8080);
+        assert_eq!(host.port, Some(8080));
         assert_eq!(host.username.as_deref(), Some("root"));
         assert_eq!(host.notes.as_deref(), Some("Imported from PuTTY"));
         assert_eq!(host.source, HostSource::Launcher);

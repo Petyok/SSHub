@@ -22,20 +22,28 @@ impl App {
         // line and its handshake aren't mixed with a previous attempt's.
         self.ssh_log.retain(|e| e.host_name != entry.name());
 
-        // Determine the stored secret to feed ssh at the first prompt. A
-        // host-level credential is sent at `password:`-style prompts; an
-        // identity-level credential is sent at `Enter passphrase for …`.
-        // The Session itself watches the PTY screen and types it once.
+        // Resolve group-inherited defaults first: the credential decision must
+        // see a group-level identity's passphrase, and the argv must use the
+        // effective port/ProxyJump/transport/forwarding — not just the stored
+        // host row. A host-level credential is sent at `password:`-style
+        // prompts; an identity-level credential at `Enter passphrase for …`.
+        // The interactive askpass channel delivers it only to its prompt class.
+        let resolved = match entry.managed() {
+            Some(m) => Some(self.store.resolve_connection(m)?),
+            None => None,
+        };
+        let effective_identity = resolved.as_ref().and_then(|r| r.identity.as_ref());
         let (pending_secret, credential_diag): (Option<crate::session::PendingSecret>, String) =
-            resolve_pending_secret(&entry, self.password_store.as_ref());
+            resolve_pending_secret(&entry, effective_identity, self.password_store.as_ref());
 
-        // Build ssh argv. The session hands a stored secret to ssh via
-        // SSH_ASKPASS. When a secret is present, auto-accept a genuinely new
-        // host key: otherwise ssh (with SSH_ASKPASS_REQUIRE=force) would ask
-        // the askpass helper to confirm the fingerprint, get the password back
-        // instead of "yes", and deadlock. Changed keys are still refused.
-        let session_argv =
-            prepare_session_connect_argv(session_argv_for_entry(&entry), pending_secret.is_some());
+        // Interactive SSH asks the TUI before trusting a new host key. The
+        // argv itself comes from the resolved (group-inherited) connection
+        // when the entry is a managed host.
+        let base_argv = match (entry.managed(), resolved.as_ref()) {
+            (Some(m), Some(r)) => resolved_session_argv(m, r),
+            _ => session_argv_for_entry(&entry),
+        };
+        let session_argv = prepare_session_connect_argv(base_argv, pending_secret.is_some());
 
         // Surface the credential decision so it's visible in the SSH log
         // panel after the session ends.
@@ -110,7 +118,10 @@ impl App {
             let display_name = entry.name().to_string();
             let rows = self.terminal_area.height.max(3);
             let cols = self.terminal_area.width.max(20);
-            let meta = session_meta_for_entry(&entry);
+            let meta = match (entry.managed(), resolved.as_ref()) {
+                (Some(m), Some(r)) => session_meta_for_resolved(m, r),
+                _ => session_meta_for_entry(&entry),
+            };
             let config = crate::session::SessionConfig {
                 argv: session_argv.clone(),
                 display_name,
@@ -127,6 +138,12 @@ impl App {
 
             match crate::session::Session::spawn(config, rows, cols, None) {
                 Ok(mut session) => {
+                    if let Some(auth) = session.auth.as_mut() {
+                        auth.host_id = entry.managed_id();
+                        auth.identity_id = entry
+                            .managed()
+                            .and_then(|m| m.identity.as_ref().map(|i| i.id));
+                    }
                     let mut log_path = None;
                     if log_enabled {
                         match self.runtime_data_dir() {
@@ -221,9 +238,15 @@ impl App {
             let empty = m.os_icon.as_deref().is_none_or(|s| s.is_empty());
             if empty && !self.os_detect_inflight.contains(&m.id) {
                 if let Some(tx) = self.os_detect_tx.as_ref() {
-                    let (secret, _diag) =
-                        resolve_pending_secret(&entry, self.password_store.as_ref());
-                    let argv = ssh_argv_for_entry(&entry);
+                    let (secret, _diag) = resolve_pending_secret(
+                        &entry,
+                        effective_identity,
+                        self.password_store.as_ref(),
+                    );
+                    let argv = match resolved.as_ref() {
+                        Some(r) => resolved_session_argv(m, r),
+                        None => ssh_argv_for_entry(&entry),
+                    };
                     if tx
                         .send(crate::osinfo::OsDetectCmd {
                             host_id: m.id,

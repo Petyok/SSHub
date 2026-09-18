@@ -52,6 +52,7 @@ The settings overlay (`Ctrl+H`) — make SSHub's own surfaces or the remote grid
 ## Features
 
 - **Embedded SSH sessions** — connect opens an in-TUI PTY; detach with Ctrl+D and return to the dashboard while SSH keeps running; multiple session tabs
+- **Interactive SSH authentication** — masked password, passphrase and one-time-code modals. Eligible managed credentials have a checked-by-default remember option, saved only after SSH confirms authentication; generic challenges are never saved. `Enter` submits, `Tab` selects remember, `Space` toggles it, and `Esc` cancels. New host keys require explicit `y` acceptance; changed keys require uppercase `A` to remove the identified stale entry and reconnect for confirmation. Fingerprints are shown unchanged; `PgUp/PgDn` scroll long prompts. OpenSSH may record accepted keys in its configured known_hosts file. Tunnels, headless commands and Mosh keep their existing authentication paths.
 - **Hosts** — browse, search, and connect. Fuzzy search with `/`, multi-tag AND filter with `#`, favorites, nested groups, manual sort order
 - **SFTP file transfer** — a dual-pane browser with a staged transfer queue: navigate both sides, queue uploads and downloads (files or whole folders, transferred recursively), and run them with a progress bar. Files can be staged while the queue runs. The left pane is your local filesystem by default, or point it at a **second server** with `o` (`O` sends it back to local) to move files between two hosts — relayed through a local temp file, since SSH has no server-to-server copy. Manage files in place too: delete (`d`), new folder (`n`), rename/move (`R`), and change permissions (`M`, octal chmod)
 - **OS auto-detection** — on first connect a background probe detects the remote distro and the host card renders its logo (Braille art in brand colors), just like Termius
@@ -61,6 +62,19 @@ The settings overlay (`Ctrl+H`) — make SSHub's own surfaces or the remote grid
 - **Ad-hoc connect** - in the fuzzy palette (`/`), typing an unknown `[user@]host[:port]` (IPv6 in brackets supported) that matches no saved host offers a "connect without saving" row; Enter opens an embedded ssh session to it. Input is validated and injection-safe (no leading-dash hosts; destination passed after `--`)
 - **Local shell tab** - `Ctrl+Shift+T` opens a session tab running your login shell (`$SHELL`, else `/bin/sh`) with the same detach/close semantics as ssh tabs
 - **Command snippets** — a library of reusable commands (name, command, optional description and tags). Manage them from the dashboard with `Shift+S` (add/edit/delete); inside a live session `Ctrl+N` opens a fuzzy picker where `Enter` runs the selected command in the PTY and `Tab` inserts it without a trailing newline so you can edit before running
+- **Session command suggestions** — as you type in a live session, the rest of a matching
+  previously recorded command appears inline as a dim suffix after the cursor. `Tab` (or
+  `Ctrl+F`) accepts it, `Esc` dismisses it for that line. Suggestions come from this
+  session's in-memory history (always on, last 100 commands), your snippet library, and — only if
+  you opt in under Settings (`Ctrl+H`) — a per-managed-host command history stored in the
+  owner-only launcher database. Persistence is off by default. Credential filtering and prompt
+  detection are best-effort, not a guarantee: unfamiliar secrets may survive, so enable disk
+  history only if that risk is acceptable. Flagged commands and multiline pastes are never indexed;
+  paste bytes still reach the PTY unchanged. Remote hosts are never probed for suggestions, and
+  history stays local-only, outside host sync. Clear history per session, per host or globally
+  from Settings. Disabling persistence stops reads and writes but does not delete existing rows.
+  Browse and run snippets separately with `Ctrl+N` (`Enter` runs, `Tab` inserts for editing).
+  There is no suggestion picker and no `Ctrl+Space` chord.
 - **Audit** — log of all connection events with filtering by status (ok/fail) and time range (today/week/month); session connect events record the path to the session log when logging is enabled
 - **Session logging** — opt-in capture of PTY session output to `~/.local/share/sshub/profiles/<name>/logs/<host-dir>/` (managed hosts use `{name}-{id}`; pure `~/.ssh/config` aliases without a launcher row may share a directory when sanitized names collide). Enable globally in Settings (`Ctrl+H`) or override per host (`inherit` / `on` / `off`). **Logs capture everything echoed to the terminal, including passwords if they appear on screen.**
 - **Session log browser** (`Shift+L`): read those session logs inside the TUI. Pick a host, pick a rotated segment, and view it with terminal escape codes stripped so the transcript reads as plain text. In the viewer, `/` searches (case-insensitive), `n` / `N` step through matches, and `b` bookmarks the current line by name. `m` lists a host's bookmarks to jump straight back to a saved line. Reads are capped so a large transcript is never loaded whole.
@@ -154,10 +168,18 @@ sshub --profile work db purge --yes-i-am-stupid
 SSHUB keeps profile-owned data isolated. Each profile can select its own SSH
 config source with `[ssh].config_path`; the default remains shared
 `~/.ssh/config`. With one profile, startup remains silent;
-with multiple profiles, the picker appears after the splash. The picker can
-create, rename, and delete profiles, but switching profiles requires restarting
-SSHUB. `--profile NAME` bypasses the picker. `--manage-profiles` opens it even
-when only one profile exists. Press `Esc` in the picker to cancel startup.
+with multiple profiles, the picker appears after the splash. From the dashboard,
+press `Alt+P` (remappable) or open Settings (`Ctrl+H`) → **Add profile** /
+**Manage profiles** to create, rename, delete, or switch workspaces without
+restarting SSHub. The footer shows the current profile and shortcut. With one
+profile, the action opens creation directly; `Esc` returns to your workspace.
+The active profile cannot be renamed or deleted. Switching requires closing SSH
+and local shell sessions, disconnecting SFTP and transfers, dismissing broadcasts,
+and stopping tunnels (including pending reconnects). A failed load leaves your
+current workspace open and displays the error in the manager.
+
+`--profile NAME` bypasses the startup picker. `--manage-profiles` opens it even
+when only one profile exists. Press `Esc` in the startup picker to cancel startup.
 Headless commands without `--profile` use the last-used profile and never open
 the interactive picker.
 
@@ -197,6 +219,17 @@ sshub groups                                 # list host groups
 sshub group add --name prod
 sshub identity add --name work --username alice --private-key ~/.ssh/id_ed25519
 sshub identity agent-remove --name work      # ssh-add -d for the identity's key
+
+# Group connection defaults (issue #74): everything under prod/ goes via the
+# bastion as deploy. Resolution per field: host value → best default on any
+# group the host belongs to (nearest chain wins; ties break toward the deeper
+# group, then the primary group's chain) → global default (port 22, ssh,
+# forwarding off). Clearing a host field restores inheritance; tags and
+# favorites never inherit.
+sshub group edit --name prod --set-default-username deploy \
+    --set-default-proxy-jump bastion --set-default-port 2222
+sshub group edit --name prod --clear-default-port   # drop one default
+sshub host edit --name db-01 --clear-port           # re-inherit the group port
 
 # Tunnels
 sshub tunnel list
@@ -275,6 +308,7 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | `Tab`            | Toggle detail panel             |
 | `Esc`            | Back / close overlay            |
 | `Ctrl+K`         | Keybind editor                  |
+| `Alt+P`          | Add / manage profiles from dashboard |
 | `?`              | Help screen                     |
 | `q`              | Quit                            |
 

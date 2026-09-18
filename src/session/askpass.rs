@@ -107,7 +107,35 @@ const ASKPASS_FILE_ENV: &str = "SSHUB_ASKPASS_FILE";
 /// only on the ssh child's environment, so the main TUI process never sees it.
 pub fn maybe_run_askpass() -> bool {
     let Some(file) = std::env::var_os(ASKPASS_FILE_ENV) else {
-        return false;
+        if std::env::var_os(super::askpass_channel::MODE_ENV).is_none()
+            && std::env::var_os(super::askpass_channel::SOCKET_ENV).is_none()
+            && std::env::var_os(super::askpass_channel::TOKEN_ENV).is_none()
+        {
+            return false;
+        }
+        let answer = (|| {
+            let path = std::env::var_os(super::askpass_channel::SOCKET_ENV)?;
+            let token = std::env::var(super::askpass_channel::TOKEN_ENV).ok()?;
+            let prompt = std::env::args().nth(1)?;
+            super::askpass_channel::request_answer(
+                Path::new(&path),
+                &token,
+                &prompt,
+                super::askpass_channel::TIMEOUT,
+            )
+            .ok()
+        })();
+        let Some(answer) = answer else {
+            std::process::exit(1)
+        };
+        let mut out = std::io::stdout().lock();
+        if writeln!(out, "{answer}")
+            .and_then(|()| out.flush())
+            .is_err()
+        {
+            std::process::exit(1);
+        }
+        return true;
     };
     if let Ok(secret) = std::fs::read_to_string(&file) {
         // Content already ends with a newline; emit it verbatim.

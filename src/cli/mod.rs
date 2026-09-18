@@ -12,6 +12,7 @@ pub mod output;
 pub mod parse;
 pub mod sftp;
 pub mod theme;
+pub mod transfer;
 pub mod tunnel;
 
 pub use context::CliContext;

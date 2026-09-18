@@ -8,6 +8,24 @@ impl App {
     /// except while the remote is on the alternate screen — there the app that
     /// drew it owns paging and the keys are forwarded.
     pub(crate) fn handle_key_session(&mut self, key: KeyEvent) -> Result<()> {
+        // Ghost completion intercepts before anything is forwarded. While a
+        // ghost is visible, Tab (plus the remappable `GhostAccept` fallback,
+        // default Ctrl+F) accepts it and the shell never sees the key; Esc
+        // dismisses without forwarding. With no ghost visible every arm is a
+        // no-op and the keys keep their normal meaning (Tab completes in the
+        // shell, Esc goes to the remote). Ctrl+C is deliberately NOT
+        // intercepted: it resets the tracker (hiding the ghost) and must
+        // still interrupt the remote.
+        if self.is_action(KeyAction::GhostAccept, &key) && self.accept_ghost() {
+            return Ok(());
+        }
+        if key.code == KeyCode::Tab && key.modifiers.is_empty() && self.accept_ghost() {
+            return Ok(());
+        }
+        if key.code == KeyCode::Esc && key.modifiers.is_empty() && self.ghost_match().is_some() {
+            self.dismiss_ghost();
+            return Ok(());
+        }
         if self.is_action(KeyAction::LocalShell, &key) {
             self.open_local_shell()?;
             return Ok(());
@@ -32,16 +50,11 @@ impl App {
             self.open_sftp_for_active_session();
             return Ok(());
         }
-        // Only over a *running* session: opening the picker mid-handshake would
-        // let Enter write the snippet into ssh's password / host-key prompt (the
-        // text is taken as the secret), and over an exited session it would
-        // swallow the "press any key to close" keystroke. When the phase isn't
-        // Running this falls through to the normal keystroke handling below.
+        // Snippet insertion only writes bytes the user explicitly picked, so the
+        // bare-Running gate applies (mosh never earns `connected`): history and
+        // ghost stay on the honest `is_live_authenticated` signal elsewhere.
         if self.is_action(KeyAction::SessionSnippets, &key)
-            && matches!(
-                self.active_session().map(|s| &s.phase),
-                Some(crate::session::SessionPhase::Running { .. })
-            )
+            && self.active_session().is_some_and(|s| s.is_running())
         {
             let return_mode = self.mode;
             self.open_snippet_picker(return_mode)?;
@@ -67,33 +80,6 @@ impl App {
         if self.is_action(KeyAction::SessionTabNext, &key) {
             self.switch_session(1);
             return Ok(());
-        }
-
-        // Accept-changed-host-key flow: when a session has exited because the
-        // server's host key changed, `a` purges the stale known_hosts entry and
-        // reconnects (which then accept-new's the current key). Any other key
-        // falls through to the normal "press any key to close".
-        if matches!(key.code, KeyCode::Char('a')) {
-            let accept = self.active_session().map(|s| {
-                (
-                    s.phase.is_terminal() && s.host_key_changed(),
-                    s.known_hosts_spec(),
-                    s.display_name.clone(),
-                )
-            });
-            if let Some((true, spec, name)) = accept {
-                self.close_active_session();
-                if let Some(spec) = spec {
-                    let _ = std::process::Command::new("ssh-keygen")
-                        .args(["-R", &spec])
-                        .output();
-                }
-                if let Some(idx) = self.hosts.iter().position(|h| h.name() == name) {
-                    let entry = self.hosts[idx].clone();
-                    self.connect_host_entry(entry)?;
-                }
-                return Ok(());
-            }
         }
 
         // Capture self.terminal_area.height before we take a mutable borrow
@@ -149,7 +135,12 @@ impl App {
         }
         let application_cursor = session.parser.screen().application_cursor();
         if let Some(bytes) = crate::session::keys::encode(key, application_cursor) {
-            let _ = session.write(&bytes);
+            let candidate = session.observe_key(key);
+            if session.write(&bytes).is_ok() {
+                self.record_session_command(candidate);
+            } else if let Some(session) = self.active_session_mut() {
+                session.history.input.invalidate();
+            }
         }
         Ok(())
     }
@@ -220,6 +211,7 @@ impl App {
     /// of a session that keeps rendering behind it, so that case counts.
     pub(crate) fn session_is_rendered(&self) -> bool {
         matches!(self.mode, AppMode::Connecting | AppMode::Session)
+            || self.mode == AppMode::AuthPrompt
             || self.session_picker_over_session()
             || self.snippet_picker_over_session()
     }
@@ -286,6 +278,7 @@ impl App {
 
     /// Return to the dashboard without tearing down background sessions.
     pub fn detach_to_dashboard(&mut self) {
+        self.reset_ghost();
         if self.sessions.is_empty() {
             self.mode = AppMode::Normal;
             return;
@@ -301,6 +294,11 @@ impl App {
             }
             return;
         };
+        // The ghost reads `self.snippets` every frame but the render pass
+        // cannot reload them (`&App`): warm here, on the funnel back into the
+        // session view, so snippet edits made on the dashboard show up. A
+        // failed reload just leaves the previous list in place.
+        let _ = self.reload_snippets();
         // Entering from outside, rather than being re-derived while already in a
         // session (an overlay closing over it, a phase change), is what earns the
         // slide: leaving already animates, so arriving looked like a cut.
@@ -318,6 +316,7 @@ impl App {
     /// Tear down the active embedded session and return to the dashboard when
     /// it was the last one — otherwise switch to the next remaining tab.
     pub fn close_active_session(&mut self) {
+        self.reset_ghost();
         let Some(idx) = self.active_session else {
             self.mode = AppMode::Normal;
             return;
@@ -403,6 +402,7 @@ impl App {
 
     /// Cycle tabs by `delta` (`+1` = next, `-1` = prev). Wraps at both ends.
     pub fn switch_session(&mut self, delta: isize) {
+        self.reset_ghost();
         if self.sessions.is_empty() {
             self.active_session = None;
             self.mode = AppMode::Normal;
@@ -412,6 +412,9 @@ impl App {
         let cur = self.active_session.unwrap_or(0) as isize;
         let next = ((cur + delta) % len + len) % len;
         self.active_session = Some(next as usize);
+        // Same reload contract as `focus_active_session`: the newly visible
+        // tab's ghost must see the current snippet library.
+        let _ = self.reload_snippets();
 
         // Carry the tab we're leaving off in the direction of travel (#35). The
         // strip wraps, so the direction comes from `delta`, not the indices.

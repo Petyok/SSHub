@@ -98,6 +98,15 @@ impl crate::credentials::PasswordStore for SharedStore {
 }
 
 pub(crate) fn test_app(hosts: Vec<(&str, SshHost)>) -> App {
+    test_app_with_store(hosts, Box::new(crate::credentials::NoopPasswordStore))
+}
+
+/// `test_app`, but with a caller-chosen credential store (e.g. one whose
+/// writes fail, mirroring an unreachable OS keyring).
+pub(crate) fn test_app_with_store(
+    hosts: Vec<(&str, SshHost)>,
+    password_store: Box<dyn crate::credentials::PasswordStore>,
+) -> App {
     let resolver = MockResolver::new(hosts);
     let metadata: Arc<dyn MetadataStore> = Arc::new(MetadataDb::default());
     let mut app = App::new_with_deps(
@@ -106,7 +115,7 @@ pub(crate) fn test_app(hosts: Vec<(&str, SshHost)>) -> App {
             resolver: Box::new(resolver),
             metadata,
             store: test_store(),
-            password_store: Box::new(crate::credentials::NoopPasswordStore),
+            password_store,
         },
     );
     app.reload_hosts().unwrap();
@@ -132,6 +141,8 @@ pub(crate) fn legacy_meta(entry: &mut HostEntry) -> &mut crate::metadata::HostMe
 }
 
 mod broadcast;
+mod cert_agent;
+mod ghost;
 mod host_crud;
 mod host_detail;
 mod host_form;
@@ -139,9 +150,12 @@ mod identity_group;
 mod keybind;
 mod log_browser;
 mod misc;
+mod profile_manager;
 mod session;
 mod sftp;
 mod snippets;
+mod suggestions;
 mod tags;
 mod theme_picker;
+mod transfer_plan_confirm;
 mod transport;

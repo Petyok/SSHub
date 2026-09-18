@@ -139,7 +139,7 @@ fn keychain_delete_in_use_identity_shows_notice() {
             name: "web".into(),
             label: None,
             address: "10.0.0.1".into(),
-            port: 22,
+            port: Some(22),
             group_id: None,
             identity_id: Some(identity.id),
             tags: vec![],
@@ -418,4 +418,49 @@ fn push_key_identity_picker_flow() {
     app.handle_key(key(KeyCode::Esc)).unwrap();
     assert_eq!(app.mode, AppMode::Normal);
     assert!(app.push_key_identity_picker.is_none());
+}
+
+#[test]
+fn keychain_identity_certificate_round_trip() {
+    // Oracle: the store re-read through an independent handle — the form must
+    // persist the certificate path and prefill it on edit.
+    let file = NamedTempFile::new().unwrap();
+    let path = file.path();
+    let mut app = app_with_store(path);
+
+    app.handle_key(key_char('i')).unwrap();
+    app.handle_key(key_char('a')).unwrap();
+    assert_eq!(app.mode, AppMode::IdentityForm);
+
+    edit_field(&mut app, "cert-user");
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Username
+    edit_field(&mut app, "alice");
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Password (skip)
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → PrivateKey
+    edit_field(&mut app, "~/.ssh/id_ed25519");
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Certificate
+    edit_field(&mut app, "~/.ssh/id_ed25519-cert.pub");
+    app.handle_key(key(KeyCode::F(2))).unwrap(); // save form
+
+    assert_eq!(app.mode, AppMode::Normal);
+    let store = LauncherStore::open(path).unwrap();
+    let created = store
+        .get_identity_by_name("cert-user")
+        .unwrap()
+        .expect("persisted identity");
+    assert_eq!(
+        created
+            .certificate
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned()),
+        Some("~/.ssh/id_ed25519-cert.pub".to_string())
+    );
+
+    // Reopen the form: the certificate row must show the stored path.
+    app.handle_key(key_char('e')).unwrap();
+    assert_eq!(app.mode, AppMode::IdentityForm);
+    assert_eq!(
+        app.identity_form.as_ref().unwrap().certificate,
+        "~/.ssh/id_ed25519-cert.pub"
+    );
 }

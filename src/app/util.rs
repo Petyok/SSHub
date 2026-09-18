@@ -4,8 +4,13 @@ use super::*;
 /// a host password (sent at `password:` prompts) or an identity passphrase
 /// (sent at `Enter passphrase for …`). Returns the pending secret and a
 /// human-readable diagnostic line for the SSH log.
+///
+/// `effective_identity` is the resolved identity (host-explicit, else the
+/// nearest ancestor group's default): a stored passphrase on a group-level
+/// identity must unlock it just like a host-level one.
 pub fn resolve_pending_secret(
     entry: &HostEntry,
+    effective_identity: Option<&crate::store::Identity>,
     password_store: &dyn crate::credentials::PasswordStore,
 ) -> (Option<crate::session::PendingSecret>, String) {
     let Some(managed) = entry.managed() else {
@@ -15,35 +20,50 @@ pub fn resolve_pending_secret(
         );
     };
 
-    if managed.has_password {
-        let key = crate::credentials::host_key(managed.id);
-        return match password_store.get(&key) {
-            Ok(Some(pw)) => (
+    // The remember-me modal saves the secret without touching the host row,
+    // so a set flag cannot be required: presence of the secret itself
+    // decides. The flag only tunes the diagnostic. Falls through to the
+    // identity below when no host secret exists.
+    let key = crate::credentials::host_key(managed.id);
+    match password_store.get(&key) {
+        Ok(Some(pw)) => {
+            return (
                 Some(crate::session::PendingSecret::Password(pw)),
-                format!("auth: using stored password ({key})"),
-            ),
-            Ok(None) => (
+                if managed.has_password {
+                    format!("auth: using stored password ({key})")
+                } else {
+                    format!("auth: using stored password ({key}) though the row flag is unset")
+                },
+            );
+        }
+        Ok(None) if managed.has_password => {
+            return (
                 None,
                 format!(
                     "auth: has_password=true but keyring entry {key} is empty — ssh will prompt"
                 ),
-            ),
-            Err(e) => (
+            );
+        }
+        Err(e) if managed.has_password => {
+            return (
                 None,
                 format!("auth: keyring lookup failed for {key}: {e:#} — ssh will prompt"),
-            ),
-        };
+            );
+        }
+        Ok(None) | Err(_) => {}
     }
 
-    if let Some(identity) = managed.identity.as_ref() {
-        if identity.has_password {
-            let key = crate::credentials::identity_key(identity.id);
-            // A secret on an identity WITH a key unlocks that key (passphrase);
-            // on a keyless identity it's a shared login password, letting many
-            // hosts reuse one user+password credential.
-            let has_key = identity.private_key.is_some();
-            return match password_store.get(&key) {
-                Ok(Some(pw)) => (
+    if let Some(identity) = effective_identity.or(managed.identity.as_ref()) {
+        // Same remember-me gap as the host branch above: the modal saves an
+        // identity secret without setting its flag.
+        let key = crate::credentials::identity_key(identity.id);
+        // A secret on an identity WITH a key unlocks that key (passphrase);
+        // on a keyless identity it's a shared login password, letting many
+        // hosts reuse one user+password credential.
+        let has_key = identity.private_key.is_some();
+        match password_store.get(&key) {
+            Ok(Some(pw)) => {
+                return (
                     Some(if has_key {
                         crate::session::PendingSecret::Passphrase(pw)
                     } else {
@@ -53,18 +73,23 @@ pub fn resolve_pending_secret(
                         "auth: using stored {} ({key})",
                         if has_key { "passphrase" } else { "password" }
                     ),
-                ),
-                Ok(None) => (
+                );
+            }
+            Ok(None) if identity.has_password => {
+                return (
                     None,
                     format!(
                         "auth: identity has_password=true but keyring entry {key} is empty — ssh will prompt"
                     ),
-                ),
-                Err(e) => (
+                );
+            }
+            Err(e) if identity.has_password => {
+                return (
                     None,
                     format!("auth: keyring lookup failed for {key}: {e:#} — ssh will prompt"),
-                ),
-            };
+                );
+            }
+            Ok(None) | Err(_) => {}
         }
     }
 
@@ -79,32 +104,39 @@ pub fn resolve_pending_secret_for_managed(
     managed: &crate::store::ManagedHost,
     password_store: &dyn crate::credentials::PasswordStore,
 ) -> (Option<crate::session::PendingSecret>, String) {
-    if managed.has_password {
-        let key = crate::credentials::host_key(managed.id);
-        return match password_store.get(&key) {
-            Ok(Some(pw)) => (
+    // Same remember-me gap as the session lookup above: secret presence
+    // decides, the row flag only tunes the diagnostic.
+    let key = crate::credentials::host_key(managed.id);
+    match password_store.get(&key) {
+        Ok(Some(pw)) => {
+            return (
                 Some(crate::session::PendingSecret::Password(pw)),
                 format!("auth: using stored password ({key})"),
-            ),
-            Ok(None) => (
+            );
+        }
+        Ok(None) if managed.has_password => {
+            return (
                 None,
                 format!(
                     "auth: has_password=true but keyring entry {key} is empty — tunnel cannot prompt"
                 ),
-            ),
-            Err(e) => (
+            );
+        }
+        Err(e) if managed.has_password => {
+            return (
                 None,
                 format!("auth: keyring lookup failed for {key}: {e:#}"),
-            ),
-        };
+            );
+        }
+        Ok(None) | Err(_) => {}
     }
 
     if let Some(identity) = managed.identity.as_ref() {
-        if identity.has_password {
-            let key = crate::credentials::identity_key(identity.id);
-            let has_key = identity.private_key.is_some();
-            return match password_store.get(&key) {
-                Ok(Some(pw)) => (
+        let key = crate::credentials::identity_key(identity.id);
+        let has_key = identity.private_key.is_some();
+        match password_store.get(&key) {
+            Ok(Some(pw)) => {
+                return (
                     Some(if has_key {
                         crate::session::PendingSecret::Passphrase(pw)
                     } else {
@@ -114,18 +146,23 @@ pub fn resolve_pending_secret_for_managed(
                         "auth: using stored {} ({key})",
                         if has_key { "passphrase" } else { "password" }
                     ),
-                ),
-                Ok(None) => (
+                );
+            }
+            Ok(None) if identity.has_password => {
+                return (
                     None,
                     format!(
                         "auth: identity has_password=true but keyring entry {key} is empty — tunnel cannot prompt"
                     ),
-                ),
-                Err(e) => (
+                );
+            }
+            Err(e) if identity.has_password => {
+                return (
                     None,
                     format!("auth: keyring lookup failed for {key}: {e:#}"),
-                ),
-            };
+                );
+            }
+            Ok(None) | Err(_) => {}
         }
     }
 
@@ -136,24 +173,35 @@ pub fn resolve_pending_secret_for_managed(
 }
 
 /// Capture host metadata used by the embedded session header + connect
+/// animation, from already-resolved connection values.
+pub(crate) fn session_meta_for_resolved(
+    m: &ManagedHost,
+    resolved: &crate::store::ResolvedConnection,
+) -> crate::session::SessionMeta {
+    crate::session::SessionMeta {
+        user: resolved
+            .username
+            .clone()
+            .or_else(|| resolved.identity.as_ref().and_then(|i| i.username.clone())),
+        address: Some(m.address.clone()),
+        port: Some(resolved.port),
+        identity: resolved
+            .identity
+            .as_ref()
+            .and_then(|i| i.private_key.as_ref())
+            .map(|p| p.to_string_lossy().into_owned()),
+        proxy_jump: resolved.proxy_jump.clone(),
+        host_id: Some(m.id),
+    }
+}
+
+/// Capture host metadata used by the embedded session header + connect
 /// animation.
 pub(crate) fn session_meta_for_entry(entry: &HostEntry) -> crate::session::SessionMeta {
     match entry {
-        HostEntry::Managed(m) => crate::session::SessionMeta {
-            user: m
-                .username
-                .clone()
-                .or_else(|| m.identity.as_ref().and_then(|i| i.username.clone())),
-            address: Some(m.address.clone()),
-            port: Some(m.port),
-            identity: m
-                .identity
-                .as_ref()
-                .and_then(|i| i.private_key.as_ref())
-                .map(|p| p.to_string_lossy().into_owned()),
-            proxy_jump: m.proxy_jump.clone(),
-            host_id: Some(m.id),
-        },
+        HostEntry::Managed(m) => {
+            session_meta_for_resolved(m, &crate::store::ResolvedConnection::from_stored(m))
+        }
         HostEntry::Legacy { host, .. } => crate::session::SessionMeta {
             user: host.user.clone(),
             address: host.hostname.clone(),
@@ -202,16 +250,21 @@ pub fn prepare_cli_connect_argv(
     }
 }
 
-/// Apply connect-time tweaks to a bare session argv: verbose `ssh` logging and
-/// `StrictHostKeyChecking=accept-new` when a stored credential is present.
+/// Interactive SSH uses explicit host trust and at most three auth attempts.
 pub fn prepare_session_connect_argv(mut argv: Vec<String>, has_stored_secret: bool) -> Vec<String> {
     match argv.first().map(String::as_str) {
         Some("ssh") => {
             argv.insert(1, "-v".into());
-            if has_stored_secret {
-                argv.insert(1, "-o".into());
-                argv.insert(2, "StrictHostKeyChecking=accept-new".into());
-            }
+            argv.splice(
+                1..1,
+                [
+                    "-o",
+                    "StrictHostKeyChecking=ask",
+                    "-o",
+                    "NumberOfPasswordPrompts=3",
+                ]
+                .map(String::from),
+            );
             argv
         }
         Some("mosh") if has_stored_secret => crate::ssh::inject_mosh_ssh_accept_new(argv),
@@ -219,7 +272,44 @@ pub fn prepare_session_connect_argv(mut argv: Vec<String>, has_stored_secret: bo
     }
 }
 
-/// Build session argv (`ssh` or `mosh`) from per-host transport setting.
+/// Build session argv (`ssh` or `mosh`) from the *effective* transport
+/// (group inheritance resolved): every connect path must use this, not
+/// [`session_argv_for_entry`], so a group-level transport default takes effect.
+pub fn resolved_session_argv(
+    m: &ManagedHost,
+    resolved: &crate::store::ResolvedConnection,
+) -> Vec<String> {
+    let ssh_host = resolved_to_ssh_host(m, resolved);
+    let alias = m.source == HostSource::SshConfig;
+    match resolved.transport {
+        crate::session_transport::SessionTransport::Ssh => {
+            if alias {
+                crate::ssh::build_ssh_alias_argv(&ssh_host)
+            } else {
+                crate::ssh::build_ssh_argv(&ssh_host)
+            }
+        }
+        crate::session_transport::SessionTransport::Mosh => {
+            if alias {
+                crate::ssh::build_mosh_alias_argv(&ssh_host)
+            } else {
+                crate::ssh::build_mosh_argv(&ssh_host)
+            }
+        }
+    }
+}
+
+/// Build session argv for a managed host, resolving group defaults first.
+pub fn session_argv_for_managed(
+    store: &crate::store::LauncherStore,
+    m: &ManagedHost,
+) -> anyhow::Result<Vec<String>> {
+    Ok(resolved_session_argv(m, &store.resolve_connection(m)?))
+}
+
+/// Build session argv (`ssh` or `mosh`) from the stored transport setting.
+/// Prefer [`resolved_session_argv`] on connect paths: this stored-only
+/// variant misses a group-level transport default.
 pub fn session_argv_for_entry(entry: &HostEntry) -> Vec<String> {
     match entry.session_transport() {
         crate::session_transport::SessionTransport::Ssh => ssh_argv_for_entry(entry),
@@ -249,25 +339,34 @@ pub fn ssh_argv_for_entry(entry: &HostEntry) -> Vec<String> {
 }
 
 pub(crate) fn managed_to_ssh_host(m: &ManagedHost) -> SshHost {
+    resolved_to_ssh_host(m, &crate::store::ResolvedConnection::from_stored(m))
+}
+
+/// Build the [`SshHost`] ssh/mosh argv is derived from, using already-resolved
+/// connection values (host-explicit → group chain → global).
+pub fn resolved_to_ssh_host(
+    m: &ManagedHost,
+    resolved: &crate::store::ResolvedConnection,
+) -> SshHost {
     let mut host = SshHost::new(&m.name);
     host.hostname = Some(m.address.clone());
-    host.port = Some(m.port);
-    host.user = m
+    host.port = Some(resolved.port);
+    host.user = resolved
         .username
         .clone()
-        .or_else(|| m.identity.as_ref().and_then(|i| i.username.clone()));
-    host.identity_file = m
+        .or_else(|| resolved.identity.as_ref().and_then(|i| i.username.clone()));
+    host.identity_file = resolved
         .identity
         .as_ref()
         .and_then(|i| i.private_key.as_ref())
         .map(|p| p.to_string_lossy().into_owned());
-    host.certificate_file = m
+    host.certificate_file = resolved
         .identity
         .as_ref()
         .and_then(|i| i.certificate.as_ref())
         .map(|p| p.to_string_lossy().into_owned());
-    host.proxy_jump = m.proxy_jump.clone();
-    host.forward_agent = Some(m.forward_agent);
+    host.proxy_jump = resolved.proxy_jump.clone();
+    host.forward_agent = Some(resolved.forward_agent);
     host.remote_command = m.remote_command.clone();
     host
 }
@@ -280,8 +379,21 @@ pub(crate) fn managed_to_ssh_host(m: &ManagedHost) -> SshHost {
 /// those resolve the alias live through the same `ssh -G` machinery the
 /// import used and let the resolved config fill what the store does not
 /// manage. SSHub-managed fields always win when present.
-pub(crate) fn sftp_ssh_host(resolver: &dyn HostResolver, entry: &HostEntry) -> SshHost {
-    let mut host = entry.ssh_host();
+pub(crate) fn sftp_ssh_host(
+    resolver: &dyn HostResolver,
+    store: &crate::store::LauncherStore,
+    entry: &HostEntry,
+) -> SshHost {
+    let mut host = match entry {
+        // Resolve group defaults first so SFTP honours the same effective
+        // port/identity as a connect. A resolution failure falls back to the
+        // stored values rather than refusing the session.
+        HostEntry::Managed(m) => match store.resolve_connection(m) {
+            Ok(resolved) => resolved_to_ssh_host(m, &resolved),
+            Err(_) => entry.ssh_host(),
+        },
+        HostEntry::Legacy { .. } => entry.ssh_host(),
+    };
     if let HostEntry::Managed(m) = entry {
         if m.source == HostSource::SshConfig {
             if let Ok(resolved) = resolver.resolve_host(&m.name) {
@@ -762,7 +874,7 @@ mod sftp_ssh_host_tests {
             fail: false,
         };
 
-        let host = sftp_ssh_host(&resolver, &entry);
+        let host = sftp_ssh_host(&resolver, &store, &entry);
         assert_eq!(host.user.as_deref(), Some("deploy"));
         assert_eq!(
             host.identity_file.as_deref(),
@@ -793,7 +905,7 @@ mod sftp_ssh_host_tests {
             fail: false,
         };
 
-        let host = sftp_ssh_host(&resolver, &entry);
+        let host = sftp_ssh_host(&resolver, &store, &entry);
         assert_eq!(host.user.as_deref(), Some("root"));
         // The key the config carries is still filled in — the row had none.
         assert_eq!(
@@ -817,7 +929,7 @@ mod sftp_ssh_host_tests {
             fail: false,
         };
 
-        let host = sftp_ssh_host(&resolver, &entry);
+        let host = sftp_ssh_host(&resolver, &store, &entry);
         // No ssh_config bleed into fully managed hosts.
         assert_eq!(host.user, None);
         assert_eq!(host.identity_file, None);
@@ -833,10 +945,11 @@ mod sftp_ssh_host_tests {
             result: None,
             fail: true,
         };
+        let store = LauncherStore::open_in_memory().unwrap();
 
         // Legacy hosts already carry resolved credentials; a failing resolver
         // must not damage them (the overlay never runs for Legacy).
-        let host = sftp_ssh_host(&failing, &legacy);
+        let host = sftp_ssh_host(&failing, &store, &legacy);
         assert_eq!(
             host.identity_file.as_deref(),
             Some("/home/u/.ssh/id_deploy")
@@ -844,9 +957,8 @@ mod sftp_ssh_host_tests {
 
         // An imported host with an unreadable config keeps its old behaviour:
         // no creds, no panic.
-        let store = LauncherStore::open_in_memory().unwrap();
         let entry = ssh_config_entry(&store);
-        let host = sftp_ssh_host(&failing, &entry);
+        let host = sftp_ssh_host(&failing, &store, &entry);
         assert_eq!(host.user, None);
         assert_eq!(host.identity_file, None);
     }

@@ -2,6 +2,9 @@ use super::*;
 
 impl App {
     pub fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
+        if self.mode == AppMode::AuthPrompt {
+            return self.handle_key_auth(key);
+        }
         if self.mode == AppMode::SessionPicker {
             return self.handle_key_session_picker(key);
         }
@@ -37,6 +40,11 @@ impl App {
             return Ok(());
         }
 
+        if self.mode == AppMode::Normal && self.is_action(KeyAction::ProfilesManage, &key) {
+            self.open_profile_manager();
+            return Ok(());
+        }
+
         // Session-log browser from any dashboard tab.
         if self.mode == AppMode::Normal && self.is_action(KeyAction::LogsBrowser, &key) {
             self.open_log_browser()?;
@@ -66,6 +74,7 @@ impl App {
             && key.code == KeyCode::Char('h')
             && key.modifiers.contains(KeyModifiers::CONTROL)
         {
+            self.refresh_profile_count();
             self.settings_selected = 0;
             self.mode = AppMode::Settings;
             return Ok(());
@@ -82,6 +91,7 @@ impl App {
             AppMode::KeybindEditor => self.handle_key_keybind_editor(key),
             AppMode::Settings => self.handle_key_settings(key),
             AppMode::ThemePicker => self.handle_key_theme_picker(key),
+            AppMode::ProfilePicker => self.handle_key_profile_picker(key),
             AppMode::TunnelReconnectSettings => self.handle_key_tunnel_reconnect_settings(key),
             AppMode::ConfirmQuit => self.handle_key_confirm_quit(key),
             AppMode::Help => self.handle_key_help(key),
@@ -94,6 +104,7 @@ impl App {
             AppMode::GroupFieldPicker => self.handle_key_group_field_picker(key),
             AppMode::TunnelHostPicker => self.handle_key_tunnel_host_picker(key),
             AppMode::SessionPicker => self.handle_key_session_picker(key),
+            AppMode::AuthPrompt => self.handle_key_auth(key),
             AppMode::PushKeyHostPicker => self.handle_key_push_key_host_picker(key),
             AppMode::PushKeyIdentityPicker => self.handle_key_push_key_identity_picker(key),
             AppMode::FieldPicker => self.handle_key_field_picker(key),
@@ -732,20 +743,31 @@ impl App {
                 self.help_scroll = self.help_scroll.saturating_sub(1);
             }
             KeyCode::Down => {
-                let max = crate::tui::help_max_scroll(self.terminal_area, &self.help_query);
+                let max = crate::tui::help_max_scroll(
+                    self.terminal_area,
+                    &self.help_query,
+                    self.config.keybinds.primary(KeyAction::ProfilesManage),
+                );
                 self.help_scroll = (self.help_scroll + 1).min(max);
             }
             KeyCode::PageUp => {
                 self.help_scroll = self.help_scroll.saturating_sub(10);
             }
             KeyCode::PageDown => {
-                let max = crate::tui::help_max_scroll(self.terminal_area, &self.help_query);
+                let max = crate::tui::help_max_scroll(
+                    self.terminal_area,
+                    &self.help_query,
+                    self.config.keybinds.primary(KeyAction::ProfilesManage),
+                );
                 self.help_scroll = (self.help_scroll + 10).min(max);
             }
             KeyCode::Home => self.help_scroll = 0,
             KeyCode::End => {
-                self.help_scroll =
-                    crate::tui::help_max_scroll(self.terminal_area, &self.help_query);
+                self.help_scroll = crate::tui::help_max_scroll(
+                    self.terminal_area,
+                    &self.help_query,
+                    self.config.keybinds.primary(KeyAction::ProfilesManage),
+                );
             }
             KeyCode::Backspace => {
                 self.help_query.pop();
@@ -1282,7 +1304,12 @@ impl App {
     pub(crate) fn setting_value(&self, item: impl Into<SettingItem>) -> Option<bool> {
         let a = &self.config.appearance;
         match item.into() {
-            SettingItem::Theme => None,
+            SettingItem::Theme
+            | SettingItem::Profiles
+            | SettingItem::CommandHistoryLimit
+            | SettingItem::ClearSessionHistory
+            | SettingItem::ClearHostHistory
+            | SettingItem::ClearAllHistory => None,
             SettingItem::Toggle(t) => Some(match t {
                 SettingToggle::TransparentSshubBackground => a.transparent_sshub_background,
                 SettingToggle::TransparentSessionBackground => a.transparent_session_background,
@@ -1290,6 +1317,7 @@ impl App {
                 SettingToggle::ConfirmQuit => a.confirm_quit,
                 SettingToggle::DisableAnimation => a.disable_animation,
                 SettingToggle::SessionLogging => self.config.session_logging.enabled,
+                SettingToggle::CommandHistory => self.config.command_history.enabled,
             }),
         }
     }
@@ -1326,12 +1354,64 @@ impl App {
             SettingToggle::SessionLogging => {
                 self.config.session_logging.enabled = !self.config.session_logging.enabled;
             }
+            SettingToggle::CommandHistory => {
+                self.config.command_history.enabled = !self.config.command_history.enabled;
+            }
         }
         true
     }
 
     pub(crate) fn handle_key_settings(&mut self, key: KeyEvent) -> Result<()> {
         let n = SETTINGS_ITEMS.len();
+        let item = SETTINGS_ITEMS.get(self.settings_selected).map(|d| d.item);
+        if item == Some(SettingItem::CommandHistoryLimit)
+            && matches!(key.code, KeyCode::Left | KeyCode::Right)
+        {
+            let value = self
+                .config
+                .command_history
+                .max_entries_per_host
+                .clamp(1, crate::store::MAX_HOST_HISTORY);
+            self.config.command_history.max_entries_per_host = if key.code == KeyCode::Left {
+                value.saturating_sub(1).max(1)
+            } else {
+                (value + 1).min(crate::store::MAX_HOST_HISTORY)
+            };
+            self.save_config_quietly();
+            return Ok(());
+        }
+        if key.code == KeyCode::Enter {
+            let result = match item {
+                Some(SettingItem::ClearSessionHistory) => {
+                    if let Some(session) = self.active_session_mut() {
+                        session.history.clear();
+                    }
+                    Some(Ok(()))
+                }
+                Some(SettingItem::ClearHostHistory) => {
+                    match self.selected_entry().and_then(|entry| entry.managed_id()) {
+                        Some(id) => Some(self.store.clear_command_history(Some(id))),
+                        None => {
+                            self.host_notice = Some("Select a managed host first.".into());
+                            return Ok(());
+                        }
+                    }
+                }
+                Some(SettingItem::ClearAllHistory) => Some(self.store.clear_command_history(None)),
+                _ => None,
+            };
+            if let Some(result) = result {
+                self.host_notice = Some(
+                    if result.is_ok() {
+                        "Command history cleared."
+                    } else {
+                        "Could not clear command history."
+                    }
+                    .into(),
+                );
+                return Ok(());
+            }
+        }
         match key.code {
             _ if self.is_action(KeyAction::Cancel, &key) => self.mode = AppMode::Normal,
             _ if self.is_action(KeyAction::MoveDown, &key) => {
@@ -1347,6 +1427,14 @@ impl App {
                 ) =>
             {
                 self.open_theme_picker();
+            }
+            KeyCode::Enter
+                if matches!(
+                    SETTINGS_ITEMS.get(self.settings_selected).map(|d| d.item),
+                    Some(SettingItem::Profiles)
+                ) =>
+            {
+                self.open_profile_manager();
             }
             KeyCode::Char(' ') | KeyCode::Enter => {
                 // Action rows ignore both keys here: nothing flips, nothing is

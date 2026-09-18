@@ -28,10 +28,12 @@ pub fn render_field_picker(frame: &mut Frame, app: &App) {
             rows.push("+ New group…".to_string());
             ("Select groups (Space toggles)", rows)
         }
-        PickerKind::Identity => (
-            "Select identity",
-            app.identities.iter().map(|i| i.name.clone()).collect(),
-        ),
+        PickerKind::Identity => {
+            // Row 0 restores inheritance (host field cleared to None).
+            let mut rows = vec!["(inherit from group)".to_string()];
+            rows.extend(app.identities.iter().map(|i| i.name.clone()));
+            ("Select identity", rows)
+        }
     };
     if rows.is_empty() {
         rows.push("(no identities)".to_string());

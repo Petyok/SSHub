@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 
 use crate::secure_fs;
 use crate::session::{askpass, PendingSecret};
-use crate::store::{ManagedHost, Tunnel, TunnelType};
+use crate::store::{ManagedHost, ResolvedConnection, Tunnel, TunnelType};
 
 /// Runtime liveness for CLI `tunnel list` / `show`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,9 +30,15 @@ impl TunnelRuntimeState {
 }
 
 /// Build the full `ssh -N …` argv for a tunnel (without spawning).
+///
+/// `resolved` is the effective connection for `host` (host-explicit → group
+/// chain → global, via `LauncherStore::resolve_connection`): tunnels honour
+/// the same group defaults as every connect path. Callers that cannot resolve
+/// fall back to `ResolvedConnection::from_stored`.
 pub fn build_tunnel_argv(
     tunnel: &Tunnel,
     host: &ManagedHost,
+    resolved: &ResolvedConnection,
     has_stored_secret: bool,
 ) -> Result<Vec<String>> {
     let mut args: Vec<String> = vec!["ssh".into(), "-N".into()];
@@ -56,29 +62,32 @@ pub fn build_tunnel_argv(
     args.push(flag.into());
     args.push(spec);
 
-    if host.port != 22 {
+    // Effective values, mirroring the connect path (`resolved_to_ssh_host`):
+    // a group-inherited port/jump/identity must reach the tunnel's ssh too.
+    let port = resolved.port;
+    if port != 22 {
         args.push("-p".into());
-        args.push(host.port.to_string());
+        args.push(port.to_string());
     }
-    if let Some(ref jump) = host.proxy_jump {
+    if let Some(jump) = resolved.proxy_jump.as_ref() {
         if !jump.is_empty() {
             args.push("-J".into());
             args.push(jump.clone());
         }
     }
-    if host.forward_agent {
+    if resolved.forward_agent {
         args.push("-A".into());
     }
-    if let Some(ref identity) = host.identity {
-        if let Some(ref key) = identity.private_key {
+    if let Some(identity) = resolved.identity.as_ref() {
+        if let Some(key) = identity.private_key.as_ref() {
             args.push("-i".into());
             args.push(key.to_string_lossy().into_owned());
         }
     }
-    let target = if let Some(ref username) = host.username {
+    let target = if let Some(username) = resolved.username.as_ref() {
         format!("{}@{}", username, host.address)
-    } else if let Some(ref identity) = host.identity {
-        if let Some(ref u) = identity.username {
+    } else if let Some(identity) = resolved.identity.as_ref() {
+        if let Some(u) = identity.username.as_ref() {
             format!("{}@{}", u, host.address)
         } else {
             host.address.clone()
@@ -251,6 +260,7 @@ pub fn tunnel_runtime_state(tunnel_id: i64, local_port: u16, pid_dir: &Path) -> 
 pub fn spawn_detached_tunnel(
     tunnel: &Tunnel,
     host: &ManagedHost,
+    resolved: &ResolvedConnection,
     secret: Option<&PendingSecret>,
     data_dir: &Path,
 ) -> Result<u32> {
@@ -268,7 +278,7 @@ pub fn spawn_detached_tunnel(
         anyhow::bail!("local port {} already in use", tunnel.local_port);
     }
 
-    let args = build_tunnel_argv(tunnel, host, secret.is_some())?;
+    let args = build_tunnel_argv(tunnel, host, resolved, secret.is_some())?;
     let mut cmd = Command::new(&args[0]);
     cmd.args(&args[1..])
         .stdin(Stdio::null())
@@ -333,5 +343,91 @@ mod tests {
         assert_eq!(read_tunnel_pid(&path).unwrap(), Some(12345));
         remove_tunnel_pid(&path).unwrap();
         assert_eq!(read_tunnel_pid(&path).unwrap(), None);
+    }
+    #[test]
+    fn tunnel_argv_carries_group_inherited_connection_values() {
+        // Oracle: hand-computed — the host sets no connection field itself;
+        // group "prod" supplies port 2222, ProxyJump, agent forwarding, and
+        // an identity (key + username). The tunnel argv must carry those
+        // EFFECTIVE values, exactly like the connect path does.
+        use crate::store::{LauncherStore, NewHost, NewHostGroup, NewIdentity};
+
+        let store = LauncherStore::open_in_memory().unwrap();
+        let iid = store
+            .create_identity(&NewIdentity {
+                name: "prod-ident".into(),
+                username: Some("prod-user".into()),
+                private_key: Some(PathBuf::from("/keys/prod_ed25519")),
+                ..Default::default()
+            })
+            .unwrap()
+            .id;
+        let group = store
+            .create_group(&NewHostGroup {
+                name: "prod".into(),
+                default_identity_id: Some(iid),
+                default_port: Some(2222),
+                default_proxy_jump: Some("bastion.example".into()),
+                default_forward_agent: Some(true),
+                ..Default::default()
+            })
+            .unwrap();
+        let mut nh = NewHost::launcher("web", "10.0.0.1");
+        nh.group_id = Some(group.id);
+        nh.port = None;
+        nh.forward_agent = None;
+        nh.transport = None;
+        let created = store.create_host(&nh).unwrap();
+        let host = store.get_host(created.id).unwrap().unwrap();
+        assert_eq!(host.port, None);
+        assert_eq!(host.proxy_jump, None);
+        assert_eq!(host.forward_agent, None);
+
+        let resolved = store.resolve_connection(&host).unwrap();
+        assert_eq!(resolved.port, 2222);
+        assert_eq!(resolved.proxy_jump.as_deref(), Some("bastion.example"));
+        assert!(resolved.forward_agent);
+
+        let tunnel = Tunnel {
+            id: 1,
+            host_id: Some(host.id),
+            tunnel_type: TunnelType::Local,
+            local_port: 8080,
+            remote_host: "localhost".into(),
+            remote_port: 80,
+            label: None,
+            auto_connect: false,
+            created_at: 0,
+            updated_at: 0,
+        };
+        let argv = build_tunnel_argv(&tunnel, &host, &resolved, false).unwrap();
+        let expected: Vec<String> = [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=30",
+            "-o",
+            "ServerAliveInterval=10",
+            "-o",
+            "ServerAliveCountMax=3",
+            "-o",
+            "TCPKeepAlive=yes",
+            "-N",
+            "-L",
+            "8080:localhost:80",
+            "-p",
+            "2222",
+            "-J",
+            "bastion.example",
+            "-A",
+            "-i",
+            "/keys/prod_ed25519",
+            "prod-user@10.0.0.1",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        assert_eq!(argv, expected);
     }
 }

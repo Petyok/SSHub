@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: i64 = 15;
+const SCHEMA_VERSION: i64 = 16;
 
 /// Name of the reserved, auto-created "Favorites" group. Membership in it is the
 /// source of truth for a host's favourite status.
@@ -19,6 +19,12 @@ CREATE TABLE IF NOT EXISTS host_groups (
     name         TEXT NOT NULL UNIQUE,
     sort_order   INTEGER NOT NULL DEFAULT 0,
     parent_id    INTEGER REFERENCES host_groups(id) ON DELETE SET NULL,
+    default_identity_id INTEGER REFERENCES identities(id) ON DELETE SET NULL,
+    default_username TEXT,
+    default_port INTEGER,
+    default_proxy_jump TEXT,
+    default_transport TEXT,
+    default_forward_agent INTEGER,
     created_at   INTEGER NOT NULL
 );
 
@@ -37,14 +43,14 @@ CREATE TABLE IF NOT EXISTS hosts (
     name            TEXT NOT NULL UNIQUE,
     label           TEXT,
     address         TEXT NOT NULL,
-    port            INTEGER NOT NULL DEFAULT 22,
+    port            INTEGER,
     group_id        INTEGER REFERENCES host_groups(id) ON DELETE SET NULL,
     identity_id     INTEGER REFERENCES identities(id) ON DELETE SET NULL,
     os_icon         TEXT,
     tags            TEXT NOT NULL DEFAULT '[]',
     notes           TEXT,
     proxy_jump      TEXT,
-    forward_agent   INTEGER NOT NULL DEFAULT 0,
+    forward_agent   INTEGER,
     remote_command  TEXT,
     sort_order      INTEGER NOT NULL DEFAULT 0,
     favorite        INTEGER NOT NULL DEFAULT 0,
@@ -133,6 +139,23 @@ pub(crate) fn run_migrations(conn: &Connection, launcher_path: &Path) -> Result<
 
     if current < 15 {
         migrate_v14_to_v15(conn)?;
+    }
+    if current < 16 {
+        conn.execute_batch(
+            "CREATE TABLE command_history (
+            id INTEGER PRIMARY KEY,
+            host_id INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+            command TEXT NOT NULL CHECK(length(CAST(command AS BLOB)) BETWEEN 1 AND 4096),
+            last_used INTEGER NOT NULL,
+            use_count INTEGER NOT NULL DEFAULT 1,
+            created_at INTEGER NOT NULL,
+            UNIQUE(host_id, command));
+            CREATE INDEX command_history_host_recent ON command_history(host_id,last_used DESC);",
+        )?;
+    }
+
+    if current < 16 {
+        migrate_v15_to_v16(conn)?;
     }
 
     // Runs last so all columns it writes to (e.g. environment) already exist.
@@ -528,6 +551,116 @@ fn migrate_v14_to_v15(conn: &Connection) -> Result<()> {
     )?;
     Ok(())
 }
+fn migrate_v15_to_v16(conn: &Connection) -> Result<()> {
+    // Group-level connection defaults (issue #74): identity already existed;
+    // username, port, ProxyJump, transport and agent-forwarding join it.
+    // Hosts resolve host-explicit -> nearest ancestor group -> global default,
+    // so the host columns become nullable (`NULL` = inherit).
+    for (column, ddl) in [
+        (
+            "default_username",
+            "ALTER TABLE host_groups ADD COLUMN default_username TEXT;",
+        ),
+        (
+            "default_port",
+            "ALTER TABLE host_groups ADD COLUMN default_port INTEGER;",
+        ),
+        (
+            "default_proxy_jump",
+            "ALTER TABLE host_groups ADD COLUMN default_proxy_jump TEXT;",
+        ),
+        (
+            "default_transport",
+            "ALTER TABLE host_groups ADD COLUMN default_transport TEXT;",
+        ),
+        (
+            "default_forward_agent",
+            "ALTER TABLE host_groups ADD COLUMN default_forward_agent INTEGER;",
+        ),
+    ] {
+        let has_col: bool = conn
+            .prepare(&format!(
+                "SELECT COUNT(*) FROM pragma_table_info('host_groups') WHERE name = '{column}'"
+            ))?
+            .query_row([], |row| row.get::<_, i64>(0))
+            .map(|c| c > 0)?;
+        if !has_col {
+            conn.execute_batch(ddl)?;
+        }
+    }
+
+    // `hosts.port`, `hosts.forward_agent` and `hosts.transport` were NOT NULL
+    // with creation-time defaults (22 / off / ssh), which made "unset" (and
+    // therefore inheritance) unrepresentable. Rebuild the table nullable.
+    // Rows that still carry the old creation defaults become NULL so
+    // long-standing untouched hosts start inheriting; genuinely custom values
+    // are preserved verbatim.
+    let hosts_nullable: bool = conn
+        .prepare(
+            "SELECT COUNT(*) FROM pragma_table_info('hosts')
+             WHERE name IN ('port', 'forward_agent', 'transport') AND \"notnull\" = 0",
+        )?
+        .query_row([], |row| row.get::<_, i64>(0))
+        .map(|c| c == 3)?;
+    if !hosts_nullable {
+        // Defer FK enforcement to commit: `tunnels` and
+        // `host_group_memberships` reference `hosts(id)`, and the parent table
+        // cannot be dropped while enforcement is immediate. (`PRAGMA
+        // foreign_keys` itself is a no-op inside a transaction; the defer
+        // pragma is the one designed for exactly this.)
+        conn.execute_batch("PRAGMA defer_foreign_keys = ON;")?;
+        conn.execute_batch(
+            "CREATE TABLE hosts_new (
+                id              INTEGER PRIMARY KEY,
+                name            TEXT NOT NULL UNIQUE,
+                label           TEXT,
+                address         TEXT NOT NULL,
+                port            INTEGER,
+                group_id        INTEGER REFERENCES host_groups(id) ON DELETE SET NULL,
+                identity_id     INTEGER REFERENCES identities(id) ON DELETE SET NULL,
+                os_icon         TEXT,
+                tags            TEXT NOT NULL DEFAULT '[]',
+                notes           TEXT,
+                proxy_jump      TEXT,
+                forward_agent   INTEGER,
+                remote_command  TEXT,
+                sort_order      INTEGER NOT NULL DEFAULT 0,
+                favorite        INTEGER NOT NULL DEFAULT 0,
+                last_connected  INTEGER,
+                source          TEXT NOT NULL DEFAULT 'launcher',
+                ssh_config_hash TEXT,
+                created_at      INTEGER NOT NULL,
+                updated_at      INTEGER NOT NULL,
+                has_password    INTEGER NOT NULL DEFAULT 0,
+                ping_ms         INTEGER,
+                username        TEXT,
+                environment     TEXT,
+                session_logging INTEGER,
+                transport       TEXT
+            );",
+        )?;
+        conn.execute_batch(
+            "INSERT INTO hosts_new
+                (id, name, label, address, port, group_id, identity_id, os_icon,
+                 tags, notes, proxy_jump, forward_agent, remote_command, sort_order,
+                 favorite, last_connected, source, ssh_config_hash, created_at,
+                 updated_at, has_password, ping_ms, username, environment,
+                 session_logging, transport)
+             SELECT id, name, label, address,
+                CASE WHEN port = 22 THEN NULL ELSE port END,
+                group_id, identity_id, os_icon, tags, notes, proxy_jump,
+                CASE WHEN forward_agent = 0 THEN NULL ELSE forward_agent END,
+                remote_command, sort_order, favorite, last_connected, source,
+                ssh_config_hash, created_at, updated_at, has_password, ping_ms,
+                username, environment, session_logging,
+                CASE WHEN transport = 'ssh' THEN NULL ELSE transport END
+             FROM hosts;",
+        )?;
+        conn.execute_batch("DROP TABLE hosts;")?;
+        conn.execute_batch("ALTER TABLE hosts_new RENAME TO hosts;")?;
+    }
+    Ok(())
+}
 
 pub(crate) fn now_ts() -> i64 {
     SystemTime::now()
@@ -589,9 +722,12 @@ mod tests {
         let conn = Connection::open(&db_path).unwrap();
         run_migrations(&conn, &db_path).unwrap();
 
-        // Simulate a pre-v14 database: drop the table and roll the recorded
-        // version back to 13, then re-run the chain.
-        conn.execute_batch("DROP TABLE snippets;").unwrap();
+        // Simulate a pre-v14 database: remove every post-v13 table before
+        // rolling the recorded version back and re-running the chain.
+        conn.execute_batch(
+            "DROP TABLE snippets; DROP TABLE log_bookmarks; DROP TABLE command_history;",
+        )
+        .unwrap();
         set_schema_version(&conn, 13).unwrap();
         run_migrations(&conn, &db_path).unwrap();
 
@@ -612,6 +748,174 @@ mod tests {
         assert_eq!(version, SCHEMA_VERSION);
     }
 
+    /// Frozen copy of the v15 schema: the oracle this migration is tested
+    /// against. It must NOT track the live `V2_SCHEMA` — if the rebuild below
+    /// drops a column or mistranslates a sentinel, this fixture still
+    /// represents what real v15 databases look like and the test fails.
+    const V15_FROZEN_SCHEMA: &str = "
+CREATE TABLE schema_version (version INTEGER NOT NULL);
+INSERT INTO schema_version (version) VALUES (15);
+CREATE TABLE identities (
+    id              INTEGER PRIMARY KEY,
+    name            TEXT NOT NULL UNIQUE,
+    username        TEXT,
+    private_key     TEXT,
+    certificate     TEXT,
+    sort_order      INTEGER NOT NULL DEFAULT 0,
+    created_at      INTEGER NOT NULL,
+    has_password    INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE host_groups (
+    id           INTEGER PRIMARY KEY,
+    name         TEXT NOT NULL UNIQUE,
+    sort_order   INTEGER NOT NULL DEFAULT 0,
+    parent_id    INTEGER REFERENCES host_groups(id) ON DELETE SET NULL,
+    default_identity_id INTEGER REFERENCES identities(id) ON DELETE SET NULL,
+    reserved     INTEGER NOT NULL DEFAULT 0,
+    created_at   INTEGER NOT NULL
+);
+CREATE TABLE hosts (
+    id              INTEGER PRIMARY KEY,
+    name            TEXT NOT NULL UNIQUE,
+    label           TEXT,
+    address         TEXT NOT NULL,
+    port            INTEGER NOT NULL DEFAULT 22,
+    group_id        INTEGER REFERENCES host_groups(id) ON DELETE SET NULL,
+    identity_id     INTEGER REFERENCES identities(id) ON DELETE SET NULL,
+    os_icon         TEXT,
+    tags            TEXT NOT NULL DEFAULT '[]',
+    notes           TEXT,
+    proxy_jump      TEXT,
+    forward_agent   INTEGER NOT NULL DEFAULT 0,
+    remote_command  TEXT,
+    sort_order      INTEGER NOT NULL DEFAULT 0,
+    favorite        INTEGER NOT NULL DEFAULT 0,
+    last_connected  INTEGER,
+    source          TEXT NOT NULL DEFAULT 'launcher',
+    ssh_config_hash TEXT,
+    created_at      INTEGER NOT NULL,
+    updated_at      INTEGER NOT NULL,
+    has_password    INTEGER NOT NULL DEFAULT 0,
+    ping_ms         INTEGER,
+    username        TEXT,
+    environment     TEXT,
+    session_logging INTEGER,
+    transport       TEXT NOT NULL DEFAULT 'ssh'
+);
+CREATE TABLE host_group_memberships (
+    host_id  INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+    group_id INTEGER NOT NULL REFERENCES host_groups(id) ON DELETE CASCADE,
+    PRIMARY KEY (host_id, group_id)
+);
+INSERT INTO host_groups (name, sort_order, reserved, created_at)
+    VALUES ('prod', 0, 0, 1700000000);
+";
+
+    #[test]
+    fn migration_v15_to_v16_adds_group_defaults_and_nulls_sentinels() {
+        // Hand-computed expectations: the untouched row (creation defaults
+        // 22/off/ssh) must come back NULL (inheriting), the custom row
+        // (2222/on/mosh) must survive verbatim, and the new group columns
+        // must accept a write+read round-trip through the store.
+        let dir = temp_dir();
+        let db_path = dir.path().join("launcher.db");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(V15_FROZEN_SCHEMA).unwrap();
+        conn.execute(
+            "INSERT INTO hosts
+                (name, address, port, group_id, forward_agent, transport,
+                 created_at, updated_at)
+             VALUES
+                ('untouched', '10.0.0.1', 22,
+                 (SELECT id FROM host_groups WHERE name = 'prod'), 0, 'ssh',
+                 1700000000, 1700000000),
+                ('custom', '10.0.0.2', 2222,
+                 (SELECT id FROM host_groups WHERE name = 'prod'), 1, 'mosh',
+                 1700000000, 1700000000)",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let migrated = Connection::open(&db_path).unwrap();
+        run_migrations(&migrated, &db_path).unwrap();
+        let version: i64 = migrated
+            .query_row("SELECT version FROM schema_version LIMIT 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(version, 16);
+        for column in [
+            "default_username",
+            "default_port",
+            "default_proxy_jump",
+            "default_transport",
+            "default_forward_agent",
+        ] {
+            let has: i64 = migrated
+                .query_row(
+                    &format!(
+                        "SELECT COUNT(*) FROM pragma_table_info('host_groups') \
+                         WHERE name = '{column}'"
+                    ),
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(has, 1, "host_groups.{column} must exist");
+        }
+        drop(migrated);
+
+        let store = crate::store::LauncherStore::open(&db_path).unwrap();
+        let untouched = store.get_host_by_name("untouched").unwrap().unwrap();
+        assert_eq!(untouched.port, None, "default port 22 becomes inheriting");
+        assert_eq!(
+            untouched.forward_agent, None,
+            "default forward_agent off becomes inheriting"
+        );
+        assert_eq!(
+            untouched.transport, None,
+            "default transport ssh becomes inheriting"
+        );
+        let custom = store.get_host_by_name("custom").unwrap().unwrap();
+        assert_eq!(custom.port, Some(2222));
+        assert_eq!(custom.forward_agent, Some(true));
+        assert_eq!(
+            custom.transport,
+            Some(crate::session_transport::SessionTransport::Mosh)
+        );
+
+        // The new group columns round-trip through the store API.
+        let prod = store.list_groups().unwrap();
+        let prod = prod.iter().find(|g| g.name == "prod").unwrap();
+        let updated = store
+            .update_group(
+                prod.id,
+                &crate::store::HostGroupUpdate {
+                    default_username: Some(Some("deploy".into())),
+                    default_port: Some(Some(2200)),
+                    default_proxy_jump: Some(Some("bastion".into())),
+                    default_transport: Some(Some(crate::session_transport::SessionTransport::Mosh)),
+                    default_forward_agent: Some(Some(true)),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.default_username.as_deref(), Some("deploy"));
+        assert_eq!(updated.default_port, Some(2200));
+        assert_eq!(updated.default_proxy_jump.as_deref(), Some("bastion"));
+        assert_eq!(
+            updated.default_transport,
+            Some(crate::session_transport::SessionTransport::Mosh)
+        );
+        assert_eq!(updated.default_forward_agent, Some(true));
+        // Untouched now inherits the group values end to end.
+        let resolved = store.resolve_connection(&untouched).unwrap();
+        assert_eq!(resolved.port, 2200);
+        assert_eq!(resolved.username.as_deref(), Some("deploy"));
+    }
+
     #[test]
     fn migration_from_v13_creates_both_snippets_and_log_bookmarks() {
         // Guards the #118/#123 merge order: a database jumping straight from v13
@@ -623,8 +927,10 @@ mod tests {
             let conn = Connection::open(&db_path).unwrap();
             run_migrations(&conn, &db_path).unwrap();
             if start == 13 {
-                conn.execute_batch("DROP TABLE snippets; DROP TABLE log_bookmarks;")
-                    .unwrap();
+                conn.execute_batch(
+                    "DROP TABLE snippets; DROP TABLE log_bookmarks; DROP TABLE command_history;",
+                )
+                .unwrap();
                 set_schema_version(&conn, 13).unwrap();
                 run_migrations(&conn, &db_path).unwrap();
             }
@@ -885,6 +1191,9 @@ mod tests {
 
     #[test]
     fn migration_v13_transport_defaults_ssh() {
+        // Since v16 the column is nullable (`NULL` = inherit): a fresh row
+        // without an explicit transport stores NULL, and the effective
+        // transport is still ssh through the global default.
         let dir = temp_dir();
         let db_path = dir.path().join("launcher.db");
         let conn = Connection::open(&db_path).unwrap();
@@ -896,13 +1205,20 @@ mod tests {
             params![now],
         )
         .unwrap();
-        let transport: String = conn
+        let transport: Option<String> = conn
             .query_row("SELECT transport FROM hosts WHERE name = 'h'", [], |row| {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(transport, "ssh");
+        assert_eq!(transport, None);
         migrate_v12_to_v13(&conn).unwrap();
+        drop(conn);
+        let store = crate::store::LauncherStore::open(&db_path).unwrap();
+        let host = store.get_host_by_name("h").unwrap().unwrap();
+        assert_eq!(
+            store.resolve_connection(&host).unwrap().transport,
+            crate::session_transport::SessionTransport::Ssh
+        );
     }
 
     #[test]

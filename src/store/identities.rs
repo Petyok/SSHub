@@ -27,34 +27,7 @@ impl LauncherStore {
     }
 
     pub fn create_identity(&self, identity: &NewIdentity) -> Result<Identity> {
-        let now = now_ts();
-        let private_key = path_to_opt_str(identity.private_key.as_ref());
-        let certificate = path_to_opt_str(identity.certificate.as_ref());
-
-        self.with_conn(|conn| {
-            conn.execute(
-                "INSERT INTO identities (name, username, private_key, certificate, sort_order, has_password, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![
-                    identity.name,
-                    identity.username,
-                    private_key,
-                    certificate,
-                    identity.sort_order,
-                    i64::from(identity.has_password),
-                    now,
-                ],
-            )?;
-            let id = conn.last_insert_rowid();
-            Ok(Identity {
-                id,
-                name: identity.name.clone(),
-                username: identity.username.clone(),
-                private_key: identity.private_key.clone(),
-                certificate: identity.certificate.clone(),
-                has_password: identity.has_password,
-            })
-        })
+        self.with_conn(|conn| create_identity_on(conn, identity))
     }
 
     pub fn get_identity(&self, id: i64) -> Result<Option<Identity>> {
@@ -138,14 +111,7 @@ impl LauncherStore {
 
     /// Count launcher hosts referencing this identity.
     pub fn count_hosts_using_identity(&self, id: i64) -> Result<usize> {
-        self.with_conn(|conn| {
-            conn.query_row(
-                "SELECT COUNT(*) FROM hosts WHERE identity_id = ?1",
-                params![id],
-                |row| row.get(0),
-            )
-            .map_err(Into::into)
-        })
+        self.with_conn(|conn| count_hosts_using_identity_on(conn, id))
     }
 
     pub fn delete_identity(&self, id: i64) -> Result<DeleteIdentityOutcome> {
@@ -158,10 +124,7 @@ impl LauncherStore {
             return Ok(DeleteIdentityOutcome::InUse { host_count });
         }
 
-        let deleted = self.with_conn(|conn| {
-            conn.execute("DELETE FROM identities WHERE id = ?1", params![id])?;
-            Ok(conn.changes() > 0)
-        })?;
+        let deleted = self.with_conn(|conn| delete_identity_on(conn, id))?;
 
         if deleted {
             Ok(DeleteIdentityOutcome::Deleted)
@@ -181,6 +144,54 @@ impl LauncherStore {
             .map_err(Into::into)
         })
     }
+}
+/// Connection-level identity insert for multi-statement transfers: the caller
+/// holds the transaction (see `store::transfer::apply_transfer_plan`).
+pub(super) fn create_identity_on(
+    conn: &rusqlite::Connection,
+    identity: &NewIdentity,
+) -> Result<Identity> {
+    let now = now_ts();
+    let private_key = path_to_opt_str(identity.private_key.as_ref());
+    let certificate = path_to_opt_str(identity.certificate.as_ref());
+    conn.execute(
+        "INSERT INTO identities (name, username, private_key, certificate, sort_order, has_password, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            identity.name,
+            identity.username,
+            private_key,
+            certificate,
+            identity.sort_order,
+            i64::from(identity.has_password),
+            now,
+        ],
+    )?;
+    let id = conn.last_insert_rowid();
+    Ok(Identity {
+        id,
+        name: identity.name.clone(),
+        username: identity.username.clone(),
+        private_key: identity.private_key.clone(),
+        certificate: identity.certificate.clone(),
+        has_password: identity.has_password,
+    })
+}
+
+/// Connection-level host-reference count (caller holds the transaction).
+pub(super) fn count_hosts_using_identity_on(conn: &rusqlite::Connection, id: i64) -> Result<usize> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM hosts WHERE identity_id = ?1",
+        params![id],
+        |row| row.get(0),
+    )
+    .map_err(Into::into)
+}
+
+/// Connection-level identity delete (caller holds the transaction).
+pub(super) fn delete_identity_on(conn: &rusqlite::Connection, id: i64) -> Result<bool> {
+    conn.execute("DELETE FROM identities WHERE id = ?1", params![id])?;
+    Ok(conn.changes() > 0)
 }
 
 fn row_to_identity(row: &rusqlite::Row<'_>) -> rusqlite::Result<Identity> {
@@ -285,7 +296,7 @@ mod tests {
                 name: "web".into(),
                 label: None,
                 address: "10.0.0.1".into(),
-                port: 22,
+                port: Some(22),
                 group_id: None,
                 identity_id: Some(identity.id),
                 tags: vec![],

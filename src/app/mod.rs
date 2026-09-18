@@ -1,8 +1,10 @@
 pub(crate) mod adhoc;
 mod audit;
+mod auth;
 mod broadcast;
 mod connect;
 mod field_picker;
+pub(crate) mod ghost;
 mod groups;
 mod host_crud;
 mod host_detail;
@@ -15,12 +17,15 @@ mod keys;
 mod local_shell;
 mod log_browser;
 mod mouse;
+mod profile_manager;
+pub(crate) mod profile_transfer;
 mod push_key;
 mod session;
 mod session_picker;
 mod session_spawn;
 mod sftp;
 mod snippets;
+mod suggestions;
 mod tags;
 mod theme_picker;
 mod tunnels;
@@ -57,7 +62,6 @@ use crate::text_input;
 use crate::theme::manager::ThemeManager;
 use crate::theme::model::{ResolvedTheme, ThemeDiagnostic, ValidationMode};
 use crate::theme::registry::ThemeRegistry;
-use crate::watcher::WatchEvent;
 
 /// Virtual group label for hosts without a DB group.
 pub const UNGROUPED_LABEL: &str = "_ungrouped";
@@ -185,12 +189,20 @@ pub struct App {
     /// Resolved profile workspace (databases, config, logs, tunnels). `None`
     /// only in unit tests that inject deps directly.
     pub profile: Option<crate::profile::ProfilePaths>,
+    pub profile_picker: Option<crate::profile::picker::ProfilePicker>,
+    pub pending_profile: Option<crate::profile::ProfilePaths>,
+    /// Staged cross-profile transfer (`T` in the profile manager). `Some`
+    /// while choosing destination/scope/confirming; the plan applies only on
+    /// explicit `y`.
+    pub pending_transfer: Option<profile_transfer::PendingTransfer>,
+    profile_return_mode: AppMode,
+    pub profile_count: usize,
     /// Active tag filters. A host matches when it carries every selected tag
     /// (AND). Empty means no tag filtering.
     pub tag_filters: Vec<String>,
     /// Highlighted row in the tag-filter popup (0 = "all"; 1.. = a tag).
     pub tag_filter_selected: usize,
-    pub watcher_rx: Option<Receiver<WatchEvent>>,
+    pub watcher_rx: Option<crate::watcher::ConfigWatcher>,
     pub should_quit: bool,
     pub detail_focus: bool,
     pub detail_edit: Option<HostDetailEdit>,
@@ -214,6 +226,7 @@ pub struct App {
     pub tunnel_host_picker: Option<TunnelHostPicker>,
     /// Searchable host picker for a new embedded session tab.
     pub session_picker: Option<SessionPicker>,
+    pub auth_modal: Option<auth::AuthModal>,
     pub push_key_host_picker: Option<PushKeyHostPicker>,
     pub push_key_identity_picker: Option<PushKeyIdentityPicker>,
     pub import_prompt: Option<ImportPromptEdit>,
@@ -268,6 +281,13 @@ pub struct App {
     pub snippet_form: Option<SnippetFormEdit>,
     /// Live snippet picker state ([`AppMode::SnippetPicker`]).
     pub snippet_picker: Option<SnippetPickerState>,
+    /// Tracker line an Esc dismiss applies to: the ghost stays hidden until
+    /// the input line changes. `None` while nothing is dismissed.
+    pub ghost_dismissed_for: Option<String>,
+    /// Cached per-host persisted history for the ghost context (see
+    /// [`ghost::GhostHostCache`]). `RefCell` so the `&App` render pass can
+    /// warm it (SQLite, no PTY I/O) without a whole-frame `&mut`.
+    pub ghost_host_cache: std::cell::RefCell<ghost::GhostHostCache>,
     pub snippet_notice: Option<String>,
     pub host_notice: Option<String>,
     /// Message shown by the modal `AppMode::Notice` popup (e.g. a connect error).
@@ -462,6 +482,14 @@ pub struct App {
     pub audit_scroll: usize,
     pub agent_info: Option<crate::ssh::agent::AgentInfo>,
     agent_info_updated: std::time::Instant,
+    /// Certificate snapshots keyed by the cert path exactly as stored/typed
+    /// (no tilde expansion — the key must match on both the lookup and the
+    /// refresh side). Refreshed on keys-tab entry, identity save, and cert
+    /// path edits; renderers only read, so `ssh-keygen` never runs per frame.
+    pub cert_statuses: std::collections::HashMap<String, crate::ssh::cert::CertStatus>,
+    /// Cert path the form detail was last probed for. Guards the per-keystroke
+    /// refresh in the identity form: only a *changed* path re-runs ssh-keygen.
+    cert_probed_path: String,
     pub tunnels: Vec<crate::store::Tunnel>,
     pub tunnel_selected: usize,
     pub tunnel_form: Option<TunnelFormEdit>,
@@ -853,6 +881,7 @@ impl App {
             },
         );
         app.profile = Some(paths);
+        app.refresh_profile_count();
         if !keyring_available {
             app.host_notice =
                 Some("OS keyring unavailable. Using credentials.json fallback.".into());
@@ -899,6 +928,11 @@ impl App {
             mode: AppMode::Normal,
             config,
             profile: None,
+            profile_picker: None,
+            pending_profile: None,
+            pending_transfer: None,
+            profile_return_mode: AppMode::Normal,
+            profile_count: 1,
             tag_filters: Vec::new(),
             tag_filter_selected: 0,
             watcher_rx: None,
@@ -919,6 +953,7 @@ impl App {
             group_field_picker: None,
             tunnel_host_picker: None,
             session_picker: None,
+            auth_modal: None,
             push_key_host_picker: None,
             push_key_identity_picker: None,
             import_prompt: None,
@@ -942,6 +977,8 @@ impl App {
             snippet_manage_selected: 0,
             snippet_form: None,
             snippet_picker: None,
+            ghost_dismissed_for: None,
+            ghost_host_cache: std::cell::RefCell::new(None),
             snippet_notice: None,
             host_notice: None,
             notice_popup: None,
@@ -1038,6 +1075,8 @@ impl App {
             audit_scroll: 0,
             agent_info: None,
             agent_info_updated: std::time::Instant::now() - std::time::Duration::from_secs(60),
+            cert_statuses: std::collections::HashMap::new(),
+            cert_probed_path: String::new(),
             tunnels: Vec::new(),
             tunnel_selected: 0,
             tunnel_form: None,
@@ -1057,7 +1096,7 @@ impl App {
         }
     }
 
-    pub fn set_watcher_rx(&mut self, rx: Receiver<WatchEvent>) {
+    pub fn set_watcher_rx(&mut self, rx: crate::watcher::ConfigWatcher) {
         self.watcher_rx = Some(rx);
     }
 
