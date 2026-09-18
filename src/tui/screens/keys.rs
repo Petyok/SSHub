@@ -185,12 +185,17 @@ pub fn render_keys(frame: &mut Frame, area: Rect, app: &App) {
 
         let is_selected = i == app.identity_selected;
         let card = Rect::new(card_x, y, card_w, CARD_H);
+        let cert = identity
+            .certificate
+            .as_ref()
+            .and_then(|p| app.cert_statuses.get(&p.to_string_lossy().into_owned()));
         render_card(
             &mut layer,
             card,
             identity,
             is_selected,
             agent,
+            cert,
             CardStyles::of(theme, card),
         );
         // The card drew its frame in the solid fallback of whichever of the two
@@ -248,6 +253,7 @@ fn render_card(
     identity: &Identity,
     selected: bool,
     agent: Option<&AgentInfo>,
+    cert: Option<&crate::ssh::cert::CertStatus>,
     styles: CardStyles,
 ) {
     let (x, y, w) = (card.x, card.y, card.width);
@@ -340,14 +346,32 @@ fn render_card(
         buf.set_string(inner_x, y + 4, dot, status_style);
         buf.set_string(inner_x + 1, y + 4, label, status_style);
 
+        // Certificate badge after the passphrase indicator (same 2-col gap,
+        // same fit check): principals and validity at a glance, with the
+        // unhealthy states in the missing colour so they read as warnings.
+        let mut after = inner_x + 1 + label.chars().count() as u16;
         if identity.has_password {
             // Passphrase indicator, placed after the status label (whose width
             // varies: " loaded" vs " not loaded") with a 2-col gap, if it fits.
-            let pw_x = inner_x + 1 + label.chars().count() as u16 + 2;
+            let pw_x = after + 2;
             let pw_text = "● passphrase";
             if pw_x + pw_text.chars().count() as u16 <= inner_x + inner_w {
                 let pw_style = styles.on_card(Style::default().fg(styles.credential), selected);
                 buf.set_string(pw_x, y + 4, pw_text, pw_style);
+                after = pw_x + pw_text.chars().count() as u16;
+            }
+        }
+        if let Some(status) = cert {
+            let text = status.badge_text();
+            let cert_x = after + 2;
+            if cert_x + text.chars().count() as u16 <= inner_x + inner_w {
+                let color = if status.badge == crate::ssh::cert::CertBadge::Valid {
+                    styles.loaded
+                } else {
+                    styles.missing
+                };
+                let cert_style = styles.on_card(Style::default().fg(color), selected);
+                buf.set_string(cert_x, y + 4, &text, cert_style);
             }
         }
     } else {
@@ -630,6 +654,7 @@ mod tests {
             &id,
             false,
             None,
+            None,
             test_styles(),
         );
 
@@ -657,6 +682,7 @@ mod tests {
             &id,
             false,
             None,
+            None,
             test_styles(),
         );
 
@@ -672,5 +698,76 @@ mod tests {
             row_text(&buf, 4, CARD_W).contains("password set"),
             "row4: expected password status"
         );
+    }
+
+    fn cert_identity() -> Identity {
+        Identity {
+            id: 7,
+            name: "deploy-cert".into(),
+            username: Some("alice".into()),
+            private_key: Some(PathBuf::from("/home/u/.ssh/id_ed25519")),
+            certificate: Some(PathBuf::from("/home/u/.ssh/id_ed25519-cert.pub")),
+            has_password: false,
+        }
+    }
+
+    fn cert_status(
+        badge: crate::ssh::cert::CertBadge,
+        principals: &[&str],
+    ) -> crate::ssh::cert::CertStatus {
+        // Oracle: hand-built snapshots — the card renders whatever snapshot it
+        // is given, so the badge contract is pinned without running ssh-keygen.
+        crate::ssh::cert::CertStatus {
+            badge,
+            key_id: "test-key-id".into(),
+            principals: principals.iter().map(|s| s.to_string()).collect(),
+            valid_from: Some("2024-01-01T00:00:00".into()),
+            valid_to: Some("2030-01-01T00:00:00".into()),
+            always_valid: false,
+        }
+    }
+
+    fn render_cert_card(status: &crate::ssh::cert::CertStatus) -> String {
+        let mut buf = Buffer::empty(Rect::new(0, 0, CARD_W, CARD_H));
+        render_card(
+            &mut buf,
+            Rect::new(0, 0, CARD_W, CARD_H),
+            &cert_identity(),
+            false,
+            None,
+            Some(status),
+            test_styles(),
+        );
+        row_text(&buf, 4, CARD_W)
+    }
+
+    #[test]
+    fn cert_badge_shows_valid_with_principal_and_expiry() {
+        let row = render_cert_card(&cert_status(crate::ssh::cert::CertBadge::Valid, &["alice"]));
+        assert!(row.contains("cert alice→2030-01-01"), "row: {row:?}");
+    }
+
+    #[test]
+    fn cert_badge_shows_expired_state() {
+        let row = render_cert_card(&cert_status(
+            crate::ssh::cert::CertBadge::Expired,
+            &["alice"],
+        ));
+        assert!(row.contains("cert EXPIRED"), "row: {row:?}");
+    }
+
+    #[test]
+    fn cert_badge_shows_mismatch_state() {
+        let row = render_cert_card(&cert_status(
+            crate::ssh::cert::CertBadge::Mismatch,
+            &["alice"],
+        ));
+        assert!(row.contains("MISMATCH"), "row: {row:?}");
+    }
+
+    #[test]
+    fn cert_badge_shows_missing_state() {
+        let row = render_cert_card(&cert_status(crate::ssh::cert::CertBadge::Missing, &[]));
+        assert!(row.contains("cert missing"), "row: {row:?}");
     }
 }
