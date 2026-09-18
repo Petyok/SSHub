@@ -24,6 +24,21 @@ All notable changes to SSHub are documented in this file.
   (22/off/ssh) migrate to `NULL` so long-standing untouched hosts start
   inheriting, while genuinely custom values are preserved. Tags/favorites
   never inherit, and nothing rewrites `~/.ssh/config`.
+- **Hardware security-key badges on the keys screen** (issue #80) - identities
+  whose key path carries the `ssh-keygen -t *-sk` `-sk`/`_sk` marker now show
+  `ed25519-sk`/`ecdsa-sk` (generic `sk` for unfamiliar bases) badges instead of
+  the base algorithm, so hardware-backed keys are distinguishable at a glance.
+  `ml-dsa` filenames no longer degrade to the `dsa` badge. Connect-time
+  presence/PIN handling stays deferred to the hardware PoC.
+- **SSH certificates are first-class on identities** (issue #75) - an identity
+  can carry a certificate path (identity form, `sshub identity add/edit`, same
+  column the importer already filled). The keys tab badges each certificate
+  identity with its principals and validity (`cert alice→2030-01-01`,
+  `cert EXPIRED`, `cert missing`, …), the identity form shows the full
+  `ssh-keygen -L` detail (key id, principals, validity window) under the
+  certificate row, `ssh-add` receives the cert alongside the key, and a
+  `does not match the private key` warning appears when the cert was not
+  issued for that key. Issuing certs and auto-renewal stay out of scope.
 
 ## [0.16.0] - 2026-09-05
 
