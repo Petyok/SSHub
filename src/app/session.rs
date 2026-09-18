@@ -82,33 +82,6 @@ impl App {
             return Ok(());
         }
 
-        // Accept-changed-host-key flow: when a session has exited because the
-        // server's host key changed, `a` purges the stale known_hosts entry and
-        // reconnects (which then accept-new's the current key). Any other key
-        // falls through to the normal "press any key to close".
-        if matches!(key.code, KeyCode::Char('a')) {
-            let accept = self.active_session().map(|s| {
-                (
-                    s.phase.is_terminal() && s.host_key_changed(),
-                    s.known_hosts_spec(),
-                    s.display_name.clone(),
-                )
-            });
-            if let Some((true, spec, name)) = accept {
-                self.close_active_session();
-                if let Some(spec) = spec {
-                    let _ = std::process::Command::new("ssh-keygen")
-                        .args(["-R", &spec])
-                        .output();
-                }
-                if let Some(idx) = self.hosts.iter().position(|h| h.name() == name) {
-                    let entry = self.hosts[idx].clone();
-                    self.connect_host_entry(entry)?;
-                }
-                return Ok(());
-            }
-        }
-
         // Capture self.terminal_area.height before we take a mutable borrow
         // on `session` — borrowck won't let us re-read self after that.
         let body_rows = self.terminal_area.height.saturating_sub(2).max(1) as usize;
@@ -238,6 +211,7 @@ impl App {
     /// of a session that keeps rendering behind it, so that case counts.
     pub(crate) fn session_is_rendered(&self) -> bool {
         matches!(self.mode, AppMode::Connecting | AppMode::Session)
+            || self.mode == AppMode::AuthPrompt
             || self.session_picker_over_session()
             || self.snippet_picker_over_session()
     }

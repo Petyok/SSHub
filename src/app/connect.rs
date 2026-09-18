@@ -27,7 +27,7 @@ impl App {
         // effective port/ProxyJump/transport/forwarding — not just the stored
         // host row. A host-level credential is sent at `password:`-style
         // prompts; an identity-level credential at `Enter passphrase for …`.
-        // The Session itself watches the PTY screen and types it once.
+        // The interactive askpass channel delivers it only to its prompt class.
         let resolved = match entry.managed() {
             Some(m) => Some(self.store.resolve_connection(m)?),
             None => None,
@@ -36,11 +36,9 @@ impl App {
         let (pending_secret, credential_diag): (Option<crate::session::PendingSecret>, String) =
             resolve_pending_secret(&entry, effective_identity, self.password_store.as_ref());
 
-        // Build ssh argv. The session hands a stored secret to ssh via
-        // SSH_ASKPASS. When a secret is present, auto-accept a genuinely new
-        // host key: otherwise ssh (with SSH_ASKPASS_REQUIRE=force) would ask
-        // the askpass helper to confirm the fingerprint, get the password back
-        // instead of "yes", and deadlock. Changed keys are still refused.
+        // Interactive SSH asks the TUI before trusting a new host key. The
+        // argv itself comes from the resolved (group-inherited) connection
+        // when the entry is a managed host.
         let base_argv = match (entry.managed(), resolved.as_ref()) {
             (Some(m), Some(r)) => resolved_session_argv(m, r),
             _ => session_argv_for_entry(&entry),
@@ -140,6 +138,12 @@ impl App {
 
             match crate::session::Session::spawn(config, rows, cols, None) {
                 Ok(mut session) => {
+                    if let Some(auth) = session.auth.as_mut() {
+                        auth.host_id = entry.managed_id();
+                        auth.identity_id = entry
+                            .managed()
+                            .and_then(|m| m.identity.as_ref().map(|i| i.id));
+                    }
                     let mut log_path = None;
                     if log_enabled {
                         match self.runtime_data_dir() {

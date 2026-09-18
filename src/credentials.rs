@@ -44,21 +44,31 @@ impl PasswordStore for NamespacedPasswordStore {
 }
 
 pub fn check_keyring_available() -> bool {
-    let entry = match keyring::Entry::new(SERVICE, "sshub-probe-availability") {
-        Ok(entry) => entry,
-        Err(_) => return false,
-    };
-    match entry.get_password() {
-        Ok(_) => true,
-        Err(keyring::Error::NoEntry) => true,
-        Err(keyring::Error::PlatformFailure(e)) => {
-            let err_str = e.to_string();
-            !(err_str.contains("org.freedesktop.secrets")
-                || err_str.contains("ServiceUnknown")
-                || err_str.contains("not provided by any .service files"))
-        }
-        Err(_) => false,
+    store_available(&OsKeyring)
+}
+
+/// Whether `store` can actually hold a secret: write a unique probe entry,
+/// read it back, and remove it. A read-only probe cannot see the failure that
+/// matters here — with no session bus (`env -i`, no `DBUS_SESSION_BUS_ADDRESS`)
+/// `get_password` fails with a dbus-autolaunch error no needle list matches,
+/// so the old check reported `true`, the app picked the OS keyring, and every
+/// remember-me write failed closed. Asking the store to do the real operation
+/// sees it. The account is unique per call so concurrent startups never share it.
+fn store_available(store: &dyn PasswordStore) -> bool {
+    let account = format!(
+        "sshub-probe-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default()
+    );
+    if store.set(&account, "probe").is_err() {
+        return false;
     }
+    let ok = matches!(store.get(&account), Ok(Some(value)) if value == "probe");
+    let _ = store.delete(&account);
+    ok
 }
 
 pub fn migrate_fallback_to_keyring(path: &std::path::Path) -> Result<()> {
@@ -222,6 +232,67 @@ pub fn host_key(id: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Oracle: observed on a host with no session bus (`env -i`, no
+    /// `DBUS_SESSION_BUS_ADDRESS`, probed 2026-09-18). There `OsKeyring::set`
+    /// fails with "Platform secure storage failure: DBus error: Using X11 for
+    /// dbus-daemon autolaunch was disabled at compile time, set your
+    /// DBUS_SESSION_BUS_ADDRESS instead: ...", and `get` fails the same way —
+    /// yet `check_keyring_available` still reported `true`, so the app picked
+    /// the OS keyring and every remember-me write failed closed.
+    struct UnreachableKeyring;
+
+    impl PasswordStore for UnreachableKeyring {
+        fn get(&self, _key: &str) -> Result<Option<String>> {
+            Err(anyhow::anyhow!(
+                "keyring: Platform secure storage failure: DBus error: Using X11 for dbus-daemon autolaunch was disabled at compile time, set your DBUS_SESSION_BUS_ADDRESS instead"
+            ))
+        }
+        fn set(&self, _key: &str, _password: &str) -> Result<()> {
+            Err(anyhow::anyhow!(
+                "Platform secure storage failure: DBus error: Using X11 for dbus-daemon autolaunch was disabled at compile time, set your DBUS_SESSION_BUS_ADDRESS instead"
+            ))
+        }
+        fn delete(&self, _key: &str) -> Result<()> {
+            Err(anyhow::anyhow!(
+                "Platform secure storage failure: DBus error: Using X11 for dbus-daemon autolaunch was disabled at compile time, set your DBUS_SESSION_BUS_ADDRESS instead"
+            ))
+        }
+    }
+
+    #[derive(Default)]
+    struct WorkingStore {
+        map: std::sync::Mutex<HashMap<String, String>>,
+    }
+
+    impl PasswordStore for WorkingStore {
+        fn get(&self, key: &str) -> Result<Option<String>> {
+            Ok(self.map.lock().unwrap().get(key).cloned())
+        }
+        fn set(&self, key: &str, password: &str) -> Result<()> {
+            self.map
+                .lock()
+                .unwrap()
+                .insert(key.to_string(), password.to_string());
+            Ok(())
+        }
+        fn delete(&self, key: &str) -> Result<()> {
+            self.map.lock().unwrap().remove(key);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn probe_reports_unwritable_store_as_unavailable() {
+        assert!(
+            !store_available(&UnreachableKeyring),
+            "env -i oracle: writes fail, so the store must not be selected"
+        );
+    }
+
+    #[test]
+    fn probe_reports_working_store_as_available() {
+        assert!(store_available(&WorkingStore::default()));
+    }
 
     #[test]
     fn test_file_password_store() {

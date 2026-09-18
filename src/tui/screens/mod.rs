@@ -1,4 +1,5 @@
 pub mod audit;
+pub mod auth;
 pub mod broadcast;
 pub mod field_picker;
 pub mod group_form;

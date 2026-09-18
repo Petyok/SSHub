@@ -20,35 +20,50 @@ pub fn resolve_pending_secret(
         );
     };
 
-    if managed.has_password {
-        let key = crate::credentials::host_key(managed.id);
-        return match password_store.get(&key) {
-            Ok(Some(pw)) => (
+    // The remember-me modal saves the secret without touching the host row,
+    // so a set flag cannot be required: presence of the secret itself
+    // decides. The flag only tunes the diagnostic. Falls through to the
+    // identity below when no host secret exists.
+    let key = crate::credentials::host_key(managed.id);
+    match password_store.get(&key) {
+        Ok(Some(pw)) => {
+            return (
                 Some(crate::session::PendingSecret::Password(pw)),
-                format!("auth: using stored password ({key})"),
-            ),
-            Ok(None) => (
+                if managed.has_password {
+                    format!("auth: using stored password ({key})")
+                } else {
+                    format!("auth: using stored password ({key}) though the row flag is unset")
+                },
+            );
+        }
+        Ok(None) if managed.has_password => {
+            return (
                 None,
                 format!(
                     "auth: has_password=true but keyring entry {key} is empty — ssh will prompt"
                 ),
-            ),
-            Err(e) => (
+            );
+        }
+        Err(e) if managed.has_password => {
+            return (
                 None,
                 format!("auth: keyring lookup failed for {key}: {e:#} — ssh will prompt"),
-            ),
-        };
+            );
+        }
+        Ok(None) | Err(_) => {}
     }
 
     if let Some(identity) = effective_identity.or(managed.identity.as_ref()) {
-        if identity.has_password {
-            let key = crate::credentials::identity_key(identity.id);
-            // A secret on an identity WITH a key unlocks that key (passphrase);
-            // on a keyless identity it's a shared login password, letting many
-            // hosts reuse one user+password credential.
-            let has_key = identity.private_key.is_some();
-            return match password_store.get(&key) {
-                Ok(Some(pw)) => (
+        // Same remember-me gap as the host branch above: the modal saves an
+        // identity secret without setting its flag.
+        let key = crate::credentials::identity_key(identity.id);
+        // A secret on an identity WITH a key unlocks that key (passphrase);
+        // on a keyless identity it's a shared login password, letting many
+        // hosts reuse one user+password credential.
+        let has_key = identity.private_key.is_some();
+        match password_store.get(&key) {
+            Ok(Some(pw)) => {
+                return (
                     Some(if has_key {
                         crate::session::PendingSecret::Passphrase(pw)
                     } else {
@@ -58,18 +73,23 @@ pub fn resolve_pending_secret(
                         "auth: using stored {} ({key})",
                         if has_key { "passphrase" } else { "password" }
                     ),
-                ),
-                Ok(None) => (
+                );
+            }
+            Ok(None) if identity.has_password => {
+                return (
                     None,
                     format!(
                         "auth: identity has_password=true but keyring entry {key} is empty — ssh will prompt"
                     ),
-                ),
-                Err(e) => (
+                );
+            }
+            Err(e) if identity.has_password => {
+                return (
                     None,
                     format!("auth: keyring lookup failed for {key}: {e:#} — ssh will prompt"),
-                ),
-            };
+                );
+            }
+            Ok(None) | Err(_) => {}
         }
     }
 
@@ -84,32 +104,39 @@ pub fn resolve_pending_secret_for_managed(
     managed: &crate::store::ManagedHost,
     password_store: &dyn crate::credentials::PasswordStore,
 ) -> (Option<crate::session::PendingSecret>, String) {
-    if managed.has_password {
-        let key = crate::credentials::host_key(managed.id);
-        return match password_store.get(&key) {
-            Ok(Some(pw)) => (
+    // Same remember-me gap as the session lookup above: secret presence
+    // decides, the row flag only tunes the diagnostic.
+    let key = crate::credentials::host_key(managed.id);
+    match password_store.get(&key) {
+        Ok(Some(pw)) => {
+            return (
                 Some(crate::session::PendingSecret::Password(pw)),
                 format!("auth: using stored password ({key})"),
-            ),
-            Ok(None) => (
+            );
+        }
+        Ok(None) if managed.has_password => {
+            return (
                 None,
                 format!(
                     "auth: has_password=true but keyring entry {key} is empty — tunnel cannot prompt"
                 ),
-            ),
-            Err(e) => (
+            );
+        }
+        Err(e) if managed.has_password => {
+            return (
                 None,
                 format!("auth: keyring lookup failed for {key}: {e:#}"),
-            ),
-        };
+            );
+        }
+        Ok(None) | Err(_) => {}
     }
 
     if let Some(identity) = managed.identity.as_ref() {
-        if identity.has_password {
-            let key = crate::credentials::identity_key(identity.id);
-            let has_key = identity.private_key.is_some();
-            return match password_store.get(&key) {
-                Ok(Some(pw)) => (
+        let key = crate::credentials::identity_key(identity.id);
+        let has_key = identity.private_key.is_some();
+        match password_store.get(&key) {
+            Ok(Some(pw)) => {
+                return (
                     Some(if has_key {
                         crate::session::PendingSecret::Passphrase(pw)
                     } else {
@@ -119,18 +146,23 @@ pub fn resolve_pending_secret_for_managed(
                         "auth: using stored {} ({key})",
                         if has_key { "passphrase" } else { "password" }
                     ),
-                ),
-                Ok(None) => (
+                );
+            }
+            Ok(None) if identity.has_password => {
+                return (
                     None,
                     format!(
                         "auth: identity has_password=true but keyring entry {key} is empty — tunnel cannot prompt"
                     ),
-                ),
-                Err(e) => (
+                );
+            }
+            Err(e) if identity.has_password => {
+                return (
                     None,
                     format!("auth: keyring lookup failed for {key}: {e:#}"),
-                ),
-            };
+                );
+            }
+            Ok(None) | Err(_) => {}
         }
     }
 
@@ -218,16 +250,21 @@ pub fn prepare_cli_connect_argv(
     }
 }
 
-/// Apply connect-time tweaks to a bare session argv: verbose `ssh` logging and
-/// `StrictHostKeyChecking=accept-new` when a stored credential is present.
+/// Interactive SSH uses explicit host trust and at most three auth attempts.
 pub fn prepare_session_connect_argv(mut argv: Vec<String>, has_stored_secret: bool) -> Vec<String> {
     match argv.first().map(String::as_str) {
         Some("ssh") => {
             argv.insert(1, "-v".into());
-            if has_stored_secret {
-                argv.insert(1, "-o".into());
-                argv.insert(2, "StrictHostKeyChecking=accept-new".into());
-            }
+            argv.splice(
+                1..1,
+                [
+                    "-o",
+                    "StrictHostKeyChecking=ask",
+                    "-o",
+                    "NumberOfPasswordPrompts=3",
+                ]
+                .map(String::from),
+            );
             argv
         }
         Some("mosh") if has_stored_secret => crate::ssh::inject_mosh_ssh_accept_new(argv),

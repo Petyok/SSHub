@@ -6,6 +6,10 @@ impl App {
     /// (not per-key), so multi-line content — e.g. a private key — no longer
     /// fires Enter/save mid-field and spills the rest as commands.
     pub fn handle_paste(&mut self, text: &str) -> Result<()> {
+        if self.mode == AppMode::AuthPrompt {
+            self.paste_auth(text);
+            return Ok(());
+        }
         // Embedded session: forward the paste straight to the remote PTY.
         if matches!(self.mode, AppMode::Session | AppMode::Connecting) {
             if let Some(s) = self.active_session_mut() {

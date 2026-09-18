@@ -5,7 +5,10 @@
 //! and renders the terminal grid fullscreen inside the existing ratatui app.
 
 pub mod askpass;
+pub mod askpass_channel;
+pub mod auth_prompt;
 pub mod history;
+pub mod interactive_auth;
 pub mod keys;
 pub mod parser;
 pub mod pty;
@@ -167,6 +170,7 @@ pub struct Session {
     _askpass: Option<askpass::AskpassSecret>,
     /// Whether the askpass path is active (auth handled invisibly).
     use_askpass: bool,
+    pub auth: Option<interactive_auth::InteractiveAuth>,
     /// True once we've seen real bytes from ssh (i.e. the remote actually
     /// responded). Distinguishes a genuine connection from the timeout
     /// fail-open reveal, so the header never claims "connected" while ssh is
@@ -249,6 +253,13 @@ impl Session {
         // Reserve 1 row for header + 1 row for footer; ensure non-zero PTY.
         let pty_rows = rows.saturating_sub(2).max(1);
         let pty_cols = cols.max(1);
+        let interactive = config.key_push_identity.is_none()
+            && matches!(config.argv.first().map(String::as_str), Some("ssh"));
+        let auth = if interactive {
+            Some(interactive_auth::InteractiveAuth::new()?)
+        } else {
+            None
+        };
 
         // Prefer handing the secret to ssh via SSH_ASKPASS so the passphrase/
         // password prompt never shows on screen. Falls back to typing into the
@@ -257,7 +268,10 @@ impl Session {
         let mut askpass = None;
         let mut use_askpass = false;
         let mut askpass_error = None;
-        if let Some(secret) = config.pending_secret.as_ref() {
+        if let Some(auth) = auth.as_ref() {
+            env = auth.channel_env(&askpass::helper_exe()?);
+            use_askpass = true;
+        } else if let Some(secret) = config.pending_secret.as_ref() {
             match askpass::helper_exe() {
                 Ok(exe) => {
                     if let Ok(guard) = askpass::AskpassSecret::new(secret.value()) {
@@ -306,6 +320,7 @@ impl Session {
             diagnostics,
             _askpass: askpass,
             use_askpass,
+            auth,
             connected: false,
             debug_log: String::new(),
             host_key_fingerprint: None,
@@ -623,6 +638,51 @@ impl Session {
         self.reveal_on_timeout();
         // Re-check after reveal/timeout transitions (a reveal is not auth evidence).
         self.maybe_detect_connected();
+        if self.phase.is_terminal() {
+            if let Some(auth) = self.auth.as_mut() {
+                auth.finish(self.connected);
+            }
+            self.pending_secret = None;
+            self.config.pending_secret = None;
+            self._askpass = None;
+        } else if self.connected {
+            // Authenticated: the askpass listener has served its purpose, so
+            // close it now instead of holding the socket until session exit.
+            // Skips the poll/cancelled path below on purpose: a closed channel
+            // reads as cancelled, and that would kill a healthy child.
+            if let Some(auth) = self.auth.as_mut() {
+                auth.finish(true);
+            }
+            // The PTY-typed copy must go too: with askpass active the secret
+            // is delivered invisibly and `maybe_send_pending_secret` never
+            // fires, so without this the plaintext lingers after connect.
+            self.pending_secret = None;
+            // Duplicating a tab must resolve credentials again, not retain a
+            // second long-lived copy in SessionConfig.
+            self.config.pending_secret = None;
+        } else if let Some(auth) = self.auth.as_mut() {
+            auth.poll(&mut self.pending_secret);
+            if auth.cancelled() {
+                self.cancel_authentication();
+            }
+            // Duplicating a tab must resolve credentials again, not retain a
+            // second long-lived copy in SessionConfig.
+            self.config.pending_secret = None;
+        }
+    }
+
+    /// Close the helper first, then kill the child; keep the ordinary failure screen.
+    pub fn cancel_authentication(&mut self) {
+        if let Some(auth) = self.auth.as_mut() {
+            auth.cancel();
+        }
+        self.pending_secret = None;
+        self.config.pending_secret = None;
+        self.runtime.terminate_child();
+        self.phase = SessionPhase::Exited {
+            status: "authentication cancelled".into(),
+            at: Instant::now(),
+        };
     }
 
     /// Write the emulator's answers to terminal status queries back into the
@@ -821,6 +881,40 @@ impl Session {
             || (log.contains("host key for") && log.contains("has changed"))
     }
 
+    /// Use OpenSSH's actual offending file and lookup name, not ~/.ssh defaults
+    /// or the display address (HostKeyAlias and custom ports can differ).
+    pub fn changed_key_target(&self) -> Option<(String, std::path::PathBuf)> {
+        let mut specs = self.debug_log.lines().filter_map(|line| {
+            line.strip_prefix("Host key for ")?
+                .split_once(" has changed")
+                .map(|(host, _)| host)
+        });
+        let spec = specs.next()?;
+        if spec.is_empty()
+            || spec.starts_with('-')
+            || spec.contains([',', '*', '?'])
+            || spec.chars().any(|c| c.is_whitespace() || c.is_control())
+            || specs.any(|other| other != spec)
+        {
+            return None;
+        }
+        let mut files = self.debug_log.lines().filter_map(|line| {
+            let line = line.strip_prefix("Offending ")?;
+            let (_, location) = line.split_once(" key in ")?;
+            let (file, row) = location.rsplit_once(':')?;
+            if row.parse::<usize>().ok()? == 0 {
+                return None;
+            }
+            let path = std::path::PathBuf::from(file);
+            path.is_absolute().then_some(path)
+        });
+        let file = files.next()?;
+        if files.any(|other| other != file) {
+            return None;
+        }
+        Some((spec.to_owned(), file))
+    }
+
     /// The known_hosts host spec to purge when accepting a changed key —
     /// `[addr]:port` for a non-default port, plain `addr` for port 22. `None`
     /// when the remote address is unknown.
@@ -887,10 +981,16 @@ impl Session {
         let lower = line.to_ascii_lowercase();
 
         let (matched, kind) = match secret {
-            PendingSecret::Password(_) => (ends_with_prompt(&lower, PASSWORD_NEEDLES), "password"),
-            PendingSecret::Passphrase(_) => {
-                (ends_with_prompt(&lower, PASSPHRASE_NEEDLES), "passphrase")
-            }
+            PendingSecret::Password(_) => (
+                auth_prompt::PromptClass::classify(&lower) == auth_prompt::PromptClass::Password
+                    && ends_with_prompt(&lower, PASSWORD_NEEDLES),
+                "password",
+            ),
+            PendingSecret::Passphrase(_) => (
+                auth_prompt::PromptClass::classify(&lower) == auth_prompt::PromptClass::Passphrase
+                    && ends_with_prompt(&lower, PASSPHRASE_NEEDLES),
+                "passphrase",
+            ),
         };
 
         if !matched {
@@ -993,6 +1093,12 @@ impl Session {
 
     /// Write raw bytes (already-encoded keystroke) to the PTY.
     pub fn write(&mut self, bytes: &[u8]) -> Result<()> {
+        // Channel authentication owns all user input until the actual SSH
+        // success marker, including the gaps between helper invocations.
+        // Emulator protocol replies use runtime.write directly and still flow.
+        if self.auth.is_some() && !self.connected {
+            return Ok(());
+        }
         self.runtime.write(bytes)
     }
 
@@ -1005,6 +1111,9 @@ impl Session {
     /// leader. If the remote hasn't asked for bracketed paste, send raw so the
     /// markers don't leak in as literal text.
     pub fn write_paste(&mut self, text: &[u8]) -> Result<()> {
+        if self.auth.is_some() && !self.connected {
+            return Ok(());
+        }
         let payload = encode_paste(text, self.parser.screen().bracketed_paste());
         self.runtime.write(&payload)
     }
@@ -1403,6 +1512,87 @@ mod prompt_tests {
     use super::*;
 
     #[test]
+    fn auth_changed_key_parser_requires_unambiguous_exact_target() {
+        let config = SessionConfig {
+            argv: vec!["sh".into(), "-c".into(), "sleep 30".into()],
+            display_name: "offline".into(),
+            meta: SessionMeta::default(),
+            pending_secret: None,
+            key_push_identity: None,
+            host_name: "offline".into(),
+        };
+        let mut session = Session::spawn(config, 24, 80, None).unwrap();
+        session.debug_log = "Offending ED25519 key in /tmp/custom known_hosts:7\nHost key for [alias]:2222 has changed and you have requested strict checking.\n".into();
+        assert_eq!(
+            session.changed_key_target(),
+            Some(("[alias]:2222".into(), "/tmp/custom known_hosts".into()))
+        );
+        for log in [
+            "Offending ED25519 key in relative:7\nHost key for alias has changed\n",
+            "Offending ED25519 key in /tmp/keys:0\nHost key for alias has changed\n",
+            "Offending ED25519 key in /tmp/keys:1\nHost key for alias has changed\nHost key for other has changed\n",
+            "Offending ED25519 key in /tmp/keys:1\nOffending RSA key in /tmp/other:2\nHost key for alias has changed\n",
+        ] {
+            session.debug_log = log.into();
+            assert!(session.changed_key_target().is_none(), "ambiguous or invalid target must not be repaired");
+        }
+    }
+
+    #[test]
+    fn auth_input_guard_preserves_terminal_protocol_replies() {
+        // The DSR 5 answer (`ESC[0n`) is a fixed 4 bytes, so `dd count=4` is
+        // exact, not a guess — deliberately no `-icanon min/time` bound here
+        // (cf. the variable-length CPR helper below): a child-side read
+        // timeout would turn a merely late reply into a silent early exit
+        // and an empty `od` print, i.e. a false red. The poll deadline below
+        // is the only bound, and it reports screen state so the next failure
+        // says whether the query, the reply, or the child went missing.
+        // Explicit `/bin/sh`: bare `sh` resolves via PATH (bash on macOS,
+        // dash on Ubuntu) — the script is POSIX either way, but the spawn
+        // must not depend on the runner's PATH.
+        let config = SessionConfig {
+            argv: vec!["/bin/sh".into(), "-c".into(), "stty raw -echo; printf '\\033[5n'; dd bs=1 count=4 2>/dev/null | od -An -tx1; sleep 30".into()],
+            display_name: "offline".into(), meta: SessionMeta::default(),
+            pending_secret: None, key_push_identity: None, host_name: "offline".into(),
+        };
+        let mut session = Session::spawn(config, 24, 80, None).unwrap();
+        session.auth = Some(interactive_auth::InteractiveAuth::new().unwrap());
+        // 10s, not 3s: CI runners stall PTY spawn + shell startup far longer
+        // than a local box (cf. the 10s `tick_until` in app/auth.rs and the
+        // macOS-conditional watcher timeouts). The contract is unchanged —
+        // the query MUST be answered.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        // Match the hex bytes with the spacing squeezed out: GNU `od` prints
+        // ` 1b 5b 30 6e`, BSD `od` (macOS) pads to `  1b  5b  30  6e`, so a
+        // literal single-spaced needle failed every macOS run while Linux
+        // passed. Drain before testing, too — the pre-drain sample could
+        // assert on bytes it had not read yet.
+        let answered = |s: &Session| {
+            s.parser
+                .screen()
+                .contents()
+                .split_whitespace()
+                .collect::<String>()
+                .contains("1b5b306e")
+        };
+        loop {
+            session.drain();
+            if answered(&session) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "terminal status query was not answered, tail: {:?}, connected: {}, terminal: {}",
+                session.screen_tail_snippet(),
+                session.is_connected(),
+                session.phase.is_terminal(),
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(!session.is_connected());
+    }
+
+    #[test]
     fn mosh_running_alone_does_not_latch_connected() {
         let config = SessionConfig {
             argv: vec!["sh".into(), "-c".into(), "sleep 120".into()],
@@ -1422,6 +1612,105 @@ mod prompt_tests {
         // Running alone is not post-auth evidence (mosh has no ssh -v
         // marker): connected stays false until real evidence arrives.
         assert!(!s.is_connected());
+    }
+
+    #[test]
+    fn connected_session_tears_down_askpass_channel_without_cancelling() {
+        // A connected session must not hold its askpass listener socket until
+        // exit — but the closed channel must not read as cancellation and kill
+        // the child on the next drain.
+        let config = SessionConfig {
+            argv: vec!["sh".into(), "-c".into(), "sleep 120".into()],
+            display_name: "t".into(),
+            meta: SessionMeta::default(),
+            pending_secret: None,
+            key_push_identity: None,
+            host_name: "t".into(),
+        };
+        let mut s = Session::spawn(config, 24, 80, None).unwrap();
+        s.auth = Some(interactive_auth::InteractiveAuth::new().unwrap());
+        assert!(s.auth.as_ref().unwrap().channel_open());
+        let env = s
+            .auth
+            .as_ref()
+            .unwrap()
+            .channel_env(std::path::Path::new("unused"));
+        let get = |name: &str| env.iter().find(|(key, _)| key == name).unwrap().1.clone();
+        let path = std::path::PathBuf::from(get(askpass_channel::SOCKET_ENV));
+        let token = get(askpass_channel::TOKEN_ENV);
+        s.connected = true;
+        s.drain();
+        let auth = s.auth.as_ref().unwrap();
+        assert!(
+            !auth.channel_open(),
+            "askpass channel must close once connected"
+        );
+        assert!(auth.channel_env(std::path::Path::new("unused")).is_empty());
+        assert!(askpass_channel::request_answer(
+            &path,
+            &token,
+            "Password:",
+            Duration::from_secs(2),
+        )
+        .is_err());
+        assert!(
+            !matches!(s.phase, SessionPhase::Exited { .. }),
+            "a connected session must not be cancelled"
+        );
+        // A second drain must not cancel either: the closed channel still reads
+        // as `cancelled`, so the guard has to hold every time.
+        s.drain();
+        assert!(!matches!(s.phase, SessionPhase::Exited { .. }));
+    }
+
+    #[test]
+    fn stderr_is_siphoned_off_the_pty() {
+        // stdout must land on the PTY grid; stderr must be routed through the
+        // side FIFO into debug_log — never onto the grid.
+        let config = SessionConfig {
+            argv: vec![
+                "sh".into(),
+                "-c".into(),
+                "printf OUT_MARKER; printf ERR_MARKER 1>&2".into(),
+            ],
+            display_name: "t".into(),
+            meta: SessionMeta::default(),
+            pending_secret: None,
+            key_push_identity: None,
+            host_name: "t".into(),
+        };
+        let mut s = Session::spawn(config, 24, 80, None).unwrap();
+
+        // Pump the reader threads; both writes are tiny and immediate.
+        let mut got_err = false;
+        for _ in 0..200 {
+            s.drain();
+            got_err = s.debug_log().contains("ERR_MARKER");
+            let got_out = s.screen_tail_snippet().contains("OUT_MARKER");
+            if got_err && got_out {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        assert!(
+            got_err,
+            "stderr should be captured in debug_log, got {:?}",
+            s.debug_log()
+        );
+        assert!(
+            s.screen_tail_snippet().contains("OUT_MARKER"),
+            "stdout should be on the PTY grid, tail: {:?}",
+            s.screen_tail_snippet()
+        );
+        assert!(
+            !s.debug_log().contains("OUT_MARKER"),
+            "stdout must not leak into the debug log"
+        );
+        assert!(
+            !s.screen_tail_snippet().contains("ERR_MARKER"),
+            "stderr must not appear on the PTY grid"
+        );
     }
 
     #[test]
