@@ -14,28 +14,7 @@ impl LauncherStore {
     // --- host groups ---
 
     pub fn create_group(&self, group: &NewHostGroup) -> Result<HostGroup> {
-        let now = now_ts();
-        self.with_conn(|conn| {
-            conn.execute(
-                "INSERT INTO host_groups (name, sort_order, default_identity_id, parent_id, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![
-                    group.name,
-                    group.sort_order,
-                    group.default_identity_id,
-                    group.parent_id,
-                    now
-                ],
-            )?;
-            Ok(HostGroup {
-                id: conn.last_insert_rowid(),
-                name: group.name.clone(),
-                sort_order: group.sort_order,
-                default_identity_id: group.default_identity_id,
-                parent_id: group.parent_id,
-                reserved: false,
-            })
-        })
+        self.with_conn(|conn| create_group_on(conn, group))
     }
 
     pub fn get_group(&self, id: i64) -> Result<Option<HostGroup>> {
@@ -96,7 +75,6 @@ impl LauncherStore {
 
         self.get_group(id)
     }
-
     pub fn delete_group(&self, id: i64) -> Result<bool> {
         // Reserved groups (Favorites) can't be deleted.
         if let Some(g) = self.get_group(id)? {
@@ -106,37 +84,16 @@ impl LauncherStore {
         }
         let deleted = self.with_conn(|conn| {
             let tx = conn.unchecked_transaction()?;
-            conn.execute("DELETE FROM host_groups WHERE id = ?1", params![id])?;
-            let changed = conn.changes() > 0;
-            // The FK nulls hosts.group_id for hosts whose primary was this group,
-            // and CASCADE drops its membership rows — but a host may still belong
-            // to other groups. Recompute the primary from a remaining real
-            // membership so group_id doesn't desync from the membership set.
-            conn.execute(
-                "UPDATE hosts SET group_id = (
-                     SELECT m.group_id FROM host_group_memberships m
-                       JOIN host_groups g ON g.id = m.group_id
-                      WHERE m.host_id = hosts.id AND g.reserved = 0
-                      ORDER BY m.group_id LIMIT 1)
-                   WHERE group_id IS NULL",
-                [],
-            )?;
+            let deleted = delete_group_on(conn, id)?;
             tx.commit()?;
-            Ok(changed)
+            Ok(deleted)
         })?;
         Ok(deleted)
     }
 
     /// Id of the reserved Favorites group (auto-created by migrations).
     pub fn favorites_group_id(&self) -> Result<i64> {
-        self.with_conn(|conn| {
-            conn.query_row(
-                "SELECT id FROM host_groups WHERE reserved = 1 ORDER BY id LIMIT 1",
-                [],
-                |row| row.get(0),
-            )
-            .map_err(Into::into)
-        })
+        self.with_conn(favorites_group_id_on)
     }
 
     /// Replace all *non-reserved* group memberships for `host_id` with
@@ -173,16 +130,10 @@ impl LauncherStore {
     }
 
     /// Add `host_id` to `group_id` (idempotent) and materialize the inherited
-    /// identity. Used by the favourite toggle.
     pub fn add_host_to_group(&self, host_id: i64, group_id: i64) -> Result<()> {
         self.with_conn(|conn| {
             let tx = conn.unchecked_transaction()?;
-            conn.execute(
-                "INSERT OR IGNORE INTO host_group_memberships (host_id, group_id)
-                 VALUES (?1, ?2)",
-                params![host_id, group_id],
-            )?;
-            materialize_identity(conn, host_id)?;
+            add_host_to_group_on(conn, host_id, group_id)?;
             tx.commit()?;
             Ok(())
         })
@@ -202,62 +153,7 @@ impl LauncherStore {
     // --- hosts ---
 
     pub fn create_host(&self, host: &NewHost) -> Result<ManagedHost> {
-        reject_option_like("name", &host.name)?;
-        reject_option_like("address", &host.address)?;
-        if let Some(user) = &host.username {
-            reject_option_like("username", user)?;
-        }
-        let now = now_ts();
-        let tags_json = tags_to_json(&host.tags)?;
-        let source = host.source.as_str();
-
-        let id = self.with_conn(|conn| {
-            conn.execute(
-                // sort_order gets the next value after the current max so each
-                // new host is distinct; without this every host defaulted to 0
-                // and manual-mode reordering (which swaps sort_order values) was
-                // a permanent no-op.
-                "INSERT INTO hosts
-                    (name, label, address, port, group_id, identity_id, os_icon, tags, notes,
-                     proxy_jump, forward_agent, remote_command, source, has_password, username,
-                     session_logging, transport, sort_order, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                     ?16, ?17,
-                     (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM hosts), ?18, ?18)",
-                params![
-                    host.name,
-                    host.label,
-                    host.address,
-                    i64::from(host.port),
-                    host.group_id,
-                    host.identity_id,
-                    host.os_icon,
-                    tags_json,
-                    host.notes,
-                    host.proxy_jump,
-                    i64::from(host.forward_agent),
-                    host.remote_command,
-                    source,
-                    i64::from(host.has_password),
-                    host.username,
-                    host.session_logging.to_db(),
-                    host.transport.to_db(),
-                    now,
-                ],
-            )?;
-            let id = conn.last_insert_rowid();
-            // Keep the join table consistent for single-group creation.
-            if let Some(gid) = host.group_id {
-                conn.execute(
-                    "INSERT OR IGNORE INTO host_group_memberships (host_id, group_id)
-                     VALUES (?1, ?2)",
-                    params![id, gid],
-                )?;
-            }
-            Ok(id)
-        })?;
-
-        self.get_host(id)?.context("inserted host missing")
+        self.with_conn(|conn| create_host_on(conn, host))
     }
 
     pub fn get_host(&self, id: i64) -> Result<Option<ManagedHost>> {
@@ -467,10 +363,7 @@ impl LauncherStore {
             return Ok(DeleteHostOutcome::NotLauncher);
         }
 
-        let deleted = self.with_conn(|conn| {
-            conn.execute("DELETE FROM hosts WHERE id = ?1", params![id])?;
-            Ok(conn.changes() > 0)
-        })?;
+        let deleted = self.with_conn(|conn| delete_host_on(conn, id))?;
         if deleted {
             Ok(DeleteHostOutcome::Deleted)
         } else {
@@ -873,6 +766,168 @@ impl LauncherStore {
                 .map_err(Into::into)
         })
     }
+}
+/// Connection-level group insert for multi-statement transfers: the caller
+/// holds the transaction (see `store::transfer::apply_transfer_plan`).
+pub(super) fn create_group_on(
+    conn: &rusqlite::Connection,
+    group: &NewHostGroup,
+) -> Result<HostGroup> {
+    let now = now_ts();
+    conn.execute(
+        "INSERT INTO host_groups (name, sort_order, default_identity_id, parent_id, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+            group.name,
+            group.sort_order,
+            group.default_identity_id,
+            group.parent_id,
+            now
+        ],
+    )?;
+    Ok(HostGroup {
+        id: conn.last_insert_rowid(),
+        name: group.name.clone(),
+        sort_order: group.sort_order,
+        default_identity_id: group.default_identity_id,
+        parent_id: group.parent_id,
+        reserved: false,
+    })
+}
+
+/// Connection-level host insert + reload (caller holds the transaction).
+pub(super) fn create_host_on(conn: &rusqlite::Connection, host: &NewHost) -> Result<ManagedHost> {
+    reject_option_like("name", &host.name)?;
+    reject_option_like("address", &host.address)?;
+    if let Some(user) = &host.username {
+        reject_option_like("username", user)?;
+    }
+    let now = now_ts();
+    let tags_json = tags_to_json(&host.tags)?;
+    let source = host.source.as_str();
+    conn.execute(
+        // sort_order gets the next value after the current max so each
+        // new host is distinct; without this every host defaulted to 0
+        // and manual-mode reordering (which swaps sort_order values) was
+        // a permanent no-op.
+        "INSERT INTO hosts
+            (name, label, address, port, group_id, identity_id, os_icon, tags, notes,
+             proxy_jump, forward_agent, remote_command, source, has_password, username,
+             session_logging, transport, sort_order, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+             ?16, ?17,
+             (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM hosts), ?18, ?18)",
+        params![
+            host.name,
+            host.label,
+            host.address,
+            i64::from(host.port),
+            host.group_id,
+            host.identity_id,
+            host.os_icon,
+            tags_json,
+            host.notes,
+            host.proxy_jump,
+            i64::from(host.forward_agent),
+            host.remote_command,
+            source,
+            i64::from(host.has_password),
+            host.username,
+            host.session_logging.to_db(),
+            host.transport.to_db(),
+            now,
+        ],
+    )?;
+    let id = conn.last_insert_rowid();
+    // Keep the join table consistent for single-group creation.
+    if let Some(gid) = host.group_id {
+        conn.execute(
+            "INSERT OR IGNORE INTO host_group_memberships (host_id, group_id)
+             VALUES (?1, ?2)",
+            params![id, gid],
+        )?;
+    }
+    load_host_by_id(conn, id)?.context("inserted host missing")
+}
+
+/// Connection-level group join + identity materialization (caller holds the
+/// transaction).
+pub(super) fn add_host_to_group_on(
+    conn: &rusqlite::Connection,
+    host_id: i64,
+    group_id: i64,
+) -> Result<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO host_group_memberships (host_id, group_id)
+         VALUES (?1, ?2)",
+        params![host_id, group_id],
+    )?;
+    materialize_identity(conn, host_id)?;
+    Ok(())
+}
+
+/// Connection-level Favorites id (caller holds the transaction).
+pub(super) fn favorites_group_id_on(conn: &rusqlite::Connection) -> Result<i64> {
+    conn.query_row(
+        "SELECT id FROM host_groups WHERE reserved = 1 ORDER BY id LIMIT 1",
+        [],
+        |row| row.get(0),
+    )
+    .map_err(Into::into)
+}
+
+/// Connection-level environment restore (caller holds the transaction).
+/// `NewHost` carries no environment field, so transfers set it after insert.
+pub(super) fn set_host_environment_on(
+    conn: &rusqlite::Connection,
+    host_id: i64,
+    environment: &Option<String>,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE hosts SET environment = ?1 WHERE id = ?2",
+        params![environment, host_id],
+    )?;
+    Ok(())
+}
+
+/// Connection-level host delete (caller holds the transaction).
+pub(super) fn delete_host_on(conn: &rusqlite::Connection, id: i64) -> Result<bool> {
+    conn.execute("DELETE FROM hosts WHERE id = ?1", params![id])?;
+    Ok(conn.changes() > 0)
+}
+
+/// Connection-level group delete with member promotion (caller holds the
+/// transaction — never nests its own, unlike [`LauncherStore::delete_group`]).
+/// The FK nulls hosts.group_id for hosts whose primary was this group, and
+/// CASCADE drops its membership rows; the primary is then recomputed from a
+/// remaining real membership so group_id doesn't desync.
+pub(super) fn delete_group_on(conn: &rusqlite::Connection, id: i64) -> Result<bool> {
+    conn.execute("DELETE FROM host_groups WHERE id = ?1", params![id])?;
+    let changed = conn.changes() > 0;
+    conn.execute(
+        "UPDATE hosts SET group_id = (
+             SELECT m.group_id FROM host_group_memberships m
+               JOIN host_groups g ON g.id = m.group_id
+              WHERE m.host_id = hosts.id AND g.reserved = 0
+              ORDER BY m.group_id LIMIT 1)
+           WHERE group_id IS NULL",
+        [],
+    )?;
+    Ok(changed)
+}
+
+/// Whether any group still names `identity_id` as its default (caller holds
+/// the transaction). Used before deleting a transferred identity.
+pub(super) fn group_default_uses_identity_on(
+    conn: &rusqlite::Connection,
+    identity_id: i64,
+) -> Result<bool> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM host_groups WHERE default_identity_id = ?1",
+        params![identity_id],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
 }
 
 fn status_sql(status: &str) -> String {

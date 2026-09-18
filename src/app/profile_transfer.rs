@@ -514,13 +514,18 @@ impl crate::app::App {
     /// Apply the confirmed plan through fresh store handles (owned `&mut`,
     /// never the live `Arc` handles, so no store lock is held across the
     /// copy), then reload the dashboard from the live handles.
+    ///
+    /// The staged plan is cloned, not taken: a failed apply keeps the flow
+    /// (plan, dialog, scope) intact so the user can retry or cancel instead
+    /// of landing on a stranded scope with no plan. Only a successful apply
+    /// clears the flow.
     pub(crate) fn apply_pending_transfer(&mut self) -> Result<()> {
-        let (dest_name, dest_db, is_move, plan) = match self.pending_transfer.as_mut() {
+        let (dest_name, dest_db, is_move, plan) = match self.pending_transfer.as_ref() {
             Some(pending) => (
                 pending.dest_name.clone().unwrap_or_default(),
                 pending.dest_db.clone().unwrap_or_default(),
                 pending.is_move,
-                pending.plan.take().context("nothing planned yet")?,
+                pending.plan.clone().context("nothing planned yet")?,
             ),
             None => anyhow::bail!("no transfer in progress"),
         };
@@ -538,10 +543,13 @@ impl crate::app::App {
         } else {
             TransferMode::Copy
         };
-        let result = apply_transfer_plan(&mut src_store, &mut dest_store, &plan, mode);
+        // Engine failures (rolled-back destination, untouched source) leave
+        // `pending_transfer` in place via `?` above: the plan survives.
+        let result = apply_transfer_plan(&mut src_store, &mut dest_store, &plan, mode)?;
         self.reload_hosts()?;
         self.reload_identities()?;
         self.reload_tunnels()?;
+        self.load_groups()?;
         let mut notice = format!(
             "Transferred {} item(s) to '{dest_name}'",
             result.transferred

@@ -16,9 +16,12 @@ All notable changes to SSHub are documented in this file.
   multi-profile startup picker, CLI selection and directory overrides are unchanged.
 
 - **Cross-profile transfers** - move or copy a host, group, identity or tunnel
-  to another profile from the profile manager (`T`) or `sshub transfer ...`.
+  to another profile from the profile manager (`t`/`T`) or `sshub transfer ...`.
   Every transfer shows a plan preview with explicit confirm; name clashes
-  auto-rename (`name (copy N)`), and active sessions block the transfer.
+  auto-rename (`name (copy N)`), and live sessions / running tunnels block the
+  affected hosts (the headless CLI only sees running tunnels, not live
+  sessions). Transferred groups flatten to top level and hosts land with
+  `Launcher` source.
   The destination picker is fuzzy-filtered and the dialog is bounded and centered.
 
 ## [0.16.0] - 2026-09-05

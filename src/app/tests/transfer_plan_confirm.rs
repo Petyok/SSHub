@@ -563,7 +563,78 @@ fn help_screen_lists_profile_transfer_key() {
     assert!(
         items
             .iter()
-            .any(|item| matches!(item, HelpItem::Entry { key: "T", .. })),
-        "help must list the T transfer key: {items:?}"
+            .any(|item| matches!(item, HelpItem::Entry { key: "t/T", .. })),
+        "help must list the t/T transfer key: {items:?}"
     );
+}
+
+#[test]
+fn transfer_arm_accepts_lowercase_t_from_list() {
+    // Oracle: `App::pending_transfer` after one keystroke — lowercase `t`
+    // must arm exactly like `T` when the picker shows the list.
+    let (_dir, mut app) = manager_app(&["default", "work"]);
+    app.handle_key(key_char('t')).unwrap();
+    assert!(
+        app.pending_transfer.is_some(),
+        "lowercase t arms a transfer from the list view"
+    );
+}
+
+#[test]
+fn transfer_arm_ignores_t_typed_as_profile_name() {
+    // Oracle: the picker view + `pending_transfer` — `T` typed while creating
+    // a profile is name text (typing `Test`), so no transfer may arm and the
+    // editor must stay open.
+    let (_dir, mut app) = manager_app(&["default", "work"]);
+    app.handle_key(key_char('n')).unwrap();
+    assert_eq!(
+        app.profile_picker.as_ref().map(|p| p.is_list_view()),
+        Some(false),
+        "n must open the create editor"
+    );
+    for c in ['T', 'e', 's', 't'] {
+        app.handle_key(key_char(c)).unwrap();
+    }
+    assert!(
+        app.pending_transfer.is_none(),
+        "typing `Test` as a profile name must not arm a transfer"
+    );
+    assert_eq!(
+        app.profile_picker.as_ref().map(|p| p.is_list_view()),
+        Some(false),
+        "editor stays open after typing the name"
+    );
+}
+
+#[test]
+fn transfer_confirm_on_empty_plan_refuses_with_notice() {
+    // Oracle: the dialog notice + staged flow — `y` on an empty plan must
+    // refuse and keep the flow (plan intact) instead of applying zero items.
+    let (_dir, mut app) = manager_app(&["default", "work"]);
+    app.handle_key(key_char('T')).unwrap();
+    let pending = app.pending_transfer.as_mut().expect("T arms a transfer");
+    pending.dest_name = Some("work".into());
+    pending.scope = Some(TransferScope::Host("web".into()));
+    pending.plan = Some(TransferPlan {
+        dest_profile: "work".into(),
+        items: Vec::new(),
+    });
+    app.handle_key(key_char('y')).unwrap();
+    let pending = app
+        .pending_transfer
+        .as_ref()
+        .expect("flow survives refusal");
+    assert!(
+        pending
+            .notice
+            .as_ref()
+            .is_some_and(|notice| notice.contains("nothing to transfer")),
+        "refusal carries a notice, got: {:?}",
+        pending.notice
+    );
+    assert!(
+        pending.plan.is_some(),
+        "refused plan stays staged for retry or Esc"
+    );
+    assert_eq!(app.mode, AppMode::ProfilePicker);
 }

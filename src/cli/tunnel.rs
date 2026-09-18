@@ -23,9 +23,7 @@ pub fn run(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
         Some("delete") => cmd_delete(ctx, &args[1..])?,
         Some("start") => cmd_start(ctx, &args[1..])?,
         Some("stop") => cmd_stop(ctx, &args[1..])?,
-        Some("transfer") => {
-            super::transfer::cmd_tunnel_transfer(ctx, &args[1..])?;
-        }
+        Some("transfer") => return super::transfer::cmd_tunnel_transfer(ctx, &args[1..]),
         Some(other) => {
             fail(&format!(
                 "unknown tunnel subcommand '{other}' (try: list, show, create, delete, start, stop, transfer)"

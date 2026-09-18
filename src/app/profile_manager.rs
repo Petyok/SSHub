@@ -117,15 +117,24 @@ impl App {
         if self.pending_transfer.is_some() {
             return self.handle_key_profile_transfer(key);
         }
+        // Manager-level single-key actions fire from the list view only: while
+        // creating or renaming a profile the same keystroke is editor text.
+        let picker_list_view = self
+            .profile_picker
+            .as_ref()
+            .is_some_and(|picker| picker.is_list_view());
         let Some(picker) = self.profile_picker.as_mut() else {
             self.mode = self.profile_return_mode;
             return Ok(());
         };
         let outcome = picker.handle_key(key)?;
-        // `T` opens the transfer flow: the highlighted profile is the picker
-        // cursor, which this side cannot read, so the destination name is
-        // typed explicitly in the next step.
-        if matches!(key.code, KeyCode::Char('T')) && matches!(outcome, PickerOutcome::Continue) {
+        // `t`/`T` opens the transfer flow. The highlighted profile is the
+        // picker cursor, which this side cannot read, so the destination name
+        // is typed explicitly in the next step.
+        let arm_transfer = matches!(key.code, KeyCode::Char('t') | KeyCode::Char('T'))
+            && matches!(outcome, PickerOutcome::Continue)
+            && picker_list_view;
+        if arm_transfer {
             self.arm_profile_transfer();
             if let Some(picker) = self.profile_picker.as_mut() {
                 picker.clear_error();
@@ -330,18 +339,33 @@ impl App {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 // Explicit confirmation only: `needs_explicit_confirm` pins the
-                // invariant that a plan applies solely via this key.
-                let confirmed = self
-                    .pending_transfer
-                    .as_ref()
-                    .and_then(|pending| pending.plan.as_ref())
-                    .is_some_and(needs_explicit_confirm);
-                if !confirmed {
-                    self.show_transfer_status();
-                } else if let Err(error) = self.apply_pending_transfer() {
-                    self.show_transfer_error(error);
+                // invariant that a plan applies solely via this key. An empty
+                // plan (nothing runnable) refuses instead: confirming zero
+                // items would silently "succeed" while transferring nothing.
+                let empty_plan = self.pending_transfer.as_ref().is_some_and(|pending| {
+                    pending
+                        .plan
+                        .as_ref()
+                        .is_some_and(|plan| plan.runnable().is_empty())
+                });
+                if empty_plan {
+                    if let Some(pending) = self.pending_transfer.as_mut() {
+                        pending.notice =
+                            Some("nothing to transfer — selection matched no items".into());
+                    }
                 } else {
-                    self.close_profile_manager();
+                    let confirmed = self
+                        .pending_transfer
+                        .as_ref()
+                        .and_then(|pending| pending.plan.as_ref())
+                        .is_some_and(needs_explicit_confirm);
+                    if !confirmed {
+                        self.show_transfer_status();
+                    } else if let Err(error) = self.apply_pending_transfer() {
+                        self.show_transfer_error(error);
+                    } else {
+                        self.close_profile_manager();
+                    }
                 }
             }
             KeyCode::Char('m') => {

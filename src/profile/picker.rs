@@ -106,6 +106,13 @@ impl ProfilePicker {
         self.state.profiles.len()
     }
 
+    /// Whether the picker shows the profile list (no create/rename/delete
+    /// editor open). Manager-level single-key actions such as the transfer
+    /// arm must only fire here — in every other view the same keystroke is
+    /// editor text.
+    pub fn is_list_view(&self) -> bool {
+        matches!(self.view, View::List)
+    }
     fn current(&self) -> Option<&ProfileRecord> {
         self.state
             .profiles
@@ -427,7 +434,7 @@ impl ProfilePicker {
                 Span::styled(" delete", theme.style(StyleRole::FooterLabel)),
             ];
             if self.active_id.is_some() {
-                manage_row.push(Span::styled("  T", theme.style(StyleRole::FooterKey)));
+                manage_row.push(Span::styled("  t/T", theme.style(StyleRole::FooterKey)));
                 manage_row.push(Span::styled(
                     " transfer",
                     theme.style(StyleRole::FooterLabel),

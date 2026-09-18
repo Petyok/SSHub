@@ -101,7 +101,7 @@ fn transfer_copy_host_with_identity() {
                                           // byte-identical.
     let src_web_before = src.get_host_by_name("web").unwrap().unwrap();
     let mut src = src;
-    let result = apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Copy);
+    let result = apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Copy).unwrap();
     assert!(result.blocked.is_empty());
     assert_eq!(result.transferred, 2);
     assert!(result.renamed.is_empty());
@@ -141,7 +141,7 @@ fn transfer_move_host_with_identity() {
         GroupTransferMode::GroupOnly,
         &HashSet::new(),
     );
-    let result = apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Move);
+    let result = apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Move).unwrap();
 
     assert!(result.blocked.is_empty());
     // Moved host is gone from source, present in dest with a copied identity.
@@ -197,7 +197,7 @@ fn transfer_group_with_members() {
     );
 
     let mut src = src;
-    let result = apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Copy);
+    let result = apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Copy).unwrap();
     assert!(result.blocked.is_empty());
 
     let dest_group = dest
@@ -255,7 +255,7 @@ fn transfer_tunnel_carry() {
     assert!(plan.items.iter().any(|i| i.kind == "tunnel"));
 
     let mut src = src;
-    let result = apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Copy);
+    let result = apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Copy).unwrap();
     assert!(result.blocked.is_empty());
 
     let tunnels = dest.list_tunnels().unwrap();
@@ -298,7 +298,7 @@ fn transfer_auto_rename() {
     assert!(plan.items[0].renamed);
 
     let mut src = src;
-    let result = apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Copy);
+    let result = apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Copy).unwrap();
     assert_eq!(result.renamed, vec!["web (copy 1)".to_string()]);
     // Both rows survive: the pre-existing dest host plus the renamed copy.
     assert!(dest.get_host_by_name("web").unwrap().is_some());
@@ -342,7 +342,7 @@ fn transfer_active_block() {
     assert!(!plan.runnable().is_empty());
 
     let mut src = src;
-    let result = apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Copy);
+    let result = apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Copy).unwrap();
     assert_eq!(result.blocked, vec!["web".to_string()]);
     assert!(dest.get_host_by_name("web").unwrap().is_none());
     assert!(dest.get_host_by_name("db").unwrap().is_some());
@@ -395,7 +395,7 @@ fn transfer_group_only_vs_with_hosts() {
         let has_host_item = plan.items.iter().any(|i| i.kind == "host");
 
         let mut src = src;
-        apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Copy);
+        apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Copy).unwrap();
 
         let dest_group = dest
             .list_groups()
@@ -431,4 +431,284 @@ fn transfer_group_only_vs_with_hosts() {
             }
         }
     }
+}
+fn mk_tunnel_unlabeled(store: &LauncherStore, host_id: i64, local_port: u16) -> i64 {
+    store
+        .create_tunnel(&NewTunnel {
+            host_id: Some(host_id),
+            tunnel_type: TunnelType::Local,
+            local_port,
+            remote_host: "localhost".into(),
+            remote_port: 80,
+            label: None,
+            auto_connect: false,
+        })
+        .unwrap()
+}
+
+fn tunnel_selection(names: &[&str]) -> TransferSelection {
+    TransferSelection {
+        tunnel_names: names.iter().map(|s| s.to_string()).collect(),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn transfer_unlabeled_tunnel_by_id() {
+    // Oracle: the source tunnel row — an unlabeled tunnel has no label to
+    // select, so the engine must resolve its bare-id token (`tunnel#<id>` is
+    // the stored fallback name, but callers pass the bare id).
+    let src = LauncherStore::open_in_memory().unwrap();
+    let mut dest = LauncherStore::open_in_memory().unwrap();
+    mk_host(&src, "web", None, None);
+    let host_id = src.get_host_by_name("web").unwrap().unwrap().id;
+    let tid = mk_tunnel_unlabeled(&src, host_id, 8080);
+
+    let plan = build_transfer_plan(
+        &snapshot(&src),
+        &dest_index(&dest),
+        &tunnel_selection(&[&tid.to_string()]),
+        TransferMode::Copy,
+        GroupTransferMode::GroupOnly,
+        &HashSet::new(),
+    );
+    assert!(
+        plan.items.iter().any(|i| i.kind == "tunnel"),
+        "bare-id token must scope the unlabeled tunnel, got: {:?}",
+        plan.items
+    );
+
+    let mut src = src;
+    let result = apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Copy).unwrap();
+    assert!(result.blocked.is_empty());
+    let tunnels = dest.list_tunnels().unwrap();
+    assert_eq!(tunnels.len(), 1);
+    assert_eq!(tunnels[0].local_port, 8080);
+    assert_eq!(tunnels[0].label, None);
+}
+
+#[test]
+fn transfer_unlabeled_tunnel_by_port_token() {
+    // Oracle: the source tunnel row — the TUI names an unlabeled tunnel
+    // `:<port>`, so the engine must resolve that token back to the row.
+    let src = LauncherStore::open_in_memory().unwrap();
+    let mut dest = LauncherStore::open_in_memory().unwrap();
+    mk_host(&src, "web", None, None);
+    let host_id = src.get_host_by_name("web").unwrap().unwrap().id;
+    mk_tunnel_unlabeled(&src, host_id, 8080);
+
+    let plan = build_transfer_plan(
+        &snapshot(&src),
+        &dest_index(&dest),
+        &tunnel_selection(&[":8080"]),
+        TransferMode::Copy,
+        GroupTransferMode::GroupOnly,
+        &HashSet::new(),
+    );
+    assert!(
+        plan.items.iter().any(|i| i.kind == "tunnel"),
+        "`:<port>` token must scope the unlabeled tunnel, got: {:?}",
+        plan.items
+    );
+
+    let mut src = src;
+    let result = apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Copy).unwrap();
+    assert!(result.blocked.is_empty());
+    assert_eq!(dest.list_tunnels().unwrap().len(), 1);
+}
+
+fn file_store(subdir: &str) -> (tempfile::TempDir, LauncherStore, std::path::PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join(subdir).join("launcher.db");
+    let store = LauncherStore::open(&db_path).unwrap();
+    (dir, store, db_path)
+}
+
+fn fail_identity_inserts(db_path: &std::path::Path) {
+    // Oracle: real SQLite — a BEFORE INSERT trigger fails every identity
+    // insert inside the engine's own destination transaction, exercising the
+    // rollback path no mock can reach.
+    let conn = rusqlite::Connection::open(db_path).unwrap();
+    conn.execute(
+        "CREATE TRIGGER transfer_test_fail_identity BEFORE INSERT ON identities \
+         BEGIN SELECT RAISE(ABORT, 'transfer test: identity insert refused'); END",
+        [],
+    )
+    .unwrap();
+}
+
+fn dest_identity_names(dest: &LauncherStore) -> Vec<String> {
+    dest.list_identities()
+        .unwrap()
+        .into_iter()
+        .map(|i| i.name)
+        .collect()
+}
+
+#[test]
+fn transfer_unknown_selection_plans_nothing() {
+    // Oracle: the empty plan — unknown names are ignored, so the confirm
+    // layers (TUI `y`, CLI) must refuse instead of applying zero items.
+    let src = LauncherStore::open_in_memory().unwrap();
+    let dest = LauncherStore::open_in_memory().unwrap();
+    mk_host(&src, "web", None, None);
+    let selection = TransferSelection {
+        host_names: vec!["ghost".into()],
+        group_names: vec!["ghost-group".into()],
+        identity_names: vec!["ghost-id".into()],
+        tunnel_names: vec![":9999".into(), "tunnel#424242".into()],
+    };
+    let plan = build_transfer_plan(
+        &snapshot(&src),
+        &dest_index(&dest),
+        &selection,
+        TransferMode::Copy,
+        GroupTransferMode::GroupOnly,
+        &HashSet::new(),
+    );
+    assert!(
+        plan.items.is_empty(),
+        "unknown names plan nothing: {:?}",
+        plan.items
+    );
+    assert!(plan.runnable().is_empty());
+}
+
+#[test]
+fn transfer_failing_identity_blocks_host() {
+    // Oracle: real SQLite rows — with identity inserts refused, the host must
+    // NOT land wired to `None`; nothing may survive in dest.
+    let src = LauncherStore::open_in_memory().unwrap();
+    let (_dest_dir, mut dest, dest_db) = file_store("dest");
+    let id = mk_identity(&src, "id-a");
+    mk_host(&src, "web", Some(id), None);
+    fail_identity_inserts(&dest_db);
+
+    let plan = build_transfer_plan(
+        &snapshot(&src),
+        &dest_index(&dest),
+        &host_selection(&["web"]),
+        TransferMode::Copy,
+        GroupTransferMode::GroupOnly,
+        &HashSet::new(),
+    );
+    assert_eq!(plan.runnable().len(), 2); // host + auto-carried identity
+
+    let mut src = src;
+    let error = apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Copy).unwrap_err();
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("id-a") && message.contains("rolled back"),
+        "error names the failed item and the rollback: {message}"
+    );
+    // No partial rows: neither the identity nor its host survived.
+    assert!(!dest_identity_names(&dest).contains(&"id-a".to_string()));
+    assert!(dest.get_host_by_name("web").unwrap().is_none());
+    // Source untouched (copy keeps originals regardless).
+    assert!(src.get_host_by_name("web").unwrap().is_some());
+    assert!(src.get_identity_by_name("id-a").unwrap().is_some());
+}
+
+#[test]
+fn transfer_failure_rolls_back_clean_items() {
+    // Oracle: real SQLite rows — the group insert succeeds on its own, but
+    // the failing identity must drag it back out via rollback.
+    let src = LauncherStore::open_in_memory().unwrap();
+    let (_dest_dir, mut dest, dest_db) = file_store("dest");
+    let gid = mk_group(&src, "ops");
+    let id = mk_identity(&src, "id-a");
+    mk_host(&src, "web", Some(id), Some(gid));
+    fail_identity_inserts(&dest_db);
+
+    let selection = TransferSelection {
+        group_names: vec!["ops".into()],
+        ..Default::default()
+    };
+    let plan = build_transfer_plan(
+        &snapshot(&src),
+        &dest_index(&dest),
+        &selection,
+        TransferMode::Copy,
+        GroupTransferMode::WithHosts,
+        &HashSet::new(),
+    );
+    assert!(plan.items.iter().any(|i| i.kind == "group"));
+
+    let mut src = src;
+    apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Copy).unwrap_err();
+    assert!(
+        dest.list_groups()
+            .unwrap()
+            .into_iter()
+            .all(|g| g.name != "ops"),
+        "clean group insert rolled back with the failing identity"
+    );
+    assert!(dest.get_host_by_name("web").unwrap().is_none());
+    assert!(!dest_identity_names(&dest).contains(&"id-a".to_string()));
+}
+
+#[test]
+fn transfer_move_delete_skipped_on_failure() {
+    // Oracle: real SQLite rows on both sides — a failed destination build
+    // must leave the source fully intact (no move-deletion at all).
+    let src = LauncherStore::open_in_memory().unwrap();
+    let (_dest_dir, mut dest, dest_db) = file_store("dest");
+    let id = mk_identity(&src, "id-a");
+    mk_host(&src, "web", Some(id), None);
+    fail_identity_inserts(&dest_db);
+
+    let plan = build_transfer_plan(
+        &snapshot(&src),
+        &dest_index(&dest),
+        &host_selection(&["web"]),
+        TransferMode::Move,
+        GroupTransferMode::GroupOnly,
+        &HashSet::new(),
+    );
+
+    let mut src = src;
+    apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Move).unwrap_err();
+    assert!(src.get_host_by_name("web").unwrap().is_some());
+    assert!(src.get_identity_by_name("id-a").unwrap().is_some());
+    assert!(dest.get_host_by_name("web").unwrap().is_none());
+}
+
+#[test]
+fn transfer_blocked_host_identity_not_carried() {
+    // Oracle: the plan items — a blocked host stays home, so its identity
+    // must not ride along without it (unless a runnable host needs it).
+    let src = LauncherStore::open_in_memory().unwrap();
+    let mut dest = LauncherStore::open_in_memory().unwrap();
+    let solo = mk_identity(&src, "solo");
+    let shared = mk_identity(&src, "shared");
+    mk_host(&src, "web", Some(solo), None);
+    mk_host(&src, "db", Some(shared), None);
+
+    let blocked_hosts: HashSet<String> = ["web".into()].into_iter().collect();
+    let plan = build_transfer_plan(
+        &snapshot(&src),
+        &dest_index(&dest),
+        &host_selection(&["web", "db"]),
+        TransferMode::Copy,
+        GroupTransferMode::GroupOnly,
+        &blocked_hosts,
+    );
+    let identity_items: Vec<&str> = plan
+        .items
+        .iter()
+        .filter(|i| i.kind == "identity")
+        .map(|i| i.src_name.as_str())
+        .collect();
+    assert_eq!(
+        identity_items,
+        vec!["shared"],
+        "only the runnable host's identity is carried: {identity_items:?}"
+    );
+
+    let mut src = src;
+    let result = apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Copy).unwrap();
+    assert_eq!(result.blocked, vec!["web".to_string()]);
+    assert!(dest.get_identity_by_name("shared").unwrap().is_some());
+    assert!(dest.get_identity_by_name("solo").unwrap().is_none());
+    assert!(dest.get_host_by_name("db").unwrap().is_some());
 }

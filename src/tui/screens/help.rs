@@ -90,7 +90,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "Picker: Enter launch, n create, r rename, d delete, Esc cancel.",
     },
     HelpItem::Entry {
-        key: "T",
+        key: "t/T",
         desc: "Transfer a host, group, identity or tunnel to another profile (profile manager).",
     },
     HelpItem::Blank,

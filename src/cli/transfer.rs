@@ -7,8 +7,9 @@
 //!
 //! Engine constructors are the only way snapshots are built here
 //! (`TransferSnapshot::capture`, `DestIndex::capture`): this module never
-//! touches snapshot fields. `TransferSelection` is matched by exact name;
-//! `tunnel_names` carries labels (numeric id string only for unlabeled tunnels).
+//! touches snapshot fields. `TransferSelection` is matched with the canonical
+//! engine grammar; tunnel tokens are normalized to a label or `tunnel#<id>`
+//! in `cmd_tunnel_transfer` before planning.
 
 use std::collections::HashSet;
 use std::io::{self, BufRead, Write};
@@ -154,7 +155,8 @@ pub fn cmd_identity_transfer(ctx: &mut CliContext, args: &[String]) -> Result<i3
 }
 
 /// `tunnel transfer <id|label|port> --to PROFILE [--move] [--yes]`.
-/// The token grammar matches the other `tunnel` subcommands.
+/// The token grammar matches the other `tunnel` subcommands, plus the
+/// canonical `tunnel#<id>` / `:<port>` forms the engine accepts everywhere.
 pub fn cmd_tunnel_transfer(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     let mut rest = args.to_vec();
     let targs = parse_transfer_args(&rest).unwrap_or_else(|msg| usage(&msg));
@@ -169,12 +171,13 @@ pub fn cmd_tunnel_transfer(ctx: &mut CliContext, args: &[String]) -> Result<i32>
         .find(|a| !a.starts_with('-'))
         .cloned()
         .unwrap_or_else(|| usage("tunnel transfer requires <id|label|port>"));
-    let tunnel = ctx.resolve_tunnel(&token)?;
-    // Engine matches `tunnel_names` by label; fall back to the id string only
-    // for unlabeled tunnels.
+    let tunnel = resolve_transfer_tunnel(ctx, &token)?;
+    // The engine matches `tunnel_names` with the canonical grammar: the label
+    // when the tunnel has one, `tunnel#<id>` otherwise (never the bare id,
+    // which would collide with a port token).
     let keys = match tunnel.label {
         Some(label) if !label.trim().is_empty() => vec![label],
-        _ => vec![tunnel.id.to_string()],
+        _ => vec![format!("tunnel#{}", tunnel.id)],
     };
     let selection = TransferSelection {
         host_names: Vec::new(),
@@ -183,6 +186,33 @@ pub fn cmd_tunnel_transfer(ctx: &mut CliContext, args: &[String]) -> Result<i32>
         tunnel_names: keys,
     };
     run_transfer(ctx, &selection, GroupTransferMode::GroupOnly, &targs)
+}
+
+/// Resolve a tunnel token in the canonical transfer grammar: `tunnel#<id>`
+/// selects by id, `:<port>` by local port, anything else goes through the
+/// shared id/label/port resolver.
+fn resolve_transfer_tunnel(ctx: &CliContext, token: &str) -> Result<crate::store::Tunnel> {
+    if let Some(rest) = token.strip_prefix("tunnel#") {
+        let id: i64 = rest
+            .parse()
+            .map_err(|_| anyhow::anyhow!("invalid tunnel token '{token}'"))?;
+        return ctx
+            .store
+            .get_tunnel(id)?
+            .with_context(|| format!("tunnel {id} not found"));
+    }
+    if let Some(rest) = token.strip_prefix(':') {
+        let port: u16 = rest
+            .parse()
+            .map_err(|_| anyhow::anyhow!("invalid tunnel token '{token}'"))?;
+        let matches = ctx.store.find_tunnels_by_local_port(port)?;
+        return match matches.len() {
+            0 => anyhow::bail!("no tunnel found for local-port {port}"),
+            1 => Ok(matches.into_iter().next().expect("single match")),
+            n => anyhow::bail!("ambiguous local-port {port}: {n} tunnels match"),
+        };
+    }
+    ctx.resolve_tunnel(token)
 }
 
 fn run_transfer(
@@ -218,10 +248,17 @@ fn run_transfer(
         &blocked_hosts,
     );
     plan.dest_profile = targs.dest_profile.clone();
-
     let text = render_plan_text(&plan);
     print!("{text}");
     io::stdout().flush()?;
+
+    // Refuse an empty plan: confirming zero items would silently "succeed"
+    // while transferring nothing (e.g. an unlabeled tunnel selected with a
+    // token the engine cannot resolve).
+    if plan.runnable().is_empty() {
+        println!("nothing to transfer — selection matched no items");
+        return Ok(1);
+    }
 
     if needs_confirm(&plan) && !targs.auto_yes && !confirm_interactive()? {
         println!("cancelled");
@@ -229,13 +266,15 @@ fn run_transfer(
     }
 
     // Copy path resolution only happens inside the engine; secrets stay put.
+    // Engine failures (rolled-back destination, untouched source) propagate
+    // as an error exit instead of a partial success.
     let mut src_store = src_store;
     let result = apply_transfer_plan(
         &mut src_store,
         &mut dest_store,
         &plan,
         transfer_mode(targs.move_mode),
-    );
+    )?;
 
     println!(
         "transferred {} item(s) to profile '{}'",

@@ -9,8 +9,9 @@ mod types;
 
 pub use hosts::is_option_like;
 pub use transfer::{
-    apply_transfer_plan, build_transfer_plan, unique_dest_name, DestIndex, GroupTransferMode,
-    PlannedItem, TransferMode, TransferPlan, TransferResult, TransferSelection, TransferSnapshot,
+    apply_transfer_plan, build_transfer_plan, tunnel_token_matches, unique_dest_name, DestIndex,
+    GroupTransferMode, PlannedItem, TransferMode, TransferPlan, TransferResult, TransferSelection,
+    TransferSnapshot,
 };
 pub use types::{
     AuthEvent, DeleteHostOutcome, DeleteIdentityOutcome, HostGroup, HostGroupUpdate, HostSource,
