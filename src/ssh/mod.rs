@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod cert;
 mod export;
 mod host;
 mod import;
