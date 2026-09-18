@@ -15,6 +15,12 @@ All notable changes to SSHub are documented in this file.
   profile cannot be renamed or deleted. Single-profile silent startup, the
   multi-profile startup picker, CLI selection and directory overrides are unchanged.
 
+- **Cross-profile transfers** - move or copy a host, group, identity or tunnel
+  to another profile from the profile manager (`T`) or `sshub transfer ...`.
+  Every transfer shows a plan preview with explicit confirm; name clashes
+  auto-rename (`name (copy N)`), and active sessions block the transfer.
+  The destination picker is fuzzy-filtered and the dialog is bounded and centered.
+
 ## [0.16.0] - 2026-09-05
 
 ### Added

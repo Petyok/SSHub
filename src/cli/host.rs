@@ -41,10 +41,11 @@ pub fn run_host(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
         "rename" => cmd_rename(ctx, rest),
         "delete" => cmd_delete(ctx, rest),
         "duplicate" => cmd_duplicate(ctx, rest),
+        "transfer" => super::transfer::cmd_host_transfer(ctx, rest),
         other => {
             eprintln!("sshub: unknown host subcommand '{other}'");
             host_usage(
-                "try: list, show, connect, resolve, search, add, edit, rename, delete, duplicate",
+                "try: list, show, connect, resolve, search, add, edit, rename, delete, duplicate, transfer",
             );
         }
     }

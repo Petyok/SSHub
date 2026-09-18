@@ -97,6 +97,11 @@ impl ProfilePicker {
         self.error = Some(message);
     }
 
+    /// Drop the error line (e.g. when the transfer dialog takes over feedback).
+    pub fn clear_error(&mut self) {
+        self.error = None;
+    }
+
     pub fn profile_count(&self) -> usize {
         self.state.profiles.len()
     }
@@ -316,13 +321,13 @@ impl ProfilePicker {
         frame.render_widget(block, area);
 
         let mut lines: Vec<Line> = Vec::new();
-
         match &self.view {
             View::List => {
-                // Reserve space for status and both legend rows. On very short
-                // terminals prioritize one selected row over the legend.
+                // Reserve space for status, the blank separator and all three
+                // legend rows. On very short terminals prioritize one selected
+                // row over the legend.
                 let status_rows = u16::from(self.error.is_some() || self.message.is_some());
-                let visible_rows = usize::from(inner.height.saturating_sub(3 + status_rows).max(1));
+                let visible_rows = usize::from(inner.height.saturating_sub(4 + status_rows).max(1));
                 let start = self.cursor.saturating_sub(visible_rows - 1);
                 for (i, record) in self
                     .state
@@ -411,13 +416,25 @@ impl ProfilePicker {
                     theme.style(StyleRole::FooterLabel),
                 ),
             ]));
-            lines.push(Line::from(vec![
+            // `T` arms a cross-profile transfer, but only in the in-app manager:
+            // at startup the picker owns `T` for nothing, so don't advertise it.
+            let mut manage_row = vec![
                 Span::styled("n", theme.style(StyleRole::FooterKey)),
                 Span::styled(" new  ", theme.style(StyleRole::FooterLabel)),
                 Span::styled("r", theme.style(StyleRole::FooterKey)),
                 Span::styled(" rename  ", theme.style(StyleRole::FooterLabel)),
                 Span::styled("d", theme.style(StyleRole::FooterKey)),
-                Span::styled(" delete  ", theme.style(StyleRole::FooterLabel)),
+                Span::styled(" delete", theme.style(StyleRole::FooterLabel)),
+            ];
+            if self.active_id.is_some() {
+                manage_row.push(Span::styled("  T", theme.style(StyleRole::FooterKey)));
+                manage_row.push(Span::styled(
+                    " transfer",
+                    theme.style(StyleRole::FooterLabel),
+                ));
+            }
+            lines.push(Line::from(manage_row));
+            lines.push(Line::from(vec![
                 Span::styled("Esc", theme.style(StyleRole::FooterKey)),
                 Span::styled(
                     if self.active_id.is_some() {

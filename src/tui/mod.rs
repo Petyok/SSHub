@@ -899,6 +899,9 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
             if let Some(picker) = &app.profile_picker {
                 picker.render(frame, app.theme());
             }
+            if app.pending_transfer.is_some() {
+                render_profile_transfer_popup(frame, app);
+            }
         }
         AppMode::TunnelReconnectSettings => {
             screens::tunnel_reconnect::render_tunnel_reconnect_settings(frame, app);
@@ -2053,6 +2056,104 @@ fn render_confirm_delete_popup(frame: &mut Frame, app: &App) {
                     .border_style(error),
             ),
         popup_area,
+    );
+}
+
+/// Dedicated transfer dialog over the profile manager (`T` in the picker).
+///
+/// The staged flow used to render as inline red text on the picker's message
+/// line, which overflowed the picker's bounds. It now renders as a centered
+/// popup like every sibling: `popup_open_rect` registration (driving the
+/// open/close slide and the backdrop capture in `render_inner`), `open_popup`
+/// ground, the shared border style plus its gradient pass, and every line
+/// ellipsized to the dialog rect — nothing can paint outside it. `Esc`
+/// cancels at every stage (handled in `App::handle_key_profile_transfer`).
+fn render_profile_transfer_popup(frame: &mut Frame, app: &App) {
+    let Some(pending) = app.pending_transfer.as_ref() else {
+        return;
+    };
+    let theme = app.theme();
+    let title = pending.dialog_title();
+    let lines = pending.dialog_lines();
+    let area = frame.area();
+    // Clamp FIRST: the dialog never exceeds the frame, keeping a one-cell
+    // margin on every side so the border and title clear the frame edge even
+    // on narrow terminals. `fit_popup` alone sizes to `area` exactly (x == 0,
+    // edge to edge), which reads as painted outside the frame.
+    let max_width = area.width.saturating_sub(2).max(1);
+    let max_height = area.height.saturating_sub(2).max(1);
+    // Size to the longest row, capped so plan lines with long names still fit
+    // an 80-column terminal; the renderer ellipsizes whatever exceeds it.
+    let longest = lines
+        .iter()
+        .map(|line| line.chars().count())
+        .max()
+        .unwrap_or(0) as u16;
+    let desired_width = longest.saturating_add(4).clamp(36, 64).min(max_width);
+    let desired_height = (lines.len() as u16 + 2).min(max_height);
+    let popup_width = fit_popup(desired_width, 20, max_width);
+    let popup_height = fit_popup(desired_height, 5, max_height);
+    if popup_width == 0 || popup_height == 0 {
+        return;
+    }
+    let x = area
+        .x
+        .saturating_add(area.width.saturating_sub(popup_width) / 2)
+        .min(
+            area.x
+                .saturating_add(area.width.saturating_sub(popup_width)),
+        );
+    let y = area
+        .y
+        .saturating_add(area.height.saturating_sub(popup_height) / 2)
+        .min(
+            area.y
+                .saturating_add(area.height.saturating_sub(popup_height)),
+        );
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    let popup_area = crate::tui::popup_open_rect(popup_area, app);
+    open_popup(frame, popup_area, theme);
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(popup_border_style(theme, popup_area))
+            .title(Span::styled(
+                format!(" {title} "),
+                theme.style(StyleRole::PopupTitle),
+            )),
+        popup_area,
+    );
+    paint_popup_border(frame, popup_area, theme);
+
+    let inner = popup_area.inner(Margin::new(1, 1));
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    // Hard clip: the ellipsis budget is the real inner width of the clamped
+    // rect above — never the pre-clamp longest line — so no row can reach the
+    // border, and `Paragraph` (already confined to `inner`) can only drop, not
+    // overflow, rows the rect has no room for.
+    let budget = inner.width as usize;
+    let body: Vec<ratatui::text::Line> = lines
+        .iter()
+        .map(|line| {
+            let shown = crate::tui::text::ellipsize(line, budget);
+            let style = if line.starts_with("! ") {
+                theme.style(StyleRole::PopupError)
+            } else if line.contains("Esc") {
+                theme.style(StyleRole::TextMuted)
+            } else if line == &lines[0] {
+                theme.style(StyleRole::TextBright)
+            } else {
+                theme.style(StyleRole::TextPrimary)
+            };
+            ratatui::text::Line::from(Span::styled(shown, style))
+        })
+        .collect();
+    frame.render_widget(
+        Paragraph::new(body).style(theme.style(StyleRole::TextPrimary)),
+        inner,
     );
 }
 

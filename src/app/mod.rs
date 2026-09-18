@@ -16,6 +16,7 @@ mod local_shell;
 mod log_browser;
 mod mouse;
 mod profile_manager;
+pub(crate) mod profile_transfer;
 mod push_key;
 mod session;
 mod session_picker;
@@ -187,6 +188,10 @@ pub struct App {
     pub profile: Option<crate::profile::ProfilePaths>,
     pub profile_picker: Option<crate::profile::picker::ProfilePicker>,
     pub pending_profile: Option<crate::profile::ProfilePaths>,
+    /// Staged cross-profile transfer (`T` in the profile manager). `Some`
+    /// while choosing destination/scope/confirming; the plan applies only on
+    /// explicit `y`.
+    pub pending_transfer: Option<profile_transfer::PendingTransfer>,
     profile_return_mode: AppMode,
     pub profile_count: usize,
     /// Active tag filters. A host matches when it carries every selected tag
@@ -906,6 +911,7 @@ impl App {
             profile: None,
             profile_picker: None,
             pending_profile: None,
+            pending_transfer: None,
             profile_return_mode: AppMode::Normal,
             profile_count: 1,
             tag_filters: Vec::new(),

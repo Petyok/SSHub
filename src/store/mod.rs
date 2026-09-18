@@ -3,10 +3,15 @@ mod identities;
 mod log_bookmarks;
 mod migrate;
 mod snippets;
+pub mod transfer;
 mod tunnels;
 mod types;
 
 pub use hosts::is_option_like;
+pub use transfer::{
+    apply_transfer_plan, build_transfer_plan, unique_dest_name, DestIndex, GroupTransferMode,
+    PlannedItem, TransferMode, TransferPlan, TransferResult, TransferSelection, TransferSnapshot,
+};
 pub use types::{
     AuthEvent, DeleteHostOutcome, DeleteIdentityOutcome, HostGroup, HostGroupUpdate, HostSource,
     HostUpdate, Identity, IdentityUpdate, LogBookmark, ManagedHost, NewHost, NewHostGroup,

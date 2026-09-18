@@ -1,9 +1,11 @@
+use super::profile_transfer::{needs_explicit_confirm, TransferScope};
 use super::*;
 use crate::profile::picker::{PickerOutcome, ProfilePicker};
 use crate::profile::{ProfileState, RootDirs};
+use anyhow::Context;
 
 impl App {
-    fn profile_roots(&self) -> Option<RootDirs> {
+    pub(crate) fn profile_roots(&self) -> Option<RootDirs> {
         self.profile
             .as_ref()
             .filter(|p| !p.compat)
@@ -96,6 +98,7 @@ impl App {
         self.profile_count = state.profiles.len();
         self.profile_return_mode = self.mode;
         self.pending_profile = None;
+        self.pending_transfer = None;
         self.profile_picker = Some(ProfilePicker::in_app(roots, state, active_id));
         self.mode = AppMode::ProfilePicker;
     }
@@ -103,15 +106,32 @@ impl App {
     fn close_profile_manager(&mut self) {
         self.profile_picker = None;
         self.pending_profile = None;
+        self.pending_transfer = None;
         self.mode = self.profile_return_mode;
     }
 
     pub fn handle_key_profile_picker(&mut self, key: KeyEvent) -> Result<()> {
+        // An armed cross-profile transfer owns every key until it is confirmed
+        // (`y`) or cancelled (`Esc`), so typing a destination name never leaks
+        // into the picker.
+        if self.pending_transfer.is_some() {
+            return self.handle_key_profile_transfer(key);
+        }
         let Some(picker) = self.profile_picker.as_mut() else {
             self.mode = self.profile_return_mode;
             return Ok(());
         };
         let outcome = picker.handle_key(key)?;
+        // `T` opens the transfer flow: the highlighted profile is the picker
+        // cursor, which this side cannot read, so the destination name is
+        // typed explicitly in the next step.
+        if matches!(key.code, KeyCode::Char('T')) && matches!(outcome, PickerOutcome::Continue) {
+            self.arm_profile_transfer();
+            if let Some(picker) = self.profile_picker.as_mut() {
+                picker.clear_error();
+            }
+            return Ok(());
+        }
         self.profile_count = picker.profile_count();
         match outcome {
             PickerOutcome::Continue => {}
@@ -147,6 +167,214 @@ impl App {
                         .set_error(format!("Cannot switch profiles: {error}")),
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// Clear the dialog's transient error line; the staged flow renders in its
+    /// own popup, so there is no picker message to re-show.
+    pub(crate) fn show_transfer_status(&mut self) {
+        if let Some(pending) = self.pending_transfer.as_mut() {
+            pending.notice = None;
+        }
+    }
+
+    fn show_transfer_error(&mut self, error: anyhow::Error) {
+        let message = format!("{error:#}");
+        if let Some(pending) = self.pending_transfer.as_mut() {
+            pending.notice = Some(message);
+        } else if let Some(picker) = self.profile_picker.as_mut() {
+            picker.set_error(message);
+        } else {
+            self.host_notice = Some(message);
+        }
+    }
+
+    /// Staged transfer keys. Destination → scope → (group-only vs with-hosts)
+    /// → plan → explicit `y` confirm. Only `y` with a built plan applies;
+    /// everything else adjusts or cancels.
+    pub(crate) fn handle_key_profile_transfer(&mut self, key: KeyEvent) -> Result<()> {
+        if matches!(key.code, KeyCode::Esc) {
+            self.cancel_pending_transfer();
+            if let Some(picker) = self.profile_picker.as_mut() {
+                picker.set_error("transfer cancelled".into());
+            }
+            return Ok(());
+        }
+        let dest_missing = self
+            .pending_transfer
+            .as_ref()
+            .is_some_and(|pending| pending.dest_name.is_none());
+        if dest_missing {
+            // Fuzzy destination picker: typing filters the candidate profiles
+            // (same nucleo wiring as the host search), ↑↓ move the highlight,
+            // Enter validates the highlighted name through
+            // `choose_transfer_dest`, Esc cancels the whole flow above.
+            match key.code {
+                KeyCode::Enter => {
+                    let choice = self
+                        .pending_transfer
+                        .as_ref()
+                        .and_then(|pending| pending.dest_highlight())
+                        .map(str::to_string);
+                    match choice {
+                        Some(name) => {
+                            if let Err(error) = self.choose_transfer_dest(&name) {
+                                self.show_transfer_error(error);
+                            } else {
+                                self.show_transfer_status();
+                            }
+                        }
+                        None => {
+                            if let Some(pending) = self.pending_transfer.as_mut() {
+                                pending.notice = Some(
+                                    "no matching profile — keep typing or Esc to cancel".into(),
+                                );
+                            }
+                        }
+                    }
+                }
+                KeyCode::Backspace => {
+                    if let Some(pending) = self.pending_transfer.as_mut() {
+                        pending.dest_buffer.pop();
+                        pending.refresh_dest_filter();
+                    }
+                    self.show_transfer_status();
+                }
+                KeyCode::Up => {
+                    if let Some(pending) = self.pending_transfer.as_mut() {
+                        pending.move_dest_selection(-1);
+                    }
+                }
+                KeyCode::Down => {
+                    if let Some(pending) = self.pending_transfer.as_mut() {
+                        pending.move_dest_selection(1);
+                    }
+                }
+                KeyCode::Char(c) if !c.is_control() => {
+                    if let Some(pending) = self.pending_transfer.as_mut() {
+                        pending.dest_buffer.push(c);
+                        pending.refresh_dest_filter();
+                    }
+                    self.show_transfer_status();
+                }
+                _ => self.show_transfer_status(),
+            }
+            return Ok(());
+        }
+        let scope_missing = self
+            .pending_transfer
+            .as_ref()
+            .is_some_and(|pending| pending.scope.is_none());
+        if scope_missing {
+            let scope = match key.code {
+                KeyCode::Char('h') => self
+                    .transfer_host_name()
+                    .context("no host selected on the dashboard")
+                    .map(TransferScope::Host),
+                KeyCode::Char('g') => self
+                    .transfer_group_name()
+                    .context("no group under cursor (open Groups first)")
+                    .map(|name| TransferScope::Group {
+                        name,
+                        with_hosts: false,
+                    }),
+                KeyCode::Char('i') => self
+                    .transfer_identity_name()
+                    .context("no identity selected")
+                    .map(TransferScope::Identity),
+                KeyCode::Char('t') => self
+                    .transfer_tunnel_name()
+                    .context("no tunnel selected")
+                    .map(TransferScope::Tunnel),
+                _ => {
+                    self.show_transfer_status();
+                    return Ok(());
+                }
+            };
+            match scope {
+                Ok(scope) => {
+                    if let Err(error) = self.choose_transfer_scope(scope) {
+                        self.show_transfer_error(error);
+                    } else {
+                        self.show_transfer_status();
+                    }
+                }
+                Err(error) => self.show_transfer_error(error),
+            }
+            return Ok(());
+        }
+        let group_choice_open = self.pending_transfer.as_ref().is_some_and(|pending| {
+            matches!(pending.scope, Some(TransferScope::Group { .. })) && pending.plan.is_none()
+        });
+        if group_choice_open {
+            match key.code {
+                KeyCode::Char('g') => {
+                    if let Err(error) = self.set_transfer_with_hosts(false) {
+                        self.show_transfer_error(error);
+                    } else {
+                        self.show_transfer_status();
+                    }
+                }
+                KeyCode::Char('w') => {
+                    if let Err(error) = self.set_transfer_with_hosts(true) {
+                        self.show_transfer_error(error);
+                    } else {
+                        self.show_transfer_status();
+                    }
+                }
+                _ => self.show_transfer_status(),
+            }
+            return Ok(());
+        }
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                // Explicit confirmation only: `needs_explicit_confirm` pins the
+                // invariant that a plan applies solely via this key.
+                let confirmed = self
+                    .pending_transfer
+                    .as_ref()
+                    .and_then(|pending| pending.plan.as_ref())
+                    .is_some_and(needs_explicit_confirm);
+                if !confirmed {
+                    self.show_transfer_status();
+                } else if let Err(error) = self.apply_pending_transfer() {
+                    self.show_transfer_error(error);
+                } else {
+                    self.close_profile_manager();
+                }
+            }
+            KeyCode::Char('m') => {
+                if let Err(error) = self.toggle_transfer_move() {
+                    self.show_transfer_error(error);
+                } else {
+                    self.show_transfer_status();
+                }
+            }
+            KeyCode::Char('w') => {
+                let is_group = self.pending_transfer.as_ref().is_some_and(|pending| {
+                    matches!(pending.scope, Some(TransferScope::Group { .. }))
+                });
+                if is_group {
+                    let next = self.pending_transfer.as_ref().is_some_and(|pending| {
+                        matches!(
+                            pending.scope,
+                            Some(TransferScope::Group {
+                                with_hosts: false,
+                                ..
+                            })
+                        )
+                    });
+                    if let Err(error) = self.set_transfer_with_hosts(next) {
+                        self.show_transfer_error(error);
+                    } else {
+                        self.show_transfer_status();
+                    }
+                } else {
+                    self.show_transfer_status();
+                }
+            }
+            _ => self.show_transfer_status(),
         }
         Ok(())
     }
