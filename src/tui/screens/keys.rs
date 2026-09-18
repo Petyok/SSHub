@@ -422,21 +422,30 @@ fn render_agent_info(
 }
 
 fn detect_key_type(identity: &Identity) -> String {
-    let path = identity
+    let Some(path) = identity
         .private_key
         .as_ref()
         .map(|p| p.to_string_lossy().to_lowercase())
-        .unwrap_or_default();
+    else {
+        return "password".into();
+    };
 
-    if identity.private_key.is_none() {
-        "password".into()
-    } else if path.contains("ed25519") {
-        "ed25519".into()
+    // `ssh-keygen -t ed25519-sk|ecdsa-sk` names files `id_*_sk`; the delimiter
+    // is load-bearing (`task/` contains "sk" but no security key does).
+    let is_sk = path.contains("-sk") || path.contains("_sk");
+    if path.contains("ed25519") {
+        if is_sk { "ed25519-sk" } else { "ed25519" }.into()
     } else if path.contains("ecdsa") {
-        "ecdsa".into()
+        if is_sk { "ecdsa-sk" } else { "ecdsa" }.into()
+    } else if is_sk {
+        // SK-marked but unfamiliar base (a future `ssh-keygen -t` type):
+        // still badge it as a security key rather than mislabel it.
+        "sk".into()
     } else if path.contains("rsa") {
         "rsa".into()
-    } else if path.contains("dsa") {
+    } else if path.contains("dsa") && !path.contains("mldsa") {
+        // `ml-dsa` (e.g. `id_mldsa44`) is not DSA; without the guard a future
+        // post-quantum filename degrades to the wrong concrete badge.
         "dsa".into()
     } else {
         "key".into()
@@ -671,6 +680,119 @@ mod tests {
         assert!(
             row_text(&buf, 4, CARD_W).contains("password set"),
             "row4: expected password status"
+        );
+    }
+    /// Oracle: `ssh -Q key` (OpenSSH's own registry of supported key
+    /// algorithms). Asserts the SK identifiers this file labels are real
+    /// OpenSSH key types, not invented strings. Read-only query: touches no
+    /// keys and no user config. Skips when no ssh binary is present.
+    fn openssh_knows_sk_key_types() -> bool {
+        let Ok(out) = std::process::Command::new("ssh")
+            .arg("-Q")
+            .arg("key")
+            .output()
+        else {
+            eprintln!("skipping oracle: no ssh binary");
+            return false;
+        };
+        if !out.status.success() {
+            eprintln!("skipping oracle: `ssh -Q key` failed");
+            return false;
+        }
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout
+                .lines()
+                .any(|l| l.trim() == "sk-ssh-ed25519@openssh.com"),
+            "oracle changed: OpenSSH no longer lists sk-ssh-ed25519"
+        );
+        assert!(
+            stdout
+                .lines()
+                .any(|l| l.trim() == "sk-ecdsa-sha2-nistp256@openssh.com"),
+            "oracle changed: OpenSSH no longer lists sk-ecdsa-sha2-nistp256"
+        );
+        true
+    }
+
+    #[test]
+    fn sk_key_paths_labelled_as_security_keys() {
+        if !openssh_knows_sk_key_types() {
+            return;
+        }
+        // (private-key path, expected card badge). The `-sk`/`_sk` filename
+        // markers are the `ssh-keygen -t ed25519-sk|ecdsa-sk` conventions.
+        for (path, expected) in [
+            ("/home/u/.ssh/id_ed25519_sk", "ed25519-sk"),
+            ("/home/u/.ssh/id_ecdsa_sk", "ecdsa-sk"),
+            ("/home/u/.ssh/id_ed25519-sk", "ed25519-sk"),
+            ("/home/u/.ssh/id_ecdsa-sk", "ecdsa-sk"),
+            ("/home/u/.ssh/work_ed25519_sk", "ed25519-sk"),
+            ("~/.ssh/id_ecdsa_sk", "ecdsa-sk"),
+            // SK-marked but unfamiliar base: still badged as a security key.
+            ("/home/u/.ssh/my_sk_key", "sk"),
+        ] {
+            assert_eq!(
+                detect_key_type(&identity(Some(path), false)),
+                expected,
+                "path: {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn regular_key_type_labels_unchanged() {
+        for (path, expected) in [
+            ("/home/u/.ssh/id_ed25519", "ed25519"),
+            ("/home/u/.ssh/id_ecdsa", "ecdsa"),
+            ("/home/u/.ssh/id_rsa", "rsa"),
+            ("/home/u/.ssh/id_dsa", "dsa"),
+            ("/home/u/.ssh/sshub_selectel-core", "key"),
+            // "task/" contains "sk" but no `-sk`/`_sk` marker: not a key.
+            ("/home/u/task/id_ed25519", "ed25519"),
+        ] {
+            assert_eq!(
+                detect_key_type(&identity(Some(path), false)),
+                expected,
+                "path: {path}"
+            );
+        }
+        assert_eq!(detect_key_type(&identity(None, true)), "password");
+    }
+
+    #[test]
+    fn unknown_key_types_degrade_to_generic_key() {
+        // Future/unknown algorithms must not surface as SK nor as a wrong
+        // concrete type; the card falls back to the generic badge.
+        for path in [
+            "/home/u/.ssh/id_mldsa44",
+            "/home/u/.ssh/mykey",
+            "/home/u/.ssh/id_xmss",
+        ] {
+            assert_eq!(
+                detect_key_type(&identity(Some(path), false)),
+                "key",
+                "path: {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn sk_card_renders_security_key_badge() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, CARD_W, CARD_H));
+        let id = identity(Some("/home/u/.ssh/id_ed25519_sk"), false);
+        render_card(
+            &mut buf,
+            Rect::new(0, 0, CARD_W, CARD_H),
+            &id,
+            false,
+            None,
+            test_styles(),
+        );
+        let row = row_text(&buf, 1, CARD_W);
+        assert!(
+            row.contains("ed25519-sk"),
+            "SK badge missing from card header: {row:?}"
         );
     }
 }

@@ -4,6 +4,15 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Hardware security-key badges on the keys screen** (issue #80) - identities
+  whose key path carries the `ssh-keygen -t *-sk` `-sk`/`_sk` marker now show
+  `ed25519-sk`/`ecdsa-sk` (generic `sk` for unfamiliar bases) badges instead of
+  the base algorithm, so hardware-backed keys are distinguishable at a glance.
+  `ml-dsa` filenames no longer degrade to the `dsa` badge. Connect-time
+  presence/PIN handling stays deferred to the hardware PoC.
+
 ## [0.16.0] - 2026-09-05
 
 ### Added
