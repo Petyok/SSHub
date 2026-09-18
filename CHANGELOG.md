@@ -4,6 +4,8 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-09-18
+
 ### Fixed
 
 - **Groups survived v0.17.0 after all** (data loss) — the v16 migration rebuilt
