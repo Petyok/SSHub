@@ -17,7 +17,8 @@ pub fn render_group_field_picker(frame: &mut Frame, app: &App) {
     let title = match picker.kind {
         GroupFormField::Parent => " Parent group ",
         GroupFormField::Identity => " Default identity ",
-        GroupFormField::Name => " Select ",
+        // Text and tri-state fields never open the picker (guarded in App).
+        _ => " Select ",
     };
 
     let theme = app.theme();
@@ -116,6 +117,23 @@ pub fn render_group_form(
         Line::from(spans)
     };
 
+    let text_or_none = |value: &str| {
+        if value.is_empty() {
+            "(none)".to_string()
+        } else {
+            value.to_string()
+        }
+    };
+    let transport_display = match form.default_transport {
+        None => "inherit".to_string(),
+        Some(t) => format!("{} (Space to cycle)", t.label()),
+    };
+    let forward_display = match form.default_forward_agent {
+        None => "inherit".to_string(),
+        Some(true) => "on (Space to cycle)".to_string(),
+        Some(false) => "off (Space to cycle)".to_string(),
+    };
+
     let lines = vec![
         Line::from(""),
         field_row(GroupFormField::Name, "Name", display, false),
@@ -129,8 +147,43 @@ pub fn render_group_form(
             true,
         ),
         Line::from(""),
+        field_row(
+            GroupFormField::Username,
+            "Default username",
+            text_or_none(&form.default_username),
+            false,
+        ),
+        Line::from(""),
+        field_row(
+            GroupFormField::Port,
+            "Default port",
+            text_or_none(&form.default_port),
+            false,
+        ),
+        Line::from(""),
+        field_row(
+            GroupFormField::ProxyJump,
+            "Default ProxyJump",
+            text_or_none(&form.default_proxy_jump),
+            false,
+        ),
+        Line::from(""),
+        field_row(
+            GroupFormField::Transport,
+            "Default transport",
+            transport_display,
+            false,
+        ),
+        Line::from(""),
+        field_row(
+            GroupFormField::ForwardAgent,
+            "Default agent forward",
+            forward_display,
+            false,
+        ),
+        Line::from(""),
         Line::from(Span::styled(
-            "\u{2191}\u{2193} move field  ·  Enter save/choose  ·  Esc cancel",
+            "\u{2191}\u{2193} move field  ·  Enter save/choose  ·  Space choose/cycle  ·  Esc cancel",
             help,
         )),
     ];

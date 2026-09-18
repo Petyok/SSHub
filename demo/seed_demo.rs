@@ -132,7 +132,7 @@ fn main() -> Result<()> {
             name: (*name).to_string(),
             address: (*addr).to_string(),
             username: Some((*user).to_string()),
-            port: *port,
+            port: Some(*port),
             group_id: *group_id,
             tags: tags.iter().map(|t| (*t).to_string()).collect(),
             proxy_jump: proxy.map(|p| p.to_string()),
@@ -172,10 +172,12 @@ fn main() -> Result<()> {
             name: "localhost (SFTP demo)".to_string(),
             address: "127.0.0.1".to_string(),
             username: Some(user),
-            port: std::env::var("SSHUB_SFTP_DEMO_PORT")
-                .ok()
-                .and_then(|p| p.parse().ok())
-                .unwrap_or(2222),
+            port: Some(
+                std::env::var("SSHUB_SFTP_DEMO_PORT")
+                    .ok()
+                    .and_then(|p| p.parse().ok())
+                    .unwrap_or(2222),
+            ),
             identity_id: Some(identity.id),
             tags: vec!["demo".to_string(), "sftp".to_string()],
             os_icon: Some("debian".to_string()),

@@ -88,7 +88,7 @@ fn import_does_not_overwrite_launcher_host_with_same_name() {
             name: "dev-local".into(),
             label: Some("Launcher copy".into()),
             address: "192.168.99.1".into(),
-            port: 2222,
+            port: Some(2222),
             group_id: None,
             identity_id: Some(default_id),
             tags: vec!["launcher".into()],
@@ -105,7 +105,7 @@ fn import_does_not_overwrite_launcher_host_with_same_name() {
     let launcher = env.store.get_host_by_name("dev-local").unwrap().unwrap();
     assert_eq!(launcher.source, HostSource::Launcher);
     assert_eq!(launcher.address, "192.168.99.1");
-    assert_eq!(launcher.port, 2222);
+    assert_eq!(launcher.port, Some(2222));
 }
 
 #[test]
@@ -134,7 +134,7 @@ fn export_launcher_hosts_roundtrip_with_backup() {
             name: "dev-partners".into(),
             label: Some("Dev Partners".into()),
             address: "10.100.19.123".into(),
-            port: 22,
+            port: Some(22),
             group_id: None,
             identity_id: Some(default_id),
             tags: vec![],

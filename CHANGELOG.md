@@ -4,6 +4,27 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Group-inherited connection defaults** (issue #74) — groups can now carry
+  optional defaults for all six connection fields: identity, username, port,
+  ProxyJump, transport (ssh/mosh) and agent forwarding. Resolution order per
+  field: the host's own explicit value → the nearest ancestor group that sets
+  it (child groups override parents) → the global default (port 22, ssh,
+  forwarding off). The host form shows the inherited values as muted
+  placeholders, and clearing a field restores inheritance; Space on the
+  transport/forwarding rows cycles inherit → set → set → inherit, and picker
+  row 0 is "(inherit from group)". Manage them in the TUI group form
+  (`Ctrl+G`), or via `sshub group add/edit --default-username/--default-port/
+  --default-proxy-jump/--default-transport/--default-fwd-agent` (with matching
+  `--clear-*` / `--set-*` flags), and clear host overrides with
+  `sshub host edit --clear-port/--clear-forward-agent/--clear-transport`.
+  Schema v16: the host port/forwarding/transport columns become nullable
+  (`NULL` = inherit); rows still carrying the old creation defaults
+  (22/off/ssh) migrate to `NULL` so long-standing untouched hosts start
+  inheriting, while genuinely custom values are preserved. Tags/favorites
+  never inherit, and nothing rewrites `~/.ssh/config`.
+
 ## [0.16.0] - 2026-09-05
 
 ### Added

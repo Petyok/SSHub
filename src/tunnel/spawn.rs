@@ -56,9 +56,10 @@ pub fn build_tunnel_argv(
     args.push(flag.into());
     args.push(spec);
 
-    if host.port != 22 {
+    let port = host.port.unwrap_or(22);
+    if port != 22 {
         args.push("-p".into());
-        args.push(host.port.to_string());
+        args.push(port.to_string());
     }
     if let Some(ref jump) = host.proxy_jump {
         if !jump.is_empty() {
@@ -66,7 +67,7 @@ pub fn build_tunnel_argv(
             args.push(jump.clone());
         }
     }
-    if host.forward_agent {
+    if host.forward_agent.unwrap_or(false) {
         args.push("-A".into());
     }
     if let Some(ref identity) = host.identity {

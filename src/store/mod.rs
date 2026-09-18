@@ -1,3 +1,4 @@
+mod group_defaults;
 mod hosts;
 mod identities;
 mod log_bookmarks;
@@ -5,7 +6,7 @@ mod migrate;
 mod snippets;
 mod tunnels;
 mod types;
-
+pub use group_defaults::{ResolvedConnection, DEFAULT_PORT};
 pub use hosts::is_option_like;
 pub use types::{
     AuthEvent, DeleteHostOutcome, DeleteIdentityOutcome, HostGroup, HostGroupUpdate, HostSource,

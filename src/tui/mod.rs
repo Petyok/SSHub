@@ -1772,11 +1772,23 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
     match kind {
         FormKind::Host => {
             if let Some(form) = app.host_form.as_ref() {
+                // Muted placeholders: what a save would actually use for each
+                // cleared field (nearest ancestor group, else global default).
+                let primary = app
+                    .groups
+                    .iter()
+                    .find(|g| form.group_ids.contains(&g.id))
+                    .map(|g| g.id);
+                let inherited = app
+                    .store()
+                    .inherited_for_group(primary)
+                    .unwrap_or_else(|_| crate::store::ResolvedConnection::global_default());
                 frame.render_widget(
                     screens::host_form::render_host_form(
                         form,
                         &app.groups,
                         &app.identities,
+                        &inherited,
                         &app.save_key_label(),
                         &app.config.keybinds.secret_field_hints(),
                         theme,
@@ -4897,7 +4909,7 @@ mod tests {
             .create_host(&NewHost {
                 name: "p1".into(),
                 address: "10.0.0.1".into(),
-                port: 22,
+                port: Some(22),
                 group_id: Some(parent.id),
                 ..Default::default()
             })
@@ -4906,7 +4918,7 @@ mod tests {
             .create_host(&NewHost {
                 name: "e1".into(),
                 address: "10.0.0.2".into(),
-                port: 22,
+                port: Some(22),
                 group_id: Some(child.id),
                 ..Default::default()
             })
@@ -5386,6 +5398,11 @@ marker = { foreground = \"#ab0005\" }\n\
             cursor: 0,
             field: crate::app::GroupFormField::Name,
             default_identity_id: None,
+            default_username: String::new(),
+            default_port: String::new(),
+            default_proxy_jump: String::new(),
+            default_transport: None,
+            default_forward_agent: None,
             parent_id: None,
             return_to_manage: false,
         });
@@ -5466,6 +5483,11 @@ marker = { foreground = \"#ab0005\" }\n\
             name: "alpha".into(),
             sort_order: 0,
             default_identity_id: None,
+            default_username: None,
+            default_port: None,
+            default_proxy_jump: None,
+            default_transport: None,
+            default_forward_agent: None,
             parent_id: None,
             reserved: false,
         }];
@@ -5492,6 +5514,11 @@ marker = { foreground = \"#ab0005\" }\n\
             cursor: 0,
             field: crate::app::GroupFormField::Name,
             default_identity_id: None,
+            default_username: String::new(),
+            default_port: String::new(),
+            default_proxy_jump: String::new(),
+            default_transport: None,
+            default_forward_agent: None,
             parent_id: None,
             return_to_manage: false,
         });
@@ -5597,7 +5624,10 @@ marker = { foreground = \"#ab0005\" }\n\
         identity.identity_form.as_mut().unwrap().editing = false;
 
         for (which, app, title, idle_label, hint) in [
-            ("host form", &host, "New host", "Port:", "Tab/"),
+            // The host form's Port row now shows a muted "inherited: …"
+            // placeholder when cleared, so the idle-value probe uses the
+            // Name row (never inheritable) instead.
+            ("host form", &host, "New host", "Name (alias):", "Tab/"),
             (
                 "identity form",
                 &identity,
@@ -5632,6 +5662,17 @@ marker = { foreground = \"#ab0005\" }\n\
                 Some(legacy::DIM),
                 "{which}: the key hints take the help role"
             );
+
+            // Issue #74: a cleared host-form field shows what a save would
+            // inherit, muted in the help role — not the value role. Only
+            // the host form has placeholders.
+            if which == "host form" {
+                assert_eq!(
+                    style_at_text_in(&buf, popup, "inherited: 22").fg,
+                    Some(legacy::DIM),
+                    "{which}: an inherited placeholder takes the help role"
+                );
+            }
         }
     }
 
@@ -5714,12 +5755,21 @@ marker = { foreground = \"#ab0005\" }\n\
             Some(marker(0xa90001)),
             "the marker is components.focus.indicator"
         );
-        // The Port row is idle, so its value carries the plain value role.
-        let (px, py) = crate::test_support::find_text(&buf, "Port:");
+        // The Name row is idle and never inheritable, so its value carries
+        // the plain value role. (Port now shows a muted "inherited: …"
+        // placeholder when cleared — see the help-role assertion below.)
+        let (px, py) = crate::test_support::find_text(&buf, "Name (alias):");
         assert_eq!(
-            cell_style(&buf, px + 6, py).fg,
+            cell_style(&buf, px + 14, py).fg,
             Some(marker(0xa50004)),
             "an idle value is components.form.value"
+        );
+        // A cleared inheritable row shows its inherited value muted.
+        let (hx, hy) = crate::test_support::find_text(&buf, "inherited: 22");
+        assert_eq!(
+            cell_style(&buf, hx, hy).fg,
+            Some(marker(0xa50008)),
+            "an inherited placeholder is components.form.help"
         );
         // The focused row's value has its own role.
         let (ax, ay) = crate::test_support::find_text(&buf, "Address:");
@@ -5814,6 +5864,11 @@ marker = { foreground = \"#ab0005\" }\n\
             cursor: 0,
             field: crate::app::GroupFormField::Name,
             default_identity_id: None,
+            default_username: String::new(),
+            default_port: String::new(),
+            default_proxy_jump: String::new(),
+            default_transport: None,
+            default_forward_agent: None,
             parent_id: None,
             return_to_manage: false,
         });
@@ -5870,6 +5925,11 @@ marker = { foreground = \"#ab0005\" }\n\
                 name: "alpha".into(),
                 sort_order: 0,
                 default_identity_id: None,
+                default_username: None,
+                default_port: None,
+                default_proxy_jump: None,
+                default_transport: None,
+                default_forward_agent: None,
                 parent_id: None,
                 reserved: false,
             },
@@ -5878,6 +5938,11 @@ marker = { foreground = \"#ab0005\" }\n\
                 name: "bravo".into(),
                 sort_order: 1,
                 default_identity_id: None,
+                default_username: None,
+                default_port: None,
+                default_proxy_jump: None,
+                default_transport: None,
+                default_forward_agent: None,
                 parent_id: None,
                 reserved: false,
             },
@@ -6355,6 +6420,11 @@ marker = { foreground = \"#ab0005\" }\n\
                     cursor: 0,
                     field: crate::app::GroupFormField::Name,
                     default_identity_id: None,
+                    default_username: String::new(),
+                    default_port: String::new(),
+                    default_proxy_jump: String::new(),
+                    default_transport: None,
+                    default_forward_agent: None,
                     parent_id: None,
                     return_to_manage: true,
                 });

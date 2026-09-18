@@ -54,13 +54,20 @@ fn connect_worker(
             return Err(1);
         }
     };
-    let ssh_host = crate::app::sftp_ssh_host(&ctx.resolver, &entry);
+    let ssh_host = crate::app::sftp_ssh_host(&ctx.resolver, &ctx.store, &entry);
     if ssh_host.proxy_jump.is_some() {
         eprintln!("sshub: SFTP via ProxyJump is not supported; pick a direct host");
         return Err(1);
     }
 
-    let (secret, _diag) = crate::app::resolve_pending_secret(&entry, ctx.password_store.as_ref());
+    let effective = entry
+        .managed()
+        .and_then(|m| ctx.store.resolve_connection(m).ok());
+    let (secret, _diag) = crate::app::resolve_pending_secret(
+        &entry,
+        effective.as_ref().and_then(|r| r.identity.as_ref()),
+        ctx.password_store.as_ref(),
+    );
     let agent = crate::ssh::agent::detect_agent();
     let (tx, rx) = crate::sftp::spawn_sftp_worker(ssh_host, secret, agent);
 

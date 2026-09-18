@@ -226,7 +226,7 @@ pub(crate) fn sort_mode_label_orders_by_display_name() {
             name: "z-host".into(),
             label: Some("Zulu".into()),
             address: "10.0.0.1".into(),
-            port: 22,
+            port: Some(22),
             group_id: None,
             identity_id: Some(default_id),
             tags: vec![],
@@ -239,7 +239,7 @@ pub(crate) fn sort_mode_label_orders_by_display_name() {
             name: "a-host".into(),
             label: Some("Alpha".into()),
             address: "10.0.0.2".into(),
-            port: 22,
+            port: Some(22),
             group_id: None,
             identity_id: Some(default_id),
             tags: vec![],
@@ -337,7 +337,7 @@ pub(crate) fn nested_groups_build_tree_and_collapse_subtree() {
         .create_host(&NewHost {
             name: "p1".into(),
             address: "10.0.0.1".into(),
-            port: 22,
+            port: Some(22),
             group_id: Some(parent.id),
             ..Default::default()
         })
@@ -346,7 +346,7 @@ pub(crate) fn nested_groups_build_tree_and_collapse_subtree() {
         .create_host(&NewHost {
             name: "e1".into(),
             address: "10.0.0.2".into(),
-            port: 22,
+            port: Some(22),
             group_id: Some(child.id),
             ..Default::default()
         })
@@ -410,7 +410,7 @@ pub(crate) fn shift_arrow_jumps_between_group_headers() {
         .create_host(&NewHost {
             name: "a1".into(),
             address: "10.0.0.1".into(),
-            port: 22,
+            port: Some(22),
             group_id: Some(g1.id),
             ..Default::default()
         })
@@ -419,7 +419,7 @@ pub(crate) fn shift_arrow_jumps_between_group_headers() {
         .create_host(&NewHost {
             name: "b1".into(),
             address: "10.0.0.2".into(),
-            port: 22,
+            port: Some(22),
             group_id: Some(g2.id),
             ..Default::default()
         })
@@ -565,7 +565,7 @@ fn fold_replays_the_subtree_while_nav_rows_collapse_at_once() {
             .create_host(&NewHost {
                 name: format!("p{i}"),
                 address: format!("10.0.0.{i}"),
-                port: 22,
+                port: Some(22),
                 group_id: Some(group.id),
                 ..Default::default()
             })

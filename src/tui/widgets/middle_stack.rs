@@ -477,7 +477,7 @@ pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
                 .hosts
                 .iter()
                 .filter(|h| match h {
-                    crate::app::HostEntry::Managed(m) => m.forward_agent,
+                    crate::app::HostEntry::Managed(m) => m.forward_agent.unwrap_or(false),
                     crate::app::HostEntry::Legacy { host, .. } => {
                         host.forward_agent.unwrap_or(false)
                     }
@@ -609,7 +609,7 @@ pub(crate) fn render_agent_panel(buf: &mut Buffer, area: Rect, app: &App) {
             .hosts
             .iter()
             .filter(|h| match h {
-                crate::app::HostEntry::Managed(m) => m.forward_agent,
+                crate::app::HostEntry::Managed(m) => m.forward_agent.unwrap_or(false),
                 crate::app::HostEntry::Legacy { host, .. } => host.forward_agent.unwrap_or(false),
             })
             .count();
@@ -887,7 +887,7 @@ mod tests {
                 name: "web-prod".into(),
                 label: None,
                 address: "10.0.0.1".into(),
-                port: 22,
+                port: Some(22),
                 group_id: None,
                 identity_id: None,
                 group: None,
@@ -897,7 +897,7 @@ mod tests {
                 tags: Vec::new(),
                 notes: None,
                 proxy_jump: Some("bastion".into()),
-                forward_agent: false,
+                forward_agent: Some(false),
                 remote_command: None,
                 environment: None,
                 sort_order: 0,

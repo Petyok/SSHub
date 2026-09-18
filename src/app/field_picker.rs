@@ -1,12 +1,14 @@
 use super::*;
 
 impl App {
-    /// Number of selectable rows in the dropdown (incl. the "+ New group" row).
+    /// Number of selectable rows in the dropdown (incl. the "+ New group" row,
+    /// and the Identity picker's leading "(inherit from group)" row).
     pub fn field_picker_len(&self, kind: PickerKind) -> usize {
         match kind {
             // groups (checkboxes) + "+ New group…"
             PickerKind::Group => self.groups.len() + 1,
-            PickerKind::Identity => self.identities.len(),
+            // "(inherit from group)" + identities
+            PickerKind::Identity => self.identities.len() + 1,
         }
     }
 
@@ -75,8 +77,9 @@ impl App {
 
     /// Toggle the highlighted group's membership in the form's `group_ids`
     /// (Group picker, Space). The "+ New group…" row isn't a group and is a
-    /// no-op here. Toggling a group ON applies its default identity when the
-    /// host has none picked yet.
+    /// no-op here. Identity is left alone: group defaults resolve dynamically
+    /// at connect time, so pinning today's default would only freeze the host
+    /// against later group changes.
     pub(crate) fn field_picker_toggle_group(&mut self) {
         let Some(picker) = self.field_picker.as_ref() else {
             return;
@@ -86,17 +89,11 @@ impl App {
             return; // create row or out of range
         };
         let gid = group.id;
-        let default_identity_index = group
-            .default_identity_id
-            .and_then(|iid| self.identities.iter().position(|i| i.id == iid));
         if let Some(form) = self.host_form.as_mut() {
             if form.group_ids.contains(&gid) {
                 form.group_ids.remove(&gid);
             } else {
                 form.group_ids.insert(gid);
-                if let Some(i) = default_identity_index {
-                    form.identity_index = i;
-                }
             }
             form.dirty = true;
         }
@@ -193,8 +190,7 @@ impl App {
                     .create_group(&crate::store::NewHostGroup {
                         name: name.clone(),
                         sort_order: self.groups.len() as i32,
-                        default_identity_id: None,
-                        parent_id: None,
+                        ..Default::default()
                     })?
                     .id
             }
@@ -219,12 +215,22 @@ impl App {
             return;
         }
         if form.field == HostFormField::ForwardAgent {
-            form.forward_agent = !form.forward_agent;
+            form.forward_agent = match form.forward_agent {
+                None => Some(true),
+                Some(true) => Some(false),
+                Some(false) => None,
+            };
             form.dirty = true;
             return;
         }
         if form.field == HostFormField::Transport {
-            form.transport = form.transport.next();
+            form.transport = match form.transport {
+                None => Some(crate::session_transport::SessionTransport::Ssh),
+                Some(crate::session_transport::SessionTransport::Ssh) => {
+                    Some(crate::session_transport::SessionTransport::Mosh)
+                }
+                Some(crate::session_transport::SessionTransport::Mosh) => None,
+            };
             form.dirty = true;
             return;
         }
@@ -251,13 +257,12 @@ impl App {
             // Group is multi-select — Left/Right no longer cycles a single
             // value; use Enter to open the checkbox dropdown (Space to toggle).
             HostFormField::Group => {}
+            // Row 0 is "(inherit from group)"; rows 1..=len are the identities.
             HostFormField::Identity => {
-                if !self.identities.is_empty() {
-                    let max = self.identities.len() - 1;
-                    let next = form.identity_index as i32 + delta;
-                    form.identity_index = next.clamp(0, max as i32) as usize;
-                    form.dirty = true;
-                }
+                let max = self.identities.len();
+                let next = form.identity_index as i32 + delta;
+                form.identity_index = next.clamp(0, max as i32) as usize;
+                form.dirty = true;
             }
             HostFormField::OsIcon => {
                 let max = OS_ICON_OPTIONS.len().saturating_sub(1);
