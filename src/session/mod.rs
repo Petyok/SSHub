@@ -1479,8 +1479,15 @@ mod prompt_tests {
         // macOS-conditional watcher timeouts). The predicate is unchanged —
         // the query MUST be answered.
         let deadline = Instant::now() + Duration::from_secs(10);
-        while !session.parser.screen().contents().contains("1b 5b 30 6e") {
+        // Drain first, then test: sampling the screen *before* `drain()` made
+        // the loop miss bytes that had already arrived, and the failure tail
+        // (taken after the drain) then showed the very reply the predicate
+        // claimed was missing.
+        loop {
             session.drain();
+            if session.parser.screen().contents().contains("1b 5b 30 6e") {
+                break;
+            }
             assert!(
                 Instant::now() < deadline,
                 "terminal status query was not answered, tail: {:?}, connected: {}, terminal: {}",
