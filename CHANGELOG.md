@@ -19,9 +19,6 @@ All notable changes to SSHub are documented in this file.
   per-host limit, and explicit clear actions. There is no suggestion picker and no `Ctrl+Space`
   chord.
 
-
-### Added
-
 - **Group-inherited connection defaults** (issue #74) — groups can now carry
   optional defaults for all six connection fields: identity, username, port,
   ProxyJump, transport (ssh/mosh) and agent forwarding. Resolution order per
