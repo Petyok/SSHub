@@ -327,6 +327,7 @@ fn run_terminal_loop(
                 newly_connected.push(s.display_name.clone());
             }
         }
+        app.poll_authentication();
 
         // Every session's PTY was drained above, but only the one on screen may
         // put an OSC 52 write on the host clipboard; the rest is dropped now

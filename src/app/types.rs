@@ -381,6 +381,8 @@ pub enum AppMode {
     TunnelHostPicker,
     /// Searchable dropdown for opening a new embedded SSH session tab.
     SessionPicker,
+    /// Interactive SSH authentication and explicit host trust decisions.
+    AuthPrompt,
     /// Searchable host list for `Shift+P` started from the Keys tab.
     PushKeyHostPicker,
     /// Identity list for `Shift+P` started from the hosts list.

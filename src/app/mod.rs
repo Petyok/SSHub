@@ -1,5 +1,6 @@
 pub(crate) mod adhoc;
 mod audit;
+mod auth;
 mod broadcast;
 mod connect;
 mod field_picker;
@@ -214,6 +215,7 @@ pub struct App {
     pub tunnel_host_picker: Option<TunnelHostPicker>,
     /// Searchable host picker for a new embedded session tab.
     pub session_picker: Option<SessionPicker>,
+    pub auth_modal: Option<auth::AuthModal>,
     pub push_key_host_picker: Option<PushKeyHostPicker>,
     pub push_key_identity_picker: Option<PushKeyIdentityPicker>,
     pub import_prompt: Option<ImportPromptEdit>,
@@ -919,6 +921,7 @@ impl App {
             group_field_picker: None,
             tunnel_host_picker: None,
             session_picker: None,
+            auth_modal: None,
             push_key_host_picker: None,
             push_key_identity_picker: None,
             import_prompt: None,

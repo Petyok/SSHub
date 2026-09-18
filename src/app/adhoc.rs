@@ -128,7 +128,16 @@ fn parse_port(s: &str) -> Option<u16> {
 /// somehow began with `-` (already rejected by the parser) could never be read
 /// as an ssh option.
 pub fn build_adhoc_argv(t: &AdhocTarget) -> Vec<String> {
-    let mut argv = vec!["ssh".to_string(), "-v".to_string()];
+    // Same interactive contract as managed hosts: explicit host trust and a
+    // bounded number of password prompts, answered through the askpass channel.
+    let mut argv = vec![
+        "ssh".to_string(),
+        "-v".to_string(),
+        "-o".to_string(),
+        "StrictHostKeyChecking=ask".to_string(),
+        "-o".to_string(),
+        "NumberOfPasswordPrompts=3".to_string(),
+    ];
     if let Some(port) = t.port {
         argv.push("-p".to_string());
         argv.push(port.to_string());

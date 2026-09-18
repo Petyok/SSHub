@@ -4,6 +4,15 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Interactive SSH authentication** (issue #52) — private askpass channel and masked TUI prompts for passwords, key passphrases and one-time challenges, three-attempt cap, and success-only credential saving. Auth modals serialize one at a time; a round-trip keyring probe falls back to file storage, secrets restore presence-first, and save failures surface as audit-error rows. Unknown and changed host keys require explicit trust decisions; cancelling or a failed channel closes the connection without exposing answers in PTY output.
+
+### Fixed
+
+- **Auth prompt scrolling on narrow terminals** — the scroll range now uses the exact wrapped line count (ratatui `unstable-rendered-line-info`) instead of a width estimate, so the final prompt/fingerprint line is always reachable.
+- **Askpass channel closes on authenticated** (issue #52) — the private SSH_ASKPASS listener socket and token are torn down as soon as the session is connected instead of being held until session exit; saved credentials are still delivered on success.
+
 ## [0.16.0] - 2026-09-05
 
 ### Added

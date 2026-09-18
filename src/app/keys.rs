@@ -2,6 +2,9 @@ use super::*;
 
 impl App {
     pub fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
+        if self.mode == AppMode::AuthPrompt {
+            return self.handle_key_auth(key);
+        }
         if self.mode == AppMode::SessionPicker {
             return self.handle_key_session_picker(key);
         }
@@ -94,6 +97,7 @@ impl App {
             AppMode::GroupFieldPicker => self.handle_key_group_field_picker(key),
             AppMode::TunnelHostPicker => self.handle_key_tunnel_host_picker(key),
             AppMode::SessionPicker => self.handle_key_session_picker(key),
+            AppMode::AuthPrompt => self.handle_key_auth(key),
             AppMode::PushKeyHostPicker => self.handle_key_push_key_host_picker(key),
             AppMode::PushKeyIdentityPicker => self.handle_key_push_key_identity_picker(key),
             AppMode::FieldPicker => self.handle_key_field_picker(key),

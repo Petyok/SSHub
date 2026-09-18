@@ -383,6 +383,9 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         key: "[session]",
         desc: "",
     },
+    HelpItem::Entry { key: "[SSH auth]", desc: "Masked prompts: Enter submits; Esc cancels; PgUp/PgDn scrolls" },
+    HelpItem::Entry { key: "Tab / Space", desc: "Select / toggle remember (managed credentials only; saved after success)" },
+    HelpItem::Entry { key: "y / n", desc: "Accept / refuse unknown host key; changed keys require uppercase A" },
     HelpItem::Entry {
         key: "Ctrl+T",
         desc: "New session tab (pick host)",

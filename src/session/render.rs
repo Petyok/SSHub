@@ -486,24 +486,7 @@ fn render_failure(frame: &mut Frame, area: Rect, session: &Session, theme: &Reso
         Line::raw(""),
     ];
 
-    // A changed host key can be accepted (removes the stale known_hosts entry
-    // and reconnects). Highlight the choice; a changed key may be a MITM, so
-    // make the accept explicit rather than automatic.
-    if session.host_key_changed() {
-        let warn = Style::default().fg(theme.color(ColorRole::StatusWarning));
-        center.push(Line::from(Span::styled(
-            "the server's key changed since you last connected",
-            warn,
-        )));
-        center.push(Line::raw(""));
-        center.push(Line::from(vec![
-            Span::styled("[a]", warn),
-            Span::styled(" accept new key & reconnect", mute),
-            Span::styled("   ·   any other key to close", dim),
-        ]));
-    } else {
-        center.push(Line::from(Span::styled("press any key to close", dim)));
-    }
+    center.push(Line::from(Span::styled("press any key to close", dim)));
     render_centered_and_tail(frame, area, session, center, theme);
 }
 

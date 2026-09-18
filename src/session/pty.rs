@@ -331,7 +331,7 @@ impl PtyRuntime {
         }
     }
 
-    fn terminate_child(&mut self) {
+    pub(super) fn terminate_child(&mut self) {
         if let Some(mut child) = self.child.take() {
             terminate_child_process(&mut *child);
         }

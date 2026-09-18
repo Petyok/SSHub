@@ -85,3 +85,36 @@ impl App {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+
+    /// Repro for "the Audit tab shows NOTHING at all": a launched session must
+    /// be visible after the exact call the tab switch makes. Drives the real
+    /// store write and the real tab refresh — not the unfiltered
+    /// `list_auth_events` the launch path was already pinned against.
+    #[test]
+    fn audit_tab_lists_launched_event_after_tab_switch() {
+        let mut app = crate::app::tests::test_app(vec![]);
+        app.store
+            .log_auth_event(
+                "web",
+                Some("root"),
+                "direct",
+                "launched",
+                "session started",
+                None,
+            )
+            .unwrap();
+        assert!(app.auth_events_cache.is_empty());
+        // What `try_tab_switch` does on the audit key (`5` by default).
+        app.active_tab = 4;
+        app.refresh_audit_events();
+        assert_eq!(app.active_tab, 4);
+        assert!(
+            !app.auth_events_cache.is_empty(),
+            "launched connect must be visible on the Audit tab"
+        );
+        assert_eq!(app.auth_events_cache[0].status, "launched");
+    }
+}

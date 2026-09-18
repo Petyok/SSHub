@@ -667,7 +667,7 @@ fn apply_panel_selection(frame: &mut Frame, app: &App) {
 
 /// Whether the picker is floating over a session rather than the dashboard.
 fn session_behind_picker(app: &App) -> bool {
-    app.session_picker_over_session()
+    app.session_picker_over_session() || app.mode == AppMode::AuthPrompt
 }
 
 /// Whether this frame is the full-screen session view rather than the
@@ -710,6 +710,12 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
                 *app.popup_backdrop.borrow_mut() = Some(frame.buffer_mut().clone());
             }
             screens::snippet_picker::render(frame, app);
+        }
+        if app.mode == AppMode::AuthPrompt {
+            if app.motion_enabled() {
+                *app.popup_backdrop.borrow_mut() = Some(frame.buffer_mut().clone());
+            }
+            screens::auth::render(frame, app);
         }
         return;
     }
@@ -863,6 +869,7 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
             screens::tunnels::render_tunnel_host_picker(frame, app);
         }
         AppMode::SessionPicker => screens::session_picker::render(frame, app),
+        AppMode::AuthPrompt => screens::auth::render(frame, app),
         AppMode::PushKeyHostPicker => screens::push_key_pickers::render_host_picker(frame, app),
         AppMode::PushKeyIdentityPicker => {
             screens::push_key_pickers::render_identity_picker(frame, app)
