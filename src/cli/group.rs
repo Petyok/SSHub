@@ -48,13 +48,17 @@ pub fn run(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
             rest.remove(0);
             cmd_delete(ctx, &rest)
         }
+        Some("transfer") => {
+            rest.remove(0);
+            super::transfer::cmd_group_transfer(ctx, &rest)
+        }
         Some(other) => {
             eprintln!("sshub: unknown group subcommand '{other}'");
-            eprintln!("       try: sshub group list|show|add|edit|delete");
+            eprintln!("       try: sshub group list|show|add|edit|delete|transfer");
             Ok(2)
         }
         None => {
-            usage("group needs a subcommand (list|show|add|edit|delete)");
+            usage("group needs a subcommand (list|show|add|edit|delete|transfer)");
         }
     }
 }

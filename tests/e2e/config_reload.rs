@@ -32,10 +32,7 @@ fn copy_fixture_tree(dest: &Path) -> (PathBuf, PathBuf) {
     (config_path, ssh_g_dir)
 }
 
-fn wait_for_config_changed(
-    rx: &std::sync::mpsc::Receiver<WatchEvent>,
-    timeout: Duration,
-) -> WatchEvent {
+fn wait_for_config_changed(rx: &sshub::watcher::ConfigWatcher, timeout: Duration) -> WatchEvent {
     rx.recv_timeout(timeout)
         .unwrap_or_else(|err| panic!("timed out waiting for config watcher event: {err}"))
 }

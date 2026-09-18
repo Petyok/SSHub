@@ -37,6 +37,11 @@ impl App {
             return Ok(());
         }
 
+        if self.mode == AppMode::Normal && self.is_action(KeyAction::ProfilesManage, &key) {
+            self.open_profile_manager();
+            return Ok(());
+        }
+
         // Session-log browser from any dashboard tab.
         if self.mode == AppMode::Normal && self.is_action(KeyAction::LogsBrowser, &key) {
             self.open_log_browser()?;
@@ -66,6 +71,7 @@ impl App {
             && key.code == KeyCode::Char('h')
             && key.modifiers.contains(KeyModifiers::CONTROL)
         {
+            self.refresh_profile_count();
             self.settings_selected = 0;
             self.mode = AppMode::Settings;
             return Ok(());
@@ -82,6 +88,7 @@ impl App {
             AppMode::KeybindEditor => self.handle_key_keybind_editor(key),
             AppMode::Settings => self.handle_key_settings(key),
             AppMode::ThemePicker => self.handle_key_theme_picker(key),
+            AppMode::ProfilePicker => self.handle_key_profile_picker(key),
             AppMode::TunnelReconnectSettings => self.handle_key_tunnel_reconnect_settings(key),
             AppMode::ConfirmQuit => self.handle_key_confirm_quit(key),
             AppMode::Help => self.handle_key_help(key),
@@ -732,20 +739,31 @@ impl App {
                 self.help_scroll = self.help_scroll.saturating_sub(1);
             }
             KeyCode::Down => {
-                let max = crate::tui::help_max_scroll(self.terminal_area, &self.help_query);
+                let max = crate::tui::help_max_scroll(
+                    self.terminal_area,
+                    &self.help_query,
+                    self.config.keybinds.primary(KeyAction::ProfilesManage),
+                );
                 self.help_scroll = (self.help_scroll + 1).min(max);
             }
             KeyCode::PageUp => {
                 self.help_scroll = self.help_scroll.saturating_sub(10);
             }
             KeyCode::PageDown => {
-                let max = crate::tui::help_max_scroll(self.terminal_area, &self.help_query);
+                let max = crate::tui::help_max_scroll(
+                    self.terminal_area,
+                    &self.help_query,
+                    self.config.keybinds.primary(KeyAction::ProfilesManage),
+                );
                 self.help_scroll = (self.help_scroll + 10).min(max);
             }
             KeyCode::Home => self.help_scroll = 0,
             KeyCode::End => {
-                self.help_scroll =
-                    crate::tui::help_max_scroll(self.terminal_area, &self.help_query);
+                self.help_scroll = crate::tui::help_max_scroll(
+                    self.terminal_area,
+                    &self.help_query,
+                    self.config.keybinds.primary(KeyAction::ProfilesManage),
+                );
             }
             KeyCode::Backspace => {
                 self.help_query.pop();
@@ -1283,6 +1301,7 @@ impl App {
         let a = &self.config.appearance;
         match item.into() {
             SettingItem::Theme
+            | SettingItem::Profiles
             | SettingItem::CommandHistoryLimit
             | SettingItem::ClearSessionHistory
             | SettingItem::ClearHostHistory
@@ -1404,6 +1423,14 @@ impl App {
                 ) =>
             {
                 self.open_theme_picker();
+            }
+            KeyCode::Enter
+                if matches!(
+                    SETTINGS_ITEMS.get(self.settings_selected).map(|d| d.item),
+                    Some(SettingItem::Profiles)
+                ) =>
+            {
+                self.open_profile_manager();
             }
             KeyCode::Char(' ') | KeyCode::Enter => {
                 // Action rows ignore both keys here: nothing flips, nothing is

@@ -7,57 +7,14 @@ use super::LauncherStore;
 
 impl LauncherStore {
     pub fn create_tunnel(&self, t: &NewTunnel) -> Result<i64> {
-        let now = now_ts();
-        self.with_conn(|conn| {
-            conn.execute(
-                "INSERT INTO tunnels (host_id, tunnel_type, local_port, remote_host, remote_port, label, auto_connect, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                params![
-                    t.host_id,
-                    t.tunnel_type.as_str(),
-                    t.local_port as i64,
-                    t.remote_host,
-                    t.remote_port as i64,
-                    t.label,
-                    t.auto_connect as i64,
-                    now,
-                    now,
-                ],
-            )?;
-            Ok(conn.last_insert_rowid())
-        })
+        self.with_conn(|conn| create_tunnel_on(conn, t))
     }
 
     pub fn list_tunnels(&self) -> Result<Vec<Tunnel>> {
-        self.with_conn(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id, host_id, tunnel_type, local_port, remote_host, remote_port, label, auto_connect, created_at, updated_at
-                 FROM tunnels ORDER BY created_at DESC",
-            )?;
-            let rows = stmt.query_map([], |row| {
-                Ok(Tunnel {
-                    id: row.get(0)?,
-                    host_id: row.get(1)?,
-                    tunnel_type: TunnelType::parse_db(row.get::<_, String>(2)?.as_str()),
-                    local_port: u16::try_from(row.get::<_, i64>(3)?).unwrap_or(0),
-                    remote_host: row.get(4)?,
-                    remote_port: u16::try_from(row.get::<_, i64>(5)?).unwrap_or(0),
-                    label: row.get(6)?,
-                    auto_connect: row.get::<_, i64>(7)? != 0,
-                    created_at: row.get(8)?,
-                    updated_at: row.get(9)?,
-                })
-            })?;
-            rows.collect::<rusqlite::Result<Vec<_>>>()
-                .map_err(Into::into)
-        })
+        self.with_conn(list_tunnels_on)
     }
-
     pub fn delete_tunnel(&self, id: i64) -> Result<bool> {
-        self.with_conn(|conn| {
-            let affected = conn.execute("DELETE FROM tunnels WHERE id = ?1", params![id])?;
-            Ok(affected > 0)
-        })
+        self.with_conn(|conn| delete_tunnel_on(conn, id))
     }
 
     pub fn get_tunnel(&self, id: i64) -> Result<Option<Tunnel>> {
@@ -95,6 +52,56 @@ impl LauncherStore {
                 .map_err(Into::into)
         })
     }
+}
+/// Connection-level tunnel list (caller holds the transaction).
+pub(super) fn list_tunnels_on(conn: &rusqlite::Connection) -> Result<Vec<Tunnel>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, host_id, tunnel_type, local_port, remote_host, remote_port, label, auto_connect, created_at, updated_at
+         FROM tunnels ORDER BY created_at DESC",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(Tunnel {
+            id: row.get(0)?,
+            host_id: row.get(1)?,
+            tunnel_type: TunnelType::parse_db(row.get::<_, String>(2)?.as_str()),
+            local_port: u16::try_from(row.get::<_, i64>(3)?).unwrap_or(0),
+            remote_host: row.get(4)?,
+            remote_port: u16::try_from(row.get::<_, i64>(5)?).unwrap_or(0),
+            label: row.get(6)?,
+            auto_connect: row.get::<_, i64>(7)? != 0,
+            created_at: row.get(8)?,
+            updated_at: row.get(9)?,
+        })
+    })?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
+}
+/// Connection-level tunnel insert for multi-statement transfers: the caller
+/// holds the transaction (see `store::transfer::apply_transfer_plan`).
+pub(super) fn create_tunnel_on(conn: &rusqlite::Connection, t: &NewTunnel) -> Result<i64> {
+    let now = now_ts();
+    conn.execute(
+        "INSERT INTO tunnels (host_id, tunnel_type, local_port, remote_host, remote_port, label, auto_connect, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![
+            t.host_id,
+            t.tunnel_type.as_str(),
+            t.local_port as i64,
+            t.remote_host,
+            t.remote_port as i64,
+            t.label,
+            t.auto_connect as i64,
+            now,
+            now,
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Connection-level tunnel delete (caller holds the transaction).
+pub(super) fn delete_tunnel_on(conn: &rusqlite::Connection, id: i64) -> Result<bool> {
+    let affected = conn.execute("DELETE FROM tunnels WHERE id = ?1", params![id])?;
+    Ok(affected > 0)
 }
 
 fn row_to_tunnel(row: &rusqlite::Row<'_>) -> rusqlite::Result<Tunnel> {

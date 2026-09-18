@@ -1,7 +1,6 @@
-//! Startup profile picker — a standalone pre-`App` TUI shown between the
-//! intro splash and the dashboard when more than one profile exists (or with
-//! `--manage-profiles`). Owns no launcher database: CRUD operates on profile
-//! directories and `state.toml` only.
+//! Profile picker used at startup and from the running application.
+//! Owns no launcher database: CRUD operates on profile directories and
+//! `state.toml` only. In-app management protects the active workspace.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::{Alignment, Rect};
@@ -20,7 +19,7 @@ pub enum PickerOutcome {
     Continue,
     /// Launch this profile.
     Launch(ProfileRecord),
-    /// Cancel startup cleanly.
+    /// Cancel startup or close in-app management.
     Quit,
 }
 
@@ -49,6 +48,8 @@ pub struct ProfilePicker {
     view: View,
     message: Option<String>,
     error: Option<String>,
+    active_id: Option<String>,
+    close_on_create_cancel: bool,
 }
 
 impl ProfilePicker {
@@ -65,9 +66,53 @@ impl ProfilePicker {
             view: View::List,
             message: None,
             error: None,
+            active_id: None,
+            close_on_create_cancel: false,
         }
     }
 
+    /// Manage profiles without touching the running workspace. A single-profile
+    /// installation opens creation directly; otherwise select the active profile.
+    pub fn in_app(roots: RootDirs, state: ProfileState, active_id: String) -> Self {
+        let mut picker = Self::new(roots, state);
+        picker.cursor = picker
+            .state
+            .profiles
+            .iter()
+            .position(|record| record.id == active_id)
+            .unwrap_or(0);
+        picker.active_id = Some(active_id);
+        if picker.profile_count() == 1 {
+            picker.view = View::Create {
+                buf: String::new(),
+                cursor: 0,
+            };
+            picker.close_on_create_cancel = true;
+        }
+        picker
+    }
+
+    /// Surface application-level switch failures in the still-open manager.
+    pub fn set_error(&mut self, message: String) {
+        self.error = Some(message);
+    }
+
+    /// Drop the error line (e.g. when the transfer dialog takes over feedback).
+    pub fn clear_error(&mut self) {
+        self.error = None;
+    }
+
+    pub fn profile_count(&self) -> usize {
+        self.state.profiles.len()
+    }
+
+    /// Whether the picker shows the profile list (no create/rename/delete
+    /// editor open). Manager-level single-key actions such as the transfer
+    /// arm must only fire here — in every other view the same keystroke is
+    /// editor text.
+    pub fn is_list_view(&self) -> bool {
+        matches!(self.view, View::List)
+    }
     fn current(&self) -> Option<&ProfileRecord> {
         self.state
             .profiles
@@ -87,6 +132,18 @@ impl ProfilePicker {
                 Ok(outcome)
             }
             View::ConfirmDelete { .. } => self.handle_confirm_key(key),
+        }
+    }
+
+    /// Paste edits names only; list and confirmation views never replay commands.
+    pub fn handle_paste(&mut self, text: &str) {
+        let (buf, cursor) = match &mut self.view {
+            View::Create { buf, cursor } | View::Rename { buf, cursor, .. } => (buf, cursor),
+            _ => return,
+        };
+        for ch in text.chars().filter(|ch| !ch.is_control()) {
+            *cursor = crate::text_input::insert_at(buf, *cursor, ch);
+            self.error = None;
         }
     }
 
@@ -121,6 +178,13 @@ impl ProfilePicker {
                     cursor: 0,
                 };
             }
+            KeyCode::Char('r' | 'd')
+                if self.current().is_some_and(|record| {
+                    self.active_id.as_deref() == Some(record.id.as_str())
+                }) =>
+            {
+                self.error = Some("cannot rename or delete the active profile".into());
+            }
             KeyCode::Char('r') => {
                 if let Some(record) = self.current().cloned() {
                     self.view = View::Rename {
@@ -145,8 +209,8 @@ impl ProfilePicker {
         Ok(PickerOutcome::Continue)
     }
 
-    /// Shared line-editor handling for Create / Rename views. Returns `Quit`
-    /// never; `Launch` never; submit/cancel flip back to the list view.
+    /// Shared Create / Rename editor. Only cancelling initial in-app creation
+    /// closes the picker; other submit/cancel actions return to the list.
     fn handle_input_key(&mut self, key: KeyEvent) -> anyhow::Result<PickerOutcome> {
         // Extract current buffer state.
         let (is_create, id, mut buf, mut cursor) = match &self.view {
@@ -157,6 +221,9 @@ impl ProfilePicker {
 
         match key.code {
             KeyCode::Esc => {
+                if is_create && self.close_on_create_cancel {
+                    return Ok(PickerOutcome::Quit);
+                }
                 self.view = View::List;
                 return Ok(PickerOutcome::Continue);
             }
@@ -173,6 +240,7 @@ impl ProfilePicker {
                                 .position(|p| p.id == record.id)
                                 .unwrap_or(0);
                             self.view = View::List;
+                            self.close_on_create_cancel = false;
                         }
                         Err(e) => {
                             self.error = Some(format!("{e:#}"));
@@ -243,7 +311,8 @@ impl ProfilePicker {
     }
 
     pub fn render(&self, frame: &mut Frame, theme: &ResolvedTheme) {
-        let area = popup_area(frame.area(), 46, 9 + self.state.profiles.len() as u16);
+        let height = 9u16.saturating_add(u16::try_from(self.profile_count()).unwrap_or(u16::MAX));
+        let area = popup_area(frame.area(), 46, height);
         frame.render_widget(Clear, area);
 
         let block = Block::default()
@@ -259,10 +328,22 @@ impl ProfilePicker {
         frame.render_widget(block, area);
 
         let mut lines: Vec<Line> = Vec::new();
-
         match &self.view {
             View::List => {
-                for (i, record) in self.state.profiles.iter().enumerate() {
+                // Reserve space for status, the blank separator and all three
+                // legend rows. On very short terminals prioritize one selected
+                // row over the legend.
+                let status_rows = u16::from(self.error.is_some() || self.message.is_some());
+                let visible_rows = usize::from(inner.height.saturating_sub(4 + status_rows).max(1));
+                let start = self.cursor.saturating_sub(visible_rows - 1);
+                for (i, record) in self
+                    .state
+                    .profiles
+                    .iter()
+                    .enumerate()
+                    .skip(start)
+                    .take(visible_rows)
+                {
                     let marker = if i == self.cursor { "▸ " } else { "  " };
                     let style = if i == self.cursor {
                         theme.style(StyleRole::PickerRowSelected)
@@ -272,6 +353,14 @@ impl ProfilePicker {
                     lines.push(Line::from(vec![
                         Span::styled(marker.to_string(), style),
                         Span::styled(format!("{}. {}", i + 1, record.name), style),
+                        Span::styled(
+                            if self.active_id.as_deref() == Some(record.id.as_str()) {
+                                " (active)"
+                            } else {
+                                ""
+                            },
+                            style,
+                        ),
                     ]));
                 }
             }
@@ -325,15 +414,43 @@ impl ProfilePicker {
                 Span::styled("↑↓/1-9", theme.style(StyleRole::FooterKey)),
                 Span::styled(" select  ", theme.style(StyleRole::FooterLabel)),
                 Span::styled("Enter", theme.style(StyleRole::FooterKey)),
-                Span::styled(" launch  ", theme.style(StyleRole::FooterLabel)),
+                Span::styled(
+                    if self.active_id.is_some() {
+                        " switch"
+                    } else {
+                        " launch"
+                    },
+                    theme.style(StyleRole::FooterLabel),
+                ),
+            ]));
+            // `T` arms a cross-profile transfer, but only in the in-app manager:
+            // at startup the picker owns `T` for nothing, so don't advertise it.
+            let mut manage_row = vec![
                 Span::styled("n", theme.style(StyleRole::FooterKey)),
                 Span::styled(" new  ", theme.style(StyleRole::FooterLabel)),
                 Span::styled("r", theme.style(StyleRole::FooterKey)),
                 Span::styled(" rename  ", theme.style(StyleRole::FooterLabel)),
                 Span::styled("d", theme.style(StyleRole::FooterKey)),
-                Span::styled(" delete  ", theme.style(StyleRole::FooterLabel)),
+                Span::styled(" delete", theme.style(StyleRole::FooterLabel)),
+            ];
+            if self.active_id.is_some() {
+                manage_row.push(Span::styled("  t/T", theme.style(StyleRole::FooterKey)));
+                manage_row.push(Span::styled(
+                    " transfer",
+                    theme.style(StyleRole::FooterLabel),
+                ));
+            }
+            lines.push(Line::from(manage_row));
+            lines.push(Line::from(vec![
                 Span::styled("Esc", theme.style(StyleRole::FooterKey)),
-                Span::styled(" quit", theme.style(StyleRole::FooterLabel)),
+                Span::styled(
+                    if self.active_id.is_some() {
+                        " close"
+                    } else {
+                        " quit"
+                    },
+                    theme.style(StyleRole::FooterLabel),
+                ),
             ]));
         } else if !matches!(self.view, View::ConfirmDelete { .. }) {
             lines.push(Line::from(vec![
@@ -401,6 +518,26 @@ mod tests {
                 .collect(),
             last_used: None,
         }
+    }
+
+    #[test]
+    fn startup_picker_paste_preserves_unicode_and_editor_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut picker = ProfilePicker::new(roots(dir.path()), state_with(&["default", "work"]));
+        let key = |code| KeyEvent::new(code, crossterm::event::KeyModifiers::empty());
+        picker.handle_key(key(KeyCode::Char('n'))).unwrap();
+        picker.handle_paste("Café");
+        picker.handle_key(key(KeyCode::Left)).unwrap();
+        picker.handle_paste("界\r\n\t\u{1b}\u{7f}\u{85}");
+        assert!(matches!(
+            &picker.view,
+            View::Create { buf, cursor } if buf == "Caf界é" && *cursor == 4
+        ));
+        assert_eq!(picker.profile_count(), 2);
+        picker.handle_key(key(KeyCode::Esc)).unwrap();
+        picker.handle_paste("jndy\n");
+        assert!(matches!(picker.view, View::List));
+        assert_eq!(picker.cursor, 0);
     }
 
     #[test]
@@ -625,5 +762,178 @@ mod tests {
             let mut terminal = Terminal::new(backend).unwrap();
             terminal.draw(|frame| picker.render(frame, &theme)).unwrap();
         }
+    }
+
+    fn press(picker: &mut ProfilePicker, code: KeyCode) -> PickerOutcome {
+        picker
+            .handle_key(KeyEvent::new(code, crossterm::event::KeyModifiers::empty()))
+            .unwrap()
+    }
+
+    fn render_text(picker: &ProfilePicker, width: u16, height: u16) -> String {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        let theme = crate::test_support::resolved_default();
+        terminal.draw(|frame| picker.render(frame, &theme)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+    }
+
+    #[test]
+    fn in_app_single_profile_creates_second_then_lists() {
+        let dir = tempfile::tempdir().unwrap();
+        let roots = roots(dir.path());
+        let mut state = ProfileState::default();
+        let active = profile::create_profile(&roots, &mut state, "default").unwrap();
+        let mut picker = ProfilePicker::in_app(roots, state, active.id.clone());
+        assert!(matches!(picker.view, View::Create { .. }));
+        assert_eq!(picker.profile_count(), 1);
+        for ch in "work".chars() {
+            assert_eq!(
+                press(&mut picker, KeyCode::Char(ch)),
+                PickerOutcome::Continue
+            );
+        }
+        assert_eq!(press(&mut picker, KeyCode::Enter), PickerOutcome::Continue);
+        assert!(matches!(picker.view, View::List));
+        assert_eq!(picker.profile_count(), 2);
+        let saved = ProfileState::load(dir.path()).unwrap().unwrap();
+        assert_eq!(saved.profiles.len(), 2);
+        assert_eq!(saved.by_name("default").unwrap(), &active);
+        let work = saved.by_name("work").unwrap();
+        assert!(dir.path().join("profiles/work/config.toml").is_file());
+        assert_eq!(
+            press(&mut picker, KeyCode::Enter),
+            PickerOutcome::Launch(work.clone())
+        );
+        press(&mut picker, KeyCode::Char('n'));
+        assert_eq!(press(&mut picker, KeyCode::Esc), PickerOutcome::Continue);
+        assert!(matches!(picker.view, View::List));
+    }
+
+    #[test]
+    fn in_app_direct_create_cancel_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut picker = ProfilePicker::in_app(
+            roots(dir.path()),
+            state_with(&["default"]),
+            "id-default".into(),
+        );
+        press(&mut picker, KeyCode::Char('w'));
+        assert_eq!(press(&mut picker, KeyCode::Esc), PickerOutcome::Quit);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn in_app_active_profile_cannot_be_renamed_or_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let roots = roots(dir.path());
+        let mut state = ProfileState::default();
+        let active = profile::create_profile(&roots, &mut state, "default").unwrap();
+        let other = profile::create_profile(&roots, &mut state, "work").unwrap();
+        state.last_used = Some(other.id);
+        let before = std::fs::read(dir.path().join(profile::STATE_FILE)).unwrap();
+        let mut picker = ProfilePicker::in_app(roots, state, active.id.clone());
+        assert_eq!(picker.current(), Some(&active));
+        for code in [KeyCode::Char('r'), KeyCode::Char('d')] {
+            assert_eq!(press(&mut picker, code), PickerOutcome::Continue);
+            assert!(matches!(picker.view, View::List));
+            assert!(render_text(&picker, 80, 24).contains("active profile"));
+            assert_eq!(
+                std::fs::read(dir.path().join(profile::STATE_FILE)).unwrap(),
+                before
+            );
+            assert!(dir.path().join("profiles/default").is_dir());
+        }
+        press(&mut picker, KeyCode::Down);
+        press(&mut picker, KeyCode::Char('r'));
+        assert!(matches!(picker.view, View::Rename { .. }));
+        press(&mut picker, KeyCode::Esc);
+        press(&mut picker, KeyCode::Char('d'));
+        assert!(matches!(picker.view, View::ConfirmDelete { .. }));
+    }
+
+    #[test]
+    fn in_app_non_active_crud_preserves_active_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let roots = roots(dir.path());
+        let mut state = ProfileState::default();
+        let active = profile::create_profile(&roots, &mut state, "default").unwrap();
+        let other = profile::create_profile(&roots, &mut state, "work").unwrap();
+        let active_config = dir.path().join("profiles/default/config.toml");
+        let before = std::fs::read(&active_config).unwrap();
+        let mut picker = ProfilePicker::in_app(roots, state, active.id.clone());
+
+        press(&mut picker, KeyCode::Down);
+        press(&mut picker, KeyCode::Char('r'));
+        for _ in "work".chars() {
+            press(&mut picker, KeyCode::Backspace);
+        }
+        for ch in "client".chars() {
+            press(&mut picker, KeyCode::Char(ch));
+        }
+        assert_eq!(press(&mut picker, KeyCode::Enter), PickerOutcome::Continue);
+        assert!(matches!(picker.view, View::List));
+        assert_eq!(picker.profile_count(), 2);
+        let saved = ProfileState::load(dir.path()).unwrap().unwrap();
+        assert_eq!(saved.by_name("client").unwrap().id, other.id);
+        assert_eq!(saved.by_name("default"), Some(&active));
+        assert!(dir.path().join("profiles/client/config.toml").is_file());
+        assert!(!dir.path().join("profiles/work").exists());
+
+        press(&mut picker, KeyCode::Char('d'));
+        assert!(matches!(picker.view, View::ConfirmDelete { .. }));
+        let text = render_text(&picker, 80, 24);
+        assert!(text.contains("Delete profile 'client' permanently?"));
+        assert_eq!(
+            press(&mut picker, KeyCode::Char('y')),
+            PickerOutcome::Continue
+        );
+        assert!(matches!(picker.view, View::List));
+        assert_eq!(picker.profile_count(), 1);
+        assert_eq!(picker.current(), Some(&active));
+        let saved = ProfileState::load(dir.path()).unwrap().unwrap();
+        assert_eq!(saved.profiles, vec![active]);
+        assert!(!dir.path().join("profiles/client").exists());
+        assert_eq!(std::fs::read(&active_config).unwrap(), before);
+    }
+
+    #[test]
+    fn in_app_render_shows_active_switch_close_and_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut picker = ProfilePicker::in_app(
+            roots(dir.path()),
+            state_with(&["default", "work"]),
+            "id-work".into(),
+        );
+        picker.set_error("switch failed".into());
+        let text = render_text(&picker, 80, 24);
+        assert!(text.contains("work (active)"));
+        assert!(text.contains("Enter switch"));
+        assert!(text.contains("Esc close"));
+        assert!(text.contains("switch failed"));
+        for (width, height) in [(1, 1), (3, 2), (8, 4), (20, 6)] {
+            render_text(&picker, width, height);
+        }
+    }
+
+    #[test]
+    fn long_list_keeps_selected_profile_visible() {
+        let dir = tempfile::tempdir().unwrap();
+        let names: Vec<String> = (0..30).map(|i| format!("profile-{i}")).collect();
+        let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut picker = ProfilePicker::in_app(
+            roots(dir.path()),
+            state_with(&name_refs),
+            "id-profile-29".into(),
+        );
+        assert!(render_text(&picker, 80, 12).contains("profile-29 (active)"));
+        press(&mut picker, KeyCode::Down);
+        assert!(render_text(&picker, 80, 12).contains("1. profile-0"));
     }
 }

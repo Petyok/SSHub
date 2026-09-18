@@ -217,6 +217,15 @@ impl TunnelManager {
         !self.processes.is_empty() || !self.reconnect.is_empty()
     }
 
+    /// Owned children and scheduled retries must finish before replacing their profile.
+    pub fn has_active_work(&self) -> bool {
+        !self.processes.is_empty()
+            || self
+                .reconnect
+                .values()
+                .any(|state| state.phase == ReconnectPhase::Reconnecting)
+    }
+
     pub fn check_health(
         &mut self,
         tunnels: &[Tunnel],
@@ -540,6 +549,62 @@ impl Drop for TunnelManager {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn active_work_excludes_exhausted_reconnects() {
+        let mut mgr = TunnelManager::new();
+        let cfg = TunnelReconnectConfig {
+            max_attempts: 2,
+            ..Default::default()
+        };
+        assert!(!mgr.has_active_work());
+        mgr.on_auto_start_failed(1, "offline", &cfg);
+        assert!(mgr.has_active_work());
+        mgr.on_auto_start_failed(1, "offline", &cfg);
+        mgr.on_auto_start_failed(1, "offline", &cfg);
+        assert!(mgr.is_gave_up(1));
+        assert!(!mgr.has_active_work());
+        assert!(mgr.needs_tunnel_list());
+        mgr.on_auto_start_failed(2, "offline", &cfg);
+        assert!(mgr.has_active_work());
+        mgr.mark_user_stopped(2);
+        assert!(!mgr.has_active_work());
+    }
+
+    #[test]
+    fn owned_child_blocks_even_with_exhausted_reconnect() {
+        let mut mgr = TunnelManager::new();
+        let cfg = TunnelReconnectConfig {
+            max_attempts: 1,
+            ..Default::default()
+        };
+        mgr.on_auto_start_failed(1, "offline", &cfg);
+        mgr.on_auto_start_failed(1, "offline", &cfg);
+        assert!(mgr.is_gave_up(1));
+        let child = Command::new("sh")
+            .args(["-c", "read value"])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        mgr.processes.insert(
+            1,
+            TunnelProcess {
+                child,
+                started_at: Instant::now(),
+                status: TunnelStatus::Up,
+                proving: true,
+                stderr_tail: Arc::new(Mutex::new(String::new())),
+                _askpass: None,
+            },
+        );
+        assert!(mgr.has_active_work());
+        assert!(!mgr.is_running(1));
+        mgr.processes.get_mut(&1).unwrap().proving = false;
+        assert!(mgr.has_active_work());
+        assert!(mgr.is_running(1));
+        mgr.stop_user(1).unwrap();
+        assert!(!mgr.has_active_work());
+    }
 
     #[test]
     fn mark_user_stopped_clears_reconnect_state() {

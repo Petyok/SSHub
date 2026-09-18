@@ -43,6 +43,7 @@ pub enum HelpItem {
         key: &'static str,
         desc: &'static str,
     },
+    Profiles,
     Blank,
 }
 
@@ -87,6 +88,10 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     HelpItem::Entry {
         key: "",
         desc: "Picker: Enter launch, n create, r rename, d delete, Esc cancel.",
+    },
+    HelpItem::Entry {
+        key: "t/T",
+        desc: "Transfer a host, group, identity or tunnel to another profile (profile manager).",
     },
     HelpItem::Blank,
     HelpItem::Section("hosts (tab 1)"),
@@ -379,6 +384,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         key: "Shift+S",
         desc: "Manage command snippets (add/edit/delete)",
     },
+    HelpItem::Profiles,
     HelpItem::Entry {
         key: "",
         desc: "Defaults listed below; rebind any action in the editor.",
@@ -552,7 +558,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
 ];
 
-fn entry_line(styles: HelpStyles, key: &'static str, desc: &'static str) -> Line<'static> {
+fn entry_line(styles: HelpStyles, key: &str, desc: &'static str) -> Line<'static> {
     Line::from(vec![
         Span::styled(format!("{:<16}", key), styles.key),
         Span::styled(desc, styles.description),
@@ -563,10 +569,15 @@ fn section_line(styles: HelpStyles, title: &'static str) -> Line<'static> {
     Line::from(Span::styled(title, styles.section))
 }
 
-fn item_to_line(styles: HelpStyles, item: HelpItem) -> Line<'static> {
+fn item_to_line(styles: HelpStyles, item: HelpItem, profile_key: &str) -> Line<'static> {
     match item {
         HelpItem::Section(title) => section_line(styles, title),
         HelpItem::Entry { key, desc } => entry_line(styles, key, desc),
+        HelpItem::Profiles => entry_line(
+            styles,
+            profile_key,
+            "Add or manage profiles (isolated workspaces)",
+        ),
         HelpItem::Blank => Line::from(""),
     }
 }
@@ -578,7 +589,7 @@ fn entry_matches(key: &str, desc: &str, query: &str) -> bool {
 /// Case-insensitive substring filter over key specs and descriptions.
 /// Section headers with no surviving entries are dropped; blank separators are
 /// kept only when they sit between kept content.
-pub fn filtered_help_items(query: &str) -> Vec<HelpItem> {
+pub fn filtered_help_items(query: &str, profile_key: &str) -> Vec<HelpItem> {
     if query.is_empty() {
         return HELP_ITEMS.to_vec();
     }
@@ -607,40 +618,70 @@ pub fn filtered_help_items(query: &str) -> Vec<HelpItem> {
                 out.push(item);
             }
             HelpItem::Entry { .. } => {}
+            HelpItem::Profiles => {
+                if entry_matches(
+                    profile_key,
+                    "Add or manage profiles (isolated workspaces)",
+                    &q,
+                ) {
+                    if let Some(title) = pending_section.take() {
+                        if pending_blank && !out.is_empty() {
+                            out.push(HelpItem::Blank);
+                        }
+                        out.push(HelpItem::Section(title));
+                    }
+                    pending_blank = false;
+                    out.push(item);
+                }
+            }
         }
     }
     out
 }
 
-fn help_lines(query: &str, styles: HelpStyles) -> Vec<Line<'static>> {
-    filtered_help_items(query)
+fn help_lines(query: &str, styles: HelpStyles, profile_key: &str) -> Vec<Line<'static>> {
+    filtered_help_items(query, profile_key)
         .into_iter()
-        .map(|item| item_to_line(styles, item))
+        .map(|item| item_to_line(styles, item, profile_key))
         .collect()
 }
 
 /// Total number of lines in the (possibly filtered) help content.
-pub fn help_line_count(query: &str) -> u16 {
-    filtered_help_items(query).len() as u16
+pub fn help_line_count(query: &str, profile_key: &str) -> u16 {
+    filtered_help_items(query, profile_key).len() as u16
 }
 
 /// The scrollable help body (no border/footer — the caller frames it).
-pub fn render_help(scroll: u16, query: &str, theme: &ResolvedTheme) -> Paragraph<'static> {
-    Paragraph::new(help_lines(query, HelpStyles::of(theme))).scroll((scroll, 0))
+pub fn render_help(
+    scroll: u16,
+    query: &str,
+    theme: &ResolvedTheme,
+    profile_key: &str,
+) -> Paragraph<'static> {
+    Paragraph::new(help_lines(query, HelpStyles::of(theme), profile_key)).scroll((scroll, 0))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn profile_help_filters_and_renders_current_binding() {
+        let items = filtered_help_items("F6", "F6");
+        assert!(items.contains(&HelpItem::Profiles));
+        assert!(!filtered_help_items("Alt+P", "F6").contains(&HelpItem::Profiles));
+        let lines = help_lines("profiles", HelpStyles::blank(), "F6");
+        assert!(lines.iter().any(|line| line.to_string().contains("F6")));
+        assert!(!lines.iter().any(|line| line.to_string().contains("Alt+P")));
+    }
 
     #[test]
     fn empty_query_keeps_full_item_list() {
-        assert_eq!(filtered_help_items(""), HELP_ITEMS.to_vec());
+        assert_eq!(filtered_help_items("", "Alt+P"), HELP_ITEMS.to_vec());
     }
 
     #[test]
     fn query_matches_key_spec_and_description() {
-        let by_key = filtered_help_items("Ctrl+K");
+        let by_key = filtered_help_items("Ctrl+K", "Alt+P");
         assert!(by_key.iter().any(|i| matches!(
             i,
             HelpItem::Entry {
@@ -652,7 +693,7 @@ mod tests {
             .iter()
             .any(|i| matches!(i, HelpItem::Section("tools"))));
 
-        let by_desc = filtered_help_items("favorite");
+        let by_desc = filtered_help_items("favorite", "Alt+P");
         assert!(by_desc.iter().any(|i| matches!(
             i,
             HelpItem::Entry {
@@ -673,7 +714,7 @@ mod tests {
         // Body rows under "termius import" mention L00t.csv, not the word
         // "termius" — so a "termius" query must keep "import / export" (Shift+T
         // row) and drop the empty "termius import" section header.
-        let by_name = filtered_help_items("termius");
+        let by_name = filtered_help_items("termius", "Alt+P");
         assert!(by_name
             .iter()
             .any(|i| matches!(i, HelpItem::Section("import / export"))));
@@ -684,7 +725,7 @@ mod tests {
             .iter()
             .any(|i| matches!(i, HelpItem::Section("navigate"))));
 
-        let by_body = filtered_help_items("L00t");
+        let by_body = filtered_help_items("L00t", "Alt+P");
         assert!(by_body
             .iter()
             .any(|i| matches!(i, HelpItem::Section("termius import (Shift+T)"))));
@@ -699,7 +740,7 @@ mod tests {
     #[test]
     fn empty_query_lines_match_pre_filter_shape() {
         let styles = HelpStyles::blank();
-        let lines = help_lines("", styles);
+        let lines = help_lines("", styles, "Alt+P");
         assert_eq!(lines.len(), HELP_ITEMS.len());
         // Spot-check first section + entry styling payload.
         assert_eq!(lines[0], section_line(styles, "navigate"));

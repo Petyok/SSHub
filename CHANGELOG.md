@@ -53,6 +53,24 @@ All notable changes to SSHub are documented in this file.
   `does not match the private key` warning appears when the cert was not
   issued for that key. Issuing certs and auto-renewal stay out of scope.
 
+- **In-app profile management** (issue #124) - `Alt+P` or Settings opens profile
+  creation/management without restarting SSHub. The dashboard shows the current
+  workspace and remappable shortcut; one-profile installs open creation directly.
+  Switching rebuilds profile-owned state in the same terminal only after the
+  replacement loads, preserving the current workspace on failure. Live sessions,
+  SFTP/transfers, broadcasts, tunnels and reconnects block switching; the active
+  profile cannot be renamed or deleted. Single-profile silent startup, the
+  multi-profile startup picker, CLI selection and directory overrides are unchanged.
+
+- **Cross-profile transfers** - move or copy a host, group, identity or tunnel
+  to another profile from the profile manager (`t`/`T`) or `sshub transfer ...`.
+  Every transfer shows a plan preview with explicit confirm; name clashes
+  auto-rename (`name (copy N)`), and live sessions / running tunnels block the
+  affected hosts (the headless CLI only sees running tunnels, not live
+  sessions). Transferred groups flatten to top level and hosts land with
+  `Launcher` source.
+  The destination picker is fuzzy-filtered and the dialog is bounded and centered.
+
 ## [0.16.0] - 2026-09-05
 
 ### Added

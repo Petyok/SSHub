@@ -46,17 +46,21 @@ pub fn run(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
             rest.remove(0);
             cmd_delete(ctx, &rest)
         }
+        Some("transfer") => {
+            rest.remove(0);
+            super::transfer::cmd_identity_transfer(ctx, &rest)
+        }
         Some("agent-remove") => {
             rest.remove(0);
             cmd_agent_remove(ctx, &rest)
         }
         Some(other) => {
             eprintln!("sshub: unknown identity subcommand '{other}'");
-            eprintln!("       try: sshub identity list|show|add|edit|delete|agent-remove");
+            eprintln!("       try: sshub identity list|show|add|edit|delete|agent-remove|transfer");
             Ok(2)
         }
         None => {
-            usage("identity needs a subcommand (list|show|add|edit|delete|agent-remove)");
+            usage("identity needs a subcommand (list|show|add|edit|delete|agent-remove|transfer)");
         }
     }
 }

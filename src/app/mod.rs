@@ -16,6 +16,8 @@ mod keys;
 mod local_shell;
 mod log_browser;
 mod mouse;
+mod profile_manager;
+pub(crate) mod profile_transfer;
 mod push_key;
 mod session;
 mod session_picker;
@@ -59,7 +61,6 @@ use crate::text_input;
 use crate::theme::manager::ThemeManager;
 use crate::theme::model::{ResolvedTheme, ThemeDiagnostic, ValidationMode};
 use crate::theme::registry::ThemeRegistry;
-use crate::watcher::WatchEvent;
 
 /// Virtual group label for hosts without a DB group.
 pub const UNGROUPED_LABEL: &str = "_ungrouped";
@@ -187,12 +188,20 @@ pub struct App {
     /// Resolved profile workspace (databases, config, logs, tunnels). `None`
     /// only in unit tests that inject deps directly.
     pub profile: Option<crate::profile::ProfilePaths>,
+    pub profile_picker: Option<crate::profile::picker::ProfilePicker>,
+    pub pending_profile: Option<crate::profile::ProfilePaths>,
+    /// Staged cross-profile transfer (`T` in the profile manager). `Some`
+    /// while choosing destination/scope/confirming; the plan applies only on
+    /// explicit `y`.
+    pub pending_transfer: Option<profile_transfer::PendingTransfer>,
+    profile_return_mode: AppMode,
+    pub profile_count: usize,
     /// Active tag filters. A host matches when it carries every selected tag
     /// (AND). Empty means no tag filtering.
     pub tag_filters: Vec<String>,
     /// Highlighted row in the tag-filter popup (0 = "all"; 1.. = a tag).
     pub tag_filter_selected: usize,
-    pub watcher_rx: Option<Receiver<WatchEvent>>,
+    pub watcher_rx: Option<crate::watcher::ConfigWatcher>,
     pub should_quit: bool,
     pub detail_focus: bool,
     pub detail_edit: Option<HostDetailEdit>,
@@ -870,6 +879,7 @@ impl App {
             },
         );
         app.profile = Some(paths);
+        app.refresh_profile_count();
         if !keyring_available {
             app.host_notice =
                 Some("OS keyring unavailable. Using credentials.json fallback.".into());
@@ -916,6 +926,11 @@ impl App {
             mode: AppMode::Normal,
             config,
             profile: None,
+            profile_picker: None,
+            pending_profile: None,
+            pending_transfer: None,
+            profile_return_mode: AppMode::Normal,
+            profile_count: 1,
             tag_filters: Vec::new(),
             tag_filter_selected: 0,
             watcher_rx: None,
@@ -1078,7 +1093,7 @@ impl App {
         }
     }
 
-    pub fn set_watcher_rx(&mut self, rx: Receiver<WatchEvent>) {
+    pub fn set_watcher_rx(&mut self, rx: crate::watcher::ConfigWatcher) {
         self.watcher_rx = Some(rx);
     }
 
