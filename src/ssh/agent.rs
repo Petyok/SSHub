@@ -40,7 +40,25 @@ pub fn remove_key(path: &str) -> Result<()> {
 }
 
 pub fn add_key(path: &str) -> Result<()> {
-    let output = Command::new("ssh-add").arg(path).output()?;
+    add_key_with_cert(path, None)
+}
+
+/// The exact `ssh-add` invocation [`add_key_with_cert`] runs, exposed so
+/// tests can pin the argv without spawning anything.
+pub fn agent_add_argv(key_path: &str, cert_path: Option<&str>) -> Vec<String> {
+    let mut argv = vec!["ssh-add".to_string(), key_path.to_string()];
+    if let Some(cert) = cert_path {
+        argv.push(cert.to_string());
+    }
+    argv
+}
+
+/// `ssh-add <key> [<cert>]`: the cert rides along as a second identity file
+/// so non-`<key>-cert.pub` paths load too (the default name ssh-add would
+/// pick up on its own is just the common case, not the rule).
+pub fn add_key_with_cert(key_path: &str, cert_path: Option<&str>) -> Result<()> {
+    let argv = agent_add_argv(key_path, cert_path);
+    let output = Command::new(&argv[0]).args(&argv[1..]).output()?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("ssh-add failed: {}", stderr.trim());
@@ -80,4 +98,62 @@ fn list_agent_keys() -> Result<Vec<AgentKey>> {
         })
         .collect();
     Ok(keys)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_add_argv_lists_key_before_cert() {
+        // Oracle: the recorded `ssh-add` invocation shape — key first, cert
+        // second, exactly as the tool accepts multiple identity files.
+        assert_eq!(
+            agent_add_argv("/home/u/.ssh/id_ed25519", Some("/home/u/.ssh/id-cert.pub")),
+            vec![
+                "ssh-add".to_string(),
+                "/home/u/.ssh/id_ed25519".to_string(),
+                "/home/u/.ssh/id-cert.pub".to_string(),
+            ],
+        );
+        assert_eq!(
+            agent_add_argv("/home/u/.ssh/id_ed25519", None),
+            vec!["ssh-add".to_string(), "/home/u/.ssh/id_ed25519".to_string(),]
+        );
+    }
+
+    #[test]
+    fn add_key_with_cert_passes_both_paths_to_ssh_add() {
+        // Oracle: a fake `ssh-add` on a private `PATH` records its real argv —
+        // the test observes what the tool would actually receive.
+        let _lock = crate::test_env::lock_home();
+        let dir = tempfile::tempdir().unwrap();
+        let recorder = dir.path().join("argv.txt");
+        let fake = dir.path().join("ssh-add");
+        std::fs::write(
+            &fake,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" >> {}\nprintf '%s\\n' '---' >> {}\n",
+                recorder.display(),
+                recorder.display()
+            ),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let old_path = std::env::var("PATH").unwrap_or_default();
+        std::env::set_var("PATH", format!("{}:{old_path}", dir.path().display()));
+        add_key_with_cert("/home/u/.ssh/id_ed25519", Some("/home/u/.ssh/id-cert.pub")).unwrap();
+        add_key_with_cert("/home/u/.ssh/id_other", None).unwrap();
+        std::env::set_var("PATH", old_path);
+
+        let recorded = std::fs::read_to_string(&recorder).unwrap();
+        assert_eq!(
+            recorded,
+            "/home/u/.ssh/id_ed25519\n/home/u/.ssh/id-cert.pub\n---\n/home/u/.ssh/id_other\n---\n"
+        );
+    }
 }

@@ -24,7 +24,57 @@ impl App {
         self.reload_identities()?;
         self.agent_info_updated = std::time::Instant::now() - std::time::Duration::from_secs(60);
         self.refresh_agent_info();
+        self.refresh_cert_statuses();
         Ok(())
+    }
+
+    /// Rebuild [`App::cert_statuses`] from the identities on disk plus the
+    /// open form's typed path. Entries are keyed by the raw path string, so a
+    /// renamed path cannot serve a stale snapshot; dropped paths fall out of
+    /// the rebuilt map. Each entry costs up to four `ssh-keygen` runs, which
+    /// is why this happens on tab entry/save/keystroke — never per frame.
+    pub(crate) fn refresh_cert_statuses(&mut self) {
+        let mut paths: Vec<(String, Option<std::path::PathBuf>, String)> = self
+            .identities
+            .iter()
+            .filter_map(|identity| {
+                identity.certificate.as_ref().map(|cert| {
+                    let secret = self.stored_secret(&crate::credentials::identity_key(identity.id));
+                    (
+                        cert.to_string_lossy().into_owned(),
+                        identity.private_key.clone(),
+                        secret,
+                    )
+                })
+            })
+            .collect();
+        if let Some(form) = self.identity_form.as_ref() {
+            if !form.certificate.trim().is_empty() {
+                let passphrase = form.password.clone();
+                let key = if form.private_key.trim().is_empty() {
+                    None
+                } else {
+                    Some(std::path::PathBuf::from(&form.private_key))
+                };
+                paths.push((form.certificate.clone(), key, passphrase));
+            }
+            self.cert_probed_path = form.certificate.clone();
+        }
+        let mut fresh = std::collections::HashMap::new();
+        for (raw, key, passphrase) in &paths {
+            if raw.trim().is_empty() {
+                continue;
+            }
+            let pass = if passphrase.is_empty() {
+                None
+            } else {
+                Some(passphrase.as_str())
+            };
+            let status =
+                crate::ssh::cert::status_for(std::path::Path::new(raw), key.as_deref(), pass);
+            fresh.insert(raw.clone(), status);
+        }
+        self.cert_statuses = fresh;
     }
 
     pub(crate) fn remove_selected_from_agent(&mut self) -> Result<()> {
@@ -76,9 +126,29 @@ impl App {
             return Ok(());
         };
         let name = identity.name.clone();
-        match crate::ssh::agent::add_key(&key_path.to_string_lossy()) {
+        let cert_path = identity.certificate.clone();
+        // Fresh check at action time: the cached snapshot may predate a cert
+        // rotation on disk, and a stale "valid" must not bless a new file.
+        let mismatch = cert_path.as_ref().is_some_and(|cert| {
+            crate::ssh::cert::check_key_match(
+                cert,
+                key_path,
+                Some(self.stored_secret(&crate::credentials::identity_key(identity.id)))
+                    .as_deref()
+                    .filter(|s| !s.is_empty()),
+            ) == crate::ssh::cert::KeyMatch::Mismatch
+        });
+        let cert_arg = cert_path
+            .as_deref()
+            .map(|p| p.to_string_lossy().into_owned());
+        match crate::ssh::agent::add_key_with_cert(&key_path.to_string_lossy(), cert_arg.as_deref())
+        {
             Ok(()) => {
-                self.identity_notice = Some(format!("Added {} to agent", name));
+                self.identity_notice = Some(if mismatch {
+                    format!("Added {name} to agent — certificate does not match the key!")
+                } else {
+                    format!("Added {name} to agent")
+                });
                 let _ = self.store.log_auth_event(
                     &name,
                     None,
@@ -163,6 +233,17 @@ impl App {
             }
             _ => {}
         }
+        // Live cert detail while the path is edited: only a *changed* path
+        // re-runs ssh-keygen (see `cert_probed_path`), so typing stays free
+        // and the form still reflects renames, pastes and deletions.
+        let probe = self
+            .identity_form
+            .as_ref()
+            .map(|form| form.certificate.clone())
+            .unwrap_or_default();
+        if probe != self.cert_probed_path {
+            self.refresh_cert_statuses();
+        }
         Ok(())
     }
 
@@ -234,6 +315,8 @@ impl App {
         };
         self.identity_form = Some(form);
         self.mode = AppMode::IdentityForm;
+        // Prefilled cert path (edit flow) gets its detail line immediately.
+        self.refresh_cert_statuses();
         Ok(())
     }
 
@@ -375,6 +458,7 @@ impl App {
 
         self.mode = AppMode::Normal;
         self.reload_identities()?;
+        self.refresh_cert_statuses();
         if let Some(pos) = self.identities.iter().position(|i| i.name == name) {
             self.identity_selected = pos;
         }
