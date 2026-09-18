@@ -38,7 +38,7 @@ fn app_with_managed_host(store_path: &std::path::Path) -> App {
             name: "prod-api".into(),
             label: Some("Production API".into()),
             address: "10.20.30.40".into(),
-            port: 2222,
+            port: Some(2222),
             group_id: None,
             identity_id: Some(identity.id),
             tags: vec![],

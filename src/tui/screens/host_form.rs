@@ -8,10 +8,15 @@ use crate::text_input;
 use crate::theme::catalog::StyleRole;
 use crate::theme::model::ResolvedTheme;
 
+/// Eight args: form state plus every list it names (groups, identities) plus
+/// the resolved inheritance shown as placeholders, plus chrome. Bundling
+/// would only move the list somewhere less visible to the two test callers.
+#[allow(clippy::too_many_arguments)]
 pub fn render_host_form(
     form: &HostFormEdit,
     groups: &[HostGroup],
     identities: &[Identity],
+    inherited: &crate::store::ResolvedConnection,
     save_hint: &str,
     secret_hints: &str,
     theme: &ResolvedTheme,
@@ -82,13 +87,26 @@ pub fn render_host_form(
                 "Port",
                 if editing {
                     text_input::with_cursor(&form.port, form.cursor)
+                } else if form.port.trim().is_empty() {
+                    // Cleared = inherit: show what a save would actually dial.
+                    format!("inherited: {}", inherited.port)
                 } else {
                     display_text(&form.port)
                 },
             ),
             HostFormField::Group => ("Group", group_summary(&form.group_ids, groups)),
             HostFormField::Identity => {
-                ("Identity", identity_label(form.identity_index, identities))
+                // Picker row 0 is "(inherit from group)": name the identity
+                // a save would actually use, or (none).
+                let label = if form.identity_index == 0 {
+                    match inherited.identity.as_ref() {
+                        Some(i) => format!("inherit ({})", i.name),
+                        None => "inherit (none)".to_string(),
+                    }
+                } else {
+                    identity_label(form.identity_index - 1, identities)
+                };
+                ("Identity", label)
             }
             HostFormField::Tags => (
                 "Tags (comma-separated)",
@@ -102,18 +120,30 @@ pub fn render_host_form(
                 "ProxyJump",
                 if editing {
                     text_input::with_cursor(&form.proxy_jump, form.cursor)
+                } else if form.proxy_jump.trim().is_empty() {
+                    inherited
+                        .proxy_jump
+                        .as_deref()
+                        .map(|v| format!("inherited: {v}"))
+                        .unwrap_or_default()
                 } else {
                     display_text(&form.proxy_jump)
                 },
             ),
             HostFormField::ForwardAgent => (
                 "Agent forward",
-                if form.forward_agent {
-                    "enabled (Space to toggle)"
-                } else {
-                    "disabled (Space to toggle)"
-                }
-                .into(),
+                match form.forward_agent {
+                    Some(true) => "enabled (Space to cycle)".to_string(),
+                    Some(false) => "disabled (Space to cycle)".to_string(),
+                    None => format!(
+                        "inherit ({}) (Space to set)",
+                        if inherited.forward_agent {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        }
+                    ),
+                },
             ),
             HostFormField::RemoteCommand => (
                 "Startup command",
@@ -125,7 +155,10 @@ pub fn render_host_form(
             ),
             HostFormField::Transport => (
                 "Transport",
-                format!("{} (Space to toggle)", form.transport.label()),
+                match form.transport {
+                    Some(t) => format!("{} (Space to cycle)", t.label()),
+                    None => format!("inherit ({}) (Space to set)", inherited.transport.label()),
+                },
             ),
             HostFormField::SessionLogging => (
                 "Session log",
@@ -163,6 +196,12 @@ pub fn render_host_form(
                 "Username",
                 if editing {
                     text_input::with_cursor(&form.username, form.cursor)
+                } else if form.username.trim().is_empty() {
+                    inherited
+                        .username
+                        .as_deref()
+                        .map(|v| format!("inherited: {v}"))
+                        .unwrap_or_default()
                 } else {
                     display_text(&form.username)
                 },
@@ -176,7 +215,21 @@ pub fn render_host_form(
         } else {
             theme.style(StyleRole::FormLabel)
         };
-        let value_style = if editing {
+        // Inherited placeholders render muted: they show what a save would
+        // actually use, not what the host pins.
+        let placeholder = !editing
+            && match field {
+                HostFormField::Port => form.port.trim().is_empty(),
+                HostFormField::ProxyJump => form.proxy_jump.trim().is_empty(),
+                HostFormField::Username => form.username.trim().is_empty(),
+                HostFormField::ForwardAgent => form.forward_agent.is_none(),
+                HostFormField::Transport => form.transport.is_none(),
+                HostFormField::Identity => form.identity_index == 0,
+                _ => false,
+            };
+        let value_style = if placeholder {
+            help
+        } else if editing {
             theme.style(StyleRole::FormInputEditing)
         } else if active {
             theme.style(StyleRole::FormInputFocused)
@@ -274,4 +327,157 @@ fn reveal_hint(secret_hints: &str) -> &str {
         .next()
         .unwrap_or_default()
         .trim()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    fn team_identity() -> Identity {
+        Identity {
+            id: 7,
+            name: "team".into(),
+            username: Some("team-user".into()),
+            private_key: None,
+            certificate: None,
+            has_password: false,
+        }
+    }
+
+    fn inherited_all_set() -> crate::store::ResolvedConnection {
+        crate::store::ResolvedConnection {
+            identity_id: Some(7),
+            identity: Some(team_identity()),
+            username: Some("deploy".into()),
+            port: 2222,
+            proxy_jump: Some("bastion".into()),
+            transport: crate::session_transport::SessionTransport::Mosh,
+            forward_agent: true,
+        }
+    }
+
+    fn empty_form() -> HostFormEdit {
+        HostFormEdit {
+            id: None,
+            address: String::new(),
+            username: String::new(),
+            label: String::new(),
+            name: String::new(),
+            port: String::new(),
+            group_index: 0,
+            group_ids: std::collections::BTreeSet::new(),
+            identity_index: 0,
+            tags: String::new(),
+            proxy_jump: String::new(),
+            forward_agent: None,
+            remote_command: String::new(),
+            transport: None,
+            session_logging: crate::session_log::SessionLoggingOverride::Inherit,
+            os_icon_index: 0,
+            password: String::new(),
+            password_original: String::new(),
+            has_password: false,
+            password_revealed: false,
+            field: HostFormField::Address,
+            cursor: 0,
+            metadata_only: false,
+            editing: false,
+            edit_snapshot: String::new(),
+            dirty: false,
+        }
+    }
+
+    fn rendered_text(form: &HostFormEdit, inherited: &crate::store::ResolvedConnection) -> String {
+        let theme = crate::test_support::resolved_default();
+        let backend = TestBackend::new(100, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                frame.render_widget(
+                    render_host_form(
+                        form,
+                        &[],
+                        &[team_identity()],
+                        inherited,
+                        "Ctrl+S",
+                        "",
+                        &theme,
+                        ratatui::style::Style::default(),
+                    ),
+                    area,
+                );
+            })
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol().to_string())
+            .collect::<String>()
+    }
+
+    #[test]
+    fn cleared_fields_show_inherited_placeholders() {
+        // Oracle: the literal placeholder strings. An empty form must show
+        // what a save would actually dial for every inheritable field —
+        // and must NOT show an explicit value anywhere.
+        let text = rendered_text(&empty_form(), &inherited_all_set());
+        for expected in [
+            "inherited: 2222",
+            "inherited: deploy",
+            "inherited: bastion",
+            "inherit (mosh)",
+            "inherit (enabled)",
+            "inherit (team)",
+        ] {
+            assert!(
+                text.contains(expected),
+                "rendered form should contain {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_values_hide_their_placeholders() {
+        // Oracle: the literal explicit strings. A form with every field set
+        // must show its own values and no "inherit" text on those rows.
+        let mut form = empty_form();
+        form.port = "2200".into();
+        form.username = "root".into();
+        form.proxy_jump = "direct".into();
+        form.forward_agent = Some(false);
+        form.transport = Some(crate::session_transport::SessionTransport::Ssh);
+        form.identity_index = 1;
+        let text = rendered_text(&form, &inherited_all_set());
+        for expected in [
+            "2200",
+            "root",
+            "direct",
+            "disabled (Space to cycle)",
+            "ssh (Space to cycle)",
+            "team",
+        ] {
+            assert!(
+                text.contains(expected),
+                "rendered form should contain {expected:?}"
+            );
+        }
+        for absent in [
+            "inherited: 2222",
+            "inherited: deploy",
+            "inherited: bastion",
+            "inherit (mosh)",
+            "inherit (enabled)",
+            "inherit (team)",
+        ] {
+            assert!(
+                !text.contains(absent),
+                "rendered form should not contain {absent:?}"
+            );
+        }
+    }
 }

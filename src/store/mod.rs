@@ -1,4 +1,5 @@
 mod command_history;
+mod group_defaults;
 pub use command_history::MAX_HOST_HISTORY;
 mod hosts;
 mod identities;
@@ -7,7 +8,7 @@ mod migrate;
 mod snippets;
 mod tunnels;
 mod types;
-
+pub use group_defaults::{ResolvedConnection, DEFAULT_PORT};
 pub use hosts::is_option_like;
 pub use types::{
     AuthEvent, DeleteHostOutcome, DeleteIdentityOutcome, HostGroup, HostGroupUpdate, HostSource,

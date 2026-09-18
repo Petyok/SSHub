@@ -7,7 +7,7 @@ use anyhow::{bail, Context, Result};
 
 use crate::app::{
     optional_field, parse_tags, prepare_cli_connect_argv, resolve_pending_secret,
-    session_argv_for_entry, SortMode,
+    resolved_session_argv, session_argv_for_entry, SortMode,
 };
 use crate::cli::context::CliContext;
 use crate::cli::filter::apply_filters;
@@ -147,12 +147,18 @@ fn cmd_connect(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
 
     let entry = ctx.host_by_name(name)?.clone();
     let host_name = entry.name().to_string();
-    let (pending_secret, _) = resolve_pending_secret(&entry, ctx.password_store.as_ref());
-    let mut argv = prepare_cli_connect_argv(
-        session_argv_for_entry(&entry),
-        pending_secret.is_some(),
-        verbose,
-    );
+    let resolved = match entry.managed() {
+        Some(m) => Some(ctx.store.resolve_connection(m)?),
+        None => None,
+    };
+    let effective_identity = resolved.as_ref().and_then(|r| r.identity.as_ref());
+    let (pending_secret, _) =
+        resolve_pending_secret(&entry, effective_identity, ctx.password_store.as_ref());
+    let base_argv = match (entry.managed(), resolved.as_ref()) {
+        (Some(m), Some(r)) => resolved_session_argv(m, r),
+        _ => session_argv_for_entry(&entry),
+    };
+    let mut argv = prepare_cli_connect_argv(base_argv, pending_secret.is_some(), verbose);
 
     if let Some(cmd) = argv.first() {
         // Best-effort pre-flight. If `which` itself cannot run (missing from
@@ -169,7 +175,13 @@ fn cmd_connect(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
         }
     }
 
-    let is_mosh = matches!(entry.session_transport(), SessionTransport::Mosh);
+    let is_mosh = matches!(
+        resolved
+            .as_ref()
+            .map(|r| r.transport)
+            .unwrap_or_else(|| entry.session_transport()),
+        SessionTransport::Mosh
+    );
     let log_enabled = effective_enabled(
         ctx.config.session_logging.enabled,
         entry.session_logging_override(),
@@ -380,8 +392,10 @@ fn cmd_edit(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     if let Some(v) = patch.set_address {
         update.address = Some(v);
     }
-    if let Some(v) = patch.set_port {
-        update.port = Some(v);
+    if patch.clear_port {
+        update.port = Some(None);
+    } else if let Some(v) = patch.set_port {
+        update.port = Some(Some(v));
     }
     if let Some(v) = patch.set_username {
         update.username = Some(v);
@@ -416,8 +430,10 @@ fn cmd_edit(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     if patch.clear_remote_command {
         update.remote_command = Some(None);
     }
-    if let Some(v) = patch.set_forward_agent {
-        update.forward_agent = Some(v);
+    if patch.clear_forward_agent {
+        update.forward_agent = Some(None);
+    } else if let Some(v) = patch.set_forward_agent {
+        update.forward_agent = Some(Some(v));
     }
     if let Some(v) = patch.set_os_icon {
         update.os_icon = Some(v);
@@ -428,8 +444,10 @@ fn cmd_edit(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     if let Some(v) = patch.set_session_logging {
         update.session_logging = Some(v);
     }
-    if let Some(v) = patch.set_transport {
-        update.transport = Some(v);
+    if patch.clear_transport {
+        update.transport = Some(None);
+    } else if let Some(v) = patch.set_transport {
+        update.transport = Some(Some(v));
     }
     if let Some(v) = patch.favorite {
         update.favorite = Some(v);
@@ -520,8 +538,10 @@ fn apply_metadata_edit(
         if let Some(v) = patch.set_label.clone() {
             update.label = Some(v);
         }
-        if let Some(v) = patch.set_transport {
-            update.transport = Some(v);
+        if patch.clear_transport {
+            update.transport = Some(None);
+        } else if let Some(v) = patch.set_transport {
+            update.transport = Some(Some(v));
         }
         ctx.store.update_host(id, &update)?;
         if let Some(groups) = patch.set_groups.clone() {
@@ -711,7 +731,7 @@ fn resolve_group_ids(ctx: &CliContext, names: &[String]) -> Result<Vec<i64>> {
 struct HostAddSpec {
     name: String,
     address: String,
-    port: u16,
+    port: Option<u16>,
     label: Option<String>,
     groups: Vec<String>,
     identity: Option<String>,
@@ -719,9 +739,9 @@ struct HostAddSpec {
     tags: Vec<String>,
     notes: Option<String>,
     proxy_jump: Option<String>,
-    forward_agent: bool,
+    forward_agent: Option<bool>,
     remote_command: Option<String>,
-    transport: SessionTransport,
+    transport: Option<SessionTransport>,
     session_logging: crate::session_log::SessionLoggingOverride,
     os_icon: Option<String>,
     favorite: bool,
@@ -736,10 +756,16 @@ impl HostAddSpec {
         let address = parse::take_opt(&mut args, "--address")
             .ok_or_else(|| anyhow::anyhow!("add requires --address"))?;
         let port = parse::take_opt(&mut args, "--port")
-            .map(|p| p.parse())
-            .transpose()
-            .map_err(|_| anyhow::anyhow!("invalid --port"))?
-            .unwrap_or(22);
+            .map(|p| {
+                p.parse::<u16>()
+                    .map_err(|_| anyhow::anyhow!("invalid --port"))
+                    .and_then(|v| {
+                        (v > 0)
+                            .then_some(v)
+                            .ok_or_else(|| anyhow::anyhow!("invalid --port"))
+                    })
+            })
+            .transpose()?;
         let label = parse::take_opt(&mut args, "--label").and_then(|s| optional_field(&s));
         let groups = parse::take_all(&mut args, "--group");
         let identity = parse::take_opt(&mut args, "--identity");
@@ -751,15 +777,15 @@ impl HostAddSpec {
         let proxy_jump =
             parse::take_opt(&mut args, "--proxy-jump").and_then(|s| optional_field(&s));
         let forward_agent = if parse::take_flag(&mut args, "--no-forward-agent") {
-            false
+            Some(false)
+        } else if parse::take_flag(&mut args, "--forward-agent") {
+            Some(true)
         } else {
-            parse::take_flag(&mut args, "--forward-agent")
+            None
         };
         let remote_command =
             parse::take_opt(&mut args, "--remote-command").and_then(|s| optional_field(&s));
-        let transport = parse::take_opt(&mut args, "--transport")
-            .and_then(|s| parse_transport(&s))
-            .unwrap_or(SessionTransport::Ssh);
+        let transport = parse::take_opt(&mut args, "--transport").and_then(|s| parse_transport(&s));
         let session_logging = parse::take_opt(&mut args, "--session-log")
             .and_then(|s| parse_session_logging(&s))
             .unwrap_or(crate::session_log::SessionLoggingOverride::Inherit);
@@ -798,6 +824,7 @@ struct HostEditPatch {
     set_name: Option<String>,
     set_address: Option<String>,
     set_port: Option<u16>,
+    clear_port: bool,
     set_username: Option<Option<String>>,
     clear_username: bool,
     set_tags: Option<Vec<String>>,
@@ -810,10 +837,12 @@ struct HostEditPatch {
     set_remote_command: Option<Option<String>>,
     clear_remote_command: bool,
     set_forward_agent: Option<bool>,
+    clear_forward_agent: bool,
     set_os_icon: Option<Option<String>>,
     clear_os_icon: bool,
     set_session_logging: Option<crate::session_log::SessionLoggingOverride>,
     set_transport: Option<SessionTransport>,
+    clear_transport: bool,
     favorite: Option<bool>,
     set_identity: Option<String>,
     clear_identity: bool,
@@ -835,6 +864,7 @@ impl HostEditPatch {
             set_name: None,
             set_address: None,
             set_port: None,
+            clear_port: false,
             set_username: None,
             clear_username: false,
             set_tags: None,
@@ -847,9 +877,11 @@ impl HostEditPatch {
             set_remote_command: None,
             clear_remote_command: false,
             set_forward_agent: None,
+            clear_forward_agent: false,
             set_os_icon: None,
             clear_os_icon: false,
             set_session_logging: None,
+            clear_transport: false,
             set_transport: None,
             favorite: None,
             set_identity: None,
@@ -872,6 +904,7 @@ impl HostEditPatch {
         if let Some(v) = parse::take_opt(&mut args, "--set-port") {
             patch.set_port = Some(v.parse().context("invalid --set-port")?);
         }
+        patch.clear_port = parse::take_flag(&mut args, "--clear-port");
         if let Some(v) = parse::take_opt(&mut args, "--set-username") {
             patch.set_username = Some(optional_field(&v));
         }
@@ -901,6 +934,7 @@ impl HostEditPatch {
         if parse::take_flag(&mut args, "--no-forward-agent") {
             patch.set_forward_agent = Some(false);
         }
+        patch.clear_forward_agent = parse::take_flag(&mut args, "--clear-forward-agent");
         if let Some(v) = parse::take_opt(&mut args, "--set-os-icon") {
             patch.set_os_icon = Some(optional_field(&v));
         }
@@ -916,6 +950,7 @@ impl HostEditPatch {
                 parse_transport(&v).ok_or_else(|| anyhow::anyhow!("invalid --set-transport"))?,
             );
         }
+        patch.clear_transport = parse::take_flag(&mut args, "--clear-transport");
         if parse::take_flag(&mut args, "--favorite") {
             patch.favorite = Some(true);
         }
@@ -945,8 +980,8 @@ impl HostEditPatch {
     fn has_any_patch(&self) -> bool {
         self.set_label.is_some()
             || self.set_name.is_some()
-            || self.set_address.is_some()
             || self.set_port.is_some()
+            || self.clear_port
             || self.set_username.is_some()
             || self.clear_username
             || self.set_tags.is_some()
@@ -957,12 +992,13 @@ impl HostEditPatch {
             || self.set_proxy_jump.is_some()
             || self.clear_proxy_jump
             || self.set_remote_command.is_some()
-            || self.clear_remote_command
             || self.set_forward_agent.is_some()
+            || self.clear_forward_agent
             || self.set_os_icon.is_some()
             || self.clear_os_icon
             || self.set_session_logging.is_some()
             || self.set_transport.is_some()
+            || self.clear_transport
             || self.favorite.is_some()
             || self.set_identity.is_some()
             || self.clear_identity
@@ -1006,9 +1042,11 @@ impl HostEditPatch {
         self.set_name.is_some()
             || self.set_address.is_some()
             || self.set_port.is_some()
+            || self.clear_port
             || self.set_proxy_jump.is_some()
             || self.clear_proxy_jump
             || self.set_forward_agent.is_some()
+            || self.clear_forward_agent
             || self.set_remote_command.is_some()
             || self.clear_remote_command
     }

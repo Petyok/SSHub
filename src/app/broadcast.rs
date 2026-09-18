@@ -252,7 +252,8 @@ impl App {
             BroadcastTarget::Tag { name } => format!("#{name}"),
         };
 
-        let store = self.password_store.as_ref();
+        let pw_store = self.password_store.as_ref();
+        let launcher = &self.store;
         let candidates: Vec<BroadcastCandidate> = self
             .hosts
             .iter()
@@ -268,11 +269,22 @@ impl App {
                 // Resolve a stored password/passphrase now (same path connect +
                 // detect use); threaded into the run so password hosts auth via
                 // SSH_ASKPASS instead of failing under BatchMode.
-                let secret = resolve_pending_secret(entry, store).0;
+                let effective = entry
+                    .managed()
+                    .and_then(|m| launcher.resolve_connection(m).ok());
+                let secret = resolve_pending_secret(
+                    entry,
+                    effective.as_ref().and_then(|r| r.identity.as_ref()),
+                    pw_store,
+                )
+                .0;
                 Some(BroadcastCandidate {
                     host_id,
                     host_name: entry.name().to_string(),
-                    argv: ssh_argv_for_entry(entry),
+                    argv: match (entry.managed(), effective.as_ref()) {
+                        (Some(m), Some(r)) => resolved_session_argv(m, r),
+                        _ => ssh_argv_for_entry(entry),
+                    },
                     secret,
                     selected: true,
                 })

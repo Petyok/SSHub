@@ -265,7 +265,7 @@ fn tag_filter_hides_groups_with_no_matches() {
         .create_host(&NewHost {
             name: "web1".into(),
             address: "10.0.0.1".into(),
-            port: 22,
+            port: Some(22),
             group_id: Some(prod.id),
             tags: vec!["eu".into()],
             ..Default::default()
@@ -275,7 +275,7 @@ fn tag_filter_hides_groups_with_no_matches() {
         .create_host(&NewHost {
             name: "db1".into(),
             address: "10.0.0.2".into(),
-            port: 22,
+            port: Some(22),
             group_id: Some(dev.id),
             tags: vec!["us".into()],
             ..Default::default()

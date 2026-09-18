@@ -5,7 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 
 use crate::app::{
-    prepare_cli_connect_argv, resolve_pending_secret, session_argv_for_entry, HostEntry,
+    prepare_cli_connect_argv, resolve_pending_secret, resolved_session_argv, resolved_to_ssh_host,
+    session_argv_for_entry, HostEntry,
 };
 use crate::credentials::PasswordStore;
 use crate::session_log::SessionLoggingOverride;
@@ -74,21 +75,36 @@ pub struct TunnelJson {
 }
 
 pub fn host_record_json(entry: &HostEntry, store: &LauncherStore) -> HostRecordJson {
-    let ssh = entry.ssh_host();
+    // Show the *effective* connection values (group inheritance resolved):
+    // what `connect`/`resolve` will actually use.
+    let resolved = match entry.managed() {
+        Some(m) => store.resolve_connection(m).ok(),
+        None => None,
+    };
+    let ssh = match (entry.managed(), resolved.as_ref()) {
+        (Some(m), Some(r)) => resolved_to_ssh_host(m, r),
+        _ => entry.ssh_host(),
+    };
+    let transport = resolved
+        .as_ref()
+        .map(|r| r.transport)
+        .unwrap_or_else(|| entry.session_transport());
     let groups = group_names(entry, store);
     let (group, identity, source, has_password, managed_id, os_icon, forward_agent) =
         match entry.managed() {
             Some(m) => (
                 m.group.as_ref().map(|g| g.name.clone()),
-                m.identity
+                resolved
                     .as_ref()
+                    .and_then(|r| r.identity.as_ref())
+                    .or(m.identity.as_ref())
                     .map(|i| i.name.clone())
                     .or_else(|| ssh.identity_file.clone()),
                 m.source.as_str().to_string(),
                 m.has_password,
                 Some(m.id),
                 m.os_icon.clone(),
-                Some(m.forward_agent),
+                ssh.forward_agent,
             ),
             None => (
                 None,
@@ -128,7 +144,7 @@ pub fn host_record_json(entry: &HostEntry, store: &LauncherStore) -> HostRecordJ
         favorite: entry.favorite(),
         last_connected: entry.last_connected(),
         session_logging: entry.session_logging_override().label().to_string(),
-        transport: entry.session_transport().label().to_string(),
+        transport: transport.label().to_string(),
         forward_agent,
         remote_command: ssh.remote_command.clone(),
         os_icon,
@@ -143,12 +159,17 @@ pub fn host_resolve_json(
     password_store: &dyn PasswordStore,
     verbose: bool,
 ) -> HostResolveJson {
-    let (pending_secret, _) = resolve_pending_secret(entry, password_store);
-    let argv = prepare_cli_connect_argv(
-        session_argv_for_entry(entry),
-        pending_secret.is_some(),
-        verbose,
-    );
+    let resolved = match entry.managed() {
+        Some(m) => store.resolve_connection(m).ok(),
+        None => None,
+    };
+    let effective_identity = resolved.as_ref().and_then(|r| r.identity.as_ref());
+    let (pending_secret, _) = resolve_pending_secret(entry, effective_identity, password_store);
+    let base_argv = match (entry.managed(), resolved.as_ref()) {
+        (Some(m), Some(r)) => resolved_session_argv(m, r),
+        _ => session_argv_for_entry(entry),
+    };
+    let argv = prepare_cli_connect_argv(base_argv, pending_secret.is_some(), verbose);
     HostResolveJson {
         host: host_record_json(entry, store),
         argv,

@@ -13,8 +13,7 @@ fn app_with_targets() -> App {
         .create_group(&crate::store::NewHostGroup {
             name: "prod".into(),
             sort_order: 0,
-            default_identity_id: None,
-            parent_id: None,
+            ..Default::default()
         })
         .unwrap();
 

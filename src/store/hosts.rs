@@ -17,12 +17,20 @@ impl LauncherStore {
         let now = now_ts();
         self.with_conn(|conn| {
             conn.execute(
-                "INSERT INTO host_groups (name, sort_order, default_identity_id, parent_id, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO host_groups
+                    (name, sort_order, default_identity_id, default_username, default_port,
+                     default_proxy_jump, default_transport, default_forward_agent,
+                     parent_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     group.name,
                     group.sort_order,
                     group.default_identity_id,
+                    group.default_username,
+                    group.default_port.map(i64::from),
+                    group.default_proxy_jump,
+                    group.default_transport.map(|t| t.to_db()),
+                    group.default_forward_agent.map(i64::from),
                     group.parent_id,
                     now
                 ],
@@ -32,6 +40,11 @@ impl LauncherStore {
                 name: group.name.clone(),
                 sort_order: group.sort_order,
                 default_identity_id: group.default_identity_id,
+                default_username: group.default_username.clone(),
+                default_port: group.default_port,
+                default_proxy_jump: group.default_proxy_jump.clone(),
+                default_transport: group.default_transport,
+                default_forward_agent: group.default_forward_agent,
                 parent_id: group.parent_id,
                 reserved: false,
             })
@@ -41,7 +54,10 @@ impl LauncherStore {
     pub fn get_group(&self, id: i64) -> Result<Option<HostGroup>> {
         self.with_conn(|conn| {
             conn.prepare(
-                "SELECT id, name, sort_order, default_identity_id, parent_id, reserved FROM host_groups WHERE id = ?1",
+                "SELECT id, name, sort_order, default_identity_id, default_username,
+                        default_port, default_proxy_jump, default_transport,
+                        default_forward_agent, parent_id, reserved
+                 FROM host_groups WHERE id = ?1",
             )?
             .query_row(params![id], row_to_group)
             .optional()
@@ -52,7 +68,9 @@ impl LauncherStore {
     pub fn list_groups(&self) -> Result<Vec<HostGroup>> {
         let flat: Vec<HostGroup> = self.with_conn(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, name, sort_order, default_identity_id, parent_id, reserved
+                "SELECT id, name, sort_order, default_identity_id, default_username,
+                        default_port, default_proxy_jump, default_transport,
+                        default_forward_agent, parent_id, reserved
                  FROM host_groups ORDER BY sort_order, name",
             )?;
             let rows = stmt.query_map([], row_to_group)?;
@@ -82,14 +100,42 @@ impl LauncherStore {
         let default_identity_id = update
             .default_identity_id
             .unwrap_or(current.default_identity_id);
+        let default_username = update
+            .default_username
+            .clone()
+            .unwrap_or(current.default_username);
+        let default_port = update.default_port.unwrap_or(current.default_port);
+        let default_proxy_jump = update
+            .default_proxy_jump
+            .clone()
+            .unwrap_or(current.default_proxy_jump);
+        let default_transport = update
+            .default_transport
+            .unwrap_or(current.default_transport);
+        let default_forward_agent = update
+            .default_forward_agent
+            .unwrap_or(current.default_forward_agent);
         let parent_id = update.parent_id.unwrap_or(current.parent_id);
 
         self.with_conn(|conn| {
             conn.execute(
                 "UPDATE host_groups
-                 SET name = ?1, sort_order = ?2, default_identity_id = ?3, parent_id = ?4
-                 WHERE id = ?5",
-                params![name, sort_order, default_identity_id, parent_id, id],
+                 SET name = ?1, sort_order = ?2, default_identity_id = ?3, parent_id = ?4,
+                     default_username = ?5, default_port = ?6, default_proxy_jump = ?7,
+                     default_transport = ?8, default_forward_agent = ?9
+                 WHERE id = ?10",
+                params![
+                    name,
+                    sort_order,
+                    default_identity_id,
+                    parent_id,
+                    default_username,
+                    default_port.map(i64::from),
+                    default_proxy_jump,
+                    default_transport.map(|t| t.to_db()),
+                    default_forward_agent.map(i64::from),
+                    id
+                ],
             )?;
             Ok(())
         })?;
@@ -228,20 +274,20 @@ impl LauncherStore {
                     host.name,
                     host.label,
                     host.address,
-                    i64::from(host.port),
+                    host.port.map(i64::from),
                     host.group_id,
                     host.identity_id,
                     host.os_icon,
                     tags_json,
                     host.notes,
                     host.proxy_jump,
-                    i64::from(host.forward_agent),
+                    host.forward_agent.map(i64::from),
                     host.remote_command,
                     source,
                     i64::from(host.has_password),
                     host.username,
                     host.session_logging.to_db(),
-                    host.transport.to_db(),
+                    host.transport.map(|t| t.to_db()),
                     now,
                 ],
             )?;
@@ -339,7 +385,10 @@ impl LauncherStore {
             };
             let name = update.name.as_ref().unwrap_or(&current.name).clone();
             let address = update.address.as_ref().unwrap_or(&current.address).clone();
-            let port = update.port.unwrap_or(current.port);
+            let port = match update.port {
+                Some(v) => v,
+                None => current.port,
+            };
             let group_id = match &update.group_id {
                 Some(v) => *v,
                 None => current.group_id,
@@ -361,7 +410,10 @@ impl LauncherStore {
                 Some(v) => v.clone(),
                 None => current.proxy_jump.clone(),
             };
-            let forward_agent = update.forward_agent.unwrap_or(current.forward_agent);
+            let forward_agent = match update.forward_agent {
+                Some(v) => v,
+                None => current.forward_agent,
+            };
             let remote_command = match &update.remote_command {
                 Some(v) => v.clone(),
                 None => current.remote_command.clone(),
@@ -380,7 +432,10 @@ impl LauncherStore {
             let session_logging = update
                 .session_logging
                 .unwrap_or(current.session_logging);
-            let transport = update.transport.unwrap_or(current.transport);
+            let transport = match update.transport {
+                Some(v) => v,
+                None => current.transport,
+            };
             let tags_json = tags_to_json(&tags)?;
             let now = now_ts();
 
@@ -395,14 +450,14 @@ impl LauncherStore {
                     name,
                     label,
                     address,
-                    i64::from(port),
+                    port.map(i64::from),
                     group_id,
                     identity_id,
                     os_icon,
                     tags_json,
                     notes,
                     proxy_jump,
-                    i64::from(forward_agent),
+                    forward_agent.map(i64::from),
                     remote_command,
                     i64::from(favorite),
                     sort_order,
@@ -412,7 +467,7 @@ impl LauncherStore {
                     id,
                     environment,
                     session_logging.to_db(),
-                    transport.to_db(),
+                    transport.map(|t| t.to_db()),
                 ],
             )?;
 
@@ -926,7 +981,9 @@ fn load_host_by_id(conn: &rusqlite::Connection, id: i64) -> Result<Option<Manage
                 h.os_icon, h.tags, h.notes, h.proxy_jump, h.forward_agent, h.remote_command,
                 h.sort_order, h.favorite, h.last_connected, h.source, h.ssh_config_hash,
                 h.has_password, h.created_at, h.updated_at, h.username,
-                g.id, g.name, g.sort_order,
+                g.id, g.name, g.sort_order, g.default_identity_id, g.default_username,
+                g.default_port, g.default_proxy_jump, g.default_transport,
+                g.default_forward_agent, g.parent_id, g.reserved,
                 i.id, i.name, i.username, i.private_key, i.certificate, i.has_password,
                 h.environment, h.session_logging, h.transport
          FROM hosts h
@@ -950,7 +1007,9 @@ fn load_host_by_id(conn: &rusqlite::Connection, id: i64) -> Result<Option<Manage
 /// Load every group a host belongs to (via the join table), in tree/sort order.
 fn load_host_groups(conn: &rusqlite::Connection, host_id: i64) -> Result<Vec<HostGroup>> {
     let mut stmt = conn.prepare(
-        "SELECT g.id, g.name, g.sort_order, g.default_identity_id, g.parent_id, g.reserved
+        "SELECT g.id, g.name, g.sort_order, g.default_identity_id, g.default_username,
+                g.default_port, g.default_proxy_jump, g.default_transport,
+                g.default_forward_agent, g.parent_id, g.reserved
          FROM host_group_memberships m
          JOIN host_groups g ON g.id = m.group_id
          WHERE m.host_id = ?1
@@ -1009,12 +1068,142 @@ fn primary_group_id(conn: &rusqlite::Connection, host_id: i64) -> Result<Option<
     .map_err(Into::into)
 }
 
+/// Tree-depth of one group at conn level (roots are depth 0), memoized in
+/// `depths`. Cycle-guarded; a truncated walk only under-reports a tie-break.
+fn group_depth_conn(
+    conn: &rusqlite::Connection,
+    depths: &mut std::collections::HashMap<i64, usize>,
+    group_id: i64,
+) -> Result<usize> {
+    if let Some(&d) = depths.get(&group_id) {
+        return Ok(d);
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut next = Some(group_id);
+    let mut len: usize = 0;
+    while let Some(id) = next {
+        if !seen.insert(id) {
+            break;
+        }
+        let row: Option<Option<i64>> = conn
+            .query_row(
+                "SELECT parent_id FROM host_groups WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        // None = missing group, ends the walk; Some(parent) counts this
+        // group and continues (a NULL parent is a counted root).
+        match row {
+            None => break,
+            Some(parent) => {
+                len += 1;
+                next = parent;
+            }
+        }
+    }
+    let depth = len.saturating_sub(1);
+    depths.insert(group_id, depth);
+    Ok(depth)
+}
+
+/// Most-specific default identity over every non-reserved membership chain of
+/// `host_id`, evaluated at conn level: callers run inside `with_conn` (a
+/// non-reentrant `std::sync::Mutex`), so this must NOT call `&self` store
+/// methods (`get_group`, `group_ancestor_chain`, …) — those relock and
+/// deadlock. Direct SQL only.
+///
+/// Ordering mirrors [`LauncherStore::ordered_default_groups`]: smallest chain
+/// distance first, then deeper group, then the primary group's chain, then
+/// smaller group id. `None` when no group on any chain sets an identity.
+fn most_specific_identity(conn: &rusqlite::Connection, host_id: i64) -> Result<Option<i64>> {
+    use rusqlite::OptionalExtension;
+    // The primary is whatever `hosts.group_id` carries: `set_host_groups`
+    // refreshes it just before materializing, and it is exactly what a later
+    // `get_host` + `resolve_connection` treats as primary, so the stored
+    // winner and the dynamic walk agree by construction.
+    let primary: Option<i64> = conn
+        .query_row(
+            "SELECT group_id FROM hosts WHERE id = ?1",
+            params![host_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten();
+    let mut member_ids: Vec<i64> = conn
+        .prepare(
+            "SELECT m.group_id FROM host_group_memberships m
+             JOIN host_groups g ON g.id = m.group_id
+             WHERE m.host_id = ?1 AND g.reserved = 0
+             ORDER BY m.group_id",
+        )?
+        .query_map(params![host_id], |row| row.get(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    // Primary-first, remaining memberships in id order: the member order the
+    // resolver uses.
+    member_ids.sort_unstable();
+    member_ids.dedup();
+    if let Some(p) = primary {
+        if let Some(pos) = member_ids.iter().position(|&id| id == p) {
+            member_ids.remove(pos);
+            member_ids.insert(0, p);
+        }
+    }
+
+    // (chain distance, group depth, primary chain, group id, identity id).
+    let mut candidates: Vec<(usize, usize, bool, i64, i64)> = Vec::new();
+    let mut depths: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
+    for member in member_ids {
+        let primary_chain = Some(member) == primary;
+        let mut seen = std::collections::HashSet::new();
+        let mut next = Some(member);
+        let mut distance: usize = 0;
+        while let Some(id) = next {
+            if !seen.insert(id) {
+                break;
+            }
+            let row: Option<(Option<i64>, Option<i64>, bool)> = conn
+                .query_row(
+                    "SELECT parent_id, default_identity_id, reserved
+                     FROM host_groups WHERE id = ?1",
+                    params![id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .optional()?;
+            let Some((parent_id, default_identity, reserved)) = row else {
+                break;
+            };
+            next = parent_id;
+            if !reserved {
+                if let Some(did) = default_identity {
+                    let depth = group_depth_conn(conn, &mut depths, id)?;
+                    candidates.push((distance, depth, primary_chain, id, did));
+                }
+            }
+            distance += 1;
+        }
+    }
+    Ok(candidates
+        .into_iter()
+        .min_by(|a, b| {
+            a.0.cmp(&b.0) // chain distance: nearer wins
+                .then(b.1.cmp(&a.1)) // tree-depth: deeper wins
+                .then(b.2.cmp(&a.2)) // primary group's chain wins
+                .then(a.3.cmp(&b.3)) // determinism
+        })
+        .map(|(_, _, _, _, did)| did))
+}
+
 /// Concretise an inherited group identity so it stays stable across membership
 /// changes: if the host now belongs to >1 group and its own `identity_id` is
-/// NULL, copy the primary group's `default_identity_id` (when set) into the host.
-/// No-op otherwise.
+/// NULL, store the most-specific winner over every member chain (nearest chain
+/// distance, then deeper group, then the primary chain, then smaller group id
+/// — the same order `resolve_connection` resolves with). When no chain sets an
+/// identity the host keeps NULL and inherits dynamically. Explicit host
+/// identities are never overwritten. Single-membership hosts are untouched
+/// (their winner is just the primary chain's nearest setter, which resolution
+/// already finds dynamically).
 fn materialize_identity(conn: &rusqlite::Connection, host_id: i64) -> Result<()> {
-    use rusqlite::OptionalExtension;
     // Count only REAL (non-reserved) groups: joining the Favorites group by
     // favouriting a host must not trigger identity materialization.
     let membership_count: i64 = conn.query_row(
@@ -1035,18 +1224,7 @@ fn materialize_identity(conn: &rusqlite::Connection, host_id: i64) -> Result<()>
     if identity_id.is_some() {
         return Ok(());
     }
-    let Some(primary) = primary_group_id(conn, host_id)? else {
-        return Ok(());
-    };
-    let default_identity: Option<i64> = conn
-        .query_row(
-            "SELECT default_identity_id FROM host_groups WHERE id = ?1",
-            params![primary],
-            |row| row.get(0),
-        )
-        .optional()?
-        .flatten();
-    if let Some(did) = default_identity {
+    if let Some(did) = most_specific_identity(conn, host_id)? {
         conn.execute(
             "UPDATE hosts SET identity_id = ?1, updated_at = ?2 WHERE id = ?3",
             params![did, now_ts(), host_id],
@@ -1093,8 +1271,17 @@ fn row_to_group(row: &rusqlite::Row<'_>) -> rusqlite::Result<HostGroup> {
         name: row.get(1)?,
         sort_order: row.get(2)?,
         default_identity_id: row.get(3)?,
-        parent_id: row.get(4)?,
-        reserved: row.get::<_, i64>(5)? != 0,
+        default_username: row.get(4)?,
+        default_port: row
+            .get::<_, Option<i64>>(5)?
+            .and_then(|v| u16::try_from(v).ok()),
+        default_proxy_jump: row.get(6)?,
+        default_transport: row
+            .get::<_, Option<String>>(7)?
+            .map(|s| SessionTransport::from_db(Some(s.as_str()))),
+        default_forward_agent: row.get::<_, Option<i64>>(8)?.map(|v| v != 0),
+        parent_id: row.get(9)?,
+        reserved: row.get::<_, i64>(10)? != 0,
     })
 }
 
@@ -1116,24 +1303,30 @@ fn row_to_managed_host(row: &rusqlite::Row<'_>) -> rusqlite::Result<ManagedHost>
             id: row.get(22)?,
             name: row.get(23)?,
             sort_order: row.get(24)?,
-            // The host-list JOIN doesn't select the group's default identity or
-            // parent; those are only needed when adding a new host or building
-            // the group tree, read via get_group/list_groups. Leave unset here.
-            default_identity_id: None,
-            parent_id: None,
-            reserved: false,
+            default_identity_id: row.get(25)?,
+            default_username: row.get(26)?,
+            default_port: row
+                .get::<_, Option<i64>>(27)?
+                .and_then(|v| u16::try_from(v).ok()),
+            default_proxy_jump: row.get(28)?,
+            default_transport: row
+                .get::<_, Option<String>>(29)?
+                .map(|s| SessionTransport::from_db(Some(s.as_str()))),
+            default_forward_agent: row.get::<_, Option<i64>>(30)?.map(|v| v != 0),
+            parent_id: row.get(31)?,
+            reserved: row.get::<_, i64>(32).unwrap_or(0) != 0,
         }),
         None => None,
     };
 
-    let identity = match row.get::<_, Option<i64>>(25)? {
+    let identity = match row.get::<_, Option<i64>>(33)? {
         Some(_) => Some(super::types::Identity {
-            id: row.get(25)?,
-            name: row.get(26)?,
-            username: row.get(27)?,
-            private_key: str_to_path(row.get(28)?),
-            certificate: str_to_path(row.get(29)?),
-            has_password: row.get::<_, i64>(30).unwrap_or(0) != 0,
+            id: row.get(33)?,
+            name: row.get(34)?,
+            username: row.get(35)?,
+            private_key: str_to_path(row.get(36)?),
+            certificate: str_to_path(row.get(37)?),
+            has_password: row.get::<_, i64>(38).unwrap_or(0) != 0,
         }),
         None => None,
     };
@@ -1143,7 +1336,9 @@ fn row_to_managed_host(row: &rusqlite::Row<'_>) -> rusqlite::Result<ManagedHost>
         name: row.get(1)?,
         label: row.get(2)?,
         address: row.get(3)?,
-        port: u16::try_from(row.get::<_, i64>(4)?).unwrap_or(22),
+        port: row
+            .get::<_, Option<i64>>(4)?
+            .and_then(|v| u16::try_from(v).ok()),
         group_id: row.get(5)?,
         identity_id: row.get(6)?,
         group,
@@ -1153,9 +1348,9 @@ fn row_to_managed_host(row: &rusqlite::Row<'_>) -> rusqlite::Result<ManagedHost>
         tags,
         notes: row.get(9)?,
         proxy_jump: row.get(10)?,
-        forward_agent: row.get::<_, i64>(11)? != 0,
+        forward_agent: row.get::<_, Option<i64>>(11)?.map(|v| v != 0),
         remote_command: row.get(12)?,
-        environment: row.get(31)?,
+        environment: row.get(39)?,
         sort_order: row.get(13)?,
         favorite: row.get::<_, i64>(14)? != 0,
         last_connected: row.get(15)?,
@@ -1163,8 +1358,10 @@ fn row_to_managed_host(row: &rusqlite::Row<'_>) -> rusqlite::Result<ManagedHost>
         ssh_config_hash: row.get(17)?,
         has_password: row.get::<_, i64>(18).unwrap_or(0) != 0,
         username: row.get(21)?,
-        session_logging: SessionLoggingOverride::from_db(row.get(32).ok()),
-        transport: SessionTransport::from_db(Some(row.get::<_, String>(33)?.as_str())),
+        session_logging: SessionLoggingOverride::from_db(row.get(40).ok()),
+        transport: row
+            .get::<_, Option<String>>(41)?
+            .map(|s| SessionTransport::from_db(Some(s.as_str()))),
         created_at: row.get(19)?,
         updated_at: row.get(20)?,
     })
@@ -1398,7 +1595,7 @@ mod tests {
                 name: "prod".into(),
                 sort_order: 0,
                 default_identity_id: Some(identity_id),
-                parent_id: None,
+                ..Default::default()
             })
             .unwrap();
         assert_eq!(group.default_identity_id, Some(identity_id));
@@ -1459,7 +1656,7 @@ mod tests {
                 .create_host(&NewHost {
                     name: name.into(),
                     address: "10.0.0.1".into(),
-                    port: 22,
+                    port: Some(22),
                     ..Default::default()
                 })
                 .unwrap()
@@ -1488,7 +1685,7 @@ mod tests {
             .create_host(&NewHost {
                 name: "evil".into(),
                 address: "-oProxyCommand=id".into(),
-                port: 22,
+                port: Some(22),
                 ..Default::default()
             })
             .unwrap_err()
@@ -1500,7 +1697,7 @@ mod tests {
             .create_host(&NewHost {
                 name: "-oProxyCommand=id".into(),
                 address: "10.0.0.1".into(),
-                port: 22,
+                port: Some(22),
                 ..Default::default()
             })
             .is_err());
@@ -1508,7 +1705,7 @@ mod tests {
             .create_host(&NewHost {
                 name: "user-flag".into(),
                 address: "10.0.0.1".into(),
-                port: 22,
+                port: Some(22),
                 username: Some("-oProxyCommand=id".into()),
                 ..Default::default()
             })
@@ -1520,7 +1717,7 @@ mod tests {
             .create_host(&NewHost {
                 name: "web".into(),
                 address: "10.0.0.1".into(),
-                port: 22,
+                port: Some(22),
                 ..Default::default()
             })
             .unwrap();
@@ -1548,7 +1745,7 @@ mod tests {
             store.create_host(&NewHost {
                 name: "dup".into(),
                 address: "10.0.0.1".into(),
-                port: 22,
+                port: Some(22),
                 ..Default::default()
             })
         };
@@ -1578,7 +1775,7 @@ mod tests {
                 name: "app-1".into(),
                 label: None,
                 address: "10.0.0.1".into(),
-                port: 22,
+                port: Some(22),
                 group_id: Some(group.id),
                 identity_id: Some(default_id),
                 tags: vec![],
@@ -1619,7 +1816,7 @@ mod tests {
                 name: "dev-partners".into(),
                 label: Some("Dev Partners".into()),
                 address: "10.100.19.123".into(),
-                port: 22,
+                port: Some(22),
                 group_id: Some(group.id),
                 identity_id: Some(default_id),
                 tags: vec!["dev".into()],
@@ -1674,7 +1871,7 @@ mod tests {
                 name: "a".into(),
                 label: None,
                 address: "10.0.0.1".into(),
-                port: 22,
+                port: Some(22),
                 group_id: None,
                 identity_id: Some(default_id),
                 tags: vec![],
@@ -1687,7 +1884,7 @@ mod tests {
                 name: "b".into(),
                 label: None,
                 address: "10.0.0.2".into(),
-                port: 22,
+                port: Some(22),
                 group_id: None,
                 identity_id: Some(default_id),
                 tags: vec![],
@@ -1787,7 +1984,7 @@ mod tests {
             .create_host(&NewHost {
                 name: "web".into(),
                 address: "10.0.0.1".into(),
-                port: 22,
+                port: Some(22),
                 group_id: Some(g1.id),
                 ..Default::default()
             })
@@ -1813,7 +2010,7 @@ mod tests {
             .create_host(&NewHost {
                 name: "web".into(),
                 address: "10.0.0.1".into(),
-                port: 22,
+                port: Some(22),
                 ..Default::default()
             })
             .unwrap();
@@ -1849,7 +2046,7 @@ mod tests {
             .create_host(&NewHost {
                 name: "web".into(),
                 address: "10.0.0.1".into(),
-                port: 22,
+                port: Some(22),
                 group_id: Some(g1.id),
                 ..Default::default()
             })
@@ -1886,7 +2083,7 @@ mod tests {
             .create_host(&NewHost {
                 name: "web".into(),
                 address: "10.0.0.1".into(),
-                port: 22,
+                port: Some(22),
                 group_id: Some(g1.id),
                 ..Default::default()
             })
@@ -1929,7 +2126,7 @@ mod tests {
             .create_host(&NewHost {
                 name: "web".into(),
                 address: "10.0.0.1".into(),
-                port: 22,
+                port: Some(22),
                 group_id: Some(g.id),
                 identity_id: None,
                 ..Default::default()
@@ -1990,7 +2187,7 @@ mod tests {
             .create_host(&NewHost {
                 name: "web".into(),
                 address: "10.0.0.1".into(),
-                port: 22,
+                port: Some(22),
                 group_id: Some(g1.id),
                 identity_id: None,
                 ..Default::default()

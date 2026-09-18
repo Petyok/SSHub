@@ -695,7 +695,7 @@ impl App {
     /// ProxyJump hosts (unsupported by the libssh2 transport in v1) with a
     /// notice instead of a doomed connection attempt.
     fn sftp_connect_to(&mut self, entry: HostEntry) -> Result<()> {
-        let ssh_host = sftp_ssh_host(self.resolver.as_ref(), &entry);
+        let ssh_host = sftp_ssh_host(self.resolver.as_ref(), &self.store, &entry);
 
         if ssh_host.proxy_jump.is_some() {
             self.host_notice =
@@ -703,7 +703,14 @@ impl App {
             return Ok(());
         }
 
-        let (secret, _diag) = resolve_pending_secret(&entry, self.password_store.as_ref());
+        let effective = entry
+            .managed()
+            .and_then(|m| self.store.resolve_connection(m).ok());
+        let (secret, _diag) = resolve_pending_secret(
+            &entry,
+            effective.as_ref().and_then(|r| r.identity.as_ref()),
+            self.password_store.as_ref(),
+        );
         let agent = crate::ssh::agent::detect_agent();
         let (tx, rx) = crate::sftp::spawn_sftp_worker(ssh_host, secret, agent);
 
@@ -800,14 +807,21 @@ impl App {
             self.host_notice = Some("connect the SFTP browser first".into());
             return Ok(());
         }
-        let ssh_host = sftp_ssh_host(self.resolver.as_ref(), &entry);
+        let ssh_host = sftp_ssh_host(self.resolver.as_ref(), &self.store, &entry);
         if ssh_host.proxy_jump.is_some() {
             self.host_notice =
                 Some("SFTP via ProxyJump isn't supported yet — pick a direct host.".into());
             return Ok(());
         }
 
-        let (secret, _diag) = resolve_pending_secret(&entry, self.password_store.as_ref());
+        let effective = entry
+            .managed()
+            .and_then(|m| self.store.resolve_connection(m).ok());
+        let (secret, _diag) = resolve_pending_secret(
+            &entry,
+            effective.as_ref().and_then(|r| r.identity.as_ref()),
+            self.password_store.as_ref(),
+        );
         let agent = crate::ssh::agent::detect_agent();
         let (tx, rx) = crate::sftp::spawn_sftp_worker(ssh_host, secret, agent);
         let cwd = PathBuf::from(".");

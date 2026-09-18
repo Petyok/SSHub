@@ -285,7 +285,7 @@ mod tests {
                 name: "web".into(),
                 label: None,
                 address: "10.0.0.1".into(),
-                port: 22,
+                port: Some(22),
                 group_id: None,
                 identity_id: Some(identity.id),
                 tags: vec![],

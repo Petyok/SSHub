@@ -316,7 +316,7 @@ pub fn import_csv_export(
                 let created = store.create_host(&NewHost {
                     name: name.clone(),
                     address: row.host.clone(),
-                    port: row.port,
+                    port: Some(row.port),
                     username,
                     identity_id,
                     os_icon: os_icon_for(&row.os),
@@ -577,14 +577,14 @@ mod tests {
 
         let web = store.get_host_by_name("web").unwrap().unwrap();
         assert_eq!(web.address, "10.0.0.1");
-        assert_eq!(web.port, 22);
+        assert_eq!(web.port, Some(22));
         assert_eq!(web.username.as_deref(), Some("admin"));
         assert!(web.has_password);
         assert_eq!(web.os_icon.as_deref(), Some("ubuntu"));
         assert_eq!(web.source, HostSource::Launcher);
 
         let db = store.get_host_by_name("db").unwrap().unwrap();
-        assert_eq!(db.port, 5432);
+        assert_eq!(db.port, Some(5432));
         assert!(!db.has_password);
     }
 

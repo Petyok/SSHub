@@ -958,9 +958,12 @@ impl HostEntry {
         }
     }
 
+    /// Stored transport with the global default (ssh) for unset. Connect paths
+    /// needing the *effective* transport (group inheritance) resolve via
+    /// [`LauncherStore::resolve_connection`] instead.
     pub fn session_transport(&self) -> crate::session_transport::SessionTransport {
         match self {
-            Self::Managed(m) => m.transport,
+            Self::Managed(m) => m.transport.unwrap_or_default(),
             Self::Legacy { meta, .. } => meta.transport,
         }
     }
@@ -1083,9 +1086,11 @@ pub struct HostFormEdit {
     pub identity_index: usize,
     pub tags: String,
     pub proxy_jump: String,
-    pub forward_agent: bool,
+    /// Explicit agent forwarding (`None` = inherit; Space cycles inherit → on → off).
+    pub forward_agent: Option<bool>,
     pub remote_command: String,
-    pub transport: crate::session_transport::SessionTransport,
+    /// Explicit transport (`None` = inherit; Space cycles inherit → ssh → mosh).
+    pub transport: Option<crate::session_transport::SessionTransport>,
     pub session_logging: crate::session_log::SessionLoggingOverride,
     pub os_icon_index: usize,
     pub password: String,
@@ -1209,19 +1214,51 @@ impl HostFormField {
 }
 
 /// Focusable field in the group form. `↑/↓` (or Tab) move between them.
+/// Text fields (Name, Username, Port, ProxyJump) edit inline; Parent and
+/// Identity open a dropdown; Transport and ForwardAgent cycle a tri-state
+/// (inherit → set → set → inherit) on Space/Enter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GroupFormField {
     Name,
     Parent,
     Identity,
+    Username,
+    Port,
+    ProxyJump,
+    Transport,
+    ForwardAgent,
 }
 
 impl GroupFormField {
-    pub const ALL: [GroupFormField; 3] = [
+    pub const ALL: [GroupFormField; 8] = [
         GroupFormField::Name,
         GroupFormField::Parent,
         GroupFormField::Identity,
+        GroupFormField::Username,
+        GroupFormField::Port,
+        GroupFormField::ProxyJump,
+        GroupFormField::Transport,
+        GroupFormField::ForwardAgent,
     ];
+
+    /// Fields edited as free text (cursor + insert/backspace apply).
+    pub fn is_text(self) -> bool {
+        matches!(
+            self,
+            GroupFormField::Name
+                | GroupFormField::Username
+                | GroupFormField::Port
+                | GroupFormField::ProxyJump
+        )
+    }
+
+    /// Fields cycled in place on Space/Enter.
+    pub fn is_tri_state(self) -> bool {
+        matches!(
+            self,
+            GroupFormField::Transport | GroupFormField::ForwardAgent
+        )
+    }
 }
 
 /// In-progress group form while in [`AppMode::GroupForm`].
@@ -1232,6 +1269,16 @@ pub struct GroupFormEdit {
     pub cursor: usize,
     /// Default identity new hosts in this group inherit. Picked via a dropdown.
     pub default_identity_id: Option<i64>,
+    /// Default username (`""` = no default). Edited as text.
+    pub default_username: String,
+    /// Default port (`""` = no default). Edited as text, validated on save.
+    pub default_port: String,
+    /// Default ProxyJump (`""` = no default). Edited as text.
+    pub default_proxy_jump: String,
+    /// Default transport (`None` = no default). Space cycles inherit → ssh → mosh.
+    pub default_transport: Option<crate::session_transport::SessionTransport>,
+    /// Default agent forwarding (`None` = no default). Space cycles inherit → on → off.
+    pub default_forward_agent: Option<bool>,
     /// Parent group for nesting (`None` = top level). Picked via a dropdown.
     pub parent_id: Option<i64>,
     /// Which field is focused.

@@ -10,6 +10,16 @@ pub struct HostGroup {
     pub sort_order: i32,
     /// Identity new hosts in this group inherit by default. `None` = no default.
     pub default_identity_id: Option<i64>,
+    /// Username hosts in this group inherit when they set none. `None` = no default.
+    pub default_username: Option<String>,
+    /// Port hosts in this group inherit when they set none. `None` = no default.
+    pub default_port: Option<u16>,
+    /// ProxyJump hosts in this group inherit when they set none. `None` = no default.
+    pub default_proxy_jump: Option<String>,
+    /// Transport hosts in this group inherit when they set none. `None` = no default.
+    pub default_transport: Option<SessionTransport>,
+    /// Agent-forwarding hosts in this group inherit when they set none. `None` = no default.
+    pub default_forward_agent: Option<bool>,
     /// Parent group for nesting. `None` = top-level group.
     pub parent_id: Option<i64>,
     /// Reserved, app-managed group (e.g. Favorites). Cannot be renamed/deleted.
@@ -56,7 +66,8 @@ pub struct ManagedHost {
     pub name: String,
     pub label: Option<String>,
     pub address: String,
-    pub port: u16,
+    /// Explicit port. `None` = inherit from the group chain, else the global default (22).
+    pub port: Option<u16>,
     pub group_id: Option<i64>,
     pub identity_id: Option<i64>,
     pub group: Option<HostGroup>,
@@ -68,7 +79,8 @@ pub struct ManagedHost {
     pub tags: Vec<String>,
     pub notes: Option<String>,
     pub proxy_jump: Option<String>,
-    pub forward_agent: bool,
+    /// Explicit agent forwarding. `None` = inherit from the group chain, else off.
+    pub forward_agent: Option<bool>,
     pub remote_command: Option<String>,
     pub environment: Option<String>,
     pub sort_order: i32,
@@ -79,7 +91,8 @@ pub struct ManagedHost {
     pub has_password: bool,
     pub username: Option<String>,
     pub session_logging: SessionLoggingOverride,
-    pub transport: SessionTransport,
+    /// Explicit transport. `None` = inherit from the group chain, else ssh.
+    pub transport: Option<SessionTransport>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -90,20 +103,20 @@ pub struct NewHost {
     pub name: String,
     pub label: Option<String>,
     pub address: String,
-    pub port: u16,
+    pub port: Option<u16>,
     pub group_id: Option<i64>,
     pub identity_id: Option<i64>,
     pub os_icon: Option<String>,
     pub tags: Vec<String>,
     pub notes: Option<String>,
     pub proxy_jump: Option<String>,
-    pub forward_agent: bool,
+    pub forward_agent: Option<bool>,
     pub remote_command: Option<String>,
     pub source: HostSource,
     pub has_password: bool,
     pub username: Option<String>,
     pub session_logging: SessionLoggingOverride,
-    pub transport: SessionTransport,
+    pub transport: Option<SessionTransport>,
 }
 
 impl Default for NewHost {
@@ -118,20 +131,20 @@ impl NewHost {
             name: name.into(),
             address: address.into(),
             label: None,
-            port: 22,
+            port: Some(22),
             group_id: None,
             identity_id: None,
             os_icon: None,
             tags: Vec::new(),
             notes: None,
             proxy_jump: None,
-            forward_agent: false,
+            forward_agent: Some(false),
             remote_command: None,
             source: HostSource::Launcher,
             has_password: false,
             username: None,
             session_logging: SessionLoggingOverride::Inherit,
-            transport: SessionTransport::Ssh,
+            transport: Some(SessionTransport::Ssh),
         }
     }
 }
@@ -142,14 +155,16 @@ pub struct HostUpdate {
     pub name: Option<String>,
     pub label: Option<Option<String>>,
     pub address: Option<String>,
-    pub port: Option<u16>,
+    /// Outer `Some` = change the port; inner `None` = clear it (restore inheritance).
+    pub port: Option<Option<u16>>,
     pub group_id: Option<Option<i64>>,
     pub identity_id: Option<Option<i64>>,
     pub os_icon: Option<Option<String>>,
     pub tags: Option<Vec<String>>,
     pub notes: Option<Option<String>>,
     pub proxy_jump: Option<Option<String>>,
-    pub forward_agent: Option<bool>,
+    /// Outer `Some` = change agent forwarding; inner `None` = restore inheritance.
+    pub forward_agent: Option<Option<bool>>,
     pub remote_command: Option<Option<String>>,
     pub environment: Option<Option<String>>,
     pub favorite: Option<bool>,
@@ -157,7 +172,8 @@ pub struct HostUpdate {
     pub has_password: Option<bool>,
     pub username: Option<Option<String>>,
     pub session_logging: Option<SessionLoggingOverride>,
-    pub transport: Option<SessionTransport>,
+    /// Outer `Some` = change the transport; inner `None` = restore inheritance.
+    pub transport: Option<Option<SessionTransport>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -165,6 +181,11 @@ pub struct NewHostGroup {
     pub name: String,
     pub sort_order: i32,
     pub default_identity_id: Option<i64>,
+    pub default_username: Option<String>,
+    pub default_port: Option<u16>,
+    pub default_proxy_jump: Option<String>,
+    pub default_transport: Option<SessionTransport>,
+    pub default_forward_agent: Option<bool>,
     pub parent_id: Option<i64>,
 }
 
@@ -174,6 +195,16 @@ pub struct HostGroupUpdate {
     pub sort_order: Option<i32>,
     /// Outer `Some` = change the default identity; inner `None` = clear it.
     pub default_identity_id: Option<Option<i64>>,
+    /// Outer `Some` = change the default username; inner `None` = clear it.
+    pub default_username: Option<Option<String>>,
+    /// Outer `Some` = change the default port; inner `None` = clear it.
+    pub default_port: Option<Option<u16>>,
+    /// Outer `Some` = change the default ProxyJump; inner `None` = clear it.
+    pub default_proxy_jump: Option<Option<String>>,
+    /// Outer `Some` = change the default transport; inner `None` = clear it.
+    pub default_transport: Option<Option<SessionTransport>>,
+    /// Outer `Some` = change the default agent forwarding; inner `None` = clear it.
+    pub default_forward_agent: Option<Option<bool>>,
     /// Outer `Some` = change the parent; inner `None` = move to top level.
     pub parent_id: Option<Option<i64>>,
 }
