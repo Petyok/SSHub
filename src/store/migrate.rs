@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: i64 = 16;
+const SCHEMA_VERSION: i64 = 17;
 
 /// Name of the reserved, auto-created "Favorites" group. Membership in it is the
 /// source of truth for a host's favourite status.
@@ -73,11 +73,80 @@ CREATE TABLE IF NOT EXISTS host_metadata (
 );
 ";
 
+/// How many `launcher.db.bak-v*` snapshots to keep next to the database.
+const KEPT_BACKUPS: usize = 3;
+
+/// Snapshot the database next to itself before a migration rewrites it.
+///
+/// `VACUUM INTO` (not a file copy) because it is a single statement that
+/// writes a consistent snapshot even with a WAL and other readers attached.
+/// Best-effort by design: a failed snapshot must not stop a user from opening
+/// their hosts, so it warns and carries on.
+fn backup_before_migration(conn: &Connection, launcher_path: &Path, from_version: i64) {
+    let mut name = launcher_path.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".bak-v{from_version}-{}", now_ts()));
+    let dest = launcher_path.with_file_name(name);
+    if dest.exists() {
+        return;
+    }
+    match conn.execute("VACUUM INTO ?1", params![dest.to_string_lossy()]) {
+        Ok(_) => prune_backups(launcher_path),
+        Err(e) => eprintln!(
+            "sshub: could not back up {} before migrating: {e:#}",
+            launcher_path.display()
+        ),
+    }
+}
+
+/// Keep the newest [`KEPT_BACKUPS`] snapshots, delete the rest.
+fn prune_backups(launcher_path: &Path) {
+    let Some(dir) = launcher_path.parent() else {
+        return;
+    };
+    let prefix = format!(
+        "{}.bak-v",
+        launcher_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+    );
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut backups: Vec<_> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .map(|n| n.to_string_lossy().starts_with(&prefix))
+                .unwrap_or(false)
+        })
+        .collect();
+    if backups.len() <= KEPT_BACKUPS {
+        return;
+    }
+    // The name ends in the unix timestamp it was taken at, so the byte order
+    // is the time order — no metadata call needed.
+    backups.sort();
+    for old in &backups[..backups.len() - KEPT_BACKUPS] {
+        let _ = std::fs::remove_file(old);
+    }
+}
+
 pub(crate) fn run_migrations(conn: &Connection, launcher_path: &Path) -> Result<()> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     // Wait instead of failing with SQLITE_BUSY when another instance (or the
     // watcher-triggered reimport) holds the write lock.
     conn.execute_batch("PRAGMA busy_timeout = 5000;")?;
+
+    // Snapshot first: a migration rewrites tables in place, and v0.17.0 proved
+    // what a wrong one costs. Nothing to save for a database that does not
+    // exist yet (version 0) or is already current. Must run before the
+    // transaction below — `VACUUM INTO` cannot run inside one.
+    let before = schema_version(conn)?;
+    if before > 0 && before < SCHEMA_VERSION {
+        backup_before_migration(conn, launcher_path, before);
+    }
 
     // Run the whole chain atomically: a crash mid-migration must not leave the
     // schema half-upgraded with no recorded version step.
@@ -156,6 +225,10 @@ pub(crate) fn run_migrations(conn: &Connection, launcher_path: &Path) -> Result<
 
     if current < 16 {
         migrate_v15_to_v16(conn)?;
+    }
+
+    if current < 17 {
+        migrate_v16_to_v17(conn)?;
     }
 
     // Runs last so all columns it writes to (e.g. environment) already exist.
@@ -603,12 +676,22 @@ fn migrate_v15_to_v16(conn: &Connection) -> Result<()> {
         .query_row([], |row| row.get::<_, i64>(0))
         .map(|c| c == 3)?;
     if !hosts_nullable {
-        // Defer FK enforcement to commit: `tunnels` and
-        // `host_group_memberships` reference `hosts(id)`, and the parent table
-        // cannot be dropped while enforcement is immediate. (`PRAGMA
-        // foreign_keys` itself is a no-op inside a transaction; the defer
-        // pragma is the one designed for exactly this.)
+        // `DROP TABLE hosts` below runs an implicit DELETE of every row, and
+        // with `PRAGMA foreign_keys = ON` that fires `ON DELETE CASCADE` on
+        // every child table — emptying host_group_memberships, tunnels and
+        // command_history (v0.17.0 shipped exactly that: every host came back
+        // ungrouped). `defer_foreign_keys` does not help: it defers the
+        // *checking* of violations to commit, not the cascade actions
+        // themselves, and `PRAGMA foreign_keys` is a no-op inside the
+        // transaction this runs in. So the child rows are copied out and put
+        // back: host ids are preserved by the rebuild, so they still match.
         conn.execute_batch("PRAGMA defer_foreign_keys = ON;")?;
+        conn.execute_batch(
+            "CREATE TEMP TABLE hosts_rebuild_memberships AS
+                 SELECT * FROM host_group_memberships;
+             CREATE TEMP TABLE hosts_rebuild_tunnels AS SELECT * FROM tunnels;
+             CREATE TEMP TABLE hosts_rebuild_history AS SELECT * FROM command_history;",
+        )?;
         conn.execute_batch(
             "CREATE TABLE hosts_new (
                 id              INTEGER PRIMARY KEY,
@@ -658,7 +741,38 @@ fn migrate_v15_to_v16(conn: &Connection) -> Result<()> {
         )?;
         conn.execute_batch("DROP TABLE hosts;")?;
         conn.execute_batch("ALTER TABLE hosts_new RENAME TO hosts;")?;
+        conn.execute_batch(
+            "INSERT OR IGNORE INTO host_group_memberships
+                 SELECT * FROM hosts_rebuild_memberships;
+             INSERT OR IGNORE INTO tunnels SELECT * FROM hosts_rebuild_tunnels;
+             INSERT OR IGNORE INTO command_history SELECT * FROM hosts_rebuild_history;
+             DROP TABLE hosts_rebuild_memberships;
+             DROP TABLE hosts_rebuild_tunnels;
+             DROP TABLE hosts_rebuild_history;",
+        )?;
     }
+    Ok(())
+}
+
+/// Repair databases that v0.17.0 already emptied.
+///
+/// The v16 rebuild cascade-deleted `host_group_memberships`, so every host
+/// rendered as ungrouped even though `hosts.group_id` survived the copy. The
+/// group tree reads memberships, so re-seed them from the column that lived:
+/// `set_host_groups` keeps `group_id` pointing at the primary membership, so
+/// it is current even for hosts regrouped under 0.17.0. `INSERT OR IGNORE`
+/// only adds, so a database that was never damaged is untouched.
+///
+/// Memberships beyond the primary group cannot be recovered — `group_id` holds
+/// one — and cascaded `tunnels` rows are gone for good.
+fn migrate_v16_to_v17(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "INSERT OR IGNORE INTO host_group_memberships (host_id, group_id)
+             SELECT id, group_id FROM hosts WHERE group_id IS NOT NULL;
+         INSERT OR IGNORE INTO host_group_memberships (host_id, group_id)
+             SELECT h.id, g.id FROM hosts h, host_groups g
+             WHERE h.favorite = 1 AND g.reserved = 1;",
+    )?;
     Ok(())
 }
 
@@ -807,9 +921,219 @@ CREATE TABLE host_group_memberships (
     group_id INTEGER NOT NULL REFERENCES host_groups(id) ON DELETE CASCADE,
     PRIMARY KEY (host_id, group_id)
 );
+CREATE TABLE tunnels (
+    id            INTEGER PRIMARY KEY,
+    host_id       INTEGER REFERENCES hosts(id) ON DELETE CASCADE,
+    tunnel_type   TEXT NOT NULL DEFAULT 'L',
+    local_port    INTEGER NOT NULL,
+    remote_host   TEXT NOT NULL DEFAULT 'localhost',
+    remote_port   INTEGER NOT NULL DEFAULT 0,
+    label         TEXT,
+    auto_connect  INTEGER NOT NULL DEFAULT 0,
+    created_at    INTEGER NOT NULL,
+    updated_at    INTEGER NOT NULL
+);
 INSERT INTO host_groups (name, sort_order, reserved, created_at)
     VALUES ('prod', 0, 0, 1700000000);
 ";
+
+    /// The database is snapshotted before a migration touches it.
+    ///
+    /// Oracle: the snapshot itself — open it and it must still be the old
+    /// schema with the old rows, whatever the migration did to the original.
+    #[test]
+    fn migration_snapshots_the_database_first_and_keeps_three() {
+        let dir = temp_dir();
+        let db_path = dir.path().join("launcher.db");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(V15_FROZEN_SCHEMA).unwrap();
+        conn.execute_batch(
+            "INSERT INTO hosts (name, address, port, forward_agent, transport,
+                                created_at, updated_at)
+             VALUES ('a', '10.0.0.1', 22, 0, 'ssh', 1700000000, 1700000000);",
+        )
+        .unwrap();
+        drop(conn);
+
+        let migrated = Connection::open(&db_path).unwrap();
+        run_migrations(&migrated, &db_path).unwrap();
+        drop(migrated);
+
+        let backups = || {
+            let mut found: Vec<_> = std::fs::read_dir(dir.path())
+                .unwrap()
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with("launcher.db.bak-v")
+                })
+                .collect();
+            found.sort();
+            found
+        };
+        let snapshot = backups();
+        assert_eq!(snapshot.len(), 1, "one snapshot per migrated launch");
+        assert!(
+            snapshot[0]
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .contains(".bak-v15-"),
+            "the name records the version migrated away from: {:?}",
+            snapshot[0]
+        );
+
+        // The snapshot is the pre-migration database, not a copy of the new one.
+        let old = Connection::open(&snapshot[0]).unwrap();
+        let version: i64 = old
+            .query_row("SELECT version FROM schema_version LIMIT 1", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(version, 15, "snapshot must predate the migration");
+        let port: i64 = old
+            .query_row("SELECT port FROM hosts WHERE name = 'a'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(port, 22, "snapshot keeps the pre-migration row verbatim");
+        drop(old);
+
+        // Only the newest three survive. Timestamps are seconds, so write the
+        // extra names directly rather than migrating five times in one second.
+        for ts in [1, 2, 3, 4] {
+            std::fs::copy(
+                &snapshot[0],
+                dir.path().join(format!("launcher.db.bak-v15-{ts}")),
+            )
+            .unwrap();
+        }
+        prune_backups(&db_path);
+        let kept = backups();
+        assert_eq!(kept.len(), KEPT_BACKUPS, "pruning keeps three: {kept:?}");
+        assert!(
+            kept.iter()
+                .all(|p| !p.file_name().unwrap().to_string_lossy().ends_with("-1")),
+            "the oldest must be the one dropped: {kept:?}"
+        );
+    }
+
+    /// Rows a host owns must survive the v16 table rebuild.
+    ///
+    /// v0.17.0 lost every one of them: `DROP TABLE hosts` runs an implicit
+    /// DELETE, and with `PRAGMA foreign_keys = ON` that fires the children's
+    /// `ON DELETE CASCADE`. Users opened the app to find every host ungrouped
+    /// and their tunnels gone. Oracle: SQLite itself — the counts before the
+    /// migration are the counts after it.
+    #[test]
+    fn migration_v16_rebuild_keeps_memberships_and_tunnels() {
+        let dir = temp_dir();
+        let db_path = dir.path().join("launcher.db");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(V15_FROZEN_SCHEMA).unwrap();
+        conn.execute_batch(
+            "INSERT INTO hosts (name, address, port, group_id, forward_agent,
+                                transport, created_at, updated_at)
+             VALUES ('a', '10.0.0.1', 22,
+                     (SELECT id FROM host_groups WHERE name = 'prod'), 0, 'ssh',
+                     1700000000, 1700000000),
+                    ('b', '10.0.0.2', 2222,
+                     (SELECT id FROM host_groups WHERE name = 'prod'), 1, 'mosh',
+                     1700000000, 1700000000);
+             INSERT INTO host_group_memberships (host_id, group_id)
+                 SELECT id, group_id FROM hosts;
+             INSERT INTO tunnels (host_id, tunnel_type, local_port, remote_host,
+                                  remote_port, created_at, updated_at)
+                 VALUES ((SELECT id FROM hosts WHERE name = 'a'), 'L', 8080,
+                         'localhost', 80, 1700000000, 1700000000);",
+        )
+        .unwrap();
+        drop(conn);
+
+        let migrated = Connection::open(&db_path).unwrap();
+        run_migrations(&migrated, &db_path).unwrap();
+        let memberships: i64 = migrated
+            .query_row("SELECT COUNT(*) FROM host_group_memberships", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(memberships, 2, "the rebuild must not cascade groups away");
+        let tunnels: i64 = migrated
+            .query_row("SELECT COUNT(*) FROM tunnels", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(tunnels, 1, "the rebuild must not cascade tunnels away");
+        let host_of_tunnel: String = migrated
+            .query_row(
+                "SELECT h.name FROM tunnels t JOIN hosts h ON h.id = t.host_id",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            host_of_tunnel, "a",
+            "restored rows must still point at their host"
+        );
+    }
+
+    /// A database v0.17.0 already emptied gets its groups back on upgrade.
+    #[test]
+    fn migration_v17_reseeds_memberships_wiped_by_v16() {
+        let dir = temp_dir();
+        let db_path = dir.path().join("launcher.db");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(V15_FROZEN_SCHEMA).unwrap();
+        conn.execute_batch(
+            "INSERT INTO hosts (name, address, port, group_id, forward_agent,
+                                transport, created_at, updated_at)
+             VALUES ('a', '10.0.0.1', 22,
+                     (SELECT id FROM host_groups WHERE name = 'prod'), 0, 'ssh',
+                     1700000000, 1700000000);
+             INSERT INTO host_group_memberships (host_id, group_id)
+                 SELECT id, group_id FROM hosts;",
+        )
+        .unwrap();
+        drop(conn);
+
+        // Reproduce the damage 0.17.0 left behind: schema at 16, memberships
+        // cascaded away, `hosts.group_id` still holding the assignment.
+        let damaged = Connection::open(&db_path).unwrap();
+        run_migrations(&damaged, &db_path).unwrap();
+        damaged
+            .execute_batch(
+                "DELETE FROM host_group_memberships;
+                 DELETE FROM schema_version;
+                 INSERT INTO schema_version (version) VALUES (16);",
+            )
+            .unwrap();
+        drop(damaged);
+
+        let repaired = Connection::open(&db_path).unwrap();
+        run_migrations(&repaired, &db_path).unwrap();
+        let restored: i64 = repaired
+            .query_row(
+                "SELECT COUNT(*) FROM host_group_memberships m
+                 JOIN hosts h ON h.id = m.host_id AND h.group_id = m.group_id",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(restored, 1, "the repair must re-seed from hosts.group_id");
+
+        // Idempotent: a second pass adds nothing and drops nothing.
+        repaired
+            .execute_batch(
+                "DELETE FROM schema_version; INSERT INTO schema_version (version) VALUES (16);",
+            )
+            .unwrap();
+        run_migrations(&repaired, &db_path).unwrap();
+        let again: i64 = repaired
+            .query_row("SELECT COUNT(*) FROM host_group_memberships", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(again, 1, "re-running the repair must not duplicate rows");
+    }
 
     #[test]
     fn migration_v15_to_v16_adds_group_defaults_and_nulls_sentinels() {
@@ -844,7 +1168,7 @@ INSERT INTO host_groups (name, sort_order, reserved, created_at)
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(version, 16);
+        assert_eq!(version, 17);
         for column in [
             "default_username",
             "default_port",

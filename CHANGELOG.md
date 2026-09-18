@@ -4,6 +4,32 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Groups survived v0.17.0 after all** (data loss) — the v16 migration rebuilt
+  the `hosts` table to make port/forwarding/transport nullable, and
+  `DROP TABLE hosts` runs an implicit `DELETE` that fires every child table's
+  `ON DELETE CASCADE`: `host_group_memberships`, `tunnels` and
+  `command_history` were emptied, so every host came back `_ungrouped`.
+  (`PRAGMA defer_foreign_keys` defers violation *checking*, not the cascade
+  actions.) The rebuild now carries those rows across, and a v17 migration
+  re-seeds memberships from `hosts.group_id`, which survived — so an already
+  damaged database repairs itself on upgrade. Memberships beyond the primary
+  group, and cascaded tunnels, cannot be recovered.
+- **A remembered host password no longer hides the key passphrase** — ssh
+  offers the key first, and the askpass channel only answers a prompt of the
+  matching class, so a host that had both a saved login password and a
+  passphrase-protected identity prompted for a passphrase sshub already held.
+  The keyed identity's passphrase now outranks the host password; a keyless
+  identity still does not displace it.
+
+### Added
+
+- **The database is snapshotted before every migration** — a schema upgrade
+  first writes `launcher.db.bak-v<from>-<timestamp>` next to the database
+  (`VACUUM INTO`, so the snapshot is consistent), keeping the three most
+  recent. Best-effort: a failed snapshot warns and does not block startup.
+
 ## [0.17.0] - 2026-09-18
 ### Added
 

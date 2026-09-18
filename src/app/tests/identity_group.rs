@@ -1,4 +1,23 @@
 use super::*;
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+/// In-memory credential store: what is stored decides, with no keyring.
+struct MapStore(Mutex<HashMap<String, String>>);
+
+impl crate::credentials::PasswordStore for MapStore {
+    fn get(&self, k: &str) -> anyhow::Result<Option<String>> {
+        Ok(self.0.lock().unwrap().get(k).cloned())
+    }
+    fn set(&self, k: &str, v: &str) -> anyhow::Result<()> {
+        self.0.lock().unwrap().insert(k.into(), v.into());
+        Ok(())
+    }
+    fn delete(&self, k: &str) -> anyhow::Result<()> {
+        self.0.lock().unwrap().remove(k);
+        Ok(())
+    }
+}
 
 #[test]
 fn agent_snapshot_refreshes_when_stale_without_waiting_for_the_keys_tab() {
@@ -58,23 +77,6 @@ pub(crate) fn identity_grid_navigation_moves_by_row_and_column() {
 
 #[test]
 pub(crate) fn keyless_identity_secret_is_a_login_password() {
-    use std::collections::HashMap;
-    use std::sync::Mutex;
-    struct MapStore(Mutex<HashMap<String, String>>);
-    impl crate::credentials::PasswordStore for MapStore {
-        fn get(&self, k: &str) -> anyhow::Result<Option<String>> {
-            Ok(self.0.lock().unwrap().get(k).cloned())
-        }
-        fn set(&self, k: &str, v: &str) -> anyhow::Result<()> {
-            self.0.lock().unwrap().insert(k.into(), v.into());
-            Ok(())
-        }
-        fn delete(&self, k: &str) -> anyhow::Result<()> {
-            self.0.lock().unwrap().remove(k);
-            Ok(())
-        }
-    }
-
     let store = test_store();
     // Identity with username + password, no key file.
     let id = store
@@ -102,6 +104,74 @@ pub(crate) fn keyless_identity_secret_is_a_login_password() {
     assert!(
         matches!(secret, Some(crate::session::PendingSecret::Password(ref p)) if p == "s3cret"),
         "keyless identity should yield a login password, got {secret:?} / {diag}"
+    );
+}
+
+#[test]
+pub(crate) fn key_passphrase_outranks_a_remembered_host_password() {
+    // The v0.17.0 shape: the host remembered a login password AND its identity
+    // has a passphrase-protected key. ssh authenticates by key first, and the
+    // askpass channel refuses to answer `Enter passphrase for …` with a
+    // `Password`, so resolving the host secret first left the user staring at
+    // a modal for a passphrase already in the keyring.
+    let store = test_store();
+    let id = store
+        .create_identity(&crate::store::NewIdentity {
+            name: "keyed".into(),
+            username: Some("root".into()),
+            private_key: Some("/home/u/.ssh/id_ed25519".into()),
+            certificate: None,
+            sort_order: 0,
+            has_password: true,
+        })
+        .unwrap()
+        .id;
+    let mut nh = NewHost::launcher("h1", "10.0.0.1");
+    nh.identity_id = Some(id);
+    let host_id = store.create_host(&nh).unwrap().id;
+
+    let pw = MapStore(Mutex::new(HashMap::new()));
+    crate::credentials::PasswordStore::set(&pw, &crate::credentials::host_key(host_id), "host-pw")
+        .unwrap();
+    crate::credentials::PasswordStore::set(
+        &pw,
+        &crate::credentials::identity_key(id),
+        "key-phrase",
+    )
+    .unwrap();
+
+    let entry = HostEntry::Managed(store.get_host(host_id).unwrap().unwrap());
+    let effective = entry.managed().and_then(|m| m.identity.as_ref());
+    let (secret, diag) = resolve_pending_secret(&entry, effective, &pw);
+    assert!(
+        matches!(secret, Some(crate::session::PendingSecret::Passphrase(ref p)) if p == "key-phrase"),
+        "the key passphrase must win over the host password, got {secret:?} / {diag}"
+    );
+
+    // Without a key the identity secret is a login password, and the host's
+    // own password still comes first.
+    let keyless = store
+        .create_identity(&crate::store::NewIdentity {
+            name: "keyless".into(),
+            username: Some("root".into()),
+            private_key: None,
+            certificate: None,
+            sort_order: 0,
+            has_password: true,
+        })
+        .unwrap()
+        .id;
+    let mut nh2 = NewHost::launcher("h2", "10.0.0.2");
+    nh2.identity_id = Some(keyless);
+    let host2 = store.create_host(&nh2).unwrap().id;
+    crate::credentials::PasswordStore::set(&pw, &crate::credentials::host_key(host2), "host-pw-2")
+        .unwrap();
+    let entry2 = HostEntry::Managed(store.get_host(host2).unwrap().unwrap());
+    let effective2 = entry2.managed().and_then(|m| m.identity.as_ref());
+    let (secret2, diag2) = resolve_pending_secret(&entry2, effective2, &pw);
+    assert!(
+        matches!(secret2, Some(crate::session::PendingSecret::Password(ref p)) if p == "host-pw-2"),
+        "a keyless identity must not displace the host password, got {secret2:?} / {diag2}"
     );
 }
 
