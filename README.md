@@ -511,6 +511,18 @@ Made with dynamic workflows + adversarial-multimodel-reviews + cross-model-revie
 - Qwen 3.8 Max
 - GPT-5.6 Luna
 
+## Donations
+
+SSHub is free and AGPL-licensed. If it saves you time, you can throw coins at it:
+
+| Coin | Network            | Address                                      |
+|------|--------------------|----------------------------------------------|
+| BTC  | Bitcoin (on-chain) | `bc1qvuprwm3r0twn03aej9yv0vjkqj3fkskyq7c3pc` |
+| USDT | Tron (TRC20)       | `TRnxCkzKD1Wunhvy1XitCrhLCHNs5U3XRf`         |
+
+Send USDT **only** on the network listed above -- coins sent over another chain
+are unrecoverable.
+
 ## License
 
 [AGPL-3.0-or-later](LICENSE) — a copyleft license: forks and derivatives must
