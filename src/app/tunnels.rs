@@ -627,12 +627,10 @@ impl App {
         if self.should_quit {
             return Ok(());
         }
-        let cfg = self.config.tunnel_reconnect.clone();
-        let tunnels = self.tunnels.clone();
         let store = Arc::clone(&self.store);
         let events = self.tunnel_manager.tick_reconnect(
-            &tunnels,
-            &cfg,
+            &self.tunnels,
+            &self.config.tunnel_reconnect,
             |host_id| {
                 store.get_host(host_id).ok().flatten().map(|h| {
                     let resolved = store
@@ -643,7 +641,7 @@ impl App {
             },
             |host| resolve_pending_secret_for_managed(host, self.password_store.as_ref()).0,
         );
-        crate::tunnel::log_tunnel_reconnect_events(&self.store, &events, &tunnels);
+        crate::tunnel::log_tunnel_reconnect_events(&self.store, &events, &self.tunnels);
         Ok(())
     }
 

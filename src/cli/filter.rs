@@ -53,18 +53,6 @@ pub fn apply_filters(
     Ok(indices)
 }
 
-pub fn all_group_names(
-    store: &LauncherStore,
-    include_reserved: bool,
-) -> anyhow::Result<Vec<String>> {
-    Ok(store
-        .list_groups()?
-        .into_iter()
-        .filter(|g| include_reserved || !g.reserved)
-        .map(|g| g.name)
-        .collect())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

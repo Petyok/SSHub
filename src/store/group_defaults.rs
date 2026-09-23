@@ -236,12 +236,6 @@ impl LauncherStore {
         Ok(out)
     }
 
-    /// Chain-only resolution for a group (host fields unset): the inherited
-    /// values the host form renders as muted placeholders.
-    pub fn inherited_for_group(&self, group_id: Option<i64>) -> Result<ResolvedConnection> {
-        self.inherited_for_groups(group_id, &[])
-    }
-
     /// Chain-only resolution across every group in `member_ids` (host fields
     /// unset): the inherited values the host form renders as muted
     /// placeholders when the form selects several groups. Uses the same

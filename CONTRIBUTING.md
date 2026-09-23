@@ -131,12 +131,12 @@ issue/PR **comments** when an agent posts them.
 
 The app is a synchronous event loop (no async runtime) built on ratatui + crossterm:
 
-- `src/app.rs` -- central state machine, key/mouse dispatch
+- `src/app/` -- central state machine, key/mouse dispatch
 - `src/tui/` -- rendering (mod.rs dispatches by tab, screens/ for full views, widgets/ for reusable components)
 - `src/store/` -- SQLite CRUD (hosts, groups, identities, tunnels, auth events)
 - `src/ssh/` -- SSH config parsing, host resolution, agent detection, probe
-- `src/tunnel.rs` -- tunnel process management (spawn/monitor/kill)
-- `src/launcher/` -- terminal launcher implementations (kitty, ghostty, custom)
+- `src/tunnel/` -- tunnel process management (spawn/monitor/kill)
+- `src/session/` -- embedded PTY sessions
 
 ## Tests
 

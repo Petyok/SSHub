@@ -46,12 +46,6 @@ impl InputTracker {
         }
     }
 
-    /// False after any key the tracker cannot model (arrows, mouse, unknown
-    /// sequences): the ghost must hide because the cursor may have moved.
-    pub fn is_certain(&self) -> bool {
-        !self.uncertain
-    }
-
     /// A fresh shell line begins (authentication just completed): pre-auth
     /// partial input belonged to the login exchange, never to a command.
     /// Called once, on the connected-latch transition.

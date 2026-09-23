@@ -6,524 +6,6 @@
 
 use serde::{Deserialize, Serialize};
 
-macro_rules! kb_defaults {
-    ($($field:ident => [$($key:literal),* $(,)?]),* $(,)?) => {
-        $(kb_defaults! { @fn $field $($key),* })*
-    };
-    (@fn save $($key:literal),* $(,)?) => {
-        fn default_kb_save() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn quit $($key:literal),* $(,)?) => {
-        fn default_kb_quit() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn help $($key:literal),* $(,)?) => {
-        fn default_kb_help() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn search $($key:literal),* $(,)?) => {
-        fn default_kb_search() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn keybind_editor $($key:literal),* $(,)?) => {
-        fn default_kb_keybind_editor() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn force_quit $($key:literal),* $(,)?) => {
-        fn default_kb_force_quit() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn connect $($key:literal),* $(,)?) => {
-        fn default_kb_connect() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn add_host $($key:literal),* $(,)?) => {
-        fn default_kb_add_host() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn generate_key $($key:literal),* $(,)?) => {
-        fn default_kb_generate_key() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn edit $($key:literal),* $(,)?) => {
-        fn default_kb_edit() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn delete $($key:literal),* $(,)?) => {
-        fn default_kb_delete() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn duplicate $($key:literal),* $(,)?) => {
-        fn default_kb_duplicate() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn tag_filter $($key:literal),* $(,)?) => {
-        fn default_kb_tag_filter() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn favorite $($key:literal),* $(,)?) => {
-        fn default_kb_favorite() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn toggle_group $($key:literal),* $(,)?) => {
-        fn default_kb_toggle_group() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn fold_group_in $($key:literal),* $(,)?) => {
-        fn default_kb_fold_group_in() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn fold_group_out $($key:literal),* $(,)?) => {
-        fn default_kb_fold_group_out() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn move_up $($key:literal),* $(,)?) => {
-        fn default_kb_move_up() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn move_down $($key:literal),* $(,)?) => {
-        fn default_kb_move_down() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn move_left $($key:literal),* $(,)?) => {
-        fn default_kb_move_left() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn move_right $($key:literal),* $(,)?) => {
-        fn default_kb_move_right() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn move_group_up $($key:literal),* $(,)?) => {
-        fn default_kb_move_group_up() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn move_group_down $($key:literal),* $(,)?) => {
-        fn default_kb_move_group_down() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn move_host_up $($key:literal),* $(,)?) => {
-        fn default_kb_move_host_up() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn move_host_down $($key:literal),* $(,)?) => {
-        fn default_kb_move_host_down() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn collapse_all $($key:literal),* $(,)?) => {
-        fn default_kb_collapse_all() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn detail_focus $($key:literal),* $(,)?) => {
-        fn default_kb_detail_focus() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn clear_ssh_log $($key:literal),* $(,)?) => {
-        fn default_kb_clear_ssh_log() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn sort_cycle $($key:literal),* $(,)?) => {
-        fn default_kb_sort_cycle() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn yank_log $($key:literal),* $(,)?) => {
-        fn default_kb_yank_log() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn reveal_secret $($key:literal),* $(,)?) => {
-        fn default_kb_reveal_secret() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn copy_secret $($key:literal),* $(,)?) => {
-        fn default_kb_copy_secret() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn ui_zoom_in $($key:literal),* $(,)?) => {
-        fn default_kb_ui_zoom_in() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn ui_zoom_out $($key:literal),* $(,)?) => {
-        fn default_kb_ui_zoom_out() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn export_ssh $($key:literal),* $(,)?) => {
-        fn default_kb_export_ssh() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn import_ssh $($key:literal),* $(,)?) => {
-        fn default_kb_import_ssh() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn import_termius $($key:literal),* $(,)?) => {
-        fn default_kb_import_termius() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn groups_manage $($key:literal),* $(,)?) => {
-        fn default_kb_groups_manage() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn rename_group $($key:literal),* $(,)?) => {
-        fn default_kb_rename_group() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn delete_group $($key:literal),* $(,)?) => {
-        fn default_kb_delete_group() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn tab_hosts $($key:literal),* $(,)?) => {
-        fn default_kb_tab_hosts() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn tab_sftp $($key:literal),* $(,)?) => {
-        fn default_kb_tab_sftp() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn tab_tunnels $($key:literal),* $(,)?) => {
-        fn default_kb_tab_tunnels() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn tab_keys $($key:literal),* $(,)?) => {
-        fn default_kb_tab_keys() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn tab_audit $($key:literal),* $(,)?) => {
-        fn default_kb_tab_audit() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn identity_columns_inc $($key:literal),* $(,)?) => {
-        fn default_kb_identity_columns_inc() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn identity_columns_dec $($key:literal),* $(,)?) => {
-        fn default_kb_identity_columns_dec() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn add_to_agent $($key:literal),* $(,)?) => {
-        fn default_kb_add_to_agent() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn remove_from_agent $($key:literal),* $(,)?) => {
-        fn default_kb_remove_from_agent() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn push_key $($key:literal),* $(,)?) => {
-        fn default_kb_push_key() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn tunnel_kill $($key:literal),* $(,)?) => {
-        fn default_kb_tunnel_kill() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn toggle_tunnel $($key:literal),* $(,)?) => {
-        fn default_kb_toggle_tunnel() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn audit_filter $($key:literal),* $(,)?) => {
-        fn default_kb_audit_filter() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn audit_range $($key:literal),* $(,)?) => {
-        fn default_kb_audit_range() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn session_new_tab $($key:literal),* $(,)?) => {
-        fn default_kb_session_new_tab() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn session_close_tab $($key:literal),* $(,)?) => {
-        fn default_kb_session_close_tab() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn session_tab_prev $($key:literal),* $(,)?) => {
-        fn default_kb_session_tab_prev() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn session_tab_next $($key:literal),* $(,)?) => {
-        fn default_kb_session_tab_next() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn session_detach $($key:literal),* $(,)?) => {
-        fn default_kb_session_detach() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn session_open_sftp $($key:literal),* $(,)?) => {
-        fn default_kb_session_open_sftp() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn local_shell $($key:literal),* $(,)?) => {
-        fn default_kb_local_shell() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn session_focus $($key:literal),* $(,)?) => {
-        fn default_kb_session_focus() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn session_switcher $($key:literal),* $(,)?) => {
-        fn default_kb_session_switcher() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn session_scroll_up $($key:literal),* $(,)?) => {
-        fn default_kb_session_scroll_up() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn session_scroll_down $($key:literal),* $(,)?) => {
-        fn default_kb_session_scroll_down() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn session_cancel $($key:literal),* $(,)?) => {
-        fn default_kb_session_cancel() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn session_toggle_log $($key:literal),* $(,)?) => {
-        fn default_kb_session_toggle_log() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn confirm_yes $($key:literal),* $(,)?) => {
-        fn default_kb_confirm_yes() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn confirm_no $($key:literal),* $(,)?) => {
-        fn default_kb_confirm_no() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn cancel $($key:literal),* $(,)?) => {
-        fn default_kb_cancel() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn toggle_panel_zoom $($key:literal),* $(,)?) => {
-        fn default_kb_toggle_panel_zoom() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn focus_panel_left $($key:literal),* $(,)?) => {
-        fn default_kb_focus_panel_left() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn focus_panel_right $($key:literal),* $(,)?) => {
-        fn default_kb_focus_panel_right() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn focus_panel_up $($key:literal),* $(,)?) => {
-        fn default_kb_focus_panel_up() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn focus_panel_down $($key:literal),* $(,)?) => {
-        fn default_kb_focus_panel_down() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn broadcast $($key:literal),* $(,)?) => {
-        fn default_kb_broadcast() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn broadcast_cancel $($key:literal),* $(,)?) => {
-        fn default_kb_broadcast_cancel() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn known_hosts $($key:literal),* $(,)?) => {
-        fn default_kb_known_hosts() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn known_hosts_delete $($key:literal),* $(,)?) => {
-        fn default_kb_known_hosts_delete() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn known_hosts_refresh $($key:literal),* $(,)?) => {
-        fn default_kb_known_hosts_refresh() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn logs_browser $($key:literal),* $(,)?) => {
-        fn default_kb_logs_browser() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn profiles_manage $($key:literal),* $(,)?) => {
-        fn default_kb_profiles_manage() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn snippets_manage $($key:literal),* $(,)?) => {
-        fn default_kb_snippets_manage() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn session_snippets $($key:literal),* $(,)?) => {
-        fn default_kb_session_snippets() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-    (@fn ghost_accept $($key:literal),* $(,)?) => {
-        fn default_kb_ghost_accept() -> Vec<String> {
-            vec![$($key.to_string()),*]
-        }
-    };
-}
-
-kb_defaults! {
-    save => ["F2", "Ctrl+S"],
-    quit => ["q"],
-    help => ["?"],
-    search => ["/"],
-    keybind_editor => ["Ctrl+K"],
-    force_quit => ["Ctrl+C"],
-    connect => ["Enter"],
-    add_host => ["a"],
-    generate_key => ["g"],
-    edit => ["e"],
-    delete => ["d"],
-    duplicate => ["Shift+D"],
-    tag_filter => ["#"],
-    favorite => ["f"],
-    toggle_group => ["Space"],
-    fold_group_in => ["Left"],
-    fold_group_out => ["Right"],
-    move_up => ["k", "Up"],
-    move_down => ["j", "Down"],
-    move_left => ["Left"],
-    move_right => ["l", "Right"],
-    move_group_up => ["Shift+Up"],
-    move_group_down => ["Shift+Down"],
-    move_host_up => ["Ctrl+Up"],
-    move_host_down => ["Ctrl+Down"],
-    collapse_all => ["Shift+Z"],
-    detail_focus => ["Tab"],
-    clear_ssh_log => ["c"],
-    sort_cycle => ["s"],
-    yank_log => ["y"],
-    reveal_secret => ["Ctrl+R"],
-    copy_secret => ["Ctrl+Y"],
-    ui_zoom_in => ["+", "="],
-    ui_zoom_out => ["-", "_"],
-    export_ssh => ["Shift+E"],
-    import_ssh => ["Shift+I"],
-    import_termius => ["Shift+T"],
-    groups_manage => ["Shift+G"],
-    rename_group => ["Ctrl+G"],
-    delete_group => ["Ctrl+Shift+G"],
-    tab_hosts => ["h", "1"],
-    tab_sftp => ["2"],
-    tab_tunnels => ["3"],
-    tab_keys => ["i", "4"],
-    tab_audit => ["5"],
-    identity_columns_inc => ["]"],
-    identity_columns_dec => ["["],
-    add_to_agent => ["p"],
-    remove_from_agent => ["r"],
-    push_key => ["Shift+P"],
-    tunnel_kill => ["x"],
-    toggle_tunnel => ["Enter"],
-    audit_filter => ["f"],
-    audit_range => ["r"],
-    session_new_tab => ["Ctrl+T"],
-    session_close_tab => ["Ctrl+W"],
-    session_tab_prev => ["Ctrl+[", "Ctrl+PageUp"],
-    session_tab_next => ["Ctrl+]", "Ctrl+PageDown"],
-    session_detach => ["Ctrl+D"],
-    session_open_sftp => ["Ctrl+Shift+F"],
-    local_shell => ["Ctrl+Shift+T"],
-    session_focus => ["Ctrl+Shift+S"],
-    session_switcher => ["Alt+S"],
-    session_scroll_up => ["PageUp"],
-    session_scroll_down => ["PageDown"],
-    session_cancel => ["Esc"],
-    session_toggle_log => ["Ctrl+O"],
-    confirm_yes => ["y", "Y", "Enter"],
-    confirm_no => ["n", "N"],
-    cancel => ["Esc"],
-    toggle_panel_zoom => ["z", "Alt+Enter"],
-    focus_panel_left => ["Alt+Left"],
-    focus_panel_right => ["Alt+Right"],
-    focus_panel_up => ["Alt+Up"],
-    focus_panel_down => ["Alt+Down"],
-    broadcast => ["b"],
-    broadcast_cancel => ["x"],
-    known_hosts => ["H"],
-    known_hosts_delete => ["Ctrl+D"],
-    known_hosts_refresh => ["Ctrl+R"],
-    logs_browser => ["Shift+L"],
-    snippets_manage => ["Shift+S"],
-    session_snippets => ["Ctrl+N"],
-    profiles_manage => ["Alt+P"],
-    ghost_accept => ["Ctrl+F"],
-}
 /// An action whose keybinding is user-configurable and editable in the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyAction {
@@ -797,360 +279,190 @@ impl KeyAction {
 
 /// User-remappable keybindings. Each field is a list of key specs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct KeybindsConfig {
-    #[serde(default = "default_kb_save")]
     pub save: Vec<String>,
-    #[serde(default = "default_kb_quit")]
     pub quit: Vec<String>,
-    #[serde(default = "default_kb_help")]
     pub help: Vec<String>,
-    #[serde(default = "default_kb_search")]
     pub search: Vec<String>,
-    #[serde(default = "default_kb_keybind_editor")]
     pub keybind_editor: Vec<String>,
-    #[serde(default = "default_kb_force_quit")]
     pub force_quit: Vec<String>,
-    #[serde(default = "default_kb_connect")]
     pub connect: Vec<String>,
-    #[serde(default = "default_kb_add_host")]
     pub add_host: Vec<String>,
-    #[serde(default = "default_kb_generate_key")]
     pub generate_key: Vec<String>,
-    #[serde(default = "default_kb_edit")]
     pub edit: Vec<String>,
-    #[serde(default = "default_kb_delete")]
     pub delete: Vec<String>,
-    #[serde(default = "default_kb_duplicate")]
     pub duplicate: Vec<String>,
-    #[serde(default = "default_kb_tag_filter")]
     pub tag_filter: Vec<String>,
-    #[serde(default = "default_kb_favorite")]
     pub favorite: Vec<String>,
-    #[serde(default = "default_kb_toggle_group")]
     pub toggle_group: Vec<String>,
-    #[serde(default = "default_kb_fold_group_in")]
     pub fold_group_in: Vec<String>,
-    #[serde(default = "default_kb_fold_group_out")]
     pub fold_group_out: Vec<String>,
-    #[serde(default = "default_kb_move_up")]
     pub move_up: Vec<String>,
-    #[serde(default = "default_kb_move_down")]
     pub move_down: Vec<String>,
-    #[serde(default = "default_kb_move_left")]
     pub move_left: Vec<String>,
-    #[serde(default = "default_kb_move_right")]
     pub move_right: Vec<String>,
-    #[serde(default = "default_kb_move_group_up")]
     pub move_group_up: Vec<String>,
-    #[serde(default = "default_kb_move_group_down")]
     pub move_group_down: Vec<String>,
-    #[serde(default = "default_kb_move_host_up")]
     pub move_host_up: Vec<String>,
-    #[serde(default = "default_kb_move_host_down")]
     pub move_host_down: Vec<String>,
-    #[serde(default = "default_kb_collapse_all")]
     pub collapse_all: Vec<String>,
-    #[serde(default = "default_kb_detail_focus")]
     pub detail_focus: Vec<String>,
-    #[serde(default = "default_kb_clear_ssh_log")]
     pub clear_ssh_log: Vec<String>,
-    #[serde(default = "default_kb_sort_cycle")]
     pub sort_cycle: Vec<String>,
-    #[serde(default = "default_kb_yank_log")]
     pub yank_log: Vec<String>,
-    #[serde(default = "default_kb_reveal_secret")]
     pub reveal_secret: Vec<String>,
-    #[serde(default = "default_kb_copy_secret")]
     pub copy_secret: Vec<String>,
-    #[serde(default = "default_kb_ui_zoom_in")]
     pub ui_zoom_in: Vec<String>,
-    #[serde(default = "default_kb_ui_zoom_out")]
     pub ui_zoom_out: Vec<String>,
-    #[serde(default = "default_kb_export_ssh")]
     pub export_ssh: Vec<String>,
-    #[serde(default = "default_kb_import_ssh")]
     pub import_ssh: Vec<String>,
-    #[serde(default = "default_kb_import_termius")]
     pub import_termius: Vec<String>,
-    #[serde(default = "default_kb_groups_manage")]
     pub groups_manage: Vec<String>,
-    #[serde(default = "default_kb_rename_group")]
     pub rename_group: Vec<String>,
-    #[serde(default = "default_kb_delete_group")]
     pub delete_group: Vec<String>,
-    #[serde(default = "default_kb_tab_hosts")]
     pub tab_hosts: Vec<String>,
-    #[serde(default = "default_kb_tab_sftp")]
     pub tab_sftp: Vec<String>,
-    #[serde(default = "default_kb_tab_tunnels")]
     pub tab_tunnels: Vec<String>,
-    #[serde(default = "default_kb_tab_keys")]
     pub tab_keys: Vec<String>,
-    #[serde(default = "default_kb_tab_audit")]
     pub tab_audit: Vec<String>,
-    #[serde(default = "default_kb_identity_columns_inc")]
     pub identity_columns_inc: Vec<String>,
-    #[serde(default = "default_kb_identity_columns_dec")]
     pub identity_columns_dec: Vec<String>,
-    #[serde(default = "default_kb_add_to_agent")]
     pub add_to_agent: Vec<String>,
-    #[serde(default = "default_kb_remove_from_agent")]
     pub remove_from_agent: Vec<String>,
-    #[serde(default = "default_kb_push_key")]
     pub push_key: Vec<String>,
-    #[serde(default = "default_kb_tunnel_kill")]
     pub tunnel_kill: Vec<String>,
-    #[serde(default = "default_kb_toggle_tunnel")]
     pub toggle_tunnel: Vec<String>,
-    #[serde(default = "default_kb_audit_filter")]
     pub audit_filter: Vec<String>,
-    #[serde(default = "default_kb_audit_range")]
     pub audit_range: Vec<String>,
-    #[serde(default = "default_kb_session_new_tab")]
     pub session_new_tab: Vec<String>,
-    #[serde(default = "default_kb_session_close_tab")]
     pub session_close_tab: Vec<String>,
-    #[serde(default = "default_kb_session_tab_prev")]
     pub session_tab_prev: Vec<String>,
-    #[serde(default = "default_kb_session_tab_next")]
     pub session_tab_next: Vec<String>,
-    #[serde(default = "default_kb_session_detach")]
     pub session_detach: Vec<String>,
-    #[serde(default = "default_kb_session_open_sftp")]
     pub session_open_sftp: Vec<String>,
-    #[serde(default = "default_kb_local_shell")]
     pub local_shell: Vec<String>,
-    #[serde(default = "default_kb_session_focus")]
     pub session_focus: Vec<String>,
-    #[serde(default = "default_kb_session_switcher")]
     pub session_switcher: Vec<String>,
-    #[serde(default = "default_kb_session_scroll_up")]
     pub session_scroll_up: Vec<String>,
-    #[serde(default = "default_kb_session_scroll_down")]
     pub session_scroll_down: Vec<String>,
-    #[serde(default = "default_kb_session_cancel")]
     pub session_cancel: Vec<String>,
-    #[serde(default = "default_kb_session_toggle_log")]
     pub session_toggle_log: Vec<String>,
-    #[serde(default = "default_kb_confirm_yes")]
     pub confirm_yes: Vec<String>,
-    #[serde(default = "default_kb_confirm_no")]
     pub confirm_no: Vec<String>,
-    #[serde(default = "default_kb_cancel")]
     pub cancel: Vec<String>,
-    #[serde(default = "default_kb_toggle_panel_zoom")]
     pub toggle_panel_zoom: Vec<String>,
-    #[serde(default = "default_kb_focus_panel_left")]
     pub focus_panel_left: Vec<String>,
-    #[serde(default = "default_kb_focus_panel_right")]
     pub focus_panel_right: Vec<String>,
-    #[serde(default = "default_kb_focus_panel_up")]
     pub focus_panel_up: Vec<String>,
-    #[serde(default = "default_kb_focus_panel_down")]
     pub focus_panel_down: Vec<String>,
-    #[serde(default = "default_kb_broadcast")]
     pub broadcast: Vec<String>,
-    #[serde(default = "default_kb_broadcast_cancel")]
     pub broadcast_cancel: Vec<String>,
-    #[serde(default = "default_kb_known_hosts")]
     pub known_hosts: Vec<String>,
-    #[serde(default = "default_kb_known_hosts_delete")]
     pub known_hosts_delete: Vec<String>,
-    #[serde(default = "default_kb_known_hosts_refresh")]
     pub known_hosts_refresh: Vec<String>,
-    #[serde(default = "default_kb_logs_browser")]
     pub logs_browser: Vec<String>,
-    #[serde(default = "default_kb_snippets_manage")]
     pub snippets_manage: Vec<String>,
-    #[serde(default = "default_kb_session_snippets")]
     pub session_snippets: Vec<String>,
-    #[serde(default = "default_kb_profiles_manage")]
     pub profiles_manage: Vec<String>,
-    #[serde(default = "default_kb_ghost_accept")]
     pub ghost_accept: Vec<String>,
 }
 
 impl Default for KeybindsConfig {
     fn default() -> Self {
         Self {
-            save: default_kb_save(),
-            quit: default_kb_quit(),
-            help: default_kb_help(),
-            search: default_kb_search(),
-            keybind_editor: default_kb_keybind_editor(),
-            force_quit: default_kb_force_quit(),
-            connect: default_kb_connect(),
-            add_host: default_kb_add_host(),
-            generate_key: default_kb_generate_key(),
-            edit: default_kb_edit(),
-            delete: default_kb_delete(),
-            duplicate: default_kb_duplicate(),
-            tag_filter: default_kb_tag_filter(),
-            favorite: default_kb_favorite(),
-            toggle_group: default_kb_toggle_group(),
-            fold_group_in: default_kb_fold_group_in(),
-            fold_group_out: default_kb_fold_group_out(),
-            move_up: default_kb_move_up(),
-            move_down: default_kb_move_down(),
-            move_left: default_kb_move_left(),
-            move_right: default_kb_move_right(),
-            move_group_up: default_kb_move_group_up(),
-            move_group_down: default_kb_move_group_down(),
-            move_host_up: default_kb_move_host_up(),
-            move_host_down: default_kb_move_host_down(),
-            collapse_all: default_kb_collapse_all(),
-            detail_focus: default_kb_detail_focus(),
-            clear_ssh_log: default_kb_clear_ssh_log(),
-            sort_cycle: default_kb_sort_cycle(),
-            yank_log: default_kb_yank_log(),
-            reveal_secret: default_kb_reveal_secret(),
-            copy_secret: default_kb_copy_secret(),
-            ui_zoom_in: default_kb_ui_zoom_in(),
-            ui_zoom_out: default_kb_ui_zoom_out(),
-            export_ssh: default_kb_export_ssh(),
-            import_ssh: default_kb_import_ssh(),
-            import_termius: default_kb_import_termius(),
-            groups_manage: default_kb_groups_manage(),
-            rename_group: default_kb_rename_group(),
-            delete_group: default_kb_delete_group(),
-            tab_hosts: default_kb_tab_hosts(),
-            tab_sftp: default_kb_tab_sftp(),
-            tab_tunnels: default_kb_tab_tunnels(),
-            tab_keys: default_kb_tab_keys(),
-            tab_audit: default_kb_tab_audit(),
-            identity_columns_inc: default_kb_identity_columns_inc(),
-            identity_columns_dec: default_kb_identity_columns_dec(),
-            add_to_agent: default_kb_add_to_agent(),
-            remove_from_agent: default_kb_remove_from_agent(),
-            push_key: default_kb_push_key(),
-            tunnel_kill: default_kb_tunnel_kill(),
-            toggle_tunnel: default_kb_toggle_tunnel(),
-            audit_filter: default_kb_audit_filter(),
-            audit_range: default_kb_audit_range(),
-            session_new_tab: default_kb_session_new_tab(),
-            session_close_tab: default_kb_session_close_tab(),
-            session_tab_prev: default_kb_session_tab_prev(),
-            session_tab_next: default_kb_session_tab_next(),
-            session_detach: default_kb_session_detach(),
-            session_open_sftp: default_kb_session_open_sftp(),
-            local_shell: default_kb_local_shell(),
-            session_focus: default_kb_session_focus(),
-            session_switcher: default_kb_session_switcher(),
-            session_scroll_up: default_kb_session_scroll_up(),
-            session_scroll_down: default_kb_session_scroll_down(),
-            session_cancel: default_kb_session_cancel(),
-            session_toggle_log: default_kb_session_toggle_log(),
-            confirm_yes: default_kb_confirm_yes(),
-            confirm_no: default_kb_confirm_no(),
-            cancel: default_kb_cancel(),
-            toggle_panel_zoom: default_kb_toggle_panel_zoom(),
-            focus_panel_left: default_kb_focus_panel_left(),
-            focus_panel_right: default_kb_focus_panel_right(),
-            focus_panel_up: default_kb_focus_panel_up(),
-            focus_panel_down: default_kb_focus_panel_down(),
-            broadcast: default_kb_broadcast(),
-            broadcast_cancel: default_kb_broadcast_cancel(),
-            known_hosts: default_kb_known_hosts(),
-            known_hosts_delete: default_kb_known_hosts_delete(),
-            known_hosts_refresh: default_kb_known_hosts_refresh(),
-            logs_browser: default_kb_logs_browser(),
-            snippets_manage: default_kb_snippets_manage(),
-            session_snippets: default_kb_session_snippets(),
-            profiles_manage: default_kb_profiles_manage(),
-            ghost_accept: default_kb_ghost_accept(),
+            save: vec!["F2".into(), "Ctrl+S".into()],
+            quit: vec!["q".into()],
+            help: vec!["?".into()],
+            search: vec!["/".into()],
+            keybind_editor: vec!["Ctrl+K".into()],
+            force_quit: vec!["Ctrl+C".into()],
+            connect: vec!["Enter".into()],
+            add_host: vec!["a".into()],
+            generate_key: vec!["g".into()],
+            edit: vec!["e".into()],
+            delete: vec!["d".into()],
+            duplicate: vec!["Shift+D".into()],
+            tag_filter: vec!["#".into()],
+            favorite: vec!["f".into()],
+            toggle_group: vec!["Space".into()],
+            fold_group_in: vec!["Left".into()],
+            fold_group_out: vec!["Right".into()],
+            move_up: vec!["k".into(), "Up".into()],
+            move_down: vec!["j".into(), "Down".into()],
+            move_left: vec!["Left".into()],
+            move_right: vec!["l".into(), "Right".into()],
+            move_group_up: vec!["Shift+Up".into()],
+            move_group_down: vec!["Shift+Down".into()],
+            move_host_up: vec!["Ctrl+Up".into()],
+            move_host_down: vec!["Ctrl+Down".into()],
+            collapse_all: vec!["Shift+Z".into()],
+            detail_focus: vec!["Tab".into()],
+            clear_ssh_log: vec!["c".into()],
+            sort_cycle: vec!["s".into()],
+            yank_log: vec!["y".into()],
+            reveal_secret: vec!["Ctrl+R".into()],
+            copy_secret: vec!["Ctrl+Y".into()],
+            ui_zoom_in: vec!["+".into(), "=".into()],
+            ui_zoom_out: vec!["-".into(), "_".into()],
+            export_ssh: vec!["Shift+E".into()],
+            import_ssh: vec!["Shift+I".into()],
+            import_termius: vec!["Shift+T".into()],
+            groups_manage: vec!["Shift+G".into()],
+            rename_group: vec!["Ctrl+G".into()],
+            delete_group: vec!["Ctrl+Shift+G".into()],
+            tab_hosts: vec!["h".into(), "1".into()],
+            tab_sftp: vec!["2".into()],
+            tab_tunnels: vec!["3".into()],
+            tab_keys: vec!["i".into(), "4".into()],
+            tab_audit: vec!["5".into()],
+            identity_columns_inc: vec!["]".into()],
+            identity_columns_dec: vec!["[".into()],
+            add_to_agent: vec!["p".into()],
+            remove_from_agent: vec!["r".into()],
+            push_key: vec!["Shift+P".into()],
+            tunnel_kill: vec!["x".into()],
+            toggle_tunnel: vec!["Enter".into()],
+            audit_filter: vec!["f".into()],
+            audit_range: vec!["r".into()],
+            session_new_tab: vec!["Ctrl+T".into()],
+            session_close_tab: vec!["Ctrl+W".into()],
+            session_tab_prev: vec!["Ctrl+[".into(), "Ctrl+PageUp".into()],
+            session_tab_next: vec!["Ctrl+]".into(), "Ctrl+PageDown".into()],
+            session_detach: vec!["Ctrl+D".into()],
+            session_open_sftp: vec!["Ctrl+Shift+F".into()],
+            local_shell: vec!["Ctrl+Shift+T".into()],
+            session_focus: vec!["Ctrl+Shift+S".into()],
+            session_switcher: vec!["Alt+S".into()],
+            session_scroll_up: vec!["PageUp".into()],
+            session_scroll_down: vec!["PageDown".into()],
+            session_cancel: vec!["Esc".into()],
+            session_toggle_log: vec!["Ctrl+O".into()],
+            confirm_yes: vec!["y".into(), "Y".into(), "Enter".into()],
+            confirm_no: vec!["n".into(), "N".into()],
+            cancel: vec!["Esc".into()],
+            toggle_panel_zoom: vec!["z".into(), "Alt+Enter".into()],
+            focus_panel_left: vec!["Alt+Left".into()],
+            focus_panel_right: vec!["Alt+Right".into()],
+            focus_panel_up: vec!["Alt+Up".into()],
+            focus_panel_down: vec!["Alt+Down".into()],
+            broadcast: vec!["b".into()],
+            broadcast_cancel: vec!["x".into()],
+            known_hosts: vec!["H".into()],
+            known_hosts_delete: vec!["Ctrl+D".into()],
+            known_hosts_refresh: vec!["Ctrl+R".into()],
+            logs_browser: vec!["Shift+L".into()],
+            snippets_manage: vec!["Shift+S".into()],
+            session_snippets: vec!["Ctrl+N".into()],
+            profiles_manage: vec!["Alt+P".into()],
+            ghost_accept: vec!["Ctrl+F".into()],
         }
     }
 }
 
 impl KeybindsConfig {
     fn default_for(action: KeyAction) -> Vec<String> {
-        match action {
-            KeyAction::Save => default_kb_save(),
-            KeyAction::Quit => default_kb_quit(),
-            KeyAction::Help => default_kb_help(),
-            KeyAction::Search => default_kb_search(),
-            KeyAction::KeybindEditor => default_kb_keybind_editor(),
-            KeyAction::ForceQuit => default_kb_force_quit(),
-            KeyAction::Connect => default_kb_connect(),
-            KeyAction::AddHost => default_kb_add_host(),
-            KeyAction::GenerateKey => default_kb_generate_key(),
-            KeyAction::Edit => default_kb_edit(),
-            KeyAction::Delete => default_kb_delete(),
-            KeyAction::Duplicate => default_kb_duplicate(),
-            KeyAction::TagFilter => default_kb_tag_filter(),
-            KeyAction::Favorite => default_kb_favorite(),
-            KeyAction::ToggleGroup => default_kb_toggle_group(),
-            KeyAction::FoldGroupIn => default_kb_fold_group_in(),
-            KeyAction::FoldGroupOut => default_kb_fold_group_out(),
-            KeyAction::MoveUp => default_kb_move_up(),
-            KeyAction::MoveDown => default_kb_move_down(),
-            KeyAction::MoveLeft => default_kb_move_left(),
-            KeyAction::MoveRight => default_kb_move_right(),
-            KeyAction::MoveGroupUp => default_kb_move_group_up(),
-            KeyAction::MoveGroupDown => default_kb_move_group_down(),
-            KeyAction::MoveHostUp => default_kb_move_host_up(),
-            KeyAction::MoveHostDown => default_kb_move_host_down(),
-            KeyAction::CollapseAll => default_kb_collapse_all(),
-            KeyAction::DetailFocus => default_kb_detail_focus(),
-            KeyAction::ClearSshLog => default_kb_clear_ssh_log(),
-            KeyAction::SortCycle => default_kb_sort_cycle(),
-            KeyAction::YankLog => default_kb_yank_log(),
-            KeyAction::RevealSecret => default_kb_reveal_secret(),
-            KeyAction::CopySecret => default_kb_copy_secret(),
-            KeyAction::UiZoomIn => default_kb_ui_zoom_in(),
-            KeyAction::UiZoomOut => default_kb_ui_zoom_out(),
-            KeyAction::ExportSsh => default_kb_export_ssh(),
-            KeyAction::ImportSsh => default_kb_import_ssh(),
-            KeyAction::ImportTermius => default_kb_import_termius(),
-            KeyAction::GroupsManage => default_kb_groups_manage(),
-            KeyAction::RenameGroup => default_kb_rename_group(),
-            KeyAction::DeleteGroup => default_kb_delete_group(),
-            KeyAction::TabHosts => default_kb_tab_hosts(),
-            KeyAction::TabSftp => default_kb_tab_sftp(),
-            KeyAction::TabTunnels => default_kb_tab_tunnels(),
-            KeyAction::TabKeys => default_kb_tab_keys(),
-            KeyAction::TabAudit => default_kb_tab_audit(),
-            KeyAction::IdentityColumnsInc => default_kb_identity_columns_inc(),
-            KeyAction::IdentityColumnsDec => default_kb_identity_columns_dec(),
-            KeyAction::AddToAgent => default_kb_add_to_agent(),
-            KeyAction::RemoveFromAgent => default_kb_remove_from_agent(),
-            KeyAction::PushKey => default_kb_push_key(),
-            KeyAction::TunnelKill => default_kb_tunnel_kill(),
-            KeyAction::ToggleTunnel => default_kb_toggle_tunnel(),
-            KeyAction::AuditFilter => default_kb_audit_filter(),
-            KeyAction::AuditRange => default_kb_audit_range(),
-            KeyAction::SessionNewTab => default_kb_session_new_tab(),
-            KeyAction::SessionCloseTab => default_kb_session_close_tab(),
-            KeyAction::SessionTabPrev => default_kb_session_tab_prev(),
-            KeyAction::SessionTabNext => default_kb_session_tab_next(),
-            KeyAction::SessionDetach => default_kb_session_detach(),
-            KeyAction::SessionOpenSftp => default_kb_session_open_sftp(),
-            KeyAction::LocalShell => default_kb_local_shell(),
-            KeyAction::SessionFocus => default_kb_session_focus(),
-            KeyAction::SessionSwitcher => default_kb_session_switcher(),
-            KeyAction::SessionScrollUp => default_kb_session_scroll_up(),
-            KeyAction::SessionScrollDown => default_kb_session_scroll_down(),
-            KeyAction::SessionCancel => default_kb_session_cancel(),
-            KeyAction::SessionToggleLog => default_kb_session_toggle_log(),
-            KeyAction::ConfirmYes => default_kb_confirm_yes(),
-            KeyAction::ConfirmNo => default_kb_confirm_no(),
-            KeyAction::Cancel => default_kb_cancel(),
-            KeyAction::TogglePanelZoom => default_kb_toggle_panel_zoom(),
-            KeyAction::FocusPanelLeft => default_kb_focus_panel_left(),
-            KeyAction::FocusPanelRight => default_kb_focus_panel_right(),
-            KeyAction::FocusPanelUp => default_kb_focus_panel_up(),
-            KeyAction::FocusPanelDown => default_kb_focus_panel_down(),
-            KeyAction::Broadcast => default_kb_broadcast(),
-            KeyAction::BroadcastCancel => default_kb_broadcast_cancel(),
-            KeyAction::KnownHosts => default_kb_known_hosts(),
-            KeyAction::KnownHostsDelete => default_kb_known_hosts_delete(),
-            KeyAction::KnownHostsRefresh => default_kb_known_hosts_refresh(),
-            KeyAction::LogsBrowser => default_kb_logs_browser(),
-            KeyAction::SnippetsManage => default_kb_snippets_manage(),
-            KeyAction::SessionSnippets => default_kb_session_snippets(),
-            KeyAction::ProfilesManage => default_kb_profiles_manage(),
-            KeyAction::GhostAccept => default_kb_ghost_accept(),
-        }
+        Self::default().binds(action).to_vec()
     }
 
     /// Restore one action's bindings to its built-in default.
@@ -1606,6 +918,20 @@ mod tests {
         assert!(hints.contains("Ctrl+T new"));
         assert!(hints.contains("Ctrl+D detach"));
         assert!(hints.contains("Ctrl+[/Ctrl+] tabs"));
+    }
+
+    #[test]
+    fn an_empty_table_loads_every_default() {
+        let cfg: KeybindsConfig = toml::from_str("").unwrap();
+        let defaults = KeybindsConfig::default();
+        for action in KeyAction::ALL {
+            assert!(
+                !defaults.binds(action).is_empty(),
+                "{action:?} has no default"
+            );
+            assert_eq!(cfg.binds(action), defaults.binds(action), "{action:?}");
+            assert_eq!(KeybindsConfig::default_for(action), defaults.binds(action));
+        }
     }
 
     #[test]
