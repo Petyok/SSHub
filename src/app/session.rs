@@ -437,13 +437,6 @@ impl App {
         };
     }
 
-    /// Legacy alias retained for tests / callers that explicitly want to end
-    /// the whole session stack.
-    pub fn end_session(&mut self) {
-        self.shutdown_all();
-        self.mode = AppMode::Normal;
-    }
-
     /// Kill every embedded SSH child and clear tab state. Called on quit and
     /// from [`Drop`] so detached sessions never outlive the app.
     pub fn shutdown_all(&mut self) {

@@ -39,10 +39,6 @@ pub fn remove_key(path: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn add_key(path: &str) -> Result<()> {
-    add_key_with_cert(path, None)
-}
-
 /// The exact `ssh-add` invocation [`add_key_with_cert`] runs, exposed so
 /// tests can pin the argv without spawning anything.
 pub fn agent_add_argv(key_path: &str, cert_path: Option<&str>) -> Vec<String> {

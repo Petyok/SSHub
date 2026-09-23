@@ -4,6 +4,20 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.17.3] - 2026-09-23
+
+### Changed
+
+- **Faster startup with an imported `~/.ssh/config`** — every launch and every
+  config hot-reload resolved each imported host with `ssh -G` twice. It now
+  resolves them once: with 60 imported hosts, startup went from ~1.65 s to
+  ~0.98 s.
+- **Less work while idle** — the dashboard no longer re-scans each unconnected
+  session's log or copies the tunnel list on every 50 ms tick.
+- **Removed dead code and repo leftovers** — unused widgets and helpers, an
+  accidentally committed `node_modules/` (with a 14 MB binary), and planning
+  specs for features that have shipped (5,477 lines deleted).
+
 ## [0.17.2] - 2026-09-18
 
 ### Fixed

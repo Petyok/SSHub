@@ -1,7 +1,6 @@
 pub mod animation;
 pub mod blit;
 pub mod dashboard_layout;
-pub mod layout;
 pub mod screens;
 pub mod text;
 pub mod theme;

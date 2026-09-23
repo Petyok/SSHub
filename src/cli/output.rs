@@ -11,7 +11,7 @@ use crate::app::{
 use crate::credentials::PasswordStore;
 use crate::session_log::SessionLoggingOverride;
 use crate::session_transport::SessionTransport;
-use crate::store::{AuthEvent, HostSource, LauncherStore, Tunnel, TunnelType};
+use crate::store::{AuthEvent, HostSource, LauncherStore};
 
 #[derive(Debug, Serialize)]
 pub struct HostRecordJson {
@@ -57,21 +57,6 @@ pub struct AuditEventJson {
     pub note: Option<String>,
     pub log_path: Option<String>,
     pub created_at: i64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct TunnelJson {
-    pub id: i64,
-    pub host_id: Option<i64>,
-    pub host_name: Option<String>,
-    pub tunnel_type: String,
-    pub local_port: u16,
-    pub remote_host: String,
-    pub remote_port: u16,
-    pub label: Option<String>,
-    pub auto_connect: bool,
-    pub created_at: i64,
-    pub updated_at: i64,
 }
 
 pub fn host_record_json(entry: &HostEntry, store: &LauncherStore) -> HostRecordJson {
@@ -190,34 +175,6 @@ pub fn audit_event_json(event: &AuthEvent) -> AuditEventJson {
     }
 }
 
-pub fn tunnel_json(tunnel: &Tunnel, store: &LauncherStore) -> TunnelJson {
-    let host_name = tunnel
-        .host_id
-        .and_then(|id| store.get_host(id).ok().flatten())
-        .map(|h| h.name);
-    TunnelJson {
-        id: tunnel.id,
-        host_id: tunnel.host_id,
-        host_name,
-        tunnel_type: tunnel_type_cli(tunnel.tunnel_type),
-        local_port: tunnel.local_port,
-        remote_host: tunnel.remote_host.clone(),
-        remote_port: tunnel.remote_port,
-        label: tunnel.label.clone(),
-        auto_connect: tunnel.auto_connect,
-        created_at: tunnel.created_at,
-        updated_at: tunnel.updated_at,
-    }
-}
-
-fn tunnel_type_cli(t: TunnelType) -> String {
-    match t {
-        TunnelType::Local => "local".into(),
-        TunnelType::Remote => "remote".into(),
-        TunnelType::Dynamic => "dynamic".into(),
-    }
-}
-
 fn group_names(entry: &HostEntry, store: &LauncherStore) -> Vec<String> {
     if let Some(m) = entry.managed() {
         return m.groups.iter().map(|g| g.name.clone()).collect();
@@ -330,23 +287,6 @@ pub fn format_audit_plain(event: &AuditEventJson) -> String {
             .note
             .as_ref()
             .map(|n| format!(" ({n})"))
-            .unwrap_or_default()
-    )
-}
-
-pub fn format_tunnel_plain(tunnel: &TunnelJson) -> String {
-    format!(
-        "#{} {} {} localhost:{} -> {}:{}{}",
-        tunnel.id,
-        tunnel.tunnel_type,
-        tunnel.host_name.as_deref().unwrap_or("-"),
-        tunnel.local_port,
-        tunnel.remote_host,
-        tunnel.remote_port,
-        tunnel
-            .label
-            .as_ref()
-            .map(|l| format!(" [{l}]"))
             .unwrap_or_default()
     )
 }

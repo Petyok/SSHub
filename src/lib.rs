@@ -579,14 +579,6 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
         }
     }
 
-    // Drain SSH probe log entries from background worker
-    if let Some(rx) = app.probe_rx.as_ref() {
-        let entries: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
-        for entry in entries {
-            app.push_ssh_log(entry);
-        }
-    }
-
     // Drain OS auto-detect results from background worker
     if let Some(rx) = app.os_detect_rx.as_ref() {
         // Collect first: `app` is borrowed by `rx` here, so we can't call the

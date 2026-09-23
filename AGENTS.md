@@ -124,7 +124,7 @@ After local green, run an independent adversarial review on the diff (2+ critics
 
 - Use fixtures and `tempfile`. Never touch real `~/.ssh`, keyring, or user config dirs.
 - Tests that mutate process-wide env vars must serialize via `config::with_test_config_dir`.
-- New overlays/screens need a render smoke test. New key actions need the full keybinds.rs insertion (macro arm, enum, ALL, label, config field, Default, default_for, binds, set).
+- New overlays/screens need a render smoke test. New key actions need the full keybinds.rs insertion (enum, ALL, label, config field, Default, binds, set).
 
 ### CI
 

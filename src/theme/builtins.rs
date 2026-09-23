@@ -686,7 +686,6 @@ mod tests {
     const AUDIT: &str = "src/tui/screens/audit.rs";
     const BROADCAST: &str = "src/tui/screens/broadcast.rs";
     const ANIMATION: &str = "src/tui/animation.rs";
-    const DETAIL_PANEL: &str = "src/tui/widgets/detail_panel.rs";
 
     /// Every renderer whose roles this task owns. The completeness guard reads
     /// these files, so a call site added to one of them without an inventory
@@ -712,7 +711,6 @@ mod tests {
         AUDIT,
         BROADCAST,
         ANIMATION,
-        DETAIL_PANEL,
     ];
 
     // `src/tui/screens/theme_picker.rs` is deliberately **not** in that list.
@@ -826,6 +824,7 @@ mod tests {
 
         vec![
             direct!(HOSTS, Color, StatusError),
+            direct!(HOSTS, Color, StatusWarning),
             direct!(RIGHT, Color, StatusInfo),
             direct!(HOSTS, Color, StatusUnknown),
             direct!(HEADER, Color, HeaderSessionSuccess),
@@ -854,6 +853,8 @@ mod tests {
             direct!(HOSTS, Style, DashboardHostListMatch),
             panel!(Style, DashboardDetailsTitle),
             direct!(MIDDLE, Style, DashboardDetailsMetadata),
+            direct!(MIDDLE, Style, DashboardDetailsLabel),
+            direct!(MIDDLE, Style, DashboardDetailsValue),
             panel!(Style, DashboardSshLogTitle),
             panel!(Style, DashboardAgentTitle),
             panel!(Style, DashboardLatencyTitle),
@@ -2814,58 +2815,6 @@ mod tests {
                 role: RoleRef::Style(StyleRole::PopupLegend),
                 expect: MigratedExpect::Style(legacy::mute()),
             },
-
-            // ── Host detail panel, `widgets/detail_panel.rs` ────
-            MigratedRoleUse {
-                id: "detail_panel.label",
-                renderer: DETAIL_PANEL,
-                was: "Style::default().fg(Color::Cyan) on every `Field: ` caption",
-                ident: "DashboardDetailsLabel",
-                role: RoleRef::Style(StyleRole::DashboardDetailsLabel),
-                expect: Ansi(Color::Cyan),
-            },
-            MigratedRoleUse {
-                id: "detail_panel.value",
-                renderer: DETAIL_PANEL,
-                was: "Span::raw(value) \u{2014} the value carried no style at all",
-                ident: "DashboardDetailsValue",
-                role: RoleRef::Style(StyleRole::DashboardDetailsValue),
-                expect: Unstyled {
-                    was: "Span::raw, i.e. the terminal's own foreground",
-                    why: "the rest of the app draws body text through a role, and a value that \
-                          cannot be themed on a themed panel is not guaranteed legible",
-                },
-            },
-            MigratedRoleUse {
-                id: "detail_panel.favorite",
-                renderer: DETAIL_PANEL,
-                was: "Style::default().fg(Color::Yellow) on `yes \u{2605}`",
-                ident: "StatusWarning",
-                role: RoleRef::Color(ColorRole::StatusWarning),
-                expect: Ansi(Color::Yellow),
-            },
-            MigratedRoleUse {
-                id: "detail_panel.hint",
-                renderer: DETAIL_PANEL,
-                was: "Style::default().fg(Color::DarkGray) on the `[e] edit host` key hints",
-                ident: "TextDim",
-                role: RoleRef::Style(StyleRole::TextDim),
-                expect: Ansi(Color::DarkGray),
-            },
-            MigratedRoleUse {
-                id: "detail_panel.field_marker",
-                renderer: DETAIL_PANEL,
-                was: "`> ` baked into an unstyled Line::from(String)",
-                ident: "DashboardDetailsFieldMarker",
-                role: RoleRef::Style(StyleRole::DashboardDetailsFieldMarker),
-                expect: Unstyled {
-                    was: "no colour \u{2014} the whole edit row was one unstyled string",
-                    why: "the marker is the one cell that says where keystrokes land, and it \
-                          belongs to the detail panel rather than to the global \
-                          `focus.indicator`, which the spec reserves for the two form popups \
-                          whose marker clung to a directly-ANSI label",
-                },
-            },
         ]
     }
 
@@ -2993,7 +2942,7 @@ mod tests {
         assert_eq!(total, ids.len(), "two rows share an id");
         // Pinned so the number quoted in reports cannot drift from the table.
         assert_eq!(
-            total, 227,
+            total, 222,
             "the inventory changed size; add or remove the row deliberately"
         );
 
@@ -3140,9 +3089,31 @@ mod tests {
             );
         }
 
+        // Published, so user themes that set it keep validating, but no
+        // renderer draws it since the old detail panel was removed.
+        let unrendered = [RoleRef::Style(StyleRole::DashboardDetailsFieldMarker)];
+        let mut dirs = vec![std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")];
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    dirs.push(path);
+                } else if path.extension().is_some_and(|e| e == "rs")
+                    && !path.ends_with("builtins.rs")
+                {
+                    let source = std::fs::read_to_string(&path).unwrap();
+                    assert!(
+                        !source.contains("StyleRole::DashboardDetailsFieldMarker"),
+                        "{} reads DashboardDetailsFieldMarker; inventory it and drop the exemption",
+                        path.display()
+                    );
+                }
+            }
+        }
         for spec in ROLE_SPECS {
             assert!(
-                migrated.iter().any(|cell| cell.role == spec.role)
+                unrendered.contains(&spec.role)
+                    || migrated.iter().any(|cell| cell.role == spec.role)
                     || shared.iter().any(|reader| reader.role == spec.role),
                 "{} has no explicitly inventoried productive renderer",
                 spec.path
