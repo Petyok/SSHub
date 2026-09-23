@@ -16,3 +16,4 @@
 /demo/build/
 npm/dist/
 .cargo/
+/node_modules/
