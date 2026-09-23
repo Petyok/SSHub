@@ -51,8 +51,8 @@ use crate::config::{self, AppConfig, KeyAction};
 use crate::metadata::{MetadataDb, MetadataStore};
 use crate::search::HostSearch;
 use crate::ssh::{
-    export_launcher_hosts, import_ssh_config, sync_ssh_config_hosts, HostResolver, ImportReport,
-    SshConfigResolver, SshHost,
+    export_launcher_hosts, import_ssh_config, HostResolver, ImportReport, SshConfigResolver,
+    SshHost,
 };
 use crate::store::{
     DeleteHostOutcome, HostGroup, HostGroupUpdate, HostSource, HostUpdate, Identity,
@@ -466,7 +466,6 @@ pub struct App {
     /// is live, so leaving it can slide the captured cells away after the state
     /// itself is gone.
     pub sftp_snapshot: std::cell::RefCell<Option<ratatui::buffer::Buffer>>,
-    pub probe_rx: Option<Receiver<crate::ssh::probe::SshLogEntry>>,
     pub os_detect_tx: Option<std::sync::mpsc::Sender<crate::osinfo::OsDetectCmd>>,
     pub os_detect_rx: Option<Receiver<crate::osinfo::OsDetectEvent>>,
     /// Host ids with an in-flight OS detection probe, to avoid re-probing.
@@ -1070,7 +1069,6 @@ impl App {
             sftp_show_hidden: false,
             sftp_anim: None,
             sftp_snapshot: std::cell::RefCell::new(None),
-            probe_rx: None,
             os_detect_tx: None,
             os_detect_rx: None,
             os_detect_inflight: std::collections::HashSet::new(),
@@ -1204,8 +1202,6 @@ impl App {
         self.load_collapsed_groups();
         self.load_sftp_hidden();
         self.load_ui_zoom();
-
-        sync_ssh_config_hosts(self.resolver.as_ref(), &self.store)?;
 
         self.hosts = crate::hosts::load_merged_hosts(
             self.resolver.as_ref(),

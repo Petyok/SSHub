@@ -167,12 +167,6 @@ fn is_config_change(event: &Event, config: &Path) -> bool {
 /// Debounce duration for watcher thread.
 pub const WATCHER_DEBOUNCE: Duration = Duration::from_millis(300);
 
-/// No-op channel for bootstrap / tests before F6.
-pub fn dummy_watcher() -> Receiver<WatchEvent> {
-    let (_tx, rx) = mpsc::channel();
-    rx
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

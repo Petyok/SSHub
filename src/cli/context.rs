@@ -30,18 +30,6 @@ pub struct CliContext {
 }
 
 impl CliContext {
-    /// Compat entry point: silently resolves the last-used (or only) profile.
-    /// Headless commands never show the picker.
-    pub fn bootstrap() -> Result<Self> {
-        let opts = crate::profile::StartupOptions::default();
-        match crate::profile::resolve_startup(&opts, false)? {
-            crate::profile::Startup::Silent(paths) => Self::bootstrap_with(paths),
-            crate::profile::Startup::Picker { .. } => {
-                unreachable!("non-interactive resolution never returns Picker")
-            }
-        }
-    }
-
     /// Bootstrap against an explicitly resolved profile.
     pub fn bootstrap_with(paths: ProfilePaths) -> Result<Self> {
         let config = crate::config::load_config_at(&paths.config_file)?;

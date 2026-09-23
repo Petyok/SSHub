@@ -7,11 +7,8 @@ use crate::metadata::MetadataStore;
 use crate::ssh::{sync_ssh_config_hosts, HostResolver};
 use crate::store::{HostSource, LauncherStore};
 
-/// Load the merged host list (launcher + ssh_config DB rows + legacy aliases).
-///
-/// Mirrors the host-loading portion of [`crate::app::App::reload_hosts`]:
-/// sync ssh_config rows, merge DB hosts, then append unresolved legacy aliases
-/// with metadata defaults applied.
+/// Load the merged host list: sync ssh_config rows, merge DB hosts, then append
+/// unresolved legacy aliases with metadata defaults applied.
 pub fn load_merged_hosts(
     resolver: &dyn HostResolver,
     store: &LauncherStore,

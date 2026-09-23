@@ -1,7 +1,5 @@
-pub mod detail_panel;
 pub mod footer;
 pub mod header;
-pub mod host_list;
 pub mod hosts_panel;
 pub mod middle_stack;
 pub mod panel_box;

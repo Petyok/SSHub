@@ -357,7 +357,6 @@ impl App {
             _ if self.is_action(KeyAction::ClearSshLog, &key) => {
                 self.ssh_log.clear();
                 self.ssh_log_scroll = 0;
-                self.probe_rx = None;
                 self.host_notice = Some("SSH log cleared.".into());
             }
             _ if self.is_action(KeyAction::SortCycle, &key) => self.cycle_sort_mode(),

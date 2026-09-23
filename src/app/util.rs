@@ -318,14 +318,6 @@ pub fn resolved_session_argv(
     }
 }
 
-/// Build session argv for a managed host, resolving group defaults first.
-pub fn session_argv_for_managed(
-    store: &crate::store::LauncherStore,
-    m: &ManagedHost,
-) -> anyhow::Result<Vec<String>> {
-    Ok(resolved_session_argv(m, &store.resolve_connection(m)?))
-}
-
 /// Build session argv (`ssh` or `mosh`) from the stored transport setting.
 /// Prefer [`resolved_session_argv`] on connect paths: this stored-only
 /// variant misses a group-level transport default.

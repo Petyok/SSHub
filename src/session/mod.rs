@@ -627,17 +627,13 @@ impl Session {
             self.answer_terminal_queries();
             self.maybe_reveal();
         }
+        // `debug_log` (the only input) changes only on stderr.
         if had_stderr {
-            self.maybe_detect_connected();
-        }
-        if had_bytes {
             self.maybe_detect_connected();
         }
         // Safety net: reveal after the timeout even with no output at all, so a
         // session blocked on auth never hangs the connect screen forever.
         self.reveal_on_timeout();
-        // Re-check after reveal/timeout transitions (a reveal is not auth evidence).
-        self.maybe_detect_connected();
         if self.phase.is_terminal() {
             if let Some(auth) = self.auth.as_mut() {
                 auth.finish(self.connected);
@@ -913,19 +909,6 @@ impl Session {
             return None;
         }
         Some((spec.to_owned(), file))
-    }
-
-    /// The known_hosts host spec to purge when accepting a changed key —
-    /// `[addr]:port` for a non-default port, plain `addr` for port 22. `None`
-    /// when the remote address is unknown.
-    pub fn known_hosts_spec(&self) -> Option<String> {
-        let addr = self.meta.address.as_ref()?;
-        let port = self.meta.port.unwrap_or(22);
-        Some(if port == 22 {
-            addr.clone()
-        } else {
-            format!("[{addr}]:{port}")
-        })
     }
 
     /// Whether the connect screen should show the full debug log.
