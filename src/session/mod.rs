@@ -2107,45 +2107,65 @@ mod prompt_tests {
         }
         let auth_keys = dir.path().join("auth_keys");
         std::fs::copy(user_key.with_extension("pub"), &auth_keys).unwrap();
-        let port = {
-            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            probe.local_addr().unwrap().port()
-        };
         let cfg = dir.path().join("sshd_config");
-        std::fs::write(
-            &cfg,
-            format!(
-                "Port {port}\nHostKey {}\nPidFile {}\nAuthorizedKeysFile {}\n\
-                 StrictModes no\nPasswordAuthentication no\nPubkeyAuthentication yes\n\
-                 UsePAM no\n",
-                host_key.display(),
-                dir.path().join("sshd.pid").display(),
-                auth_keys.display(),
-            ),
-        )
-        .unwrap();
         let log = dir.path().join("sshd.log");
-        let mut sshd = Command::new(sshd_bin)
-            .args([
-                "-D",
-                "-f",
-                cfg.to_str().unwrap(),
-                "-E",
-                log.to_str().unwrap(),
-            ])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
+        // The probe port is free when picked but not reserved: another process
+        // can take it before sshd binds. sshd then exits, so try a fresh port.
+        let mut attempts = 0;
+        let (port, mut sshd) = loop {
+            attempts += 1;
+            let port = {
+                let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                probe.local_addr().unwrap().port()
+            };
+            std::fs::write(
+                &cfg,
+                format!(
+                    "Port {port}\nListenAddress 127.0.0.1\nHostKey {}\nPidFile {}\n\
+                     AuthorizedKeysFile {}\nStrictModes no\nPasswordAuthentication no\n\
+                     PubkeyAuthentication yes\nUsePAM no\n",
+                    host_key.display(),
+                    dir.path().join("sshd.pid").display(),
+                    auth_keys.display(),
+                ),
+            )
             .unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_err() {
+            let mut sshd = Command::new(sshd_bin.as_str())
+                .args([
+                    "-D",
+                    "-f",
+                    cfg.to_str().unwrap(),
+                    "-E",
+                    log.to_str().unwrap(),
+                ])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let listening = loop {
+                if std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok() {
+                    break true;
+                }
+                if sshd.try_wait().unwrap().is_some() {
+                    break false;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "tempdir sshd never listened: {}",
+                    std::fs::read_to_string(&log).unwrap_or_default(),
+                );
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            };
+            if listening {
+                break (port, sshd);
+            }
             assert!(
-                std::time::Instant::now() < deadline,
-                "tempdir sshd never listened: {}",
+                attempts < 5,
+                "tempdir sshd exited on {attempts} ports: {}",
                 std::fs::read_to_string(&log).unwrap_or_default(),
             );
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
+        };
         let user = std::env::var("USER").unwrap_or_else(|_| "root".into());
         let known = dir.path().join("known_hosts");
         let config = SessionConfig {
