@@ -4,6 +4,20 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **New terminals no longer stay blank on a locked keyring** (#135): every
+  headless command opened the OS keyring at startup with a test write, even
+  commands that never read a secret. With the keyring locked and its unlock
+  prompt unable to open (for example `gcr-prompter: cannot open display`),
+  that call never returned, so `sshub host list` hung, and so did
+  `source <(sshub completions zsh)` in `~/.zshrc`, leaving each new terminal
+  window without a prompt. The keyring is now opened only by commands that
+  read, store or remove a secret (`connect`, `exec`, `host resolve`,
+  `tunnel start`, `sftp`, `import`, host and identity `delete`, and `add`/`edit`
+  with a password flag). `sshub completions` also reads host names directly
+  instead of running a second `sshub host list`.
+
 ## [0.17.3] - 2026-09-23
 
 ### Changed

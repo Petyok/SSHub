@@ -104,7 +104,7 @@ fn cmd_resolve(ctx: &CliContext, args: &[String]) -> Result<i32> {
         host_usage("resolve requires <name>");
     };
     let entry = ctx.host_by_name(name)?;
-    let resolve = host_resolve_json(entry, &ctx.store, ctx.password_store.as_ref(), verbose);
+    let resolve = host_resolve_json(entry, &ctx.store, ctx.password_store(), verbose);
     match fmt {
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&resolve)?),
         OutputFormat::Plain => println!("{}", format_resolve_plain(&resolve)),
@@ -154,7 +154,7 @@ fn cmd_connect(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     };
     let effective_identity = resolved.as_ref().and_then(|r| r.identity.as_ref());
     let (pending_secret, _) =
-        resolve_pending_secret(&entry, effective_identity, ctx.password_store.as_ref());
+        resolve_pending_secret(&entry, effective_identity, ctx.password_store());
     let base_argv = match (entry.managed(), resolved.as_ref()) {
         (Some(m), Some(r)) => resolved_session_argv(m, r),
         _ => session_argv_for_entry(&entry),
@@ -334,7 +334,7 @@ fn cmd_add(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
 
     if let Some(pw) = spec.password {
         if let Err(e) = ctx
-            .password_store
+            .password_store()
             .set(&crate::credentials::host_key(created.id), &pw)
         {
             eprintln!("sshub: warning: storing password failed: {e:#}");
@@ -488,14 +488,14 @@ fn cmd_edit(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
 
     if let Some(pw) = patch.password {
         if let Err(e) = ctx
-            .password_store
+            .password_store()
             .set(&crate::credentials::host_key(managed.id), &pw)
         {
             eprintln!("sshub: warning: storing password failed: {e:#}");
         }
     } else if patch.clear_password {
         let _ = ctx
-            .password_store
+            .password_store()
             .delete(&crate::credentials::host_key(managed.id));
     }
 
@@ -649,7 +649,7 @@ fn cmd_delete(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     match ctx.store.delete_host(managed.id)? {
         DeleteHostOutcome::Deleted => {
             if let Err(err) = ctx
-                .password_store
+                .password_store()
                 .delete(&crate::credentials::host_key(managed.id))
             {
                 eprintln!("warning: host deleted but credential cleanup failed: {err}");

@@ -1,5 +1,6 @@
 //! CLI bootstrap context — opens store/metadata without starting the TUI.
 
+use std::cell::OnceCell;
 use std::io::Read;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -23,7 +24,8 @@ pub struct CliContext {
     pub store: Arc<LauncherStore>,
     pub metadata: Arc<MetadataDb>,
     pub resolver: SshConfigResolver,
-    pub password_store: Box<dyn PasswordStore>,
+    /// Opened on first use, see [`CliContext::password_store`].
+    pub(crate) password_store: OnceCell<Box<dyn PasswordStore>>,
     pub hosts: Vec<HostEntry>,
     /// Resolved profile workspace for this invocation.
     pub profile: ProfilePaths,
@@ -38,28 +40,31 @@ impl CliContext {
         let metadata = Arc::new(MetadataDb::open(paths.metadata_db())?);
         let store = Arc::new(LauncherStore::open(paths.launcher_db())?);
         let resolver = SshConfigResolver::with_config_path(paths.ssh_config.clone());
-        let prefix = paths.credential_prefix();
-        let password_store: Box<dyn PasswordStore> = if check_keyring_available() {
-            let _ = migrate_fallback_to_keyring(&paths.credentials_file());
-            Box::new(NamespacedPasswordStore::new(Box::new(OsKeyring), prefix))
-        } else {
-            Box::new(NamespacedPasswordStore::new(
-                Box::new(FilePasswordStore::new(paths.credentials_file())),
-                prefix,
-            ))
-        };
 
         let mut ctx = Self {
             config,
             store,
             metadata,
             resolver,
-            password_store,
+            password_store: OnceCell::new(),
             hosts: Vec::new(),
             profile: paths,
         };
         ctx.reload_hosts()?;
         Ok(ctx)
+    }
+
+    /// The credential store (OS keyring, or the `credentials.json` fallback),
+    /// opened the first time a command reads or writes a secret.
+    ///
+    /// Opening it runs a write probe against the keyring, and on a locked
+    /// Secret Service collection that probe waits for the unlock prompt. When
+    /// the prompt cannot be shown it waits forever, so commands that never
+    /// touch a secret (`host list`, `completions`, ...) must not open it.
+    pub fn password_store(&self) -> &dyn PasswordStore {
+        self.password_store
+            .get_or_init(|| open_password_store(&self.profile))
+            .as_ref()
     }
 
     pub fn reload_hosts(&mut self) -> Result<()> {
@@ -128,7 +133,20 @@ impl CliContext {
         &self,
         host: &ManagedHost,
     ) -> (Option<crate::session::PendingSecret>, String) {
-        resolve_pending_secret_for_managed(host, self.password_store.as_ref())
+        resolve_pending_secret_for_managed(host, self.password_store())
+    }
+}
+
+fn open_password_store(paths: &ProfilePaths) -> Box<dyn PasswordStore> {
+    let prefix = paths.credential_prefix();
+    if check_keyring_available() {
+        let _ = migrate_fallback_to_keyring(&paths.credentials_file());
+        Box::new(NamespacedPasswordStore::new(Box::new(OsKeyring), prefix))
+    } else {
+        Box::new(NamespacedPasswordStore::new(
+            Box::new(FilePasswordStore::new(paths.credentials_file())),
+            prefix,
+        ))
     }
 }
 
@@ -169,4 +187,67 @@ pub fn read_password_stdin() -> Result<String> {
         .read_to_string(&mut buf)
         .context("read password from stdin")?;
     Ok(buf.trim_end_matches(['\r', '\n']).to_string())
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+
+    /// A context bootstrapped the way `main` does it, over a throwaway
+    /// profile directory whose launcher database holds `hosts`.
+    pub(crate) fn bootstrapped(dir: &std::path::Path, hosts: &[&str]) -> CliContext {
+        let root = dir.join("profile");
+        std::fs::create_dir_all(&root).unwrap();
+        let paths = ProfilePaths {
+            data_root: dir.to_path_buf(),
+            id: "test".into(),
+            name: "test".into(),
+            config_file: root.join("config.toml"),
+            ssh_config: dir.join("ssh_config"),
+            root,
+            compat: false,
+        };
+        let store = LauncherStore::open(paths.launcher_db()).unwrap();
+        for name in hosts {
+            store
+                .create_host(&crate::store::NewHost::launcher(*name, "10.0.0.1"))
+                .unwrap();
+        }
+        drop(store);
+        CliContext::bootstrap_with(paths).unwrap()
+    }
+
+    /// #135: opening the store probes the OS keyring, which blocks forever on
+    /// a locked collection whose unlock prompt cannot open. `host list` and
+    /// `completions` (sourced from the shell rc) read no secret, so they must
+    /// finish without ever opening it.
+    #[test]
+    fn commands_without_secrets_never_open_the_credential_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ctx = bootstrapped(dir.path(), &["web"]);
+        assert!(
+            ctx.password_store.get().is_none(),
+            "bootstrap opened the credential store"
+        );
+
+        let list = ["list", "--format", "json"].map(String::from);
+        assert_eq!(
+            crate::cli::run_subcommand(&mut ctx, "host", &list).unwrap(),
+            0
+        );
+        assert!(
+            ctx.password_store.get().is_none(),
+            "host list opened the credential store"
+        );
+
+        let zsh = ["zsh".to_string()];
+        assert_eq!(
+            crate::cli::run_subcommand(&mut ctx, "completions", &zsh).unwrap(),
+            0
+        );
+        assert!(
+            ctx.password_store.get().is_none(),
+            "completions opened the credential store"
+        );
+    }
 }

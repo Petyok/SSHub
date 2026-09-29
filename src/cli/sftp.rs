@@ -66,7 +66,7 @@ fn connect_worker(
     let (secret, _diag) = crate::app::resolve_pending_secret(
         &entry,
         effective.as_ref().and_then(|r| r.identity.as_ref()),
-        ctx.password_store.as_ref(),
+        ctx.password_store(),
     );
     let agent = crate::ssh::agent::detect_agent();
     let (tx, rx) = crate::sftp::spawn_sftp_worker(ssh_host, secret, agent);
