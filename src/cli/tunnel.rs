@@ -223,7 +223,7 @@ fn run_foreground(
 ) -> Result<()> {
     let cfg = ctx.config.tunnel_reconnect.clone();
     let store = Arc::clone(&ctx.store);
-    let password_store = ctx.password_store.as_ref();
+    let password_store = ctx.password_store();
     let host_name = host.name.clone();
     let label = tunnel.label.clone().unwrap_or_default();
     let local_port = tunnel.local_port;

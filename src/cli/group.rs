@@ -413,7 +413,7 @@ mod tests {
             store,
             metadata: Arc::new(crate::metadata::MetadataDb::default()),
             resolver: crate::ssh::SshConfigResolver::default(),
-            password_store: Box::new(crate::credentials::OsKeyring),
+            password_store: std::cell::OnceCell::new(),
             hosts: Vec::new(),
             profile: crate::profile::ProfilePaths {
                 data_root: std::path::PathBuf::new(),
