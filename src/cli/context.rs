@@ -188,3 +188,66 @@ pub fn read_password_stdin() -> Result<String> {
         .context("read password from stdin")?;
     Ok(buf.trim_end_matches(['\r', '\n']).to_string())
 }
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+
+    /// A context bootstrapped the way `main` does it, over a throwaway
+    /// profile directory whose launcher database holds `hosts`.
+    pub(crate) fn bootstrapped(dir: &std::path::Path, hosts: &[&str]) -> CliContext {
+        let root = dir.join("profile");
+        std::fs::create_dir_all(&root).unwrap();
+        let paths = ProfilePaths {
+            data_root: dir.to_path_buf(),
+            id: "test".into(),
+            name: "test".into(),
+            config_file: root.join("config.toml"),
+            ssh_config: dir.join("ssh_config"),
+            root,
+            compat: false,
+        };
+        let store = LauncherStore::open(paths.launcher_db()).unwrap();
+        for name in hosts {
+            store
+                .create_host(&crate::store::NewHost::launcher(*name, "10.0.0.1"))
+                .unwrap();
+        }
+        drop(store);
+        CliContext::bootstrap_with(paths).unwrap()
+    }
+
+    /// #135: opening the store probes the OS keyring, which blocks forever on
+    /// a locked collection whose unlock prompt cannot open. `host list` and
+    /// `completions` (sourced from the shell rc) read no secret, so they must
+    /// finish without ever opening it.
+    #[test]
+    fn commands_without_secrets_never_open_the_credential_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ctx = bootstrapped(dir.path(), &["web"]);
+        assert!(
+            ctx.password_store.get().is_none(),
+            "bootstrap opened the credential store"
+        );
+
+        let list = ["list", "--format", "json"].map(String::from);
+        assert_eq!(
+            crate::cli::run_subcommand(&mut ctx, "host", &list).unwrap(),
+            0
+        );
+        assert!(
+            ctx.password_store.get().is_none(),
+            "host list opened the credential store"
+        );
+
+        let zsh = ["zsh".to_string()];
+        assert_eq!(
+            crate::cli::run_subcommand(&mut ctx, "completions", &zsh).unwrap(),
+            0
+        );
+        assert!(
+            ctx.password_store.get().is_none(),
+            "completions opened the credential store"
+        );
+    }
+}

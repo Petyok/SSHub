@@ -476,6 +476,17 @@ mod tests {
         assert_eq!(read, names);
     }
 
+    /// The names come from the profile's store, in `host list` order (label
+    /// sort), not from a child `sshub host list` process.
+    #[test]
+    fn host_names_come_from_the_store_in_host_list_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = crate::cli::context::tests::bootstrapped(dir.path(), &["zeta", "alpha"]);
+        let names = load_host_names(&ctx, None).unwrap();
+        assert_eq!(names, ["alpha", "zeta"]);
+        assert!(render_zsh(&names).contains("'alpha' 'zeta'"));
+    }
+
     #[test]
     fn bash_script_contains_top_level() {
         let script = render_bash(&["prod".into()]);
