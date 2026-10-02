@@ -466,6 +466,9 @@ jitter_ratio = 0.25
 
 [clipboard]
 relay_from_pty = true       # let apps inside a session copy to your clipboard
+
+[ping]
+enabled = true              # ICMP status probes (Ctrl+H); hosts override it in their form
 ```
 
 ## Development

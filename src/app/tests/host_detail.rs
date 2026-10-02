@@ -186,7 +186,7 @@ pub(crate) fn host_detail_managed_save_persists_session_logging() {
     while app.detail_edit.as_ref().unwrap().field != DetailEditField::SessionLogging {
         app.detail_edit_field_next();
     }
-    app.detail_edit_cycle_session_logging(1);
+    app.detail_edit_cycle(1);
     app.save_host_detail().unwrap();
 
     let updated = store.get_host(created.id).unwrap().expect("host row");

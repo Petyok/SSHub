@@ -339,14 +339,7 @@ pub(crate) fn render_ping_panel(buf: &mut Buffer, area: Rect, app: &App) {
         }
         let info_y = area.y + 2;
         if info_y < area.y + area.height - 1 {
-            put_clamped(
-                buf,
-                inner_x,
-                info_y,
-                "waiting for ping data...",
-                dim,
-                inner_w,
-            );
+            put_clamped(buf, inner_x, info_y, ping_empty_text(app), dim, inner_w);
         }
         return;
     }
@@ -440,6 +433,15 @@ pub(crate) fn render_ping_panel(buf: &mut Buffer, area: Rect, app: &App) {
     }
 }
 
+/// What the Ping panel says before it has any samples to draw.
+fn ping_empty_text(app: &App) -> &'static str {
+    if app.config.ping.enabled {
+        "waiting for ping data..."
+    } else {
+        "ping disabled in Settings"
+    }
+}
+
 /// Colour a latency (ms) green/amber/red by how healthy it looks.
 fn ping_latency_style(theme: &ResolvedTheme, v: u32) -> ratatui::style::Style {
     let role = if v < 80 {
@@ -466,7 +468,7 @@ fn render_ping_zoomed(buf: &mut Buffer, area: Rect, app: &App, inner_x: u16, inn
     if app.ping_data.is_empty() {
         let y = area.y + 1;
         if y < bottom {
-            put_clamped(buf, inner_x, y, "waiting for ping data...", dim, inner_w);
+            put_clamped(buf, inner_x, y, ping_empty_text(app), dim, inner_w);
         }
         return;
     }

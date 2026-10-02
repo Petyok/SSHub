@@ -115,6 +115,22 @@ impl Default for ClipboardConfig {
     }
 }
 
+/// Background reachability probes behind the host-list status dots, the
+/// latency column and the Ping panel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PingConfig {
+    /// Run `ping` against every host every 30 s. Off: no worker is spawned
+    /// and every host stays "unknown" rather than turning "unreachable".
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl Default for PingConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
 fn default_tunnel_reconnect_max_attempts() -> u32 {
     12
 }
@@ -334,6 +350,8 @@ pub struct AppConfig {
     pub keybinds: KeybindsConfig,
     #[serde(default)]
     pub clipboard: ClipboardConfig,
+    #[serde(default)]
+    pub ping: PingConfig,
     #[serde(default)]
     pub ssh: SshSourceConfig,
 }
@@ -786,6 +804,19 @@ mod tests {
     fn an_empty_clipboard_section_keeps_the_default() {
         let config = parse_config_str("[clipboard]\n").unwrap();
         assert!(config.clipboard.relay_from_pty);
+    }
+
+    #[test]
+    fn ping_stays_on_unless_switched_off() {
+        // Configs from before `[ping]` existed must keep probing (#137).
+        assert!(parse_config_str("").unwrap().ping.enabled);
+        assert!(parse_config_str("[ping]\n").unwrap().ping.enabled);
+        assert!(
+            !parse_config_str("[ping]\nenabled = false\n")
+                .unwrap()
+                .ping
+                .enabled
+        );
     }
 
     #[test]

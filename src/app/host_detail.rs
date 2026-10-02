@@ -15,11 +15,13 @@ impl App {
             .unwrap_or_default()
             .to_string();
         let session_logging = self.hosts[host_idx].session_logging_override();
+        let ping = self.hosts[host_idx].ping_override();
         self.detail_edit = Some(HostDetailEdit {
             tags: tags.clone(),
             description,
             environment,
             session_logging,
+            ping,
             field: DetailEditField::Tags,
             cursor: text_input::char_len(&tags),
         });
@@ -68,6 +70,7 @@ impl App {
                 notes: Some(description),
                 environment: Some(environment),
                 session_logging: Some(edit.session_logging),
+                ping: Some(edit.ping),
                 ..Default::default()
             };
             if let Some(updated) = self.store.update_host(id, &update)? {
@@ -82,6 +85,7 @@ impl App {
                 favorite,
                 last_connected,
                 session_logging: edit.session_logging,
+                ping: edit.ping,
                 transport: self.hosts[host_idx].session_transport(),
             };
             self.metadata.upsert(&meta)?;
@@ -114,28 +118,18 @@ impl App {
         }
     }
 
-    pub(crate) fn detail_edit_cycle_session_logging(&mut self, delta: i32) {
+    /// Left/Right/Space on a tri-state row (session log, ping) cycles it.
+    pub(crate) fn detail_edit_cycle(&mut self, delta: i32) {
         let Some(edit) = self.detail_edit.as_mut() else {
             return;
         };
-        if edit.field != DetailEditField::SessionLogging {
-            return;
-        }
-        edit.session_logging = if delta >= 0 {
-            edit.session_logging.next()
-        } else {
-            match edit.session_logging {
-                crate::session_log::SessionLoggingOverride::Inherit => {
-                    crate::session_log::SessionLoggingOverride::Off
-                }
-                crate::session_log::SessionLoggingOverride::On => {
-                    crate::session_log::SessionLoggingOverride::Inherit
-                }
-                crate::session_log::SessionLoggingOverride::Off => {
-                    crate::session_log::SessionLoggingOverride::On
-                }
+        match edit.field {
+            DetailEditField::SessionLogging => {
+                edit.session_logging = edit.session_logging.step(delta)
             }
-        };
+            DetailEditField::Ping => edit.ping = edit.ping.step(delta),
+            _ => {}
+        }
     }
 
     pub(crate) fn detail_edit_backspace(&mut self) {

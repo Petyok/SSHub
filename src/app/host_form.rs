@@ -78,6 +78,7 @@ impl App {
                 remote_command: managed.remote_command.clone().unwrap_or_default(),
                 transport: managed.transport,
                 session_logging: managed.session_logging,
+                ping: managed.ping,
                 os_icon_index: os_icon_index_from_option(&managed.os_icon),
                 password: stored_password.clone(),
                 password_original: stored_password,
@@ -121,6 +122,7 @@ impl App {
                 remote_command: String::new(),
                 transport: None,
                 session_logging: crate::session_log::SessionLoggingOverride::Inherit,
+                ping: crate::session_log::SessionLoggingOverride::Inherit,
                 os_icon_index: 0,
                 password: String::new(),
                 password_original: String::new(),
@@ -213,6 +215,7 @@ impl App {
                     has_password: Some(new_has_password),
                     username: Some(username.clone()),
                     session_logging: Some(form.session_logging),
+                    ping: Some(form.ping),
                     transport: Some(form.transport),
                     ..Default::default()
                 },
@@ -307,6 +310,7 @@ impl App {
                     has_password: Some(new_has_password),
                     username: Some(username),
                     session_logging: Some(form.session_logging),
+                    ping: Some(form.ping),
                     transport: Some(form.transport),
                     ..Default::default()
                 },
@@ -330,6 +334,7 @@ impl App {
                 has_password: new_has_password,
                 username,
                 session_logging: form.session_logging,
+                ping: form.ping,
                 transport: form.transport,
             })?;
             self.store.set_host_groups(created.id, &group_ids)?;
@@ -402,7 +407,7 @@ impl App {
                 if key.modifiers.is_empty()
                     && (field == HostFormField::ForwardAgent
                         || field == HostFormField::Transport
-                        || field == HostFormField::SessionLogging) =>
+                        || field.is_tri_state()) =>
             {
                 self.host_form_toggle();
             }
@@ -477,6 +482,9 @@ impl App {
             form.dirty = true;
         } else if form.field == HostFormField::SessionLogging {
             form.session_logging = form.session_logging.next();
+            form.dirty = true;
+        } else if form.field == HostFormField::Ping {
+            form.ping = form.ping.next();
             form.dirty = true;
         }
     }

@@ -32,6 +32,7 @@ pub fn duplicate_legacy_to_launcher(
     new_host.forward_agent = Some(host.forward_agent.unwrap_or(false));
     new_host.remote_command = host.remote_command.clone();
     new_host.session_logging = meta.session_logging;
+    new_host.ping = meta.ping;
     new_host.transport = Some(meta.transport);
     new_host.identity_id = match_identity_for_ssh_host(store, host)?;
     store.create_host(&new_host)?;

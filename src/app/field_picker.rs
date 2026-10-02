@@ -235,21 +235,12 @@ impl App {
             return;
         }
         if form.field == HostFormField::SessionLogging {
-            form.session_logging = if delta >= 0 {
-                form.session_logging.next()
-            } else {
-                match form.session_logging {
-                    crate::session_log::SessionLoggingOverride::Inherit => {
-                        crate::session_log::SessionLoggingOverride::Off
-                    }
-                    crate::session_log::SessionLoggingOverride::On => {
-                        crate::session_log::SessionLoggingOverride::Inherit
-                    }
-                    crate::session_log::SessionLoggingOverride::Off => {
-                        crate::session_log::SessionLoggingOverride::On
-                    }
-                }
-            };
+            form.session_logging = form.session_logging.step(delta);
+            form.dirty = true;
+            return;
+        }
+        if form.field == HostFormField::Ping {
+            form.ping = form.ping.step(delta);
             form.dirty = true;
             return;
         }

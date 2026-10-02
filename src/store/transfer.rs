@@ -659,6 +659,7 @@ pub fn apply_transfer_plan(
                                     has_password: false,
                                     username: src_host.username.clone(),
                                     session_logging: src_host.session_logging,
+                                    ping: src_host.ping,
                                     transport: src_host.transport,
                                 },
                             );
