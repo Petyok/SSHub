@@ -94,6 +94,8 @@ impl App {
             }
         }
         self.rebuild_filter();
+        // The ping override may have changed; the entry was swapped in place.
+        self.start_ping_worker();
         self.mode = AppMode::Normal;
         Ok(())
     }
