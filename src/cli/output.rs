@@ -31,6 +31,7 @@ pub struct HostRecordJson {
     pub favorite: bool,
     pub last_connected: Option<i64>,
     pub session_logging: String,
+    pub ping: String,
     pub transport: String,
     pub forward_agent: Option<bool>,
     pub remote_command: Option<String>,
@@ -129,6 +130,7 @@ pub fn host_record_json(entry: &HostEntry, store: &LauncherStore) -> HostRecordJ
         favorite: entry.favorite(),
         last_connected: entry.last_connected(),
         session_logging: entry.session_logging_override().label().to_string(),
+        ping: entry.ping_override().label().to_string(),
         transport: transport.label().to_string(),
         forward_agent,
         remote_command: ssh.remote_command.clone(),
@@ -240,6 +242,7 @@ pub fn format_host_plain(record: &HostRecordJson) -> String {
                 .unwrap_or_else(|| "—".into())
         ),
         format!("Session log: {}", record.session_logging),
+        format!("Ping: {}", record.ping),
         format!("Transport: {}", record.transport),
     ];
     if let Some(fa) = record.forward_agent {

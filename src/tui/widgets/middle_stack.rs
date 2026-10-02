@@ -201,6 +201,7 @@ pub(crate) fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
             format!("session log: {}", entry.session_logging_override().label()),
             metadata,
         ));
+        rows.push((format!("ping: {}", entry.ping_override().label()), metadata));
         if ssh.forward_agent == Some(true) {
             rows.push(("forward agent: yes".to_string(), metadata));
         }
@@ -908,6 +909,7 @@ mod tests {
                 has_password: false,
                 username: None,
                 session_logging: crate::session_log::SessionLoggingOverride::Inherit,
+                ping: crate::session_log::SessionLoggingOverride::Inherit,
                 transport: Default::default(),
                 created_at: 0,
                 updated_at: 0,

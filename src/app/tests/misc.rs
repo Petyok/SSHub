@@ -708,6 +708,68 @@ fn ping_class_change_flashes_the_status_dot() {
     );
 }
 
+/// Switching `Ping hosts` off in Settings (#137) persists, stops the worker
+/// (its next send fails, which is what ends the thread) and drops every
+/// sample, so a host reads as unknown instead of keeping its last class.
+#[test]
+fn ping_off_in_settings_stops_the_worker_and_leaves_hosts_unknown() {
+    let dir = tempfile::tempdir().unwrap();
+    crate::config::with_test_config_dir(dir.path(), || {
+        let mut app = test_app(vec![("a", host("a"))]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.ping_rx = Some(rx);
+        app.ping_data
+            .insert("a".into(), vec![crate::ping::PING_UNREACHABLE]);
+
+        app.mode = AppMode::Settings;
+        app.settings_selected = SETTINGS_ITEMS
+            .iter()
+            .position(|d| d.item == SettingToggle::Ping.into())
+            .unwrap();
+        app.handle_key(key_char(' ')).unwrap();
+
+        assert!(!crate::config::load_config().unwrap().ping.enabled);
+        let probe = crate::ping::PingResult {
+            host_name: "a".into(),
+            address: "a".into(),
+            latency_ms: None,
+        };
+        assert!(tx.send(probe).is_err(), "worker still has a receiver");
+        assert_eq!(
+            crate::ping::classify_ping(app.ping_data.get("a").map(Vec::as_slice)),
+            crate::ping::PingClass::Unknown
+        );
+    });
+}
+
+/// A host's ping override beats `[ping] enabled` in both directions (#137),
+/// and a host taken out of the probe set drops its samples, so it reads as
+/// unknown instead of its last class.
+#[test]
+fn per_host_ping_override_beats_the_global_switch() {
+    use crate::session_log::SessionLoggingOverride as O;
+    let mut app = test_app(vec![("a", host("a")), ("b", host("b"))]);
+    let a = app.hosts.iter().position(|h| h.name() == "a").unwrap();
+    let targets = |app: &App| {
+        let mut names: Vec<String> = app.ping_targets().into_iter().map(|(n, _)| n).collect();
+        names.sort();
+        names
+    };
+
+    legacy_meta(&mut app.hosts[a]).ping = O::Off;
+    assert_eq!(targets(&app), ["b"], "off beats a global on");
+
+    app.config.ping.enabled = false;
+    legacy_meta(&mut app.hosts[a]).ping = O::On;
+    assert_eq!(targets(&app), ["a"], "on beats a global off");
+
+    app.ping_data.insert("a".into(), vec![12]);
+    app.ping_data.insert("b".into(), vec![12]);
+    app.start_ping_worker();
+    assert!(app.ping_data.contains_key("a"));
+    assert!(!app.ping_data.contains_key("b"), "b must read as unknown");
+}
+
 /// The flash peaks on the active `text.bright` **role**, not on the semantic
 /// token it falls back to.
 ///

@@ -286,6 +286,7 @@ pub enum SettingToggle {
     DisableAnimation,
     SessionLogging,
     CommandHistory,
+    Ping,
 }
 
 /// What a Settings row *is*: an action that opens something, or a boolean.
@@ -323,7 +324,7 @@ pub struct SettingDescriptor {
 /// by a test in `tui::screens::settings`) and avoid ambiguous-width chars like
 /// the em dash or `…` — some terminals draw those 2 cells wide, pushing the
 /// tail of the line onto the popup border.
-pub const SETTINGS_ITEMS: [SettingDescriptor; 13] = [
+pub const SETTINGS_ITEMS: [SettingDescriptor; 14] = [
     SettingDescriptor {
         item: SettingItem::Theme,
         label: "Theme...",
@@ -358,6 +359,11 @@ pub const SETTINGS_ITEMS: [SettingDescriptor; 13] = [
         item: SettingItem::Toggle(SettingToggle::SessionLogging),
         label: "Session logging",
         hint: "save PTY output under the selected profile logs",
+    },
+    SettingDescriptor {
+        item: SettingItem::Toggle(SettingToggle::Ping),
+        label: "Ping hosts",
+        hint: "ICMP status probes; off leaves hosts unknown",
     },
     SettingDescriptor {
         item: SettingItem::Profiles,
@@ -857,14 +863,16 @@ pub enum DetailEditField {
     Description = 1,
     Environment = 2,
     SessionLogging = 3,
+    Ping = 4,
 }
 
 impl DetailEditField {
-    const ALL: [DetailEditField; 4] = [
+    const ALL: [DetailEditField; 5] = [
         DetailEditField::Tags,
         DetailEditField::Description,
         DetailEditField::Environment,
         DetailEditField::SessionLogging,
+        DetailEditField::Ping,
     ];
 
     pub(crate) fn next(self) -> Self {
@@ -878,7 +886,7 @@ impl DetailEditField {
     }
 
     pub(crate) fn is_tri_state(self) -> bool {
-        matches!(self, Self::SessionLogging)
+        matches!(self, Self::SessionLogging | Self::Ping)
     }
 }
 
@@ -889,6 +897,7 @@ pub struct HostDetailEdit {
     pub description: String,
     pub environment: String,
     pub session_logging: crate::session_log::SessionLoggingOverride,
+    pub ping: crate::session_log::SessionLoggingOverride,
     pub field: DetailEditField,
     pub cursor: usize,
 }
@@ -966,6 +975,14 @@ impl HostEntry {
         match self {
             Self::Managed(m) => m.session_logging,
             Self::Legacy { meta, .. } => meta.session_logging,
+        }
+    }
+
+    /// Per-host override of `[ping] enabled` (#137).
+    pub fn ping_override(&self) -> crate::session_log::SessionLoggingOverride {
+        match self {
+            Self::Managed(m) => m.ping,
+            Self::Legacy { meta, .. } => meta.ping,
         }
     }
 
@@ -1103,6 +1120,7 @@ pub struct HostFormEdit {
     /// Explicit transport (`None` = inherit; Space cycles inherit → ssh → mosh).
     pub transport: Option<crate::session_transport::SessionTransport>,
     pub session_logging: crate::session_log::SessionLoggingOverride,
+    pub ping: crate::session_log::SessionLoggingOverride,
     pub os_icon_index: usize,
     pub password: String,
     /// The secret as it was in the credential store when the form opened, so
@@ -1144,10 +1162,11 @@ pub enum HostFormField {
     OsIcon = 12,
     Password = 13,
     Username = 14,
+    Ping = 15,
 }
 
 impl HostFormField {
-    pub const ALL: [HostFormField; 15] = [
+    pub const ALL: [HostFormField; 16] = [
         HostFormField::Address,
         HostFormField::Password,
         HostFormField::Username,
@@ -1162,6 +1181,7 @@ impl HostFormField {
         HostFormField::RemoteCommand,
         HostFormField::Transport,
         HostFormField::SessionLogging,
+        HostFormField::Ping,
         HostFormField::OsIcon,
     ];
 
@@ -1205,6 +1225,7 @@ impl HostFormField {
             HostFormField::OsIcon => "OS icon",
             HostFormField::Password => "Password",
             HostFormField::Username => "Username",
+            HostFormField::Ping => "Ping",
         }
     }
 
@@ -1220,7 +1241,7 @@ impl HostFormField {
     }
 
     pub(crate) fn is_tri_state(self) -> bool {
-        matches!(self, HostFormField::SessionLogging)
+        matches!(self, HostFormField::SessionLogging | HostFormField::Ping)
     }
 }
 
@@ -1708,7 +1729,8 @@ impl HostFormEdit {
             HostFormField::RemoteCommand => &self.remote_command,
             HostFormField::ForwardAgent
             | HostFormField::Transport
-            | HostFormField::SessionLogging => "",
+            | HostFormField::SessionLogging
+            | HostFormField::Ping => "",
             HostFormField::Password => &self.password,
         }
     }
@@ -1736,7 +1758,8 @@ impl HostFormEdit {
             | HostFormField::OsIcon
             | HostFormField::ForwardAgent
             | HostFormField::Transport
-            | HostFormField::SessionLogging => None,
+            | HostFormField::SessionLogging
+            | HostFormField::Ping => None,
         }
     }
 }
@@ -1799,7 +1822,7 @@ impl HostDetailEdit {
             DetailEditField::Tags => &self.tags,
             DetailEditField::Description => &self.description,
             DetailEditField::Environment => &self.environment,
-            DetailEditField::SessionLogging => "",
+            DetailEditField::SessionLogging | DetailEditField::Ping => "",
         }
     }
 
@@ -1808,7 +1831,7 @@ impl HostDetailEdit {
             DetailEditField::Tags => &mut self.tags,
             DetailEditField::Description => &mut self.description,
             DetailEditField::Environment => &mut self.environment,
-            DetailEditField::SessionLogging => &mut self.environment,
+            DetailEditField::SessionLogging | DetailEditField::Ping => &mut self.environment,
         }
     }
 }

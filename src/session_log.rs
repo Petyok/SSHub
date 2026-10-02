@@ -10,7 +10,8 @@ use anyhow::{Context, Result};
 
 use crate::secure_fs;
 
-/// Per-host override for session logging (tri-state).
+/// Per-host tri-state override of a global switch: session logging, and the
+/// ping probe (#137). Resolved by [`effective_enabled`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SessionLoggingOverride {
     #[default]
@@ -36,6 +37,16 @@ impl SessionLoggingOverride {
         }
     }
 
+    /// `next` for a non-negative `delta`, the reverse cycle otherwise.
+    pub fn step(self, delta: i32) -> Self {
+        match (delta >= 0, self) {
+            (true, s) => s.next(),
+            (false, Self::Inherit) => Self::Off,
+            (false, Self::On) => Self::Inherit,
+            (false, Self::Off) => Self::On,
+        }
+    }
+
     pub fn from_db(value: Option<i64>) -> Self {
         match value {
             None => Self::Inherit,
@@ -54,7 +65,7 @@ impl SessionLoggingOverride {
     }
 }
 
-/// Resolve whether logging is active for a connect attempt.
+/// Resolve a global switch against a host's override.
 pub fn effective_enabled(global: bool, host_override: SessionLoggingOverride) -> bool {
     match host_override {
         SessionLoggingOverride::Inherit => global,

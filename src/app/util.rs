@@ -867,6 +867,7 @@ mod sftp_ssh_host_tests {
                 favorite: false,
                 last_connected: None,
                 session_logging: crate::session_log::SessionLoggingOverride::Inherit,
+                ping: crate::session_log::SessionLoggingOverride::Inherit,
                 transport: crate::session_transport::SessionTransport::Ssh,
             })
             .unwrap();

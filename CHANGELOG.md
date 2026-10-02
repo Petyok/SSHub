@@ -4,6 +4,23 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Ping probes can be switched off** (issue #137, requested by
+  [@morgonjor](https://github.com/morgonjor)) - SSHub always ran
+  `ping -c 1 -W 1` against every host every 30 s, so where ICMP is blocked or
+  unwanted every host showed as unreachable and the probes never stopped. The
+  new `Ping hosts` row in Settings (`Ctrl+H`), stored as `[ping] enabled` in
+  `config.toml` (default `true`), turns them off: no ping worker runs, status
+  dots and latency stay unknown instead of unreachable, and the Ping panel says
+  so. Flipping it applies at once, without a restart.
+
+  Each host can override that with a `Ping` row in the host form (`inherit`,
+  `on`, `off`), the same pattern as its session log: `off` silences one host
+  that drops ICMP, `on` keeps probing one host while the rest stay quiet. The
+  CLI takes the same values as `sshub host add --ping` and
+  `sshub host edit --set-ping`, and `sshub host show` prints the setting.
+
 ### Fixed
 
 - **New terminals no longer stay blank on a locked keyring** (#135): every

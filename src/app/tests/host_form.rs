@@ -69,16 +69,44 @@ pub(crate) fn host_form_up_down_navigate_fields_in_both_directions() {
         HostFormField::Address
     );
 
-    // Navigate to the end (14 downs from Address)
-    for _ in 0..14 {
+    // Navigate to the end (15 downs from Address)
+    for _ in 0..15 {
         app.handle_key(key(KeyCode::Down)).unwrap();
     }
     assert_eq!(app.host_form.as_ref().unwrap().field, HostFormField::OsIcon);
 
     app.handle_key(key(KeyCode::Up)).unwrap();
+    assert_eq!(app.host_form.as_ref().unwrap().field, HostFormField::Ping);
+}
+
+/// The host form's Ping row (#137) cycles inherit → on → off on Space, and
+/// saving it writes the override to the host row and takes the host out of
+/// the probe set.
+#[test]
+pub(crate) fn host_form_ping_override_saves_and_stops_probing_the_host() {
+    use crate::session_log::SessionLoggingOverride as O;
+    let mut app = test_app(vec![]);
+    let created = app
+        .store
+        .create_host(&crate::store::NewHost::launcher("db", "10.0.0.7"))
+        .unwrap();
+    app.reload_hosts().unwrap();
+    assert_eq!(app.ping_targets().len(), 1);
+
+    app.enter_host_form(Some(&created), false).unwrap();
+    app.host_form.as_mut().unwrap().field = HostFormField::Ping;
+    app.handle_key(key_char(' ')).unwrap();
+    app.handle_key(key_char(' ')).unwrap();
+    assert_eq!(app.host_form.as_ref().unwrap().ping, O::Off);
+    app.save_host_form().unwrap();
+
     assert_eq!(
-        app.host_form.as_ref().unwrap().field,
-        HostFormField::SessionLogging
+        app.store.get_host(created.id).unwrap().unwrap().ping,
+        O::Off
+    );
+    assert!(
+        app.ping_targets().is_empty(),
+        "a host with ping off is not probed"
     );
 }
 
