@@ -35,9 +35,10 @@ All notable changes to SSHub are documented in this file.
   rendering an arbitrary 4 KiB PTY read half-way through a repaint. A one-second
   fail-open prevents a broken or hostile application from freezing the view.
 - **Terminal queries no longer disappear in the hardened parser** (by @Frysuni) — DSR 5/6,
-  DECXCPR, DA1/DA2, the kitty keyboard capability probe, character-cell size and
+  DA1, character-cell size and
   DECRQM for mode 2026 receive bounded replies even when a control sequence is
-  split across PTY reads.
+  split across PTY reads. Kitty, DA2 and DECXCPR remain unanswered, preserving
+  the capability policy from PR #114.
 - **Mouse protocol coverage** (by @Frysuni) now includes the real UTF-8 (1005), urxvt (1015)
   and SGR-pixel (1016) encodings exposed by the terminal parser.
 - **New terminals no longer stay blank on a locked keyring** (#135): every

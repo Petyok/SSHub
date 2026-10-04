@@ -105,10 +105,8 @@ impl vt100::Callbacks for PtyCallbacks {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TerminalQuery {
     DeviceStatus,
-    CursorPosition { private: bool },
+    CursorPosition,
     PrimaryDeviceAttributes,
-    SecondaryDeviceAttributes,
-    KittyKeyboard,
     CharacterSize,
     SynchronizedUpdateMode,
 }
@@ -138,13 +136,13 @@ impl vte::Perform for QueryObserver {
         if params.next().is_some() {
             return;
         }
+        // Preserve PR #114's capability policy: kitty, DA2 and DECXCPR
+        // stay unanswered. A kitty flags=0 reply advertises protocol support,
+        // not lack of support; DA1 alone lets callers detect it as unsupported.
         self.query = match (intermediates, action, param) {
             ([], 'n', 5) => Some(TerminalQuery::DeviceStatus),
-            ([], 'n', 6) => Some(TerminalQuery::CursorPosition { private: false }),
-            ([b'?'], 'n', 6) => Some(TerminalQuery::CursorPosition { private: true }),
+            ([], 'n', 6) => Some(TerminalQuery::CursorPosition),
             ([], 'c', 0) => Some(TerminalQuery::PrimaryDeviceAttributes),
-            ([b'>'], 'c', 0) => Some(TerminalQuery::SecondaryDeviceAttributes),
-            ([b'?'], 'u', 0) => Some(TerminalQuery::KittyKeyboard),
             ([], 't', 18) => Some(TerminalQuery::CharacterSize),
             ([b'?', b'$'], 'p', 2026) => Some(TerminalQuery::SynchronizedUpdateMode),
             _ => None,
@@ -174,22 +172,13 @@ impl ParserState {
             let screen = self.inner.screen();
             match query {
                 TerminalQuery::DeviceStatus => b"\x1b[0n".to_vec(),
-                TerminalQuery::CursorPosition { private } => {
+                TerminalQuery::CursorPosition => {
                     let (row, col) = screen.cursor_position();
                     let (rows, cols) = screen.size();
                     let (row, col) = ((row + 1).min(rows), (col + 1).min(cols));
-                    if private {
-                        format!("\x1b[?{row};{col}R").into_bytes()
-                    } else {
-                        format!("\x1b[{row};{col}R").into_bytes()
-                    }
+                    format!("\x1b[{row};{col}R").into_bytes()
                 }
                 TerminalQuery::PrimaryDeviceAttributes => b"\x1b[?1;2c".to_vec(),
-                TerminalQuery::SecondaryDeviceAttributes => b"\x1b[>0;0;0c".to_vec(),
-                // SSHub does not implement kitty's enhanced keyboard protocol;
-                // an explicit flags=0 reply is better than a two-second probe
-                // timeout and is the truthful capability answer.
-                TerminalQuery::KittyKeyboard => b"\x1b[?0u".to_vec(),
                 TerminalQuery::CharacterSize => {
                     let (rows, cols) = screen.size();
                     format!("\x1b[8;{rows};{cols}t").into_bytes()
@@ -569,9 +558,20 @@ mod tests {
     }
 
     #[test]
-    fn private_queries_are_answered() {
-        let mut p = parser_with(10, 80, b"\x1b[?u\x1b[>c\x1b[?6n");
-        assert_eq!(p.take_replies(), b"\x1b[?0u\x1b[>0;0;0c\x1b[?1;1R");
+    fn private_queries_stay_unanswered() {
+        let mut p = parser_with(10, 80, b"\x1b[?u\x1b[?0u\x1b[>c\x1b[>0c\x1b[?6n");
+        assert!(p.take_replies().is_empty());
+    }
+
+    #[test]
+    fn kitty_support_probe_receives_only_da1_even_when_split() {
+        // PR #114: no kitty reply + DA1 means unsupported, without a timeout.
+        let mut p = ParserState::new(10, 80);
+        p.process(b"\x1b[?");
+        assert!(p.take_replies().is_empty());
+        p.process(b"u\x1b[c");
+        assert_eq!(p.take_replies(), b"\x1b[?1;2c");
+        assert!(p.take_replies().is_empty());
     }
 
     #[test]
