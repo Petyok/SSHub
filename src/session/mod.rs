@@ -250,9 +250,10 @@ impl Session {
         log: Option<crate::session_log::SessionLogWriter>,
         siphon_stderr: bool,
     ) -> Result<Self> {
-        // Reserve 1 row for header + 1 row for footer; ensure non-zero PTY.
-        let pty_rows = rows.saturating_sub(2).max(1);
-        let pty_cols = cols.max(1);
+        // Reserve 1 row for header + 1 row for footer. A 2x2 floor avoids
+        // degenerate one-cell resize paths while the outer renderer still clips.
+        let pty_rows = rows.saturating_sub(2).max(2);
+        let pty_cols = cols.max(2);
         let interactive = config.key_push_identity.is_none()
             && matches!(config.argv.first().map(String::as_str), Some("ssh"));
         let auth = if interactive {
@@ -1020,8 +1021,8 @@ impl Session {
 
     /// Update both the PTY size and the parser grid. Body rows = total - header - footer.
     pub fn resize(&mut self, rows: u16, cols: u16) {
-        let pty_rows = rows.saturating_sub(2).max(1);
-        let pty_cols = cols.max(1);
+        let pty_rows = rows.saturating_sub(2).max(2);
+        let pty_cols = cols.max(2);
         self.parser.set_size(pty_rows, pty_cols);
         let _ = self.runtime.resize(pty_rows, pty_cols);
     }

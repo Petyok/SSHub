@@ -196,7 +196,7 @@ pub fn encode_mouse(
     let row = event_y.saturating_add(1) as u32;
 
     match encoding {
-        MouseProtocolEncoding::Sgr => {
+        MouseProtocolEncoding::Sgr | MouseProtocolEncoding::SgrPixels => {
             let release_marker = if matches!(event.kind, MouseEventKind::Up(_)) {
                 'm'
             } else {
@@ -220,17 +220,66 @@ pub fn encode_mouse(
                 }
                 _ => code,
             };
-            Some(format!("\x1b[<{sgr_button};{col};{row}{release_marker}").into_bytes())
+
+            // 1016 is the SGR wire format with pixel coordinates. Crossterm
+            // reports mouse events in cells, so map the cell centre into the
+            // physical terminal's pixel grid when the backend exposes it. If
+            // pixel dimensions are unavailable (notably Windows and some
+            // pseudo-terminals), fall back to cell coordinates rather than
+            // dropping input entirely.
+            let (x, y) = if encoding == MouseProtocolEncoding::SgrPixels {
+                pixel_position(event_x, event_y).unwrap_or((col, row))
+            } else {
+                (col, row)
+            };
+            Some(format!("\x1b[<{sgr_button};{x};{y}{release_marker}").into_bytes())
         }
-        MouseProtocolEncoding::Utf8 | MouseProtocolEncoding::Default => {
+        MouseProtocolEncoding::Urxvt => {
+            // urxvt 1015: decimal legacy button code + 32, followed by
+            // 1-based cell coordinates.
+            Some(format!("\x1b[{};{col};{row}M", u32::from(code) + 32).into_bytes())
+        }
+        MouseProtocolEncoding::Utf8 => {
+            // 1005 keeps the legacy `CSI M` shape, but Cb/Cx/Cy are UTF-8
+            // encoded code points instead of capped single bytes. This is what
+            // lets coordinates beyond column/row 223 survive.
+            let mut out = b"\x1b[M".to_vec();
+            for value in [u32::from(code) + 32, col + 32, row + 32] {
+                if let Some(ch) = char::from_u32(value) {
+                    let mut tmp = [0u8; 4];
+                    out.extend_from_slice(ch.encode_utf8(&mut tmp).as_bytes());
+                }
+            }
+            Some(out)
+        }
+        MouseProtocolEncoding::Default => {
             // Default encoding: CSI M Cb Cx Cy where each char is 32 + value.
-            // Caps at 223 for the default encoding.
+            // Values above the protocol's single-byte range are saturated.
             let cb = (code as u32 + 32).min(255) as u8;
             let cx = (col + 32).min(255) as u8;
             let cy = (row + 32).min(255) as u8;
             Some(vec![0x1b, b'[', b'M', cb, cx, cy])
         }
     }
+}
+
+/// Approximate a cell event by the centre of that cell in the host terminal's
+/// pixel grid. SGR-pixels (1016) wants physical coordinates, while crossterm's
+/// mouse event API is cell based. The ratio is nevertheless enough to preserve
+/// ordering and hit-testing for applications that opt into 1016.
+fn pixel_position(col: u16, row: u16) -> Option<(u32, u32)> {
+    let ws = crossterm::terminal::window_size().ok()?;
+    if ws.columns == 0 || ws.rows == 0 || ws.width == 0 || ws.height == 0 {
+        return None;
+    }
+    let cell_left = u32::from(col) * u32::from(ws.width) / u32::from(ws.columns);
+    let cell_right = u32::from(col.saturating_add(1)) * u32::from(ws.width) / u32::from(ws.columns);
+    let cell_top = u32::from(row) * u32::from(ws.height) / u32::from(ws.rows);
+    let cell_bottom = u32::from(row.saturating_add(1)) * u32::from(ws.height) / u32::from(ws.rows);
+    Some((
+        ((cell_left + cell_right) / 2).saturating_add(1),
+        ((cell_top + cell_bottom) / 2).saturating_add(1),
+    ))
 }
 
 fn button_index(b: MouseButton) -> u8 {
@@ -545,5 +594,37 @@ mod tests {
             MouseProtocolEncoding::Sgr,
         )
         .is_none());
+    }
+
+    #[test]
+    fn urxvt_left_press_uses_decimal_1015_format() {
+        let m = mouse_event(MouseEventKind::Down(MouseButton::Left), 4, 6);
+        let bytes = encode_mouse(
+            m,
+            4,
+            6,
+            MouseProtocolMode::PressRelease,
+            MouseProtocolEncoding::Urxvt,
+        )
+        .unwrap();
+        assert_eq!(bytes, b"\x1b[32;5;7M");
+    }
+
+    #[test]
+    fn utf8_mouse_does_not_truncate_large_coordinates() {
+        let m = mouse_event(MouseEventKind::Down(MouseButton::Left), 300, 6);
+        let bytes = encode_mouse(
+            m,
+            300,
+            6,
+            MouseProtocolMode::PressRelease,
+            MouseProtocolEncoding::Utf8,
+        )
+        .unwrap();
+        assert!(bytes.starts_with(b"\x1b[M "));
+        assert!(
+            bytes.len() > 6,
+            "large x coordinate must be multibyte UTF-8"
+        );
     }
 }

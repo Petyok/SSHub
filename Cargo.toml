@@ -80,6 +80,20 @@ toml_edit = "0.22"
 tempfile = "3"
 tui-term = "0.3"
 vt100 = "0.16"
+vte = "0.15"
+
+# crates.io vt100 0.16.2 is missing a sizeable part of the xterm-256color
+# surface that SSHub advertises to remote applications (HVP, SCOSC/SCORC,
+# synchronized output, REP, real tab stops, DECAWM/IRM and modern SGR among
+# others).  The shellglass fork is still package/version-compatible with
+# vt100 0.16.2, but carries those parser fixes and hardening.  Patch crates.io
+# globally so tui-term and SSHub keep using the *same* vt100 types.
+#
+# Keep this pinned: terminal emulation is too sensitive to silently follow a
+# moving branch.  Long term these commits can be replaced by an upstream vt100
+# release once the missing sequences land there.
+[patch.crates-io]
+vt100 = { git = "https://github.com/iksteen/shellglass", rev = "dc7f399f4ffc3daf0593ff9a272338ac9b1affc6" }
 
 [dev-dependencies]
 assert_cmd = "2"

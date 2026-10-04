@@ -23,6 +23,23 @@ All notable changes to SSHub are documented in this file.
 
 ### Fixed
 
+- **Embedded terminal compatibility with modern TUIs** (by @Frysuni) — the in-app terminal
+  now understands the xterm sequences SSHub advertises through
+  `TERM=xterm-256color`, including HVP (`CSI row;col f`), SCOSC/SCORC
+  (`CSI s` / `CSI u`), REP, real tab stops, DECAWM/IRM, DECSTR, modern SGR and
+  synchronized output (`CSI ? 2026 h/l`). This fixes btop frames being appended
+  and duplicated instead of redrawn in place, and closes the same parser gaps
+  hit by neovim, helix, lazygit, tmux and other full-screen TUIs.
+- **Synchronized output is now atomic on screen** (by @Frysuni) — while a remote application
+  is inside DEC mode 2026, SSHub keeps the last complete frame instead of
+  rendering an arbitrary 4 KiB PTY read half-way through a repaint. A one-second
+  fail-open prevents a broken or hostile application from freezing the view.
+- **Terminal queries no longer disappear in the hardened parser** (by @Frysuni) — DSR 5/6,
+  DECXCPR, DA1/DA2, the kitty keyboard capability probe, character-cell size and
+  DECRQM for mode 2026 receive bounded replies even when a control sequence is
+  split across PTY reads.
+- **Mouse protocol coverage** (by @Frysuni) now includes the real UTF-8 (1005), urxvt (1015)
+  and SGR-pixel (1016) encodings exposed by the terminal parser.
 - **New terminals no longer stay blank on a locked keyring** (#135): every
   headless command opened the OS keyring at startup with a test write, even
   commands that never read a secret. With the keyring locked and its unlock
