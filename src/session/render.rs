@@ -50,6 +50,19 @@ pub(crate) fn remote_pty_rect(frame_area: Rect) -> Rect {
     session_chunks(frame_area)[1]
 }
 
+/// Whether frame cell `(column, row)` shows a cell of a `(rows, cols)` grid,
+/// rather than SSHub's header or footer. The grid can be taller than the pane
+/// (the PTY is floored at 2 rows), so its size alone does not say.
+pub(crate) fn pane_shows_cell(
+    frame_area: Rect,
+    (column, row): (u16, u16),
+    (rows, cols): (u16, u16),
+) -> bool {
+    let pane = remote_pty_rect(frame_area);
+    let shown = Rect::new(pane.x, pane.y, pane.width.min(cols), pane.height.min(rows));
+    shown.contains(ratatui::layout::Position::new(column, row))
+}
+
 /// Whether this frame actually shows the remote grid.
 ///
 /// The connecting spinner and the failure screen occupy the same rect but are
@@ -773,6 +786,25 @@ mod tests {
         // whole frame is the viewport, where `y + 1 / height - 2` was empty.
         let tiny = Rect::new(0, 0, 10, 1);
         assert_eq!(remote_pty_rect(tiny), Rect::new(0, 0, 10, 1));
+    }
+
+    #[test]
+    fn clicks_reach_only_grid_rows_the_pane_shows() {
+        // At an outer height of 3 the pane is 1 row but the grid has 2 (the
+        // 2x2 floor): a click on the footer must not become grid row 1.
+        let area = Rect::new(0, 0, 10, 3);
+        let grid = crate::session::pty_size(area.height, area.width);
+        assert_eq!(grid, (2, 10));
+        assert!(pane_shows_cell(area, (0, 1), grid));
+        assert!(!pane_shows_cell(area, (0, 0), grid), "header");
+        assert!(!pane_shows_cell(area, (0, 2), grid), "footer");
+        let area = Rect::new(0, 0, 80, 26);
+        assert!(pane_shows_cell(area, (79, 24), (24, 80)));
+        assert!(
+            !pane_shows_cell(area, (80, 5), (24, 80)),
+            "past the last column"
+        );
+        assert!(!pane_shows_cell(area, (5, 25), (24, 80)), "footer");
     }
 
     fn spawned_session() -> Session {

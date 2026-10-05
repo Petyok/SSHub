@@ -522,4 +522,11 @@ mod tests {
         assert_eq!(decoded_len(b"aGk"), 2); // "hi"    unpadded
         assert_eq!(decoded_len(b"YQ"), 1); // "a"     unpadded
     }
+
+    #[test]
+    fn smallest_pty_survives_wrapping_and_wide_text() {
+        let (rows, cols) = crate::session::pty_size(0, 0);
+        let mut p = ParserState::new(rows, cols);
+        p.process("abcdefghijklmnop中文中文\r\nx中".as_bytes());
+    }
 }

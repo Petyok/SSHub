@@ -21,6 +21,15 @@ use anyhow::Result;
 pub use parser::ParserState;
 pub use pty::{PtyEvent, PtyRuntime};
 
+/// PTY size for a terminal of `rows` x `cols`: one row each for header and
+/// footer, floored at 2x2. Stock vt100 0.16 panics below that: wrapping text
+/// on a 1-row grid panics in `Grid::col_wrap`, and a wide character on a
+/// 1-column grid underflows `cols - width` in `Screen::text`. The
+/// renderer clips whatever no longer fits the window.
+pub(crate) fn pty_size(rows: u16, cols: u16) -> (u16, u16) {
+    (rows.saturating_sub(2).max(2), cols.max(2))
+}
+
 /// Lifecycle of an embedded SSH session.
 #[derive(Debug)]
 pub enum SessionPhase {
@@ -250,9 +259,7 @@ impl Session {
         log: Option<crate::session_log::SessionLogWriter>,
         siphon_stderr: bool,
     ) -> Result<Self> {
-        // Reserve 1 row for header + 1 row for footer; ensure non-zero PTY.
-        let pty_rows = rows.saturating_sub(2).max(1);
-        let pty_cols = cols.max(1);
+        let (pty_rows, pty_cols) = pty_size(rows, cols);
         let interactive = config.key_push_identity.is_none()
             && matches!(config.argv.first().map(String::as_str), Some("ssh"));
         let auth = if interactive {
@@ -1020,8 +1027,7 @@ impl Session {
 
     /// Update both the PTY size and the parser grid. Body rows = total - header - footer.
     pub fn resize(&mut self, rows: u16, cols: u16) {
-        let pty_rows = rows.saturating_sub(2).max(1);
-        let pty_cols = cols.max(1);
+        let (pty_rows, pty_cols) = pty_size(rows, cols);
         self.parser.set_size(pty_rows, pty_cols);
         let _ = self.runtime.resize(pty_rows, pty_cols);
     }
