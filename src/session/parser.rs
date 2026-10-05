@@ -2,7 +2,11 @@
 //! renderer reads via `tui-term`, relays OSC 52 clipboard writes that
 //! applications inside the PTY emit, and answers the terminal status queries
 //! they send — `vt100` implements none of the latter, and an application that
-//! asks and hears nothing back blocks until its own timeout.
+//! asks and hears nothing back blocks until its own timeout. In front of the
+//! parser, [`XtermCompat`] translates the few xterm sequences stock `vt100`
+//! drops into ones it does understand.
+
+use unicode_width::UnicodeWidthChar;
 
 /// Largest decoded payload we'll relay from the PTY to the host clipboard
 /// (64 KiB). Keeps a remote from flooding the clipboard with a huge write.
@@ -17,6 +21,227 @@ const CLIPBOARD_RELAY_MAX_QUEUED: usize = 8;
 /// real application asks for in one frame — it exists so a remote stuck in a
 /// query loop can't make us buffer unbounded input for it.
 const REPLY_QUEUE_MAX_BYTES: usize = 1024;
+
+/// Longest CSI sequence held back waiting for its final byte (256 bytes).
+/// Real ones are a few dozen bytes; a longer one is passed through unchanged
+/// instead of being buffered without bound.
+const CSI_HOLD_MAX: usize = 256;
+
+const ESC: u8 = 0x1b;
+
+/// Where [`XtermCompat`] stands in the byte stream: the slice of vte's state
+/// machine that tells printed text, a CSI sequence and string payloads apart.
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum Scan {
+    #[default]
+    Ground,
+    /// `ESC` seen and held, the next byte decides what it starts.
+    Esc,
+    /// Inside `ESC [`, held until the final byte.
+    Csi,
+    /// Passed through until a final byte in `lo..=0x7e`: an `ESC (`-style
+    /// sequence (`0x30`), or a CSI past [`CSI_HOLD_MAX`] (`0x40`).
+    Pass(u8),
+    /// OSC payload, ended by BEL or `ESC`.
+    Osc,
+    /// DCS parameters, up to the final byte that starts the payload.
+    DcsHead,
+    /// DCS payload, ended by `ESC` or a raw C1 ST (`0x9c`).
+    Dcs,
+    /// SOS/PM/APC payload, ended by `ESC`.
+    Str,
+}
+
+/// Rewrites xterm sequences stock `vt100` 0.16 ignores into ones it handles.
+/// btop, for one, places everything with HVP (`CSI r;c f`); vt100 ignored it,
+/// so each frame landed where the previous one stopped. Diagnosed in PR #139.
+///
+/// Only CSI sequences are touched, and only when held whole: a sequence split
+/// across PTY reads is kept back and finished on the next read. Bytes inside
+/// OSC/DCS/APC strings are never rewritten; when one ends at a bare `ESC`, a
+/// CAN goes first so vt100 leaves the string at the same point vte does.
+#[derive(Default)]
+struct XtermCompat {
+    scan: Scan,
+    /// The held `ESC` or `ESC [ …` sequence.
+    seq: Vec<u8>,
+    /// Last graphic character printed, for REP. Kept across reads.
+    last: Option<char>,
+    /// A UTF-8 character being assembled, possibly across reads.
+    utf8: [u8; 4],
+    utf8_len: u8,
+    utf8_need: u8,
+}
+
+impl XtermCompat {
+    /// Translate `bytes`, appending the result to `out` in order.
+    fn feed(&mut self, bytes: &[u8], size: (u16, u16), out: &mut Vec<u8>) {
+        let mut span = 0;
+        for (i, &b) in bytes.iter().enumerate() {
+            if !matches!(self.scan, Scan::Esc | Scan::Csi) {
+                match (self.scan, b) {
+                    (_, ESC) => {
+                        out.extend_from_slice(&bytes[span..i]);
+                        span = i + 1;
+                        // vte ends a string or aborts a sequence on this ESC,
+                        // before seeing what follows it. Holding the ESC would
+                        // leave vte inside, swallowing REP output and C0
+                        // controls sent ahead of it; CAN ends it right here.
+                        if self.scan != Scan::Ground {
+                            out.push(0x18);
+                        }
+                        self.hold_esc();
+                    }
+                    (Scan::Ground, _) => self.track(b),
+                    (_, 0x18 | 0x1a) | (Scan::Osc, 0x07) | (Scan::Dcs, 0x9c) => {
+                        self.scan = Scan::Ground;
+                    }
+                    (Scan::DcsHead, 0x40..=0x7e) => self.scan = Scan::Dcs,
+                    (Scan::Pass(lo), _) if (lo..=0x7e).contains(&b) => {
+                        self.scan = Scan::Ground;
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+            span = i + 1;
+            match b {
+                // A new ESC aborts the held sequence (CSI) or is ignored after
+                // it (ESC ESC); either way the held bytes did nothing yet.
+                ESC => self.hold_esc(),
+                0x18 | 0x1a => {
+                    self.seq.push(b);
+                    out.extend_from_slice(&self.seq);
+                    self.scan = Scan::Ground;
+                }
+                // Other C0 controls run mid-sequence without ending it, so
+                // running them before the held bytes changes nothing.
+                0x00..=0x1f => out.push(b),
+                // vte ignores DEL and high bytes mid-sequence.
+                0x7f..=0xff => {}
+                b'[' if self.scan == Scan::Esc => {
+                    self.seq.push(b);
+                    self.scan = Scan::Csi;
+                }
+                _ if self.scan == Scan::Esc => {
+                    self.seq.push(b);
+                    out.extend_from_slice(&self.seq);
+                    self.scan = match b {
+                        b']' => Scan::Osc,
+                        b'P' => Scan::DcsHead,
+                        b'X' | b'^' | b'_' => Scan::Str,
+                        0x20..=0x2f => Scan::Pass(0x30),
+                        _ => Scan::Ground,
+                    };
+                }
+                0x40..=0x7e => {
+                    self.seq.push(b);
+                    self.dispatch(size, out);
+                    self.scan = Scan::Ground;
+                }
+                _ => {
+                    self.seq.push(b);
+                    if self.seq.len() > CSI_HOLD_MAX {
+                        out.extend_from_slice(&self.seq);
+                        self.scan = Scan::Pass(0x40);
+                    }
+                }
+            }
+        }
+        if span < bytes.len() {
+            out.extend_from_slice(&bytes[span..]);
+        }
+    }
+
+    fn hold_esc(&mut self) {
+        self.seq.clear();
+        self.seq.push(ESC);
+        self.utf8_len = 0;
+        self.scan = Scan::Esc;
+    }
+
+    /// Follow printed text to know the last graphic character, the one REP
+    /// repeats. Mirrors what vt100 draws as a cell of its own: no controls, no
+    /// U+FFFD, no C1, no zero-width marks (those stack onto the cell before).
+    fn track(&mut self, b: u8) {
+        match b {
+            0x20..=0x7e => {
+                self.last = Some(char::from(b));
+                self.utf8_len = 0;
+            }
+            0x80..=0xbf if self.utf8_len > 0 => {
+                self.utf8[usize::from(self.utf8_len)] = b;
+                self.utf8_len += 1;
+                if self.utf8_len == self.utf8_need {
+                    let utf8 = &self.utf8[..usize::from(self.utf8_len)];
+                    let c = std::str::from_utf8(utf8)
+                        .ok()
+                        .and_then(|s| s.chars().next());
+                    if let Some(c) = c.filter(|&c| c != '\u{fffd}' && c.width().unwrap_or(0) > 0) {
+                        self.last = Some(c);
+                    }
+                    self.utf8_len = 0;
+                }
+            }
+            0xc2..=0xf4 => {
+                self.utf8[0] = b;
+                self.utf8_len = 1;
+                // 110xxxxx, 1110xxxx, 11110xxx: the leading ones are the length.
+                self.utf8_need = b.leading_ones() as u8;
+            }
+            _ => self.utf8_len = 0,
+        }
+    }
+
+    /// Write the complete CSI sequence in `seq`, rewritten if vt100 lacks it.
+    fn dispatch(&mut self, (_, cols): (u16, u16), out: &mut Vec<u8>) {
+        let end = self.seq.len() - 1;
+        let (body, fin) = (&self.seq[2..end], self.seq[end]);
+        // Plain parameters only: a private marker or intermediate makes it
+        // another sequence (`CSI ? u` is the kitty query, not SCORC).
+        let plain = body
+            .iter()
+            .all(|&b| b.is_ascii_digit() || b == b';' || b == b':');
+        let bare = body.is_empty();
+        let n = param(body);
+        match fin {
+            b's' if bare => out.extend_from_slice(b"\x1b7"),
+            b'u' if bare => out.extend_from_slice(b"\x1b8"),
+            // HVP, HPA, HPR, VPR: same parameters as CUP, CHA, CUF, CUD.
+            b'f' | b'`' | b'a' | b'e' if plain => {
+                self.seq[end] = match fin {
+                    b'f' => b'H',
+                    b'`' => b'G',
+                    b'a' => b'C',
+                    _ => b'B',
+                };
+                out.extend_from_slice(&self.seq);
+            }
+            // REP, bounded to `cols` characters (two rows of wide ones);
+            // dropped with nothing to repeat.
+            b'b' if plain => {
+                if let Some(c) = self.last {
+                    let mut buf = [0; 4];
+                    let count = usize::from(n.max(1).min(cols));
+                    let c = c.encode_utf8(&mut buf).as_bytes();
+                    for _ in 0..count {
+                        out.extend_from_slice(c);
+                    }
+                }
+            }
+            _ => out.extend_from_slice(&self.seq),
+        }
+    }
+}
+
+/// Value of one CSI parameter: its leading digits, saturating like vte.
+fn param(p: &[u8]) -> u16 {
+    p.iter()
+        .take_while(|b| b.is_ascii_digit())
+        .fold(0u16, |n, &d| {
+            n.saturating_mul(10).saturating_add(u16::from(d - b'0'))
+        })
+}
 
 /// Exact decoded byte length of a base64 payload, without decoding it. The
 /// payload is relayed verbatim, so a real decoder would be pure waste — this
@@ -152,12 +377,17 @@ impl vt100::Callbacks for PtyCallbacks {
 
 pub struct ParserState {
     inner: vt100::Parser<PtyCallbacks>,
+    compat: XtermCompat,
+    /// Translator output for the read being processed; reused.
+    out: Vec<u8>,
 }
 
 impl ParserState {
     pub fn new(rows: u16, cols: u16) -> Self {
         Self {
             inner: vt100::Parser::new_with_callbacks(rows, cols, 10_000, PtyCallbacks::default()),
+            compat: XtermCompat::default(),
+            out: Vec::new(),
         }
     }
 
@@ -180,7 +410,12 @@ impl ParserState {
     }
 
     pub fn process(&mut self, bytes: &[u8]) {
-        self.inner.process(bytes);
+        let size = self.inner.screen().size();
+        let mut out = std::mem::take(&mut self.out);
+        out.clear();
+        self.compat.feed(bytes, size, &mut out);
+        self.inner.process(&out);
+        self.out = out;
     }
 
     pub fn set_size(&mut self, rows: u16, cols: u16) {
@@ -521,6 +756,291 @@ mod tests {
         assert_eq!(decoded_len(b"aGVsbG8"), 5); // "hello" unpadded
         assert_eq!(decoded_len(b"aGk"), 2); // "hi"    unpadded
         assert_eq!(decoded_len(b"YQ"), 1); // "a"     unpadded
+    }
+
+    // ── xterm compatibility translator ────────────────────────────
+    //
+    // Stock vt100 0.16 drops these xterm sequences; `XtermCompat` rewrites
+    // them into ones it handles before the bytes reach the parser.
+
+    /// Run `chunks` through the translator alone, as successive PTY reads.
+    fn translate(size: (u16, u16), chunks: &[&[u8]]) -> Vec<u8> {
+        let mut compat = XtermCompat::default();
+        let mut out = Vec::new();
+        for chunk in chunks {
+            compat.feed(chunk, size, &mut out);
+        }
+        out
+    }
+
+    fn row(p: &ParserState, r: usize) -> String {
+        let (_, cols) = p.screen().size();
+        p.screen().rows(0, cols).nth(r).unwrap_or_default()
+    }
+
+    #[test]
+    fn hvp_places_text_like_cup() {
+        // btop positions everything with HVP; ignored, a frame lands on one line.
+        let p = parser_with(24, 80, b"\x1b[2J\x1b[HAAA\x1b[10;20fBBB");
+        assert_eq!(row(&p, 0), "AAA");
+        assert_eq!(row(&p, 9), format!("{}BBB", " ".repeat(19)));
+    }
+
+    #[test]
+    fn hpa_hpr_vpr_move_like_cha_cuf_cud() {
+        assert_eq!(row(&parser_with(5, 20, b"\x1b[5`X"), 0), "    X");
+        assert_eq!(row(&parser_with(5, 20, b"AB\x1b[3aC"), 0), "AB   C");
+        assert_eq!(row(&parser_with(5, 20, b"\x1b[2eX"), 2), "X");
+    }
+
+    #[test]
+    fn scosc_and_scorc_save_and_restore_the_cursor() {
+        let p = parser_with(10, 20, b"\x1b[5;5H\x1b[s\x1b[1;1HX\x1b[uY");
+        assert_eq!(row(&p, 4), "    Y");
+    }
+
+    #[test]
+    fn only_bare_csi_s_and_u_mean_cursor_save() {
+        // `CSI ? u` (kitty query), `CSI > 1 u`, `CSI < u`, `CSI 1 u` must not
+        // restore the cursor saved at (2, 2).
+        let p = parser_with(
+            10,
+            20,
+            b"\x1b[3;3H\x1b7\x1b[1;1H\x1b[?u\x1b[>1u\x1b[<u\x1b[1u",
+        );
+        assert_eq!(p.screen().cursor_position(), (0, 0));
+        // `CSI 1;5 s` (DECSLRM) must not save over it.
+        let p = parser_with(10, 20, b"\x1b[3;3H\x1b7\x1b[5;5H\x1b[1;5s\x1b[1;1H\x1b8");
+        assert_eq!(p.screen().cursor_position(), (2, 2));
+    }
+
+    #[test]
+    fn rewrites_survive_every_split_between_reads() {
+        let stream: &[u8] =
+            b"\x1b[2J\x1b[HAAA\x1b[10;20fBBB\x1b[5`X\x1b[s\x1b[3;3HY\x1b[uZ\xe4\xb8\xad\x1b[2b";
+        let p = parser_with(24, 80, stream);
+        assert_eq!(row(&p, 2), "  Y");
+        assert_eq!(row(&p, 9), "    XZ中中中       BBB");
+        let whole = p.screen().contents_formatted();
+        for k in 0..=stream.len() {
+            let mut p = ParserState::new(24, 80);
+            p.process(&stream[..k]);
+            p.process(&stream[k..]);
+            assert_eq!(p.screen().contents_formatted(), whole, "split at {k}");
+        }
+        let mut p = ParserState::new(24, 80);
+        for b in stream {
+            p.process(std::slice::from_ref(b));
+        }
+        assert_eq!(p.screen().contents_formatted(), whole, "byte at a time");
+    }
+
+    #[test]
+    fn rep_repeats_the_last_character() {
+        assert_eq!(row(&parser_with(5, 20, b"a\x1b[3b"), 0), "aaaa");
+        assert_eq!(row(&parser_with(5, 20, b"a\x1b[b"), 0), "aa");
+        assert_eq!(row(&parser_with(5, 20, b"a\x1b[0b"), 0), "aa");
+    }
+
+    #[test]
+    fn rep_is_bounded_by_the_row_width() {
+        let p = parser_with(3, 10, b"x\x1b[65535b");
+        assert_eq!(p.screen().contents().matches('x').count(), 11);
+    }
+
+    #[test]
+    fn rep_remembers_a_wide_character_across_reads() {
+        let wide = "中".as_bytes();
+        let mut p = ParserState::new(5, 20);
+        p.process(&wide[..1]);
+        p.process(&wide[1..]);
+        p.process(b"\x1b[2b");
+        assert_eq!(row(&p, 0), "中中中");
+    }
+
+    #[test]
+    fn rep_with_nothing_printed_before_it_is_dropped() {
+        assert_eq!(row(&parser_with(5, 20, b"\x1b[5b"), 0), "");
+        // Payload bytes of a string are not printed text.
+        assert_eq!(row(&parser_with(5, 20, b"a\x1b]0;bbb\x07\x1b[b"), 0), "aa");
+        assert_eq!(row(&parser_with(5, 20, b"a\x1bPq#0\x1b\\\x1b[b"), 0), "aa");
+    }
+
+    #[test]
+    fn string_payloads_pass_through_unchanged() {
+        // Only a CAN lands in front of each ESC that ends a string.
+        let stream: &[u8] = b"\x1b]0;[1;2f title [s\x07\x1b]52;c;R0VIRUlN\x1b\\\
+            \x1bP1$r[5;5f\x1b\\\x1b_[u\x1b\\";
+        let expected: &[u8] = b"\x1b]0;[1;2f title [s\x07\x1b]52;c;R0VIRUlN\x18\x1b\\\
+            \x1bP1$r[5;5f\x18\x1b\\\x1b_[u\x18\x1b\\";
+        for k in 0..=stream.len() {
+            assert_eq!(
+                translate((24, 80), &[&stream[..k], &stream[k..]]),
+                expected,
+                "split {k}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_string_ended_by_a_bare_esc_is_left_at_once() {
+        // vte ends the string at the ESC itself; holding that ESC used to keep
+        // vt100 inside the string while REP output and controls went in.
+        assert_eq!(row(&parser_with(5, 20, b"a\x1b]0;t\x1b[2bZ"), 0), "aaaZ");
+        assert_eq!(row(&parser_with(5, 20, b"\x1b]0;t\x1b[2bZ"), 0), "Z");
+        let mut p = parser_with(5, 20, b"a\x1b]52;c;R0VIRUlN\x1b[2bxyz");
+        assert_eq!(p.take_clipboard_writes(), vec!["R0VIRUlN".to_string()]);
+        assert_eq!(row(&p, 0), "aaaxyz");
+        let stream = b"ab\x1b]0;t\x1b\nY";
+        let mut raw = vt100::Parser::new(5, 20, 0);
+        raw.process(stream);
+        assert_eq!(raw.screen().cursor_position(), (1, 2));
+        assert_eq!(
+            parser_with(5, 20, stream).screen().cursor_position(),
+            (1, 2)
+        );
+    }
+
+    #[test]
+    fn an_esc_aborting_a_held_csi_drops_it() {
+        // `ESC [ 1` never completes; emitting it ahead of the REP output made
+        // the first repeated `a` its final byte.
+        assert_eq!(row(&parser_with(5, 20, b"a\x1b[1\x1b[2bZ"), 0), "aaaZ");
+    }
+
+    #[test]
+    fn a_raw_c1_st_ends_a_dcs_for_rep() {
+        assert_eq!(row(&parser_with(5, 20, b"a\x1bPq\x9cz\x1b[3b"), 0), "azzzz");
+    }
+
+    #[test]
+    fn rep_skips_zero_width_marks() {
+        let p = parser_with(5, 20, "e\u{301}\x1b[2b".as_bytes());
+        let cell = |c| p.screen().cell(0, c).unwrap().contents().to_string();
+        assert_eq!(
+            (cell(0), cell(1), cell(2)),
+            ("e\u{301}".into(), "e".into(), "e".into())
+        );
+    }
+
+    /// Streams made only of sequences the translator must leave alone render
+    /// exactly as on stock vt100: same screen, cursor and replies, also when
+    /// split at any offset. Fixed seed, so a failure reproduces.
+    #[test]
+    fn untouched_sequences_render_like_stock_vt100() {
+        const PIECES: &[&[u8]] = &[
+            b"a",
+            b"Z",
+            b"x ",
+            "é".as_bytes(),
+            "中".as_bytes(),
+            b"\r",
+            b"\n",
+            b"\t",
+            b"\x08",
+            b"\x07",
+            b"\x18",
+            b"\x1a",
+            b"\x1b]0;t[1;2f\x07",
+            b"\x1b]2;[s\x1b\\",
+            b"\x1b]0;bare[",
+            b"\x1b]52;c;R0VIRUlN\x07",
+            b"\x1b]52;c;aGk=\x1b",
+            b"\x1bP1$r[5f\x1b\\",
+            b"\x1bPq#0",
+            b"\x1b_[u\x1b\\",
+            b"\x1b^x\x1b",
+            b"\x1b[?25l",
+            b"\x1b[?25h",
+            b"\x1b[?u",
+            b"\x1b[>c",
+            b"\x1b[?6n",
+            b"\x1b[>1u",
+            b"\x1b[<u",
+            b"\x1b[6n",
+            b"\x1b[5n",
+            b"\x1b[c",
+            b"\x1b[3;4H",
+            b"\x1b[2J",
+            b"\x1b[K",
+            b"\x1b[1;31m",
+            b"\x1b[5;6\x1b",
+            b"\x1b[?3;4\x18",
+            b"\x1b(B",
+            b"\x1b7",
+            b"\x1b8",
+            b"\x1b",
+        ];
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for n in 0..3000 {
+            let len = 1 + next() % 40;
+            let stream: Vec<u8> = (0..len)
+                .flat_map(|_| {
+                    PIECES[(next() % PIECES.len() as u64) as usize]
+                        .iter()
+                        .copied()
+                })
+                .collect();
+            let splits: Vec<usize> = if n < 30 {
+                (0..=stream.len()).collect()
+            } else {
+                vec![0]
+            };
+            for k in splits {
+                // Raw vt100 gets the same two reads: vte 0.15 itself mishandles
+                // a UTF-8 character split across reads, which is not ours to
+                // compare against.
+                let mut raw =
+                    vt100::Parser::new_with_callbacks(6, 20, 10_000, PtyCallbacks::default());
+                raw.process(&stream[..k]);
+                raw.process(&stream[k..]);
+                let want = (
+                    raw.screen().contents_formatted(),
+                    raw.screen().cursor_position(),
+                );
+                let want_replies = raw.callbacks().replies.clone();
+                let mut p = ParserState::new(6, 20);
+                p.process(&stream[..k]);
+                p.process(&stream[k..]);
+                let got = (
+                    p.screen().contents_formatted(),
+                    p.screen().cursor_position(),
+                );
+                assert!(
+                    got == want,
+                    "stream {n} split {k}: {:?}",
+                    String::from_utf8_lossy(&stream)
+                );
+                assert_eq!(
+                    p.take_replies(),
+                    want_replies,
+                    "replies, stream {n} split {k}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn osc52_relay_survives_split_reads() {
+        let mut p = ParserState::new(10, 80);
+        for chunk in [&b"\x1b]5"[..], b"2;c;R0VI", b"RUlN\x07"] {
+            p.process(chunk);
+        }
+        assert_eq!(p.take_clipboard_writes(), vec!["R0VIRUlN".to_string()]);
+    }
+
+    #[test]
+    fn replies_keep_their_order_across_rewrites_and_split_reads() {
+        let mut p = ParserState::new(10, 80);
+        p.process(b"\x1b[5n\x1b[2;3f\x1b[6");
+        p.process(b"n\x1b[?u\x1b[>c\x1b[c");
+        assert_eq!(p.take_replies(), b"\x1b[0n\x1b[2;3R\x1b[?1;2c".to_vec());
     }
 
     #[test]

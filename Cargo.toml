@@ -79,6 +79,8 @@ toml = "0.8"
 toml_edit = "0.22"
 tempfile = "3"
 tui-term = "0.3"
+# Character widths for REP: already in the tree through vt100.
+unicode-width = "0.2"
 vt100 = "0.16"
 
 [dev-dependencies]
