@@ -1,8 +1,5 @@
-//! SSHub's embedded terminal model, adapted from vt100 and shellglass.
-//! See `src/terminal/README.md` for the pinned source and integration limits.
-//! Generic metadata APIs are retained from that source; SSHub does not use
-//! them to implement graphics protocols.
-//!
+// Adapted from Jesse Luehrs' vt100 and iksteen/shellglass revision
+// dc7f399f4ffc3daf0593ff9a272338ac9b1affc6. MIT; see LICENSE.
 //! This module parses a terminal byte stream and provides an in-memory
 //! representation of the rendered contents.
 //!

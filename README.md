@@ -314,16 +314,6 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 
 ### Session (embedded PTY)
 
-The terminal model is compiled into SSHub and included in its crates.io
-package; it does not depend on a Cargo patch or a git-only parser. DEC mode
-2026 holds only the remote pane, with a one-second presentation cap; resize
-and local scrollback bypass that hold. Selection and inline suggestions also
-use the live grid, so copied text and completion positions match what is shown.
-Pixel mouse mode 1016 uses the actual
-PTY pixel geometry when the host terminal provides it. See
-[terminal compatibility](docs/terminal-compatibility.md) for supported query
-policy, resource limits, rendering limitations and verification commands.
-
 | Key                    | Action                              |
 |------------------------|-------------------------------------|
 | `Ctrl+T`               | New session tab (host picker)         |
