@@ -52,9 +52,10 @@ enum Scan {
     Str,
 }
 
-/// Rewrites xterm sequences stock `vt100` 0.16 ignores into ones it handles.
-/// btop, for one, places everything with HVP (`CSI r;c f`); vt100 ignored it,
-/// so each frame landed where the previous one stopped. Diagnosed in PR #139.
+/// Rewrites xterm sequences stock `vt100` 0.16 ignores into ones it handles,
+/// and clamps the counts it would loop on for seconds. btop, for one, places
+/// everything with HVP (`CSI r;c f`); vt100 ignored it, so each frame landed
+/// where the previous one stopped. Diagnosed in PR #139.
 ///
 /// Only CSI sequences are touched, and only when held whole: a sequence split
 /// across PTY reads is kept back and finished on the next read. Bytes inside
@@ -99,6 +100,13 @@ impl XtermCompat {
                     (Scan::DcsHead, 0x40..=0x7e) => self.scan = Scan::Dcs,
                     (Scan::Pass(lo), _) if (lo..=0x7e).contains(&b) => {
                         self.scan = Scan::Ground;
+                        // An overlong ICH/IL/SD still carries a count vt100
+                        // would loop on; CAN aborts it before dispatch.
+                        if lo == 0x40 && matches!(b, b'@' | b'L' | b'T') {
+                            out.extend_from_slice(&bytes[span..i]);
+                            out.push(0x18);
+                            span = i + 1;
+                        }
                     }
                     _ => {}
                 }
@@ -194,7 +202,7 @@ impl XtermCompat {
     }
 
     /// Write the complete CSI sequence in `seq`, rewritten if vt100 lacks it.
-    fn dispatch(&mut self, (_, cols): (u16, u16), out: &mut Vec<u8>) {
+    fn dispatch(&mut self, (rows, cols): (u16, u16), out: &mut Vec<u8>) {
         let end = self.seq.len() - 1;
         let (body, fin) = (&self.seq[2..end], self.seq[end]);
         // Plain parameters only: a private marker or intermediate makes it
@@ -228,6 +236,12 @@ impl XtermCompat {
                         out.extend_from_slice(c);
                     }
                 }
+            }
+            // vt100 loops `n` times for ICH, IL and SD; past the grid it is
+            // the same blank, only seconds slower.
+            b'@' if plain && n > cols => out.extend_from_slice(format!("\x1b[{cols}@").as_bytes()),
+            b'L' | b'T' if plain && n > rows => {
+                out.extend_from_slice(format!("\x1b[{rows}{}", char::from(fin)).as_bytes());
             }
             _ => out.extend_from_slice(&self.seq),
         }
@@ -1033,6 +1047,40 @@ mod tests {
             p.process(chunk);
         }
         assert_eq!(p.take_clipboard_writes(), vec!["R0VIRUlN".to_string()]);
+    }
+
+    #[test]
+    fn ich_il_sd_counts_are_clamped_to_the_grid() {
+        // vt100 loops once per count: a single `CSI 65535 @` takes seconds.
+        let t = |s: &[u8]| translate((24, 80), &[s]);
+        assert_eq!(t(b"\x1b[65535@"), b"\x1b[80@");
+        assert_eq!(t(b"\x1b[65535:1@"), b"\x1b[80@");
+        assert_eq!(t(b"\x1b[65535L"), b"\x1b[24L");
+        assert_eq!(t(b"\x1b[65535T"), b"\x1b[24T");
+        assert_eq!(t(b"\x1b[80@\x1b[24L\x1b[2T"), b"\x1b[80@\x1b[24L\x1b[2T");
+
+        let p = parser_with(24, 80, b"abc\x1b[1;1H\x1b[65535@");
+        assert_eq!(row(&p, 0), "");
+        let p = parser_with(5, 10, b"1\r\n2\r\n3\x1b[1;1H\x1b[65535L");
+        assert_eq!(p.screen().contents().trim(), "");
+        let p = parser_with(5, 10, b"1\r\n2\r\n3\x1b[65535T");
+        assert_eq!(p.screen().contents().trim(), "");
+    }
+
+    #[test]
+    fn overlong_count_sequence_is_aborted() {
+        // Zero padding pushes it past the hold limit; it must not reach vt100
+        // with its 65535 count intact.
+        let mut ich = b"\x1b[".to_vec();
+        ich.extend(std::iter::repeat_n(b'0', 300));
+        ich.extend_from_slice(b"65535@");
+        let mut aborted = ich.clone();
+        *aborted.last_mut().unwrap() = 0x18;
+        assert_eq!(translate((24, 80), &[&ich]), aborted);
+
+        let mut stream = b"abc\x1b[1;1H".to_vec();
+        stream.extend_from_slice(&ich);
+        assert_eq!(row(&parser_with(24, 80, &stream), 0), "abc");
     }
 
     #[test]
