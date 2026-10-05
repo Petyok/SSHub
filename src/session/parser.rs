@@ -4,8 +4,16 @@
 //! they send — `vt100` implements none of the latter, and an application that
 //! asks and hears nothing back blocks until its own timeout. In front of the
 //! parser, [`XtermCompat`] translates the few xterm sequences stock `vt100`
-//! drops into ones it does understand.
+//! drops into ones it does understand, and tracks synchronized output (DEC
+//! mode 2026) so the pane can show the last complete frame mid-repaint.
 
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
+
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
+use ratatui::widgets::Widget;
+use tui_term::widget::PseudoTerminal;
 use unicode_width::UnicodeWidthChar;
 
 /// Largest decoded payload we'll relay from the PTY to the host clipboard
@@ -72,6 +80,23 @@ struct XtermCompat {
     utf8: [u8; 4],
     utf8_len: u8,
     utf8_need: u8,
+    /// Synchronized output (DEC mode 2026) is set: the app is mid-frame.
+    sync: bool,
+    /// Index in `marks` of the frame mark that opened the transaction still
+    /// open, if it opened in the current batch.
+    open_frame: Option<usize>,
+    /// Points in the current batch's output where `ParserState` must act.
+    marks: Vec<(usize, Mark)>,
+}
+
+/// Something `ParserState` must do at a point in the translated stream.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mark {
+    /// A synchronized-output transaction opens here: the bytes before it are
+    /// the last complete frame.
+    Frame,
+    /// DECRQM for mode 2026, with whether the mode was set at that point.
+    ModeQuery(bool),
 }
 
 impl XtermCompat {
@@ -134,6 +159,11 @@ impl XtermCompat {
                 _ if self.scan == Scan::Esc => {
                     self.seq.push(b);
                     out.extend_from_slice(&self.seq);
+                    // RIS resets every mode, synchronized output included.
+                    if b == b'c' {
+                        self.sync = false;
+                        self.open_frame = None;
+                    }
                     self.scan = match b {
                         b']' => Scan::Osc,
                         b'P' => Scan::DcsHead,
@@ -213,6 +243,28 @@ impl XtermCompat {
         let bare = body.is_empty();
         let n = param(body);
         match fin {
+            // DECSET/DECRST 2026, alone or combined (`CSI ? 25;2026 h`).
+            // vt100 still gets the bytes; it ignores the mode itself.
+            b'h' | b'l'
+                if body.first() == Some(&b'?')
+                    && body[1..].split(|&b| b == b';').any(|p| param(p) == 2026) =>
+            {
+                if fin == b'h' && !self.sync {
+                    self.sync = true;
+                    self.open_frame = Some(self.marks.len());
+                    self.marks.push((out.len(), Mark::Frame));
+                }
+                if fin == b'l' {
+                    self.sync = false;
+                    self.open_frame = None;
+                }
+                out.extend_from_slice(&self.seq);
+            }
+            // DECRQM 2026: answered in stream order by `ParserState`.
+            b'p' if body == b"?2026$" => {
+                self.marks.push((out.len(), Mark::ModeQuery(self.sync)));
+                out.extend_from_slice(&self.seq);
+            }
             b's' if bare => out.extend_from_slice(b"\x1b7"),
             b'u' if bare => out.extend_from_slice(b"\x1b8"),
             // HVP, HPA, HPR, VPR: same parameters as CUP, CHA, CUF, CUD.
@@ -383,17 +435,45 @@ impl vt100::Callbacks for PtyCallbacks {
             ('c', 0) => b"\x1b[?1;2c".to_vec(),
             _ => return,
         };
+        self.queue_reply(&reply);
+    }
+}
+
+impl PtyCallbacks {
+    fn queue_reply(&mut self, reply: &[u8]) {
         if self.replies.len() + reply.len() <= REPLY_QUEUE_MAX_BYTES {
-            self.replies.extend_from_slice(&reply);
+            self.replies.extend_from_slice(reply);
         }
     }
 }
 
+/// Longest a synchronized update may freeze the pane (1 s), counted from when
+/// the held frame was taken. An app that opens a transaction and never closes
+/// it must not freeze the session; a repeated BSU takes no new frame, so it
+/// cannot extend the hold either.
+const SYNC_HOLD_MAX: Duration = Duration::from_secs(1);
+
 pub struct ParserState {
     inner: vt100::Parser<PtyCallbacks>,
     compat: XtermCompat,
-    /// Translator output for the read being processed; reused.
+    /// Translated reads queued by [`Self::queue`], up to `done` already fed
+    /// to vt100; reused.
     out: Vec<u8>,
+    /// End offset in `out` of each queued read not yet fed.
+    ends: VecDeque<usize>,
+    done: usize,
+    /// Next entry of `compat.marks` to act on.
+    next_mark: usize,
+    /// The pane as of the last complete frame, drawn instead of the live grid
+    /// while a synchronized update (DEC mode 2026) is open. Rasterized at most
+    /// once per batch; a clone of the screen would drag 10k scrollback rows.
+    frame: Buffer,
+    /// `frame` matches the current grid size and the live (not scrolled) view.
+    frame_ok: bool,
+    /// When `frame` was rasterized.
+    taken: Instant,
+    #[cfg(test)]
+    pub(super) snapshots: usize,
 }
 
 impl ParserState {
@@ -402,6 +482,14 @@ impl ParserState {
             inner: vt100::Parser::new_with_callbacks(rows, cols, 10_000, PtyCallbacks::default()),
             compat: XtermCompat::default(),
             out: Vec::new(),
+            ends: VecDeque::new(),
+            done: 0,
+            next_mark: 0,
+            frame: Buffer::empty(Rect::default()),
+            frame_ok: false,
+            taken: Instant::now(),
+            #[cfg(test)]
+            snapshots: 0,
         }
     }
 
@@ -424,16 +512,97 @@ impl ParserState {
     }
 
     pub fn process(&mut self, bytes: &[u8]) {
+        self.process_at(bytes, Instant::now());
+    }
+
+    fn process_at(&mut self, bytes: &[u8], now: Instant) {
+        self.queue(bytes);
+        self.apply_next(now);
+    }
+
+    /// Translate one PTY read and queue it for [`Self::apply_next`]. Queue all
+    /// reads of a batch before applying any: the held frame is then rasterized
+    /// once, at the batch's last frame boundary, instead of once per read.
+    pub(crate) fn queue(&mut self, bytes: &[u8]) {
         let size = self.inner.screen().size();
-        let mut out = std::mem::take(&mut self.out);
-        out.clear();
-        self.compat.feed(bytes, size, &mut out);
-        self.inner.process(&out);
-        self.out = out;
+        self.compat.feed(bytes, size, &mut self.out);
+        self.ends.push_back(self.out.len());
+    }
+
+    /// Feed the oldest queued read to vt100, as of `now`.
+    pub(crate) fn apply_next(&mut self, now: Instant) {
+        let Some(end) = self.ends.pop_front() else {
+            return;
+        };
+        // Only the transaction still open at the end of the batch matters:
+        // its opening BSU is where the last complete frame ends.
+        while let Some(&(at, mark)) = self.compat.marks.get(self.next_mark) {
+            if at >= end {
+                break;
+            }
+            self.next_mark += 1;
+            if mark == Mark::Frame && self.compat.open_frame != Some(self.next_mark - 1) {
+                continue;
+            }
+            self.inner.process(&self.out[self.done..at]);
+            self.done = at;
+            match mark {
+                Mark::Frame => self.snapshot(now),
+                // DECRPM: 1 = set, 2 = reset. Queued with vt100's own answers,
+                // so replies keep stream order.
+                Mark::ModeQuery(set) => self.inner.callbacks_mut().queue_reply(if set {
+                    b"\x1b[?2026;1$y"
+                } else {
+                    b"\x1b[?2026;2$y"
+                }),
+            }
+        }
+        self.inner.process(&self.out[self.done..end]);
+        self.done = end;
+        if self.ends.is_empty() {
+            self.out.clear();
+            self.done = 0;
+            self.compat.marks.clear();
+            self.compat.open_frame = None;
+            self.next_mark = 0;
+        }
+    }
+
+    /// Rasterize the grid as the held frame, as `tui-term` would draw it.
+    fn snapshot(&mut self, now: Instant) {
+        let screen = self.inner.screen();
+        // A scrolled-back view is not the frame the app drew.
+        self.frame_ok = screen.scrollback() == 0;
+        if self.frame_ok {
+            let (rows, cols) = screen.size();
+            let area = Rect::new(0, 0, cols, rows);
+            self.frame.resize(area);
+            PseudoTerminal::new(screen).render(area, &mut self.frame);
+            self.taken = now;
+            #[cfg(test)]
+            {
+                self.snapshots += 1;
+            }
+        }
+    }
+
+    /// The pane to draw instead of the live grid while the app is mid-frame,
+    /// or `None` to draw live. `live_only` is for overlays that read the live
+    /// grid (selection, ghost text). Never held while scrolled back, after a
+    /// resize until the next frame, or once the frame is [`SYNC_HOLD_MAX`] old.
+    pub(crate) fn held_frame(&self, now: Instant, live_only: bool) -> Option<&Buffer> {
+        let hold = self.compat.sync
+            && self.frame_ok
+            && !live_only
+            && self.scrollback() == 0
+            && now.saturating_duration_since(self.taken) < SYNC_HOLD_MAX;
+        hold.then_some(&self.frame)
     }
 
     pub fn set_size(&mut self, rows: u16, cols: u16) {
         self.inner.screen_mut().set_size(rows, cols);
+        // The held frame has the old size: draw live until the next one.
+        self.frame_ok = false;
     }
 
     pub fn screen(&self) -> &vt100::Screen {
@@ -1096,5 +1265,194 @@ mod tests {
         let (rows, cols) = crate::session::pty_size(0, 0);
         let mut p = ParserState::new(rows, cols);
         p.process("abcdefghijklmnop中文中文\r\nx中".as_bytes());
+    }
+
+    // ── Synchronized output (DEC mode 2026) ───────────────────────
+    //
+    // Inside `CSI ? 2026 h` … `CSI ? 2026 l` the pane shows the last complete
+    // frame, so a read that ends mid-repaint is never drawn half-way.
+
+    const BSU: &str = "\x1b[?2026h";
+    const ESU: &str = "\x1b[?2026l";
+
+    /// The held pane as text, or `None` when the pane draws live.
+    fn held(p: &ParserState, now: Instant) -> Option<String> {
+        p.held_frame(now, false).map(|b| {
+            let a = b.area;
+            (0..a.height)
+                .map(|y| (0..a.width).map(|x| b[(x, y)].symbol()).collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+    }
+
+    fn ms(t: Instant, n: u64) -> Instant {
+        t + Duration::from_millis(n)
+    }
+
+    #[test]
+    fn sync_holds_the_last_complete_frame_until_esu() {
+        let t = Instant::now();
+        let mut p = ParserState::new(5, 20);
+        p.process(format!("BEFORE{BSU}PARTIAL").as_bytes());
+        let shown = held(&p, t).expect("held mid-frame");
+        assert!(
+            shown.contains("BEFORE") && !shown.contains("PARTIAL"),
+            "{shown}"
+        );
+        assert!(
+            p.screen().contents().contains("BEFOREPARTIAL"),
+            "vt100 still gets it all"
+        );
+        p.process(format!(" DONE{ESU}").as_bytes());
+        assert_eq!(held(&p, ms(t, 100)), None);
+    }
+
+    #[test]
+    fn sync_hold_is_capped_from_the_snapshot() {
+        let t = Instant::now();
+        let mut p = ParserState::new(5, 20);
+        p.process_at(format!("A{BSU}B").as_bytes(), t);
+        assert!(held(&p, ms(t, 500)).is_some());
+        assert!(held(&p, ms(t, 999)).is_some());
+        assert_eq!(held(&p, ms(t, 1000)), None, "cap fired");
+        p.process_at(b"C", ms(t, 1100));
+        assert_eq!(
+            held(&p, ms(t, 1100)),
+            None,
+            "live until the transaction ends"
+        );
+        // The next transaction takes a fresh frame and may hold again.
+        p.process_at(format!("{ESU}D{BSU}E").as_bytes(), ms(t, 1700));
+        assert!(held(&p, ms(t, 1700)).is_some_and(|s| s.contains("ABCD") && !s.contains('E')));
+    }
+
+    #[test]
+    fn repeated_bsu_cannot_extend_the_hold() {
+        let t = Instant::now();
+        let mut p = ParserState::new(5, 20);
+        p.process_at(format!("A{BSU}B").as_bytes(), t);
+        p.process_at(format!("{BSU}C").as_bytes(), ms(t, 600));
+        assert!(held(&p, ms(t, 600)).is_some());
+        assert_eq!(held(&p, ms(t, 1000)), None);
+    }
+
+    #[test]
+    fn a_stale_frame_never_comes_back() {
+        // A selection drawn live for 5 s, then cleared: the 5 s old frame must
+        // not be shown for another second.
+        let t = Instant::now();
+        let mut p = ParserState::new(5, 20);
+        p.process_at(format!("A{BSU}B").as_bytes(), t);
+        assert!(p.held_frame(ms(t, 100), true).is_none());
+        assert!(p.held_frame(ms(t, 5000), true).is_none());
+        assert_eq!(held(&p, ms(t, 5050)), None, "selection cleared");
+        // A background tab's frame taken 10 s ago, first drawn when switched to.
+        let mut bg = ParserState::new(5, 20);
+        bg.process_at(format!("A{BSU}B").as_bytes(), t);
+        assert_eq!(held(&bg, ms(t, 10_000)), None);
+    }
+
+    #[test]
+    fn esu_bsu_loop_keeps_advancing_frames() {
+        let t = Instant::now();
+        let mut p = ParserState::new(5, 20);
+        for i in 1..=5u64 {
+            let at = ms(t, i * 1500);
+            p.process_at(format!("{ESU}\x1b[2J\x1b[HFRAME {i}{BSU}").as_bytes(), at);
+            // Frames further apart than the cap: each new one is held anyway.
+            let shown = held(&p, at).expect("each new frame is held");
+            assert!(shown.contains(&format!("FRAME {i}")), "{shown}");
+        }
+        // Several transactions in one read: the frame before the last BSU,
+        // rasterized once.
+        let before = p.snapshots;
+        p.process_at(
+            format!("{ESU}X{BSU}x{ESU}Y{BSU}y{ESU}Z{BSU}z").as_bytes(),
+            ms(t, 9000),
+        );
+        assert_eq!(p.snapshots, before + 1);
+        let shown = held(&p, ms(t, 9000)).unwrap();
+        assert!(shown.contains("XxYyZ") && !shown.contains('z'), "{shown}");
+    }
+
+    #[test]
+    fn a_batch_of_reads_takes_one_snapshot() {
+        // Many small reads queued together (one `Session::drain`) cost one
+        // rasterization, of the frame at the batch's last BSU.
+        let t = Instant::now();
+        let mut p = ParserState::new(5, 20);
+        let reads: Vec<String> = (0..8).map(|i| format!("{ESU}{i}{BSU}")).collect();
+        for r in &reads {
+            p.queue(r.as_bytes());
+        }
+        for _ in &reads {
+            p.apply_next(t);
+        }
+        assert_eq!(p.snapshots, 1);
+        assert!(held(&p, t).is_some_and(|s| s.starts_with("01234567")));
+        // A transaction still open from an earlier batch keeps its frame.
+        p.queue(b"more");
+        p.queue(b" still");
+        p.apply_next(t);
+        p.apply_next(t);
+        assert_eq!(p.snapshots, 1);
+        assert!(held(&p, t).is_some_and(|s| !s.contains("more")));
+    }
+
+    #[test]
+    fn sync_hold_is_bypassed_when_scrolled_resized_or_overlaid() {
+        let t = Instant::now();
+        let mut p = ParserState::new(5, 20);
+        for i in 0..20 {
+            p.process(format!("line {i}\r\n").as_bytes());
+        }
+        p.process(format!("{BSU}partial").as_bytes());
+        assert!(held(&p, t).is_some());
+        assert!(
+            p.held_frame(t, true).is_none(),
+            "selection / ghost read the live grid"
+        );
+        p.set_scrollback(3);
+        assert_eq!(held(&p, t), None, "scrolled back");
+        p.set_scrollback(0);
+        assert!(held(&p, t).is_some());
+        p.set_size(6, 30);
+        assert_eq!(held(&p, t), None, "first frame after a resize");
+        p.process(format!("{ESU}{BSU}").as_bytes());
+        assert_eq!(p.held_frame(t, false).map(|b| b.area.width), Some(30));
+    }
+
+    #[test]
+    fn decrqm_2026_is_answered_in_stream_order() {
+        let mut p = ParserState::new(5, 20);
+        p.process(format!("\x1b[?2026$p\x1b[5n{BSU}\x1b[?2026$p\x1b[6n").as_bytes());
+        assert_eq!(
+            p.take_replies(),
+            b"\x1b[?2026;2$y\x1b[0n\x1b[?2026;1$y\x1b[1;1R"
+        );
+        p.process(b"\x1b[?20");
+        p.process(format!("26$p{ESU}\x1b[?2026$p\x1b[?2027$p\x1b[?u\x1b[>c").as_bytes());
+        assert_eq!(p.take_replies(), b"\x1b[?2026;1$y\x1b[?2026;2$y");
+    }
+
+    #[test]
+    fn combined_decset_params_toggle_sync() {
+        let t = Instant::now();
+        let mut p = ParserState::new(5, 20);
+        p.process(b"A\x1b[?25;2026hB");
+        assert!(held(&p, t).is_some_and(|s| s.contains('A') && !s.contains('B')));
+        p.process(b"\x1b[?1049;2026l");
+        assert_eq!(held(&p, t), None);
+    }
+
+    #[test]
+    fn ris_ends_the_hold() {
+        let t = Instant::now();
+        let mut p = ParserState::new(5, 20);
+        p.process(format!("A{BSU}B").as_bytes());
+        assert!(held(&p, t).is_some());
+        p.process(b"\x1bc");
+        assert_eq!(held(&p, t), None);
     }
 }

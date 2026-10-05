@@ -6,7 +6,7 @@
 //! `components.header.*` and `components.session.*` roles; the grid itself is
 //! the host's own output and is never recoloured.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -349,6 +349,20 @@ fn render_body(
             // refused): the PTY grid is blank, so show a failure marker + a
             // plain-language reason with the debug tail underneath.
             render_failure(frame, area, session, theme);
+        }
+        return;
+    }
+    // Mid-frame under synchronized output (DEC 2026): show the last complete
+    // frame instead. Only the pane is held; chrome around it draws as usual.
+    // Selection and ghost text paint over the live grid, so they force live.
+    let live_only = session.selection.is_some() || ghost.is_some();
+    if let Some(held) = session.parser.held_frame(Instant::now(), live_only) {
+        frame.render_widget(Clear, area);
+        let buf = frame.buffer_mut();
+        for y in 0..held.area.height.min(area.height) {
+            for x in 0..held.area.width.min(area.width) {
+                buf[(area.x + x, area.y + y)] = held[(x, y)].clone();
+            }
         }
         return;
     }
@@ -1109,5 +1123,40 @@ mod tests {
         });
         let line: String = (0..3).map(|x| buf.cell((x, 0)).unwrap().symbol()).collect();
         assert_eq!(line, "abc", "paint clips to the viewport");
+    }
+
+    /// Synchronized output holds the pane only: SSHub's own chrome keeps
+    /// redrawing while the app is mid-frame.
+    #[test]
+    fn sync_hold_freezes_only_the_pane() {
+        let text = |buf: &ratatui::buffer::Buffer| -> String {
+            buf.content().iter().map(|c| c.symbol()).collect()
+        };
+        let mut app = crate::test_support::themed_app(session_marker_theme());
+        let mut session = spawned_session();
+        session.phase = SessionPhase::Running {
+            started_at: std::time::Instant::now(),
+        };
+        session.meta.address = Some("10.0.0.1".into());
+        session.parser.process(b"BEFORE\x1b[?2026hPARTIAL");
+        app.sessions.push(session);
+        app.active_session = Some(0);
+        let area = Rect::new(0, 0, 80, 26);
+
+        let buf = draw(area, |frame| render(frame, &app));
+        assert!(text(&buf).contains("10.0.0.1") && text(&buf).contains("BEFORE"));
+        assert!(
+            !text(&buf).contains("PARTIAL"),
+            "pane shows the last complete frame"
+        );
+
+        app.sessions[0].meta.address = Some("10.9.9.9".into());
+        app.sessions[0].parser.process(b" MORE");
+        let buf = draw(area, |frame| render(frame, &app));
+        assert!(
+            text(&buf).contains("10.9.9.9"),
+            "chrome redraws during the hold"
+        );
+        assert!(!text(&buf).contains("PARTIAL"), "pane still held");
     }
 }
