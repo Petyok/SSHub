@@ -5,8 +5,8 @@
 //! PgUp / PgDn, function keys, Tab, Enter, Backspace, Esc, and mouse events
 //! when the remote application has requested them.
 
-use crate::terminal::{MouseProtocolEncoding, MouseProtocolMode};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use vt100::{MouseProtocolEncoding, MouseProtocolMode};
 
 /// Encode a `KeyEvent` for transmission to the PTY child.
 ///
@@ -148,18 +148,6 @@ pub fn encode_mouse(
     mode: MouseProtocolMode,
     encoding: MouseProtocolEncoding,
 ) -> Option<Vec<u8>> {
-    encode_mouse_with_geometry(event, event_x, event_y, mode, encoding, None)
-}
-
-/// Encode using exactly the pixel geometry advertised by the remote PTY.
-pub fn encode_mouse_with_geometry(
-    event: MouseEvent,
-    event_x: u16,
-    event_y: u16,
-    mode: MouseProtocolMode,
-    encoding: MouseProtocolEncoding,
-    geometry: Option<portable_pty::PtySize>,
-) -> Option<Vec<u8>> {
     if mode == MouseProtocolMode::None {
         return None;
     }
@@ -208,7 +196,7 @@ pub fn encode_mouse_with_geometry(
     let row = event_y.saturating_add(1) as u32;
 
     match encoding {
-        MouseProtocolEncoding::Sgr | MouseProtocolEncoding::SgrPixels => {
+        MouseProtocolEncoding::Sgr => {
             let release_marker = if matches!(event.kind, MouseEventKind::Up(_)) {
                 'm'
             } else {
@@ -232,62 +220,17 @@ pub fn encode_mouse_with_geometry(
                 }
                 _ => code,
             };
-
-            // 1016 requires physical coordinates and known PTY pixel dimensions.
-            // Never send cell coordinates disguised as pixels.
-            let (x, y) = if encoding == MouseProtocolEncoding::SgrPixels {
-                pixel_position(event_x, event_y, geometry?)?
-            } else {
-                (col, row)
-            };
-            Some(format!("\x1b[<{sgr_button};{x};{y}{release_marker}").into_bytes())
+            Some(format!("\x1b[<{sgr_button};{col};{row}{release_marker}").into_bytes())
         }
-        MouseProtocolEncoding::Urxvt => {
-            // urxvt 1015: decimal legacy button code + 32, followed by
-            // 1-based cell coordinates.
-            Some(format!("\x1b[{};{col};{row}M", u32::from(code) + 32).into_bytes())
-        }
-        MouseProtocolEncoding::Utf8 => {
-            // 1005 keeps the legacy `CSI M` shape, but Cb/Cx/Cy are UTF-8
-            // encoded code points instead of capped single bytes. This is what
-            // lets coordinates beyond column/row 223 survive.
-            let mut out = b"\x1b[M".to_vec();
-            for value in [u32::from(code) + 32, col + 32, row + 32] {
-                if value > 2047 {
-                    return None;
-                }
-                let ch = char::from_u32(value)?;
-                let mut tmp = [0u8; 4];
-                out.extend_from_slice(ch.encode_utf8(&mut tmp).as_bytes());
-            }
-            Some(out)
-        }
-        MouseProtocolEncoding::Default => {
+        MouseProtocolEncoding::Utf8 | MouseProtocolEncoding::Default => {
             // Default encoding: CSI M Cb Cx Cy where each char is 32 + value.
-            // Values above the protocol's single-byte range are saturated.
+            // Caps at 223 for the default encoding.
             let cb = (code as u32 + 32).min(255) as u8;
             let cx = (col + 32).min(255) as u8;
             let cy = (row + 32).min(255) as u8;
             Some(vec![0x1b, b'[', b'M', cb, cx, cy])
         }
     }
-}
-
-/// Centre of a PTY-relative cell in the pixel grid reported to the remote.
-fn pixel_position(col: u16, row: u16, ws: portable_pty::PtySize) -> Option<(u32, u32)> {
-    if ws.cols == 0
-        || ws.rows == 0
-        || ws.pixel_width == 0
-        || ws.pixel_height == 0
-        || col >= ws.cols
-        || row >= ws.rows
-    {
-        return None;
-    }
-    // The intermediate product can exceed u32 even though the result fits u16.
-    let x = (2 * u64::from(col) + 1) * u64::from(ws.pixel_width) / (2 * u64::from(ws.cols));
-    let y = (2 * u64::from(row) + 1) * u64::from(ws.pixel_height) / (2 * u64::from(ws.rows));
-    Some(((x + 1) as u32, (y + 1) as u32))
 }
 
 fn button_index(b: MouseButton) -> u8 {
@@ -390,7 +333,7 @@ mod tests {
 
     #[test]
     fn decckm_switches_cursor_keys_to_ss3() {
-        let mut parser = crate::terminal::Parser::new(24, 80, 0);
+        let mut parser = vt100::Parser::new(24, 80, 0);
         parser.process(b"\x1b[?1h");
         let application_cursor = parser.screen().application_cursor();
 
@@ -600,131 +543,6 @@ mod tests {
             1,
             MouseProtocolMode::PressRelease,
             MouseProtocolEncoding::Sgr,
-        )
-        .is_none());
-    }
-
-    #[test]
-    fn urxvt_left_press_uses_decimal_1015_format() {
-        let m = mouse_event(MouseEventKind::Down(MouseButton::Left), 4, 6);
-        let bytes = encode_mouse(
-            m,
-            4,
-            6,
-            MouseProtocolMode::PressRelease,
-            MouseProtocolEncoding::Urxvt,
-        )
-        .unwrap();
-        assert_eq!(bytes, b"\x1b[32;5;7M");
-    }
-
-    #[test]
-    fn utf8_mouse_does_not_truncate_large_coordinates() {
-        let m = mouse_event(MouseEventKind::Down(MouseButton::Left), 300, 6);
-        let bytes = encode_mouse(
-            m,
-            300,
-            6,
-            MouseProtocolMode::PressRelease,
-            MouseProtocolEncoding::Utf8,
-        )
-        .unwrap();
-        assert_eq!(bytes, b"\x1b[M \xc5\x8d'");
-    }
-}
-
-#[cfg(test)]
-mod protocol_bound_tests {
-    use super::*;
-    use crossterm::event::{KeyModifiers, MouseButton};
-    fn event() -> MouseEvent {
-        MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: 4,
-            row: 6,
-            modifiers: KeyModifiers::NONE,
-        }
-    }
-    #[test]
-    fn pixel_coordinates_cover_full_pty_geometry_range_without_overflow() {
-        let geometry = portable_pty::PtySize {
-            rows: u16::MAX,
-            cols: u16::MAX,
-            pixel_width: u16::MAX,
-            pixel_height: u16::MAX,
-        };
-        assert_eq!(pixel_position(65534, 65534, geometry), Some((65535, 65535)));
-        assert_eq!(pixel_position(0, 0, geometry), Some((1, 1)));
-    }
-    #[test]
-    fn utf8_limits_drop_entire_report() {
-        for coordinate in [2015, 2048, 55263, u16::MAX] {
-            assert!(encode_mouse(
-                event(),
-                coordinate,
-                6,
-                MouseProtocolMode::PressRelease,
-                MouseProtocolEncoding::Utf8
-            )
-            .is_none());
-            assert!(encode_mouse(
-                event(),
-                4,
-                coordinate,
-                MouseProtocolMode::PressRelease,
-                MouseProtocolEncoding::Utf8
-            )
-            .is_none());
-        }
-        assert_eq!(
-            encode_mouse(
-                event(),
-                2014,
-                6,
-                MouseProtocolMode::PressRelease,
-                MouseProtocolEncoding::Utf8
-            )
-            .unwrap(),
-            b"\x1b[M \xdf\xbf'"
-        );
-    }
-    #[test]
-    fn pixel_reports_match_advertised_geometry_and_never_fall_back_to_cells() {
-        let geometry = portable_pty::PtySize {
-            rows: 23,
-            cols: 80,
-            pixel_width: 800,
-            pixel_height: 460,
-        };
-        let bytes = encode_mouse_with_geometry(
-            event(),
-            4,
-            6,
-            MouseProtocolMode::PressRelease,
-            MouseProtocolEncoding::SgrPixels,
-            Some(geometry),
-        )
-        .unwrap();
-        assert_eq!(bytes, b"\x1b[<0;46;131M");
-        assert!(encode_mouse(
-            event(),
-            4,
-            6,
-            MouseProtocolMode::PressRelease,
-            MouseProtocolEncoding::SgrPixels
-        )
-        .is_none());
-        let unknown = portable_pty::PtySize {
-            pixel_width: 0,
-            ..geometry
-        };
-        assert!(encode_mouse_with_geometry(
-            event(),
-            4,
-            6,
-            MouseProtocolMode::PressRelease,
-            MouseProtocolEncoding::SgrPixels,
-            Some(unknown)
         )
         .is_none());
     }

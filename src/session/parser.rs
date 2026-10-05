@@ -1,8 +1,8 @@
-//! Terminal stream integration: the screen model deliberately ignores queries;
-//! a streaming observer answers supported queries at their byte-stream position.
-//! Clipboard callbacks relay bounded OSC 52 writes separately from query replies.
-
-use std::cell::RefCell;
+//! VT100 parser wrapper. Maintains an in-memory `vt100::Screen` that the
+//! renderer reads via `tui-term`, relays OSC 52 clipboard writes that
+//! applications inside the PTY emit, and answers the terminal status queries
+//! they send — `vt100` implements none of the latter, and an application that
+//! asks and hears nothing back blocks until its own timeout.
 
 /// Largest decoded payload we'll relay from the PTY to the host clipboard
 /// (64 KiB). Keeps a remote from flooding the clipboard with a huge write.
@@ -49,9 +49,11 @@ pub(crate) struct ClipboardDrops {
 /// clipboard writes headed for the real terminal, and answers to terminal
 /// status queries headed back into the PTY.
 ///
-/// The screen model dispatches clipboard writes to callbacks, but deliberately
-/// ignores terminal queries. The observer queues query replies into this same
-/// bounded collection for the PTY writer to drain.
+/// Without this, `vt100` hands both to the default `Callbacks for ()` impl,
+/// which silently drops them. A dropped clipboard write means anything copying
+/// inside the PTY (herdr, tmux, neovim, lazygit…) appears to work but never
+/// reaches the system clipboard; a dropped *query* means the application waits
+/// for an answer that never comes.
 #[derive(Default)]
 struct PtyCallbacks {
     /// Pending base64 payloads, in arrival order.
@@ -62,8 +64,8 @@ struct PtyCallbacks {
     replies: Vec<u8>,
 }
 
-impl crate::terminal::Callbacks for PtyCallbacks {
-    fn copy_to_clipboard(&mut self, _: &mut crate::terminal::Screen, _ty: &[u8], data: &[u8]) {
+impl vt100::Callbacks for PtyCallbacks {
+    fn copy_to_clipboard(&mut self, _: &mut vt100::Screen, _ty: &[u8], data: &[u8]) {
         // An empty payload is a clipboard *clear* on terminals that honour it.
         // We neither forward it nor count it as a drop: a remote must not be
         // able to wipe the local clipboard, and nothing was lost worth naming.
@@ -91,124 +93,71 @@ impl crate::terminal::Callbacks for PtyCallbacks {
     // `paste_from_clipboard` is deliberately left as the no-op default:
     // answering `ESC]52;c;?BEL` would let any host we're SSH'd into *read* the
     // local clipboard, which is far worse than a write and buys us nothing.
-}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TerminalQuery {
-    DeviceStatus,
-    CursorPosition,
-    PrimaryDeviceAttributes,
-    CharacterSize,
-    SynchronizedUpdateMode,
-}
-
-/// Observe queries using the same ANSI state machine as the screen parser.
-/// This preserves split sequences, cancellations and OSC/DCS string context.
-#[derive(Default)]
-struct QueryObserver {
-    query: Option<TerminalQuery>,
-    sync_boundary: Option<bool>,
-}
-
-impl vte::Perform for QueryObserver {
-    fn terminated(&self) -> bool {
-        self.query.is_some() || self.sync_boundary.is_some()
-    }
-
-    fn esc_dispatch(&mut self, intermediates: &[u8], ignore: bool, byte: u8) {
-        // RIS also ends an active synchronized transaction.
-        if !ignore && intermediates.is_empty() && byte == b'c' {
-            self.sync_boundary = Some(false);
-        }
-    }
-
-    fn csi_dispatch(
+    /// vt100 implements no terminal *query* at all, so every one of them lands
+    /// here — and an application that asks and hears nothing back blocks until
+    /// its own timeout expires. atuin's history search dies outright ("The
+    /// cursor position could not be read within a normal duration", #113), and
+    /// every crossterm-based TUI stalls two seconds at startup probing for the
+    /// kitty keyboard protocol. Answering is simply what the terminal on the
+    /// other side does when `ssh` runs without sshub in front of it.
+    fn unhandled_csi(
         &mut self,
-        params: &vte::Params,
-        intermediates: &[u8],
-        ignore: bool,
-        action: char,
+        screen: &mut vt100::Screen,
+        i1: Option<u8>,
+        _i2: Option<u8>,
+        params: &[&[u16]],
+        c: char,
     ) {
-        if ignore {
+        // Private sequences (`CSI ? … u`, the kitty keyboard protocol query;
+        // `CSI > c`, secondary device attributes) stay unanswered on purpose.
+        // We don't speak them, and claiming otherwise is worse than silence:
+        // crossterm reads a missing `?u` reply *plus* the DA1 answer below as
+        // a definitive "not supported", which is the truth.
+        if i1.is_some() {
             return;
         }
-        if intermediates == b"?" && matches!(action, 'h' | 'l') {
-            // DECSET/DECRST can contain multiple independent mode parameters.
-            if params.iter().any(|param| param == [2026]) {
-                self.sync_boundary = Some(action == 'h');
+        let param = params.first().and_then(|p| p.first().copied()).unwrap_or(0);
+        let reply = match (c, param) {
+            // DSR 6 — cursor position report. Our grid mirrors the remote
+            // screen, so its cursor *is* the answer. Reported 1-based, and
+            // clamped: vt100 parks the cursor one column *past* the right
+            // margin after a character lands in the last column (the pending
+            // wrap is only resolved when the next one arrives), so a prompt
+            // that fills the line would otherwise be reported at column
+            // `cols + 1` — a real terminal answers `cols`, and code measuring
+            // the room left underflows on anything else. Origin mode is the
+            // one case we still get wrong: vt100 handles DECOM itself and
+            // exposes no accessor, so the row here is absolute where a
+            // conformant terminal would report it relative to the region.
+            ('n', 6) => {
+                let (row, col) = screen.cursor_position();
+                let (rows, cols) = screen.size();
+                let (row, col) = ((row + 1).min(rows), (col + 1).min(cols));
+                format!("\x1b[{row};{col}R").into_bytes()
             }
-            return;
-        }
-        let mut params = params.iter();
-        let Some(&[param]) = params.next() else {
-            return;
+            // DSR 5 — device status. Nothing can go wrong in an in-memory grid.
+            ('n', 5) => b"\x1b[0n".to_vec(),
+            // DA1 — device attributes. VT100 with the advanced video option is
+            // the honest floor for what vt100 emulates; callers only care that
+            // an answer arrives at all, not what it claims.
+            ('c', 0) => b"\x1b[?1;2c".to_vec(),
+            _ => return,
         };
-        if params.next().is_some() {
-            return;
+        if self.replies.len() + reply.len() <= REPLY_QUEUE_MAX_BYTES {
+            self.replies.extend_from_slice(&reply);
         }
-        // Preserve PR #114's capability policy: kitty, DA2 and DECXCPR
-        // stay unanswered. A kitty flags=0 reply advertises protocol support,
-        // not lack of support; DA1 alone lets callers detect it as unsupported.
-        self.query = match (intermediates, action, param) {
-            ([], 'n', 5) => Some(TerminalQuery::DeviceStatus),
-            ([], 'n', 6) => Some(TerminalQuery::CursorPosition),
-            ([], 'c', 0) => Some(TerminalQuery::PrimaryDeviceAttributes),
-            ([], 't', 18) => Some(TerminalQuery::CharacterSize),
-            ([b'?', b'$'], 'p', 2026) => Some(TerminalQuery::SynchronizedUpdateMode),
-            _ => None,
-        };
     }
 }
 
 pub struct ParserState {
-    inner: crate::terminal::Parser<PtyCallbacks>,
-    query_parser: vte::Parser,
-    pub(crate) presentation: RefCell<super::render::PanePresentation>,
+    inner: vt100::Parser<PtyCallbacks>,
 }
 
 impl ParserState {
     pub fn new(rows: u16, cols: u16) -> Self {
         Self {
-            inner: crate::terminal::Parser::new_with_callbacks(
-                rows,
-                cols,
-                10_000,
-                PtyCallbacks::default(),
-            ),
-            query_parser: vte::Parser::new(),
-            presentation: RefCell::new(super::render::PanePresentation::default()),
-        }
-    }
-
-    fn answer_query(&mut self, query: TerminalQuery) {
-        let reply = {
-            let screen = self.inner.screen();
-            match query {
-                TerminalQuery::DeviceStatus => b"\x1b[0n".to_vec(),
-                TerminalQuery::CursorPosition => {
-                    // Pending wrap parks the cursor one column past the grid;
-                    // report the last column rather than cols+1 (PR #114).
-                    // DECOM caveat: this reports an absolute row, not one
-                    // relative to the scrolling region when origin mode is on.
-                    let (row, col) = screen.cursor_position();
-                    let (rows, cols) = screen.size();
-                    let (row, col) = ((row + 1).min(rows), (col + 1).min(cols));
-                    format!("\x1b[{row};{col}R").into_bytes()
-                }
-                TerminalQuery::PrimaryDeviceAttributes => b"\x1b[?1;2c".to_vec(),
-                TerminalQuery::CharacterSize => {
-                    let (rows, cols) = screen.size();
-                    format!("\x1b[8;{rows};{cols}t").into_bytes()
-                }
-                TerminalQuery::SynchronizedUpdateMode => {
-                    let state = if screen.synchronized_update() { 1 } else { 2 };
-                    format!("\x1b[?2026;{state}$y").into_bytes()
-                }
-            }
-        };
-        let callbacks = self.inner.callbacks_mut();
-        if callbacks.replies.len() + reply.len() <= REPLY_QUEUE_MAX_BYTES {
-            callbacks.replies.extend_from_slice(&reply);
+            inner: vt100::Parser::new_with_callbacks(rows, cols, 10_000, PtyCallbacks::default()),
         }
     }
 
@@ -231,56 +180,14 @@ impl ParserState {
     }
 
     pub fn process(&mut self, bytes: &[u8]) {
-        let mut observer = QueryObserver::default();
-        let mut processed = 0;
-        let mut events = Vec::new();
-        let mut synchronized = self.inner.screen().synchronized_update();
-        let mut last_boundary = None;
-        // Scan once to locate the last transaction boundary. Intermediate
-        // completed frames are superseded before the next UI draw; rasterize
-        // only the last one, rather than allocating a grid for every mode toggle.
-        while processed < bytes.len() {
-            let consumed = self
-                .query_parser
-                .advance_until_terminated(&mut observer, &bytes[processed..]);
-            processed += consumed;
-            let boundary = observer
-                .sync_boundary
-                .take()
-                .filter(|&state| state != synchronized);
-            if let Some(state) = boundary {
-                synchronized = state;
-                last_boundary = Some(events.len());
-            }
-            let query = observer.query.take();
-            if boundary.is_some() || query.is_some() {
-                events.push((processed, query, boundary));
-            }
-        }
-        processed = 0;
-        for (index, (end, query, boundary)) in events.into_iter().enumerate() {
-            self.inner.process(&bytes[processed..end]);
-            processed = end;
-            if boundary.is_some() {
-                self.presentation.borrow_mut().sync_boundary(
-                    self.inner.screen(),
-                    std::time::Instant::now(),
-                    synchronized && last_boundary == Some(index),
-                );
-            }
-            if let Some(query) = query {
-                self.answer_query(query);
-            }
-        }
-        self.inner.process(&bytes[processed..]);
+        self.inner.process(bytes);
     }
 
     pub fn set_size(&mut self, rows: u16, cols: u16) {
         self.inner.screen_mut().set_size(rows, cols);
-        self.presentation.borrow_mut().invalidate();
     }
 
-    pub fn screen(&self) -> &crate::terminal::Screen {
+    pub fn screen(&self) -> &vt100::Screen {
         self.inner.screen()
     }
 
@@ -330,48 +237,8 @@ mod tests {
         p
     }
 
-    #[test]
-    fn xterm_hvp_positions_instead_of_appending() {
-        let p = parser_with(12, 80, b"\x1b[2J\x1b[HAAA\x1b[10;20fBBB");
-        assert_eq!(p.screen().cell(9, 19).unwrap().contents(), "B");
-        assert_eq!(p.screen().cell(9, 20).unwrap().contents(), "B");
-        assert_eq!(p.screen().cell(9, 21).unwrap().contents(), "B");
-    }
-
-    #[test]
-    fn scosc_scorc_restore_cursor_for_tui_overlays() {
-        let p = parser_with(8, 40, b"\x1b[2;3H\x1b[s\x1b[7;30H\x1b[uX");
-        assert_eq!(p.screen().cell(1, 2).unwrap().contents(), "X");
-    }
-
-    #[test]
-    fn synchronized_update_holds_until_esu() {
-        let mut p = ParserState::new(10, 40);
-        p.process(b"\x1b[?2026hhalf a frame");
-        assert!(p.screen().synchronized_update());
-        p.process(b"\x1b[?2026l");
-        assert!(!p.screen().synchronized_update());
-    }
-
-    #[test]
-    fn split_cursor_query_still_gets_one_reply() {
-        let mut p = ParserState::new(10, 40);
-        p.process(b"\x1b[4;7H\x1b[");
-        assert!(p.take_replies().is_empty());
-        p.process(b"6n");
-        assert_eq!(p.take_replies(), b"\x1b[4;7R");
-        assert!(p.take_replies().is_empty());
-    }
-
-    #[test]
-    fn decrqm_reports_synchronized_update_state() {
-        let mut p = ParserState::new(10, 40);
-        p.process(b"\x1b[?2026$p");
-        assert_eq!(p.take_replies(), b"\x1b[?2026;2$y");
-    }
-
     /// Reproduces the bug: scrolling past the screen height used to panic
-    /// (vt100 0.15.2 underflow). Embedded parser must keep it from crashing
+    /// (vt100 0.15.2 underflow). Vendored patch must keep it from crashing
     /// and must let us actually read older rows.
     #[test]
     fn scrollback_beyond_screen_height_does_not_panic() {
@@ -536,7 +403,7 @@ mod tests {
 
     // ── Terminal status queries ───────────────────────────────────
     //
-    // The screen model ignores these; the streaming observer answers them. An
+    // vt100 implements none of these, so they arrive at `unhandled_csi`. An
     // application that asks and hears nothing back hangs on its own timeout.
 
     #[test]
@@ -586,42 +453,11 @@ mod tests {
 
     #[test]
     fn private_queries_stay_unanswered() {
-        let mut p = parser_with(10, 80, b"\x1b[?u\x1b[?0u\x1b[>c\x1b[>0c\x1b[?6n");
+        // We don't speak the kitty keyboard protocol (`CSI ? u`) or secondary
+        // device attributes (`CSI > c`). Silence is the honest answer, and it's
+        // what makes crossterm conclude "unsupported" once DA1 arrives.
+        let mut p = parser_with(10, 80, b"\x1b[?u\x1b[>c\x1b[?6n");
         assert!(p.take_replies().is_empty());
-    }
-
-    #[test]
-    fn kitty_support_probe_receives_only_da1_even_when_split() {
-        // PR #114: no kitty reply + DA1 means unsupported, without a timeout.
-        let mut p = ParserState::new(10, 80);
-        p.process(b"\x1b[?");
-        assert!(p.take_replies().is_empty());
-        p.process(b"u\x1b[c");
-        assert_eq!(p.take_replies(), b"\x1b[?1;2c");
-        assert!(p.take_replies().is_empty());
-    }
-
-    #[test]
-    fn queries_answer_state_at_each_sequence_completion() {
-        let mut p = parser_with(
-            10,
-            80,
-            b"a\x1b[6nb\x1b[6n\x1b[?2026h\x1b[?2026$p\x1b[?2026l\x1b[?2026$p",
-        );
-        assert_eq!(
-            p.take_replies(),
-            b"\x1b[1;2R\x1b[1;3R\x1b[?2026;1$y\x1b[?2026;2$y"
-        );
-    }
-
-    #[test]
-    fn osc_payload_and_canceled_sequences_are_not_queries() {
-        let mut p = ParserState::new(10, 80);
-        p.process(b"\x1b]0;title[6");
-        p.process(b"n\x07\x1b[6\x18n\x1b[6;1n\x1b[6:1n");
-        assert!(p.take_replies().is_empty());
-        p.process(b"\x1b[5n");
-        assert_eq!(p.take_replies(), b"\x1b[0n");
     }
 
     #[test]
@@ -685,21 +521,5 @@ mod tests {
         assert_eq!(decoded_len(b"aGVsbG8"), 5); // "hello" unpadded
         assert_eq!(decoded_len(b"aGk"), 2); // "hi"    unpadded
         assert_eq!(decoded_len(b"YQ"), 1); // "a"     unpadded
-    }
-}
-
-#[cfg(test)]
-mod added_query_tests {
-    use super::*;
-    #[test]
-    fn character_size_reply_uses_current_grid_after_resize_and_split_reads() {
-        let mut parser = ParserState::new(23, 80);
-        parser.process(b"\x1b[18");
-        assert!(parser.take_replies().is_empty());
-        parser.process(b"t");
-        assert_eq!(parser.take_replies(), b"\x1b[8;23;80t");
-        parser.set_size(10, 40);
-        parser.process(b"\x1b[18t");
-        assert_eq!(parser.take_replies(), b"\x1b[8;10;40t");
     }
 }

@@ -78,10 +78,8 @@ strsim = "0.11"
 toml = "0.8"
 toml_edit = "0.22"
 tempfile = "3"
-tui-term = { version = "0.3", default-features = false }
-itoa = "1"
-unicode-width = "0.2"
-vte = { version = "0.15", default-features = false }
+tui-term = "0.3"
+vt100 = "0.16"
 
 [dev-dependencies]
 assert_cmd = "2"

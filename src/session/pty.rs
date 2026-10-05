@@ -18,32 +18,6 @@ use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize}
 
 const READ_BUF: usize = 4096;
 
-/// Scale the host's physical dimensions to the PTY body (header/footer excluded).
-/// Unknown pixel dimensions remain zero; pixel mouse reports must then be dropped.
-pub(crate) fn pty_size(
-    rows: u16,
-    cols: u16,
-    host: Option<crossterm::terminal::WindowSize>,
-) -> PtySize {
-    let (pixel_width, pixel_height) = host
-        .filter(|w| w.columns > 0 && w.rows > 0)
-        .map(|w| {
-            (
-                (u32::from(w.width) * u32::from(cols) / u32::from(w.columns))
-                    .min(u32::from(u16::MAX)) as u16,
-                (u32::from(w.height) * u32::from(rows) / u32::from(w.rows)).min(u32::from(u16::MAX))
-                    as u16,
-            )
-        })
-        .unwrap_or((0, 0));
-    PtySize {
-        rows,
-        cols,
-        pixel_width,
-        pixel_height,
-    }
-}
-
 /// How many pending writes toward the PTY we hold before dropping them.
 ///
 /// The writer sits on its own thread for one reason: `write_all` on the master
@@ -205,11 +179,12 @@ impl PtyRuntime {
 
         let pty_system = native_pty_system();
         let pair = pty_system
-            .openpty(pty_size(
+            .openpty(PtySize {
                 rows,
                 cols,
-                crossterm::terminal::window_size().ok(),
-            ))
+                pixel_width: 0,
+                pixel_height: 0,
+            })
             .context("openpty")?;
 
         let child = pair
@@ -342,17 +317,14 @@ impl PtyRuntime {
         }
     }
 
-    pub(crate) fn size(&self) -> Option<PtySize> {
-        self.master.get_size().ok()
-    }
-
     pub fn resize(&self, rows: u16, cols: u16) -> Result<()> {
         self.master
-            .resize(pty_size(
+            .resize(PtySize {
                 rows,
                 cols,
-                crossterm::terminal::window_size().ok(),
-            ))
+                pixel_width: 0,
+                pixel_height: 0,
+            })
             .context("pty resize")?;
         Ok(())
     }
@@ -414,73 +386,5 @@ impl Drop for PtyRuntime {
         if let Some(handle) = self.reader_thread.take() {
             let _ = handle.join();
         }
-    }
-}
-
-#[cfg(test)]
-mod pixel_geometry_tests {
-    use super::*;
-    #[test]
-    fn kernel_pty_preserves_pixel_geometry_on_open_and_resize() {
-        let system = native_pty_system();
-        let initial = PtySize {
-            rows: 23,
-            cols: 80,
-            pixel_width: 800,
-            pixel_height: 460,
-        };
-        let pair = system.openpty(initial).unwrap();
-        let actual = pair.master.get_size().unwrap();
-        assert_eq!(
-            (
-                actual.rows,
-                actual.cols,
-                actual.pixel_width,
-                actual.pixel_height
-            ),
-            (23, 80, 800, 460)
-        );
-        pair.master
-            .resize(PtySize {
-                rows: 10,
-                cols: 40,
-                pixel_width: 400,
-                pixel_height: 200,
-            })
-            .unwrap();
-        let actual = pair.master.get_size().unwrap();
-        assert_eq!(
-            (
-                actual.rows,
-                actual.cols,
-                actual.pixel_width,
-                actual.pixel_height
-            ),
-            (10, 40, 400, 200)
-        );
-    }
-
-    #[test]
-    fn body_pixels_exclude_chrome_and_follow_resize() {
-        let host = crossterm::terminal::WindowSize {
-            rows: 25,
-            columns: 80,
-            width: 800,
-            height: 500,
-        };
-        let size = pty_size(23, 80, Some(host));
-        assert_eq!((size.pixel_width, size.pixel_height), (800, 460));
-        let resized = pty_size(
-            10,
-            40,
-            Some(crossterm::terminal::WindowSize {
-                rows: 25,
-                columns: 80,
-                width: 800,
-                height: 500,
-            }),
-        );
-        assert_eq!((resized.pixel_width, resized.pixel_height), (400, 200));
-        assert_eq!(pty_size(23, 80, None).pixel_width, 0);
     }
 }

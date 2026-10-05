@@ -250,7 +250,7 @@ impl Session {
         log: Option<crate::session_log::SessionLogWriter>,
         siphon_stderr: bool,
     ) -> Result<Self> {
-        // Reserve one row for header and one for footer; keep a nonzero PTY.
+        // Reserve 1 row for header + 1 row for footer; ensure non-zero PTY.
         let pty_rows = rows.saturating_sub(2).max(1);
         let pty_cols = cols.max(1);
         let interactive = config.key_push_identity.is_none()
@@ -1026,10 +1026,6 @@ impl Session {
         let _ = self.runtime.resize(pty_rows, pty_cols);
     }
 
-    pub(crate) fn pty_size(&self) -> Option<portable_pty::PtySize> {
-        self.runtime.size()
-    }
-
     /// Bare `Running` gate for explicit snippet insertion. `Running` may be a
     /// timeout reveal rather than proof of authentication, but insertion only
     /// ever writes bytes the user explicitly chose (a picker selection), so
@@ -1276,7 +1272,7 @@ fn ends_with_prompt(line: &str, needles: &[&str]) -> bool {
 }
 
 /// Text of the cursor row up to (and excluding) the cursor column.
-fn line_before_cursor(screen: &crate::terminal::Screen) -> String {
+fn line_before_cursor(screen: &vt100::Screen) -> String {
     let (rows, _) = screen.size();
     if rows == 0 {
         return String::new();
@@ -1315,7 +1311,7 @@ impl Drop for Session {
 /// exactly the bug where stored passwords were never auto-typed). The cursor
 /// sits on the prompt line, so anchoring there works whether the prompt is at
 /// the top of a fresh screen or at the bottom of a scrolled shell.
-fn current_screen_tail(screen: &crate::terminal::Screen) -> String {
+fn current_screen_tail(screen: &vt100::Screen) -> String {
     let (rows, cols) = screen.size();
     if rows == 0 {
         return String::new();
@@ -2463,7 +2459,7 @@ mod prompt_tests {
 
     #[test]
     fn host_key_verification_prompt_is_detected() {
-        let mut parser = crate::terminal::Parser::new(40, 100, 0);
+        let mut parser = vt100::Parser::new(40, 100, 0);
         parser.process(
             b"The authenticity of host 'srv (10.0.0.1)' can't be established.\r\n\
               ED25519 key fingerprint is SHA256:abc123def456.\r\n\
@@ -2483,7 +2479,7 @@ mod prompt_tests {
         // at the top of a tall PTY, leaving the bottom blank. The scanner must
         // still see the prompt (it used to read the physical bottom 3 rows and
         // find "(blank)", so the stored password was never auto-typed).
-        let mut parser = crate::terminal::Parser::new(40, 100, 0);
+        let mut parser = vt100::Parser::new(40, 100, 0);
         parser.process(
             b"** WARNING: connection is not using a post-quantum key exchange algorithm.\r\n\
               ** This session may be vulnerable to \"store now, decrypt later\" attacks.\r\n\
@@ -2500,7 +2496,7 @@ mod prompt_tests {
     fn motd_mentioning_password_does_not_trigger_autotype() {
         // A banner that *mentions* "password:" mid-text must not match: the
         // scanner now looks only at the cursor line, which must end with ':'.
-        let mut parser = crate::terminal::Parser::new(40, 100, 0);
+        let mut parser = vt100::Parser::new(40, 100, 0);
         parser.process(
             b"* Policy: you must change your password: rotate it every 90 days.\r\n\
               Loading profile...\r\n",
@@ -2522,7 +2518,7 @@ mod prompt_tests {
 
     #[test]
     fn passphrase_prompt_matches_at_cursor_line() {
-        let mut parser = crate::terminal::Parser::new(10, 100, 0);
+        let mut parser = vt100::Parser::new(10, 100, 0);
         parser.process(b"Enter passphrase for key '/home/me/.ssh/id_rsa': ");
         let line = line_before_cursor(parser.screen());
         assert!(ends_with_prompt(

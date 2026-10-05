@@ -23,31 +23,6 @@ All notable changes to SSHub are documented in this file.
 
 ### Fixed
 
-- **Embedded terminal positioning** (by @Frysuni) — HVP (`CSI row;col f`),
-  SCOSC/SCORC and additional xterm movement sequences are supported by an
-  embedded MIT-licensed terminal model. The source ships inside the SSHub
-  crate, so crates.io installation uses the same parser as repository builds.
-- **Bounded synchronized output** (by @Frysuni) — DEC mode 2026 holds only the
-  session pane, for at most one second since its last draw. Headers, notices
-  and selection overlays continue drawing; resize and scrollback bypass holds.
-  Completed frames survive an immediately following BSU; expired holds stay
-  open until the transaction ends. Soft wraps survive scrolling on one-row
-  terminals and height-only resize; OSC defaults preserve the cursor overlay.
-  Selection and inline suggestions use the live grid, keeping copied text
-  and completion positions consistent with the visible pane.
-- **Terminal query compatibility** (by @Frysuni) — DSR 5/6 and DA1 retain
-  PR #114's behavior; character-grid size and DECRQM 2026 receive bounded,
-  correctly ordered replies. Kitty, DA2 and DECXCPR remain unanswered.
-- **Terminal resource bounds** (by @Frysuni) — REP count is capped at grid area;
-  OSC strings, retained URIs and title history have explicit memory limits.
-- **Mouse protocol coverage** (by @Frysuni) — UTF-8 (1005) reports validate the
-  protocol range, urxvt (1015) is supported, and SGR pixels (1016) uses physical
-  PTY dimensions supplied at creation and resize. Unknown pixels never fall
-  back to sending cell coordinates as pixels.
-- **Extended terminal attributes** (by @Frysuni) — strikethrough, conceal,
-  blink and cursor shapes reach the renderer. Underline variants and links are
-  parsed, but underline styles display as a single underline and hyperlinks
-  are not emitted to the outer terminal.
 - **New terminals no longer stay blank on a locked keyring** (#135): every
   headless command opened the OS keyring at startup with a test write, even
   commands that never read a secret. With the keyring locked and its unlock
