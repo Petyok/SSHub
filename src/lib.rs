@@ -23,6 +23,7 @@ pub mod sftp;
 pub mod ssh;
 pub mod store;
 pub mod suggestions;
+pub mod terminal;
 /// Shared allocation counter for tests; only one `#[global_allocator]` may
 /// exist per binary, so every allocation-free proof shares this module.
 #[cfg(test)]
@@ -445,20 +446,7 @@ fn run_terminal_loop(
         // capture for native text selection.
 
         app.refresh_agent_info();
-
-        // DEC private mode 2026 asks the terminal to present a group of writes as
-        // one frame. PTY reads are only chunks of the byte stream, so drawing while
-        // a synchronized update is open exposes half-redrawn TUIs (btop is a
-        // particularly visible example). Keeping the physical terminal untouched
-        // is exactly the atomic presentation the remote requested. ParserState has
-        // a fail-open timeout, so a missing ESU can never freeze SSHub indefinitely.
-        let hold_synchronized_frame = crate::app::is_session_mode(app.mode)
-            && app
-                .active_session()
-                .is_some_and(|session| session.parser.should_hold_render());
-        if !hold_synchronized_frame {
-            terminal.draw(|frame| tui::render(frame, app))?;
-        }
+        terminal.draw(|frame| tui::render(frame, app))?;
 
         if auto_quit.is_some() {
             apply_auto_quit(app, auto_quit)?;

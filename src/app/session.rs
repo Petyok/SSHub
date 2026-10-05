@@ -561,7 +561,14 @@ impl App {
         if mouse.row == 0 || mouse.row.saturating_sub(1) >= rows || mouse.column >= cols {
             return;
         }
-        if let Some(bytes) = crate::session::keys::encode_mouse(mouse, col, row, mode, encoding) {
+        let geometry = if encoding == crate::terminal::MouseProtocolEncoding::SgrPixels {
+            session.pty_size()
+        } else {
+            None
+        };
+        if let Some(bytes) = crate::session::keys::encode_mouse_with_geometry(
+            mouse, col, row, mode, encoding, geometry,
+        ) {
             let _ = session.write(&bytes);
         }
     }

@@ -5,8 +5,8 @@
 //! PgUp / PgDn, function keys, Tab, Enter, Backspace, Esc, and mouse events
 //! when the remote application has requested them.
 
+use crate::terminal::{MouseProtocolEncoding, MouseProtocolMode};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use vt100::{MouseProtocolEncoding, MouseProtocolMode};
 
 /// Encode a `KeyEvent` for transmission to the PTY child.
 ///
@@ -148,6 +148,18 @@ pub fn encode_mouse(
     mode: MouseProtocolMode,
     encoding: MouseProtocolEncoding,
 ) -> Option<Vec<u8>> {
+    encode_mouse_with_geometry(event, event_x, event_y, mode, encoding, None)
+}
+
+/// Encode using exactly the pixel geometry advertised by the remote PTY.
+pub fn encode_mouse_with_geometry(
+    event: MouseEvent,
+    event_x: u16,
+    event_y: u16,
+    mode: MouseProtocolMode,
+    encoding: MouseProtocolEncoding,
+    geometry: Option<portable_pty::PtySize>,
+) -> Option<Vec<u8>> {
     if mode == MouseProtocolMode::None {
         return None;
     }
@@ -221,14 +233,10 @@ pub fn encode_mouse(
                 _ => code,
             };
 
-            // 1016 is the SGR wire format with pixel coordinates. Crossterm
-            // reports mouse events in cells, so map the cell centre into the
-            // physical terminal's pixel grid when the backend exposes it. If
-            // pixel dimensions are unavailable (notably Windows and some
-            // pseudo-terminals), fall back to cell coordinates rather than
-            // dropping input entirely.
+            // 1016 requires physical coordinates and known PTY pixel dimensions.
+            // Never send cell coordinates disguised as pixels.
             let (x, y) = if encoding == MouseProtocolEncoding::SgrPixels {
-                pixel_position(event_x, event_y).unwrap_or((col, row))
+                pixel_position(event_x, event_y, geometry?)?
             } else {
                 (col, row)
             };
@@ -245,10 +253,12 @@ pub fn encode_mouse(
             // lets coordinates beyond column/row 223 survive.
             let mut out = b"\x1b[M".to_vec();
             for value in [u32::from(code) + 32, col + 32, row + 32] {
-                if let Some(ch) = char::from_u32(value) {
-                    let mut tmp = [0u8; 4];
-                    out.extend_from_slice(ch.encode_utf8(&mut tmp).as_bytes());
+                if value > 2047 {
+                    return None;
                 }
+                let ch = char::from_u32(value)?;
+                let mut tmp = [0u8; 4];
+                out.extend_from_slice(ch.encode_utf8(&mut tmp).as_bytes());
             }
             Some(out)
         }
@@ -263,23 +273,21 @@ pub fn encode_mouse(
     }
 }
 
-/// Approximate a cell event by the centre of that cell in the host terminal's
-/// pixel grid. SGR-pixels (1016) wants physical coordinates, while crossterm's
-/// mouse event API is cell based. The ratio is nevertheless enough to preserve
-/// ordering and hit-testing for applications that opt into 1016.
-fn pixel_position(col: u16, row: u16) -> Option<(u32, u32)> {
-    let ws = crossterm::terminal::window_size().ok()?;
-    if ws.columns == 0 || ws.rows == 0 || ws.width == 0 || ws.height == 0 {
+/// Centre of a PTY-relative cell in the pixel grid reported to the remote.
+fn pixel_position(col: u16, row: u16, ws: portable_pty::PtySize) -> Option<(u32, u32)> {
+    if ws.cols == 0
+        || ws.rows == 0
+        || ws.pixel_width == 0
+        || ws.pixel_height == 0
+        || col >= ws.cols
+        || row >= ws.rows
+    {
         return None;
     }
-    let cell_left = u32::from(col) * u32::from(ws.width) / u32::from(ws.columns);
-    let cell_right = u32::from(col.saturating_add(1)) * u32::from(ws.width) / u32::from(ws.columns);
-    let cell_top = u32::from(row) * u32::from(ws.height) / u32::from(ws.rows);
-    let cell_bottom = u32::from(row.saturating_add(1)) * u32::from(ws.height) / u32::from(ws.rows);
-    Some((
-        ((cell_left + cell_right) / 2).saturating_add(1),
-        ((cell_top + cell_bottom) / 2).saturating_add(1),
-    ))
+    // The intermediate product can exceed u32 even though the result fits u16.
+    let x = (2 * u64::from(col) + 1) * u64::from(ws.pixel_width) / (2 * u64::from(ws.cols));
+    let y = (2 * u64::from(row) + 1) * u64::from(ws.pixel_height) / (2 * u64::from(ws.rows));
+    Some(((x + 1) as u32, (y + 1) as u32))
 }
 
 fn button_index(b: MouseButton) -> u8 {
@@ -382,7 +390,7 @@ mod tests {
 
     #[test]
     fn decckm_switches_cursor_keys_to_ss3() {
-        let mut parser = vt100::Parser::new(24, 80, 0);
+        let mut parser = crate::terminal::Parser::new(24, 80, 0);
         parser.process(b"\x1b[?1h");
         let application_cursor = parser.screen().application_cursor();
 
@@ -621,10 +629,103 @@ mod tests {
             MouseProtocolEncoding::Utf8,
         )
         .unwrap();
-        assert!(bytes.starts_with(b"\x1b[M "));
-        assert!(
-            bytes.len() > 6,
-            "large x coordinate must be multibyte UTF-8"
+        assert_eq!(bytes, b"\x1b[M \xc5\x8d'");
+    }
+}
+
+#[cfg(test)]
+mod protocol_bound_tests {
+    use super::*;
+    use crossterm::event::{KeyModifiers, MouseButton};
+    fn event() -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 4,
+            row: 6,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+    #[test]
+    fn pixel_coordinates_cover_full_pty_geometry_range_without_overflow() {
+        let geometry = portable_pty::PtySize {
+            rows: u16::MAX,
+            cols: u16::MAX,
+            pixel_width: u16::MAX,
+            pixel_height: u16::MAX,
+        };
+        assert_eq!(pixel_position(65534, 65534, geometry), Some((65535, 65535)));
+        assert_eq!(pixel_position(0, 0, geometry), Some((1, 1)));
+    }
+    #[test]
+    fn utf8_limits_drop_entire_report() {
+        for coordinate in [2015, 2048, 55263, u16::MAX] {
+            assert!(encode_mouse(
+                event(),
+                coordinate,
+                6,
+                MouseProtocolMode::PressRelease,
+                MouseProtocolEncoding::Utf8
+            )
+            .is_none());
+            assert!(encode_mouse(
+                event(),
+                4,
+                coordinate,
+                MouseProtocolMode::PressRelease,
+                MouseProtocolEncoding::Utf8
+            )
+            .is_none());
+        }
+        assert_eq!(
+            encode_mouse(
+                event(),
+                2014,
+                6,
+                MouseProtocolMode::PressRelease,
+                MouseProtocolEncoding::Utf8
+            )
+            .unwrap(),
+            b"\x1b[M \xdf\xbf'"
         );
+    }
+    #[test]
+    fn pixel_reports_match_advertised_geometry_and_never_fall_back_to_cells() {
+        let geometry = portable_pty::PtySize {
+            rows: 23,
+            cols: 80,
+            pixel_width: 800,
+            pixel_height: 460,
+        };
+        let bytes = encode_mouse_with_geometry(
+            event(),
+            4,
+            6,
+            MouseProtocolMode::PressRelease,
+            MouseProtocolEncoding::SgrPixels,
+            Some(geometry),
+        )
+        .unwrap();
+        assert_eq!(bytes, b"\x1b[<0;46;131M");
+        assert!(encode_mouse(
+            event(),
+            4,
+            6,
+            MouseProtocolMode::PressRelease,
+            MouseProtocolEncoding::SgrPixels
+        )
+        .is_none());
+        let unknown = portable_pty::PtySize {
+            pixel_width: 0,
+            ..geometry
+        };
+        assert!(encode_mouse_with_geometry(
+            event(),
+            4,
+            6,
+            MouseProtocolMode::PressRelease,
+            MouseProtocolEncoding::SgrPixels,
+            Some(unknown)
+        )
+        .is_none());
     }
 }

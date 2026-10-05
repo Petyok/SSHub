@@ -1,10 +1,8 @@
-//! VT100 parser wrapper. Maintains an in-memory `vt100::Screen` that the
-//! renderer reads via `tui-term`, relays OSC 52 clipboard writes that
-//! applications inside the PTY emit, and answers the terminal status queries
-//! they send — `vt100` implements none of the latter, and an application that
-//! asks and hears nothing back blocks until its own timeout.
+//! Terminal stream integration: the screen model deliberately ignores queries;
+//! a streaming observer answers supported queries at their byte-stream position.
+//! Clipboard callbacks relay bounded OSC 52 writes separately from query replies.
 
-use std::time::{Duration, Instant};
+use std::cell::RefCell;
 
 /// Largest decoded payload we'll relay from the PTY to the host clipboard
 /// (64 KiB). Keeps a remote from flooding the clipboard with a huge write.
@@ -19,11 +17,6 @@ const CLIPBOARD_RELAY_MAX_QUEUED: usize = 8;
 /// real application asks for in one frame — it exists so a remote stuck in a
 /// query loop can't make us buffer unbounded input for it.
 const REPLY_QUEUE_MAX_BYTES: usize = 1024;
-
-/// Real terminals fail open synchronized output rather than allowing a broken
-/// program to freeze the display forever. One second is intentionally generous
-/// for remote links while still bounding the damage from a missing ESU.
-const SYNC_RENDER_HOLD_MAX: Duration = Duration::from_secs(1);
 
 /// Exact decoded byte length of a base64 payload, without decoding it. The
 /// payload is relayed verbatim, so a real decoder would be pure waste — this
@@ -56,11 +49,9 @@ pub(crate) struct ClipboardDrops {
 /// clipboard writes headed for the real terminal, and answers to terminal
 /// status queries headed back into the PTY.
 ///
-/// Without this, `vt100` hands both to the default `Callbacks for ()` impl,
-/// which silently drops them. A dropped clipboard write means anything copying
-/// inside the PTY (herdr, tmux, neovim, lazygit…) appears to work but never
-/// reaches the system clipboard; a dropped *query* means the application waits
-/// for an answer that never comes.
+/// The screen model dispatches clipboard writes to callbacks, but deliberately
+/// ignores terminal queries. The observer queues query replies into this same
+/// bounded collection for the PTY writer to drain.
 #[derive(Default)]
 struct PtyCallbacks {
     /// Pending base64 payloads, in arrival order.
@@ -71,8 +62,8 @@ struct PtyCallbacks {
     replies: Vec<u8>,
 }
 
-impl vt100::Callbacks for PtyCallbacks {
-    fn copy_to_clipboard(&mut self, _: &mut vt100::Screen, _ty: &[u8], data: &[u8]) {
+impl crate::terminal::Callbacks for PtyCallbacks {
+    fn copy_to_clipboard(&mut self, _: &mut crate::terminal::Screen, _ty: &[u8], data: &[u8]) {
         // An empty payload is a clipboard *clear* on terminals that honour it.
         // We neither forward it nor count it as a drop: a remote must not be
         // able to wipe the local clipboard, and nothing was lost worth naming.
@@ -116,9 +107,21 @@ enum TerminalQuery {
 #[derive(Default)]
 struct QueryObserver {
     query: Option<TerminalQuery>,
+    sync_boundary: Option<bool>,
 }
 
 impl vte::Perform for QueryObserver {
+    fn terminated(&self) -> bool {
+        self.query.is_some() || self.sync_boundary.is_some()
+    }
+
+    fn esc_dispatch(&mut self, intermediates: &[u8], ignore: bool, byte: u8) {
+        // RIS also ends an active synchronized transaction.
+        if !ignore && intermediates.is_empty() && byte == b'c' {
+            self.sync_boundary = Some(false);
+        }
+    }
+
     fn csi_dispatch(
         &mut self,
         params: &vte::Params,
@@ -127,6 +130,13 @@ impl vte::Perform for QueryObserver {
         action: char,
     ) {
         if ignore {
+            return;
+        }
+        if intermediates == b"?" && matches!(action, 'h' | 'l') {
+            // DECSET/DECRST can contain multiple independent mode parameters.
+            if params.iter().any(|param| param == [2026]) {
+                self.sync_boundary = Some(action == 'h');
+            }
             return;
         }
         let mut params = params.iter();
@@ -151,19 +161,22 @@ impl vte::Perform for QueryObserver {
 }
 
 pub struct ParserState {
-    inner: vt100::Parser<PtyCallbacks>,
+    inner: crate::terminal::Parser<PtyCallbacks>,
     query_parser: vte::Parser,
-    sync_starts: u32,
-    sync_started_at: Option<Instant>,
+    pub(crate) presentation: RefCell<super::render::PanePresentation>,
 }
 
 impl ParserState {
     pub fn new(rows: u16, cols: u16) -> Self {
         Self {
-            inner: vt100::Parser::new_with_callbacks(rows, cols, 10_000, PtyCallbacks::default()),
+            inner: crate::terminal::Parser::new_with_callbacks(
+                rows,
+                cols,
+                10_000,
+                PtyCallbacks::default(),
+            ),
             query_parser: vte::Parser::new(),
-            sync_starts: 0,
-            sync_started_at: None,
+            presentation: RefCell::new(super::render::PanePresentation::default()),
         }
     }
 
@@ -173,6 +186,10 @@ impl ParserState {
             match query {
                 TerminalQuery::DeviceStatus => b"\x1b[0n".to_vec(),
                 TerminalQuery::CursorPosition => {
+                    // Pending wrap parks the cursor one column past the grid;
+                    // report the last column rather than cols+1 (PR #114).
+                    // DECOM caveat: this reports an absolute row, not one
+                    // relative to the scrolling region when origin mode is on.
                     let (row, col) = screen.cursor_position();
                     let (rows, cols) = screen.size();
                     let (row, col) = ((row + 1).min(rows), (col + 1).min(cols));
@@ -216,44 +233,54 @@ impl ParserState {
     pub fn process(&mut self, bytes: &[u8]) {
         let mut observer = QueryObserver::default();
         let mut processed = 0;
-        for (index, byte) in bytes.iter().enumerate() {
-            self.query_parser
-                .advance(&mut observer, std::slice::from_ref(byte));
-            if let Some(query) = observer.query.take() {
-                // Answer before later writes in this PTY read change the state.
-                self.inner.process(&bytes[processed..=index]);
-                processed = index + 1;
+        let mut events = Vec::new();
+        let mut synchronized = self.inner.screen().synchronized_update();
+        let mut last_boundary = None;
+        // Scan once to locate the last transaction boundary. Intermediate
+        // completed frames are superseded before the next UI draw; rasterize
+        // only the last one, rather than allocating a grid for every mode toggle.
+        while processed < bytes.len() {
+            let consumed = self
+                .query_parser
+                .advance_until_terminated(&mut observer, &bytes[processed..]);
+            processed += consumed;
+            let boundary = observer
+                .sync_boundary
+                .take()
+                .filter(|&state| state != synchronized);
+            if let Some(state) = boundary {
+                synchronized = state;
+                last_boundary = Some(events.len());
+            }
+            let query = observer.query.take();
+            if boundary.is_some() || query.is_some() {
+                events.push((processed, query, boundary));
+            }
+        }
+        processed = 0;
+        for (index, (end, query, boundary)) in events.into_iter().enumerate() {
+            self.inner.process(&bytes[processed..end]);
+            processed = end;
+            if boundary.is_some() {
+                self.presentation.borrow_mut().sync_boundary(
+                    self.inner.screen(),
+                    std::time::Instant::now(),
+                    synchronized && last_boundary == Some(index),
+                );
+            }
+            if let Some(query) = query {
                 self.answer_query(query);
             }
         }
         self.inner.process(&bytes[processed..]);
-
-        let starts = self.inner.screen().synchronized_update_starts();
-        if self.inner.screen().synchronized_update() {
-            if starts != self.sync_starts {
-                self.sync_started_at = Some(Instant::now());
-            }
-        } else {
-            self.sync_started_at = None;
-        }
-        self.sync_starts = starts;
-    }
-
-    /// Whether the visible renderer should keep the previous complete frame.
-    /// The parser still consumes all bytes while held; only presentation is
-    /// delayed until ESU, matching DEC synchronized-output semantics.
-    pub fn should_hold_render(&self) -> bool {
-        self.inner.screen().synchronized_update()
-            && self
-                .sync_started_at
-                .is_some_and(|at| at.elapsed() < SYNC_RENDER_HOLD_MAX)
     }
 
     pub fn set_size(&mut self, rows: u16, cols: u16) {
         self.inner.screen_mut().set_size(rows, cols);
+        self.presentation.borrow_mut().invalidate();
     }
 
-    pub fn screen(&self) -> &vt100::Screen {
+    pub fn screen(&self) -> &crate::terminal::Screen {
         self.inner.screen()
     }
 
@@ -321,9 +348,9 @@ mod tests {
     fn synchronized_update_holds_until_esu() {
         let mut p = ParserState::new(10, 40);
         p.process(b"\x1b[?2026hhalf a frame");
-        assert!(p.should_hold_render());
+        assert!(p.screen().synchronized_update());
         p.process(b"\x1b[?2026l");
-        assert!(!p.should_hold_render());
+        assert!(!p.screen().synchronized_update());
     }
 
     #[test]
@@ -344,7 +371,7 @@ mod tests {
     }
 
     /// Reproduces the bug: scrolling past the screen height used to panic
-    /// (vt100 0.15.2 underflow). Vendored patch must keep it from crashing
+    /// (vt100 0.15.2 underflow). Embedded parser must keep it from crashing
     /// and must let us actually read older rows.
     #[test]
     fn scrollback_beyond_screen_height_does_not_panic() {
@@ -509,7 +536,7 @@ mod tests {
 
     // ── Terminal status queries ───────────────────────────────────
     //
-    // vt100 implements none of these, so they arrive at `unhandled_csi`. An
+    // The screen model ignores these; the streaming observer answers them. An
     // application that asks and hears nothing back hangs on its own timeout.
 
     #[test]
@@ -598,15 +625,6 @@ mod tests {
     }
 
     #[test]
-    fn new_synchronized_update_resets_timeout_after_same_chunk_esu() {
-        let mut p = parser_with(10, 80, b"\x1b[?2026h");
-        p.sync_started_at = Some(Instant::now() - SYNC_RENDER_HOLD_MAX);
-        assert!(!p.should_hold_render());
-        p.process(b"\x1b[?2026l\x1b[?2026h");
-        assert!(p.should_hold_render());
-    }
-
-    #[test]
     fn unknown_dsr_parameters_are_not_answered() {
         // Making something up for a query we don't recognise is worse than not
         // replying: the application would parse our answer as the wrong event.
@@ -667,5 +685,21 @@ mod tests {
         assert_eq!(decoded_len(b"aGVsbG8"), 5); // "hello" unpadded
         assert_eq!(decoded_len(b"aGk"), 2); // "hi"    unpadded
         assert_eq!(decoded_len(b"YQ"), 1); // "a"     unpadded
+    }
+}
+
+#[cfg(test)]
+mod added_query_tests {
+    use super::*;
+    #[test]
+    fn character_size_reply_uses_current_grid_after_resize_and_split_reads() {
+        let mut parser = ParserState::new(23, 80);
+        parser.process(b"\x1b[18");
+        assert!(parser.take_replies().is_empty());
+        parser.process(b"t");
+        assert_eq!(parser.take_replies(), b"\x1b[8;23;80t");
+        parser.set_size(10, 40);
+        parser.process(b"\x1b[18t");
+        assert_eq!(parser.take_replies(), b"\x1b[8;10;40t");
     }
 }

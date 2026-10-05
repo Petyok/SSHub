@@ -2398,6 +2398,7 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "crossterm",
+ "itoa",
  "keyring",
  "libc",
  "notify",
@@ -2414,7 +2415,7 @@ dependencies = [
  "toml",
  "toml_edit 0.22.27",
  "tui-term",
- "vt100",
+ "unicode-width",
  "vte",
 ]
 
@@ -2745,7 +2746,6 @@ checksum = "a338ded85dbe7f9ea2298321d126244f54e531e2b2006b97abdab8e47d6f3c88"
 dependencies = [
  "ratatui-core",
  "ratatui-widgets",
- "vt100",
 ]
 
 [[package]]
@@ -2835,16 +2835,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "vt100"
-version = "0.16.2"
-source = "git+https://github.com/iksteen/shellglass?rev=dc7f399f4ffc3daf0593ff9a272338ac9b1affc6#dc7f399f4ffc3daf0593ff9a272338ac9b1affc6"
-dependencies = [
- "itoa",
- "unicode-width",
- "vte",
-]
 
 [[package]]
 name = "vte"
