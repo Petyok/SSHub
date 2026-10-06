@@ -4,6 +4,8 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.17.4] - 2026-10-06
+
 ### Added
 
 - **Ping probes can be switched off** (issue #137, requested by
