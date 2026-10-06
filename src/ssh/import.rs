@@ -1,7 +1,6 @@
 use anyhow::Result;
 
 use crate::metadata::MetadataStore;
-use crate::session_transport::SessionTransport;
 use crate::ssh::{HostResolver, SshHost};
 use crate::store::{LauncherStore, SshConfigHostImport, UpsertSshConfigOutcome};
 
@@ -102,6 +101,7 @@ fn build_sync_import(
         favorite: existing.favorite,
         last_connected: existing.last_connected,
         session_logging: existing.session_logging,
+        ping: existing.ping,
         transport: existing.transport.unwrap_or_default(),
     }
 }
@@ -137,28 +137,9 @@ fn build_import_row(
         .unwrap_or_else(|| name.to_string());
     let port = resolved.port.unwrap_or(22);
 
-    let meta = metadata.get(name)?;
-    let (tags, notes, environment, favorite, last_connected, session_logging, transport) =
-        match meta {
-            Some(m) => (
-                m.tags,
-                m.description,
-                m.environment,
-                m.favorite,
-                m.last_connected,
-                m.session_logging,
-                m.transport,
-            ),
-            None => (
-                Vec::new(),
-                None,
-                None,
-                false,
-                None,
-                crate::session_log::SessionLoggingOverride::Inherit,
-                SessionTransport::Ssh,
-            ),
-        };
+    let meta = metadata
+        .get(name)?
+        .unwrap_or_else(|| crate::metadata::HostMetadata::new(name));
 
     Ok(SshConfigHostImport {
         name: name.to_string(),
@@ -168,13 +149,14 @@ fn build_import_row(
         forward_agent: resolved.forward_agent.unwrap_or(false),
         remote_command: resolved.remote_command.clone(),
         ssh_config_hash: compute_ssh_config_hash(resolved),
-        tags,
-        notes,
-        environment,
-        favorite,
-        last_connected,
-        session_logging,
-        transport,
+        tags: meta.tags,
+        notes: meta.description,
+        environment: meta.environment,
+        favorite: meta.favorite,
+        last_connected: meta.last_connected,
+        session_logging: meta.session_logging,
+        ping: meta.ping,
+        transport: meta.transport,
     })
 }
 
@@ -202,6 +184,7 @@ pub fn compute_ssh_config_hash(host: &SshHost) -> String {
 mod tests {
     use super::*;
     use crate::metadata::MetadataDb;
+    use crate::session_transport::SessionTransport;
     use crate::ssh::SshHost;
     use crate::store::{HostSource, LauncherStore, NewHost};
     use std::collections::HashMap;
@@ -397,6 +380,7 @@ mod tests {
                 favorite: true,
                 last_connected: Some(42),
                 session_logging: crate::session_log::SessionLoggingOverride::On,
+                ping: crate::session_log::SessionLoggingOverride::Off,
                 transport: SessionTransport::Ssh,
             })
             .unwrap();
@@ -415,6 +399,10 @@ mod tests {
         assert_eq!(
             imported.session_logging,
             crate::session_log::SessionLoggingOverride::On
+        );
+        assert_eq!(
+            imported.ping,
+            crate::session_log::SessionLoggingOverride::Off
         );
     }
 }

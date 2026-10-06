@@ -104,7 +104,7 @@ fn cmd_resolve(ctx: &CliContext, args: &[String]) -> Result<i32> {
         host_usage("resolve requires <name>");
     };
     let entry = ctx.host_by_name(name)?;
-    let resolve = host_resolve_json(entry, &ctx.store, ctx.password_store.as_ref(), verbose);
+    let resolve = host_resolve_json(entry, &ctx.store, ctx.password_store(), verbose);
     match fmt {
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&resolve)?),
         OutputFormat::Plain => println!("{}", format_resolve_plain(&resolve)),
@@ -154,7 +154,7 @@ fn cmd_connect(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     };
     let effective_identity = resolved.as_ref().and_then(|r| r.identity.as_ref());
     let (pending_secret, _) =
-        resolve_pending_secret(&entry, effective_identity, ctx.password_store.as_ref());
+        resolve_pending_secret(&entry, effective_identity, ctx.password_store());
     let base_argv = match (entry.managed(), resolved.as_ref()) {
         (Some(m), Some(r)) => resolved_session_argv(m, r),
         _ => session_argv_for_entry(&entry),
@@ -327,6 +327,7 @@ fn cmd_add(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
         has_password: spec.password.is_some(),
         username: spec.username,
         session_logging: spec.session_logging,
+        ping: spec.ping,
         transport: spec.transport,
     })?;
 
@@ -334,7 +335,7 @@ fn cmd_add(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
 
     if let Some(pw) = spec.password {
         if let Err(e) = ctx
-            .password_store
+            .password_store()
             .set(&crate::credentials::host_key(created.id), &pw)
         {
             eprintln!("sshub: warning: storing password failed: {e:#}");
@@ -445,6 +446,9 @@ fn cmd_edit(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     if let Some(v) = patch.set_session_logging {
         update.session_logging = Some(v);
     }
+    if let Some(v) = patch.set_ping {
+        update.ping = Some(v);
+    }
     if patch.clear_transport {
         update.transport = Some(None);
     } else if let Some(v) = patch.set_transport {
@@ -488,14 +492,14 @@ fn cmd_edit(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
 
     if let Some(pw) = patch.password {
         if let Err(e) = ctx
-            .password_store
+            .password_store()
             .set(&crate::credentials::host_key(managed.id), &pw)
         {
             eprintln!("sshub: warning: storing password failed: {e:#}");
         }
     } else if patch.clear_password {
         let _ = ctx
-            .password_store
+            .password_store()
             .delete(&crate::credentials::host_key(managed.id));
     }
 
@@ -532,6 +536,9 @@ fn apply_metadata_edit(
         }
         if let Some(v) = patch.set_session_logging {
             update.session_logging = Some(v);
+        }
+        if let Some(v) = patch.set_ping {
+            update.ping = Some(v);
         }
         if let Some(v) = patch.favorite {
             update.favorite = Some(v);
@@ -594,6 +601,7 @@ fn apply_metadata_edit(
         session_logging: patch
             .set_session_logging
             .unwrap_or(entry.session_logging_override()),
+        ping: patch.set_ping.unwrap_or(entry.ping_override()),
         transport: patch.set_transport.unwrap_or(entry.session_transport()),
     };
     ctx.metadata.upsert(&meta)?;
@@ -649,7 +657,7 @@ fn cmd_delete(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     match ctx.store.delete_host(managed.id)? {
         DeleteHostOutcome::Deleted => {
             if let Err(err) = ctx
-                .password_store
+                .password_store()
                 .delete(&crate::credentials::host_key(managed.id))
             {
                 eprintln!("warning: host deleted but credential cleanup failed: {err}");
@@ -744,6 +752,7 @@ struct HostAddSpec {
     remote_command: Option<String>,
     transport: Option<SessionTransport>,
     session_logging: crate::session_log::SessionLoggingOverride,
+    ping: crate::session_log::SessionLoggingOverride,
     os_icon: Option<String>,
     favorite: bool,
     password: Option<String>,
@@ -790,6 +799,10 @@ impl HostAddSpec {
         let session_logging = parse::take_opt(&mut args, "--session-log")
             .and_then(|s| parse_session_logging(&s))
             .unwrap_or(crate::session_log::SessionLoggingOverride::Inherit);
+        let ping = parse::take_opt(&mut args, "--ping")
+            .map(|s| parse_session_logging(&s).ok_or_else(|| anyhow::anyhow!("invalid --ping")))
+            .transpose()?
+            .unwrap_or_default();
         let os_icon = parse::take_opt(&mut args, "--os-icon").and_then(|s| optional_field(&s));
         let favorite = parse::take_flag(&mut args, "--favorite");
         let password = if parse::take_flag(&mut args, "--password-stdin") {
@@ -812,6 +825,7 @@ impl HostAddSpec {
             remote_command,
             transport,
             session_logging,
+            ping,
             os_icon,
             favorite,
             password,
@@ -842,6 +856,7 @@ struct HostEditPatch {
     set_os_icon: Option<Option<String>>,
     clear_os_icon: bool,
     set_session_logging: Option<crate::session_log::SessionLoggingOverride>,
+    set_ping: Option<crate::session_log::SessionLoggingOverride>,
     set_transport: Option<SessionTransport>,
     clear_transport: bool,
     favorite: Option<bool>,
@@ -882,6 +897,7 @@ impl HostEditPatch {
             set_os_icon: None,
             clear_os_icon: false,
             set_session_logging: None,
+            set_ping: None,
             clear_transport: false,
             set_transport: None,
             favorite: None,
@@ -946,6 +962,11 @@ impl HostEditPatch {
                     .ok_or_else(|| anyhow::anyhow!("invalid --set-session-log"))?,
             );
         }
+        if let Some(v) = parse::take_opt(&mut args, "--set-ping") {
+            patch.set_ping = Some(
+                parse_session_logging(&v).ok_or_else(|| anyhow::anyhow!("invalid --set-ping"))?,
+            );
+        }
         if let Some(v) = parse::take_opt(&mut args, "--set-transport") {
             patch.set_transport = Some(
                 parse_transport(&v).ok_or_else(|| anyhow::anyhow!("invalid --set-transport"))?,
@@ -998,6 +1019,7 @@ impl HostEditPatch {
             || self.set_os_icon.is_some()
             || self.clear_os_icon
             || self.set_session_logging.is_some()
+            || self.set_ping.is_some()
             || self.set_transport.is_some()
             || self.clear_transport
             || self.favorite.is_some()

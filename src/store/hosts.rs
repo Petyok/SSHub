@@ -315,6 +315,7 @@ impl LauncherStore {
             let session_logging = update
                 .session_logging
                 .unwrap_or(current.session_logging);
+            let ping = update.ping.unwrap_or(current.ping);
             let transport = match update.transport {
                 Some(v) => v,
                 None => current.transport,
@@ -327,7 +328,7 @@ impl LauncherStore {
                  SET name = ?1, label = ?2, address = ?3, port = ?4, group_id = ?5, identity_id = ?6,
                      os_icon = ?7, tags = ?8, notes = ?9, proxy_jump = ?10, forward_agent = ?11,
                      remote_command = ?12, favorite = ?13, sort_order = ?14, has_password = ?15, username = ?16, updated_at = ?17,
-                     environment = ?19, session_logging = ?20, transport = ?21
+                     environment = ?19, session_logging = ?20, transport = ?21, ping = ?22
                  WHERE id = ?18",
                 params![
                     name,
@@ -351,6 +352,7 @@ impl LauncherStore {
                     environment,
                     session_logging.to_db(),
                     transport.map(|t| t.to_db()),
+                    ping.to_db(),
                 ],
             )?;
 
@@ -497,8 +499,8 @@ impl LauncherStore {
                 "INSERT INTO hosts
                     (name, label, address, port, tags, notes, environment, proxy_jump, forward_agent,
                      remote_command, favorite, last_connected, source, ssh_config_hash,
-                     session_logging, transport, created_at, updated_at)
-                 VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?13, ?6, ?7, ?8, ?9, ?10, 'ssh_config', ?11, ?14, ?15, ?12, ?12)",
+                     session_logging, transport, ping, created_at, updated_at)
+                 VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?13, ?6, ?7, ?8, ?9, ?10, 'ssh_config', ?11, ?14, ?15, ?16, ?12, ?12)",
                 params![
                     import.name,
                     import.address,
@@ -515,6 +517,7 @@ impl LauncherStore {
                     import.environment,
                     import.session_logging.to_db(),
                     import.transport.to_db(),
+                    import.ping.to_db(),
                 ],
             )?;
             if import.favorite {
@@ -580,6 +583,7 @@ impl LauncherStore {
             has_password: false,
             username: current.username.clone(),
             session_logging: current.session_logging,
+            ping: current.ping,
             transport: current.transport,
         })
         .map(Some)
@@ -868,9 +872,9 @@ pub(super) fn create_host_on(conn: &rusqlite::Connection, host: &NewHost) -> Res
         "INSERT INTO hosts
             (name, label, address, port, group_id, identity_id, os_icon, tags, notes,
              proxy_jump, forward_agent, remote_command, source, has_password, username,
-             session_logging, transport, sort_order, created_at, updated_at)
+             session_logging, transport, ping, sort_order, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-             ?16, ?17,
+             ?16, ?17, ?19,
              (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM hosts), ?18, ?18)",
         params![
             host.name,
@@ -891,6 +895,7 @@ pub(super) fn create_host_on(conn: &rusqlite::Connection, host: &NewHost) -> Res
             host.session_logging.to_db(),
             host.transport.map(|t| t.to_db()),
             now,
+            host.ping.to_db(),
         ],
     )?;
     let id = conn.last_insert_rowid();
@@ -1040,7 +1045,7 @@ fn load_host_by_id(conn: &rusqlite::Connection, id: i64) -> Result<Option<Manage
                 g.default_port, g.default_proxy_jump, g.default_transport,
                 g.default_forward_agent, g.parent_id, g.reserved,
                 i.id, i.name, i.username, i.private_key, i.certificate, i.has_password,
-                h.environment, h.session_logging, h.transport
+                h.environment, h.session_logging, h.transport, h.ping
          FROM hosts h
          LEFT JOIN host_groups g ON g.id = h.group_id
          LEFT JOIN identities i ON i.id = h.identity_id
@@ -1417,6 +1422,7 @@ fn row_to_managed_host(row: &rusqlite::Row<'_>) -> rusqlite::Result<ManagedHost>
         transport: row
             .get::<_, Option<String>>(41)?
             .map(|s| SessionTransport::from_db(Some(s.as_str()))),
+        ping: SessionLoggingOverride::from_db(row.get(42).ok()),
         created_at: row.get(19)?,
         updated_at: row.get(20)?,
     })

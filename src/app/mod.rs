@@ -433,6 +433,9 @@ pub struct App {
     pub palette_results: Vec<usize>,
     pub palette_adhoc: Option<crate::app::adhoc::AdhocTarget>,
     pub ping_rx: Option<Receiver<crate::ping::PingResult>>,
+    /// Whether [`App::start_ping_worker`] may spawn real probes. Set only by
+    /// the on-disk constructor, so unit tests that inject deps stay offline.
+    pub ping_live: bool,
     pub ping_data: std::collections::HashMap<String, Vec<u32>>,
     pub sftp: Option<crate::sftp::model::SftpState>,
     pub sftp_tx: Option<std::sync::mpsc::Sender<crate::sftp::SftpCommand>>,
@@ -902,9 +905,10 @@ impl App {
         // start even with a broken themes directory.
         app.load_themes_from(&themes_dir);
 
+        app.ping_live = true;
+        // Also starts the ping worker.
         app.reload_hosts()?;
         app.refresh_auth_cache();
-        app.start_ping_worker();
 
         // Spawn the OS auto-detect worker here (the on-disk constructor) rather
         // than in new_with_deps so unit tests that inject deps stay offline and
@@ -1055,6 +1059,7 @@ impl App {
             palette_results: Vec::new(),
             palette_adhoc: None,
             ping_rx: None,
+            ping_live: false,
             ping_data: std::collections::HashMap::new(),
             sftp: None,
             sftp_tx: None,
@@ -1139,12 +1144,13 @@ impl App {
         }
     }
 
-    /// Launch a background thread that pings all known host addresses periodically.
-    /// Should NOT be called in test/CI environments.
-    pub fn start_ping_worker(&mut self) {
-        let hosts: Vec<(String, String)> = self
-            .hosts
+    /// `(name, address)` of every host whose ping is on: `[ping] enabled`,
+    /// overridden per host (#137).
+    pub(crate) fn ping_targets(&self) -> Vec<(String, String)> {
+        let global = self.config.ping.enabled;
+        self.hosts
             .iter()
+            .filter(|h| crate::session_log::effective_enabled(global, h.ping_override()))
             .filter_map(|h| {
                 let addr = match h {
                     HostEntry::Managed(m) => m.address.clone(),
@@ -1155,26 +1161,31 @@ impl App {
                 }
                 Some((h.name().to_string(), addr))
             })
-            .collect();
-        if hosts.is_empty() {
-            // No hosts to ping — drop any existing worker. Dropping its Receiver
-            // makes the old thread exit on its next send instead of leaving it
-            // pinging deleted addresses forever.
-            self.ping_rx = None;
-        } else {
-            // Replacing ping_rx drops the previous Receiver, so any prior worker
-            // also winds down on its next send.
-            self.ping_rx = Some(crate::ping::spawn_ping_worker(
-                hosts.clone(),
-                std::time::Duration::from_secs(30),
-            ));
-            // We used to also spawn `ssh -v` against every host every 60s
-            // and dump its output into the SSH log — but that buried the
-            // events the user actually cares about (their own connect
-            // attempts + auto-auth diagnostics) under hundreds of probe
-            // lines. Status freshness still comes from the ping worker
-            // above; the SSH log is now reserved for user-initiated events.
+            .collect()
+    }
+
+    /// (Re)start the background ping worker over [`App::ping_targets`].
+    /// Samples of hosts left out are dropped, so they read as unknown rather
+    /// than as their last reading. Spawns nothing unless [`App::ping_live`]
+    /// is set, so tests never probe.
+    pub fn start_ping_worker(&mut self) {
+        let hosts = self.ping_targets();
+        {
+            let pinged: std::collections::HashSet<&str> =
+                hosts.iter().map(|(name, _)| name.as_str()).collect();
+            self.ping_data
+                .retain(|name, _| pinged.contains(name.as_str()));
         }
+        // Replacing or dropping ping_rx drops the previous Receiver, so a
+        // running worker exits on its next send instead of pinging forever.
+        self.ping_rx = (self.ping_live && !hosts.is_empty())
+            .then(|| crate::ping::spawn_ping_worker(hosts, std::time::Duration::from_secs(30)));
+        // We used to also spawn `ssh -v` against every host every 60s and dump
+        // its output into the SSH log, but that buried the events the user
+        // actually cares about (their own connect attempts + auto-auth
+        // diagnostics) under hundreds of probe lines. Status freshness still
+        // comes from the ping worker; the SSH log is reserved for
+        // user-initiated events.
     }
 
     /// Reload host list from launcher store + ssh_config resolver, rebuild filter.
@@ -1213,10 +1224,8 @@ impl App {
         if let Some(name) = selected_name {
             self.restore_selection_by_name(&name);
         }
-        // Restart ping worker with updated host list (only if already running)
-        if self.ping_rx.is_some() {
-            self.start_ping_worker();
-        }
+        // The host list or a host's ping override may have changed.
+        self.start_ping_worker();
         Ok(())
     }
 

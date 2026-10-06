@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: i64 = 17;
+const SCHEMA_VERSION: i64 = 18;
 
 /// Name of the reserved, auto-created "Favorites" group. Membership in it is the
 /// source of truth for a host's favourite status.
@@ -229,6 +229,10 @@ pub(crate) fn run_migrations(conn: &Connection, launcher_path: &Path) -> Result<
 
     if current < 17 {
         migrate_v16_to_v17(conn)?;
+    }
+
+    if current < 18 {
+        migrate_v17_to_v18(conn)?;
     }
 
     // Runs last so all columns it writes to (e.g. environment) already exist.
@@ -776,6 +780,19 @@ fn migrate_v16_to_v17(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Per-host ping override (#137): NULL = inherit `[ping] enabled`, 1 = on,
+/// 0 = off, the same encoding as `session_logging`.
+fn migrate_v17_to_v18(conn: &Connection) -> Result<()> {
+    let has_col: bool = conn
+        .prepare("SELECT COUNT(*) FROM pragma_table_info('hosts') WHERE name = 'ping'")?
+        .query_row([], |row| row.get::<_, i64>(0))
+        .map(|c| c > 0)?;
+    if !has_col {
+        conn.execute_batch("ALTER TABLE hosts ADD COLUMN ping INTEGER;")?;
+    }
+    Ok(())
+}
+
 pub(crate) fn now_ts() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1168,7 +1185,7 @@ INSERT INTO host_groups (name, sort_order, reserved, created_at)
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(version, 17);
+        assert_eq!(version, SCHEMA_VERSION);
         for column in [
             "default_username",
             "default_port",

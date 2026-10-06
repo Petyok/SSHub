@@ -2,13 +2,14 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{Context, Result};
 
+use crate::app::SortMode;
 use crate::secure_fs;
 
 use super::context::CliContext;
+use super::filter::apply_filters;
 use super::parse::{take_opt, usage};
 
 const CACHE_HEADER: &str = "# sshub-completion-cache v1";
@@ -63,7 +64,7 @@ const COMPLETIONS_SUB: &[&str] = &["bash", "zsh", "fish"];
 
 const THEME_SUB: &[&str] = &["check", "list", "show"];
 
-pub fn run(_ctx: &mut CliContext, args: &[String]) -> Result<i32> {
+pub fn run(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     let mut rest = args.to_vec();
     let shell = match rest.first() {
         Some(s) => s.to_string(),
@@ -78,7 +79,7 @@ pub fn run(_ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     rest.remove(0);
 
     let cache_path = take_opt(&mut rest, "--cache");
-    let host_names = load_host_names(cache_path.as_deref())?;
+    let host_names = load_host_names(ctx, cache_path.as_deref())?;
 
     if let Some(path) = cache_path {
         write_cache(&path, &host_names)?;
@@ -94,7 +95,7 @@ pub fn run(_ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     Ok(0)
 }
 
-fn load_host_names(cache_path: Option<&str>) -> Result<Vec<String>> {
+fn load_host_names(ctx: &CliContext, cache_path: Option<&str>) -> Result<Vec<String>> {
     if let Some(path) = cache_path {
         if Path::new(path).exists() {
             if let Ok(names) = read_cache(path) {
@@ -102,47 +103,18 @@ fn load_host_names(cache_path: Option<&str>) -> Result<Vec<String>> {
             }
         }
     }
-    fetch_host_names_via_subprocess()
+    host_names(ctx)
 }
 
-fn fetch_host_names_via_subprocess() -> Result<Vec<String>> {
-    let exe = std::env::current_exe().context("resolve sshub executable path")?;
-    let output = Command::new(&exe)
-        .args(["host", "list", "--format", "json"])
-        .output()
-        .context("spawn sshub host list for completions")?;
-
-    if !output.status.success() {
-        return Ok(Vec::new());
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_host_list_json(&stdout)
-}
-
-fn parse_host_list_json(stdout: &str) -> Result<Vec<String>> {
-    let trimmed = stdout.trim();
-    if trimmed.is_empty() {
-        return Ok(Vec::new());
-    }
-    let value: serde_json::Value = serde_json::from_str(trimmed).unwrap_or(serde_json::Value::Null);
-    let mut names = Vec::new();
-    if let Some(arr) = value.as_array() {
-        for item in arr {
-            if let Some(n) = item.get("name").and_then(|v| v.as_str()) {
-                names.push(n.to_string());
-            } else if let Some(n) = item.as_str() {
-                names.push(n.to_string());
-            }
-        }
-    } else if let Some(arr) = value.as_array() {
-        for item in arr {
-            if let Some(s) = item.as_str() {
-                names.push(s.to_string());
-            }
-        }
-    }
-    Ok(names)
+/// Host names in `sshub host list` order, read from the already open
+/// context. Running `host list` as a child process instead would bootstrap a
+/// second sshub while the shell that sources this script waits on it.
+fn host_names(ctx: &CliContext) -> Result<Vec<String>> {
+    let indices = apply_filters(&ctx.hosts, &ctx.store, &[], None, SortMode::Label)?;
+    Ok(indices
+        .into_iter()
+        .map(|i| ctx.hosts[i].name().to_string())
+        .collect())
 }
 
 fn write_cache(path: &str, names: &[String]) -> Result<()> {
@@ -502,6 +474,17 @@ mod tests {
         write_cache(path.to_str().unwrap(), &names).unwrap();
         let read = read_cache(path.to_str().unwrap()).unwrap();
         assert_eq!(read, names);
+    }
+
+    /// The names come from the profile's store, in `host list` order (label
+    /// sort), not from a child `sshub host list` process.
+    #[test]
+    fn host_names_come_from_the_store_in_host_list_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = crate::cli::context::tests::bootstrapped(dir.path(), &["zeta", "alpha"]);
+        let names = load_host_names(&ctx, None).unwrap();
+        assert_eq!(names, ["alpha", "zeta"]);
+        assert!(render_zsh(&names).contains("'alpha' 'zeta'"));
     }
 
     #[test]

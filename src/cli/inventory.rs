@@ -96,7 +96,7 @@ pub fn run_import(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
                 let report = crate::import::termius_csv::import_csv_export(
                     &dir,
                     &ctx.store,
-                    ctx.password_store.as_ref(),
+                    ctx.password_store(),
                 )?;
                 print_csv_import_report(&report);
                 ctx.reload_hosts()?;

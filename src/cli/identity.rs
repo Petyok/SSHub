@@ -136,7 +136,7 @@ fn cmd_add(ctx: &CliContext, args: &[String]) -> Result<i32> {
     })?;
 
     if let Some(pw) = password {
-        ctx.password_store.set(&identity_key(created.id), &pw)?;
+        ctx.password_store().set(&identity_key(created.id), &pw)?;
     }
 
     println!("created identity '{}'", created.name);
@@ -181,16 +181,16 @@ fn cmd_edit(ctx: &CliContext, args: &[String]) -> Result<i32> {
 
     let mut has_password = identity.has_password;
     if clear_password {
-        ctx.password_store.delete(&identity_key(identity.id))?;
+        ctx.password_store().delete(&identity_key(identity.id))?;
         has_password = false;
     }
     if password_stdin {
         let pw = read_password_stdin()?;
         if pw.is_empty() {
-            ctx.password_store.delete(&identity_key(identity.id))?;
+            ctx.password_store().delete(&identity_key(identity.id))?;
             has_password = false;
         } else {
-            ctx.password_store.set(&identity_key(identity.id), &pw)?;
+            ctx.password_store().set(&identity_key(identity.id), &pw)?;
             has_password = true;
         }
     }
@@ -230,7 +230,7 @@ fn cmd_delete(ctx: &CliContext, args: &[String]) -> Result<i32> {
     let identity = ctx.identity_by_name(&name)?;
     match ctx.store.delete_identity(identity.id)? {
         DeleteIdentityOutcome::Deleted => {
-            if let Err(err) = ctx.password_store.delete(&identity_key(identity.id)) {
+            if let Err(err) = ctx.password_store().delete(&identity_key(identity.id)) {
                 eprintln!("warning: identity deleted but credential cleanup failed: {err}");
             }
             println!("deleted identity '{name}'");

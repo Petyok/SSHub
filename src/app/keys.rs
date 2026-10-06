@@ -583,12 +583,10 @@ impl App {
             KeyCode::BackTab => self.detail_edit_field_prev(),
             _ if self.is_action(KeyAction::MoveDown, &key) => self.detail_edit_field_next(),
             _ if self.is_action(KeyAction::MoveUp, &key) => self.detail_edit_field_prev(),
-            KeyCode::Right if field.is_tri_state() => self.detail_edit_cycle_session_logging(1),
-            KeyCode::Left if field.is_tri_state() => self.detail_edit_cycle_session_logging(-1),
-            KeyCode::Char(' ')
-                if key.modifiers.is_empty() && field == DetailEditField::SessionLogging =>
-            {
-                self.detail_edit_cycle_session_logging(1);
+            KeyCode::Right if field.is_tri_state() => self.detail_edit_cycle(1),
+            KeyCode::Left if field.is_tri_state() => self.detail_edit_cycle(-1),
+            KeyCode::Char(' ') if key.modifiers.is_empty() && field.is_tri_state() => {
+                self.detail_edit_cycle(1);
             }
             KeyCode::Backspace if key.modifiers.is_empty() => self.detail_edit_backspace(),
             KeyCode::Char(c)
@@ -1317,6 +1315,7 @@ impl App {
                 SettingToggle::DisableAnimation => a.disable_animation,
                 SettingToggle::SessionLogging => self.config.session_logging.enabled,
                 SettingToggle::CommandHistory => self.config.command_history.enabled,
+                SettingToggle::Ping => self.config.ping.enabled,
             }),
         }
     }
@@ -1356,6 +1355,7 @@ impl App {
             SettingToggle::CommandHistory => {
                 self.config.command_history.enabled = !self.config.command_history.enabled;
             }
+            SettingToggle::Ping => self.config.ping.enabled = !self.config.ping.enabled,
         }
         true
     }
@@ -1442,6 +1442,11 @@ impl App {
                 let item = SETTINGS_ITEMS.get(self.settings_selected).map(|d| d.item);
                 if item.is_some_and(|item| self.toggle_setting(item)) {
                     self.save_config_quietly();
+                    // Takes effect now: starts the worker, or stops it and
+                    // resets every host to unknown.
+                    if item == Some(SettingToggle::Ping.into()) {
+                        self.start_ping_worker();
+                    }
                 }
             }
             _ => {}

@@ -167,6 +167,10 @@ pub fn render_host_form(
                     form.session_logging.label()
                 ),
             ),
+            HostFormField::Ping => (
+                "Ping",
+                format!("{} (Space or arrows to cycle)", form.ping.label()),
+            ),
             HostFormField::OsIcon => ("OS icon", os_icon_label(form.os_icon_index)),
             HostFormField::Password => (
                 "Password",
@@ -375,6 +379,7 @@ mod tests {
             remote_command: String::new(),
             transport: None,
             session_logging: crate::session_log::SessionLoggingOverride::Inherit,
+            ping: crate::session_log::SessionLoggingOverride::Inherit,
             os_icon_index: 0,
             password: String::new(),
             password_original: String::new(),

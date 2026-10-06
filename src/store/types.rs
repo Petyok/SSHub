@@ -91,6 +91,8 @@ pub struct ManagedHost {
     pub has_password: bool,
     pub username: Option<String>,
     pub session_logging: SessionLoggingOverride,
+    /// Per-host override of `[ping] enabled` (#137).
+    pub ping: SessionLoggingOverride,
     /// Explicit transport. `None` = inherit from the group chain, else ssh.
     pub transport: Option<SessionTransport>,
     pub created_at: i64,
@@ -116,6 +118,7 @@ pub struct NewHost {
     pub has_password: bool,
     pub username: Option<String>,
     pub session_logging: SessionLoggingOverride,
+    pub ping: SessionLoggingOverride,
     pub transport: Option<SessionTransport>,
 }
 
@@ -144,6 +147,7 @@ impl NewHost {
             has_password: false,
             username: None,
             session_logging: SessionLoggingOverride::Inherit,
+            ping: SessionLoggingOverride::Inherit,
             transport: Some(SessionTransport::Ssh),
         }
     }
@@ -172,6 +176,7 @@ pub struct HostUpdate {
     pub has_password: Option<bool>,
     pub username: Option<Option<String>>,
     pub session_logging: Option<SessionLoggingOverride>,
+    pub ping: Option<SessionLoggingOverride>,
     /// Outer `Some` = change the transport; inner `None` = restore inheritance.
     pub transport: Option<Option<SessionTransport>>,
 }
@@ -261,6 +266,7 @@ pub struct SshConfigHostImport {
     pub favorite: bool,
     pub last_connected: Option<i64>,
     pub session_logging: SessionLoggingOverride,
+    pub ping: SessionLoggingOverride,
     pub transport: SessionTransport,
 }
 

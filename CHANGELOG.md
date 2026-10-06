@@ -4,6 +4,56 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.17.4] - 2026-10-06
+
+### Added
+
+- **Ping probes can be switched off** (issue #137, requested by
+  [@morgonjor](https://github.com/morgonjor)) - SSHub always ran
+  `ping -c 1 -W 1` against every host every 30 s, so where ICMP is blocked or
+  unwanted every host showed as unreachable and the probes never stopped. The
+  new `Ping hosts` row in Settings (`Ctrl+H`), stored as `[ping] enabled` in
+  `config.toml` (default `true`), turns them off: no ping worker runs, status
+  dots and latency stay unknown instead of unreachable, and the Ping panel says
+  so. Flipping it applies at once, without a restart.
+
+  Each host can override that with a `Ping` row in the host form (`inherit`,
+  `on`, `off`), the same pattern as its session log: `off` silences one host
+  that drops ICMP, `on` keeps probing one host while the rest stay quiet. The
+  CLI takes the same values as `sshub host add --ping` and
+  `sshub host edit --set-ping`, and `sshub host show` prints the setting.
+
+### Fixed
+
+- **New terminals no longer stay blank on a locked keyring** (#135): every
+  headless command opened the OS keyring at startup with a test write, even
+  commands that never read a secret. With the keyring locked and its unlock
+  prompt unable to open (for example `gcr-prompter: cannot open display`),
+  that call never returned, so `sshub host list` hung, and so did
+  `source <(sshub completions zsh)` in `~/.zshrc`, leaving each new terminal
+  window without a prompt. The keyring is now opened only by commands that
+  read, store or remove a secret (`connect`, `exec`, `host resolve`,
+  `tunnel start`, `sftp`, `import`, host and identity `delete`, and `add`/`edit`
+  with a password flag). `sshub completions` also reads host names directly
+  instead of running a second `sshub host list`.
+
+- **btop draws correctly in embedded sessions** (diagnosed in PR #139 by
+  @Frysuni) - SSHub advertises `TERM=xterm-256color`, but the terminal
+  emulator inside embedded sessions ignored several xterm sequences, so btop,
+  which positions everything with HVP (`CSI row;col f`), printed each frame
+  where the previous one stopped and the screen filled with scrolled,
+  duplicated fragments. SSHub now translates HVP, HPA, HPR, VPR, the bare
+  SCO cursor save/restore (`CSI s`/`CSI u`) and REP into sequences the
+  emulator understands, also when one arrives split across reads. Insert
+  character/line and scroll down counts are capped at the screen size, so a
+  single `CSI 65535 @` no longer freezes the session for seconds, and the
+  embedded terminal is never smaller than 2x2, where the emulator panicked on
+  wrapping text. Synchronized output (DEC mode 2026) is supported too: while
+  an app repaints inside `CSI ? 2026 h` ... `CSI ? 2026 l`, the session pane
+  keeps the last complete frame (for at most 1 s) instead of a half-drawn
+  one, SSHub's own header, footer and popups keep updating, and the mode
+  query (`CSI ? 2026 $ p`) is answered.
+
 ## [0.17.3] - 2026-09-23
 
 ### Changed
