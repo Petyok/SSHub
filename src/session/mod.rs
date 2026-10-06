@@ -21,6 +21,15 @@ use anyhow::Result;
 pub use parser::ParserState;
 pub use pty::{PtyEvent, PtyRuntime};
 
+/// PTY size for a terminal of `rows` x `cols`: one row each for header and
+/// footer, floored at 2x2. Stock vt100 0.16 panics below that: wrapping text
+/// on a 1-row grid panics in `Grid::col_wrap`, and a wide character on a
+/// 1-column grid underflows `cols - width` in `Screen::text`. The
+/// renderer clips whatever no longer fits the window.
+pub(crate) fn pty_size(rows: u16, cols: u16) -> (u16, u16) {
+    (rows.saturating_sub(2).max(2), cols.max(2))
+}
+
 /// Lifecycle of an embedded SSH session.
 #[derive(Debug)]
 pub enum SessionPhase {
@@ -193,6 +202,8 @@ pub struct Session {
     /// never answered is useless, so we keep the spinner until either real PTY
     /// content arrives or the child exits.
     saw_pty_bytes: bool,
+    /// PTY events taken in one [`Self::drain`]; reused.
+    pty_events: Vec<PtyEvent>,
     /// Active in-app mouse text selection over the grid, if any.
     pub selection: Option<Selection>,
     /// Transient "copied" toast: (message, shown_at). Rendered in a corner for
@@ -250,9 +261,7 @@ impl Session {
         log: Option<crate::session_log::SessionLogWriter>,
         siphon_stderr: bool,
     ) -> Result<Self> {
-        // Reserve 1 row for header + 1 row for footer; ensure non-zero PTY.
-        let pty_rows = rows.saturating_sub(2).max(1);
-        let pty_cols = cols.max(1);
+        let (pty_rows, pty_cols) = pty_size(rows, cols);
         let interactive = config.key_push_identity.is_none()
             && matches!(config.argv.first().map(String::as_str), Some("ssh"));
         let auth = if interactive {
@@ -326,6 +335,7 @@ impl Session {
             host_key_fingerprint: None,
             debug_expanded: false,
             saw_pty_bytes: false,
+            pty_events: Vec::new(),
             selection: None,
             copy_notice: None,
             alt_scroll_hinted: false,
@@ -557,12 +567,31 @@ impl Session {
     /// screen for an unanswered password / passphrase prompt and auto-type
     /// the stored secret exactly once.
     pub fn drain(&mut self) {
+        let mut events = std::mem::take(&mut self.pty_events);
+        while let Some(event) = self.runtime.try_recv() {
+            events.push(event);
+        }
+        self.handle_pty_events(&mut events);
+        self.pty_events = events;
+    }
+
+    fn handle_pty_events(&mut self, events: &mut Vec<PtyEvent>) {
+        // Translate every read up front: a synchronized-output frame is then
+        // rasterized once per drain, not once per small read. Each read still
+        // reaches vt100 on its own below, so everything checked per read sees
+        // the same screen as before.
+        for event in events.iter() {
+            if let PtyEvent::Bytes(bytes) = event {
+                self.parser.queue(bytes);
+            }
+        }
+        let now = Instant::now();
         let mut had_bytes = false;
         let mut had_stderr = false;
-        while let Some(event) = self.runtime.try_recv() {
+        for event in events.drain(..) {
             match event {
                 PtyEvent::Bytes(bytes) => {
-                    self.parser.process(&bytes);
+                    self.parser.apply_next(now);
                     if !self.history_capture_allowed() {
                         self.history.input.invalidate_pending_input();
                     }
@@ -1020,8 +1049,7 @@ impl Session {
 
     /// Update both the PTY size and the parser grid. Body rows = total - header - footer.
     pub fn resize(&mut self, rows: u16, cols: u16) {
-        let pty_rows = rows.saturating_sub(2).max(1);
-        let pty_cols = cols.max(1);
+        let (pty_rows, pty_cols) = pty_size(rows, cols);
         self.parser.set_size(pty_rows, pty_cols);
         let _ = self.runtime.resize(pty_rows, pty_cols);
     }
@@ -1939,6 +1967,27 @@ mod prompt_tests {
             vec!["R0VIRUlN".to_string()],
             "drain must leave the clipboard write for the frame to decide on"
         );
+    }
+
+    #[test]
+    fn one_drain_of_small_sync_reads_takes_one_snapshot() {
+        // A remote flushing `ESU BSU` in many tiny reads must not cost one
+        // full-grid rasterization per read on the UI thread.
+        let config = SessionConfig {
+            argv: vec!["true".into()],
+            display_name: "t".into(),
+            meta: SessionMeta::default(),
+            pending_secret: None,
+            key_push_identity: None,
+            host_name: "t".into(),
+        };
+        let mut s = Session::spawn(config, 24, 80, None).unwrap();
+        let mut events: Vec<PtyEvent> = (0..16)
+            .map(|i| PtyEvent::Bytes(format!("\x1b[?2026l{i:x}\x1b[?2026h").into_bytes()))
+            .collect();
+        s.handle_pty_events(&mut events);
+        assert_eq!(s.parser.snapshots, 1);
+        assert!(s.parser.screen().contents().starts_with("0123456789abcdef"));
     }
 
     /// End-to-end for #113: a child asks the terminal where the cursor is and

@@ -84,7 +84,8 @@ impl App {
 
         // Capture self.terminal_area.height before we take a mutable borrow
         // on `session` — borrowck won't let us re-read self after that.
-        let body_rows = self.terminal_area.height.saturating_sub(2).max(1) as usize;
+        let area = self.terminal_area;
+        let body_rows = usize::from(crate::session::pty_size(area.height, area.width).0);
 
         let cancel_connecting = matches!(
             self.active_session().map(|s| &s.phase),
@@ -484,6 +485,7 @@ impl App {
     /// reporting we forward; otherwise the scroll wheel drives local
     /// scrollback navigation and clicks are dropped.
     pub(crate) fn handle_mouse_session(&mut self, mouse: MouseEvent) {
+        let area = self.terminal_area;
         let Some(session) = self.active_session_mut() else {
             return;
         };
@@ -554,11 +556,12 @@ impl App {
         }
 
         // Remote app is consuming mouse — translate to the wire protocol.
-        // Only events inside the grid go out: row 0 is our own header and
-        // anything past the last row is the footer, and reporting either as an
-        // edge row of the grid made a stray click on sshub's chrome land on the
-        // remote (tmux's status line with `status-position top`, for one).
-        if mouse.row == 0 || mouse.row.saturating_sub(1) >= rows || mouse.column >= cols {
+        // Only events on a grid cell the pane shows go out: row 0 is our own
+        // header, the footer follows the pane, and reporting either as an edge
+        // row of the grid made a stray click on sshub's chrome land on the
+        // remote (tmux's status line with `status-position top`, for one). The
+        // grid can be a row taller than a tiny pane, so its size is not enough.
+        if !crate::session::render::pane_shows_cell(area, (mouse.column, mouse.row), (rows, cols)) {
             return;
         }
         if let Some(bytes) = crate::session::keys::encode_mouse(mouse, col, row, mode, encoding) {

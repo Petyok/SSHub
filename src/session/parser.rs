@@ -2,7 +2,19 @@
 //! renderer reads via `tui-term`, relays OSC 52 clipboard writes that
 //! applications inside the PTY emit, and answers the terminal status queries
 //! they send — `vt100` implements none of the latter, and an application that
-//! asks and hears nothing back blocks until its own timeout.
+//! asks and hears nothing back blocks until its own timeout. In front of the
+//! parser, [`XtermCompat`] translates the few xterm sequences stock `vt100`
+//! drops into ones it does understand, and tracks synchronized output (DEC
+//! mode 2026) so the pane can show the last complete frame mid-repaint.
+
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
+
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
+use ratatui::widgets::Widget;
+use tui_term::widget::PseudoTerminal;
+use unicode_width::UnicodeWidthChar;
 
 /// Largest decoded payload we'll relay from the PTY to the host clipboard
 /// (64 KiB). Keeps a remote from flooding the clipboard with a huge write.
@@ -17,6 +29,285 @@ const CLIPBOARD_RELAY_MAX_QUEUED: usize = 8;
 /// real application asks for in one frame — it exists so a remote stuck in a
 /// query loop can't make us buffer unbounded input for it.
 const REPLY_QUEUE_MAX_BYTES: usize = 1024;
+
+/// Longest CSI sequence held back waiting for its final byte (256 bytes).
+/// Real ones are a few dozen bytes; a longer one is passed through unchanged
+/// instead of being buffered without bound.
+const CSI_HOLD_MAX: usize = 256;
+
+const ESC: u8 = 0x1b;
+
+/// Where [`XtermCompat`] stands in the byte stream: the slice of vte's state
+/// machine that tells printed text, a CSI sequence and string payloads apart.
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum Scan {
+    #[default]
+    Ground,
+    /// `ESC` seen and held, the next byte decides what it starts.
+    Esc,
+    /// Inside `ESC [`, held until the final byte.
+    Csi,
+    /// Passed through until a final byte in `lo..=0x7e`: an `ESC (`-style
+    /// sequence (`0x30`), or a CSI past [`CSI_HOLD_MAX`] (`0x40`).
+    Pass(u8),
+    /// OSC payload, ended by BEL or `ESC`.
+    Osc,
+    /// DCS parameters, up to the final byte that starts the payload.
+    DcsHead,
+    /// DCS payload, ended by `ESC` or a raw C1 ST (`0x9c`).
+    Dcs,
+    /// SOS/PM/APC payload, ended by `ESC`.
+    Str,
+}
+
+/// Rewrites xterm sequences stock `vt100` 0.16 ignores into ones it handles,
+/// and clamps the counts it would loop on for seconds. btop, for one, places
+/// everything with HVP (`CSI r;c f`); vt100 ignored it, so each frame landed
+/// where the previous one stopped. Diagnosed in PR #139.
+///
+/// Only CSI sequences are touched, and only when held whole: a sequence split
+/// across PTY reads is kept back and finished on the next read. Bytes inside
+/// OSC/DCS/APC strings are never rewritten; when one ends at a bare `ESC`, a
+/// CAN goes first so vt100 leaves the string at the same point vte does.
+#[derive(Default)]
+struct XtermCompat {
+    scan: Scan,
+    /// The held `ESC` or `ESC [ …` sequence.
+    seq: Vec<u8>,
+    /// Last graphic character printed, for REP. Kept across reads.
+    last: Option<char>,
+    /// A UTF-8 character being assembled, possibly across reads.
+    utf8: [u8; 4],
+    utf8_len: u8,
+    utf8_need: u8,
+    /// Synchronized output (DEC mode 2026) is set: the app is mid-frame.
+    sync: bool,
+    /// Index in `marks` of the frame mark that opened the transaction still
+    /// open, if it opened in the current batch.
+    open_frame: Option<usize>,
+    /// Points in the current batch's output where `ParserState` must act.
+    marks: Vec<(usize, Mark)>,
+}
+
+/// Something `ParserState` must do at a point in the translated stream.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mark {
+    /// A synchronized-output transaction opens here: the bytes before it are
+    /// the last complete frame.
+    Frame,
+    /// DECRQM for mode 2026, with whether the mode was set at that point.
+    ModeQuery(bool),
+}
+
+impl XtermCompat {
+    /// Translate `bytes`, appending the result to `out` in order.
+    fn feed(&mut self, bytes: &[u8], size: (u16, u16), out: &mut Vec<u8>) {
+        let mut span = 0;
+        for (i, &b) in bytes.iter().enumerate() {
+            if !matches!(self.scan, Scan::Esc | Scan::Csi) {
+                match (self.scan, b) {
+                    (_, ESC) => {
+                        out.extend_from_slice(&bytes[span..i]);
+                        span = i + 1;
+                        // vte ends a string or aborts a sequence on this ESC,
+                        // before seeing what follows it. Holding the ESC would
+                        // leave vte inside, swallowing REP output and C0
+                        // controls sent ahead of it; CAN ends it right here.
+                        if self.scan != Scan::Ground {
+                            out.push(0x18);
+                        }
+                        self.hold_esc();
+                    }
+                    (Scan::Ground, _) => self.track(b),
+                    (_, 0x18 | 0x1a) | (Scan::Osc, 0x07) | (Scan::Dcs, 0x9c) => {
+                        self.scan = Scan::Ground;
+                    }
+                    (Scan::DcsHead, 0x40..=0x7e) => self.scan = Scan::Dcs,
+                    (Scan::Pass(lo), _) if (lo..=0x7e).contains(&b) => {
+                        self.scan = Scan::Ground;
+                        // An overlong ICH/IL/SD still carries a count vt100
+                        // would loop on; CAN aborts it before dispatch.
+                        if lo == 0x40 && matches!(b, b'@' | b'L' | b'T') {
+                            out.extend_from_slice(&bytes[span..i]);
+                            out.push(0x18);
+                            span = i + 1;
+                        }
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+            span = i + 1;
+            match b {
+                // A new ESC aborts the held sequence (CSI) or is ignored after
+                // it (ESC ESC); either way the held bytes did nothing yet.
+                ESC => self.hold_esc(),
+                0x18 | 0x1a => {
+                    self.seq.push(b);
+                    out.extend_from_slice(&self.seq);
+                    self.scan = Scan::Ground;
+                }
+                // Other C0 controls run mid-sequence without ending it, so
+                // running them before the held bytes changes nothing.
+                0x00..=0x1f => out.push(b),
+                // vte ignores DEL and high bytes mid-sequence.
+                0x7f..=0xff => {}
+                b'[' if self.scan == Scan::Esc => {
+                    self.seq.push(b);
+                    self.scan = Scan::Csi;
+                }
+                _ if self.scan == Scan::Esc => {
+                    self.seq.push(b);
+                    out.extend_from_slice(&self.seq);
+                    // RIS resets every mode, synchronized output included.
+                    if b == b'c' {
+                        self.sync = false;
+                        self.open_frame = None;
+                    }
+                    self.scan = match b {
+                        b']' => Scan::Osc,
+                        b'P' => Scan::DcsHead,
+                        b'X' | b'^' | b'_' => Scan::Str,
+                        0x20..=0x2f => Scan::Pass(0x30),
+                        _ => Scan::Ground,
+                    };
+                }
+                0x40..=0x7e => {
+                    self.seq.push(b);
+                    self.dispatch(size, out);
+                    self.scan = Scan::Ground;
+                }
+                _ => {
+                    self.seq.push(b);
+                    if self.seq.len() > CSI_HOLD_MAX {
+                        out.extend_from_slice(&self.seq);
+                        self.scan = Scan::Pass(0x40);
+                    }
+                }
+            }
+        }
+        if span < bytes.len() {
+            out.extend_from_slice(&bytes[span..]);
+        }
+    }
+
+    fn hold_esc(&mut self) {
+        self.seq.clear();
+        self.seq.push(ESC);
+        self.utf8_len = 0;
+        self.scan = Scan::Esc;
+    }
+
+    /// Follow printed text to know the last graphic character, the one REP
+    /// repeats. Mirrors what vt100 draws as a cell of its own: no controls, no
+    /// U+FFFD, no C1, no zero-width marks (those stack onto the cell before).
+    fn track(&mut self, b: u8) {
+        match b {
+            0x20..=0x7e => {
+                self.last = Some(char::from(b));
+                self.utf8_len = 0;
+            }
+            0x80..=0xbf if self.utf8_len > 0 => {
+                self.utf8[usize::from(self.utf8_len)] = b;
+                self.utf8_len += 1;
+                if self.utf8_len == self.utf8_need {
+                    let utf8 = &self.utf8[..usize::from(self.utf8_len)];
+                    let c = std::str::from_utf8(utf8)
+                        .ok()
+                        .and_then(|s| s.chars().next());
+                    if let Some(c) = c.filter(|&c| c != '\u{fffd}' && c.width().unwrap_or(0) > 0) {
+                        self.last = Some(c);
+                    }
+                    self.utf8_len = 0;
+                }
+            }
+            0xc2..=0xf4 => {
+                self.utf8[0] = b;
+                self.utf8_len = 1;
+                // 110xxxxx, 1110xxxx, 11110xxx: the leading ones are the length.
+                self.utf8_need = b.leading_ones() as u8;
+            }
+            _ => self.utf8_len = 0,
+        }
+    }
+
+    /// Write the complete CSI sequence in `seq`, rewritten if vt100 lacks it.
+    fn dispatch(&mut self, (rows, cols): (u16, u16), out: &mut Vec<u8>) {
+        let end = self.seq.len() - 1;
+        let (body, fin) = (&self.seq[2..end], self.seq[end]);
+        // Plain parameters only: a private marker or intermediate makes it
+        // another sequence (`CSI ? u` is the kitty query, not SCORC).
+        let plain = body
+            .iter()
+            .all(|&b| b.is_ascii_digit() || b == b';' || b == b':');
+        let bare = body.is_empty();
+        let n = param(body);
+        match fin {
+            // DECSET/DECRST 2026, alone or combined (`CSI ? 25;2026 h`).
+            // vt100 still gets the bytes; it ignores the mode itself.
+            b'h' | b'l'
+                if body.first() == Some(&b'?')
+                    && body[1..].split(|&b| b == b';').any(|p| param(p) == 2026) =>
+            {
+                if fin == b'h' && !self.sync {
+                    self.sync = true;
+                    self.open_frame = Some(self.marks.len());
+                    self.marks.push((out.len(), Mark::Frame));
+                }
+                if fin == b'l' {
+                    self.sync = false;
+                    self.open_frame = None;
+                }
+                out.extend_from_slice(&self.seq);
+            }
+            // DECRQM 2026: answered in stream order by `ParserState`.
+            b'p' if body == b"?2026$" => {
+                self.marks.push((out.len(), Mark::ModeQuery(self.sync)));
+                out.extend_from_slice(&self.seq);
+            }
+            b's' if bare => out.extend_from_slice(b"\x1b7"),
+            b'u' if bare => out.extend_from_slice(b"\x1b8"),
+            // HVP, HPA, HPR, VPR: same parameters as CUP, CHA, CUF, CUD.
+            b'f' | b'`' | b'a' | b'e' if plain => {
+                self.seq[end] = match fin {
+                    b'f' => b'H',
+                    b'`' => b'G',
+                    b'a' => b'C',
+                    _ => b'B',
+                };
+                out.extend_from_slice(&self.seq);
+            }
+            // REP, bounded to `cols` characters (two rows of wide ones);
+            // dropped with nothing to repeat.
+            b'b' if plain => {
+                if let Some(c) = self.last {
+                    let mut buf = [0; 4];
+                    let count = usize::from(n.max(1).min(cols));
+                    let c = c.encode_utf8(&mut buf).as_bytes();
+                    for _ in 0..count {
+                        out.extend_from_slice(c);
+                    }
+                }
+            }
+            // vt100 loops `n` times for ICH, IL and SD; past the grid it is
+            // the same blank, only seconds slower.
+            b'@' if plain && n > cols => out.extend_from_slice(format!("\x1b[{cols}@").as_bytes()),
+            b'L' | b'T' if plain && n > rows => {
+                out.extend_from_slice(format!("\x1b[{rows}{}", char::from(fin)).as_bytes());
+            }
+            _ => out.extend_from_slice(&self.seq),
+        }
+    }
+}
+
+/// Value of one CSI parameter: its leading digits, saturating like vte.
+fn param(p: &[u8]) -> u16 {
+    p.iter()
+        .take_while(|b| b.is_ascii_digit())
+        .fold(0u16, |n, &d| {
+            n.saturating_mul(10).saturating_add(u16::from(d - b'0'))
+        })
+}
 
 /// Exact decoded byte length of a base64 payload, without decoding it. The
 /// payload is relayed verbatim, so a real decoder would be pure waste — this
@@ -144,20 +435,61 @@ impl vt100::Callbacks for PtyCallbacks {
             ('c', 0) => b"\x1b[?1;2c".to_vec(),
             _ => return,
         };
+        self.queue_reply(&reply);
+    }
+}
+
+impl PtyCallbacks {
+    fn queue_reply(&mut self, reply: &[u8]) {
         if self.replies.len() + reply.len() <= REPLY_QUEUE_MAX_BYTES {
-            self.replies.extend_from_slice(&reply);
+            self.replies.extend_from_slice(reply);
         }
     }
 }
 
+/// Longest a synchronized update may freeze the pane (1 s), counted from when
+/// the held frame was taken. An app that opens a transaction and never closes
+/// it must not freeze the session; a repeated BSU takes no new frame, so it
+/// cannot extend the hold either.
+const SYNC_HOLD_MAX: Duration = Duration::from_secs(1);
+
 pub struct ParserState {
     inner: vt100::Parser<PtyCallbacks>,
+    compat: XtermCompat,
+    /// Translated reads queued by [`Self::queue`], up to `done` already fed
+    /// to vt100; reused.
+    out: Vec<u8>,
+    /// End offset in `out` of each queued read not yet fed.
+    ends: VecDeque<usize>,
+    done: usize,
+    /// Next entry of `compat.marks` to act on.
+    next_mark: usize,
+    /// The pane as of the last complete frame, drawn instead of the live grid
+    /// while a synchronized update (DEC mode 2026) is open. Rasterized at most
+    /// once per batch; a clone of the screen would drag 10k scrollback rows.
+    frame: Buffer,
+    /// `frame` matches the current grid size and the live (not scrolled) view.
+    frame_ok: bool,
+    /// When `frame` was rasterized.
+    taken: Instant,
+    #[cfg(test)]
+    pub(super) snapshots: usize,
 }
 
 impl ParserState {
     pub fn new(rows: u16, cols: u16) -> Self {
         Self {
             inner: vt100::Parser::new_with_callbacks(rows, cols, 10_000, PtyCallbacks::default()),
+            compat: XtermCompat::default(),
+            out: Vec::new(),
+            ends: VecDeque::new(),
+            done: 0,
+            next_mark: 0,
+            frame: Buffer::empty(Rect::default()),
+            frame_ok: false,
+            taken: Instant::now(),
+            #[cfg(test)]
+            snapshots: 0,
         }
     }
 
@@ -180,11 +512,97 @@ impl ParserState {
     }
 
     pub fn process(&mut self, bytes: &[u8]) {
-        self.inner.process(bytes);
+        self.process_at(bytes, Instant::now());
+    }
+
+    fn process_at(&mut self, bytes: &[u8], now: Instant) {
+        self.queue(bytes);
+        self.apply_next(now);
+    }
+
+    /// Translate one PTY read and queue it for [`Self::apply_next`]. Queue all
+    /// reads of a batch before applying any: the held frame is then rasterized
+    /// once, at the batch's last frame boundary, instead of once per read.
+    pub(crate) fn queue(&mut self, bytes: &[u8]) {
+        let size = self.inner.screen().size();
+        self.compat.feed(bytes, size, &mut self.out);
+        self.ends.push_back(self.out.len());
+    }
+
+    /// Feed the oldest queued read to vt100, as of `now`.
+    pub(crate) fn apply_next(&mut self, now: Instant) {
+        let Some(end) = self.ends.pop_front() else {
+            return;
+        };
+        // Only the transaction still open at the end of the batch matters:
+        // its opening BSU is where the last complete frame ends.
+        while let Some(&(at, mark)) = self.compat.marks.get(self.next_mark) {
+            if at >= end {
+                break;
+            }
+            self.next_mark += 1;
+            if mark == Mark::Frame && self.compat.open_frame != Some(self.next_mark - 1) {
+                continue;
+            }
+            self.inner.process(&self.out[self.done..at]);
+            self.done = at;
+            match mark {
+                Mark::Frame => self.snapshot(now),
+                // DECRPM: 1 = set, 2 = reset. Queued with vt100's own answers,
+                // so replies keep stream order.
+                Mark::ModeQuery(set) => self.inner.callbacks_mut().queue_reply(if set {
+                    b"\x1b[?2026;1$y"
+                } else {
+                    b"\x1b[?2026;2$y"
+                }),
+            }
+        }
+        self.inner.process(&self.out[self.done..end]);
+        self.done = end;
+        if self.ends.is_empty() {
+            self.out.clear();
+            self.done = 0;
+            self.compat.marks.clear();
+            self.compat.open_frame = None;
+            self.next_mark = 0;
+        }
+    }
+
+    /// Rasterize the grid as the held frame, as `tui-term` would draw it.
+    fn snapshot(&mut self, now: Instant) {
+        let screen = self.inner.screen();
+        // A scrolled-back view is not the frame the app drew.
+        self.frame_ok = screen.scrollback() == 0;
+        if self.frame_ok {
+            let (rows, cols) = screen.size();
+            let area = Rect::new(0, 0, cols, rows);
+            self.frame.resize(area);
+            PseudoTerminal::new(screen).render(area, &mut self.frame);
+            self.taken = now;
+            #[cfg(test)]
+            {
+                self.snapshots += 1;
+            }
+        }
+    }
+
+    /// The pane to draw instead of the live grid while the app is mid-frame,
+    /// or `None` to draw live. `live_only` is for overlays that read the live
+    /// grid (selection, ghost text). Never held while scrolled back, after a
+    /// resize until the next frame, or once the frame is [`SYNC_HOLD_MAX`] old.
+    pub(crate) fn held_frame(&self, now: Instant, live_only: bool) -> Option<&Buffer> {
+        let hold = self.compat.sync
+            && self.frame_ok
+            && !live_only
+            && self.scrollback() == 0
+            && now.saturating_duration_since(self.taken) < SYNC_HOLD_MAX;
+        hold.then_some(&self.frame)
     }
 
     pub fn set_size(&mut self, rows: u16, cols: u16) {
         self.inner.screen_mut().set_size(rows, cols);
+        // The held frame has the old size: draw live until the next one.
+        self.frame_ok = false;
     }
 
     pub fn screen(&self) -> &vt100::Screen {
@@ -521,5 +939,520 @@ mod tests {
         assert_eq!(decoded_len(b"aGVsbG8"), 5); // "hello" unpadded
         assert_eq!(decoded_len(b"aGk"), 2); // "hi"    unpadded
         assert_eq!(decoded_len(b"YQ"), 1); // "a"     unpadded
+    }
+
+    // ── xterm compatibility translator ────────────────────────────
+    //
+    // Stock vt100 0.16 drops these xterm sequences; `XtermCompat` rewrites
+    // them into ones it handles before the bytes reach the parser.
+
+    /// Run `chunks` through the translator alone, as successive PTY reads.
+    fn translate(size: (u16, u16), chunks: &[&[u8]]) -> Vec<u8> {
+        let mut compat = XtermCompat::default();
+        let mut out = Vec::new();
+        for chunk in chunks {
+            compat.feed(chunk, size, &mut out);
+        }
+        out
+    }
+
+    fn row(p: &ParserState, r: usize) -> String {
+        let (_, cols) = p.screen().size();
+        p.screen().rows(0, cols).nth(r).unwrap_or_default()
+    }
+
+    #[test]
+    fn hvp_places_text_like_cup() {
+        // btop positions everything with HVP; ignored, a frame lands on one line.
+        let p = parser_with(24, 80, b"\x1b[2J\x1b[HAAA\x1b[10;20fBBB");
+        assert_eq!(row(&p, 0), "AAA");
+        assert_eq!(row(&p, 9), format!("{}BBB", " ".repeat(19)));
+    }
+
+    #[test]
+    fn hpa_hpr_vpr_move_like_cha_cuf_cud() {
+        assert_eq!(row(&parser_with(5, 20, b"\x1b[5`X"), 0), "    X");
+        assert_eq!(row(&parser_with(5, 20, b"AB\x1b[3aC"), 0), "AB   C");
+        assert_eq!(row(&parser_with(5, 20, b"\x1b[2eX"), 2), "X");
+    }
+
+    #[test]
+    fn scosc_and_scorc_save_and_restore_the_cursor() {
+        let p = parser_with(10, 20, b"\x1b[5;5H\x1b[s\x1b[1;1HX\x1b[uY");
+        assert_eq!(row(&p, 4), "    Y");
+    }
+
+    #[test]
+    fn only_bare_csi_s_and_u_mean_cursor_save() {
+        // `CSI ? u` (kitty query), `CSI > 1 u`, `CSI < u`, `CSI 1 u` must not
+        // restore the cursor saved at (2, 2).
+        let p = parser_with(
+            10,
+            20,
+            b"\x1b[3;3H\x1b7\x1b[1;1H\x1b[?u\x1b[>1u\x1b[<u\x1b[1u",
+        );
+        assert_eq!(p.screen().cursor_position(), (0, 0));
+        // `CSI 1;5 s` (DECSLRM) must not save over it.
+        let p = parser_with(10, 20, b"\x1b[3;3H\x1b7\x1b[5;5H\x1b[1;5s\x1b[1;1H\x1b8");
+        assert_eq!(p.screen().cursor_position(), (2, 2));
+    }
+
+    #[test]
+    fn rewrites_survive_every_split_between_reads() {
+        let stream: &[u8] =
+            b"\x1b[2J\x1b[HAAA\x1b[10;20fBBB\x1b[5`X\x1b[s\x1b[3;3HY\x1b[uZ\xe4\xb8\xad\x1b[2b";
+        let p = parser_with(24, 80, stream);
+        assert_eq!(row(&p, 2), "  Y");
+        assert_eq!(row(&p, 9), "    XZ中中中       BBB");
+        let whole = p.screen().contents_formatted();
+        for k in 0..=stream.len() {
+            let mut p = ParserState::new(24, 80);
+            p.process(&stream[..k]);
+            p.process(&stream[k..]);
+            assert_eq!(p.screen().contents_formatted(), whole, "split at {k}");
+        }
+        let mut p = ParserState::new(24, 80);
+        for b in stream {
+            p.process(std::slice::from_ref(b));
+        }
+        assert_eq!(p.screen().contents_formatted(), whole, "byte at a time");
+    }
+
+    #[test]
+    fn rep_repeats_the_last_character() {
+        assert_eq!(row(&parser_with(5, 20, b"a\x1b[3b"), 0), "aaaa");
+        assert_eq!(row(&parser_with(5, 20, b"a\x1b[b"), 0), "aa");
+        assert_eq!(row(&parser_with(5, 20, b"a\x1b[0b"), 0), "aa");
+    }
+
+    #[test]
+    fn rep_is_bounded_by_the_row_width() {
+        let p = parser_with(3, 10, b"x\x1b[65535b");
+        assert_eq!(p.screen().contents().matches('x').count(), 11);
+    }
+
+    #[test]
+    fn rep_remembers_a_wide_character_across_reads() {
+        let wide = "中".as_bytes();
+        let mut p = ParserState::new(5, 20);
+        p.process(&wide[..1]);
+        p.process(&wide[1..]);
+        p.process(b"\x1b[2b");
+        assert_eq!(row(&p, 0), "中中中");
+    }
+
+    #[test]
+    fn rep_with_nothing_printed_before_it_is_dropped() {
+        assert_eq!(row(&parser_with(5, 20, b"\x1b[5b"), 0), "");
+        // Payload bytes of a string are not printed text.
+        assert_eq!(row(&parser_with(5, 20, b"a\x1b]0;bbb\x07\x1b[b"), 0), "aa");
+        assert_eq!(row(&parser_with(5, 20, b"a\x1bPq#0\x1b\\\x1b[b"), 0), "aa");
+    }
+
+    #[test]
+    fn string_payloads_pass_through_unchanged() {
+        // Only a CAN lands in front of each ESC that ends a string.
+        let stream: &[u8] = b"\x1b]0;[1;2f title [s\x07\x1b]52;c;R0VIRUlN\x1b\\\
+            \x1bP1$r[5;5f\x1b\\\x1b_[u\x1b\\";
+        let expected: &[u8] = b"\x1b]0;[1;2f title [s\x07\x1b]52;c;R0VIRUlN\x18\x1b\\\
+            \x1bP1$r[5;5f\x18\x1b\\\x1b_[u\x18\x1b\\";
+        for k in 0..=stream.len() {
+            assert_eq!(
+                translate((24, 80), &[&stream[..k], &stream[k..]]),
+                expected,
+                "split {k}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_string_ended_by_a_bare_esc_is_left_at_once() {
+        // vte ends the string at the ESC itself; holding that ESC used to keep
+        // vt100 inside the string while REP output and controls went in.
+        assert_eq!(row(&parser_with(5, 20, b"a\x1b]0;t\x1b[2bZ"), 0), "aaaZ");
+        assert_eq!(row(&parser_with(5, 20, b"\x1b]0;t\x1b[2bZ"), 0), "Z");
+        let mut p = parser_with(5, 20, b"a\x1b]52;c;R0VIRUlN\x1b[2bxyz");
+        assert_eq!(p.take_clipboard_writes(), vec!["R0VIRUlN".to_string()]);
+        assert_eq!(row(&p, 0), "aaaxyz");
+        let stream = b"ab\x1b]0;t\x1b\nY";
+        let mut raw = vt100::Parser::new(5, 20, 0);
+        raw.process(stream);
+        assert_eq!(raw.screen().cursor_position(), (1, 2));
+        assert_eq!(
+            parser_with(5, 20, stream).screen().cursor_position(),
+            (1, 2)
+        );
+    }
+
+    #[test]
+    fn an_esc_aborting_a_held_csi_drops_it() {
+        // `ESC [ 1` never completes; emitting it ahead of the REP output made
+        // the first repeated `a` its final byte.
+        assert_eq!(row(&parser_with(5, 20, b"a\x1b[1\x1b[2bZ"), 0), "aaaZ");
+    }
+
+    #[test]
+    fn a_raw_c1_st_ends_a_dcs_for_rep() {
+        assert_eq!(row(&parser_with(5, 20, b"a\x1bPq\x9cz\x1b[3b"), 0), "azzzz");
+    }
+
+    #[test]
+    fn rep_skips_zero_width_marks() {
+        let p = parser_with(5, 20, "e\u{301}\x1b[2b".as_bytes());
+        let cell = |c| p.screen().cell(0, c).unwrap().contents().to_string();
+        assert_eq!(
+            (cell(0), cell(1), cell(2)),
+            ("e\u{301}".into(), "e".into(), "e".into())
+        );
+    }
+
+    /// Streams made only of sequences the translator must leave alone render
+    /// exactly as on stock vt100: same screen, cursor and replies, also when
+    /// split at any offset. Fixed seed, so a failure reproduces.
+    #[test]
+    fn untouched_sequences_render_like_stock_vt100() {
+        const PIECES: &[&[u8]] = &[
+            b"a",
+            b"Z",
+            b"x ",
+            "é".as_bytes(),
+            "中".as_bytes(),
+            b"\r",
+            b"\n",
+            b"\t",
+            b"\x08",
+            b"\x07",
+            b"\x18",
+            b"\x1a",
+            b"\x1b]0;t[1;2f\x07",
+            b"\x1b]2;[s\x1b\\",
+            b"\x1b]0;bare[",
+            b"\x1b]52;c;R0VIRUlN\x07",
+            b"\x1b]52;c;aGk=\x1b",
+            b"\x1bP1$r[5f\x1b\\",
+            b"\x1bPq#0",
+            b"\x1b_[u\x1b\\",
+            b"\x1b^x\x1b",
+            b"\x1b[?25l",
+            b"\x1b[?25h",
+            b"\x1b[?u",
+            b"\x1b[>c",
+            b"\x1b[?6n",
+            b"\x1b[>1u",
+            b"\x1b[<u",
+            b"\x1b[6n",
+            b"\x1b[5n",
+            b"\x1b[c",
+            b"\x1b[3;4H",
+            b"\x1b[2J",
+            b"\x1b[K",
+            b"\x1b[1;31m",
+            b"\x1b[5;6\x1b",
+            b"\x1b[?3;4\x18",
+            b"\x1b(B",
+            b"\x1b7",
+            b"\x1b8",
+            b"\x1b",
+        ];
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for n in 0..3000 {
+            let len = 1 + next() % 40;
+            let stream: Vec<u8> = (0..len)
+                .flat_map(|_| {
+                    PIECES[(next() % PIECES.len() as u64) as usize]
+                        .iter()
+                        .copied()
+                })
+                .collect();
+            let splits: Vec<usize> = if n < 30 {
+                (0..=stream.len()).collect()
+            } else {
+                vec![0]
+            };
+            for k in splits {
+                // Raw vt100 gets the same two reads: vte 0.15 itself mishandles
+                // a UTF-8 character split across reads, which is not ours to
+                // compare against.
+                let mut raw =
+                    vt100::Parser::new_with_callbacks(6, 20, 10_000, PtyCallbacks::default());
+                raw.process(&stream[..k]);
+                raw.process(&stream[k..]);
+                let want = (
+                    raw.screen().contents_formatted(),
+                    raw.screen().cursor_position(),
+                );
+                let want_replies = raw.callbacks().replies.clone();
+                let mut p = ParserState::new(6, 20);
+                p.process(&stream[..k]);
+                p.process(&stream[k..]);
+                let got = (
+                    p.screen().contents_formatted(),
+                    p.screen().cursor_position(),
+                );
+                assert!(
+                    got == want,
+                    "stream {n} split {k}: {:?}",
+                    String::from_utf8_lossy(&stream)
+                );
+                assert_eq!(
+                    p.take_replies(),
+                    want_replies,
+                    "replies, stream {n} split {k}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn osc52_relay_survives_split_reads() {
+        let mut p = ParserState::new(10, 80);
+        for chunk in [&b"\x1b]5"[..], b"2;c;R0VI", b"RUlN\x07"] {
+            p.process(chunk);
+        }
+        assert_eq!(p.take_clipboard_writes(), vec!["R0VIRUlN".to_string()]);
+    }
+
+    #[test]
+    fn ich_il_sd_counts_are_clamped_to_the_grid() {
+        // vt100 loops once per count: a single `CSI 65535 @` takes seconds.
+        let t = |s: &[u8]| translate((24, 80), &[s]);
+        assert_eq!(t(b"\x1b[65535@"), b"\x1b[80@");
+        assert_eq!(t(b"\x1b[65535:1@"), b"\x1b[80@");
+        assert_eq!(t(b"\x1b[65535L"), b"\x1b[24L");
+        assert_eq!(t(b"\x1b[65535T"), b"\x1b[24T");
+        assert_eq!(t(b"\x1b[80@\x1b[24L\x1b[2T"), b"\x1b[80@\x1b[24L\x1b[2T");
+
+        let p = parser_with(24, 80, b"abc\x1b[1;1H\x1b[65535@");
+        assert_eq!(row(&p, 0), "");
+        let p = parser_with(5, 10, b"1\r\n2\r\n3\x1b[1;1H\x1b[65535L");
+        assert_eq!(p.screen().contents().trim(), "");
+        let p = parser_with(5, 10, b"1\r\n2\r\n3\x1b[65535T");
+        assert_eq!(p.screen().contents().trim(), "");
+    }
+
+    #[test]
+    fn overlong_count_sequence_is_aborted() {
+        // Zero padding pushes it past the hold limit; it must not reach vt100
+        // with its 65535 count intact.
+        let mut ich = b"\x1b[".to_vec();
+        ich.extend(std::iter::repeat_n(b'0', 300));
+        ich.extend_from_slice(b"65535@");
+        let mut aborted = ich.clone();
+        *aborted.last_mut().unwrap() = 0x18;
+        assert_eq!(translate((24, 80), &[&ich]), aborted);
+
+        let mut stream = b"abc\x1b[1;1H".to_vec();
+        stream.extend_from_slice(&ich);
+        assert_eq!(row(&parser_with(24, 80, &stream), 0), "abc");
+    }
+
+    #[test]
+    fn replies_keep_their_order_across_rewrites_and_split_reads() {
+        let mut p = ParserState::new(10, 80);
+        p.process(b"\x1b[5n\x1b[2;3f\x1b[6");
+        p.process(b"n\x1b[?u\x1b[>c\x1b[c");
+        assert_eq!(p.take_replies(), b"\x1b[0n\x1b[2;3R\x1b[?1;2c".to_vec());
+    }
+
+    #[test]
+    fn smallest_pty_survives_wrapping_and_wide_text() {
+        let (rows, cols) = crate::session::pty_size(0, 0);
+        let mut p = ParserState::new(rows, cols);
+        p.process("abcdefghijklmnop中文中文\r\nx中".as_bytes());
+    }
+
+    // ── Synchronized output (DEC mode 2026) ───────────────────────
+    //
+    // Inside `CSI ? 2026 h` … `CSI ? 2026 l` the pane shows the last complete
+    // frame, so a read that ends mid-repaint is never drawn half-way.
+
+    const BSU: &str = "\x1b[?2026h";
+    const ESU: &str = "\x1b[?2026l";
+
+    /// The held pane as text, or `None` when the pane draws live.
+    fn held(p: &ParserState, now: Instant) -> Option<String> {
+        p.held_frame(now, false).map(|b| {
+            let a = b.area;
+            (0..a.height)
+                .map(|y| (0..a.width).map(|x| b[(x, y)].symbol()).collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+    }
+
+    fn ms(t: Instant, n: u64) -> Instant {
+        t + Duration::from_millis(n)
+    }
+
+    #[test]
+    fn sync_holds_the_last_complete_frame_until_esu() {
+        let t = Instant::now();
+        let mut p = ParserState::new(5, 20);
+        p.process(format!("BEFORE{BSU}PARTIAL").as_bytes());
+        let shown = held(&p, t).expect("held mid-frame");
+        assert!(
+            shown.contains("BEFORE") && !shown.contains("PARTIAL"),
+            "{shown}"
+        );
+        assert!(
+            p.screen().contents().contains("BEFOREPARTIAL"),
+            "vt100 still gets it all"
+        );
+        p.process(format!(" DONE{ESU}").as_bytes());
+        assert_eq!(held(&p, ms(t, 100)), None);
+    }
+
+    #[test]
+    fn sync_hold_is_capped_from_the_snapshot() {
+        let t = Instant::now();
+        let mut p = ParserState::new(5, 20);
+        p.process_at(format!("A{BSU}B").as_bytes(), t);
+        assert!(held(&p, ms(t, 500)).is_some());
+        assert!(held(&p, ms(t, 999)).is_some());
+        assert_eq!(held(&p, ms(t, 1000)), None, "cap fired");
+        p.process_at(b"C", ms(t, 1100));
+        assert_eq!(
+            held(&p, ms(t, 1100)),
+            None,
+            "live until the transaction ends"
+        );
+        // The next transaction takes a fresh frame and may hold again.
+        p.process_at(format!("{ESU}D{BSU}E").as_bytes(), ms(t, 1700));
+        assert!(held(&p, ms(t, 1700)).is_some_and(|s| s.contains("ABCD") && !s.contains('E')));
+    }
+
+    #[test]
+    fn repeated_bsu_cannot_extend_the_hold() {
+        let t = Instant::now();
+        let mut p = ParserState::new(5, 20);
+        p.process_at(format!("A{BSU}B").as_bytes(), t);
+        p.process_at(format!("{BSU}C").as_bytes(), ms(t, 600));
+        assert!(held(&p, ms(t, 600)).is_some());
+        assert_eq!(held(&p, ms(t, 1000)), None);
+    }
+
+    #[test]
+    fn a_stale_frame_never_comes_back() {
+        // A selection drawn live for 5 s, then cleared: the 5 s old frame must
+        // not be shown for another second.
+        let t = Instant::now();
+        let mut p = ParserState::new(5, 20);
+        p.process_at(format!("A{BSU}B").as_bytes(), t);
+        assert!(p.held_frame(ms(t, 100), true).is_none());
+        assert!(p.held_frame(ms(t, 5000), true).is_none());
+        assert_eq!(held(&p, ms(t, 5050)), None, "selection cleared");
+        // A background tab's frame taken 10 s ago, first drawn when switched to.
+        let mut bg = ParserState::new(5, 20);
+        bg.process_at(format!("A{BSU}B").as_bytes(), t);
+        assert_eq!(held(&bg, ms(t, 10_000)), None);
+    }
+
+    #[test]
+    fn esu_bsu_loop_keeps_advancing_frames() {
+        let t = Instant::now();
+        let mut p = ParserState::new(5, 20);
+        for i in 1..=5u64 {
+            let at = ms(t, i * 1500);
+            p.process_at(format!("{ESU}\x1b[2J\x1b[HFRAME {i}{BSU}").as_bytes(), at);
+            // Frames further apart than the cap: each new one is held anyway.
+            let shown = held(&p, at).expect("each new frame is held");
+            assert!(shown.contains(&format!("FRAME {i}")), "{shown}");
+        }
+        // Several transactions in one read: the frame before the last BSU,
+        // rasterized once.
+        let before = p.snapshots;
+        p.process_at(
+            format!("{ESU}X{BSU}x{ESU}Y{BSU}y{ESU}Z{BSU}z").as_bytes(),
+            ms(t, 9000),
+        );
+        assert_eq!(p.snapshots, before + 1);
+        let shown = held(&p, ms(t, 9000)).unwrap();
+        assert!(shown.contains("XxYyZ") && !shown.contains('z'), "{shown}");
+    }
+
+    #[test]
+    fn a_batch_of_reads_takes_one_snapshot() {
+        // Many small reads queued together (one `Session::drain`) cost one
+        // rasterization, of the frame at the batch's last BSU.
+        let t = Instant::now();
+        let mut p = ParserState::new(5, 20);
+        let reads: Vec<String> = (0..8).map(|i| format!("{ESU}{i}{BSU}")).collect();
+        for r in &reads {
+            p.queue(r.as_bytes());
+        }
+        for _ in &reads {
+            p.apply_next(t);
+        }
+        assert_eq!(p.snapshots, 1);
+        assert!(held(&p, t).is_some_and(|s| s.starts_with("01234567")));
+        // A transaction still open from an earlier batch keeps its frame.
+        p.queue(b"more");
+        p.queue(b" still");
+        p.apply_next(t);
+        p.apply_next(t);
+        assert_eq!(p.snapshots, 1);
+        assert!(held(&p, t).is_some_and(|s| !s.contains("more")));
+    }
+
+    #[test]
+    fn sync_hold_is_bypassed_when_scrolled_resized_or_overlaid() {
+        let t = Instant::now();
+        let mut p = ParserState::new(5, 20);
+        for i in 0..20 {
+            p.process(format!("line {i}\r\n").as_bytes());
+        }
+        p.process(format!("{BSU}partial").as_bytes());
+        assert!(held(&p, t).is_some());
+        assert!(
+            p.held_frame(t, true).is_none(),
+            "selection / ghost read the live grid"
+        );
+        p.set_scrollback(3);
+        assert_eq!(held(&p, t), None, "scrolled back");
+        p.set_scrollback(0);
+        assert!(held(&p, t).is_some());
+        p.set_size(6, 30);
+        assert_eq!(held(&p, t), None, "first frame after a resize");
+        p.process(format!("{ESU}{BSU}").as_bytes());
+        assert_eq!(p.held_frame(t, false).map(|b| b.area.width), Some(30));
+    }
+
+    #[test]
+    fn decrqm_2026_is_answered_in_stream_order() {
+        let mut p = ParserState::new(5, 20);
+        p.process(format!("\x1b[?2026$p\x1b[5n{BSU}\x1b[?2026$p\x1b[6n").as_bytes());
+        assert_eq!(
+            p.take_replies(),
+            b"\x1b[?2026;2$y\x1b[0n\x1b[?2026;1$y\x1b[1;1R"
+        );
+        p.process(b"\x1b[?20");
+        p.process(format!("26$p{ESU}\x1b[?2026$p\x1b[?2027$p\x1b[?u\x1b[>c").as_bytes());
+        assert_eq!(p.take_replies(), b"\x1b[?2026;1$y\x1b[?2026;2$y");
+    }
+
+    #[test]
+    fn combined_decset_params_toggle_sync() {
+        let t = Instant::now();
+        let mut p = ParserState::new(5, 20);
+        p.process(b"A\x1b[?25;2026hB");
+        assert!(held(&p, t).is_some_and(|s| s.contains('A') && !s.contains('B')));
+        p.process(b"\x1b[?1049;2026l");
+        assert_eq!(held(&p, t), None);
+    }
+
+    #[test]
+    fn ris_ends_the_hold() {
+        let t = Instant::now();
+        let mut p = ParserState::new(5, 20);
+        p.process(format!("A{BSU}B").as_bytes());
+        assert!(held(&p, t).is_some());
+        p.process(b"\x1bc");
+        assert_eq!(held(&p, t), None);
     }
 }
