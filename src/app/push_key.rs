@@ -244,7 +244,7 @@ impl App {
 
         let mut ssh_argv = self.ssh_argv_for_key_push(entry, &remote_cmd);
         if ssh_argv.first().map(String::as_str) == Some("ssh") {
-            ssh_argv.insert(1, "-v".into());
+            ssh_argv.splice(1..1, crate::session::SSH_DEBUG_ARGS.map(String::from));
             if pending_secret.is_some() {
                 ssh_argv.insert(1, "-o".into());
                 ssh_argv.insert(2, "StrictHostKeyChecking=accept-new".into());

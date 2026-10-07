@@ -1,0 +1,98 @@
+name: Bug report
+description: Something in SSHub does not work as it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before posting, remove passwords, private keys, tokens and any hostnames you do not want public.
+  - type: input
+    id: sshub-version
+    attributes:
+      label: SSHub version
+      description: Output of `sshub --version`
+      placeholder: sshub 0.17.4
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installed via
+      options:
+        - npm (sshub-tui)
+        - cargo install
+        - release binary from GitHub
+        - built from source (say which commit below)
+        - other (say which below)
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and version
+      description: For example `Arch Linux (uname -r 6.12.4)`, `Ubuntu 24.04`, `macOS 15.2`
+    validations:
+      required: true
+  - type: input
+    id: openssh
+    attributes:
+      label: OpenSSH version
+      description: Output of `ssh -V`
+      placeholder: OpenSSH_10.0p2, OpenSSL 3.5.0 8 Apr 2025
+    validations:
+      required: true
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal emulator
+      description: And tmux/zellij/screen if SSHub runs inside one
+      placeholder: kitty 0.39, inside tmux 3.5
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Include the exact error text or exit code SSHub shows
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Add a host with ...
+        2. Press Enter to connect
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: host-setup
+    attributes:
+      label: Host setup
+      description: Only if a connection is involved. Leave out what does not apply.
+      value: |
+        - Source (added in SSHub / ~/.ssh/config / imported):
+        - ProxyJump:
+        - Auth (agent / key file / stored password / typed password / certificate):
+        - Transport (ssh / mosh):
+        - Server OS and OpenSSH version, if known:
+  - type: textarea
+    id: logs
+    attributes:
+      label: SSH log
+      description: For connection problems, paste the host's "ssh log" panel, and the full ssh output if you can get it (Ctrl+O while the session is still connecting)
+      render: text
+  - type: checkboxes
+    id: redacted
+    attributes:
+      label: Privacy
+      options:
+        - label: I removed secrets and private hostnames from everything above
+          required: true

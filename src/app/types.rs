@@ -1128,6 +1128,8 @@ pub struct HostFormEdit {
     /// emptied field can mean "delete it" rather than "leave it alone".
     pub password_original: String,
     pub has_password: bool,
+    /// `Attribute=value` Secret Service lookup (#142); empty = unset.
+    pub secret_lookup: String,
     /// Whether the password field is currently shown as text. Per-form and
     /// deliberately not persisted: it drops on leaving the field or closing.
     pub password_revealed: bool,
@@ -1163,12 +1165,14 @@ pub enum HostFormField {
     Password = 13,
     Username = 14,
     Ping = 15,
+    SecretLookup = 16,
 }
 
 impl HostFormField {
-    pub const ALL: [HostFormField; 16] = [
+    pub const ALL: [HostFormField; 17] = [
         HostFormField::Address,
         HostFormField::Password,
+        HostFormField::SecretLookup,
         HostFormField::Username,
         HostFormField::Label,
         HostFormField::Name,
@@ -1226,6 +1230,7 @@ impl HostFormField {
             HostFormField::Password => "Password",
             HostFormField::Username => "Username",
             HostFormField::Ping => "Ping",
+            HostFormField::SecretLookup => "Secret lookup",
         }
     }
 
@@ -1732,6 +1737,7 @@ impl HostFormEdit {
             | HostFormField::SessionLogging
             | HostFormField::Ping => "",
             HostFormField::Password => &self.password,
+            HostFormField::SecretLookup => &self.secret_lookup,
         }
     }
 
@@ -1753,6 +1759,7 @@ impl HostFormEdit {
             HostFormField::ProxyJump => Some(&mut self.proxy_jump),
             HostFormField::RemoteCommand => Some(&mut self.remote_command),
             HostFormField::Password => Some(&mut self.password),
+            HostFormField::SecretLookup => Some(&mut self.secret_lookup),
             HostFormField::Group
             | HostFormField::Identity
             | HostFormField::OsIcon

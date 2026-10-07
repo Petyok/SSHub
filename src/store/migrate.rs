@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: i64 = 18;
+const SCHEMA_VERSION: i64 = 19;
 
 /// Name of the reserved, auto-created "Favorites" group. Membership in it is the
 /// source of truth for a host's favourite status.
@@ -233,6 +233,10 @@ pub(crate) fn run_migrations(conn: &Connection, launcher_path: &Path) -> Result<
 
     if current < 18 {
         migrate_v17_to_v18(conn)?;
+    }
+
+    if current < 19 {
+        migrate_v18_to_v19(conn)?;
     }
 
     // Runs last so all columns it writes to (e.g. environment) already exist.
@@ -793,6 +797,19 @@ fn migrate_v17_to_v18(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Per-host Secret Service lookup spec (#142): NULL = unset, else one
+/// `Attribute=value` pair.
+fn migrate_v18_to_v19(conn: &Connection) -> Result<()> {
+    let has_col: bool = conn
+        .prepare("SELECT COUNT(*) FROM pragma_table_info('hosts') WHERE name = 'secret_lookup'")?
+        .query_row([], |row| row.get::<_, i64>(0))
+        .map(|c| c > 0)?;
+    if !has_col {
+        conn.execute_batch("ALTER TABLE hosts ADD COLUMN secret_lookup TEXT;")?;
+    }
+    Ok(())
+}
+
 pub(crate) fn now_ts() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1150,6 +1167,47 @@ INSERT INTO host_groups (name, sort_order, reserved, created_at)
             })
             .unwrap();
         assert_eq!(again, 1, "re-running the repair must not duplicate rows");
+    }
+
+    /// An existing host comes through v19 with no lookup (NULL), and a
+    /// re-run over a database that already has the column is a no-op.
+    #[test]
+    fn migration_v19_adds_null_secret_lookup() {
+        let dir = temp_dir();
+        let db_path = dir.path().join("launcher.db");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(V15_FROZEN_SCHEMA).unwrap();
+        conn.execute_batch(
+            "INSERT INTO hosts (name, address, port, forward_agent, transport,
+                                created_at, updated_at)
+             VALUES ('a', '10.0.0.1', 22, 0, 'ssh', 1700000000, 1700000000);",
+        )
+        .unwrap();
+        drop(conn);
+
+        let migrated = Connection::open(&db_path).unwrap();
+        run_migrations(&migrated, &db_path).unwrap();
+        let lookup: Option<String> = migrated
+            .query_row(
+                "SELECT secret_lookup FROM hosts WHERE name = 'a'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(lookup, None);
+
+        migrated
+            .execute_batch(
+                "DELETE FROM schema_version; INSERT INTO schema_version (version) VALUES (18);",
+            )
+            .unwrap();
+        run_migrations(&migrated, &db_path).unwrap();
+        let version: i64 = migrated
+            .query_row("SELECT version FROM schema_version LIMIT 1", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
     }
 
     #[test]

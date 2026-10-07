@@ -220,6 +220,9 @@ pub(crate) fn render_host_panel(buf: &mut Buffer, area: Rect, app: &App) {
             if m.has_password {
                 rows.push(("password: stored".to_string(), dim));
             }
+            if let Some(spec) = m.secret_lookup.as_deref() {
+                rows.push((format!("secret lookup: {spec}"), metadata));
+            }
         }
         rows.push((format!("source: {}", entry.source().as_str()), dim));
         if let Some(env) = entry.environment().filter(|s| !s.is_empty()) {
@@ -907,6 +910,7 @@ mod tests {
                 source: crate::store::HostSource::Launcher,
                 ssh_config_hash: None,
                 has_password: false,
+                secret_lookup: None,
                 username: None,
                 session_logging: crate::session_log::SessionLoggingOverride::Inherit,
                 ping: crate::session_log::SessionLoggingOverride::Inherit,

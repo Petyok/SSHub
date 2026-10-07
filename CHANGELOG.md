@@ -4,6 +4,57 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Host passwords from KeePassXC** (issue #142, requested by
+  [@morgonjor](https://github.com/morgonjor)) - on Linux, a host's new
+  `Secret lookup` field takes one `Attribute=value` pair, such as
+  `URL=ssh://root@10.0.0.5:22` or `Uuid=...`, and SSHub reads that host's
+  password from the single Secret Service entry that matches it exactly. With
+  KeePassXC's Secret Service integration on, that is a KeePassXC entry, so the
+  password no longer has to be copied into SSHub. When the field is set it is
+  the only source of the host password: no match, several matches, or a
+  declined unlock means ssh prompts as if nothing were stored. The field is in
+  the host form, `sshub host add --secret-lookup`, `sshub host edit
+  --set-secret-lookup` / `--clear-secret-lookup` and `sshub host show`, and
+  `--verbose` on `sshub host connect` and `sshub exec` now prints how the
+  credential was chosen.
+- **Issue forms** - bug reports now ask for the SSHub version, how it was
+  installed, the OS, `ssh -V` and the terminal; feature requests for the
+  problem and the proposed behavior.
+
+### Fixed
+
+- **ProxyJump hosts connect again** (issue #140, reported by
+  [@morgonjor](https://github.com/morgonjor)) - ssh hands `-v` on to the jump
+  host, and the jump's own `Authenticated to` line marked the session as
+  connected as soon as the jump host accepted the key. That closed the
+  password prompt channel before the destination asked, so the session ended
+  with `code 255` and a blank screen, with or without a stored password.
+  Embedded sessions now ask ssh for debug output with `-o LogLevel=DEBUG1`,
+  which ssh does not pass on to jump hosts.
+
+  The stored destination password also went to whichever ssh asked first: a
+  jump host that wanted a password received the destination's, and a jump
+  password typed with Remember ticked was saved as the destination's. Only the
+  destination's own prompts now get the stored secret or the Remember box; a
+  jump host's password prompt opens the normal prompt.
+
+- **Stored passwords stay off jump hosts outside the TUI too** (#141) -
+  `sshub exec`, `sshub host connect`, tunnels, broadcast, OS detection and key
+  push still handed the stored destination password to a ProxyJump host that
+  asked for one. The askpass helper now answers only the ssh connecting to the
+  destination; a hop running under it gets no answer. A jump host that needs a
+  password therefore needs its own key or agent on these paths, even when it
+  shares the destination's password.
+
+- **Detached tunnels log in with a stored password** (#144) -
+  `sshub tunnel start` without `--foreground` deleted the staged password as
+  soon as it returned, before ssh asked for it, so the server saw empty
+  passwords and the tunnel never came up. The staged file now stays for the
+  detached ssh, is deleted as soon as ssh has read it, and `sshub tunnel stop`
+  removes it if ssh never asked.
+
 ## [0.17.4] - 2026-10-06
 
 ### Added

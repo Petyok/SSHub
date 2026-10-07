@@ -182,7 +182,7 @@ mod tests {
         app.active_session = Some(0);
         app.mode = AppMode::Connecting;
         let helper = std::thread::spawn(move || {
-            askpass_channel::request_answer(&path, &token, PROMPT, Duration::from_secs(3))
+            askpass_channel::request_answer(&path, &token, PROMPT, None, Duration::from_secs(3))
         });
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {

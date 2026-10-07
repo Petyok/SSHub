@@ -90,17 +90,113 @@ impl AskpassSecret {
                 ASKPASS_FILE_ENV.into(),
                 self.path.to_string_lossy().into_owned(),
             ),
+            (OWNER_ENV.into(), std::process::id().to_string()),
         ]
+    }
+
+    /// Keep the file after this guard is gone, for an ssh that outlives the
+    /// process that staged it: a detached tunnel (#144). Set [`READ_ONCE_ENV`]
+    /// on that ssh so the helper removes the file once it has been read, and
+    /// [`remove_outlived`] it when the tunnel stops without ever asking.
+    pub fn outlive(mut self) -> PathBuf {
+        std::mem::take(&mut self.path)
     }
 }
 
 impl Drop for AskpassSecret {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
+        if !self.path.as_os_str().is_empty() {
+            let _ = std::fs::remove_file(&self.path);
+        }
     }
 }
 
+/// Remove a file handed out by [`AskpassSecret::outlive`]. Refuses any path
+/// that is not a staged secret, since the caller read it back from disk.
+pub fn remove_outlived(path: &Path) {
+    if path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("sshub-askpass-"))
+    {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// Tells the helper to delete the staged file after its first read.
+pub const READ_ONCE_ENV: &str = "SSHUB_ASKPASS_READ_ONCE";
+
 const ASKPASS_FILE_ENV: &str = "SSHUB_ASKPASS_FILE";
+/// The sshub process that staged the secret: where the ancestry walk stops.
+const OWNER_ENV: &str = "SSHUB_ASKPASS_OWNER";
+
+/// Whether the ssh that ran this helper is a ProxyJump/ProxyCommand hop: a
+/// process named `ssh` sits between it and the sshub that staged the secret.
+/// The hop inherits the destination's environment, so without this check it
+/// would be handed the destination's password (#141). Only wrappers such as
+/// `script` or `sh -c` sit above the destination ssh itself.
+fn asked_by_jump_hop(owner: Option<u32>) -> bool {
+    let Some((mut pid, _)) = parent_and_name(std::os::unix::process::parent_id()) else {
+        return false;
+    };
+    for _ in 0..16 {
+        if pid <= 1 || Some(pid) == owner {
+            return false;
+        }
+        let Some((parent, name)) = parent_and_name(pid) else {
+            return false;
+        };
+        if name == "ssh" {
+            return true;
+        }
+        pid = parent;
+    }
+    false
+}
+
+/// Parent pid and command name of `pid`.
+#[cfg(target_os = "linux")]
+fn parent_and_name(pid: u32) -> Option<(u32, String)> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // `pid (comm) state ppid …`; comm may itself contain `) `.
+    let (head, rest) = stat.rsplit_once(") ")?;
+    let name = head.split_once(" (")?.1;
+    let parent = rest.split_whitespace().nth(1)?.parse().ok()?;
+    Some((parent, name.to_owned()))
+}
+
+/// Parent pid and command name of `pid`.
+#[cfg(target_os = "macos")]
+fn parent_and_name(pid: u32) -> Option<(u32, String)> {
+    // SAFETY: an all-zero proc_bsdinfo is a valid value of this plain C struct.
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    // SAFETY: `info` is a writable buffer of exactly `size` bytes.
+    let written = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            (&mut info as *mut libc::proc_bsdinfo).cast(),
+            size,
+        )
+    };
+    if written != size {
+        return None;
+    }
+    let name: Vec<u8> = info
+        .pbi_comm
+        .iter()
+        .take_while(|&&c| c != 0)
+        .map(|&c| c as u8)
+        .collect();
+    Some((info.pbi_ppid, String::from_utf8_lossy(&name).into_owned()))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn parent_and_name(_pid: u32) -> Option<(u32, String)> {
+    None
+}
 
 /// If this process was launched by ssh as its `SSH_ASKPASS` helper, print the
 /// staged secret and return `true` (the caller should exit immediately). Set
@@ -121,6 +217,7 @@ pub fn maybe_run_askpass() -> bool {
                 Path::new(&path),
                 &token,
                 &prompt,
+                super::askpass_channel::asking_ssh_pid(),
                 super::askpass_channel::TIMEOUT,
             )
             .ok()
@@ -137,11 +234,20 @@ pub fn maybe_run_askpass() -> bool {
         }
         return true;
     };
+    let owner = std::env::var(OWNER_ENV)
+        .ok()
+        .and_then(|pid| pid.parse().ok());
+    if asked_by_jump_hop(owner) {
+        std::process::exit(1);
+    }
     if let Ok(secret) = std::fs::read_to_string(&file) {
         // Content already ends with a newline; emit it verbatim.
         let mut out = std::io::stdout();
         let _ = out.write_all(secret.as_bytes());
         let _ = out.flush();
+        if std::env::var_os(READ_ONCE_ENV).is_some() {
+            let _ = std::fs::remove_file(&file);
+        }
     }
     true
 }
@@ -149,6 +255,83 @@ pub fn maybe_run_askpass() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_helper_entry() {
+        if std::env::var_os("SSHUB_TEST_FILE_HELPER").is_some() {
+            assert!(maybe_run_askpass());
+            std::process::exit(0);
+        }
+    }
+
+    #[test]
+    fn read_once_secret_is_gone_after_the_first_answer() {
+        // A detached tunnel's secret outlives sshub (#144); the helper removes
+        // it as soon as ssh has read it.
+        let dir = tempfile::tempdir().unwrap();
+        let guard = AskpassSecret {
+            path: dir.path().join("sshub-askpass-test"),
+        };
+        std::fs::write(&guard.path, "s3cr3t\n").unwrap();
+        let path = guard.outlive();
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "session::askpass::tests::file_helper_entry",
+                "--nocapture",
+            ])
+            .env("SSHUB_TEST_FILE_HELPER", "1")
+            .env(ASKPASS_FILE_ENV, &path)
+            .env(READ_ONCE_ENV, "1")
+            // This test plays the ssh; stop the hop walk at its parent.
+            .env(OWNER_ENV, std::os::unix::process::parent_id().to_string())
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&out.stdout).contains("s3cr3t"));
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn staged_secret_is_never_handed_to_a_jump_hop() {
+        // ProxyJump (#141): the jump ssh runs under the destination ssh and
+        // inherits its askpass environment. Stand-ins named `ssh` (a copy of
+        // bash) rebuild both process trees around a real helper process.
+        let dir = tempfile::tempdir().unwrap();
+        let ssh = dir.path().join("ssh");
+        std::fs::copy("/bin/bash", &ssh).unwrap();
+        // Staged in this test's own dir: another test repoints XDG_RUNTIME_DIR.
+        let guard = AskpassSecret {
+            path: dir.path().join("secret"),
+        };
+        std::fs::write(&guard.path, "s3cr3t\n").unwrap();
+        let helper = format!(
+            "'{}' --exact session::askpass::tests::file_helper_entry --nocapture; echo helper-exit=$?",
+            std::env::current_exe().unwrap().display()
+        );
+        let run = |script: &str| {
+            let out = std::process::Command::new(&ssh)
+                .args(["-c", script])
+                .env("SSHUB_TEST_FILE_HELPER", "1")
+                .envs(guard.env(Path::new("unused")))
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).into_owned()
+        };
+
+        // The destination: the helper's `ssh` was started by this process.
+        let destination = run(&helper);
+        assert!(destination.contains("s3cr3t"), "{destination}");
+        assert!(destination.contains("helper-exit=0"), "{destination}");
+
+        // A hop: the helper's `ssh` runs under another `ssh`.
+        let hop = run(&format!(
+            "'{}' -c \"{}\"; :",
+            ssh.display(),
+            helper.replace('$', "\\$")
+        ));
+        assert!(!hop.contains("s3cr3t"), "{hop}");
+        assert!(hop.contains("helper-exit=1"), "{hop}");
+    }
 
     #[test]
     fn stages_secret_in_owner_only_file_and_cleans_up() {

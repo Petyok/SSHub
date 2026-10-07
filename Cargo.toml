@@ -83,6 +83,11 @@ tui-term = "0.3"
 unicode-width = "0.2"
 vt100 = "0.16"
 
+# Per-host secret lookup (#142): search the Secret Service (KeePassXC) by one
+# attribute. Already in the tree through keyring's secret-service backend.
+[target.'cfg(target_os = "linux")'.dependencies]
+dbus-secret-service = { version = "4.1", features = ["crypto-rust"] }
+
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"

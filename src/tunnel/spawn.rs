@@ -194,10 +194,22 @@ pub fn write_tunnel_pid(path: &Path, pid: u32) -> Result<()> {
 }
 
 pub fn remove_tunnel_pid(path: &Path) -> Result<()> {
+    // A detached tunnel's staged secret goes with its pid file (#144).
+    let record = staged_secret_record(path);
+    if let Ok(staged) = fs::read(&record) {
+        use std::os::unix::ffi::OsStrExt;
+        askpass::remove_outlived(Path::new(std::ffi::OsStr::from_bytes(&staged)));
+        let _ = fs::remove_file(&record);
+    }
     if path.exists() {
         fs::remove_file(path).with_context(|| format!("remove {}", path.display()))?;
     }
     Ok(())
+}
+
+/// Where a detached tunnel records the path of its staged askpass secret.
+fn staged_secret_record(pid_path: &Path) -> PathBuf {
+    pid_path.with_extension("askpass")
 }
 
 pub fn is_pid_alive(pid: u32) -> bool {
@@ -285,10 +297,24 @@ pub fn spawn_detached_tunnel(
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 
-    let _askpass = stage_tunnel_askpass(&mut cmd, secret)?;
+    let staged = stage_tunnel_askpass(&mut cmd, secret)?;
+    if staged.is_some() {
+        cmd.env(askpass::READ_ONCE_ENV, "1");
+    }
     let child = cmd.spawn().context("spawn tunnel ssh")?;
     let pid = child.id();
     write_tunnel_pid(&pid_path, pid)?;
+    if let Some(staged) = staged {
+        // ssh outlives this process and asks for the secret later (#144): leave
+        // the file to it (the helper deletes it once read) and record it, so
+        // stopping a tunnel that never asked removes it too.
+        use std::os::unix::ffi::OsStrExt;
+        let path = staged.outlive();
+        if let Err(e) = fs::write(staged_secret_record(&pid_path), path.as_os_str().as_bytes()) {
+            askpass::remove_outlived(&path);
+            return Err(e).context("record staged tunnel secret");
+        }
+    }
     Ok(pid)
 }
 
@@ -332,6 +358,59 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|w| w == ["-o", "StrictHostKeyChecking=accept-new"]));
+    }
+
+    #[test]
+    fn detached_tunnel_keeps_its_staged_secret_until_stopped() {
+        // #144: `tunnel start` returned, dropped the staged askpass file, and
+        // the detached ssh found nothing when it asked for the password. The
+        // ssh here dials a closed port, so it never asks.
+        use crate::store::{LauncherStore, NewHost};
+        if Command::new("ssh").arg("-V").output().is_err() {
+            eprintln!("skipping: no ssh binary");
+            return;
+        }
+        let free_port = || {
+            TcpListener::bind("127.0.0.1:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+                .port()
+        };
+        let store = LauncherStore::open_in_memory().unwrap();
+        let mut new_host = NewHost::launcher("t", "127.0.0.1");
+        new_host.port = Some(free_port());
+        let host = store.create_host(&new_host).unwrap();
+        let tunnel = Tunnel {
+            id: 7,
+            host_id: Some(host.id),
+            tunnel_type: TunnelType::Local,
+            local_port: free_port(),
+            remote_host: "localhost".into(),
+            remote_port: 80,
+            label: None,
+            auto_connect: false,
+            created_at: 0,
+            updated_at: 0,
+        };
+        let data = tempfile::tempdir().unwrap();
+        let secret = PendingSecret::Password("s3cr3t".into());
+        spawn_detached_tunnel(
+            &tunnel,
+            &host,
+            &ResolvedConnection::from_stored(&host),
+            Some(&secret),
+            data.path(),
+        )
+        .unwrap();
+
+        let pid_path = tunnel_pid_path(&ensure_tunnel_pid_dir(data.path()).unwrap(), 7);
+        let staged = PathBuf::from(fs::read_to_string(staged_secret_record(&pid_path)).unwrap());
+        assert_eq!(fs::read_to_string(&staged).unwrap(), "s3cr3t\n");
+
+        stop_detached_tunnel(data.path(), 7).unwrap();
+        assert!(!staged.exists(), "stop must remove the staged secret");
+        assert!(!staged_secret_record(&pid_path).exists());
     }
 
     #[test]

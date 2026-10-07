@@ -39,6 +39,10 @@ pub fn resolve_pending_secret(
         }
     }
 
+    if let Some(spec) = managed.secret_lookup.as_deref() {
+        return resolve_secret_lookup(spec, password_store);
+    }
+
     // The remember-me modal saves the secret without touching the host row,
     // so a set flag cannot be required: presence of the secret itself
     // decides. The flag only tunes the diagnostic. Falls through to the
@@ -118,11 +122,33 @@ pub fn resolve_pending_secret(
     )
 }
 
+/// A host's Secret Service lookup (#142) is authoritative for its password:
+/// a failure prompts instead of falling back to the SSHub-stored secret.
+fn resolve_secret_lookup(
+    spec: &str,
+    password_store: &dyn crate::credentials::PasswordStore,
+) -> (Option<crate::session::PendingSecret>, String) {
+    match password_store.lookup(spec) {
+        Ok(pw) => (
+            Some(crate::session::PendingSecret::Password(pw)),
+            format!("auth: using Secret Service entry {spec}"),
+        ),
+        Err(e) => (
+            None,
+            format!("auth: secret lookup {spec} failed: {e:#}; ssh will prompt"),
+        ),
+    }
+}
+
 /// Same as [`resolve_pending_secret`] but for a [`ManagedHost`] row (tunnels).
 pub fn resolve_pending_secret_for_managed(
     managed: &crate::store::ManagedHost,
     password_store: &dyn crate::credentials::PasswordStore,
 ) -> (Option<crate::session::PendingSecret>, String) {
+    if let Some(spec) = managed.secret_lookup.as_deref() {
+        return resolve_secret_lookup(spec, password_store);
+    }
+
     // Same remember-me gap as the session lookup above: secret presence
     // decides, the row flag only tunes the diagnostic.
     let key = crate::credentials::host_key(managed.id);
@@ -273,7 +299,6 @@ pub fn prepare_cli_connect_argv(
 pub fn prepare_session_connect_argv(mut argv: Vec<String>, has_stored_secret: bool) -> Vec<String> {
     match argv.first().map(String::as_str) {
         Some("ssh") => {
-            argv.insert(1, "-v".into());
             argv.splice(
                 1..1,
                 [
@@ -282,6 +307,8 @@ pub fn prepare_session_connect_argv(mut argv: Vec<String>, has_stored_secret: bo
                     "-o",
                     "NumberOfPasswordPrompts=3",
                 ]
+                .into_iter()
+                .chain(crate::session::SSH_DEBUG_ARGS)
                 .map(String::from),
             );
             argv

@@ -37,6 +37,7 @@ pub struct HostRecordJson {
     pub remote_command: Option<String>,
     pub os_icon: Option<String>,
     pub has_password: bool,
+    pub secret_lookup: Option<String>,
     pub managed_id: Option<i64>,
 }
 
@@ -136,6 +137,7 @@ pub fn host_record_json(entry: &HostEntry, store: &LauncherStore) -> HostRecordJ
         remote_command: ssh.remote_command.clone(),
         os_icon,
         has_password,
+        secret_lookup: entry.managed().and_then(|m| m.secret_lookup.clone()),
         managed_id,
     }
 }
@@ -220,6 +222,7 @@ pub fn format_host_plain(record: &HostRecordJson) -> String {
             }
         ),
         format!("Identity: {}", opt_dash(&record.identity)),
+        format!("Secret lookup: {}", opt_dash(&record.secret_lookup)),
         format!("ProxyJump: {}", opt_dash(&record.proxy_jump)),
         format!("Source: {}", record.source),
         String::new(),
