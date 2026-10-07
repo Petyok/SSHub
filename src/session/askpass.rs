@@ -93,13 +93,38 @@ impl AskpassSecret {
             (OWNER_ENV.into(), std::process::id().to_string()),
         ]
     }
+
+    /// Keep the file after this guard is gone, for an ssh that outlives the
+    /// process that staged it: a detached tunnel (#144). Set [`READ_ONCE_ENV`]
+    /// on that ssh so the helper removes the file once it has been read, and
+    /// [`remove_outlived`] it when the tunnel stops without ever asking.
+    pub fn outlive(mut self) -> PathBuf {
+        std::mem::take(&mut self.path)
+    }
 }
 
 impl Drop for AskpassSecret {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
+        if !self.path.as_os_str().is_empty() {
+            let _ = std::fs::remove_file(&self.path);
+        }
     }
 }
+
+/// Remove a file handed out by [`AskpassSecret::outlive`]. Refuses any path
+/// that is not a staged secret, since the caller read it back from disk.
+pub fn remove_outlived(path: &Path) {
+    if path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("sshub-askpass-"))
+    {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// Tells the helper to delete the staged file after its first read.
+pub const READ_ONCE_ENV: &str = "SSHUB_ASKPASS_READ_ONCE";
 
 const ASKPASS_FILE_ENV: &str = "SSHUB_ASKPASS_FILE";
 /// The sshub process that staged the secret: where the ancestry walk stops.
@@ -220,6 +245,9 @@ pub fn maybe_run_askpass() -> bool {
         let mut out = std::io::stdout();
         let _ = out.write_all(secret.as_bytes());
         let _ = out.flush();
+        if std::env::var_os(READ_ONCE_ENV).is_some() {
+            let _ = std::fs::remove_file(&file);
+        }
     }
     true
 }
@@ -234,6 +262,33 @@ mod tests {
             assert!(maybe_run_askpass());
             std::process::exit(0);
         }
+    }
+
+    #[test]
+    fn read_once_secret_is_gone_after_the_first_answer() {
+        // A detached tunnel's secret outlives sshub (#144); the helper removes
+        // it as soon as ssh has read it.
+        let dir = tempfile::tempdir().unwrap();
+        let guard = AskpassSecret {
+            path: dir.path().join("sshub-askpass-test"),
+        };
+        std::fs::write(&guard.path, "s3cr3t\n").unwrap();
+        let path = guard.outlive();
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "session::askpass::tests::file_helper_entry",
+                "--nocapture",
+            ])
+            .env("SSHUB_TEST_FILE_HELPER", "1")
+            .env(ASKPASS_FILE_ENV, &path)
+            .env(READ_ONCE_ENV, "1")
+            // This test plays the ssh; stop the hop walk at its parent.
+            .env(OWNER_ENV, std::os::unix::process::parent_id().to_string())
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&out.stdout).contains("s3cr3t"));
+        assert!(!path.exists());
     }
 
     #[test]
