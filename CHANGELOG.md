@@ -4,6 +4,8 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.17.5] - 2026-10-07
+
 ### Added
 
 - **Host passwords from KeePassXC** (issue #142, requested by
