@@ -83,6 +83,7 @@ impl App {
                 password: stored_password.clone(),
                 password_original: stored_password,
                 has_password: managed.has_password,
+                secret_lookup: managed.secret_lookup.clone().unwrap_or_default(),
                 password_revealed: false,
                 field: start_field,
                 cursor: start_cursor,
@@ -127,6 +128,7 @@ impl App {
                 password: String::new(),
                 password_original: String::new(),
                 has_password: false,
+                secret_lookup: String::new(),
                 password_revealed: false,
                 field: HostFormField::Address,
                 cursor: 0,
@@ -193,6 +195,15 @@ impl App {
             form.has_password
         };
         let username = optional_field(&form.username);
+        let secret_lookup = optional_field(&form.secret_lookup);
+        if let Some(Err(e)) = secret_lookup
+            .as_deref()
+            .map(crate::credentials::parse_secret_lookup)
+        {
+            self.host_notice = Some(format!("Secret lookup: {e}"));
+            self.host_form = Some(form);
+            return Ok(());
+        }
 
         if form.metadata_only {
             let Some(id) = form.id else {
@@ -213,6 +224,7 @@ impl App {
                     identity_id: Some(identity_id),
                     tags: Some(tags),
                     has_password: Some(new_has_password),
+                    secret_lookup: Some(secret_lookup),
                     username: Some(username.clone()),
                     session_logging: Some(form.session_logging),
                     ping: Some(form.ping),
@@ -308,6 +320,7 @@ impl App {
                     forward_agent: Some(form.forward_agent),
                     remote_command: Some(remote_command),
                     has_password: Some(new_has_password),
+                    secret_lookup: Some(secret_lookup),
                     username: Some(username),
                     session_logging: Some(form.session_logging),
                     ping: Some(form.ping),
@@ -332,6 +345,7 @@ impl App {
                 remote_command,
                 source: HostSource::Launcher,
                 has_password: new_has_password,
+                secret_lookup,
                 username,
                 session_logging: form.session_logging,
                 ping: form.ping,

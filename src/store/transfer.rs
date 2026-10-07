@@ -657,6 +657,7 @@ pub fn apply_transfer_plan(
                                     remote_command: src_host.remote_command.clone(),
                                     source: HostSource::Launcher,
                                     has_password: false,
+                                    secret_lookup: src_host.secret_lookup.clone(),
                                     username: src_host.username.clone(),
                                     session_logging: src_host.session_logging,
                                     ping: src_host.ping,

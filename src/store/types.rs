@@ -89,6 +89,9 @@ pub struct ManagedHost {
     pub source: HostSource,
     pub ssh_config_hash: Option<String>,
     pub has_password: bool,
+    /// `Attribute=value` naming the Secret Service item holding this host's
+    /// password (#142). Set = authoritative over the SSHub-stored password.
+    pub secret_lookup: Option<String>,
     pub username: Option<String>,
     pub session_logging: SessionLoggingOverride,
     /// Per-host override of `[ping] enabled` (#137).
@@ -116,6 +119,7 @@ pub struct NewHost {
     pub remote_command: Option<String>,
     pub source: HostSource,
     pub has_password: bool,
+    pub secret_lookup: Option<String>,
     pub username: Option<String>,
     pub session_logging: SessionLoggingOverride,
     pub ping: SessionLoggingOverride,
@@ -145,6 +149,7 @@ impl NewHost {
             remote_command: None,
             source: HostSource::Launcher,
             has_password: false,
+            secret_lookup: None,
             username: None,
             session_logging: SessionLoggingOverride::Inherit,
             ping: SessionLoggingOverride::Inherit,
@@ -174,6 +179,7 @@ pub struct HostUpdate {
     pub favorite: Option<bool>,
     pub sort_order: Option<i32>,
     pub has_password: Option<bool>,
+    pub secret_lookup: Option<Option<String>>,
     pub username: Option<Option<String>>,
     pub session_logging: Option<SessionLoggingOverride>,
     pub ping: Option<SessionLoggingOverride>,

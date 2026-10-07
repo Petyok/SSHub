@@ -39,6 +39,10 @@ pub fn resolve_pending_secret(
         }
     }
 
+    if let Some(spec) = managed.secret_lookup.as_deref() {
+        return resolve_secret_lookup(spec, password_store);
+    }
+
     // The remember-me modal saves the secret without touching the host row,
     // so a set flag cannot be required: presence of the secret itself
     // decides. The flag only tunes the diagnostic. Falls through to the
@@ -118,11 +122,33 @@ pub fn resolve_pending_secret(
     )
 }
 
+/// A host's Secret Service lookup (#142) is authoritative for its password:
+/// a failure prompts instead of falling back to the SSHub-stored secret.
+fn resolve_secret_lookup(
+    spec: &str,
+    password_store: &dyn crate::credentials::PasswordStore,
+) -> (Option<crate::session::PendingSecret>, String) {
+    match password_store.lookup(spec) {
+        Ok(pw) => (
+            Some(crate::session::PendingSecret::Password(pw)),
+            format!("auth: using Secret Service entry {spec}"),
+        ),
+        Err(e) => (
+            None,
+            format!("auth: secret lookup {spec} failed: {e:#}; ssh will prompt"),
+        ),
+    }
+}
+
 /// Same as [`resolve_pending_secret`] but for a [`ManagedHost`] row (tunnels).
 pub fn resolve_pending_secret_for_managed(
     managed: &crate::store::ManagedHost,
     password_store: &dyn crate::credentials::PasswordStore,
 ) -> (Option<crate::session::PendingSecret>, String) {
+    if let Some(spec) = managed.secret_lookup.as_deref() {
+        return resolve_secret_lookup(spec, password_store);
+    }
+
     // Same remember-me gap as the session lookup above: secret presence
     // decides, the row flag only tunes the diagnostic.
     let key = crate::credentials::host_key(managed.id);

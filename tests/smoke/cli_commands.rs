@@ -973,3 +973,56 @@ fn host_add_refuses_an_option_like_address() {
         .failure()
         .stderr(predicate::str::contains("ssh reads as an option"));
 }
+
+/// Issue #142: the per-host Secret Service lookup round-trips through
+/// add/edit/clear and `host show`; a malformed spec is a usage error.
+#[test]
+fn host_secret_lookup_round_trips_through_add_edit_and_show() {
+    let d = dir();
+    let show = |format: &str| {
+        let out = sshub(d.path())
+            .args(["host", "show", "web", "--format", format])
+            .assert()
+            .success();
+        String::from_utf8(out.get_output().stdout.clone()).unwrap()
+    };
+    sshub(d.path())
+        .args(["host", "add", "--name", "web", "--address", "10.0.0.1"])
+        .args(["--secret-lookup", "URL=ssh://root@web:22"])
+        .assert()
+        .success();
+    assert!(show("plain").contains("Secret lookup: URL=ssh://root@web:22"));
+
+    sshub(d.path())
+        .args([
+            "host",
+            "edit",
+            "--name",
+            "web",
+            "--set-secret-lookup",
+            "Notes=a=b",
+        ])
+        .assert()
+        .success();
+    assert!(show("json").contains(r#""secret_lookup": "Notes=a=b""#));
+
+    sshub(d.path())
+        .args(["host", "edit", "--name", "web", "--clear-secret-lookup"])
+        .assert()
+        .success();
+    assert!(show("plain").contains("Secret lookup: —"));
+    assert!(show("json").contains(r#""secret_lookup": null"#));
+
+    let add_bad: &[&str] = &["host", "add", "--name", "db", "--address", "10.0.0.2"];
+    let edit_bad: &[&str] = &["host", "edit", "--name", "web", "--set-secret-lookup", "=x"];
+    for args in [
+        [add_bad, &["--secret-lookup", "URL"]].concat(),
+        edit_bad.to_vec(),
+    ] {
+        sshub(d.path())
+            .args(&args)
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("secret-lookup"));
+    }
+}

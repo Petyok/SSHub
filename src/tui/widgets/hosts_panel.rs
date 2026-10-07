@@ -641,6 +641,7 @@ mod tests {
                 source: crate::store::HostSource::Launcher,
                 ssh_config_hash: None,
                 has_password: false,
+                secret_lookup: None,
                 username: None,
                 session_logging: crate::session_log::SessionLoggingOverride::Inherit,
                 ping: crate::session_log::SessionLoggingOverride::Inherit,
