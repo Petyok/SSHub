@@ -71,7 +71,15 @@ Create a launcher host. Flags include
 .BR \-\-port ", " \-\-username ", " \-\-label ", " \-\-identity ", " \-\-group ", "
 .BR \-\-tag ", " \-\-notes ", " \-\-proxy\-jump ", " \-\-remote\-command ", "
 .BR \-\-forward\-agent ", " \-\-os\-icon ", " \-\-transport ", " \-\-session\-log ", "
-.BR \-\-favorite ", " \-\-password\-stdin .
+.BR \-\-favorite ", " \-\-password\-stdin ", " \-\-secret\-lookup .
+.B \-\-secret\-lookup \fIATTR\fB=\fIVALUE\fR
+takes the host password from the one Secret Service entry (e.g. KeePassXC)
+whose attribute matches exactly, such as
+.B URL=ssh://user@host:22
+or
+.BR Uuid=... ;
+edit takes
+.BR \-\-set\-secret\-lookup " and " \-\-clear\-secret\-lookup .
 .TP
 .B sshub host edit \fB\-\-name\fR \fINAME\fR [\fB\-\-set\-*\fR|\fB\-\-clear\-*\fR ...]
 Edit a host. Each field has a

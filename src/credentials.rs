@@ -8,6 +8,52 @@ pub trait PasswordStore: Send + Sync {
     fn get(&self, key: &str) -> Result<Option<String>>;
     fn set(&self, key: &str, password: &str) -> Result<()>;
     fn delete(&self, key: &str) -> Result<()>;
+    /// Fetch a host password named by a per-host `Attribute=value` spec
+    /// (#142). A method so tests can answer without a session bus.
+    fn lookup(&self, spec: &str) -> Result<String> {
+        secret_service_lookup(spec)
+    }
+}
+
+/// Split a secret lookup spec into `(attribute, value)` at the first `=`.
+// ponytail: one pair is the ceiling; `;`-separated pairs are the upgrade
+// path if a single attribute ever stops being unique enough.
+pub fn parse_secret_lookup(spec: &str) -> Result<(&str, &str)> {
+    let Some((attr, value)) = spec.split_once('=') else {
+        anyhow::bail!("secret lookup must be Attribute=value");
+    };
+    let (attr, value) = (attr.trim(), value.trim());
+    if attr.is_empty() || value.is_empty() {
+        anyhow::bail!("secret lookup must be Attribute=value");
+    }
+    Ok((attr, value))
+}
+
+/// Read the one Secret Service item whose attribute matches `spec` exactly
+/// (KeePassXC exposes `Title`, `UserName`, `URL`, `Notes`, `Path`, `Uuid`).
+#[cfg(target_os = "linux")]
+pub fn secret_service_lookup(spec: &str) -> Result<String> {
+    use dbus_secret_service::{EncryptionType, SecretService};
+    let (attr, value) = parse_secret_lookup(spec)?;
+    let ss = SecretService::connect(EncryptionType::Dh)?;
+    let found = ss.search_items(HashMap::from([(attr, value)]))?;
+    let mut items: Vec<_> = found.unlocked.into_iter().chain(found.locked).collect();
+    match items.len() {
+        0 => anyhow::bail!("no Secret Service entry has {attr}={value}"),
+        1 => {}
+        n => anyhow::bail!(
+            "{n} Secret Service entries have {attr}={value}; use a unique attribute such as Uuid"
+        ),
+    }
+    let item = items.remove(0);
+    // The provider shows its own unlock/confirm prompt here.
+    item.ensure_unlocked()?;
+    Ok(String::from_utf8(item.get_secret()?)?)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn secret_service_lookup(_spec: &str) -> Result<String> {
+    anyhow::bail!("secret lookup needs a Secret Service (Linux)")
 }
 
 /// Password store that prefixes every key with a namespace. Profiles use
@@ -40,6 +86,10 @@ impl PasswordStore for NamespacedPasswordStore {
     }
     fn delete(&self, key: &str) -> Result<()> {
         self.inner.delete(&self.namespaced(key))
+    }
+    // The spec names a provider entry, not an SSHub key: no prefix.
+    fn lookup(&self, spec: &str) -> Result<String> {
+        self.inner.lookup(spec)
     }
 }
 
@@ -312,5 +362,23 @@ mod tests {
         store.delete(test_key).unwrap();
 
         assert_eq!(store.get(test_key).unwrap(), None);
+    }
+
+    #[test]
+    fn secret_lookup_spec_splits_at_the_first_equals() {
+        assert_eq!(
+            parse_secret_lookup("URL=ssh://a@b:22").unwrap(),
+            ("URL", "ssh://a@b:22")
+        );
+        assert_eq!(
+            parse_secret_lookup(" Notes = a=b ").unwrap(),
+            ("Notes", "a=b")
+        );
+        for bad in ["URL", "=x", "URL=", " = "] {
+            assert!(
+                parse_secret_lookup(bad).is_err(),
+                "{bad:?} must be rejected"
+            );
+        }
     }
 }

@@ -196,6 +196,16 @@ pub fn render_host_form(
                     password_display(&form.password, form.has_password, form.password_revealed)
                 },
             ),
+            HostFormField::SecretLookup => (
+                "Secret lookup",
+                if editing {
+                    text_input::with_cursor(&form.secret_lookup, form.cursor)
+                } else if form.secret_lookup.trim().is_empty() {
+                    "URL=ssh://user@host:port".to_string()
+                } else {
+                    form.secret_lookup.clone()
+                },
+            ),
             HostFormField::Username => (
                 "Username",
                 if editing {
@@ -226,6 +236,7 @@ pub fn render_host_form(
                 HostFormField::Port => form.port.trim().is_empty(),
                 HostFormField::ProxyJump => form.proxy_jump.trim().is_empty(),
                 HostFormField::Username => form.username.trim().is_empty(),
+                HostFormField::SecretLookup => form.secret_lookup.trim().is_empty(),
                 HostFormField::ForwardAgent => form.forward_agent.is_none(),
                 HostFormField::Transport => form.transport.is_none(),
                 HostFormField::Identity => form.identity_index == 0,
@@ -384,6 +395,7 @@ mod tests {
             password: String::new(),
             password_original: String::new(),
             has_password: false,
+            secret_lookup: String::new(),
             password_revealed: false,
             field: HostFormField::Address,
             cursor: 0,

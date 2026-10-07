@@ -712,3 +712,26 @@ fn transfer_blocked_host_identity_not_carried() {
     assert!(dest.get_identity_by_name("solo").unwrap().is_none());
     assert!(dest.get_host_by_name("db").unwrap().is_some());
 }
+
+#[test]
+fn transfer_carries_secret_lookup() {
+    let src = LauncherStore::open_in_memory().unwrap();
+    let mut dest = LauncherStore::open_in_memory().unwrap();
+    src.create_host(&NewHost {
+        secret_lookup: Some("Uuid=abc".into()),
+        ..NewHost::launcher("web", "web.example.com")
+    })
+    .unwrap();
+    let plan = build_transfer_plan(
+        &snapshot(&src),
+        &dest_index(&dest),
+        &host_selection(&["web"]),
+        TransferMode::Copy,
+        GroupTransferMode::GroupOnly,
+        &HashSet::new(),
+    );
+    let mut src = src;
+    apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Copy).unwrap();
+    let dest_host = dest.get_host_by_name("web").unwrap().expect("dest host");
+    assert_eq!(dest_host.secret_lookup.as_deref(), Some("Uuid=abc"));
+}

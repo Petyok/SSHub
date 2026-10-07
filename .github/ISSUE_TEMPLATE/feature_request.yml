@@ -1,0 +1,38 @@
+name: Feature request
+description: Something SSHub should do that it does not do yet
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What you are trying to do, and where SSHub gets in the way
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What you would like SSHub to do. Key bindings, settings or CLI flags you have in mind are welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workarounds and alternatives
+      description: What you do today, and other tools or designs you considered
+  - type: input
+    id: sshub-version
+    attributes:
+      label: SSHub version
+      description: Output of `sshub --version`
+      placeholder: sshub 0.17.4
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and version
+      placeholder: Ubuntu 24.04
+    validations:
+      required: true

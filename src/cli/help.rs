@@ -50,7 +50,11 @@ USAGE:
     sshub host duplicate <name>
 
 --sort MODE: label|last-connected|favorite|group|manual. Run `man sshub` for the
-full add/edit flag list."#
+full add/edit flag list.
+
+--secret-lookup ATTR=VALUE (add; edit: --set-secret-lookup / --clear-secret-lookup)
+takes the host password from the one Secret Service entry (e.g. KeePassXC) whose
+attribute matches exactly, such as URL=ssh://user@host:22 or Uuid=..."#
     );
 }
 

@@ -264,7 +264,7 @@ impl Session {
         let (pty_rows, pty_cols) = pty_size(rows, cols);
         let interactive = config.key_push_identity.is_none()
             && matches!(config.argv.first().map(String::as_str), Some("ssh"));
-        let auth = if interactive {
+        let mut auth = if interactive {
             Some(interactive_auth::InteractiveAuth::new()?)
         } else {
             None
@@ -297,6 +297,10 @@ impl Session {
         }
 
         let runtime = PtyRuntime::spawn(&config.argv, pty_rows, pty_cols, &env, siphon_stderr)?;
+        if let Some(auth) = auth.as_mut() {
+            // `sh -c 'exec ssh …'` keeps the pid, so this is the destination ssh.
+            auth.destination_pid = runtime.child_pid();
+        }
         let parser = ParserState::new(pty_rows, pty_cols);
 
         let display_argv = config.argv.clone();
@@ -1208,6 +1212,14 @@ const CONNECTED_NEEDLES: &[&str] = &[
     "mux_client_request_session",
 ];
 
+/// How an embedded ssh is asked for the debug output scanned for
+/// [`CONNECTED_NEEDLES`]. Not `-v`: ssh hands `-v` on to every ProxyJump hop,
+/// whose own `Authenticated to …` reaches the same stderr and would mark the
+/// session connected (closing the askpass channel) before the destination asks
+/// for its password. A jump host whose ssh_config sets `LogLevel VERBOSE` or
+/// higher still prints that line.
+pub(crate) const SSH_DEBUG_ARGS: [&str; 2] = ["-o", "LogLevel=DEBUG1"];
+
 /// Cap on the retained ssh `-v` debug buffer (bytes). Old output past this is
 /// dropped from the front so a long session can't grow it without bound.
 const DEBUG_LOG_CAP: usize = 64 * 1024;
@@ -1661,6 +1673,7 @@ mod prompt_tests {
             &path,
             &token,
             "Password:",
+            None,
             Duration::from_secs(2),
         )
         .is_err());
@@ -2090,13 +2103,25 @@ mod prompt_tests {
         };
         Session::spawn(config, 24, 80, None).unwrap()
     }
-    #[test]
-    fn real_ssh_master_latches_connected_through_drain() {
-        // Oracle: a real OpenSSH client (`ssh -v`) against a tempdir `sshd`
-        // with key auth — the normal/master path (no ControlMaster). The
-        // client must print `Authenticated to …` on the siphoned stderr so
-        // `maybe_detect_connected` latches, and the banner must reveal
-        // `Running`, earning `is_live_authenticated` through `drain` alone.
+    /// A key-auth `sshd` on a free 127.0.0.1 port, configured in a tempdir;
+    /// `None` (test skipped) without sshd, ssh or ssh-keygen. Killed on drop.
+    struct TempdirSshd {
+        dir: tempfile::TempDir,
+        port: u16,
+        user_key: std::path::PathBuf,
+        host_key: std::path::PathBuf,
+        log: std::path::PathBuf,
+        child: std::process::Child,
+    }
+
+    impl Drop for TempdirSshd {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    fn tempdir_sshd() -> Option<TempdirSshd> {
         use std::process::Command;
         let sshd_bin = ["sshd", "/usr/sbin/sshd", "/usr/bin/sshd"]
             .into_iter()
@@ -2112,7 +2137,7 @@ mod prompt_tests {
             .find(|path| path.starts_with('/'));
         let Some(sshd_bin) = sshd_bin else {
             eprintln!("skipping: no sshd binary");
-            return;
+            return None;
         };
         for bin in ["ssh", "ssh-keygen"] {
             if Command::new("sh")
@@ -2125,7 +2150,7 @@ mod prompt_tests {
                 continue;
             }
             eprintln!("skipping: no {bin} binary");
-            return;
+            return None;
         }
         let dir = tempfile::tempdir().unwrap();
         let host_key = dir.path().join("host_key");
@@ -2144,7 +2169,7 @@ mod prompt_tests {
         // The probe port is free when picked but not reserved: another process
         // can take it before sshd binds. sshd then exits, so try a fresh port.
         let mut attempts = 0;
-        let (port, mut sshd) = loop {
+        let (port, child) = loop {
             attempts += 1;
             let port = {
                 let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -2198,8 +2223,28 @@ mod prompt_tests {
                 std::fs::read_to_string(&log).unwrap_or_default(),
             );
         };
+        Some(TempdirSshd {
+            dir,
+            port,
+            user_key,
+            host_key,
+            log,
+            child,
+        })
+    }
+
+    #[test]
+    fn real_ssh_master_latches_connected_through_drain() {
+        // Oracle: a real OpenSSH client (`ssh -v`) against a tempdir `sshd`
+        // with key auth — the normal/master path (no ControlMaster). The
+        // client must print `Authenticated to …` on the siphoned stderr so
+        // `maybe_detect_connected` latches, and the banner must reveal
+        // `Running`, earning `is_live_authenticated` through `drain` alone.
+        let Some(sshd) = tempdir_sshd() else {
+            return;
+        };
         let user = std::env::var("USER").unwrap_or_else(|_| "root".into());
-        let known = dir.path().join("known_hosts");
+        let known = sshd.dir.path().join("known_hosts");
         let config = SessionConfig {
             argv: vec![
                 "ssh".into(),
@@ -2207,7 +2252,7 @@ mod prompt_tests {
                 "-F".into(),
                 "/dev/null".into(),
                 "-i".into(),
-                user_key.to_str().unwrap().into(),
+                sshd.user_key.to_str().unwrap().into(),
                 "-o".into(),
                 "StrictHostKeyChecking=accept-new".into(),
                 "-o".into(),
@@ -2217,7 +2262,7 @@ mod prompt_tests {
                 "-o".into(),
                 "BatchMode=yes".into(),
                 "-p".into(),
-                port.to_string(),
+                sshd.port.to_string(),
                 format!("{user}@127.0.0.1"),
                 "printf 'READY\\n'; exec sleep 60".into(),
             ],
@@ -2247,8 +2292,80 @@ mod prompt_tests {
             s.history_capture_allowed(),
             "capture must be allowed on a clean remote prompt"
         );
-        let _ = sshd.kill();
-        let _ = sshd.wait();
+    }
+
+    #[test]
+    fn proxyjump_hop_authenticating_never_reads_as_connected() {
+        // Oracle: real OpenSSH through a real jump (#140), the tempdir sshd
+        // serving both hops: the jump accepts our key, the destination is an
+        // unknown user. The jump's own `Authenticated to …` reaches the same
+        // stderr, and when it latched `connected` the askpass channel closed
+        // before the destination could ask for its password: exit 255. A
+        // session whose destination never authenticated must never read
+        // connected.
+        let Some(sshd) = tempdir_sshd() else {
+            return;
+        };
+        let dir = sshd.dir.path();
+        let user = std::env::var("USER").unwrap_or_else(|_| "root".into());
+        let known = dir.join("known_hosts");
+        let host_key = std::fs::read_to_string(sshd.host_key.with_extension("pub")).unwrap();
+        std::fs::write(&known, format!("[127.0.0.1]:{} {host_key}", sshd.port)).unwrap();
+        // `-F` is the one client setting ssh hands on to the jump hop.
+        let client_config = dir.join("ssh_config");
+        std::fs::write(
+            &client_config,
+            format!(
+                "IdentityFile {}\nIdentitiesOnly yes\nUserKnownHostsFile {}\nBatchMode yes\n",
+                sshd.user_key.display(),
+                known.display(),
+            ),
+        )
+        .unwrap();
+        let argv = crate::app::prepare_session_connect_argv(
+            vec![
+                "ssh".into(),
+                "-F".into(),
+                client_config.to_str().unwrap().into(),
+                "-J".into(),
+                format!("{user}@127.0.0.1:{}", sshd.port),
+                "-p".into(),
+                sshd.port.to_string(),
+                "sshub-no-such-user@127.0.0.1".into(),
+            ],
+            false,
+        );
+        let config = SessionConfig {
+            argv,
+            display_name: "jump".into(),
+            meta: SessionMeta::default(),
+            pending_secret: None,
+            key_push_identity: None,
+            host_name: "jump".into(),
+        };
+        let mut s = Session::spawn(config, 24, 80, None).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !s.phase.is_terminal() {
+            s.drain();
+            assert!(
+                !s.is_connected(),
+                "the jump hop's marker latched connected: {:?}",
+                s.debug_log()
+            );
+            assert!(
+                std::time::Instant::now() < deadline,
+                "ssh never exited: {:?}",
+                s.debug_log()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        // Not vacuous: the jump hop did authenticate before the destination failed.
+        let log = std::fs::read_to_string(&sshd.log).unwrap();
+        assert!(
+            log.contains(&format!("Accepted publickey for {user}")),
+            "{log}"
+        );
+        assert!(log.contains("Invalid user sshub-no-such-user"), "{log}");
     }
 
     #[test]

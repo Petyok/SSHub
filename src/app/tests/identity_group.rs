@@ -209,6 +209,114 @@ pub(crate) fn missing_stored_secret_yields_an_explicit_will_prompt_diagnostic() 
     );
 }
 
+/// `MapStore` plus a canned Secret Service answer (#142): never touches D-Bus.
+struct LookupStore {
+    map: MapStore,
+    answer: Result<&'static str, &'static str>,
+}
+
+impl crate::credentials::PasswordStore for LookupStore {
+    fn get(&self, k: &str) -> anyhow::Result<Option<String>> {
+        self.map.get(k)
+    }
+    fn set(&self, k: &str, v: &str) -> anyhow::Result<()> {
+        self.map.set(k, v)
+    }
+    fn delete(&self, k: &str) -> anyhow::Result<()> {
+        self.map.delete(k)
+    }
+    fn lookup(&self, spec: &str) -> anyhow::Result<String> {
+        assert_eq!(
+            spec, "Title=db",
+            "the host's spec reaches the store verbatim"
+        );
+        self.answer.map(str::to_string).map_err(anyhow::Error::msg)
+    }
+}
+
+/// A host with a stored SSHub password and a lookup spec.
+fn host_with_lookup(
+    store: &crate::store::LauncherStore,
+    identity_id: Option<i64>,
+) -> crate::store::ManagedHost {
+    let mut nh = NewHost::launcher("db", "10.0.0.5");
+    nh.identity_id = identity_id;
+    nh.has_password = true;
+    nh.secret_lookup = Some("Title=db".into());
+    let id = store.create_host(&nh).unwrap().id;
+    store.get_host(id).unwrap().unwrap()
+}
+
+fn lookup_store(host_id: i64, answer: Result<&'static str, &'static str>) -> LookupStore {
+    let map = MapStore(Mutex::new(HashMap::new()));
+    crate::credentials::PasswordStore::set(&map, &crate::credentials::host_key(host_id), "stored")
+        .unwrap();
+    LookupStore { map, answer }
+}
+
+#[test]
+pub(crate) fn secret_lookup_is_authoritative_for_the_host_password() {
+    let store = test_store();
+    let managed = host_with_lookup(&store, None);
+    let entry = HostEntry::Managed(managed.clone());
+
+    let found = lookup_store(managed.id, Ok("from-keepass"));
+    for (secret, diag) in [
+        resolve_pending_secret(&entry, None, &found),
+        resolve_pending_secret_for_managed(&managed, &found),
+    ] {
+        assert!(
+            matches!(&secret, Some(crate::session::PendingSecret::Password(p)) if p == "from-keepass"),
+            "a found entry is the host password, got {secret:?} / {diag}"
+        );
+        assert_eq!(diag, "auth: using Secret Service entry Title=db");
+    }
+
+    // A failed lookup prompts; it never falls back to the stored password.
+    let missing = lookup_store(managed.id, Err("no Secret Service entry has Title=db"));
+    for (secret, diag) in [
+        resolve_pending_secret(&entry, None, &missing),
+        resolve_pending_secret_for_managed(&managed, &missing),
+    ] {
+        assert!(secret.is_none(), "stored password leaked: {secret:?}");
+        assert!(
+            diag.contains("secret lookup Title=db failed: no Secret Service entry"),
+            "{diag}"
+        );
+    }
+}
+
+#[test]
+pub(crate) fn key_passphrase_outranks_a_secret_lookup() {
+    let store = test_store();
+    let identity = store
+        .create_identity(&crate::store::NewIdentity {
+            name: "keyed".into(),
+            username: Some("root".into()),
+            private_key: Some("/home/u/.ssh/id_ed25519".into()),
+            certificate: None,
+            sort_order: 0,
+            has_password: true,
+        })
+        .unwrap()
+        .id;
+    let managed = host_with_lookup(&store, Some(identity));
+    let pw = lookup_store(managed.id, Ok("from-keepass"));
+    crate::credentials::PasswordStore::set(
+        &pw,
+        &crate::credentials::identity_key(identity),
+        "key-phrase",
+    )
+    .unwrap();
+    let entry = HostEntry::Managed(managed);
+    let effective = entry.managed().and_then(|m| m.identity.as_ref());
+    let (secret, diag) = resolve_pending_secret(&entry, effective, &pw);
+    assert!(
+        matches!(&secret, Some(crate::session::PendingSecret::Passphrase(p)) if p == "key-phrase"),
+        "the key passphrase must win over the lookup, got {secret:?} / {diag}"
+    );
+}
+
 #[test]
 pub(crate) fn keychain_create_edit_delete_flow() {
     let store = test_store();

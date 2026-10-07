@@ -336,7 +336,13 @@ mod tests {
             let path = path.clone();
             let token = token.clone();
             let helper = std::thread::spawn(move || {
-                askpass_channel::request_answer(&path, &token, "Password:", Duration::from_secs(3))
+                askpass_channel::request_answer(
+                    &path,
+                    &token,
+                    "Password:",
+                    None,
+                    Duration::from_secs(3),
+                )
             });
             if attempt == 3 {
                 tick_until(&mut app, |app| app.sessions[0].phase.is_terminal());
@@ -409,7 +415,13 @@ mod tests {
             .zip(prompts)
             .map(|((path, token), prompt)| {
                 std::thread::spawn(move || {
-                    askpass_channel::request_answer(&path, &token, prompt, Duration::from_secs(5))
+                    askpass_channel::request_answer(
+                        &path,
+                        &token,
+                        prompt,
+                        None,
+                        Duration::from_secs(5),
+                    )
                 })
             })
             .collect();
@@ -540,6 +552,8 @@ mod tests {
             let mut auth = InteractiveAuth::new().unwrap();
             auth.host_id = managed.then_some(7);
             auth.identity_id = Some(9);
+            // The test process plays the destination ssh.
+            auth.destination_pid = Some(std::process::id());
             let env = auth.channel_env(std::path::Path::new("unused"));
             let get = |name: &str| env.iter().find(|(key, _)| key == name).unwrap().1.clone();
             let path = std::path::PathBuf::from(get(askpass_channel::SOCKET_ENV));
@@ -551,7 +565,13 @@ mod tests {
             app.sessions[0].write_paste(b"initial-paste\n").unwrap();
             app.mode = AppMode::Connecting;
             let helper = std::thread::spawn(move || {
-                askpass_channel::request_answer(&path, &token, prompt, Duration::from_secs(3))
+                askpass_channel::request_answer(
+                    &path,
+                    &token,
+                    prompt,
+                    Some(std::process::id()),
+                    Duration::from_secs(3),
+                )
             });
             wait_for(&mut app, "opening authentication modal", |app| {
                 app.auth_modal.is_some()
@@ -715,7 +735,10 @@ mod tests {
             host_name: "restored".into(),
         };
         let mut session = Session::spawn(config, 24, 100, None).unwrap();
-        session.auth = Some(InteractiveAuth::new().unwrap());
+        let mut auth = InteractiveAuth::new().unwrap();
+        // The test process plays the destination ssh.
+        auth.destination_pid = Some(std::process::id());
+        session.auth = Some(auth);
         let env = session
             .auth
             .as_ref()
@@ -728,7 +751,13 @@ mod tests {
         app.active_session = Some(0);
         app.mode = AppMode::Connecting;
         let helper = std::thread::spawn(move || {
-            askpass_channel::request_answer(&path, &token, "Password:", Duration::from_secs(3))
+            askpass_channel::request_answer(
+                &path,
+                &token,
+                "Password:",
+                Some(std::process::id()),
+                Duration::from_secs(3),
+            )
         });
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
@@ -832,6 +861,8 @@ mod tests {
         let mut auth = InteractiveAuth::new().unwrap();
         auth.host_id = Some(7);
         auth.identity_id = Some(9);
+        // The test process plays the destination ssh.
+        auth.destination_pid = Some(std::process::id());
         let env = auth.channel_env(std::path::Path::new("unused"));
         let get = |name: &str| env.iter().find(|(key, _)| key == name).unwrap().1.clone();
         let path = std::path::PathBuf::from(get(askpass_channel::SOCKET_ENV));
@@ -841,7 +872,13 @@ mod tests {
         app.active_session = Some(0);
         app.mode = AppMode::Connecting;
         let helper = std::thread::spawn(move || {
-            askpass_channel::request_answer(&path, &token, "Password:", Duration::from_secs(3))
+            askpass_channel::request_answer(
+                &path,
+                &token,
+                "Password:",
+                Some(std::process::id()),
+                Duration::from_secs(3),
+            )
         });
         wait_for(&mut app, "opening authentication modal", |app| {
             app.auth_modal.is_some()
@@ -924,7 +961,13 @@ mod tests {
                 .1
         };
         let helper = std::thread::spawn(move || {
-            askpass_channel::request_answer(&path, &token, "Password:", Duration::from_secs(3))
+            askpass_channel::request_answer(
+                &path,
+                &token,
+                "Password:",
+                None,
+                Duration::from_secs(3),
+            )
         });
         tick_until(&mut app, |app| app.mode == AppMode::AuthPrompt);
         app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()))
@@ -963,7 +1006,7 @@ mod tests {
         app.active_session = Some(0);
         app.mode = AppMode::Connecting;
         let helper = std::thread::spawn(move || {
-            askpass_channel::request_answer(&path, &token, prompt, Duration::from_secs(3))
+            askpass_channel::request_answer(&path, &token, prompt, None, Duration::from_secs(3))
         });
         tick_until(&mut app, |app| app.mode == AppMode::AuthPrompt);
         let modal = app.auth_modal.as_ref().unwrap();

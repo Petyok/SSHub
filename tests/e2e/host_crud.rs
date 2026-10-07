@@ -80,6 +80,7 @@ fn host_create_edit_delete_roundtrip() {
     // Address field (already selected)
     edit_field(&mut app, "10.0.0.50");
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Password (skip)
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Secret lookup (skip)
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Username (skip)
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Label
     edit_field(&mut app, "Dev Server");
@@ -111,6 +112,7 @@ fn host_create_edit_delete_roundtrip() {
     assert_eq!(app.mode, AppMode::HostForm);
 
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Password
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Secret lookup
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Username
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Label
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Name
@@ -140,6 +142,7 @@ fn host_duplicate_creates_copy() {
     app.handle_key(key_char('a')).unwrap();
     edit_field(&mut app, "192.168.1.10");
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Password (skip)
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Secret lookup (skip)
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Username (skip)
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Label (skip)
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Name
@@ -167,6 +170,7 @@ fn adding_host_with_duplicate_name_renames_instead_of_crashing() {
         app.handle_key(key_char('a')).unwrap();
         edit_field(app, "10.0.0.1");
         app.handle_key(key(KeyCode::Down)).unwrap(); // → Password
+        app.handle_key(key(KeyCode::Down)).unwrap(); // → Secret lookup
         app.handle_key(key(KeyCode::Down)).unwrap(); // → Username
         app.handle_key(key(KeyCode::Down)).unwrap(); // → Label
         app.handle_key(key(KeyCode::Down)).unwrap(); // → Name
@@ -200,14 +204,16 @@ fn enter_on_last_field_saves_the_form() {
     assert_eq!(app.mode, AppMode::HostForm);
     edit_field(&mut app, "10.0.0.7"); // Address
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Password
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Secret lookup
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Username
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Label
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Name
     edit_field(&mut app, "edge-1");
 
-    // Walk Up to the last field (OS icon): Name → Label → Username → Password
-    // → Address → (wrap) OS icon. Enter there should save, not open an editor.
-    for _ in 0..5 {
+    // Walk Up to the last field (OS icon): Name → Label → Username → Secret
+    // lookup → Password → Address → (wrap) OS icon. Enter there should save,
+    // not open an editor.
+    for _ in 0..6 {
         app.handle_key(key(KeyCode::Up)).unwrap();
     }
     app.handle_key(key(KeyCode::Enter)).unwrap();
@@ -317,6 +323,7 @@ fn form_refuses_an_option_like_address_without_unwinding() {
     assert_eq!(app.mode, AppMode::HostForm);
     edit_field(&mut app, "-oProxyCommand=id"); // Address
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Password
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Secret lookup
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Username
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Label
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Name

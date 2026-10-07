@@ -45,6 +45,12 @@ pub(crate) fn host_form_up_down_navigate_fields_in_both_directions() {
     app.handle_key(key(KeyCode::Down)).unwrap();
     assert_eq!(
         app.host_form.as_ref().unwrap().field,
+        HostFormField::SecretLookup
+    );
+
+    app.handle_key(key(KeyCode::Down)).unwrap();
+    assert_eq!(
+        app.host_form.as_ref().unwrap().field,
         HostFormField::Username
     );
 
@@ -58,6 +64,7 @@ pub(crate) fn host_form_up_down_navigate_fields_in_both_directions() {
     );
 
     app.handle_key(key(KeyCode::Up)).unwrap();
+    app.handle_key(key(KeyCode::Up)).unwrap();
     assert_eq!(
         app.host_form.as_ref().unwrap().field,
         HostFormField::Password
@@ -69,8 +76,8 @@ pub(crate) fn host_form_up_down_navigate_fields_in_both_directions() {
         HostFormField::Address
     );
 
-    // Navigate to the end (15 downs from Address)
-    for _ in 0..15 {
+    // Navigate to the end (16 downs from Address)
+    for _ in 0..16 {
         app.handle_key(key(KeyCode::Down)).unwrap();
     }
     assert_eq!(app.host_form.as_ref().unwrap().field, HostFormField::OsIcon);
@@ -110,11 +117,53 @@ pub(crate) fn host_form_ping_override_saves_and_stops_probing_the_host() {
     );
 }
 
+/// The Secret lookup row (#142) refuses a malformed spec with the form still
+/// open, and saves a valid one (whose value keeps its own `=`/`:`).
+#[test]
+pub(crate) fn host_form_secret_lookup_validates_then_saves() {
+    let mut app = test_app(vec![]);
+    let created = app
+        .store
+        .create_host(&crate::store::NewHost::launcher("db", "10.0.0.7"))
+        .unwrap();
+    app.enter_host_form(Some(&created), false).unwrap();
+    app.host_form.as_mut().unwrap().secret_lookup = "URL".into();
+    app.save_host_form().unwrap();
+    assert!(
+        app.host_form.is_some(),
+        "an invalid spec keeps the form open"
+    );
+    assert!(app
+        .host_notice
+        .as_deref()
+        .is_some_and(|n| n.contains("Secret lookup")));
+    assert_eq!(
+        app.store
+            .get_host(created.id)
+            .unwrap()
+            .unwrap()
+            .secret_lookup,
+        None
+    );
+
+    app.host_form.as_mut().unwrap().secret_lookup = " URL=ssh://root@db:22 ".into();
+    app.save_host_form().unwrap();
+    assert_eq!(
+        app.store
+            .get_host(created.id)
+            .unwrap()
+            .unwrap()
+            .secret_lookup
+            .as_deref(),
+        Some("URL=ssh://root@db:22")
+    );
+}
+
 #[test]
 pub(crate) fn host_form_picker_at_boundary_moves_to_adjacent_field() {
     let mut app = test_app(vec![]);
     app.enter_host_form(None, false).unwrap();
-    for _ in 0..6 {
+    for _ in 0..7 {
         app.handle_key(key(KeyCode::Down)).unwrap();
     }
     assert_eq!(app.host_form.as_ref().unwrap().field, HostFormField::Group);

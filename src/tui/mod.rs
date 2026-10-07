@@ -1822,9 +1822,9 @@ enum FormKind {
 /// Rows each form needs to show everything it draws, hint lines included.
 const fn form_rows_needed(kind: FormKind) -> u16 {
     match kind {
-        // 16 fields + a blank + 2 hint rows + 2 borders, plus the extra hint row
-        // the password field adds.
-        FormKind::Host => 23,
+        // 17 fields + a blank + 2 hint rows + 2 borders, plus the extra hint row
+        // the password field adds: exactly a 24-row terminal.
+        FormKind::Host => 24,
         FormKind::Identity => 14,
         FormKind::Keygen => 14,
         FormKind::Group => 12,

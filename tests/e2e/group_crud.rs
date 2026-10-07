@@ -93,6 +93,7 @@ fn create_group_assign_host_visible_in_tree() {
     app.handle_key(key_char('a')).unwrap();
     edit_field(&mut app, "10.0.0.10");
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Password (skip)
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Secret lookup (skip)
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Username (skip)
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Label
     edit_field(&mut app, "VC Host");
@@ -142,6 +143,7 @@ fn host_form_group_dropdown_creates_group_inline() {
     app.handle_key(key_char('a')).unwrap();
     edit_field(&mut app, "10.0.0.20"); // Address
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Password
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Secret lookup
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Username
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Label
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Name
@@ -209,6 +211,7 @@ fn host_form_multi_select_assigns_two_groups() {
     app.handle_key(key_char('a')).unwrap();
     edit_field(&mut app, "10.0.0.30"); // Address
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Password
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Secret lookup
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Username
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Label
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Name
@@ -335,6 +338,7 @@ fn rename_and_delete_group_via_shortcuts() {
     app.handle_key(key_char('a')).unwrap();
     edit_field(&mut app, "10.0.0.11");
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Password (skip)
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Secret lookup (skip)
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Username (skip)
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Label (skip)
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Name
@@ -389,6 +393,7 @@ fn delete_group_cancel_confirm_and_notice() {
     app.handle_key(key_char('a')).unwrap();
     edit_field(&mut app, "10.0.0.20");
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Password (skip)
+    app.handle_key(key(KeyCode::Down)).unwrap(); // → Secret lookup (skip)
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Username (skip)
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Label
     edit_field(&mut app, "Test Host");

@@ -153,8 +153,11 @@ fn cmd_connect(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
         None => None,
     };
     let effective_identity = resolved.as_ref().and_then(|r| r.identity.as_ref());
-    let (pending_secret, _) =
+    let (pending_secret, credential_diag) =
         resolve_pending_secret(&entry, effective_identity, ctx.password_store());
+    if verbose {
+        eprintln!("sshub: {credential_diag}");
+    }
     let base_argv = match (entry.managed(), resolved.as_ref()) {
         (Some(m), Some(r)) => resolved_session_argv(m, r),
         _ => session_argv_for_entry(&entry),
@@ -325,6 +328,7 @@ fn cmd_add(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
         remote_command: spec.remote_command,
         source: HostSource::Launcher,
         has_password: spec.password.is_some(),
+        secret_lookup: spec.secret_lookup,
         username: spec.username,
         session_logging: spec.session_logging,
         ping: spec.ping,
@@ -466,6 +470,12 @@ fn cmd_edit(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     }
     if let Some(v) = patch.set_has_password {
         update.has_password = Some(v);
+    }
+    if let Some(v) = patch.set_secret_lookup {
+        update.secret_lookup = Some(Some(v));
+    }
+    if patch.clear_secret_lookup {
+        update.secret_lookup = Some(None);
     }
 
     let saved_name = patch
@@ -756,6 +766,7 @@ struct HostAddSpec {
     os_icon: Option<String>,
     favorite: bool,
     password: Option<String>,
+    secret_lookup: Option<String>,
 }
 
 impl HostAddSpec {
@@ -805,6 +816,8 @@ impl HostAddSpec {
             .unwrap_or_default();
         let os_icon = parse::take_opt(&mut args, "--os-icon").and_then(|s| optional_field(&s));
         let favorite = parse::take_flag(&mut args, "--favorite");
+        let secret_lookup = parse::take_opt(&mut args, "--secret-lookup")
+            .map(|s| valid_secret_lookup("--secret-lookup", &s));
         let password = if parse::take_flag(&mut args, "--password-stdin") {
             Some(read_password_stdin()?)
         } else {
@@ -829,6 +842,7 @@ impl HostAddSpec {
             os_icon,
             favorite,
             password,
+            secret_lookup,
         })
     }
 }
@@ -866,6 +880,8 @@ struct HostEditPatch {
     set_has_password: Option<bool>,
     password: Option<String>,
     clear_password: bool,
+    set_secret_lookup: Option<String>,
+    clear_secret_lookup: bool,
 }
 
 impl HostEditPatch {
@@ -907,6 +923,8 @@ impl HostEditPatch {
             set_has_password: None,
             password: None,
             clear_password: false,
+            set_secret_lookup: None,
+            clear_secret_lookup: false,
         };
 
         if let Some(v) = parse::take_opt(&mut args, "--set-label") {
@@ -992,6 +1010,9 @@ impl HostEditPatch {
             patch.set_has_password = Some(true);
         }
         patch.clear_password = parse::take_flag(&mut args, "--clear-password");
+        patch.set_secret_lookup = parse::take_opt(&mut args, "--set-secret-lookup")
+            .map(|s| valid_secret_lookup("--set-secret-lookup", &s));
+        patch.clear_secret_lookup = parse::take_flag(&mut args, "--clear-secret-lookup");
 
         if !patch.has_any_patch() {
             bail!("edit requires at least one --set-* flag");
@@ -1028,6 +1049,8 @@ impl HostEditPatch {
             || self.set_groups.is_some()
             || self.password.is_some()
             || self.clear_password
+            || self.set_secret_lookup.is_some()
+            || self.clear_secret_lookup
     }
 
     fn needs_materialize(&self) -> bool {
@@ -1059,6 +1082,8 @@ impl HostEditPatch {
             || self.clear_username
             || self.set_os_icon.is_some()
             || self.clear_os_icon
+            || self.set_secret_lookup.is_some()
+            || self.clear_secret_lookup
     }
 
     fn changes_connection_fields(&self) -> bool {
@@ -1081,6 +1106,15 @@ fn read_password_stdin() -> Result<String> {
         .read_to_string(&mut buf)
         .context("read password from stdin")?;
     Ok(buf.trim_end_matches(['\r', '\n']).to_string())
+}
+
+/// A `--secret-lookup` value, trimmed; a malformed one is a usage error.
+fn valid_secret_lookup(flag: &str, raw: &str) -> String {
+    let spec = raw.trim();
+    if let Err(e) = crate::credentials::parse_secret_lookup(spec) {
+        host_usage(&format!("invalid {flag}: {e}"));
+    }
+    spec.to_string()
 }
 
 fn host_usage(msg: &str) -> ! {

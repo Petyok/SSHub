@@ -238,11 +238,9 @@ impl App {
             let empty = m.os_icon.as_deref().is_none_or(|s| s.is_empty());
             if empty && !self.os_detect_inflight.contains(&m.id) {
                 if let Some(tx) = self.os_detect_tx.as_ref() {
-                    let (secret, _diag) = resolve_pending_secret(
-                        &entry,
-                        effective_identity,
-                        self.password_store.as_ref(),
-                    );
+                    // Already resolved above: a second lookup would raise a
+                    // second Secret Service confirm prompt for a #142 host.
+                    let secret = pending_secret.clone();
                     let argv = match resolved.as_ref() {
                         Some(r) => resolved_session_argv(m, r),
                         None => ssh_argv_for_entry(&entry),

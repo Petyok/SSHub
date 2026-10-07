@@ -308,6 +308,10 @@ impl LauncherStore {
             let favorite = update.favorite.unwrap_or(current.favorite);
             let sort_order = update.sort_order.unwrap_or(current.sort_order);
             let has_password = update.has_password.unwrap_or(current.has_password);
+            let secret_lookup = match &update.secret_lookup {
+                Some(v) => v.clone(),
+                None => current.secret_lookup.clone(),
+            };
             let username = match &update.username {
                 Some(v) => v.clone(),
                 None => current.username.clone(),
@@ -328,7 +332,8 @@ impl LauncherStore {
                  SET name = ?1, label = ?2, address = ?3, port = ?4, group_id = ?5, identity_id = ?6,
                      os_icon = ?7, tags = ?8, notes = ?9, proxy_jump = ?10, forward_agent = ?11,
                      remote_command = ?12, favorite = ?13, sort_order = ?14, has_password = ?15, username = ?16, updated_at = ?17,
-                     environment = ?19, session_logging = ?20, transport = ?21, ping = ?22
+                     environment = ?19, session_logging = ?20, transport = ?21, ping = ?22,
+                     secret_lookup = ?23
                  WHERE id = ?18",
                 params![
                     name,
@@ -353,6 +358,7 @@ impl LauncherStore {
                     session_logging.to_db(),
                     transport.map(|t| t.to_db()),
                     ping.to_db(),
+                    secret_lookup,
                 ],
             )?;
 
@@ -581,6 +587,7 @@ impl LauncherStore {
             remote_command: current.remote_command.clone(),
             source: HostSource::Launcher,
             has_password: false,
+            secret_lookup: current.secret_lookup.clone(),
             username: current.username.clone(),
             session_logging: current.session_logging,
             ping: current.ping,
@@ -872,9 +879,9 @@ pub(super) fn create_host_on(conn: &rusqlite::Connection, host: &NewHost) -> Res
         "INSERT INTO hosts
             (name, label, address, port, group_id, identity_id, os_icon, tags, notes,
              proxy_jump, forward_agent, remote_command, source, has_password, username,
-             session_logging, transport, ping, sort_order, created_at, updated_at)
+             session_logging, transport, ping, secret_lookup, sort_order, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-             ?16, ?17, ?19,
+             ?16, ?17, ?19, ?20,
              (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM hosts), ?18, ?18)",
         params![
             host.name,
@@ -896,6 +903,7 @@ pub(super) fn create_host_on(conn: &rusqlite::Connection, host: &NewHost) -> Res
             host.transport.map(|t| t.to_db()),
             now,
             host.ping.to_db(),
+            host.secret_lookup,
         ],
     )?;
     let id = conn.last_insert_rowid();
@@ -1045,7 +1053,7 @@ fn load_host_by_id(conn: &rusqlite::Connection, id: i64) -> Result<Option<Manage
                 g.default_port, g.default_proxy_jump, g.default_transport,
                 g.default_forward_agent, g.parent_id, g.reserved,
                 i.id, i.name, i.username, i.private_key, i.certificate, i.has_password,
-                h.environment, h.session_logging, h.transport, h.ping
+                h.environment, h.session_logging, h.transport, h.ping, h.secret_lookup
          FROM hosts h
          LEFT JOIN host_groups g ON g.id = h.group_id
          LEFT JOIN identities i ON i.id = h.identity_id
@@ -1417,6 +1425,7 @@ fn row_to_managed_host(row: &rusqlite::Row<'_>) -> rusqlite::Result<ManagedHost>
         source,
         ssh_config_hash: row.get(17)?,
         has_password: row.get::<_, i64>(18).unwrap_or(0) != 0,
+        secret_lookup: row.get(43)?,
         username: row.get(21)?,
         session_logging: SessionLoggingOverride::from_db(row.get(40).ok()),
         transport: row
@@ -1644,6 +1653,29 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn secret_lookup_round_trips_through_create_update_duplicate() {
+        let store = LauncherStore::open_in_memory().unwrap();
+        let mut nh = NewHost::launcher("web", "10.0.0.1");
+        nh.secret_lookup = Some("URL=ssh://root@web:22".into());
+        let id = store.create_host(&nh).unwrap().id;
+        let get = |id| store.get_host(id).unwrap().unwrap().secret_lookup;
+        assert_eq!(get(id).as_deref(), Some("URL=ssh://root@web:22"));
+
+        let copy = store.duplicate_host(id).unwrap().unwrap();
+        assert_eq!(get(copy.id).as_deref(), Some("URL=ssh://root@web:22"));
+
+        let mut update = HostUpdate {
+            secret_lookup: Some(Some("Uuid=abc".into())),
+            ..Default::default()
+        };
+        store.update_host(id, &update).unwrap();
+        assert_eq!(get(id).as_deref(), Some("Uuid=abc"));
+        update.secret_lookup = Some(None);
+        store.update_host(id, &update).unwrap();
+        assert_eq!(get(id), None);
     }
 
     #[test]
