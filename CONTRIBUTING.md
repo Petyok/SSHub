@@ -171,11 +171,10 @@ cargo test my_unit_test_name
 
 ## Reporting bugs
 
-Open an issue with:
-- What you expected vs. what happened
-- Steps to reproduce
-- Terminal emulator and OS
-- Output of `sshub --help` (shows version)
+Use the **Bug report** form when opening an issue. Its required fields
+(SSHub version from `sshub --version`, install method, OS, `ssh -V`, terminal,
+steps to reproduce) are the ones a fix cannot start without. Feature ideas go
+through the **Feature request** form.
 
 ## License
 
