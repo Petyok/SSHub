@@ -4,6 +4,23 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **ProxyJump hosts connect again** (issue #140, reported by
+  [@morgonjor](https://github.com/morgonjor)) - ssh hands `-v` on to the jump
+  host, and the jump's own `Authenticated to` line marked the session as
+  connected as soon as the jump host accepted the key. That closed the
+  password prompt channel before the destination asked, so the session ended
+  with `code 255` and a blank screen, with or without a stored password.
+  Embedded sessions now ask ssh for debug output with `-o LogLevel=DEBUG1`,
+  which ssh does not pass on to jump hosts.
+
+  The stored destination password also went to whichever ssh asked first: a
+  jump host that wanted a password received the destination's, and a jump
+  password typed with Remember ticked was saved as the destination's. Only the
+  destination's own prompts now get the stored secret or the Remember box; a
+  jump host's password prompt opens the normal prompt.
+
 ## [0.17.4] - 2026-10-06
 
 ### Added
