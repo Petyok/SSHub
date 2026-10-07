@@ -48,6 +48,13 @@ All notable changes to SSHub are documented in this file.
   password therefore needs its own key or agent on these paths, even when it
   shares the destination's password.
 
+- **Detached tunnels log in with a stored password** (#144) -
+  `sshub tunnel start` without `--foreground` deleted the staged password as
+  soon as it returned, before ssh asked for it, so the server saw empty
+  passwords and the tunnel never came up. The staged file now stays for the
+  detached ssh, is deleted as soon as ssh has read it, and `sshub tunnel stop`
+  removes it if ssh never asked.
+
 ## [0.17.4] - 2026-10-06
 
 ### Added
