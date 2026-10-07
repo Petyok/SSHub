@@ -108,8 +108,11 @@ pub fn run(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
 
     let host_name = entry.name().to_string();
     let effective_identity = resolved.as_ref().and_then(|r| r.identity.as_ref());
-    let (pending_secret, _) =
+    let (pending_secret, credential_diag) =
         resolve_pending_secret(&entry, effective_identity, ctx.password_store());
+    if verbose {
+        eprintln!("sshub: {credential_diag}");
+    }
     let base_argv = match (entry.managed(), resolved.as_ref()) {
         (Some(m), Some(r)) => resolved_session_argv(m, r),
         _ => session_argv_for_entry(&entry),
