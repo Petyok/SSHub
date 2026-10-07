@@ -16,6 +16,10 @@ use serde::{Deserialize, Serialize};
 pub const SOCKET_ENV: &str = "SSHUB_ASKPASS_SOCKET";
 pub const TOKEN_ENV: &str = "SSHUB_ASKPASS_TOKEN";
 pub const MODE_ENV: &str = "SSHUB_ASKPASS_CHANNEL";
+/// [`MODE_ENV`] value from a TUI that reads `ssh_pid`. An older TUI sets "1"
+/// and rejects unknown fields, yet after an in-place upgrade the helper it runs
+/// is the newer binary on disk, so the field is sent only when asked for.
+const MODE_WITH_SSH_PID: &str = "2";
 pub const TIMEOUT: Duration = Duration::from_secs(120);
 pub const MAX_ANSWER_BYTES: usize = 4096;
 const MAX_FRAME: usize = 32 * 1024;
@@ -26,6 +30,8 @@ const MAX_CLIENTS: usize = 8;
 struct WireRequest {
     token: String,
     prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ssh_pid: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -46,6 +52,10 @@ fn valid_answer(answer: &str) -> bool {
 /// One modal's request. Dropping this closes the helper connection (failure).
 pub struct Request {
     pub prompt: String,
+    /// The ssh process that ran the helper, if the helper reported it. A
+    /// ProxyJump hop is a separate ssh that inherits the same askpass
+    /// environment, so this is what tells its prompts from the destination's.
+    pub ssh_pid: Option<u32>,
     stream: UnixStream,
     deadline: Instant,
 }
@@ -131,7 +141,7 @@ impl Channel {
             ("SSH_ASKPASS_REQUIRE".into(), "force".into()),
             // Nonempty DISPLAY also supports OpenSSH versions checking it.
             ("DISPLAY".into(), "sshub:0".into()),
-            (MODE_ENV.into(), "1".into()),
+            (MODE_ENV.into(), MODE_WITH_SSH_PID.into()),
             (
                 SOCKET_ENV.into(),
                 self.directory
@@ -205,6 +215,7 @@ impl Channel {
                 }
                 self.ready.push_back(Request {
                     prompt: wire.prompt,
+                    ssh_pid: wire.ssh_pid,
                     stream: client.stream,
                     deadline: client.deadline,
                 });
@@ -221,12 +232,20 @@ impl Channel {
     }
 }
 
+/// Helper side: the ssh that ran this helper, if the TUI asked for it.
+pub fn asking_ssh_pid() -> Option<u32> {
+    std::env::var(MODE_ENV)
+        .is_ok_and(|mode| mode == MODE_WITH_SSH_PID)
+        .then(std::os::unix::process::parent_id)
+}
+
 /// Blocking helper side. Any incomplete/malformed/late reply is an error, never
 /// an empty or guessed answer. The helper process owns the overall read timeout.
 pub fn request_answer(
     path: &Path,
     token: &str,
     prompt: &str,
+    ssh_pid: Option<u32>,
     timeout: Duration,
 ) -> io::Result<String> {
     if token.is_empty() || prompt.is_empty() {
@@ -235,6 +254,7 @@ pub fn request_answer(
     let mut bytes = serde_json::to_vec(&WireRequest {
         token: token.into(),
         prompt: prompt.into(),
+        ssh_pid,
     })
     .map_err(|_| refused())?;
     bytes.push(b'\n');
@@ -285,7 +305,7 @@ mod tests {
     ) -> thread::JoinHandle<io::Result<String>> {
         let path = channel.directory.path().join("socket");
         let prompt = prompt.to_owned();
-        thread::spawn(move || request_answer(&path, &token, &prompt, Duration::from_secs(2)))
+        thread::spawn(move || request_answer(&path, &token, &prompt, None, Duration::from_secs(2)))
     }
 
     fn next(channel: &mut Channel) -> Request {
@@ -328,7 +348,9 @@ mod tests {
             thread::sleep(Duration::from_millis(1));
         }
         assert!(bad.join().unwrap().is_err());
-        assert!(request_answer(&root.path().join("missing"), "", "password:", TIMEOUT).is_err());
+        assert!(
+            request_answer(&root.path().join("missing"), "", "password:", None, TIMEOUT).is_err()
+        );
     }
 
     #[test]
@@ -350,7 +372,7 @@ mod tests {
         );
         drop(channel);
         assert!(!path.exists());
-        assert!(request_answer(&path, "stale", "password:", TIMEOUT).is_err());
+        assert!(request_answer(&path, "stale", "password:", None, TIMEOUT).is_err());
     }
 
     #[test]
@@ -389,6 +411,60 @@ mod tests {
         if std::env::var_os("SSHUB_TEST_HELPER_PROCESS").is_some() {
             assert!(super::super::askpass::maybe_run_askpass());
             std::process::exit(0);
+        }
+    }
+
+    #[test]
+    fn helper_names_its_ssh_only_to_a_tui_that_asks() {
+        // A TUI from before `ssh_pid` sets mode "1" and rejects unknown fields,
+        // yet after an upgrade it runs this newer helper: the field must stay out.
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("socket");
+        let listener = UnixListener::bind(&path).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        // The helper's parent is the ssh that ran it: here, this test process.
+        for (mode, ssh_pid) in [("1", None), (MODE_WITH_SSH_PID, Some(std::process::id()))] {
+            let child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "session::askpass_channel::tests::auth_helper_process_entry",
+                ])
+                .env("SSHUB_TEST_HELPER_PROCESS", "1")
+                .env_remove("SSHUB_ASKPASS_FILE")
+                .env(SOCKET_ENV, &path)
+                .env(TOKEN_ENV, "token")
+                .env(MODE_ENV, mode)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        assert!(Instant::now() < deadline, "mode {mode}: helper never asked");
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    Err(e) => panic!("accept: {e}"),
+                }
+            };
+            stream.set_nonblocking(false).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut line = String::new();
+            io::BufRead::read_line(&mut io::BufReader::new(&stream), &mut line).unwrap();
+            let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(
+                request.get("ssh_pid").cloned(),
+                ssh_pid.map(serde_json::Value::from),
+                "mode {mode}: {line}"
+            );
+            let mut reply = serde_json::to_vec(&WireReply::Answer("ok".into())).unwrap();
+            reply.push(b'\n');
+            stream.write_all(&reply).unwrap();
+            assert!(child.wait_with_output().unwrap().status.success());
         }
     }
 

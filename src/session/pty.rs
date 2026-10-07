@@ -333,6 +333,10 @@ impl PtyRuntime {
         self.closed.load(Ordering::Relaxed)
     }
 
+    pub fn child_pid(&self) -> Option<u32> {
+        self.child.as_ref()?.process_id()
+    }
+
     /// Reap a child that has already exited. Prevents zombies while the
     /// [`Session`] object stays alive in a detached tab.
     pub fn reap_child(&mut self) -> Option<portable_pty::ExitStatus> {

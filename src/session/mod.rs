@@ -264,7 +264,7 @@ impl Session {
         let (pty_rows, pty_cols) = pty_size(rows, cols);
         let interactive = config.key_push_identity.is_none()
             && matches!(config.argv.first().map(String::as_str), Some("ssh"));
-        let auth = if interactive {
+        let mut auth = if interactive {
             Some(interactive_auth::InteractiveAuth::new()?)
         } else {
             None
@@ -297,6 +297,10 @@ impl Session {
         }
 
         let runtime = PtyRuntime::spawn(&config.argv, pty_rows, pty_cols, &env, siphon_stderr)?;
+        if let Some(auth) = auth.as_mut() {
+            // `sh -c 'exec ssh …'` keeps the pid, so this is the destination ssh.
+            auth.destination_pid = runtime.child_pid();
+        }
         let parser = ParserState::new(pty_rows, pty_cols);
 
         let display_argv = config.argv.clone();
@@ -1669,6 +1673,7 @@ mod prompt_tests {
             &path,
             &token,
             "Password:",
+            None,
             Duration::from_secs(2),
         )
         .is_err());

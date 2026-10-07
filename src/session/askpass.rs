@@ -121,6 +121,7 @@ pub fn maybe_run_askpass() -> bool {
                 Path::new(&path),
                 &token,
                 &prompt,
+                super::askpass_channel::asking_ssh_pid(),
                 super::askpass_channel::TIMEOUT,
             )
             .ok()
