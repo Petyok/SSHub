@@ -273,7 +273,6 @@ pub fn prepare_cli_connect_argv(
 pub fn prepare_session_connect_argv(mut argv: Vec<String>, has_stored_secret: bool) -> Vec<String> {
     match argv.first().map(String::as_str) {
         Some("ssh") => {
-            argv.insert(1, "-v".into());
             argv.splice(
                 1..1,
                 [
@@ -282,6 +281,8 @@ pub fn prepare_session_connect_argv(mut argv: Vec<String>, has_stored_secret: bo
                     "-o",
                     "NumberOfPasswordPrompts=3",
                 ]
+                .into_iter()
+                .chain(crate::session::SSH_DEBUG_ARGS)
                 .map(String::from),
             );
             argv

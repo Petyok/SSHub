@@ -123,21 +123,24 @@ fn parse_port(s: &str) -> Option<u16> {
 
 /// Pure. Build an injection-safe ssh argv for an ad-hoc target.
 ///
-/// Shape: `["ssh", "-v", ("-p", "<port>")?, "--", "<user@host>" | "<host>"]`.
+/// Shape: `["ssh", <debug args>, ("-p", "<port>")?, "--", "<user@host>" | "<host>"]`.
 /// The destination is placed AFTER a `--` end-of-options marker so a host that
 /// somehow began with `-` (already rejected by the parser) could never be read
 /// as an ssh option.
 pub fn build_adhoc_argv(t: &AdhocTarget) -> Vec<String> {
     // Same interactive contract as managed hosts: explicit host trust and a
     // bounded number of password prompts, answered through the askpass channel.
-    let mut argv = vec![
-        "ssh".to_string(),
-        "-v".to_string(),
-        "-o".to_string(),
-        "StrictHostKeyChecking=ask".to_string(),
-        "-o".to_string(),
-        "NumberOfPasswordPrompts=3".to_string(),
-    ];
+    let mut argv: Vec<String> = ["ssh"]
+        .into_iter()
+        .chain(crate::session::SSH_DEBUG_ARGS)
+        .chain([
+            "-o",
+            "StrictHostKeyChecking=ask",
+            "-o",
+            "NumberOfPasswordPrompts=3",
+        ])
+        .map(String::from)
+        .collect();
     if let Some(port) = t.port {
         argv.push("-p".to_string());
         argv.push(port.to_string());
@@ -313,7 +316,6 @@ mod tests {
         };
         let argv = build_adhoc_argv(&t);
         assert_eq!(argv[0], "ssh");
-        assert_eq!(argv[1], "-v");
         let dd = argv.iter().position(|a| a == "--").unwrap();
         let dest = argv.iter().position(|a| a == "root@example.com").unwrap();
         assert!(dd < dest, "`--` must precede the destination");
