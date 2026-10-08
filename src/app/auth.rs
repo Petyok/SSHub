@@ -189,6 +189,9 @@ impl App {
             modal.checkbox_focused = !modal.checkbox_focused;
         } else if modal.checkbox_focused && key.code == KeyCode::Char(' ') {
             modal.remember = !modal.remember;
+            // Toggling Remember is complete; return focus to the credential
+            // field so the next typed character is not silently discarded.
+            modal.checkbox_focused = false;
         } else if key.code == KeyCode::Enter {
             let modal = self.auth_modal.take().unwrap();
             let session = &mut self.sessions[modal.session];
@@ -587,8 +590,8 @@ mod tests {
                     .unwrap();
                 app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::empty()))
                     .unwrap();
-                app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty()))
-                    .unwrap();
+                assert!(app.auth_modal.as_ref().unwrap().remember);
+                assert!(!app.auth_modal.as_ref().unwrap().checkbox_focused);
             }
             app.sessions[0].write(b"during-prompt\n").unwrap();
             app.handle_paste("synthetic-secret").unwrap();
@@ -889,9 +892,8 @@ mod tests {
             .unwrap();
         app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::empty()))
             .unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty()))
-            .unwrap();
         assert!(app.auth_modal.as_ref().unwrap().remember);
+        assert!(!app.auth_modal.as_ref().unwrap().checkbox_focused);
         app.handle_paste("synthetic-secret").unwrap();
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()))
             .unwrap();
