@@ -189,6 +189,9 @@ impl App {
             modal.checkbox_focused = !modal.checkbox_focused;
         } else if modal.checkbox_focused && key.code == KeyCode::Char(' ') {
             modal.remember = !modal.remember;
+            // Space confirms the checkbox; return focus to the password field so
+            // the next character is not silently discarded.
+            modal.checkbox_focused = false;
         } else if key.code == KeyCode::Enter {
             let modal = self.auth_modal.take().unwrap();
             let session = &mut self.sessions[modal.session];
