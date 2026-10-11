@@ -1320,6 +1320,7 @@ impl App {
                 SettingToggle::SessionLogging => self.config.session_logging.enabled,
                 SettingToggle::CommandHistory => self.config.command_history.enabled,
                 SettingToggle::Ping => self.config.ping.enabled,
+                SettingToggle::UpdateCheck => self.config.updates.check,
             }),
         }
     }
@@ -1360,6 +1361,7 @@ impl App {
                 self.config.command_history.enabled = !self.config.command_history.enabled;
             }
             SettingToggle::Ping => self.config.ping.enabled = !self.config.ping.enabled,
+            SettingToggle::UpdateCheck => self.config.updates.check = !self.config.updates.check,
         }
         true
     }

@@ -80,13 +80,13 @@ The settings overlay (`Ctrl+H`) — make SSHub's own surfaces or the remote grid
 - **Session logging** — opt-in capture of PTY session output to `~/.local/share/sshub/profiles/<name>/logs/<host-dir>/` (managed hosts use `{name}-{id}`; pure `~/.ssh/config` aliases without a launcher row may share a directory when sanitized names collide). Enable globally in Settings (`Ctrl+H`) or override per host (`inherit` / `on` / `off`). **Logs capture everything echoed to the terminal, including passwords if they appear on screen.**
 - **Session log browser** (`Shift+L`): read those session logs inside the TUI. Pick a host, pick a rotated segment, and view it with terminal escape codes stripped so the transcript reads as plain text. In the viewer, `/` searches (case-insensitive), `n` / `N` step through matches, and `b` bookmarks the current line by name. `m` lists a host's bookmarks to jump straight back to a saved line. Reads are capped so a large transcript is never loaded whole.
 - **Mosh transport** — per-host `Transport` field in the host form (`ssh` or `mosh`). Embedded sessions use `mosh` when selected; tunnels and SFTP stay ssh-only.
-- **Settings overlay** (`Ctrl+H`) — toggle session logging, let your terminal show through SSHub's own surfaces or through the remote grid (two separate switches, both off by default), toggle OS logos, quit confirmation, and the startup animation
+- **Settings overlay** (`Ctrl+H`) — toggle session logging, let your terminal show through SSHub's own surfaces or through the remote grid (two separate switches, both off by default), toggle OS logos, quit confirmation, the startup animation, and the start-up update check
 - **Headless CLI** — the whole inventory without the TUI: hosts, groups, identities, tunnels, one-shot SFTP, the audit log and themes, plus `sshub exec <host> -- <command>` to run a single command on a saved host and get its output and exit code back (with the stored identity, credential and ProxyJump applied). `--format json` on any listing, stable exit codes, completions for bash/zsh/fish — see [Headless CLI](#headless-cli)
 - **Hybrid sources** — hosts from `~/.ssh/config` (read-only) and launcher-managed (full CRUD) merge without duplicates
 - **Import/Export**: import from `~/.ssh/config`, Termius backups, PuTTY (a Windows regedit `.reg` export or a Unix `~/.putty/sessions` directory), or mRemoteNG (`confCons.xml`); export managed hosts back to ssh config format. Only SSH sessions are imported (RDP/VNC/telnet entries are skipped), and encrypted mRemoteNG passwords are not decrypted (imported hosts carry no stored secret)
 - **Hot reload** — edits to `~/.ssh/config` update the host list live via file watcher
 - **Configurable keybindings** — rebind any action via Ctrl+K; stored in `config.toml`
-- **Update notice** (`Shift+U`): on start SSHub asks GitHub for the latest release, and a newer one shows next to the version in the tab bar. `Shift+U` on the hosts tab installs it the way SSHub was installed (`npm install -g sshub-tui@<version>`, `cargo install sshub --version <version>`, or, for a release tarball, an in-place swap of the binary after checking it runs), then asks you to restart. While it installs, quitting always asks first. With no update known, `Shift+U` checks on demand. Needs `curl` (and `tar` for the tarball swap); `[updates] check = false` turns the start-up check off.
+- **Update notice** (`Shift+U`): on start SSHub asks GitHub for the latest release, and a newer one shows next to the version in the tab bar. `Shift+U` on the hosts tab installs it the way SSHub was installed (`npm install -g sshub-tui@<version>`, `cargo install sshub --version <version>`, or, for a release tarball, an in-place swap of the binary after checking it runs), then asks you to restart. While it installs, quitting always asks first. With no update known, `Shift+U` checks on demand. Needs `curl` (and `tar` for the tarball swap); `Check for updates` in Settings (`Ctrl+H`), or `[updates] check = false`, turns the start-up check off.
 - **Mouse support** — click tabs, select rows, scroll panels, double-click to connect
 
 ## Install
@@ -474,7 +474,7 @@ relay_from_pty = true       # let apps inside a session copy to your clipboard
 enabled = true              # ICMP status probes (Ctrl+H); hosts override it in their form
 
 [updates]
-check = true                # ask GitHub for the latest release on start (Shift+U checks on demand)
+check = true                # ask GitHub for the latest release on start (Ctrl+H; Shift+U checks on demand)
 ```
 
 ## Development

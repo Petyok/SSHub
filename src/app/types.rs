@@ -287,6 +287,7 @@ pub enum SettingToggle {
     SessionLogging,
     CommandHistory,
     Ping,
+    UpdateCheck,
 }
 
 /// What a Settings row *is*: an action that opens something, or a boolean.
@@ -324,7 +325,7 @@ pub struct SettingDescriptor {
 /// by a test in `tui::screens::settings`) and avoid ambiguous-width chars like
 /// the em dash or `…` — some terminals draw those 2 cells wide, pushing the
 /// tail of the line onto the popup border.
-pub const SETTINGS_ITEMS: [SettingDescriptor; 14] = [
+pub const SETTINGS_ITEMS: [SettingDescriptor; 15] = [
     SettingDescriptor {
         item: SettingItem::Theme,
         label: "Theme...",
@@ -364,6 +365,11 @@ pub const SETTINGS_ITEMS: [SettingDescriptor; 14] = [
         item: SettingItem::Toggle(SettingToggle::Ping),
         label: "Ping hosts",
         hint: "ICMP status probes; off leaves hosts unknown",
+    },
+    SettingDescriptor {
+        item: SettingItem::Toggle(SettingToggle::UpdateCheck),
+        label: "Check for updates",
+        hint: "ask GitHub for a newer release on start",
     },
     SettingDescriptor {
         item: SettingItem::Profiles,

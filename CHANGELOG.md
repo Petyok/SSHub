@@ -15,8 +15,9 @@ All notable changes to SSHub are documented in this file.
   replaces the binary in place. Source builds and `npx` runs get a hint
   instead, and a failed install shows the command and its error. With no
   update known, `Shift+U` checks on demand. While an update installs, quitting
-  asks first even with quit confirmation off. The check needs `curl`;
-  `[updates] check = false` in `config.toml` turns it off.
+  asks first even with quit confirmation off. The check needs `curl`; `Check
+  for updates` in Settings (`Ctrl+H`), or `[updates] check = false` in
+  `config.toml`, turns it off.
 
 ### Fixed
 
