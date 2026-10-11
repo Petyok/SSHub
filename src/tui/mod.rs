@@ -967,7 +967,9 @@ fn render_notice_popup(frame: &mut Frame, app: &App) {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(Span::styled(" Connection failed ", error))
+                    // Each message opens with its own headline (connect,
+                    // SFTP, snippet, update), so the title stays generic.
+                    .title(Span::styled(" Error ", error))
                     .border_style(error),
             ),
         popup_area,

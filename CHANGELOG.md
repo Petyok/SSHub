@@ -4,6 +4,12 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Error popup title** - the popup for a failed snippet command or update
+  said "Connection failed"; it now says "Error" and lets the message name what
+  failed.
+
 ## [0.17.6] - 2026-10-11
 
 ### Fixed
