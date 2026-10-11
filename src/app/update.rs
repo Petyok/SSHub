@@ -58,6 +58,11 @@ impl App {
         self.host_notice = Some(notice);
     }
 
+    /// Whether an install is running: quitting now would abandon it.
+    pub(crate) fn update_installing(&self) -> bool {
+        matches!(self.update.status, UpdateStatus::Installing(_))
+    }
+
     /// Apply the worker's answer, if it has one. Called every tick.
     pub fn poll_update(&mut self) {
         let Some(event) = self.update.rx.as_ref().and_then(|rx| rx.try_recv().ok()) else {

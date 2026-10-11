@@ -14,7 +14,8 @@ All notable changes to SSHub are documented in this file.
   release tarball a download that is run once with `--version` before it
   replaces the binary in place. Source builds and `npx` runs get a hint
   instead, and a failed install shows the command and its error. With no
-  update known, `Shift+U` checks on demand. The check needs `curl`;
+  update known, `Shift+U` checks on demand. While an update installs, quitting
+  asks first even with quit confirmation off. The check needs `curl`;
   `[updates] check = false` in `config.toml` turns it off.
 
 ### Fixed

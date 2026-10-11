@@ -173,11 +173,12 @@ fn replace_binary(tag: &str) -> Result<String> {
     let dir = exe
         .parent()
         .context("the running binary has no directory")?;
+    sweep_stale_update_dirs(dir);
     // Next to the binary, so the final rename stays on one filesystem and the
-    // swap is atomic. Removed on every return from here (not when sshub quits
-    // mid-download).
+    // swap is atomic. Removed on every return from here; a quit or a kill
+    // mid-download leaves it for the sweep above on the next update.
     let tmp = tempfile::Builder::new()
-        .prefix(".sshub-update-")
+        .prefix(UPDATE_DIR_PREFIX)
         .tempdir_in(dir)
         .with_context(|| format!("cannot write to {}", dir.display()))?;
     let archive = tmp.path().join("sshub.tar.gz");
@@ -215,6 +216,32 @@ fn replace_binary(tag: &str) -> Result<String> {
     std::fs::set_permissions(&new, std::fs::metadata(&exe)?.permissions())?;
     std::fs::rename(&new, &exe).with_context(|| format!("cannot replace {}", exe.display()))?;
     Ok(reported)
+}
+
+const UPDATE_DIR_PREFIX: &str = ".sshub-update-";
+
+/// Remove update directories an earlier run left in `dir`. A live one is never
+/// older than the 300 s download limit (its mtime moves when the first byte of
+/// the archive arrives and again when it is unpacked), so ten minutes means dead.
+fn sweep_stale_update_dirs(dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let stale = entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(UPDATE_DIR_PREFIX)
+            // Not followed: a symlink by that name is not ours to empty.
+            && entry.metadata().is_ok_and(|m| {
+                m.is_dir()
+                    && m.modified()
+                        .is_ok_and(|t| t.elapsed().is_ok_and(|age| age.as_secs() > 600))
+            });
+        if stale {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
 }
 
 /// Run `cmd` without a terminal and return its stdout. A failure names the
@@ -323,6 +350,41 @@ mod tests {
             "curl: (6) Could not resolve host: api.github.com"
         );
         assert_eq!(failure_line(""), "no output");
+    }
+
+    #[test]
+    fn sweep_removes_only_dead_update_dirs() {
+        // The sweep deletes inside the user's bin directory: anything but an
+        // old update directory of ours must survive it.
+        let bin = tempfile::tempdir().unwrap();
+        let age = |path: &Path| {
+            let hour_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+            std::fs::File::open(path)
+                .unwrap()
+                .set_modified(hour_ago)
+                .unwrap();
+        };
+        let dead = bin.path().join(".sshub-update-dead");
+        std::fs::create_dir(&dead).unwrap();
+        std::fs::write(dead.join("sshub.tar.gz"), "x").unwrap();
+        age(&dead);
+        let live = bin.path().join(".sshub-update-live");
+        std::fs::create_dir(&live).unwrap();
+        let other = bin.path().join("tools");
+        std::fs::create_dir(&other).unwrap();
+        age(&other);
+        let file = bin.path().join(".sshub-update-note");
+        std::fs::write(&file, "x").unwrap();
+        age(&file);
+        let link = bin.path().join(".sshub-update-link");
+        std::os::unix::fs::symlink(&other, &link).unwrap();
+
+        sweep_stale_update_dirs(bin.path());
+
+        assert!(!dead.exists(), "an hour-old update dir is dead");
+        assert!(live.exists(), "a fresh one may be another sshub's download");
+        assert!(other.exists() && file.exists());
+        assert!(link.symlink_metadata().is_ok(), "a symlink is not followed");
     }
 
     #[test]

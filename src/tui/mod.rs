@@ -1978,16 +1978,18 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
 
 fn render_confirm_quit_popup(frame: &mut Frame, app: &App) {
     let active = app.tunnel_manager.active_count();
-    let message = if active > 0 {
-        format!("Quit sshub?\n{active} active tunnel(s) will be closed.")
-    } else {
-        "Quit sshub?".to_string()
-    };
+    let mut message = "Quit sshub?".to_string();
+    if active > 0 {
+        message.push_str(&format!("\n{active} active tunnel(s) will be closed."));
+    }
+    if app.update_installing() {
+        message.push_str("\nAn update is still installing;\nquitting now may leave it broken.");
+    }
     let hint = "y: quit \u{2502} n: stay \u{2502} Esc: cancel";
 
     let area = frame.area();
     let popup_width = 44u16.min(area.width);
-    let popup_height = if active > 0 { 6u16 } else { 5u16 }.min(area.height);
+    let popup_height = (message.lines().count() as u16 + 4).min(area.height);
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);

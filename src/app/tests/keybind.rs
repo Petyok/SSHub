@@ -235,6 +235,24 @@ pub(crate) fn quit_confirmation_can_be_disabled() {
 }
 
 #[test]
+pub(crate) fn quit_asks_while_an_update_installs() {
+    // Even with confirmation off: quitting abandons the install.
+    let mut app = test_app(vec![("web", host("web"))]);
+    app.config.appearance.confirm_quit = false;
+    app.update.status = crate::app::UpdateStatus::Installing("v9.9.9".into());
+    let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+    for first in [key_char('q'), ctrl_c] {
+        app.handle_key(first).unwrap();
+        assert_eq!(app.mode, AppMode::ConfirmQuit);
+        assert!(!app.should_quit);
+        app.handle_key(key_char('n')).unwrap();
+    }
+    app.handle_key(key_char('q')).unwrap();
+    app.handle_key(key_char('y')).unwrap();
+    assert!(app.should_quit);
+}
+
+#[test]
 pub(crate) fn rebinding_add_host_action_takes_effect() {
     let mut app = test_app(vec![("web", host("web"))]);
     // Default: 'a' opens the new-host form.
