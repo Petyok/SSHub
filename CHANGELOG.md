@@ -4,6 +4,17 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Line drawing in embedded sessions** (issue #147, reported by
+  [@Frysuni](https://github.com/Frysuni)) - ncurses apps such as nvtop draw
+  boxes and graph borders by switching to the DEC Special Graphics character
+  set and printing letters (`ESC ( 0`, then `lqqk`). The embedded terminal
+  ignored the switch, so borders showed up as rows of `q`, `x`, `l` and `k`.
+  It now follows the switch, both `ESC ( 0` / `ESC ( B` and SO/SI with the
+  set in G1, draws the set as its Unicode glyphs (`┌─┐│`), and keeps it
+  across cursor save and restore.
+
 ## [0.17.5] - 2026-10-07
 
 ### Added

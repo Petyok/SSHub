@@ -4,8 +4,9 @@
 //! they send — `vt100` implements none of the latter, and an application that
 //! asks and hears nothing back blocks until its own timeout. In front of the
 //! parser, [`XtermCompat`] translates the few xterm sequences stock `vt100`
-//! drops into ones it does understand, and tracks synchronized output (DEC
-//! mode 2026) so the pane can show the last complete frame mid-repaint.
+//! drops into ones it does understand, draws DEC Special Graphics (line
+//! drawing) as the Unicode glyphs, and tracks synchronized output (DEC mode
+//! 2026) so the pane can show the last complete frame mid-repaint.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -47,9 +48,12 @@ enum Scan {
     Esc,
     /// Inside `ESC [`, held until the final byte.
     Csi,
-    /// Passed through until a final byte in `lo..=0x7e`: an `ESC (`-style
+    /// Passed through until a final byte in `lo..=0x7e`: an `ESC #`-style
     /// sequence (`0x30`), or a CSI past [`CSI_HOLD_MAX`] (`0x40`).
     Pass(u8),
+    /// `ESC (` or `ESC )`, designating G0 or G1 by its final byte; `plain`
+    /// until another intermediate makes it a set we don't model.
+    Scs { slot: usize, plain: bool },
     /// OSC payload, ended by BEL or `ESC`.
     Osc,
     /// DCS parameters, up to the final byte that starts the payload.
@@ -65,8 +69,9 @@ enum Scan {
 /// everything with HVP (`CSI r;c f`); vt100 ignored it, so each frame landed
 /// where the previous one stopped. Diagnosed in PR #139.
 ///
-/// Only CSI sequences are touched, and only when held whole: a sequence split
-/// across PTY reads is kept back and finished on the next read. Bytes inside
+/// Only CSI sequences and, while DEC Special Graphics is in use, printed
+/// ASCII are touched; a CSI sequence only when held whole: one split across
+/// PTY reads is kept back and finished on the next read. Bytes inside
 /// OSC/DCS/APC strings are never rewritten; when one ends at a bare `ESC`, a
 /// CAN goes first so vt100 leaves the string at the same point vte does.
 #[derive(Default)]
@@ -87,6 +92,9 @@ struct XtermCompat {
     open_frame: Option<usize>,
     /// Points in the current batch's output where `ParserState` must act.
     marks: Vec<(usize, Mark)>,
+    /// Character sets in use, and the copy DECSC saved for DECRC.
+    charsets: Charsets,
+    saved: Charsets,
 }
 
 /// Something `ParserState` must do at a point in the translated stream.
@@ -97,6 +105,42 @@ enum Mark {
     Frame,
     /// DECRQM for mode 2026, with whether the mode was set at that point.
     ModeQuery(bool),
+}
+
+/// G0 and G1 as `ESC (` and `ESC )` designated them, and which one SO/SI put
+/// in use. Only DEC Special Graphics (`0`) is modelled, every other set
+/// counts as ASCII. vt100 ignores all of it, so ncurses boxes (`ESC ( 0`,
+/// then `lqqk`) printed as letters. Issue #147.
+#[derive(Default, Clone, Copy)]
+struct Charsets {
+    /// G0 and G1 hold DEC Special Graphics.
+    graphics: [bool; 2],
+    /// SO shifted G1 in; SI shifts G0 back.
+    shifted: bool,
+}
+
+/// What DEC Special Graphics draws for `0x5f..=0x7e`: the glyphs of vte's
+/// own charset map (blank, diamond, control pictures, box drawing).
+const DEC_GRAPHICS: [char; 32] = [
+    ' ', '◆', '▒', '␉', '␌', '␍', '␊', '°', '±', '␤', '␋', '┘', '┐', '┌', '└', '┼', '⎺', '⎻', '─',
+    '⎼', '⎽', '├', '┤', '┴', '┬', '│', '≤', '≥', 'π', '≠', '£', '·',
+];
+
+impl Charsets {
+    /// SO and SI switch sets; any other byte leaves them.
+    fn shift(&mut self, b: u8) {
+        match b {
+            0x0e => self.shifted = true,
+            0x0f => self.shifted = false,
+            _ => {}
+        }
+    }
+
+    /// The glyph printing `b` draws, or `None` if it draws itself.
+    fn glyph(self, b: u8) -> Option<char> {
+        let graphics = self.graphics[usize::from(self.shifted)];
+        (graphics && (0x5f..=0x7e).contains(&b)).then(|| DEC_GRAPHICS[usize::from(b - 0x5f)])
+    }
 }
 
 impl XtermCompat {
@@ -118,8 +162,29 @@ impl XtermCompat {
                         }
                         self.hold_esc();
                     }
-                    (Scan::Ground, _) => self.track(b),
+                    (Scan::Ground, _) => match self.charsets.glyph(b) {
+                        // vt100 knows no charsets: it gets the glyph itself.
+                        Some(c) => {
+                            out.extend_from_slice(&bytes[span..i]);
+                            span = i + 1;
+                            out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
+                            self.last = Some(c);
+                            self.utf8_len = 0;
+                        }
+                        None => {
+                            self.charsets.shift(b);
+                            self.track(b);
+                        }
+                    },
                     (_, 0x18 | 0x1a) | (Scan::Osc, 0x07) | (Scan::Dcs, 0x9c) => {
+                        self.scan = Scan::Ground;
+                    }
+                    (Scan::Pass(_) | Scan::Scs { .. }, 0x0e | 0x0f) => self.charsets.shift(b),
+                    (Scan::Scs { slot, .. }, 0x20..=0x2f) => {
+                        self.scan = Scan::Scs { slot, plain: false };
+                    }
+                    (Scan::Scs { slot, plain }, 0x30..=0x7e) => {
+                        self.charsets.graphics[slot] = plain && b == b'0';
                         self.scan = Scan::Ground;
                     }
                     (Scan::DcsHead, 0x40..=0x7e) => self.scan = Scan::Dcs,
@@ -149,7 +214,10 @@ impl XtermCompat {
                 }
                 // Other C0 controls run mid-sequence without ending it, so
                 // running them before the held bytes changes nothing.
-                0x00..=0x1f => out.push(b),
+                0x00..=0x1f => {
+                    self.charsets.shift(b);
+                    out.push(b);
+                }
                 // vte ignores DEL and high bytes mid-sequence.
                 0x7f..=0xff => {}
                 b'[' if self.scan == Scan::Esc => {
@@ -159,15 +227,31 @@ impl XtermCompat {
                 _ if self.scan == Scan::Esc => {
                     self.seq.push(b);
                     out.extend_from_slice(&self.seq);
-                    // RIS resets every mode, synchronized output included.
-                    if b == b'c' {
-                        self.sync = false;
-                        self.open_frame = None;
+                    match b {
+                        // RIS resets every mode: synchronized output, charsets.
+                        b'c' => {
+                            self.sync = false;
+                            self.open_frame = None;
+                            self.charsets = Charsets::default();
+                            self.saved = Charsets::default();
+                        }
+                        // DECSC and DECRC carry the charsets with the cursor.
+                        b'7' => self.saved = self.charsets,
+                        b'8' => self.charsets = self.saved,
+                        _ => {}
                     }
                     self.scan = match b {
                         b']' => Scan::Osc,
                         b'P' => Scan::DcsHead,
                         b'X' | b'^' | b'_' => Scan::Str,
+                        b'(' => Scan::Scs {
+                            slot: 0,
+                            plain: true,
+                        },
+                        b')' => Scan::Scs {
+                            slot: 1,
+                            plain: true,
+                        },
                         0x20..=0x2f => Scan::Pass(0x30),
                         _ => Scan::Ground,
                     };
@@ -265,8 +349,14 @@ impl XtermCompat {
                 self.marks.push((out.len(), Mark::ModeQuery(self.sync)));
                 out.extend_from_slice(&self.seq);
             }
-            b's' if bare => out.extend_from_slice(b"\x1b7"),
-            b'u' if bare => out.extend_from_slice(b"\x1b8"),
+            b's' if bare => {
+                self.saved = self.charsets;
+                out.extend_from_slice(b"\x1b7");
+            }
+            b'u' if bare => {
+                self.charsets = self.saved;
+                out.extend_from_slice(b"\x1b8");
+            }
             // HVP, HPA, HPR, VPR: same parameters as CUP, CHA, CUF, CUD.
             b'f' | b'`' | b'a' | b'e' if plain => {
                 self.seq[end] = match fin {
@@ -1106,6 +1196,69 @@ mod tests {
         );
     }
 
+    // ncurses draws boxes by designating DEC Special Graphics (`ESC ( 0`) and
+    // printing ASCII letters; vt100 ignores the designation, so nvtop's graph
+    // borders came out as `lqqk` (#147).
+
+    #[test]
+    fn line_drawing_draws_boxes_until_ascii_comes_back() {
+        // smacs and rmacs as TERM=xterm-256color has them.
+        let p = parser_with(5, 20, b"\x1b(0lqqk\r\nx\x1b(B hi \x1b(0x\r\nmqqj\x1b(B lqk");
+        assert_eq!(row(&p, 0), "┌──┐");
+        assert_eq!(row(&p, 1), "│ hi │");
+        assert_eq!(row(&p, 2), "└──┘ lqk");
+        // Only `_` through `~` are remapped.
+        assert_eq!(row(&parser_with(5, 20, b"\x1b(0AZ09^_`a~"), 0), "AZ09^ ◆▒·");
+    }
+
+    #[test]
+    fn so_and_si_switch_between_g0_and_g1() {
+        assert_eq!(row(&parser_with(5, 20, b"\x1b)0q\x0eq\x0fq"), 0), "q─q");
+        // With ASCII in G1, SO hides line drawing designated into G0.
+        assert_eq!(row(&parser_with(5, 20, b"\x1b(0\x0eq\x0fq"), 0), "q─");
+    }
+
+    #[test]
+    fn only_esc_paren_0_designates_line_drawing() {
+        // `ESC ( A` and `ESC ( % 5` name sets we draw as ASCII; an aborted
+        // `ESC (` changes nothing, so its `0` prints.
+        let p = parser_with(5, 20, b"\x1b(0q\x1b(Aq\x1b(0\x1b(%5q\x1b(0\x1b(\x180q");
+        assert_eq!(row(&p, 0), "─qq0─");
+    }
+
+    #[test]
+    fn rep_repeats_the_line_glyph() {
+        assert_eq!(
+            row(&parser_with(5, 20, b"\x1b(0q\x1b[3b\x1b(Bq"), 0),
+            "────q"
+        );
+    }
+
+    #[test]
+    fn cursor_save_and_restore_carry_the_charsets() {
+        let p = parser_with(5, 20, b"\x1b7\x1b(0q\x1b8\x1b[Bq");
+        assert_eq!((row(&p, 0), row(&p, 1)), ("─".into(), "q".into()));
+        let p = parser_with(5, 20, b"\x1b(0\x1b[s\x1b(Bq\x1b[u\x1b[Bq");
+        assert_eq!((row(&p, 0), row(&p, 1)), ("q".into(), "─".into()));
+        // RIS resets the charsets in use and the saved copy.
+        assert_eq!(row(&parser_with(5, 20, b"\x1b)0\x0e\x1bcq"), 0), "q");
+        assert_eq!(row(&parser_with(5, 20, b"\x1b(0\x1b7\x1bc\x1b8q"), 0), "q");
+    }
+
+    #[test]
+    fn line_drawing_survives_every_split_between_reads() {
+        let stream: &[u8] = b"\x1b(0lq\x1b[2bk\x1b(Bq\x1b)0\x0ex\x0fx\x1b7\x1b(0\x1b8q";
+        let p = parser_with(5, 20, stream);
+        assert_eq!(row(&p, 0), "┌───┐q│xq");
+        let whole = p.screen().contents_formatted();
+        for k in 0..=stream.len() {
+            let mut p = ParserState::new(5, 20);
+            p.process(&stream[..k]);
+            p.process(&stream[k..]);
+            assert_eq!(p.screen().contents_formatted(), whole, "split at {k}");
+        }
+    }
+
     /// Streams made only of sequences the translator must leave alone render
     /// exactly as on stock vt100: same screen, cursor and replies, also when
     /// split at any offset. Fixed seed, so a failure reproduces.
@@ -1152,6 +1305,8 @@ mod tests {
             b"\x1b(B",
             b"\x1b7",
             b"\x1b8",
+            b"\x0e",
+            b"\x0f",
             b"\x1b",
         ];
         let mut seed = 0x9e37_79b9_7f4a_7c15u64;
