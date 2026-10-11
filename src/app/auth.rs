@@ -127,7 +127,7 @@ impl App {
         let Some(modal) = self.auth_modal.as_mut() else {
             return;
         };
-        if modal.class == PromptClass::HostKey || modal.checkbox_focused {
+        if modal.class == PromptClass::HostKey {
             return;
         }
         // Reject a multiline paste rather than silently changing a credential.
@@ -137,6 +137,7 @@ impl App {
         {
             return;
         }
+        modal.checkbox_focused = false;
         let byte = text_input::byte_index(&modal.value, modal.cursor);
         modal.value.insert_str(byte, text);
         modal.cursor += text_input::char_len(text);
@@ -189,9 +190,6 @@ impl App {
             modal.checkbox_focused = !modal.checkbox_focused;
         } else if modal.checkbox_focused && key.code == KeyCode::Char(' ') {
             modal.remember = !modal.remember;
-            // Toggling Remember is complete; return focus to the credential
-            // field so the next typed character is not silently discarded.
-            modal.checkbox_focused = false;
         } else if key.code == KeyCode::Enter {
             let modal = self.auth_modal.take().unwrap();
             let session = &mut self.sessions[modal.session];
@@ -211,7 +209,10 @@ impl App {
             } else {
                 AppMode::Session
             };
-        } else if !modal.checkbox_focused {
+        } else {
+            // Anything else edits the credential: leave the Remember box first
+            // so a key typed while it has focus is never dropped.
+            modal.checkbox_focused = false;
             if key.modifiers.contains(KeyModifiers::CONTROL) {
                 match key.code {
                     KeyCode::Char('u') => {
@@ -591,7 +592,6 @@ mod tests {
                 app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::empty()))
                     .unwrap();
                 assert!(app.auth_modal.as_ref().unwrap().remember);
-                assert!(!app.auth_modal.as_ref().unwrap().checkbox_focused);
             }
             app.sessions[0].write(b"during-prompt\n").unwrap();
             app.handle_paste("synthetic-secret").unwrap();
@@ -893,7 +893,6 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::empty()))
             .unwrap();
         assert!(app.auth_modal.as_ref().unwrap().remember);
-        assert!(!app.auth_modal.as_ref().unwrap().checkbox_focused);
         app.handle_paste("synthetic-secret").unwrap();
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()))
             .unwrap();
@@ -1071,5 +1070,43 @@ mod tests {
                 .contains("reconnected")
         });
         assert_eq!(app.sessions[0].host_name, "original-adhoc-target");
+    }
+
+    /// Remember is ticked with Tab then Space, but a key typed or pasted
+    /// while the box has focus belongs to the credential. Dropping it sent a
+    /// password short by those characters, with nothing on screen to show it.
+    #[test]
+    fn keys_on_the_remember_box_reach_the_credential() {
+        let run = |keys: &[KeyCode], paste: &str| {
+            let mut app = crate::app::tests::test_app(vec![]);
+            app.auth_modal = Some(AuthModal {
+                session: 0,
+                prompt: "Password:".into(),
+                class: PromptClass::classify("Password:"),
+                attempt: 0,
+                can_remember: true,
+                remember: false,
+                value: String::new(),
+                cursor: 0,
+                checkbox_focused: false,
+                changed_key: false,
+                scroll: 0,
+            });
+            app.mode = AppMode::AuthPrompt;
+            for &code in keys {
+                app.handle_key(KeyEvent::new(code, KeyModifiers::empty()))
+                    .unwrap();
+            }
+            app.handle_paste(paste).unwrap();
+            let modal = app.auth_modal.take().unwrap();
+            (modal.value, modal.remember)
+        };
+        let (tab, space, x) = (KeyCode::Tab, KeyCode::Char(' '), KeyCode::Char('x'));
+        assert_eq!(run(&[tab, x], "pw"), ("xpw".into(), false));
+        assert_eq!(run(&[tab, space, x], "pw"), ("xpw".into(), true));
+        assert_eq!(run(&[tab, space, tab, x], "pw"), ("xpw".into(), true));
+        assert_eq!(run(&[tab, space], "pw"), ("pw".into(), true));
+        // Space on the box only toggles: a second one unticks and types nothing.
+        assert_eq!(run(&[tab, space, space], ""), ("".into(), false));
     }
 }
