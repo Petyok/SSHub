@@ -13,14 +13,18 @@ use crate::theme::model::ResolvedTheme;
 /// The version string shown at the far right, resolved once at runtime.
 ///
 /// * `SSHUB_VERSION_LABEL` **unset** → `v{CARGO_PKG_VERSION}`, plus an
-///   install-channel suffix when one is detected (see [`install_channel`]).
+///   install-channel suffix when one is detected (see
+///   [`crate::update::install_channel`]).
 /// * set but **empty** → `None`, the version is hidden entirely (used by the
 ///   demo recordings so their GIFs never advertise a stale version).
 /// * set and **non-empty** → that exact string, verbatim (custom label wins
 ///   over the channel suffix so recordings stay byte-exact).
 fn version_label() -> Option<&'static str> {
     static LABEL: LazyLock<Option<String>> = LazyLock::new(|| {
-        compose_version_label(std::env::var("SSHUB_VERSION_LABEL").ok(), install_channel())
+        compose_version_label(
+            std::env::var("SSHUB_VERSION_LABEL").ok(),
+            crate::update::install_channel(),
+        )
     });
     LABEL.as_deref()
 }
@@ -51,65 +55,6 @@ fn resolve_version_label(var: Option<String>) -> Option<String> {
     }
 }
 
-/// How the running binary was installed, shown next to the version so a
-/// support conversation can tell how the binary got onto the machine.
-///
-/// Detection, most specific first:
-///
-/// * `SSHUB_INSTALL_CHANNEL` set → that value (the npm shim sets `npm`; the
-///   prebuilt npm binary is byte-identical to the release tarball one, so no
-///   path heuristic can tell them apart).
-/// * the binary lives in cargo's install bin dir (`$CARGO_HOME/bin`) → `cargo`.
-/// * the binary sits inside a build-target dir (`target/`, `…-target/`) →
-///   `source` — a `cargo run`/`cargo build` straight out of the checkout.
-/// * the binary lives in `~/.local/bin` → `source` (`just install`).
-/// * otherwise → `None`: a distro package or a manual copy shows no suffix.
-fn install_channel() -> Option<String> {
-    static CHANNEL: LazyLock<Option<String>> = LazyLock::new(|| {
-        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-        let cargo_bin = match std::env::var_os("CARGO_HOME") {
-            Some(dir) => Some(std::path::PathBuf::from(dir).join("bin")),
-            None => home.as_ref().map(|h| h.join(".cargo").join("bin")),
-        };
-        let local_bin = home.as_ref().map(|h| h.join(".local").join("bin"));
-        resolve_install_channel(
-            std::env::var("SSHUB_INSTALL_CHANNEL").ok(),
-            std::env::current_exe().ok().as_deref(),
-            cargo_bin.as_deref(),
-            local_bin.as_deref(),
-        )
-    });
-    CHANNEL.clone()
-}
-
-/// Pure resolution of the install channel from its inputs (extracted so it can
-/// be unit tested without touching process-global env or the exe location).
-fn resolve_install_channel(
-    env_val: Option<String>,
-    exe: Option<&std::path::Path>,
-    cargo_bin: Option<&std::path::Path>,
-    local_bin: Option<&std::path::Path>,
-) -> Option<String> {
-    if let Some(channel) = env_val.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        return Some(channel.to_string());
-    }
-    let exe = exe?;
-    if cargo_bin.is_some_and(|dir| exe.starts_with(dir)) {
-        return Some("cargo".into());
-    }
-    // A build-target dir (`target/`, or a custom `…-target/` via CARGO_TARGET_DIR).
-    if exe.components().any(|c| {
-        let name = c.as_os_str();
-        name == "target" || name.to_string_lossy().ends_with("-target")
-    }) {
-        return Some("source".into());
-    }
-    if local_bin.is_some_and(|dir| exe.starts_with(dir)) {
-        return Some("source".into());
-    }
-    None
-}
-
 /// Tab definitions: (number label, display name).
 const TABS: [(&str, &str); 5] = [
     ("1", "hosts"),
@@ -123,17 +68,29 @@ const TABS: [(&str, &str); 5] = [
 ///
 /// * `active_tab` — 1-based index (1 = hosts, 2 = tunnels, …)
 /// * `scope_path` — shown at far right, e.g. `"~/.config/sshub"`
+/// * `update` — release-check state appended to the version, e.g. `↑ v0.18.0`
 pub fn render_tab_bar(
     frame: &mut Frame,
     area: Rect,
     active_tab: usize,
     scope_path: &str,
     profile_name: Option<&str>,
+    update: Option<&str>,
     theme: &ResolvedTheme,
 ) {
     if area.height == 0 || area.width == 0 {
         return;
     }
+    // A pending update rides on the version label, in the warning colour.
+    let version: Option<std::borrow::Cow<str>> = version_label().map(|v| match update {
+        Some(badge) => format!("{v}  {badge}").into(),
+        None => v.into(),
+    });
+    let version_style = Style::default().fg(theme.color(if update.is_some() {
+        ColorRole::StatusWarning
+    } else {
+        ColorRole::StatusSuccess
+    }));
 
     let buf = frame.buffer_mut();
     let y = area.y;
@@ -192,15 +149,19 @@ pub fn render_tab_bar(
         const PREFIX: &str = "profile: ";
         if available > PREFIX.len() {
             let name_width = Span::raw(name).width();
-            let version = version_label();
+            let version = version.as_deref();
             let scope_len = 7 + Span::raw(scope_path).width();
             let version_width = version.map(|label| Span::raw(label).width()).unwrap_or(0);
-            let badges_width = scope_len
-                + if version.is_some() {
-                    2 + version_width
-                } else {
-                    0
-                };
+            let version_part = version.map_or(0, |_| 2 + version_width);
+            // An update badge outranks the scope path, which never changes:
+            // when both do not fit, the scope goes rather than everything.
+            let show_scope =
+                update.is_none() || PREFIX.len() + 8 + 2 + scope_len + version_part <= available;
+            let badges_width = if show_scope {
+                scope_len + version_part
+            } else {
+                version_width
+            };
             let reserve_badges = PREFIX.len() + 8 + 2 + badges_width <= available;
             let name_budget =
                 available - PREFIX.len() - if reserve_badges { badges_width + 2 } else { 0 };
@@ -233,20 +194,16 @@ pub fn render_tab_bar(
             if reserve_badges {
                 let scope_right = if let Some(version) = version {
                     let version_x = right - version_width as u16;
-                    buf.set_stringn(
-                        version_x,
-                        y,
-                        version,
-                        version_width,
-                        Style::default().fg(theme.color(ColorRole::StatusSuccess)),
-                    );
+                    buf.set_stringn(version_x, y, version, version_width, version_style);
                     version_x - 2
                 } else {
                     right
                 };
-                let scope_x = scope_right - scope_len as u16;
-                buf.set_string(scope_x, y, "scope: ", dim);
-                buf.set_stringn(scope_x + 7, y, scope_path, scope_len - 7, profile_style);
+                if show_scope {
+                    let scope_x = scope_right - scope_len as u16;
+                    buf.set_string(scope_x, y, "scope: ", dim);
+                    buf.set_stringn(scope_x + 7, y, scope_path, scope_len - 7, profile_style);
+                }
             }
         }
         return;
@@ -267,15 +224,14 @@ pub fn render_tab_bar(
         }
     };
 
-    match version_label() {
+    match version.as_deref() {
         Some(version) => {
             // Columns, not bytes: the channel suffix's " · " separator is one
             // column but two UTF-8 bytes.
             let ver_len = version.chars().count() as u16;
             if area.width > ver_len + 2 {
                 let ver_x = area.x + area.width - ver_len - 1;
-                let ok = Style::default().fg(theme.color(ColorRole::StatusSuccess));
-                buf.set_string(ver_x, y, version, ok);
+                buf.set_string(ver_x, y, version, version_style);
                 // Two-space gap between the scope path and the version.
                 draw_scope(buf, ver_x.saturating_sub(2));
             }
@@ -286,82 +242,7 @@ pub fn render_tab_bar(
 
 #[cfg(test)]
 mod tests {
-    use super::{compose_version_label, resolve_install_channel, resolve_version_label};
-    use std::path::Path;
-
-    #[test]
-    fn install_channel_resolution() {
-        let ch = |env_val: Option<&str>,
-                  exe: Option<&Path>,
-                  cargo_bin: Option<&Path>,
-                  local_bin: Option<&Path>| {
-            resolve_install_channel(env_val.map(str::to_string), exe, cargo_bin, local_bin)
-        };
-
-        // The env var wins outright — the npm shim sets it because the prebuilt
-        // npm binary is byte-identical to the release-tarball one.
-        assert_eq!(ch(Some("npm"), None, None, None).as_deref(), Some("npm"));
-        // A blank env value falls through to the path heuristics.
-        assert_eq!(
-            ch(Some("   "), Some(Path::new("/usr/bin/sshub")), None, None),
-            None
-        );
-
-        // cargo install → $CARGO_HOME/bin (or the default ~/.cargo/bin).
-        assert_eq!(
-            ch(
-                None,
-                Some(Path::new("/home/u/.cargo/bin/sshub")),
-                Some(Path::new("/home/u/.cargo/bin")),
-                None
-            )
-            .as_deref(),
-            Some("cargo")
-        );
-
-        // A dev run straight out of a build dir — plain `target/` and a custom
-        // `…-target/` (CARGO_TARGET_DIR) both count.
-        assert_eq!(
-            ch(
-                None,
-                Some(Path::new("/repo/target/release/sshub")),
-                None,
-                None
-            )
-            .as_deref(),
-            Some("source")
-        );
-        assert_eq!(
-            ch(
-                None,
-                Some(Path::new("/repo/.cargo-target/debug/sshub")),
-                None,
-                None
-            )
-            .as_deref(),
-            Some("source")
-        );
-
-        // `just install` destination.
-        assert_eq!(
-            ch(
-                None,
-                Some(Path::new("/home/u/.local/bin/sshub")),
-                None,
-                Some(Path::new("/home/u/.local/bin"))
-            )
-            .as_deref(),
-            Some("source")
-        );
-
-        // A distro package or manual copy — no channel, no suffix.
-        assert_eq!(
-            ch(None, Some(Path::new("/usr/bin/sshub")), None, None),
-            None
-        );
-        // No exe path resolvable at all.
-        assert_eq!(ch(None, None, None, None), None);
-    }
+    use super::{compose_version_label, resolve_version_label};
 
     #[test]
     fn version_label_gains_channel_suffix() {

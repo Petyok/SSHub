@@ -34,6 +34,7 @@ pub mod text_input;
 pub mod theme;
 pub mod tui;
 pub mod tunnel;
+pub mod update;
 pub mod watcher;
 
 pub use app::{
@@ -161,6 +162,10 @@ pub fn run_app_with(opts: profile::StartupOptions) -> Result<()> {
     if !stdout().is_terminal() {
         return run_headless_loop(&mut app, auto_quit.as_deref());
     }
+    // Interactive runs only: smoke tests and CI never reach the network.
+    if auto_quit.is_none() && app.config.updates.check {
+        app.start_update_check(false);
+    }
 
     run_terminal_loop(&mut app, auto_quit.as_deref(), session, splash_done)
 }
@@ -202,6 +207,8 @@ fn apply_pending_profile(
         Ok(mut candidate) => {
             candidate.terminal_area = app.terminal_area;
             candidate.dashboard_at = Some(std::time::Instant::now());
+            // The release check is about the binary, not the profile.
+            candidate.update = std::mem::take(&mut app.update);
             *app = candidate;
             record_last_used(&paths);
             true
@@ -588,6 +595,8 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
             app.apply_os_detect(ev)?;
         }
     }
+
+    app.poll_update();
 
     // Drive the live broadcast run (drain worker events, settle/dismiss panel).
     app.tick_broadcast()?;

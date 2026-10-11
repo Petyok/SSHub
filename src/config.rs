@@ -131,6 +131,21 @@ impl Default for PingConfig {
     }
 }
 
+/// Release check (#149).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdatesConfig {
+    /// Ask GitHub for the latest release when the TUI starts and say so when it
+    /// is newer. Off: nothing is sent; the update key still checks on demand.
+    #[serde(default = "default_true")]
+    pub check: bool,
+}
+
+impl Default for UpdatesConfig {
+    fn default() -> Self {
+        Self { check: true }
+    }
+}
+
 fn default_tunnel_reconnect_max_attempts() -> u32 {
     12
 }
@@ -352,6 +367,8 @@ pub struct AppConfig {
     pub clipboard: ClipboardConfig,
     #[serde(default)]
     pub ping: PingConfig,
+    #[serde(default)]
+    pub updates: UpdatesConfig,
     #[serde(default)]
     pub ssh: SshSourceConfig,
 }

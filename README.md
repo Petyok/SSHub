@@ -86,6 +86,7 @@ The settings overlay (`Ctrl+H`) — make SSHub's own surfaces or the remote grid
 - **Import/Export**: import from `~/.ssh/config`, Termius backups, PuTTY (a Windows regedit `.reg` export or a Unix `~/.putty/sessions` directory), or mRemoteNG (`confCons.xml`); export managed hosts back to ssh config format. Only SSH sessions are imported (RDP/VNC/telnet entries are skipped), and encrypted mRemoteNG passwords are not decrypted (imported hosts carry no stored secret)
 - **Hot reload** — edits to `~/.ssh/config` update the host list live via file watcher
 - **Configurable keybindings** — rebind any action via Ctrl+K; stored in `config.toml`
+- **Update notice** (`Shift+U`): on start SSHub asks GitHub for the latest release, and a newer one shows next to the version in the tab bar. `Shift+U` on the hosts tab installs it the way SSHub was installed (`npm install -g sshub-tui@<version>`, `cargo install sshub --version <version>`, or, for a release tarball, an in-place swap of the binary after checking it runs), then asks you to restart. With no update known, `Shift+U` checks on demand. Needs `curl` (and `tar` for the tarball swap); `[updates] check = false` turns the start-up check off.
 - **Mouse support** — click tabs, select rows, scroll panels, double-click to connect
 
 ## Install
@@ -357,6 +358,7 @@ arrives as arrow keys, exactly as in a real terminal.
 | `Shift+E`          | Export to ssh config      |
 | `Shift+T`          | Import from Termius       |
 | `Shift+P`          | Push public key to host   |
+| `Shift+U`          | Install the sshub update, or check for one |
 
 ### SFTP (tab 2)
 
@@ -470,6 +472,9 @@ relay_from_pty = true       # let apps inside a session copy to your clipboard
 
 [ping]
 enabled = true              # ICMP status probes (Ctrl+H); hosts override it in their form
+
+[updates]
+check = true                # ask GitHub for the latest release on start (Shift+U checks on demand)
 ```
 
 ## Development

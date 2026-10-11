@@ -30,6 +30,7 @@ mod tags;
 mod theme_picker;
 mod tunnels;
 mod types;
+mod update;
 mod util;
 
 #[cfg(test)]
@@ -37,6 +38,7 @@ mod tests;
 
 pub use theme_picker::{ThemePickerState, ThemeRecordSummary, ThemeRow, ThemeRowStatus};
 pub use types::*;
+pub use update::{UpdateState, UpdateStatus};
 pub use util::*;
 
 use std::path::Path;
@@ -473,6 +475,8 @@ pub struct App {
     pub os_detect_rx: Option<Receiver<crate::osinfo::OsDetectEvent>>,
     /// Host ids with an in-flight OS detection probe, to avoid re-probing.
     pub os_detect_inflight: std::collections::HashSet<i64>,
+    /// Release check and update install (#149).
+    pub update: UpdateState,
     pub ssh_log: Vec<crate::ssh::probe::SshLogEntry>,
     pub ssh_log_scroll: usize,
     pub auth_events_cache: Vec<crate::store::AuthEvent>,
@@ -1077,6 +1081,7 @@ impl App {
             os_detect_tx: None,
             os_detect_rx: None,
             os_detect_inflight: std::collections::HashSet::new(),
+            update: UpdateState::default(),
             ssh_log: Vec::new(),
             ssh_log_scroll: 0,
             auth_events_cache: Vec::new(),

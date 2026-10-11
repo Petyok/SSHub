@@ -133,3 +133,6 @@ initial_delay_ms = 1000
 max_delay_ms = 60000
 jitter_ratio = 0.25
 stable_secs = 5
+
+[updates]
+check = false

@@ -93,12 +93,13 @@ pub enum KeyAction {
     SnippetsManage,
     SessionSnippets,
     ProfilesManage,
+    Update,
     GhostAccept,
 }
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 85] = [
+    pub const ALL: [KeyAction; 86] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -183,6 +184,7 @@ impl KeyAction {
         KeyAction::SnippetsManage,
         KeyAction::SessionSnippets,
         KeyAction::ProfilesManage,
+        KeyAction::Update,
         KeyAction::GhostAccept,
     ];
 
@@ -272,6 +274,7 @@ impl KeyAction {
             KeyAction::SnippetsManage => "Manage command snippets",
             KeyAction::SessionSnippets => "Session: run a command snippet",
             KeyAction::ProfilesManage => "Add or manage profiles",
+            KeyAction::Update => "Install update / check for one",
             KeyAction::GhostAccept => "Session: accept ghost completion",
         }
     }
@@ -365,6 +368,7 @@ pub struct KeybindsConfig {
     pub snippets_manage: Vec<String>,
     pub session_snippets: Vec<String>,
     pub profiles_manage: Vec<String>,
+    pub update: Vec<String>,
     pub ghost_accept: Vec<String>,
 }
 
@@ -455,6 +459,7 @@ impl Default for KeybindsConfig {
             snippets_manage: vec!["Shift+S".into()],
             session_snippets: vec!["Ctrl+N".into()],
             profiles_manage: vec!["Alt+P".into()],
+            update: vec!["Shift+U".into()],
             ghost_accept: vec!["Ctrl+F".into()],
         }
     }
@@ -628,6 +633,7 @@ impl KeybindsConfig {
             KeyAction::SnippetsManage => &self.snippets_manage,
             KeyAction::SessionSnippets => &self.session_snippets,
             KeyAction::ProfilesManage => &self.profiles_manage,
+            KeyAction::Update => &self.update,
             KeyAction::GhostAccept => &self.ghost_accept,
         }
     }
@@ -718,6 +724,7 @@ impl KeybindsConfig {
             KeyAction::SnippetsManage => self.snippets_manage = binds,
             KeyAction::SessionSnippets => self.session_snippets = binds,
             KeyAction::ProfilesManage => self.profiles_manage = binds,
+            KeyAction::Update => self.update = binds,
             KeyAction::GhostAccept => self.ghost_accept = binds,
         }
     }
@@ -990,10 +997,9 @@ mod tests {
     #[test]
     fn ghost_accept_defaults_and_roundtrips() {
         // Oracle: none exists (config defaults are sshub's own invention);
-        // this pins the contract the session key handler relies on: one
-        // action, still 85 total (84 + ProfilesManage), Ctrl+F out of the
-        // box, and old `session_suggestions` keys ignored rather than fatal.
-        assert_eq!(KeyAction::ALL.len(), 85, "picker swap must not add actions");
+        // this pins the contract the session key handler relies on: Ctrl+F
+        // out of the box, and old `session_suggestions` keys ignored rather
+        // than fatal.
         assert!(KeyAction::ALL.contains(&KeyAction::GhostAccept));
         let kb = KeybindsConfig::default();
         assert_eq!(kb.primary(KeyAction::GhostAccept), "Ctrl+F");

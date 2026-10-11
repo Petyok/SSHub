@@ -155,6 +155,10 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         key: "Shift+P",
         desc: "Push public key to host",
     },
+    HelpItem::Entry {
+        key: "Shift+U",
+        desc: "Install the sshub update, or check for one",
+    },
     HelpItem::Blank,
     HelpItem::Section("tunnels (tab 3)"),
     HelpItem::Entry {

@@ -771,6 +771,7 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
             .as_ref()
             .filter(|p| !p.compat)
             .map(|p| p.name.as_str()),
+        app.update_badge().as_deref(),
         theme,
     );
 
@@ -1275,6 +1276,18 @@ fn footer_keybinds(
         if let Some(i) = binds.iter().position(|(_, l)| *l == label) {
             pinned.push(binds.remove(i));
         }
+    }
+    // A known update is pinned too: it is rare and the key does nothing visible
+    // otherwise. Hosts tab only, which is where the key works.
+    let update_key = app
+        .config
+        .keybinds
+        .primary(crate::config::KeyAction::Update);
+    if app.active_tab == 0
+        && matches!(app.update.status, crate::app::UpdateStatus::Available(_))
+        && !update_key.is_empty()
+    {
+        pinned.insert(0, (update_key.to_string(), "update"));
     }
     let pinned_len = pinned.len();
     let mut binds: Vec<_> = binds
@@ -2401,6 +2414,7 @@ mod tests {
                             1,
                             "~/.config/sshub",
                             Some(&name),
+                            None,
                             app.theme(),
                         )
                     })
@@ -2427,6 +2441,38 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn tab_bar_update_badge_survives_a_profile_at_120_columns() {
+        // The badge makes the version label too wide to share the row with the
+        // scope path; the scope gives way, the version and the badge stay.
+        let app = test_app_with_hosts();
+        let mut terminal = Terminal::new(TestBackend::new(120, 1)).unwrap();
+        terminal
+            .draw(|frame| {
+                widgets::tab_bar::render_tab_bar(
+                    frame,
+                    Rect::new(0, 0, 120, 1),
+                    1,
+                    "~/.config/sshub",
+                    Some("alpha"),
+                    Some("updating to v99.0.0…"),
+                    app.theme(),
+                )
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let row: String = (0..120).map(|x| buffer[(x, 0)].symbol()).collect();
+        assert!(
+            row.contains("profile: alpha") && row.contains("audit"),
+            "{row}"
+        );
+        assert!(row.contains("updating to v99.0.0…"), "{row}");
+        assert!(
+            row.contains(concat!("v", env!("CARGO_PKG_VERSION"))),
+            "{row}"
+        );
     }
     #[test]
     fn profile_footer_and_settings_show_current_workspace_and_remapped_key() {
@@ -2833,6 +2879,7 @@ mod tests {
                         .as_ref()
                         .filter(|p| !p.compat)
                         .map(|p| p.name.as_str()),
+                    app.update_badge().as_deref(),
                     theme,
                 );
                 let rule2 = row_in(area, areas.tab_bar.y + areas.tab_bar.height);

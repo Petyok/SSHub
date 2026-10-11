@@ -168,6 +168,7 @@ impl App {
 
         match key.code {
             _ if self.is_action(KeyAction::Quit, &key) => self.request_quit(),
+            _ if self.is_action(KeyAction::Update, &key) => self.press_update_key(),
             _ if self.is_action(KeyAction::MoveHostUp, &key) => self.move_host_manual(-1)?,
             _ if self.is_action(KeyAction::MoveHostDown, &key) => self.move_host_manual(1)?,
             _ if self.is_action(KeyAction::MoveGroupUp, &key) => self.move_selection_by_group(-1),
