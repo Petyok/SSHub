@@ -688,40 +688,50 @@ pub fn render_command_prompt(frame: &mut Frame, app: &App) {
     let popup = popup_rect(frame, 70, 44, 7);
     let theme = app.theme();
 
+    let input = theme.style(StyleRole::FormInput);
     let lines = vec![
-        Line::from(Span::styled(
-            format!("Command to run on {}:", setup.target_label),
-            theme.style(StyleRole::TextPrimary),
-        )),
-        Line::from(Span::styled(
-            format!(
-                "cmd> {}",
-                crate::text_input::with_cursor(&setup.command, setup.cursor)
-            ),
-            theme.style(StyleRole::FormInput),
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Enter: preview  \u{2502}  Esc: cancel",
-            theme.style(StyleRole::PopupHint),
-        )),
+        (
+            Line::from(Span::styled(
+                format!("Command to run on {}:", setup.target_label),
+                theme.style(StyleRole::TextPrimary),
+            )),
+            None,
+        ),
+        (
+            Line::from(vec![
+                Span::styled("cmd> ", input),
+                Span::styled(
+                    crate::text_input::with_cursor(&setup.command, setup.cursor),
+                    input,
+                ),
+            ]),
+            Some(0),
+        ),
+        (Line::from(""), None),
+        (
+            Line::from(Span::styled(
+                "Enter: preview  \u{2502}  Esc: cancel",
+                theme.style(StyleRole::PopupHint),
+            )),
+            None,
+        ),
     ];
 
     let popup = crate::tui::popup_open_rect(popup, app);
 
     crate::tui::open_popup(frame, popup, theme);
-    frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(Span::styled(
-                    " Broadcast command ",
-                    theme.style(StyleRole::PopupTitle),
-                ))
-                .border_style(crate::tui::popup_border_style(theme, popup)),
-        ),
-        popup,
+    let body = super::FormBody::new(
+        lines,
+        Block::default()
+            .borders(Borders::ALL)
+            .title(Span::styled(
+                " Broadcast command ",
+                theme.style(StyleRole::PopupTitle),
+            ))
+            .border_style(crate::tui::popup_border_style(theme, popup)),
+        Some(Wrap { trim: false }),
     );
+    frame.render_widget(body, popup);
     crate::tui::paint_popup_border(frame, popup, theme);
 }
 

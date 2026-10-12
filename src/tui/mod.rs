@@ -998,37 +998,49 @@ fn render_sftp_prompt_popup(frame: &mut Frame, app: &App) {
 
     let theme = app.theme();
     let mut lines = vec![
-        ratatui::text::Line::from(Span::styled(label, theme.style(StyleRole::TextPrimary))),
-        ratatui::text::Line::from(Span::styled(
-            crate::text_input::with_cursor(&prompt.value, prompt.cursor),
-            theme.style(StyleRole::FormInput),
-        )),
-        ratatui::text::Line::from(""),
+        (
+            ratatui::text::Line::from(Span::styled(label, theme.style(StyleRole::TextPrimary))),
+            None,
+        ),
+        (
+            ratatui::text::Line::from(Span::styled(
+                crate::text_input::with_cursor(&prompt.value, prompt.cursor),
+                theme.style(StyleRole::FormInput),
+            )),
+            Some(0),
+        ),
+        (ratatui::text::Line::from(""), None),
     ];
     if let Some(err) = &prompt.error {
-        lines.push(ratatui::text::Line::from(Span::styled(
-            format!("\u{2717} {err}"),
-            theme.style(StyleRole::PopupError),
-        )));
-        lines.push(ratatui::text::Line::from(""));
+        lines.push((
+            ratatui::text::Line::from(Span::styled(
+                format!("\u{2717} {err}"),
+                theme.style(StyleRole::PopupError),
+            )),
+            None,
+        ));
+        lines.push((ratatui::text::Line::from(""), None));
     }
-    lines.push(ratatui::text::Line::from(Span::styled(
-        "Enter: confirm  \u{2502}  Esc: cancel",
-        theme.style(StyleRole::PopupHint),
-    )));
+    lines.push((
+        ratatui::text::Line::from(Span::styled(
+            "Enter: confirm  \u{2502}  Esc: cancel",
+            theme.style(StyleRole::PopupHint),
+        )),
+        None,
+    ));
 
     let popup_area = crate::tui::popup_open_rect(popup_area, app);
 
     open_popup(frame, popup_area, theme);
-    frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(Span::styled(title, theme.style(StyleRole::PopupTitle)))
-                .border_style(popup_border_style(theme, popup_area)),
-        ),
-        popup_area,
+    let body = screens::FormBody::new(
+        lines,
+        Block::default()
+            .borders(Borders::ALL)
+            .title(Span::styled(title, theme.style(StyleRole::PopupTitle)))
+            .border_style(popup_border_style(theme, popup_area)),
+        Some(Wrap { trim: false }),
     );
+    frame.render_widget(body, popup_area);
     paint_popup_border(frame, popup_area, theme);
 }
 
@@ -1046,43 +1058,55 @@ fn render_import_prompt_popup(frame: &mut Frame, app: &App) {
 
     let theme = app.theme();
     let mut lines = vec![
-        ratatui::text::Line::from(Span::styled(
-            "Path to Termius export folder (contains L00t.csv, ssh_keys/):",
-            theme.style(StyleRole::TextPrimary),
-        )),
-        ratatui::text::Line::from(Span::styled(
-            crate::text_input::with_cursor(&prompt.path, prompt.cursor),
-            theme.style(StyleRole::FormInput),
-        )),
-        ratatui::text::Line::from(""),
+        (
+            ratatui::text::Line::from(Span::styled(
+                "Path to Termius export folder (contains L00t.csv, ssh_keys/):",
+                theme.style(StyleRole::TextPrimary),
+            )),
+            None,
+        ),
+        (
+            ratatui::text::Line::from(Span::styled(
+                crate::text_input::with_cursor(&prompt.path, prompt.cursor),
+                theme.style(StyleRole::FormInput),
+            )),
+            Some(0),
+        ),
+        (ratatui::text::Line::from(""), None),
     ];
     if let Some(err) = &prompt.error {
-        lines.push(ratatui::text::Line::from(Span::styled(
-            format!("\u{2717} {err}"),
-            theme.style(StyleRole::PopupError),
-        )));
-        lines.push(ratatui::text::Line::from(""));
+        lines.push((
+            ratatui::text::Line::from(Span::styled(
+                format!("\u{2717} {err}"),
+                theme.style(StyleRole::PopupError),
+            )),
+            None,
+        ));
+        lines.push((ratatui::text::Line::from(""), None));
     }
-    lines.push(ratatui::text::Line::from(Span::styled(
-        "Enter: import  \u{2502}  Esc: cancel",
-        theme.style(StyleRole::PopupHint),
-    )));
+    lines.push((
+        ratatui::text::Line::from(Span::styled(
+            "Enter: import  \u{2502}  Esc: cancel",
+            theme.style(StyleRole::PopupHint),
+        )),
+        None,
+    ));
 
     let popup_area = crate::tui::popup_open_rect(popup_area, app);
 
     open_popup(frame, popup_area, theme);
-    frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(Span::styled(
-                    " Import from Termius ",
-                    theme.style(StyleRole::PopupTitle),
-                ))
-                .border_style(popup_border_style(theme, popup_area)),
-        ),
-        popup_area,
+    let body = screens::FormBody::new(
+        lines,
+        Block::default()
+            .borders(Borders::ALL)
+            .title(Span::styled(
+                " Import from Termius ",
+                theme.style(StyleRole::PopupTitle),
+            ))
+            .border_style(popup_border_style(theme, popup_area)),
+        Some(Wrap { trim: false }),
     );
+    frame.render_widget(body, popup_area);
     paint_popup_border(frame, popup_area, theme);
 }
 
@@ -1867,7 +1891,7 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
     let border = popup_border_style(theme, popup_area);
     open_popup(frame, popup_area, theme);
 
-    match kind {
+    let body = match kind {
         FormKind::Host => {
             if let Some(form) = app.host_form.as_ref() {
                 // Muted placeholders: what a save would actually use for each
@@ -1884,46 +1908,39 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
                     .store()
                     .inherited_for_groups(primary, &selected)
                     .unwrap_or_else(|_| crate::store::ResolvedConnection::global_default());
-                frame.render_widget(
-                    screens::host_form::render_host_form(
-                        form,
-                        &app.groups,
-                        &app.identities,
-                        &inherited,
-                        &app.save_key_label(),
-                        &app.config.keybinds.secret_field_hints(),
-                        theme,
-                        border,
-                    ),
-                    popup_area,
-                );
+                Some(screens::host_form::render_host_form(
+                    form,
+                    &app.groups,
+                    &app.identities,
+                    &inherited,
+                    &app.save_key_label(),
+                    &app.config.keybinds.secret_field_hints(),
+                    theme,
+                    border,
+                ))
+            } else {
+                None
             }
         }
         FormKind::Identity => {
             if let Some(form) = app.identity_form.as_ref() {
                 let cert = app.cert_statuses.get(&form.certificate);
-                frame.render_widget(
-                    screens::keychain::render_identity_form(
-                        form,
-                        &app.save_key_label(),
-                        &app.config.keybinds.secret_field_hints(),
-                        cert,
-                        theme,
-                        border,
-                        popup_area.width.saturating_sub(2),
-                    ),
-                    popup_area,
-                );
+                Some(screens::keychain::render_identity_form(
+                    form,
+                    &app.save_key_label(),
+                    &app.config.keybinds.secret_field_hints(),
+                    cert,
+                    theme,
+                    border,
+                    popup_area.width.saturating_sub(2),
+                ))
+            } else {
+                None
             }
         }
-        FormKind::Keygen => {
-            if let Some(form) = app.keygen_form.as_ref() {
-                frame.render_widget(
-                    screens::keygen::render_keygen_form(form, &app.save_key_label(), theme, border),
-                    popup_area,
-                );
-            }
-        }
+        FormKind::Keygen => app.keygen_form.as_ref().map(|form| {
+            screens::keygen::render_keygen_form(form, &app.save_key_label(), theme, border)
+        }),
         FormKind::Group => {
             if let Some(form) = app.group_form.as_ref() {
                 let identity_name = form.default_identity_id.and_then(|id| {
@@ -1938,18 +1955,20 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
                         .find(|g| g.id == id)
                         .map(|g| g.name.clone())
                 });
-                frame.render_widget(
-                    screens::group_form::render_group_form(
-                        form,
-                        identity_name.as_deref(),
-                        parent_name.as_deref(),
-                        theme,
-                        border,
-                    ),
-                    popup_area,
-                );
+                Some(screens::group_form::render_group_form(
+                    form,
+                    identity_name.as_deref(),
+                    parent_name.as_deref(),
+                    theme,
+                    border,
+                ))
+            } else {
+                None
             }
         }
+    };
+    if let Some(body) = body {
+        frame.render_widget(body, popup_area);
     }
 
     // Whichever form was rendered above drew its frame in `border`'s solid

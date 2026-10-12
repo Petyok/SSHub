@@ -9,7 +9,7 @@
 //! `components.popup.*` — not from a keychain family of its own.
 
 use ratatui::style::Style;
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders};
 
 use crate::app::{IdentityFormEdit, IdentityFormField};
 use crate::text_input;
@@ -27,13 +27,13 @@ pub fn render_identity_form(
     theme: &ResolvedTheme,
     border: Style,
     inner_width: u16,
-) -> Paragraph<'static> {
+) -> super::FormBody {
     // Same contract as the host form, and for the same reason: this form's
     // marker had no `theme.rs` cell of its own, only direct ANSI accents, so
     // the global focus role is what it takes.
     let focus = theme.style(StyleRole::FocusIndicator);
     let mut lines = Vec::with_capacity(IdentityFormField::ALL.len() + 2);
-    for field in IdentityFormField::ALL {
+    for (index, field) in IdentityFormField::ALL.into_iter().enumerate() {
         let active = form.field == field;
         let editing = active && form.editing;
         let prefix = if editing {
@@ -132,11 +132,14 @@ pub fn render_identity_form(
         } else {
             field.label()
         };
-        lines.push(ratatui::text::Line::from(vec![
-            ratatui::text::Span::styled(prefix, prefix_style),
-            ratatui::text::Span::styled(format!("{label}: "), label_style),
-            ratatui::text::Span::styled(display, value_style),
-        ]));
+        lines.push((
+            ratatui::text::Line::from(vec![
+                ratatui::text::Span::styled(prefix, prefix_style),
+                ratatui::text::Span::styled(format!("{label}: "), label_style),
+                ratatui::text::Span::styled(display, value_style),
+            ]),
+            Some(index),
+        ));
         // Certificate detail directly under its row: key id, principals and
         // validity from `ssh-keygen -L`, or the reason nothing could be shown.
         // Keyed to the typed path via the shared snapshot map, so a renamed
@@ -155,13 +158,17 @@ pub fn render_identity_form(
                         crate::tui::text::ellipsize(&status.detail_line(), budget)
                     )
                 };
-                lines.push(ratatui::text::Line::from(vec![
-                    ratatui::text::Span::styled(detail, theme.style(StyleRole::FormHelp)),
-                ]));
+                lines.push((
+                    ratatui::text::Line::from(vec![ratatui::text::Span::styled(
+                        detail,
+                        theme.style(StyleRole::FormHelp),
+                    )]),
+                    None,
+                ));
             }
         }
     }
-    lines.push(ratatui::text::Line::from(""));
+    lines.push((ratatui::text::Line::from(""), None));
     // Save/cancel stay at the end: the middle of this row is what truncation
     // eats first on a narrow terminal (see the 0.9.x footer fix).
     let base = format!("type to edit │ paste a key or its path into Private key │ Tab/↓: next │ {save_hint}: save │ Esc: cancel │ Ctrl+U/W: kill line/word");
@@ -172,11 +179,15 @@ pub fn render_identity_form(
     } else {
         base
     };
-    lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
-        hint,
-        theme.style(StyleRole::FormHelp),
-    )));
-    Paragraph::new(lines).block(
+    lines.push((
+        ratatui::text::Line::from(ratatui::text::Span::styled(
+            hint,
+            theme.style(StyleRole::FormHelp),
+        )),
+        None,
+    ));
+    super::FormBody::new(
+        lines,
         Block::default()
             .borders(Borders::ALL)
             .border_style(border)
@@ -184,6 +195,7 @@ pub fn render_identity_form(
                 "Identity",
                 theme.style(StyleRole::PopupTitle),
             )),
+        None,
     )
 }
 

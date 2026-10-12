@@ -1,6 +1,6 @@
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Wrap};
 
 use crate::app::{HostFormEdit, HostFormField, OS_ICON_OPTIONS};
 use crate::store::{HostGroup, Identity};
@@ -21,7 +21,7 @@ pub fn render_host_form(
     secret_hints: &str,
     theme: &ResolvedTheme,
     border: Style,
-) -> Paragraph<'static> {
+) -> super::FormBody {
     let title = if form.metadata_only {
         "Edit metadata (ssh_config)"
     } else if form.id.is_some() {
@@ -41,13 +41,16 @@ pub fn render_host_form(
 
     let mut lines = Vec::with_capacity(HostFormField::ALL.len() + 2);
     if form.metadata_only {
-        lines.push(Line::from(Span::styled(
-            "Connection fields are read-only (from ~/.ssh/config). Edit launcher metadata below.",
-            help,
-        )));
-        lines.push(Line::from(""));
+        lines.push((
+            Line::from(Span::styled(
+                "Connection fields are read-only (from ~/.ssh/config). Edit launcher metadata below.",
+                help,
+            )),
+            None,
+        ));
+        lines.push((Line::from(""), None));
     }
-    for field in HostFormField::ALL {
+    for (index, field) in HostFormField::ALL.into_iter().enumerate() {
         let active = form.field == field;
         let editing = active && form.editing;
         let prefix = if editing {
@@ -252,32 +255,46 @@ pub fn render_host_form(
             theme.style(StyleRole::FormValue)
         };
         let prefix_style = if active { focus } else { label_style };
-        lines.push(Line::from(vec![
-            Span::styled(prefix, prefix_style),
-            Span::styled(format!("{label}{suffix}: "), label_style),
-            Span::styled(display, value_style),
-        ]));
+        lines.push((
+            Line::from(vec![
+                Span::styled(prefix, prefix_style),
+                Span::styled(format!("{label}{suffix}: "), label_style),
+                Span::styled(display, value_style),
+            ]),
+            Some(index),
+        ));
     }
 
-    lines.push(Line::from(""));
+    lines.push((Line::from(""), None));
     if form.field == HostFormField::Password && !secret_hints.is_empty() {
         // See the identity form: a masked value needs its binds said out loud.
-        lines.push(Line::from(Span::styled(secret_hints.to_string(), help)));
+        lines.push((
+            Line::from(Span::styled(secret_hints.to_string(), help)),
+            None,
+        ));
     }
-    lines.push(Line::from(Span::styled(
-        "Tab/↓: next field    Enter: open picker (Group/Identity)    Ctrl+U/W: kill line/word",
-        help,
-    )));
-    lines.push(Line::from(Span::styled(
-        format!("{save_hint}: save    Esc: cancel"),
-        help,
-    )));
+    lines.push((
+        Line::from(Span::styled(
+            "Tab/↓: next field    Enter: open picker (Group/Identity)    Ctrl+U/W: kill line/word",
+            help,
+        )),
+        None,
+    ));
+    lines.push((
+        Line::from(Span::styled(
+            format!("{save_hint}: save    Esc: cancel"),
+            help,
+        )),
+        None,
+    ));
 
-    Paragraph::new(lines).wrap(Wrap { trim: true }).block(
+    super::FormBody::new(
+        lines,
         Block::default()
             .borders(Borders::ALL)
             .border_style(border)
             .title(Span::styled(title, theme.style(StyleRole::PopupTitle))),
+        Some(Wrap { trim: true }),
     )
 }
 
