@@ -17,6 +17,7 @@ mod keys;
 mod local_shell;
 mod log_browser;
 mod mouse;
+pub(crate) mod panes;
 mod profile_manager;
 pub(crate) mod profile_transfer;
 mod push_key;
@@ -511,8 +512,13 @@ pub struct App {
     /// Embedded PTY sessions. Multiple may coexist (Ctrl+T opens a new tab).
     /// Empty when not in `Connecting` / `Session` mode.
     pub sessions: Vec<crate::session::Session>,
-    /// Index into `sessions` of the visible tab. `None` when `sessions` is empty.
+    /// Index into `sessions` of the visible tab, or of the focused pane's
+    /// session in a split view. `None` when `sessions` is empty, and in a split
+    /// view whose focused pane is empty.
     pub active_session: Option<usize>,
+    /// Split view (#73): the session body divided into 2 to 4 panes. `None` is
+    /// the classic one-session view.
+    pub panes: Option<panes::Panes>,
     last_click: Option<(std::time::Instant, u16, u16)>,
     resolver: Box<dyn HostResolver>,
     metadata: Arc<dyn MetadataStore>,
@@ -614,7 +620,9 @@ impl App {
                 // Leaving supersedes any tab slide still in flight, and releases
                 // the snapshot it was holding frozen.
                 self.session_tab_switch = None;
-                if self.motion_enabled() {
+                // A split view leaves in place: its snapshot protects one
+                // remote rect, and sliding it would expose the other panes.
+                if self.motion_enabled() && self.panes.is_none() {
                     self.session_exit_at = Some(std::time::Instant::now());
                 } else {
                     *self.session_snapshot.borrow_mut() = None;
@@ -1105,6 +1113,7 @@ impl App {
             terminal_area: ratatui::layout::Rect::default(),
             sessions: Vec::new(),
             active_session: None,
+            panes: None,
             last_click: None,
             resolver: deps.resolver,
             metadata: deps.metadata,

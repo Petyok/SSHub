@@ -116,8 +116,6 @@ impl App {
                 .unwrap_or("direct");
             // Spawn an embedded PTY session in-process. No external terminal.
             let display_name = entry.name().to_string();
-            let rows = self.terminal_area.height.max(3);
-            let cols = self.terminal_area.width.max(20);
             let meta = match (entry.managed(), resolved.as_ref()) {
                 (Some(m), Some(r)) => session_meta_for_resolved(m, r),
                 _ => session_meta_for_entry(&entry),
@@ -136,7 +134,10 @@ impl App {
                 entry.session_logging_override(),
             );
 
-            match crate::session::Session::spawn(config, rows, cols, None) {
+            // Spawned at the grid of the pane it lands in, so the remote starts
+            // at the right size instead of hearing a SIGWINCH next frame.
+            let grid = self.new_session_grid();
+            match crate::session::Session::spawn(config, grid, None) {
                 Ok(mut session) => {
                     if let Some(auth) = session.auth.as_mut() {
                         auth.host_id = entry.managed_id();

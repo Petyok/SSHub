@@ -320,8 +320,6 @@ impl App {
             .unwrap_or("direct");
 
         let display_name = format!("Push Key to {}", entry.name());
-        let rows = self.terminal_area.height.max(3);
-        let cols = self.terminal_area.width.max(20);
         let meta = match (entry.managed(), resolved.as_ref()) {
             (Some(m), Some(r)) => session_meta_for_resolved(m, r),
             _ => session_meta_for_entry(entry),
@@ -336,7 +334,8 @@ impl App {
             host_name: entry.name().to_string(),
         };
 
-        match crate::session::Session::spawn(config, rows, cols, None) {
+        let grid = self.new_session_grid();
+        match crate::session::Session::spawn(config, grid, None) {
             Ok(session) => {
                 self.sessions.push(session);
                 self.active_session = Some(self.sessions.len() - 1);

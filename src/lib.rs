@@ -345,19 +345,21 @@ fn run_terminal_loop(
     // The dashboard fades up from here, over the intro animation it replaces.
     app.dashboard_at = Some(std::time::Instant::now());
 
-    let mut last_size: Option<(u16, u16)> = None;
     loop {
         let sz = terminal.size()?;
         app.terminal_area = ratatui::layout::Rect::new(0, 0, sz.width, sz.height);
 
         // Drain every session's PTY this frame so background tabs accumulate
-        // output and don't fall behind. Resize all of them when the host
-        // terminal changes size — every tab shares the same body area.
-        let resized = last_size != Some((sz.width, sz.height));
+        // output and don't fall behind. Each session on screen follows the
+        // grid of the pane it is drawn in; one out of view keeps its last size
+        // and is resized once when shown again. `Session::resize` is a no-op
+        // for an unchanged size, so asking every frame costs nothing.
+        app.sync_panes();
+        let grids = app.session_grids();
         let mut diag_entries: Vec<(String, String)> = Vec::new();
         let mut newly_connected: Vec<String> = Vec::new();
         let mut key_push_events = Vec::new();
-        for s in app.sessions.iter_mut() {
+        for (s, grid) in app.sessions.iter_mut().zip(grids) {
             let was_connected = s.is_connected();
             s.drain();
             if s.phase.is_terminal() && !s.logged_exit {
@@ -376,8 +378,8 @@ fn run_terminal_loop(
                     ));
                 }
             }
-            if resized {
-                s.resize(sz.height, sz.width);
+            if let Some(grid) = grid {
+                s.resize(grid);
             }
             if s.is_connected() && !was_connected {
                 newly_connected.push(s.display_name.clone());
@@ -442,7 +444,6 @@ fn run_terminal_loop(
                 app.mode = AppMode::Session;
             }
         }
-        last_size = Some((sz.width, sz.height));
 
         // Mouse capture stays on continuously so the scroll wheel always
         // reaches sshub (driving scrollback when the remote isn't using the

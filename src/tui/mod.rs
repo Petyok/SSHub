@@ -411,15 +411,14 @@ impl FrameComposition {
         //    reaches over cells that are SSHub's own this frame. Protecting
         //    those would hand the grid's ground to the dashboard.
         if tab_slide_progress.is_none() && shows_session_view(app) {
-            if let Some(session) = app.active_session() {
-                if crate::session::render::shows_remote_pty(session) {
-                    let resting = crate::session::render::remote_pty_rect(area);
-                    match enter_offset {
-                        Some(offset) => {
-                            protected.extend(translated_region(resting, i32::from(offset), area))
-                        }
-                        None => protected.push(resting),
+            // Every pane with a live grid: in a split view there is more than
+            // one, and protecting only the focused one paints over the rest.
+            for resting in crate::session::render::remote_pty_rects(app, area) {
+                match enter_offset {
+                    Some(offset) => {
+                        protected.extend(translated_region(resting, i32::from(offset), area))
                     }
+                    None => protected.push(resting),
                 }
             }
         }
@@ -457,7 +456,12 @@ impl FrameComposition {
 /// that is captured but not blitted protects cells nothing owns, and one that is
 /// blitted but not captured paints over remote output.
 fn session_enter_offset(app: &App, area: Rect, now: std::time::Instant) -> Option<u16> {
-    if !app.motion_enabled() || session_behind_picker(app) || !shows_session_view(app) {
+    // A split view appears in place: the slide carries one full-frame session.
+    if !app.motion_enabled()
+        || session_behind_picker(app)
+        || !shows_session_view(app)
+        || app.panes.is_some()
+    {
         return None;
     }
     let at = app.session_enter_at?;
@@ -678,7 +682,8 @@ fn shows_session_view(app: &App) -> bool {
 
 /// Whether this frame takes the exact branch that blits a session-tab slide.
 fn will_render_session_tab_slide(app: &App) -> bool {
-    shows_session_view(app) && !session_behind_picker(app)
+    // The tab slide moves the one full-width body, so a split view has none.
+    shows_session_view(app) && !session_behind_picker(app) && app.panes.is_none()
 }
 
 fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
@@ -2938,7 +2943,7 @@ mod tests {
                 host_name: name.into(),
             };
             app.sessions
-                .push(crate::session::Session::spawn(cfg, 24, 80, None).unwrap());
+                .push(crate::session::Session::spawn(cfg, (24, 80), None).unwrap());
         }
         app.sessions[1].phase = SessionPhase::Running {
             started_at: Instant::now(),
@@ -3014,7 +3019,7 @@ mod tests {
                 host_name: name.into(),
             };
             app.sessions
-                .push(crate::session::Session::spawn(cfg, 24, 80, None).unwrap());
+                .push(crate::session::Session::spawn(cfg, (24, 80), None).unwrap());
         }
         app
     }
@@ -3460,7 +3465,7 @@ mod tests {
             key_push_identity: None,
             host_name: "web-prod".into(),
         };
-        let mut session = crate::session::Session::spawn(cfg, 24, 80, None).unwrap();
+        let mut session = crate::session::Session::spawn(cfg, (24, 80), None).unwrap();
         session.phase = SessionPhase::Running {
             started_at: std::time::Instant::now(),
         };
@@ -5196,7 +5201,7 @@ mod tests {
                 host_name: name.into(),
             };
             app.sessions
-                .push(crate::session::Session::spawn(cfg, 24, 80, None).unwrap());
+                .push(crate::session::Session::spawn(cfg, (24, 80), None).unwrap());
             app.active_session = Some(0);
             app.session_picker = Some(crate::app::SessionPicker {
                 purpose: crate::app::SessionPickerPurpose::SwitchSession,
@@ -5467,7 +5472,7 @@ mod tests {
             key_push_identity: None,
             host_name: "web-prod".into(),
         };
-        let session = crate::session::Session::spawn(config, 24, 80, None).unwrap();
+        let session = crate::session::Session::spawn(config, (24, 80), None).unwrap();
         app.sessions.push(session);
         app.active_session = Some(0);
         app.mode = AppMode::Connecting;
@@ -5506,7 +5511,7 @@ mod tests {
             key_push_identity: None,
             host_name: "web-prod".into(),
         };
-        let session = crate::session::Session::spawn(config, 24, 80, None).unwrap();
+        let session = crate::session::Session::spawn(config, (24, 80), None).unwrap();
         app.sessions.push(session);
         app.active_session = Some(0);
         app.mode = AppMode::Connecting;
@@ -5527,7 +5532,7 @@ mod tests {
             key_push_identity: None,
             host_name: "web-prod".into(),
         };
-        let session = crate::session::Session::spawn(config, 24, 80, None).unwrap();
+        let session = crate::session::Session::spawn(config, (24, 80), None).unwrap();
         app.sessions.push(session);
         app.active_session = Some(0);
         // Stays on the dashboard (Normal), so the strip is what makes the

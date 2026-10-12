@@ -14,7 +14,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
-use tui_term::widget::PseudoTerminal;
+use tui_term::widget::{Cursor, PseudoTerminal};
 
 use crate::app::App;
 use crate::config::{KeyAction, KeybindsConfig};
@@ -50,17 +50,22 @@ pub(crate) fn remote_pty_rect(frame_area: Rect) -> Rect {
     session_chunks(frame_area)[1]
 }
 
-/// Whether frame cell `(column, row)` shows a cell of a `(rows, cols)` grid,
-/// rather than SSHub's header or footer. The grid can be taller than the pane
-/// (the PTY is floored at 2 rows), so its size alone does not say.
+/// Whether frame cell `(column, row)` shows a cell of a `(rows, cols)` grid
+/// drawn in `pane`, rather than SSHub's header, footer or a split separator.
+/// The grid can be taller or wider than the pane (it is floored at 2x2, and a
+/// session out of view keeps its last size), so its size alone does not say.
 pub(crate) fn pane_shows_cell(
-    frame_area: Rect,
+    pane: Rect,
     (column, row): (u16, u16),
     (rows, cols): (u16, u16),
 ) -> bool {
-    let pane = remote_pty_rect(frame_area);
     let shown = Rect::new(pane.x, pane.y, pane.width.min(cols), pane.height.min(rows));
     shown.contains(ratatui::layout::Position::new(column, row))
+}
+
+/// The grid a pane of `rect` shows: its own size, floored at the vt100 2x2.
+pub(crate) fn grid_of(rect: Rect) -> (u16, u16) {
+    crate::session::floor_grid((rect.height, rect.width))
 }
 
 /// Whether this frame actually shows the remote grid.
@@ -77,10 +82,28 @@ pub(crate) fn shows_remote_pty(session: &Session) -> bool {
     }
 }
 
+/// Every rect of this frame that shows a remote grid: one in the classic view,
+/// one per pane holding a live grid in a split view. The theme passes protect
+/// exactly these, from the same geometry the renderer draws with.
+pub(crate) fn remote_pty_rects(app: &App, frame_area: Rect) -> Vec<Rect> {
+    app.pane_views(frame_area)
+        .into_iter()
+        .filter(|v| {
+            v.session
+                .and_then(|i| app.sessions.get(i))
+                .is_some_and(shows_remote_pty)
+        })
+        .map(|v| v.rect)
+        .collect()
+}
+
 pub fn render(frame: &mut Frame, app: &App) {
-    let Some(session) = app.active_session() else {
+    let session = app.active_session();
+    // A split view can be on screen with its focused pane empty; the classic
+    // view always shows a session.
+    if session.is_none() && app.panes.is_none() {
         return;
-    };
+    }
     let theme = app.theme();
 
     let chunks = session_chunks(frame.area());
@@ -90,22 +113,142 @@ pub fn render(frame: &mut Frame, app: &App) {
     // keys only while it is visible, and the body paints it. Computing it
     // here (rather than inside each callee) keeps the two in agreement.
     let ghost = app.ghost_match();
-    render_footer(frame, chunks[2], session, theme, ghost.is_some());
-    render_body(
-        frame,
-        chunks[1],
-        session,
-        &app.config.keybinds,
-        theme,
-        ghost.as_ref(),
-    );
+    let zoomed = app.panes.as_ref().is_some_and(|p| p.zoomed);
+    match session {
+        Some(session) => render_footer(frame, chunks[2], session, theme, ghost.is_some(), zoomed),
+        None => render_empty_pane_footer(frame, chunks[2], &app.config.keybinds, theme),
+    }
 
-    // Transient "copied" toast in the body's bottom-right corner.
-    if let Some((msg, at)) = &session.copy_notice {
-        if at.elapsed() < Duration::from_millis(3500) {
-            render_copy_toast(frame, chunks[1], msg, theme);
+    let views = app.pane_views(frame.area());
+    render_pane_rules(frame, app, &views, theme);
+    for view in views {
+        let Some(pane_session) = view.session.and_then(|i| app.sessions.get(i)) else {
+            render_empty_pane(frame, view.rect, &app.config.keybinds, theme, view.focused);
+            continue;
+        };
+        // The ghost and the cursor belong to the pane that takes the keys.
+        let ghost = ghost.as_ref().filter(|_| view.focused);
+        render_body(
+            frame,
+            view.rect,
+            pane_session,
+            &app.config.keybinds,
+            theme,
+            ghost,
+            view.focused,
+        );
+        // Transient "copied" toast in the pane's bottom-right corner.
+        if let Some((msg, at)) = &pane_session.copy_notice {
+            if at.elapsed() < Duration::from_millis(3500) {
+                render_copy_toast(frame, view.rect, msg, theme);
+            }
         }
     }
+}
+
+/// The one-cell rules between split panes, in `session.border`. The stretch of
+/// rule along the focused pane takes the focus indicator role instead, so the
+/// focus reads at a glance even where the panes' own output looks alike.
+fn render_pane_rules(
+    frame: &mut Frame,
+    app: &App,
+    views: &[crate::app::panes::PaneView],
+    theme: &ResolvedTheme,
+) {
+    let rules = app.pane_rules(frame.area());
+    let Some(focused) = views.iter().find(|v| v.focused).map(|v| v.rect) else {
+        return;
+    };
+    // Every cell touching the focused pane, the corners included.
+    let around = Rect::new(
+        focused.x.saturating_sub(1),
+        focused.y.saturating_sub(1),
+        focused.width.saturating_add(2),
+        focused.height.saturating_add(2),
+    );
+    let focus_style = theme.style(StyleRole::FocusIndicator);
+    let buf = frame.buffer_mut();
+    for rule in rules {
+        let style = Style::default().fg(crate::tui::blit::line_color(
+            theme,
+            PaintRole::SessionBorder,
+            rule,
+        ));
+        let glyph = if rule.width == 1 && rule.height > 1 {
+            "\u{2502}"
+        } else {
+            "\u{2500}"
+        };
+        for y in rule.top()..rule.bottom() {
+            for x in rule.left()..rule.right() {
+                let at = ratatui::layout::Position::new(x, y);
+                if let Some(cell) = buf.cell_mut(at) {
+                    cell.set_symbol(glyph);
+                    cell.set_style(if around.contains(at) {
+                        focus_style
+                    } else {
+                        style
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// An empty pane of a split view: what it is and how to fill it. SSHub's own
+/// chrome, so the theme backs it like any other surface.
+fn render_empty_pane(
+    frame: &mut Frame,
+    area: Rect,
+    keybinds: &KeybindsConfig,
+    theme: &ResolvedTheme,
+    focused: bool,
+) {
+    let mute = theme.style(StyleRole::TextMuted);
+    let title = if focused {
+        theme.style(StyleRole::FocusIndicator)
+    } else {
+        mute
+    };
+    let mut lines = vec![Line::from(Span::styled("empty pane", title))];
+    for (action, what) in [
+        (KeyAction::SessionSwitcher, "show an open session here"),
+        (KeyAction::SessionNewTab, "open a new session here"),
+        (KeyAction::PaneClose, "close this pane"),
+    ] {
+        let key = keybinds.primary(action);
+        if !key.is_empty() {
+            lines.push(Line::from(Span::styled(format!("{key}  {what}"), mute)));
+        }
+    }
+    let height = (lines.len() as u16).min(area.height);
+    let top = area.y + area.height.saturating_sub(height) / 2;
+    frame.render_widget(
+        Paragraph::new(lines).alignment(ratatui::layout::Alignment::Center),
+        Rect::new(area.x, top, area.width, height),
+    );
+}
+
+/// Footer for a focused empty pane: no session, so no stats to show.
+fn render_empty_pane_footer(
+    frame: &mut Frame,
+    area: Rect,
+    keybinds: &KeybindsConfig,
+    theme: &ResolvedTheme,
+) {
+    let mute = theme.style(StyleRole::TextMuted);
+    let line = Line::from(vec![
+        Span::raw(" "),
+        Span::styled(
+            format!(
+                "empty pane \u{b7} {} pick a session \u{b7} {} next pane",
+                keybinds.primary(KeyAction::SessionSwitcher),
+                keybinds.primary(KeyAction::PaneFocusNext),
+            ),
+            mute,
+        ),
+    ]);
+    frame.render_widget(Paragraph::new(line), area);
 }
 
 /// Small self-dismissing toast (e.g. "✓ copied N chars") in the corner of the
@@ -145,7 +288,7 @@ fn render_copy_toast(frame: &mut Frame, body: Rect, msg: &str, theme: &ResolvedT
 fn render_header(
     frame: &mut Frame,
     area: Rect,
-    session: &Session,
+    session: Option<&Session>,
     app: &App,
     theme: &ResolvedTheme,
 ) {
@@ -162,20 +305,34 @@ fn render_header(
     // the highlight can travel between them (#35).
     let mut tab_spans: Vec<(u16, u16)> = Vec::new();
     let travel = highlight_travel(app);
-    if app.sessions.len() > 1 {
+    if app.sessions.len() > 1 || app.panes.is_some() {
         // Multi-tab header: compact tab strip in place of the verbose
         // connection summary. Active tab is reversed; others are mute.
-        let active_idx = app.active_session.unwrap_or(0);
+        let active_idx = app.active_session;
+        // In a split view a dot marks every session the layout shows. It takes
+        // the label's leading space, so the strip never shifts.
+        let shown: Vec<usize> = app
+            .panes
+            .as_ref()
+            .map(|p| {
+                p.tree
+                    .leaves()
+                    .into_iter()
+                    .filter_map(|id| app.sessions.iter().position(|s| Some(s.id) == *id))
+                    .collect()
+            })
+            .unwrap_or_default();
         // The highlight is painted afterwards, over the interpolated rect, so
         // every label goes down mute here and the moving bar decides which one
         // reads as active.
         let mut col: u16 = area.x + spans.iter().map(span_cols).sum::<u16>();
         for (i, s) in app.sessions.iter().enumerate() {
-            let label = format!(" {} {} ", i + 1, s.display_name);
+            let mark = if shown.contains(&i) { '\u{2022}' } else { ' ' };
+            let label = format!("{mark}{} {} ", i + 1, s.display_name);
             let w = label.chars().count() as u16;
             tab_spans.push((col, w));
             col += w + 1;
-            let style = if i == active_idx && travel.is_none() {
+            let style = if Some(i) == active_idx && travel.is_none() {
                 active
             } else {
                 inactive
@@ -183,7 +340,7 @@ fn render_header(
             spans.push(Span::styled(label, style));
             spans.push(Span::raw(" "));
         }
-    } else {
+    } else if let Some(session) = session {
         // Single-tab header — full connection detail.
         let color = |role| Style::default().fg(theme.color(role));
         let (status_label, status_style) = match &session.phase {
@@ -229,7 +386,7 @@ fn render_header(
     let hint_text = app
         .config
         .keybinds
-        .session_header_hints(app.sessions.len() > 1);
+        .session_header_hints(app.sessions.len() > 1, app.panes.is_some());
     let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
     let pad = (area.width as usize).saturating_sub(used + hint_text.chars().count() + 1);
     spans.push(Span::raw(" ".repeat(pad)));
@@ -335,6 +492,7 @@ fn render_body(
     keybinds: &KeybindsConfig,
     theme: &ResolvedTheme,
     ghost: Option<&crate::app::ghost::GhostMatch>,
+    cursor: bool,
 ) {
     // While connecting, ssh's verbose `-v` handshake is siphoned off the PTY
     // (via a side FIFO) into `debug_log`, so the grid stays clean. Show a
@@ -366,7 +524,10 @@ fn render_body(
         }
         return;
     }
-    let term = PseudoTerminal::new(session.parser.screen());
+    // Only the pane that takes the keys shows a cursor: in a split view the
+    // others would otherwise each draw one, and the eye cannot tell which.
+    let term =
+        PseudoTerminal::new(session.parser.screen()).cursor(Cursor::default().visibility(cursor));
     frame.render_widget(term, area);
 
     // Overlay the in-app text selection by reversing the selected cells. Done
@@ -689,6 +850,7 @@ fn render_footer(
     session: &Session,
     theme: &ResolvedTheme,
     ghost_visible: bool,
+    zoomed: bool,
 ) {
     // When the child has exited the footer becomes a red banner with a
     // dismiss hint. Otherwise it shows the usual session stats line.
@@ -737,6 +899,13 @@ fn render_footer(
         bullet.clone(),
         Span::styled(target, mute),
     ];
+    if zoomed {
+        spans.push(bullet.clone());
+        spans.push(Span::styled(
+            "zoomed pane",
+            theme.style(StyleRole::FocusIndicator),
+        ));
+    }
 
     // When scrolled back, hint at how to return to live output. Otherwise
     // surface the selection hint: plain drag selects (and copies) in a shell;
@@ -807,18 +976,23 @@ mod tests {
         // At an outer height of 3 the pane is 1 row but the grid has 2 (the
         // 2x2 floor): a click on the footer must not become grid row 1.
         let area = Rect::new(0, 0, 10, 3);
-        let grid = crate::session::pty_size(area.height, area.width);
+        let pane = remote_pty_rect(area);
+        let grid = grid_of(pane);
         assert_eq!(grid, (2, 10));
-        assert!(pane_shows_cell(area, (0, 1), grid));
-        assert!(!pane_shows_cell(area, (0, 0), grid), "header");
-        assert!(!pane_shows_cell(area, (0, 2), grid), "footer");
-        let area = Rect::new(0, 0, 80, 26);
-        assert!(pane_shows_cell(area, (79, 24), (24, 80)));
+        assert!(pane_shows_cell(pane, (0, 1), grid));
+        assert!(!pane_shows_cell(pane, (0, 0), grid), "header");
+        assert!(!pane_shows_cell(pane, (0, 2), grid), "footer");
+        let pane = remote_pty_rect(Rect::new(0, 0, 80, 26));
+        assert!(pane_shows_cell(pane, (79, 24), (24, 80)));
         assert!(
-            !pane_shows_cell(area, (80, 5), (24, 80)),
+            !pane_shows_cell(pane, (80, 5), (24, 80)),
             "past the last column"
         );
-        assert!(!pane_shows_cell(area, (5, 25), (24, 80)), "footer");
+        assert!(!pane_shows_cell(pane, (5, 25), (24, 80)), "footer");
+        // A right-hand split pane: its origin is not (0, 1).
+        let right = Rect::new(41, 1, 39, 24);
+        assert!(!pane_shows_cell(right, (40, 5), (24, 39)), "separator");
+        assert!(pane_shows_cell(right, (41, 5), (24, 39)));
     }
 
     fn spawned_session() -> Session {
@@ -830,7 +1004,7 @@ mod tests {
             key_push_identity: None,
             host_name: "web-prod".into(),
         };
-        Session::spawn(cfg, 24, 80, None).unwrap()
+        Session::spawn(cfg, (24, 80), None).unwrap()
     }
 
     #[test]
@@ -1089,9 +1263,8 @@ mod tests {
             host_name: "narrow".into(),
         };
         // Pending wrap: filling all 10 columns parks the cursor at column
-        // 10, so the ghost must start at row 1, col 0. (`spawn` reserves a
-        // header and a footer row, so 5 rows yield a 3-row grid.)
-        let mut session = Session::spawn(narrow_cfg, 5, 10, None).unwrap();
+        // 10, so the ghost must start at row 1, col 0. (A 3-row grid.)
+        let mut session = Session::spawn(narrow_cfg, (3, 10), None).unwrap();
         session.parser.process(b"0123456789");
         assert_eq!(
             session.parser.screen().cursor_position(),

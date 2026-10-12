@@ -407,8 +407,7 @@ fn detached_local_session_blocks_switch_until_closed() {
             key_push_identity: None,
             host_name: "local".into(),
         },
-        24,
-        80,
+        (24, 80),
         None,
     )
     .unwrap();

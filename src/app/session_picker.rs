@@ -210,8 +210,10 @@ impl App {
                         }
                         // Retarget first, drop the picker, then derive the mode from
                         // the session we are switching *to* — never from wherever
-                        // the picker happened to be opened.
-                        self.active_session = Some(index);
+                        // the picker happened to be opened. In a split view the
+                        // pick goes into the focused pane (swapping panes if it
+                        // is already shown in another).
+                        self.show_in_focused_pane(index);
                         self.session_picker = None;
                         self.focus_active_session();
                     }

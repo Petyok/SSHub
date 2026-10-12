@@ -14,6 +14,7 @@ pub mod parser;
 pub mod pty;
 pub mod render;
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -21,13 +22,25 @@ use anyhow::Result;
 pub use parser::ParserState;
 pub use pty::{PtyEvent, PtyRuntime};
 
-/// PTY size for a terminal of `rows` x `cols`: one row each for header and
-/// footer, floored at 2x2. Stock vt100 0.16 panics below that: wrapping text
-/// on a 1-row grid panics in `Grid::col_wrap`, and a wide character on a
-/// 1-column grid underflows `cols - width` in `Screen::text`. The
-/// renderer clips whatever no longer fits the window.
-pub(crate) fn pty_size(rows: u16, cols: u16) -> (u16, u16) {
-    (rows.saturating_sub(2).max(2), cols.max(2))
+/// Smallest grid a session is ever given. Stock vt100 0.16 panics below 2x2:
+/// wrapping text on a 1-row grid panics in `Grid::col_wrap`, and a wide
+/// character on a 1-column grid underflows `cols - width` in `Screen::text`.
+/// The renderer clips whatever no longer fits the pane.
+pub(crate) fn floor_grid((rows, cols): (u16, u16)) -> (u16, u16) {
+    (rows.max(2), cols.max(2))
+}
+
+/// Identity of an open session, stable for its whole life. `App::sessions` is
+/// a `Vec` that shifts on every close, so anything that must keep pointing at
+/// one session (a pane in a split view) holds this instead of an index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SessionId(u64);
+
+impl SessionId {
+    fn next() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
 }
 
 /// Lifecycle of an embedded SSH session.
@@ -151,6 +164,8 @@ impl Selection {
 }
 
 pub struct Session {
+    /// Stable identity; see [`SessionId`].
+    pub id: SessionId,
     pub display_name: String,
     pub meta: SessionMeta,
     pub phase: SessionPhase,
@@ -230,14 +245,20 @@ pub struct Session {
 }
 
 impl Session {
-    /// Spawn the child on a freshly allocated PTY and start the reader thread.
+    /// Spawn the child on a freshly allocated PTY of `grid` = `(rows, cols)`
+    /// and start the reader thread.
+    ///
+    /// `grid` is the size of the pane the session is shown in, chrome already
+    /// subtracted by the caller: the session knows nothing about headers,
+    /// footers or splits. Spawning at the destination size matters, because
+    /// ssh sends it to the remote with the PTY request; a wrong first size costs
+    /// the remote a `SIGWINCH` and a full repaint before anything was typed.
     pub fn spawn(
         config: SessionConfig,
-        rows: u16,
-        cols: u16,
+        grid: (u16, u16),
         log: Option<crate::session_log::SessionLogWriter>,
     ) -> Result<Self> {
-        Self::spawn_inner(config, rows, cols, log, true)
+        Self::spawn_inner(config, grid, log, true)
     }
 
     /// Like [`Self::spawn`] but with the child's stderr merged onto the PTY
@@ -246,22 +267,20 @@ impl Session {
     /// the grid stays blank so the session never leaves Connecting.
     pub fn spawn_with_merged_stderr(
         config: SessionConfig,
-        rows: u16,
-        cols: u16,
+        grid: (u16, u16),
         log: Option<crate::session_log::SessionLogWriter>,
     ) -> Result<Self> {
-        Self::spawn_inner(config, rows, cols, log, false)
+        Self::spawn_inner(config, grid, log, false)
     }
 
     /// Spawn the child on a freshly allocated PTY and start the reader thread.
     fn spawn_inner(
         config: SessionConfig,
-        rows: u16,
-        cols: u16,
+        grid: (u16, u16),
         log: Option<crate::session_log::SessionLogWriter>,
         siphon_stderr: bool,
     ) -> Result<Self> {
-        let (pty_rows, pty_cols) = pty_size(rows, cols);
+        let (pty_rows, pty_cols) = floor_grid(grid);
         let interactive = config.key_push_identity.is_none()
             && matches!(config.argv.first().map(String::as_str), Some("ssh"));
         let mut auth = if interactive {
@@ -318,6 +337,7 @@ impl Session {
         }
 
         Ok(Self {
+            id: SessionId::next(),
             display_name: config.display_name.clone(),
             meta: config.meta.clone(),
             phase: SessionPhase::Connecting {
@@ -1051,11 +1071,21 @@ impl Session {
         current_screen_tail(self.parser.screen())
     }
 
-    /// Update both the PTY size and the parser grid. Body rows = total - header - footer.
-    pub fn resize(&mut self, rows: u16, cols: u16) {
-        let (pty_rows, pty_cols) = pty_size(rows, cols);
-        self.parser.set_size(pty_rows, pty_cols);
-        let _ = self.runtime.resize(pty_rows, pty_cols);
+    /// Resize the PTY and the parser grid to `grid` = `(rows, cols)`, the size
+    /// of the pane the session is shown in.
+    ///
+    /// A no-op when the size is unchanged, so callers may call it every frame:
+    /// the kernel would not signal an unchanged size either, but the parser's
+    /// held sync frame would be dropped for nothing. An exited session is
+    /// never resized: no program is left to repaint, and on vt100 a shrink and
+    /// grow round trip cuts its frozen screen.
+    pub fn resize(&mut self, grid: (u16, u16)) {
+        let (rows, cols) = floor_grid(grid);
+        if self.phase.is_terminal() || self.parser.screen().size() == (rows, cols) {
+            return;
+        }
+        self.parser.set_size(rows, cols);
+        let _ = self.runtime.resize(rows, cols);
     }
 
     /// Bare `Running` gate for explicit snippet insertion. `Running` may be a
@@ -1544,7 +1574,7 @@ mod prompt_tests {
             key_push_identity: None,
             host_name: "offline".into(),
         };
-        let mut session = Session::spawn(config, 24, 80, None).unwrap();
+        let mut session = Session::spawn(config, (24, 80), None).unwrap();
         session.debug_log = "Offending ED25519 key in /tmp/custom known_hosts:7\nHost key for [alias]:2222 has changed and you have requested strict checking.\n".into();
         assert_eq!(
             session.changed_key_target(),
@@ -1578,7 +1608,7 @@ mod prompt_tests {
             display_name: "offline".into(), meta: SessionMeta::default(),
             pending_secret: None, key_push_identity: None, host_name: "offline".into(),
         };
-        let mut session = Session::spawn(config, 24, 80, None).unwrap();
+        let mut session = Session::spawn(config, (24, 80), None).unwrap();
         session.auth = Some(interactive_auth::InteractiveAuth::new().unwrap());
         // 10s, not 3s: CI runners stall PTY spawn + shell startup far longer
         // than a local box (cf. the 10s `tick_until` in app/auth.rs and the
@@ -1625,7 +1655,7 @@ mod prompt_tests {
             key_push_identity: None,
             host_name: "mosh-host".into(),
         };
-        let mut s = Session::spawn(config, 10, 40, None).unwrap();
+        let mut s = Session::spawn(config, (10, 40), None).unwrap();
         s.config.argv = vec!["mosh".into(), "host".into()];
         s.phase = SessionPhase::Running {
             started_at: Instant::now(),
@@ -1650,7 +1680,7 @@ mod prompt_tests {
             key_push_identity: None,
             host_name: "t".into(),
         };
-        let mut s = Session::spawn(config, 24, 80, None).unwrap();
+        let mut s = Session::spawn(config, (24, 80), None).unwrap();
         s.auth = Some(interactive_auth::InteractiveAuth::new().unwrap());
         assert!(s.auth.as_ref().unwrap().channel_open());
         let env = s
@@ -1703,7 +1733,7 @@ mod prompt_tests {
             key_push_identity: None,
             host_name: "t".into(),
         };
-        let mut s = Session::spawn(config, 24, 80, None).unwrap();
+        let mut s = Session::spawn(config, (24, 80), None).unwrap();
 
         // Pump the reader threads; both writes are tiny and immediate.
         let mut got_err = false;
@@ -1749,7 +1779,7 @@ mod prompt_tests {
             key_push_identity: None,
             host_name: "mosh-host".into(),
         };
-        let mut s = Session::spawn(config, 10, 40, None).unwrap();
+        let mut s = Session::spawn(config, (10, 40), None).unwrap();
         s.config.argv = vec!["mosh".into(), "host".into()];
         s.phase = SessionPhase::Running {
             started_at: Instant::now(),
@@ -1812,7 +1842,7 @@ mod prompt_tests {
             key_push_identity: None,
             host_name: "mux-slave".into(),
         };
-        let mut s = Session::spawn(config, 10, 40, None).unwrap();
+        let mut s = Session::spawn(config, (10, 40), None).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
             s.drain();
@@ -1855,7 +1885,7 @@ mod prompt_tests {
             key_push_identity: None,
             host_name: "local".into(),
         };
-        let mut s = Session::spawn_with_merged_stderr(config, 24, 80, None).unwrap();
+        let mut s = Session::spawn_with_merged_stderr(config, (24, 80), None).unwrap();
         s.local_shell = true;
         // Bounded poll past REVEAL_TIMEOUT: a shell that never reveals
         // must fail the assert, not park the test binary.
@@ -1912,7 +1942,7 @@ mod prompt_tests {
             key_push_identity: None,
             host_name: "t".into(),
         };
-        let mut s = Session::spawn(config, 24, 80, None).unwrap();
+        let mut s = Session::spawn(config, (24, 80), None).unwrap();
         // Force the fallback: in-test the askpass helper stages fine
         // (the test binary exists), which would skip the PTY path.
         s.use_askpass = false;
@@ -1956,7 +1986,7 @@ mod prompt_tests {
             key_push_identity: None,
             host_name: "t".into(),
         };
-        let mut s = Session::spawn(config, 24, 80, None).unwrap();
+        let mut s = Session::spawn(config, (24, 80), None).unwrap();
 
         for _ in 0..200 {
             s.drain();
@@ -1994,7 +2024,7 @@ mod prompt_tests {
             key_push_identity: None,
             host_name: "t".into(),
         };
-        let mut s = Session::spawn(config, 24, 80, None).unwrap();
+        let mut s = Session::spawn(config, (24, 80), None).unwrap();
         let mut events: Vec<PtyEvent> = (0..16)
             .map(|i| PtyEvent::Bytes(format!("\x1b[?2026l{i:x}\x1b[?2026h").into_bytes()))
             .collect();
@@ -2029,7 +2059,7 @@ mod prompt_tests {
             key_push_identity: None,
             host_name: "t".into(),
         };
-        let mut s = Session::spawn(config, 24, 80, None).unwrap();
+        let mut s = Session::spawn(config, (24, 80), None).unwrap();
         // Bounded poll: a child that never gets its answer must fail the assert,
         // not park the test binary. `Drop for PtyRuntime` kills the process
         // group on the way out, so a `dd` still blocked on the read is reaped.
@@ -2101,7 +2131,7 @@ mod prompt_tests {
             key_push_identity: None,
             host_name: "t".into(),
         };
-        Session::spawn(config, 24, 80, None).unwrap()
+        Session::spawn(config, (24, 80), None).unwrap()
     }
     /// A key-auth `sshd` on a free 127.0.0.1 port, configured in a tempdir;
     /// `None` (test skipped) without sshd, ssh or ssh-keygen. Killed on drop.
@@ -2272,7 +2302,7 @@ mod prompt_tests {
             key_push_identity: None,
             host_name: "oracle".into(),
         };
-        let mut s = Session::spawn(config, 24, 80, None).unwrap();
+        let mut s = Session::spawn(config, (24, 80), None).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         loop {
             s.drain();
@@ -2343,7 +2373,7 @@ mod prompt_tests {
             key_push_identity: None,
             host_name: "jump".into(),
         };
-        let mut s = Session::spawn(config, 24, 80, None).unwrap();
+        let mut s = Session::spawn(config, (24, 80), None).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         while !s.phase.is_terminal() {
             s.drain();
@@ -2564,7 +2594,7 @@ mod prompt_tests {
             key_push_identity: None,
             host_name: "x".into(),
         };
-        let mut s = Session::spawn(config, 24, 80, None).unwrap();
+        let mut s = Session::spawn(config, (24, 80), None).unwrap();
         // The child's exit and its stderr bytes race between the two reader
         // threads; the main loop keeps draining regardless, so wait for both.
         let mut exited = false;

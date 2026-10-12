@@ -23,7 +23,7 @@ fn fixture(local: bool) -> App {
         key_push_identity: None,
         host_name: "fixture".into(),
     };
-    let mut session = crate::session::Session::spawn(config, 30, 100, None).unwrap();
+    let mut session = crate::session::Session::spawn(config, (30, 100), None).unwrap();
     session.phase = crate::session::SessionPhase::Running {
         started_at: Instant::now(),
     };
@@ -58,7 +58,7 @@ fn fixture_capture(path: &std::path::Path, local: bool) -> App {
         key_push_identity: None,
         host_name: "fixture".into(),
     };
-    let mut session = crate::session::Session::spawn(config, 30, 100, None).unwrap();
+    let mut session = crate::session::Session::spawn(config, (30, 100), None).unwrap();
     session.phase = crate::session::SessionPhase::Running {
         started_at: Instant::now(),
     };
@@ -615,7 +615,7 @@ fn remote_session_latches_connected_and_records_typed_commands() {
         key_push_identity: None,
         host_name: "fake".into(),
     };
-    let session = crate::session::Session::spawn(config, 30, 100, None).unwrap();
+    let session = crate::session::Session::spawn(config, (30, 100), None).unwrap();
     app.sessions.push(session);
     app.active_session = Some(0);
     app.mode = AppMode::Session;

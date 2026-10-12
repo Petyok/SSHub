@@ -747,7 +747,8 @@ impl ParserState {
             let lift = usize::from(row + 1 - rows);
             self.inner.process(format!("\x1b[{old_rows};1H").as_bytes());
             self.inner.process("\n".repeat(lift).as_bytes());
-            self.inner.process(format!("\x1b[{rows};{}H", col + 1).as_bytes());
+            self.inner
+                .process(format!("\x1b[{rows};{}H", col + 1).as_bytes());
         }
         self.inner.screen_mut().set_size(rows, cols);
         // The held frame has the old size: draw live until the next one.
@@ -1476,7 +1477,7 @@ mod tests {
 
     #[test]
     fn smallest_pty_survives_wrapping_and_wide_text() {
-        let (rows, cols) = crate::session::pty_size(0, 0);
+        let (rows, cols) = crate::session::floor_grid((0, 0));
         let mut p = ParserState::new(rows, cols);
         p.process("abcdefghijklmnop中文中文\r\nx中".as_bytes());
     }
@@ -1728,7 +1729,10 @@ mod tests {
         // Growing back adds blank rows below; history is still whole.
         p.set_size(46, 40);
         assert_eq!(p.screen().cursor_position(), (22, 8));
-        assert_eq!(history(&p).iter().filter(|l| !l.trim().is_empty()).count(), 101);
+        assert_eq!(
+            history(&p).iter().filter(|l| !l.trim().is_empty()).count(),
+            101
+        );
     }
 
     #[test]
@@ -1745,7 +1749,11 @@ mod tests {
         stream.push_str("\x1b[?1049h\x1b[?1049l\x1b[10;1H");
         p.process(stream.as_bytes());
         p.set_size(6, 20);
-        let rows: Vec<String> = p.screen().rows(0, 20).map(|r| r.trim_end().to_string()).collect();
+        let rows: Vec<String> = p
+            .screen()
+            .rows(0, 20)
+            .map(|r| r.trim_end().to_string())
+            .collect();
         assert_eq!(rows, ["row1", "row2", "row3", "row4", "row5", "row6"]);
     }
 

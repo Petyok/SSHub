@@ -171,7 +171,7 @@ mod tests {
             key_push_identity: None,
             host_name: "offline".into(),
         };
-        let mut session = Session::spawn(config, 24, 100, None).unwrap();
+        let mut session = Session::spawn(config, (24, 100), None).unwrap();
         let auth = InteractiveAuth::new().unwrap();
         let env = auth.channel_env(std::path::Path::new("unused"));
         let get = |name: &str| env.iter().find(|(key, _)| key == name).unwrap().1.clone();
