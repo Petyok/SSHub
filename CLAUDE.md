@@ -42,9 +42,9 @@ Odometer scheme — **Z (patch)** rolls 0–9, **Y (minor)** rolls 0–99, and t
 
 The patch bump is automated by a tracked `pre-commit` hook (`.githooks/pre-commit`) that runs `just bump patch` on every commit **to `development`** (skipped on other branches and during merges). Git hooks aren't shared on clone, so enable them once per checkout: `just setup-hooks` (sets `core.hooksPath .githooks`).
 
-Releasing is one command, run from a clean `development`:
+Releasing is one command, run from a clean `development`. The kind is required: a bare `just release` refuses and lists the three below.
 
-- **`just release`** (or `just release minor`) — feature release. `just bump minor`, tags `vX.Y.0`.
+- **`just release minor`**: feature release. `just bump minor`, tags `vX.Y.0`.
 - **`just release patch`** — **hotfix**. Tags/publishes `development`'s **current** `vX.Y.Z` with **no bump**, so a fix can reach `main` + crates.io without pretending to be a new minor.
 - **`just release X.Y.Z`** — release an **explicit** version (e.g. `just release 0.7.0` to jump ahead), no `--no-verify` dance needed.
 
@@ -106,6 +106,6 @@ For current architecture details (tabs, schema, event loop, modules), see `openw
 
 This repository uses OpenWiki for recurring code documentation. Start with `openwiki/quickstart.md`, then follow its links to architecture, workflows, domain concepts, operations, integrations, testing guidance, and source maps.
 
-The scheduled OpenWiki GitHub Actions workflow refreshes the repository wiki. Do not hand-edit generated OpenWiki pages unless explicitly asked; prefer updating source code/docs and letting OpenWiki regenerate.
+The manually triggered OpenWiki GitHub Actions workflow (`workflow_dispatch`) refreshes the repository wiki. Do not hand-edit generated OpenWiki pages unless explicitly asked; prefer updating source code/docs and letting OpenWiki regenerate.
 
 <!-- OPENWIKI:END -->
