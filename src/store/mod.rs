@@ -9,6 +9,7 @@ mod snippets;
 pub mod transfer;
 mod tunnels;
 mod types;
+mod workspaces;
 pub use group_defaults::{ResolvedConnection, DEFAULT_PORT};
 pub use hosts::is_option_like;
 pub use transfer::{
@@ -20,7 +21,7 @@ pub use types::{
     AuthEvent, DeleteHostOutcome, DeleteIdentityOutcome, HostGroup, HostGroupUpdate, HostSource,
     HostUpdate, Identity, IdentityUpdate, LogBookmark, ManagedHost, NewHost, NewHostGroup,
     NewIdentity, NewLogBookmark, NewSnippet, NewTunnel, Snippet, SnippetUpdate,
-    SshConfigHostImport, Tunnel, TunnelType, UpsertSshConfigOutcome,
+    SshConfigHostImport, Tunnel, TunnelType, UpsertSshConfigOutcome, Workspace,
 };
 
 use anyhow::{Context, Result};

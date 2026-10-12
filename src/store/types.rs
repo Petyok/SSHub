@@ -375,6 +375,15 @@ pub struct LogBookmark {
     pub created_at: i64,
 }
 
+/// A saved split-view layout (#73): what to open in which pane, as JSON.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Workspace {
+    pub id: i64,
+    pub name: String,
+    pub layout: String,
+    pub updated_at: i64,
+}
+
 /// Fields for creating a new log bookmark.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct NewLogBookmark {
