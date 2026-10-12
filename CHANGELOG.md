@@ -4,6 +4,13 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **SFTP search keeps capital letters** - typing `S` or `L` into the SFTP
+  tab's host search or file filter opened the snippet manager or the log
+  browser. A text input on a dashboard tab now gets every character it types;
+  chords such as `Ctrl+T` still reach the global keys.
+
 ## [0.17.7] - 2026-10-11
 
 ### Added

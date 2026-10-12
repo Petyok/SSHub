@@ -37,6 +37,15 @@ impl App {
             return Ok(());
         }
 
+        // A text input on a dashboard tab (the SFTP host or file search) owns
+        // every character it types, so a global bind on a plain or Shift key
+        // (`Shift+S` snippets, `Shift+L` logs, or any user rebind) must not
+        // steal it. Chords such as Ctrl+T or Alt+P still reach the globals.
+        if self.mode == AppMode::Normal && self.dashboard_text_input_active() && is_typed_char(&key)
+        {
+            return self.handle_key_dashboard_tab(key);
+        }
+
         // Open a local shell tab from any dashboard tab.
         if matches!(self.mode, AppMode::Normal) && self.is_action(KeyAction::LocalShell, &key) {
             self.open_local_shell()?;
@@ -129,14 +138,27 @@ impl App {
             AppMode::SnippetForm => self.handle_key_snippet_form(key),
             AppMode::SnippetPicker => self.handle_key_snippet_picker(key),
             AppMode::Connecting | AppMode::Session => self.handle_key_session(key),
-            AppMode::Normal => match self.active_tab {
-                1 => self.handle_key_sftp(key),
-                2 => self.handle_key_tunnels(key),
-                3 => self.handle_key_keychain(key),
-                4 => self.handle_key_audit(key),
-                _ => self.handle_key_normal(key),
-            },
+            AppMode::Normal => self.handle_key_dashboard_tab(key),
         }
+    }
+
+    /// Key dispatch for the dashboard tab on screen.
+    fn handle_key_dashboard_tab(&mut self, key: KeyEvent) -> Result<()> {
+        match self.active_tab {
+            1 => self.handle_key_sftp(key),
+            2 => self.handle_key_tunnels(key),
+            3 => self.handle_key_keychain(key),
+            4 => self.handle_key_audit(key),
+            _ => self.handle_key_normal(key),
+        }
+    }
+
+    /// True while a dashboard tab has a text input capturing keys. These live
+    /// in `AppMode::Normal`, unlike overlay inputs, which have their own mode
+    /// and never see the global binds.
+    fn dashboard_text_input_active(&self) -> bool {
+        self.active_tab == 1
+            && (self.sftp_picker_searching || self.sftp.as_ref().is_some_and(|s| s.searching))
     }
 
     pub(crate) fn handle_key_normal(&mut self, key: KeyEvent) -> Result<()> {
@@ -1553,4 +1575,11 @@ pub(crate) fn save_config_to(
         Some(path) => crate::config::save_config_at(path, config),
         None => crate::config::save_config(config),
     }
+}
+
+/// A key a text input inserts: a printable character, plain or with Shift
+/// (the same test every input handler applies before pushing the char).
+fn is_typed_char(key: &KeyEvent) -> bool {
+    matches!(key.code, KeyCode::Char(c) if !c.is_control())
+        && (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
 }
