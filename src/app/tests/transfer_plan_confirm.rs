@@ -173,6 +173,54 @@ fn buffer_contains(buffer: &ratatui::buffer::Buffer, needle: &str) -> bool {
     false
 }
 
+/// Regression: the `h` scope read `self.hosts[self.selected]`, but `selected`
+/// is a nav-row index that counts group headers, so a grouped dashboard named
+/// the wrong host (or none). It also sent the label, which the engine (keyed
+/// by host name) never matches.
+#[test]
+fn transfer_host_scope_follows_the_selected_nav_row() {
+    use crate::app::NavRow;
+    use crate::store::{NewHost, NewHostGroup};
+
+    let store = super::test_store();
+    for (group, host, label) in [("alpha", "a1", None), ("beta", "b1", Some("Beta box"))] {
+        let g = store
+            .create_group(&NewHostGroup {
+                name: group.into(),
+                ..Default::default()
+            })
+            .unwrap();
+        store
+            .create_host(&NewHost {
+                name: host.into(),
+                label: label.map(Into::into),
+                address: "10.0.0.1".into(),
+                group_id: Some(g.id),
+                ..Default::default()
+            })
+            .unwrap();
+    }
+    let mut app = App::new_with_deps(
+        crate::config::AppConfig::default(),
+        crate::app::AppDeps {
+            resolver: Box::new(super::MockResolver::new(vec![])),
+            metadata: std::sync::Arc::new(crate::metadata::MetadataDb::default()),
+            store,
+            password_store: Box::new(crate::credentials::NoopPasswordStore),
+        },
+    );
+    app.reload_hosts().unwrap();
+    // Tree: [Header alpha, Host a1, Header beta, Host b1]
+    assert!(matches!(app.nav_rows[3], NavRow::Host(_)));
+
+    app.selected = 1;
+    assert_eq!(app.transfer_host_name().as_deref(), Some("a1"));
+    app.selected = 3;
+    assert_eq!(app.transfer_host_name().as_deref(), Some("b1"));
+    app.selected = 2;
+    assert_eq!(app.transfer_host_name(), None, "a group header is no host");
+}
+
 #[test]
 fn transfer_dialog_lines_cover_every_stage() {
     // Oracle: the staged keymap in `App::handle_key_profile_transfer`

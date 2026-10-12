@@ -369,11 +369,11 @@ impl crate::app::App {
         self.pending_transfer = None;
     }
 
-    /// Dashboard selection names used as transfer scopes.
+    /// Dashboard selection names used as transfer scopes. `selected` is a
+    /// nav-row index (group headers included), so the host comes through the
+    /// nav row; the engine matches the host's name, never its label.
     pub(crate) fn transfer_host_name(&self) -> Option<String> {
-        self.hosts
-            .get(self.selected)
-            .map(|host| host.display_name().to_string())
+        self.selected_entry().map(|host| host.name().to_string())
     }
 
     pub(crate) fn transfer_group_name(&self) -> Option<String> {
