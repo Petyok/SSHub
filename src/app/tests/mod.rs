@@ -150,6 +150,7 @@ mod identity_group;
 mod keybind;
 mod log_browser;
 mod misc;
+mod panes;
 mod profile_manager;
 mod session;
 mod sftp;
