@@ -78,12 +78,6 @@ start() {
     stop 2>/dev/null || true
     seed_keys
     write_conf
-    # This is a throwaway server on a loopback port; drop any prior host-key
-    # entry so SSHub's trust-on-first-use re-records the current ephemeral key
-    # instead of tripping its "host key changed" (MITM) guard on a stale line.
-    if [ -f "$HOME/.ssh/known_hosts" ]; then
-        ssh-keygen -R "[127.0.0.1]:$PORT" -f "$HOME/.ssh/known_hosts" >/dev/null 2>&1 || true
-    fi
     # -D keeps sshd in the foreground; background it ourselves so the tape's
     # shell keeps going. -e sends logs to stderr (silenced).
     "$SSHD_BIN" -f "$SSHD_CONF" -D -e >/dev/null 2>&1 &
@@ -109,9 +103,12 @@ status() {
     fi
 }
 
+# `keys` only prepares the keys and sandboxes: demo/record.py needs the client
+# key before it seeds the database, or the SFTP host is left out.
 case "${1:-start}" in
     start)  start ;;
     stop)   stop ;;
     status) status ;;
-    *) echo "usage: $0 start|stop|status" >&2; exit 1 ;;
+    keys)   seed_keys ;;
+    *) echo "usage: $0 start|stop|status|keys" >&2; exit 1 ;;
 esac

@@ -47,6 +47,8 @@ SHOTS = ROOT / "demo" / "screenshots"
 # local pane's path on screen, so a real `$HOME` would publish your username and
 # directory layout in the README — it already did, in the GIFs this replaces.
 DEMO_HOME = Path("/tmp/sshub-demo-home")
+# Seeded once per run; every scenario then works on its own copy (env_for).
+SEEDED = ROOT / "demo" / "home" / ".local" / "share" / "sshub"
 
 COLS, ROWS = 150, 40
 # The "Mono" variant, or agg warns that the cell metrics are off.
@@ -140,7 +142,7 @@ class Tape:
         return self
 
 
-def record(tape: Tape, env: dict[str, str], cast: Path) -> float:
+def record(tape: Tape, exe: Path, env: dict[str, str], cast: Path) -> float:
     """Run sshub under a PTY, feed it `tape`, write an asciicast. Returns the
     duration of the visible part."""
     master, slave = pty.openpty()
@@ -150,7 +152,7 @@ def record(tape: Tape, env: dict[str, str], cast: Path) -> float:
 
     winsize(COLS)
     proc = subprocess.Popen(
-        [str(ROOT / "target" / "release" / "sshub")],
+        [str(exe)],
         stdin=slave, stdout=slave, stderr=slave, env=env,
         close_fds=True, preexec_fn=os.setsid, cwd=env.get("SSHUB_CWD", str(ROOT)),
     )
@@ -215,7 +217,7 @@ def render(cast: Path, gif: Path) -> None:
         "agg", "--font-family", FONT, "--font-size", str(FONT_SIZE),
         "--theme", THEME, "--fps-cap", str(FPS_CAP),
         "--last-frame-duration", "2", str(cast), str(gif),
-    ], check=True, stderr=subprocess.DEVNULL)
+    ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def grab_stills(gif: Path, stills: list[tuple[str, float]]) -> None:
@@ -238,9 +240,9 @@ def grab_stills(gif: Path, stills: list[tuple[str, float]]) -> None:
         print(f"    {SHOTS.name}/{name}.png  (t={at:.2f}s)")
 
 
-def env_for(slug: str, cwd: Path | None = None) -> dict[str, str]:
-    """A pristine config per scenario, so one run cannot leak settings into
-    another.
+def env_for(slug: str, release: Path, cwd: Path | None = None) -> dict[str, str]:
+    """A pristine config and database per scenario, so one run cannot leak
+    settings or hosts into another (add-host's new host, a session in "recent").
 
     Motion is deliberately left ON. `disable_animation` is the reduced-motion
     toggle: it switches off every slide these recordings exist to show. The old
@@ -249,24 +251,36 @@ def env_for(slug: str, cwd: Path | None = None) -> dict[str, str]:
     way instead.
     """
     cfg = Path(f"/tmp/sshub-demo-{slug}")
-    if cfg.exists():
-        shutil.rmtree(cfg)
+    data = Path(f"/tmp/sshub-demo-data-{slug}")
+    for d in (cfg, data):
+        if d.exists():
+            shutil.rmtree(d)
     shutil.copytree(ROOT / "demo" / "home" / ".config" / "sshub", cfg)
+    shutil.copytree(SEEDED, data)
     # Fresh throwaway home: keeps your username out of frame, and gives the SFTP
     # scenario a pristine local folder (it downloads into it).
     if DEMO_HOME.exists():
         shutil.rmtree(DEMO_HOME)
     shutil.copytree(ROOT / "demo" / "home" / "sftp-local", DEMO_HOME / "sftp-local")
     (DEMO_HOME / ".ssh").mkdir(mode=0o700, parents=True, exist_ok=True)
+    # The SFTP identity is seeded with this path (see main), so the keys tab
+    # shows a path under the throwaway home instead of your checkout's.
+    for suffix in ("", ".pub"):
+        shutil.copy2(ROOT / "demo" / "home" / ".ssh" / f"demo_client_ed25519{suffix}",
+                     DEMO_HOME / ".ssh")
     env = dict(os.environ)
+    # Whatever terminal runs the recorder, the recording is of a colour one.
+    for var in ("NO_COLOR", "TERMINFO"):
+        env.pop(var, None)
     env.update({
         "HOME": str(DEMO_HOME),
         "TERM": "xterm-256color",
+        "COLORTERM": "truecolor",
         "SSHUB_VERSION_LABEL": "",
         "SSHUB_CONFIG_DIR": str(cfg),
-        "SSHUB_DATA_DIR": str(ROOT / "demo" / "home" / ".local" / "share" / "sshub"),
+        "SSHUB_DATA_DIR": str(data),
         "SSHUB_SSH_CONFIG": str(ROOT / "demo" / "home" / "ssh_config"),
-        "PATH": f"{ROOT}/demo/bin:{ROOT}/target/release:" + os.environ.get("PATH", ""),
+        "PATH": f"{ROOT}/demo/bin:{release}:" + os.environ.get("PATH", ""),
     })
     if cwd:
         env["SSHUB_CWD"] = str(cwd)
@@ -403,23 +417,49 @@ SCENARIOS: dict[str, dict] = {
 }
 
 
+def build() -> Path:
+    """Build this checkout's binary and return the directory it lands in.
+
+    Not `ROOT/target`: worktrees share one target dir through an untracked
+    `.cargo/config.toml`, and CARGO_TARGET_DIR can move it too, so ask cargo.
+    That shared dir also fingerprints the crate identically for every worktree,
+    so a build here can report itself fresh and leave another worktree's binary
+    in place; touching the crate roots makes cargo rebuild from this checkout.
+    `--no-default-features` links the system OpenSSL: this binary never ships,
+    and the vendored build is most of a cold compile.
+    """
+    for root in ("src/lib.rs", "src/main.rs"):
+        os.utime(ROOT / root)
+    subprocess.run(["cargo", "build", "--release", "--no-default-features"],
+                   cwd=ROOT, check=True)
+    meta = subprocess.run(["cargo", "metadata", "--format-version", "1", "--no-deps"],
+                          cwd=ROOT, check=True, capture_output=True, text=True)
+    return Path(json.loads(meta.stdout)["target_directory"]) / "release"
+
+
 def main(argv: list[str]) -> int:
     if not shutil.which("agg"):
         print("agg not found: cargo install --git https://github.com/asciinema/agg",
               file=sys.stderr)
         return 1
-    if not (ROOT / "target" / "release" / "sshub").exists():
-        subprocess.run(["cargo", "build", "--release"], cwd=ROOT, check=True)
-    # The demo hosts are seeded once, outside the recording — the old tapes typed
-    # this into the shell and then had to wait for cargo mid-take.
-    subprocess.run(["bash", "demo/seed-demo.sh"], cwd=ROOT, check=True,
-                   stdout=subprocess.DEVNULL)
-
     names = argv or list(SCENARIOS)
     for name in names:
         if name not in SCENARIOS:
             print(f"no such scenario: {name}", file=sys.stderr)
             return 1
+    release = build()
+    # The SFTP host is only seeded when its client key exists (seed-demo.sh), so
+    # make the key first: every scenario's host list shows that host.
+    subprocess.run(["bash", "demo/sftp-server.sh", "keys"], cwd=ROOT, check=True)
+    # The demo hosts are seeded once, outside the recording (the old tapes typed
+    # this into the shell and then had to wait for cargo mid-take). The SFTP key
+    # is recorded at the path env_for copies it to, under the throwaway home.
+    shutil.rmtree(SEEDED, ignore_errors=True)
+    seed_env = dict(os.environ, SSHUB_DATA_DIR=str(SEEDED),
+                    SSHUB_DEMO_SFTP_KEY=str(DEMO_HOME / ".ssh" / "demo_client_ed25519"))
+    subprocess.run(["bash", "demo/seed-demo.sh"], cwd=ROOT, check=True, env=seed_env,
+                   stdout=subprocess.DEVNULL)
+
     BUILD.mkdir(parents=True, exist_ok=True)
     GIFS.mkdir(parents=True, exist_ok=True)
 
@@ -433,7 +473,10 @@ def main(argv: list[str]) -> int:
         try:
             print(f"==> recording {name}")
             cast = BUILD / f"{name}.cast"
-            got = record(tape, env_for(name, spec.get("cwd")), cast)
+            env = env_for(name, release, spec.get("cwd"))
+            if spec.get("home"):
+                spec["home"](DEMO_HOME)
+            got = record(tape, release / "sshub", env, cast)
         finally:
             if spec.get("teardown"):
                 subprocess.run(spec["teardown"], cwd=ROOT, check=False,

@@ -155,23 +155,24 @@ fn main() -> Result<()> {
     // A real, locally-reachable SFTP target for the SFTP-browser demo. Unlike
     // the public-resolver hosts above (whose sessions are faked by
     // demo/bin/ssh), the SFTP browser speaks native libssh2 and needs an actual
-    // server — demo/sftp-server.sh spins up a rootless sshd on 127.0.0.1:2222
-    // and exports these two env vars. Absent them (e.g. `cargo run` outside the
-    // demo harness) we simply skip this host.
-    if let (Ok(key), Ok(user)) = (
-        std::env::var("SSHUB_DEMO_SFTP_KEY"),
-        std::env::var("SSHUB_DEMO_SFTP_USER"),
-    ) {
+    // server: demo/sftp-server.sh spins up a rootless sshd on 127.0.0.1:2222
+    // and generates the key in SSHUB_DEMO_SFTP_KEY. Absent it (e.g. `cargo run`
+    // outside the demo harness) we simply skip this host. The rootless sshd
+    // only admits the user running it, and with no username stored SSHub's SFTP
+    // logs in as `$USER`, so nobody's login name is seeded into a recording.
+    // SSHUB_DEMO_SFTP_USER pins one anyway.
+    if let Ok(key) = std::env::var("SSHUB_DEMO_SFTP_KEY") {
+        let user = std::env::var("SSHUB_DEMO_SFTP_USER").ok();
         let identity = store.create_identity(&NewIdentity {
             name: "demo sftp key".to_string(),
-            username: Some(user.clone()),
+            username: user.clone(),
             private_key: Some(PathBuf::from(&key)),
             ..Default::default()
         })?;
         store.create_host(&NewHost {
             name: "localhost (SFTP demo)".to_string(),
             address: "127.0.0.1".to_string(),
-            username: Some(user),
+            username: user,
             port: Some(
                 std::env::var("SSHUB_SFTP_DEMO_PORT")
                     .ok()

@@ -11,8 +11,8 @@ mkdir -p "$SSHUB_DATA_DIR"
 # demo/sftp-server.sh). Harmless when absent — the seeder just skips that host.
 CLIENTKEY="$ROOT/demo/home/.ssh/demo_client_ed25519"
 if [ -f "$CLIENTKEY" ]; then
-    export SSHUB_DEMO_SFTP_KEY="$CLIENTKEY"
-    export SSHUB_DEMO_SFTP_USER="${SSHUB_DEMO_SFTP_USER:-$USER}"
+    # demo/record.py passes the path of a copy under its throwaway home instead.
+    export SSHUB_DEMO_SFTP_KEY="${SSHUB_DEMO_SFTP_KEY:-$CLIENTKEY}"
 fi
 
-cargo run --quiet --example seed-demo --manifest-path "$ROOT/Cargo.toml"
+cargo run --quiet --no-default-features --example seed-demo --manifest-path "$ROOT/Cargo.toml"
