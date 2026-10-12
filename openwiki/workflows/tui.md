@@ -43,7 +43,9 @@ The full binding table lives in `README.md` (`## Keybindings`); rebinds made in 
 
 ## Mouse
 
-Click tabs, select rows, scroll panels, double-click to connect (`src/app/mouse.rs`). Enabled via crossterm `EnableMouseCapture` in the [event loop](../architecture/overview.md).
+Mouse capture is enabled via crossterm `EnableMouseCapture` in the [event loop](../architecture/overview.md); `App::handle_mouse` (`src/app/mouse.rs`) routes each event by mode. On the dashboard: click tabs, select rows, scroll panels, double-click to connect. In sessions: terminal-style selection over the PTY. Over a zoomed panel and over every overlay (`is_overlay_mode`: forms, dialogs, pickers): a drag selects what is on screen and copies it on release (`apply_panel_selection` in `src/tui/mod.rs` scrapes the drawn cells); a press and release without movement copies nothing.
+
+Over an overlay that click goes to `App::click_at` (`src/app/field_click.rs`), which reads `App::click_map`: one-row targets the renderers record every frame (the map is cleared at the start of each frame) saying what was drawn where, a form field row (`ClickHit::Field`, focus it with the cursor under the pointer) or a picker row (`ClickHit::Row`, highlight it without choosing). The host, identity, keygen and group forms and the SFTP, import and broadcast prompts build a `screens::FormBody`, a paragraph that also knows which line shows which field; `FormBody::record_clicks` lays each field line out with ratatui's own `Wrap`, so word-wrapped values map exactly. The tunnel and snippet forms record their one-row fields directly, and pickers their rows (mostly through `App::record_list_rows`). While a popup slides open, `render_popup_open` moves its targets by the same offset it draws the popup at.
 
 ## Change guidance
 

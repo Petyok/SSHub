@@ -249,7 +249,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "Ctrl+Y",
-        desc: "In a form: copy the stored secret",
+        desc: "In a form: copy the focused field (the stored secret on a password field)",
     },
     HelpItem::Blank,
     HelpItem::Section("audit (tab 5)"),
@@ -459,6 +459,14 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     HelpItem::Entry {
         key: "[forms]",
         desc: "",
+    },
+    HelpItem::Entry {
+        key: "click",
+        desc: "Focus the field under the pointer with the cursor there; in a picker, palette or tag filter, highlight the row without choosing it",
+    },
+    HelpItem::Entry {
+        key: "drag",
+        desc: "Select text in a form, dialog or picker, copied on release (Shift+drag leaves the mouse to your terminal)",
     },
     HelpItem::Entry {
         key: "Ctrl+U / Ctrl+W",

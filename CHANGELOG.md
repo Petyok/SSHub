@@ -4,6 +4,19 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Mouse in forms, dialogs and pickers** (issue #116) - the mouse used to
+  do nothing outside a session or a zoomed panel, and since SSHub holds the
+  mouse the terminal's own selection was gone too. A drag now selects
+  whatever is on screen and copies it on release, a click focuses the field
+  under the pointer with the cursor where you clicked (prompts included), and
+  a click on a picker, palette or tag-filter row highlights it without
+  choosing it. `Ctrl+Y` (the copy-secret bind) copies the focused field's
+  exact value in any form, the search bar or the palette, not just a stored
+  secret (the key generator's passphrase is never copied), and the form's hint
+  line names it. `Shift` still hands the mouse to the terminal.
+
 ## [0.17.7] - 2026-10-11
 
 ### Added

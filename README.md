@@ -87,7 +87,7 @@ The settings overlay (`Ctrl+H`) — make SSHub's own surfaces or the remote grid
 - **Hot reload** — edits to `~/.ssh/config` update the host list live via file watcher
 - **Configurable keybindings** — rebind any action via Ctrl+K; stored in `config.toml`
 - **Update notice** (`Shift+U`): on start SSHub asks GitHub for the latest release, and a newer one shows next to the version in the tab bar. `Shift+U` on the hosts tab installs it the way SSHub was installed (`npm install -g sshub-tui@<version>`, `cargo install sshub --version <version>`, or, for a release tarball, an in-place swap of the binary after checking it runs), then asks you to restart. While it installs, quitting always asks first. With no update known, `Shift+U` checks on demand. Needs `curl` (and `tar` for the tarball swap); `Check for updates` in Settings (`Ctrl+H`), or `[updates] check = false`, turns the start-up check off.
-- **Mouse support** — click tabs, select rows, scroll panels, double-click to connect
+- **Mouse support**: click tabs, select rows, scroll panels, double-click to connect; in forms, dialogs and pickers a click focuses the field (cursor where you clicked) or highlights the row, and a drag selects text and copies it on release
 
 ## Install
 
@@ -331,6 +331,13 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 `Ctrl+W` closes a session tab, but inside a form it kills the word before the
 cursor (`Ctrl+U` kills everything before it) — the host, identity and tunnel
 forms take readline's editing chords.
+
+In forms, dialogs and pickers the mouse works too: click a field to focus it
+with the cursor where you clicked, click a picker row to highlight it (Enter
+still chooses), and drag over anything on screen to copy it on release.
+`Ctrl+Y` copies the focused field's exact value (the stored secret on a
+password field), with no label or border. Hold `Shift` to hand the mouse to
+your terminal for its own selection and middle-click paste.
 
 The wheel inside `tmux` reaches tmux's own scrollback only with
 `set -g mouse on`; without it tmux never asks for the mouse, so the notch
