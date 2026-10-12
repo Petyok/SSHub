@@ -3,6 +3,7 @@ mod audit;
 mod auth;
 mod broadcast;
 mod connect;
+mod field_click;
 mod field_picker;
 pub(crate) mod ghost;
 mod groups;
@@ -258,6 +259,10 @@ pub struct App {
     /// `self.hosts` indices for the rows of a zoomed host-list panel (ping /
     /// recent), filled by their render so Enter connects the selected row.
     pub zoomed_host_idx: std::cell::RefCell<Vec<usize>>,
+    /// Clickable regions of the last frame (#116): form fields, input bars and
+    /// picker rows, recorded by their renderers so a click can focus what it
+    /// landed on. Cleared at the start of every frame.
+    pub click_map: std::cell::RefCell<Vec<ClickTarget>>,
     /// Live broadcast run (issue #3): `Some` while a fleet command runs or its
     /// finished panel is settling. Owns the run's mpsc + cancel flag.
     pub broadcast: Option<BroadcastState>,
@@ -983,6 +988,7 @@ impl App {
             panel_sel: None,
             panel_sel_text: std::cell::RefCell::new(String::new()),
             zoomed_host_idx: std::cell::RefCell::new(Vec::new()),
+            click_map: std::cell::RefCell::new(Vec::new()),
             broadcast: None,
             broadcast_setup: None,
             broadcast_toasts: Vec::new(),

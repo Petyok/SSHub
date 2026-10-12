@@ -89,9 +89,11 @@ impl App {
             return Ok(());
         }
         // Forms, dialogs and pickers: drag to select and copy what is on
-        // screen (#116).
+        // screen; a plain click focuses what is under the pointer (#116).
         if is_overlay_mode(self.mode) {
-            self.mouse_select(mouse);
+            if let Some((col, row)) = self.mouse_select(mouse) {
+                self.click_at(col, row);
+            }
             return Ok(());
         }
 

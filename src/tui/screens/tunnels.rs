@@ -497,6 +497,15 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
             value.as_str()
         };
         buf.set_string(val_x, row_y, truncate(display, val_w), val_style);
+        app.click_map.borrow_mut().push(crate::app::ClickTarget {
+            area: Rect::new(inner.x, row_y, inner.width, 1),
+            hit: crate::app::ClickHit::Field {
+                index: i,
+                value_x: val_x,
+                start: 0,
+                end: usize::MAX,
+            },
+        });
 
         // Arrow indicator for active field
         if is_active {
@@ -641,6 +650,16 @@ pub fn render_tunnel_host_picker(frame: &mut Frame, app: &App) {
     } else {
         // Scroll so the selection stays visible.
         let scroll = picker.selected.saturating_sub(visible.saturating_sub(1));
+        app.record_list_rows(
+            Rect::new(
+                popup.x + 1,
+                list_top,
+                popup.width.saturating_sub(2),
+                visible as u16,
+            ),
+            scroll,
+            matches.len(),
+        );
         for (i, (_, name)) in matches.iter().skip(scroll).take(visible).enumerate() {
             let idx = scroll + i;
             let ry = list_top + i as u16;

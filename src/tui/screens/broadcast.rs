@@ -731,6 +731,7 @@ pub fn render_command_prompt(frame: &mut Frame, app: &App) {
             .border_style(crate::tui::popup_border_style(theme, popup)),
         Some(Wrap { trim: false }),
     );
+    body.record_clicks(app, popup);
     frame.render_widget(body, popup);
     crate::tui::paint_popup_border(frame, popup, theme);
 }

@@ -52,13 +52,15 @@ pub fn render_group_field_picker(frame: &mut Frame, app: &App) {
     frame.render_widget(block, popup);
     crate::tui::paint_popup_border(frame, popup, theme);
 
+    let len = items.len();
     let mut state = ListState::default();
-    state.select(Some(picker.selected.min(items.len().saturating_sub(1))));
+    state.select(Some(picker.selected.min(len.saturating_sub(1))));
     frame.render_stateful_widget(
         List::new(items).highlight_style(theme.style(StyleRole::PickerRowSelected)),
         inner,
         &mut state,
     );
+    app.record_list_rows(inner, state.offset(), len);
 }
 
 pub fn render_group_form(

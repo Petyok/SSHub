@@ -1027,7 +1027,7 @@ fn tunnel_form_with_port(focus: TunnelFormField) -> App {
 }
 
 #[test]
-fn a_drag_over_a_form_copies_what_it_covers() {
+fn a_drag_over_a_form_copies_what_it_covers_and_a_click_focuses_instead() {
     let mut app = tunnel_form_with_port(TunnelFormField::Label);
     let (w, h) = (100u16, 30u16);
     app.terminal_area = ratatui::layout::Rect::new(0, 0, w, h);
@@ -1069,6 +1069,12 @@ fn a_drag_over_a_form_copies_what_it_covers() {
     app.handle_mouse(at(MouseEventKind::Up(MouseButton::Left), x))
         .unwrap();
     assert_eq!(app.host_notice, None, "a click is not a one-cell copy");
+    let f = app.tunnel_form.as_ref().unwrap();
+    assert_eq!(
+        (f.active_field, f.cursor),
+        (TunnelFormField::LocalPort, 0),
+        "the click focused the field under it"
+    );
 }
 
 #[test]

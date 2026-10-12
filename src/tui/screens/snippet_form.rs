@@ -90,5 +90,22 @@ pub fn render_snippet_form(frame: &mut Frame, app: &App) {
         help,
     )));
 
+    let mut map = app.click_map.borrow_mut();
+    for (index, field) in SnippetFormField::ALL.into_iter().enumerate() {
+        // Row 0 is padding; the fields follow in `ALL` order.
+        let y = inner.y + 1 + index as u16;
+        if y < inner.bottom() {
+            map.push(crate::app::ClickTarget {
+                area: Rect::new(inner.x, y, inner.width, 1),
+                hit: crate::app::ClickHit::Field {
+                    index,
+                    value_x: inner.x + 2 + field.label().chars().count() as u16 + 2,
+                    start: 0,
+                    end: usize::MAX,
+                },
+            });
+        }
+    }
+    drop(map);
     frame.render_widget(Paragraph::new(lines), inner);
 }

@@ -137,6 +137,7 @@ fn render_with_transition_clock(frame: &mut Frame, app: &App, now: std::time::In
     // Reset the per-frame popup rect; each popup that draws sets it via
     // `popup_open_rect`, and we snapshot it afterwards for the close slide (#35).
     app.last_popup_rect.set(None);
+    app.click_map.borrow_mut().clear();
     render_inner(frame, app, &composition);
     // While in the full-screen host view, keep a fresh snapshot so leaving it can
     // slide the session off to the right (#35). Once exited, render_inner has
@@ -1044,6 +1045,7 @@ fn render_sftp_prompt_popup(frame: &mut Frame, app: &App) {
             .border_style(popup_border_style(theme, popup_area)),
         Some(Wrap { trim: false }),
     );
+    body.record_clicks(app, popup_area);
     frame.render_widget(body, popup_area);
     paint_popup_border(frame, popup_area, theme);
 }
@@ -1110,6 +1112,7 @@ fn render_import_prompt_popup(frame: &mut Frame, app: &App) {
             .border_style(popup_border_style(theme, popup_area)),
         Some(Wrap { trim: false }),
     );
+    body.record_clicks(app, popup_area);
     frame.render_widget(body, popup_area);
     paint_popup_border(frame, popup_area, theme);
 }
@@ -1472,6 +1475,20 @@ fn render_popup_open(frame: &mut Frame, app: &App) {
             }
         }
     }
+    // The popup recorded its click targets where it rests; move them to the
+    // rows this frame drew them on, so a click mid-slide hits what is shown.
+    app.click_map.borrow_mut().retain_mut(|t| {
+        if rect.union(t.area) != *rect {
+            return true;
+        }
+        match t.area.y.checked_sub(off) {
+            Some(y) => {
+                t.area.y = y;
+                true
+            }
+            None => false,
+        }
+    });
 }
 
 /// Blit a just-closed popup's captured snapshot, sliding it up off the top over
@@ -1972,6 +1989,7 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
         }
     };
     if let Some(body) = body {
+        body.record_clicks(app, popup_area);
         frame.render_widget(body, popup_area);
     }
 
