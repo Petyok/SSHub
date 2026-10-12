@@ -832,7 +832,11 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
     // so this toast is the *only* surface left: gating it on `panel_zoomed` made
     // every dashboard notice invisible — push-key errors, import/export results,
     // SFTP failures — and a silent failure reads as a broken keybind.
-    if let Some(notice) = &app.host_notice {
+    // The host form prints `host_notice` on its own message line; a toast of
+    // the same text under it would say everything twice.
+    let host_form_drawn = matches!(app.mode, AppMode::HostForm | AppMode::FieldPicker)
+        || (app.mode == AppMode::ConfirmDiscard && app.host_form.is_some());
+    if let Some(notice) = app.host_notice.as_ref().filter(|_| !host_form_drawn) {
         render_notice_toast(frame, areas.footer, notice, app);
     }
 
@@ -6269,6 +6273,28 @@ marker = { foreground = \"#ab0005\" }\n\
             Some(marker(0xa10003)),
             "the fixed footer is components.popup.hint"
         );
+    }
+
+    /// A notice while the host form is open (a copy, a validation error) is
+    /// printed once, on the form's own line, not again as a toast under it.
+    #[test]
+    fn a_host_form_notice_is_shown_once() {
+        let mut app = test_app_with_hosts();
+        app.enter_host_form(None, false).unwrap();
+        app.host_notice = Some("copied 83 chars to clipboard".into());
+        let buf = render_to_buffer(&app, 120, 38);
+        assert_eq!(
+            buffer_text(&buf)
+                .matches("copied 83 chars to clipboard")
+                .count(),
+            1
+        );
+
+        // The dashboard has no form line, so there the toast still shows it.
+        app.host_form = None;
+        app.mode = AppMode::Normal;
+        let buf = render_to_buffer(&app, 120, 38);
+        assert!(buffer_text(&buf).contains("copied 83 chars to clipboard"));
     }
 
     /// Every form role, across the three states a field can be in.
