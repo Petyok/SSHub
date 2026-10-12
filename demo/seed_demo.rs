@@ -1,15 +1,15 @@
-//! Populate `demo/home/.local/share/sshub/launcher.db` for VHS recordings.
+//! Populate `demo/home/.local/share/sshub/launcher.db` for the demo recordings.
 //! Run via `demo/seed-demo.sh`.
 //!
 //! Hosts are created directly (not imported from ssh_config) so they can have
-//! playful display names. Their addresses are real, pingable public anycast
-//! resolvers (Google / Cloudflare / Quad9 / OpenDNS / Level3) so the demo shows
-//! hosts as *online* — the actual connect is simulated by `demo/bin/ssh`.
+//! playful display names. Their addresses are public anycast resolvers (Google /
+//! Cloudflare / Quad9 / OpenDNS / Level3); in the demos `demo/bin/ping` answers
+//! for them and `demo/bin/ssh` simulates the connect, so nothing leaves the box.
 
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use sshub::store::{HostUpdate, LauncherStore, NewHost, NewHostGroup, NewIdentity};
+use sshub::store::{HostUpdate, LauncherStore, NewHost, NewHostGroup, NewIdentity, NewSnippet};
 
 /// One seeded demo host: display name, address, user, port, group, tags,
 /// favorite, proxy_jump, os_icon.
@@ -187,7 +187,24 @@ fn main() -> Result<()> {
         count += 1;
     }
 
-    eprintln!("seeded {count} hosts");
+    // Snippets for the session demo (Ctrl+N picker, inline suggestions). Only
+    // commands demo/bin/ssh fakes: anything else runs on the recording machine.
+    let snippets: &[(&str, &str, &str)] = &[
+        ("Disk usage", "df -h", "Free space on every mount"),
+        ("Memory", "free -m", "RAM and swap in MiB"),
+        ("OS release", "cat /etc/os-release", "Which distro is this"),
+        ("Uptime", "uptime", "Load average and days since boot"),
+    ];
+    for (name, command, description) in snippets {
+        store.create_snippet(&NewSnippet {
+            name: (*name).to_string(),
+            command: (*command).to_string(),
+            description: Some((*description).to_string()),
+            tags: vec!["demo".to_string()],
+        })?;
+    }
+
+    eprintln!("seeded {count} hosts, {} snippets", snippets.len());
     Ok(())
 }
 

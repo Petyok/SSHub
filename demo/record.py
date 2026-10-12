@@ -35,6 +35,7 @@ import signal
 import struct
 import subprocess
 import sys
+import tempfile
 import termios
 import time
 from pathlib import Path
@@ -63,7 +64,8 @@ THEME = ",".join([
 ])
 FPS_CAP = 50
 TAIL = 1.5      # keep recording this long after the last keystroke
-TYPING = 0.04   # seconds per character, matching the tapes' `Set TypingSpeed 40ms`
+# Seconds per character. 80ms reads as typing; faster reads as a paste.
+TYPING = 0.08
 
 RESYNC = "resync"   # scheduled action: force a full repaint (see Tape.begin)
 
@@ -71,11 +73,12 @@ KEYS = {
     "enter": b"\r", "esc": b"\x1b", "tab": b"\t", "space": b" ", "backspace": b"\x7f",
     "up": b"\x1b[A", "down": b"\x1b[B", "right": b"\x1b[C", "left": b"\x1b[D",
     "pgup": b"\x1b[5~", "pgdn": b"\x1b[6~",
+    "ctrl+pgup": b"\x1b[5;5~", "ctrl+pgdn": b"\x1b[6;5~",
     "ctrl+a": b"\x01", "ctrl+d": b"\x04", "ctrl+f": b"\x06", "ctrl+h": b"\x08",
-    "ctrl+k": b"\x0b", "ctrl+r": b"\x12", "ctrl+s": b"\x13", "ctrl+t": b"\x14",
-    "ctrl+w": b"\x17", "ctrl+y": b"\x19",
+    "ctrl+k": b"\x0b", "ctrl+n": b"\x0e", "ctrl+r": b"\x12", "ctrl+s": b"\x13",
+    "ctrl+t": b"\x14", "ctrl+w": b"\x17", "ctrl+y": b"\x19",
     # ESC prefix is how a terminal spells Alt.
-    "ctrl+alt+n": b"\x1b\x0e",
+    "alt+s": b"\x1bs",
 }
 
 
@@ -292,15 +295,20 @@ def opening(t: Tape) -> Tape:
     return t.sleep(0.9).key("enter").sleep(1.2).begin()
 
 
-# ── Scenarios: faithful ports of the tapes they replace ────────────────────────
+# ── Scenarios ──────────────────────────────────────────────────────────────────
+#
+# Pacing: at least 0.7s between cursor or selection steps (faster reads as
+# jitter), 1-1.6s after an overlay opens or closes, typing at TYPING. Keys are
+# the defaults (demo/home/.config/sshub/config.toml has no [keybinds]), so a
+# GIF never teaches a chord a fresh install does not have.
 
 def hero() -> Tape:
     t = Tape()
     # Open on the intro's settled final frame (logo + tagline + blinking prompt).
     t.sleep(11.5).begin().sleep(2.5).key("enter").sleep(1.2)
     t.key("down", times=3, gap=0.7).sleep(1.0)
-    t.type("/").sleep(0.6).type("google").sleep(0.9).key("enter").sleep(3.0)
-    t.type("uptime").sleep(0.4).key("enter").sleep(1.8)
+    t.type("/").sleep(1.2).type("google").sleep(1.0).key("enter").sleep(3.0)
+    t.type("uptime").sleep(0.7).key("enter").sleep(1.8)
     t.key("ctrl+d").sleep(3.0)
     return t
 
@@ -312,9 +320,9 @@ def navigate() -> Tape:
     # Collapse the group, then expand it again. Space folds; Enter would connect.
     t.key("space").sleep(1.6).key("space").sleep(1.6)
     # Fuzzy host palette.
-    t.type("/").sleep(0.8).type("quad", cps=0.08).sleep(1.6).key("esc").sleep(0.8)
+    t.type("/").sleep(1.2).type("quad").sleep(1.6).key("esc").sleep(1.2)
     # Group manager overlay (nested groups).
-    t.type("G").sleep(1.6).key("down").sleep(0.8).key("down").sleep(0.8).key("esc").sleep(1.0)
+    t.type("G").sleep(1.6).key("down").sleep(0.8).key("down").sleep(0.8).key("esc").sleep(1.2)
     # Multi-tag filter: # opens the picker, Space toggles, Enter applies.
     t.type("#").sleep(1.2)
     t.key("down").sleep(0.7).key("space").sleep(0.8)
@@ -325,72 +333,112 @@ def navigate() -> Tape:
 
 def connect() -> Tape:
     t = opening(Tape()).sleep(1.0)
-    # Connect via the fuzzy palette — the session runs in an embedded PTY.
-    t.type("/").sleep(0.5).type("google").sleep(0.8).key("enter").sleep(3.0)
-    t.type('cowsay "SSHub: secure shell x undefined behavior"').sleep(0.4)
+    # Connect via the fuzzy palette: the session runs in an embedded PTY.
+    t.type("/").sleep(1.2).type("google").sleep(1.0).key("enter").sleep(3.0)
+    t.type('cowsay "SSHub: secure shell x undefined behavior"').sleep(0.7)
     t.key("enter").sleep(2.0)
     # Detach; SSH keeps running (session strip in the header).
     t.key("ctrl+d").sleep(2.0)
-    # Re-focus the detached session from the dashboard.
-    t.key("ctrl+alt+n").sleep(1.5)
     # Second session tab, through the host picker.
-    t.key("ctrl+t").sleep(1.0).type("quad").sleep(0.8).key("enter").sleep(2.5)
-    # Switch tabs, then detach.
-    t.key("ctrl+a").sleep(1.5).key("ctrl+d").sleep(1.5)
+    t.key("ctrl+t").sleep(1.4).type("quad").sleep(1.0).key("enter").sleep(2.5)
+    # Previous tab, then back to the dashboard.
+    t.key("ctrl+pgup").sleep(1.8).key("ctrl+d").sleep(1.6)
+    # The session switcher finds a running session by name.
+    t.key("alt+s").sleep(1.4).key("down").sleep(0.8).key("enter").sleep(2.0)
+    t.key("ctrl+d").sleep(1.6)
     # Close both session tabs from the dashboard.
-    t.key("ctrl+w").sleep(1.0).key("ctrl+w").sleep(2.5)
-    # go up for full cycle
-    t.key("up").sleep(2.0)
+    t.key("ctrl+w").sleep(1.2).key("ctrl+w").sleep(2.5)
     return t
 
 
 def add_host() -> Tape:
     t = opening(Tape()).sleep(1.0)
-    t.type("a").sleep(1.0)                                    # open the form
-    t.type("172.217.21.238").sleep(0.4)                       # address
-    t.key("down").sleep(0.4).type("BlahblahblahPASSWORD!!!").sleep(0.4)
-    t.key("down").sleep(0.4).type("pizza-lover-9000").sleep(0.4)
-    t.key("down").sleep(0.4).type("Demo VM").sleep(0.4)       # label
-    t.key("down").sleep(0.4).type("demo-vm-1").sleep(0.4)     # name
-    t.key("down").sleep(0.4)                                  # port (default)
-    # Group: a multi-select picker — Space ticks, Enter closes.
-    t.key("down").key("enter").sleep(0.7)
-    t.key("down").sleep(0.4).key("space").sleep(0.5)
-    t.key("down").sleep(0.4).key("down").sleep(0.4).key("space").sleep(0.6)
-    t.key("enter").sleep(0.5)
-    t.key("down").sleep(0.4)                                  # identity (default)
-    t.key("down").sleep(0.4).type("demo,pizza").sleep(0.5)    # tags
-    t.key("ctrl+s").sleep(1.5)                                # save
-    t.type("/").sleep(0.8).type("Demo").sleep(3.0)
+    t.type("a").sleep(1.4)                                    # open the form
+    t.type("172.217.21.238").sleep(0.7)                       # address
+    t.key("down").sleep(0.7).type("BlahblahblahPASSWORD!!!").sleep(0.7)
+    t.key("down").sleep(0.7)                                  # secret lookup (empty)
+    t.key("down").sleep(0.7).type("pizza-lover-9000").sleep(0.7)
+    t.key("down").sleep(0.7).type("Demo VM").sleep(0.7)       # label
+    t.key("down").sleep(0.7).type("demo-vm-1").sleep(0.7)     # name
+    t.key("down").sleep(0.7)                                  # port (default)
+    # Group: a multi-select picker. Space ticks, Enter closes.
+    t.key("down").sleep(0.7).key("enter").sleep(1.2)
+    t.key("down").sleep(0.7).key("space").sleep(0.8)
+    t.key("down").sleep(0.7).key("down").sleep(0.7).key("space").sleep(0.8)
+    t.key("enter").sleep(1.2)
+    t.key("down").sleep(0.7)                                  # identity (default)
+    t.key("down").sleep(0.7).type("demo,pizza").sleep(0.8)    # tags
+    t.key("ctrl+s").sleep(1.6)                                # save
+    t.type("/").sleep(1.2).type("Demo").sleep(3.0)
     return t
 
 
 def sftp() -> Tape:
     t = opening(Tape())
     # Open the SFTP tab and connect to the demo server.
-    t.type("2").sleep(1.5).type("/").sleep(0.6).type("SFTP demo").sleep(1.0)
+    # Lowercase on purpose: in this search a capital S opens the snippet manager.
+    t.type("2").sleep(1.5).type("/").sleep(1.0).type("sftp demo").sleep(1.0)
     t.key("enter").sleep(3.0)
     # Browse the remote tree: descend into a directory and back out.
     t.key("down").sleep(0.8).key("enter").sleep(1.5).key("backspace").sleep(1.5)
     # Stage a download (remote -> local).
-    t.key("down").sleep(0.6).key("down").sleep(0.6).key("left").sleep(2.0).still("sftp")
+    t.key("down").sleep(0.7).key("down").sleep(0.7).key("left").sleep(2.0).still("sftp")
     # Focus the local pane and stage an upload (local -> remote).
-    t.key("tab").sleep(0.9).key("down").sleep(0.6).key("right").sleep(1.2)
+    t.key("tab").sleep(0.9).key("down").sleep(0.7).key("right").sleep(1.2)
     # Run the queue, with its progress bar.
     t.type("c").sleep(4.5)
     # File operations on the remote pane, each targeted through / search.
-    t.key("tab").sleep(0.7)
-    t.type("/").type("README").sleep(0.8).key("enter").sleep(0.7)
-    t.type("M").sleep(1.0).key("backspace", times=3).type("600").sleep(0.8)
-    t.key("enter").sleep(1.5).type("/").key("esc").sleep(0.6)
-    t.type("n").sleep(0.8).type("backups").sleep(0.8).key("enter").sleep(1.5)
-    t.type("/").type("backups").sleep(0.8).key("enter").sleep(0.5)
+    t.key("tab").sleep(0.8)
+    t.type("/").type("README").sleep(0.8).key("enter").sleep(0.8)
+    t.type("M").sleep(1.2).key("backspace", times=3, gap=0.1).type("600").sleep(0.8)
+    t.key("enter").sleep(1.5).type("/").key("esc").sleep(0.8)
+    t.type("n").sleep(1.0).type("backups").sleep(0.8).key("enter").sleep(1.5)
+    t.type("/").type("backups").sleep(0.8).key("enter").sleep(0.8)
     t.type("d").sleep(1.2).type("y").sleep(1.5).type("/").key("esc").sleep(0.8)
     return t
 
 
+def themes() -> Tape:
+    t = opening(Tape()).sleep(1.0)
+    t.key("down", times=2, gap=0.7).sleep(1.0)
+    # Settings opens on the Theme row; Enter opens the picker.
+    t.key("ctrl+h").sleep(1.4).key("enter").sleep(1.6)
+    # Every step previews that theme on the whole interface, not just the box.
+    t.key("down", times=4, gap=1.8).sleep(1.8)
+    # Back up to one and keep it: only Enter writes the choice.
+    t.key("up", times=2, gap=1.2).sleep(1.2).key("enter").sleep(1.4)
+    t.key("esc").sleep(1.4)
+    t.key("down", times=2, gap=0.8).sleep(2.0)
+    return t
+
+
+def broadcast() -> Tape:
+    t = opening(Tape()).sleep(1.0)
+    # b: pick a group or tag, type one command, check the hosts, run.
+    t.type("b").sleep(1.4)
+    t.key("down", times=BROADCAST_TARGET, gap=0.7).sleep(1.0).key("enter").sleep(1.2)
+    t.type("uptime").sleep(0.8).key("enter").sleep(1.8)
+    t.type("y").sleep(5.0)
+    return t
+
+
+def snippets() -> Tape:
+    t = opening(Tape()).sleep(1.0)
+    t.type("/").sleep(1.2).type("google").sleep(1.0).key("enter").sleep(3.0)
+    t.type("uname -a").sleep(0.7).key("enter").sleep(1.5)
+    # A command this session ran comes back as a dim suggestion; Tab takes it.
+    t.type("una").sleep(1.6).key("tab").sleep(1.0).key("enter").sleep(1.5)
+    # Ctrl+N: the snippet library. Enter runs one...
+    t.key("ctrl+n").sleep(1.4).type("mem").sleep(1.2).key("enter").sleep(2.0)
+    # ...Tab only types it, to edit before running.
+    t.key("ctrl+n").sleep(1.4).type("disk").sleep(1.2).key("tab").sleep(1.2)
+    t.type(" /").sleep(0.8).key("enter").sleep(2.0)
+    t.key("ctrl+d").sleep(2.0)
+    return t
+
+
 def screenshots() -> Tape:
-    """Stills only — its GIF is scratch."""
+    """Stills only; its GIF is scratch."""
     t = opening(Tape())
     t.key("down").sleep(2.0).still("hosts")
     t.type("/").sleep(0.8).type("quad").sleep(2.0).still("palette").key("esc").sleep(0.5)
@@ -398,9 +446,35 @@ def screenshots() -> Tape:
     t.type("a").sleep(2.0).still("add-host").key("esc").sleep(0.5)
     t.key("ctrl+k").sleep(2.0).still("keybindings").key("esc").sleep(0.5)
     t.type("?").sleep(2.0).still("help").key("esc").sleep(0.5)
-    t.key("ctrl+h").sleep(2.0).still("settings").key("esc").sleep(0.5)
+    t.key("ctrl+h").sleep(2.0).still("settings")
+    t.key("enter").sleep(1.0).key("down", times=THEME_STILL, gap=0.5).sleep(2.0)
+    t.still("theme-picker").key("esc").sleep(0.8).key("esc").sleep(0.8)
+    t.type("4").sleep(1.0).type("H").sleep(2.0).still("known-hosts").key("esc").sleep(0.5)
     return t
 
+
+def known_hosts(home: Path) -> None:
+    """Give the known hosts manager something to list: throwaway keys for the
+    demo hosts, written to the throwaway home (never yours)."""
+    lines = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for i, (host, kind) in enumerate([
+            ("8.8.8.8", "ed25519"), ("8.8.4.4", "ed25519"), ("[1.1.1.1]:5432", "ecdsa"),
+            ("[1.0.0.1]:5432", "ecdsa"), ("9.9.9.9", "ed25519"), ("4.2.2.2", "rsa"),
+        ]):
+            key = Path(tmp) / f"k{i}"
+            subprocess.run(["ssh-keygen", "-q", "-t", kind, "-N", "", "-C", "", "-f", str(key)],
+                           check=True)
+            algo, blob = Path(f"{key}.pub").read_text().split()[:2]
+            lines.append(f"{host} {algo} {blob}")
+    (home / ".ssh" / "known_hosts").write_text("\n".join(lines) + "\n")
+
+
+# Menu rows to step over: the broadcast target (#prod) and the theme shown in
+# the picker still. Both lists are ordered by the app, so the counts are pinned
+# to the seeded data and the built-in themes.
+BROADCAST_TARGET = 8
+THEME_STILL = 2
 
 SCENARIOS: dict[str, dict] = {
     "hero": {"build": hero},
@@ -413,7 +487,10 @@ SCENARIOS: dict[str, dict] = {
         "setup": ["bash", "demo/sftp-server.sh", "start"],
         "teardown": ["bash", "demo/sftp-server.sh", "stop"],
     },
-    "screenshots": {"build": screenshots, "scratch": True},
+    "themes": {"build": themes},
+    "broadcast": {"build": broadcast},
+    "snippets": {"build": snippets},
+    "screenshots": {"build": screenshots, "scratch": True, "home": known_hosts},
 }
 
 
