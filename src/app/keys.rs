@@ -48,6 +48,12 @@ impl App {
             return Ok(());
         }
 
+        // Saved split-view layouts, from any dashboard tab.
+        if self.mode == AppMode::Normal && self.is_action(KeyAction::Workspaces, &key) {
+            self.open_workspace_picker();
+            return Ok(());
+        }
+
         // Session-log browser from any dashboard tab.
         if self.mode == AppMode::Normal && self.is_action(KeyAction::LogsBrowser, &key) {
             self.open_log_browser()?;

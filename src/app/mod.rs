@@ -33,6 +33,7 @@ mod tunnels;
 mod types;
 mod update;
 mod util;
+mod workspaces;
 
 #[cfg(test)]
 mod tests;
@@ -519,6 +520,8 @@ pub struct App {
     /// Split view (#73): the session body divided into 2 to 4 panes. `None` is
     /// the classic one-session view.
     pub panes: Option<panes::Panes>,
+    /// Saved workspaces, loaded when the workspace picker opens.
+    pub workspaces: Vec<crate::store::Workspace>,
     last_click: Option<(std::time::Instant, u16, u16)>,
     resolver: Box<dyn HostResolver>,
     metadata: Arc<dyn MetadataStore>,
@@ -1114,6 +1117,7 @@ impl App {
             sessions: Vec::new(),
             active_session: None,
             panes: None,
+            workspaces: Vec::new(),
             last_click: None,
             resolver: deps.resolver,
             metadata: deps.metadata,

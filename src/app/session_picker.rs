@@ -46,7 +46,9 @@ impl App {
         let Some(picker) = self.session_picker.as_ref() else {
             return Vec::new();
         };
-        if picker.purpose.over_sessions() {
+        if picker.purpose == SessionPickerPurpose::Workspaces {
+            self.picker_workspace_rows(&picker.query)
+        } else if picker.purpose.over_sessions() {
             self.picker_session_rows(&picker.query.to_lowercase())
         } else {
             self.session_picker_host_matches()
@@ -164,6 +166,21 @@ impl App {
         }
         let rows = self.session_picker_rows();
         let len = rows.len();
+        let picker = self
+            .session_picker
+            .as_ref()
+            .map(|p| (p.purpose, p.selected));
+        if let Some((SessionPickerPurpose::Workspaces, selected)) = picker {
+            if key.code == KeyCode::Char('x') && key.modifiers == KeyModifiers::CONTROL {
+                if let Some(row) = rows.get(selected) {
+                    self.delete_workspace_at(row.index);
+                }
+                if let Some(p) = self.session_picker.as_mut() {
+                    p.selected = 0;
+                }
+                return Ok(());
+            }
+        }
         match key.code {
             KeyCode::Esc => self.close_session_picker(),
             KeyCode::Down => {
@@ -224,6 +241,15 @@ impl App {
                     SessionPickerPurpose::SftpLeftPane => {
                         self.close_session_picker();
                         self.sftp_connect_left_pane(index)?;
+                    }
+                    SessionPickerPurpose::Workspaces => {
+                        let query = self
+                            .session_picker
+                            .as_ref()
+                            .map(|p| p.query.clone())
+                            .unwrap_or_default();
+                        self.close_session_picker();
+                        self.pick_workspace(index, &query)?;
                     }
                 }
             }

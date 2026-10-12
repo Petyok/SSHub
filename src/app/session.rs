@@ -29,6 +29,10 @@ impl App {
         if self.handle_key_panes(&key) {
             return Ok(());
         }
+        if self.is_action(KeyAction::Workspaces, &key) {
+            self.open_workspace_picker();
+            return Ok(());
+        }
         if self.is_action(KeyAction::LocalShell, &key) {
             self.open_local_shell()?;
             return Ok(());

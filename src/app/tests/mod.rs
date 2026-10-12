@@ -160,3 +160,4 @@ mod tags;
 mod theme_picker;
 mod transfer_plan_confirm;
 mod transport;
+mod workspaces;

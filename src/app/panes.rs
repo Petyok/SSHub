@@ -238,7 +238,7 @@ pub struct PaneView {
 }
 
 impl App {
-    fn session_index(&self, id: SessionId) -> Option<usize> {
+    pub(crate) fn session_index(&self, id: SessionId) -> Option<usize> {
         self.sessions.iter().position(|s| s.id == id)
     }
 
@@ -363,7 +363,7 @@ impl App {
 
     /// Point `active_session` at the focused pane's session and derive the
     /// session mode from its phase.
-    fn follow_focused_pane(&mut self) {
+    pub(crate) fn follow_focused_pane(&mut self) {
         if let Some(panes) = self.panes.as_ref() {
             self.active_session = panes.focused_id().and_then(|id| self.session_index(id));
         }

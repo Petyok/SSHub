@@ -1428,6 +1428,9 @@ pub enum SessionPickerPurpose {
     SftpLeftPane,
     /// Jump to a session that is already open (Alt+S).
     SwitchSession,
+    /// Open, save or delete a saved split-view layout (Alt+E). Rows index
+    /// `App::workspaces`; one past the end is the "save" row.
+    Workspaces,
 }
 
 impl SessionPickerPurpose {
@@ -1437,6 +1440,7 @@ impl SessionPickerPurpose {
             Self::NewSession => " new session tab ",
             Self::SftpLeftPane => " select left server ",
             Self::SwitchSession => " switch session ",
+            Self::Workspaces => " workspaces \u{b7} Enter open \u{b7} Ctrl+X delete ",
         }
     }
 
@@ -1445,6 +1449,7 @@ impl SessionPickerPurpose {
         match self {
             Self::NewSession | Self::SftpLeftPane => "(no matching hosts)",
             Self::SwitchSession => "(no matching sessions)",
+            Self::Workspaces => "(none saved: type a name to save this layout)",
         }
     }
 

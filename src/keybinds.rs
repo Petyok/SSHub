@@ -101,11 +101,12 @@ pub enum KeyAction {
     PaneZoom,
     PaneClose,
     PaneUnsplit,
+    Workspaces,
 }
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 92] = [
+    pub const ALL: [KeyAction; 93] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -198,6 +199,7 @@ impl KeyAction {
         KeyAction::PaneZoom,
         KeyAction::PaneClose,
         KeyAction::PaneUnsplit,
+        KeyAction::Workspaces,
     ];
 
     pub fn label(self) -> &'static str {
@@ -294,6 +296,7 @@ impl KeyAction {
             KeyAction::PaneZoom => "Split view: zoom the focused pane",
             KeyAction::PaneClose => "Split view: close the focused pane",
             KeyAction::PaneUnsplit => "Split view: back to one pane",
+            KeyAction::Workspaces => "Workspaces: open, save or delete",
         }
     }
 }
@@ -394,6 +397,7 @@ pub struct KeybindsConfig {
     pub pane_zoom: Vec<String>,
     pub pane_close: Vec<String>,
     pub pane_unsplit: Vec<String>,
+    pub workspaces: Vec<String>,
 }
 
 impl Default for KeybindsConfig {
@@ -493,6 +497,7 @@ impl Default for KeybindsConfig {
             pane_zoom: vec!["Alt+M".into()],
             pane_close: vec!["Alt+K".into()],
             pane_unsplit: vec!["Alt+I".into()],
+            workspaces: vec!["Alt+E".into()],
         }
     }
 }
@@ -684,6 +689,7 @@ impl KeybindsConfig {
             KeyAction::PaneZoom => &self.pane_zoom,
             KeyAction::PaneClose => &self.pane_close,
             KeyAction::PaneUnsplit => &self.pane_unsplit,
+            KeyAction::Workspaces => &self.workspaces,
         }
     }
 
@@ -781,6 +787,7 @@ impl KeybindsConfig {
             KeyAction::PaneZoom => self.pane_zoom = binds,
             KeyAction::PaneClose => self.pane_close = binds,
             KeyAction::PaneUnsplit => self.pane_unsplit = binds,
+            KeyAction::Workspaces => self.workspaces = binds,
         }
     }
 
@@ -1008,6 +1015,7 @@ mod tests {
             KeyAction::PaneZoom,
             KeyAction::PaneClose,
             KeyAction::PaneUnsplit,
+            KeyAction::Workspaces,
         ] {
             let spec = kb.primary(action);
             let letter = spec
