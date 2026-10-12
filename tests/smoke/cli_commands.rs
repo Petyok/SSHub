@@ -88,6 +88,20 @@ fn audit_list_bogus_status_exits_two() {
         .code(2);
 }
 
+/// Broadcast runs are audited, so `--via broadcast` must be a valid filter.
+#[test]
+fn audit_via_broadcast_is_accepted() {
+    let d = dir();
+    sshub(d.path())
+        .args(["audit", "list", "--via", "broadcast"])
+        .assert()
+        .success();
+    sshub(d.path())
+        .args(["audit", "stats", "--via", "broadcast"])
+        .assert()
+        .success();
+}
+
 #[test]
 fn host_list_exits_zero() {
     let d = dir();

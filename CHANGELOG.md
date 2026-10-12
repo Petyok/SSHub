@@ -19,6 +19,10 @@ All notable changes to SSHub are documented in this file.
 - **Profile transfer of a host** (`h` in the transfer dialog) picked the host
   by the row number of the hosts tree, so with groups it transferred another
   host or none. A labelled host was never found at all.
+- **Broadcast audit rows no longer store the command** - like `sshub exec`,
+  the audit log keeps the exit code and error, not a command that can carry a
+  password in an argument. `sshub audit list|stats --via broadcast` now
+  filters them, and `--via connect` no longer counts them as connects.
 
 ## [0.17.7] - 2026-10-11
 

@@ -190,10 +190,11 @@ fn print_audit() {
         r#"sshub audit - inspect the connection audit log
 
 USAGE:
-    sshub audit list  [--status all|ok|fail|retry] [--via all|connect|tunnel|agent|exec]
+    sshub audit list  [--status all|ok|fail|retry]
+                      [--via all|connect|tunnel|agent|exec|broadcast]
                       [--host NAME] [--limit N] [--days N] [--format plain|json]
-    sshub audit stats [--days N] [--via all|connect|tunnel|agent|exec] [--include-retry]
-                      [--format plain|json]"#
+    sshub audit stats [--days N] [--via all|connect|tunnel|agent|exec|broadcast]
+                      [--include-retry] [--format plain|json]"#
     );
 }
 
