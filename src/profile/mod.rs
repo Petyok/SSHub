@@ -242,11 +242,10 @@ fn roots_from(
 }
 
 /// The directory holding `config.toml` and `themes/` for the profile a
-/// headless command runs against, chosen exactly like [`resolve_startup`]
-/// without a terminal (`--profile`, else the last-used profile; the override
-/// directory in compat mode), but with no side effects: no layout creation,
-/// migration or `state.toml` write. Before the first launch has written
-/// `state.toml`, that launch would create `default`, so its directory is it.
+/// headless command runs against, chosen like [`resolve_startup`] without a
+/// terminal (`--profile`, else the last-used profile; the override directory
+/// in compat mode), but with no side effects: no layout creation, migration
+/// or `state.toml` write.
 pub fn locate_config_dir(opts: &StartupOptions) -> Result<PathBuf> {
     let roots = locate_roots()?;
     if roots.compat {
@@ -254,17 +253,26 @@ pub fn locate_config_dir(opts: &StartupOptions) -> Result<PathBuf> {
         return Ok(roots.config_root);
     }
     let state = ProfileState::load(&roots.data_root)?.unwrap_or_default();
-    let name = match &opts.profile {
-        Some(requested) => state
-            .by_name(requested)
-            .ok_or_else(|| unknown_profile(requested, &state))?
-            .name
-            .as_str(),
-        None => state
-            .last_used_record()
-            .map_or(DEFAULT_PROFILE_NAME, |record| record.name.as_str()),
+    let record = match &opts.profile {
+        Some(requested) => Some(
+            state
+                .by_name(requested)
+                .ok_or_else(|| unknown_profile(requested, &state))?,
+        ),
+        None => state.last_used_record(),
     };
-    Ok(ProfilePaths::profile_dir(&roots.data_root, name))
+    let Some(record) = record else {
+        // No `state.toml` yet: the next launch creates `default`. (It would
+        // also adopt directories an interrupted setup left in `profiles/`;
+        // that recovery case is not mirrored here.)
+        return Ok(ProfilePaths::profile_dir(
+            &roots.data_root,
+            DEFAULT_PROFILE_NAME,
+        ));
+    };
+    // A recorded profile whose directory is gone fails here as at startup.
+    require_profile_dir(&roots, record)?;
+    Ok(ProfilePaths::profile_dir(&roots.data_root, &record.name))
 }
 
 const COMPAT_PROFILE_ERROR: &str =

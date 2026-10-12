@@ -487,7 +487,7 @@ fn theme_read_commands_use_the_selected_profiles_themes() {
     std::fs::create_dir_all(&profiles).unwrap();
     std::fs::write(
         data.join("state.toml"),
-        "last_used = \"default-id\"\n\n[[profiles]]\nid = \"default-id\"\nname = \"default\"\n\n[[profiles]]\nid = \"work-id\"\nname = \"work\"\n",
+        "last_used = \"default-id\"\n\n[[profiles]]\nid = \"default-id\"\nname = \"default\"\n\n[[profiles]]\nid = \"work-id\"\nname = \"work\"\n\n[[profiles]]\nid = \"gone-id\"\nname = \"gone\"\n",
     )
     .unwrap();
     install_theme(&profiles.join("default"), "home-made", VALID_THEME);
@@ -534,6 +534,8 @@ fn theme_read_commands_use_the_selected_profiles_themes() {
     );
     assert_eq!(run(&["theme", "show", "work-made"]).0, Some(1));
     assert_eq!(run(&["--profile", "nope", "theme", "list"]).0, Some(1));
+    // A recorded profile whose directory is gone fails, as the TUI does.
+    assert_eq!(run(&["--profile", "gone", "theme", "list"]).0, Some(1));
     // Reading never opens a database.
     assert!(!profiles.join("work/launcher.db").exists());
 }
