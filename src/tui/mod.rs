@@ -1936,6 +1936,7 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
                     &inherited,
                     &app.save_key_label(),
                     &app.config.keybinds.secret_field_hints(),
+                    &app.copy_field_hint(),
                     theme,
                     border,
                 ))
@@ -1950,6 +1951,7 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
                     form,
                     &app.save_key_label(),
                     &app.config.keybinds.secret_field_hints(),
+                    &app.copy_field_hint(),
                     cert,
                     theme,
                     border,
@@ -1960,7 +1962,13 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
             }
         }
         FormKind::Keygen => app.keygen_form.as_ref().map(|form| {
-            screens::keygen::render_keygen_form(form, &app.save_key_label(), theme, border)
+            screens::keygen::render_keygen_form(
+                form,
+                &app.save_key_label(),
+                &app.copy_field_hint(),
+                theme,
+                border,
+            )
         }),
         FormKind::Group => {
             if let Some(form) = app.group_form.as_ref() {
@@ -1982,6 +1990,7 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
                     parent_name.as_deref(),
                     theme,
                     border,
+                    &app.copy_field_hint(),
                 ))
             } else {
                 None

@@ -1027,6 +1027,28 @@ fn tunnel_form_with_port(focus: TunnelFormField) -> App {
 }
 
 #[test]
+fn the_copy_bind_copies_the_focused_field_value() {
+    let mut app = tunnel_form_with_port(TunnelFormField::LocalPort);
+    let copy = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL);
+    assert!(
+        app.is_action(KeyAction::CopySecret, &copy),
+        "Ctrl+Y is the bind"
+    );
+    app.handle_key(copy).unwrap();
+    assert_eq!(
+        app.host_notice.as_deref(),
+        Some("copied 4 chars to clipboard")
+    );
+    assert_eq!(app.tunnel_form.as_ref().unwrap().local_port, "8080");
+
+    // A field that holds no text leaves the bind to the form.
+    app.host_notice = None;
+    app.tunnel_form.as_mut().unwrap().active_field = TunnelFormField::Type;
+    app.handle_key(copy).unwrap();
+    assert_eq!(app.host_notice, None);
+}
+
+#[test]
 fn a_drag_over_a_form_copies_what_it_covers_and_a_click_focuses_instead() {
     let mut app = tunnel_form_with_port(TunnelFormField::Label);
     let (w, h) = (100u16, 30u16);
@@ -1074,6 +1096,69 @@ fn a_drag_over_a_form_copies_what_it_covers_and_a_click_focuses_instead() {
         (f.active_field, f.cursor),
         (TunnelFormField::LocalPort, 0),
         "the click focused the field under it"
+    );
+}
+
+/// The frame `app` draws at 100x30, row by row.
+fn screen(app: &mut App) -> String {
+    app.terminal_area = ratatui::layout::Rect::new(0, 0, 100, 30);
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+    term.draw(|f| crate::tui::render(f, app)).unwrap();
+    let buf = term.backend().buffer();
+    (0..30)
+        .map(|y| (0..100).map(|x| buf[(x, y)].symbol()).collect::<String>() + "\n")
+        .collect()
+}
+
+#[test]
+fn the_copy_bind_leaves_the_keygen_passphrase_alone() {
+    let mut app = test_app(vec![]);
+    app.enter_keygen_form().unwrap();
+    let form = app.keygen_form.as_mut().unwrap();
+    form.passphrase = "s3cret".into();
+    form.comment = "me@box".into();
+    form.field = KeygenFormField::Passphrase;
+    let copy = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL);
+
+    assert!(
+        !screen(&mut app).contains("copy field"),
+        "no copy hint on the passphrase"
+    );
+    app.handle_key(copy).unwrap();
+    assert_eq!(app.keygen_notice, None, "the passphrase was not copied");
+    assert_eq!(app.keygen_form.as_ref().unwrap().passphrase, "s3cret");
+
+    app.keygen_form.as_mut().unwrap().field = KeygenFormField::Comment;
+    assert!(screen(&mut app).contains("Ctrl+Y: copy field"));
+    app.handle_key(copy).unwrap();
+    assert_eq!(
+        app.keygen_notice.as_deref(),
+        Some("copied 6 chars to clipboard")
+    );
+}
+
+#[test]
+fn the_host_form_legend_names_the_copy_bind_on_the_fields_it_copies() {
+    let mut app = test_app(vec![]);
+    app.enter_host_form(None, false).unwrap();
+    assert!(
+        screen(&mut app).contains("Ctrl+Y: copy field"),
+        "on Address"
+    );
+
+    app.host_form.as_mut().unwrap().field = HostFormField::Password;
+    assert!(
+        !screen(&mut app).contains("copy field"),
+        "the password field names its secret binds instead"
+    );
+
+    app.host_form.as_mut().unwrap().field = HostFormField::Address;
+    app.config
+        .keybinds
+        .set(KeyAction::CopySecret, vec!["F7".into()]);
+    assert!(
+        screen(&mut app).contains("F7: copy field"),
+        "a rebind shows through"
     );
 }
 

@@ -19,6 +19,7 @@ pub fn render_host_form(
     inherited: &crate::store::ResolvedConnection,
     save_hint: &str,
     secret_hints: &str,
+    copy_hint: &str,
     theme: &ResolvedTheme,
     border: Style,
 ) -> super::FormBody {
@@ -280,13 +281,12 @@ pub fn render_host_form(
         )),
         None,
     ));
-    lines.push((
-        Line::from(Span::styled(
-            format!("{save_hint}: save    Esc: cancel"),
-            help,
-        )),
-        None,
-    ));
+    let save = format!("{save_hint}: save");
+    let legend: Vec<&str> = [save.as_str(), copy_hint, "Esc: cancel"]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect();
+    lines.push((Line::from(Span::styled(legend.join("    "), help)), None));
 
     super::FormBody::new(
         lines,
@@ -437,6 +437,7 @@ mod tests {
                         &[team_identity()],
                         inherited,
                         "Ctrl+S",
+                        "",
                         "",
                         &theme,
                         ratatui::style::Style::default(),

@@ -15,9 +15,11 @@ pub fn render_snippet_form(frame: &mut Frame, app: &App) {
     let area = frame.area();
     let width = crate::tui::fit_popup(area.width * 66 / 100, 46, area.width.saturating_sub(2));
     // 1 pad + 4 field rows + 1 pad + 1 help = 7 inner rows, + 2 borders, plus a
-    // validation-notice row when one is pending.
+    // validation-notice row when one is pending and a row for the copy bind.
     let notice_row = u16::from(app.snippet_notice.is_some());
-    let height = crate::tui::fit_popup(9 + notice_row, 8, area.height.saturating_sub(2));
+    let copy_hint = app.copy_field_hint();
+    let copy_row = u16::from(!copy_hint.is_empty());
+    let height = crate::tui::fit_popup(9 + notice_row + copy_row, 8, area.height.saturating_sub(2));
     let x = area.x + (area.width.saturating_sub(width)) / 2;
     let y = area.y + (area.height.saturating_sub(height)) / 2;
     let popup = Rect::new(x, y, width, height);
@@ -89,6 +91,9 @@ pub fn render_snippet_form(frame: &mut Frame, app: &App) {
         "\u{2191}\u{2193}/Tab move field  ·  Enter next / save on last  ·  Esc cancel",
         help,
     )));
+    if copy_row == 1 {
+        lines.push(Line::from(Span::styled(copy_hint, help)));
+    }
 
     let mut map = app.click_map.borrow_mut();
     for (index, field) in SnippetFormField::ALL.into_iter().enumerate() {

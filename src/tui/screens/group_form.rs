@@ -69,6 +69,7 @@ pub fn render_group_form(
     parent_group: Option<&str>,
     theme: &ResolvedTheme,
     border: Style,
+    copy_hint: &str,
 ) -> super::FormBody {
     let title = if form.id.is_some() {
         "Edit group"
@@ -138,7 +139,7 @@ pub fn render_group_form(
     };
 
     let blank = || (Line::from(""), None);
-    let lines = vec![
+    let mut lines = vec![
         blank(),
         field_row(GroupFormField::Name, "Name", display, false),
         blank(),
@@ -194,6 +195,10 @@ pub fn render_group_form(
             None,
         ),
     ];
+    // Its own row: the legend above is already cut short on most widths.
+    if !copy_hint.is_empty() {
+        lines.push((Line::from(Span::styled(copy_hint.to_string(), help)), None));
+    }
     super::FormBody::new(
         lines,
         Block::default()

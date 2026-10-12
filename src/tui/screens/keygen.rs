@@ -14,6 +14,7 @@ use crate::theme::model::ResolvedTheme;
 pub fn render_keygen_form(
     form: &KeygenFormEdit,
     save_hint: &str,
+    copy_hint: &str,
     theme: &ResolvedTheme,
     border: Style,
 ) -> super::FormBody {
@@ -80,7 +81,13 @@ pub fn render_keygen_form(
     lines.push((ratatui::text::Line::from(""), None));
     lines.push((
         ratatui::text::Line::from(ratatui::text::Span::styled(
-            format!("type to edit │ Tab/↓: next │ {save_hint}: save │ Esc: cancel"),
+            if copy_hint.is_empty() {
+                format!("type to edit │ Tab/↓: next │ {save_hint}: save │ Esc: cancel")
+            } else {
+                format!(
+                    "type to edit │ Tab/↓: next │ {save_hint}: save │ {copy_hint} │ Esc: cancel"
+                )
+            },
             theme.style(StyleRole::KeygenHelp),
         )),
         None,
@@ -141,7 +148,10 @@ mod tests {
         let area = Rect::new(0, 0, 60, 12);
         let border = ratatui::style::Style::default();
         frame_at(area, |f| {
-            f.render_widget(render_keygen_form(&form(), "Ctrl+S", theme, border), area)
+            f.render_widget(
+                render_keygen_form(&form(), "Ctrl+S", "", theme, border),
+                area,
+            )
         })
     }
 

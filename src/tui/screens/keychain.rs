@@ -19,10 +19,12 @@ use crate::theme::model::ResolvedTheme;
 /// `inner_width` is the popup's inner width (borders excluded): the two path
 /// rows are cut to it with an ellipsis (see below), so the caller passes the
 /// popup width minus its borders.
+#[allow(clippy::too_many_arguments)]
 pub fn render_identity_form(
     form: &IdentityFormEdit,
     save_hint: &str,
     secret_hints: &str,
+    copy_hint: &str,
     cert: Option<&crate::ssh::cert::CertStatus>,
     theme: &ResolvedTheme,
     border: Style,
@@ -176,6 +178,9 @@ pub fn render_identity_form(
     // so that is the moment the user needs to know how to see or copy it.
     let hint = if form.field == IdentityFormField::Password && !secret_hints.is_empty() {
         format!("{secret_hints} │ {base}")
+    } else if !copy_hint.is_empty() {
+        // Likewise the copy bind, on the fields it copies.
+        format!("{copy_hint} │ {base}")
     } else {
         base
     };
@@ -237,7 +242,7 @@ mod tests {
 
     fn render_text(form: &IdentityFormEdit, cert: Option<&crate::ssh::cert::CertStatus>) -> String {
         let theme = crate::test_support::resolved_default();
-        let widget = render_identity_form(form, "F2", "", cert, &theme, Style::default(), 98);
+        let widget = render_identity_form(form, "F2", "", "", cert, &theme, Style::default(), 98);
         let mut buf = Buffer::empty(Rect::new(0, 0, 100, 12));
         ratatui::widgets::Widget::render(widget, buf.area, &mut buf);
         let mut text = String::new();
@@ -309,8 +314,16 @@ mod tests {
                     _ => 0,
                 };
                 let theme = crate::test_support::resolved_default();
-                let widget =
-                    render_identity_form(&form, "F2", "", None, &theme, Style::default(), INNER_W);
+                let widget = render_identity_form(
+                    &form,
+                    "F2",
+                    "",
+                    "",
+                    None,
+                    &theme,
+                    Style::default(),
+                    INNER_W,
+                );
                 let mut buf = Buffer::empty(Rect::new(0, 0, 300, 12));
                 ratatui::widgets::Widget::render(widget, buf.area, &mut buf);
                 for (label, full) in [
@@ -379,6 +392,7 @@ mod tests {
         let widget = render_identity_form(
             &form,
             "F2",
+            "",
             "",
             Some(&status),
             &theme,
