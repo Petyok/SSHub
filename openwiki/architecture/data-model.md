@@ -1,85 +1,225 @@
 ---
 type: Data Model
-title: Data Model & Storage — launcher.db, metadata.db, config, and hybrid hosts
-description: SSHub persists state in two SQLite databases (launcher.db for managed hosts/groups/identities/tunnels/audit, metadata.db for legacy ssh_config hosts), a TOML config file, and merges managed hosts with read-only ~/.ssh/config aliases through the HostResolver abstraction.
-resource: src/store/mod.rs
-tags: [storage, sqlite, schema, config, hosts, architecture]
+title: Data Model & Storage, launcher.db v19, metadata.db, config.toml, and hybrid hosts
+description: SSHub persists each profile's state in two SQLite databases (launcher.db at schema v19 for managed hosts, groups and their connection defaults, identities, tunnels, audit, snippets, log bookmarks and opt-in command history; metadata.db for legacy ssh_config aliases), snapshots launcher.db before every migration, keeps settings in config.toml, and merges managed hosts with read-only ~/.ssh/config aliases through HostResolver.
+resource: src/store/migrate.rs
+tags: [storage, sqlite, schema, migrations, config, hosts, architecture]
 ---
 
 # Data Model & Storage
 
 ## Profile-owned storage
 
-Normal installs keep `state.toml` at the data root and put each profile under
-`profiles/<name>/`. A profile owns its two SQLite databases, `config.toml`,
-fallback credentials, session logs, and tunnel PID state. `ProfilePaths` is
-resolved once before resource construction and passed to stores, config,
-resolver, credentials, logging, tunnels, watcher, and CLI context. Profiles
-retain stable IDs so renaming does not change credential namespaces.
-
-Directory overrides (`SSHUB_DATA_DIR` or `SSHUB_CONFIG_DIR`) select compatibility
-mode and use the override directories verbatim without `profiles/` nesting.
+Every path below is resolved once into a `ProfilePaths` (`src/profile/mod.rs`)
+and passed to stores, config, resolver, credentials, session logging, tunnels,
+watcher and CLI context; no subsystem rediscovers paths from the environment.
+Normal installs keep `state.toml` at the data root and one directory per
+profile under `profiles/<name>/`; `SSHUB_DATA_DIR` / `SSHUB_CONFIG_DIR` (or
+their `SSH_LAUNCHER_*` fallbacks) select compatibility mode, which uses the
+override directories verbatim. Layout, picker and migration:
+[profiles](profiles.md).
 
 ## Two SQLite databases
 
-| DB | Path | Contents |
+| DB | Path (profile mode) | Contents |
 |---|---|---|
-| `launcher.db` | `profiles/<name>/launcher.db` | Managed hosts, host groups, identities, tunnels, auth events (audit), UI state |
-| `metadata.db` | `profiles/<name>/metadata.db` | `host_metadata` for **legacy** ssh_config-only hosts: tags, description, environment, favorite, last_connected, session_logging, transport |
+| `launcher.db` | `profiles/<name>/launcher.db` | Managed and imported hosts, groups, memberships, identities, tunnels, audit (`auth_events`), UI state, snippets, log bookmarks, command history |
+| `metadata.db` | `profiles/<name>/metadata.db` | `host_metadata` for **legacy** ssh_config-only aliases: tags, description, environment, favorite, last_connected, session_logging, transport, ping |
 
-The split is historical: `metadata.db` predates the launcher database and still backs per-alias metadata for hosts that exist only in `~/.ssh/config`. `LauncherStore`'s own docs admit the "MVP still uses MetadataDb" — treat the overlap (e.g. `session_logging` and `transport` exist on both `ManagedHost` and `HostMetadata`) as an acknowledged incomplete migration, not a design to copy. A best-effort one-way import from legacy `metadata.db` runs on fresh `launcher.db` creation (`src/store/migrate.rs`); a locked legacy DB must never brick launch.
+The split is historical: `metadata.db` predates `launcher.db` and still backs
+per-alias metadata for hosts that exist only in the ssh config. `LauncherStore`'s
+own doc comment still says the "MVP still uses `MetadataDb`"; treat the overlap
+(`session_logging`, `transport`, `ping` exist on both `ManagedHost` and
+`HostMetadata`) as an unfinished migration, not a pattern to copy. On a fresh
+`launcher.db` (schema version 0) a best-effort one-way import copies
+`host_metadata` rows into `hosts` as `source = 'ssh_config'`
+(`migrate_legacy_metadata`); a locked or corrupt `metadata.db` is skipped with a
+warning so it can never brick startup.
 
 ## launcher.db schema (`src/store/`)
 
-`LauncherStore` wraps a `Mutex<Connection>` (rusqlite, bundled SQLite) with `PRAGMA foreign_keys=ON` and `busy_timeout=5000`. Migrations use a custom `schema_version` table — base v2 schema plus stepwise `migrate_vN_to_vN+1` functions up to **SCHEMA_VERSION 16**, all in one transaction; column adds are guarded with `pragma_table_info` so re-runs are safe.
+`LauncherStore` wraps a `Mutex<Connection>` (rusqlite, bundled SQLite). Opening
+creates the parent directory 0700 and the file 0600 (`secure_fs`), runs
+migrations and seeds the "Default" identity. `run_migrations`
+(`src/store/migrate.rs`):
+
+1. `PRAGMA foreign_keys = ON`, `PRAGMA busy_timeout = 5000`.
+2. **Pre-migration snapshot**: when the stored version is between 1 and
+   `SCHEMA_VERSION - 1`, `backup_before_migration` writes
+   `launcher.db.bak-v<from>-<unix-ts>` next to the database with
+   `VACUUM INTO` (consistent even with WAL readers; cannot run inside a
+   transaction, so it runs first) and `prune_backups` keeps the newest three
+   (`KEPT_BACKUPS = 3`). Best-effort: a failed snapshot only warns.
+3. One transaction: the base v2 schema (`CREATE TABLE IF NOT EXISTS`), then
+   every `migrate_vN_to_vN+1` step below the current version, then the legacy
+   metadata import (fresh DB only), then `schema_version` is set to
+   **`SCHEMA_VERSION = 19`**. Column adds are guarded with `pragma_table_info`
+   so re-runs are safe.
+
+Migration history worth knowing:
+
+| Version | Change |
+|---|---|
+| v3 | `has_password` on `identities` and `hosts` |
+| v4 | `auth_events` table; `hosts.ping_ms` |
+| v5, v7 | `hosts.username`, `hosts.environment` |
+| v6 | `tunnels` table |
+| v8 | `ui_state` key/value table |
+| v9, v10 | `host_groups.default_identity_id`, `host_groups.parent_id` (nesting) |
+| v11 | `host_groups.reserved` + `host_group_memberships`; reserved Favorites group created, memberships backfilled from `group_id` and `favorite` |
+| v12 | `hosts.session_logging`, `auth_events.log_path` |
+| v13 | `hosts.transport` |
+| v14 | `snippets` table |
+| v15 | `log_bookmarks` table |
+| v16 | `command_history` table; `host_groups.default_username`, `default_port`, `default_proxy_jump`, `default_transport`, `default_forward_agent`; `hosts` rebuilt so `port`, `forward_agent`, `transport` are nullable (`NULL` = inherit), with old creation defaults (22 / off / `ssh`) migrated to `NULL` |
+| v17 | Repair: re-seed `host_group_memberships` from `hosts.group_id` and the reserved Favorites group |
+| v18 | `hosts.ping` (per-host ping override: `NULL` inherit, 1 on, 0 off) |
+| v19 | `hosts.secret_lookup` (one `Attribute=value` Secret Service spec) |
+
+The v16 rebuild is the cautionary tale: `DROP TABLE hosts` fires every child
+`ON DELETE CASCADE`, and 0.17.0 emptied memberships, tunnels and command
+history that way. The rebuild now copies those child rows into temp tables and
+puts them back; v17 repairs databases already damaged (only the primary group
+is recoverable). This is why the pre-migration snapshot exists.
 
 Tables:
 
-- `hosts` — managed hosts plus imported ssh_config rows; key columns: `source` (`launcher` | `ssh_config`), `ssh_config_hash` (drift detection), `transport`, `session_logging`, `os_icon`.
-- `host_groups` — nested via `parent_id`; a `reserved` flag marks the built-in **Favorites** group (found by flag, never by name — a user's own group named "Favorites" is never repurposed).
-- `host_group_memberships` — M:N; a host can belong to several groups at once.
-- `identities` — seeded with a "Default" identity.
-- `tunnels` — tunnel definitions (see [tunnels](../workflows/tunnels.md)).
-- `auth_events` — the audit log, including `log_path` for session-connect events when logging is enabled.
-- `ui_state` — collapsed groups, ui_zoom.
-- `command_history` — **local-only**, schema v16, excluded from host export/sync: `host_id` (FK to `hosts` ON DELETE CASCADE), `command`, `last_used`, `use_count`, `created_at`, `UNIQUE(host_id, command)`, index `(host_id, last_used DESC)`. Written only when `[command_history].enabled` is on and only for managed hosts; commands pass the shared classifier in `src/command_safety.rs` first.
+- `hosts`: `id`, `name` (unique), `label`, `address`, `port`, `group_id`
+  (primary group, kept in sync with memberships), `identity_id`, `os_icon`,
+  `tags` (JSON), `notes`, `proxy_jump`, `forward_agent`, `remote_command`,
+  `sort_order`, `favorite`, `last_connected`, `source` (`launcher` |
+  `ssh_config`), `ssh_config_hash`, timestamps, `has_password`, `ping_ms`,
+  `username`, `environment`, `session_logging`, `transport`, `ping`,
+  `secret_lookup`. Writes refuse a `name`, `address` or `username` starting with
+  `-` (`reject_option_like`, see [secrets](../security/secrets.md#input-safety)).
+- `host_groups`: nested via `parent_id`; `reserved` marks the built-in
+  **Favorites** group (found by flag, never by name: a user's own "Favorites"
+  group is never repurposed, the reserved one is renamed `Favorites (2)` on
+  clash); `default_identity_id` plus the five v16 `default_*` columns.
+- `host_group_memberships`: M:N, primary key `(host_id, group_id)`, both sides
+  cascade.
+- `identities`: `name`, `username`, `private_key`, `certificate`,
+  `has_password`, `sort_order`; seeded with "Default".
+- `tunnels`: tunnel definitions, `host_id` cascades (see
+  [tunnels](../workflows/tunnels.md)).
+- `auth_events`: the audit log, columns `id`, `host_name`, `username`, `via`,
+  `status`, `note`, `created_at`, `log_path`. `via` distinguishes connect
+  paths; `tunnel`, `agent` and `exec` have their own audit filter.
+- `ui_state`: key/value (`collapsed_groups`, `ui_zoom`, `name_zoom`).
+- `snippets`: `name`, `command`, `description`, `tags` (JSON), timestamps
+  (`src/store/snippets.rs`).
+- `log_bookmarks`: `host_dir`, `file_name`, `line`, `name`, `created_at`. Keyed
+  by the on-disk log location rather than a host id, so a bookmark survives
+  deleting and re-adding a host (`src/store/log_bookmarks.rs`).
+- `command_history`: **local-only**, opt-in: `host_id` (cascade), `command`
+  (1 to 4096 bytes), `last_used`, `use_count`, `created_at`,
+  `UNIQUE(host_id, command)`, index `command_history_host_recent`. Written by
+  `record_command` only for managed hosts, only when
+  `[command_history].enabled` is on, and only for commands
+  `command_safety::classify_command` calls safe; the per-host limit is capped at
+  `MAX_HOST_HISTORY = 2000`. The classifier is best-effort, so persisted command
+  text may still contain a secret it did not recognise.
 
-CRUD is split across `src/store/hosts.rs`, `identities.rs`, `tunnels.rs`; DTOs (`ManagedHost`, `HostSource`, `Tunnel`, `AuthEvent`, `NewHost`, …) live in `src/store/types.rs`. Managed credentials stay outside SQLite (only `has_password` flags are stored); actual credentials use the credential store (see [secrets](../security/secrets.md)). Opt-in command history is different: its best-effort classifier can miss unfamiliar credentials, so persisted command text may still contain secrets.
+CRUD is split across `src/store/hosts.rs`, `identities.rs`, `tunnels.rs`,
+`snippets.rs`, `log_bookmarks.rs`, `command_history.rs` and
+`group_defaults.rs`; DTOs (`ManagedHost`, `HostSource`, `Tunnel`, `AuthEvent`,
+`NewHost`, `Snippet`, `LogBookmark`, ...) live in `src/store/types.rs`.
+Credentials never enter SQLite (only `has_password` flags and the
+`secret_lookup` spec); see [secrets](../security/secrets.md).
 
-`sshub --profile NAME db purge --yes-i-am-stupid` deletes the selected profile's
-`launcher.db` and sidecars (`src/lib.rs::purge_profile_database`);
-`~/.ssh/config` is untouched and imported hosts reappear on next launch. Profile
-credential namespaces prevent identical host names in different profiles from
-sharing keyring entries.
+### Group-inherited connection defaults (`src/store/group_defaults.rs`)
+
+Six connection fields inherit: identity, username, port, ProxyJump, transport,
+agent forwarding. `LauncherStore::resolve_connection` returns a
+`ResolvedConnection` per host: the host's own value, else the best group
+default, else the global default (`DEFAULT_PORT = 22`, `ssh`, forwarding off;
+identity, username and ProxyJump stay unset). "Best" is most-specific-wins over
+the ancestor chains of every membership: smallest chain distance, then the
+deeper group, then the primary group's chain, then the smaller group id. Tags
+and favorites never inherit. Connect paths must build argv from the resolved
+values (`app::util::resolved_session_argv`).
+
+### Cross-profile transfer engine (`src/store/transfer.rs`)
+
+`TransferSnapshot::capture` and `DestIndex::capture` copy plain DTOs out of the
+source and destination stores, so planning never holds a store lock and applying
+never holds two (the `LauncherStore` mutex is not reentrant).
+`build_transfer_plan` / `apply_transfer_plan` copy or move hosts, groups,
+identities and tunnels; clashes rename to `name (copy N)`
+(`unique_dest_name`). Callers: the profile manager and `sshub <entity> transfer`
+([profiles](profiles.md#cross-profile-transfers)).
+
+### Destructive purge
+
+`sshub [--profile NAME] db purge --yes-i-am-stupid` deletes the profile's
+`launcher.db` and its `-wal`, `-shm`, `-journal` sidecars
+(`src/lib.rs::purge_profile_database`). `~/.ssh/config` is untouched and
+imported hosts reappear on next launch; keyring entries are orphaned.
 
 ## Hybrid host model (`src/hosts/loader.rs`, `src/ssh/`)
 
 `load_merged_hosts` produces the unified host list:
 
-1. DB hosts with `source=launcher` (full CRUD).
-2. DB hosts with `source=ssh_config` — rows synced from the user's ssh config by `sync_ssh_config_hosts` (`src/ssh/import.rs`), keyed by `ssh_config_hash`, refreshed on `sshub sync` / import; launcher rows are never overwritten.
-3. Remaining unresolved ssh_config aliases surface as `HostEntry::Legacy { host, meta }`, with metadata from `metadata.db`.
+1. DB hosts with `source = launcher` (full CRUD).
+2. DB hosts with `source = ssh_config`: rows synced from the ssh config by
+   `sync_ssh_config_hosts` (`src/ssh/import.rs`), keyed by `ssh_config_hash`;
+   launcher rows are never overwritten.
+3. Remaining ssh_config aliases with no DB row surface as
+   `HostEntry::Legacy { host, meta }`, with metadata from `metadata.db`.
 
-Resolution goes through the `HostResolver` trait; `SshConfigResolver` (`src/ssh/resolver.rs`) parses `Host` aliases itself (following `Include` directives, depth-capped at 16) and shells out to `ssh -F <cfg> -G <alias>` for effective options. The user's own `~/.ssh/config` is never written — export renders to `exported.conf` with an atomic write and `.bak` (`src/ssh/export.rs`), and `conf_val` flattens CR/LF so a host field can't inject a `Host *` stanza.
+Resolution goes through the `HostResolver` trait. `SshConfigResolver`
+(`src/ssh/resolver.rs`) lists `Host` aliases itself (unquoting them the way
+OpenSSH does, following `Include` up to depth 16) and shells out to
+`ssh -F <cfg> -G <alias>` for effective options. The
+ssh config is never written: export renders `exported.conf` with an atomic
+write and `.bak` (`src/ssh/export.rs`), and `conf_val` flattens CR/LF so a host
+field cannot inject a `Host *` stanza.
 
-Hosts, groups, favorites, and identities as user-facing concepts: [domain/hosts-identities](../domain/hosts-identities.md).
+Hosts, groups, favorites and identities as user-facing concepts:
+[domain/hosts-identities](../domain/hosts-identities.md).
 
 ## Configuration (`src/config.rs`)
 
-`profiles/<name>/config.toml` (created on first run) sections:
+`profiles/<name>/config.toml` (compat mode: `<config dir>/config.toml`) is
+created 0600 on first load. Sections of `AppConfig`:
 
-- Legacy `terminal` and `launch_command` keys may still occur in older config files, but are ignored after the external-terminal launcher was removed in 0.10.0. Sessions run on the embedded PTY (`src/session/`, tui-term + vt100); see [integrations](../integrations/external-terminals.md).
-- `[clipboard]` — `relay_from_pty` (default `true`) controls whether the visible embedded session relays OSC 52 clipboard writes to the hosting terminal.
-- `[appearance]` — opaque background, OS logos, quit confirmation, startup animation
-- `[session_logging]` — `enabled`, `max_file_bytes` (default 10 MiB), `retention_files` (50)
-- `[command_history]` — `enabled` (default **false**), `max_entries_per_host` (default 200, hard cap 2000); see [security/secrets](../security/secrets.md) rationale for why this is opt-in.
-- `[tunnel_reconnect]` — `max_attempts`, `initial_delay_ms`, `max_delay_ms`, `stable_secs`, `jitter_ratio` (consumed by `config::tunnel_backoff_delay`; see [tunnels](../workflows/tunnels.md))
-- `[keybinds]` — user rebinds from the Ctrl+K editor (`src/keybinds.rs`)
+- `[appearance]`: `show_detail_panel`, `date_format`, `disable_animation`
+  (reduced motion), `confirm_quit`, `identity_columns`, `os_logo`,
+  `transparent_sshub_background`, `transparent_session_background`,
+  `active_theme` (default `"default"`, see [themes](themes.md)).
+- `[session_logging]`: `enabled` (false), `max_file_bytes` (10 MiB),
+  `retention_files` (50).
+- `[command_history]`: `enabled` (false), `max_entries_per_host` (200, cap
+  2000).
+- `[tunnel_reconnect]`: `max_attempts` (12, 0 = unlimited), `initial_delay_ms`
+  (1000), `max_delay_ms` (60000), `jitter_ratio` (0.25), `stable_secs` (5).
+- `[keybinds]`: rebinds from the `Ctrl+K` editor (`src/keybinds.rs`).
+- `[clipboard]`: `relay_from_pty` (true), the OSC 52 relay.
+- `[ping]`: `enabled` (true).
+- `[updates]`: `check` (true), the startup release check.
+- `[ssh]`: `config_path`, a per-profile ssh config source (`~` expanded);
+  `SSHUB_SSH_CONFIG` / `SSH_LAUNCHER_SSH_CONFIG` still win.
 
-`save_config` deep-merges through `toml_edit`, preserving comments and unknown keys. Env overrides: `SSHUB_CONFIG_DIR`, `SSHUB_DATA_DIR`, `SSHUB_SSH_CONFIG` (with `SSH_LAUNCHER_*` legacy fallbacks), plus `SSHUB_DRY_RUN` / `SSHUB_AUTO_QUIT` for headless runs. A staged-rename migration moves `~/.config/ssh-launcher` → `~/.config/sshub` via a `.migrating` sibling so a crash mid-copy can't freeze a partial config.
+`save_config_at` deep-merges through `toml_edit` (comments and unknown keys
+survive) and writes atomically via a 0600 temp file. Load runs one-shot
+keybind migrations and drops retired keys (`RETIRED_KEYS`: only
+`appearance.opaque_background`), persisting once. Legacy `terminal` /
+`launch_command` keys from before 0.10.0 are simply ignored. Env overrides:
+`SSHUB_CONFIG_DIR`, `SSHUB_DATA_DIR`, `SSHUB_SSH_CONFIG` (each with an
+`SSH_LAUNCHER_*` fallback; empty values are ignored), plus `SSHUB_DRY_RUN` /
+`SSHUB_AUTO_QUIT` for headless runs. `config_dir()` / `data_dir()` migrate the
+old `~/.config/ssh-launcher` and `~/.local/share/ssh-launcher` trees when no
+override is set; `config_dir_path()` resolves without side effects (used by
+`sshub theme`).
 
 ## Change guidance
 
-- Adding a column or table: bump `SCHEMA_VERSION`, add a `migrate_vN_to_vN+1` step, and prefer `pragma_table_info` guards — tests open in-memory stores (`LauncherStore::open_in_memory`) and run all migrations from scratch.
-- In-memory tests point the launcher path into a temp dir so the legacy metadata import can't pick up a stray `./metadata.db` from the CWD.
-- The [file watcher](overview.md#file-watcher) only reloads hosts; config.toml changes require restart.
+- Adding a column or table: bump `SCHEMA_VERSION`, add a `migrate_vN_to_vN+1`
+  step with a `pragma_table_info` guard, and never `DROP` a parent table without
+  carrying its cascading children across. Tests open in-memory stores
+  (`LauncherStore::open_in_memory`) that run all migrations from scratch, and
+  `migrate.rs` has upgrade tests from hand-written older schemas.
+- `open_in_memory` points the launcher path into a temp dir so the legacy
+  metadata import cannot pick up a stray `./metadata.db` from the CWD.
+- The [file watcher](overview.md#file-watcher) reloads hosts only;
+  `config.toml` edits made outside SSHub need a restart.

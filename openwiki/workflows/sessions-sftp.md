@@ -1,58 +1,108 @@
 ---
 type: Workflow
-title: Embedded Sessions & SFTP — PTY sessions, session logging, mosh, and file transfer
-description: How SSHub runs SSH inside the TUI via portable-pty + vt100 (src/session), stages credentials through SSH_ASKPASS re-exec, optionally logs session output with rotation, supports mosh transport, and provides a dual-pane SFTP browser over libssh2 with a staged transfer queue (src/sftp).
+title: Embedded Sessions & SFTP - PTY sessions, session logging, mosh, and file transfer
+description: How SSHub runs ssh and local shells inside the TUI via portable-pty + vt100 (src/session), the session switcher and in-session keys, credential delivery through the SSH_ASKPASS channel, the xterm compatibility layer, OSC 52 relay, mouse rules, opt-in session logging with rotation, mosh transport, and the dual-pane SFTP browser with a second-server mode and staged transfer queue (src/sftp).
 resource: src/session/mod.rs
 tags: [session, pty, sftp, mosh, workflow, file-transfer]
 ---
 
 # Embedded Sessions & SFTP
 
+Snippets, ghost-text suggestions, the session log browser and the interactive authentication modal have their own page: [session tools](session-tools.md).
+
 ## Embedded SSH sessions (`src/session/`)
 
-Connecting to a host spawns `ssh` (or `mosh`) on a pseudo-TTY; output is parsed through `vt100` and rendered fullscreen in ratatui via `tui-term`. Multiple sessions coexist as background tabs — `Ctrl+D` detaches to the dashboard while SSH keeps running. `Alt+S` opens a fuzzy session switcher with host/address and `up` / `new` / `dead` lifecycle indicators; Enter resumes a session, while `Ctrl+Shift+T` creates a local-shell tab using `$SHELL` or `/bin/sh`. The same picker is reused for a new SSH session and the SFTP left-pane host.
+Connecting to a host spawns `ssh` (or `mosh`) on a pseudo-TTY; output is parsed through `vt100` and rendered fullscreen with `tui-term`. Sessions coexist as tabs; detaching returns to the dashboard while ssh keeps running, and the dashboard header shows a session strip.
 
-The dashboard session strip can be cycled without entering fullscreen; `Ctrl+Shift+S` opens the selected session. Re-entry uses the same slide transition as a fresh connection, with reduced motion bypassing animation.
+In-session keys (`App::handle_key_session`, `src/app/session.rs`; all rebindable):
+
+| Key | Action |
+|---|---|
+| `Ctrl+D` | Detach to the dashboard |
+| `Ctrl+T` | New session tab (opens the host picker) |
+| `Ctrl+W` | Close the tab |
+| `Ctrl+[` / `Ctrl+]` (also `Ctrl+PageUp` / `Ctrl+PageDown`) | Previous / next tab |
+| `Alt+S` | Session switcher |
+| `Ctrl+Shift+T` | Local shell tab |
+| `Ctrl+Shift+F` | Open the SFTP tab for this host |
+| `Ctrl+N` | [Snippet picker](session-tools.md#command-snippets) (running sessions only) |
+| `Tab` / `Ctrl+F` | Accept a visible [ghost completion](session-tools.md#ghost-text-suggestions); Esc dismisses it |
+| `PageUp` / `PageDown` | Local scrollback, half a screen per press. On the alternate screen (vim, tmux, less) they are forwarded to the remote instead |
+| `Esc` while connecting | Cancel the connection |
+| `Ctrl+O` while connecting | Expand or collapse the ssh debug log on the connect screen |
+
+Every other key snaps the view back to live and is encoded to xterm bytes by `session/keys.rs`; `Ctrl+C` always reaches the remote.
+
+**Session switcher** (`Alt+S`, `src/app/session_picker.rs`, `screens/session_picker.rs`): a type-to-filter list of open sessions matching name, user or address, each with its ordinal, endpoint and a phase badge `conn` / `up` / `exit`. Enter jumps to the session (with the tab slide animation when opened from a session), Esc closes, `Ctrl+Shift+T` closes it and opens a local shell. The same picker, with a host list instead of sessions, serves `Ctrl+T` (new session tab) and the SFTP left-pane server choice. The switcher refuses to open when there are no sessions.
+
+**Dashboard session strip** (`handle_key_background_sessions`): with sessions running, every dashboard tab accepts `Ctrl+Shift+S` (resume the selected session), `Ctrl+[`/`Ctrl+]` (move the strip selection without entering), `Alt+S`, `Ctrl+T`, `Ctrl+W`, `Ctrl+Shift+F`. The footer leads with `resume` (`KeybindsConfig::session_footer_hints`).
+
+**Local shell** (`src/app/local_shell.rs`): `Ctrl+Shift+T` from any dashboard tab, a session, or the switcher opens a tab running `$SHELL` (falling back to `/bin/sh`) with stderr merged onto the PTY so the prompt renders. Detach and close behave like ssh tabs.
 
 Key pieces:
 
-- **`pty.rs`** — `PtyRuntime::spawn(argv, rows, cols, env)` over `portable-pty`; a reader thread streams `PtyEvent::{Bytes, Stderr, Exited}` over mpsc to the [event loop](../architecture/overview.md). The child's stderr is siphoned through a side FIFO (`StderrFifo`, `mkfifo` 0600, opened `O_RDWR|O_NONBLOCK` so empty reads yield EAGAIN instead of EOF) via an `sh -c 'exec "$@" 2>"$SSHUB_STDERR_FIFO"'` wrapper — this keeps `ssh -v` noise off the render grid. `TERM` is forced to `xterm-256color` because kitty's terminfo breaks remotes. Drop escalates SIGHUP → SIGTERM → kill on the process group.
-- **`askpass.rs`** — credentials reach ssh without PTY typing: the secret is written to a 0600 file in `$XDG_RUNTIME_DIR`, the child gets `SSH_ASKPASS=<self exe>`, `SSH_ASKPASS_REQUIRE=force`, `SSHUB_ASKPASS_FILE=<path>`, and `main.rs` calls `maybe_run_askpass()` first so the re-executed binary prints the secret and exits. Details and caveats: [secrets](../security/secrets.md).
-- **`mod.rs`** — `Session` lifecycle `SessionPhase::{Connecting, Running, Exited}`. `PendingSecret::{Password, Passphrase}` is auto-typed at most once (prompt matched via a cursor-parked needle scan, not MOTD text) so wrong-password retries don't loop; askpass is preferred, PTY typing is the fallback.
-- **`parser.rs`** — `vt100::Parser` with 10k scrollback. A `clear_buffer()` helper exists to wipe the buffer post-auth but is currently dead code (never called); `-v` handshake noise is siphoned off via the stderr FIFO into `debug_log`, not the parser buffer. **`keys.rs`** encodes crossterm keys to xterm bytes; **`render.rs`** draws header/body/footer and the copy toast.
-- **OSC 52 relay** — applications inside the PTY may request a clipboard write; only the visible session relays non-empty payloads to the hosting terminal. Payloads are capped at 64 KiB and queued with bounded capacity; background sessions, the dashboard, SFTP, and tunnels drop requests immediately. Clipboard reads (`ESC]52;c;?BEL`) remain unanswered. Disable writes with `[clipboard] relay_from_pty = false`; the raw sequence can still appear in enabled session logs.
+- **`pty.rs`**: `PtyRuntime::spawn(argv, rows, cols, env, siphon_stderr)` over `portable-pty`; reader threads send `PtyEvent::{Bytes, Stderr, Exited}` to the [event loop](../architecture/overview.md). For ssh the child's stderr is siphoned through a side FIFO (`StderrFifo`, `mkfifo` 0600 in the temp dir, opened `O_RDWR | O_NONBLOCK`) via an `sh -c 'exec "$@" 2>"$SSHUB_STDERR_FIFO"'` wrapper, keeping debug output off the grid. `TERM=xterm-256color` and `COLORTERM=truecolor` are forced. Writes (keys, pastes, query answers) go through one writer thread in order. Drop sends SIGHUP, then SIGTERM, then kills the process group.
+- **Connect argv** (`prepare_session_connect_argv`, `src/app/util.rs`): embedded ssh runs with `-o StrictHostKeyChecking=ask -o NumberOfPasswordPrompts=3 -o LogLevel=DEBUG1`, so unknown or changed host keys and password prompts surface in the [auth modal](session-tools.md#interactive-authentication-modal) instead of being auto-accepted.
+- **Credentials** (`askpass.rs`, `askpass_channel.rs`, `interactive_auth.rs`): every interactive ssh session (argv[0] `ssh`, not a key push) gets a private Unix-socket askpass channel: `SSH_ASKPASS=<self exe>` plus `SSHUB_ASKPASS_SOCKET` / `SSHUB_ASKPASS_TOKEN` / `SSHUB_ASKPASS_CHANNEL`. `main.rs` calls `maybe_run_askpass()` first, so the re-executed binary forwards the prompt to the TUI. A stored secret answers only a matching prompt class from the destination ssh (identified by pid, so a ProxyJump hop never receives it); anything else opens the modal. Mosh with a stored secret and key-push sessions use the older 0600 file under `$XDG_RUNTIME_DIR` (`AskpassSecret`, `SSHUB_ASKPASS_FILE`). Only when that file path cannot be staged is the stored secret typed into the PTY, at most once and only when the cursor sits right after a password or passphrase prompt (`maybe_send_pending_secret`, `ends_with_prompt`). Details: [private channel](../security/secrets.md#private-channel-srcsessionaskpass_channelrs) and [secrets](../security/secrets.md).
+- **`mod.rs`**: `Session` lifecycle `SessionPhase::{Connecting, Running, Exited}`; the connect animation stays up until a stored secret is delivered or `REVEAL_TIMEOUT` (6 s) passes. `FAILURE_EXPLANATIONS` turns common ssh failures into plain-language reasons on the connect screen. The first `debug1: Server host key:` fingerprint is cached and shown there.
+- **`parser.rs`**: `vt100::Parser` with 10 000 rows of scrollback behind `XtermCompat`, which rewrites xterm sequences stock `vt100` 0.16 drops (for example HVP cursor moves used by btop), renders DEC Special Graphics line drawing as Unicode, and tracks synchronized output (DEC mode 2026) so the pane keeps showing the last complete frame mid-repaint. It also answers terminal status queries (bounded reply queue) so remote apps do not block on a timeout.
+- **`render.rs`**: header (tab strip and hints from `session_header_hints`), body, footer, copy toast, ghost text.
+- **OSC 52 relay**: applications inside the PTY may request a clipboard write; only the visible session relays non-empty payloads (`App::relay_visible_session_clipboard`). Payloads are capped at 64 KiB and at most 8 writes are queued; background sessions, the dashboard, SFTP and tunnels discard requests immediately. Clipboard reads (`ESC]52;c;?BEL`) stay unanswered. Disable with `[clipboard] relay_from_pty = false`; the raw sequence can still land in enabled session logs.
+
+### Mouse and selection in a session
+
+`handle_mouse_session` with `session::keys::selects_locally`: when the remote has not enabled mouse reporting, the mouse is local (drag selects, release copies through OSC 52, the wheel scrolls scrollback by 3 lines, dragging past the edge autoscrolls). When reporting is on, the mouse is forwarded only if the remote is also on the alternate screen; `Shift` inverts the decision in either direction. On the alternate screen without reporting, a wheel notch becomes arrow keys for the app (xterm alternateScroll); `Shift`+wheel scrolls local scrollback instead. Forwarded events outside the grid cells (header, footer) are dropped.
 
 ## Session logging (`src/session_log.rs`)
 
-Opt-in capture of PTY output to plain-text logs under
-`~/.local/share/sshub/profiles/<name>/logs/<host-dir>/` in profile mode.
-Compatibility-mode installs use `~/.local/share/sshub/logs/<host-dir>/`.
-Enabled globally in Settings or per host (`inherit` / `on` / `off` — stored on
-`ManagedHost` or `HostMetadata`, see [data model](../architecture/data-model.md)).
+Opt-in capture of PTY output to plain-text files under `<data dir>/logs/<host-dir>/`, which is `~/.local/share/sshub/profiles/<name>/logs/` in profile mode and `~/.local/share/sshub/logs/` (or the `SSHUB_DATA_DIR` override) in compatibility mode. Enabled globally in Settings ("Session logging") or per host (`inherit` / `on` / `off`, host form "Session log" or `sshub host add --session-log`).
 
-- `SessionLogWriter` is append-only; rotates at `[session_logging].max_file_bytes` (default 10 MiB) with `{secs}-{pid}-{n}[-serial].log` names, prunes by mtime to `retention_files` (default 50) per host; dirs 0700 / files 0600 via `secure_fs`.
-- Managed hosts log to `{name}-{id}` directories; pure ssh_config aliases without a launcher row may share a directory when sanitized names collide.
+- `SessionLogWriter` is append-only; rotates at `[session_logging].max_file_bytes` (default 10 MiB) with `{secs}-{pid}-{id}[-{serial}].log` names and prunes by mtime to `retention_files` (default 50) per host directory; dirs 0700, files 0600 via `secure_fs`.
+- Managed hosts log to `{sanitized-name}-{id}` directories (`host_log_dir_name`); ssh_config aliases without a launcher row use the sanitized name alone, so colliding names can share a directory.
 - Session-connect audit events record the log path in `auth_events.log_path`.
-- **Security:** logs capture everything echoed to the terminal, including typed passwords. This warning is in the [TUI help screen](tui.md) and the [secrets page](../security/secrets.md).
-- `wrap_script_command()` wraps external launches in `script(1)` (Linux/macOS) when logging applies outside the embedded PTY.
+- **Security:** logs capture everything echoed to the terminal, including typed passwords. The help overlay carries this warning; see [secrets](../security/secrets.md).
+- `wrap_script_command()` wraps `sshub host connect` in `script(1)` when logging applies outside the embedded PTY; `sshub exec` never writes a transcript.
+- Browse, search and bookmark logs in the TUI with `Shift+L`: [session log browser](session-tools.md#session-log-browser).
 
 ## Transport: ssh or mosh (`src/session_transport.rs`)
 
-Per-host `SessionTransport::{Ssh, Mosh}` selected in the host form. Embedded sessions use `mosh` when selected (`build_mosh_argv` in `src/ssh/host.rs`, with an injected ssh accept-new option); **tunnels and SFTP are always ssh-only**.
+Per-host `SessionTransport::{Ssh, Mosh}`, set in the host form, by `--transport ssh|mosh`, or inherited from a group default (`resolved_session_argv`). Embedded sessions use `mosh` when selected (`build_mosh_argv` in `src/ssh/host.rs`; `StrictHostKeyChecking=accept-new` is injected into the inner ssh only when a secret is staged). Tunnels, SFTP, broadcast and `sshub exec` are ssh-only; `exec` refuses mosh hosts.
 
 ## SFTP (`src/sftp/`)
 
-A dual-pane (remote/local) file browser with a staged transfer queue: navigate both sides, queue uploads/downloads (files or whole folders, recursive), and run the queue with a progress bar. The local pane displays paths under the local home directory with `$HOME` collapsed to `~`; remote paths remain server paths. `..` is a selectable parent row in both panes. Dotfiles are hidden by default and `.` reveals them (a dot-prefixed search also reveals matches), with the choice persisted across restarts. In-place ops: delete `d`, new folder `n`, rename/move `R`, chmod `M` (octal).
+The SFTP tab first shows a host picker (same group tree and fold keys as the hosts tab; `/` searches, Enter connects). The browser is dual-pane: **left = local, right = remote** (`Tab` switches focus). The local pane shows `$HOME` as `~`; `..` is a selectable parent row in both panes.
 
-The left pane can target a second SSH server. Server-to-server transfers use a local temporary file one leg at a time, and remain queued until the far-end write completes. The queue stays open while a transfer runs so more items can be staged; failures stop and cancel workers rather than retrying forever. An unreachable SFTP host produces a timed connection failure modal instead of a blank browser.
+Browser keys (`handle_key_sftp_browser`, `src/app/sftp.rs`):
 
-- **`transport.rs`** — `SftpTransport` trait (test seam) with `Ssh2Transport` over the `ssh2` crate (libssh2, vendored OpenSSL so `cargo install` needs no system libssh2). TOFU host-key policy mirroring `accept-new`: unknown keys are appended to `~/.ssh/known_hosts` **manually** because libssh2's `write_file` would drop unparsable lines; a *changed* key is a hard MITM error. Auth order: stored passphrase → `userauth_pubkey_file`; password → `userauth_password`; else agent / unencrypted key.
-- **`worker.rs`** — the blocking transport lives on a dedicated thread (`spawn_sftp_worker`) serving `SftpCommand::{ListDir, RunQueue, Remove, Mkdir, Rename, Chmod, Cancel}` and emitting `SftpEvent::{Connected, ConnectFailed, DirListing, Progress, TransferDone, QueueDone, OpDone, Error}`. Progress events are throttled at 64 KiB; recursive transfers pre-plan the tree (still polling Cancel); symlinks are never descended.
-- **`model.rs`** — pure, I/O-free dual-pane state (`Pane`, `FileEntry`, `QueuedTransfer`, `Direction`) — easy to unit test.
+| Key | Action |
+|---|---|
+| `Enter` / `Backspace` | Enter directory / go to parent |
+| `Left` / `Right` | Stage the focused selection toward the left (download) or right (upload) pane; files or whole folders, recursive |
+| `u` | Remove the most recently staged item |
+| `c` | Run the queue |
+| `d` / `n` / `R` / `M` | Delete (confirmed), new folder, rename/move, chmod (octal, seeded with the current mode); frozen while a queue runs |
+| `r` | Re-list both panes |
+| `.` | Show or hide dotfiles (persisted in `ui_state` as `sftp_show_hidden`); a dot-prefixed search also reveals matches |
+| `/` | Filter the focused pane |
+| `s` | Open an SSH session to the same host (SFTP stays open) |
+| `o` / `O` | Point the left pane at a second server (session picker) / back to the local filesystem |
+| `Esc` | Disconnect back to the host picker |
 
-Limitations: **ProxyJump hosts are refused** (libssh2 transport can't chain; `src/app/sftp.rs`). SFTP is also exposed headlessly — `sshub sftp ls|get|put|rm|mkdir|rename|chmod` (see [CLI](cli.md)).
+The queue stays open while a run is in flight: newly staged items join the next pass. While a queue runs, the remote pane cannot navigate (its worker is busy) but the local pane can.
+
+**Second-server mode**: after `o`, both panes are remote. Each item is relayed through an owner-only local temp directory (`sshub-relay-*`), one leg at a time: the source worker downloads, then the destination worker uploads, and the item leaves the queue only after the far-end write completes (`sftp_relay_step`).
+
+**Connection target** (`app::util::sftp_ssh_host`, used for the right pane and the second server): libssh2 cannot read `~/.ssh/config`, so a managed host is first resolved through `store.resolve_connection` (group defaults apply; a failure falls back to the stored row). For a managed row with `source = ssh_config`, the alias is then resolved live through the resolver (`ssh -G`), and its user, identity file and certificate file fill only the fields the store leaves empty; SSHub-managed values always win.
+
+An unreachable host fails after an 8 s TCP connect timeout with a modal notice instead of a blank browser.
+
+- **`transport.rs`**: `SftpTransport` trait (test seam) with `Ssh2Transport` over the `ssh2` crate (libssh2, vendored OpenSSL). TOFU host-key policy mirroring `accept-new`: unknown keys are appended to `~/.ssh/known_hosts` by hand (`known_hosts_entry`) because libssh2's writer would drop unparsable lines; a changed key is a hard "possible MITM" error. Auth order: stored passphrase with the identity file, stored password, else ssh-agent, else an unencrypted identity file.
+- **`worker.rs`**: the blocking transport lives on a dedicated thread (`spawn_sftp_worker`) serving `SftpCommand::{ListDir, RunQueue, Remove, Mkdir, Rename, Chmod, Cancel}` and emitting `SftpEvent::{Connected, ConnectFailed, DirListing, Progress, TransferDone, QueueDone, OpDone, Error}`. Progress events are throttled to every 64 KiB; recursive transfers pre-plan the tree; symlinks are never descended.
+- **`model.rs`**: pure, I/O-free dual-pane state (`SftpState`, `Pane`, `FileEntry`, `QueuedTransfer`, `Direction`, `Side`), easy to unit test.
+
+Limitations: **ProxyJump hosts are refused** with a notice ("SFTP via ProxyJump isn't supported yet"), in the picker and for the second server. SFTP is also exposed headlessly: `sshub sftp ls|get|put|rm|mkdir|rename|chmod` (see [CLI](cli.md)).
 
 ## Change guidance
 
-- Session regressions: `src/app/tests/session.rs` + `tests/e2e/connect_managed.rs`.
-- SFTP logic changes belong in `model.rs` (pure) where possible; transport changes go through the `SftpTransport` trait so tests can substitute a fake. See `tests/e2e/quick_connect.rs` and `src/app/tests/sftp.rs`.
+- Session regressions: `src/app/tests/session.rs`, `tests/e2e/connect_managed.rs`, `tests/e2e/session_switcher.rs`, `tests/e2e/local_shell.rs`.
+- SFTP logic belongs in `model.rs` (pure) where possible; transport changes go through the `SftpTransport` trait so tests can substitute a fake. See `tests/e2e/quick_connect.rs` and `src/app/tests/sftp.rs`.

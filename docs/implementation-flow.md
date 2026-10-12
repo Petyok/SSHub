@@ -136,7 +136,7 @@ If you add or change `openwiki/` pages (or merge an OpenWiki bot PR):
 2. Update [openwiki/.last-update.json](../openwiki/.last-update.json) (`gitHead`, `validatedAt`) after manual correction.
 3. Keep `CLAUDE.md` / `AGENTS.md` architecture pointers in sync (prefer linking to OpenWiki over duplicating tables).
 
-Automated regen is a starting point, not source of truth. Scheduled workflow needs repo secret `OPENROUTER_API_KEY` ([runbook](../openwiki/operations/runbook.md)).
+Automated regen is a starting point, not source of truth. The workflow runs only when triggered by hand (`workflow_dispatch`) and needs repo secret `OPENROUTER_API_KEY` ([runbook](../openwiki/operations/ci-cd.md#openwiki-updateyml-wiki-bot)).
 
 ## 7. Adversarial review (before merge)
 

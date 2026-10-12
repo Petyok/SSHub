@@ -1,80 +1,124 @@
 ---
 type: Product Overview
-title: SSHub — Quickstart
-description: Entry point to the SSHub knowledge base. SSHub is a Rust terminal UI for managing and connecting to SSH hosts, combining ~/.ssh/config with a built-in SQLite host database, embedded PTY sessions, SFTP, tunnels, identities, and an audit log.
+title: SSHub Quickstart
+description: Entry point to the SSHub knowledge base. SSHub is a Rust terminal UI for managing and connecting to SSH hosts, combining ~/.ssh/config with isolated per-profile SQLite host databases, embedded PTY sessions with an in-app auth modal, SFTP, tunnels, broadcast, snippets and suggestions, identities, runtime themes, a headless CLI, and an audit log.
 tags: [sshub, tui, ssh, rust, overview]
 ---
 
 # SSHub Quickstart
 
-SSHub (`sshub`, v0.9.3 in `Cargo.toml`) is a keyboard-driven terminal UI for managing and connecting to SSH hosts. It merges your read-only `~/.ssh/config` with a fully managed host database (SQLite), and adds embedded in-TUI SSH sessions, an SFTP file browser, SSH tunnels with keep-alive reconnect, ssh-agent identity management, OS auto-detection with logos, and a connection audit log. It also ships a full headless CLI for scripting. License: AGPL-3.0-or-later.
+SSHub (`sshub`, v0.17.7 in `Cargo.toml`) is a keyboard-driven terminal UI for
+managing and connecting to SSH hosts. It merges your read-only `~/.ssh/config`
+with a managed host database per profile (SQLite) and adds embedded in-TUI SSH
+and local shell sessions with a masked authentication modal, an SFTP browser,
+tunnels with keep-alive reconnect, broadcast commands, command snippets and
+ghost-text suggestions, a session log browser, ssh-agent and certificate-aware
+identities, group-inherited connection defaults, OS detection with logos,
+runtime themes, a release notice with in-place update, and a connection audit
+log. A headless CLI covers scripting (`sshub exec`, `sshub host ...`, transfers,
+themes). License: AGPL-3.0-or-later.
 
-- Crate: `sshub` on crates.io (`cargo install sshub`); repo: github.com/Petyok/SSHub
-- Stack: Rust 2021, ratatui 0.30 + crossterm (TUI), portable-pty + vt100/tui-term (embedded sessions), rusqlite bundled (SQLite), ssh2/libssh2 with vendored OpenSSL (SFTP), nucleo (fuzzy search), notify (file watcher), keyring (OS secret store). **No async runtime** — a synchronous event loop polls every 50 ms (`src/lib.rs`).
-- Single binary: `src/main.rs` dispatches askpass re-exec → `db` subcommand → headless CLI subcommands → global flags → the TUI.
+- Crate: `sshub` on crates.io (`cargo install sshub`), npm package
+  `sshub-tui`; repo: github.com/Petyok/SSHub.
+- Stack: Rust 2021, ratatui 0.30 + crossterm 0.29 (TUI), portable-pty +
+  vt100 0.16 + tui-term (embedded sessions, upstream vt100 with SSHub's own
+  query answers and sequence translation), rusqlite bundled (SQLite), ssh2 /
+  libssh2 with OpenSSL vendored by default (SFTP), nucleo (fuzzy search),
+  notify (file watcher), keyring + dbus-secret-service (credentials).
+  **No async runtime**: a synchronous event loop polls every 50 ms
+  (`src/lib.rs`).
+- Single binary: `src/main.rs` dispatches askpass helper → global profile
+  flags → `db` → `theme` → headless CLI subcommands → global flags → TUI.
 
 ## Install and run
 
 ```bash
-cargo install sshub          # or: git clone … && just install
-sshub                        # launch TUI
+cargo install sshub          # or: npm install -g sshub-tui, or: git clone ... && just install
+sshub                        # launch the TUI
 sshub --help                 # global options (--profile, --manage-profiles, --dry-run, --version)
 sshub list                   # headless CLI (see workflows/cli.md)
 ```
 
-Linux builds need `libdbus-1-dev` + `pkg-config` (Secret Service keyring backend). At runtime an unlocked Secret Service provider (gnome-keyring, KWallet) is required for password persistence; otherwise SSHub warns and ssh falls back to prompting.
+Linux builds need `libdbus-1-dev` + `pkg-config`; `--no-default-features`
+links the system OpenSSL instead of the vendored one. At runtime a usable
+Secret Service provider (gnome-keyring, KWallet, KeePassXC) stores passwords;
+without one SSHub falls back to an owner-only `credentials.json`.
 
 ## Data paths
 
-| Resource | Default path | Override |
+| Resource | Default path (profile mode) | Override |
 |---|---|---|
-| Config | `~/.local/share/sshub/profiles/<name>/config.toml` | `SSHUB_CONFIG_DIR` in compatibility mode |
-| Databases | `~/.local/share/sshub/profiles/<name>/{launcher,metadata}.db` | `SSHUB_DATA_DIR` in compatibility mode |
-| SSH config | `~/.ssh/config` | `SSHUB_SSH_CONFIG` |
-| Session logs | `~/.local/share/sshub/profiles/<name>/logs/<host-dir>/` | — |
-| Profile state | `~/.local/share/sshub/state.toml` | — |
+| Profile registry | `~/.local/share/sshub/state.toml` | none (compat mode has no registry) |
+| Config | `~/.local/share/sshub/profiles/<name>/config.toml` | `SSHUB_CONFIG_DIR` (compat mode) |
+| Databases | `~/.local/share/sshub/profiles/<name>/{launcher,metadata}.db` | `SSHUB_DATA_DIR` (compat mode) |
+| Pre-migration snapshots | `profiles/<name>/launcher.db.bak-v<from>-<ts>` (newest 3) | follows the database |
+| Fallback credentials | `profiles/<name>/credentials.json` | follows the data dir |
+| Session logs | `profiles/<name>/logs/<host-dir>/` | follows the data dir |
+| Tunnel PID files | `profiles/<name>/tunnels/` | follows the data dir |
+| User themes (TUI) | `profiles/<name>/themes/*.toml` | compat: `<config dir>/themes/` |
+| User themes (`sshub theme` CLI) | `~/.config/sshub/themes/*.toml` | `SSHUB_CONFIG_DIR/themes/` |
+| SSH config | `~/.ssh/config` | `[ssh] config_path` per profile; `SSHUB_SSH_CONFIG` wins |
 
-Startup uses one profile workspace. One profile starts silently; multiple profiles
-show a picker after the splash. Use `sshub --profile NAME` to bypass it or
-`sshub --manage-profiles` to manage profiles. Picker supports create, rename,
-delete, and last-used selection. Headless commands without `--profile` use the
-last-used profile and never open the picker. Legacy `SSH_LAUNCHER_*` env vars remain
-fallbacks; setting `SSHUB_DATA_DIR` or `SSHUB_CONFIG_DIR` uses compatibility
-mode without profile discovery. Legacy top-level data migrates into
-`profiles/default` (`src/profile/migrate.rs`).
+One profile starts silently; several show a picker after the splash.
+`sshub --profile NAME` bypasses it, `sshub --manage-profiles` forces it, and
+`Alt+P` manages profiles inside the TUI. Headless commands without `--profile`
+use the last-used profile and never open the picker. Setting `SSHUB_DATA_DIR`
+or `SSHUB_CONFIG_DIR` (or the legacy `SSH_LAUNCHER_*` names) selects
+compatibility mode without profiles. Legacy top-level data migrates into
+`profiles/default`. The two themes rows disagree in profile mode; see
+[themes](architecture/themes.md).
 
 ## Where to go next
 
 ### Architecture
-- [Runtime architecture](architecture/overview.md) — the 50 ms synchronous event loop, the `App` state machine (`AppMode` overlays, `active_tab`), the TUI render pipeline, and background workers.
-- [Data model & storage](architecture/data-model.md) — `launcher.db` vs `metadata.db`, schema migrations, the hybrid ssh_config/managed host model, config file, and file watching.
+- [Runtime architecture](architecture/overview.md): dispatch, startup, the 50 ms event loop, `AppMode` and `active_tab`, render pipeline, workers and channels, source map.
+- [Data model & storage](architecture/data-model.md): `launcher.db` schema v19 and its migrations, pre-migration snapshots, group defaults, transfer engine, `metadata.db`, the hybrid host model, `config.toml`.
+- [Profiles](architecture/profiles.md): layout, compat mode, startup selection, in-app switching, legacy migration, cross-profile transfers.
+- [Theme system internals](architecture/themes.md): registry, resolver, `ThemeManager`, picker; the authoring guide is `docs/theme-system.md`.
 
 ### Workflows
-- [TUI dashboard](workflows/tui.md) — tabs, overlays, keybindings, searchable pickers, and screens.
-- [Known hosts manager](workflows/known-hosts.md) — fingerprints, guarded known_hosts deletion, and first-connect verification.
-- [Sessions & SFTP](workflows/sessions-sftp.md) — embedded PTY sessions, OSC 52 relay boundary, askpass, session logging, mosh, and the dual-pane SFTP browser.
-- [Tunnels](workflows/tunnels.md) — local/remote/dynamic tunnels and keep-alive reconnect with backoff.
-- [Headless CLI](workflows/cli.md) — full command tree, JSON output, exit codes.
+- [TUI dashboard](workflows/tui.md): tabs, overlays, keybindings, screens.
+- [Sessions & SFTP](workflows/sessions-sftp.md): embedded sessions, session switcher, credential delivery, terminal compatibility, OSC 52, logging, mosh, SFTP.
+- [Session tools](workflows/session-tools.md): auth modal, snippets, ghost-text suggestions, command history, session log browser.
+- [Broadcast](workflows/broadcast.md): one command across a group or tag.
+- [Tunnels](workflows/tunnels.md): local/remote/dynamic forwards and keep-alive reconnect.
+- [Known hosts manager](workflows/known-hosts.md): fingerprints, guarded deletion, host-key decisions.
+- [Profiles & themes](workflows/profiles-themes.md): picker, profile manager, transfers, theme picker, `sshub theme`.
+- [Headless CLI](workflows/cli.md): command tree, `exec`, JSON output, exit codes.
 
 ### Domain
-- [Hosts, groups & identities](domain/hosts-identities.md) — host sources, nested groups and Favorites, identities, ssh-agent, and Termius import.
+- [Hosts, groups & identities](domain/hosts-identities.md): host sources, nested groups with defaults and Favorites, identities, certificates, keygen and key push, imports.
+
+### Security & integrations
+- [Secrets & security](security/secrets.md): credential store, Secret Service lookup, askpass file and channel, remember opt-in, host-key policy, OSC 52, permissions, input safety.
+- [Integrations](integrations/external-terminals.md): external binaries, keyring, release check and update channels, npm packaging, demo pipeline.
 
 ### Operations & testing
-- [Build, versioning & release](operations/build-release.md) — Justfile recipes, odometer versioning, pre-commit hook, release flow.
-- [CI & automation](operations/ci-cd.md) — GitHub Actions workflows, including the OpenWiki wiki-update bot.
-- [Testing strategy](testing/strategy.md) — unit / smoke / e2e / config levels, fixtures, and test doubles.
+- [Build, versioning & release](operations/build-release.md): Justfile, features, shared target, odometer versioning, release and hotfix flow.
+- [CI & automation](operations/ci-cd.md): GitHub Actions workflows, branch-name check, OpenWiki bot.
+- [Testing strategy](testing/strategy.md): unit / smoke / e2e / config / transfer levels, oracle tests, fixtures.
 
-### Integrations & security
-- [External terminal launchers & demo](integrations/external-terminals.md) — kitty/ghostty/custom launchers and the VHS demo pipeline.
-- [Secrets, credentials & file security](security/secrets.md) — OS keyring, askpass staging, TOFU host keys, session-log exposure warning, permission hardening.
+### Wiki maintenance
+- [OpenWiki instructions](INSTRUCTIONS.md): generator prompt and the invariant checklist to verify before merging wiki changes.
+- [Changelog coverage](changelog-coverage.md): CHANGELOG entries mapped to wiki pages.
 
 ## Contributing pointers
 
-Pinned workflow: [docs/implementation-flow.md](../docs/implementation-flow.md) (issue → claim → branch off `development` → verify → adversarial review → PR). Run `cargo fmt`, `cargo fmt --check`, and `cargo clippy --all-targets` before every push — CI enforces the same. See [Build, versioning & release](operations/build-release.md) for the branch model (`feature/* → development → main`).
+Pinned workflow: [docs/implementation-flow.md](../docs/implementation-flow.md)
+(issue → claim → branch off `development` → verify → adversarial review → PR).
+Run `just test`, `cargo fmt`, `cargo fmt --check` and
+`cargo clippy --all-targets` before every push; CI enforces the same with
+warnings denied. Branch names follow `feature/`, `fix/`, `docs/`, `chore/`,
+`poc/`; see [build & release](operations/build-release.md).
 
 ## Backlog
 
-- **Demo pipeline details** (`demo/` tapes, `record.sh`, `seed-demo.sh`) — only summarized under [integrations](integrations/external-terminals.md); deferred because it is contributor tooling, not product behavior.
-- **Host-sync design** (`docs/host-sync-design.md`) — P2P sync design for epic #13; not yet implemented, documented only in the design doc.
-- **Changelog audit follow-ups** — public-key push/key generation, npm packaging details, motion/panel behavior, PuTTY/mRemoteNG import, and release-license history remain pending in [the changelog coverage notebook](changelog-coverage.md).
-- **Detached tunnel PID-file hardening** (`src/tunnel/spawn.rs`) — acknowledged races (no locking, recycled PIDs) noted in [tunnels](workflows/tunnels.md); behavior may change.
+- **Host-sync design** (`docs/host-sync-design.md`): P2P sync of hosts and
+  credentials; design only, nothing in `src/`.
+- **Detached tunnel PID files** (`src/tunnel/spawn.rs`): acknowledged races (no
+  lock between concurrent `tunnel start`, recycled PIDs) noted in the code and
+  in [tunnels](workflows/tunnels.md).
+- **Themes directory split**: the TUI and `sshub theme` read different
+  directories in profile mode ([themes](architecture/themes.md)).
+- **Changelog follow-ups**: items still marked Pending in
+  [changelog coverage](changelog-coverage.md).

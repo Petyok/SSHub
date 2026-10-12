@@ -1,3 +1,3 @@
 # Files
 
-- [Integrations — terminal stream demos and external touchpoints](external-terminals.md) - SSHub's current integration surface includes embedded PTY demo recording, OS keyring, SSH tooling, and GitHub/crates.io automation; the former external-terminal launcher was removed in 0.10.0.
+- [Integrations, external tools, release channels, and the demo pipeline](external-terminals.md) - SSHub's integration surface. The external binaries it shells out to (ssh, ssh-keygen, ssh-add, mosh, ping, curl, tar, npm, cargo), the OS keyring and Secret Service, the GitHub release check and in-place update per install channel, and the asciicast-based demo recording pipeline. The external-terminal launcher was removed in 0.10.0.
