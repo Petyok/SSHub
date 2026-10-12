@@ -82,10 +82,16 @@ impl App {
     /// Handle a mouse event — clicks, scroll wheel, etc.
     pub fn handle_mouse(&mut self, mouse: MouseEvent) -> Result<()> {
         if matches!(self.mode, AppMode::Connecting | AppMode::Session) {
+            // A drag begun over an overlay that closed mid-gesture must not
+            // resurface as a highlight on the next one.
+            self.panel_sel = None;
             self.handle_mouse_session(mouse);
             return Ok(());
         }
-        if self.mode != AppMode::Normal {
+        // Forms, dialogs and pickers: drag to select and copy what is on
+        // screen (#116).
+        if is_overlay_mode(self.mode) {
+            self.mouse_select(mouse);
             return Ok(());
         }
 
@@ -97,34 +103,13 @@ impl App {
             match mouse.kind {
                 MouseEventKind::ScrollDown => self.scroll_zoomed(true, 3),
                 MouseEventKind::ScrollUp => self.scroll_zoomed(false, 3),
-                // Drag to select text over the panel (like the PTY selection);
-                // the rendered buffer text is copied on release.
-                MouseEventKind::Down(MouseButton::Left) => {
-                    self.panel_sel = Some(PanelSel {
-                        anchor: (mouse.column, mouse.row),
-                        cur: (mouse.column, mouse.row),
-                    });
+                _ => {
+                    self.mouse_select(mouse);
                 }
-                MouseEventKind::Drag(MouseButton::Left) => {
-                    if let Some(sel) = self.panel_sel.as_mut() {
-                        sel.cur = (mouse.column, mouse.row);
-                    }
-                }
-                MouseEventKind::Up(MouseButton::Left) => {
-                    let had_sel = self.panel_sel.take().is_some();
-                    let text = self.panel_sel_text.borrow().clone();
-                    if had_sel && !text.trim().is_empty() {
-                        let chars = text.chars().count();
-                        self.host_notice = Some(match write_osc52(&text) {
-                            Ok(()) => format!("copied {chars} chars to clipboard"),
-                            Err(e) => format!("clipboard copy failed: {e:#}"),
-                        });
-                    }
-                }
-                _ => {}
             }
             return Ok(());
         }
+        self.panel_sel = None;
 
         let areas =
             crate::tui::dashboard_layout::dashboard_layout_zoomed(self.terminal_area, self.ui_zoom);
@@ -346,5 +331,52 @@ impl App {
         }
 
         Ok(())
+    }
+
+    /// Terminal-style drag selection over whatever is rendered (the zoomed
+    /// panel, or the whole screen under a form / dialog / picker). The render
+    /// pass highlights the span and scrapes it into `panel_sel_text`; a drag is
+    /// copied on release. Returns the position of a left click that never moved,
+    /// which is a click, not a one-cell selection.
+    fn mouse_select(&mut self, mouse: MouseEvent) -> Option<(u16, u16)> {
+        let at = (mouse.column, mouse.row);
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.panel_sel = Some(PanelSel {
+                    anchor: at,
+                    cur: at,
+                });
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if let Some(sel) = self.panel_sel.as_mut() {
+                    sel.cur = at;
+                }
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                let sel = self.panel_sel.take()?;
+                if sel.anchor == sel.cur {
+                    return Some(sel.cur);
+                }
+                let text = self.panel_sel_text.borrow().clone();
+                if !text.trim().is_empty() {
+                    let chars = text.chars().count();
+                    let notice = match write_osc52(&text) {
+                        Ok(()) => format!("copied {chars} chars to clipboard"),
+                        Err(e) => format!("clipboard copy failed: {e:#}"),
+                    };
+                    // A picker or auth prompt over a live session is drawn on
+                    // the session view, which shows only the session's notice.
+                    if self.session_is_rendered() {
+                        if let Some(session) = self.active_session_mut() {
+                            session.set_copy_notice(notice);
+                        }
+                    } else {
+                        self.host_notice = Some(notice);
+                    }
+                }
+            }
+            _ => {}
+        }
+        None
     }
 }

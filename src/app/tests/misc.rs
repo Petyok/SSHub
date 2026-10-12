@@ -1011,3 +1011,105 @@ fn a_paste_reaches_the_tunnel_form_port_field() {
     let f = app.tunnel_form.as_ref().unwrap();
     assert_eq!(f.local_port, "8080", "paste landed: {:?}", f.local_port);
 }
+
+/// The tunnel form with `8080` in Local port; `focus` is the field with focus.
+fn tunnel_form_with_port(focus: TunnelFormField) -> App {
+    let mut app = test_app(vec![("edge", host("edge"))]);
+    app.config.appearance.disable_animation = true;
+    app.active_tab = 2;
+    app.handle_key(key(KeyCode::Char('a'))).unwrap();
+    assert_eq!(app.mode, AppMode::TunnelForm);
+    let f = app.tunnel_form.as_mut().unwrap();
+    f.local_port = "8080".into();
+    f.active_field = focus;
+    f.cursor = 0;
+    app
+}
+
+#[test]
+fn a_drag_over_a_form_copies_what_it_covers() {
+    let mut app = tunnel_form_with_port(TunnelFormField::Label);
+    let (w, h) = (100u16, 30u16);
+    app.terminal_area = ratatui::layout::Rect::new(0, 0, w, h);
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+    term.draw(|f| crate::tui::render(f, &app)).unwrap();
+    let buf = term.backend().buffer().clone();
+    let (x, y) = (0..h)
+        .find_map(|y| {
+            let row: String = (0..w).map(|x| buf[(x, y)].symbol()).collect();
+            row.find("8080")
+                .map(|i| (row[..i].chars().count() as u16, y))
+        })
+        .expect("the port is on screen");
+    let at = |kind, column| MouseEvent {
+        kind,
+        column,
+        row: y,
+        modifiers: KeyModifiers::empty(),
+    };
+
+    app.handle_mouse(at(MouseEventKind::Down(MouseButton::Left), x))
+        .unwrap();
+    app.handle_mouse(at(MouseEventKind::Drag(MouseButton::Left), x + 3))
+        .unwrap();
+    term.draw(|f| crate::tui::render(f, &app)).unwrap();
+    assert_eq!(*app.panel_sel_text.borrow(), "8080");
+    app.handle_mouse(at(MouseEventKind::Up(MouseButton::Left), x + 3))
+        .unwrap();
+    assert_eq!(
+        app.host_notice.as_deref(),
+        Some("copied 4 chars to clipboard")
+    );
+    assert!(app.panel_sel.is_none());
+
+    app.host_notice = None;
+    app.handle_mouse(at(MouseEventKind::Down(MouseButton::Left), x))
+        .unwrap();
+    term.draw(|f| crate::tui::render(f, &app)).unwrap();
+    app.handle_mouse(at(MouseEventKind::Up(MouseButton::Left), x))
+        .unwrap();
+    assert_eq!(app.host_notice, None, "a click is not a one-cell copy");
+}
+
+#[test]
+fn on_the_zoomed_panel_a_drag_copies_and_a_click_copies_nothing() {
+    let mut app = test_app(vec![("alpha-node", host("alpha-node"))]);
+    app.panel_zoomed = true;
+    let (w, h) = (100u16, 30u16);
+    app.terminal_area = ratatui::layout::Rect::new(0, 0, w, h);
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+    term.draw(|f| crate::tui::render(f, &app)).unwrap();
+    let body =
+        crate::tui::dashboard_layout::dashboard_layout_zoomed(app.terminal_area, app.ui_zoom).body;
+    let (x, y) = crate::test_support::find_text_from(term.backend().buffer(), "alpha-node", body.y);
+    let at = |kind, column| MouseEvent {
+        kind,
+        column,
+        row: y,
+        modifiers: KeyModifiers::empty(),
+    };
+
+    app.handle_mouse(at(MouseEventKind::Down(MouseButton::Left), x))
+        .unwrap();
+    app.handle_mouse(at(MouseEventKind::Drag(MouseButton::Left), x + 9))
+        .unwrap();
+    term.draw(|f| crate::tui::render(f, &app)).unwrap();
+    assert_eq!(*app.panel_sel_text.borrow(), "alpha-node");
+    app.handle_mouse(at(MouseEventKind::Up(MouseButton::Left), x + 9))
+        .unwrap();
+    assert_eq!(
+        app.host_notice.as_deref(),
+        Some("copied 10 chars to clipboard")
+    );
+    assert!(app.panel_sel.is_none());
+
+    // A press and release without moving is a click, not a one-cell copy.
+    app.host_notice = None;
+    app.handle_mouse(at(MouseEventKind::Down(MouseButton::Left), x))
+        .unwrap();
+    term.draw(|f| crate::tui::render(f, &app)).unwrap();
+    app.handle_mouse(at(MouseEventKind::Up(MouseButton::Left), x))
+        .unwrap();
+    assert_eq!(app.host_notice, None);
+    assert!(app.panel_sel.is_none());
+}
