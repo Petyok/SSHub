@@ -113,6 +113,11 @@ impl<T: Clone> PaneTree<T> {
         }
     }
 
+    /// Whether leaf `i` exists and is above the depth limit, so it can split.
+    pub fn can_split(&self, i: usize) -> bool {
+        self.path(i).is_some_and(|p| p.len() < MAX_DEPTH)
+    }
+
     /// Split leaf `i` in `dir`, putting `new` right after it (leaf `i + 1`).
     /// `false`, and nothing changes, when leaf `i` is already at the depth
     /// limit or does not exist.
@@ -225,6 +230,12 @@ impl Panes {
             .copied()
             .copied()
             .flatten()
+    }
+
+    /// Whether a split key would add a pane: not while zoomed, and only while
+    /// the focused pane is above the depth limit.
+    pub fn can_split(&self) -> bool {
+        !self.zoomed && self.tree.can_split(self.focused)
     }
 }
 
@@ -551,11 +562,24 @@ mod tests {
 
     #[test]
     fn splits_insert_after_the_split_pane_and_stop_at_depth_two() {
+        // Three panes: leaves 0 and 1 sit at depth 2, leaf 2 can still split.
+        let three = tree(3);
+        assert!(!three.can_split(0) && !three.can_split(1) && three.can_split(2));
+        let mut panes = Panes {
+            tree: PaneTree::split_of(SplitDir::Vertical, None, None),
+            focused: 0,
+            zoomed: false,
+        };
+        assert!(panes.can_split());
+        panes.zoomed = true;
+        assert!(!panes.can_split(), "no split while zoomed");
+
         let mut t = tree(4);
         // Reading order: first column top/bottom, second column top/bottom.
         assert_eq!(t.leaves(), vec![&0, &2, &1, &3]);
         // Every leaf is at depth 2 now: no fifth pane anywhere.
         for i in 0..4 {
+            assert!(!t.can_split(i), "leaf {i}");
             assert!(!t.split(i, SplitDir::Vertical, 9), "leaf {i}");
         }
         assert_eq!(t.pane_count(), 4);

@@ -519,9 +519,21 @@ impl KeybindsConfig {
 
     /// Right-aligned hints in the fullscreen session header. In a split view
     /// the pane keys replace the tab keys: the strip already shows the tabs.
-    pub fn session_header_hints(&self, multi_tab: bool, split: bool) -> String {
+    /// `can_split` is whether a split key would add a pane right now.
+    pub fn session_header_hints(&self, multi_tab: bool, split: bool, can_split: bool) -> String {
         let mut parts = Vec::new();
+        let split_hint = can_split
+            .then(|| {
+                key_pair(
+                    self,
+                    KeyAction::PaneSplitSideBySide,
+                    KeyAction::PaneSplitStacked,
+                )
+            })
+            .flatten()
+            .map(|keys| format!("{keys} split"));
         if split {
+            parts.extend(split_hint);
             push_hint(&mut parts, self.primary(KeyAction::PaneFocusNext), "pane");
             push_hint(&mut parts, self.primary(KeyAction::PaneZoom), "zoom");
             push_hint(&mut parts, self.primary(KeyAction::PaneUnsplit), "unsplit");
@@ -536,11 +548,7 @@ impl KeybindsConfig {
             if let Some(tabs) = tab_switch_hint(self) {
                 parts.push(tabs);
             }
-            push_hint(
-                &mut parts,
-                self.primary(KeyAction::PaneSplitSideBySide),
-                "split",
-            );
+            parts.extend(split_hint);
             push_hint(&mut parts, self.primary(KeyAction::SessionDetach), "detach");
         } else {
             push_hint(
@@ -548,6 +556,7 @@ impl KeybindsConfig {
                 self.primary(KeyAction::SessionNewTab),
                 "new tab",
             );
+            parts.extend(split_hint);
             push_hint(&mut parts, self.primary(KeyAction::SessionDetach), "detach");
         }
         push_hint(
@@ -872,16 +881,21 @@ fn push_footer_hint(out: &mut Vec<(String, &'static str)>, key: &str, label: &'s
     }
 }
 
-/// `Ctrl+[/]` style key from prev/next tab bindings.
-fn tab_switch_keys(kb: &KeybindsConfig) -> Option<String> {
-    let prev = kb.primary(KeyAction::SessionTabPrev);
-    let next = kb.primary(KeyAction::SessionTabNext);
-    match (prev.is_empty(), next.is_empty()) {
+/// `Ctrl+[/Ctrl+]` style keys from the primary binds of two paired actions.
+fn key_pair(kb: &KeybindsConfig, first: KeyAction, second: KeyAction) -> Option<String> {
+    let a = kb.primary(first);
+    let b = kb.primary(second);
+    match (a.is_empty(), b.is_empty()) {
         (true, true) => None,
-        (false, false) if prev != next => Some(format!("{prev}/{next}")),
-        (false, _) => Some(prev.to_string()),
-        (_, false) => Some(next.to_string()),
+        (false, false) if a != b => Some(format!("{a}/{b}")),
+        (false, _) => Some(a.to_string()),
+        (_, false) => Some(b.to_string()),
     }
+}
+
+/// `Ctrl+[/Ctrl+]` style key from prev/next tab bindings.
+fn tab_switch_keys(kb: &KeybindsConfig) -> Option<String> {
+    key_pair(kb, KeyAction::SessionTabPrev, KeyAction::SessionTabNext)
 }
 
 /// `Ctrl+[/] tabs` style hint from prev/next tab bindings.
@@ -972,26 +986,37 @@ mod tests {
         let kb = KeybindsConfig {
             session_new_tab: vec!["F9".into()],
             session_detach: vec!["Ctrl+Shift+D".into()],
+            pane_split_stacked: vec!["F8".into()],
             ..Default::default()
         };
-        assert_eq!(
-            kb.session_header_hints(false, false),
-            "F9 new tab  Ctrl+Shift+D detach  Alt+S switch"
-        );
+        let hints = kb.session_header_hints(false, false, true);
+        assert!(hints.contains("F9 new tab"), "{hints}");
+        assert!(hints.contains("Ctrl+Shift+D detach"), "{hints}");
+        assert!(hints.contains("Alt+V/F8 split"), "{hints}");
     }
 
     #[test]
     fn session_header_hints_multi_tab_pair() {
         let kb = KeybindsConfig::default();
-        let hints = kb.session_header_hints(true, false);
+        // Both split keys show in every view a split is possible from: one
+        // tab, several tabs, and a split that still has room.
+        assert!(kb
+            .session_header_hints(false, false, true)
+            .contains("Alt+V/Alt+J split"));
+        let hints = kb.session_header_hints(true, false, true);
         assert!(hints.contains("Ctrl+T new"));
         assert!(hints.contains("Ctrl+D detach"));
         assert!(hints.contains("Ctrl+[/Ctrl+] tabs"));
-        assert!(hints.contains("Alt+V split"));
+        assert!(hints.contains("Alt+V/Alt+J split"));
         // In a split view the pane keys take the tab keys' place.
-        let split = kb.session_header_hints(true, true);
+        let split = kb.session_header_hints(true, true, true);
         assert!(split.contains("Alt+O pane") && split.contains("Alt+I unsplit"));
+        assert!(split.contains("Alt+V/Alt+J split"));
         assert!(!split.contains("Ctrl+T new"));
+        // Zoomed, or every pane at the depth limit: no split hint.
+        assert!(!kb
+            .session_header_hints(true, true, false)
+            .contains(" split"));
     }
 
     #[test]
@@ -1084,8 +1109,8 @@ mod tests {
         let mut kb = KeybindsConfig::default();
         kb.set(KeyAction::SessionSwitcher, vec!["F7".into()]);
         // Single tab and multi tab: the switcher is useful either way.
-        assert!(kb.session_header_hints(false, false).contains("F7"));
-        assert!(kb.session_header_hints(true, false).contains("F7"));
+        assert!(kb.session_header_hints(false, false, true).contains("F7"));
+        assert!(kb.session_header_hints(true, false, true).contains("F7"));
         assert!(kb
             .session_footer_hints()
             .iter()
