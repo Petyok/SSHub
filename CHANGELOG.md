@@ -24,6 +24,12 @@ All notable changes to SSHub are documented in this file.
   password in an argument. `sshub audit list|stats --via broadcast` now
   filters them, and `--via connect` no longer counts them as connects.
 
+### Removed
+
+- **`appearance.show_detail_panel` and `appearance.date_format`** - nothing
+  reads them (the layout that did was dead code, deleted in 0.17.3). New config
+  files leave them out; existing ones still load.
+
 ## [0.17.7] - 2026-10-11
 
 ### Added
