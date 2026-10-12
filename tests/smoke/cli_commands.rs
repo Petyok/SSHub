@@ -1047,6 +1047,38 @@ fn host_add_refuses_an_option_like_address() {
         .stderr(predicate::str::contains("ssh reads as an option"));
 }
 
+/// Regression: `host edit` rejected `--set-address` (and `--clear-remote-command`)
+/// as its only flag with "edit requires at least one --set-* flag", because the
+/// patch-presence check did not list them.
+#[test]
+fn host_edit_accepts_a_lone_address_or_remote_command_clear() {
+    let d = dir();
+    let show = || {
+        let out = sshub(d.path())
+            .args(["host", "show", "web", "--format", "json"])
+            .assert()
+            .success();
+        String::from_utf8(out.get_output().stdout.clone()).unwrap()
+    };
+    sshub(d.path())
+        .args(["host", "add", "--name", "web", "--address", "10.0.0.1"])
+        .args(["--remote-command", "htop"])
+        .assert()
+        .success();
+
+    sshub(d.path())
+        .args(["host", "edit", "--name", "web", "--set-address", "10.0.0.9"])
+        .assert()
+        .success();
+    assert!(show().contains(r#""address": "10.0.0.9""#));
+
+    sshub(d.path())
+        .args(["host", "edit", "--name", "web", "--clear-remote-command"])
+        .assert()
+        .success();
+    assert!(show().contains(r#""remote_command": null"#));
+}
+
 /// Issue #142: the per-host Secret Service lookup round-trips through
 /// add/edit/clear and `host show`; a malformed spec is a usage error.
 #[test]

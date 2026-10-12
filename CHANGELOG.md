@@ -14,6 +14,8 @@ All notable changes to SSHub are documented in this file.
   listed `~/.config/sshub/themes` while the TUI loads the profile's own
   `themes/`. They now read the themes of the profile `--profile` names, else the
   last used one, and the config directory in compatibility mode.
+- **`sshub host edit --set-address` alone** was refused with "edit requires
+  at least one --set-* flag"; so was `--clear-remote-command`.
 
 ## [0.17.7] - 2026-10-11
 
