@@ -4,6 +4,21 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Help text caught up with the keys and commands** - the in-app help (`?`)
+  said `e` on a group header only picks its default identity (it opens the
+  whole group form, connection defaults included), listed `z` without
+  `Alt+Enter`, the ghost-text accept without `Ctrl+F`, and nothing for
+  broadcast (`b`, `x`) or the connecting screen (`Esc` cancels, `Ctrl+O` shows
+  the ssh log). It also says the auth modal's Remember box starts clear.
+  `sshub --help` and `sshub host|group|identity|tunnel --help` now list the
+  `transfer` commands, `sshub group --help` the connection-default flags, and
+  `sshub --help` the `SSHUB_VERSION_LABEL` and `SSHUB_INSTALL_CHANNEL`
+  variables. `sshub host --help` showed `--tag` for `host add` (it takes
+  `--tags a,b`) and a positional name for `host duplicate` (it takes `--name`,
+  with an optional `--new-name`).
+
 ### Changed
 
 - **New README GIFs and screenshots** - the recordings were two months old

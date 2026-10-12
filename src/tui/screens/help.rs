@@ -101,7 +101,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "e",
-        desc: "Edit host, or set group default identity on a header",
+        desc: "Edit host; on a group header, edit the group (name + connection defaults)",
     },
     HelpItem::Entry {
         key: "d",
@@ -124,7 +124,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "Move dashboard panel focus",
     },
     HelpItem::Entry {
-        key: "z",
+        key: "z / Alt+Enter",
         desc: "Zoom the focused panel to full screen (Esc to exit)",
     },
     HelpItem::Entry {
@@ -158,6 +158,14 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     HelpItem::Entry {
         key: "Shift+U",
         desc: "Install the sshub update, or check for one",
+    },
+    HelpItem::Entry {
+        key: "b",
+        desc: "Broadcast a command to a group or tag (target, command, preview, y runs)",
+    },
+    HelpItem::Entry {
+        key: "x",
+        desc: "Cancel a running broadcast, or clear its error toasts",
     },
     HelpItem::Blank,
     HelpItem::Section("tunnels (tab 3)"),
@@ -334,8 +342,8 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "In group form: choose dropdown / cycle transport & forwarding default",
     },
     HelpItem::Entry {
-        key: "e",
-        desc: "On a group header: pick its default identity",
+        key: "e / Ctrl+G",
+        desc: "On a group header: edit the group, including its default identity",
     },
     HelpItem::Entry {
         key: "Ctrl+Shift+G",
@@ -398,7 +406,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "",
     },
     HelpItem::Entry { key: "[SSH auth]", desc: "Masked prompts: Enter submits; Esc cancels; PgUp/PgDn scrolls" },
-    HelpItem::Entry { key: "Tab / Space", desc: "Select / toggle remember (managed credentials only; saved after success)" },
+    HelpItem::Entry { key: "Tab / Space", desc: "Select / toggle remember (starts clear; managed credentials only; saved after success)" },
     HelpItem::Entry { key: "y / n", desc: "Accept / refuse unknown host key; changed keys require uppercase A" },
     HelpItem::Entry {
         key: "Ctrl+T",
@@ -421,7 +429,15 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "Open SFTP for this host (session keeps running)",
     },
     HelpItem::Entry {
-        key: "Tab",
+        key: "Esc",
+        desc: "While connecting: cancel the connection",
+    },
+    HelpItem::Entry {
+        key: "Ctrl+O",
+        desc: "While connecting: show / hide the ssh -v debug log",
+    },
+    HelpItem::Entry {
+        key: "Tab / Ctrl+F",
         desc: "Accept ghost completion (history + snippets); Esc dismisses",
     },
     HelpItem::Entry {

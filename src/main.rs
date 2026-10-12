@@ -175,6 +175,7 @@ HOST (read/write):
     sshub host resolve <name> [--format plain|json]
     sshub host search <query> [--format plain|json]
     sshub host add|edit|rename|delete|duplicate …
+    sshub host transfer --name NAME --to PROFILE [--move] [--yes]
 
 EXEC (scripted, non-interactive):
     sshub exec <host> [--tty] [--timeout SECS] [--format plain|json] -- <command> [args…]
@@ -190,14 +191,22 @@ GROUPS:
     sshub group edit --name NAME [--set-name …] [--set-parent …] [--clear-parent]
                      [--set-default-identity …] [--clear-default-identity] [--set-sort-order N]
     sshub group delete --name NAME --yes
+    sshub group transfer --name NAME --to PROFILE [--with-hosts] [--move] [--yes]
     sshub groups …                          Alias for `group list` (forwards flags)
 
 IDENTITIES:
     sshub identity list|show|add|edit|delete|agent-remove …
     sshub identity agent-remove --name NAME
+    sshub identity transfer --name NAME --to PROFILE [--move] [--yes]
 
 TUNNELS:
     sshub tunnel list|show|create|delete|start|stop …
+    sshub tunnel transfer <id|label|port> --to PROFILE [--move] [--yes]
+
+TRANSFER (copy to another profile):
+    The plan prints first; without --yes it asks y/N. --move deletes the
+    originals afterwards; --with-hosts (group) brings the member hosts along.
+    Identities carry the key path only, never secret material.
 
 SFTP (one-shot):
     sshub sftp ls|get|put|rm|mkdir|rename|chmod …
@@ -230,6 +239,8 @@ ENVIRONMENT:
     SSHUB_SSH_CONFIG          Override SSH config path (fallback: SSH_LAUNCHER_SSH_CONFIG)
     SSHUB_DRY_RUN             Exit immediately (fallback: SSH_LAUNCHER_DRY_RUN)
     SSHUB_AUTO_QUIT           Headless smoke (fallback: SSH_LAUNCHER_AUTO_QUIT): 1 = quit after first draw, q = quit via q key
+    SSHUB_VERSION_LABEL       Replace the tab-bar version label; set but empty hides it
+    SSHUB_INSTALL_CHANNEL     How sshub was installed (npm, cargo, source, …); picks the update route
 
     Directory overrides disable profiles (compat mode): the override directory
     is used verbatim and --profile is rejected.

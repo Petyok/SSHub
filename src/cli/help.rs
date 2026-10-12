@@ -43,14 +43,18 @@ USAGE:
     sshub host resolve <name> [--format plain|json]
     sshub host search  <query> [--format plain|json]
     sshub host add     --name NAME --address ADDR [--port N] [--username U] [--identity NAME]
-                       [--group NAME] [--tag TAG]... [--proxy-jump SPEC] [--transport ssh|mosh] ...
+                       [--group NAME]... [--tags a,b] [--proxy-jump SPEC] [--transport ssh|mosh] ...
     sshub host edit    --name NAME [--set-FIELD ... | --clear-FIELD ...]
     sshub host rename  --name NAME --new-name NEW [--strict]
     sshub host delete  --name NAME --yes
-    sshub host duplicate <name>
+    sshub host duplicate --name NAME [--new-name NEW] [--format plain|json]
+    sshub host transfer --name NAME --to PROFILE [--move] [--yes]
 
 --sort MODE: label|last-connected|favorite|group|manual. Run `man sshub` for the
 full add/edit flag list.
+
+transfer copies the host into another profile: the plan prints first, then it
+asks y/N unless --yes; --move deletes the original afterwards.
 
 --secret-lookup ATTR=VALUE (add; edit: --set-secret-lookup / --clear-secret-lookup)
 takes the host password from the one Secret Service entry (e.g. KeePassXC) whose
@@ -125,9 +129,19 @@ USAGE:
     sshub group list [--all] [--format plain|json]
     sshub group show <name> [--format plain|json]
     sshub group add --name NAME [--parent GROUP] [--default-identity NAME] [--sort-order N]
+                    [--default-username U] [--default-port N] [--default-proxy-jump SPEC]
+                    [--default-transport ssh|mosh] [--default-fwd-agent|--no-default-fwd-agent]
     sshub group edit --name NAME [--set-name ...] [--set-parent ...] [--clear-parent]
                      [--set-default-identity ...] [--clear-default-identity] [--set-sort-order N]
-    sshub group delete --name NAME --yes"#
+                     [--set-default-FIELD ... | --clear-default-FIELD]
+                     [--set-default-fwd-agent | --no-default-fwd-agent]
+    sshub group delete --name NAME --yes
+    sshub group transfer --name NAME --to PROFILE [--with-hosts] [--move] [--yes]
+
+FIELD is username, port, proxy-jump, transport or fwd-agent. A member host
+inherits each default it leaves empty. transfer copies the group into another
+profile (--with-hosts brings its member hosts along); the plan prints first,
+then it asks y/N unless --yes; --move deletes the originals afterwards."#
     );
 }
 
@@ -145,7 +159,11 @@ USAGE:
                           [--set-certificate ...] [--clear-certificate]
                           [--password-stdin] [--clear-password]
     sshub identity delete --name NAME --yes
-    sshub identity agent-remove --name NAME"#
+    sshub identity agent-remove --name NAME
+    sshub identity transfer --name NAME --to PROFILE [--move] [--yes]
+
+transfer copies the identity into another profile (the key path only, never
+secret material); the plan prints first, then it asks y/N unless --yes."#
     );
 }
 
@@ -161,9 +179,12 @@ USAGE:
     sshub tunnel start  <id>         [--foreground]
     sshub tunnel stop   <id>
     sshub tunnel delete <id> --yes
+    sshub tunnel transfer <id> --to PROFILE [--move] [--yes]
 
 <id> accepts a tunnel id, label, or local port. Detached tunnels record a PID
-file and are not visible to the TUI tunnel manager (and vice versa)."#
+file and are not visible to the TUI tunnel manager (and vice versa). transfer
+copies the tunnel into another profile; the plan prints first, then it asks
+y/N unless --yes."#
     );
 }
 

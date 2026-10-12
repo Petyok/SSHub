@@ -40,6 +40,20 @@ Print the version and exit.
 .TP
 .B \-\-dry\-run
 Exit immediately without launching the TUI (smoke tests / CI).
+.TP
+.B \-\-profile \fINAME\fR
+Use the named profile. For the TUI this skips the startup picker; for a
+headless command it selects the profile instead of the last-used one. Unknown
+names fail with the list of available profiles. Rejected in compatibility mode
+(see
+.BR ENVIRONMENT ).
+.TP
+.B \-\-manage\-profiles
+Open the profile picker at startup even when only one profile exists.
+.PP
+Both flags may appear before or after a command; anything after
+.B \-\-
+belongs to the remote command and is never read as a profile flag.
 .SH COMMANDS
 .SS Host (read)
 .TP
@@ -68,10 +82,10 @@ Fuzzy-search hosts, best match first.
 .TP
 .B sshub host add \fB\-\-name\fR \fINAME\fR \fB\-\-address\fR \fIADDR\fR [flags]
 Create a launcher host. Flags include
-.BR \-\-port ", " \-\-username ", " \-\-label ", " \-\-identity ", " \-\-group ", "
-.BR \-\-tag ", " \-\-notes ", " \-\-proxy\-jump ", " \-\-remote\-command ", "
-.BR \-\-forward\-agent ", " \-\-os\-icon ", " \-\-transport ", " \-\-session\-log ", "
-.BR \-\-favorite ", " \-\-password\-stdin ", " \-\-secret\-lookup .
+.BR \-\-port ", " \-\-username ", " \-\-label ", " \-\-identity ", " \-\-group " (repeatable), "
+.BR \-\-tags " (comma-separated), " \-\-notes ", " \-\-proxy\-jump ", " \-\-remote\-command ", "
+.BR \-\-forward\-agent ", " \-\-no\-forward\-agent ", " \-\-os\-icon ", " \-\-transport ", "
+.BR \-\-session\-log ", " \-\-ping ", " \-\-favorite ", " \-\-password\-stdin ", " \-\-secret\-lookup .
 .B \-\-secret\-lookup \fIATTR\fB=\fIVALUE\fR
 takes the host password from the one Secret Service entry (e.g. KeePassXC)
 whose attribute matches exactly, such as
@@ -99,8 +113,22 @@ fails instead of de-duplicating a clashing name.
 Delete a launcher host. Requires
 .BR \-\-yes .
 .TP
-.B sshub host duplicate \fINAME\fR
+.B sshub host duplicate \fB\-\-name\fR \fINAME\fR [\fB\-\-new\-name\fR \fINEW\fR] [\fB\-\-format\fR \fIF\fR]
 Duplicate a host (legacy ssh_config hosts are copied into the launcher).
+Without
+.BR \-\-new\-name ,
+the copy gets a free name derived from the original.
+.TP
+.B sshub host transfer \fB\-\-name\fR \fINAME\fR \fB\-\-to\fR \fIPROFILE\fR \fR[\fB\-\-move\fR] [\fB\-\-yes\fR]
+Copy a launcher host into another profile. The plan is printed first and
+applied only after an interactive
+.B y
+or with
+.BR \-\-yes ;
+.B \-\-move
+deletes the original afterwards. The group, identity and tunnel
+.B transfer
+commands below work the same way.
 .SS Exec (scripted)
 .TP
 .B sshub exec \fIHOST\fR \fR[\fB\-\-tty\fR] [\fB\-\-timeout\fR \fISECS\fR] [\fB\-\-format\fR \fIF\fR] [\fB\-v\fR] \fB\-\-\fR \fICOMMAND\fR \fR[\fIARGS\fR...]
@@ -170,21 +198,46 @@ Alias for
 .TQ
 .B sshub group show \fINAME\fR [\fB\-\-format\fR \fIF\fR]
 .TQ
-.B sshub group add \fB\-\-name\fR \fINAME\fR \fR[\fB\-\-parent\fR \fIG\fR] [\fB\-\-default\-identity\fR \fIN\fR] [\fB\-\-sort\-order\fR \fIN\fR]
+.B sshub group add \fB\-\-name\fR \fINAME\fR \fR[\fB\-\-parent\fR \fIG\fR] [\fB\-\-default\-identity\fR \fIN\fR] [\fB\-\-sort\-order\fR \fIN\fR] [\fB\-\-default\-\fIFIELD\fR ...]
 .TQ
-.B sshub group edit \fB\-\-name\fR \fINAME\fR \fR[\fB\-\-set\-name\fR|\fB\-\-set\-parent\fR|\fB\-\-clear\-parent\fR|\fB\-\-set\-default\-identity\fR|\fB\-\-clear\-default\-identity\fR|\fB\-\-set\-sort\-order\fR ...]
+.B sshub group edit \fB\-\-name\fR \fINAME\fR \fR[\fB\-\-set\-name\fR|\fB\-\-set\-parent\fR|\fB\-\-clear\-parent\fR|\fB\-\-set\-default\-identity\fR|\fB\-\-clear\-default\-identity\fR|\fB\-\-set\-sort\-order\fR|\fB\-\-set\-default\-\fIFIELD\fR|\fB\-\-clear\-default\-\fIFIELD\fR ...]
 .TQ
 .B sshub group delete \fB\-\-name\fR \fINAME\fR \fB\-\-yes\fR
+.TQ
+.B sshub group transfer \fB\-\-name\fR \fINAME\fR \fB\-\-to\fR \fIPROFILE\fR \fR[\fB\-\-with\-hosts\fR] [\fB\-\-move\fR] [\fB\-\-yes\fR]
 Manage host groups.
+.I FIELD
+is a connection default a member host inherits when it leaves that field empty:
+.BR username ", " port ", " proxy\-jump ", " transport " (" ssh | mosh ),
+and
+.BR fwd\-agent .
+On add, give
+.BI \-\-default\- FIELD " " VALUE
+.RB ( \-\-default\-fwd\-agent
+or
+.B \-\-no\-default\-fwd\-agent
+take no value); on edit,
+.BI \-\-set\-default\- FIELD
+or
+.BI \-\-clear\-default\- FIELD
+.RB ( \-\-set\-default\-fwd\-agent
+and
+.B \-\-no\-default\-fwd\-agent
+take no value). Per field a host value wins, then the nearest group default,
+then the global default (port 22, ssh, forwarding off).
+.B transfer \-\-with\-hosts
+also transfers the group's member hosts.
 .SS Identities
 .TP
-.B sshub identity list\fR|\fBshow\fR|\fBadd\fR|\fBedit\fR|\fBdelete\fR|\fBagent\-remove \fR...
+.B sshub identity list\fR|\fBshow\fR|\fBadd\fR|\fBedit\fR|\fBdelete\fR|\fBagent\-remove\fR|\fBtransfer \fR...
 Manage SSH identities. Passwords are read from stdin with
 .BR \-\-password\-stdin .
 .B agent\-remove \-\-name \fINAME\fR
 runs
 .B ssh\-add \-d
 for the identity's key.
+.B transfer \-\-name \fINAME\fB \-\-to \fIPROFILE\fR
+copies only the key path; secret material is never copied.
 .SS Tunnels
 .TP
 .B sshub tunnel list\fR|\fBshow \fR[\fB\-\-format\fR \fIF\fR]
@@ -196,6 +249,8 @@ for the identity's key.
 .B sshub tunnel stop \fIID\fR
 .TQ
 .B sshub tunnel delete \fIID\fR \fB\-\-yes\fR
+.TQ
+.B sshub tunnel transfer \fIID\fR \fB\-\-to\fR \fIPROFILE\fR \fR[\fB\-\-move\fR] [\fB\-\-yes\fR]
 Manage SSH tunnels.
 .I T
 is
@@ -270,21 +325,33 @@ when valid (warnings allowed) and
 .B 1
 on any error.
 .PP
-All three run headless: no TUI, no database, no keyring. User themes live in
+All three run headless: no TUI, no database, no keyring, and before any
+profile is selected. That is why
+.B theme list
+and
+.B theme show
+read user themes from the config directory,
 .I ~/.config/sshub/themes/*.toml
-and the file name is the theme ID;
-.I ~/.config/sshub/config.toml
-stores only
-.IR appearance.active_theme .
+(or
+.IR $SSHUB_CONFIG_DIR/themes ),
+where the file name is the theme ID; the TUI of a profile reads that profile's
+.I themes/
+directory instead (see
+.BR FILES ).
+.B theme check
+takes any file path. The selected theme is stored as
+.I appearance.active_theme
+in the profile's
+.IR config.toml .
 Select a theme in the TUI with
 .BR Ctrl+H " \(-> " Theme... " \(-> " Enter :
 moving through the list previews live, Esc rolls back, Enter saves.
 .PP
-The full guide \(em file format, colour values and simulated opacity,
+The full guide (file format, colour values and simulated opacity,
 inheritance and
 .IR \(dqauto\(dq ,
 gradient directions and the perimeter rule, the complete role catalogue, and
-worked examples \(em is in
+worked examples) is in
 .I docs/theme\-system.md
 in the source tree.
 .SS Inventory and config
@@ -347,7 +414,8 @@ Print a shell completion script.
 writes/reads a host-name cache for faster dynamic completion.
 .TP
 .B sshub db purge \fR[\fB\-\-yes\-i\-am\-stupid\fR]
-Delete the launcher database (hosts, groups, identities, tunnels, audit log).
+Delete the selected profile's launcher database (hosts, groups, identities,
+tunnels, audit log); keyring passwords are left in place.
 Irreversible; requires
 .BR \-\-yes\-i\-am\-stupid .
 Leaves
@@ -387,21 +455,74 @@ Override the SSH config path (fallback:
 .B SSHUB_DRY_RUN
 Exit immediately (fallback:
 .BR SSH_LAUNCHER_DRY_RUN ).
+.TP
+.B SSHUB_AUTO_QUIT
+Headless smoke test (fallback:
+.BR SSH_LAUNCHER_AUTO_QUIT ):
+.B q
+quits through the
+.B q
+key, any other value quits after the first draw. Also skips the startup picker
+and the update check.
+.TP
+.B SSHUB_VERSION_LABEL
+Replace the version label in the tab bar; set but empty hides it.
+.TP
+.B SSHUB_INSTALL_CHANNEL
+How sshub was installed
+.RB ( npm ", " cargo ", " source ,
+or another name); decides the route the in-app update takes and the suffix
+next to the version. The npm wrapper sets
+.BR npm .
+.PP
+Setting
+.B SSHUB_CONFIG_DIR
+or
+.B SSHUB_DATA_DIR
+selects compatibility mode: the directories are used verbatim, profiles are
+not discovered, and
+.B \-\-profile
+is rejected.
 .SH FILES
 .TP
-.I ~/.local/share/sshub/launcher.db
-The launcher SQLite database (managed hosts, groups, identities, tunnels, audit
-log). Path honors
-.BR SSHUB_DATA_DIR .
+.I ~/.local/share/sshub/state.toml
+The profile registry and the last-used profile.
 .TP
-.I ~/.config/sshub/themes/*.toml
-User theme files; the file name without
-.I .toml
-is the theme ID. Path honors
-.BR SSHUB_CONFIG_DIR .
+.I ~/.local/share/sshub/profiles/NAME/
+One profile:
+.I launcher.db
+(managed hosts, groups, identities, tunnels, audit log),
+.IR metadata.db ,
+.IR config.toml ,
+.IR themes/*.toml ,
+session
+.IR logs/ ,
+tunnel
+.IR tunnels/ ,
+and
+.I credentials.json
+when no Secret Service keyring is available. In compatibility mode the
+databases, logs and tunnels sit directly in
+.B SSHUB_DATA_DIR
+(default
+.IR ~/.local/share/sshub )
+and
+.I config.toml
+and
+.I themes/
+in
+.B SSHUB_CONFIG_DIR
+(default
+.IR ~/.config/sshub ).
 .TP
 .I ~/.ssh/config
-Read-only source of ssh_config hosts merged into the launcher.
+Read-only source of ssh_config hosts merged into the launcher. A profile can
+point elsewhere with
+.I [ssh] config_path
+in its
+.IR config.toml ;
+.B SSHUB_SSH_CONFIG
+overrides both.
 .SH SEE ALSO
 .BR ssh (1),
 .BR ssh_config (5),
