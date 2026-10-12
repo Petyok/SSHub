@@ -38,7 +38,7 @@ fn main() -> Result<()> {
     // `is_subcommand`/`CliContext::bootstrap_with` so that validating a draft theme
     // never opens the launcher and metadata databases.
     if args.first().map(String::as_str) == Some("theme") {
-        let code = sshub::cli::theme::run(&args[1..])?;
+        let code = sshub::cli::theme::run(&startup, &args[1..])?;
         std::process::exit(code);
     }
 

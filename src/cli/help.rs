@@ -298,8 +298,9 @@ USAGE:
     sshub theme list         [--format plain|json]
     sshub theme show  <id>   [--resolved] [--format toml|json]
 
-User themes live in ~/.config/sshub/themes/*.toml; the file stem is the theme
-id. Run `sshub theme <subcommand> --help` for details."#
+User themes live in the profile's themes/*.toml (--profile, else the last used;
+~/.config/sshub/themes in compatibility mode); the file stem is the theme id.
+Run `sshub theme <subcommand> --help` for details."#
         ),
     }
 }

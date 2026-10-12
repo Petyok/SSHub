@@ -10,6 +10,10 @@ All notable changes to SSHub are documented in this file.
   tab's host search or file filter opened the snippet manager or the log
   browser. A text input on a dashboard tab now gets every character it types;
   chords such as `Ctrl+T` still reach the global keys.
+- **`sshub theme list|show` read the wrong directory** - in profile mode they
+  listed `~/.config/sshub/themes` while the TUI loads the profile's own
+  `themes/`. They now read the themes of the profile `--profile` names, else the
+  last used one, and the config directory in compatibility mode.
 
 ## [0.17.7] - 2026-10-11
 

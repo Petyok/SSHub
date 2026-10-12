@@ -591,14 +591,28 @@ pub fn config_dir_path() -> anyhow::Result<std::path::PathBuf> {
 /// Falls back to `SSH_LAUNCHER_DATA_DIR` for backward compatibility.
 /// Migrates data from `~/.local/share/ssh-launcher` if the new path doesn't exist yet.
 pub fn data_dir() -> anyhow::Result<std::path::PathBuf> {
+    let dir = data_dir_path()?;
+    if env_dir("SSHUB_DATA_DIR")
+        .or_else(|| env_dir("SSH_LAUNCHER_DATA_DIR"))
+        .is_none()
+    {
+        let home = std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME not set"))?;
+        migrate_legacy_dir(
+            &dir,
+            &std::path::PathBuf::from(&home).join(".local/share/ssh-launcher"),
+        );
+    }
+    Ok(dir)
+}
+
+/// Where the data directory *is*: [`data_dir`] without the legacy migration,
+/// the data-side twin of [`config_dir_path`].
+pub fn data_dir_path() -> anyhow::Result<std::path::PathBuf> {
     if let Some(dir) = env_dir("SSHUB_DATA_DIR").or_else(|| env_dir("SSH_LAUNCHER_DATA_DIR")) {
         return Ok(dir);
     }
     let home = std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME not set"))?;
-    let new_dir = std::path::PathBuf::from(&home).join(".local/share/sshub");
-    let legacy_dir = std::path::PathBuf::from(&home).join(".local/share/ssh-launcher");
-    migrate_legacy_dir(&new_dir, &legacy_dir);
-    Ok(new_dir)
+    Ok(std::path::PathBuf::from(&home).join(".local/share/sshub"))
 }
 
 /// Env-var directory override; empty values are ignored so e.g.

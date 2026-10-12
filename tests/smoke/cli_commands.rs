@@ -462,6 +462,79 @@ fn theme_read_commands_never_create_the_config_directory() {
     assert!(legacy_themes.join("legacy.toml").exists());
 }
 
+/// Regression: `theme list|show` read `~/.config/sshub/themes` while the TUI in
+/// profile mode reads `profiles/<name>/themes`. The CLI must resolve the same
+/// profile as every other headless command: `--profile`, else the last used.
+#[test]
+fn theme_read_commands_use_the_selected_profiles_themes() {
+    let home = dir();
+    let data = home.path().join(".local/share/sshub");
+    let profiles = data.join("profiles");
+    std::fs::create_dir_all(&profiles).unwrap();
+    std::fs::write(
+        data.join("state.toml"),
+        "last_used = \"default-id\"\n\n[[profiles]]\nid = \"default-id\"\nname = \"default\"\n\n[[profiles]]\nid = \"work-id\"\nname = \"work\"\n",
+    )
+    .unwrap();
+    install_theme(&profiles.join("default"), "home-made", VALID_THEME);
+    install_theme(&profiles.join("work"), "work-made", VALID_THEME);
+    // The directory the CLI used to read, which no profile-mode TUI looks at.
+    install_theme(&home.path().join(".config/sshub"), "stray", VALID_THEME);
+
+    let run = |args: &[&str]| {
+        let out = Command::cargo_bin("sshub")
+            .unwrap()
+            .env("HOME", home.path())
+            .env_remove("SSHUB_DATA_DIR")
+            .env_remove("SSHUB_CONFIG_DIR")
+            .env_remove("SSH_LAUNCHER_DATA_DIR")
+            .env_remove("SSH_LAUNCHER_CONFIG_DIR")
+            .env("SSHUB_SSH_CONFIG", fixture_ssh_config())
+            .args(args)
+            .output()
+            .unwrap();
+        (out.status.code(), String::from_utf8(out.stdout).unwrap())
+    };
+
+    let (code, work) = run(&["--profile", "work", "theme", "list", "--format", "json"]);
+    assert_eq!(code, Some(0));
+    let work_dir = profiles.join("work/themes").display().to_string();
+    assert!(
+        work.contains(&format!("\"themes_dir\": \"{work_dir}\"")),
+        "{work}"
+    );
+    assert!(work.contains("work-made"), "{work}");
+    assert!(
+        !work.contains("home-made") && !work.contains("stray"),
+        "{work}"
+    );
+
+    let (code, last_used) = run(&["theme", "list"]);
+    assert_eq!(code, Some(0));
+    assert!(last_used.contains("home-made"), "{last_used}");
+    assert!(!last_used.contains("work-made") && !last_used.contains("stray"));
+
+    assert_eq!(
+        run(&["--profile", "work", "theme", "show", "work-made"]).0,
+        Some(0)
+    );
+    assert_eq!(run(&["theme", "show", "work-made"]).0, Some(1));
+    assert_eq!(run(&["--profile", "nope", "theme", "list"]).0, Some(1));
+    // Reading never opens a database.
+    assert!(!profiles.join("work/launcher.db").exists());
+}
+
+/// Compat mode rejects `--profile` for `theme` exactly as for other commands.
+#[test]
+fn theme_list_rejects_a_profile_in_compatibility_mode() {
+    let d = dir();
+    sshub(d.path())
+        .args(["--profile", "work", "theme", "list"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("unavailable"));
+}
+
 #[test]
 fn theme_show_unknown_id_exits_one() {
     let dir = dir();
