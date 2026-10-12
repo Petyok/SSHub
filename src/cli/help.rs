@@ -283,10 +283,11 @@ USAGE:
     sshub theme show <id> [--resolved] [--format toml|json]
 
 Without --resolved the theme file is printed verbatim, comments included, which
-is the documented copy workflow:
+is the documented copy workflow (THEMES is the themes_dir that
+`sshub theme list --format json` prints):
 
-    sshub theme show aqua > ~/.config/sshub/themes/aqua-custom.toml
-    sshub theme check ~/.config/sshub/themes/aqua-custom.toml
+    sshub theme show aqua > THEMES/aqua-custom.toml
+    sshub theme check THEMES/aqua-custom.toml
 
 --resolved writes a standalone document instead: no inheritance, no references,
 every value spelled out. An unknown id exits 1."#
