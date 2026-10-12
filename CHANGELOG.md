@@ -23,6 +23,8 @@ All notable changes to SSHub are documented in this file.
   the audit log keeps the exit code and error, not a command that can carry a
   password in an argument. `sshub audit list|stats --via broadcast` now
   filters them, and `--via connect` no longer counts them as connects.
+- **Shell completions** offer the `transfer` subcommand of `host`, `group`,
+  `identity` and `tunnel`.
 
 ### Removed
 
