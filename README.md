@@ -325,6 +325,11 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | `Ctrl+[` / `Ctrl+]`   | Previous / next session tab         |
 | `Ctrl+Shift+S`         | Focus session from dashboard        |
 | `Alt+S`                | Switch to an open session (searchable) |
+| `Alt+V` / `Alt+J`      | Split view: add a pane side by side / below (up to 4 panes) |
+| `Alt+O`                | Split view: focus the next pane (or click a pane) |
+| `Alt+M`                | Split view: zoom the focused pane   |
+| `Alt+K` / `Alt+I`      | Split view: close the focused pane / back to one pane |
+| `Alt+E`                | Workspaces: save this layout under a name, reopen or delete one |
 | `PgUp`/`PgDn`, wheel   | Scroll session history; both go to the remote app while it holds the alternate screen (tmux, vim, less), where the wheel becomes arrow keys |
 | drag                   | Select terminal text, copied on release; `Shift` inverts it when the remote app owns the mouse |
 

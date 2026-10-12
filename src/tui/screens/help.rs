@@ -445,6 +445,22 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "Switch to an open session (searchable)",
     },
     HelpItem::Entry {
+        key: "Alt+V / Alt+J",
+        desc: "Split view: add a pane side by side / below (up to 4); Alt+S fills the focused pane",
+    },
+    HelpItem::Entry {
+        key: "Alt+O / Alt+M",
+        desc: "Split view: focus the next pane (or click it) / zoom the focused pane",
+    },
+    HelpItem::Entry {
+        key: "Alt+K / Alt+I",
+        desc: "Split view: close the focused pane (its session stays open) / back to one pane",
+    },
+    HelpItem::Entry {
+        key: "Alt+E",
+        desc: "Workspaces: type a name to save the layout; Enter reopens, Ctrl+X deletes",
+    },
+    HelpItem::Entry {
         key: "PgUp/PgDn",
         desc: "Scroll session history; goes to the remote app while it holds the alternate screen (tmux, vim, less)",
     },

@@ -14,6 +14,14 @@ Connecting to a host spawns `ssh` (or `mosh`) on a pseudo-TTY; output is parsed 
 
 The dashboard session strip can be cycled without entering fullscreen; `Ctrl+Shift+S` opens the selected session. Re-entry uses the same slide transition as a fresh connection, with reduced motion bypassing animation.
 
+### Split view and workspaces (#73)
+
+The session body can be divided into 2 to 4 panes (`src/app/panes.rs`): a layout tree of depth 2 with equal halves, whose leaves hold a `SessionId` (stable for a session's life, unlike its index in `App::sessions`). `App::pane_views` is the one geometry function; the renderer, the mouse, the theme protection pass (`session::render::remote_pty_rects`) and the per-frame resize all read pane rects from it. The focused pane's session is `App::active_session`, so keys, paste, the ghost, snippets and the OSC 52 relay follow focus. Slides do not run while split.
+
+Resize contract: `Session::spawn` and `Session::resize` take the grid size of the pane (callers own the chrome); `resize` is a no-op for an unchanged size and never touches an `Exited` session. Each frame, `sync_panes` reconciles the layout with `active_session`, then every session on screen is resized to its pane; one out of view keeps its last size. New sessions are spawned at the grid of the pane they land in (`App::new_session_grid`). `ParserState::set_size` scrolls the top of the primary screen into history before a row shrink, so the cursor row survives (vt100 cuts from the bottom); columns are cut, not reflowed.
+
+Workspaces (`src/app/workspaces.rs`, table `workspaces`, schema v20) store the layout tree as JSON with saved hosts by name and local shells per pane; opening one lays the panes out first, then spawns each session into its pane.
+
 Key pieces:
 
 - **`pty.rs`** — `PtyRuntime::spawn(argv, rows, cols, env)` over `portable-pty`; a reader thread streams `PtyEvent::{Bytes, Stderr, Exited}` over mpsc to the [event loop](../architecture/overview.md). The child's stderr is siphoned through a side FIFO (`StderrFifo`, `mkfifo` 0600, opened `O_RDWR|O_NONBLOCK` so empty reads yield EAGAIN instead of EOF) via an `sh -c 'exec "$@" 2>"$SSHUB_STDERR_FIFO"'` wrapper — this keeps `ssh -v` noise off the render grid. `TERM` is forced to `xterm-256color` because kitty's terminfo breaks remotes. Drop escalates SIGHUP → SIGTERM → kill on the process group.

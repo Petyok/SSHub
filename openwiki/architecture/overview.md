@@ -18,7 +18,7 @@ background threads communicating over `std::sync::mpsc` channels.
 
 `POLL_INTERVAL = 50ms`. Each frame:
 
-1. **Drain sessions** — every open embedded session's PTY is drained and resized; a `Connecting` session is promoted to `Session` on first output.
+1. **Drain sessions**: every open embedded session's PTY is drained; each session on screen is resized to the grid of its pane (`App::pane_views`), sessions out of view keep their size; a `Connecting` session is promoted to `Session` on first output.
 2. **Draw** — `terminal.draw` renders via `tui::render`.
 3. **Drain input** — `poll_keys_and_watcher` drains *all* queued crossterm events per frame (the code notes that draining only one would make "paste into an embedded session crawl at ~20 chars/sec"), then non-blocking `try_recv` drains of every worker channel:
    - config [file watcher](#file-watcher) → `app.reload_hosts()`

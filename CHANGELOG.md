@@ -4,6 +4,33 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Split view** (issue #73) - the session view divides into 2 to 4 panes,
+  each showing an open session: `Alt+V` adds a pane side by side, `Alt+J` one
+  below (each half splits once more), `Alt+O` moves the focus, `Alt+M` zooms
+  the focused pane, `Alt+K` closes it (its session stays in the strip) and
+  `Alt+I` goes back to one pane. A click focuses a pane; keys, paste, the
+  clipboard relay and the mouse follow the focused one. `Alt+S` puts the chosen
+  session into the focused pane, swapping with a pane that already shows it,
+  and a new tab opens there too. Each session's PTY is sized to its own pane,
+  so a split, a zoom or a close is one resize of the sessions it changes and
+  nothing for the rest; a session out of view keeps its size until shown, and
+  one that has exited is never resized. The defaults are Alt+letter chords
+  that neither bash nor zsh binds, and all of them are remappable.
+- **Workspaces** (issue #73) - `Alt+E`, from the dashboard or a session,
+  saves the current layout under a name and reopens it later: saved hosts and
+  local shells come back in their panes, each started at its pane's size.
+  `Ctrl+X` in the picker deletes one. Stored in the profile database (schema
+  v20).
+
+### Fixed
+
+- **Shrinking the terminal cut off the prompt** - a shorter window dropped
+  the bottom rows of an embedded session, prompt included, and growing it back
+  brought blank rows. The top now scrolls into history instead, as in xterm.
+  Columns are still cut, not reflowed, when a session gets narrower.
+
 ## [0.17.7] - 2026-10-11
 
 ### Added
