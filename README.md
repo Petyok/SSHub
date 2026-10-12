@@ -12,25 +12,37 @@ A terminal UI for managing and connecting to SSH hosts. Combines your `~/.ssh/co
 
 ![SSHub demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/hero.gif)
 
-Navigating the dashboard — nested host groups, the fuzzy palette (`/`), the group manager (`Shift+G`), and the multi-tag filter (`#`):
+Navigating the dashboard: nested host groups, the fuzzy palette (`/`), the group manager (`Shift+G`), and the multi-tag filter (`#`):
 
 ![Navigation demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/navigate.gif)
 
-Connecting to a host — the session runs in an embedded PTY right inside the TUI:
+Connecting to a host: the session runs in an embedded PTY right inside the TUI. `Ctrl+D` detaches, `Ctrl+T` opens a second session tab, and `Alt+S` finds a running session by name:
 
 ![Connect demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/connect.gif)
 
-Adding a managed host and marking it as a favorite:
+Inside a session: a command you ran comes back as a dim inline suggestion (`Tab` takes it), and `Ctrl+N` opens the snippet library (`Enter` runs a snippet, `Tab` types it for editing first):
+
+![Snippets and suggestions demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/snippets.gif)
+
+Adding a managed host: address, password, username, label, two groups and tags, saved with `Ctrl+S`:
 
 ![Add host demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/add-host.gif)
 
-Transferring files over SFTP — a dual-pane browser (remote / local) with a staged transfer queue:
+Transferring files over SFTP: a dual-pane browser (local / remote) with a staged transfer queue, plus chmod, new folder and delete in place:
 
 ![SFTP demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/sftp.gif)
 
+Broadcast (`b`): one command on every host of a group or tag, with a preview of the hosts before it runs and a live results panel:
+
+![Broadcast demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/broadcast.gif)
+
+Themes: Settings (`Ctrl+H`), then `Theme...`. Every step in the picker previews that theme on the whole interface; `Enter` keeps it, `Esc` puts the old one back:
+
+![Themes demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/themes.gif)
+
 ## Screenshots
 
-The hosts dashboard — nested groups on the left; the selected host's card shows its auto-detected OS logo, fact sheet, and per-host latency, with live agent / ping panels alongside:
+The hosts dashboard: nested groups on the left; the selected host's card shows its auto-detected OS logo, fact sheet, and per-host latency, with live agent / ping panels alongside:
 
 ![Hosts dashboard](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/hosts.png)
 
@@ -45,9 +57,14 @@ Add/edit host form, the rebindable keybindings editor (`Ctrl+K`), and the scroll
 ![Keybindings editor](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/keybindings.png)
 ![Help overlay](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/help.png)
 
-The settings overlay (`Ctrl+H`) — make SSHub's own surfaces or the remote grid transparent, toggle OS logos, quit confirmation, and the startup animation:
+The settings overlay (`Ctrl+H`): the theme, transparency for SSHub's own surfaces or the remote grid, ping, the update check, profiles, OS logos, quit confirmation, the startup animation and session command history:
 
 ![Settings overlay](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/settings.png)
+
+The theme picker, with its detail preview next to the list, and the known hosts manager (`H` on the identities tab):
+
+![Theme picker](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/theme-picker.png)
+![Known hosts manager](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/known-hosts.png)
 
 ## Features
 

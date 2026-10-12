@@ -4,6 +4,17 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **New README GIFs and screenshots** - the recordings were two months old
+  and showed no themes at all. They are re-recorded on the current UI, with
+  three new GIFs (the theme picker previewing each built-in theme, broadcast,
+  and snippets with inline suggestions in a session) and two new screenshots
+  (theme picker, known hosts manager). `demo/record.py` now builds the
+  checkout's own binary in the real cargo target dir, so it works with a
+  shared `CARGO_TARGET_DIR`, and gives every scenario its own database and the
+  default key bindings.
+
 ## [0.17.7] - 2026-10-11
 
 ### Added
