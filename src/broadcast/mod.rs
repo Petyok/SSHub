@@ -116,12 +116,13 @@ pub trait CommandRunner: Send + Sync {
 
 /// Real runner: shells out to `ssh` with the same non-interactive option splice
 /// as [`crate::osinfo::detect::SshProbeRunner`]
-/// (`-o BatchMode=yes -o ConnectTimeout=N -o StrictHostKeyChecking=accept-new`
+/// (`-o BatchMode=… -o ConnectTimeout=N -o StrictHostKeyChecking=accept-new`
 /// after `argv[0]`, the remote command appended as the final argv). Pipes
 /// stdout/stderr, enforces `run_timeout` + `cancel` via a `try_wait` poll loop
-/// that kills the child (reader threads joined after the kill). Key/agent only
-/// — no `SSH_ASKPASS` in v1, so `BatchMode=yes` makes a password-needing host
-/// fail fast instead of blocking on `/dev/tty`.
+/// that kills the child (reader threads joined after the kill). A host with a
+/// stored credential gets `BatchMode=no` and the secret through `SSH_ASKPASS`,
+/// like a live session; any other host gets `BatchMode=yes` (key/agent only),
+/// so a password prompt fails fast instead of blocking on `/dev/tty`.
 pub struct SshCommandRunner {
     pub connect_timeout_secs: u32,
     pub run_timeout: Duration,
