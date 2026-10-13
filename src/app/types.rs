@@ -71,6 +71,12 @@ pub enum ClickHit {
     },
     /// Row `index` of a picker list (an index into the list, not the screen).
     Row(usize),
+    /// A row of an SFTP browser pane on the dashboard; `pos` is the entry
+    /// drawn there (its position in the pane's visible list), if any.
+    SftpPane {
+        pane: crate::sftp::model::Focus,
+        pos: Option<usize>,
+    },
 }
 
 /// A clickable region recorded by a renderer (#116): always a single row, so

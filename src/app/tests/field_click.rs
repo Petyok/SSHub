@@ -278,3 +278,121 @@ fn a_click_while_a_popup_slides_open_lands_on_the_field_drawn_there() {
     app.click_at(x + "Port: ".len() as u16 + 1, y);
     assert_eq!(app.host_form.as_ref().unwrap().field, HostFormField::Port);
 }
+
+fn mouse(app: &mut App, kind: MouseEventKind, column: u16, row: u16) {
+    app.handle_mouse(MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::empty(),
+    })
+    .unwrap();
+}
+
+/// A press and release on one cell.
+fn click(app: &mut App, x: u16, y: u16) {
+    mouse(app, MouseEventKind::Down(MouseButton::Left), x, y);
+    mouse(app, MouseEventKind::Up(MouseButton::Left), x, y);
+}
+
+#[test]
+fn on_the_dashboard_a_drag_copies_and_a_click_picks_the_row() {
+    let mut app = test_app(vec![("alpha", host("alpha")), ("bravo", host("bravo"))]);
+    let buf = draw(&mut app, 120, 40);
+    let (x, y) = find_text(&buf, "bravo");
+    let before = app.selected;
+
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), x, y);
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), x + 4, y);
+    draw(&mut app, 120, 40);
+    assert_eq!(*app.panel_sel_text.borrow(), "bravo");
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), x + 4, y);
+    assert_eq!(
+        app.host_notice.as_deref(),
+        Some("copied 5 chars to clipboard")
+    );
+    assert_eq!(app.selected, before, "a drag is not a click");
+
+    click(&mut app, x, y);
+    let picked = app
+        .selected_host_index()
+        .map(|i| app.hosts[i].name().to_string());
+    assert_eq!(picked.as_deref(), Some("bravo"));
+}
+
+#[test]
+fn a_click_on_the_hosts_tab_focuses_the_panel_under_it() {
+    let mut app = test_app(vec![("alpha", host("alpha"))]);
+    let buf = draw(&mut app, 120, 40);
+    assert_eq!(app.focused_panel, PanelId::Hosts);
+    let (x, y) = find_text(&buf, "recent sessions");
+    click(&mut app, x, y + 1);
+    assert_eq!(app.focused_panel, PanelId::Recent);
+}
+
+#[test]
+fn the_sftp_browser_answers_a_click_a_double_click_and_the_wheel() {
+    use crate::sftp::model::{FileEntry, Focus, SftpState};
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("alpha")).unwrap();
+    let entry = |name: &str, is_dir| FileEntry {
+        name: name.into(),
+        is_dir,
+        size: 1,
+        is_symlink: false,
+        perm: None,
+    };
+    let mut state = SftpState::new("/srv", dir.path());
+    state
+        .local
+        .set_entries(vec![entry("alpha", true), entry("notes.txt", false)]);
+    state.remote.set_entries(
+        (1..=9)
+            .map(|i| entry(&format!("remote-{i}.log"), false))
+            .collect(),
+    );
+    let mut app = test_app(vec![]);
+    app.active_tab = 1;
+    app.sftp = Some(state);
+    let buf = draw(&mut app, 120, 40);
+
+    // A click focuses the local pane and picks the entry under the pointer.
+    let (x, y) = find_text(&buf, "alpha");
+    click(&mut app, x, y);
+    let s = app.sftp.as_ref().unwrap();
+    assert_eq!(s.focus, Focus::Local);
+    assert_eq!(s.local.selected_entry().unwrap().name, "alpha");
+
+    // The wheel scrolls the pane under the pointer, focus stays put.
+    let (rx, ry) = find_text(&buf, "remote-1.log");
+    mouse(&mut app, MouseEventKind::ScrollDown, rx, ry);
+    let s = app.sftp.as_ref().unwrap();
+    assert_eq!(s.focus, Focus::Local);
+    assert_eq!(s.remote.selected, 3);
+
+    // A second click on the same entry is a double click: it opens it.
+    app.last_click = None;
+    click(&mut app, x, y);
+    click(&mut app, x, y);
+    assert_eq!(
+        app.sftp.as_ref().unwrap().local.cwd,
+        dir.path().join("alpha")
+    );
+}
+
+#[test]
+fn a_double_click_in_the_sftp_picker_connects_to_the_host() {
+    let mut app = test_app(vec![("alpha", host("alpha")), ("charlie", host("charlie"))]);
+    app.active_tab = 1;
+    let buf = draw(&mut app, 120, 40);
+    let (x, y) = find_text(&buf, "charlie");
+    click(&mut app, x, y);
+    let picked = app
+        .selected_host_index()
+        .map(|i| app.hosts[i].name().to_string());
+    assert_eq!(picked.as_deref(), Some("charlie"));
+    assert_eq!(app.sftp_host, None, "one click only picks");
+    click(&mut app, x, y);
+    // `sftp_host` is set before the worker even tries the network.
+    assert_eq!(app.sftp_host.as_deref(), Some("charlie"));
+}

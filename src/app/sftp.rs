@@ -144,14 +144,7 @@ impl App {
                     && self.group_sections.iter().all(|s| s.collapsed);
                 self.set_all_groups_collapsed(!all_collapsed);
             }
-            // On a group header, Enter folds the group (matches the hosts tab);
-            // on a host row it connects via SFTP.
-            _ if self.selected_nav_header().is_some()
-                && self.is_action(KeyAction::Connect, &key) =>
-            {
-                self.toggle_selected_group();
-            }
-            _ if self.is_action(KeyAction::Connect, &key) => self.sftp_connect_selected()?,
+            _ if self.is_action(KeyAction::Connect, &key) => self.sftp_picker_activate()?,
             _ if self.is_action(KeyAction::Search, &key) => {
                 self.sftp_picker_searching = true;
                 self.search_query.clear();
@@ -174,11 +167,7 @@ impl App {
             }
             _ if self.is_action(KeyAction::Connect, &key) => {
                 self.sftp_picker_searching = false;
-                if self.selected_nav_header().is_some() {
-                    self.toggle_selected_group();
-                } else {
-                    self.sftp_connect_selected()?;
-                }
+                self.sftp_picker_activate()?;
             }
             KeyCode::Char(c)
                 if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
@@ -196,6 +185,34 @@ impl App {
             _ => {}
         }
         Ok(())
+    }
+
+    /// Enter (or a double click) on the picker: fold the group header under
+    /// the cursor, or connect to the host there.
+    pub(crate) fn sftp_picker_activate(&mut self) -> Result<()> {
+        if self.selected_nav_header().is_some() {
+            self.toggle_selected_group();
+            Ok(())
+        } else {
+            self.sftp_connect_selected()
+        }
+    }
+
+    /// Enter (or a double click) on the browser: descend into the focused
+    /// pane's selected directory, or go up on its `..` row. The remote pane
+    /// stays put during a run: the worker handles commands in order, so a
+    /// listing queued behind a transfer would leave the pane looking hung.
+    /// The local pane is read straight off the filesystem and stays browsable.
+    pub(crate) fn sftp_enter_selected(&mut self) {
+        let Some(s) = self.sftp.as_ref() else {
+            return;
+        };
+        if s.phase == crate::sftp::model::Phase::Running && s.focused_side() != Side::Local {
+            return;
+        }
+        if let Some((side, path)) = s.enter_dir() {
+            self.sftp_navigate(side, path);
+        }
     }
 
     fn handle_key_sftp_browser(&mut self, key: KeyEvent) -> Result<()> {
@@ -218,10 +235,8 @@ impl App {
             return Ok(());
         }
         // Enter descends into the selected directory of the focused pane.
-        if can_navigate && self.is_action(KeyAction::Connect, &key) {
-            if let Some((side, path)) = self.sftp.as_ref().and_then(|s| s.enter_dir()) {
-                self.sftp_navigate(side, path);
-            }
+        if self.is_action(KeyAction::Connect, &key) {
+            self.sftp_enter_selected();
             return Ok(());
         }
         if self.is_action(KeyAction::MoveDown, &key) {

@@ -1,3 +1,5 @@
+use ratatui::layout::{Position, Rect};
+
 use super::*;
 
 impl App {
@@ -111,166 +113,19 @@ impl App {
             }
             return Ok(());
         }
-        self.panel_sel = None;
-
         let areas =
             crate::tui::dashboard_layout::dashboard_layout_zoomed(self.terminal_area, self.ui_zoom);
         let x = mouse.column;
         let y = mouse.row;
 
         match mouse.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                let now = std::time::Instant::now();
-                let is_double = self
-                    .last_click
-                    .map(|(t, lx, ly)| {
-                        now.duration_since(t).as_millis() < 400
-                            && x.abs_diff(lx) <= 1
-                            && y.abs_diff(ly) <= 1
-                    })
-                    .unwrap_or(false);
-                self.last_click = Some((now, x, y));
-
-                // Tab bar clicks
-                if y == areas.tab_bar.y {
-                    if let Some(tab) = tab_from_x(x) {
-                        match tab {
-                            0 => self.active_tab = 0,
-                            1 => self.switch_to_sftp_tab(),
-                            2 => self.switch_to_tunnels_tab()?,
-                            3 => self.switch_to_keys_tab()?,
-                            4 => {
-                                self.active_tab = 4;
-                                self.refresh_audit_events();
-                            }
-                            _ => {}
-                        }
-                    }
-                    return Ok(());
-                }
-
-                // Body area clicks
-                if y >= areas.body.y && y < areas.body.y + areas.body.height {
-                    match self.active_tab {
-                        0 => {
-                            // Host list panel
-                            if x >= areas.col_left.x && x < areas.col_left.x + areas.col_left.width
-                            {
-                                let content_y = areas.col_left.y + 1;
-                                // Mirror the panel's body height: ch = height-2,
-                                // body reserves 2 rows for its footer.
-                                let ch = areas.col_left.height.saturating_sub(2);
-                                let body_h = if ch > 2 { ch - 2 } else { ch } as usize;
-                                if y >= content_y {
-                                    let rel = y - content_y;
-                                    if let Some(idx) = self.host_row_to_index(rel, body_h) {
-                                        if let Some(pos) = self
-                                            .nav_rows
-                                            .iter()
-                                            .position(|r| matches!(r, NavRow::Host(i) if *i == idx))
-                                        {
-                                            self.selected = pos;
-                                            if is_double {
-                                                self.connect_selected()?;
-                                            }
-                                        }
-                                    } else if let Some(si) = self.host_row_to_header(rel, body_h) {
-                                        // Click on a group header toggles collapse.
-                                        self.toggle_group_by_section(si);
-                                    }
-                                }
-                            }
-                        }
-                        1 => {
-                            // SFTP tab — no body-click interaction yet.
-                        }
-                        2 => {
-                            // Tunnels table — account for scroll offset
-                            let data_y = areas.body.y + 4;
-                            if y >= data_y {
-                                let visible_row = (y - data_y) as usize;
-                                let max_rows = (areas.body.y + areas.body.height)
-                                    .saturating_sub(data_y)
-                                    as usize;
-                                let scroll = if self.tunnel_selected >= max_rows {
-                                    self.tunnel_selected - max_rows + 1
-                                } else {
-                                    0
-                                };
-                                let idx = scroll + visible_row;
-                                if idx < self.tunnels.len() {
-                                    self.tunnel_selected = idx;
-                                    if is_double {
-                                        self.toggle_tunnel()?;
-                                    }
-                                }
-                            }
-                        }
-                        3 => {
-                            // Keys cards
-                            if !self.identities.is_empty() {
-                                let inner_w =
-                                    crate::tui::screens::keys::inner_width(areas.body.width);
-                                let cards_per_row = crate::tui::screens::keys::resolve_columns(
-                                    inner_w,
-                                    self.config.appearance.identity_columns,
-                                );
-                                let card_h = 6u16;
-                                let rel_y = y.saturating_sub(areas.body.y);
-                                let row_idx = rel_y / (card_h + 1);
-                                let col_idx = if cards_per_row > 1 {
-                                    let card_w = inner_w
-                                        .saturating_sub((cards_per_row as u16 - 1) * 2)
-                                        / cards_per_row as u16;
-                                    let margin = if areas.body.width >= 132 {
-                                        2
-                                    } else if areas.body.width >= 80 {
-                                        1
-                                    } else {
-                                        0
-                                    };
-                                    let rel_x = x.saturating_sub(areas.body.x + margin);
-                                    (rel_x / (card_w + 2)).min(cards_per_row as u16 - 1)
-                                } else {
-                                    0
-                                };
-                                let row_offset = self.keys_scroll_row_offset(
-                                    areas.body.height,
-                                    cards_per_row,
-                                    card_h + 1,
-                                );
-                                let idx = (row_idx as usize + row_offset) * cards_per_row
-                                    + col_idx as usize;
-                                if idx < self.identities.len() {
-                                    self.identity_selected = idx;
-                                }
-                            }
-                        }
-                        4 => {
-                            // Audit table (mirror the renderer's scroll math)
-                            let data_y = areas.body.y + 3;
-                            if y >= data_y {
-                                let max_rows = (areas.body.y + areas.body.height)
-                                    .saturating_sub(data_y)
-                                    as usize;
-                                let scroll = if max_rows > 0 && self.audit_selected >= max_rows {
-                                    self.audit_selected - max_rows + 1
-                                } else {
-                                    0
-                                };
-                                let row = (y - data_y) as usize + scroll;
-                                if row < self.auth_events_cache.len() {
-                                    self.audit_selected = row;
-                                }
-                            }
-
-                            // Filter strip clicks (row 0 of audit area)
-                            if y == areas.body.y {
-                                self.handle_audit_filter_click(x, areas.body.x)?;
-                            }
-                        }
-                        _ => {}
-                    }
+            // A drag selects whatever is on screen and copies it on release;
+            // a press and release on one cell is a click on what is there.
+            MouseEventKind::Down(MouseButton::Left)
+            | MouseEventKind::Drag(MouseButton::Left)
+            | MouseEventKind::Up(MouseButton::Left) => {
+                if let Some((x, y)) = self.mouse_select(mouse) {
+                    self.dashboard_click(x, y, &areas)?;
                 }
             }
             MouseEventKind::ScrollUp => {
@@ -284,7 +139,7 @@ impl App {
                                 self.ssh_log_scroll = self.ssh_log_scroll.saturating_add(3);
                             }
                         }
-                        1 => {}
+                        1 => self.sftp_wheel(x, y, areas.body, -3),
                         2 => {
                             self.tunnel_selected = self.tunnel_selected.saturating_sub(1);
                         }
@@ -313,7 +168,7 @@ impl App {
                             self.ssh_log_scroll = self.ssh_log_scroll.saturating_sub(3);
                         }
                     }
-                    1 => {}
+                    1 => self.sftp_wheel(x, y, areas.body, 3),
                     2 => {
                         let max = self.tunnels.len().saturating_sub(1);
                         self.tunnel_selected = (self.tunnel_selected + 1).min(max);
@@ -335,8 +190,252 @@ impl App {
         Ok(())
     }
 
+    /// A click on the dashboard: a tab, a panel, a row.
+    fn dashboard_click(
+        &mut self,
+        x: u16,
+        y: u16,
+        areas: &crate::tui::dashboard_layout::DashboardAreas,
+    ) -> Result<()> {
+        let now = std::time::Instant::now();
+        let is_double = self
+            .last_click
+            .map(|(t, lx, ly)| {
+                now.duration_since(t).as_millis() < 400
+                    && x.abs_diff(lx) <= 1
+                    && y.abs_diff(ly) <= 1
+            })
+            .unwrap_or(false);
+        self.last_click = Some((now, x, y));
+
+        // Tab bar clicks
+        if y == areas.tab_bar.y {
+            if let Some(tab) = tab_from_x(x) {
+                match tab {
+                    0 => self.active_tab = 0,
+                    1 => self.switch_to_sftp_tab(),
+                    2 => self.switch_to_tunnels_tab()?,
+                    3 => self.switch_to_keys_tab()?,
+                    4 => {
+                        self.active_tab = 4;
+                        self.refresh_audit_events();
+                    }
+                    _ => {}
+                }
+            }
+            return Ok(());
+        }
+
+        if !areas.body.contains(Position::new(x, y)) {
+            return Ok(());
+        }
+        match self.active_tab {
+            0 => {
+                // The clicked panel takes the focus (what `z` zooms).
+                if let Some(panel) = self.dashboard_panel_at(areas, x, y) {
+                    self.focused_panel = panel;
+                }
+                if areas.col_left.contains(Position::new(x, y))
+                    && self.click_hosts_panel(areas.col_left, y)
+                    && is_double
+                {
+                    self.connect_selected()?;
+                }
+            }
+            1 => self.sftp_click(x, y, areas.body, is_double)?,
+            2 => {
+                // Tunnels table — account for scroll offset
+                let data_y = areas.body.y + 4;
+                if y >= data_y {
+                    let visible_row = (y - data_y) as usize;
+                    let max_rows =
+                        (areas.body.y + areas.body.height).saturating_sub(data_y) as usize;
+                    let scroll = if self.tunnel_selected >= max_rows {
+                        self.tunnel_selected - max_rows + 1
+                    } else {
+                        0
+                    };
+                    let idx = scroll + visible_row;
+                    if idx < self.tunnels.len() {
+                        self.tunnel_selected = idx;
+                        if is_double {
+                            self.toggle_tunnel()?;
+                        }
+                    }
+                }
+            }
+            3 => {
+                // Keys cards
+                if !self.identities.is_empty() {
+                    let inner_w = crate::tui::screens::keys::inner_width(areas.body.width);
+                    let cards_per_row = crate::tui::screens::keys::resolve_columns(
+                        inner_w,
+                        self.config.appearance.identity_columns,
+                    );
+                    let card_h = 6u16;
+                    let rel_y = y.saturating_sub(areas.body.y);
+                    let row_idx = rel_y / (card_h + 1);
+                    let col_idx = if cards_per_row > 1 {
+                        let card_w = inner_w.saturating_sub((cards_per_row as u16 - 1) * 2)
+                            / cards_per_row as u16;
+                        let margin = if areas.body.width >= 132 {
+                            2
+                        } else if areas.body.width >= 80 {
+                            1
+                        } else {
+                            0
+                        };
+                        let rel_x = x.saturating_sub(areas.body.x + margin);
+                        (rel_x / (card_w + 2)).min(cards_per_row as u16 - 1)
+                    } else {
+                        0
+                    };
+                    let row_offset =
+                        self.keys_scroll_row_offset(areas.body.height, cards_per_row, card_h + 1);
+                    let idx = (row_idx as usize + row_offset) * cards_per_row + col_idx as usize;
+                    if idx < self.identities.len() {
+                        self.identity_selected = idx;
+                    }
+                }
+            }
+            4 => {
+                // Audit table (mirror the renderer's scroll math)
+                let data_y = areas.body.y + 3;
+                if y >= data_y {
+                    let max_rows =
+                        (areas.body.y + areas.body.height).saturating_sub(data_y) as usize;
+                    let scroll = if max_rows > 0 && self.audit_selected >= max_rows {
+                        self.audit_selected - max_rows + 1
+                    } else {
+                        0
+                    };
+                    let row = (y - data_y) as usize + scroll;
+                    if row < self.auth_events_cache.len() {
+                        self.audit_selected = row;
+                    }
+                }
+
+                // Filter strip clicks (row 0 of audit area)
+                if y == areas.body.y {
+                    self.handle_audit_filter_click(x, areas.body.x)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// The hosts-tab panel at (`x`, `y`): the docked broadcast panel first,
+    /// since it is drawn over the grid.
+    fn dashboard_panel_at(
+        &self,
+        areas: &crate::tui::dashboard_layout::DashboardAreas,
+        x: u16,
+        y: u16,
+    ) -> Option<PanelId> {
+        let docked = self.broadcast.is_some().then_some(PanelId::Broadcast);
+        docked
+            .into_iter()
+            .chain([
+                PanelId::Hosts,
+                PanelId::Detail,
+                PanelId::Agent,
+                PanelId::Latency,
+                PanelId::Recent,
+                PanelId::Auth,
+                PanelId::Ping,
+                PanelId::SshLog,
+            ])
+            .find(|&p| crate::tui::panel_zoom_source(areas, p).contains(Position::new(x, y)))
+    }
+
+    /// A click on row `y` of the hosts panel drawn in `panel` (the hosts tab,
+    /// or the SFTP picker): select the host there, or fold the group header.
+    /// True when a host row was hit, so a double click can act on it.
+    fn click_hosts_panel(&mut self, panel: Rect, y: u16) -> bool {
+        let content_y = panel.y + 1;
+        if y < content_y {
+            return false;
+        }
+        // Mirror the panel's body height: ch = height-2, body reserves 2 rows
+        // for its footer.
+        let ch = panel.height.saturating_sub(2);
+        let body_h = if ch > 2 { ch - 2 } else { ch } as usize;
+        let rel = y - content_y;
+        if let Some(idx) = self.host_row_to_index(rel, body_h) {
+            if let Some(pos) = self
+                .nav_rows
+                .iter()
+                .position(|r| matches!(r, NavRow::Host(i) if *i == idx))
+            {
+                self.selected = pos;
+                return true;
+            }
+        } else if let Some(si) = self.host_row_to_header(rel, body_h) {
+            self.toggle_group_by_section(si);
+        }
+        false
+    }
+
+    /// A click on the SFTP tab. The picker is the hosts panel (all of the body
+    /// but its hint line); in the browser a click focuses the pane under it
+    /// and picks the entry there, and a double click opens it like Enter.
+    fn sftp_click(&mut self, x: u16, y: u16, body: Rect, is_double: bool) -> Result<()> {
+        if self.sftp.is_none() {
+            let list = Rect::new(body.x, body.y, body.width, body.height.saturating_sub(1));
+            if list.contains(Position::new(x, y)) && self.click_hosts_panel(list, y) && is_double {
+                self.sftp_picker_activate()?;
+            }
+            return Ok(());
+        }
+        let Some((pane, pos)) = self.sftp_pane_at(x, y) else {
+            return Ok(());
+        };
+        if let Some(s) = self.sftp.as_mut() {
+            s.focus = pane;
+            if let Some(pos) = pos {
+                s.focused_pane_mut().selected = pos;
+            }
+        }
+        if is_double && pos.is_some() {
+            self.sftp_enter_selected();
+        }
+        Ok(())
+    }
+
+    /// The wheel on the SFTP tab: the picker list, or the pane under the
+    /// pointer (without moving the focus).
+    fn sftp_wheel(&mut self, x: u16, y: u16, body: Rect, delta: i64) {
+        if self.sftp.is_none() {
+            if body.contains(Position::new(x, y)) {
+                let max = self.nav_rows.len().saturating_sub(1) as i64;
+                self.selected = (self.selected as i64 + delta).clamp(0, max) as usize;
+            }
+            return;
+        }
+        if let Some((pane, _)) = self.sftp_pane_at(x, y) {
+            if let Some(s) = self.sftp.as_mut() {
+                s.pane_mut(pane).move_selection(delta);
+            }
+        }
+    }
+
+    /// The SFTP browser pane the last frame drew at (`x`, `y`), and the entry
+    /// on that row, if any.
+    fn sftp_pane_at(&self, x: u16, y: u16) -> Option<(crate::sftp::model::Focus, Option<usize>)> {
+        self.click_map
+            .borrow()
+            .iter()
+            .rev()
+            .find(|t| t.area.contains(Position::new(x, y)))
+            .and_then(|t| match t.hit {
+                ClickHit::SftpPane { pane, pos } => Some((pane, pos)),
+                _ => None,
+            })
+    }
+
     /// Terminal-style drag selection over whatever is rendered (the zoomed
-    /// panel, or the whole screen under a form / dialog / picker). The render
+    /// panel, or the whole screen anywhere else outside a session). The render
     /// pass highlights the span and scrapes it into `panel_sel_text`; a drag is
     /// copied on release. Returns the position of a left click that never moved,
     /// which is a click, not a one-cell selection.

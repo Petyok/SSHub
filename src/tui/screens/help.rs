@@ -71,6 +71,14 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         key: "Esc",
         desc: "Back / close overlay",
     },
+    HelpItem::Entry {
+        key: "click",
+        desc: "Pick a tab, a row or a hosts-tab panel; on the SFTP tab, a host or a pane's entry. Double-click connects, starts a tunnel or opens a folder",
+    },
+    HelpItem::Entry {
+        key: "drag",
+        desc: "Select anything on screen, copied on release (Shift+drag leaves the mouse to your terminal)",
+    },
     HelpItem::Blank,
     HelpItem::Section("profiles"),
     HelpItem::Entry {
@@ -763,6 +771,10 @@ mod tests {
             lines[1],
             entry_line(styles, "\u{2191}\u{2193} / j k", "Move up / down")
         );
-        assert_eq!(lines[6], Line::from(""));
+        let blank = HELP_ITEMS
+            .iter()
+            .position(|i| matches!(i, HelpItem::Blank))
+            .unwrap();
+        assert_eq!(lines[blank], Line::from(""));
     }
 }

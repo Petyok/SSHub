@@ -77,6 +77,8 @@ impl App {
                 self.focus_field(index, cell);
             }
             ClickHit::Row(index) => self.select_row(index),
+            // The dashboard behind an overlay: a click there is not for it.
+            ClickHit::SftpPane { .. } => {}
         }
     }
 

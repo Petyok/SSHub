@@ -619,12 +619,13 @@ fn fill_reset_background(buf: &mut Buffer, area: Rect, color: Color, exclusions:
 /// Highlight the mouse text selection by reversing the selected cells, and
 /// extract the selected text into `app.panel_sel_text` for copy-on-release.
 /// Terminal-style stream selection over the zoomed panel's body (issue #18) or,
-/// under a form / dialog / picker, over the whole screen (issue #116).
+/// on the dashboard and under a form / dialog / picker, over the whole screen
+/// (issue #116).
 fn apply_panel_selection(frame: &mut Frame, app: &App) {
-    let body = if crate::app::is_overlay_mode(app.mode) {
-        frame.area()
-    } else if app.mode == AppMode::Normal && app.panel_zoomed {
+    let body = if app.mode == AppMode::Normal && app.panel_zoomed {
         dashboard_layout::dashboard_layout_zoomed(frame.area(), app.ui_zoom).body
+    } else if app.mode == AppMode::Normal || crate::app::is_overlay_mode(app.mode) {
+        frame.area()
     } else {
         return;
     };
