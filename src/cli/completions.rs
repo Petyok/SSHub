@@ -46,13 +46,24 @@ const HOST_SUB: &[&str] = &[
     "rename",
     "delete",
     "duplicate",
+    "transfer",
 ];
 
-const GROUP_SUB: &[&str] = &["list", "show", "add", "edit", "delete"];
+const GROUP_SUB: &[&str] = &["list", "show", "add", "edit", "delete", "transfer"];
 
-const IDENTITY_SUB: &[&str] = &["list", "show", "add", "edit", "delete", "agent-remove"];
+const IDENTITY_SUB: &[&str] = &[
+    "list",
+    "show",
+    "add",
+    "edit",
+    "delete",
+    "transfer",
+    "agent-remove",
+];
 
-const TUNNEL_SUB: &[&str] = &["list", "show", "create", "delete", "start", "stop"];
+const TUNNEL_SUB: &[&str] = &[
+    "list", "show", "create", "delete", "start", "stop", "transfer",
+];
 
 const SFTP_SUB: &[&str] = &["ls", "get", "put", "rm", "mkdir", "rename", "chmod"];
 
@@ -513,6 +524,37 @@ mod tests {
         );
         for script in [&bash, &zsh, &fish] {
             assert!(script.contains("theme"), "top level must list theme");
+        }
+    }
+
+    /// Regression: the profile `transfer` subcommands of host, group, identity
+    /// and tunnel were missing from these hand-kept lists, so no shell offered
+    /// them.
+    #[test]
+    fn every_shell_completes_the_transfer_subcommands() {
+        let bash = render_bash(&[]);
+        let zsh = render_zsh(&[]);
+        let fish = render_fish(&[]);
+        for (bash_var, zsh_var, fish_cond) in [
+            ("host_sub", "host_cmds", "host connect"),
+            ("group_sub", "group_cmds", "groups group"),
+            ("identity_sub", "identity_cmds", "identity"),
+            ("tunnel_sub", "tunnel_cmds", "tunnel"),
+        ] {
+            let line = bash
+                .lines()
+                .find(|l| l.contains(&format!("local {bash_var}=")))
+                .unwrap();
+            assert!(line.contains("transfer"), "bash: {line}");
+            let line = zsh
+                .lines()
+                .find(|l| l.trim_start().starts_with(&format!("{zsh_var}=(")))
+                .unwrap();
+            assert!(line.contains("transfer"), "zsh: {line}");
+            let entry = format!(
+                "complete -c sshub -n '__fish_seen_subcommand_from {fish_cond}' -a 'transfer'"
+            );
+            assert!(fish.contains(&entry), "fish lacks: {entry}");
         }
     }
 

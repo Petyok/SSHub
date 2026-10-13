@@ -79,6 +79,11 @@ pub fn render_host_picker(frame: &mut Frame, app: &App) {
         );
     } else {
         let scroll = picker.selected.saturating_sub(visible.saturating_sub(1));
+        app.record_list_rows(
+            Rect::new(popup.x + 1, list_top, popup.width - 2, visible as u16),
+            scroll,
+            matches.len(),
+        );
         for (i, (_, name)) in matches.iter().skip(scroll).take(visible).enumerate() {
             let idx = scroll + i;
             let ry = list_top + i as u16;
@@ -174,6 +179,11 @@ pub fn render_identity_picker(frame: &mut Frame, app: &App) {
         );
     } else {
         let scroll = picker.selected.saturating_sub(visible.saturating_sub(1));
+        app.record_list_rows(
+            Rect::new(popup.x + 1, list_top, popup.width - 2, visible as u16),
+            scroll,
+            identities.len(),
+        );
         for (i, identity) in identities.iter().skip(scroll).take(visible).enumerate() {
             let idx = scroll + i;
             let ry = list_top + i as u16;

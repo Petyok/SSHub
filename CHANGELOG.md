@@ -23,6 +23,20 @@ All notable changes to SSHub are documented in this file.
   local shells come back in their panes, each started at its pane's size.
   `Ctrl+X` in the picker deletes one. Stored in the profile database (schema
   v20).
+- **Mouse on the dashboard, in forms, dialogs and pickers** (issue #116) -
+  outside a session or a zoomed panel the mouse could only click tabs and rows,
+  and since SSHub holds the mouse the terminal's own selection was gone too. A
+  drag now selects whatever is on screen and copies it on release, on every
+  dashboard tab as well as over a form. A click focuses the field under the
+  pointer with the cursor where you clicked (prompts included), highlights a
+  picker, palette or tag-filter row without choosing it, and on the hosts tab
+  focuses the panel under it. The SFTP tab answers the mouse too: a click
+  picks a host or a pane's entry, a double-click connects or opens the folder,
+  and the wheel scrolls the pane under the pointer. `Ctrl+Y` (the copy-secret
+  bind) copies the focused field's exact value in any form, the search bar or
+  the palette, not just a stored secret (the key generator's passphrase is
+  never copied), and the form's hint line names it. `Shift` still hands the
+  mouse to the terminal.
 
 ### Fixed
 
@@ -30,6 +44,31 @@ All notable changes to SSHub are documented in this file.
   the bottom rows of an embedded session, prompt included, and growing it back
   brought blank rows. The top now scrolls into history instead, as in xterm.
   Columns are still cut, not reflowed, when a session gets narrower.
+- **SFTP search keeps capital letters** - typing `S` or `L` into the SFTP
+  tab's host search or file filter opened the snippet manager or the log
+  browser. A text input on a dashboard tab now gets every character it types;
+  chords such as `Ctrl+T` still reach the global keys.
+- **`sshub theme list|show` read the wrong directory** - in profile mode they
+  listed `~/.config/sshub/themes` while the TUI loads the profile's own
+  `themes/`. They now read the themes of the profile `--profile` names, else the
+  last used one, and the config directory in compatibility mode.
+- **`sshub host edit --set-address` alone** was refused with "edit requires
+  at least one --set-* flag"; so was `--clear-remote-command`.
+- **Profile transfer of a host** (`h` in the transfer dialog) picked the host
+  by the row number of the hosts tree, so with groups it transferred another
+  host or none. A labelled host was never found at all.
+- **Broadcast audit rows no longer store the command** - like `sshub exec`,
+  the audit log keeps the exit code and error, not a command that can carry a
+  password in an argument. `sshub audit list|stats --via broadcast` now
+  filters them, and `--via connect` no longer counts them as connects.
+- **Shell completions** offer the `transfer` subcommand of `host`, `group`,
+  `identity` and `tunnel`.
+
+### Removed
+
+- **`appearance.show_detail_panel` and `appearance.date_format`** - nothing
+  reads them (the layout that did was dead code, deleted in 0.17.3). New config
+  files leave them out; existing ones still load.
 
 ## [0.17.7] - 2026-10-11
 

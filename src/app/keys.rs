@@ -37,6 +37,34 @@ impl App {
             return Ok(());
         }
 
+        // Copy the focused field's own value (#116): the exact string, with no
+        // label, border or cursor glyph a mouse selection would scrape along.
+        // Secret fields return `None`: the host / identity password keep their
+        // form's own stored-secret copy, the keygen passphrase is not copied.
+        if self.is_action(KeyAction::CopySecret, &key) {
+            if let Some(value) = self.focused_field_text() {
+                let notice = if value.is_empty() {
+                    "the field is empty".to_string()
+                } else {
+                    match write_osc52(&value) {
+                        Ok(()) => format!("copied {} chars to clipboard", value.chars().count()),
+                        Err(e) => format!("clipboard copy failed: {e:#}"),
+                    }
+                };
+                self.set_focused_form_notice(notice);
+                return Ok(());
+            }
+        }
+
+        // A text input on a dashboard tab (the SFTP host or file search) owns
+        // every character it types, so a global bind on a plain or Shift key
+        // (`Shift+S` snippets, `Shift+L` logs, or any user rebind) must not
+        // steal it. Chords such as Ctrl+T or Alt+P still reach the globals.
+        if self.mode == AppMode::Normal && self.dashboard_text_input_active() && is_typed_char(&key)
+        {
+            return self.handle_key_dashboard_tab(key);
+        }
+
         // Open a local shell tab from any dashboard tab.
         if matches!(self.mode, AppMode::Normal) && self.is_action(KeyAction::LocalShell, &key) {
             self.open_local_shell()?;
@@ -135,14 +163,111 @@ impl App {
             AppMode::SnippetForm => self.handle_key_snippet_form(key),
             AppMode::SnippetPicker => self.handle_key_snippet_picker(key),
             AppMode::Connecting | AppMode::Session => self.handle_key_session(key),
-            AppMode::Normal => match self.active_tab {
-                1 => self.handle_key_sftp(key),
-                2 => self.handle_key_tunnels(key),
-                3 => self.handle_key_keychain(key),
-                4 => self.handle_key_audit(key),
-                _ => self.handle_key_normal(key),
-            },
+            AppMode::Normal => self.handle_key_dashboard_tab(key),
         }
+    }
+
+    /// The focused text field's value in a form or text bar, for the copy bind.
+    /// `None` where nothing text-like has focus and on secret fields: the host /
+    /// identity password (their form copies the stored secret) and the keygen
+    /// passphrase.
+    pub(crate) fn focused_field_text(&self) -> Option<String> {
+        let value = match self.mode {
+            AppMode::HostForm => {
+                let form = self.host_form.as_ref()?;
+                let f = form.field;
+                if f == HostFormField::Password
+                    || f.is_picker()
+                    || f.is_toggle()
+                    || f.is_tri_state()
+                {
+                    return None;
+                }
+                form.active_field()
+            }
+            AppMode::IdentityForm => {
+                let form = self.identity_form.as_ref()?;
+                if form.field == IdentityFormField::Password {
+                    return None;
+                }
+                form.active_field()
+            }
+            AppMode::KeygenForm => {
+                let form = self.keygen_form.as_ref()?;
+                if matches!(
+                    form.field,
+                    KeygenFormField::KeyType | KeygenFormField::Passphrase
+                ) {
+                    return None;
+                }
+                form.active_field()
+            }
+            AppMode::GroupForm => {
+                let form = self.group_form.as_ref()?;
+                match form.field {
+                    GroupFormField::Name => &form.name,
+                    GroupFormField::Username => &form.default_username,
+                    GroupFormField::Port => &form.default_port,
+                    GroupFormField::ProxyJump => &form.default_proxy_jump,
+                    _ => return None,
+                }
+            }
+            AppMode::TunnelForm => self.tunnel_form.as_ref()?.active_text_field()?,
+            AppMode::SnippetForm => Self::snippet_form_field_ref(self.snippet_form.as_ref()?),
+            AppMode::HostDetail => {
+                let form = self.detail_edit.as_ref()?;
+                if form.field.is_tri_state() {
+                    return None;
+                }
+                form.active_field()
+            }
+            AppMode::Search => &self.search_query,
+            AppMode::Palette => &self.palette_query,
+            _ => return None,
+        };
+        Some(value.to_string())
+    }
+
+    /// The copy bind's hint for a form's legend (#116): `"<bind>: copy field"`
+    /// while the focused field is one it copies, empty otherwise or unbound.
+    pub(crate) fn copy_field_hint(&self) -> String {
+        let copy = self.config.keybinds.primary(KeyAction::CopySecret);
+        if copy.is_empty() || self.focused_field_text().is_none() {
+            String::new()
+        } else {
+            format!("{copy}: copy field")
+        }
+    }
+
+    /// Show `notice` where the focused form shows its own messages.
+    fn set_focused_form_notice(&mut self, notice: String) {
+        let slot = match self.mode {
+            AppMode::IdentityForm => &mut self.identity_notice,
+            AppMode::KeygenForm => &mut self.keygen_notice,
+            AppMode::GroupForm => &mut self.group_notice,
+            AppMode::SnippetForm => &mut self.snippet_notice,
+            _ => &mut self.host_notice,
+        };
+        *slot = Some(notice);
+    }
+
+    /// Key dispatch for the dashboard tab on screen.
+    fn handle_key_dashboard_tab(&mut self, key: KeyEvent) -> Result<()> {
+        match self.active_tab {
+            1 => self.handle_key_sftp(key),
+            2 => self.handle_key_tunnels(key),
+            3 => self.handle_key_keychain(key),
+            4 => self.handle_key_audit(key),
+            _ => self.handle_key_normal(key),
+        }
+    }
+
+    /// True while a dashboard tab has a text input capturing keys. These live
+    /// in `AppMode::Normal`, unlike overlay inputs, which have their own mode
+    /// and never see the global binds.
+    fn dashboard_text_input_active(&self) -> bool {
+        self.active_tab == 1
+            && (self.sftp_picker_searching || self.sftp.as_ref().is_some_and(|s| s.searching))
     }
 
     pub(crate) fn handle_key_normal(&mut self, key: KeyEvent) -> Result<()> {
@@ -1559,4 +1684,11 @@ pub(crate) fn save_config_to(
         Some(path) => crate::config::save_config_at(path, config),
         None => crate::config::save_config(config),
     }
+}
+
+/// A key a text input inserts: a printable character, plain or with Shift
+/// (the same test every input handler applies before pushing the char).
+fn is_typed_char(key: &KeyEvent) -> bool {
+    matches!(key.code, KeyCode::Char(c) if !c.is_control())
+        && (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
 }

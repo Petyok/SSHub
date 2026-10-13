@@ -584,19 +584,22 @@ impl App {
                     // rows integrate with the stats query, the Ok/Fail audit
                     // filters, and theme::status_color: "launched" (green/Ok)
                     // for a clean exit, "fail" (red/Fail) otherwise.
+                    // The command itself is never logged, as for `sshub exec`:
+                    // it can carry a password in an argument, and the audit log
+                    // is not the place to keep one.
                     let (status, note) = match &r.state {
                         crate::broadcast::HostState::Done { exit } => {
                             let status = if *exit == 0 { "launched" } else { "fail" };
                             // On failure, fold the first stderr line into the note
                             // so the Audit tab records WHAT broke, not just the code.
                             let note = match crate::broadcast::error_text(r) {
-                                Some(err) => format!("{} (exit {}: {})", bc.command, exit, err),
-                                None => format!("{} (exit {})", bc.command, exit),
+                                Some(err) => format!("exit {exit}: {err}"),
+                                None => format!("exit {exit}"),
                             };
                             (status.to_string(), note)
                         }
                         crate::broadcast::HostState::Failed { reason } => {
-                            ("fail".to_string(), format!("{} ({})", bc.command, reason))
+                            ("fail".to_string(), reason.clone())
                         }
                         // Unreachable once all_terminal holds; stay total anyway.
                         _ => continue,

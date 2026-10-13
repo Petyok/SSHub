@@ -497,6 +497,15 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
             value.as_str()
         };
         buf.set_string(val_x, row_y, truncate(display, val_w), val_style);
+        app.click_map.borrow_mut().push(crate::app::ClickTarget {
+            area: Rect::new(inner.x, row_y, inner.width, 1),
+            hit: crate::app::ClickHit::Field {
+                index: i,
+                value_x: val_x,
+                start: 0,
+                end: usize::MAX,
+            },
+        });
 
         // Arrow indicator for active field
         if is_active {
@@ -532,13 +541,16 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
     let footer_top = inner.y + inner.height.saturating_sub(2);
     let footer_bottom = inner.y + inner.height.saturating_sub(1);
     if footer_top > inner.y + fields.len() as u16 {
+        let copy = app.copy_field_hint();
+        let keys = if copy.is_empty() {
+            "type to edit  Tab/\u{2193}: next field  Ctrl+U/W: kill line/word".to_string()
+        } else {
+            format!("type to edit  Tab/\u{2193}: next field  {copy}  Ctrl+U/W: kill line/word")
+        };
         buf.set_string(
             inner.x + 1,
             footer_top,
-            crate::tui::text::ellipsize(
-                "type to edit  Tab/\u{2193}: next field  Ctrl+U/W: kill line/word",
-                avail,
-            ),
+            crate::tui::text::ellipsize(&keys, avail),
             theme.style(StyleRole::TunnelFormHelp),
         );
         let save_esc = format!("{}: save", app.save_key_label());
@@ -641,6 +653,16 @@ pub fn render_tunnel_host_picker(frame: &mut Frame, app: &App) {
     } else {
         // Scroll so the selection stays visible.
         let scroll = picker.selected.saturating_sub(visible.saturating_sub(1));
+        app.record_list_rows(
+            Rect::new(
+                popup.x + 1,
+                list_top,
+                popup.width.saturating_sub(2),
+                visible as u16,
+            ),
+            scroll,
+            matches.len(),
+        );
         for (i, (_, name)) in matches.iter().skip(scroll).take(visible).enumerate() {
             let idx = scroll + i;
             let ry = list_top + i as u16;

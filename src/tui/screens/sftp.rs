@@ -59,7 +59,7 @@ fn render_rest(frame: &mut Frame, area: Rect, app: &App) {
         }
         Some(state) => {
             let fill = app.sftp_progress_advance(progress_fraction(state));
-            render_browser(
+            let panes = render_browser(
                 frame.buffer_mut(),
                 area,
                 state,
@@ -67,7 +67,18 @@ fn render_rest(frame: &mut Frame, area: Rect, app: &App) {
                 staged_fly_in(app),
                 nav_offsets(app, area),
                 app.theme(),
-            )
+            );
+            // Every row of each pane, carrying the entry drawn on it: a click
+            // focuses the pane and picks the entry (#116).
+            for (pane, rect, rows) in panes {
+                for y in rect.top()..rect.bottom() {
+                    let pos = rows.iter().find(|(ry, _)| *ry == y).map(|&(_, p)| p);
+                    app.record_click(
+                        Rect::new(rect.x, y, rect.width, 1),
+                        crate::app::ClickHit::SftpPane { pane, pos },
+                    );
+                }
+            }
         }
     }
 }
@@ -200,6 +211,9 @@ fn render_picker(frame: &mut Frame, area: Rect, app: &App) {
 
 // ── Browser sub-state ────────────────────────────────────────
 
+/// One browser pane as drawn: its box and the entry on each drawn row.
+type DrawnPane = (Focus, Rect, Vec<(u16, usize)>);
+
 fn render_browser(
     buf: &mut Buffer,
     area: Rect,
@@ -208,7 +222,7 @@ fn render_browser(
     staged: f32,
     nav: [i32; 2],
     theme: &ResolvedTheme,
-) {
+) -> [DrawnPane; 2] {
     let progress_h: u16 = if state.phase == Phase::Running { 1 } else { 0 };
     let queue_h: u16 = if state.queue.is_empty() {
         1
@@ -226,7 +240,7 @@ fn render_browser(
     // The left pane is the local filesystem by default, but can be pointed at
     // a second server -- in which case it carries that host's name.
     let left_title = state.left_host.as_deref().unwrap_or("local");
-    render_pane(
+    let local_rows = render_pane(
         buf,
         local_rect,
         &state.local,
@@ -240,7 +254,7 @@ fn render_browser(
     if state.left_connecting {
         render_connecting(buf, local_rect, state.left_host.as_deref(), theme);
     }
-    render_pane(
+    let remote_rows = render_pane(
         buf,
         remote_rect,
         &state.remote,
@@ -273,8 +287,14 @@ fn render_browser(
         let py = area.y + area.height.saturating_sub(1);
         render_progress(buf, area.x, py, area.width, state, fill, theme);
     }
+    [
+        (Focus::Local, local_rect, local_rows),
+        (Focus::Remote, remote_rect, remote_rows),
+    ]
 }
 
+/// Draw one pane and return the entry on each drawn row: `(y, position in
+/// the visible list)`, so a click can find what is under the pointer (#116).
 #[allow(clippy::too_many_arguments)]
 fn render_pane(
     buf: &mut Buffer,
@@ -291,9 +311,9 @@ fn render_pane(
     // `sftp.remote` on the right.
     entry_role: StyleRole,
     theme: &ResolvedTheme,
-) {
+) -> Vec<(u16, usize)> {
     if rect.width < 6 || rect.height < 2 {
-        return;
+        return Vec::new();
     }
     let total = pane.entries.len();
     let vis = pane.visible_indices();
@@ -336,7 +356,7 @@ fn render_pane(
     let mut top = rect.y + 1;
     let mut rows = rect.height.saturating_sub(2) as usize;
     if rows == 0 {
-        return;
+        return Vec::new();
     }
 
     // Prominent search bar on the top inner row while this focused pane is being
@@ -356,7 +376,7 @@ fn render_pane(
         top += 1;
         rows = rows.saturating_sub(1);
         if rows == 0 {
-            return;
+            return Vec::new();
         }
     }
 
@@ -373,7 +393,7 @@ fn render_pane(
             (false, false) => "(no matches)".to_string(),
         };
         buf.set_string(inner_x, top, &msg, theme.style(StyleRole::TextDim));
-        return;
+        return Vec::new();
     }
 
     // Keep the selection roughly centred (a "camera" that follows), clamped to
@@ -385,10 +405,12 @@ fn render_pane(
         .saturating_sub(rows / 2)
         .min(count_len.saturating_sub(rows));
 
+    let mut drawn = Vec::new();
     for (i, &entry_idx) in vis.iter().skip(scroll).take(rows).enumerate() {
         let entry = &pane.entries[entry_idx];
         let pos = scroll + i; // position within the visible list
         let y = top + i as u16;
+        drawn.push((y, pos));
         let is_sel = pos == pane.selected;
         let active = is_sel && focused;
 
@@ -440,6 +462,7 @@ fn render_pane(
         let size_style = selection.unwrap_or_else(|| theme.style(StyleRole::TextDim));
         buf.set_string(size_x, y, &size_str, size_style);
     }
+    drawn
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -876,7 +899,7 @@ mod tests {
 
     fn browser(state: &SftpState, theme: &ResolvedTheme) -> Buffer {
         crate::test_support::buffer_at(AREA, |buf| {
-            render_browser(buf, AREA, state, 0.5, 1.0, [0, 0], theme)
+            render_browser(buf, AREA, state, 0.5, 1.0, [0, 0], theme);
         })
     }
 

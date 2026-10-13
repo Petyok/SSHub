@@ -209,23 +209,85 @@ pub struct RootDirs {
 /// Resolve installation roots. Any directory override env var switches the
 /// whole installation into compat mode (no profile discovery or migration).
 pub fn resolve_roots() -> Result<RootDirs> {
+    roots_from(crate::config::data_dir, crate::config::config_dir)
+}
+
+/// [`resolve_roots`] without the legacy `ssh-launcher` directory migrations:
+/// nothing is created or moved.
+fn locate_roots() -> Result<RootDirs> {
+    roots_from(crate::config::data_dir_path, crate::config::config_dir_path)
+}
+
+fn roots_from(
+    data_dir: fn() -> Result<PathBuf>,
+    config_dir: fn() -> Result<PathBuf>,
+) -> Result<RootDirs> {
     let data_override = env_dir("SSHUB_DATA_DIR").or_else(|| env_dir("SSH_LAUNCHER_DATA_DIR"));
     let config_override =
         env_dir("SSHUB_CONFIG_DIR").or_else(|| env_dir("SSH_LAUNCHER_CONFIG_DIR"));
     let compat = data_override.is_some() || config_override.is_some();
     let data_root = match data_override {
         Some(dir) => dir,
-        None => crate::config::data_dir()?,
+        None => data_dir()?,
     };
     let config_root = match config_override {
         Some(dir) => dir,
-        None => crate::config::config_dir()?,
+        None => config_dir()?,
     };
     Ok(RootDirs {
         data_root,
         config_root,
         compat,
     })
+}
+
+/// The directory holding `config.toml` and `themes/` for the profile a
+/// headless command runs against, chosen like [`resolve_startup`] without a
+/// terminal (`--profile`, else the last-used profile; the override directory
+/// in compat mode), but with no side effects: no layout creation, migration
+/// or `state.toml` write.
+pub fn locate_config_dir(opts: &StartupOptions) -> Result<PathBuf> {
+    let roots = locate_roots()?;
+    if roots.compat {
+        anyhow::ensure!(opts.profile.is_none(), COMPAT_PROFILE_ERROR);
+        return Ok(roots.config_root);
+    }
+    let state = ProfileState::load(&roots.data_root)?.unwrap_or_default();
+    let record = match &opts.profile {
+        Some(requested) => Some(
+            state
+                .by_name(requested)
+                .ok_or_else(|| unknown_profile(requested, &state))?,
+        ),
+        None => state.last_used_record(),
+    };
+    let Some(record) = record else {
+        // No `state.toml` yet: the next launch creates `default`. (It would
+        // also adopt directories an interrupted setup left in `profiles/`;
+        // that recovery case is not mirrored here.)
+        return Ok(ProfilePaths::profile_dir(
+            &roots.data_root,
+            DEFAULT_PROFILE_NAME,
+        ));
+    };
+    // A recorded profile whose directory is gone fails here as at startup.
+    require_profile_dir(&roots, record)?;
+    Ok(ProfilePaths::profile_dir(&roots.data_root, &record.name))
+}
+
+const COMPAT_PROFILE_ERROR: &str =
+    "--profile is unavailable when SSHUB_DATA_DIR/SSHUB_CONFIG_DIR overrides are set";
+
+fn unknown_profile(requested: &str, state: &ProfileState) -> anyhow::Error {
+    let available: Vec<&str> = state.profiles.iter().map(|p| p.name.as_str()).collect();
+    anyhow::anyhow!(
+        "unknown profile '{requested}' (available: {})",
+        if available.is_empty() {
+            "none".to_string()
+        } else {
+            available.join(", ")
+        }
+    )
 }
 
 fn env_dir(var: &str) -> Option<PathBuf> {
@@ -415,10 +477,7 @@ fn resolve_startup_at(
     roots: RootDirs,
 ) -> Result<Startup> {
     if roots.compat {
-        anyhow::ensure!(
-            opts.profile.is_none(),
-            "--profile is unavailable when SSHUB_DATA_DIR/SSHUB_CONFIG_DIR overrides are set"
-        );
+        anyhow::ensure!(opts.profile.is_none(), COMPAT_PROFILE_ERROR);
         let ssh_config = crate::ssh::ssh_config_path()?;
         return Ok(Startup::Silent(compat_paths(&roots, ssh_config)));
     }
@@ -426,17 +485,9 @@ fn resolve_startup_at(
     let state = ensure_layout(&roots)?;
 
     if let Some(requested) = &opts.profile {
-        let record = state.by_name(requested).ok_or_else(|| {
-            let available: Vec<&str> = state.profiles.iter().map(|p| p.name.as_str()).collect();
-            anyhow::anyhow!(
-                "unknown profile '{requested}' (available: {})",
-                if available.is_empty() {
-                    "none".to_string()
-                } else {
-                    available.join(", ")
-                }
-            )
-        })?;
+        let record = state
+            .by_name(requested)
+            .ok_or_else(|| unknown_profile(requested, &state))?;
         require_profile_dir(&roots, record)?;
         let ssh_config = ssh_config_path_for_profile(&roots, record)?;
         let paths = profile_paths(&roots, record, ssh_config);

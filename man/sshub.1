@@ -236,7 +236,7 @@ is
 .BR all ", " ok ", " fail ", or " retry ;
 .I V
 is
-.BR all ", " connect ", " tunnel ", " agent ", or " exec .
+.BR all ", " connect ", " tunnel ", " agent ", " exec ", or " broadcast .
 .SS Themes
 .TP
 .B sshub theme list \fR[\fB\-\-format\fR \fBplain\fR|\fBjson\fR]
@@ -271,9 +271,10 @@ when valid (warnings allowed) and
 on any error.
 .PP
 All three run headless: no TUI, no database, no keyring. User themes live in
-.I ~/.config/sshub/themes/*.toml
-and the file name is the theme ID;
-.I ~/.config/sshub/config.toml
+the selected profile's
+.I themes/*.toml
+(see FILES) and the file name is the theme ID; the profile's
+.I config.toml
 stores only
 .IR appearance.active_theme .
 Select a theme in the TUI with
@@ -394,11 +395,19 @@ The launcher SQLite database (managed hosts, groups, identities, tunnels, audit
 log). Path honors
 .BR SSHUB_DATA_DIR .
 .TP
-.I ~/.config/sshub/themes/*.toml
-User theme files; the file name without
+.I ~/.local/share/sshub/profiles/NAME/themes/*.toml
+User theme files of profile NAME; the file name without
 .I .toml
-is the theme ID. Path honors
-.BR SSHUB_CONFIG_DIR .
+is the theme ID.
+.B theme list
+and
+.B theme show
+read the profile given by
+.BR \-\-profile ,
+else the last used one. In compatibility mode the directory is
+.I ~/.config/sshub/themes
+(honors
+.BR SSHUB_CONFIG_DIR ).
 .TP
 .I ~/.ssh/config
 Read-only source of ssh_config hosts merged into the launcher.

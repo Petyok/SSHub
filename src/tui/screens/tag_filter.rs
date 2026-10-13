@@ -93,6 +93,11 @@ pub fn render(frame: &mut Frame, app: &App) {
     } else {
         let list_top = popup.y + 3;
         let max_rows = popup.height.saturating_sub(5) as usize;
+        app.record_list_rows(
+            Rect::new(popup.x + 1, list_top, popup.width - 2, max_rows as u16),
+            0,
+            rows.len(),
+        );
         for (i, label) in rows.iter().enumerate().take(max_rows) {
             let ry = list_top + i as u16;
             let is_sel = i == app.tag_filter_selected;

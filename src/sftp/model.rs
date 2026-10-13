@@ -200,6 +200,17 @@ impl Pane {
             .nth(self.selected)
     }
 
+    /// Move the cursor by `delta`, clamped to `[0, len-1]` of the listing.
+    pub fn move_selection(&mut self, delta: i64) {
+        let len = self.visible_len();
+        if len == 0 {
+            self.selected = 0;
+            return;
+        }
+        let max = len as i64 - 1;
+        self.selected = (self.selected as i64 + delta).clamp(0, max) as usize;
+    }
+
     /// Replace the listing and clamp the cursor to the new bounds.
     ///
     /// Prepends the synthetic [`PARENT_ROW`] unless the pane is at the root, so
@@ -335,14 +346,15 @@ impl SftpState {
 
     /// Move the cursor in the focused pane by `delta`, clamped to `[0, len-1]`.
     pub fn move_selection(&mut self, delta: i64) {
-        let pane = self.focused_pane_mut();
-        let len = pane.visible_len();
-        if len == 0 {
-            pane.selected = 0;
-            return;
+        self.focused_pane_mut().move_selection(delta);
+    }
+
+    /// The pane on side `focus`.
+    pub fn pane_mut(&mut self, focus: Focus) -> &mut Pane {
+        match focus {
+            Focus::Remote => &mut self.remote,
+            Focus::Local => &mut self.local,
         }
-        let max = len as i64 - 1;
-        pane.selected = (pane.selected as i64 + delta).clamp(0, max) as usize;
     }
 
     /// Swap keyboard focus between the two panes.
@@ -368,10 +380,7 @@ impl SftpState {
     }
 
     pub fn focused_pane_mut(&mut self) -> &mut Pane {
-        match self.focus {
-            Focus::Remote => &mut self.remote,
-            Focus::Local => &mut self.local,
-        }
+        self.pane_mut(self.focus)
     }
 
     /// Compute the child path when descending into the focused pane's selected

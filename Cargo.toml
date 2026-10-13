@@ -9,16 +9,22 @@ readme = "README.md"
 keywords = ["ssh", "tui", "terminal", "launcher"]
 categories = ["command-line-utilities"]
 # Keep the published crate lean and installable: drop the heavy demo media
-# (README GIFs/screenshots render from GitHub, not the crate) and CI config.
+# (README GIFs/screenshots render from GitHub, not the crate), the demo
+# recorder tooling, CI config and the local CodeGraph index stub.
+# demo/seed_demo.rs ships as the `seed-demo` example below.
 exclude = [
     "npm",
     "demo/gifs",
     "demo/screenshots",
-    "demo/tapes",
     "demo/home",
     "demo/bin",
     "demo/play.sh",
+    "demo/record.py",
+    "demo/seed-demo.sh",
+    "demo/sftp-server.sh",
+    "demo/.gitignore",
     ".github",
+    ".codegraph",
 ]
 
 [[bin]]

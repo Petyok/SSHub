@@ -1,7 +1,7 @@
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
 use ratatui::Frame;
 
 use crate::app::{App, GroupFormEdit, GroupFormField};
@@ -52,13 +52,15 @@ pub fn render_group_field_picker(frame: &mut Frame, app: &App) {
     frame.render_widget(block, popup);
     crate::tui::paint_popup_border(frame, popup, theme);
 
+    let len = items.len();
     let mut state = ListState::default();
-    state.select(Some(picker.selected.min(items.len().saturating_sub(1))));
+    state.select(Some(picker.selected.min(len.saturating_sub(1))));
     frame.render_stateful_widget(
         List::new(items).highlight_style(theme.style(StyleRole::PickerRowSelected)),
         inner,
         &mut state,
     );
+    app.record_list_rows(inner, state.offset(), len);
 }
 
 pub fn render_group_form(
@@ -67,7 +69,8 @@ pub fn render_group_form(
     parent_group: Option<&str>,
     theme: &ResolvedTheme,
     border: Style,
-) -> Paragraph<'static> {
+    copy_hint: &str,
+) -> super::FormBody {
     let title = if form.id.is_some() {
         "Edit group"
     } else {
@@ -114,7 +117,8 @@ pub fn render_group_form(
         if focused && is_picker {
             spans.push(Span::styled("   Enter to choose", help));
         }
-        Line::from(spans)
+        let index = GroupFormField::ALL.iter().position(|f| *f == field);
+        (Line::from(spans), index)
     };
 
     let text_or_none = |value: &str| {
@@ -134,60 +138,69 @@ pub fn render_group_form(
         Some(false) => "off (Space to cycle)".to_string(),
     };
 
-    let lines = vec![
-        Line::from(""),
+    let blank = || (Line::from(""), None);
+    let mut lines = vec![
+        blank(),
         field_row(GroupFormField::Name, "Name", display, false),
-        Line::from(""),
+        blank(),
         field_row(GroupFormField::Parent, "Parent group", parent_display, true),
-        Line::from(""),
+        blank(),
         field_row(
             GroupFormField::Identity,
             "Default identity",
             identity_display,
             true,
         ),
-        Line::from(""),
+        blank(),
         field_row(
             GroupFormField::Username,
             "Default username",
             text_or_none(&form.default_username),
             false,
         ),
-        Line::from(""),
+        blank(),
         field_row(
             GroupFormField::Port,
             "Default port",
             text_or_none(&form.default_port),
             false,
         ),
-        Line::from(""),
+        blank(),
         field_row(
             GroupFormField::ProxyJump,
             "Default ProxyJump",
             text_or_none(&form.default_proxy_jump),
             false,
         ),
-        Line::from(""),
+        blank(),
         field_row(
             GroupFormField::Transport,
             "Default transport",
             transport_display,
             false,
         ),
-        Line::from(""),
+        blank(),
         field_row(
             GroupFormField::ForwardAgent,
             "Default agent forward",
             forward_display,
             false,
         ),
-        Line::from(""),
-        Line::from(Span::styled(
-            "\u{2191}\u{2193} move field  ·  Enter save/choose  ·  Space choose/cycle  ·  Esc cancel",
-            help,
-        )),
+        blank(),
+        (
+            Line::from(Span::styled(
+                "\u{2191}\u{2193} move field  ·  Enter save/choose  ·  Space choose/cycle  ·  Esc cancel",
+                help,
+            )),
+            None,
+        ),
     ];
-    Paragraph::new(lines).block(
+    // Its own row: the legend above is already cut short on most widths.
+    if !copy_hint.is_empty() {
+        lines.push((Line::from(Span::styled(copy_hint.to_string(), help)), None));
+    }
+    super::FormBody::new(
+        lines,
         Block::default()
             .borders(Borders::ALL)
             .border_style(border)
@@ -195,5 +208,6 @@ pub fn render_group_form(
                 format!(" {title} "),
                 theme.style(StyleRole::PopupTitle),
             )),
+        None,
     )
 }

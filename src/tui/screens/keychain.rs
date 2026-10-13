@@ -9,7 +9,7 @@
 //! `components.popup.*` — not from a keychain family of its own.
 
 use ratatui::style::Style;
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders};
 
 use crate::app::{IdentityFormEdit, IdentityFormField};
 use crate::text_input;
@@ -19,21 +19,23 @@ use crate::theme::model::ResolvedTheme;
 /// `inner_width` is the popup's inner width (borders excluded): the two path
 /// rows are cut to it with an ellipsis (see below), so the caller passes the
 /// popup width minus its borders.
+#[allow(clippy::too_many_arguments)]
 pub fn render_identity_form(
     form: &IdentityFormEdit,
     save_hint: &str,
     secret_hints: &str,
+    copy_hint: &str,
     cert: Option<&crate::ssh::cert::CertStatus>,
     theme: &ResolvedTheme,
     border: Style,
     inner_width: u16,
-) -> Paragraph<'static> {
+) -> super::FormBody {
     // Same contract as the host form, and for the same reason: this form's
     // marker had no `theme.rs` cell of its own, only direct ANSI accents, so
     // the global focus role is what it takes.
     let focus = theme.style(StyleRole::FocusIndicator);
     let mut lines = Vec::with_capacity(IdentityFormField::ALL.len() + 2);
-    for field in IdentityFormField::ALL {
+    for (index, field) in IdentityFormField::ALL.into_iter().enumerate() {
         let active = form.field == field;
         let editing = active && form.editing;
         let prefix = if editing {
@@ -132,11 +134,14 @@ pub fn render_identity_form(
         } else {
             field.label()
         };
-        lines.push(ratatui::text::Line::from(vec![
-            ratatui::text::Span::styled(prefix, prefix_style),
-            ratatui::text::Span::styled(format!("{label}: "), label_style),
-            ratatui::text::Span::styled(display, value_style),
-        ]));
+        lines.push((
+            ratatui::text::Line::from(vec![
+                ratatui::text::Span::styled(prefix, prefix_style),
+                ratatui::text::Span::styled(format!("{label}: "), label_style),
+                ratatui::text::Span::styled(display, value_style),
+            ]),
+            Some(index),
+        ));
         // Certificate detail directly under its row: key id, principals and
         // validity from `ssh-keygen -L`, or the reason nothing could be shown.
         // Keyed to the typed path via the shared snapshot map, so a renamed
@@ -155,13 +160,17 @@ pub fn render_identity_form(
                         crate::tui::text::ellipsize(&status.detail_line(), budget)
                     )
                 };
-                lines.push(ratatui::text::Line::from(vec![
-                    ratatui::text::Span::styled(detail, theme.style(StyleRole::FormHelp)),
-                ]));
+                lines.push((
+                    ratatui::text::Line::from(vec![ratatui::text::Span::styled(
+                        detail,
+                        theme.style(StyleRole::FormHelp),
+                    )]),
+                    None,
+                ));
             }
         }
     }
-    lines.push(ratatui::text::Line::from(""));
+    lines.push((ratatui::text::Line::from(""), None));
     // Save/cancel stay at the end: the middle of this row is what truncation
     // eats first on a narrow terminal (see the 0.9.x footer fix).
     let base = format!("type to edit │ paste a key or its path into Private key │ Tab/↓: next │ {save_hint}: save │ Esc: cancel │ Ctrl+U/W: kill line/word");
@@ -169,14 +178,21 @@ pub fn render_identity_form(
     // so that is the moment the user needs to know how to see or copy it.
     let hint = if form.field == IdentityFormField::Password && !secret_hints.is_empty() {
         format!("{secret_hints} │ {base}")
+    } else if !copy_hint.is_empty() {
+        // Likewise the copy bind, on the fields it copies.
+        format!("{copy_hint} │ {base}")
     } else {
         base
     };
-    lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
-        hint,
-        theme.style(StyleRole::FormHelp),
-    )));
-    Paragraph::new(lines).block(
+    lines.push((
+        ratatui::text::Line::from(ratatui::text::Span::styled(
+            hint,
+            theme.style(StyleRole::FormHelp),
+        )),
+        None,
+    ));
+    super::FormBody::new(
+        lines,
         Block::default()
             .borders(Borders::ALL)
             .border_style(border)
@@ -184,6 +200,7 @@ pub fn render_identity_form(
                 "Identity",
                 theme.style(StyleRole::PopupTitle),
             )),
+        None,
     )
 }
 
@@ -225,7 +242,7 @@ mod tests {
 
     fn render_text(form: &IdentityFormEdit, cert: Option<&crate::ssh::cert::CertStatus>) -> String {
         let theme = crate::test_support::resolved_default();
-        let widget = render_identity_form(form, "F2", "", cert, &theme, Style::default(), 98);
+        let widget = render_identity_form(form, "F2", "", "", cert, &theme, Style::default(), 98);
         let mut buf = Buffer::empty(Rect::new(0, 0, 100, 12));
         ratatui::widgets::Widget::render(widget, buf.area, &mut buf);
         let mut text = String::new();
@@ -297,8 +314,16 @@ mod tests {
                     _ => 0,
                 };
                 let theme = crate::test_support::resolved_default();
-                let widget =
-                    render_identity_form(&form, "F2", "", None, &theme, Style::default(), INNER_W);
+                let widget = render_identity_form(
+                    &form,
+                    "F2",
+                    "",
+                    "",
+                    None,
+                    &theme,
+                    Style::default(),
+                    INNER_W,
+                );
                 let mut buf = Buffer::empty(Rect::new(0, 0, 300, 12));
                 ratatui::widgets::Widget::render(widget, buf.area, &mut buf);
                 for (label, full) in [
@@ -367,6 +392,7 @@ mod tests {
         let widget = render_identity_form(
             &form,
             "F2",
+            "",
             "",
             Some(&status),
             &theme,

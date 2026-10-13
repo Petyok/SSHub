@@ -190,10 +190,11 @@ fn print_audit() {
         r#"sshub audit - inspect the connection audit log
 
 USAGE:
-    sshub audit list  [--status all|ok|fail|retry] [--via all|connect|tunnel|agent|exec]
+    sshub audit list  [--status all|ok|fail|retry]
+                      [--via all|connect|tunnel|agent|exec|broadcast]
                       [--host NAME] [--limit N] [--days N] [--format plain|json]
-    sshub audit stats [--days N] [--via all|connect|tunnel|agent|exec] [--include-retry]
-                      [--format plain|json]"#
+    sshub audit stats [--days N] [--via all|connect|tunnel|agent|exec|broadcast]
+                      [--include-retry] [--format plain|json]"#
     );
 }
 
@@ -282,10 +283,11 @@ USAGE:
     sshub theme show <id> [--resolved] [--format toml|json]
 
 Without --resolved the theme file is printed verbatim, comments included, which
-is the documented copy workflow:
+is the documented copy workflow (THEMES is the themes_dir that
+`sshub theme list --format json` prints):
 
-    sshub theme show aqua > ~/.config/sshub/themes/aqua-custom.toml
-    sshub theme check ~/.config/sshub/themes/aqua-custom.toml
+    sshub theme show aqua > THEMES/aqua-custom.toml
+    sshub theme check THEMES/aqua-custom.toml
 
 --resolved writes a standalone document instead: no inheritance, no references,
 every value spelled out. An unknown id exits 1."#
@@ -298,8 +300,9 @@ USAGE:
     sshub theme list         [--format plain|json]
     sshub theme show  <id>   [--resolved] [--format toml|json]
 
-User themes live in ~/.config/sshub/themes/*.toml; the file stem is the theme
-id. Run `sshub theme <subcommand> --help` for details."#
+User themes live in the profile's themes/*.toml (--profile, else the last used;
+~/.config/sshub/themes in compatibility mode); the file stem is the theme id.
+Run `sshub theme <subcommand> --help` for details."#
         ),
     }
 }

@@ -108,13 +108,15 @@ pub fn render(frame: &mut Frame, app: &App) {
                 ]))
             })
             .collect();
+        let len = items.len();
         let mut list_state = ListState::default();
-        list_state.select(Some(state.selected.min(items.len().saturating_sub(1))));
+        list_state.select(Some(state.selected.min(len.saturating_sub(1))));
         frame.render_stateful_widget(
             List::new(items).highlight_style(theme.style(StyleRole::PickerRowSelected)),
             list_area,
             &mut list_state,
         );
+        app.record_list_rows(list_area, list_state.offset(), len);
     }
 
     // ── hint ─────────────────────────────────────────────────

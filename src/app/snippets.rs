@@ -270,7 +270,7 @@ impl App {
         }
     }
 
-    fn snippet_form_field_ref(form: &SnippetFormEdit) -> &str {
+    pub(super) fn snippet_form_field_ref(form: &SnippetFormEdit) -> &str {
         match form.field {
             SnippetFormField::Name => &form.name,
             SnippetFormField::Command => &form.command,

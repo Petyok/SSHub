@@ -145,6 +145,17 @@ pub fn render_palette(
     } else {
         0
     };
+    // The ad-hoc target is one extra row past the results.
+    app.record_list_rows(
+        Rect::new(
+            inner.x,
+            list_start_y,
+            inner.width,
+            (MAX_VISIBLE_ROWS as u16).min(inner.bottom().saturating_sub(list_start_y)),
+        ),
+        scroll_offset,
+        filtered.len() + usize::from(adhoc.is_some()),
+    );
 
     for i in 0..MAX_VISIBLE_ROWS {
         let row_y = list_start_y + i as u16;

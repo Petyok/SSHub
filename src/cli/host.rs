@@ -1023,6 +1023,7 @@ impl HostEditPatch {
     fn has_any_patch(&self) -> bool {
         self.set_label.is_some()
             || self.set_name.is_some()
+            || self.set_address.is_some()
             || self.set_port.is_some()
             || self.clear_port
             || self.set_username.is_some()
@@ -1035,6 +1036,7 @@ impl HostEditPatch {
             || self.set_proxy_jump.is_some()
             || self.clear_proxy_jump
             || self.set_remote_command.is_some()
+            || self.clear_remote_command
             || self.set_forward_agent.is_some()
             || self.clear_forward_agent
             || self.set_os_icon.is_some()

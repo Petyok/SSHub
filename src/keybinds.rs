@@ -235,7 +235,7 @@ impl KeyAction {
             KeyAction::SortCycle => "Cycle sort mode",
             KeyAction::YankLog => "Copy SSH log",
             KeyAction::RevealSecret => "Show and copy the stored secret",
-            KeyAction::CopySecret => "Copy the stored secret",
+            KeyAction::CopySecret => "Copy the focused field or stored secret",
             KeyAction::UiZoomIn => "Zoom in (hosts column)",
             KeyAction::UiZoomOut => "Zoom out (hosts column)",
             KeyAction::ExportSsh => "Export to ssh config",
