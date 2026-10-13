@@ -27,18 +27,19 @@ This guide is the long form. The README has the three-line version.
 The shortest path from "I want different colours" to a theme of your own:
 
 ```bash
-# 1. Make the themes directory. The ID of a theme is its file name.
-mkdir -p ~/.config/sshub/themes
+# 1. Make the profile's themes directory (<name> is your profile, `default`
+#    unless you made others). The ID of a theme is its file name.
+mkdir -p ~/.local/share/sshub/profiles/<name>/themes
 
 # 2. Copy a built-in as a starting point.
-sshub theme show aqua > ~/.config/sshub/themes/mine.toml
+sshub theme show aqua > ~/.local/share/sshub/profiles/<name>/themes/mine.toml
 
 # 3. Change the visible `name` inside the file — the ID came from the
 #    file name, but two entries called "Aqua" in the picker help nobody.
-$EDITOR ~/.config/sshub/themes/mine.toml
+$EDITOR ~/.local/share/sshub/profiles/<name>/themes/mine.toml
 
 # 4. Check it before you look at it.
-sshub theme check ~/.config/sshub/themes/mine.toml
+sshub theme check ~/.local/share/sshub/profiles/<name>/themes/mine.toml
 
 # 5. Select it: Ctrl+H (Settings) → "Theme…" → Enter → pick → Enter.
 sshub
@@ -51,13 +52,15 @@ you to change `name`.
 Selecting a theme in the picker writes exactly one setting:
 
 ```toml
-# ~/.config/sshub/config.toml
+# ~/.local/share/sshub/profiles/<name>/config.toml
 [appearance]
 active_theme = "mine"
 ```
 
-With `SSHUB_CONFIG_DIR` set, themes live in `$SSHUB_CONFIG_DIR/themes/`
-instead.
+`sshub theme list` and `show` read the themes of the profile `--profile` names,
+else the last used one. In compatibility mode (`SSHUB_DATA_DIR` or
+`SSHUB_CONFIG_DIR` set) themes and `config.toml` live in the config directory,
+`~/.config/sshub/themes/` or `$SSHUB_CONFIG_DIR/themes/`.
 
 ---
 
@@ -940,7 +943,7 @@ sshub theme show <id>    [--resolved] [--format toml|json]
 ### `theme check`
 
 ```console
-$ sshub theme check ~/.config/sshub/themes/ocean.toml
+$ sshub theme check ~/.local/share/sshub/profiles/default/themes/ocean.toml
 OK: ocean (extends aqua), 25 colors, 2 gradients, 19 overrides
 ```
 
@@ -948,8 +951,8 @@ Failures carry file, line and column wherever the TOML parser can supply a
 position, and a suggestion when a key is close enough to a real one:
 
 ```console
-$ sshub theme check ~/.config/sshub/themes/ocean.toml
-/home/you/.config/sshub/themes/ocean.toml:9:9 error: unknown component role `components.dashboard.host_list.bordr`
+$ sshub theme check ~/.local/share/sshub/profiles/default/themes/ocean.toml
+/home/you/.local/share/sshub/profiles/default/themes/ocean.toml:9:9 error: unknown component role `components.dashboard.host_list.bordr`
   help: did you mean `components.dashboard.host_list.border`?
 FAILED: ocean — 1 error(s), 0 warning(s)
 ```
@@ -982,8 +985,8 @@ standalone document with every semantic slot, gradient and component role
 written out and no `extends`; it re-reads to exactly the same runtime theme.
 
 ```bash
-sshub theme show aqua > ~/.config/sshub/themes/aqua-custom.toml
-sshub theme check ~/.config/sshub/themes/aqua-custom.toml
+sshub theme show aqua > ~/.local/share/sshub/profiles/<name>/themes/aqua-custom.toml
+sshub theme check ~/.local/share/sshub/profiles/<name>/themes/aqua-custom.toml
 ```
 
 The exported source starts with a comment naming the theme it came from and
@@ -1083,7 +1086,7 @@ per gradient, inheritance depth 16, colour reference depth 16. Per directory:
 
 Both examples below are extracted from this file by the test suite and run
 through the real strict pipeline, so they are known to validate and resolve.
-Copy either one into `~/.config/sshub/themes/<id>.toml` as it stands.
+Copy either one into `~/.local/share/sshub/profiles/<name>/themes/<id>.toml` as it stands.
 
 ### 1. Minimal: just change the accent colour
 
@@ -1104,8 +1107,8 @@ accent = "#5eead4"
 <!-- THEME_EXAMPLE:END -->
 
 ```bash
-$EDITOR ~/.config/sshub/themes/mint.toml
-sshub theme check ~/.config/sshub/themes/mint.toml
+$EDITOR ~/.local/share/sshub/profiles/<name>/themes/mint.toml
+sshub theme check ~/.local/share/sshub/profiles/<name>/themes/mint.toml
 ```
 
 ### 2. Substantial: inheritance, palette maths, gradients and overrides
@@ -1175,8 +1178,8 @@ border = "auto"
 Install and check it:
 
 ```bash
-$EDITOR ~/.config/sshub/themes/harbour.toml
-sshub theme check ~/.config/sshub/themes/harbour.toml
+$EDITOR ~/.local/share/sshub/profiles/<name>/themes/harbour.toml
+sshub theme check ~/.local/share/sshub/profiles/<name>/themes/harbour.toml
 sshub                                    # Ctrl+H → Theme… → Harbour → Enter
 ```
 

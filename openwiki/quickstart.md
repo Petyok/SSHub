@@ -56,7 +56,7 @@ without one SSHub falls back to an owner-only `credentials.json`.
 | Session logs | `profiles/<name>/logs/<host-dir>/` | follows the data dir |
 | Tunnel PID files | `profiles/<name>/tunnels/` | follows the data dir |
 | User themes (TUI) | `profiles/<name>/themes/*.toml` | compat: `<config dir>/themes/` |
-| User themes (`sshub theme` CLI) | `~/.config/sshub/themes/*.toml` | `SSHUB_CONFIG_DIR/themes/` |
+| User themes (TUI and `sshub theme`) | `~/.local/share/sshub/profiles/<name>/themes/*.toml` | `SSHUB_CONFIG_DIR/themes/` |
 | SSH config | `~/.ssh/config` | `[ssh] config_path` per profile; `SSHUB_SSH_CONFIG` wins |
 
 One profile starts silently; several show a picker after the splash.
@@ -118,7 +118,5 @@ warnings denied. Branch names follow `feature/`, `fix/`, `docs/`, `chore/`,
 - **Detached tunnel PID files** (`src/tunnel/spawn.rs`): acknowledged races (no
   lock between concurrent `tunnel start`, recycled PIDs) noted in the code and
   in [tunnels](workflows/tunnels.md).
-- **Themes directory split**: the TUI and `sshub theme` read different
-  directories in profile mode ([themes](architecture/themes.md)).
 - **Changelog follow-ups**: items still marked Pending in
   [changelog coverage](changelog-coverage.md).

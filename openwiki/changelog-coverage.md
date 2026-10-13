@@ -17,6 +17,17 @@ treatment. Source references name where the behavior lives today.
 
 | Release / entry | Wiki page(s) | Status | Notes |
 | --- | --- | --- | --- |
+| Unreleased: Split view (#73) | [Sessions & SFTP](workflows/sessions-sftp.md#split-view-and-workspaces-73), [Runtime architecture](architecture/overview.md#the-event-loop-run_terminal_loop) | Covered | `src/app/panes.rs` (`PaneTree`, `Panes::can_split`), `App::pane_views`, `App::new_session_grid`, `KeyAction::Pane*`. |
+| Unreleased: Workspaces (#73) | [Sessions & SFTP](workflows/sessions-sftp.md#split-view-and-workspaces-73), [Data model](architecture/data-model.md#launcherdb-schema-srcstore) | Covered | `src/app/workspaces.rs`, `src/store/workspaces.rs`, schema v20. |
+| Unreleased: Mouse on the dashboard, in forms, dialogs and pickers (#116) | [TUI dashboard](workflows/tui.md#mouse) | Covered | `App::mouse_select`, `App::dashboard_click`, `App::click_at` (`src/app/field_click.rs`), `ClickHit`, `screens::FormBody`, `App::focused_field_text`. |
+| Unreleased: Shrinking the terminal cut off the prompt | [Sessions & SFTP](workflows/sessions-sftp.md#split-view-and-workspaces-73) | Covered | `ParserState::set_size` scrolls rows into history before a shrink. |
+| Unreleased: SFTP search keeps capital letters | [TUI dashboard](workflows/tui.md#tabs) | Covered | `App::dashboard_text_input_active`, `handle_key_dashboard_tab`. |
+| Unreleased: `sshub theme list\|show` read the wrong directory | [Theme internals](architecture/themes.md), [Profiles & themes](workflows/profiles-themes.md#themes), [Headless CLI](workflows/cli.md) | Covered | `profile::locate_config_dir`. |
+| Unreleased: `host edit --set-address` alone, `--clear-remote-command` | [Headless CLI](workflows/cli.md) | Covered | `src/cli/host.rs` edit flag check; flag-level detail lives in `sshub host --help`. |
+| Unreleased: Profile transfer of a host picked the wrong row | [Profiles](architecture/profiles.md#cross-profile-transfers) | Covered | `App::transfer_host_name` takes the selected entry's name, never its label or row number. |
+| Unreleased: Broadcast audit rows no longer store the command | [Broadcast](workflows/broadcast.md#audit), [Headless CLI](workflows/cli.md) | Covered | `src/app/broadcast.rs` audit note; `--via broadcast` in `src/cli/audit.rs`. |
+| Unreleased: Shell completions offer `transfer` | [Headless CLI](workflows/cli.md) | Covered | `src/cli/completions.rs`. |
+| Unreleased: `appearance.show_detail_panel` and `date_format` removed | [Data model](architecture/data-model.md#configuration-srcconfigrs) | Covered | Unknown keys in existing configs still load. |
 | 0.17.7: Update notice and `Shift+U` install per channel | [Integrations](integrations/external-terminals.md#release-check-and-update-srcupdaters-srcappupdaters), [TUI dashboard](workflows/tui.md), [Runtime architecture](architecture/overview.md) | Covered | `src/update.rs` (`spawn_check`, `install_channel`, `install`), `src/app/update.rs`, `[updates] check`. |
 | 0.17.7: Error popup title | [TUI dashboard](workflows/tui.md) | Covered | `AppMode::Notice`; title wording is renderer detail. |
 | 0.17.6: DEC Special Graphics line drawing | [Sessions & SFTP](workflows/sessions-sftp.md) | Covered | `src/session/parser.rs` `XtermCompat`. |
@@ -61,7 +72,7 @@ treatment. Source references name where the behavior lives today.
 | 0.15.0: Shift+P before Identities visited; dashboard notices | [Hosts, Groups & Identities](domain/hosts-identities.md#identities), [TUI dashboard](workflows/tui.md) | Covered | `src/app/push_key.rs`. |
 | 0.14.2: Theme choice persisted to the profile config | [Theme internals](architecture/themes.md#theme-picker-srcapptheme_pickerrs-srctuiscreenstheme_pickerrs) | Covered | `App::config_target`. |
 | 0.14.2: Leading-dash host target guard (#101) | [Secrets](security/secrets.md#input-safety), [Data model](architecture/data-model.md), [Hosts, Groups & Identities](domain/hosts-identities.md#hosts) | Covered | `store::hosts::reject_option_like`, `ssh::safe_ssh_target`. |
-| 0.14.0: Runtime theme system and `sshub theme` CLI | [Theme internals](architecture/themes.md), [Profiles & themes](workflows/profiles-themes.md#themes) | Covered | `src/theme/`, `src/cli/theme.rs`, `docs/theme-system.md`. The changelog's `~/.config/sshub/themes` is what the CLI reads; the TUI reads the profile's `themes/` in profile mode. |
+| 0.14.0: Runtime theme system and `sshub theme` CLI | [Theme internals](architecture/themes.md), [Profiles & themes](workflows/profiles-themes.md#themes) | Covered | `src/theme/`, `src/cli/theme.rs`, `docs/theme-system.md`. The changelog's `~/.config/sshub/themes` holds only in compat mode; the TUI and `theme list\|show` read the profile's `themes/`. |
 | 0.14.0: Isolated profiles | [Profiles](architecture/profiles.md), [Data model](architecture/data-model.md), [Quickstart](quickstart.md#data-paths) | Covered | `src/profile/`. |
 | 0.14.0: Transparency toggles replace `opaque_background` | [Data model](architecture/data-model.md#configuration-srcconfigrs), [Theme internals](architecture/themes.md) | Covered | `RETIRED_KEYS`. |
 | 0.14.0: Known hosts manager follow-ups | [Known hosts manager](workflows/known-hosts.md) | Covered | `src/known_hosts.rs`. |

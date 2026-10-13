@@ -40,7 +40,7 @@ fn app_with_session_and_snippets() -> App {
         key_push_identity: None,
         host_name: "edge".into(),
     };
-    let mut session = crate::session::Session::spawn(config, 24, 80, None).unwrap();
+    let mut session = crate::session::Session::spawn(config, (24, 80), None).unwrap();
     // The picker only opens over a *running* session; a bare `cat` never emits
     // output to trip the reveal, so mark it running explicitly.
     session.phase = crate::session::SessionPhase::Running {
@@ -172,7 +172,7 @@ fn ctrl_n_is_inert_over_a_connecting_session() {
         host_name: "edge".into(),
     };
     // Session::spawn leaves the phase in `Connecting` until output reveals it.
-    let session = crate::session::Session::spawn(config, 24, 80, None).unwrap();
+    let session = crate::session::Session::spawn(config, (24, 80), None).unwrap();
     assert!(matches!(
         session.phase,
         crate::session::SessionPhase::Connecting { .. }

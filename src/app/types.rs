@@ -56,6 +56,37 @@ pub struct PanelSel {
     pub cur: (u16, u16),
 }
 
+/// What a click on a recorded spot of the last frame means (#116).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClickHit {
+    /// One drawn row of a form field (or of the one input of a prompt, as
+    /// index 0), by the field's position in the form's `ALL` order. The row
+    /// shows the value's display cells `start..end`, counted from the value's
+    /// first cell as if it never wrapped, drawn from column `value_x` on.
+    Field {
+        index: usize,
+        value_x: u16,
+        start: usize,
+        end: usize,
+    },
+    /// Row `index` of a picker list (an index into the list, not the screen).
+    Row(usize),
+    /// A row of an SFTP browser pane on the dashboard; `pos` is the entry
+    /// drawn there (its position in the pane's visible list), if any.
+    SftpPane {
+        pane: crate::sftp::model::Focus,
+        pos: Option<usize>,
+    },
+}
+
+/// A clickable region recorded by a renderer (#116): always a single row, so
+/// a popup sliding open can move it by whole rows.
+#[derive(Debug, Clone, Copy)]
+pub struct ClickTarget {
+    pub area: ratatui::layout::Rect,
+    pub hit: ClickHit,
+}
+
 /// Direction for dashboard panel focus movement (issue #18).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusDir {
@@ -761,7 +792,7 @@ pub enum TunnelFormField {
 }
 
 impl TunnelFormField {
-    const ALL: [TunnelFormField; 7] = [
+    pub(crate) const ALL: [TunnelFormField; 7] = [
         TunnelFormField::Host,
         TunnelFormField::Type,
         TunnelFormField::LocalPort,
@@ -1428,6 +1459,9 @@ pub enum SessionPickerPurpose {
     SftpLeftPane,
     /// Jump to a session that is already open (Alt+S).
     SwitchSession,
+    /// Open, save or delete a saved split-view layout (Alt+E). Rows index
+    /// `App::workspaces`; one past the end is the "save" row.
+    Workspaces,
 }
 
 impl SessionPickerPurpose {
@@ -1437,6 +1471,7 @@ impl SessionPickerPurpose {
             Self::NewSession => " new session tab ",
             Self::SftpLeftPane => " select left server ",
             Self::SwitchSession => " switch session ",
+            Self::Workspaces => " workspaces \u{b7} Enter open \u{b7} Ctrl+X delete ",
         }
     }
 
@@ -1445,6 +1480,7 @@ impl SessionPickerPurpose {
         match self {
             Self::NewSession | Self::SftpLeftPane => "(no matching hosts)",
             Self::SwitchSession => "(no matching sessions)",
+            Self::Workspaces => "(none saved: type a name to save this layout)",
         }
     }
 

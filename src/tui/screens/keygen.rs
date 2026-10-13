@@ -1,5 +1,5 @@
 use ratatui::prelude::Style;
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders};
 
 use crate::app::{KeygenFormEdit, KeygenFormField};
 use crate::text_input;
@@ -14,11 +14,12 @@ use crate::theme::model::ResolvedTheme;
 pub fn render_keygen_form(
     form: &KeygenFormEdit,
     save_hint: &str,
+    copy_hint: &str,
     theme: &ResolvedTheme,
     border: Style,
-) -> Paragraph<'static> {
+) -> super::FormBody {
     let mut lines = Vec::with_capacity(KeygenFormField::ALL.len() + 2);
-    for field in KeygenFormField::ALL {
+    for (index, field) in KeygenFormField::ALL.into_iter().enumerate() {
         let editing = form.field == field;
         let prefix = if editing { "▸ " } else { "  " };
         let display = match field {
@@ -69,17 +70,30 @@ pub fn render_keygen_form(
             StyleRole::KeygenValue
         });
 
-        lines.push(ratatui::text::Line::from(vec![
-            ratatui::text::Span::styled(format!("{prefix}{}: ", field.label()), label_style),
-            ratatui::text::Span::styled(display, value_style),
-        ]));
+        lines.push((
+            ratatui::text::Line::from(vec![
+                ratatui::text::Span::styled(format!("{prefix}{}: ", field.label()), label_style),
+                ratatui::text::Span::styled(display, value_style),
+            ]),
+            Some(index),
+        ));
     }
-    lines.push(ratatui::text::Line::from(""));
-    lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
-        format!("type to edit │ Tab/↓: next │ {save_hint}: save │ Esc: cancel"),
-        theme.style(StyleRole::KeygenHelp),
-    )));
-    Paragraph::new(lines).block(
+    lines.push((ratatui::text::Line::from(""), None));
+    lines.push((
+        ratatui::text::Line::from(ratatui::text::Span::styled(
+            if copy_hint.is_empty() {
+                format!("type to edit │ Tab/↓: next │ {save_hint}: save │ Esc: cancel")
+            } else {
+                format!(
+                    "type to edit │ Tab/↓: next │ {save_hint}: save │ {copy_hint} │ Esc: cancel"
+                )
+            },
+            theme.style(StyleRole::KeygenHelp),
+        )),
+        None,
+    ));
+    super::FormBody::new(
+        lines,
         Block::default()
             .borders(Borders::ALL)
             .border_style(border)
@@ -87,6 +101,7 @@ pub fn render_keygen_form(
                 "Generate SSH Key",
                 theme.style(StyleRole::KeygenTitle),
             )),
+        None,
     )
 }
 
@@ -133,7 +148,10 @@ mod tests {
         let area = Rect::new(0, 0, 60, 12);
         let border = ratatui::style::Style::default();
         frame_at(area, |f| {
-            f.render_widget(render_keygen_form(&form(), "Ctrl+S", theme, border), area)
+            f.render_widget(
+                render_keygen_form(&form(), "Ctrl+S", "", theme, border),
+                area,
+            )
         })
     }
 

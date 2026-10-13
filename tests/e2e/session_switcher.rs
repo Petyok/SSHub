@@ -77,8 +77,7 @@ fn alt_s_filters_open_sessions_and_renders_the_selected_tab() {
                     key_push_identity: None,
                     host_name: name.into(),
                 },
-                40,
-                120,
+                (40, 120),
                 None,
             )
             .unwrap(),

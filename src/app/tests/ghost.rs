@@ -24,7 +24,7 @@ fn fixture(capture: Option<&std::path::Path>) -> App {
         key_push_identity: None,
         host_name: "fixture".into(),
     };
-    let mut session = crate::session::Session::spawn(config, 30, 100, None).unwrap();
+    let mut session = crate::session::Session::spawn(config, (30, 100), None).unwrap();
     session.phase = crate::session::SessionPhase::Running {
         started_at: Instant::now(),
     };
@@ -139,7 +139,7 @@ fn remote_password_session_ghosts_second_prefix_after_first_command() {
         key_push_identity: None,
         host_name: "kuma".into(),
     };
-    let session = crate::session::Session::spawn(config, 30, 100, None).unwrap();
+    let session = crate::session::Session::spawn(config, (30, 100), None).unwrap();
     app.sessions.push(session);
     app.active_session = Some(0);
     app.mode = AppMode::Session;
@@ -237,7 +237,7 @@ fn remote_interactive_bash_ghosts_second_prefix_after_first_command() {
         key_push_identity: None,
         host_name: "kuma".into(),
     };
-    let session = crate::session::Session::spawn(config, 30, 100, None).unwrap();
+    let session = crate::session::Session::spawn(config, (30, 100), None).unwrap();
     app.sessions.push(session);
     app.active_session = Some(0);
     app.mode = AppMode::Session;
@@ -760,7 +760,7 @@ fn manual_password_before_latch_still_records_first_post_auth_command() {
         key_push_identity: None,
         host_name: "kuma".into(),
     };
-    let session = crate::session::Session::spawn(config, 30, 100, None).unwrap();
+    let session = crate::session::Session::spawn(config, (30, 100), None).unwrap();
     app.sessions.push(session);
     app.active_session = Some(0);
     app.mode = AppMode::Session;

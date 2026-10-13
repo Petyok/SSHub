@@ -26,6 +26,8 @@ Order and digits come from `src/tui/widgets/tab_bar.rs` and `App::try_tab_switch
 
 Configs written before the SFTP tab existed are re-digited once by `KeybindsConfig::migrate_pre_sftp_tabs`.
 
+While a dashboard tab's text input is active (the SFTP host search or file filter, `App::dashboard_text_input_active`), every typed character goes to that tab, so a global bind on a plain or Shift key (`Shift+S`, `Shift+L`) cannot steal it; chords such as `Ctrl+T` still reach the globals.
+
 ## Hosts tab panels
 
 The hosts tab is a panel grid (`PanelId` in `src/app/types.rs`): `Hosts` (left column), `Detail` / `Agent` / `Latency` (middle), `Recent` / `Auth` / `Ping` (right), an `SshLog` strip along the bottom, and a floating `Broadcast` panel while a [broadcast](broadcast.md) run is live. `Alt+Arrows` move focus spatially; `z` or `Alt+Enter` zooms the focused panel to the full body (Esc unzooms). In a zoomed panel, `j`/`k`/PageUp/PageDown scroll; Enter connects from the zoomed Ping or Recent panel; `f`/`r` cycle status and range in the zoomed Auth panel; `d` removes the selected key in the zoomed Agent panel (`ssh-add -d`, needs a file path); mouse drag copies the panel text via OSC 52.
@@ -43,7 +45,7 @@ The hosts tab is a panel grid (`PanelId` in `src/app/types.rs`): `Hosts` (left c
 | Keybind editor (`KeybindEditor`) | `Ctrl+K` (dashboard) | `keybind_editor.rs` | Type to filter by label or bind text; Enter captures a replacement chord, `Ctrl+A` appends one, `Ctrl+R` resets to default, `Ctrl+X` unbinds. Saved to `[keybinds]`. |
 | Help (`Help`) | `?` | `help.rs` | Searchable, scrollable reference; Esc clears the query before closing. Older `help = ["?", "Shift+H"]` configs lose `Shift+H` once (`migrate_help_frees_known_hosts`) because `H` opens the [known-hosts manager](known-hosts.md). |
 | Group manager (`GroupManage`) / group form (`GroupForm`) | `Shift+G`; `Ctrl+G` or `e` on a group header edits the selected group; `Ctrl+Shift+G` deletes it | `group_manage.rs`, `group_form.rs` | Group form carries name, parent and group defaults (identity, username, port, ProxyJump, transport, agent forwarding). |
-| Host form (`HostForm`) | `a` / `e` (hosts tab) | `host_form.rs` | Save with `F2`/`Ctrl+S`; `Ctrl+R` reveals and copies a stored secret, `Ctrl+Y` copies it. |
+| Host form (`HostForm`) | `a` / `e` (hosts tab) | `host_form.rs` | Save with `F2`/`Ctrl+S`; `Ctrl+R` reveals and copies a stored secret. `Ctrl+Y` copies the focused field's value, or the stored secret on the password field. |
 | Snippet manager (`SnippetManage`) | `Shift+S` (dashboard) | `snippet_manage.rs` | See [session tools](session-tools.md#command-snippets). |
 | Session log browser (`LogBrowser`) | `Shift+L` (dashboard) | `log_browser.rs` | See [session tools](session-tools.md#session-log-browser). |
 | Broadcast wizard (`BroadcastPickTarget` / `BroadcastCommand` / `BroadcastPreview`) | `b` (hosts tab) | `broadcast.rs` | See [broadcast](broadcast.md). |
@@ -57,7 +59,7 @@ The hosts tab is a panel grid (`PanelId` in `src/app/types.rs`): `Hosts` (left c
 
 ## Default keybindings (highlights)
 
-Global (dashboard): `q` quit, `Ctrl+C` force quit, `?` help, `Ctrl+K` keybind editor, `Ctrl+H` settings, `Alt+P` profiles, `Shift+L` log browser, `Shift+S` snippets, `Ctrl+Shift+T` local shell tab. `Tab` toggles the detail panel on the hosts tab and switches panes on SFTP.
+Global (dashboard): `q` quit, `Ctrl+C` force quit, `?` help, `Ctrl+K` keybind editor, `Ctrl+H` settings, `Alt+P` profiles, `Shift+L` log browser, `Shift+S` snippets, `Ctrl+Shift+T` local shell tab, `Alt+E` workspaces (save or open a split-view layout). `Tab` toggles the detail panel on the hosts tab and switches panes on SFTP.
 
 Hosts: `Enter` connect (or fold on a group header), `a`/`e`/`d`/`Shift+D` add/edit/delete/duplicate, `f` favorite, `s` cycle sort (label, last connected, favorite first, group+label, manual), `Ctrl+Up`/`Ctrl+Down` move host in manual order, `Shift+Up`/`Shift+Down` jump between groups, `Space` fold, `Left`/`Right` fold in/out, `Shift+Z` collapse or expand all, `+`/`-` hosts-column zoom, `c` clear and `y` copy the SSH log, `Shift+I`/`Shift+E` import/export ssh config, `Shift+T` Termius import, `b` broadcast, `x` cancel broadcast or clear its error toasts, `Shift+P` push key, `Shift+U` update (install a known release, else check now; hosts tab only).
 
@@ -73,11 +75,14 @@ The footer hints are built per tab in `footer_keybinds` (`src/tui/mod.rs`) and p
 
 ## Mouse
 
-`src/app/mouse.rs`, enabled through crossterm mouse capture in the [event loop](../architecture/overview.md):
+Mouse capture is enabled via crossterm `EnableMouseCapture` in the [event loop](../architecture/overview.md); `App::handle_mouse` (`src/app/mouse.rs`) routes each event by mode. In sessions: terminal-style selection over the PTY. Everywhere else the left button goes through `App::mouse_select`: a drag selects what is on screen and copies it on release (`apply_panel_selection` in `src/tui/mod.rs` scrapes the drawn cells: the whole screen on the dashboard and under every overlay, `is_overlay_mode`, the body over a zoomed panel), and a press and release without movement is a click instead, which copies nothing. On the dashboard a click (`App::dashboard_click`, which also detects double-clicks) picks a tab or a row, focuses the hosts-tab panel under it (`panel_zoom_source` rects), and on the SFTP tab picks a picker host or a browser entry; a double-click connects, starts a tunnel or opens a folder. The SFTP browser records its pane rows in `App::click_map` as `ClickHit::SftpPane`, which the click and the wheel read; the other tabs still mirror their renderer's scroll math in `src/app/mouse.rs`.
 
 - Click a tab to switch; click a host row to select, double-click (within 400 ms) to connect; click a group header to fold. Tunnels: click selects, double-click toggles. Identities: click selects a card. Audit: click selects a row; clicking a status or range label in the top strip applies it.
 - Wheel: hosts column moves the selection by 3, elsewhere on the hosts tab it scrolls the SSH log; tunnels/identities/audit move the selection by 1. A zoomed panel takes the wheel and drag-to-copy.
-- Overlays ignore the mouse (only `AppMode::Normal`, `Connecting` and `Session` handle it). In-session mouse rules are on the [sessions page](sessions-sftp.md#mouse-and-selection-in-a-session).
+
+Over an overlay that click goes to `App::click_at` (`src/app/field_click.rs`), which reads `App::click_map`: one-row targets the renderers record every frame (the map is cleared at the start of each frame) saying what was drawn where, a form field row (`ClickHit::Field`, focus it with the cursor under the pointer) or a picker row (`ClickHit::Row`, highlight it without choosing). The host, identity, keygen and group forms and the SFTP, import and broadcast prompts build a `screens::FormBody`, a paragraph that also knows which line shows which field; `FormBody::record_clicks` lays each field line out with ratatui's own `Wrap`, so word-wrapped values map exactly. The tunnel and snippet forms record their one-row fields directly, and pickers their rows (mostly through `App::record_list_rows`). While a popup slides open, `render_popup_open` moves its targets by the same offset it draws the popup at.
+
+In-session mouse rules are on the [sessions page](sessions-sftp.md#mouse-and-selection-in-a-session).
 
 ## Change guidance
 

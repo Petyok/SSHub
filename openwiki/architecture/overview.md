@@ -63,12 +63,14 @@ parse global flags -> profile::resolve_startup -> (picker session: splash + pick
 poll window drops to 16 ms. Each iteration:
 
 1. `terminal.size()` becomes `app.terminal_area`. Every session is `drain`ed
-   (so background tabs keep up) and `resize`d when the size changed. Resize comes
-   from `terminal.size()`, not from crossterm resize events.
+   (so background tabs keep up); each session on screen is `resize`d to the grid
+   of its pane (`App::pane_views`, a no-op when unchanged), sessions out of view
+   keep their last size and exited ones are never resized. The size comes from
+   `terminal.size()`, not from crossterm resize events.
 2. Finished key-push sessions are written to the audit log.
 3. `app.poll_authentication()` collects secrets answered in auth modals.
 4. `app.relay_visible_session_clipboard()` relays OSC 52 writes of the visible
-   session only, dropping the rest (before diagnostics, so a failed relay is
+   session only (in a split, the focused pane's), dropping the rest (before diagnostics, so a failed relay is
    logged in the same frame).
 5. Session diagnostics feed the SSH log panel; a newly connected session clears
    its host's SSH log; a visible session that produced output is promoted from

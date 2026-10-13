@@ -45,9 +45,10 @@ workflow](../workflows/profiles-themes.md).
   `<directory of config.toml>/themes`, i.e. `profiles/<name>/themes/` in
   profile mode and `<config dir>/themes/` in compat mode
   (`src/app/mod.rs::new_with_profile`). The headless `sshub theme list|show`
-  resolve `config::config_dir_path()/themes`, i.e. `~/.config/sshub/themes/`
-  (or `$SSHUB_CONFIG_DIR/themes/`). The two agree only in compat mode;
-  `docs/theme-system.md` and the 0.14.0 changelog name `~/.config/sshub/themes`.
+  resolve the same directory through `profile::locate_config_dir`: the profile
+  `--profile` names, else the last used one, with no side effects (no layout
+  creation, migration or `state.toml` write). The 0.14.0 changelog still names
+  `~/.config/sshub/themes`, which is right only in compat mode.
 - The startup profile picker always renders on the embedded `default`
   (`ThemeRegistry::builtins`), because no profile is loaded yet.
 

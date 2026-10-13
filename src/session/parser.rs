@@ -95,6 +95,13 @@ struct XtermCompat {
     /// Character sets in use, and the copy DECSC saved for DECRC.
     charsets: Charsets,
     saved: Charsets,
+    /// The app is on the alternate screen, as far as the stream says.
+    alt: bool,
+    /// The primary screen has a scroll region (DECSTBM) narrower than the
+    /// grid. vt100 keeps it across a visit to the alternate screen, so only a
+    /// DECSTBM on the primary screen or RIS changes it. See
+    /// [`ParserState::set_size`].
+    primary_region: bool,
 }
 
 /// Something `ParserState` must do at a point in the translated stream.
@@ -234,6 +241,8 @@ impl XtermCompat {
                             self.open_frame = None;
                             self.charsets = Charsets::default();
                             self.saved = Charsets::default();
+                            self.alt = false;
+                            self.primary_region = false;
                         }
                         // DECSC and DECRC carry the charsets with the cursor.
                         b'7' => self.saved = self.charsets,
@@ -326,6 +335,13 @@ impl XtermCompat {
             .all(|&b| b.is_ascii_digit() || b == b';' || b == b':');
         let bare = body.is_empty();
         let n = param(body);
+        // Which screen the app draws on, for the scroll-region flag below.
+        if matches!(fin, b'h' | b'l') && body.first() == Some(&b'?') {
+            let mut params = body[1..].split(|&b| b == b';').map(param);
+            if params.any(|p| matches!(p, 47 | 1047 | 1049)) {
+                self.alt = fin == b'h';
+            }
+        }
         match fin {
             // DECSET/DECRST 2026, alone or combined (`CSI ? 25;2026 h`).
             // vt100 still gets the bytes; it ignores the mode itself.
@@ -384,6 +400,20 @@ impl XtermCompat {
             b'@' if plain && n > cols => out.extend_from_slice(format!("\x1b[{cols}@").as_bytes()),
             b'L' | b'T' if plain && n > rows => {
                 out.extend_from_slice(format!("\x1b[{rows}{}", char::from(fin)).as_bytes());
+            }
+            // DECSTBM: remember whether the primary screen scrolls a region
+            // narrower than the grid, with vt100's own defaults and clamps.
+            b'r' if plain => {
+                if !self.alt {
+                    let mut p = body.split(|&b| b == b';').map(param);
+                    let top = p.next().unwrap_or(0).max(1);
+                    let bottom = match p.next().unwrap_or(0) {
+                        0 => rows,
+                        b => b.min(rows),
+                    };
+                    self.primary_region = top < bottom && (top > 1 || bottom < rows);
+                }
+                out.extend_from_slice(&self.seq);
             }
             _ => out.extend_from_slice(&self.seq),
         }
@@ -689,7 +719,37 @@ impl ParserState {
         hold.then_some(&self.frame)
     }
 
+    /// Resize the grid to `rows` x `cols`.
+    ///
+    /// Stock vt100 shrinks rows by cutting them off the *bottom* and clamping
+    /// the cursor, so a shell whose prompt sits on the last row loses the
+    /// prompt and everything above it down to the new height, for good, and
+    /// growing back brings blank rows. A real terminal scrolls the top into
+    /// history instead. This does the same with vt100's own scrolling: on the
+    /// primary screen, with no narrowed scroll region (vt100 only keeps
+    /// history then), line feeds at the bottom margin push the rows above the
+    /// cursor into scrollback until the cursor row is the new last row.
+    ///
+    /// The alternate screen is left alone: it keeps no history, and the app
+    /// drawing there repaints on SIGWINCH. Columns are not reflowed (vt100
+    /// cuts them), which is what xterm does too.
     pub fn set_size(&mut self, rows: u16, cols: u16) {
+        let screen = self.inner.screen();
+        let (old_rows, _) = screen.size();
+        let (row, col) = screen.cursor_position();
+        if rows < old_rows
+            && row >= rows
+            && !screen.alternate_screen()
+            && !self.compat.primary_region
+        {
+            // Down to the bottom margin, scroll, then back to the cursor's
+            // column on what becomes the new last row (CUP is 1-based).
+            let lift = usize::from(row + 1 - rows);
+            self.inner.process(format!("\x1b[{old_rows};1H").as_bytes());
+            self.inner.process("\n".repeat(lift).as_bytes());
+            self.inner
+                .process(format!("\x1b[{rows};{}H", col + 1).as_bytes());
+        }
         self.inner.screen_mut().set_size(rows, cols);
         // The held frame has the old size: draw live until the next one.
         self.frame_ok = false;
@@ -1417,7 +1477,7 @@ mod tests {
 
     #[test]
     fn smallest_pty_survives_wrapping_and_wide_text() {
-        let (rows, cols) = crate::session::pty_size(0, 0);
+        let (rows, cols) = crate::session::floor_grid((0, 0));
         let mut p = ParserState::new(rows, cols);
         p.process("abcdefghijklmnop中文中文\r\nx中".as_bytes());
     }
@@ -1609,5 +1669,115 @@ mod tests {
         assert!(held(&p, t).is_some());
         p.process(b"\x1bc");
         assert_eq!(held(&p, t), None);
+    }
+
+    // ── Row shrink keeps the cursor row (#73) ───────────────────────
+    //
+    // Oracle: xterm. Shrinking a window with the prompt on the last row
+    // scrolls the top into history; the prompt and the output just above it
+    // stay on screen.
+
+    /// Every row the screen holds, oldest scrollback first, then the screen.
+    fn history(p: &ParserState) -> Vec<String> {
+        let mut screen = p.screen().clone();
+        let (rows, cols) = screen.size();
+        screen.set_scrollback(usize::MAX);
+        let mut out: Vec<String> = Vec::new();
+        // Walk up from the oldest window one screen at a time; each window
+        // starts `offset` rows above the live top.
+        let mut offset = screen.scrollback();
+        while offset > 0 {
+            screen.set_scrollback(offset);
+            let take = offset.min(usize::from(rows));
+            out.extend(screen.rows(0, cols).take(take));
+            offset -= take;
+        }
+        screen.set_scrollback(0);
+        out.extend(screen.rows(0, cols));
+        out
+    }
+
+    /// Lines `1..=n`, then a prompt on what is then the last row.
+    fn shell_output(rows: u16, n: usize) -> ParserState {
+        let mut p = ParserState::new(rows, 40);
+        let mut stream: String = (1..=n).map(|i| format!("{i}\r\n")).collect();
+        stream.push_str("PROMPT$ ");
+        p.process(stream.as_bytes());
+        assert_eq!(p.screen().cursor_position(), (rows - 1, 8));
+        p
+    }
+
+    #[test]
+    fn shrinking_rows_scrolls_the_top_away_and_keeps_the_prompt() {
+        let mut p = shell_output(46, 100);
+        p.set_size(23, 40);
+        // The prompt is still where the shell left its cursor, on the new last
+        // row, with the last output right above it.
+        assert_eq!(p.screen().cursor_position(), (22, 8));
+        let rows: Vec<String> = p.screen().rows(0, 40).collect();
+        assert_eq!(rows[22].trim_end(), "PROMPT$");
+        assert_eq!(rows[21].trim_end(), "100");
+        // Nothing was lost: every line is in history, in order, once.
+        let lines: Vec<String> = history(&p)
+            .into_iter()
+            .map(|l| l.trim_end().to_string())
+            .filter(|l| !l.is_empty())
+            .collect();
+        let mut want: Vec<String> = (1..=100).map(|i| i.to_string()).collect();
+        want.push("PROMPT$".into());
+        assert_eq!(lines, want);
+        // Growing back adds blank rows below; history is still whole.
+        p.set_size(46, 40);
+        assert_eq!(p.screen().cursor_position(), (22, 8));
+        assert_eq!(
+            history(&p).iter().filter(|l| !l.trim().is_empty()).count(),
+            101
+        );
+    }
+
+    #[test]
+    fn a_scroll_region_is_never_scrolled_to_make_room() {
+        // A pager-style layout on the primary screen: a fixed 4-row header and
+        // a region below it. vt100 keeps no history for a region, so scrolling
+        // it would delete rows outright; the stock cut is the lesser loss. A
+        // visit to the alternate screen does not reset the primary's region.
+        let mut p = ParserState::new(10, 20);
+        let mut stream = String::from("\x1b[5;10r");
+        for row in 1..=10 {
+            stream.push_str(&format!("\x1b[{row};1Hrow{row}"));
+        }
+        stream.push_str("\x1b[?1049h\x1b[?1049l\x1b[10;1H");
+        p.process(stream.as_bytes());
+        p.set_size(6, 20);
+        let rows: Vec<String> = p
+            .screen()
+            .rows(0, 20)
+            .map(|r| r.trim_end().to_string())
+            .collect();
+        assert_eq!(rows, ["row1", "row2", "row3", "row4", "row5", "row6"]);
+    }
+
+    #[test]
+    fn the_alternate_screen_is_cut_not_scrolled() {
+        // The app there repaints on SIGWINCH; scrolling would only throw away
+        // its top rows (the alternate grid has no history to keep them in).
+        let mut p = ParserState::new(10, 20);
+        p.process(b"\x1b[?1049h\x1b[1;1HTOP\x1b[10;1HBOTTOM");
+        p.set_size(6, 20);
+        assert_eq!(p.screen().rows(0, 20).next().unwrap().trim_end(), "TOP");
+    }
+
+    #[test]
+    fn ris_clears_a_remembered_scroll_region() {
+        // After a reset the region is gone, so the shrink keeps the prompt.
+        let mut p = ParserState::new(46, 40);
+        p.process(b"\x1b[5;46r\x1bc");
+        let mut stream: String = (1..=100).map(|i| format!("{i}\r\n")).collect();
+        stream.push_str("PROMPT$ ");
+        p.process(stream.as_bytes());
+        p.set_size(23, 40);
+        let rows: Vec<String> = p.screen().rows(0, 40).collect();
+        assert_eq!(rows[22].trim_end(), "PROMPT$");
+        assert_eq!(rows[21].trim_end(), "100");
     }
 }

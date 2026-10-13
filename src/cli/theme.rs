@@ -18,7 +18,7 @@ use anyhow::Result;
 use ratatui::style::{Color, Style};
 use serde::Serialize;
 
-use crate::config;
+use crate::profile::{self, StartupOptions};
 use crate::theme::catalog::{RoleFallback, RoleRef, SemanticTint, ROLE_SPECS, SEMANTIC_SPECS};
 use crate::theme::model::{
     modifier_from_key, semantic_style, DiagnosticSeverity, GradientDirection, ResolvedGradient,
@@ -38,11 +38,11 @@ enum ThemeShowFormat {
     Json,
 }
 
-pub fn run(args: &[String]) -> Result<i32> {
+pub fn run(startup: &StartupOptions, args: &[String]) -> Result<i32> {
     match args.first().map(String::as_str) {
         Some("check") => run_check(&args[1..]),
-        Some("list") => run_list(&args[1..]),
-        Some("show") => run_show(&args[1..]),
+        Some("list") => run_list(startup, &args[1..]),
+        Some("show") => run_show(startup, &args[1..]),
         Some("--help") | Some("-h") => {
             help::print_theme_help(None);
             Ok(0)
@@ -67,15 +67,17 @@ fn wants_help(args: &[String]) -> bool {
     args.iter().any(|a| a == "--help" || a == "-h")
 }
 
-/// The themes directory the running app would read.
+/// The themes directory the running app would read: the selected profile's
+/// (`--profile`, else the last-used one), or the config directory in compat
+/// mode.
 ///
-/// Resolved through [`config::config_dir_path`], never `config_dir()`: every
-/// caller here only reads, and asking which themes are installed must not
-/// create `~/.config/sshub` or migrate a legacy tree into it.
-fn installed_themes_dir() -> Result<PathBuf, String> {
-    config::config_dir_path()
+/// Resolved through [`profile::locate_config_dir`]: every caller here only
+/// reads, and asking which themes are installed must not create the profile
+/// layout or migrate a legacy tree.
+fn installed_themes_dir(startup: &StartupOptions) -> Result<PathBuf, String> {
+    profile::locate_config_dir(startup)
         .map(|dir| dir.join("themes"))
-        .map_err(|e| format!("no config directory ({e})"))
+        .map_err(|e| format!("no themes directory ({e:#})"))
 }
 
 // ---------------------------------------------------------------------------
@@ -233,7 +235,7 @@ fn override_count(theme: &ResolvedTheme) -> usize {
 // theme list
 // ---------------------------------------------------------------------------
 
-fn run_list(args: &[String]) -> Result<i32> {
+fn run_list(startup: &StartupOptions, args: &[String]) -> Result<i32> {
     if wants_help(args) {
         help::print_theme_help(Some("list"));
         return Ok(0);
@@ -253,7 +255,7 @@ fn run_list(args: &[String]) -> Result<i32> {
         Err(code) => return Ok(code),
     }
 
-    let themes_dir = match installed_themes_dir() {
+    let themes_dir = match installed_themes_dir(startup) {
         Ok(dir) => dir,
         Err(message) => return Ok(failure(&message)),
     };
@@ -345,7 +347,7 @@ fn run_list(args: &[String]) -> Result<i32> {
 // theme show
 // ---------------------------------------------------------------------------
 
-fn run_show(args: &[String]) -> Result<i32> {
+fn run_show(startup: &StartupOptions, args: &[String]) -> Result<i32> {
     if wants_help(args) {
         help::print_theme_help(Some("show"));
         return Ok(0);
@@ -379,7 +381,7 @@ fn run_show(args: &[String]) -> Result<i32> {
         _ => return Ok(usage_error("theme show takes exactly one theme id")),
     };
 
-    let themes_dir = match installed_themes_dir() {
+    let themes_dir = match installed_themes_dir(startup) {
         Ok(dir) => dir,
         Err(message) => return Ok(failure(&message)),
     };

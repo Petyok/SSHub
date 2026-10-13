@@ -107,7 +107,7 @@ The theme picker, with its detail preview next to the list, and the known hosts 
 - **Configurable keybindings**: rebind any action via `Ctrl+K`; stored in `config.toml` under `[keybinds]`
 - **Profiles**: isolated workspaces, each with its own databases, config, themes, logs and keyring namespace (see [Usage](#usage)). In the profile manager (`Alt+P`), `t` transfers a host, group, identity or tunnel to another profile; headless, `sshub host|group|identity|tunnel transfer --to PROFILE` does the same
 - **Update notice** (`Shift+U`): on start SSHub asks GitHub for the latest release, and a newer one shows next to the version in the tab bar. `Shift+U` on the hosts tab installs it the way SSHub was installed (`npm install -g sshub-tui@<version>`, `cargo install sshub --version <version>`, or, for a release tarball, an in-place swap of the binary after checking it runs), then asks you to restart. While it installs, quitting always asks first. With no update known, `Shift+U` checks on demand. Needs `curl` (and `tar` for the tarball swap); `Check for updates` in Settings (`Ctrl+H`), or `[updates] check = false`, turns the start-up check off.
-- **Mouse support** — click tabs, select rows, scroll panels, double-click to connect
+- **Mouse support**: click tabs, rows and hosts-tab panels, scroll lists, double-click to connect, start a tunnel or open an SFTP folder; on the SFTP tab a click picks a host or a pane's entry; in forms, dialogs and pickers a click focuses the field (cursor where you clicked) or highlights the row; a drag anywhere selects text and copies it on release
 
 ## Install
 
@@ -360,6 +360,11 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | `Esc` / `Ctrl+O`       | While connecting: cancel / show or hide the `ssh -v` debug log |
 | `Ctrl+Shift+S`         | Focus session from dashboard        |
 | `Alt+S`                | Switch to an open session (searchable) |
+| `Alt+V` / `Alt+J`      | Split view: add a pane side by side / below (up to 4 panes) |
+| `Alt+O`                | Split view: focus the next pane (or click a pane) |
+| `Alt+M`                | Split view: zoom the focused pane   |
+| `Alt+K` / `Alt+I`      | Split view: close the focused pane / back to one pane |
+| `Alt+E`                | Workspaces: save this layout under a name, reopen or delete one |
 | `PgUp`/`PgDn`, wheel   | Scroll session history; both go to the remote app while it holds the alternate screen (tmux, vim, less), where the wheel becomes arrow keys |
 | drag                   | Select terminal text, copied on release; `Shift` inverts it when the remote app owns the mouse |
 
@@ -369,6 +374,14 @@ keys and `Ctrl+Shift+F` also work from every dashboard tab.
 `Ctrl+W` closes a session tab, but inside a form it kills the word before the
 cursor (`Ctrl+U` kills everything before it): the host, identity and tunnel
 forms and the SSH authentication prompt take readline's editing chords.
+
+On the dashboard and in forms, dialogs and pickers the mouse works too:
+drag over anything on screen to copy it on release, click a field to focus
+it with the cursor where you clicked, and click a picker row to highlight it
+(Enter still chooses).
+`Ctrl+Y` copies the focused field's exact value (the stored secret on a
+password field), with no label or border. Hold `Shift` to hand the mouse to
+your terminal for its own selection and middle-click paste.
 
 The wheel inside `tmux` reaches tmux's own scrollback only with
 `set -g mouse on`; without it tmux never asks for the mouse, so the notch
@@ -494,9 +507,8 @@ Three headless commands, all without a TUI or a database:
 | `sshub theme show <id> [--resolved]` | The theme's source, or a fully resolved standalone export |
 | `sshub theme check <file>` | Strict validation with `file:line:column` diagnostics |
 
-`theme list` and `theme show` run before any profile is selected, so the user
-themes they see are the ones in the config directory (`~/.config/sshub/themes/`,
-or `$SSHUB_CONFIG_DIR/themes/`), not a profile's `themes/` directory.
+`theme list` and `theme show` read the user themes of the profile `--profile`
+names, else the last used one (the config directory in compatibility mode).
 `theme check` takes any file path.
 
 **Full guide: [docs/theme-system.md](docs/theme-system.md)** — the file format,

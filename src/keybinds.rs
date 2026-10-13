@@ -95,11 +95,18 @@ pub enum KeyAction {
     ProfilesManage,
     Update,
     GhostAccept,
+    PaneSplitSideBySide,
+    PaneSplitStacked,
+    PaneFocusNext,
+    PaneZoom,
+    PaneClose,
+    PaneUnsplit,
+    Workspaces,
 }
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 86] = [
+    pub const ALL: [KeyAction; 93] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -186,6 +193,13 @@ impl KeyAction {
         KeyAction::ProfilesManage,
         KeyAction::Update,
         KeyAction::GhostAccept,
+        KeyAction::PaneSplitSideBySide,
+        KeyAction::PaneSplitStacked,
+        KeyAction::PaneFocusNext,
+        KeyAction::PaneZoom,
+        KeyAction::PaneClose,
+        KeyAction::PaneUnsplit,
+        KeyAction::Workspaces,
     ];
 
     pub fn label(self) -> &'static str {
@@ -221,7 +235,7 @@ impl KeyAction {
             KeyAction::SortCycle => "Cycle sort mode",
             KeyAction::YankLog => "Copy SSH log",
             KeyAction::RevealSecret => "Show and copy the stored secret",
-            KeyAction::CopySecret => "Copy the stored secret",
+            KeyAction::CopySecret => "Copy the focused field or stored secret",
             KeyAction::UiZoomIn => "Zoom in (hosts column)",
             KeyAction::UiZoomOut => "Zoom out (hosts column)",
             KeyAction::ExportSsh => "Export to ssh config",
@@ -276,6 +290,13 @@ impl KeyAction {
             KeyAction::ProfilesManage => "Add or manage profiles",
             KeyAction::Update => "Install update / check for one",
             KeyAction::GhostAccept => "Session: accept ghost completion",
+            KeyAction::PaneSplitSideBySide => "Split view: add a pane side by side",
+            KeyAction::PaneSplitStacked => "Split view: add a pane below",
+            KeyAction::PaneFocusNext => "Split view: focus the next pane",
+            KeyAction::PaneZoom => "Split view: zoom the focused pane",
+            KeyAction::PaneClose => "Split view: close the focused pane",
+            KeyAction::PaneUnsplit => "Split view: back to one pane",
+            KeyAction::Workspaces => "Workspaces: open, save or delete",
         }
     }
 }
@@ -370,6 +391,13 @@ pub struct KeybindsConfig {
     pub profiles_manage: Vec<String>,
     pub update: Vec<String>,
     pub ghost_accept: Vec<String>,
+    pub pane_split_side_by_side: Vec<String>,
+    pub pane_split_stacked: Vec<String>,
+    pub pane_focus_next: Vec<String>,
+    pub pane_zoom: Vec<String>,
+    pub pane_close: Vec<String>,
+    pub pane_unsplit: Vec<String>,
+    pub workspaces: Vec<String>,
 }
 
 impl Default for KeybindsConfig {
@@ -461,6 +489,15 @@ impl Default for KeybindsConfig {
             profiles_manage: vec!["Alt+P".into()],
             update: vec!["Shift+U".into()],
             ghost_accept: vec!["Ctrl+F".into()],
+            // Split view: Alt+letter chords that neither bash's readline nor
+            // zsh's emacs keymap binds by default, so no shell loses a key.
+            pane_split_side_by_side: vec!["Alt+V".into()],
+            pane_split_stacked: vec!["Alt+J".into()],
+            pane_focus_next: vec!["Alt+O".into()],
+            pane_zoom: vec!["Alt+M".into()],
+            pane_close: vec!["Alt+K".into()],
+            pane_unsplit: vec!["Alt+I".into()],
+            workspaces: vec!["Alt+E".into()],
         }
     }
 }
@@ -480,10 +517,28 @@ impl KeybindsConfig {
         self.binds(action).first().map(String::as_str).unwrap_or("")
     }
 
-    /// Right-aligned hints in the fullscreen session header.
-    pub fn session_header_hints(&self, multi_tab: bool) -> String {
+    /// Right-aligned hints in the fullscreen session header. In a split view
+    /// the pane keys replace the tab keys: the strip already shows the tabs.
+    /// `can_split` is whether a split key would add a pane right now.
+    pub fn session_header_hints(&self, multi_tab: bool, split: bool, can_split: bool) -> String {
         let mut parts = Vec::new();
-        if multi_tab {
+        let split_hint = can_split
+            .then(|| {
+                key_pair(
+                    self,
+                    KeyAction::PaneSplitSideBySide,
+                    KeyAction::PaneSplitStacked,
+                )
+            })
+            .flatten()
+            .map(|keys| format!("{keys} split"));
+        if split {
+            parts.extend(split_hint);
+            push_hint(&mut parts, self.primary(KeyAction::PaneFocusNext), "pane");
+            push_hint(&mut parts, self.primary(KeyAction::PaneZoom), "zoom");
+            push_hint(&mut parts, self.primary(KeyAction::PaneUnsplit), "unsplit");
+            push_hint(&mut parts, self.primary(KeyAction::SessionDetach), "detach");
+        } else if multi_tab {
             push_hint(&mut parts, self.primary(KeyAction::SessionNewTab), "new");
             push_hint(
                 &mut parts,
@@ -493,6 +548,7 @@ impl KeybindsConfig {
             if let Some(tabs) = tab_switch_hint(self) {
                 parts.push(tabs);
             }
+            parts.extend(split_hint);
             push_hint(&mut parts, self.primary(KeyAction::SessionDetach), "detach");
         } else {
             push_hint(
@@ -500,6 +556,7 @@ impl KeybindsConfig {
                 self.primary(KeyAction::SessionNewTab),
                 "new tab",
             );
+            parts.extend(split_hint);
             push_hint(&mut parts, self.primary(KeyAction::SessionDetach), "detach");
         }
         push_hint(
@@ -635,6 +692,13 @@ impl KeybindsConfig {
             KeyAction::ProfilesManage => &self.profiles_manage,
             KeyAction::Update => &self.update,
             KeyAction::GhostAccept => &self.ghost_accept,
+            KeyAction::PaneSplitSideBySide => &self.pane_split_side_by_side,
+            KeyAction::PaneSplitStacked => &self.pane_split_stacked,
+            KeyAction::PaneFocusNext => &self.pane_focus_next,
+            KeyAction::PaneZoom => &self.pane_zoom,
+            KeyAction::PaneClose => &self.pane_close,
+            KeyAction::PaneUnsplit => &self.pane_unsplit,
+            KeyAction::Workspaces => &self.workspaces,
         }
     }
 
@@ -726,6 +790,13 @@ impl KeybindsConfig {
             KeyAction::ProfilesManage => self.profiles_manage = binds,
             KeyAction::Update => self.update = binds,
             KeyAction::GhostAccept => self.ghost_accept = binds,
+            KeyAction::PaneSplitSideBySide => self.pane_split_side_by_side = binds,
+            KeyAction::PaneSplitStacked => self.pane_split_stacked = binds,
+            KeyAction::PaneFocusNext => self.pane_focus_next = binds,
+            KeyAction::PaneZoom => self.pane_zoom = binds,
+            KeyAction::PaneClose => self.pane_close = binds,
+            KeyAction::PaneUnsplit => self.pane_unsplit = binds,
+            KeyAction::Workspaces => self.workspaces = binds,
         }
     }
 
@@ -810,16 +881,21 @@ fn push_footer_hint(out: &mut Vec<(String, &'static str)>, key: &str, label: &'s
     }
 }
 
-/// `Ctrl+[/]` style key from prev/next tab bindings.
-fn tab_switch_keys(kb: &KeybindsConfig) -> Option<String> {
-    let prev = kb.primary(KeyAction::SessionTabPrev);
-    let next = kb.primary(KeyAction::SessionTabNext);
-    match (prev.is_empty(), next.is_empty()) {
+/// `Ctrl+[/Ctrl+]` style keys from the primary binds of two paired actions.
+fn key_pair(kb: &KeybindsConfig, first: KeyAction, second: KeyAction) -> Option<String> {
+    let a = kb.primary(first);
+    let b = kb.primary(second);
+    match (a.is_empty(), b.is_empty()) {
         (true, true) => None,
-        (false, false) if prev != next => Some(format!("{prev}/{next}")),
-        (false, _) => Some(prev.to_string()),
-        (_, false) => Some(next.to_string()),
+        (false, false) if a != b => Some(format!("{a}/{b}")),
+        (false, _) => Some(a.to_string()),
+        (_, false) => Some(b.to_string()),
     }
+}
+
+/// `Ctrl+[/Ctrl+]` style key from prev/next tab bindings.
+fn tab_switch_keys(kb: &KeybindsConfig) -> Option<String> {
+    key_pair(kb, KeyAction::SessionTabPrev, KeyAction::SessionTabNext)
 }
 
 /// `Ctrl+[/] tabs` style hint from prev/next tab bindings.
@@ -910,21 +986,76 @@ mod tests {
         let kb = KeybindsConfig {
             session_new_tab: vec!["F9".into()],
             session_detach: vec!["Ctrl+Shift+D".into()],
+            pane_split_stacked: vec!["F8".into()],
             ..Default::default()
         };
-        assert_eq!(
-            kb.session_header_hints(false),
-            "F9 new tab  Ctrl+Shift+D detach  Alt+S switch"
-        );
+        let hints = kb.session_header_hints(false, false, true);
+        assert!(hints.contains("F9 new tab"), "{hints}");
+        assert!(hints.contains("Ctrl+Shift+D detach"), "{hints}");
+        assert!(hints.contains("Alt+V/F8 split"), "{hints}");
     }
 
     #[test]
     fn session_header_hints_multi_tab_pair() {
         let kb = KeybindsConfig::default();
-        let hints = kb.session_header_hints(true);
+        // Both split keys show in every view a split is possible from: one
+        // tab, several tabs, and a split that still has room.
+        assert!(kb
+            .session_header_hints(false, false, true)
+            .contains("Alt+V/Alt+J split"));
+        let hints = kb.session_header_hints(true, false, true);
         assert!(hints.contains("Ctrl+T new"));
         assert!(hints.contains("Ctrl+D detach"));
         assert!(hints.contains("Ctrl+[/Ctrl+] tabs"));
+        assert!(hints.contains("Alt+V/Alt+J split"));
+        // In a split view the pane keys take the tab keys' place.
+        let split = kb.session_header_hints(true, true, true);
+        assert!(split.contains("Alt+O pane") && split.contains("Alt+I unsplit"));
+        assert!(split.contains("Alt+V/Alt+J split"));
+        assert!(!split.contains("Ctrl+T new"));
+        // Zoomed, or every pane at the depth limit: no split hint.
+        assert!(!kb
+            .session_header_hints(true, true, false)
+            .contains(" split"));
+    }
+
+    #[test]
+    fn split_view_defaults_take_no_key_from_bash_or_zsh() {
+        // Oracle: `bind -p` of bash 5.3 (`bash --norc`) and `bindkey` of zsh
+        // 5.9 (`zsh -f`, emacs keymap). Their Alt+letter bindings, uppercase
+        // folded: anything the session view takes never reaches the shell.
+        const SHELL_ALT_LETTERS: &str = "abcdfghlnpqrstuwxyz";
+        let kb = KeybindsConfig::default();
+        let session_view_alt: Vec<char> = [KeyAction::SessionSwitcher]
+            .into_iter()
+            .flat_map(|a| kb.binds(a).to_vec())
+            .filter_map(|s| s.strip_prefix("Alt+").map(|k| k.to_ascii_lowercase()))
+            .filter_map(|k| k.chars().next())
+            .collect();
+        let mut seen = Vec::new();
+        for action in [
+            KeyAction::PaneSplitSideBySide,
+            KeyAction::PaneSplitStacked,
+            KeyAction::PaneFocusNext,
+            KeyAction::PaneZoom,
+            KeyAction::PaneClose,
+            KeyAction::PaneUnsplit,
+            KeyAction::Workspaces,
+        ] {
+            let spec = kb.primary(action);
+            let letter = spec
+                .strip_prefix("Alt+")
+                .and_then(|k| k.chars().next())
+                .map(|c| c.to_ascii_lowercase())
+                .unwrap_or_else(|| panic!("{action:?}: {spec} is not Alt+letter"));
+            assert!(
+                !SHELL_ALT_LETTERS.contains(letter),
+                "{action:?} takes {spec}"
+            );
+            assert!(!session_view_alt.contains(&letter), "{action:?} clashes");
+            assert!(!seen.contains(&letter), "{action:?} reuses {spec}");
+            seen.push(letter);
+        }
     }
 
     #[test]
@@ -978,8 +1109,8 @@ mod tests {
         let mut kb = KeybindsConfig::default();
         kb.set(KeyAction::SessionSwitcher, vec!["F7".into()]);
         // Single tab and multi tab: the switcher is useful either way.
-        assert!(kb.session_header_hints(false).contains("F7"));
-        assert!(kb.session_header_hints(true).contains("F7"));
+        assert!(kb.session_header_hints(false, false, true).contains("F7"));
+        assert!(kb.session_header_hints(true, false, true).contains("F7"));
         assert!(kb
             .session_footer_hints()
             .iter()

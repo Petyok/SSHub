@@ -26,6 +26,13 @@ impl App {
             self.dismiss_ghost();
             return Ok(());
         }
+        if self.handle_key_panes(&key) {
+            return Ok(());
+        }
+        if self.is_action(KeyAction::Workspaces, &key) {
+            self.open_workspace_picker();
+            return Ok(());
+        }
         if self.is_action(KeyAction::LocalShell, &key) {
             self.open_local_shell()?;
             return Ok(());
@@ -82,10 +89,11 @@ impl App {
             return Ok(());
         }
 
-        // Capture self.terminal_area.height before we take a mutable borrow
-        // on `session` — borrowck won't let us re-read self after that.
-        let area = self.terminal_area;
-        let body_rows = usize::from(crate::session::pty_size(area.height, area.width).0);
+        // Half a page of the grid the session is drawn at, which in a split
+        // view is its pane, not the terminal.
+        let body_rows = self
+            .active_session()
+            .map_or(1, |s| usize::from(s.parser.screen().size().0));
 
         let cancel_connecting = matches!(
             self.active_session().map(|s| &s.phase),
@@ -107,7 +115,11 @@ impl App {
         }
 
         let Some(session) = self.active_session_mut() else {
-            self.mode = AppMode::Normal;
+            // A focused empty pane takes no keys but the ones above. The
+            // classic view without a session has nothing left to show.
+            if self.panes.is_none() {
+                self.mode = AppMode::Normal;
+            }
             return Ok(());
         };
 
@@ -292,6 +304,9 @@ impl App {
         let Some(idx) = self.active_session else {
             if self.sessions.is_empty() {
                 self.mode = AppMode::Normal;
+            } else if self.panes.is_some() {
+                // A split view whose focused pane is empty is still a view.
+                self.mode = AppMode::Session;
             }
             return;
         };
@@ -319,7 +334,12 @@ impl App {
     pub fn close_active_session(&mut self) {
         self.reset_ghost();
         let Some(idx) = self.active_session else {
-            self.mode = AppMode::Normal;
+            // Closing in a focused empty pane closes the pane itself.
+            if self.panes.is_some() && is_session_mode(self.mode) {
+                self.close_pane();
+            } else {
+                self.mode = AppMode::Normal;
+            }
             return;
         };
         if idx < self.sessions.len() {
@@ -356,7 +376,14 @@ impl App {
         }
         if self.sessions.is_empty() {
             self.active_session = None;
+            self.panes = None;
             self.mode = AppMode::Normal;
+        } else if self.panes.is_some() && is_session_mode(self.mode) {
+            // In a split view the pane stays, empty, until it is filled or
+            // closed: the layout does not rearrange under the user.
+            self.active_session = None;
+            self.sync_panes();
+            self.mode = AppMode::Session;
         } else {
             // Stay at the same index if possible, else drop back to the new last.
             let next = idx.min(self.sessions.len() - 1);
@@ -391,7 +418,8 @@ impl App {
     /// because it is not always the sign of the index delta: the strip wraps,
     /// so cycling past either end travels the way the key pointed.
     pub(crate) fn arm_session_tab_switch(&mut self, dir: i8, from: usize) {
-        if !self.motion_enabled() {
+        // A split view has no tab slide: it carries one full-width body.
+        if !self.motion_enabled() || (self.panes.is_some() && is_session_mode(self.mode)) {
             return;
         }
         self.session_tab_switch = Some(SessionTabSwitch {
@@ -486,6 +514,27 @@ impl App {
     /// scrollback navigation and clicks are dropped.
     pub(crate) fn handle_mouse_session(&mut self, mouse: MouseEvent) {
         let area = self.terminal_area;
+        // A press in another pane of a split view focuses it first, then is
+        // handled there like any press.
+        if let MouseEventKind::Down(_) = mouse.kind {
+            let at = ratatui::layout::Position::new(mouse.column, mouse.row);
+            if let Some(i) = self
+                .pane_views(area)
+                .iter()
+                .position(|v| v.rect.contains(at))
+            {
+                self.focus_pane(i);
+            }
+        }
+        // Grid coordinates are relative to the focused pane's origin.
+        let Some(pane) = self
+            .pane_views(area)
+            .into_iter()
+            .find(|v| v.focused)
+            .map(|v| v.rect)
+        else {
+            return;
+        };
         let Some(session) = self.active_session_mut() else {
             return;
         };
@@ -495,9 +544,12 @@ impl App {
         let alternate_screen = session.parser.screen().alternate_screen();
         let (rows, cols) = session.parser.screen().size();
 
-        // Body-local grid coordinates (header takes row 0).
-        let row = mouse.row.saturating_sub(1).min(rows.saturating_sub(1));
-        let col = mouse.column.min(cols.saturating_sub(1));
+        // Pane-local grid coordinates.
+        let row = mouse.row.saturating_sub(pane.y).min(rows.saturating_sub(1));
+        let col = mouse
+            .column
+            .saturating_sub(pane.x)
+            .min(cols.saturating_sub(1));
         let shift = mouse.modifiers.contains(KeyModifiers::SHIFT);
 
         // Local text selection drives the mouse when the remote app isn't
@@ -514,7 +566,10 @@ impl App {
                     // Arm edge autoscroll when the pointer is dragged past the
                     // top/bottom of the grid, so a selection can extend beyond
                     // what's currently visible (the poll tick keeps it going).
-                    let dir = crate::session::edge_autoscroll_dir(mouse.row as i32 - 1, rows);
+                    let dir = crate::session::edge_autoscroll_dir(
+                        i32::from(mouse.row) - i32::from(pane.y),
+                        rows,
+                    );
                     session.set_drag_autoscroll(dir, col);
                     session.selection_extend(row, col);
                 }
@@ -556,12 +611,13 @@ impl App {
         }
 
         // Remote app is consuming mouse — translate to the wire protocol.
-        // Only events on a grid cell the pane shows go out: row 0 is our own
-        // header, the footer follows the pane, and reporting either as an edge
-        // row of the grid made a stray click on sshub's chrome land on the
-        // remote (tmux's status line with `status-position top`, for one). The
-        // grid can be a row taller than a tiny pane, so its size is not enough.
-        if !crate::session::render::pane_shows_cell(area, (mouse.column, mouse.row), (rows, cols)) {
+        // Only events on a grid cell the pane shows go out: the header, the
+        // footer and the rules between split panes are SSHub's, and reporting
+        // any of them as an edge row of the grid made a stray click on sshub's
+        // chrome land on the remote (tmux's status line with `status-position
+        // top`, for one). The grid can outgrow a tiny pane, so its size is not
+        // enough.
+        if !crate::session::render::pane_shows_cell(pane, (mouse.column, mouse.row), (rows, cols)) {
             return;
         }
         if let Some(bytes) = crate::session::keys::encode_mouse(mouse, col, row, mode, encoding) {

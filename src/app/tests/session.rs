@@ -24,7 +24,7 @@ pub(crate) fn enter_starts_embedded_session() {
         key_push_identity: None,
         host_name: "edge".into(),
     };
-    let session = crate::session::Session::spawn(config, 24, 80, None).unwrap();
+    let session = crate::session::Session::spawn(config, (24, 80), None).unwrap();
     app.sessions.push(session);
     app.active_session = Some(0);
     app.mode = AppMode::Connecting;
@@ -72,7 +72,7 @@ pub(crate) fn ctrl_t_opens_host_picker() {
         host_name: "edge".into(),
     };
     app.sessions
-        .push(crate::session::Session::spawn(cfg, 24, 80, None).unwrap());
+        .push(crate::session::Session::spawn(cfg, (24, 80), None).unwrap());
     app.sessions[0].phase = crate::session::SessionPhase::Running {
         started_at: std::time::Instant::now(),
     };
@@ -116,7 +116,7 @@ pub(crate) fn session_tabs_switch_detach_and_focus() {
     };
     for _ in 0..3 {
         app.sessions
-            .push(crate::session::Session::spawn(cfg.clone(), 24, 80, None).unwrap());
+            .push(crate::session::Session::spawn(cfg.clone(), (24, 80), None).unwrap());
     }
     app.active_session = Some(2);
     app.mode = AppMode::Session;
@@ -171,7 +171,7 @@ pub(crate) fn shutdown_all_kills_detached_sessions() {
         host_name: "edge".into(),
     };
     app.sessions
-        .push(crate::session::Session::spawn(cfg, 24, 80, None).unwrap());
+        .push(crate::session::Session::spawn(cfg, (24, 80), None).unwrap());
     app.active_session = Some(0);
     app.mode = AppMode::Session;
 
@@ -281,7 +281,7 @@ fn app_with_sessions(names: &[&str]) -> App {
             host_name: (*name).into(),
         };
         app.sessions
-            .push(crate::session::Session::spawn(cfg, 24, 80, None).unwrap());
+            .push(crate::session::Session::spawn(cfg, (24, 80), None).unwrap());
     }
     app.active_session = if names.is_empty() { None } else { Some(0) };
     app.mode = AppMode::Normal;
@@ -313,7 +313,7 @@ fn app_with_background_session(hosts: Vec<(&str, SshHost)>) -> App {
         host_name: name,
     };
     app.sessions
-        .push(crate::session::Session::spawn(cfg, 24, 80, None).unwrap());
+        .push(crate::session::Session::spawn(cfg, (24, 80), None).unwrap());
     app.active_session = Some(0);
     app.mode = AppMode::Normal;
     app
@@ -834,7 +834,7 @@ pub(crate) fn session_strip_cycle_and_sftp_from_non_hosts_tab() {
         host_name: "edge".into(),
     };
     app.sessions
-        .push(crate::session::Session::spawn(cfg, 24, 80, None).unwrap());
+        .push(crate::session::Session::spawn(cfg, (24, 80), None).unwrap());
     app.active_session = Some(0);
     app.active_tab = 2; // tunnels
                         // Pre-seed a browser so Ctrl+Shift+F only switches tabs (no worker thread /
@@ -895,7 +895,7 @@ fn app_with_pending_clipboard_writes(n: usize) -> App {
             key_push_identity: None,
             host_name: format!("s{i}"),
         };
-        let mut session = crate::session::Session::spawn(cfg, 24, 80, None).unwrap();
+        let mut session = crate::session::Session::spawn(cfg, (24, 80), None).unwrap();
         session.parser.process(b"\x1b]52;c;R0VIRUlN\x07");
         app.sessions.push(session);
     }
@@ -1007,7 +1007,7 @@ pub(crate) fn a_wheel_that_cannot_scroll_leaves_the_selection_where_it_is() {
         key_push_identity: None,
         host_name: "edge".into(),
     };
-    let mut session = crate::session::Session::spawn(cfg, 24, 80, None).unwrap();
+    let mut session = crate::session::Session::spawn(cfg, (24, 80), None).unwrap();
     // Alternate screen, as tmux / vim leave it.
     session.parser.process(b"\x1b[?1049h");
     assert!(session.parser.screen().alternate_screen());
@@ -1034,7 +1034,7 @@ pub(crate) fn a_wheel_that_cannot_scroll_leaves_the_selection_where_it_is() {
         key_push_identity: None,
         host_name: "edge".into(),
     };
-    let mut session = crate::session::Session::spawn(cfg, 24, 80, None).unwrap();
+    let mut session = crate::session::Session::spawn(cfg, (24, 80), None).unwrap();
     for i in 0..60 {
         session.parser.process(format!("line {i}\r\n").as_bytes());
     }
@@ -1065,7 +1065,7 @@ pub(crate) fn a_wheel_on_the_alternate_screen_names_the_tmux_switch_once() {
         key_push_identity: None,
         host_name: "edge".into(),
     };
-    let mut session = crate::session::Session::spawn(cfg, 24, 80, None).unwrap();
+    let mut session = crate::session::Session::spawn(cfg, (24, 80), None).unwrap();
     session.parser.process(b"\x1b[?1049h"); // tmux / vim / less draw here
     app.sessions.push(session);
     app.active_session = Some(0);
@@ -1109,7 +1109,7 @@ pub(crate) fn a_wheel_on_the_alternate_screen_names_the_tmux_switch_once() {
         host_name: "plain".into(),
     };
     app.sessions
-        .push(crate::session::Session::spawn(cfg, 24, 80, None).unwrap());
+        .push(crate::session::Session::spawn(cfg, (24, 80), None).unwrap());
     app.active_session = Some(1);
     app.handle_mouse(wheel(MouseEventKind::ScrollUp)).unwrap();
     assert!(app.active_session().unwrap().copy_notice.is_none());

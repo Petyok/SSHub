@@ -141,6 +141,11 @@ pub fn render(frame: &mut Frame, app: &App) {
         );
     } else {
         let scroll = picker.selected.saturating_sub(visible.saturating_sub(1));
+        app.record_list_rows(
+            Rect::new(inner.x, list_top, inner.width, visible as u16),
+            scroll,
+            rows.len(),
+        );
         for (i, row) in rows.iter().skip(scroll).take(visible).enumerate() {
             draw_row(
                 buf,

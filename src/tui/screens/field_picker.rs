@@ -96,6 +96,10 @@ pub fn render_field_picker(frame: &mut Frame, app: &App) {
     let max_rows = popup.height.saturating_sub(2) as usize;
     for (i, label) in rows.iter().enumerate().take(max_rows) {
         let ry = popup.y + 1 + i as u16;
+        app.record_click(
+            Rect::new(popup.x + 1, ry, popup.width - 2, 1),
+            crate::app::ClickHit::Row(i),
+        );
         let is_sel = i == picker.selected && picker.creating.is_none();
         let is_create = Some(i) == create_index;
         let style = if is_sel {

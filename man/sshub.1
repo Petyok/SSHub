@@ -291,7 +291,7 @@ is
 .BR all ", " ok ", " fail ", or " retry ;
 .I V
 is
-.BR all ", " connect ", " tunnel ", " agent ", or " exec .
+.BR all ", " connect ", " tunnel ", " agent ", " exec ", or " broadcast .
 .SS Themes
 .TP
 .B sshub theme list \fR[\fB\-\-format\fR \fBplain\fR|\fBjson\fR]
@@ -325,19 +325,12 @@ when valid (warnings allowed) and
 .B 1
 on any error.
 .PP
-All three run headless: no TUI, no database, no keyring, and before any
-profile is selected. That is why
-.B theme list
-and
-.B theme show
-read user themes from the config directory,
-.I ~/.config/sshub/themes/*.toml
-(or
-.IR $SSHUB_CONFIG_DIR/themes ),
-where the file name is the theme ID; the TUI of a profile reads that profile's
-.I themes/
-directory instead (see
-.BR FILES ).
+All three run headless: no TUI, no database, no keyring. User themes live in
+the selected profile's
+.I themes/*.toml
+(see
+.BR FILES )
+and the file name is the theme ID.
 .B theme check
 takes any file path. The selected theme is stored as
 .I appearance.active_theme
@@ -514,6 +507,20 @@ in
 .B SSHUB_CONFIG_DIR
 (default
 .IR ~/.config/sshub ).
+.TP
+.I ~/.local/share/sshub/profiles/NAME/themes/*.toml
+User theme files of profile NAME; the file name without
+.I .toml
+is the theme ID.
+.B theme list
+and
+.B theme show
+read the profile given by
+.BR \-\-profile ,
+else the last used one. In compatibility mode the directory is
+.I ~/.config/sshub/themes
+(honors
+.BR SSHUB_CONFIG_DIR ).
 .TP
 .I ~/.ssh/config
 Read-only source of ssh_config hosts merged into the launcher. A profile can

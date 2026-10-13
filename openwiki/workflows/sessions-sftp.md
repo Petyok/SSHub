@@ -39,6 +39,14 @@ Every other key snaps the view back to live and is encoded to xterm bytes by `se
 
 **Local shell** (`src/app/local_shell.rs`): `Ctrl+Shift+T` from any dashboard tab, a session, or the switcher opens a tab running `$SHELL` (falling back to `/bin/sh`) with stderr merged onto the PTY so the prompt renders. Detach and close behave like ssh tabs.
 
+### Split view and workspaces (#73)
+
+The session body can be divided into 2 to 4 panes (`src/app/panes.rs`): a layout tree of depth 2 with equal halves, whose leaves hold a `SessionId` (stable for a session's life, unlike its index in `App::sessions`). `App::pane_views` is the one geometry function; the renderer, the mouse, the theme protection pass (`session::render::remote_pty_rects`) and the per-frame resize all read pane rects from it. The focused pane's session is `App::active_session`, so keys, paste, the ghost, snippets and the OSC 52 relay follow focus. Slides do not run while split.
+
+Resize contract: `Session::spawn` and `Session::resize` take the grid size of the pane (callers own the chrome); `resize` is a no-op for an unchanged size and never touches an `Exited` session. Each frame, `sync_panes` reconciles the layout with `active_session`, then every session on screen is resized to its pane; one out of view keeps its last size. New sessions are spawned at the grid of the pane they land in (`App::new_session_grid`). `ParserState::set_size` scrolls the top of the primary screen into history before a row shrink, so the cursor row survives (vt100 cuts from the bottom); columns are cut, not reflowed.
+
+Workspaces (`src/app/workspaces.rs`, table `workspaces`, schema v20) store the layout tree as JSON with saved hosts by name and local shells per pane; opening one lays the panes out first, then spawns each session into its pane.
+
 Key pieces:
 
 - **`pty.rs`**: `PtyRuntime::spawn(argv, rows, cols, env, siphon_stderr)` over `portable-pty`; reader threads send `PtyEvent::{Bytes, Stderr, Exited}` to the [event loop](../architecture/overview.md). For ssh the child's stderr is siphoned through a side FIFO (`StderrFifo`, `mkfifo` 0600 in the temp dir, opened `O_RDWR | O_NONBLOCK`) via an `sh -c 'exec "$@" 2>"$SSHUB_STDERR_FIFO"'` wrapper, keeping debug output off the grid. `TERM=xterm-256color` and `COLORTERM=truecolor` are forced. Writes (keys, pastes, query answers) go through one writer thread in order. Drop sends SIGHUP, then SIGTERM, then kills the process group.

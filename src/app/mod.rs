@@ -3,6 +3,7 @@ mod audit;
 mod auth;
 mod broadcast;
 mod connect;
+mod field_click;
 mod field_picker;
 pub(crate) mod ghost;
 mod groups;
@@ -17,6 +18,7 @@ mod keys;
 mod local_shell;
 mod log_browser;
 mod mouse;
+pub(crate) mod panes;
 mod profile_manager;
 pub(crate) mod profile_transfer;
 mod push_key;
@@ -32,6 +34,7 @@ mod tunnels;
 mod types;
 mod update;
 mod util;
+mod workspaces;
 
 #[cfg(test)]
 mod tests;
@@ -258,6 +261,10 @@ pub struct App {
     /// `self.hosts` indices for the rows of a zoomed host-list panel (ping /
     /// recent), filled by their render so Enter connects the selected row.
     pub zoomed_host_idx: std::cell::RefCell<Vec<usize>>,
+    /// Clickable regions of the last frame (#116): form fields, input bars and
+    /// picker rows, recorded by their renderers so a click can focus what it
+    /// landed on. Cleared at the start of every frame.
+    pub click_map: std::cell::RefCell<Vec<ClickTarget>>,
     /// Live broadcast run (issue #3): `Some` while a fleet command runs or its
     /// finished panel is settling. Owns the run's mpsc + cancel flag.
     pub broadcast: Option<BroadcastState>,
@@ -511,8 +518,15 @@ pub struct App {
     /// Embedded PTY sessions. Multiple may coexist (Ctrl+T opens a new tab).
     /// Empty when not in `Connecting` / `Session` mode.
     pub sessions: Vec<crate::session::Session>,
-    /// Index into `sessions` of the visible tab. `None` when `sessions` is empty.
+    /// Index into `sessions` of the visible tab, or of the focused pane's
+    /// session in a split view. `None` when `sessions` is empty, and in a split
+    /// view whose focused pane is empty.
     pub active_session: Option<usize>,
+    /// Split view (#73): the session body divided into 2 to 4 panes. `None` is
+    /// the classic one-session view.
+    pub panes: Option<panes::Panes>,
+    /// Saved workspaces, loaded when the workspace picker opens.
+    pub workspaces: Vec<crate::store::Workspace>,
     last_click: Option<(std::time::Instant, u16, u16)>,
     resolver: Box<dyn HostResolver>,
     metadata: Arc<dyn MetadataStore>,
@@ -614,7 +628,9 @@ impl App {
                 // Leaving supersedes any tab slide still in flight, and releases
                 // the snapshot it was holding frozen.
                 self.session_tab_switch = None;
-                if self.motion_enabled() {
+                // A split view leaves in place: its snapshot protects one
+                // remote rect, and sliding it would expose the other panes.
+                if self.motion_enabled() && self.panes.is_none() {
                     self.session_exit_at = Some(std::time::Instant::now());
                 } else {
                     *self.session_snapshot.borrow_mut() = None;
@@ -983,6 +999,7 @@ impl App {
             panel_sel: None,
             panel_sel_text: std::cell::RefCell::new(String::new()),
             zoomed_host_idx: std::cell::RefCell::new(Vec::new()),
+            click_map: std::cell::RefCell::new(Vec::new()),
             broadcast: None,
             broadcast_setup: None,
             broadcast_toasts: Vec::new(),
@@ -1105,6 +1122,8 @@ impl App {
             terminal_area: ratatui::layout::Rect::default(),
             sessions: Vec::new(),
             active_session: None,
+            panes: None,
+            workspaces: Vec::new(),
             last_click: None,
             resolver: deps.resolver,
             metadata: deps.metadata,

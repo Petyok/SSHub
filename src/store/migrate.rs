@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: i64 = 19;
+const SCHEMA_VERSION: i64 = 20;
 
 /// Name of the reserved, auto-created "Favorites" group. Membership in it is the
 /// source of truth for a host's favourite status.
@@ -237,6 +237,10 @@ pub(crate) fn run_migrations(conn: &Connection, launcher_path: &Path) -> Result<
 
     if current < 19 {
         migrate_v18_to_v19(conn)?;
+    }
+
+    if current < 20 {
+        migrate_v19_to_v20(conn)?;
     }
 
     // Runs last so all columns it writes to (e.g. environment) already exist.
@@ -810,6 +814,21 @@ fn migrate_v18_to_v19(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Saved split-view layouts (#73), one row per name. `layout` is JSON the app
+/// owns: a tree of panes, each naming what to open in it.
+fn migrate_v19_to_v20(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS workspaces (
+            id          INTEGER PRIMARY KEY,
+            name        TEXT NOT NULL UNIQUE,
+            layout      TEXT NOT NULL,
+            created_at  INTEGER NOT NULL,
+            updated_at  INTEGER NOT NULL
+        );",
+    )?;
+    Ok(())
+}
+
 pub(crate) fn now_ts() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1167,6 +1186,45 @@ INSERT INTO host_groups (name, sort_order, reserved, created_at)
             })
             .unwrap();
         assert_eq!(again, 1, "re-running the repair must not duplicate rows");
+    }
+
+    /// A v19 database gains the empty `workspaces` table, keeps its hosts, and
+    /// leaves a pre-migration snapshot named for v19.
+    #[test]
+    fn migration_v20_adds_workspaces_and_snapshots_v19() {
+        let dir = temp_dir();
+        let db_path = dir.path().join("launcher.db");
+        let conn = Connection::open(&db_path).unwrap();
+        run_migrations(&conn, &db_path).unwrap();
+        conn.execute_batch(
+            "INSERT INTO hosts (name, address, port, forward_agent, transport,
+                                created_at, updated_at)
+             VALUES ('a', '10.0.0.1', 22, 0, 'ssh', 1700000000, 1700000000);
+             DROP TABLE workspaces;
+             DELETE FROM schema_version; INSERT INTO schema_version (version) VALUES (19);",
+        )
+        .unwrap();
+        drop(conn);
+
+        let migrated = Connection::open(&db_path).unwrap();
+        run_migrations(&migrated, &db_path).unwrap();
+        let (version, workspaces, hosts): (i64, i64, i64) = migrated
+            .query_row(
+                "SELECT (SELECT version FROM schema_version),
+                        (SELECT COUNT(*) FROM workspaces),
+                        (SELECT COUNT(*) FROM hosts WHERE name = 'a')",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((version, workspaces, hosts), (20, 0, 1));
+        let snapshots: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("launcher.db.bak-v19-"))
+            .collect();
+        assert_eq!(snapshots.len(), 1, "{snapshots:?}");
     }
 
     /// An existing host comes through v19 with no lookup (NULL), and a

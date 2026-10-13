@@ -52,8 +52,6 @@ impl App {
             timestamp: now_ts(),
         });
 
-        let rows = self.terminal_area.height.max(3);
-        let cols = self.terminal_area.width.max(20);
         let config = crate::session::SessionConfig {
             argv,
             display_name,
@@ -69,7 +67,7 @@ impl App {
         } else {
             crate::session::Session::spawn
         };
-        match spawn(config, rows, cols, None) {
+        match spawn(config, self.new_session_grid(), None) {
             Ok(mut session) => {
                 session.local_shell = local_shell;
                 self.sessions.push(session);

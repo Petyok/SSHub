@@ -1,7 +1,7 @@
 ---
 type: Data Model
-title: Data Model & Storage, launcher.db v19, metadata.db, config.toml, and hybrid hosts
-description: SSHub persists each profile's state in two SQLite databases (launcher.db at schema v19 for managed hosts, groups and their connection defaults, identities, tunnels, audit, snippets, log bookmarks and opt-in command history; metadata.db for legacy ssh_config aliases), snapshots launcher.db before every migration, keeps settings in config.toml, and merges managed hosts with read-only ~/.ssh/config aliases through HostResolver.
+title: Data Model & Storage, launcher.db v20, metadata.db, config.toml, and hybrid hosts
+description: SSHub persists each profile's state in two SQLite databases (launcher.db at schema v20 for managed hosts, groups and their connection defaults, identities, tunnels, audit, snippets, log bookmarks, opt-in command history and saved split-view workspaces; metadata.db for legacy ssh_config aliases), snapshots launcher.db before every migration, keeps settings in config.toml, and merges managed hosts with read-only ~/.ssh/config aliases through HostResolver.
 resource: src/store/migrate.rs
 tags: [storage, sqlite, schema, migrations, config, hosts, architecture]
 ---
@@ -23,7 +23,7 @@ override directories verbatim. Layout, picker and migration:
 
 | DB | Path (profile mode) | Contents |
 |---|---|---|
-| `launcher.db` | `profiles/<name>/launcher.db` | Managed and imported hosts, groups, memberships, identities, tunnels, audit (`auth_events`), UI state, snippets, log bookmarks, command history |
+| `launcher.db` | `profiles/<name>/launcher.db` | Managed and imported hosts, groups, memberships, identities, tunnels, audit (`auth_events`), UI state, snippets, log bookmarks, command history, workspaces |
 | `metadata.db` | `profiles/<name>/metadata.db` | `host_metadata` for **legacy** ssh_config-only aliases: tags, description, environment, favorite, last_connected, session_logging, transport, ping |
 
 The split is historical: `metadata.db` predates `launcher.db` and still backs
@@ -53,7 +53,7 @@ migrations and seeds the "Default" identity. `run_migrations`
 3. One transaction: the base v2 schema (`CREATE TABLE IF NOT EXISTS`), then
    every `migrate_vN_to_vN+1` step below the current version, then the legacy
    metadata import (fresh DB only), then `schema_version` is set to
-   **`SCHEMA_VERSION = 19`**. Column adds are guarded with `pragma_table_info`
+   **`SCHEMA_VERSION = 20`**. Column adds are guarded with `pragma_table_info`
    so re-runs are safe.
 
 Migration history worth knowing:
@@ -75,6 +75,7 @@ Migration history worth knowing:
 | v17 | Repair: re-seed `host_group_memberships` from `hosts.group_id` and the reserved Favorites group |
 | v18 | `hosts.ping` (per-host ping override: `NULL` inherit, 1 on, 0 off) |
 | v19 | `hosts.secret_lookup` (one `Attribute=value` Secret Service spec) |
+| v20 | `workspaces` table (saved split-view layouts) |
 
 The v16 rebuild is the cautionary tale: `DROP TABLE hosts` fires every child
 `ON DELETE CASCADE`, and 0.17.0 emptied memberships, tunnels and command
@@ -104,13 +105,16 @@ Tables:
   [tunnels](../workflows/tunnels.md)).
 - `auth_events`: the audit log, columns `id`, `host_name`, `username`, `via`,
   `status`, `note`, `created_at`, `log_path`. `via` distinguishes connect
-  paths; `tunnel`, `agent` and `exec` have their own audit filter.
+  paths; `tunnel`, `agent`, `exec` and `broadcast` have their own audit filter.
 - `ui_state`: key/value (`collapsed_groups`, `ui_zoom`, `name_zoom`).
 - `snippets`: `name`, `command`, `description`, `tags` (JSON), timestamps
   (`src/store/snippets.rs`).
 - `log_bookmarks`: `host_dir`, `file_name`, `line`, `name`, `created_at`. Keyed
   by the on-disk log location rather than a host id, so a bookmark survives
   deleting and re-adding a host (`src/store/log_bookmarks.rs`).
+- `workspaces`: `name` (unique), `layout` (the pane tree as JSON: saved hosts
+  by name and local shells per pane), timestamps (`src/store/workspaces.rs`).
+  See [sessions & SFTP](../workflows/sessions-sftp.md).
 - `command_history`: **local-only**, opt-in: `host_id` (cascade), `command`
   (1 to 4096 bytes), `last_used`, `use_count`, `created_at`,
   `UNIQUE(host_id, command)`, index `command_history_host_recent`. Written by
@@ -121,7 +125,7 @@ Tables:
   text may still contain a secret it did not recognise.
 
 CRUD is split across `src/store/hosts.rs`, `identities.rs`, `tunnels.rs`,
-`snippets.rs`, `log_bookmarks.rs`, `command_history.rs` and
+`snippets.rs`, `log_bookmarks.rs`, `command_history.rs`, `workspaces.rs` and
 `group_defaults.rs`; DTOs (`ManagedHost`, `HostSource`, `Tunnel`, `AuthEvent`,
 `NewHost`, `Snippet`, `LogBookmark`, ...) live in `src/store/types.rs`.
 Credentials never enter SQLite (only `has_password` flags and the
@@ -183,8 +187,7 @@ Hosts, groups, favorites and identities as user-facing concepts:
 `profiles/<name>/config.toml` (compat mode: `<config dir>/config.toml`) is
 created 0600 on first load. Sections of `AppConfig`:
 
-- `[appearance]`: `show_detail_panel`, `date_format`, `disable_animation`
-  (reduced motion), `confirm_quit`, `identity_columns`, `os_logo`,
+- `[appearance]`: `disable_animation` (reduced motion), `confirm_quit`, `identity_columns`, `os_logo`,
   `transparent_sshub_background`, `transparent_session_background`,
   `active_theme` (default `"default"`, see [themes](themes.md)).
 - `[session_logging]`: `enabled` (false), `max_file_bytes` (10 MiB),

@@ -137,6 +137,7 @@ fn render_with_transition_clock(frame: &mut Frame, app: &App, now: std::time::In
     // Reset the per-frame popup rect; each popup that draws sets it via
     // `popup_open_rect`, and we snapshot it afterwards for the close slide (#35).
     app.last_popup_rect.set(None);
+    app.click_map.borrow_mut().clear();
     render_inner(frame, app, &composition);
     // While in the full-screen host view, keep a fresh snapshot so leaving it can
     // slide the session off to the right (#35). Once exited, render_inner has
@@ -411,15 +412,14 @@ impl FrameComposition {
         //    reaches over cells that are SSHub's own this frame. Protecting
         //    those would hand the grid's ground to the dashboard.
         if tab_slide_progress.is_none() && shows_session_view(app) {
-            if let Some(session) = app.active_session() {
-                if crate::session::render::shows_remote_pty(session) {
-                    let resting = crate::session::render::remote_pty_rect(area);
-                    match enter_offset {
-                        Some(offset) => {
-                            protected.extend(translated_region(resting, i32::from(offset), area))
-                        }
-                        None => protected.push(resting),
+            // Every pane with a live grid: in a split view there is more than
+            // one, and protecting only the focused one paints over the rest.
+            for resting in crate::session::render::remote_pty_rects(app, area) {
+                match enter_offset {
+                    Some(offset) => {
+                        protected.extend(translated_region(resting, i32::from(offset), area))
                     }
+                    None => protected.push(resting),
                 }
             }
         }
@@ -457,7 +457,12 @@ impl FrameComposition {
 /// that is captured but not blitted protects cells nothing owns, and one that is
 /// blitted but not captured paints over remote output.
 fn session_enter_offset(app: &App, area: Rect, now: std::time::Instant) -> Option<u16> {
-    if !app.motion_enabled() || session_behind_picker(app) || !shows_session_view(app) {
+    // A split view appears in place: the slide carries one full-frame session.
+    if !app.motion_enabled()
+        || session_behind_picker(app)
+        || !shows_session_view(app)
+        || app.panes.is_some()
+    {
         return None;
     }
     let at = app.session_enter_at?;
@@ -615,18 +620,23 @@ fn fill_reset_background(buf: &mut Buffer, area: Rect, color: Color, exclusions:
     }
 }
 
-/// Highlight the zoomed-panel text selection (issue #18) by reversing the
-/// selected cells, and extract the selected text into `app.panel_sel_text` for
-/// copy-on-release. Terminal-style stream selection over the dashboard body.
+/// Highlight the mouse text selection by reversing the selected cells, and
+/// extract the selected text into `app.panel_sel_text` for copy-on-release.
+/// Terminal-style stream selection over the zoomed panel's body (issue #18) or,
+/// on the dashboard and under a form / dialog / picker, over the whole screen
+/// (issue #116).
 fn apply_panel_selection(frame: &mut Frame, app: &App) {
-    if !app.panel_zoomed {
+    let body = if app.mode == AppMode::Normal && app.panel_zoomed {
+        dashboard_layout::dashboard_layout_zoomed(frame.area(), app.ui_zoom).body
+    } else if app.mode == AppMode::Normal || crate::app::is_overlay_mode(app.mode) {
+        frame.area()
+    } else {
         return;
-    }
+    };
     let Some(sel) = app.panel_sel else {
         app.panel_sel_text.borrow_mut().clear();
         return;
     };
-    let body = dashboard_layout::dashboard_layout_zoomed(frame.area(), app.ui_zoom).body;
     // Order anchor/pointer in reading (row-major) order.
     let (a, b) = (sel.anchor, sel.cur);
     let (start, end) = if (a.1, a.0) <= (b.1, b.0) {
@@ -678,7 +688,8 @@ fn shows_session_view(app: &App) -> bool {
 
 /// Whether this frame takes the exact branch that blits a session-tab slide.
 fn will_render_session_tab_slide(app: &App) -> bool {
-    shows_session_view(app) && !session_behind_picker(app)
+    // The tab slide moves the one full-width body, so a split view has none.
+    shows_session_view(app) && !session_behind_picker(app) && app.panes.is_none()
 }
 
 fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
@@ -827,7 +838,11 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
     // so this toast is the *only* surface left: gating it on `panel_zoomed` made
     // every dashboard notice invisible — push-key errors, import/export results,
     // SFTP failures — and a silent failure reads as a broken keybind.
-    if let Some(notice) = &app.host_notice {
+    // The host form prints `host_notice` on its own message line; a toast of
+    // the same text under it would say everything twice.
+    let host_form_drawn = matches!(app.mode, AppMode::HostForm | AppMode::FieldPicker)
+        || (app.mode == AppMode::ConfirmDiscard && app.host_form.is_some());
+    if let Some(notice) = app.host_notice.as_ref().filter(|_| !host_form_drawn) {
         render_notice_toast(frame, areas.footer, notice, app);
     }
 
@@ -998,37 +1013,50 @@ fn render_sftp_prompt_popup(frame: &mut Frame, app: &App) {
 
     let theme = app.theme();
     let mut lines = vec![
-        ratatui::text::Line::from(Span::styled(label, theme.style(StyleRole::TextPrimary))),
-        ratatui::text::Line::from(Span::styled(
-            crate::text_input::with_cursor(&prompt.value, prompt.cursor),
-            theme.style(StyleRole::FormInput),
-        )),
-        ratatui::text::Line::from(""),
+        (
+            ratatui::text::Line::from(Span::styled(label, theme.style(StyleRole::TextPrimary))),
+            None,
+        ),
+        (
+            ratatui::text::Line::from(Span::styled(
+                crate::text_input::with_cursor(&prompt.value, prompt.cursor),
+                theme.style(StyleRole::FormInput),
+            )),
+            Some(0),
+        ),
+        (ratatui::text::Line::from(""), None),
     ];
     if let Some(err) = &prompt.error {
-        lines.push(ratatui::text::Line::from(Span::styled(
-            format!("\u{2717} {err}"),
-            theme.style(StyleRole::PopupError),
-        )));
-        lines.push(ratatui::text::Line::from(""));
+        lines.push((
+            ratatui::text::Line::from(Span::styled(
+                format!("\u{2717} {err}"),
+                theme.style(StyleRole::PopupError),
+            )),
+            None,
+        ));
+        lines.push((ratatui::text::Line::from(""), None));
     }
-    lines.push(ratatui::text::Line::from(Span::styled(
-        "Enter: confirm  \u{2502}  Esc: cancel",
-        theme.style(StyleRole::PopupHint),
-    )));
+    lines.push((
+        ratatui::text::Line::from(Span::styled(
+            "Enter: confirm  \u{2502}  Esc: cancel",
+            theme.style(StyleRole::PopupHint),
+        )),
+        None,
+    ));
 
     let popup_area = crate::tui::popup_open_rect(popup_area, app);
 
     open_popup(frame, popup_area, theme);
-    frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(Span::styled(title, theme.style(StyleRole::PopupTitle)))
-                .border_style(popup_border_style(theme, popup_area)),
-        ),
-        popup_area,
+    let body = screens::FormBody::new(
+        lines,
+        Block::default()
+            .borders(Borders::ALL)
+            .title(Span::styled(title, theme.style(StyleRole::PopupTitle)))
+            .border_style(popup_border_style(theme, popup_area)),
+        Some(Wrap { trim: false }),
     );
+    body.record_clicks(app, popup_area);
+    frame.render_widget(body, popup_area);
     paint_popup_border(frame, popup_area, theme);
 }
 
@@ -1046,43 +1074,56 @@ fn render_import_prompt_popup(frame: &mut Frame, app: &App) {
 
     let theme = app.theme();
     let mut lines = vec![
-        ratatui::text::Line::from(Span::styled(
-            "Path to Termius export folder (contains L00t.csv, ssh_keys/):",
-            theme.style(StyleRole::TextPrimary),
-        )),
-        ratatui::text::Line::from(Span::styled(
-            crate::text_input::with_cursor(&prompt.path, prompt.cursor),
-            theme.style(StyleRole::FormInput),
-        )),
-        ratatui::text::Line::from(""),
+        (
+            ratatui::text::Line::from(Span::styled(
+                "Path to Termius export folder (contains L00t.csv, ssh_keys/):",
+                theme.style(StyleRole::TextPrimary),
+            )),
+            None,
+        ),
+        (
+            ratatui::text::Line::from(Span::styled(
+                crate::text_input::with_cursor(&prompt.path, prompt.cursor),
+                theme.style(StyleRole::FormInput),
+            )),
+            Some(0),
+        ),
+        (ratatui::text::Line::from(""), None),
     ];
     if let Some(err) = &prompt.error {
-        lines.push(ratatui::text::Line::from(Span::styled(
-            format!("\u{2717} {err}"),
-            theme.style(StyleRole::PopupError),
-        )));
-        lines.push(ratatui::text::Line::from(""));
+        lines.push((
+            ratatui::text::Line::from(Span::styled(
+                format!("\u{2717} {err}"),
+                theme.style(StyleRole::PopupError),
+            )),
+            None,
+        ));
+        lines.push((ratatui::text::Line::from(""), None));
     }
-    lines.push(ratatui::text::Line::from(Span::styled(
-        "Enter: import  \u{2502}  Esc: cancel",
-        theme.style(StyleRole::PopupHint),
-    )));
+    lines.push((
+        ratatui::text::Line::from(Span::styled(
+            "Enter: import  \u{2502}  Esc: cancel",
+            theme.style(StyleRole::PopupHint),
+        )),
+        None,
+    ));
 
     let popup_area = crate::tui::popup_open_rect(popup_area, app);
 
     open_popup(frame, popup_area, theme);
-    frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(Span::styled(
-                    " Import from Termius ",
-                    theme.style(StyleRole::PopupTitle),
-                ))
-                .border_style(popup_border_style(theme, popup_area)),
-        ),
-        popup_area,
+    let body = screens::FormBody::new(
+        lines,
+        Block::default()
+            .borders(Borders::ALL)
+            .title(Span::styled(
+                " Import from Termius ",
+                theme.style(StyleRole::PopupTitle),
+            ))
+            .border_style(popup_border_style(theme, popup_area)),
+        Some(Wrap { trim: false }),
     );
+    body.record_clicks(app, popup_area);
+    frame.render_widget(body, popup_area);
     paint_popup_border(frame, popup_area, theme);
 }
 
@@ -1444,6 +1485,20 @@ fn render_popup_open(frame: &mut Frame, app: &App) {
             }
         }
     }
+    // The popup recorded its click targets where it rests; move them to the
+    // rows this frame drew them on, so a click mid-slide hits what is shown.
+    app.click_map.borrow_mut().retain_mut(|t| {
+        if rect.union(t.area) != *rect {
+            return true;
+        }
+        match t.area.y.checked_sub(off) {
+            Some(y) => {
+                t.area.y = y;
+                true
+            }
+            None => false,
+        }
+    });
 }
 
 /// Blit a just-closed popup's captured snapshot, sliding it up off the top over
@@ -1867,7 +1922,7 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
     let border = popup_border_style(theme, popup_area);
     open_popup(frame, popup_area, theme);
 
-    match kind {
+    let body = match kind {
         FormKind::Host => {
             if let Some(form) = app.host_form.as_ref() {
                 // Muted placeholders: what a save would actually use for each
@@ -1884,46 +1939,47 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
                     .store()
                     .inherited_for_groups(primary, &selected)
                     .unwrap_or_else(|_| crate::store::ResolvedConnection::global_default());
-                frame.render_widget(
-                    screens::host_form::render_host_form(
-                        form,
-                        &app.groups,
-                        &app.identities,
-                        &inherited,
-                        &app.save_key_label(),
-                        &app.config.keybinds.secret_field_hints(),
-                        theme,
-                        border,
-                    ),
-                    popup_area,
-                );
+                Some(screens::host_form::render_host_form(
+                    form,
+                    &app.groups,
+                    &app.identities,
+                    &inherited,
+                    &app.save_key_label(),
+                    &app.config.keybinds.secret_field_hints(),
+                    &app.copy_field_hint(),
+                    theme,
+                    border,
+                ))
+            } else {
+                None
             }
         }
         FormKind::Identity => {
             if let Some(form) = app.identity_form.as_ref() {
                 let cert = app.cert_statuses.get(&form.certificate);
-                frame.render_widget(
-                    screens::keychain::render_identity_form(
-                        form,
-                        &app.save_key_label(),
-                        &app.config.keybinds.secret_field_hints(),
-                        cert,
-                        theme,
-                        border,
-                        popup_area.width.saturating_sub(2),
-                    ),
-                    popup_area,
-                );
+                Some(screens::keychain::render_identity_form(
+                    form,
+                    &app.save_key_label(),
+                    &app.config.keybinds.secret_field_hints(),
+                    &app.copy_field_hint(),
+                    cert,
+                    theme,
+                    border,
+                    popup_area.width.saturating_sub(2),
+                ))
+            } else {
+                None
             }
         }
-        FormKind::Keygen => {
-            if let Some(form) = app.keygen_form.as_ref() {
-                frame.render_widget(
-                    screens::keygen::render_keygen_form(form, &app.save_key_label(), theme, border),
-                    popup_area,
-                );
-            }
-        }
+        FormKind::Keygen => app.keygen_form.as_ref().map(|form| {
+            screens::keygen::render_keygen_form(
+                form,
+                &app.save_key_label(),
+                &app.copy_field_hint(),
+                theme,
+                border,
+            )
+        }),
         FormKind::Group => {
             if let Some(form) = app.group_form.as_ref() {
                 let identity_name = form.default_identity_id.and_then(|id| {
@@ -1938,18 +1994,22 @@ fn render_form_popup(frame: &mut Frame, app: &App, kind: FormKind) {
                         .find(|g| g.id == id)
                         .map(|g| g.name.clone())
                 });
-                frame.render_widget(
-                    screens::group_form::render_group_form(
-                        form,
-                        identity_name.as_deref(),
-                        parent_name.as_deref(),
-                        theme,
-                        border,
-                    ),
-                    popup_area,
-                );
+                Some(screens::group_form::render_group_form(
+                    form,
+                    identity_name.as_deref(),
+                    parent_name.as_deref(),
+                    theme,
+                    border,
+                    &app.copy_field_hint(),
+                ))
+            } else {
+                None
             }
         }
+    };
+    if let Some(body) = body {
+        body.record_clicks(app, popup_area);
+        frame.render_widget(body, popup_area);
     }
 
     // Whichever form was rendered above drew its frame in `border`'s solid
@@ -2938,7 +2998,7 @@ mod tests {
                 host_name: name.into(),
             };
             app.sessions
-                .push(crate::session::Session::spawn(cfg, 24, 80, None).unwrap());
+                .push(crate::session::Session::spawn(cfg, (24, 80), None).unwrap());
         }
         app.sessions[1].phase = SessionPhase::Running {
             started_at: Instant::now(),
@@ -3014,7 +3074,7 @@ mod tests {
                 host_name: name.into(),
             };
             app.sessions
-                .push(crate::session::Session::spawn(cfg, 24, 80, None).unwrap());
+                .push(crate::session::Session::spawn(cfg, (24, 80), None).unwrap());
         }
         app
     }
@@ -3460,7 +3520,7 @@ mod tests {
             key_push_identity: None,
             host_name: "web-prod".into(),
         };
-        let mut session = crate::session::Session::spawn(cfg, 24, 80, None).unwrap();
+        let mut session = crate::session::Session::spawn(cfg, (24, 80), None).unwrap();
         session.phase = SessionPhase::Running {
             started_at: std::time::Instant::now(),
         };
@@ -5196,7 +5256,7 @@ mod tests {
                 host_name: name.into(),
             };
             app.sessions
-                .push(crate::session::Session::spawn(cfg, 24, 80, None).unwrap());
+                .push(crate::session::Session::spawn(cfg, (24, 80), None).unwrap());
             app.active_session = Some(0);
             app.session_picker = Some(crate::app::SessionPicker {
                 purpose: crate::app::SessionPickerPurpose::SwitchSession,
@@ -5303,15 +5363,6 @@ mod tests {
             classify_ping(app.ping_data.get("host-02").map(|v| v.as_slice())),
             PingClass::Unreachable
         );
-    }
-
-    #[test]
-    fn render_hides_detail_panel_when_disabled() {
-        let mut app = test_app_with_hosts();
-        app.config.appearance.show_detail_panel = false;
-        let buffer = render_to_buffer(&app, 120, 38);
-        // Host name should still be visible in hosts panel
-        assert!(buffer_contains(&buffer, "web-prod"));
     }
 
     #[test]
@@ -5467,7 +5518,7 @@ mod tests {
             key_push_identity: None,
             host_name: "web-prod".into(),
         };
-        let session = crate::session::Session::spawn(config, 24, 80, None).unwrap();
+        let session = crate::session::Session::spawn(config, (24, 80), None).unwrap();
         app.sessions.push(session);
         app.active_session = Some(0);
         app.mode = AppMode::Connecting;
@@ -5506,7 +5557,7 @@ mod tests {
             key_push_identity: None,
             host_name: "web-prod".into(),
         };
-        let session = crate::session::Session::spawn(config, 24, 80, None).unwrap();
+        let session = crate::session::Session::spawn(config, (24, 80), None).unwrap();
         app.sessions.push(session);
         app.active_session = Some(0);
         app.mode = AppMode::Connecting;
@@ -5527,7 +5578,7 @@ mod tests {
             key_push_identity: None,
             host_name: "web-prod".into(),
         };
-        let session = crate::session::Session::spawn(config, 24, 80, None).unwrap();
+        let session = crate::session::Session::spawn(config, (24, 80), None).unwrap();
         app.sessions.push(session);
         app.active_session = Some(0);
         // Stays on the dashboard (Normal), so the strip is what makes the
@@ -6219,6 +6270,28 @@ marker = { foreground = \"#ab0005\" }\n\
             Some(marker(0xa10003)),
             "the fixed footer is components.popup.hint"
         );
+    }
+
+    /// A notice while the host form is open (a copy, a validation error) is
+    /// printed once, on the form's own line, not again as a toast under it.
+    #[test]
+    fn a_host_form_notice_is_shown_once() {
+        let mut app = test_app_with_hosts();
+        app.enter_host_form(None, false).unwrap();
+        app.host_notice = Some("copied 83 chars to clipboard".into());
+        let buf = render_to_buffer(&app, 120, 38);
+        assert_eq!(
+            buffer_text(&buf)
+                .matches("copied 83 chars to clipboard")
+                .count(),
+            1
+        );
+
+        // The dashboard has no form line, so there the toast still shows it.
+        app.host_form = None;
+        app.mode = AppMode::Normal;
+        let buf = render_to_buffer(&app, 120, 38);
+        assert!(buffer_text(&buf).contains("copied 83 chars to clipboard"));
     }
 
     /// Every form role, across the three states a field can be in.

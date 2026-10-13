@@ -55,12 +55,12 @@ Identities carry the key path only, never secrets; the reserved Favorites group 
 
 Rows that cannot be previewed or saved (invalid files) are listed with their reason.
 
-**User themes** are `*.toml` files whose file stem is the theme id. The TUI loads them from the `themes/` directory beside the active `config.toml`, which is `~/.local/share/sshub/profiles/<name>/themes/` in profile mode and `~/.config/sshub/themes/` in compatibility mode (`App::new_with_profile`). The headless commands read `~/.config/sshub/themes/` (`src/cli/theme.rs`):
+**User themes** are `*.toml` files whose file stem is the theme id. The TUI loads them from the `themes/` directory beside the active `config.toml`, which is `~/.local/share/sshub/profiles/<name>/themes/` in profile mode and `~/.config/sshub/themes/` in compatibility mode (`App::new_with_profile`). `sshub theme list|show` read the same directory for the profile `--profile` names, else the last used one (`profile::locate_config_dir`, no side effects; the config directory in compatibility mode). `src/cli/theme.rs`:
 
 ```bash
 sshub theme list                                   # built-ins and installed themes, with state
-sshub theme show aqua > ~/.config/sshub/themes/aqua-custom.toml
-sshub theme check ~/.config/sshub/themes/aqua-custom.toml
+sshub theme show aqua > ~/.local/share/sshub/profiles/<name>/themes/aqua-custom.toml
+sshub theme check ~/.local/share/sshub/profiles/<name>/themes/aqua-custom.toml
 sshub theme show aqua-custom --resolved --format json
 ```
 

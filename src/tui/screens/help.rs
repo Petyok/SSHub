@@ -71,6 +71,14 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         key: "Esc",
         desc: "Back / close overlay",
     },
+    HelpItem::Entry {
+        key: "click",
+        desc: "Pick a tab, a row or a hosts-tab panel; on the SFTP tab, a host or a pane's entry. Double-click connects, starts a tunnel or opens a folder",
+    },
+    HelpItem::Entry {
+        key: "drag",
+        desc: "Select anything on screen, copied on release (Shift+drag leaves the mouse to your terminal)",
+    },
     HelpItem::Blank,
     HelpItem::Section("profiles"),
     HelpItem::Entry {
@@ -257,7 +265,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "Ctrl+Y",
-        desc: "In a form: copy the stored secret",
+        desc: "In a form: copy the focused field (the stored secret on a password field)",
     },
     HelpItem::Blank,
     HelpItem::Section("audit (tab 5)"),
@@ -461,6 +469,22 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "Switch to an open session (searchable)",
     },
     HelpItem::Entry {
+        key: "Alt+V / Alt+J",
+        desc: "Split view: add a pane side by side / below (up to 4); Alt+S fills the focused pane",
+    },
+    HelpItem::Entry {
+        key: "Alt+O / Alt+M",
+        desc: "Split view: focus the next pane (or click it) / zoom the focused pane",
+    },
+    HelpItem::Entry {
+        key: "Alt+K / Alt+I",
+        desc: "Split view: close the focused pane (its session stays open) / back to one pane",
+    },
+    HelpItem::Entry {
+        key: "Alt+E",
+        desc: "Workspaces: type a name to save the layout; Enter reopens, Ctrl+X deletes",
+    },
+    HelpItem::Entry {
         key: "PgUp/PgDn",
         desc: "Scroll session history; goes to the remote app while it holds the alternate screen (tmux, vim, less)",
     },
@@ -475,6 +499,14 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     HelpItem::Entry {
         key: "[forms]",
         desc: "",
+    },
+    HelpItem::Entry {
+        key: "click",
+        desc: "Focus the field under the pointer with the cursor there; in a picker, palette or tag filter, highlight the row without choosing it",
+    },
+    HelpItem::Entry {
+        key: "drag",
+        desc: "Select text in a form, dialog or picker, copied on release (Shift+drag leaves the mouse to your terminal)",
     },
     HelpItem::Entry {
         key: "Ctrl+U / Ctrl+W",
@@ -771,6 +803,10 @@ mod tests {
             lines[1],
             entry_line(styles, "\u{2191}\u{2193} / j k", "Move up / down")
         );
-        assert_eq!(lines[6], Line::from(""));
+        let blank = HELP_ITEMS
+            .iter()
+            .position(|i| matches!(i, HelpItem::Blank))
+            .unwrap();
+        assert_eq!(lines[blank], Line::from(""));
     }
 }

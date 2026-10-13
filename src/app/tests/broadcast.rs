@@ -199,7 +199,10 @@ pub(crate) fn tick_broadcast_folds_events_settles_and_audits_once() {
     // Keep the panel unfocused so the settle countdown can't flip to Paused.
     app.focused_panel = PanelId::Hosts;
 
-    let (state, tx, _cancel) = make_state("systemctl restart nginx", &[(1, "web"), (2, "api")]);
+    // A command carrying a secret in an argument: it must not reach the audit
+    // log, which keeps no command text (the `sshub exec` rule).
+    let command = "mysql -pHUNTER2 -e 'flush tables'";
+    let (state, tx, _cancel) = make_state(command, &[(1, "web"), (2, "api")]);
     app.broadcast = Some(state);
 
     tx.send(BroadcastEvent::Finished {
@@ -238,21 +241,20 @@ pub(crate) fn tick_broadcast_folds_events_settles_and_audits_once() {
 
     let web = bcast.iter().find(|e| e.host_name == "web").unwrap();
     assert_eq!(web.status, "launched");
-    assert!(
-        web.note
-            .as_deref()
-            .unwrap()
-            .contains("systemctl restart nginx"),
-        "command echoed in the note"
-    );
+    assert_eq!(web.note.as_deref(), Some("exit 0"));
 
     let api = bcast.iter().find(|e| e.host_name == "api").unwrap();
     assert_eq!(api.status, "fail");
-    let api_note = api.note.as_deref().unwrap();
-    assert!(api_note.contains("systemctl restart nginx"));
-    assert!(
-        api_note.contains("connection refused"),
+    assert_eq!(
+        api.note.as_deref(),
+        Some("connection refused"),
         "reason in the note"
+    );
+    assert!(
+        events
+            .iter()
+            .all(|e| !e.note.as_deref().unwrap_or_default().contains("HUNTER2")),
+        "the command never reaches the audit log"
     );
 
     // A second tick must not duplicate the audit rows.

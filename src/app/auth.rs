@@ -326,7 +326,7 @@ mod tests {
             key_push_identity: None,
             host_name: "offline".into(),
         };
-        let mut session = Session::spawn(config, 24, 100, None).unwrap();
+        let mut session = Session::spawn(config, (24, 100), None).unwrap();
         let auth = InteractiveAuth::new().unwrap();
         let env = auth.channel_env(std::path::Path::new("unused"));
         let get = |name: &str| env.iter().find(|(key, _)| key == name).unwrap().1.clone();
@@ -400,7 +400,7 @@ mod tests {
                 key_push_identity: None,
                 host_name: name.into(),
             };
-            let mut session = Session::spawn(config, 24, 100, None).unwrap();
+            let mut session = Session::spawn(config, (24, 100), None).unwrap();
             let auth = InteractiveAuth::new().unwrap();
             let env = auth.channel_env(std::path::Path::new("unused"));
             let get = |name: &str| env.iter().find(|(key, _)| key == name).unwrap().1.clone();
@@ -737,7 +737,7 @@ mod tests {
             key_push_identity: None,
             host_name: "restored".into(),
         };
-        let mut session = Session::spawn(config, 24, 100, None).unwrap();
+        let mut session = Session::spawn(config, (24, 100), None).unwrap();
         let mut auth = InteractiveAuth::new().unwrap();
         // The test process plays the destination ssh.
         auth.destination_pid = Some(std::process::id());
@@ -939,7 +939,7 @@ mod tests {
             key_push_identity: None,
             host_name: "offline".into(),
         };
-        let mut session = Session::spawn(config, 24, 100, None).unwrap();
+        let mut session = Session::spawn(config, (24, 100), None).unwrap();
         let auth = InteractiveAuth::new().unwrap();
         let path = {
             let env = auth.channel_env(std::path::Path::new("unused"));
@@ -996,7 +996,7 @@ mod tests {
             key_push_identity: None,
             host_name: "offline".into(),
         };
-        let mut session = Session::spawn(config, 24, 100, None).unwrap();
+        let mut session = Session::spawn(config, (24, 100), None).unwrap();
         let auth = InteractiveAuth::new().unwrap();
         let env = auth.channel_env(std::path::Path::new("unused"));
         let get = |name: &str| env.iter().find(|(key, _)| key == name).unwrap().1.clone();
@@ -1037,7 +1037,7 @@ mod tests {
             display_name: "Ad-hoc label".into(), meta: SessionMeta::default(),
             pending_secret: None, key_push_identity: None, host_name: "original-adhoc-target".into(),
         };
-        let mut session = Session::spawn(config, 24, 100, None).unwrap();
+        let mut session = Session::spawn(config, (24, 100), None).unwrap();
         session.auth = Some(InteractiveAuth::new().unwrap());
         app.sessions.push(session);
         app.active_session = Some(0);

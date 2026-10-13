@@ -41,7 +41,7 @@ The docked panel slides from the center to the bottom-right of the hosts body an
 
 ## Audit
 
-When every host reaches a terminal state, one `auth_events` row per host is written with `via = broadcast`: status `launched` for exit 0, `fail` otherwise, and a note holding the command, the exit code and the first stderr line (or the failure reason). Unlike `sshub exec`, the broadcast command text is stored in the audit note. The rows appear in the Audit tab and in `sshub audit list` (the `--via` filter has no `broadcast` value, so use `--via all`).
+When every host reaches a terminal state, one `auth_events` row per host is written with `via = broadcast`: status `launched` for exit 0, `fail` otherwise, and a note holding the exit code and the first stderr line (or the failure reason). Like `sshub exec`, the command text is not stored, since it can carry a password in an argument. The rows appear in the Audit tab and in `sshub audit list|stats --via broadcast`; `--via connect` leaves them out.
 
 A live or unfinished broadcast blocks switching profiles (`profile_switch_blocker`).
 
