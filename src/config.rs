@@ -4,12 +4,11 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+/// Retired keys still found in older files (`show_detail_panel`, `date_format`,
+/// read by a layout removed in #133) load fine: unknown keys are ignored, and
+/// saving merges into the file rather than rewriting it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppearanceConfig {
-    #[serde(default = "default_true")]
-    pub show_detail_panel: bool,
-    #[serde(default = "default_date_format")]
-    pub date_format: String,
     /// Reduced-motion toggle. When true, skip all UI motion (the startup
     /// splash and every panel/toast slide + morph); surfaces jump straight to
     /// their final state. Default off. Also flipped in Settings (`Ctrl+H`).
@@ -297,15 +296,9 @@ fn jitter_factor(tunnel_id: i64, attempt: u32, jitter_ratio: f64) -> f64 {
     1.0 + jitter_ratio * (frac - 1.0)
 }
 
-fn default_date_format() -> String {
-    "%Y-%m-%d %H:%M".to_string()
-}
-
 impl Default for AppearanceConfig {
     fn default() -> Self {
         Self {
-            show_detail_panel: true,
-            date_format: default_date_format(),
             disable_animation: false,
             confirm_quit: true,
             identity_columns: 0,
@@ -591,14 +584,28 @@ pub fn config_dir_path() -> anyhow::Result<std::path::PathBuf> {
 /// Falls back to `SSH_LAUNCHER_DATA_DIR` for backward compatibility.
 /// Migrates data from `~/.local/share/ssh-launcher` if the new path doesn't exist yet.
 pub fn data_dir() -> anyhow::Result<std::path::PathBuf> {
+    let dir = data_dir_path()?;
+    if env_dir("SSHUB_DATA_DIR")
+        .or_else(|| env_dir("SSH_LAUNCHER_DATA_DIR"))
+        .is_none()
+    {
+        let home = std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME not set"))?;
+        migrate_legacy_dir(
+            &dir,
+            &std::path::PathBuf::from(&home).join(".local/share/ssh-launcher"),
+        );
+    }
+    Ok(dir)
+}
+
+/// Where the data directory *is*: [`data_dir`] without the legacy migration,
+/// the data-side twin of [`config_dir_path`].
+pub fn data_dir_path() -> anyhow::Result<std::path::PathBuf> {
     if let Some(dir) = env_dir("SSHUB_DATA_DIR").or_else(|| env_dir("SSH_LAUNCHER_DATA_DIR")) {
         return Ok(dir);
     }
     let home = std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME not set"))?;
-    let new_dir = std::path::PathBuf::from(&home).join(".local/share/sshub");
-    let legacy_dir = std::path::PathBuf::from(&home).join(".local/share/ssh-launcher");
-    migrate_legacy_dir(&new_dir, &legacy_dir);
-    Ok(new_dir)
+    Ok(std::path::PathBuf::from(&home).join(".local/share/sshub"))
 }
 
 /// Env-var directory override; empty values are ignored so e.g.
@@ -896,13 +903,13 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(
                 &path,
-                "# my hand-written note\nfuture_option = true  # keep me\n\n[appearance]\ndate_format = \"%Y-%m-%d %H:%M\"\n",
+                "# my hand-written note\nfuture_option = true  # keep me\n\n[appearance]\nconfirm_quit = true\n",
             )
             .unwrap();
 
             let config = AppConfig {
                 appearance: AppearanceConfig {
-                    date_format: "%d/%m/%Y".to_string(),
+                    confirm_quit: false,
                     ..AppearanceConfig::default()
                 },
                 ..AppConfig::default()
@@ -919,7 +926,7 @@ mod tests {
                 "unknown key lost: {after}"
             );
             assert!(
-                after.contains("%d/%m/%Y"),
+                after.contains("confirm_quit = false"),
                 "our change not written: {after}"
             );
         });
@@ -1181,8 +1188,8 @@ mod tests {
     #[test]
     fn parse_config_uses_defaults_for_empty_toml() {
         let config = parse_config_str("").unwrap();
-        assert!(config.appearance.show_detail_panel);
-        assert_eq!(config.appearance.date_format, "%Y-%m-%d %H:%M");
+        assert!(config.appearance.confirm_quit);
+        assert_eq!(config.appearance.active_theme, "default");
     }
 
     #[test]
@@ -1272,9 +1279,10 @@ mod tests {
 
     #[test]
     fn parse_config_applies_overrides() {
-        // Old configs may still carry the removed `terminal` / `launch_command`
-        // keys; they must be silently ignored (no deny_unknown_fields) so the
-        // rest of the config still loads.
+        // Old configs may still carry removed keys (`terminal` /
+        // `launch_command`, `appearance.show_detail_panel` / `date_format`);
+        // they must be silently ignored (no deny_unknown_fields) so the rest of
+        // the config still loads.
         let toml = r#"
 terminal = "ghostty"
 launch_command = "foot ssh {host}"
@@ -1282,18 +1290,18 @@ launch_command = "foot ssh {host}"
 [appearance]
 show_detail_panel = false
 date_format = "%d/%m/%Y"
+confirm_quit = false
 "#;
         let config = parse_config_str(toml).unwrap();
-        assert!(!config.appearance.show_detail_panel);
-        assert_eq!(config.appearance.date_format, "%d/%m/%Y");
+        assert!(!config.appearance.confirm_quit);
     }
 
     #[test]
     fn parse_config_fixture_toml() {
+        // The fixture predates the removal of `show_detail_panel` and
+        // `date_format`, so it also proves those keys still load.
         let fixture = include_str!("../tests/fixtures/config.toml");
         let config = parse_config_str(fixture).unwrap();
-        assert!(config.appearance.show_detail_panel);
-        assert_eq!(config.appearance.date_format, "%Y-%m-%d %H:%M");
         // The fixture predates `active_theme`, which is exactly the spec's
         // backwards-compatibility case: an older config.toml must still load
         // and simply get `default`.
@@ -1317,8 +1325,10 @@ date_format = "%d/%m/%Y"
             "active_theme missing from the generated default config: {toml}"
         );
         let config = parse_config_str(&toml).unwrap();
-        assert!(config.appearance.show_detail_panel);
-        assert_eq!(config.appearance.date_format, "%Y-%m-%d %H:%M");
+        // Keys nothing reads are not written into a new config either.
+        for retired in ["show_detail_panel", "date_format"] {
+            assert!(!toml.contains(retired), "{retired} written: {toml}");
+        }
         assert_eq!(config.appearance.active_theme, "default");
     }
 }

@@ -775,13 +775,7 @@ impl LauncherStore {
                 conds.push("created_at >= ?".into());
             }
             if let Some(v) = via.filter(|v| *v != "all") {
-                match v {
-                    "connect" => conds.push("via NOT IN ('tunnel', 'agent', 'exec')".into()),
-                    "tunnel" => conds.push("via = 'tunnel'".into()),
-                    "agent" => conds.push("via = 'agent'".into()),
-                    "exec" => conds.push("via = 'exec'".into()),
-                    other => conds.push(format!("via = '{other}'")),
-                }
+                conds.push(via_condition(v));
             }
             if host_name.is_some() {
                 conds.push("host_name = ?".into());
@@ -1035,11 +1029,17 @@ fn reject_option_like(field: &str, value: &str) -> Result<()> {
 fn via_filter_sql(via: Option<&str>) -> String {
     match via {
         None | Some("all") => String::new(),
-        Some("connect") => " AND via NOT IN ('tunnel', 'agent', 'exec')".into(),
-        Some("tunnel") => " AND via = 'tunnel'".into(),
-        Some("agent") => " AND via = 'agent'".into(),
-        Some("exec") => " AND via = 'exec'".into(),
-        Some(v) => format!(" AND via = '{v}'"),
+        Some(v) => format!(" AND {}", via_condition(v)),
+    }
+}
+
+/// SQL condition for one `--via` bucket. `connect` is every interactive
+/// connect, which logs its jump host (or `direct`) as `via`, so it is
+/// everything the other buckets do not claim.
+fn via_condition(via: &str) -> String {
+    match via {
+        "connect" => "via NOT IN ('tunnel', 'agent', 'exec', 'broadcast')".into(),
+        other => format!("via = '{other}'"),
     }
 }
 
@@ -1543,6 +1543,36 @@ mod tests {
         let (ok, fail) = store.auth_event_stats(7).unwrap();
         assert_eq!(ok, 2, "launched connects must count as ok");
         assert_eq!(fail, 1);
+    }
+
+    /// Broadcast runs are audited under `via = 'broadcast'`: they have their own
+    /// `--via` bucket and are not interactive connects.
+    #[test]
+    fn broadcast_rows_have_their_own_via_bucket() {
+        let store = LauncherStore::open_in_memory().unwrap();
+        for (host, via) in [("a", "direct"), ("b", "broadcast"), ("c", "exec")] {
+            store
+                .log_auth_event(host, None, via, "launched", "", None)
+                .unwrap();
+        }
+        let hosts = |via: &str| -> Vec<String> {
+            store
+                .list_auth_events_cli(None, None, Some(via), None, 10)
+                .unwrap()
+                .into_iter()
+                .map(|e| e.host_name)
+                .collect()
+        };
+        assert_eq!(hosts("broadcast"), ["b"]);
+        assert_eq!(hosts("connect"), ["a"]);
+
+        let stats = |via: &str| {
+            store
+                .auth_event_stats_filtered(7, Some(via), false)
+                .unwrap()
+        };
+        assert_eq!(stats("broadcast"), (1, 0, 0));
+        assert_eq!(stats("connect"), (1, 0, 0));
     }
 
     #[test]

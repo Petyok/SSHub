@@ -5361,15 +5361,6 @@ mod tests {
     }
 
     #[test]
-    fn render_hides_detail_panel_when_disabled() {
-        let mut app = test_app_with_hosts();
-        app.config.appearance.show_detail_panel = false;
-        let buffer = render_to_buffer(&app, 120, 38);
-        // Host name should still be visible in hosts panel
-        assert!(buffer_contains(&buffer, "web-prod"));
-    }
-
-    #[test]
     fn render_host_list_shows_favorite_star() {
         let app = test_app_with_hosts();
         let buffer = render_to_buffer(&app, 120, 38);

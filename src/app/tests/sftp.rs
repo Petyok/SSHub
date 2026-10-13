@@ -400,6 +400,45 @@ fn dot_types_into_the_filter_instead_of_toggling() {
     assert!(!app.sftp_show_hidden, "and did not flip the setting");
 }
 
+/// Regression: the SFTP host search typed `S` and `L` into global binds
+/// (`Shift+S` snippet manager, `Shift+L` log browser), which ran before the
+/// tab's search handler. Every character a dashboard input can take is its own.
+#[test]
+fn shift_letters_type_into_the_sftp_host_search() {
+    let mut app = test_app(vec![("SLOW", host("SLOW"))]);
+    app.active_tab = 1;
+
+    app.handle_key(key_char('/')).unwrap();
+    for c in "SL".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::SHIFT))
+            .unwrap();
+    }
+
+    assert_eq!(app.mode, AppMode::Normal, "no overlay opened");
+    assert!(app.sftp_picker_searching);
+    assert_eq!(app.search_query, "SL");
+}
+
+/// The same guard covers the file filter inside a live SFTP browser.
+#[test]
+fn shift_letters_type_into_the_sftp_file_filter() {
+    use crate::sftp::model::SftpState;
+
+    let mut app = test_app(vec![]);
+    let mut state = SftpState::new("/srv", "/home/me");
+    state.start_search();
+    app.sftp = Some(state);
+    app.active_tab = 1;
+
+    for c in "SL".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::SHIFT))
+            .unwrap();
+    }
+
+    assert_eq!(app.mode, AppMode::Normal, "no overlay opened");
+    assert_eq!(app.sftp.as_ref().unwrap().remote.filter, "SL");
+}
+
 /// The SFTP tab reaches its themed renderer through the real frame dispatch.
 ///
 /// The screen's own tests drive `render_browser` directly; this one proves the

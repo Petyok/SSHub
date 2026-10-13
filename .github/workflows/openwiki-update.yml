@@ -2,11 +2,6 @@ name: OpenWiki Update
 
 on:
   workflow_dispatch:
-    inputs:
-      scan_mode:
-        description: "Strix scan mode"
-        required: false
-        default: quick
 
 permissions:
   contents: write

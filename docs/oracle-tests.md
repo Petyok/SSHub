@@ -38,8 +38,8 @@ a real export from the real tool, and say in a comment where it came from.
 | `session/`, `tui/`, `app/` | none exists | read the diff; keep files small |
 
 Where no oracle exists, no amount of test count substitutes for reading the
-diff. A large `#[cfg(test)]` module is not evidence — most of sshub's 766 tests
-run against in-repo mocks of its own traits.
+diff. A large `#[cfg(test)]` module is not evidence: most of sshub's tests run
+against in-repo mocks of its own traits.
 
 ## Worked example (found by writing the first such test)
 
