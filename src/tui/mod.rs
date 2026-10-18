@@ -925,8 +925,12 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
             if let Some(picker) = &app.profile_picker {
                 picker.render(frame, app.theme());
             }
-            if app.pending_transfer.is_some() {
-                render_profile_transfer_popup(frame, app);
+            if let Some(pending) = &app.pending_transfer {
+                if pending.screen.is_some() {
+                    screens::host_transfer::render_host_transfer(frame, app);
+                } else {
+                    render_profile_transfer_popup(frame, app);
+                }
             }
         }
         AppMode::TunnelReconnectSettings => {

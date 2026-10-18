@@ -112,7 +112,7 @@ boots.
 
 Engine: `src/store/transfer.rs` ([data model](data-model.md#cross-profile-transfer-engine-srcstoretransferrs)).
 Front ends: the profile manager (`t` / `T` in the list view arms
-`App::pending_transfer`; flow and rendering in `src/app/profile_transfer.rs`:
+`App::pending_transfer`; flow and rendering in `src/app/profile_transfer.rs`, with the dual-pane host screen of `m` in `src/app/host_transfer.rs` (push and pull batches run the same engine with the two stores swapped for a pull):
 destination, scope, plan, explicit `y`) and the CLI
 (`src/cli/transfer.rs`):
 

@@ -11,6 +11,7 @@ pub mod hop_editor;
 mod host_crud;
 mod host_detail;
 mod host_form;
+pub(crate) mod host_transfer;
 mod hostlist;
 mod identities;
 mod import;

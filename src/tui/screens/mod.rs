@@ -7,6 +7,7 @@ pub mod group_manage;
 pub mod help;
 pub mod hop_lines;
 pub mod host_form;
+pub mod host_transfer;
 pub mod keybind_editor;
 pub mod keychain;
 pub mod keygen;

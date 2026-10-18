@@ -6,8 +6,13 @@ All notable changes to SSHub are documented in this file.
 
 ### Added
 
-- **Guided profile migration** - in the profile manager, `t`, pick the destination,
-  then `m` walks through five checklists: hosts, the groups of those hosts, their
+- **SFTP-style host transfer** - in the profile manager, `t`, pick the destination,
+  then `m` opens a dual-pane screen: this profile's hosts on the left, the other
+  profile's on the right, grouped and filterable with `/`. `→` stages a host (or
+  a whole group) to push, `←` stages one from the right pane to pull, a queue
+  strip shows what is staged and `c` continues. Pushes and pulls can be mixed;
+  they run one direction at a time, each with its own plan review.
+- **Guided profile migration** - the staged hosts then go through five checklists: hosts, the groups of those hosts, their
   tunnels, the identities they (and the groups) use, and their audit logs. Only
   checked rows travel; a step with nothing to list is skipped, `b` steps back.
   Audit events keep their timestamps and land under the host's name in the

@@ -203,7 +203,11 @@ impl App {
     /// → plan → explicit `y` confirm. Only `y` with a built plan applies;
     /// everything else adjusts or cancels.
     pub(crate) fn handle_key_profile_transfer(&mut self, key: KeyEvent) -> Result<()> {
-        if matches!(key.code, KeyCode::Esc) {
+        let screen_wants_escape = self
+            .pending_transfer
+            .as_ref()
+            .is_some_and(|pending| pending.screen_wants_escape());
+        if matches!(key.code, KeyCode::Esc) && !screen_wants_escape {
             self.cancel_pending_transfer();
             if let Some(picker) = self.profile_picker.as_mut() {
                 picker.set_error("transfer cancelled".into());
@@ -271,6 +275,13 @@ impl App {
             }
             return Ok(());
         }
+        let screen_open = self
+            .pending_transfer
+            .as_ref()
+            .is_some_and(|pending| pending.screen.is_some());
+        if screen_open {
+            return self.handle_key_host_transfer(key);
+        }
         let wizard_open = self
             .pending_transfer
             .as_ref()
@@ -285,7 +296,7 @@ impl App {
         if scope_missing {
             let scope = match key.code {
                 KeyCode::Char('m') => {
-                    match self.start_migration_wizard() {
+                    match self.open_host_transfer_screen(Vec::new()) {
                         Ok(()) => self.show_transfer_status(),
                         Err(error) => self.show_transfer_error(error),
                     }
@@ -378,9 +389,11 @@ impl App {
                     } else {
                         match self.apply_pending_transfer() {
                             Err(error) => self.show_transfer_error(error),
-                            Ok(warning) => {
+                            // The other direction is armed and waiting.
+                            Ok(applied) if applied.more => {}
+                            Ok(applied) => {
                                 self.close_profile_manager();
-                                if let Some(text) = warning {
+                                if let Some(text) = applied.warning {
                                     // After closing: that resets `mode`.
                                     self.notice_popup = Some(text);
                                     self.mode = AppMode::Notice;

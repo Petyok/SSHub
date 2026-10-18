@@ -104,6 +104,13 @@ impl MigrationWizard {
         }
     }
 
+    /// Check these hosts on the first step (names the profile lacks are ignored).
+    pub fn preselect(&mut self, names: &[String]) {
+        for row in &mut self.rows[MigrationStep::Hosts.index()] {
+            row.checked = names.contains(&row.key);
+        }
+    }
+
     fn rows(&self) -> &Vec<CheckRow> {
         &self.rows[self.step.index()]
     }
@@ -439,11 +446,12 @@ impl MigrationWizard {
     }
 
     /// Dialog body for the current step.
-    pub fn lines(&self, dest: &str) -> Vec<String> {
+    pub fn lines(&self, other: &str, pull: bool) -> Vec<String> {
         let rows = self.rows();
         let checked = rows.iter().filter(|r| r.checked).count();
         let mut lines = vec![format!(
-            "Migrate to '{dest}' · step {}/{}: {} ({checked}/{} selected)",
+            "{} '{other}' · step {}/{}: {} ({checked}/{} selected)",
+            if pull { "Pull from" } else { "Migrate to" },
             self.step.index() + 1,
             MigrationStep::ORDER.len(),
             self.step.title(),
@@ -480,15 +488,28 @@ impl MigrationWizard {
 }
 
 impl crate::app::App {
-    /// Open the wizard on its host step from the scope picker.
-    pub(crate) fn start_migration_wizard(&mut self) -> anyhow::Result<()> {
-        let snapshot = TransferSnapshot::capture(&self.store)?;
-        anyhow::ensure!(!snapshot.hosts.is_empty(), "this profile has no hosts");
-        let counts = self.store.auth_event_counts()?;
+    /// Turn the wizard's checked rows into the plan: sets the migration
+    /// scope and builds the plan review. Returns the error to show when the
+    /// plan cannot be built (the scope is reset so the wizard stays open).
+    pub(crate) fn finish_migration_selection(&mut self) -> Option<String> {
+        let selection = self
+            .pending_transfer
+            .as_ref()
+            .and_then(|pending| pending.wizard.as_ref())
+            .map(MigrationWizard::selection)
+            .unwrap_or_default();
         if let Some(pending) = self.pending_transfer.as_mut() {
-            pending.wizard = Some(MigrationWizard::new(snapshot, counts));
+            pending.scope = Some(super::profile_transfer::TransferScope::Migration(selection));
+            pending.plan = None;
+            pending.dialog = None;
         }
-        Ok(())
+        if let Err(error) = self.rebuild_transfer_plan() {
+            if let Some(pending) = self.pending_transfer.as_mut() {
+                pending.scope = None;
+            }
+            return Some(format!("{error:#}"));
+        }
+        None
     }
 
     /// Keys of a checklist step. `Esc` is handled by the caller.
@@ -533,28 +554,18 @@ impl crate::app::App {
             _ => {}
         }
         if leave {
-            if let Some(pending) = self.pending_transfer.as_mut() {
-                pending.wizard = None;
+            // First step: back to the dual-pane screen, queue intact.
+            let staged = self
+                .pending_transfer
+                .as_ref()
+                .map(|p| p.staged.clone())
+                .unwrap_or_default();
+            if let Err(error) = self.open_host_transfer_screen(staged) {
+                notice = Some(format!("{error:#}"));
             }
         }
         if review {
-            let selection = self
-                .pending_transfer
-                .as_ref()
-                .and_then(|pending| pending.wizard.as_ref())
-                .map(MigrationWizard::selection)
-                .unwrap_or_default();
-            if let Some(pending) = self.pending_transfer.as_mut() {
-                pending.scope = Some(super::profile_transfer::TransferScope::Migration(selection));
-                pending.plan = None;
-                pending.dialog = None;
-            }
-            if let Err(error) = self.rebuild_transfer_plan() {
-                if let Some(pending) = self.pending_transfer.as_mut() {
-                    pending.scope = None;
-                }
-                notice = Some(format!("{error:#}"));
-            }
+            notice = self.finish_migration_selection();
         }
         if let Some(pending) = self.pending_transfer.as_mut() {
             pending.notice = notice;

@@ -99,7 +99,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "t/T",
-        desc: "Transfer a host, group, identity or tunnel to another profile (profile manager); m = guided steps: hosts, groups, tunnels, identities, audit logs.",
+        desc: "Transfer a host, group, identity or tunnel to another profile (profile manager); m = two-pane host transfer (→ push, ← pull, c continue), then groups, tunnels, identities, audit logs.",
     },
     HelpItem::Blank,
     HelpItem::Section("hosts (tab 1)"),
