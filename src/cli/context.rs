@@ -9,10 +9,7 @@ use anyhow::{Context, Result};
 
 use crate::app::{resolve_pending_secret_for_managed, HostEntry};
 use crate::config::AppConfig;
-use crate::credentials::{
-    check_keyring_available, migrate_fallback_to_keyring, FilePasswordStore,
-    NamespacedPasswordStore, OsKeyring, PasswordStore,
-};
+use crate::credentials::{open_for_profile, PasswordStore};
 use crate::hosts::load_merged_hosts;
 use crate::metadata::MetadataDb;
 use crate::profile::ProfilePaths;
@@ -63,7 +60,7 @@ impl CliContext {
     /// touch a secret (`host list`, `completions`, ...) must not open it.
     pub fn password_store(&self) -> &dyn PasswordStore {
         self.password_store
-            .get_or_init(|| open_password_store(&self.profile))
+            .get_or_init(|| open_for_profile(&self.profile))
             .as_ref()
     }
 
@@ -134,19 +131,6 @@ impl CliContext {
         host: &ManagedHost,
     ) -> (Option<crate::session::PendingSecret>, String) {
         resolve_pending_secret_for_managed(host, self.password_store())
-    }
-}
-
-fn open_password_store(paths: &ProfilePaths) -> Box<dyn PasswordStore> {
-    let prefix = paths.credential_prefix();
-    if check_keyring_available() {
-        let _ = migrate_fallback_to_keyring(&paths.credentials_file());
-        Box::new(NamespacedPasswordStore::new(Box::new(OsKeyring), prefix))
-    } else {
-        Box::new(NamespacedPasswordStore::new(
-            Box::new(FilePasswordStore::new(paths.credentials_file())),
-            prefix,
-        ))
     }
 }
 

@@ -37,9 +37,19 @@ Switching happens in place (`apply_pending_profile` in `src/lib.rs` swaps in a f
 1. **Destination**: type to fuzzy-filter the other profiles, arrows move, Enter picks.
 2. **Scope**: `h` the host selected on the hosts tab, `g` the group selected in the group manager (open it with `Shift+G` first), `i` the selected identity, `t` the selected tunnel.
 3. **Group mode** (groups only): `g` group only (member hosts stay) or `w` group with its hosts.
-4. **Plan**: the planned items with renames and blocked reasons. `m` toggles copy/move (move deletes the originals after copying, then deletes the moved hosts' saved passwords and the moved identities' passphrases from the source profile's credential store; the result notice carries a WARNING if any could not be removed), `w` toggles with-hosts for a group, `y` applies; an empty plan refuses. `Esc` cancels at any step.
+4. **Plan**: the planned items with renames and blocked reasons. `m` toggles copy/move (move deletes the originals after copying and carries the moved hosts' saved passwords and the moved identities' passphrases into the destination profile's credential store, then removes them from the source; a copy carries no secrets; a host or identity whose secret could not be carried is not deleted from the source and a popup lists it; a secret that could not be removed from the source is reported too), `w` toggles with-hosts for a group, `y` applies; an empty plan refuses. `Esc` cancels at any step.
 
-Identities carry the key path only, never secrets; the reserved Favorites group cannot be transferred. The same engine ([cross-profile transfers](../architecture/profiles.md#cross-profile-transfers)) backs `sshub host|group|identity|tunnel transfer ... --to PROFILE` ([CLI](cli.md)).
+**Guided migration** (`m` at the scope step): five checklists, then the same plan review.
+
+1. **Hosts**: every host of the profile, nothing checked; `Space` toggles, `a` all, `n` none, `Enter` next (needs one host).
+2. **Groups** the chosen hosts belong to (Favorites excluded), all checked. A group lands flattened at top level with its defaults (username, port, ProxyJump, transport, agent forwarding); each chosen host is wired to it. An unchecked group stays behind and its hosts land without it. A move deletes a group from the source only when none of its hosts stays there; otherwise the source keeps it.
+3. **Tunnels** of the chosen hosts, all checked.
+4. **Identities** the chosen hosts use, plus the default identity of every chosen group, all checked. An unchecked identity stays behind and its host (or group) lands without one.
+5. **Audit logs**: the chosen hosts that have audit events, all checked. The events land under the host's destination name with their original timestamps; a move deletes them from the source (only for hosts it actually moved). Session log files are not copied, `log_path` keeps pointing at the source profile.
+
+A step with nothing to list is skipped. `b` goes back a step (from the plan review to the last step, from the first step to the scope pick); going back and forward again keeps the rows you unchecked (rows of hosts you dropped disappear). Hosts that land without an unchecked group or identity are listed in a `note:` line of the plan review. A ProxyJump naming a host that is not migrated dangles. A move leaves a tunnel you unchecked in the source without a host and with auto-connect off, and carries the moved hosts' saved passwords to the destination. The plan review lists `[audit] events of 'host'` rows; `m` copy/move and `y` work as above. Only checked rows travel (`TransferSelection::no_auto_carry`). The wizard names tunnels by `tunnel#<id>`, and the planner falls back to that handle whenever a label is shared with another tunnel, so a shared label never reaches a tunnel of an unchosen host.
+
+Identities carry the key path; saved passwords and passphrases travel only on a move; the reserved Favorites group cannot be transferred. The same engine ([cross-profile transfers](../architecture/profiles.md#cross-profile-transfers)) backs `sshub host|group|identity|tunnel transfer ... --to PROFILE` ([CLI](cli.md)).
 
 ## Themes
 

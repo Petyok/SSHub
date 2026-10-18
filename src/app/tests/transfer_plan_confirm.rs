@@ -34,6 +34,7 @@ fn sample_plan() -> TransferPlan {
                 blocked: Some("active session".into()),
             },
         ],
+        ..Default::default()
     }
 }
 
@@ -80,6 +81,7 @@ fn transfer_tui_group_only_vs_with_hosts_prompt() {
             renamed: false,
             blocked: None,
         }],
+        ..Default::default()
     };
     let with_hosts = TransferPlan {
         dest_profile: "work".into(),
@@ -106,6 +108,7 @@ fn transfer_tui_group_only_vs_with_hosts_prompt() {
                 blocked: None,
             },
         ],
+        ..Default::default()
     };
     let only_text = plan_text(&group_only);
     let with_text = plan_text(&with_hosts);
@@ -501,6 +504,7 @@ fn transfer_dialog_stays_inside_a_narrow_frame() {
                 blocked: Some("active session".into()),
             },
         ],
+        ..Default::default()
     };
     let pending = app.pending_transfer.as_mut().unwrap();
     pending.dest_name = Some("work".into());
@@ -666,6 +670,7 @@ fn transfer_confirm_on_empty_plan_refuses_with_notice() {
     pending.plan = Some(TransferPlan {
         dest_profile: "work".into(),
         items: Vec::new(),
+        ..Default::default()
     });
     app.handle_key(key_char('y')).unwrap();
     let pending = app
@@ -685,4 +690,321 @@ fn transfer_confirm_on_empty_plan_refuses_with_notice() {
         "refused plan stays staged for retry or Esc"
     );
     assert_eq!(app.mode, AppMode::ProfilePicker);
+}
+
+/// The guided migration end to end through real keys: destination, `m`, the
+/// five checklist steps, review, `y`. Source and destination are real
+/// `launcher.db` files, read back after the apply.
+#[test]
+fn guided_migration_moves_host_group_tunnel_identity_and_audit() {
+    use crate::store::{LauncherStore, NewHost, NewIdentity, NewTunnel, TunnelType};
+
+    let (dir, mut app) = manager_app(&["default", "work"]);
+    let work_db = dir.path().join("data/profiles/work/launcher.db");
+    std::fs::create_dir_all(work_db.parent().unwrap()).unwrap();
+    LauncherStore::open(&work_db).unwrap();
+
+    let src_db = app.profile.as_ref().unwrap().launcher_db();
+    let src = LauncherStore::open(&src_db).unwrap();
+    let identity = src
+        .create_identity(&NewIdentity {
+            name: "deploy".into(),
+            username: None,
+            private_key: None,
+            certificate: None,
+            sort_order: 0,
+            has_password: true,
+        })
+        .unwrap();
+    for (name, identity_id) in [("web", Some(identity.id)), ("db", None)] {
+        src.create_host(&NewHost {
+            identity_id,
+            // `web` has a saved password, `db` does not.
+            has_password: name == "web",
+            ..NewHost::launcher(name, "10.0.0.1")
+        })
+        .unwrap();
+    }
+    let web = src.get_host_by_name("web").unwrap().unwrap().id;
+    src.create_tunnel(&NewTunnel {
+        host_id: Some(web),
+        tunnel_type: TunnelType::Local,
+        local_port: 8080,
+        remote_host: "db".into(),
+        remote_port: 5432,
+        label: Some("pg".into()),
+        auto_connect: false,
+    })
+    .unwrap();
+    src.log_auth_event("web", None, "tui", "ok", "hello", None)
+        .unwrap();
+    src.log_auth_event("db", None, "tui", "ok", "stays", None)
+        .unwrap();
+    drop(src);
+    app.store = std::sync::Arc::new(LauncherStore::open(&src_db).unwrap());
+    // Saved secrets in the source; the destination store is a file in the
+    // temp profile, never the real OS keyring.
+    let secrets = std::sync::Arc::new(super::MemoryPasswordStore::default());
+    {
+        use crate::credentials::{host_key, identity_key, PasswordStore};
+        secrets.set(&host_key(web), "host-pw").unwrap();
+        secrets.set(&identity_key(identity.id), "key-pass").unwrap();
+    }
+    app.password_store = std::sync::Arc::new(super::SharedStore(secrets.clone()));
+    app.open_profile_secrets = |paths| {
+        Box::new(crate::credentials::NamespacedPasswordStore::new(
+            Box::new(crate::credentials::FilePasswordStore::new(
+                paths.credentials_file(),
+            )),
+            paths.credential_prefix(),
+        ))
+    };
+
+    app.handle_key(key_char('T')).unwrap();
+    for c in "work".chars() {
+        app.handle_key(key_char(c)).unwrap();
+    }
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    app.handle_key(key_char('m')).unwrap();
+    let lines = |app: &App| app.pending_transfer.as_ref().unwrap().dialog_lines();
+    assert!(
+        lines(&app)[0].contains("step 1/5: Hosts"),
+        "{:?}",
+        lines(&app)
+    );
+
+    // Enter with nothing checked is refused in place.
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert!(lines(&app).iter().any(|l| l.contains("at least one host")));
+    // Rows sort by name: db, web. Check `web`.
+    app.handle_key(key(KeyCode::Down)).unwrap();
+    app.handle_key(key_char(' ')).unwrap();
+    for step in [
+        "step 3/5: Tunnels",
+        "step 4/5: Identities",
+        "step 5/5: Audit",
+    ] {
+        app.handle_key(key(KeyCode::Enter)).unwrap();
+        assert!(lines(&app)[0].contains(step), "{:?}", lines(&app));
+    }
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    let review = lines(&app).join("\n");
+    for needle in [
+        "[host] 'web'",
+        "[tunnel] 'pg'",
+        "[identity] 'deploy'",
+        "[audit] events of 'web'",
+        "b: back",
+    ] {
+        assert!(review.contains(needle), "{needle} missing:\n{review}");
+    }
+    assert!(!review.contains("'db'"), "unchosen host planned:\n{review}");
+    assert!(buffer_contains(
+        &render_to_buffer(&app, 100, 30),
+        "[audit] events of"
+    ));
+
+    // Move, then confirm.
+    app.handle_key(key_char('m')).unwrap();
+    app.handle_key(key_char('y')).unwrap();
+    assert!(app.pending_transfer.is_none(), "applied and closed");
+
+    let dest = LauncherStore::open(&work_db).unwrap();
+    let dest_host = dest.get_host_by_name("web").unwrap().expect("moved host");
+    let dest_identity = dest.get_identity_by_name("deploy").unwrap().unwrap();
+    assert!(dest_host.has_password && dest_identity.has_password);
+    {
+        // The secrets followed the rows (under the destination's new ids)
+        // and are gone from the source store.
+        use crate::credentials::{host_key, identity_key, PasswordStore};
+        let dest_secrets = (app.open_profile_secrets)(&app.transfer_dest_paths("work").unwrap());
+        assert_eq!(
+            dest_secrets
+                .get(&host_key(dest_host.id))
+                .unwrap()
+                .as_deref(),
+            Some("host-pw")
+        );
+        assert_eq!(
+            dest_secrets
+                .get(&identity_key(dest_identity.id))
+                .unwrap()
+                .as_deref(),
+            Some("key-pass")
+        );
+        assert_eq!(secrets.get(&host_key(web)).unwrap(), None);
+        assert_eq!(secrets.get(&identity_key(identity.id)).unwrap(), None);
+    }
+    assert_eq!(dest.list_tunnels().unwrap().len(), 1);
+    assert_eq!(dest.list_auth_events_for_host("web").unwrap().len(), 1);
+    let src = LauncherStore::open(&src_db).unwrap();
+    assert!(src.get_host_by_name("web").unwrap().is_none());
+    assert!(src.list_auth_events_for_host("web").unwrap().is_empty());
+    assert_eq!(src.list_auth_events_for_host("db").unwrap().len(), 1);
+}
+
+#[test]
+fn guided_migration_back_returns_from_review_to_the_last_step() {
+    use crate::store::{LauncherStore, NewHost};
+
+    let (dir, mut app) = manager_app(&["default", "work"]);
+    let work_db = dir.path().join("data/profiles/work/launcher.db");
+    std::fs::create_dir_all(work_db.parent().unwrap()).unwrap();
+    LauncherStore::open(&work_db).unwrap();
+    let src_db = app.profile.as_ref().unwrap().launcher_db();
+    let src = LauncherStore::open(&src_db).unwrap();
+    src.create_host(&NewHost::launcher("web", "10.0.0.1"))
+        .unwrap();
+    drop(src);
+    app.store = std::sync::Arc::new(LauncherStore::open(&src_db).unwrap());
+
+    app.handle_key(key_char('T')).unwrap();
+    app.handle_key(key(KeyCode::Enter)).unwrap(); // only candidate: work
+    app.handle_key(key_char('m')).unwrap();
+    app.handle_key(key_char(' ')).unwrap();
+    app.handle_key(key(KeyCode::Enter)).unwrap(); // no dependents: review
+    let pending = app.pending_transfer.as_ref().unwrap();
+    assert!(matches!(pending.scope, Some(TransferScope::Migration(_))));
+    app.handle_key(key_char('b')).unwrap();
+    let pending = app.pending_transfer.as_ref().unwrap();
+    assert!(pending.scope.is_none() && pending.plan.is_none());
+    assert!(pending.dialog_lines()[0].contains("step 1/5: Hosts"));
+    // `b` on the first step leaves the wizard for the scope picker.
+    app.handle_key(key_char('b')).unwrap();
+    let pending = app.pending_transfer.as_ref().unwrap();
+    assert!(pending.wizard.is_none());
+    assert!(pending.dialog_lines()[0].contains("Transfer what to"));
+}
+
+/// A big migration must keep its summary and the move/copy and `y` hints on
+/// screen: the popup drops overflow from the bottom.
+#[test]
+fn long_plan_keeps_summary_and_hints_visible() {
+    use crate::store::transfer::PlannedItem;
+
+    let (_dir, mut app) = manager_app(&["default", "work"]);
+    app.handle_key(key_char('T')).unwrap();
+    let pending = app.pending_transfer.as_mut().unwrap();
+    pending.dest_name = Some("work".into());
+    pending.scope = Some(TransferScope::Host("h0".into()));
+    pending.plan = Some(TransferPlan {
+        dest_profile: "work".into(),
+        items: (0..40)
+            .map(|i| PlannedItem {
+                kind: "host",
+                src_name: format!("h{i}"),
+                dest_name: format!("h{i}"),
+                renamed: false,
+                blocked: None,
+            })
+            .collect(),
+        ..Default::default()
+    });
+    let lines = pending.dialog_lines();
+    assert!(lines.len() <= 18, "{} lines", lines.len());
+    let text = lines.join("\n");
+    for needle in [
+        "30 more item(s)",
+        "40 to transfer",
+        "y: transfer",
+        "move/copy",
+    ] {
+        assert!(text.contains(needle), "{needle} missing:\n{text}");
+    }
+    let buffer = render_to_buffer(&app, 80, 24);
+    assert!(buffer_contains(&buffer, "y: transfer"));
+    assert!(buffer_contains(&buffer, "move/copy"));
+}
+
+#[test]
+fn backspace_on_the_first_wizard_step_does_not_drop_the_selection() {
+    use crate::store::{LauncherStore, NewHost};
+
+    let (dir, mut app) = manager_app(&["default", "work"]);
+    let work_db = dir.path().join("data/profiles/work/launcher.db");
+    std::fs::create_dir_all(work_db.parent().unwrap()).unwrap();
+    LauncherStore::open(&work_db).unwrap();
+    app.store
+        .create_host(&NewHost::launcher("web", "10.0.0.1"))
+        .unwrap();
+    app.handle_key(key_char('T')).unwrap();
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    app.handle_key(key_char('m')).unwrap();
+    app.handle_key(key_char(' ')).unwrap();
+    app.handle_key(key(KeyCode::Backspace)).unwrap();
+    app.handle_key(key(KeyCode::Left)).unwrap();
+    let pending = app.pending_transfer.as_ref().unwrap();
+    assert!(pending.wizard.is_some());
+    assert!(pending.dialog_lines().iter().any(|l| l.contains("[x] web")));
+}
+
+/// A move whose secret cannot be written to the destination must not lose it:
+/// the host stays in the source, the user is told in the popup, and a retry
+/// is possible.
+#[test]
+fn guided_move_with_a_locked_destination_keeps_the_host_and_warns_in_a_popup() {
+    use crate::store::{LauncherStore, NewHost};
+
+    let (dir, mut app) = manager_app(&["default", "work"]);
+    let work_db = dir.path().join("data/profiles/work/launcher.db");
+    std::fs::create_dir_all(work_db.parent().unwrap()).unwrap();
+    LauncherStore::open(&work_db).unwrap();
+    let src_db = app.profile.as_ref().unwrap().launcher_db();
+    let src = LauncherStore::open(&src_db).unwrap();
+    let web = src
+        .create_host(&NewHost {
+            has_password: true,
+            ..NewHost::launcher("web", "10.0.0.1")
+        })
+        .unwrap()
+        .id;
+    drop(src);
+    app.store = std::sync::Arc::new(LauncherStore::open(&src_db).unwrap());
+    let secrets = std::sync::Arc::new(super::MemoryPasswordStore::default());
+    {
+        use crate::credentials::{host_key, PasswordStore};
+        secrets.set(&host_key(web), "host-pw").unwrap();
+    }
+    app.password_store = std::sync::Arc::new(super::SharedStore(secrets.clone()));
+    // A destination store that refuses every write.
+    struct Locked;
+    impl crate::credentials::PasswordStore for Locked {
+        fn get(&self, _: &str) -> anyhow::Result<Option<String>> {
+            Ok(None)
+        }
+        fn set(&self, _: &str, _: &str) -> anyhow::Result<()> {
+            anyhow::bail!("keyring locked")
+        }
+        fn delete(&self, _: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+    app.open_profile_secrets = |_| Box::new(Locked);
+
+    app.handle_key(key_char('T')).unwrap();
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    app.handle_key(key_char('m')).unwrap();
+    app.handle_key(key_char(' ')).unwrap();
+    app.handle_key(key(KeyCode::Enter)).unwrap(); // review (no dependents)
+    app.handle_key(key_char('m')).unwrap(); // move
+    app.handle_key(key_char('y')).unwrap();
+
+    assert_eq!(app.mode, AppMode::Notice, "warning goes to the popup");
+    let popup = app.notice_popup.clone().expect("popup text");
+    assert!(
+        popup.contains("finished with warnings") && popup.contains("web"),
+        "{popup}"
+    );
+    assert!(!popup.contains("host-pw"), "secret leaked into the popup");
+    // Retry is possible: the source host and its secret are intact, and the
+    // destination holds no half-moved copy that a retry would duplicate.
+    let src = LauncherStore::open(&src_db).unwrap();
+    assert!(src.get_host_by_name("web").unwrap().is_some());
+    let dest = LauncherStore::open(&work_db).unwrap();
+    assert!(dest.get_host_by_name("web").unwrap().is_none());
+    use crate::credentials::{host_key, PasswordStore};
+    assert_eq!(
+        secrets.get(&host_key(web)).unwrap().as_deref(),
+        Some("host-pw")
+    );
 }

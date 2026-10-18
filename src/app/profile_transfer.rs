@@ -14,8 +14,8 @@ use nucleo::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo::{Config, Matcher, Utf32Str};
 
 use crate::store::transfer::{
-    apply_transfer_plan, build_transfer_plan, DestIndex, GroupTransferMode, TransferMode,
-    TransferPlan, TransferSelection, TransferSnapshot,
+    apply_transfer_plan_with_secrets, build_transfer_plan, DestIndex, GroupTransferMode,
+    SecretStores, TransferMode, TransferPlan, TransferSelection, TransferSnapshot,
 };
 use crate::store::LauncherStore;
 
@@ -25,9 +25,14 @@ use crate::store::LauncherStore;
 #[derive(Debug, Clone)]
 pub enum TransferScope {
     Host(String),
-    Group { name: String, with_hosts: bool },
+    Group {
+        name: String,
+        with_hosts: bool,
+    },
     Identity(String),
     Tunnel(String),
+    /// Guided migration: the checked rows of the wizard steps.
+    Migration(TransferSelection),
 }
 
 impl TransferScope {
@@ -37,6 +42,7 @@ impl TransferScope {
             TransferScope::Group { .. } => "group",
             TransferScope::Identity(_) => "identity",
             TransferScope::Tunnel(_) => "tunnel",
+            TransferScope::Migration(_) => "migration",
         }
     }
 
@@ -46,6 +52,7 @@ impl TransferScope {
             | TransferScope::Group { name, .. }
             | TransferScope::Identity(name)
             | TransferScope::Tunnel(name) => name,
+            TransferScope::Migration(_) => "guided migration",
         }
     }
 
@@ -56,6 +63,7 @@ impl TransferScope {
             TransferScope::Group { name, .. } => selection.group_names.push(name.clone()),
             TransferScope::Identity(name) => selection.identity_names.push(name.clone()),
             TransferScope::Tunnel(name) => selection.tunnel_names.push(name.clone()),
+            TransferScope::Migration(chosen) => selection = chosen.clone(),
         }
         selection
     }
@@ -79,7 +87,11 @@ pub fn plan_text(plan: &TransferPlan) -> String {
         out.push_str("\n  (nothing selected)");
     }
     for item in &plan.items {
-        let mut line = format!("  [{}] '{}'", item.kind, item.src_name);
+        let mut line = if item.kind == "audit" {
+            format!("  [audit] events of '{}'", item.src_name)
+        } else {
+            format!("  [{}] '{}'", item.kind, item.src_name)
+        };
         if item.dest_name != item.src_name {
             line.push_str(&format!(" -> '{}'", item.dest_name));
         }
@@ -92,10 +104,11 @@ pub fn plan_text(plan: &TransferPlan) -> String {
         out.push('\n');
         out.push_str(&line);
     }
+    // Audit rows ride with their host (blocked together): not extra items.
     out.push_str(&format!(
         "\n{} to transfer, {} blocked — y: transfer    Esc: cancel",
-        plan.runnable().len(),
-        plan.blocked().len()
+        plan.runnable().iter().filter(|i| i.kind != "audit").count(),
+        plan.blocked().iter().filter(|i| i.kind != "audit").count()
     ));
     out
 }
@@ -152,6 +165,10 @@ pub struct PendingTransfer {
     /// line until the next key clears it. Kept off the picker message line so
     /// long transfer text can never overflow the picker's bounds.
     pub notice: Option<String>,
+    /// Guided migration steps (`m` at the scope pick). `Some` while its
+    /// checklists are open or being revisited; the plan review follows once
+    /// `scope` is set to [`TransferScope::Migration`].
+    pub wizard: Option<super::profile_migration::MigrationWizard>,
 }
 
 /// Fuzzy-rank profile names against `query`, returning indices into `names`
@@ -193,6 +210,9 @@ pub(crate) fn rank_profile_names(names: &[String], query: &str) -> Vec<usize> {
 /// compact on tall terminals too.
 const DEST_PICKER_ROWS: usize = 6;
 
+/// Plan item rows the dialog shows before folding the rest into a count.
+const PLAN_ROWS: usize = 10;
+
 impl PendingTransfer {
     fn new() -> Self {
         Self {
@@ -206,6 +226,7 @@ impl PendingTransfer {
             is_move: false,
             plan: None,
             dialog: None,
+            wizard: None,
             notice: None,
         }
     }
@@ -280,9 +301,15 @@ impl PendingTransfer {
                 lines.push("type to filter · ↑↓ select · Enter choose · Esc cancel".to_string());
                 lines
             }
+            (Some(dest), None, _) if self.wizard.is_some() => self
+                .wizard
+                .as_ref()
+                .map(|wizard| wizard.lines(dest))
+                .unwrap_or_default(),
             (Some(dest), None, _) => vec![
                 format!("Transfer what to '{dest}'?"),
                 "h host · g group · i identity · t tunnel".to_string(),
+                "m migrate in steps: hosts → groups → tunnels → identities → audit".to_string(),
                 "Esc cancel".to_string(),
             ],
             (Some(_), Some(TransferScope::Group { name, .. }), None) => vec![
@@ -291,10 +318,42 @@ impl PendingTransfer {
             ],
             (Some(_), Some(_), Some(plan)) => {
                 let mut lines: Vec<String> = plan_text(plan).lines().map(str::to_string).collect();
+                // The popup cannot scroll and drops overflow from the bottom,
+                // which would hide the summary, move/copy and `y` hints of a
+                // big migration. Keep header and summary, fold the item rows,
+                // blocked and renamed ones first so they are never the hidden.
+                if lines.len() > PLAN_ROWS + 2 {
+                    let summary = lines.pop().unwrap_or_default();
+                    let header = lines.remove(0);
+                    let important =
+                        |l: &String| l.contains(" — blocked: ") || l.contains("(renamed: ");
+                    let (mut items, rest): (Vec<String>, Vec<String>) =
+                        lines.into_iter().partition(important);
+                    items.extend(rest);
+                    let hidden = items.len().saturating_sub(PLAN_ROWS);
+                    items.truncate(PLAN_ROWS);
+                    lines = vec![header];
+                    lines.extend(items);
+                    if hidden > 0 {
+                        lines.push(format!("  … {hidden} more item(s)"));
+                    }
+                    lines.push(summary);
+                }
+                if matches!(self.scope, Some(TransferScope::Migration(_))) {
+                    if let Some(wizard) = &self.wizard {
+                        lines.extend(wizard.losses());
+                    }
+                }
                 lines.push(format!(
                     "m: toggle move/copy (now {})",
                     if self.is_move { "move" } else { "copy" }
                 ));
+                if self.is_move && matches!(self.scope, Some(TransferScope::Migration(_))) {
+                    lines.push("move carries saved passwords to the destination".to_string());
+                }
+                if matches!(self.scope, Some(TransferScope::Migration(_))) {
+                    lines.push("b: back to the steps".to_string());
+                }
                 lines
             }
             (Some(_), Some(_), None) => vec!["building plan…".to_string()],
@@ -518,7 +577,11 @@ impl crate::app::App {
     /// (plan, dialog, scope) intact so the user can retry or cancel instead
     /// of landing on a stranded scope with no plan. Only a successful apply
     /// clears the flow.
-    pub(crate) fn apply_pending_transfer(&mut self) -> Result<()> {
+    ///
+    /// Returns the warnings the user must read (secrets that could not be
+    /// carried or removed): the dashboard toast drops long text, so the caller
+    /// shows them in the modal notice popup.
+    pub(crate) fn apply_pending_transfer(&mut self) -> Result<Option<String>> {
         let (dest_name, dest_db, is_move, plan) = match self.pending_transfer.as_ref() {
             Some(pending) => (
                 pending.dest_name.clone().unwrap_or_default(),
@@ -542,33 +605,91 @@ impl crate::app::App {
         } else {
             TransferMode::Copy
         };
+        // Resolved before the apply: a failure here must not strike after the
+        // destination has committed. A copy opens no credential store.
+        let carries_secrets = is_move
+            && plan
+                .runnable()
+                .iter()
+                .any(|item| matches!(item.kind, "host" | "identity"));
+        let dest_secrets = if carries_secrets {
+            Some((self.open_profile_secrets)(
+                &self.transfer_dest_paths(&dest_name)?,
+            ))
+        } else {
+            None
+        };
         // Engine failures (rolled-back destination, untouched source) leave
         // `pending_transfer` in place via `?` above: the plan survives.
-        let result = apply_transfer_plan(&mut src_store, &mut dest_store, &plan, mode)?;
-        self.reload_hosts()?;
-        self.reload_identities()?;
-        self.reload_tunnels()?;
-        self.load_groups()?;
+        let result = apply_transfer_plan_with_secrets(
+            &mut src_store,
+            &mut dest_store,
+            &plan,
+            mode,
+            dest_secrets.as_deref().map(|dest| SecretStores {
+                src: self.password_store.as_ref(),
+                dest,
+            }),
+        )?;
+        // Committed: the plan must never be re-applied (a retry would
+        // duplicate every row), whatever the follow-up steps do.
+        self.pending_transfer = None;
         let mut notice = format!(
             "Transferred {} item(s) to '{dest_name}'",
             result.transferred
         );
+        if result.audit_events > 0 {
+            notice.push_str(&format!(" + {} audit event(s)", result.audit_events));
+        }
         if !result.renamed.is_empty() {
             notice.push_str(&format!(" (renamed: {})", result.renamed.join(", ")));
         }
         if !result.blocked.is_empty() {
             notice.push_str(&format!(" (blocked: {})", result.blocked.join(", ")));
         }
-        let purge_failures = result.purge_source_secrets(self.password_store.as_ref());
-        if !purge_failures.is_empty() {
-            notice.push_str(&format!(
-                " WARNING: {}",
-                crate::store::transfer::secret_purge_warning(&purge_failures)
+        let mut warnings: Vec<String> = Vec::new();
+        if !result.carry_failures.is_empty() {
+            warnings.push(crate::store::transfer::secret_carry_warning(
+                &result.carry_failures,
+                &result.kept_in_source,
             ));
         }
-        self.host_notice = Some(notice);
+        let purge_failures = result.purge_source_secrets(self.password_store.as_ref());
+        if !purge_failures.is_empty() {
+            warnings.push(crate::store::transfer::secret_purge_warning(
+                &purge_failures,
+            ));
+        }
+        let reloaded = self
+            .reload_hosts()
+            .and_then(|_| self.reload_identities())
+            .and_then(|_| self.reload_tunnels())
+            .and_then(|_| self.load_groups());
+        if let Err(error) = reloaded {
+            warnings.push(format!("the lists could not be reloaded: {error:#}"));
+        }
+        self.host_notice = Some(notice.clone());
         self.host_notice_at = Some(std::time::Instant::now());
-        self.pending_transfer = None;
-        Ok(())
+        Ok((!warnings.is_empty()).then(|| {
+            format!(
+                "Transfer finished with warnings\n\n{notice}\n\n{}",
+                warnings.join("\n")
+            )
+        }))
+    }
+
+    /// Paths of the destination profile, for its credential store.
+    pub(crate) fn transfer_dest_paths(&self, name: &str) -> Result<crate::profile::ProfilePaths> {
+        let roots = self
+            .profile_roots()
+            .context("profile management is unavailable in compatibility mode")?;
+        let state = crate::profile::ProfileState::load(&roots.data_root)?
+            .context("profile registry is missing")?;
+        let record = state
+            .by_name(name)
+            .with_context(|| format!("no profile named '{name}'"))?
+            .clone();
+        let ssh_config = crate::profile::ssh_config_path_for_profile(&roots, &record)?;
+        Ok(crate::profile::profile_paths(&roots, &record, ssh_config))
     }
 }

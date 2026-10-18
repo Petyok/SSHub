@@ -6,27 +6,25 @@
 [![npm downloads](https://img.shields.io/npm/dm/sshub-tui.svg?label=npm%20downloads%2Fmonth)](https://www.npmjs.com/package/sshub-tui)
 [![vibecoded](https://img.shields.io/badge/vibecoded-~98.5%25-ff69b4)](#model-credits)
 
+```bash
+npm install -g sshub-tui
+```
+
+Then run `sshub`. Other install methods: [Install](#install).
+
 A terminal UI for managing and connecting to SSH hosts. Combines your `~/.ssh/config` with a built-in host database, tunnels, key management, and an audit log -- all in one keyboard-driven interface.
 
 > ⚠️ This project is ~98.5% vibe-coded slop — see [Model credits](#model-credits) for the ever-growing pack of LLMs responsible — the other ~1.5% is real humans (see Contributors). It has — and will keep having — stupid bugs LLMs can't see. Use at your own risk.
 
 ![SSHub demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/hero.gif)
 
-Navigating the dashboard: nested host groups, the fuzzy palette (`/`), the group manager (`Shift+G`), and the multi-tag filter (`#`):
-
-![Navigation demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/navigate.gif)
-
 Connecting to a host: the session runs in an embedded PTY right inside the TUI. `Ctrl+D` detaches, `Ctrl+T` opens a second session tab, and `Alt+S` finds a running session by name:
 
 ![Connect demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/connect.gif)
 
-Inside a session: a command you ran comes back as a dim inline suggestion (`Tab` takes it), and `Ctrl+N` opens the snippet library (`Enter` runs a snippet, `Tab` types it for editing first):
+The jump-host map (tab `6`): hops as a tree, hosts as status glyphs behind their last hop. `B` shows a hop's blast radius, `/` filters by route (`via:`, `group:`, `tag:`):
 
-![Snippets and suggestions demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/snippets.gif)
-
-Adding a managed host: address, password, username, label, two groups and tags, saved with `Ctrl+S`:
-
-![Add host demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/add-host.gif)
+![Map demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/map.gif)
 
 Transferring files over SFTP: a dual-pane browser (local / remote) with a staged transfer queue, plus chmod, new folder and delete in place:
 
@@ -36,35 +34,17 @@ Broadcast (`b`): one command on every host of a group or tag, with a preview of 
 
 ![Broadcast demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/broadcast.gif)
 
-Themes: Settings (`Ctrl+H`), then `Theme...`. Every step in the picker previews that theme on the whole interface; `Enter` keeps it, `Esc` puts the old one back:
-
-![Themes demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/themes.gif)
-
 ## Screenshots
 
 The hosts dashboard: nested groups on the left; the selected host's card shows its auto-detected OS logo, fact sheet, and per-host latency, with live agent / ping panels alongside:
 
 ![Hosts dashboard](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/hosts.png)
 
-Fuzzy quick-connect palette (`/`) and the multi-tag filter (`#`):
+The jump-host map, the add/edit host form, and the theme picker (Settings, `Ctrl+H`, then `Theme...`):
 
-![Quick-connect palette](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/palette.png)
-![Tag filter](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/tags.png)
-
-Add/edit host form, the rebindable keybindings editor (`Ctrl+K`), and the scrollable help overlay (`?`):
-
+![Jump-host map](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/map.png)
 ![Add host form](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/add-host.png)
-![Keybindings editor](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/keybindings.png)
-![Help overlay](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/help.png)
-
-The settings overlay (`Ctrl+H`): the theme, transparency for SSHub's own surfaces or the remote grid, ping, the update check, profiles, OS logos, quit confirmation, the startup animation and session command history:
-
-![Settings overlay](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/settings.png)
-
-The theme picker, with its detail preview next to the list, and the known hosts manager (`H` on the identities tab):
-
 ![Theme picker](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/theme-picker.png)
-![Known hosts manager](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/known-hosts.png)
 
 ## Features
 
@@ -106,7 +86,7 @@ The theme picker, with its detail preview next to the list, and the known hosts 
 - **Import/Export**: import from `~/.ssh/config`, Termius backups, PuTTY (a Windows regedit `.reg` export or a Unix `~/.putty/sessions` directory), or mRemoteNG (`confCons.xml`); export managed hosts back to ssh config format (the export stops with an error naming the host if a name, address, user or ProxyJump could not be written safely). Only SSH sessions are imported (RDP/VNC/telnet entries are skipped), and encrypted mRemoteNG passwords are not decrypted (imported hosts carry no stored secret)
 - **Hot reload** — edits to `~/.ssh/config` update the host list live via file watcher
 - **Configurable keybindings**: rebind any action via `Ctrl+K`; stored in `config.toml` under `[keybinds]`
-- **Profiles**: isolated workspaces, each with its own databases, config, themes, logs and keyring namespace (see [Usage](#usage)). In the profile manager (`Alt+P`), `t` transfers a host, group, identity or tunnel to another profile; headless, `sshub host|group|identity|tunnel transfer --to PROFILE` does the same
+- **Profiles**: isolated workspaces, each with its own databases, config, themes, logs and keyring namespace (see [Usage](#usage)). In the profile manager (`Alt+P`), `t` transfers a host, group, identity or tunnel to another profile, or `m` after the destination walks through hosts, their groups, tunnels, identities and audit logs step by step; headless, `sshub host|group|identity|tunnel transfer --to PROFILE` does the same for one entity
 - **Update notice** (`Shift+U`): on start SSHub asks GitHub for the latest release, and a newer one shows next to the version in the tab bar. `Shift+U` on the hosts tab installs it the way SSHub was installed (`npm install -g sshub-tui@<version>`, `cargo install sshub --version <version>`, or, for a release tarball, an in-place swap of the binary after checking it runs), then asks you to restart. While it installs, quitting always asks first. With no update known, `Shift+U` checks on demand. Needs `curl` (and `tar` for the tarball swap); `Check for updates` in Settings (`Ctrl+H`), or `[updates] check = false`, turns the start-up check off.
 - **Mouse support**: click tabs, rows and hosts-tab panels, scroll lists, double-click to connect, start a tunnel or open an SFTP folder; on the SFTP tab a click picks a host or a pane's entry; in forms, dialogs and pickers a click focuses the field (cursor where you clicked) or highlights the row; a drag anywhere selects text and copies it on release
 

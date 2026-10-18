@@ -271,12 +271,26 @@ impl App {
             }
             return Ok(());
         }
+        let wizard_open = self
+            .pending_transfer
+            .as_ref()
+            .is_some_and(|pending| pending.wizard.is_some() && pending.scope.is_none());
+        if wizard_open {
+            return self.handle_key_migration_wizard(key);
+        }
         let scope_missing = self
             .pending_transfer
             .as_ref()
             .is_some_and(|pending| pending.scope.is_none());
         if scope_missing {
             let scope = match key.code {
+                KeyCode::Char('m') => {
+                    match self.start_migration_wizard() {
+                        Ok(()) => self.show_transfer_status(),
+                        Err(error) => self.show_transfer_error(error),
+                    }
+                    return Ok(());
+                }
                 KeyCode::Char('h') => self
                     .transfer_host_name()
                     .context("no host selected on the dashboard")
@@ -361,11 +375,32 @@ impl App {
                         .is_some_and(needs_explicit_confirm);
                     if !confirmed {
                         self.show_transfer_status();
-                    } else if let Err(error) = self.apply_pending_transfer() {
-                        self.show_transfer_error(error);
                     } else {
-                        self.close_profile_manager();
+                        match self.apply_pending_transfer() {
+                            Err(error) => self.show_transfer_error(error),
+                            Ok(warning) => {
+                                self.close_profile_manager();
+                                if let Some(text) = warning {
+                                    // After closing: that resets `mode`.
+                                    self.notice_popup = Some(text);
+                                    self.mode = AppMode::Notice;
+                                }
+                            }
+                        }
                     }
+                }
+            }
+            KeyCode::Char('b')
+                if self.pending_transfer.as_ref().is_some_and(|pending| {
+                    matches!(pending.scope, Some(TransferScope::Migration(_)))
+                }) =>
+            {
+                // Back to the wizard's last step; its checklists are intact.
+                if let Some(pending) = self.pending_transfer.as_mut() {
+                    pending.scope = None;
+                    pending.plan = None;
+                    pending.dialog = None;
+                    pending.notice = None;
                 }
             }
             KeyCode::Char('m') => {

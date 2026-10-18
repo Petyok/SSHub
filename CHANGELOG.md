@@ -4,6 +4,36 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Guided profile migration** - in the profile manager, `t`, pick the destination,
+  then `m` walks through five checklists: hosts, the groups of those hosts, their
+  tunnels, the identities they (and the groups) use, and their audit logs. Only
+  checked rows travel; a step with nothing to list is skipped, `b` steps back.
+  Audit events keep their timestamps and land under the host's name in the
+  destination (a move deletes them from the source). A guided move keeps a group
+  in the source while a host that is not moving still belongs to it.
+
+### Fixed
+
+- **Moving hosts to another profile now keeps their saved passwords** - a move
+  carries each moved host's password and each moved identity's passphrase into
+  the destination profile's keyring (the new rows are flagged as having one),
+  and only then removes them from the source. A secret that cannot be written
+  to the destination is not moved at all: the host or identity stays in the
+  source (a host's destination copy is removed again) and a popup or a warning
+  lists it, so the move can be repeated. `sshub ... transfer --move` then exits 1. Copies still carry no
+  secrets. Applies to the profile manager, the guided migration and
+  `sshub host|group|identity transfer --move`.
+  A tunnel transferred without its host now lands with auto-connect off.
+
+### Changed
+
+- **README media trimmed to what matters** - five GIFs (hero, connect, map,
+  SFTP, broadcast) and four screenshots (hosts, map, add host, theme picker)
+  instead of eight and ten, with a new map GIF and screenshot. The demo hosts
+  now route Databases and Quad9 through jump hosts so the map has a tree to show.
+
 ## [0.19.0] - 2026-10-17
 
 ### Added

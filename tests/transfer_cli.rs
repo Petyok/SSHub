@@ -33,6 +33,7 @@ fn sample_plan() -> TransferPlan {
             },
         ],
         dest_profile: "other".to_string(),
+        ..Default::default()
     }
 }
 
@@ -44,6 +45,7 @@ fn transfer_cli_plan_confirm_requires_explicit_yes() {
     let empty = TransferPlan {
         items: Vec::new(),
         dest_profile: "other".to_string(),
+        ..Default::default()
     };
     assert!(needs_confirm(&empty));
     // A plan with only blocked items demands it too: the gate does not depend
@@ -59,6 +61,7 @@ fn transfer_cli_plan_confirm_requires_explicit_yes() {
             blocked: Some("tunnel running".to_string()),
         }],
         dest_profile: "other".to_string(),
+        ..Default::default()
     };
     assert!(needs_confirm(&blocked_only));
 }

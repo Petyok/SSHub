@@ -618,6 +618,42 @@ impl LauncherStore {
         })
     }
 
+    /// Audit event count per host name (hosts without events are absent).
+    pub fn auth_event_counts(&self) -> Result<std::collections::HashMap<String, usize>> {
+        self.with_conn(|conn| {
+            let mut stmt =
+                conn.prepare("SELECT host_name, COUNT(*) FROM auth_events GROUP BY host_name")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as usize))
+            })?;
+            rows.collect::<rusqlite::Result<_>>().map_err(Into::into)
+        })
+    }
+
+    /// Every audit event of one host, oldest first (insertion order).
+    pub fn list_auth_events_for_host(&self, host_name: &str) -> Result<Vec<AuthEvent>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, host_name, username, via, status, note, log_path, created_at
+                 FROM auth_events WHERE host_name = ?1 ORDER BY id ASC",
+            )?;
+            let rows = stmt.query_map(params![host_name], |row| {
+                Ok(AuthEvent {
+                    id: row.get(0)?,
+                    host_name: row.get(1)?,
+                    username: row.get(2)?,
+                    via: row.get(3)?,
+                    status: row.get(4)?,
+                    note: row.get(5)?,
+                    log_path: row.get(6)?,
+                    created_at: row.get(7)?,
+                })
+            })?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(Into::into)
+        })
+    }
+
     pub fn list_auth_events(&self, limit: usize) -> Result<Vec<AuthEvent>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
@@ -853,6 +889,55 @@ pub(super) fn create_group_on(
         parent_id: group.parent_id,
         reserved: false,
     })
+}
+
+/// Connection-level audit event insert under `host_name`, keeping the original
+/// timestamp (caller holds the transaction). Used by profile transfers.
+pub(super) fn insert_auth_event_on(
+    conn: &rusqlite::Connection,
+    host_name: &str,
+    event: &AuthEvent,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO auth_events (host_name, username, via, status, note, log_path, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            host_name,
+            event.username,
+            event.via,
+            event.status,
+            event.note,
+            event.log_path,
+            event.created_at
+        ],
+    )?;
+    Ok(())
+}
+
+/// Connection-level delete of one host's audit events (caller holds the
+/// transaction). Used by the move phase of a profile transfer.
+pub(super) fn delete_auth_events_for_host_on(
+    conn: &rusqlite::Connection,
+    host_name: &str,
+) -> Result<()> {
+    conn.execute(
+        "DELETE FROM auth_events WHERE host_name = ?1",
+        params![host_name],
+    )?;
+    Ok(())
+}
+
+/// Delete one host's audit events with an id above `floor`, returning how many
+/// went: only what a transfer inserted, never older rows under the same name.
+pub(super) fn delete_auth_events_since_on(
+    conn: &rusqlite::Connection,
+    host_name: &str,
+    floor: i64,
+) -> Result<usize> {
+    Ok(conn.execute(
+        "DELETE FROM auth_events WHERE host_name = ?1 AND id > ?2",
+        params![host_name, floor],
+    )?)
 }
 
 /// Connection-level host insert + reload (caller holds the transaction).
