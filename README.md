@@ -167,9 +167,24 @@ environment.systemPackages = [
 ];
 ```
 
-The flake follows the default branch (`main`), so it tracks releases, and it pins
-nixos-unstable: overriding that with `inputs.sshub.inputs.nixpkgs.follows` to an older
-channel can fail on an older Rust toolchain. The package links nixpkgs' OpenSSL, puts
+Prebuilt binaries come from the [sshub.cachix.org](https://sshub.cachix.org) cache, so
+nothing is compiled. The flake declares it, and Nix asks whether to trust it the first
+time (answer `y`, or pass `--accept-flake-config`). On a multi-user install a user who is
+not in `trusted-users` has the flake's cache ignored: add it to `trusted-substituters`
+(with the key below in `trusted-public-keys`) or add the user to `trusted-users`. On
+NixOS, set it system-wide instead:
+
+```nix
+nix.settings.substituters = [ "https://sshub.cachix.org" ];
+nix.settings.trusted-public-keys = [
+  "sshub.cachix.org-1:yniNe6K3gkRhTgoJL6Rh2Kvqjfaw7ZjTYEFTwIpYjKA="
+];
+```
+
+The cache holds the build for the nixpkgs this flake pins. Overriding that with
+`inputs.sshub.inputs.nixpkgs.follows` changes the store path, so Nix compiles locally,
+and an older channel can also fail on an older Rust toolchain. The flake follows the
+default branch (`main`), so it tracks releases. The package links nixpkgs' OpenSSL, puts
 `openssh` on the end of `PATH` (your own `ssh` still wins), and installs the man page,
 icon and desktop entry. Shell completions are not packaged: they embed your host names,
 so generate them yourself as described under [Headless CLI](#headless-cli)
