@@ -35,6 +35,114 @@ pub fn parent_of(path: &std::path::Path) -> Option<PathBuf> {
     }
 }
 
+/// Lexical path cleanup, like `cd -L`: `.` components vanish and `..` cancels
+/// the normal component before it. A `..` with nothing to cancel stays on a
+/// relative path (the remote pane starts on `.`, so it can legitimately sit
+/// above where it began) and is dropped at the root. Never touches the
+/// filesystem, so symlinks are not resolved. An empty relative result is `.`.
+pub fn normalize_lexical(path: &std::path::Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => match out.components().next_back() {
+                Some(Component::Normal(_)) => {
+                    out.pop();
+                }
+                Some(Component::RootDir) => {}
+                _ => out.push(".."),
+            },
+            other => out.push(other.as_os_str()),
+        }
+    }
+    if out.as_os_str().is_empty() {
+        out.push(".");
+    }
+    out
+}
+
+/// Turn what was typed in the go-to-path prompt into the directory to list.
+///
+/// `remote` is true for any pane backed by a server. Its `~` is the login
+/// directory, which the server already resolves for the relative path `.`, so
+/// `~/x` becomes `x` and no round trip is needed. A local pane expands `~`
+/// from `home`. `~user` is not expanded. The input is not trimmed (names may
+/// contain spaces); empty input resolves to nothing.
+pub fn resolve_goto(
+    input: &str,
+    cwd: &std::path::Path,
+    remote: bool,
+    home: Option<&std::path::Path>,
+) -> Option<PathBuf> {
+    if input.is_empty() {
+        return None;
+    }
+    let tilde_rest = if input == "~" {
+        Some("")
+    } else {
+        input.strip_prefix("~/").map(|r| r.trim_start_matches('/'))
+    };
+    let joined = match (tilde_rest, remote, home) {
+        (Some(rest), true, _) => PathBuf::from(".").join(rest),
+        (Some(rest), false, Some(home)) => home.join(rest),
+        _ if std::path::Path::new(input).is_absolute() => PathBuf::from(input),
+        _ => cwd.join(input),
+    };
+    Some(normalize_lexical(&joined))
+}
+
+/// Outcome of completing the last segment of a typed path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Completed {
+    None,
+    /// One match: the full name, with a trailing `/` when it is a known directory.
+    Unique(String),
+    /// Several matches: what they share (at least the typed text) and the
+    /// candidate names, directories marked with `/`.
+    Many {
+        prefix: String,
+        names: Vec<String>,
+    },
+}
+
+/// Complete `partial` against a directory listing. Only directories are
+/// offered; a remote listing does not follow links, so there a symlink counts
+/// too. Dotfiles only match a partial that starts with `.`. Case-sensitive.
+pub fn complete_segment(entries: &[FileEntry], partial: &str, remote: bool) -> Completed {
+    let mut names: Vec<String> = entries
+        .iter()
+        .filter(|e| !e.is_parent() && e.name.starts_with(partial))
+        .filter(|e| partial.starts_with('.') || !e.name.starts_with('.'))
+        .filter(|e| e.is_dir || (remote && e.is_symlink))
+        .map(|e| {
+            if e.is_dir {
+                format!("{}/", e.name)
+            } else {
+                e.name.clone()
+            }
+        })
+        .collect();
+    names.sort();
+    match names.len() {
+        0 => Completed::None,
+        1 => Completed::Unique(names.remove(0)),
+        _ => {
+            let mut prefix = names[0].clone();
+            for n in &names[1..] {
+                let common: usize = prefix
+                    .chars()
+                    .zip(n.chars())
+                    .take_while(|(a, b)| a == b)
+                    .map(|(a, _)| a.len_utf8())
+                    .sum();
+                prefix.truncate(common);
+            }
+            Completed::Many { prefix, names }
+        }
+    }
+}
+
 /// Which of the two panes a path/entry belongs to.
 ///
 /// `Remote` is the right-hand pane, always a server. `Local` is the left-hand
@@ -1069,5 +1177,195 @@ mod tests {
         }]);
         // Clamped to the last row of the new listing ("..", "only").
         assert_eq!(s.remote.selected, 1);
+    }
+
+    fn dir(name: &str) -> FileEntry {
+        FileEntry {
+            name: name.into(),
+            is_dir: true,
+            size: 0,
+            is_symlink: false,
+            perm: None,
+        }
+    }
+
+    fn file(name: &str) -> FileEntry {
+        FileEntry {
+            is_dir: false,
+            size: 1,
+            ..dir(name)
+        }
+    }
+
+    #[test]
+    fn goto_resolves_against_cwd_and_normalizes() {
+        use std::path::Path;
+        let go = |input: &str, cwd: &str, remote: bool| {
+            resolve_goto(input, Path::new(cwd), remote, Some(Path::new("/home/me")))
+        };
+        assert_eq!(go("", "/srv", false), None);
+        assert_eq!(go("/etc/", "/srv", false), Some("/etc".into()));
+        assert_eq!(go("../aboba", "/srv/www", false), Some("/srv/aboba".into()));
+        assert_eq!(go("..", "/", false), Some("/".into()));
+        assert_eq!(go("a/./b/../c", "/srv", false), Some("/srv/a/c".into()));
+        // Spaces are part of the name, not padding.
+        assert_eq!(go(" x ", "/srv", false), Some("/srv/ x ".into()));
+        // Relative cwd (the remote pane's "."): `..` is kept when nothing cancels it.
+        assert_eq!(go("a", ".", true), Some("a".into()));
+        assert_eq!(go("..", ".", true), Some("..".into()));
+        assert_eq!(go("..", "..", true), Some("../..".into()));
+        assert_eq!(go("../x", "work", true), Some("x".into()));
+        assert_eq!(go("..", "work", true), Some(".".into()));
+        assert_eq!(go("/a/../..", ".", true), Some("/".into()));
+    }
+
+    #[test]
+    fn goto_tilde_depends_on_the_pane() {
+        use std::path::Path;
+        let home = Some(Path::new("/home/me"));
+        let cwd = Path::new("/srv");
+        // Local: expands from $HOME.
+        assert_eq!(resolve_goto("~", cwd, false, home), Some("/home/me".into()));
+        assert_eq!(
+            resolve_goto("~/.ssh", cwd, false, home),
+            Some("/home/me/.ssh".into())
+        );
+        // Remote: the login directory is ".", whatever the local $HOME says,
+        // and it ignores the cwd.
+        assert_eq!(resolve_goto("~", cwd, true, home), Some(".".into()));
+        assert_eq!(resolve_goto("~/", cwd, true, home), Some(".".into()));
+        assert_eq!(resolve_goto("~/.ssh", cwd, true, home), Some(".ssh".into()));
+        assert_eq!(resolve_goto("~//a", cwd, true, home), Some("a".into()));
+        // `~user` is a literal name, and so is `~` without a known home.
+        assert_eq!(
+            resolve_goto("~bob/x", cwd, false, home),
+            Some("/srv/~bob/x".into())
+        );
+        assert_eq!(resolve_goto("~", cwd, false, None), Some("/srv/~".into()));
+    }
+
+    #[test]
+    fn goto_results_keep_the_parent_row_working() {
+        use std::path::Path;
+        // Whatever the prompt produces must still be climbable by `parent_of`.
+        for (input, up) in [("a/b", "a"), ("a", "."), ("..", "../.."), ("/x", "/")] {
+            let p = resolve_goto(input, Path::new("."), true, None).unwrap();
+            assert_eq!(parent_of(&p), Some(PathBuf::from(up)), "{input}");
+        }
+        let root = resolve_goto("/", Path::new("."), true, None).unwrap();
+        assert_eq!(parent_of(&root), None);
+    }
+
+    /// Oracle: GNU `realpath -m -s` is the reference for lexical cleanup.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn normalization_matches_gnu_realpath() {
+        let cases = [
+            "/",
+            "//",
+            "/a/b/",
+            "/a//b",
+            "/a/./b",
+            "/a/b/..",
+            "/a/b/../c",
+            "/a/../../..",
+            "/../x",
+            "/a/b/../../..",
+            "/.hidden/./..x/..",
+        ];
+        for case in cases {
+            let out = match std::process::Command::new("realpath")
+                .args(["-m", "-s", "--", case])
+                .output()
+            {
+                Ok(o) if o.status.success() => o,
+                _ => {
+                    crate::test_support::tool_missing("GNU realpath");
+                    return;
+                }
+            };
+            let want = String::from_utf8(out.stdout).unwrap();
+            assert_eq!(
+                normalize_lexical(std::path::Path::new(case)),
+                PathBuf::from(want.trim_end_matches('\n')),
+                "{case}"
+            );
+        }
+    }
+
+    #[test]
+    fn completion_offers_directories_only() {
+        let entries = vec![dir("docs"), dir("data"), file("dump.txt"), dir(".git")];
+        assert_eq!(
+            complete_segment(&entries, "do", false),
+            Completed::Unique("docs/".into())
+        );
+        assert_eq!(
+            complete_segment(&entries, "d", false),
+            Completed::Many {
+                prefix: "d".into(),
+                names: vec!["data/".into(), "docs/".into()]
+            }
+        );
+        // A file never completes, however well it matches.
+        assert_eq!(complete_segment(&entries, "du", false), Completed::None);
+        assert_eq!(complete_segment(&entries, "x", false), Completed::None);
+    }
+
+    #[test]
+    fn completion_hides_dotfiles_until_asked() {
+        let entries = vec![dir(".git"), dir(".ssh"), dir("src")];
+        // An empty partial lists the visible directories only.
+        assert_eq!(
+            complete_segment(&entries, "", false),
+            Completed::Unique("src/".into())
+        );
+        assert_eq!(
+            complete_segment(&entries, ".s", false),
+            Completed::Unique(".ssh/".into())
+        );
+        assert_eq!(
+            complete_segment(&entries, ".", false),
+            Completed::Many {
+                prefix: ".".into(),
+                names: vec![".git/".into(), ".ssh/".into()]
+            }
+        );
+    }
+
+    #[test]
+    fn completion_extends_to_the_common_prefix() {
+        let entries = vec![dir("backup-2024"), dir("backup-2025"), dir("backups")];
+        assert_eq!(
+            complete_segment(&entries, "b", false),
+            Completed::Many {
+                prefix: "backup".into(),
+                names: vec![
+                    "backup-2024/".into(),
+                    "backup-2025/".into(),
+                    "backups/".into()
+                ]
+            }
+        );
+        // Multibyte names are cut on a char boundary.
+        let entries = vec![dir("фото"), dir("фильмы")];
+        assert!(matches!(
+            complete_segment(&entries, "ф", false),
+            Completed::Many { prefix, .. } if prefix == "ф"
+        ));
+    }
+
+    #[test]
+    fn completion_skips_the_parent_row_and_counts_remote_links() {
+        let mut link = file("current");
+        link.is_symlink = true;
+        let entries = vec![FileEntry::parent_row(), link];
+        assert_eq!(complete_segment(&entries, "", false), Completed::None);
+        // A server listing does not follow links, so a link may be a directory.
+        // It is offered without a slash: it is not known to be one.
+        assert_eq!(
+            complete_segment(&entries, "cur", true),
+            Completed::Unique("current".into())
+        );
     }
 }
