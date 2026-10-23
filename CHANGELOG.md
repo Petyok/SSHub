@@ -4,6 +4,8 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.19.2] - 2026-10-24
+
 ### Changed
 
 - **New icon** - the launcher icon `just install` puts in place is now the hop chain: you,
