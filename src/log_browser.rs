@@ -116,10 +116,11 @@ pub fn read_segment_lines(path: &Path, cap: u64) -> Option<(Vec<String>, bool)> 
     let mut buf = Vec::new();
     file.take(cap).read_to_end(&mut buf).ok()?;
     // Drop a trailing partial multibyte char left by the byte cap so it does not
-    // render as U+FFFD.
+    // render as U+FFFD. An invalid byte in the middle (`error_len` is `Some`)
+    // is left for the lossy conversion, so the rest of the log still shows.
     let valid = match std::str::from_utf8(&buf) {
-        Ok(_) => buf.len(),
-        Err(e) => e.valid_up_to(),
+        Err(e) if e.error_len().is_none() => e.valid_up_to(),
+        _ => buf.len(),
     };
     let text = String::from_utf8_lossy(&buf[..valid]);
     let clean = strip_ansi(&text);
@@ -283,6 +284,27 @@ mod tests {
         let (lines, truncated) = read_segment_lines(&seg, 10).unwrap();
         assert!(truncated);
         assert_eq!(lines[0].len(), 10);
+    }
+
+    #[test]
+    fn read_keeps_text_after_an_invalid_byte() {
+        let tmp = tempfile::tempdir().unwrap();
+        let seg = tmp.path().join("100-1-0.log");
+        fs::write(&seg, b"before\xff\nafter\n").unwrap();
+        let (lines, truncated) = read_segment_lines(&seg, VIEWER_READ_CAP).unwrap();
+        assert!(!truncated);
+        assert_eq!(lines, vec!["before\u{fffd}", "after"]);
+    }
+
+    #[test]
+    fn read_drops_a_multibyte_char_split_by_the_cap() {
+        let tmp = tempfile::tempdir().unwrap();
+        let seg = tmp.path().join("100-1-0.log");
+        fs::write(&seg, "ab\u{e9}cd").unwrap();
+        // The cap lands in the middle of the two-byte "\u{e9}".
+        let (lines, truncated) = read_segment_lines(&seg, 3).unwrap();
+        assert!(truncated);
+        assert_eq!(lines, vec!["ab"]);
     }
 
     #[test]
