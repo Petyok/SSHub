@@ -1,4 +1,4 @@
-# SSHub
+# <img src="https://raw.githubusercontent.com/Petyok/SSHub/main/assets/sshub.svg" alt="" width="40" height="40" align="top"> SSHub
 
 [![crates.io](https://img.shields.io/crates/v/sshub.svg)](https://crates.io/crates/sshub)
 [![crates.io downloads](https://img.shields.io/crates/d/sshub.svg?label=crates.io%20downloads)](https://crates.io/crates/sshub)
