@@ -4,6 +4,13 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Session log viewer cut off at an invalid byte** (PR #123 by @56steve) - a log containing a
+  byte that is not valid UTF-8 (binary output, a legacy encoding) showed only the text
+  before it. The rest of the log is now shown, with the bad byte as a replacement
+  character.
+
 ## [0.19.1] - 2026-10-21
 
 ### Fixed
