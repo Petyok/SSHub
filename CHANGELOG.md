@@ -4,6 +4,15 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Nix flake** (issue #163, requested by [@Frysuni](https://github.com/Frysuni)) - `nix run
+  github:Petyok/SSHub` runs SSHub and `nix profile install github:Petyok/SSHub` or a
+  NixOS flake input installs it declaratively (Linux x86_64 and aarch64). The package
+  links nixpkgs' OpenSSL, installs the man page, icon and desktop entry, and runs
+  with `openssh` on the end of `PATH`. CI builds it on x86_64 and aarch64 for every push
+  and pull request.
+
 ### Fixed
 
 - **Session log viewer cut off at an invalid byte** (PR #123 by @56steve) - a log containing a

@@ -148,6 +148,33 @@ sudo pacman -S --needed dbus
 
 Prebuilt binaries for Linux and macOS are attached to each [GitHub release](https://github.com/Petyok/SSHub/releases).
 
+From the [Nix flake](flake.nix) (Linux x86_64 and aarch64), no toolchain required:
+
+```bash
+nix run github:Petyok/SSHub               # run it without installing
+nix profile install github:Petyok/SSHub   # then just: sshub
+```
+
+On NixOS, add it as a flake input and install the package system-wide:
+
+```nix
+# flake.nix
+inputs.sshub.url = "github:Petyok/SSHub";
+
+# configuration.nix (pass `inputs` to your modules, e.g. via specialArgs)
+environment.systemPackages = [
+  inputs.sshub.packages.${pkgs.stdenv.hostPlatform.system}.default
+];
+```
+
+The flake follows the default branch (`main`), so it tracks releases, and it pins
+nixos-unstable: overriding that with `inputs.sshub.inputs.nixpkgs.follows` to an older
+channel can fail on an older Rust toolchain. The package links nixpkgs' OpenSSL, puts
+`openssh` on the end of `PATH` (your own `ssh` still wins), and installs the man page,
+icon and desktop entry. Shell completions are not packaged: they embed your host names,
+so generate them yourself as described under [Headless CLI](#headless-cli)
+(`sshub completions <shell>` works the same for a Nix install).
+
 At runtime, a Secret Service provider (gnome-keyring, KWallet, …) is preferred for secure credential storage. If one is not running or unlocked (e.g. in WSL, Docker, or headless SSH sessions), SSHub will fallback to storing credentials in a local owner-only restricted file (`credentials.json`), notifying you in the status bar.
 
 ```bash
