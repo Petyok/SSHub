@@ -4,6 +4,13 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **New icon** - the launcher icon `just install` puts in place is now the hop chain: you,
+  the jump host, and the amber host you land on.
+- **Project website** - [sshub.petruha.uk](https://sshub.petruha.uk) is the homepage on
+  crates.io and npm and is linked from the README.
+
 ### Fixed
 
 - **Session log viewer cut off at an invalid byte** (PR #123 by @56steve) - a log containing a

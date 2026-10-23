@@ -2,7 +2,7 @@
   "name": "@NAME@",
   "version": "@VERSION@",
   "description": "SSHub prebuilt binary for @OS@ @CPU@",
-  "homepage": "https://github.com/Petyok/SSHub#readme",
+  "homepage": "https://sshub.petruha.uk",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Petyok/SSHub.git"
