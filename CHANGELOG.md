@@ -16,9 +16,18 @@ All notable changes to SSHub are documented in this file.
   path that is not a directory is refused in the prompt; a refusal from the
   server shows as the usual notice and the pane keeps its directory.
 
+## [0.19.2] - 2026-10-24
+
+### Changed
+
+- **New icon** - the launcher icon `just install` puts in place is now the hop chain: you,
+  the jump host, and the amber host you land on.
+- **Project website** - [sshub.petruha.uk](https://sshub.petruha.uk) is the homepage on
+  crates.io and npm and is linked from the README.
+
 ### Fixed
 
-- **Session log viewer cut off at an invalid byte** (PR #123 by @56steve) - a log containing a
+- **Session log viewer cut off at an invalid byte** (PR #164 by @56steve) - a log containing a
   byte that is not valid UTF-8 (binary output, a legacy encoding) showed only the text
   before it. The rest of the log is now shown, with the bad byte as a replacement
   character.

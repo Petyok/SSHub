@@ -1,10 +1,11 @@
-# SSHub
+# <img src="https://raw.githubusercontent.com/Petyok/SSHub/main/assets/sshub.svg" alt="" width="40" height="40" align="top"> SSHub
 
 [![crates.io](https://img.shields.io/crates/v/sshub.svg)](https://crates.io/crates/sshub)
 [![crates.io downloads](https://img.shields.io/crates/d/sshub.svg?label=crates.io%20downloads)](https://crates.io/crates/sshub)
 [![npm](https://img.shields.io/npm/v/sshub-tui.svg)](https://www.npmjs.com/package/sshub-tui)
 [![npm downloads](https://img.shields.io/npm/dm/sshub-tui.svg?label=npm%20downloads%2Fmonth)](https://www.npmjs.com/package/sshub-tui)
 [![vibecoded](https://img.shields.io/badge/vibecoded-~98.5%25-ff69b4)](#model-credits)
+[![website](https://img.shields.io/badge/website-sshub.petruha.uk-e0a84a)](https://sshub.petruha.uk)
 
 A terminal UI for managing and connecting to SSH hosts. Combines your `~/.ssh/config` with a built-in host database, tunnels, key management, and an audit log -- all in one keyboard-driven interface.
 
