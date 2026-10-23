@@ -3,6 +3,12 @@
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
+  # Prebuilt outputs for the pinned nixpkgs, pushed by CI (see the `nix` job).
+  nixConfig = {
+    extra-substituters = [ "https://sshub.cachix.org" ];
+    extra-trusted-public-keys = [ "sshub.cachix.org-1:yniNe6K3gkRhTgoJL6Rh2Kvqjfaw7ZjTYEFTwIpYjKA=" ];
+  };
+
   outputs = { self, nixpkgs }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" ];
