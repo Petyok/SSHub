@@ -65,6 +65,24 @@ jobs:
       - name: Run tests
         run: cargo test
 
+  # The maintainer does not use Nix, so this job is what keeps flake.nix from
+  # rotting: it builds the package and runs the result, the same smoke the
+  # release workflow runs on its binaries.
+  nix:
+    name: Nix build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+      - name: Build
+        run: nix build -L
+      - name: Smoke
+        run: ./result/bin/sshub --dry-run
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
