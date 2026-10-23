@@ -4,6 +4,9 @@
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
   # Prebuilt outputs for the pinned nixpkgs, pushed by CI (see the `nix` job).
+  # Only read for the flake being run (`nix run`); a NixOS configuration that
+  # takes this flake as an input imports `nixosModules.binaryCache` instead.
+  # nixConfig must be a literal, so the cache is spelled out in both places.
   nixConfig = {
     extra-substituters = [ "https://sshub.cachix.org" ];
     extra-trusted-public-keys = [ "sshub.cachix.org-1:yniNe6K3gkRhTgoJL6Rh2Kvqjfaw7ZjTYEFTwIpYjKA=" ];
@@ -59,5 +62,12 @@
           inherit sshub;
           default = sshub;
         });
+
+      nixosModules.binaryCache = {
+        nix.settings = {
+          substituters = [ "https://sshub.cachix.org" ];
+          trusted-public-keys = [ "sshub.cachix.org-1:yniNe6K3gkRhTgoJL6Rh2Kvqjfaw7ZjTYEFTwIpYjKA=" ];
+        };
+      };
     };
 }

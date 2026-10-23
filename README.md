@@ -155,24 +155,23 @@ nix run github:Petyok/SSHub               # run it without installing
 nix profile install github:Petyok/SSHub   # then just: sshub
 ```
 
-On NixOS, add it as a flake input and install the package system-wide:
+On NixOS, add it as a flake input, install the package system-wide, and import the
+module that points Nix at the prebuilt binaries:
 
 ```nix
 # flake.nix
 inputs.sshub.url = "github:Petyok/SSHub";
 
 # configuration.nix (pass `inputs` to your modules, e.g. via specialArgs)
+imports = [ inputs.sshub.nixosModules.binaryCache ];
 environment.systemPackages = [
   inputs.sshub.packages.${pkgs.stdenv.hostPlatform.system}.default
 ];
 ```
 
 Prebuilt binaries come from the [sshub.cachix.org](https://sshub.cachix.org) cache, so
-nothing is compiled. The flake declares it, and Nix asks whether to trust it the first
-time (answer `y`, or pass `--accept-flake-config`). On a multi-user install a user who is
-not in `trusted-users` has the flake's cache ignored: add it to `trusted-substituters`
-(with the key below in `trusted-public-keys`) or add the user to `trusted-users`. On
-NixOS, set it system-wide instead:
+nothing is compiled. `nixosModules.binaryCache` only sets `nix.settings.substituters` and
+`nix.settings.trusted-public-keys`; skip it and set them yourself if you prefer:
 
 ```nix
 nix.settings.substituters = [ "https://sshub.cachix.org" ];
@@ -180,6 +179,13 @@ nix.settings.trusted-public-keys = [
   "sshub.cachix.org-1:yniNe6K3gkRhTgoJL6Rh2Kvqjfaw7ZjTYEFTwIpYjKA="
 ];
 ```
+
+For `nix run` and `nix profile install` the flake declares the cache itself, and Nix asks
+whether to trust it the first time (answer `y`, or pass `--accept-flake-config`). That
+declaration is ignored when the flake is an input of another flake, hence the module. On a
+multi-user install a user who is not in `trusted-users` has the flake's cache ignored: add
+it to `trusted-substituters` (with the key above in `trusted-public-keys`) or add the user
+to `trusted-users`.
 
 The cache holds the build for the nixpkgs this flake pins. Overriding that with
 `inputs.sshub.inputs.nixpkgs.follows` changes the store path, so Nix compiles locally,
