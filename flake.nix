@@ -51,7 +51,7 @@
 
             meta = {
               description = "TUI SSH host launcher, tunnels and key manager";
-              homepage = "https://github.com/Petyok/SSHub";
+              homepage = "https://sshub.petruha.uk";
               license = lib.licenses.agpl3Plus;
               mainProgram = "sshub";
               platforms = systems;
