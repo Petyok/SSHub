@@ -2,7 +2,7 @@
 //!
 //! A `BulkExport { requester, window_secs }` op, once the ceremony approved it,
 //! lets the requester open every credential for `window_secs` (at most 3600)
-//! from the op's timestamp, through the normal unlock paths. This module is the
+//! from the moment this device saw its ceremony complete, through the normal unlock paths. This module is the
 //! requester's side: it finds the open window, calls the caller's `unlock` for
 //! each host, and writes a Termius style `L00t.csv` (`Label,Host,Port,Username,
 //! Password,SSH_Key,OS`), the one importer format of SSHub that carries
@@ -63,11 +63,52 @@ fn approved_exports(store: &LauncherStore) -> Result<Vec<ExportOp>> {
         {
             // Only a completed ceremony opens a window, the proposer's own request included.
             if crate::sync::ceremony::in_force(store, &op)? {
-                out.push((op.hash(), requester.clone(), op.timestamp, *window_secs));
+                // The window opens when THIS device saw the ceremony complete, not at a time the
+                // requester wrote into its op.
+                out.push((
+                    op.hash(),
+                    requester.clone(),
+                    completed_at(store, &op)?,
+                    *window_secs,
+                ));
             }
         }
     }
     Ok(out)
+}
+
+/// When this device last received the op or one of its proofs: the moment, on the local clock,
+/// the ceremony could first have been complete.
+fn completed_at(store: &LauncherStore, op: &crate::sync::oplog::Op) -> Result<i64> {
+    let hash = op.hash();
+    store.with_conn(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT op_hash, received_at FROM sync_ops
+             WHERE (op_hash = ?1 OR kind IN ('RedApprove', 'RedPhoneSign', 'RedFactor'))
+               AND state IN ('applied', 'approved')",
+        )?;
+        let rows: Vec<(Vec<u8>, i64)> = stmt
+            .query_map(params![&hash[..]], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<std::result::Result<_, _>>()?;
+        let mut at = 0;
+        for (h, received) in rows {
+            let h: [u8; 32] = h.try_into().map_err(|_| anyhow::anyhow!("stored hash"))?;
+            let Some(row) = load_op(conn, &h)? else {
+                continue;
+            };
+            let refers = h == hash
+                || matches!(
+                    &row.op.body,
+                    OpBody::RedApprove { op_hash }
+                        | OpBody::RedPhoneSign { op_hash }
+                        | OpBody::RedFactor { op_hash, .. } if *op_hash == hash
+                );
+            if refers {
+                at = at.max(received);
+            }
+        }
+        Ok(at)
+    })
 }
 
 /// The newest approved window of `requester` that contains `now`.
