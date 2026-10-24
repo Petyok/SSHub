@@ -389,10 +389,14 @@ pub fn secret_carry_warning(failures: &[String], kept: &[String]) -> String {
     if kept.len() > SHOWN {
         names.push_str(&format!(" and {} more", kept.len() - SHOWN));
     }
-    let mut out = format!(
-        "{} problem(s) carrying secrets; these stay in the source profile: {names}",
-        failures.len()
-    );
+    let mut out = if kept.is_empty() {
+        format!("{} problem(s) finishing the move:", failures.len())
+    } else {
+        format!(
+            "{} problem(s) carrying secrets; these stay in the source profile: {names}",
+            failures.len()
+        )
+    };
     for failure in failures.iter().take(SHOWN) {
         out.push_str(&format!("\n  - {failure}"));
     }
@@ -1231,7 +1235,7 @@ pub fn apply_transfer_plan_with_secrets(
             // that duplicates every row. The source stays whole, so nothing is
             // purged, and the caller reports it like a failed carry.
             Err(e) => result.carry_failures.push(format!(
-                "the originals could not be removed from the source profile, the destination already holds the copies: {e:#}"
+                "the originals could not be removed from the source profile and the destination already holds the copies, so do not repeat the move: {e:#}"
             )),
         }
     }
@@ -1521,6 +1525,9 @@ mod tests {
                 .unwrap();
         assert!(result.deleted_host_ids.is_empty());
         assert!(result.carry_failures[0].contains("originals could not be removed"));
+        let warning = secret_carry_warning(&result.carry_failures, &result.kept_in_source);
+        assert!(!warning.contains("carrying secrets"), "{warning}");
+        assert!(warning.contains("do not repeat the move"), "{warning}");
         assert_eq!(dest.list_hosts().unwrap().len(), 1);
         assert_eq!(src.list_hosts().unwrap().len(), 1);
     }
