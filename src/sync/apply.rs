@@ -20,8 +20,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::session_transport::SessionTransport;
 use crate::store::{
-    self, uid_from_hex, uid_hex, GroupUid, HostSource, HostUpdate, NewHost,
-    NewHostGroup, NewIdentity, Uid, FAVORITES_GROUP_UID,
+    self, uid_from_hex, uid_hex, GroupUid, HostSource, HostUpdate, NewHost, NewHostGroup,
+    NewIdentity, Uid, FAVORITES_GROUP_UID,
 };
 use crate::sync::oplog::op::{GroupFields, HostFields, IdentityFields, OpBody};
 use crate::sync::oplog::tier::EntityKind;
@@ -119,10 +119,9 @@ fn validate_host(f: &HostFields) -> std::result::Result<(), String> {
     }
     if let Some(a) = &f.address {
         name_ok("address", a)?;
-        if let Some(p) = crate::ssh::destination_problem(
-            a,
-            f.username.as_ref().and_then(|u| u.as_deref()),
-        ) {
+        if let Some(p) =
+            crate::ssh::destination_problem(a, f.username.as_ref().and_then(|u| u.as_deref()))
+        {
             return Err(p);
         }
     } else if let Some(Some(u)) = &f.username {
@@ -223,8 +222,7 @@ impl View {
             .map(|v| v.as_u64().and_then(|n| u16::try_from(n).ok()))
     }
     fn opt_uid(&self, k: &str) -> Option<Option<Uid>> {
-        self.present(k)
-            .map(|v| v.as_str().and_then(uid_from_hex))
+        self.present(k).map(|v| v.as_str().and_then(uid_from_hex))
     }
     pub fn base_name(&self) -> Option<&str> {
         self.fields.get("name").and_then(Value::as_str)
@@ -331,8 +329,9 @@ pub fn reproject(conn: &Connection, touched: &Touched) -> Result<()> {
     }
     // Name peers: every live entity sharing a base name with a touched one.
     for (kind, name) in &names {
-        let mut stmt = conn
-            .prepare_cached("SELECT uid FROM sync_entities WHERE kind = ?1 AND alive = 1 AND name = ?2")?;
+        let mut stmt = conn.prepare_cached(
+            "SELECT uid FROM sync_entities WHERE kind = ?1 AND alive = 1 AND name = ?2",
+        )?;
         let peers: Vec<Vec<u8>> = stmt
             .query_map(params![kind.as_str(), name], |r| r.get(0))?
             .collect::<std::result::Result<_, _>>()?;
@@ -427,7 +426,12 @@ fn referrers(conn: &Connection, uid: &Uid) -> Result<Vec<(EntityKind, Uid)>> {
 
 /// The name this entity should carry locally: its base name when it wins the
 /// name, `base (uid8)` when another entity (or a local-only row) holds it.
-fn rendered_name(conn: &Connection, kind: EntityKind, uid: &Uid, view: &View) -> Result<Option<String>> {
+fn rendered_name(
+    conn: &Connection,
+    kind: EntityKind,
+    uid: &Uid,
+    view: &View,
+) -> Result<Option<String>> {
     let Some(base) = view.base_name() else {
         return Ok(None);
     };
@@ -440,15 +444,14 @@ fn rendered_name(conn: &Connection, kind: EntityKind, uid: &Uid, view: &View) ->
         )
         .optional()?;
     let table = table_of(kind);
-    let occupied: bool = conn
-        .query_row(
-            &format!(
-                "SELECT EXISTS(SELECT 1 FROM {table} t WHERE t.name = ?1 AND t.uid != ?2
+    let occupied: bool = conn.query_row(
+        &format!(
+            "SELECT EXISTS(SELECT 1 FROM {table} t WHERE t.name = ?1 AND t.uid != ?2
                    AND t.uid NOT IN (SELECT uid FROM sync_entities WHERE kind = ?3))"
-            ),
-            params![base, &uid[..], kind.as_str()],
-            |r| r.get(0),
-        )?;
+        ),
+        params![base, &uid[..], kind.as_str()],
+        |r| r.get(0),
+    )?;
     if winner.as_deref() == Some(&uid[..]) && !occupied {
         Ok(Some(base.to_string()))
     } else {
@@ -482,7 +485,9 @@ fn project_row(conn: &Connection, kind: EntityKind, uid: &Uid, view: &View) -> R
             match kind {
                 EntityKind::Host => {
                     let source: Option<String> = conn
-                        .query_row("SELECT source FROM hosts WHERE id = ?1", params![id], |r| r.get(0))
+                        .query_row("SELECT source FROM hosts WHERE id = ?1", params![id], |r| {
+                            r.get(0)
+                        })
                         .optional()?;
                     if source.as_deref() == Some(HostSource::Launcher.as_str()) {
                         store::delete_host_on(conn, id)?;
@@ -508,7 +513,13 @@ fn project_row(conn: &Connection, kind: EntityKind, uid: &Uid, view: &View) -> R
     }
 }
 
-fn project_identity(conn: &Connection, uid: &Uid, view: &View, existing: Option<i64>, name: &str) -> Result<()> {
+fn project_identity(
+    conn: &Connection,
+    uid: &Uid,
+    view: &View,
+    existing: Option<i64>,
+    name: &str,
+) -> Result<()> {
     let id = match existing {
         Some(id) => id,
         None => {
@@ -570,7 +581,13 @@ fn parent_cycles(conn: &Connection, start: &Uid) -> Result<bool> {
     Ok(true)
 }
 
-fn project_group(conn: &Connection, uid: &Uid, view: &View, existing: Option<i64>, name: &str) -> Result<()> {
+fn project_group(
+    conn: &Connection,
+    uid: &Uid,
+    view: &View,
+    existing: Option<i64>,
+    name: &str,
+) -> Result<()> {
     let id = match existing {
         Some(id) => id,
         None => {
@@ -616,7 +633,13 @@ fn project_group(conn: &Connection, uid: &Uid, view: &View, existing: Option<i64
     Ok(())
 }
 
-fn project_host(conn: &Connection, uid: &Uid, view: &View, existing: Option<i64>, name: &str) -> Result<()> {
+fn project_host(
+    conn: &Connection,
+    uid: &Uid,
+    view: &View,
+    existing: Option<i64>,
+    name: &str,
+) -> Result<()> {
     let address = match (view.opt_str("address"), existing) {
         (Some(Some(a)), _) => a,
         (_, Some(_)) => String::new(),
@@ -632,7 +655,9 @@ fn project_host(conn: &Connection, uid: &Uid, view: &View, existing: Option<i64>
     let id = match existing {
         Some(id) => {
             let source: Option<String> = conn
-                .query_row("SELECT source FROM hosts WHERE id = ?1", params![id], |r| r.get(0))
+                .query_row("SELECT source FROM hosts WHERE id = ?1", params![id], |r| {
+                    r.get(0)
+                })
                 .optional()?;
             if source.as_deref() != Some(HostSource::Launcher.as_str()) {
                 return Ok(());
@@ -667,7 +692,11 @@ fn project_host(conn: &Connection, uid: &Uid, view: &View, existing: Option<i64>
         .opt_str("transport")
         .map(|t| t.map(|t| SessionTransport::from_db(Some(&t))));
     if let Some(Value::Array(tags)) = view.present("tags") {
-        upd.tags = Some(tags.iter().filter_map(|t| t.as_str().map(String::from)).collect());
+        upd.tags = Some(
+            tags.iter()
+                .filter_map(|t| t.as_str().map(String::from))
+                .collect(),
+        );
     }
     if let Some(Some(f)) = view.opt_bool("favorite") {
         upd.favorite = Some(f);
@@ -813,7 +842,8 @@ fn project_jump(conn: &Connection, kind: EntityKind, uid: &Uid, view: &View) -> 
 /// effective op set (up to the per-field order the registers resolve).
 pub fn state_hash(conn: &Connection) -> Result<[u8; 32]> {
     let mut out = Vec::new();
-    let mut stmt = conn.prepare("SELECT kind, uid FROM sync_entities WHERE alive = 1 ORDER BY kind, uid")?;
+    let mut stmt =
+        conn.prepare("SELECT kind, uid FROM sync_entities WHERE alive = 1 ORDER BY kind, uid")?;
     let rows: Vec<(String, Vec<u8>)> = stmt
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<std::result::Result<_, _>>()?;
@@ -822,7 +852,14 @@ pub fn state_hash(conn: &Connection) -> Result<[u8; 32]> {
             continue;
         };
         let view = effective_view(conn, k, &u)?;
-        out.extend_from_slice(format!("{kind} {} {}\n", uid_hex(&u), serde_json::to_string(&view.fields)?).as_bytes());
+        out.extend_from_slice(
+            format!(
+                "{kind} {} {}\n",
+                uid_hex(&u),
+                serde_json::to_string(&view.fields)?
+            )
+            .as_bytes(),
+        );
     }
     Ok(crate::sync::crypto::chain_hash(&out))
 }

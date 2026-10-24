@@ -1015,7 +1015,7 @@ pub(crate) fn create_host_on(conn: &rusqlite::Connection, host: &NewHost) -> Res
 
 /// Connection-level group join + identity materialization (caller holds the
 /// transaction).
-pub(crate) fn add_host_to_group_on(
+pub(super) fn add_host_to_group_on(
     conn: &rusqlite::Connection,
     host_id: i64,
     group_id: i64,
@@ -1030,7 +1030,7 @@ pub(crate) fn add_host_to_group_on(
 }
 
 /// Connection-level Favorites id (caller holds the transaction).
-pub(crate) fn favorites_group_id_on(conn: &rusqlite::Connection) -> Result<i64> {
+pub(super) fn favorites_group_id_on(conn: &rusqlite::Connection) -> Result<i64> {
     conn.query_row(
         "SELECT id FROM host_groups WHERE reserved = 1 ORDER BY id LIMIT 1",
         [],
@@ -1041,7 +1041,7 @@ pub(crate) fn favorites_group_id_on(conn: &rusqlite::Connection) -> Result<i64> 
 
 /// Connection-level environment restore (caller holds the transaction).
 /// `NewHost` carries no environment field, so transfers set it after insert.
-pub(crate) fn set_host_environment_on(
+pub(super) fn set_host_environment_on(
     conn: &rusqlite::Connection,
     host_id: i64,
     environment: &Option<String>,
@@ -1144,7 +1144,7 @@ fn via_condition(via: &str) -> String {
     }
 }
 
-pub(crate) fn load_host_by_id(conn: &rusqlite::Connection, id: i64) -> Result<Option<ManagedHost>> {
+fn load_host_by_id(conn: &rusqlite::Connection, id: i64) -> Result<Option<ManagedHost>> {
     conn.prepare(
         "SELECT h.id, h.name, h.label, h.address, h.port, h.group_id, h.identity_id,
                 h.os_icon, h.tags, h.notes, h.proxy_jump, h.forward_agent, h.remote_command,
@@ -1200,7 +1200,7 @@ fn favorites_group_id_conn(conn: &rusqlite::Connection) -> Result<i64> {
 }
 
 /// Add/remove a host's Favorites membership to match `favorite`.
-pub(crate) fn sync_favorite_membership(
+fn sync_favorite_membership(
     conn: &rusqlite::Connection,
     host_id: i64,
     favorite: bool,

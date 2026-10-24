@@ -378,13 +378,23 @@ fn hex_lower(bytes: &[u8]) -> String {
 
 // ------------------------------------------------------- field value lists
 
-fn opt_value<T>(out: &mut Vec<(&'static str, Value)>, k: &'static str, v: &Option<Option<T>>, f: impl Fn(&T) -> Value) {
+fn opt_value<T>(
+    out: &mut Vec<(&'static str, Value)>,
+    k: &'static str,
+    v: &Option<Option<T>>,
+    f: impl Fn(&T) -> Value,
+) {
     if let Some(inner) = v {
         out.push((k, inner.as_ref().map_or(Value::Null, f)));
     }
 }
 
-fn req_value<T>(out: &mut Vec<(&'static str, Value)>, k: &'static str, v: &Option<T>, f: impl Fn(&T) -> Value) {
+fn req_value<T>(
+    out: &mut Vec<(&'static str, Value)>,
+    k: &'static str,
+    v: &Option<T>,
+    f: impl Fn(&T) -> Value,
+) {
     if let Some(v) = v {
         out.push((k, f(v)));
     }
@@ -408,7 +418,9 @@ pub fn host_field_values(f: &HostFields) -> Vec<(&'static str, Value)> {
     opt_value(&mut o, "port", &f.port, |p| Value::from(*p));
     opt_value(&mut o, "username", &f.username, s);
     opt_value(&mut o, "proxy_jump", &f.proxy_jump, s);
-    opt_value(&mut o, "forward_agent", &f.forward_agent, |v| Value::Bool(*v));
+    opt_value(&mut o, "forward_agent", &f.forward_agent, |v| {
+        Value::Bool(*v)
+    });
     opt_value(&mut o, "remote_command", &f.remote_command, s);
     opt_value(&mut o, "transport", &f.transport, s);
     opt_value(&mut o, "environment", &f.environment, s);
@@ -435,9 +447,12 @@ pub fn group_field_values(f: &GroupFields) -> Vec<(&'static str, Value)> {
     opt_value(&mut o, "default_port", &f.default_port, |p| Value::from(*p));
     opt_value(&mut o, "default_proxy_jump", &f.default_proxy_jump, s);
     opt_value(&mut o, "default_transport", &f.default_transport, s);
-    opt_value(&mut o, "default_forward_agent", &f.default_forward_agent, |v| {
-        Value::Bool(*v)
-    });
+    opt_value(
+        &mut o,
+        "default_forward_agent",
+        &f.default_forward_agent,
+        |v| Value::Bool(*v),
+    );
     opt_value(&mut o, "parent_uid", &f.parent_uid, u);
     o
 }
@@ -462,7 +477,9 @@ pub fn decode_op(bytes: &[u8], signature: [u8; 64]) -> Result<Op> {
         prev_hash: {
             let h = get_string(m, "prev_hash")?;
             ensure!(
-                h.len() == 64 && h.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)),
+                h.len() == 64
+                    && h.bytes()
+                        .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)),
                 "prev_hash must be 64 lowercase hex characters"
             );
             let mut out = [0u8; 32];
@@ -548,8 +565,11 @@ fn get_32(m: &Map<String, Value>, k: &str) -> Result<[u8; 32]> {
 }
 
 fn uid_of(v: &Value, k: &str) -> Result<Uid> {
-    uid_from_hex(v.as_str().ok_or_else(|| anyhow!("{k} must be a uid string"))?)
-        .ok_or_else(|| anyhow!("{k} must be 32 lowercase hex characters"))
+    uid_from_hex(
+        v.as_str()
+            .ok_or_else(|| anyhow!("{k} must be a uid string"))?,
+    )
+    .ok_or_else(|| anyhow!("{k} must be 32 lowercase hex characters"))
 }
 
 fn get_uid(m: &Map<String, Value>, k: &str) -> Result<Uid> {
@@ -585,7 +605,9 @@ fn third_factor_of(v: &Value) -> Result<ThirdFactor> {
     match v {
         Value::String(s) if s == "Paper" => Ok(ThirdFactor::Paper),
         Value::String(s) if s == "EmailCode" => Ok(ThirdFactor::EmailCode),
-        Value::Object(m) if m.len() == 1 => Ok(ThirdFactor::HardwareKey(get_string(m, "HardwareKey")?)),
+        Value::Object(m) if m.len() == 1 => {
+            Ok(ThirdFactor::HardwareKey(get_string(m, "HardwareKey")?))
+        }
         _ => bail!("unknown third factor"),
     }
 }
@@ -818,7 +840,9 @@ fn group_fields_of(m: &Map<String, Value>) -> Result<GroupFields> {
     let st = |v: &Value| str_of(v, "field");
     Ok(GroupFields {
         name: req(m, "name", st)?,
-        default_identity_uid: patch(m, "default_identity_uid", |v| uid_of(v, "default_identity_uid"))?,
+        default_identity_uid: patch(m, "default_identity_uid", |v| {
+            uid_of(v, "default_identity_uid")
+        })?,
         default_username: patch(m, "default_username", st)?,
         default_port: patch(m, "default_port", port_of)?,
         default_proxy_jump: patch(m, "default_proxy_jump", st)?,

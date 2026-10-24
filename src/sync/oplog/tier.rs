@@ -82,7 +82,7 @@ pub const IDENTITY_FIELDS: &[(&str, FieldClass)] = &[
     ("has_password", Dangerous),
 ];
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub enum EntityKind {
     Host,
     Group,
@@ -135,8 +135,12 @@ pub fn body_tier(body: &OpBody) -> OpTier {
     use super::canonical::{group_field_values, host_field_values, identity_field_values};
     use super::op::DeviceRole;
     match body {
-        OpBody::HostUpsert { fields, .. } => upsert_tier(EntityKind::Host, &host_field_values(fields)),
-        OpBody::GroupUpsert { fields, .. } => upsert_tier(EntityKind::Group, &group_field_values(fields)),
+        OpBody::HostUpsert { fields, .. } => {
+            upsert_tier(EntityKind::Host, &host_field_values(fields))
+        }
+        OpBody::GroupUpsert { fields, .. } => {
+            upsert_tier(EntityKind::Group, &group_field_values(fields))
+        }
         OpBody::IdentityUpsert { fields, .. } => {
             upsert_tier(EntityKind::Identity, &identity_field_values(fields))
         }
@@ -176,7 +180,7 @@ mod tests {
     use super::*;
     use crate::store::{HostGroup, Identity, ManagedHost};
 
-    fn names(table: &[(&str, FieldClass)]) -> Vec<&'static str> {
+    fn names<'a>(table: &[(&'a str, FieldClass)]) -> Vec<&'a str> {
         table.iter().map(|(n, _)| *n).collect()
     }
 
@@ -219,11 +223,36 @@ mod tests {
                 updated_at: _,
             } = h;
             vec![
-                "id", "name", "label", "address", "port", "group_id", "identity_id", "group",
-                "groups", "identity", "os_icon", "tags", "notes", "proxy_jump", "forward_agent",
-                "remote_command", "environment", "sort_order", "favorite", "last_connected",
-                "source", "ssh_config_hash", "has_password", "secret_lookup", "username",
-                "session_logging", "ping", "transport", "created_at", "updated_at",
+                "id",
+                "name",
+                "label",
+                "address",
+                "port",
+                "group_id",
+                "identity_id",
+                "group",
+                "groups",
+                "identity",
+                "os_icon",
+                "tags",
+                "notes",
+                "proxy_jump",
+                "forward_agent",
+                "remote_command",
+                "environment",
+                "sort_order",
+                "favorite",
+                "last_connected",
+                "source",
+                "ssh_config_hash",
+                "has_password",
+                "secret_lookup",
+                "username",
+                "session_logging",
+                "ping",
+                "transport",
+                "created_at",
+                "updated_at",
             ]
         }
         fn group(g: HostGroup) -> Vec<&'static str> {
@@ -241,9 +270,17 @@ mod tests {
                 reserved: _,
             } = g;
             vec![
-                "id", "name", "sort_order", "default_identity_id", "default_username",
-                "default_port", "default_proxy_jump", "default_transport",
-                "default_forward_agent", "parent_id", "reserved",
+                "id",
+                "name",
+                "sort_order",
+                "default_identity_id",
+                "default_username",
+                "default_port",
+                "default_proxy_jump",
+                "default_transport",
+                "default_forward_agent",
+                "parent_id",
+                "reserved",
             ]
         }
         fn identity(i: Identity) -> Vec<&'static str> {
@@ -255,30 +292,86 @@ mod tests {
                 certificate: _,
                 has_password: _,
             } = i;
-            vec!["id", "name", "username", "private_key", "certificate", "has_password"]
+            vec![
+                "id",
+                "name",
+                "username",
+                "private_key",
+                "certificate",
+                "has_password",
+            ]
         }
         // The functions above are only here to be compiled; the lists are what
         // they destructure, kept next to the patterns so both change together.
         let _ = (host, group, identity);
         let host_names: &[&str] = &[
-            "id", "name", "label", "address", "port", "group_id", "identity_id", "group", "groups",
-            "identity", "os_icon", "tags", "notes", "proxy_jump", "forward_agent",
-            "remote_command", "environment", "sort_order", "favorite", "last_connected", "source",
-            "ssh_config_hash", "has_password", "secret_lookup", "username", "session_logging",
-            "ping", "transport", "created_at", "updated_at",
+            "id",
+            "name",
+            "label",
+            "address",
+            "port",
+            "group_id",
+            "identity_id",
+            "group",
+            "groups",
+            "identity",
+            "os_icon",
+            "tags",
+            "notes",
+            "proxy_jump",
+            "forward_agent",
+            "remote_command",
+            "environment",
+            "sort_order",
+            "favorite",
+            "last_connected",
+            "source",
+            "ssh_config_hash",
+            "has_password",
+            "secret_lookup",
+            "username",
+            "session_logging",
+            "ping",
+            "transport",
+            "created_at",
+            "updated_at",
         ];
         for n in host_names {
-            assert!(classify(EntityKind::Host, n).is_some(), "host field {n} unclassified");
+            assert!(
+                classify(EntityKind::Host, n).is_some(),
+                "host field {n} unclassified"
+            );
         }
         for n in [
-            "id", "name", "sort_order", "default_identity_id", "default_username", "default_port",
-            "default_proxy_jump", "default_transport", "default_forward_agent", "parent_id",
+            "id",
+            "name",
+            "sort_order",
+            "default_identity_id",
+            "default_username",
+            "default_port",
+            "default_proxy_jump",
+            "default_transport",
+            "default_forward_agent",
+            "parent_id",
             "reserved",
         ] {
-            assert!(classify(EntityKind::Group, n).is_some(), "group field {n} unclassified");
+            assert!(
+                classify(EntityKind::Group, n).is_some(),
+                "group field {n} unclassified"
+            );
         }
-        for n in ["id", "name", "username", "private_key", "certificate", "has_password"] {
-            assert!(classify(EntityKind::Identity, n).is_some(), "identity field {n} unclassified");
+        for n in [
+            "id",
+            "name",
+            "username",
+            "private_key",
+            "certificate",
+            "has_password",
+        ] {
+            assert!(
+                classify(EntityKind::Identity, n).is_some(),
+                "identity field {n} unclassified"
+            );
         }
     }
 
@@ -298,21 +391,42 @@ mod tests {
             assert_eq!(classify(EntityKind::Host, n), Some(Safe), "{n}");
         }
         for n in [
-            "address", "port", "username", "proxy_jump", "remote_command", "forward_agent",
-            "transport", "environment", "secret_lookup", "has_password", "identity_uid",
+            "address",
+            "port",
+            "username",
+            "proxy_jump",
+            "remote_command",
+            "forward_agent",
+            "transport",
+            "environment",
+            "secret_lookup",
+            "has_password",
+            "identity_uid",
             "group_uids",
         ] {
             assert_eq!(classify(EntityKind::Host, n), Some(Dangerous), "{n}");
         }
         for n in [
-            "default_proxy_jump", "default_identity_uid", "default_username", "default_port",
-            "default_transport", "default_forward_agent", "parent_uid",
+            "default_proxy_jump",
+            "default_identity_uid",
+            "default_username",
+            "default_port",
+            "default_transport",
+            "default_forward_agent",
+            "parent_uid",
         ] {
             assert_eq!(classify(EntityKind::Group, n), Some(Dangerous), "{n}");
         }
         for n in [
-            "id", "created_at", "updated_at", "last_connected", "sort_order", "ping",
-            "session_logging", "ssh_config_hash", "source",
+            "id",
+            "created_at",
+            "updated_at",
+            "last_connected",
+            "sort_order",
+            "ping",
+            "session_logging",
+            "ssh_config_hash",
+            "source",
         ] {
             assert_eq!(classify(EntityKind::Host, n), Some(LocalOnly), "{n}");
         }

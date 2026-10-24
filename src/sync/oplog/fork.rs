@@ -9,7 +9,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use super::merge::op_at;
 use super::op::*;
-use crate::sync::crypto::{chain_hash, verify, DeviceIdentity};
+use crate::sync::crypto::{verify, DeviceIdentity};
 
 const HEAD_DOMAIN: &[u8] = b"sshub/sync/head/v1";
 
@@ -118,7 +118,9 @@ pub(crate) fn evidence(conn: &Connection, device: &str) -> Result<Option<ForkEvi
     };
     Ok(Some(match (a[0], b[0]) {
         (b'O', b'O') => ForkEvidence::Ops(Box::new(op_from_blob(&a)?), Box::new(op_from_blob(&b)?)),
-        (b'O', b'H') => ForkEvidence::OpAndHead(Box::new(op_from_blob(&a)?), SignedHead::from_blob(&b)?),
+        (b'O', b'H') => {
+            ForkEvidence::OpAndHead(Box::new(op_from_blob(&a)?), SignedHead::from_blob(&b)?)
+        }
         (b'H', b'H') => ForkEvidence::Heads(SignedHead::from_blob(&a)?, SignedHead::from_blob(&b)?),
         _ => return Err(anyhow!("unknown fork evidence")),
     }))
@@ -127,13 +129,6 @@ pub(crate) fn evidence(conn: &Connection, device: &str) -> Result<Option<ForkEvi
 /// After a new op at `op.seq` was stored: does a stored signed head of the
 /// same device at that seq disagree with it?
 pub(crate) fn check_heads_against_op(conn: &Connection, op: &Op, hash: &[u8; 32]) -> Result<bool> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT chain_hash, signature FROM sync_head_attests WHERE device_id = ?1 AND seq = ?2
-           AND chain_hash != ?3 AND length(signature) = 64 AND kind = 'head'",
-    );
-    // Heads are stored with their own table kind column when self-signed.
-    let _ = &mut stmt;
-    drop(stmt);
     let mut stmt = conn.prepare_cached(
         "SELECT chain_hash, signature FROM sync_head_attests
          WHERE device_id = ?1 AND seq = ?2 AND chain_hash != ?3",
@@ -224,7 +219,12 @@ pub(crate) fn record_head(conn: &Connection, head: &SignedHead) -> Result<HeadVe
     conn.execute(
         "INSERT OR IGNORE INTO sync_head_attests (device_id, seq, chain_hash, signature)
          VALUES (?1, ?2, ?3, ?4)",
-        params![head.device_id, head.seq as i64, &head.hash[..], &head.sig[..]],
+        params![
+            head.device_id,
+            head.seq as i64,
+            &head.hash[..],
+            &head.sig[..]
+        ],
     )?;
     let have: Option<i64> = conn
         .query_row(
@@ -248,9 +248,4 @@ pub(crate) fn mark_suspect(conn: &Connection, device: &str) -> Result<()> {
         params![device],
     )?;
     Ok(())
-}
-
-#[allow(dead_code)]
-fn _hash_is_chain_hash(bytes: &[u8]) -> [u8; 32] {
-    chain_hash(bytes)
 }

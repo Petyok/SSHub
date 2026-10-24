@@ -14,9 +14,8 @@ mod workspaces;
 pub use group_defaults::{ResolvedConnection, DEFAULT_PORT};
 pub use hosts::is_option_like;
 pub(crate) use hosts::{
-    add_host_to_group_on, create_group_on, create_host_on, delete_group_on, delete_host_on,
-    favorites_group_id_on, load_host_by_id, reject_option_like, set_host_environment_on,
-    sync_favorite_membership, update_group_on, update_host_on,
+    create_group_on, create_host_on, delete_group_on, delete_host_on, reject_option_like,
+    update_group_on, update_host_on,
 };
 pub(crate) use identities::{create_identity_on, delete_identity_on, update_identity_on};
 pub(crate) use migrate::now_ts;
@@ -31,10 +30,7 @@ pub use types::{
     NewIdentity, NewLogBookmark, NewSnippet, NewTunnel, Snippet, SnippetUpdate,
     SshConfigHostImport, Tunnel, TunnelType, UpsertSshConfigOutcome, Workspace,
 };
-pub(crate) use uid::{
-    group_id_by_uid_on, group_uid_on, host_id_by_uid_on, host_uid_on, identity_id_by_uid_on,
-    identity_uid_on,
-};
+pub(crate) use uid::{group_id_by_uid_on, host_id_by_uid_on, identity_id_by_uid_on};
 pub use uid::{
     uid_from_hex, uid_hex, GroupUid, HostUid, IdentityUid, Uid, DEFAULT_IDENTITY_UID,
     FAVORITES_GROUP_UID,

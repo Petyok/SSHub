@@ -13,9 +13,7 @@ use anyhow::{anyhow, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::{BTreeSet, HashSet, VecDeque};
 
-use super::canonical::{
-    body_name, group_field_values, host_field_values, identity_field_values,
-};
+use super::canonical::{body_name, group_field_values, host_field_values, identity_field_values};
 use super::op::*;
 use super::tier::EntityKind;
 use crate::store::{uid_hex, Uid};
@@ -106,7 +104,9 @@ fn row_of(conn: &Connection, where_sql: &str, p: impl rusqlite::Params) -> Resul
     let mut out = Vec::new();
     for row in rows {
         let (hash, canonical, sig, state, reason, local) = row?;
-        let sig: [u8; 64] = sig.try_into().map_err(|_| anyhow!("stored signature length"))?;
+        let sig: [u8; 64] = sig
+            .try_into()
+            .map_err(|_| anyhow!("stored signature length"))?;
         out.push(OpRow {
             op: Op::from_canonical(&canonical, sig)?,
             hash: hash.try_into().map_err(|_| anyhow!("stored hash length"))?,
@@ -123,7 +123,12 @@ pub(crate) fn load_op(conn: &Connection, hash: &[u8; 32]) -> Result<Option<OpRow
 }
 
 pub(crate) fn op_at(conn: &Connection, device: &str, seq: u64) -> Result<Option<OpRow>> {
-    Ok(row_of(conn, "device_id = ?1 AND seq = ?2", params![device, seq as i64])?.pop())
+    Ok(row_of(
+        conn,
+        "device_id = ?1 AND seq = ?2",
+        params![device, seq as i64],
+    )?
+    .pop())
 }
 
 /// Store a verified op, its register writes and its tombstone. The state is
@@ -175,7 +180,13 @@ pub(crate) fn insert_op(
             conn.execute(
                 "INSERT OR IGNORE INTO sync_tombstones (kind, uid, lamport, device_id, op_hash)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![kind.as_str(), &uid[..], op.lamport as i64, op.device_id, &hash[..]],
+                params![
+                    kind.as_str(),
+                    &uid[..],
+                    op.lamport as i64,
+                    op.device_id,
+                    &hash[..]
+                ],
             )?;
         } else {
             let mut fields = match &op.body {
@@ -227,12 +238,21 @@ fn sync_pending_row(
             params![&hash[..], op.device_id, kind, uid, reason.unwrap_or("tier"), now],
         )?;
     } else {
-        conn.execute("DELETE FROM sync_pending_ops WHERE op_hash = ?1", params![&hash[..]])?;
+        conn.execute(
+            "DELETE FROM sync_pending_ops WHERE op_hash = ?1",
+            params![&hash[..]],
+        )?;
     }
     Ok(())
 }
 
-fn set_state(conn: &Connection, row: &OpRow, state: State, reason: Option<&str>, now: i64) -> Result<()> {
+fn set_state(
+    conn: &Connection,
+    row: &OpRow,
+    state: State,
+    reason: Option<&str>,
+    now: i64,
+) -> Result<()> {
     conn.execute(
         "UPDATE sync_ops SET state = ?1, reason = ?2 WHERE op_hash = ?3",
         params![state.as_str(), reason, &row.hash[..]],
@@ -265,7 +285,10 @@ fn resurrects(conn: &Connection, op: &Op) -> Result<bool> {
 }
 
 /// The state an op should be in given everything else in the log.
-pub(crate) fn desired_state(conn: &Connection, row: &OpRow) -> Result<(State, Option<&'static str>)> {
+pub(crate) fn desired_state(
+    conn: &Connection,
+    row: &OpRow,
+) -> Result<(State, Option<&'static str>)> {
     let op = &row.op;
     if row.state == State::Rejected {
         return Ok((State::Rejected, None));
@@ -318,7 +341,12 @@ impl<'a> Settler<'a> {
 
     /// Move one op to `state` (the caller has decided), run its effects and
     /// queue everything its change can affect.
-    pub(crate) fn transition(&mut self, row: &OpRow, state: State, reason: Option<&str>) -> Result<()> {
+    pub(crate) fn transition(
+        &mut self,
+        row: &OpRow,
+        state: State,
+        reason: Option<&str>,
+    ) -> Result<()> {
         if row.state == state && row.reason.as_deref() == reason {
             return Ok(());
         }
@@ -343,14 +371,6 @@ impl<'a> Settler<'a> {
             effects(self.conn, &row.op, &row.hash)?;
         }
         Ok(())
-    }
-
-    pub(crate) fn settle_author(&mut self, device: &str) {
-        self.queue.push_back(Work::Author(device.to_string()));
-    }
-
-    pub(crate) fn settle_entity(&mut self, kind: EntityKind, uid: Uid) {
-        self.queue.push_back(Work::Entity(kind, uid));
     }
 
     /// Drain the queue. Each unit of work is re-run only when an earlier
@@ -407,7 +427,9 @@ fn effects(conn: &Connection, op: &Op, hash: &[u8; 32]) -> Result<()> {
             role,
             attendance,
         } => {
-            if device.validate().is_ok() && device.device_id() == device_id_of_pub(&device.ed25519_pub) {
+            if device.validate().is_ok()
+                && device.device_id() == device_id_of_pub(&device.ed25519_pub)
+            {
                 conn.execute(
                     "INSERT OR IGNORE INTO sync_devices
                        (device_id, ed25519, x25519, mlkem, name, role, attendance, last_seen, added_by)
@@ -498,7 +520,11 @@ fn effects(conn: &Connection, op: &Op, hash: &[u8; 32]) -> Result<()> {
         OpBody::ModeChange { to, .. } => {
             let incoming = lww_key(op.lamport, &op.device_id);
             let cur: Option<Vec<u8>> = conn
-                .query_row("SELECT value FROM sync_meta WHERE key = 'cred_mode_key'", [], |r| r.get(0))
+                .query_row(
+                    "SELECT value FROM sync_meta WHERE key = 'cred_mode_key'",
+                    [],
+                    |r| r.get(0),
+                )
                 .optional()?;
             if cur.is_none_or(|c| String::from_utf8_lossy(&c).as_ref() < incoming.as_str()) {
                 conn.execute(
@@ -557,7 +583,10 @@ fn scope_json(s: &CertScope) -> String {
         CertScope::Group(g) => format!("{{\"Group\":\"{}\"}}", uid_hex(g)),
         CertScope::Hosts(h) => format!(
             "{{\"Hosts\":[{}]}}",
-            h.iter().map(|u| format!("\"{}\"", uid_hex(u))).collect::<Vec<_>>().join(",")
+            h.iter()
+                .map(|u| format!("\"{}\"", uid_hex(u)))
+                .collect::<Vec<_>>()
+                .join(",")
         ),
     }
 }
