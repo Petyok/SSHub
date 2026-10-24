@@ -65,3 +65,11 @@ devid() { peer "$1" $SSHUB sync-status --format json 2>/dev/null | pjq -r --arg 
 # Read-only SQL against peer $1's launcher.db (evidence and counts, never writes).
 sq() { p=$1; shift; peer "$p" sh -c 'sqlite3 "$(find "$HOME/.local/share/sshub" -name launcher.db | head -n1)" "$1"' sh "$*"; }
 ckpts_accepted() { sq "$1" "SELECT count(*) FROM sync_checkpoints WHERE status IN ('accepted','pruned')"; }
+
+# sync-now bounded to 15 minutes, with the elapsed seconds printed (large logs).
+snowt() {
+  t0=$(date +%s)
+  out=$(peer "$1" timeout 900 $SSHUB sync-now --format json 2>&1) || true
+  echo "sync-now on $1 took $(( $(date +%s) - t0 ))s"
+  printf '%s\n' "$out" | pjq -c '.[]? | {name, status, applied, pending, received, rejected}' 2>/dev/null || printf '%s\n' "$out" | cut -c1-300
+}

@@ -25,20 +25,22 @@ grow='i=0; while [ $i -lt 6000 ]; do
   fi
 done'
 check "peer-a grows its log past the checkpoint threshold" "psh peer-a '$grow'"
-show "peer-a ops in the log" sq peer-a 'SELECT count(*) FROM sync_ops'
+show "peer-a ops in the log" sq peer-a 'SELECT count(*), sum(length(canonical)) FROM sync_ops'
 for round in 1 2 3; do
-  spread peer-b peer-a peer-b peer-a
+  snowt peer-b
+  snowt peer-a
 done
 show "peer-a checkpoints" sq peer-a 'SELECT status, state_len FROM sync_checkpoints'
+show "peer-b checkpoints" sq peer-b 'SELECT status, state_len FROM sync_checkpoints'
+show "peer-b op states" sq peer-b 'SELECT state, reason, count(*) FROM sync_ops GROUP BY state, reason'
 check "peer-a holds an accepted checkpoint" '[ "$(ckpts_accepted peer-a)" -gt 0 ]'
-show "peer-b checkpoints" sq peer-b 'SELECT status FROM sync_checkpoints'
+check "peer-b holds the accepted checkpoint too" '[ "$(ckpts_accepted peer-b)" -gt 0 ]'
 
 echo "--- GAP: prune needs 7 days after acceptance and the driver reads the wall clock; no hook, so no pruned log exists to bootstrap from"
 check "peer-c joins after the checkpoint and receives the ring" "enroll_peer peer-c hub"
 approve_all peer-a >/dev/null 2>&1 || true
 check "peer-c records peer-a" "enroll_peer peer-c peer-a"
-out=$(snow peer-c)
-echo "peer-c first round: $out"
+snowt peer-c
 check "peer-c has the big host after syncing" "peer peer-c $SSHUB host list 2>/dev/null | grep -q big"
 dump_state "after checkpoint"
 
