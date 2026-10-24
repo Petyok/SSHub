@@ -1106,7 +1106,10 @@ pub fn print_help(cmd: &str) {
         "sync-import-kit" => ("sync-import-kit", "On a new machine: read the ring kit (sshub:ring:1:...) and the six master words without echo and set up the Vault here."),
         _ => return,
     };
-    println!("sshub {cmd} - {}", text.split(". ").next().unwrap_or("").trim_end_matches('.'));
+    println!(
+        "sshub {cmd} - {}",
+        text.split(". ").next().unwrap_or("").trim_end_matches('.')
+    );
     println!();
     println!("USAGE:");
     println!("    sshub [--profile NAME] {synopsis}");
