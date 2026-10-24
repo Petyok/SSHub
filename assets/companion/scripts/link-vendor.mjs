@@ -7,13 +7,13 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const vendor = join(root, 'vendor');
 const nm = join(root, 'node_modules');
-rmSync(nm, { recursive: true, force: true });
 for (const dir of readdirSync(vendor, { withFileTypes: true })) {
   if (!dir.isDirectory()) continue;
   const pkgJson = join(vendor, dir.name, 'package.json');
   if (!existsSync(pkgJson)) continue;
   const { name } = JSON.parse(readFileSync(pkgJson, 'utf8'));
   const link = join(nm, name);
+  rmSync(link, { recursive: true, force: true });
   mkdirSync(dirname(link), { recursive: true });
   symlinkSync(relative(dirname(link), join(vendor, dir.name)), link, 'dir');
 }
