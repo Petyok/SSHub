@@ -849,7 +849,15 @@ fn latest_accepted(conn: &Connection) -> Result<Option<[u8; 32]>> {
     Ok(h.and_then(|h| h.try_into().ok()))
 }
 
-fn propose_parts(op: &Op) -> Result<(&Vec<CutEntry>, &[u8; 32], u64, &[u8; 32], &Vec<DeviceId>)> {
+type ProposalParts<'a> = (
+    &'a Vec<CutEntry>,
+    &'a [u8; 32],
+    u64,
+    &'a [u8; 32],
+    &'a Vec<DeviceId>,
+);
+
+fn propose_parts(op: &Op) -> Result<ProposalParts<'_>> {
     match &op.body {
         OpBody::CheckpointPropose {
             cut,
@@ -1109,13 +1117,12 @@ pub(crate) fn record(
     }
     settle_competitors(conn, prev)?;
     drop_old_blobs(conn)?;
-    Ok(conn
-        .query_row(
-            "SELECT status FROM sync_checkpoints WHERE proposal_hash = ?1",
-            params![&hash[..]],
-            |r| r.get::<_, String>(0),
-        )
-        .map(|s| CheckpointStatus::parse(&s))??)
+    let status: String = conn.query_row(
+        "SELECT status FROM sync_checkpoints WHERE proposal_hash = ?1",
+        params![&hash[..]],
+        |r| r.get(0),
+    )?;
+    CheckpointStatus::parse(&status)
 }
 
 /// Same `prev_checkpoint`: lowest `(lamport, device_id)` wins, the others are
@@ -1497,7 +1504,8 @@ fn collapse_tombstones(conn: &Connection) -> Result<()> {
          WHERE t.op_hash IN (SELECT op_hash FROM _pruned) OR t.op_hash = zeroblob(32)
          ORDER BY t.lamport, t.device_id",
     )?;
-    let rows: Vec<(String, Vec<u8>, i64, String, i64, Vec<u8>, Option<String>)> = stmt
+    type TombRow = (String, Vec<u8>, i64, String, i64, Vec<u8>, Option<String>);
+    let rows: Vec<TombRow> = stmt
         .query_map([], |r| {
             Ok((
                 r.get(0)?,
