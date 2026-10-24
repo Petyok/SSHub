@@ -364,6 +364,230 @@ environment, os_icon, tags, notes, favorite, secret_lookup, has_password,
 group_uids, identity_uid`. Hop tokens in `proxy_jump` are stored as uids and
 rendered as names locally; apply rewrites them.
 
+### 2a. Stage 1 as built (WP1a, WP1b)
+
+Binding addenda to section 2; the code in `src/sync/oplog/`, `src/sync/apply.rs`
+and `src/sync/identity_store.rs` is the reference.
+
+**Canonical form details (C2).** Header field order is `device_id, seq, lamport,
+prev_hash, timestamp, epoch, alg, body`; `alg` is the two-byte wire form
+`[sig, wrap]` as a JSON array (`[1,1]` today, the only number array left); the
+body is externally tagged, `{"Variant":{fields in the order of section 2}}`;
+uids are 32 lowercase hex characters; fixed `[u8; 32]` values (`prev_hash`,
+`chain_hash`, `cert_id`, `reenroll_hash`, `ed25519_pub`, `x25519_pub`) are
+lowercase hex strings; every `Vec<u8>` (`ciphertext`, `sealed`, `sealed_share`,
+`mlkem_pub`, each `commitments` entry, the bytes of a `sub_shares` pair) is a
+base64 string (standard alphabet, padded); `sub_shares` entries are
+`["<device id>","<base64>"]` pairs; `ReshareItem` is `{host_uid, sub_shares,
+commitments}`, `ConfirmItem` is `{host_uid, sealed_share}`; `ThirdFactor` is
+`"Paper"` or `"EmailCode"`; `PhoneReenroll` ends with `paper_sig`, `null` or a
+128 character lowercase hex string (the 64 byte signature); `DeviceAdd` ends with
+`kind` (`"Terminal"` or `"Phone"`); `CertScope` is
+`{"Group":"<uid>"}` or `{"Hosts":["<uid>",...]}`; `HeadAttest` (in
+`PhoneReenroll.liveness`) is `{"device_id","seq","chain_hash"}`. Decoding is
+strict: `Op::from_canonical` re-encodes and refuses bytes that differ from what
+the encoder would write (wrong alphabet, missing padding, uppercase hex, key
+order, whitespace). An op larger than `MAX_FRAME_BYTES` is refused at ingest.
+Final vectors: `tests/vectors/op/ops.json` (every body variant plus edge cases,
+inputs with `Vec<u8>` as hex), reproduced by the independent oracle
+`tests/oracles/op_canonical.py`; `tests/vectors/op-rules/` is the superseded PoC A
+number-array set.
+
+**C14 ops.** `ShareReshareSession`, `ShareStorageKey`, `ShareReshareBatch`,
+`ShareReshareConfirmBatch` (at most `RESHARE_ITEMS_PER_OP` items, enforced at
+ingest and by `sync_append_local`) and `WrapKeyRotate` are Green: cryptographic
+data only, the ring ceremony around them (`DeviceRevoke`, holder changes) is
+Red. Stage 1 stores them in the chain; stage 3 reads them with
+`sync_chain_tail`. `WrapKeyRotate` must be signed by `device_id` itself
+(`Rejected` otherwise); on effect it records the replaced and the new
+generation in `sync_wrap_history` and, when `wrap_epoch` is above the stored one
+and the keys validate (`DevicePublic::validate`), replaces `x25519`/`mlkem` in
+`sync_devices` and sets `DeviceRow.wrap_epoch`. The signing key never changes.
+
+**Patch fields.** `HostUpsert`, `GroupUpsert` and `IdentityUpsert` carry a patch:
+absent key = untouched, explicit `null` = cleared, absent keys are omitted, key
+order fixed:
+
+- host: `name, label, address, port, username, proxy_jump, forward_agent,
+  remote_command, transport, environment, os_icon, tags, notes, favorite,
+  secret_lookup, has_password, group_uids, identity_uid`. `transport` is the DB
+  string (`ssh`, `mosh`); `group_uids` is sorted, unique and never holds the
+  Favorites uid (that is `favorite`); `tags` keep their order.
+- group: `name, default_identity_uid, default_username, default_port,
+  default_proxy_jump, default_transport, default_forward_agent, parent_uid`.
+- identity: `name, username, has_password` (key file paths never replicate).
+
+A hop token in `proxy_jump` or `default_proxy_jump` that names a saved launcher
+host travels as `#<uid hex>`; any other hop token is a plain `[user@]host[:port]`
+checked by `map::hops::validate_raw`. Apply renders `#uid` as the local host
+name (`sync_hops_to_wire` does the inverse when authoring); an unresolvable hop
+clears the column and keeps the register.
+
+**Types added.** `CertScope` lives in `oplog::op` (stage 3 re-exports it, it does
+not redefine it). `HeadAttest` is an unsigned claim; the self-signed form is
+`fork::SignedHead { device_id, seq, hash, sig }` (signature over
+`"sshub/sync/head/v1" || device_id || 0x00 || seq u64 BE || hash`).
+`fork::HeadVerdict { Consistent, Ahead, Fork, Rejected }`,
+`fork::ForkEvidence { Ops, OpAndHead, Heads }`, `merge::TieBreak { First, Second,
+ManualReview }` and `merge::tie_break(a, b)` are exported from `oplog`.
+
+**Extra `LauncherStore` methods** (beyond section 2): `sync_register_device(public,
+name, role, attendance)` (the trust anchor written by an enrollment ceremony),
+`sync_chain_heads()`, `sync_pending_reason(hash)`, `sync_record_head(&SignedHead)`,
+`sync_fork_evidence(device)`, `sync_mark_suspect(device)`, `sync_state_hash()`,
+`sync_projection_hash()`, `sync_projection_dump()`, `sync_hops_to_wire(str)`.
+`sync_append_local` validates the body like ingest does and stores the op as
+`approved` (the user made the change). `sync_chain_tail` returns at most
+`MAX_OPS_PER_TAIL` ops.
+
+**Ingest verdicts.** `Rejected` (not chained, nothing stored): seq, lamport or
+epoch above `i64::MAX` or zero; unknown or compromised signer; unsupported alg;
+bad signature; invalid field values (option-like names and addresses,
+`destination_problem`, bad hops, port 0, unknown transport, unsorted
+`group_uids`, ops on the local-only Favorites group, `ShareRelease` whose
+`requester` is not the signer); duplicate; gap; `prev_hash` mismatch; lamport not
+increasing along the chain; lamport above `max_known + LAMPORT_JUMP_CAP`;
+quarantine full for the device. `ForkProof(stored, new)` when a valid op has the
+seq of a different stored op (device becomes `compromised`, evidence kept).
+Otherwise the op is chained and stored: `Applied` or `Pending`; an op signed at
+or after its author's approved revocation is chained but `void` and reported as
+`Rejected("void: ...")`.
+
+**Op states** (`sync_ops.state`): `applied` (Green, automatic), `pending`,
+`approved` (review or own op), `rejected` (review refused; kept so the chain
+stays whole), `void`. Applied and approved ops are effective; only they feed
+state. The state is a function of the op and the rest of the log, never of
+arrival order. Pending reasons: `tier` (Yellow or Red, or a dangerous field
+anywhere in the op: the whole op waits, its safe fields included),
+`resurrection` (an edit with lamport strictly above an effective tombstone),
+`revoke-conflict` (author has a pending revoke at or below the op's lamport).
+An approved `DeviceRevoke` voids the target's ops with lamport at or above the
+revoke's; a revoke never loses an automatic tie-break.
+
+**Tiers** (`tier::body_tier`): Green = upserts with only safe fields,
+`CertHostOpened`, `RecoveryAck`, `HeadAttest`, `WrapKeyRotate` and the four reshare
+ops. Yellow = upserts touching any
+dangerous (or unclassified) field, the three deletes, `CredUpdate`,
+`ShareRelease`, `CertRevoke`, `PhoneReenrollCancel`,
+`DeviceAdd` of a mirror. Red = `DeviceAdd` of a holder, `DeviceRevoke`,
+`CertIssue`, `PhoneReenroll`, `ModeChange`. Only Green applies
+without review.
+
+**State model.** Entity state is a deterministic function of the effective ops:
+per-field last writer wins by `(lamport, device_id, seq)` over `sync_fields`; an
+entity is alive iff its newest effective write has a strictly higher lamport than
+its newest effective tombstone. Rows are a projection written through the
+existing `*_on` helpers and validators. Two live entities that want one name: the
+holder of the older name write `(lamport, device_id)` keeps it, the other renders
+as `name (<first 8 uid hex>)`; a local-only row (ssh_config, pre-sync) always
+keeps its name. A group whose parent chain cycles loses its parent on every
+device. Effects of non-entity ops (`DeviceAdd`, `CredUpdate`, certificates,
+`ModeChange`, `HeadAttest`) run once when the op becomes effective and are not
+undone by a later void (ring-membership ops are always reviewed by a human).
+
+**Schema.** Tables of `migrate_v21_to_v22`: the 11 of section 2 plus
+`sync_fields` (per-field write registers), `sync_entities` (cache of
+liveness and base name) and `sync_wrap_history` (wrap key generations). `sync_ops` also stores `kind` and `subject`. The DDL is
+`SYNC_SCHEMA` in `src/store/migrate.rs`. Uids of new rows come from an
+`AFTER INSERT` trigger (`randomblob(16)`, SQLite's OS-seeded CSPRNG); the seeded
+Favorites group and Default identity have fixed uids
+(`FAVORITES_GROUP_UID`, `DEFAULT_IDENTITY_UID` in `src/store/uid.rs`).
+
+**Device key (C8) as built.** `load_or_init_identity` keeps the passphrase of
+`device.key` (random 256 bits, `to_encrypted`) in the profile's credential store
+under `sync-device-key`: the OS keyring normally; in the `credentials.json`
+fallback it sits next to the file, so the 0600 mode is the whole protection, as for
+every secret there. A key file whose passphrase is missing is an error, never a
+silent regeneration.
+
+### 2a'. Checkpoints as built (C15)
+
+Additions to 2a for the checkpoint package; the code in
+`src/sync/oplog/checkpoint.rs` is the reference.
+
+**Op types.** `DeviceKind { Terminal, Phone }` (`DeviceAdd.kind`,
+`DeviceRow.kind`, `sync_register_device(.., kind)`); `ThirdFactor` is `Paper |
+EmailCode`; `RecoveryApprove { reenroll_hash }` is Red and `PhoneReenroll` carries
+`paper_sig: Option<[u8; 64]>` (stage 3 validates the state machine and the
+signature); `CheckpointPropose` and `CheckpointSign` are Green and inert. The
+canonical form of `CutEntry` is `{device_id, seq, op_hash (hex), lamport}`.
+
+**Multi-version writes.** Everything that is not an entity field is kept as a
+write in `sync_writes(section, key, op_hash, ord, lamport, device_id, seq, value)`:
+sections `device`, `revoke`, `wrap`, `cred`, `share`, `storage`, `mode`, `cert`,
+`cert_revoked`, `cert_open`, `head`. The winner of a `(section, key)` is the newest
+`(ord, lamport, device_id, seq)` among writes of effective ops (`ord` is the epoch,
+wrap epoch or head seq where one exists). `op_hash` = 32 zero bytes marks a *base
+write*: always effective; used for devices registered without an op
+(`sync_register_device` writes one), for pruned winners and for bootstrap.
+`sync_fields` and `sync_tombstones` follow the same rule. The cache tables of
+section 2 (`sync_cred_state`, `sync_delegation_certs`, ...) are still written by
+the op effects and rebuilt from the winners by a bootstrap. `sync_cred_state.wrapped_shares`
+holds base64 `sealed`. Read helpers over the writes: `sync_share_envelopes(host)`
+and `sync_storage_key(device)`.
+
+**State blob.** Canonical JSON (keys sorted), sections `cut`, `devices` (key
+material of the current wrap generation, role, attendance, kind, status
+`operational | revoked | compromised`, `wrap_epoch`, `added_by`, `head_ts` = timestamp
+of the device's op at the cut), `entities` (per entity the winning write of every
+field with its `(lamport, device_id, seq)`; a deleted entity keeps its fields and a
+tombstone `{lamport, device_id, ts}` until `TOMBSTONE_KEEP_SECS` before the proposal
+time, then it is omitted), `epochs` (epoch of each head op), `forks` (the two
+evidence blobs of every compromised device) and `writes` (every `sync_writes`
+winner; a credential that was resharded has `shares: []` in its `cred` entry).
+The fold is *as of the cut*: only effective ops with `seq` at or below the cut of
+their device count, plus base writes. Pending ops below the cut make
+`sync_checkpoint_build` fail and `sync_checkpoint_verify` answer `Blocked`.
+`required` is the sorted set of devices with `kind = terminal`, `attendance =
+attended`, status `operational` and `head_ts` within `LIVE_DEVICE_WINDOW_SECS` of the
+proposal timestamp. `prev_checkpoint` must be the last accepted proposal hash (zeros
+for the first) or the verdict is `Differs { section: "prev_checkpoint" }`.
+`ring_fingerprint(state)` is 88 bits of BLAKE3 over the canonical `devices` section
+as 8 BIP39 words.
+
+**API as built** beyond 2b: `sync_checkpoint_propose(id, cut, now)` (attended
+terminal only; the proposal carries timestamp `now`, which is also the clock of
+the fold), `sync_checkpoint_sign(id, proposal, state)` (signs only on `Matches`;
+`Differs` records the proposal as `Disputed` and the proposer as `suspect`),
+`sync_checkpoint_bundle(proposal_hash)` (proposal, signs, head ops, state of a
+recorded checkpoint, for serving), `sync_append_local_at(id, body, now)`.
+`sync_chain_tail` returns `Err(Pruned { floor_seq })` when `after_seq + 1 <
+floor_seq`.
+
+**Recording and acceptance.** `sync_checkpoint_record` stores the proposal and the
+valid `CheckpointSign` ops, runs the verdict and sets the status: `Disputed` on
+`Differs`, `Proposed` on `MissingOps` or `Blocked`, `Verified` on `Matches` without
+enough signatures, `Accepted` on `Matches` when every `required` device signed and at
+least `CHECKPOINT_SIGN_MIN` distinct attended terminals signed. Accepting flags
+every device whose head op at the cut is older than `STALE_AFTER_SECS`: its ops above
+that seq enter pending with reason `stale` whatever their class. Proposals with the
+same `prev_checkpoint`: the lowest `(lamport, device_id)` stays, the others become
+`Void` (an accepted one is never voided).
+
+**Pruning.** `sync_prune(now)` does nothing until two checkpoints are accepted and
+the newest is `CHECKPOINT_PRUNE_DELAY_SECS` old. Then, with the cut of the older
+accepted checkpoint as the floor: ops below the floor are deleted, the head op of
+every device at the floor stays; the winners of the writes of the deleted ops
+become base writes and every other write is dropped; tombstones are collapsed the
+same way and a deleted entity past the horizon is forgotten; a resharded
+credential loses its wrapped shares; old head attestations and older wrap key
+generations go; only the newest state blob is kept (an older one still holds the
+shares that were live then); the file is `VACUUM`ed so deleted blobs do not stay in
+free pages. `PruneReport` counts deleted ops, deleted writes, dropped share blobs
+and bytes. Ingest: `seq` below the floor is `Rejected("covered ...")`, `seq` equal to
+the floor with another hash is a `ForkProof` against the kept head.
+
+**Bootstrap.** `sync_bootstrap` checks the blob hash and length, the proposer and
+every sign against the blob's own device table, the cut, the required set and its
+signatures (all required, at least `CHECKPOINT_SIGN_MIN`), the head ops, and the
+trust anchor (`RingFingerprint`, case and spacing ignored, or an `Anchor` device
+that signed); it needs a store without ops. It stores the head ops as anchors
+(state `void`, reason `checkpoint-anchor`), writes the base rows, rebuilds the cache
+tables and the projection, sets the floor to the cut and records the checkpoint as
+accepted. Tombstone state is `{lamport, device_id, ts}`: the op hash is not part of
+the blob, so a pruned or bootstrapped store folds to the same bytes as one that kept
+the log.
+
 ### 2b. Checkpoints and pruning (C15)
 
 Design: `docs/host-sync-design.md`, section "Checkpoints and pruning". Owner: the op-log package.
