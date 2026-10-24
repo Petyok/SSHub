@@ -16,14 +16,17 @@ Rust paths are under `crate::sync` (`src/sync/`), declared in `src/lib.rs` as
   `HostUid`, `GroupUid`, `IdentityUid`. Local SQLite integer ids stay local row
   keys and foreign-key targets; they never appear in an op, a frame or a
   challenge. `DeviceId = String = hex(ed25519_pub[..8])`.
-- **Canonical bytes (C2).** One canonical form for ops and challenges, written
-  by an explicit hand-ordered encoder (not by `#[derive(Serialize)]` field
-  order), frozen by committed vectors under `tests/vectors/`. Provisional form:
-  deterministic JSON with fixed field order, `prev_hash` and every 32-byte
-  value as lowercase hex, integers as JSON numbers (u64 above 2^53 as decimal
-  strings), strings NFC-agnostic raw UTF-8. PoC A claim A5 gates this: any
-  Rust/JS mismatch switches the whole epic to a length-prefixed binary form;
-  there is never a second format.
+- **Canonical bytes (C2, proven by PoC A claim A5).** One canonical form for ops
+  and challenges, written by an explicit hand-ordered encoder (not by
+  `#[derive(Serialize)]` field order), frozen by committed vectors under
+  `tests/vectors/`. Form: deterministic compact JSON, fixed field order,
+  `prev_hash` as lowercase hex, other 32-byte values as number arrays exactly as
+  the vectors show, integers as plain JSON number literals (u64::MAX is
+  `18446744073709551615`), strings as raw UTF-8 with only the mandatory JSON
+  escapes. Rule for every consumer, the phone included: hash and verify over the
+  exact bytes received, never re-serialise; a consumer that must parse numbers
+  uses an exact-integer parser (native `JSON.parse` rounds above 2^53). There is
+  never a second format.
 - **Tombstones (C3).** `HostDelete`, `GroupDelete`, `IdentityDelete` write a
   tombstone `(kind, uid, lamport, device_id, op_hash)`. Order is
   `(lamport, device_id)`. A delete beats a concurrent edit unless the edit has a
@@ -85,10 +88,23 @@ Rust paths are under `crate::sync` (`src/sync/`), declared in `src/lib.rs` as
   reference `uid` BLOBs. `uid` columns are added with `ALTER TABLE ... ADD COLUMN`,
   backfilled in the migration, with a UNIQUE INDEX (no table rebuild).
 - **Dependencies.** The RustCrypto 0.10/0.5/dalek-2 generation stays for the
-  whole epic: argon2 0.5, chacha20poly1305 0.10, crypto_box 0.9, ed25519-dalek 2,
-  x25519-dalek 2, ml-kem 0.2, bip39 2, blake3 1, rand_core 0.6, plus direct
-  `zeroize`, `hex`, `getrandom`/`rand`. No SMTP crate. `audio` and
+  whole epic: argon2 0.5, chacha20poly1305 0.10, ed25519-dalek 2,
+  x25519-dalek 2, ml-kem `=0.2.3` (pinned exactly), bip39 2, blake3 1,
+  rand_core 0.6, plus direct `zeroize`, `hex`, `getrandom`/`rand`. No SMTP
+  crate, no `crypto_box`, no `bincode` (C11, C13). `audio` and
   `clipboard-read` are opt-in cargo features.
+- **Sealed box (C11, PoC A finding 3).** `seal_to`/`open_sealed` are
+  `eph_pub(32) || nonce(24) || XChaCha20-Poly1305(key, plaintext)` with
+  `key = BLAKE3.derive_key("sshub/sync/seal/v1", dh || eph_pub || recipient_pub)`,
+  the same shape as the hybrid wrap. The `crypto_box` crate and the legacy
+  ChaCha20 construction are not used.
+- **Authenticated header (C12, PoC A finding 2).** The hybrid wrap blob is
+  `"SSHW" || sig_suite || wrap_suite || eph_pub || kem_ct_len u16 BE || kem_ct ||
+  nonce || ct`; everything before `ct` is AEAD associated data, so the
+  algorithm tag cannot be flipped in transit.
+- **Wire frames without bincode (C13).** The share response frame is
+  `"SWR1" || version u16 BE || kind u8 || request_id u64 BE || len u64 BE ||
+  bytes`, hand-encoded on both sides.
 
 ## 1. Stage 0: `src/sync/crypto/` (WP0a, WP0b, WP0c)
 
@@ -112,7 +128,7 @@ impl DeviceIdentity {
     pub fn generate() -> Self;
     pub fn public(&self) -> DevicePublic;
     pub fn sign(&self, msg: &[u8]) -> [u8; 64];
-    // Ephemeral crypto_box, only for the phone share reply (recipient lives ~3 s).
+    // Sealed box (C11), only for the phone share reply (recipient lives ~3 s).
     pub fn seal_to(recipient_x25519: &[u8; 32], plaintext: &[u8]) -> Vec<u8>;
     pub fn open_sealed(&self, ciphertext: &[u8]) -> anyhow::Result<Vec<u8>>;
     pub fn to_encrypted(&self, passphrase: &str) -> Vec<u8>;
