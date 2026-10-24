@@ -29,6 +29,36 @@ pub(crate) fn dek_seal_with(dek: &[u8; 32], plaintext: &[u8], nonce: &[u8; 24]) 
     out
 }
 
+/// XChaCha20-Poly1305 under any 32-byte key with associated data, `nonce(24) || ciphertext+tag`.
+/// For symmetric envelopes whose context (credential, epoch, holder) must be bound to the bytes.
+pub fn aead_seal(key: &[u8; 32], aad: &[u8], plaintext: &[u8]) -> Vec<u8> {
+    let mut nonce = [0u8; 24];
+    OsRng.fill_bytes(&mut nonce);
+    let ct = XChaCha20Poly1305::new(key.into())
+        .encrypt(
+            (&nonce).into(),
+            chacha20poly1305::aead::Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
+        .expect("XChaCha20-Poly1305 encrypt");
+    [nonce.as_slice(), ct.as_slice()].concat()
+}
+
+pub fn aead_open(key: &[u8; 32], aad: &[u8], sealed: &[u8]) -> Result<Vec<u8>> {
+    if sealed.len() < 24 + 16 {
+        bail!("sealed data too short: {} bytes", sealed.len());
+    }
+    let (nonce, body) = sealed.split_at(24);
+    XChaCha20Poly1305::new(key.into())
+        .decrypt(
+            nonce.into(),
+            chacha20poly1305::aead::Payload { msg: body, aad },
+        )
+        .map_err(|_| anyhow!("authentication failed (wrong key, wrong context or tampered)"))
+}
+
 pub fn dek_open(dek: &[u8; 32], ciphertext: &[u8]) -> Result<Vec<u8>> {
     if ciphertext.len() < 24 + 16 {
         bail!("ciphertext too short: {} bytes", ciphertext.len());
@@ -55,6 +85,25 @@ mod tests {
         ct[last] ^= 1;
         assert!(dek_open(&dek, &ct).is_err(), "tampered");
         assert!(dek_open(&dek, &[0u8; 39]).is_err(), "too short");
+    }
+
+    #[test]
+    fn aead_binds_its_context() {
+        let key = dek_generate();
+        let sealed = aead_seal(&key, b"host-a|epoch-3|holder-2", b"share bytes");
+        assert_eq!(
+            aead_open(&key, b"host-a|epoch-3|holder-2", &sealed).unwrap(),
+            b"share bytes"
+        );
+        assert!(
+            aead_open(&key, b"host-b|epoch-3|holder-2", &sealed).is_err(),
+            "moved to another credential"
+        );
+        assert!(
+            aead_open(&key, b"host-a|epoch-4|holder-2", &sealed).is_err(),
+            "moved to another epoch"
+        );
+        assert!(aead_open(&key, b"", &sealed[..30]).is_err());
     }
 
     #[test]
