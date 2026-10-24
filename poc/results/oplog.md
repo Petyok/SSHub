@@ -59,3 +59,13 @@ Delete-before-rename ordering of rows; closure of name peers' referrers; rows of
 | Full verify.sh on the tip | fmt, clippy, build, test PASS (hs-oplog-20261024T183955.log) | PASS |
 
 Replay rule as built: local ops (`local = 1`) above this device's cut seq must chain from the cut's head entry for this device (seq and `prev_hash`); they are re-ingested unchanged after the bootstrap and kept as own, approved ops. Foreign unsynced ops are not replayed (the next tail sync fetches them). An own op at the cut seq with another hash, or a gap or wrong `prev_hash` above it, refuses the adoption.
+
+## Ops for S (ExemptionSet, CertExtend) and bulk export (C9)
+
+| Claim | Measured | Result |
+|---|---|---|
+| `ExemptionSet { device_id, slot }` (Red): canonical bytes, vectors, oracle; projection sets `sync_devices.exempt` (newest op wins, also through checkpoint fold and bootstrap); invalid slot key refused | test `exemption_set_projects_the_flag_and_the_newest_op_wins` | PASS |
+| `CertExtend { cert_id, extra_hosts }` (Green, inert), 1..=`CERT_NEW_HOSTS_PER_DAY` | test `cert_extend_is_green_inert_and_bounded` | PASS |
+| Vectors / oracle for every body | 51 vectors, 35 body variants, oracle 159 checks 0 failures | PASS |
+| Bulk export: window check (before, inside, after, other device, mid-export expiry), 0600 file in the importer's `L00t.csv` format (commas, quotes, newlines in passwords survive `parse_loot_csv`), never overwrites, window over 3600 s refused, announced once per op through the notify hook, failing mail retried | 4 tests in `sync::export` | PASS |
+| C2 revocation driver | not built here: it exists as `src/sync/revocation.rs` on poc/quorum2 (S) | n/a |

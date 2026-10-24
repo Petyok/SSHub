@@ -33,7 +33,10 @@ impl ExportWindow {
     }
 }
 
-fn approved_exports(store: &LauncherStore) -> Result<Vec<([u8; 32], DeviceId, i64, u32)>> {
+/// `(op hash, requester, timestamp, window_secs)`.
+type ExportOp = ([u8; 32], DeviceId, i64, u32);
+
+fn approved_exports(store: &LauncherStore) -> Result<Vec<ExportOp>> {
     store.with_conn(|conn| {
         let mut stmt = conn.prepare(
             "SELECT op_hash FROM sync_ops WHERE kind = 'BulkExport' AND state IN ('approved','applied')
