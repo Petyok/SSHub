@@ -42,6 +42,16 @@ fn main() -> Result<()> {
         std::process::exit(code);
     }
 
+    // Host-sync commands are headless too, and sync-serve/sync-enroll own
+    // stdout for protocol frames, so they never reach `CliContext`.
+    if let Some(cmd) = args
+        .first()
+        .filter(|c| sshub::cli::sync_cmd::is_sync_command(c))
+    {
+        let code = sshub::cli::sync_cmd::run(cmd, &args[1..], || resolve_cli_profile(&startup))?;
+        std::process::exit(code);
+    }
+
     if let Some(cmd) = args.first() {
         if sshub::cli::is_subcommand(cmd) {
             let code = run_cli(&startup, &args)?;
@@ -220,6 +230,13 @@ THEMES (headless; no database):
     sshub theme check <file> [--format plain|json]
     sshub theme list         [--format plain|json]
     sshub theme show  <id>   [--resolved] [--format toml|json]
+
+HOST SYNC (headless; encrypted peer-to-peer over ssh):
+    sshub sync-join <host>                   Join the ring of the device at <host>
+    sshub sync-now [<device>] [--format plain|json]   Sync with ring devices
+    sshub sync-status [--format plain|json]  Ring devices, pending changes, credential mode
+    sshub sync-review [--approve <id> | --reject <id>] [--format plain|json]   Review pending changes
+    sshub sync-serve | sync-enroll           Run by a peer over ssh (frames on stdin/stdout)
 
 INVENTORY / CONFIG:
     sshub tags [--format plain|json]

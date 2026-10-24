@@ -24,7 +24,9 @@ fn sshub(dir: &Path) -> Command {
     let mut cmd = Command::cargo_bin("sshub").unwrap();
     cmd.env("SSHUB_DATA_DIR", dir)
         .env("SSHUB_CONFIG_DIR", dir)
-        .env("SSHUB_SSH_CONFIG", fixture_ssh_config());
+        .env("SSHUB_SSH_CONFIG", fixture_ssh_config())
+        // Never reach the real keyring: secrets fall back to credentials.json.
+        .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/bus");
     cmd
 }
 
@@ -1310,4 +1312,132 @@ fn host_add_and_edit_refuse_an_invalid_proxy_jump_and_show_keeps_the_stored_one(
         .args(["host", "show", "evil"])
         .assert()
         .failure();
+}
+
+fn has_file_named(root: &Path, name: &str) -> bool {
+    std::fs::read_dir(root).is_ok_and(|rd| {
+        rd.flatten().any(|e| {
+            let p = e.path();
+            e.file_name() == name || (p.is_dir() && has_file_named(&p, name))
+        })
+    })
+}
+
+#[test]
+fn sync_serve_speaks_a_hello_frame_first_and_nothing_else() {
+    use std::io::Read;
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    let d = dir();
+    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin("sshub"))
+        .arg("sync-serve")
+        .env("SSHUB_DATA_DIR", d.path())
+        .env("SSHUB_CONFIG_DIR", d.path())
+        .env("SSHUB_SSH_CONFIG", fixture_ssh_config())
+        .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/bus")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    let mut len = [0u8; 4];
+    stdout.read_exact(&mut len).unwrap();
+    let mut body = vec![0u8; u32::from_be_bytes(len) as usize];
+    stdout.read_exact(&mut body).unwrap();
+    let frame: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(frame["t"], "hello", "first frame: {frame}");
+
+    // The client goes away: the server must end on its own.
+    drop(child.stdin.take());
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while child.try_wait().unwrap().is_none() {
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            panic!("sync-serve did not exit after stdin closed");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn sync_status_on_an_empty_profile_says_so_and_creates_no_device_key() {
+    let d = dir();
+    sshub(d.path())
+        .arg("sync-status")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "No sync ring on this profile yet.",
+        ));
+    assert!(!has_file_named(d.path(), "device.key"));
+}
+
+#[test]
+fn sync_join_without_a_host_exits_two() {
+    let d = dir();
+    sshub(d.path()).arg("sync-join").assert().code(2);
+}
+
+#[test]
+fn sync_now_on_an_empty_profile_exits_zero_with_a_note() {
+    let d = dir();
+    sshub(d.path())
+        .arg("sync-now")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Nothing to sync"));
+}
+
+#[test]
+fn sync_commands_print_their_own_help() {
+    let d = dir();
+    for cmd in [
+        "sync-serve",
+        "sync-enroll",
+        "sync-join",
+        "sync-now",
+        "sync-status",
+        "sync-review",
+    ] {
+        sshub(d.path())
+            .args([cmd, "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(format!("sshub {cmd} -")));
+    }
+}
+
+#[test]
+fn sync_review_empty_queue_is_quiet_and_creates_no_device_key() {
+    let d = dir();
+    sshub(d.path())
+        .arg("sync-review")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Nothing waiting for review."));
+    let out = sshub(d.path())
+        .args(["sync-review", "--format", "json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(v, serde_json::json!([]));
+    assert!(!has_file_named(d.path(), "device.key"));
+}
+
+#[test]
+fn sync_review_with_an_unknown_id_exits_two() {
+    let d = dir();
+    sshub(d.path())
+        .args(["sync-review", "--approve", "deadbeef"])
+        .assert()
+        .code(2);
+    sshub(d.path())
+        .args(["sync-review", "--approve", "dead", "--reject", "beef"])
+        .assert()
+        .code(2);
 }

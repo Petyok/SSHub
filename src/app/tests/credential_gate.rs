@@ -293,10 +293,16 @@ fn an_unlocked_hop_secret_is_staged_for_the_helper_and_a_locked_one_is_not() {
         "Debug never prints it"
     );
 
-    // It travels to the helper the way the destination's own secret does.
+    // It reaches the helper without ever being written: the file holds a
+    // handle, the staging process serves the value.
     let staged = crate::session::askpass::AskpassSecret::staged(None, &hops).unwrap();
+    assert!(staged.holds_synced());
     let text = std::fs::read_to_string(staged.path()).unwrap();
-    assert!(text.contains("v:lb-1-pw"), "{text}");
+    assert!(text.contains("s:s0"), "{text}");
+    assert!(
+        !text.contains("lb-1-pw"),
+        "no plaintext in the file: {text}"
+    );
     assert!(
         !text.contains("host:"),
         "no store reference for the staged hop"
@@ -318,4 +324,62 @@ fn cancelling_the_unlock_drops_the_waiting_action() {
     unlock(&gate, &web, "pw");
     app.poll_sync();
     assert!(app.sessions.is_empty(), "a cancelled connect never resumes");
+}
+
+/// Every file under `root` (bounded depth and size) that contains `needle`.
+fn files_containing(root: &std::path::Path, needle: &str, depth: usize) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return found;
+    };
+    for entry in entries.flatten() {
+        let (path, Ok(kind)) = (entry.path(), entry.file_type()) else {
+            continue;
+        };
+        if kind.is_dir() && depth > 0 {
+            found.extend(files_containing(&path, needle, depth - 1));
+        } else if kind.is_file()
+            && entry.metadata().is_ok_and(|m| m.len() < (1 << 20))
+            && std::fs::read(&path).is_ok_and(|b| String::from_utf8_lossy(&b).contains(needle))
+        {
+            found.push(path);
+        }
+    }
+    found
+}
+
+#[test]
+fn a_synced_secret_never_lands_in_a_temp_or_runtime_file_during_connects() {
+    // A marker no other test uses, so a hit can only be this test's secret.
+    let marker = format!(
+        "SYNCED-MARKER-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    );
+    let (mut app, gate, _) = gated_app();
+    let lb = add_host(&mut app, "lb-1", None);
+    let web = add_host(&mut app, "web", Some("lb-1"));
+    guard(&gate, &[&lb, &web]);
+    unlock(&gate, &lb, &format!("{marker}-hop"));
+    unlock(&gate, &web, &format!("{marker}-dest"));
+    let id = add_tunnel(&mut app, &web, 18994, false);
+
+    // A tunnel stages askpass files; a session uses the in-process channel.
+    app.toggle_tunnel_by_id(id).unwrap();
+    app.connect_host_entry(HostEntry::from_managed(web.clone()))
+        .unwrap();
+    assert!(
+        app.tunnel_notice.is_some() && !app.sessions.is_empty(),
+        "both paths ran"
+    );
+
+    let mut roots = vec![std::env::temp_dir()];
+    roots.extend(std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from));
+    for root in roots {
+        let hits = files_containing(&root, &marker, 3);
+        assert!(
+            hits.is_empty(),
+            "plaintext of a synced credential in {hits:?}"
+        );
+    }
 }

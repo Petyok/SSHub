@@ -15,10 +15,12 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use super::transport::{Conn, Limits, CANCEL_POLL};
+use crate::app::sync::{OnboardingSecrets, UnlockPathKind};
 use crate::ssh::{build_ssh_argv, SshHost};
 
-/// A device in the ring. The stage-1 type is a plain string too.
-pub type DeviceId = String;
+// The worker speaks the protocol's own types.
+pub use crate::sync::oplog::DeviceId;
+pub use crate::sync::protocol::RoundSummary;
 
 /// The error event text for a worker thread that is gone.
 pub const WORKER_STOPPED: &str = "sync worker stopped";
@@ -215,7 +217,30 @@ pub enum SyncCmd {
     SyncNow(DeviceId),
     EnrollBegin(DeviceId),
     EnrollConfirmSas(bool),
+    /// Open these synced credentials (store keys).
+    Unlock(Vec<String>),
+    /// The user's answer to an unlock prompt: the master phrase or a code.
+    UnlockCode(String),
+    /// Abandon the running unlock.
+    UnlockCancel,
+    /// Set up the Vault ring.
+    Onboard(Box<OnboardingSecrets>),
+    /// The holder's answer to a pending `ShareRelease`: resolve it and, when
+    /// approved, append the grants.
+    Release {
+        approve: bool,
+        hash: [u8; 32],
+    },
     Shutdown,
+}
+
+/// What the SAS modal needs: the words, who the peer says it is, and whether
+/// a human on the other side sees the same words.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SasPromptInfo {
+    pub words: String,
+    pub peer_name: String,
+    pub peer_has_screen: bool,
 }
 
 /// What the worker reports.
@@ -223,7 +248,18 @@ pub enum SyncCmd {
 pub enum SyncEvent {
     Progress(String),
     PendingArrived(usize),
-    SasPrompt(String),
+    SasPrompt(SasPromptInfo),
+    /// What the running unlock asks the user for (shown in the unlock modal).
+    UnlockPrompt(String),
+    /// Where one unlock path stands (`peer device: asked laptop`, `phone: waiting`).
+    UnlockPath(UnlockPathKind, String),
+    /// Shares collected so far of those needed.
+    UnlockProgress {
+        have: usize,
+        need: usize,
+    },
+    /// QR frames of a challenge for the phone, looped by the modal.
+    UnlockChallenge(Vec<Vec<u8>>),
     ForkDetected(DeviceId),
     BehindPeer(DeviceId),
     Done,
@@ -235,13 +271,13 @@ pub enum SyncEvent {
 pub enum Round {
     Sync,
     Enroll,
-}
-
-/// What a finished round hands back.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct RoundSummary {
-    /// Operations that arrived and wait for review.
-    pub pending_arrived: usize,
+    /// Open synced credentials; the device argument lists their store keys,
+    /// one per line.
+    Unlock,
+    /// Set up the Vault ring from the secrets [`RoundCtx::take_secrets`] holds.
+    Onboard,
+    /// Answer a release request; the device argument is `<0|1>:<op hash hex>`.
+    Release,
 }
 
 /// A round's window onto the worker: report events, and wait for the UI's
@@ -250,11 +286,23 @@ pub struct RoundCtx<'a> {
     events: &'a Sender<SyncEvent>,
     cmds: &'a Receiver<SyncCmd>,
     cancel: Arc<AtomicBool>,
+    secrets: Option<OnboardingSecrets>,
 }
 
 impl RoundCtx<'_> {
     pub fn emit(&self, event: SyncEvent) {
         let _ = self.events.send(event);
+    }
+
+    /// A sender for code that outlives a borrow of the context (the unlock
+    /// thread), reporting to the same UI.
+    pub fn event_sender(&self) -> Sender<SyncEvent> {
+        self.events.clone()
+    }
+
+    /// The secrets an [`SyncCmd::Onboard`] command carried, once.
+    pub fn take_secrets(&mut self) -> Option<OnboardingSecrets> {
+        self.secrets.take()
     }
 
     /// The flag to hand to [`SshTransport::run`]: set when the worker is told
@@ -309,27 +357,48 @@ pub fn spawn_sync_thread(mut round: RoundFn) -> SyncHandle {
             if worker_cancel.load(Ordering::SeqCst) {
                 break;
             }
+            let mut secrets = None;
             let (kind, device) = match cmd {
                 SyncCmd::SyncNow(d) => (Round::Sync, d),
                 SyncCmd::EnrollBegin(d) => (Round::Enroll, d),
+                SyncCmd::Unlock(keys) => (Round::Unlock, keys.join("\n")),
+                SyncCmd::Onboard(s) => {
+                    secrets = Some(*s);
+                    (Round::Onboard, String::new())
+                }
+                SyncCmd::Release { approve, hash } => (
+                    Round::Release,
+                    format!("{}:{}", u8::from(approve), hex::encode(hash)),
+                ),
                 SyncCmd::EnrollConfirmSas(_) => {
                     let _ = evt_tx.send(SyncEvent::Error(
                         "no enrollment is waiting for a confirmation".into(),
                     ));
                     continue;
                 }
+                // An answer or a cancel with no unlock waiting for it.
+                SyncCmd::UnlockCode(_) | SyncCmd::UnlockCancel => continue,
                 SyncCmd::Shutdown => break,
             };
             let mut ctx = RoundCtx {
                 events: &evt_tx,
                 cmds: &cmd_rx,
                 cancel: worker_cancel.clone(),
+                secrets,
             };
             let done = match catch_unwind(AssertUnwindSafe(|| round(kind, &device, &mut ctx))) {
                 Ok(Ok(summary)) => {
                     if summary.pending_arrived > 0 {
                         let _ = evt_tx.send(SyncEvent::PendingArrived(summary.pending_arrived));
                     }
+                    for id in summary.forks {
+                        let _ = evt_tx.send(SyncEvent::ForkDetected(id));
+                    }
+                    for id in summary.behind {
+                        let _ = evt_tx.send(SyncEvent::BehindPeer(id));
+                    }
+                    // `suspect` is already in the store as a device status:
+                    // the view re-reads it when the round is done.
                     SyncEvent::Done
                 }
                 Ok(Err(e)) => SyncEvent::Error(format!("{e:#}")),
@@ -389,6 +458,14 @@ mod tests {
     use serde_json::json;
     use std::os::unix::net::UnixStream;
 
+    fn sample_sas() -> SasPromptInfo {
+        SasPromptInfo {
+            words: "harbor-globe-lantern-mint".into(),
+            peer_name: "laptop".into(),
+            peer_has_screen: true,
+        }
+    }
+
     /// A connection to an in-process peer; the other end is returned raw.
     fn pair(limits: Limits) -> (Conn, UnixStream, Arc<AtomicBool>) {
         let (ours, theirs) = UnixStream::pair().unwrap();
@@ -415,6 +492,7 @@ mod tests {
             t.join().unwrap();
             Ok(RoundSummary {
                 pending_arrived: hello["pending"].as_u64().unwrap() as usize,
+                ..Default::default()
             })
         })
     }
@@ -495,6 +573,30 @@ mod tests {
     }
 
     #[test]
+    fn a_rounds_forks_and_behind_peers_become_events() {
+        let handle = spawn_sync_thread(Box::new(|_, _, _| {
+            Ok(RoundSummary {
+                pending_arrived: 1,
+                forks: vec!["evil".into()],
+                behind: vec!["slow".into()],
+                suspect: vec!["odd".into()],
+                ..Default::default()
+            })
+        }));
+        handle.send(SyncCmd::SyncNow("laptop".into())).unwrap();
+        let seen = collect(&handle, terminal);
+        assert_eq!(
+            seen,
+            vec![
+                SyncEvent::PendingArrived(1),
+                SyncEvent::ForkDetected("evil".into()),
+                SyncEvent::BehindPeer("slow".into()),
+                SyncEvent::Done,
+            ]
+        );
+    }
+
+    #[test]
     fn a_failing_or_panicking_round_is_reported_and_the_worker_carries_on() {
         let mut calls = 0;
         let handle = spawn_sync_thread(Box::new(move |_k, _d, _ctx| {
@@ -519,7 +621,7 @@ mod tests {
     fn enrollment_waits_for_the_sas_confirmation_from_the_ui() {
         let handle = spawn_sync_thread(Box::new(|kind, device, ctx| {
             assert_eq!((kind, device.as_str()), (Round::Enroll, "new"));
-            ctx.emit(SyncEvent::SasPrompt("harbor-globe-lantern-mint".into()));
+            ctx.emit(SyncEvent::SasPrompt(sample_sas()));
             match ctx.recv_cmd(Duration::from_secs(5)) {
                 Some(SyncCmd::EnrollConfirmSas(true)) => Ok(RoundSummary::default()),
                 other => anyhow::bail!("not confirmed: {other:?}"),
@@ -527,10 +629,7 @@ mod tests {
         }));
         handle.send(SyncCmd::EnrollBegin("new".into())).unwrap();
         let first = collect(&handle, |e| matches!(e, SyncEvent::SasPrompt(_)));
-        assert_eq!(
-            first,
-            vec![SyncEvent::SasPrompt("harbor-globe-lantern-mint".into())]
-        );
+        assert_eq!(first, vec![SyncEvent::SasPrompt(sample_sas())]);
         handle.send(SyncCmd::EnrollConfirmSas(true)).unwrap();
         assert_eq!(collect(&handle, terminal), vec![SyncEvent::Done]);
     }

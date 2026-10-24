@@ -463,7 +463,11 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "",
-        desc: "Not set up yet: t on the hosts tab enrolls a machine as one of your devices; sshub sync-join <device> joins a blank machine. A fork takes over the screen and names the device.",
+        desc: "A synced credential opens in a modal when something needs it: type the six words of the master phrase and press Enter (Esc cancels).",
+    },
+    HelpItem::Entry {
+        key: "",
+        desc: "Not set up yet: t on the hosts tab enrolls a machine as one of your devices; sshub sync-join <device> joins a blank machine. Enrollment shows four words to compare; when the other end has no screen they prove nothing and you approve the admission on trust in the SSH host key (the device list says how each one was verified). A fork takes over the screen and names the device.",
     },
     HelpItem::Blank,
     HelpItem::Section("groups"),
