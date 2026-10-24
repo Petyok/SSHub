@@ -23,6 +23,14 @@ pub enum Attendance {
     Unattended,
 }
 
+/// Only terminals keep a store and can sign checkpoints; recovery needs to know
+/// which device is the phone.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DeviceKind {
+    Terminal,
+    Phone,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CredMode {
     Vault,
@@ -32,7 +40,6 @@ pub enum CredMode {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum ThirdFactor {
     Paper,
-    HardwareKey(DeviceId),
     EmailCode,
 }
 
@@ -55,6 +62,15 @@ pub struct ReshareItem {
     pub host_uid: HostUid,
     pub sub_shares: Vec<(DeviceId, Vec<u8>)>,
     pub commitments: Vec<Vec<u8>>,
+}
+
+/// Where a checkpoint cuts one device's chain.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CutEntry {
+    pub device_id: DeviceId,
+    pub seq: u64,
+    pub op_hash: [u8; 32],
+    pub lamport: u64,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -151,6 +167,7 @@ pub enum OpBody {
         name: String,
         role: DeviceRole,
         attendance: Attendance,
+        kind: DeviceKind,
     },
     DeviceRevoke {
         device_id: DeviceId,
@@ -213,11 +230,18 @@ pub enum OpBody {
         via_paper: bool,
         third_factor: ThirdFactor,
         liveness: Vec<HeadAttest>,
+        /// Signature by the paper/recover key over the reenroll body without
+        /// this field, domain-tagged (checked by stage 3).
+        paper_sig: Option<[u8; 64]>,
     },
     PhoneReenrollCancel {
         reenroll_hash: [u8; 32],
         by_phone: bool,
         third_factor: Option<ThirdFactor>,
+    },
+    /// An attended device approves a pending re-enrollment after the user said so.
+    RecoveryApprove {
+        reenroll_hash: [u8; 32],
     },
     RecoveryAck {
         reenroll_hash: [u8; 32],
@@ -232,6 +256,18 @@ pub enum OpBody {
         device_id: DeviceId,
         seq: u64,
         chain_hash: [u8; 32],
+    },
+    /// Certifies the resolved state at a cut of the log (C15). Inert until
+    /// verified by every device that signs.
+    CheckpointPropose {
+        cut: Vec<CutEntry>,
+        state_hash: [u8; 32],
+        state_len: u64,
+        prev_checkpoint: [u8; 32],
+        required: Vec<DeviceId>,
+    },
+    CheckpointSign {
+        proposal_hash: [u8; 32],
     },
 }
 

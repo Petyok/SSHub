@@ -158,12 +158,15 @@ pub fn body_tier(body: &OpBody) -> OpTier {
         OpBody::DeviceRevoke { .. }
         | OpBody::CertIssue { .. }
         | OpBody::PhoneReenroll { .. }
+        | OpBody::RecoveryApprove { .. }
         | OpBody::ModeChange { .. } => OpTier::Red,
         // Cryptographic data only: it changes nothing a user could be tricked
         // into trusting, and the ring ceremony around it is Red.
         OpBody::CertHostOpened { .. }
         | OpBody::RecoveryAck { .. }
         | OpBody::HeadAttest { .. }
+        | OpBody::CheckpointPropose { .. }
+        | OpBody::CheckpointSign { .. }
         | OpBody::WrapKeyRotate { .. }
         | OpBody::ShareReshareSession { .. }
         | OpBody::ShareStorageKey { .. }
