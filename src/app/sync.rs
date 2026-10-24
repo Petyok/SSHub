@@ -721,6 +721,7 @@ impl App {
     pub fn poll_sync(&mut self) {
         self.poll_unlock_resume();
         self.forward_sync_intents();
+        super::sync_phone::tick(self);
         while let Some(Ok(event)) = self.sync_worker.as_ref().map(|w| w.try_recv()) {
             self.apply_sync_event(event);
         }
@@ -799,6 +800,7 @@ impl App {
                     peer_has_screen: info.peer_has_screen,
                 });
             }
+            SyncEvent::Notice(message) if message.is_empty() => {}
             SyncEvent::Notice(message) if message.contains('\n') => {
                 let lines = message.lines().map(str::to_string).collect();
                 self.sync_info("Done", lines);
