@@ -1,4 +1,11 @@
 //! Host sync (epic #13). Interface contract: `docs/host-sync-contract.md`.
 
+pub mod codes;
 pub mod crypto;
+pub mod email;
+pub mod fountain;
 pub mod limits;
+pub mod snapshot;
+#[cfg(test)]
+mod vectors;
+pub mod wire;

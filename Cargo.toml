@@ -27,6 +27,16 @@ exclude = [
     ".github",
     ".codegraph",
     "poc",
+    # Host sync: the phone page ships only as its built single file
+    # (assets/companion/sshub-companion.html); its sources, vendored libraries
+    # and tests, the Hub stack and the PoC benches stay out of the crate.
+    "assets/companion/src",
+    "assets/companion/test",
+    "assets/companion/vendor",
+    "assets/companion/package*.json",
+    "assets/companion/build.mjs",
+    "assets/companion/poc",
+    "deploy",
 ]
 
 [[bin]]
