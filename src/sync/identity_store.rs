@@ -63,6 +63,21 @@ pub fn load_or_init_identity(
     }
 }
 
+/// Write the identity back after its wrap keys changed (`rotate_wrap_keys`,
+/// `retire_previous_wrap_keys`): same file, same passphrase, same 0600 write.
+/// Call it BEFORE announcing the new keys, so a crash never leaves a published
+/// key without its secret.
+pub fn save_identity(
+    paths: &ProfilePaths,
+    store: &dyn PasswordStore,
+    id: &DeviceIdentity,
+) -> Result<()> {
+    let pass = store
+        .get(KEY_NAME)?
+        .context("the device key passphrase is missing from the credential store")?;
+    write_private(&key_path(paths), &id.to_encrypted(&pass))
+}
+
 fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
     let dir = path.parent().context("device key path has no parent")?;
     std::fs::create_dir_all(dir)?;
@@ -146,6 +161,21 @@ mod tests {
             load_or_init_identity(&p, &store).unwrap().public(),
             a.public()
         );
+    }
+
+    #[test]
+    fn a_rotated_identity_is_saved_and_reloaded_with_its_old_generation() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = paths(dir.path());
+        let store = MemoryPasswordStore::default();
+        let mut id = load_or_init_identity(&p, &store).unwrap();
+        let before = id.public();
+        let after = id.rotate_wrap_keys();
+        save_identity(&p, &store, &id).unwrap();
+        let back = load_or_init_identity(&p, &store).unwrap();
+        assert_eq!(back.public(), after);
+        assert_eq!(back.public().ed25519_pub, before.ed25519_pub);
+        assert_eq!(back.wrap_key_generations(), 2);
     }
 
     #[test]

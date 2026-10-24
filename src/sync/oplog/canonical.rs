@@ -161,6 +161,8 @@ pub fn body_name(body: &OpBody) -> &'static str {
         OpBody::FactorRegister { .. } => "FactorRegister",
         OpBody::DeviceRoleChange { .. } => "DeviceRoleChange",
         OpBody::BulkExport { .. } => "BulkExport",
+        OpBody::ExemptionSet { .. } => "ExemptionSet",
+        OpBody::CertExtend { .. } => "CertExtend",
         OpBody::CheckpointPropose { .. } => "CheckpointPropose",
         OpBody::CheckpointSign { .. } => "CheckpointSign",
     }
@@ -423,6 +425,27 @@ fn body(b: &mut Vec<u8>, body: &OpBody) {
             b64(o.key("sealed"), sealed);
             string(o.key("salt"), &hex_lower(salt));
             opt_str(o.key("sender"), sender);
+        }
+        OpBody::ExemptionSet { device_id, slot } => {
+            string(o.key("device_id"), device_id);
+            let b = o.key("slot");
+            match slot {
+                None => b.extend_from_slice(b"null"),
+                Some(p) => {
+                    let mut d = Obj::new(b);
+                    hex32(d.key("ed25519_pub"), &p.ed25519_pub);
+                    hex32(d.key("x25519_pub"), &p.x25519_pub);
+                    b64(d.key("mlkem_pub"), &p.mlkem_pub);
+                    d.end();
+                }
+            }
+        }
+        OpBody::CertExtend {
+            cert_id,
+            extra_hosts,
+        } => {
+            hex32(o.key("cert_id"), cert_id);
+            write!(o.key("extra_hosts"), "{extra_hosts}").expect("vec write");
         }
         OpBody::DeviceRoleChange { device_id, to } => {
             string(o.key("device_id"), device_id);
@@ -1063,6 +1086,24 @@ fn decode_body(v: &Value) -> Result<OpBody> {
                 out
             },
             sender: opt_string(m, "sender")?,
+        },
+        "ExemptionSet" => OpBody::ExemptionSet {
+            device_id: get_string(m, "device_id")?,
+            slot: match get(m, "slot")? {
+                Value::Null => None,
+                v => {
+                    let d = as_obj(v)?;
+                    Some(DevicePublic {
+                        ed25519_pub: get_32(d, "ed25519_pub")?,
+                        x25519_pub: get_32(d, "x25519_pub")?,
+                        mlkem_pub: get_bytes(d, "mlkem_pub")?,
+                    })
+                }
+            },
+        },
+        "CertExtend" => OpBody::CertExtend {
+            cert_id: get_32(m, "cert_id")?,
+            extra_hosts: u32::try_from(get_u64(m, "extra_hosts")?)?,
         },
         "DeviceRoleChange" => OpBody::DeviceRoleChange {
             device_id: get_string(m, "device_id")?,

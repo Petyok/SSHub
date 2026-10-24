@@ -302,6 +302,18 @@ pub enum OpBody {
         device_id: DeviceId,
         to: DeviceRole,
     },
+    /// Mixed-mode exemption: `Some(slot)` enables, `None` disables. The
+    /// projection sets `sync_devices.exempt`; the ceremony gates it (Red).
+    ExemptionSet {
+        device_id: DeviceId,
+        slot: Option<DevicePublic>,
+    },
+    /// The phone that issued a certificate extends its daily budget for the
+    /// rolling day of this op (inert; the holders count it).
+    CertExtend {
+        cert_id: [u8; 32],
+        extra_hosts: u32,
+    },
     /// Authorises a bulk credential export for `window_secs` (at most 3600).
     BulkExport {
         requester: DeviceId,
