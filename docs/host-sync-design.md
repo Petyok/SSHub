@@ -475,14 +475,27 @@ tree is needed at these sizes (0.6 to 0.9 MB for 1000 credentials).
 
 ### The mixed-mode exemption
 
-One machine may keep opening credentials with the master phrase inside a Quorum
-ring. The master-phrase slot is then bound to that device: the share replicates
-like all the others, but unwraps only for someone holding both the phrase and
-that machine's key. No invariant breaks. For that machine, "one stolen device is
-not enough" stops being true, so it is labelled an **exemption**, per row, and
-the alternative (an unattended holder + trust mode) is offered
-first — the exemption is usually requested for the laptop most likely to be
-stolen.
+One machine may keep opening credentials with the master phrase inside a Quorum ring. It is built as one
+extra Shamir share per credential, held by a **slot recipient** whose key exists only for someone holding
+**both** the master phrase and that machine's device key:
+
+`slot key = identity from_seed( BLAKE3 derive_key("sshub/sync/exempt/seed/v1", Argon2id(phrase, salt) || PRF(device key)) )`,
+where `PRF(device key)` is the hash of the device's deterministic signature over a fixed message (the key never
+leaves the device) and `salt` derives from the device id. The slot's public key is published in the log;
+every credential created afterwards gets a share wrapped to it, and existing credentials get theirs through a
+reshare (the slot is a permanent recipient like the paper: it takes no part in contributing and adopts nothing,
+it rebuilds its share at unlock time).
+
+The exempt machine owns two shares of every credential (its own and the slot's), so it opens alone: its
+device key unwraps its own share, the phrase plus the same device key unwrap the slot's. Stolen device key
+alone: one share, nothing. Phrase alone: no slot share, nothing. Stolen machine plus the phrase: opens,
+which is why it is labelled an **exemption**, per row ("exemption: master phrase"), never as a banner, and
+why it is offered only after the alternatives (a trust session with an unattended holder, Vault mode) have
+been shown. Other devices are unaffected: they still need a second share. No invariant breaks: the slot's
+share replicates like all the others and revoking the exemption (a Red op) reshares without the slot.
+
+Enabling or disabling it is a Red ceremony (`ExemptionSet`); the exempt device must be an attended holder
+terminal and cannot be the second approver of its own exemption.
 
 ## Share release
 
@@ -597,6 +610,53 @@ So the phone is not needed for every connection to a test server.
 - Reaching the daily budget asks the phone for one confirmation to extend the
   day, rather than a ceremony per host. That confirmation is a prompt on a
   possibly-compromised machine; it extends the budget, never the scope.
+
+## The Red ceremony
+
+Red operations are: adding a holder or promoting a mirror (`DeviceAdd` with the holder role,
+`DeviceRoleChange`), revoking a holder (`DeviceRevoke`), enabling a trust session (`CertIssue`),
+changing the credential mode (`ModeChange`), registering or replacing a third factor
+(`FactorRegister`), and bulk export (`BulkExport`). Replacing the phone has its own path (below).
+
+A Red op is **proposed** by an attended terminal (the proposer, the author of the op itself) and
+**takes effect only when three proofs are in the log, each bound to the exact op hash**:
+
+1. **Phone participation**: a `RedPhoneSign` authored by the phone. The phone's signing key is key
+   material a compromised peer does not have. (For `CertIssue` the phone is the author, so this proof
+   is the op itself.)
+2. **A second attended device**: a `RedApprove` authored by an attended **holder** terminal other than
+   the proposer, written only after its user confirmed a screen that says "Red" and names the proposer
+   and the change. An unattended device never counts; a mirror never counts (so a mirror's vote can
+   admit a mirror at Yellow but never create a holder).
+3. **A third factor from outside the devices**: a `RedFactor` whose signature is made by a key that
+   exists only on the paper (the `paper/recover` key from the 24 words) or inside an emailed code (the
+   `email` key, below). The key is registered in the ring beforehand by `FactorRegister`, so every
+   peer verifies the signature itself: a compromised peer cannot skip a check, there is none to skip.
+
+The three come from three different participants: the phone, a second device, and a factor that is
+not a device. The proposer is the fourth party and its own approval counts for nothing. Every peer
+evaluates the same rule on the same log; there is no "ceremony server". A pending Red op is applied
+by each peer when its ceremony is complete and is dropped (never applied) when it has not completed
+within `RED_CEREMONY_TTL_SECS`; proofs older than the op or bound to another hash do not count.
+Because the proofs, not a click on each device, authorize it, peers show the applied change in a
+banner instead of asking again.
+
+A ring with a single attended terminal has no second device. For that ring the second-device proof is
+waived and the paper factor plus the phone are required; the Sync tab says "single-machine ring:
+no second device" next to every such change.
+
+**The emailed code (option).** At setup a random 32 byte seed becomes the `email` signing key; the seed
+is stored in the log as a blob sealed under a key derived by Argon2id from a random code of at least
+100 bits (the code is never stored in the log) and the code is kept by a **sender** device that is
+neither the proposer nor the second approver and has `[sync.notify]` configured. When a Red op has
+its phone and second-device proofs, the sender mails the code (a message that says what it is for and
+carries nothing else); the user pastes it into the proposer, which opens the blob, signs `RedFactor`
+and drops the seed. Without the mailbox the log alone yields nothing; without the log the code
+alone yields nothing. Sender and mailbox are one participant, which is why the sender may not be the
+proposer or the second approver.
+
+**Bulk export** is a loop of share releases made without a prompt per host for a short window
+after a completed Red ceremony (`BulkExport`), not a new kind of secret handling.
 
 ## Phone loss / re-enrollment (recovery without deadlock)
 

@@ -418,6 +418,26 @@ fn run<L: SyncLink>(
             ring
         }
     };
+    // A device knows its own attendance and role from the day it joins a ring: rules such as "an
+    // unattended device releases nothing without a certificate" ask the store about this device.
+    let my_id = id.public().device_id();
+    if !store.sync_devices()?.iter().any(|d| d.id == my_id) {
+        store.sync_register_device(
+            &id.public(),
+            name,
+            match role {
+                EnrollRole::Inviter => DeviceRole::Holder,
+                EnrollRole::Joiner => DeviceRole::Mirror,
+            },
+            if attended {
+                Attendance::Attended
+            } else {
+                Attendance::Unattended
+            },
+            DeviceKind::Terminal,
+            verified,
+        )?;
+    }
     save_pair(store, &peer_id, &PairState::fresh(key))?;
     Ok(EnrollOutcome {
         peer: peer_pub,

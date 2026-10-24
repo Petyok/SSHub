@@ -155,6 +155,14 @@ pub fn body_name(body: &OpBody) -> &'static str {
         OpBody::ModeChange { .. } => "ModeChange",
         OpBody::HeadAttest { .. } => "HeadAttest",
         OpBody::RecoveryApprove { .. } => "RecoveryApprove",
+        OpBody::RedApprove { .. } => "RedApprove",
+        OpBody::RedPhoneSign { .. } => "RedPhoneSign",
+        OpBody::RedFactor { .. } => "RedFactor",
+        OpBody::FactorRegister { .. } => "FactorRegister",
+        OpBody::DeviceRoleChange { .. } => "DeviceRoleChange",
+        OpBody::BulkExport { .. } => "BulkExport",
+        OpBody::ExemptionSet { .. } => "ExemptionSet",
+        OpBody::CertExtend { .. } => "CertExtend",
         OpBody::CheckpointPropose { .. } => "CheckpointPropose",
         OpBody::CheckpointSign { .. } => "CheckpointSign",
     }
@@ -393,6 +401,63 @@ fn body(b: &mut Vec<u8>, body: &OpBody) {
             }
         }
         OpBody::RecoveryApprove { reenroll_hash } => hex32(o.key("reenroll_hash"), reenroll_hash),
+        OpBody::RedApprove { op_hash } | OpBody::RedPhoneSign { op_hash } => {
+            hex32(o.key("op_hash"), op_hash)
+        }
+        OpBody::RedFactor {
+            op_hash,
+            factor,
+            sig,
+        } => {
+            hex32(o.key("op_hash"), op_hash);
+            third_factor(o.key("factor"), factor);
+            string(o.key("sig"), &hex_lower(sig));
+        }
+        OpBody::FactorRegister {
+            factor,
+            public,
+            sealed,
+            salt,
+            sender,
+        } => {
+            third_factor(o.key("factor"), factor);
+            hex32(o.key("public"), public);
+            b64(o.key("sealed"), sealed);
+            string(o.key("salt"), &hex_lower(salt));
+            opt_str(o.key("sender"), sender);
+        }
+        OpBody::ExemptionSet { device_id, slot } => {
+            string(o.key("device_id"), device_id);
+            let b = o.key("slot");
+            match slot {
+                None => b.extend_from_slice(b"null"),
+                Some(p) => {
+                    let mut d = Obj::new(b);
+                    hex32(d.key("ed25519_pub"), &p.ed25519_pub);
+                    hex32(d.key("x25519_pub"), &p.x25519_pub);
+                    b64(d.key("mlkem_pub"), &p.mlkem_pub);
+                    d.end();
+                }
+            }
+        }
+        OpBody::CertExtend {
+            cert_id,
+            extra_hosts,
+        } => {
+            hex32(o.key("cert_id"), cert_id);
+            write!(o.key("extra_hosts"), "{extra_hosts}").expect("vec write");
+        }
+        OpBody::DeviceRoleChange { device_id, to } => {
+            string(o.key("device_id"), device_id);
+            string(o.key("to"), role_str(*to));
+        }
+        OpBody::BulkExport {
+            requester,
+            window_secs,
+        } => {
+            string(o.key("requester"), requester);
+            write!(o.key("window_secs"), "{window_secs}").expect("vec write");
+        }
         OpBody::CheckpointPropose {
             cut,
             state_hash,
@@ -731,57 +796,17 @@ fn get_alg(m: &Map<String, Value>, k: &str) -> Result<AlgTag> {
     AlgTag::from_bytes(a)
 }
 
-const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
 /// Standard alphabet, padded (RFC 4648 section 4).
 pub(super) fn b64_encode(data: &[u8]) -> String {
-    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let n = (u32::from(chunk[0]) << 16)
-            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
-            | u32::from(*chunk.get(2).unwrap_or(&0));
-        out.push(B64[(n >> 18) as usize & 63] as char);
-        out.push(B64[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 {
-            B64[(n >> 6) as usize & 63] as char
-        } else {
-            '='
-        });
-        out.push(if chunk.len() > 2 {
-            B64[n as usize & 63] as char
-        } else {
-            '='
-        });
-    }
-    out
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(data)
 }
 
+/// Strict: the standard engine requires canonical padding and rejects
+/// whitespace, other alphabets and non-zero trailing bits.
 pub(super) fn b64_decode(s: &str) -> Option<Vec<u8>> {
-    let bytes = s.as_bytes();
-    if !bytes.len().is_multiple_of(4) {
-        return None;
-    }
-    let val = |c: u8| B64.iter().position(|x| *x == c).map(|p| p as u32);
-    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
-    for (i, quad) in bytes.chunks(4).enumerate() {
-        let last = (i + 1) * 4 == bytes.len();
-        let pad = quad.iter().rev().take_while(|c| **c == b'=').count();
-        if pad > 2 || (pad > 0 && !last) {
-            return None;
-        }
-        let mut n = 0u32;
-        for (j, c) in quad.iter().enumerate() {
-            n = (n << 6) | if j >= 4 - pad { 0 } else { val(*c)? };
-        }
-        out.push((n >> 16) as u8);
-        if pad < 2 {
-            out.push((n >> 8) as u8);
-        }
-        if pad < 1 {
-            out.push(n as u8);
-        }
-    }
-    Some(out)
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.decode(s).ok()
 }
 
 fn uid_of(v: &Value, k: &str) -> Result<Uid> {
@@ -1030,6 +1055,67 @@ fn decode_body(v: &Value) -> Result<OpBody> {
                 Value::Null => None,
                 v => Some(third_factor_of(v)?),
             },
+        },
+        "RedApprove" => OpBody::RedApprove {
+            op_hash: get_32(m, "op_hash")?,
+        },
+        "RedPhoneSign" => OpBody::RedPhoneSign {
+            op_hash: get_32(m, "op_hash")?,
+        },
+        "RedFactor" => OpBody::RedFactor {
+            op_hash: get_32(m, "op_hash")?,
+            factor: third_factor_of(get(m, "factor")?)?,
+            sig: get_64(get(m, "sig")?)?,
+        },
+        "FactorRegister" => OpBody::FactorRegister {
+            factor: third_factor_of(get(m, "factor")?)?,
+            public: get_32(m, "public")?,
+            sealed: get_bytes(m, "sealed")?,
+            salt: {
+                let h = get_string(m, "salt")?;
+                ensure!(
+                    h.len() == 32
+                        && h.bytes()
+                            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)),
+                    "salt must be 32 lowercase hex characters"
+                );
+                let mut out = [0u8; 16];
+                for (i, byte) in out.iter_mut().enumerate() {
+                    *byte = u8::from_str_radix(&h[2 * i..2 * i + 2], 16)?;
+                }
+                out
+            },
+            sender: opt_string(m, "sender")?,
+        },
+        "ExemptionSet" => OpBody::ExemptionSet {
+            device_id: get_string(m, "device_id")?,
+            slot: match get(m, "slot")? {
+                Value::Null => None,
+                v => {
+                    let d = as_obj(v)?;
+                    Some(DevicePublic {
+                        ed25519_pub: get_32(d, "ed25519_pub")?,
+                        x25519_pub: get_32(d, "x25519_pub")?,
+                        mlkem_pub: get_bytes(d, "mlkem_pub")?,
+                    })
+                }
+            },
+        },
+        "CertExtend" => OpBody::CertExtend {
+            cert_id: get_32(m, "cert_id")?,
+            extra_hosts: u32::try_from(get_u64(m, "extra_hosts")?)?,
+        },
+        "DeviceRoleChange" => OpBody::DeviceRoleChange {
+            device_id: get_string(m, "device_id")?,
+            to: match get_string(m, "to")?.as_str() {
+                "Holder" => DeviceRole::Holder,
+                "Mirror" => DeviceRole::Mirror,
+                r => bail!("unknown role {r}"),
+            },
+        },
+        "BulkExport" => OpBody::BulkExport {
+            requester: get_string(m, "requester")?,
+            window_secs: u32::try_from(get_u64(m, "window_secs")?)?,
         },
         "RecoveryApprove" => OpBody::RecoveryApprove {
             reenroll_hash: get_32(m, "reenroll_hash")?,

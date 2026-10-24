@@ -64,6 +64,36 @@ pub fn validate_body(body: &OpBody) -> std::result::Result<(), String> {
             }
             Ok(())
         }
+        OpBody::ExemptionSet { slot, .. } => {
+            if let Some(p) = slot {
+                p.validate()
+                    .map_err(|e| format!("invalid exemption slot: {e}"))?;
+            }
+            Ok(())
+        }
+        OpBody::CertExtend { extra_hosts, .. } => {
+            let max = crate::sync::limits::CERT_NEW_HOSTS_PER_DAY;
+            if *extra_hosts == 0 || *extra_hosts > max {
+                return Err(format!("a budget extension is 1 to {max} hosts"));
+            }
+            Ok(())
+        }
+        OpBody::BulkExport { window_secs, .. } => {
+            if *window_secs == 0 || *window_secs > 3600 {
+                return Err("an export window is 1 to 3600 seconds".into());
+            }
+            Ok(())
+        }
+        OpBody::FactorRegister { factor, sealed, .. } => {
+            let max = match factor {
+                crate::sync::oplog::op::ThirdFactor::Paper => 0,
+                crate::sync::oplog::op::ThirdFactor::EmailCode => 128,
+            };
+            if sealed.len() > max {
+                return Err("sealed factor material is too long".into());
+            }
+            Ok(())
+        }
         OpBody::ShareGrant { sealed, .. } => {
             if sealed.len() > 128 {
                 return Err("a share grant is at most 128 bytes".into());

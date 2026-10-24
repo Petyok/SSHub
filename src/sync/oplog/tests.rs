@@ -343,6 +343,47 @@ fn sample_bodies() -> Vec<OpBody> {
         OpBody::RecoveryApprove {
             reenroll_hash: [6; 32],
         },
+        OpBody::RedApprove { op_hash: [1; 32] },
+        OpBody::RedPhoneSign { op_hash: [2; 32] },
+        OpBody::RedFactor {
+            op_hash: [3; 32],
+            factor: ThirdFactor::EmailCode,
+            sig: [0x5a; 64],
+        },
+        OpBody::FactorRegister {
+            factor: ThirdFactor::Paper,
+            public: [4; 32],
+            sealed: vec![],
+            salt: [9; 16],
+            sender: None,
+        },
+        OpBody::FactorRegister {
+            factor: ThirdFactor::EmailCode,
+            public: [5; 32],
+            sealed: vec![7; 128],
+            salt: [0xab; 16],
+            sender: Some("0011223344556677".into()),
+        },
+        OpBody::DeviceRoleChange {
+            device_id: "0011223344556677".into(),
+            to: DeviceRole::Holder,
+        },
+        OpBody::BulkExport {
+            requester: "0011223344556677".into(),
+            window_secs: 3600,
+        },
+        OpBody::ExemptionSet {
+            device_id: "0011223344556677".into(),
+            slot: None,
+        },
+        OpBody::ExemptionSet {
+            device_id: "0011223344556677".into(),
+            slot: Some(DeviceIdentity::generate().public()),
+        },
+        OpBody::CertExtend {
+            cert_id: [8; 32],
+            extra_hosts: 50,
+        },
         OpBody::CheckpointPropose {
             cut: vec![
                 CutEntry {
@@ -548,7 +589,12 @@ fn bad_signature_unknown_device_gap_duplicate_and_chain_breaks_are_rejected() {
 
     let stranger = Peer::new();
     let so = stranger.append(upsert(2, hf("x", "10.0.0.9")));
-    assert!(rejected(&b.store.sync_ingest(so).unwrap()).contains("unknown device"));
+    // A stranger's op cannot be checked: it waits for a human, takes no effect.
+    assert!(matches!(
+        b.store.sync_ingest(so).unwrap(),
+        IngestOutcome::Pending
+    ));
+    assert!(b.host(&uid(2)).is_none());
 
     assert!(rejected(&b.store.sync_ingest(o2.clone()).unwrap()).contains("gap"));
     assert!(matches!(
@@ -1154,7 +1200,15 @@ fn ring_membership_ops_always_wait_and_take_effect_on_approval() {
         .all(|d| d.id != newcomer.dev()));
     // Until approved the newcomer is a stranger.
     let early = newcomer.append(upsert(5, hf("n", "10.0.0.5")));
-    assert!(rejected(&b.store.sync_ingest(early.clone()).unwrap()).contains("unknown device"));
+    assert!(matches!(
+        b.store.sync_ingest(early.clone()).unwrap(),
+        IngestOutcome::Pending
+    ));
+    assert!(b
+        .store
+        .sync_chain_tail(&newcomer.dev(), 0)
+        .unwrap()
+        .is_empty());
     b.store.sync_resolve_pending(&add.hash(), true).unwrap();
     let row = b
         .store
@@ -2465,4 +2519,344 @@ fn competing_proposals_resolve_to_the_lowest_lamport_and_device() {
         };
         assert_eq!(r.status, want, "{}", r.device_id);
     }
+}
+
+#[test]
+fn role_change_updates_the_device_and_a_mirror_revoke_is_yellow() {
+    let ring = ring(2);
+    let (a, b) = (&ring[0], &ring[1]);
+    let mirror = Peer::new();
+    for p in [a, b] {
+        p.store
+            .sync_register_device(
+                &mirror.id.public(),
+                "m",
+                DeviceRole::Mirror,
+                Attendance::Attended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+    }
+    let role = |p: &Peer| {
+        p.store
+            .sync_devices()
+            .unwrap()
+            .into_iter()
+            .find(|d| d.id == mirror.dev())
+            .unwrap()
+            .role
+    };
+    // Revoking a mirror is Yellow here, a holder is Red.
+    let revoke_mirror = a.append(OpBody::DeviceRevoke {
+        device_id: mirror.dev(),
+    });
+    let revoke_holder = a.append(OpBody::DeviceRevoke { device_id: b.dev() });
+    let tier = |p: &Peer, op: &Op| {
+        p.store
+            .with_conn(|c| super::merge::effective_tier(c, op))
+            .unwrap()
+    };
+    assert_eq!(tier(b, &revoke_mirror), OpTier::Yellow);
+    assert_eq!(tier(b, &revoke_holder), OpTier::Red);
+    // Promotion is Red, waits, and takes effect through the programmatic resolve.
+    let promote = a.append(OpBody::DeviceRoleChange {
+        device_id: mirror.dev(),
+        to: DeviceRole::Holder,
+    });
+    assert_eq!(promote.tier(), OpTier::Red);
+    assert_eq!(role(a), DeviceRole::Holder, "the author applied it locally");
+    pull(b, a);
+    assert_eq!(
+        b.store
+            .sync_pending_reason(&promote.hash())
+            .unwrap()
+            .as_deref(),
+        Some("tier")
+    );
+    assert_eq!(role(b), DeviceRole::Mirror);
+    b.store.sync_resolve_pending(&promote.hash(), true).unwrap();
+    assert_eq!(role(b), DeviceRole::Holder);
+    let demote = a.append(OpBody::DeviceRoleChange {
+        device_id: mirror.dev(),
+        to: DeviceRole::Mirror,
+    });
+    pull(b, a);
+    b.store.sync_resolve_pending(&demote.hash(), true).unwrap();
+    assert_eq!(role(b), DeviceRole::Mirror);
+}
+
+#[test]
+fn ceremony_records_are_green_and_bounded() {
+    let ring = ring(2);
+    let (a, b) = (&ring[0], &ring[1]);
+    for body in [
+        OpBody::RedApprove { op_hash: [1; 32] },
+        OpBody::RedPhoneSign { op_hash: [1; 32] },
+        OpBody::RedFactor {
+            op_hash: [1; 32],
+            factor: ThirdFactor::Paper,
+            sig: [2; 64],
+        },
+    ] {
+        let op = a.append(body);
+        assert_eq!(op.tier(), OpTier::Green);
+        assert!(matches!(
+            b.store.sync_ingest(op).unwrap(),
+            IngestOutcome::Applied
+        ));
+    }
+    let reg = |factor, sealed: Vec<u8>| OpBody::FactorRegister {
+        factor,
+        public: [3; 32],
+        sealed,
+        salt: [4; 16],
+        sender: None,
+    };
+    assert_eq!(
+        a.append(reg(ThirdFactor::Paper, vec![])).tier(),
+        OpTier::Red
+    );
+    assert!(a
+        .store
+        .sync_append_local(&a.id, reg(ThirdFactor::Paper, vec![1]))
+        .is_err());
+    assert!(a
+        .store
+        .sync_append_local(&a.id, reg(ThirdFactor::EmailCode, vec![0; 129]))
+        .is_err());
+    let export = |w| OpBody::BulkExport {
+        requester: a.dev(),
+        window_secs: w,
+    };
+    assert_eq!(a.append(export(3600)).tier(), OpTier::Red);
+    assert!(a.store.sync_append_local(&a.id, export(3601)).is_err());
+    assert!(a.store.sync_append_local(&a.id, export(0)).is_err());
+}
+
+#[test]
+fn exemption_set_projects_the_flag_and_the_newest_op_wins() {
+    let ring = ring(2);
+    let (a, b) = (&ring[0], &ring[1]);
+    let slot = DeviceIdentity::generate().public();
+    let exempt = |p: &Peer| {
+        p.store
+            .sync_devices()
+            .unwrap()
+            .into_iter()
+            .find(|d| d.id == a.dev())
+            .unwrap()
+            .exempt
+    };
+    let on = a.append(OpBody::ExemptionSet {
+        device_id: a.dev(),
+        slot: Some(slot),
+    });
+    assert_eq!(on.tier(), OpTier::Red);
+    assert!(exempt(a));
+    assert!(matches!(
+        b.store.sync_ingest(on.clone()).unwrap(),
+        IngestOutcome::Pending
+    ));
+    assert!(!exempt(b), "waits for the ceremony");
+    b.store.sync_resolve_pending(&on.hash(), true).unwrap();
+    assert!(exempt(b));
+    let off = a.append(OpBody::ExemptionSet {
+        device_id: a.dev(),
+        slot: None,
+    });
+    b.store.sync_ingest(off.clone()).unwrap();
+    b.store.sync_resolve_pending(&off.hash(), true).unwrap();
+    assert!(!exempt(a) && !exempt(b));
+    // An invalid slot key is refused before it is chained.
+    let bad = DevicePublic {
+        ed25519_pub: [0; 32],
+        x25519_pub: [0; 32],
+        mlkem_pub: vec![1, 2, 3],
+    };
+    assert!(a
+        .store
+        .sync_append_local(
+            &a.id,
+            OpBody::ExemptionSet {
+                device_id: a.dev(),
+                slot: Some(bad)
+            }
+        )
+        .is_err());
+}
+
+#[test]
+fn cert_extend_is_green_inert_and_bounded() {
+    let ring = ring(2);
+    let (a, b) = (&ring[0], &ring[1]);
+    let op = a.append(OpBody::CertExtend {
+        cert_id: [1; 32],
+        extra_hosts: 10,
+    });
+    assert_eq!(op.tier(), OpTier::Green);
+    assert!(matches!(
+        b.store.sync_ingest(op).unwrap(),
+        IngestOutcome::Applied
+    ));
+    for n in [0u32, 51] {
+        assert!(a
+            .store
+            .sync_append_local(
+                &a.id,
+                OpBody::CertExtend {
+                    cert_id: [1; 32],
+                    extra_hosts: n
+                }
+            )
+            .is_err());
+    }
+}
+
+// ------------------------------------------------------------------ join anchor
+
+fn host_n(i: u32) -> OpBody {
+    let mut u = [0u8; 16];
+    u[..4].copy_from_slice(&i.to_be_bytes());
+    OpBody::HostUpsert {
+        host_uid: u,
+        fields: hf(&format!("h{i}"), "10.0.0.1"),
+    }
+}
+
+#[test]
+fn a_joiner_adopts_the_anchor_reviews_nothing_below_the_cut_and_only_what_comes_after() {
+    let ring = live_ring(vec![Peer::new(), Peer::new()]);
+    let (a, b) = (&ring[0], &ring[1]);
+    for i in 0..500 {
+        a.append(host_n(i));
+    }
+    touch(&ring);
+    settle(&ring);
+    // A real checkpoint is not an anchor either.
+    let (cp, _) = checkpoint_round(&ring, 0, crate::store::now_ts());
+    let joiner = Peer::new();
+    a.append(add_device_body(&joiner, DeviceRole::Mirror));
+    let bundle = a.store.sync_join_anchor_build(&a.id).unwrap();
+
+    // Only as a join anchor, and only with the inviter the user verified.
+    for wrong in [
+        BootstrapTrust::Enrollment { inviter: b.dev() },
+        BootstrapTrust::Anchor(a.dev()),
+        BootstrapTrust::RingFingerprint(ring_fingerprint(&bundle.state).unwrap()),
+    ] {
+        assert!(
+            joiner.store.sync_join_adopt(&bundle, &wrong).is_err(),
+            "{wrong:?}"
+        );
+    }
+    assert!(joiner
+        .store
+        .sync_bootstrap(&bundle, &BootstrapTrust::Anchor(a.dev()))
+        .unwrap_err()
+        .to_string()
+        .contains("join anchor"));
+    assert!(joiner
+        .store
+        .sync_join_adopt(&cp, &BootstrapTrust::Enrollment { inviter: a.dev() })
+        .unwrap_err()
+        .to_string()
+        .contains("prune checkpoint"));
+    // Nor does a join anchor pass as a checkpoint to anyone else.
+    assert!(b.store.sync_checkpoint_record(&bundle).is_err());
+
+    joiner
+        .store
+        .sync_join_adopt(&bundle, &BootstrapTrust::Enrollment { inviter: a.dev() })
+        .unwrap();
+    assert_eq!(
+        joiner.pending(),
+        0,
+        "the joiner reviews nothing below the cut"
+    );
+    assert_eq!(joiner.store.list_hosts().unwrap().len(), 502);
+    let devices: Vec<_> = joiner
+        .store
+        .sync_devices()
+        .unwrap()
+        .into_iter()
+        .map(|d| d.id)
+        .collect();
+    for d in [a.dev(), b.dev(), joiner.dev()] {
+        assert!(devices.contains(&d), "{d}");
+    }
+    assert!(joiner.store.sync_checkpoints().unwrap().is_empty());
+
+    // A dangerous change made after the cut is a foreign change under review.
+    let dangerous = HostFields {
+        address: Some("6.6.6.6".into()),
+        ..Default::default()
+    };
+    let mut u = [0u8; 16];
+    u[..4].copy_from_slice(&3u32.to_be_bytes());
+    let op = b.append(OpBody::HostUpsert {
+        host_uid: u,
+        fields: dangerous,
+    });
+    pull(&joiner, b);
+    let pending = joiner.store.sync_pending_with_reasons().unwrap();
+    assert_eq!(pending.len(), 1, "{pending:?}");
+    assert_eq!(pending[0].0.hash(), op.hash());
+    assert_eq!(pending[0].1, "tier");
+}
+
+#[test]
+fn an_op_of_an_unknown_author_waits_with_its_reason_and_never_takes_effect() {
+    let ring = ring(2);
+    let (a, b) = (&ring[0], &ring[1]);
+    let newcomer = Peer::new();
+    let op = newcomer.append(upsert(5, hf("n", "10.0.0.5")));
+    assert!(matches!(
+        b.store.sync_ingest(op.clone()).unwrap(),
+        IngestOutcome::Pending
+    ));
+    let pending = b.store.sync_pending_with_reasons().unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].1, "unknown-author");
+    assert_eq!(b.store.sync_pending().unwrap().len(), 1);
+    // Nothing of it exists: no host, no chain, nothing to serve, no fork evidence.
+    assert!(b.host(&uid(5)).is_none());
+    assert!(b
+        .store
+        .sync_chain_heads()
+        .unwrap()
+        .iter()
+        .all(|(d, _, _)| *d != newcomer.dev()));
+    assert!(b
+        .store
+        .sync_chain_tail(&newcomer.dev(), 0)
+        .unwrap()
+        .is_empty());
+    assert!(rejected(&b.store.sync_ingest(op.clone()).unwrap()).contains("duplicate"));
+    // Approving before the author is a device is refused; rejecting forgets the op.
+    assert!(b
+        .store
+        .sync_resolve_pending(&op.hash(), true)
+        .unwrap_err()
+        .to_string()
+        .contains("not a device of the ring yet"));
+    b.store.sync_resolve_pending(&op.hash(), false).unwrap();
+    assert_eq!(b.pending(), 0);
+
+    // Once the author is admitted, the op goes through the ordinary checks.
+    let add = a.append(add_device_body(&newcomer, DeviceRole::Mirror));
+    b.store.sync_ingest(add.clone()).unwrap();
+    b.store.sync_resolve_pending(&add.hash(), true).unwrap();
+    assert!(matches!(
+        b.store.sync_ingest(op).unwrap(),
+        IngestOutcome::Pending
+    ));
+    let reasons: Vec<String> = b
+        .store
+        .sync_pending_with_reasons()
+        .unwrap()
+        .into_iter()
+        .map(|(_, r)| r)
+        .collect();
+    assert_eq!(reasons, vec!["tier".to_string()]);
 }

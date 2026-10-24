@@ -1441,3 +1441,71 @@ fn sync_review_with_an_unknown_id_exits_two() {
         .assert()
         .code(2);
 }
+
+const ADMIN_VERBS: [&str; 11] = [
+    "sync-revoke",
+    "sync-role",
+    "sync-approve",
+    "sync-factor",
+    "sync-factor-register",
+    "sync-recovery",
+    "sync-mode",
+    "sync-exemption",
+    "sync-export",
+    "sync-migrate",
+    "sync-import-kit",
+];
+
+#[test]
+fn sync_admin_verbs_print_their_own_help() {
+    let d = dir();
+    for cmd in ADMIN_VERBS {
+        sshub(d.path())
+            .args([cmd, "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(format!("sshub {cmd} -")))
+            .stdout(predicate::str::contains("USAGE:"));
+    }
+}
+
+#[test]
+fn sync_admin_argument_errors_exit_two() {
+    let d = dir();
+    for args in [
+        vec!["sync-revoke"],
+        vec!["sync-role", "dev", "boss"],
+        vec!["sync-factor", "abcdef"],
+        vec!["sync-recovery"],
+        vec!["sync-mode", "both"],
+        vec!["sync-exemption", "maybe", "dev"],
+        vec!["sync-export", "--window", "60"],
+        vec!["sync-migrate", "--bogus"],
+        vec!["sync-import-kit", "extra"],
+    ] {
+        sshub(d.path()).args(&args).assert().code(2);
+    }
+}
+
+#[test]
+fn sync_admin_verbs_on_an_empty_profile_fail_without_a_device_key() {
+    let d = dir();
+    for args in [
+        vec!["sync-revoke", "dev"],
+        vec!["sync-role", "dev", "holder"],
+        vec!["sync-approve", "abcdef"],
+        vec!["sync-recovery", "status"],
+        vec!["sync-mode", "quorum"],
+        vec!["sync-export", "--window", "60", "--out", "x.csv"],
+        vec!["sync-migrate"],
+    ] {
+        sshub(d.path())
+            .args(&args)
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains(
+                "No sync ring on this profile yet.",
+            ));
+    }
+    assert!(!has_file_named(d.path(), "device.key"));
+}

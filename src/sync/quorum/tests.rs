@@ -1149,8 +1149,6 @@ fn the_trust_session_path_grants_under_a_certificate_and_defers_without_one() {
 
 #[test]
 fn the_attended_peer_path_goes_through_the_log_and_the_grant_is_sealed_to_the_ephemeral_key() {
-    use crate::sync::oplog::{Attendance, DeviceKind, DeviceRole, VerifiedBy};
-
     let d = ring(3); // 0 requester, 1 attended holder, 2 another holder
     quorum_mode(&d[0]);
     all_to_all(&d);
@@ -1219,18 +1217,125 @@ fn the_attended_peer_path_goes_through_the_log_and_the_grant_is_sealed_to_the_ep
     assert!(peer_poll(&d[0].store, &other, 0).unwrap().is_none());
 
     // An unattended holder never grants on approval.
-    d[2].store
-        .sync_register_device(
-            &d[2].id.public(),
-            "vps",
-            DeviceRole::Holder,
-            Attendance::Unattended,
-            DeviceKind::Terminal,
-            VerifiedBy::Sas,
-        )
-        .unwrap();
+    d[2].make_unattended();
     assert!(grant_bodies(&d[2].store, &d[2].id, &release)
         .unwrap_err()
         .to_string()
         .contains("unattended"));
+}
+
+#[test]
+fn revoking_a_holder_runs_rotate_reshare_adopt_and_retire_without_prompts() {
+    use crate::sync::reshare::mark_adopted;
+    use crate::sync::revocation::{check_revocable, next_actions, perform, RevocationAction};
+
+    let mut d = ring(4); // 0, 1, 2 stay; 3 is revoked
+    quorum_mode(&d[0]);
+    all_to_all(&d);
+    let hosts: Vec<HostUid> = (1..=3u8).map(|n| [100 + n; 16]).collect();
+    for h in &hosts {
+        cred_put(&d[0].store, &d[0].id, h, &payload(&format!("p{}", h[0]))).unwrap();
+    }
+    all_to_all(&d);
+    let removed_old = own_shares(&d[3].store, &d[3].id, &hosts[0])
+        .unwrap()
+        .remove(0)
+        .1;
+
+    let now = crate::store::now_ts();
+    check_revocable(&d[0].store, &d[3].did, now).unwrap();
+    append(
+        &d[0],
+        OpBody::DeviceRevoke {
+            device_id: d[3].did.clone(),
+        },
+    );
+    all_to_all(&d[..3]);
+    assert!(
+        next_actions(&d[3].store, &d[3].id, now).unwrap().is_empty(),
+        "the revoked device has no part"
+    );
+
+    // Each round every remaining holder does what the log says is next; nobody is asked anything.
+    let mut seen_rotate = 0;
+    let mut seen_contribute = 0;
+    let mut seen_receive = 0;
+    for _ in 0..8 {
+        let mut progressed = false;
+        for dev in d.iter_mut().take(3) {
+            let actions = next_actions(&dev.store, &dev.id, now).unwrap();
+            for a in actions {
+                match &a {
+                    RevocationAction::Rotate => seen_rotate += 1,
+                    RevocationAction::Contribute { .. } => seen_contribute += 1,
+                    RevocationAction::Receive { .. } => seen_receive += 1,
+                    RevocationAction::Retire => continue,
+                }
+                let store = dev.store.clone();
+                let bodies = perform(
+                    &store,
+                    std::sync::Arc::get_mut(&mut dev.id).expect("unique identity"),
+                    &a,
+                )
+                .unwrap();
+                for b in bodies {
+                    append(dev, b);
+                }
+                progressed = true;
+            }
+        }
+        all_to_all(&d[..3]);
+        if !progressed {
+            break;
+        }
+    }
+    assert_eq!(
+        (seen_rotate, seen_contribute, seen_receive),
+        (3, 3, 3),
+        "each remaining holder rotated, contributed and received once"
+    );
+    // The new sharing opens, the removed holder's old share does not combine with it.
+    for h in &hosts {
+        let s0 = own_shares(&d[0].store, &d[0].id, h).unwrap().remove(0);
+        let s1 = own_shares(&d[1].store, &d[1].id, h).unwrap().remove(0);
+        assert_eq!((s0.0, s1.0), (1, 1));
+        let dek = assemble_dek(&d[0].store, h, s0.1.clone(), s1.1).unwrap();
+        assert_eq!(
+            open_payload(&d[0].store, h, &dek).password.clone().unwrap(),
+            format!("p{}", h[0])
+        );
+        if *h == hosts[0] {
+            assert!(assemble_dek(&d[0].store, h, removed_old.clone(), s0.1).is_err());
+        }
+    }
+
+    // The previous wrap keys stay until every credential was adopted by a real unlock.
+    assert!(!next_actions(&d[0].store, &d[0].id, now)
+        .unwrap()
+        .contains(&RevocationAction::Retire));
+    for h in &hosts {
+        mark_adopted(&d[0].store, h, 1).unwrap();
+    }
+    assert!(next_actions(&d[0].store, &d[0].id, now)
+        .unwrap()
+        .contains(&RevocationAction::Retire));
+    let store = d[0].store.clone();
+    let did0 = d[0].did.clone();
+    let did1 = d[1].did.clone();
+    let id0 = std::sync::Arc::get_mut(&mut d[0].id).unwrap();
+    assert_eq!(id0.wrap_key_generations(), 2);
+    perform(&store, id0, &RevocationAction::Retire).unwrap();
+    assert_eq!(id0.wrap_key_generations(), 1);
+    // And the old wrapped shares are now unreadable by it: forward secrecy.
+    let (_, wraps) = store.sync_cred_ciphertext(&hosts[0]).unwrap().unwrap();
+    let mine = wraps.iter().find(|w| w.recipient == did0).unwrap();
+    assert!(crate::sync::crypto::hybrid_unwrap(id0, &mine.sealed).is_err());
+
+    // With only two holders left, a revocation is refused up front.
+    let _ = did1;
+    let two = ring(2);
+    assert!(
+        check_revocable(&two[0].store, &two[1].did, now).is_err(),
+        "one remaining holder cannot contribute"
+    );
 }
