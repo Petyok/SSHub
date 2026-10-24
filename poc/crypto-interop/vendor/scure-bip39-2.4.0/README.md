@@ -1,0 +1,134 @@
+# scure-bip39
+
+Audited & minimal JS implementation of [BIP39 mnemonic phrases](https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki).
+
+- 🔒 [**Audited**](#security) by an independent security firm
+- 🔻 Tree-shakeable: unused code is excluded from your builds
+- 🥈 Two implementations: pure JS or friendly WebCrypto wrapper
+- ➰ Only 1 audited dependency by the same author:
+  [noble-hashes](https://github.com/paulmillr/noble-hashes)
+- 🪶 14KB (gzipped) with one wordlist, 79KB with all of them: much smaller than similar libraries
+
+Check out [scure-bip32](https://github.com/paulmillr/scure-bip32) if you need
+hierarchical deterministic wallets ("HD Wallets").
+
+### This library belongs to _scure_
+
+> **scure** — audited micro-libraries.
+
+- Zero or minimal dependencies
+- Highly readable TypeScript / JS code
+- PGP-signed releases and transparent NPM builds
+- Check out [homepage](https://paulmillr.com/noble/#scure) & all libraries:
+  [base](https://github.com/paulmillr/scure-base),
+  [bip32](https://github.com/paulmillr/scure-bip32),
+  [bip39](https://github.com/paulmillr/scure-bip39),
+  [btc-signer](https://github.com/paulmillr/scure-btc-signer),
+  [sr25519](https://github.com/paulmillr/scure-sr25519),
+  [starknet](https://github.com/paulmillr/scure-starknet)
+
+## Usage
+
+> `npm install @scure/bip39`
+
+> `deno add jsr:@scure/bip39`
+
+We don't provide source maps.
+Wordlists are large, including source maps would double package size.
+
+```js
+import * as bip39 from '@scure/bip39';
+import { wordlist } from '@scure/bip39/wordlists/english.js';
+
+// Generate x random words. Uses Cryptographically-Secure Random Number Generator.
+const mn = bip39.generateMnemonic(wordlist);
+console.log(mn);
+
+// You can customize the strength of the generated mnemonic by passing a value between 128 and 256 as the second argument to the generateMnemonic function.
+// This value must be a multiple of 32. Default is 128.
+const mn256 = bip39.generateMnemonic(wordlist, 256);
+console.log(mn256);
+
+// Reversible: Converts mnemonic string to raw entropy in form of byte array.
+const ent = bip39.mnemonicToEntropy(mn, wordlist);
+
+// Reversible: Converts raw entropy in form of byte array to mnemonic string.
+bip39.entropyToMnemonic(ent, wordlist);
+
+// Validates mnemonic for being 12-24 words contained in `wordlist`.
+bip39.validateMnemonic(mn, wordlist);
+bip39.validateMnemonic(mn256, wordlist);
+
+// Irreversible: Uses KDF to derive 64 bytes of key data from mnemonic + optional password.
+const seed1 = await bip39.mnemonicToSeed(mn, 'password');
+const seed2 = bip39.mnemonicToSeedSync(mn, 'password');
+const seed3 = await bip39.mnemonicToSeedWebcrypto(mn, 'password'); // Native, WebCrypto version.
+```
+
+This submodule contains the word lists defined by BIP39 for Czech, English, French, Italian, Japanese, Korean, Portuguese, Simplified and Traditional Chinese, and Spanish. These are not imported by default, as that would increase bundle sizes too much. Instead, you should import and use them explicitly.
+
+```typescript
+function generateMnemonic(wordlist: string[], strength?: number): string;
+function mnemonicToEntropy(mnemonic: string, wordlist: string[]): Uint8Array;
+function entropyToMnemonic(entropy: Uint8Array, wordlist: string[]): string;
+function validateMnemonic(mnemonic: string, wordlist: string[]): boolean;
+function mnemonicToSeed(mnemonic: string, passphrase?: string): Promise<Uint8Array>;
+function mnemonicToSeedSync(mnemonic: string, passphrase?: string): Uint8Array;
+function mnemonicToSeedWebcrypto(mnemonic: string, passphrase?: string): Promise<Uint8Array>;
+```
+
+All wordlists (**warning: non-english wordlists are officially discouraged by bip39**):
+
+```typescript
+import { wordlist as czech } from '@scure/bip39/wordlists/czech.js';
+import { wordlist as english } from '@scure/bip39/wordlists/english.js';
+import { wordlist as french } from '@scure/bip39/wordlists/french.js';
+import { wordlist as italian } from '@scure/bip39/wordlists/italian.js';
+import { wordlist as japanese } from '@scure/bip39/wordlists/japanese.js';
+import { wordlist as korean } from '@scure/bip39/wordlists/korean.js';
+import { wordlist as portuguese } from '@scure/bip39/wordlists/portuguese.js';
+import { wordlist as simplifiedChinese } from '@scure/bip39/wordlists/simplified-chinese.js';
+import { wordlist as spanish } from '@scure/bip39/wordlists/spanish.js';
+import { wordlist as traditionalChinese } from '@scure/bip39/wordlists/traditional-chinese.js';
+```
+
+## Security
+
+The library has been audited:
+
+- at version 2.2.0, in Apr 2026, by ourselves (self-audited)
+  - Scope: everything
+  - [Changes since audit](https://github.com/paulmillr/scure-bip39/compare/2.2.0..main)
+- at version 1.0.0, in Jan 2022, by [cure53](https://cure53.de)
+  - PDFs: [online](https://cure53.de/pentest-report_hashing-libs.pdf), [offline](./audit/2022-01-05-cure53-audit-nbl2.pdf)
+  - [Changes since audit](https://github.com/paulmillr/scure-bip39/compare/1.0.0..main).
+  - The audit has been funded by [Ethereum Foundation](https://ethereum.org/en/) with help of [Nomic Labs](https://nomiclabs.io)
+
+The library was initially developed for [js-ethereum-cryptography](https://github.com/ethereum/js-ethereum-cryptography).
+At commit [ae00e6d7](https://github.com/ethereum/js-ethereum-cryptography/commit/ae00e6d7d24fb3c76a1c7fe10039f6ecd120b77e),
+it was extracted to a separate package called `micro-bip39`.
+After the audit we've decided to use `@scure` NPM namespace for security.
+
+To audit wordlist content, run `node scripts/fetch-wordlist.js`.
+
+### Supply chain security
+
+- **Commits** are signed with PGP keys to prevent forgery. Be sure to verify the commit signatures
+- **Releases** are made transparently through token-less GitHub CI and Trusted Publishing. Be sure to verify the [provenance logs](https://docs.npmjs.com/generating-provenance-statements) for authenticity.
+- **Rare releasing** is practiced to minimize the need for re-audits by end-users.
+- **Dependencies** are minimized and strictly pinned to reduce supply-chain risk.
+  - We use as few dependencies as possible.
+  - Version ranges are locked, and changes are checked with npm-diff.
+- **Dev dependencies** are excluded from end-user installs; they’re only used for development and build steps.
+
+For this package, there is 1 dependency; and a few dev dependencies:
+
+- [noble-hashes](https://github.com/paulmillr/noble-hashes) provides cryptographic hashing functionality
+- jsbt is used for benchmarking / testing / build tooling and developed by the same author
+- prettier, fast-check and typescript are used for code quality / test generation / ts compilation
+
+## License
+
+[MIT License](./LICENSE)
+
+Copyright (c) 2022 Patricio Palladino, Paul Miller (paulmillr.com)
