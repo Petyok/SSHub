@@ -754,10 +754,7 @@ fn dump_qr_variants() {
 #[test]
 fn emitter_forwards_only_a_valid_share_response_wire() {
     let (tx, rx) = std::sync::mpsc::channel();
-    let em = Emitter {
-        kind: MediaKind::Audio,
-        tx,
-    };
+    let em = Emitter::new(MediaKind::Audio, tx, super::ListenOpts::SHARE_RESPONSE);
     assert!(!em.reply(b"not a wire".to_vec()));
     assert!(matches!(
         rx.try_recv(),
@@ -782,4 +779,127 @@ fn without_the_features_nothing_is_available_and_listen_says_why() {
     assert!(events
         .iter()
         .all(|e| matches!(e, MediaEvent::Status(_, s) if s.contains("built without"))));
+}
+
+fn enroll_docs() -> Vec<Vec<u8>> {
+    use crate::sync::wire::EnrollFrame;
+    vec![
+        EnrollFrame::Commit {
+            role: 0,
+            commit: [7; 32],
+        }
+        .encode(),
+        // a reveal is big (ML-KEM key): several QR frames
+        EnrollFrame::Reveal {
+            role: 0,
+            reveal: (0..1300u32).map(|i| (i * 13 + 5) as u8).collect(),
+        }
+        .encode(),
+        EnrollFrame::Confirm {
+            role: 0,
+            ok: true,
+            sig: [9; 64],
+        }
+        .encode(),
+    ]
+}
+
+/// EnrollFrame documents as the phone shows them (looping fountain frames, drawn to images),
+/// read through `qrscan`: each document completes and parses back to the same frame.
+#[test]
+fn enroll_frames_through_qrscan() {
+    let mut c = ReplyCollector::new();
+    for doc in enroll_docs() {
+        let frames = fountain_encode(&doc, 250, 25).unwrap();
+        let mut done = None;
+        for lap in 0..2 {
+            for f in &frames {
+                let img = draw_qr(f, 5);
+                let b = img.bytes();
+                if let Scan::Complete(d) = c.push_image(Gray {
+                    width: img.w,
+                    height: img.h,
+                    pixels: &b,
+                }) {
+                    done = Some((lap, d));
+                }
+            }
+        }
+        let (_, got) = done.unwrap_or_else(|| {
+            panic!(
+                "document of {} B ({} frames) completes",
+                doc.len(),
+                frames.len()
+            )
+        });
+        assert_eq!(got, doc);
+        assert!(super::accept_enroll_frame(&got));
+        assert!(!super::accept_share_response(&got));
+    }
+}
+
+#[test]
+fn keep_listening_hands_over_each_new_document_once() {
+    use super::ListenOpts;
+    let (tx, rx) = std::sync::mpsc::channel();
+    let em = Emitter::new(MediaKind::Camera, tx, ListenOpts::ENROLL_FRAMES);
+    let docs = enroll_docs();
+    assert!(
+        !em.reply(b"junk".to_vec()),
+        "a refused document does not stop the channel"
+    );
+    assert!(matches!(rx.try_recv(), Ok(MediaEvent::Status(..))));
+    for d in [&docs[0], &docs[0], &docs[1], &docs[1], &docs[0], &docs[2]] {
+        assert!(
+            !em.reply(d.clone()),
+            "keep_listening never stops the channel"
+        );
+    }
+    let got: Vec<Vec<u8>> = rx
+        .try_iter()
+        .map(|e| match e {
+            MediaEvent::Reply(MediaKind::Camera, b) => b,
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    // the immediate repeat is dropped, a return to an earlier document is a new step
+    assert_eq!(
+        got,
+        vec![
+            docs[0].clone(),
+            docs[1].clone(),
+            docs[0].clone(),
+            docs[2].clone()
+        ]
+    );
+    // without keep_listening the first accepted reply ends the channel
+    let (tx, rx) = std::sync::mpsc::channel();
+    let em = Emitter::new(
+        MediaKind::Camera,
+        tx,
+        ListenOpts {
+            keep_listening: false,
+            ..ListenOpts::ENROLL_FRAMES
+        },
+    );
+    assert!(em.reply(docs[2].clone()));
+    assert!(matches!(rx.try_recv(), Ok(MediaEvent::Reply(..))));
+}
+
+#[test]
+fn frames_of_a_finished_document_do_not_shadow_the_next_one() {
+    let docs = enroll_docs();
+    let mut c = ReplyCollector::new();
+    let first = fountain_encode(&docs[1], 250, 25).unwrap();
+    let mut completed = 0;
+    // the phone keeps looping the finished document for a while
+    for f in first.iter().cycle().take(first.len() * 3) {
+        if matches!(c.push_frame(f), Scan::Complete(_)) {
+            completed += 1;
+        }
+    }
+    assert_eq!(completed, 1);
+    // the very first frame of the next document counts
+    let next = fountain_encode(&docs[2], 250, 25).unwrap();
+    assert_eq!(c.push_frame(&next[0]), Scan::Complete(docs[2].clone()));
 }
