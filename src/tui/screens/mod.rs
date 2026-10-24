@@ -23,6 +23,7 @@ pub mod sftp;
 pub mod snippet_form;
 pub mod snippet_manage;
 pub mod snippet_picker;
+pub mod sync;
 pub mod tag_filter;
 pub mod theme_picker;
 pub mod tunnel_reconnect;

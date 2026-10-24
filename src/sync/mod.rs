@@ -10,6 +10,7 @@ pub mod limits;
 pub mod oplog;
 pub mod share_release;
 pub mod snapshot;
+pub mod transport;
 #[cfg(test)]
 mod vectors;
 pub mod wire;

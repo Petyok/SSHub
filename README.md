@@ -388,7 +388,7 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 
 | Key              | Action                          |
 |------------------|---------------------------------|
-| `1`..`6`, `h` / `i` | Switch tab (hosts/sftp/tunnels/identities/audit/map); `h` is hosts, `i` identities |
+| `1`..`7`, `h` / `i` | Switch tab (hosts/sftp/tunnels/identities/audit/map/sync); `h` is hosts, `i` identities |
 | `Esc`            | Back / close overlay            |
 | `Ctrl+H`         | Settings (theme, transparency, logging, ping, updates, profiles, command history); fixed, not rebindable |
 | `Ctrl+K`         | Keybind editor                  |
@@ -475,6 +475,7 @@ arrives as arrow keys, exactly as in a real terminal.
 | `x`                | Cancel a running broadcast / clear its error toasts |
 | `Shift+U`          | Install the sshub update, or check for one |
 | `Shift+W`          | What's new: release notes of this version or the installed update |
+| `t`                | Make the selected host one of your sync devices (once sync is set up) |
 
 ### SFTP (tab 2)
 
@@ -551,6 +552,19 @@ arrives as arrow keys, exactly as in a real terminal.
 Under 80x24 the map becomes an outline (one hop per row); under 40x12 it asks for a bigger terminal.
 
 In the host form, the ProxyJump field is the hop editor: `a` add a saved host, `r` a raw hop, `Enter` replace, `d` remove, `Ctrl+↑` / `Ctrl+↓` move, `n` direct (stores `none`, overriding a group jump), `X` clear (inherit), `t` test the chain. ssh_config hosts stay read-only.
+
+### Sync (tab 7)
+
+Sync keeps hosts and credentials identical on your own devices, end to end encrypted. Until a ring exists the tab says so and how to start or join one: `t` on the hosts tab enrolls a machine as one of your devices, and `sshub sync-join <a reachable device>` joins a blank machine. Once a ring exists the tab lists the devices with their status and role, the credential mode, the trust session and the number of changes waiting, and the tab bar shows `⇅N ⏳Nops` (red when a device is compromised).
+
+| Key | Action |
+|-----|--------|
+| `↑` / `↓` | Select a device |
+| `y` | Sync now with the selected device |
+| `R` | Review the changes waiting for approval (`a` approve, `r` reject, `Esc` close) |
+| `t` | Open a trust session: pick the scope first, then the term (7, 30 or 90 days) |
+
+A fork (a device that signed two different histories) takes over the whole screen and names the device; `Esc` closes the alert and the badge stays red. All five sync keys (`7`, `y`, `R`, `t` on the sync tab, `t` on the hosts tab) are rebindable in the keybind editor.
 
 ## Theming
 
