@@ -9,7 +9,8 @@ cd "$HERE" || exit 2
 P=sshub-hostsync-e2e
 C="docker compose -p $P -f docker-compose.yml"
 PEERS="peer-a peer-b peer-c hub"
-export C PEERS
+E2E_DIR=$HERE
+export E2E_DIR C PEERS
 
 cleanup() {
   $C down -v --remove-orphans >/dev/null 2>&1 || true
