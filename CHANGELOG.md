@@ -4,6 +4,18 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Go to a path in the SFTP browser** (issue #162, requested by
+  [@Frysuni](https://github.com/Frysuni)) - the browser could only filter the
+  current directory, so reaching `/var/www` or `~/.ssh` meant walking there one
+  folder at a time. `g` opens a prompt on the focused pane that takes an absolute
+  path, a relative one (`../other`) or `~/x`, and `Tab` completes the last
+  segment: one match is filled in, several extend to what they share and are
+  shown below the field. On the remote pane `~` is the login directory. A local
+  path that is not a directory is refused in the prompt; a refusal from the
+  server shows as the usual notice and the pane keeps its directory.
+
 ## [0.19.2] - 2026-10-24
 
 ### Changed

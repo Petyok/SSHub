@@ -2,7 +2,10 @@ use super::*;
 
 use std::path::{Path, PathBuf};
 
-use crate::sftp::model::{Direction, FileEntry, Phase, QueuedTransfer, SftpState, Side};
+use crate::sftp::model::{
+    complete_segment, normalize_lexical, resolve_goto, Completed, Direction, FileEntry, Phase,
+    QueuedTransfer, SftpState, Side,
+};
 
 /// Time constant of the SFTP progress bar's chase (#35).
 const SFTP_PROGRESS_TAU: f32 = 0.12;
@@ -310,6 +313,8 @@ impl App {
             KeyCode::Char('O') => self.sftp_left_pane_to_local(),
             // Confirm: run the whole queue sequentially.
             KeyCode::Char('c') => self.sftp_run_queue(),
+            // Jump to a typed directory (`Tab` completes it).
+            KeyCode::Char('g') if can_navigate => self.sftp_open_prompt(SftpPromptKind::Goto),
             // File ops (frozen while a queue runs).
             KeyCode::Char('d') if !running => self.sftp_arm_delete(),
             KeyCode::Char('n') if !running => self.sftp_open_prompt(SftpPromptKind::Mkdir),
@@ -346,7 +351,7 @@ impl App {
         let pane = s.focused_pane();
         let base = pane.cwd.clone();
         let (value, old_path) = match kind {
-            SftpPromptKind::Mkdir => (String::new(), None),
+            SftpPromptKind::Mkdir | SftpPromptKind::Goto => (String::new(), None),
             SftpPromptKind::Rename => {
                 let Some(entry) = pane.selected_entry().filter(|e| !e.is_parent()) else {
                     return;
@@ -372,6 +377,7 @@ impl App {
             value,
             cursor,
             error: None,
+            hint: None,
         });
         self.mode = AppMode::SftpPrompt;
     }
@@ -380,6 +386,7 @@ impl App {
         if let Some(p) = self.sftp_prompt.as_mut() {
             p.cursor = text_input::insert_at(&mut p.value, p.cursor, ch);
             p.error = None;
+            p.hint = None;
         }
     }
 
@@ -387,6 +394,7 @@ impl App {
         if let Some(p) = self.sftp_prompt.as_mut() {
             p.cursor = text_input::backspace_at(&mut p.value, p.cursor);
             p.error = None;
+            p.hint = None;
         }
     }
 
@@ -397,6 +405,7 @@ impl App {
                 self.mode = AppMode::Normal;
             }
             KeyCode::Enter => self.sftp_prompt_commit(),
+            KeyCode::Tab => self.sftp_goto_complete(),
             KeyCode::Backspace if key.modifiers.is_empty() => self.sftp_prompt_backspace(),
             KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End | KeyCode::Delete => {
                 if let Some(p) = self.sftp_prompt.as_mut() {
@@ -405,6 +414,7 @@ impl App {
                     p.cursor = cursor;
                     if key.code == KeyCode::Delete {
                         p.error = None;
+                        p.hint = None;
                     }
                 }
             }
@@ -419,6 +429,147 @@ impl App {
         Ok(())
     }
 
+    /// Whether `side` is backed by a server: the right pane always, the left
+    /// one only while it browses a second host.
+    fn sftp_side_is_remote(&self, side: Side) -> bool {
+        side == Side::Remote || self.sftp.as_ref().is_some_and(|s| s.left_is_remote())
+    }
+
+    /// What the Goto prompt's text names so far: the directory its last `/`
+    /// ends (the pane's own when there is none) and the segment typed after it.
+    fn sftp_goto_target(&self) -> Option<(PathBuf, String)> {
+        let p = self
+            .sftp_prompt
+            .as_ref()
+            .filter(|p| p.kind == SftpPromptKind::Goto)?;
+        let (head, partial) = match p.value.rfind('/') {
+            Some(i) => p.value.split_at(i + 1),
+            None => ("", p.value.as_str()),
+        };
+        let dir = if head.is_empty() {
+            normalize_lexical(&p.base)
+        } else {
+            resolve_goto(
+                head,
+                &p.base,
+                self.sftp_side_is_remote(p.side),
+                local_home().as_deref(),
+            )?
+        };
+        Some((dir, partial.to_string()))
+    }
+
+    /// `Tab` in the Goto prompt: complete the last path segment. The pane's own
+    /// listing and local directories answer at once; another remote directory
+    /// takes a round trip, finished by [`Self::sftp_goto_names`].
+    fn sftp_goto_complete(&mut self) {
+        let Some((dir, partial)) = self.sftp_goto_target() else {
+            return;
+        };
+        let Some(s) = self.sftp.as_ref() else { return };
+        let side = self.sftp_prompt.as_ref().map_or(Side::Remote, |p| p.side);
+        let remote = self.sftp_side_is_remote(side);
+        let pane = match side {
+            Side::Remote => &s.remote,
+            Side::Local => &s.local,
+        };
+        if normalize_lexical(&pane.cwd) == dir {
+            let found = complete_segment(&pane.entries, &partial, remote);
+            self.sftp_goto_apply(found);
+        } else if !remote {
+            let found = complete_segment(&read_local_dir(&dir), &partial, false);
+            self.sftp_goto_apply(found);
+        } else if s.phase == Phase::Running {
+            // The worker is busy with the transfer; a listing would queue behind it.
+            self.sftp_goto_hint("busy: a transfer is running");
+        } else {
+            let sent = self
+                .sftp_channel(side)
+                .is_some_and(|tx| tx.send(SftpCommand::ListNames(dir)).is_ok());
+            self.sftp_goto_hint(if sent {
+                "completing..."
+            } else {
+                "not connected"
+            });
+        }
+    }
+
+    fn sftp_goto_hint(&mut self, text: &str) {
+        if let Some(p) = self.sftp_prompt.as_mut() {
+            p.hint = Some(text.to_string());
+        }
+    }
+
+    /// Write a completion into the Goto prompt: the text after the last `/`
+    /// becomes the match (or what the matches share), the candidates go to the
+    /// hint line.
+    fn sftp_goto_apply(&mut self, found: Completed) {
+        let Some(p) = self.sftp_prompt.as_mut() else {
+            return;
+        };
+        let (tail, hint) = match found {
+            Completed::None => (None, "no match".to_string()),
+            Completed::Unique(name) => (Some(name), String::new()),
+            Completed::Many { prefix, names } => (Some(prefix), names.join("  ")),
+        };
+        if let Some(tail) = tail {
+            p.value.truncate(p.value.rfind('/').map_or(0, |i| i + 1));
+            p.value.push_str(&tail);
+            p.cursor = p.value.chars().count();
+        }
+        p.error = None;
+        p.hint = Some(hint).filter(|h| !h.is_empty());
+    }
+
+    /// A worker answered `ListNames`. It only counts if the Goto prompt is still
+    /// open on that pane and still asks about that directory; the segment to
+    /// complete is whatever has been typed since.
+    fn sftp_goto_names(&mut self, side: Side, path: PathBuf, entries: Vec<FileEntry>) {
+        let Some((dir, partial)) = self.sftp_goto_target() else {
+            return;
+        };
+        if self.sftp_prompt.as_ref().map(|p| p.side) != Some(side)
+            || normalize_lexical(&path) != dir
+        {
+            return;
+        }
+        self.sftp_goto_apply(complete_segment(&entries, &partial, true));
+    }
+
+    /// Enter in the Goto prompt. A local target must be a directory: the local
+    /// lister shows a missing path as merely empty, so one that is not a
+    /// directory is refused here (`is_dir` does not test readability, so a
+    /// directory that cannot be read still opens, empty). A server's refusal
+    /// comes back through the usual `Error` notice and the pane keeps showing
+    /// the old directory.
+    fn sftp_goto_commit(&mut self) {
+        let Some(p) = self.sftp_prompt.as_ref() else {
+            return;
+        };
+        let side = p.side;
+        let remote = self.sftp_side_is_remote(side);
+        let target = resolve_goto(&p.value, &p.base, remote, local_home().as_deref());
+        let error = match &target {
+            None => None,
+            Some(path) if !remote && !path.is_dir() => {
+                Some(format!("not a directory: {}", path.display()))
+            }
+            Some(_) if remote && self.sftp_channel(side).is_none() => Some("not connected".into()),
+            Some(_) => None,
+        };
+        if error.is_some() {
+            if let Some(p) = self.sftp_prompt.as_mut() {
+                p.error = error;
+            }
+            return;
+        }
+        self.sftp_prompt = None;
+        self.mode = AppMode::Normal;
+        if let Some(path) = target {
+            self.sftp_navigate(side, path);
+        }
+    }
+
     /// Apply the open mkdir / rename prompt. Remote ops are dispatched to the
     /// worker and the prompt closes immediately (the result surfaces as a pane
     /// refresh on OpDone or a browser notice on Error — we deliberately do NOT
@@ -430,6 +581,10 @@ impl App {
         let Some(p) = self.sftp_prompt.as_ref() else {
             return;
         };
+        if p.kind == SftpPromptKind::Goto {
+            self.sftp_goto_commit();
+            return;
+        }
         // chmod takes an octal mode, not a name — handle it separately.
         if p.kind == SftpPromptKind::Chmod {
             self.sftp_chmod_commit();
@@ -464,7 +619,9 @@ impl App {
                 SftpPromptKind::Rename => {
                     crate::sftp::SftpCommand::Rename(old_path.unwrap_or_default(), target)
                 }
-                SftpPromptKind::Chmod => unreachable!("chmod handled earlier"),
+                SftpPromptKind::Chmod | SftpPromptKind::Goto => {
+                    unreachable!("chmod and goto handled earlier")
+                }
             };
             // A missing channel OR a failed send (worker thread dead) means
             // the op won't run — keep the prompt open with an error rather
@@ -502,7 +659,9 @@ impl App {
                             std::fs::rename(old_path.unwrap_or_default(), &target)
                         }
                     }
-                    SftpPromptKind::Chmod => unreachable!("chmod handled earlier"),
+                    SftpPromptKind::Chmod | SftpPromptKind::Goto => {
+                        unreachable!("chmod and goto handled earlier")
+                    }
                 };
                 match result {
                     Ok(()) => {
@@ -1223,6 +1382,7 @@ impl App {
                 self.notice_popup = Some(format!("Could not connect to {host}:\n{msg}"));
                 self.mode = AppMode::Notice;
             }
+            SftpEvent::Names(path, entries) => self.sftp_goto_names(Side::Local, path, entries),
             SftpEvent::DirListing(_, path, entries) => {
                 if let Some(s) = self.sftp.as_mut() {
                     s.local.cwd = path;
@@ -1299,6 +1459,7 @@ impl App {
                     }
                 }
             }
+            SftpEvent::Names(path, entries) => self.sftp_goto_names(Side::Remote, path, entries),
             SftpEvent::Progress {
                 transferred, size, ..
             } if self.sftp_relay.is_some() => self.sftp_relay_progress(transferred, size),
@@ -1359,6 +1520,13 @@ impl App {
             }
         }
     }
+}
+
+/// The local home directory, for expanding `~` in the go-to-path prompt.
+fn local_home() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|h| !h.is_empty())
+        .map(PathBuf::from)
 }
 
 /// Read a local directory into `FileEntry` rows, directories first then
