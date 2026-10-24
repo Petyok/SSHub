@@ -197,13 +197,40 @@ fn serve(paths: &ProfilePaths) -> Result<i32> {
     let config = crate::config::load_config_at(&paths.config_file)
         .map_err(|e| eprintln!("sshub: config not read, no notifications: {e:#}"))
         .ok();
-    crate::sync::hub::run_sync_serve_notify(
-        &store,
-        &identity,
-        &mut conn,
-        config.as_ref().map(|c| &c.sync.notify),
-    )?;
+    let notify = config.as_ref().map(|c| &c.sync.notify);
+    let round = crate::sync::hub::run_sync_serve_notify(&store, &identity, &mut conn, notify);
+    mail_owed_codes(&store, &identity, notify);
+    round?;
     Ok(0)
+}
+
+/// The emailed third-factor code, when this device is the registered sender and
+/// a Red change has everything but that factor. Failures go to stderr only:
+/// stdout carries frames.
+fn mail_owed_codes(
+    store: &LauncherStore,
+    identity: &DeviceIdentity,
+    notify: Option<&crate::config::NotifyConfig>,
+) {
+    let Some(cfg) = notify.filter(|c| c.command.is_some()) else {
+        return;
+    };
+    let now = crate::store::now_ts();
+    let owed =
+        match crate::sync::ceremony::owed_code_mails(store, &identity.public().device_id(), now) {
+            Ok(o) => o,
+            Err(e) => return eprintln!("sshub: could not look for owed code mails: {e:#}"),
+        };
+    for (hash, subject, body) in owed {
+        match crate::sync::notify::send_notification(cfg, &subject, &body) {
+            Ok(()) => {
+                if let Err(e) = crate::sync::ceremony::mark_code_sent(store, &hash) {
+                    eprintln!("sshub: code mailed but not recorded: {e:#}");
+                }
+            }
+            Err(e) => eprintln!("sshub: could not mail the code: {e:#}"),
+        }
+    }
 }
 
 fn is_yes(line: &str) -> bool {
@@ -558,7 +585,7 @@ fn verified_str(v: VerifiedBy) -> &'static str {
 fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
     let store = open_store(paths)?;
     let rows = store.sync_devices()?;
-    let pending = store.sync_pending()?.len();
+    let pending = store.sync_pending_with_reasons()?.len();
     let mode = lower(store.sync_cred_mode()?);
     let peers = Peers::load(paths)?;
     if json_out {
@@ -628,13 +655,11 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
     use crate::app::sync_view::pending_view;
     let store = open_store(paths)?;
     let rows = store.sync_devices()?;
-    let ops = store.sync_pending()?;
-    let views: Vec<_> = ops
+    // Every pending op with its reason (`unknown-author` ones included).
+    let views: Vec<_> = store
+        .sync_pending_with_reasons()?
         .iter()
-        .map(|op| {
-            let reason = store.sync_pending_reason(&op.hash()).ok().flatten();
-            pending_view(&store, op, &rows, reason)
-        })
+        .map(|(op, reason)| pending_view(&store, op, &rows, Some(reason.clone())))
         .collect();
     if let Some((approve, prefix)) = resolve {
         let hashes: Vec<[u8; 32]> = views.iter().map(|v| v.hash).collect();
@@ -647,7 +672,7 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
             .find(|v| v.hash == hash)
             .expect("resolved above");
         let id = hex(&hash)[..12].to_string();
-        store.sync_resolve_pending(&hash, *approve)?;
+        crate::sync::ceremony::resolve(&store, &hash, *approve, crate::store::now_ts())?;
         let verb = if *approve { "Approved" } else { "Rejected" };
         if json_out {
             let doc = json!({
@@ -665,6 +690,11 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
             .map(|v| {
                 json!({
                     "id": &hex(&v.hash)[..12], "author": v.device, "summary": v.summary,
+                    "reason": v.reason,
+                    "ceremony": v.red.as_ref().map(|r| json!({
+                        "have": r.have, "missing": r.missing, "expired": r.expired,
+                        "blocked": r.blocked, "single_machine": r.single_machine,
+                    })),
                     "changes": v.changes.iter().map(|c| json!({
                         "field": c.field, "from": c.from, "to": c.to, "dangerous": c.dangerous,
                     })).collect::<Vec<_>>(),
@@ -683,6 +713,21 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
         for c in &v.changes {
             let mark = if c.dangerous { "[!]" } else { "   " };
             println!("  {mark} {}: {} -> {}", c.field, c.from, c.to);
+        }
+        if let Some(red) = &v.red {
+            println!("  Red change, three proofs needed:");
+            for h in &red.have {
+                println!("    present: {h}");
+            }
+            for m in &red.missing {
+                println!("    missing: {m}");
+            }
+            if let Some(why) = &red.blocked {
+                println!("    impossible as it stands: {why}");
+            }
+            if red.expired {
+                println!("    expired: reject it and propose it again");
+            }
         }
     }
     Ok(0)

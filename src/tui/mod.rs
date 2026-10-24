@@ -965,6 +965,9 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
         AppMode::TrustSessionTtl => screens::sync::render_trust_ttl(frame, app),
         AppMode::SyncReleaseConfirm => screens::sync::render_release_confirm(frame, app),
         AppMode::SyncOnboarding => screens::sync::render_onboarding(frame, app),
+        AppMode::SyncPrompt | AppMode::SyncMenu | AppMode::SyncInfo => {
+            screens::sync::render_sync_ui(frame, app)
+        }
         _ => {}
     }
 }
@@ -1640,6 +1643,14 @@ fn footer_keybinds(
                         .primary(crate::config::KeyAction::SyncTrust),
                 ),
                 "trust",
+            ),
+            (
+                screens::map::key_label(
+                    app.config
+                        .keybinds
+                        .primary(crate::config::KeyAction::SyncAdmin),
+                ),
+                "manage",
             ),
             ("?".into(), "help"),
             ("q".into(), "quit"),
@@ -5788,6 +5799,9 @@ mod tests {
             AppMode::TrustSessionTtl,
             AppMode::SyncReleaseConfirm,
             AppMode::SyncOnboarding,
+            AppMode::SyncPrompt,
+            AppMode::SyncMenu,
+            AppMode::SyncInfo,
         ];
         for &mode in &modes {
             for (w, h) in [(1u16, 1u16), (10, 3), (30, 8), (49, 20)] {

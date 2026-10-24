@@ -20,6 +20,7 @@ pub mod media;
 pub mod modes;
 pub mod notify;
 pub mod oplog;
+pub mod phone_enroll;
 #[cfg(test)]
 mod phone_fixtures;
 pub mod protocol;

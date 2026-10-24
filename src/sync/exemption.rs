@@ -52,6 +52,10 @@ pub fn active_slots(store: &LauncherStore) -> Result<Vec<(DeviceId, DevicePublic
         let OpBody::ExemptionSet { device_id, slot } = &op.body else {
             continue;
         };
+        // Only a completed ceremony changes who is wrapped to.
+        if !super::ceremony::in_force(store, &op)? {
+            continue;
+        }
         let key = (op.lamport, op.device_id.clone());
         match newest.iter_mut().find(|(_, d, _)| d == device_id) {
             Some(e) if e.0 < key => *e = (key, device_id.clone(), slot.clone()),
@@ -59,7 +63,7 @@ pub fn active_slots(store: &LauncherStore) -> Result<Vec<(DeviceId, DevicePublic
             None => newest.push((key, device_id.clone(), slot.clone())),
         }
     }
-    let devices = store.sync_devices()?;
+    let devices = super::ceremony::effective_devices(store, None)?;
     let mut out = Vec::new();
     for (_, device, slot) in newest {
         let Some(slot) = slot else { continue };

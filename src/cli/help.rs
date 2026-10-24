@@ -354,8 +354,12 @@ USAGE:
 
 Without a flag, lists each change waiting for review: a 12-character id, the
 author device, a summary, and one line per field (`[!]` marks a dangerous
-field). --approve / --reject take a unique prefix (at least 4 hex characters)
-of an id and resolve the change in the store, the same way the TUI does.
+field). EVERY waiting change is listed with why it waits: the reason is in
+brackets after the summary (`tier`, `stale`, `resurrection`, `revoke-conflict`,
+`unknown-author`) and is the `reason` field of the JSON items. A Red change
+shows its ceremony (proofs present and missing). --approve / --reject take a
+unique prefix (at least 4 hex characters) of an id and resolve the change the
+way the TUI does: a Red change is approved only when its ceremony is complete.
 Read-only otherwise; never creates a device key.
 
 EXIT CODES:

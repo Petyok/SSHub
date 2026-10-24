@@ -121,6 +121,17 @@ pub fn full_entry_share(
     })
 }
 
+/// The kind 5 paste path (no camera): the phone's ops list as the page copies it (base64 of the whole
+/// frame) goes through the courier ingest like a reply extension, so the ops reach every peer with the
+/// next round. Malformed text or frames are errors and change nothing.
+pub fn phone_ops_from_text(store: &LauncherStore, text: &str) -> Result<RoundSummary> {
+    let bytes = B64
+        .decode(text.split_whitespace().collect::<String>())
+        .context("the pasted text is not base64")?;
+    let wire = super::wire::PhoneOpsWire::decode(&bytes)?;
+    super::hub::courier_ingest(store, &wire.ops)
+}
+
 /// The paper path: the 24 typed paper words are the paper's key; its share of `host` at `epoch` (the
 /// credential op or a reshare) is the second share next to this device's own, so a lone terminal with
 /// the paper opens a credential without any other holder. The paper is a registered recipient

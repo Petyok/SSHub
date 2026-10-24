@@ -284,16 +284,20 @@ pub fn paper_recover_pub(store: &LauncherStore) -> Result<Option<[u8; 32]>> {
     Ok(meta_get(store, "paper_recover_pub")?.and_then(|b| b.try_into().ok()))
 }
 
-/// The ring's phone: the one device of kind `Phone` that is not revoked or compromised.
+/// The ring's phone: the one device of kind `Phone` that is not revoked or compromised, as the
+/// ceremony sees it (an enrollment that is not in force names nobody).
 pub fn phone_device(store: &LauncherStore) -> Result<Option<DeviceId>> {
-    let mut phones: Vec<DeviceId> = store
-        .sync_devices()?
-        .into_iter()
+    phone_device_in(&super::ceremony::effective_devices(store, None)?)
+}
+
+pub(crate) fn phone_device_in(devices: &[super::oplog::DeviceRow]) -> Result<Option<DeviceId>> {
+    let mut phones: Vec<DeviceId> = devices
+        .iter()
         .filter(|d| {
             d.kind == super::oplog::DeviceKind::Phone
                 && !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
         })
-        .map(|d| d.id)
+        .map(|d| d.id.clone())
         .collect();
     ensure!(phones.len() <= 1, "the ring has more than one live phone");
     Ok(phones.pop())
@@ -309,7 +313,7 @@ pub fn paper_pub(store: &LauncherStore) -> Result<Option<DevicePublic>> {
             ..
         } = &op.body
         {
-            if !sealed.is_empty() {
+            if !sealed.is_empty() && super::ceremony::in_force(store, &op)? {
                 return pub_from_bytes(sealed).map(Some);
             }
         }
@@ -346,8 +350,7 @@ pub fn paper_rule(store: &LauncherStore, holders_after: usize) -> Result<()> {
 
 /// Live holders of the ring (not revoked, not compromised).
 pub fn live_holder_count(store: &LauncherStore) -> Result<usize> {
-    Ok(store
-        .sync_devices()?
+    Ok(super::ceremony::effective_devices(store, None)?
         .into_iter()
         .filter(|d| {
             d.role == DeviceRole::Holder
@@ -364,8 +367,7 @@ pub fn share_recipients(
     store: &LauncherStore,
     me: &DevicePublic,
 ) -> Result<Vec<(DeviceId, DevicePublic)>> {
-    let mut out: Vec<(DeviceId, DevicePublic)> = store
-        .sync_devices()?
+    let mut out: Vec<(DeviceId, DevicePublic)> = super::ceremony::effective_devices(store, None)?
         .into_iter()
         .filter(|d| {
             d.role == DeviceRole::Holder
@@ -691,7 +693,8 @@ impl QuorumUnlocker {
             .map_err(fail)?
             .ok_or_else(|| UnlockError::Failed("no such credential".into()))?;
         let vault = vault_pub(&self.store).map_err(fail)?.map(|v| v.device_id());
-        let is_vault = self.store.sync_cred_mode().map_err(fail)? == CredMode::Vault
+        let is_vault = super::ceremony::effective_cred_mode(&self.store).map_err(fail)?
+            == CredMode::Vault
             || vault
                 .as_ref()
                 .is_some_and(|v| wraps.iter().any(|w| w.recipient == *v));

@@ -1303,3 +1303,31 @@ the paper (`quorum::paper_rule`): refused for new credentials, a mode change to 
 leave two holders. A reshare also runs when the holders differ from those the credentials are shared among
 (a promoted holder, an enabled or disabled exemption): `revocation::next_actions` returns `Contribute` and
 `Receive` without a rotation step.
+
+### 4g. The ceremony-complete rule for Red consumers (audit)
+
+A proposer applies its own op at once (`sync_append_local` approves by definition); peers hold a Red op pending
+until `settle_red_ops` finds its ceremony complete. Anything that reaches OTHER devices' data (who is wrapped to,
+who is reshared to, which mode credentials are written in, which certificate or export window lets a share go)
+must therefore be read through the ceremony-complete view on EVERY device, the proposer included, never from the
+raw table or from "an op of that kind exists":
+
+* `ceremony::in_force(store, op)`: not gated, or all proofs present (time-independent; an op that completed stays
+  in force). `ceremony::effective_devices(store, upto)`: the device table with a promotion that is not in force
+  read as a mirror and a revocation that is not in force read as not revoked. `ceremony::effective_cred_mode`:
+  the mode before a `ModeChange` that is not in force. Proofs of an op count only from devices that were
+  holders in force before it (`upto = op.lamport`), so a sybil holder cannot approve; a factor signs only ops
+  proposed after its registration (which must itself be in force).
+* Consumers by Red op kind: `FactorRegister{Paper}`: `quorum::paper_pub`, hence `share_recipients`,
+  `reissue_plan`, `paper_rule`, the membership reshare; every factor verifier (`registered`). `ExemptionSet`:
+  `exemption::active_slots`. `ModeChange`: `cred_ops::cred_update_body` and the unlocker (effective mode), and the
+  re-encryption itself, which is a separate step (`modes::mode_migration`) that refuses until the change is in
+  force. `DeviceAdd{Holder}` and `DeviceRoleChange`: `share_recipients`, `holder_public`, `live_holders`,
+  `live_holder_count`, `phone_device`, recovery approvals, `validate_cert_issue`, the proof counting in
+  `red_status`. `DeviceRevoke`: `revocation::open_revocation`, `live_holders`, the membership reshare.
+  `CertIssue`: `cert::cert_allows` (the single choke point). `BulkExport`: `export::active_window`.
+  Not Red-gated by this ceremony and therefore unchanged: `PhoneReenroll`/`RecoveryApprove` (the recovery machine
+  counts its own approvals).
+* Test per kind: "proposed, not complete" changes nothing a peer would act on; "complete" does
+  (`ceremony::tests::*_in_force`). Known limit: the helpers read ops from the log, so ops pruned below a
+  checkpoint cannot be re-evaluated; the checkpoint state must carry the effective result (op-log worker).
