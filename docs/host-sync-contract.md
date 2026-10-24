@@ -896,6 +896,71 @@ Code: `src/sync/{quorum,reshare,cred_ops,cert,modes,recovery}.rs` (plus the phon
   `ReplyExt::approved_by(phone_ed25519, binding_preimage)` is the check that ties an extension to the
   phone that was asked: replies are sealed to a public ephemeral key, so anyone can build one.
 
+### 4c. Red ceremony (C17): spec for the op-log and the core
+
+Design: `docs/host-sync-design.md`, "The Red ceremony". New ops, authored like any op, signed by their author:
+
+```rust
+RedApprove    { op_hash: [u8; 32] }                 // Green, inert
+RedPhoneSign  { op_hash: [u8; 32] }                 // Green, inert; author must be the phone
+RedFactor     { op_hash: [u8; 32], factor: ThirdFactor, sig: [u8; 64] }   // Green, inert
+FactorRegister{ factor: ThirdFactor, public: [u8; 32], sealed: Vec<u8>, salt: [u8; 16],
+                sender: Option<DeviceId> }          // Red: sealed is empty for Paper, <= 128 bytes for EmailCode
+DeviceRoleChange { device_id: DeviceId, to: DeviceRole }   // Red
+BulkExport    { requester: DeviceId, window_secs: u32 }    // Red, window <= 3600
+```
+
+Already Red and gated by the ceremony: `DeviceAdd` with `role: Holder`, `DeviceRevoke` of a holder (of a mirror it
+stays Yellow), `CertIssue`, `ModeChange`. `PhoneReenroll` keeps its own rules (4a, recovery). The op-log gives the
+new bodies canonical bytes, vectors and oracle checks; `apply` does nothing for the three proof ops.
+
+Rules, evaluated by `ceremony::red_status(store, op, now)` over the log (core, not op-log):
+
+* Proofs count only if they name `op.hash()`, were written after the op and within `RED_CEREMONY_TTL_SECS` of
+  its timestamp, and their author is valid: `RedApprove` by an attended `Holder` `Terminal` that is not the proposer
+  (and, for `ModeChange` to Vault, is the named `cosigner`); `RedPhoneSign` by the device with `kind == Phone`
+  (not needed for `CertIssue`, whose author is the phone); `RedFactor` whose `sig` verifies under the registered
+  factor key over `b"sshub/sync/red/factor/v1" || op_hash || proposer id`.
+* Factor keys come from the newest applied `FactorRegister` per factor kind: `Paper` carries the `paper/recover`
+  ed25519 public key; `EmailCode` carries the `email` ed25519 public key and the sealed seed
+  (`aead_seal(Argon2id(code, salt), seed)`, `ARGON2_EMAIL`), `sender` names the device that holds the code. A first
+  `FactorRegister` needs phone + second-device proofs only; a replacement also needs a `RedFactor` of the factor
+  being replaced.
+* A ring with one attended `Holder` terminal waives the second-device proof; it needs the phone and the paper.
+* `DeviceRoleChange` and `DeviceAdd` as holder additionally require at least two other live holders (seen within
+  `LIVE_DEVICE_WINDOW_SECS`) so a reshare has k contributors; `DeviceRevoke` of a holder requires at least two
+  remaining holders after it (three before).
+* `RedStatus { missing: Vec<RedProof>, have: Vec<RedProof>, complete: bool, expired: bool }` is what the review
+  screen shows ("phone: signed, second device: waiting, paper: missing"). `settle_red_ops(store, now)` runs after
+  every ingest: it resolves a pending Red op as approved when complete and as rejected when expired.
+* Builders for the UI and the phone: `red_approve_body(op)`, `red_factor_paper(recover_identity, proposer, op)`,
+  `red_factor_email(code, store, proposer, op)`, and for the phone `RedPhoneSign` is encoded by the page like its
+  cancel op; the terminal shows a Red notice (the op as kind-3 notice frame) for the phone to scan or paste.
+* The email sender (`hub::announce` family) mails the code only when the op has its phone and second-device
+  proofs and only once per op; the message states its purpose and nothing else.
+* `BulkExport`: once complete, each holder releases shares for any host to `requester` until
+  `op.timestamp + window_secs` without a prompt per host (like a certificate, recorded the same way).
+
+### 4d. Builders and screening for the UI (C4, C7)
+
+* `recovery::start_body(store, me, now, paper_recover: Option<&DeviceIdentity>, third_factor)` builds the
+  `PhoneReenroll` body (liveness set, `paper_sig` when the paper phrase was typed); `approve_body(op)`,
+  `ack_body(op, now)`, `cancel_body(op, by_phone, factor)` build the votes; `unacknowledged(store, me, now)` lists
+  open recoveries this attended device has not acknowledged (the UI shows each, then appends `ack_body`; an
+  unattended device gets none); `validate_phone_reenroll(store, op, now)` is the status for the screen;
+  `completion_bodies(store, op, now, new_phone_public, name)` yields `DeviceRevoke` of the old phone and
+  `DeviceAdd` of the new one once the clock ran out; `clear_snapshots(store)` forgets the old phone's
+  short-code blobs. The caller then reshares (`reshare` / the revocation driver).
+* `screen::screen_pending(store, now)` runs after every `run_round` / `run_sync_serve` (ending badly or not):
+  a pending `PhoneReenroll`, `ModeChange` or `CertIssue` that its validator refuses is rejected at once with the
+  reason; the others stay pending for review.
+* `cert::cert_request(store, delegate, scope, term_secs, budget, epoch_slack, now) -> CertRequestWire` is what the
+  terminal shows the phone (wire kind 9, `CertRequestWire::{encode, decode, to_body}`, layout in `wire.rs`);
+  the phone shows it, builds and signs `CertIssue` itself and returns it as a courier op / phone-ops frame.
+  `cert::cert_revoke_body(&cert)` revokes (Yellow).
+* A device records itself (role, attendance) in its own `sync_devices` when it enrolls, so `quorum::is_unattended`
+  and `recovery::unacknowledged` know an unattended device (the Hub) is one.
+
 ### 4b. Second-share paths (how a terminal gets the share it does not hold)
 
 `ShareSource::second_share(host, epoch, mine)` is answered by one of five paths. Which ring device is

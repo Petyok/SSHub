@@ -343,6 +343,35 @@ fn sample_bodies() -> Vec<OpBody> {
         OpBody::RecoveryApprove {
             reenroll_hash: [6; 32],
         },
+        OpBody::RedApprove { op_hash: [1; 32] },
+        OpBody::RedPhoneSign { op_hash: [2; 32] },
+        OpBody::RedFactor {
+            op_hash: [3; 32],
+            factor: ThirdFactor::EmailCode,
+            sig: [0x5a; 64],
+        },
+        OpBody::FactorRegister {
+            factor: ThirdFactor::Paper,
+            public: [4; 32],
+            sealed: vec![],
+            salt: [9; 16],
+            sender: None,
+        },
+        OpBody::FactorRegister {
+            factor: ThirdFactor::EmailCode,
+            public: [5; 32],
+            sealed: vec![7; 128],
+            salt: [0xab; 16],
+            sender: Some("0011223344556677".into()),
+        },
+        OpBody::DeviceRoleChange {
+            device_id: "0011223344556677".into(),
+            to: DeviceRole::Holder,
+        },
+        OpBody::BulkExport {
+            requester: "0011223344556677".into(),
+            window_secs: 3600,
+        },
         OpBody::CheckpointPropose {
             cut: vec![
                 CutEntry {
@@ -2465,4 +2494,117 @@ fn competing_proposals_resolve_to_the_lowest_lamport_and_device() {
         };
         assert_eq!(r.status, want, "{}", r.device_id);
     }
+}
+
+#[test]
+fn role_change_updates_the_device_and_a_mirror_revoke_is_yellow() {
+    let ring = ring(2);
+    let (a, b) = (&ring[0], &ring[1]);
+    let mirror = Peer::new();
+    for p in [a, b] {
+        p.store
+            .sync_register_device(
+                &mirror.id.public(),
+                "m",
+                DeviceRole::Mirror,
+                Attendance::Attended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+    }
+    let role = |p: &Peer| {
+        p.store
+            .sync_devices()
+            .unwrap()
+            .into_iter()
+            .find(|d| d.id == mirror.dev())
+            .unwrap()
+            .role
+    };
+    // Revoking a mirror is Yellow here, a holder is Red.
+    let revoke_mirror = a.append(OpBody::DeviceRevoke {
+        device_id: mirror.dev(),
+    });
+    let revoke_holder = a.append(OpBody::DeviceRevoke { device_id: b.dev() });
+    let tier = |p: &Peer, op: &Op| {
+        p.store
+            .with_conn(|c| super::merge::effective_tier(c, op))
+            .unwrap()
+    };
+    assert_eq!(tier(b, &revoke_mirror), OpTier::Yellow);
+    assert_eq!(tier(b, &revoke_holder), OpTier::Red);
+    // Promotion is Red, waits, and takes effect through the programmatic resolve.
+    let promote = a.append(OpBody::DeviceRoleChange {
+        device_id: mirror.dev(),
+        to: DeviceRole::Holder,
+    });
+    assert_eq!(promote.tier(), OpTier::Red);
+    assert_eq!(role(a), DeviceRole::Holder, "the author applied it locally");
+    pull(b, a);
+    assert_eq!(
+        b.store
+            .sync_pending_reason(&promote.hash())
+            .unwrap()
+            .as_deref(),
+        Some("tier")
+    );
+    assert_eq!(role(b), DeviceRole::Mirror);
+    b.store.sync_resolve_pending(&promote.hash(), true).unwrap();
+    assert_eq!(role(b), DeviceRole::Holder);
+    let demote = a.append(OpBody::DeviceRoleChange {
+        device_id: mirror.dev(),
+        to: DeviceRole::Mirror,
+    });
+    pull(b, a);
+    b.store.sync_resolve_pending(&demote.hash(), true).unwrap();
+    assert_eq!(role(b), DeviceRole::Mirror);
+}
+
+#[test]
+fn ceremony_records_are_green_and_bounded() {
+    let ring = ring(2);
+    let (a, b) = (&ring[0], &ring[1]);
+    for body in [
+        OpBody::RedApprove { op_hash: [1; 32] },
+        OpBody::RedPhoneSign { op_hash: [1; 32] },
+        OpBody::RedFactor {
+            op_hash: [1; 32],
+            factor: ThirdFactor::Paper,
+            sig: [2; 64],
+        },
+    ] {
+        let op = a.append(body);
+        assert_eq!(op.tier(), OpTier::Green);
+        assert!(matches!(
+            b.store.sync_ingest(op).unwrap(),
+            IngestOutcome::Applied
+        ));
+    }
+    let reg = |factor, sealed: Vec<u8>| OpBody::FactorRegister {
+        factor,
+        public: [3; 32],
+        sealed,
+        salt: [4; 16],
+        sender: None,
+    };
+    assert_eq!(
+        a.append(reg(ThirdFactor::Paper, vec![])).tier(),
+        OpTier::Red
+    );
+    assert!(a
+        .store
+        .sync_append_local(&a.id, reg(ThirdFactor::Paper, vec![1]))
+        .is_err());
+    assert!(a
+        .store
+        .sync_append_local(&a.id, reg(ThirdFactor::EmailCode, vec![0; 129]))
+        .is_err());
+    let export = |w| OpBody::BulkExport {
+        requester: a.dev(),
+        window_secs: w,
+    };
+    assert_eq!(a.append(export(3600)).tier(), OpTier::Red);
+    assert!(a.store.sync_append_local(&a.id, export(3601)).is_err());
+    assert!(a.store.sync_append_local(&a.id, export(0)).is_err());
 }
