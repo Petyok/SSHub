@@ -733,8 +733,53 @@ per device row, never as a banner. Colours come from the theme (`ColorRole`,
 `assets/companion/sshub-companion.html` (built file committed; sources, vendor,
 tests, `build.mjs`, `package*.json` excluded from the published crate). Consumes
 only the byte contract of section 4 (`Challenge::to_qr_payload`,
-`unwrap_share_response`, `SYNC_WIRE_V1`). The release fingerprint is a const in
-`src/sync/companion.rs`, shown by the TUI.
+`unwrap_share_response`, `SYNC_WIRE_V1`) and the phone frames of C16 below. The release
+fingerprint is a const in `src/sync/companion.rs`, shown by the TUI. Fingerprint = lowercase
+hex sha256 of the built file with its own 64 hex characters replaced by 64 zeros (a file
+cannot hold its own hash); the page shows it, the build writes it to
+`assets/companion/FINGERPRINT`, and the About screen says how to recompute it. It detects a wrong
+or outdated build, not a malicious page (a substituted page can print any string; that residual is
+already in the design).
+
+### C16: frames and replies only the phone uses
+
+Additive to `SYNC_WIRE_V1` (frame kinds 1 and 2 are unchanged). Rust: `wire.rs`
+(`RecoveryNoticeWire`, `PhoneOpsWire`, `EnrollFrame`) and `share_release.rs` (`ReplyExt`,
+`unwrap_share_reply`); JS: `assets/companion/src/frames.mjs`. `unwrap_share_response` still returns
+the share and ignores an extension.
+
+```text
+kind 3 recovery notice (terminal to phone) = op_len u32 BE || op_canonical || op_signature(64)
+kind 5 phone ops       (phone to terminal) = n u8 || n * (op_len u32 BE || op_canonical || signature(64))
+kind 6 enroll commit   = role u8 || commit(32)
+kind 7 enroll reveal   = role u8 || reveal bytes (enroll.rs Reveal::bytes, opaque to the wire)
+kind 8 enroll confirm  = role u8 || ok u8 || signature(64)       role 0 = joining (phone), 1 = existing terminal
+
+share reply plaintext (inside the C11 sealed box of the kind 2 frame):
+  share(33)                                      audio channel: nothing else fits a 2 to 15 second burst
+  share(33) || 0x01 || approval_sig(64) || n u8 || n * (op_len u32 BE || op || sig(64))
+            || snap u8 [|| host_uid(16) || blob_len u16 BE || snapshot blob]       reverse QR and clipboard
+```
+
+- `approval_sig` is Ed25519 by the phone over the binding preimage of the challenge (section 4).
+- Courier: the ops are the newest (at most 8) of the phone's own chain, each approval appends one
+  `HeadAttest { device_id: phone, seq: previous own seq, chain_hash: previous own op hash }`
+  (seq 0 and 32 zero bytes before the first op) with a fresh timestamp, `lamport` above every
+  lamport seen, `epoch` the highest seen. A recovery cancellation is a `PhoneReenrollCancel` with
+  `by_phone: true`, `third_factor: null`, `reenroll_hash` = BLAKE3 of the `PhoneReenroll` op bytes,
+  delivered in a kind 5 frame. The terminal that receives them ingests them like any other ops.
+- The snapshot blob is the contract `SnapshotBlob::to_bytes` and `host_uid` names the credential it
+  opens; the phone issues one per credential only while none is live (TTL 7 days recorded in the
+  blob), the user can declare a blob dead (never delivered, or DEK reissued).
+- Manual entry: the phone shows `index` and the 24 BIP39 words of the 32 share bytes.
+- Phone identity: 32 random bytes are the secret; `BLAKE3 derive_key("sshub/sync/phone/v1", secret)`
+  as 128 bytes = the usual identity split (section 1); the 24 BIP39 words are the backup. At rest
+  the secret is `"SSHP" || 1 || mem u32 BE || iters u32 BE || salt(16) || nonce(24) || ct` under
+  Argon2id of the PIN (64 MiB x 3 by default), header as AAD.
+- Binding words: the phone prints `sas_words(binding_hash)` of the challenge it is about to approve;
+  a terminal that shows the same four words lets the person compare before approving.
+- Enrollment over QR runs the commit, reveal, SAS and confirm steps of `enroll.rs` with the same
+  byte layouts; the phone is the joining side (role 0), the terminal commits first.
 
 ## 8. Global constraints
 
