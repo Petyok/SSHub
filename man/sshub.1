@@ -126,7 +126,11 @@ applied only after an interactive
 or with
 .BR \-\-yes ;
 .B \-\-move
-deletes the original afterwards. The group, identity and tunnel
+deletes the original afterwards and carries the saved password of a moved
+host (and the passphrase of a moved identity) into the destination profile
+first; a secret that cannot be carried keeps its row in the source, is
+reported on stderr, and makes the command exit 1. A copy carries no secrets.
+The group, identity and tunnel
 .B transfer
 commands below work the same way.
 .SS Exec (scripted)
@@ -226,7 +230,10 @@ and
 take no value). Per field a host value wins, then the nearest group default,
 then the global default (port 22, ssh, forwarding off).
 .B transfer \-\-with\-hosts
-also transfers the group's member hosts.
+also transfers the group's member hosts; with
+.B \-\-move
+the moved hosts' saved passwords go along, as with
+.BR "host transfer" .
 .SS Identities
 .TP
 .B sshub identity list\fR|\fBshow\fR|\fBadd\fR|\fBedit\fR|\fBdelete\fR|\fBagent\-remove\fR|\fBtransfer \fR...
@@ -237,7 +244,9 @@ runs
 .B ssh\-add \-d
 for the identity's key.
 .B transfer \-\-name \fINAME\fB \-\-to \fIPROFILE\fR
-copies only the key path; secret material is never copied.
+copies the key path but no secret; with
+.B \-\-move
+the saved passphrase is carried to the destination profile.
 .SS Tunnels
 .TP
 .B sshub tunnel list\fR|\fBshow \fR[\fB\-\-format\fR \fIF\fR]

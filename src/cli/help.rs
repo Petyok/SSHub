@@ -55,7 +55,8 @@ USAGE:
 full add/edit flag list.
 
 transfer copies the host into another profile: the plan prints first, then it
-asks y/N unless --yes; --move deletes the original afterwards.
+asks y/N unless --yes; --move deletes the original afterwards and carries
+its saved password to the destination profile.
 
 --secret-lookup ATTR=VALUE (add; edit: --set-secret-lookup / --clear-secret-lookup)
 takes the host password from the one Secret Service entry (e.g. KeePassXC) whose
@@ -142,7 +143,8 @@ USAGE:
 FIELD is username, port, proxy-jump, transport or fwd-agent. A member host
 inherits each default it leaves empty. transfer copies the group into another
 profile (--with-hosts brings its member hosts along); the plan prints first,
-then it asks y/N unless --yes; --move deletes the originals afterwards."#
+then it asks y/N unless --yes; --move deletes the originals afterwards and
+carries the moved hosts' saved passwords to the destination profile."#
     );
 }
 
@@ -163,8 +165,9 @@ USAGE:
     sshub identity agent-remove --name NAME
     sshub identity transfer --name NAME --to PROFILE [--move] [--yes]
 
-transfer copies the identity into another profile (the key path only, never
-secret material); the plan prints first, then it asks y/N unless --yes."#
+transfer copies the identity into another profile (the key path only; --move
+also carries its saved passphrase); the plan prints first, then it asks y/N
+unless --yes."#
     );
 }
 

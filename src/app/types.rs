@@ -506,6 +506,8 @@ pub enum AppMode {
     /// A modal message popup (e.g. a connection error). Any key dismisses it;
     /// the text lives in `App::notice_popup`.
     Notice,
+    /// Scrollable release notes; the text lives in `App::update.whats_new`.
+    WhatsNew,
     /// Known-hosts manager overlay (Keys tab).
     KnownHosts,
     /// Session-log browser overlay: hosts, segments, and a searchable viewer.
@@ -1563,6 +1565,8 @@ pub enum SftpPromptKind {
     Rename,
     /// Octal-permission input; `old_path` holds the entry being chmod'd.
     Chmod,
+    /// Go-to-path: a directory to jump to; `Tab` completes the last segment.
+    Goto,
 }
 
 /// Single-field text prompt for an SFTP mkdir / rename ([`AppMode::SftpPrompt`]).
@@ -1577,6 +1581,9 @@ pub struct SftpPromptEdit {
     pub value: String,
     pub cursor: usize,
     pub error: Option<String>,
+    /// Neutral feedback under the field (completion candidates), as opposed
+    /// to `error`, which marks something that went wrong.
+    pub hint: Option<String>,
 }
 
 /// In-progress identity form while in [`AppMode::IdentityForm`].

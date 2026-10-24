@@ -557,6 +557,7 @@ fn transfer_unknown_selection_plans_nothing() {
         group_names: vec!["ghost-group".into()],
         identity_names: vec!["ghost-id".into()],
         tunnel_names: vec![":9999".into(), "tunnel#424242".into()],
+        ..Default::default()
     };
     let plan = build_transfer_plan(
         &snapshot(&src),
@@ -734,4 +735,489 @@ fn transfer_carries_secret_lookup() {
     apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Copy).unwrap();
     let dest_host = dest.get_host_by_name("web").unwrap().expect("dest host");
     assert_eq!(dest_host.secret_lookup.as_deref(), Some("Uuid=abc"));
+}
+
+fn audit_selection(host: &str) -> TransferSelection {
+    TransferSelection {
+        host_names: vec![host.into()],
+        audit_hosts: vec![host.into()],
+        no_auto_carry: true,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn guided_selection_carries_only_what_is_listed() {
+    let src = LauncherStore::open_in_memory().unwrap();
+    let mut dest = LauncherStore::open_in_memory().unwrap();
+    let id = mk_identity(&src, "id-a");
+    mk_host(&src, "web", Some(id), None);
+    let web = src.get_host_by_name("web").unwrap().unwrap().id;
+    mk_tunnel(&src, web, "db-tunnel");
+
+    let plan = build_transfer_plan(
+        &snapshot(&src),
+        &dest_index(&dest),
+        &TransferSelection {
+            audit_hosts: Vec::new(),
+            ..audit_selection("web")
+        },
+        TransferMode::Copy,
+        GroupTransferMode::GroupOnly,
+        &HashSet::new(),
+    );
+    let kinds: Vec<_> = plan.items.iter().map(|i| i.kind).collect();
+    assert_eq!(
+        kinds,
+        vec!["host"],
+        "no identity, tunnel or audit rows unasked"
+    );
+    let mut src = src;
+    apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Copy).unwrap();
+    // Unchecked identity: the host lands unlinked rather than dragging it along.
+    assert_eq!(
+        dest.get_host_by_name("web").unwrap().unwrap().identity_id,
+        None
+    );
+    assert!(dest.list_tunnels().unwrap().is_empty());
+}
+
+#[test]
+fn audit_events_follow_a_renamed_host_and_copy_keeps_the_source() {
+    let mut src = LauncherStore::open_in_memory().unwrap();
+    let mut dest = LauncherStore::open_in_memory().unwrap();
+    mk_host(&src, "web", None, None);
+    mk_host(&dest, "web", None, None); // forces the rename
+    src.log_auth_event("web", Some("deploy"), "tui", "ok", "first", None)
+        .unwrap();
+    src.log_auth_event(
+        "web",
+        Some("deploy"),
+        "tui",
+        "fail",
+        "second",
+        Some("/logs/web"),
+    )
+    .unwrap();
+    src.log_auth_event("other", None, "tui", "ok", "not ours", None)
+        .unwrap();
+    let before = src.list_auth_events_for_host("web").unwrap();
+    // Whole-second timestamps: let "now" move on so a re-stamped copy differs.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
+    let plan = build_transfer_plan(
+        &snapshot(&src),
+        &dest_index(&dest),
+        &audit_selection("web"),
+        TransferMode::Copy,
+        GroupTransferMode::GroupOnly,
+        &HashSet::new(),
+    );
+    let audit = plan
+        .items
+        .iter()
+        .find(|i| i.kind == "audit")
+        .expect("audit item");
+    assert_eq!(
+        (audit.src_name.as_str(), audit.dest_name.as_str()),
+        ("web", "web (copy 1)")
+    );
+    let result = apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Copy).unwrap();
+    assert_eq!(result.audit_events, 2);
+
+    let moved = dest.list_auth_events_for_host("web (copy 1)").unwrap();
+    assert_eq!(moved.len(), 2);
+    for (got, want) in moved.iter().zip(&before) {
+        // Same event, original timestamp, only the host name differs.
+        assert_eq!(
+            (
+                &got.username,
+                &got.via,
+                &got.status,
+                &got.note,
+                &got.log_path,
+                got.created_at
+            ),
+            (
+                &want.username,
+                &want.via,
+                &want.status,
+                &want.note,
+                &want.log_path,
+                want.created_at
+            )
+        );
+    }
+    assert!(dest.list_auth_events_for_host("other").unwrap().is_empty());
+    assert_eq!(
+        src.list_auth_events_for_host("web").unwrap().len(),
+        2,
+        "copy keeps source"
+    );
+}
+
+#[test]
+fn move_deletes_only_the_moved_hosts_audit_events() {
+    let mut src = LauncherStore::open_in_memory().unwrap();
+    let mut dest = LauncherStore::open_in_memory().unwrap();
+    mk_host(&src, "web", None, None);
+    mk_host(&src, "db", None, None);
+    src.log_auth_event("web", None, "tui", "ok", "", None)
+        .unwrap();
+    src.log_auth_event("db", None, "tui", "ok", "", None)
+        .unwrap();
+
+    let plan = build_transfer_plan(
+        &snapshot(&src),
+        &dest_index(&dest),
+        &audit_selection("web"),
+        TransferMode::Move,
+        GroupTransferMode::GroupOnly,
+        &HashSet::new(),
+    );
+    apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Move).unwrap();
+    assert!(src.list_auth_events_for_host("web").unwrap().is_empty());
+    assert_eq!(src.list_auth_events_for_host("db").unwrap().len(), 1);
+    assert_eq!(dest.list_auth_events_for_host("web").unwrap().len(), 1);
+}
+
+#[test]
+fn blocked_host_keeps_its_audit_events_home() {
+    let mut src = LauncherStore::open_in_memory().unwrap();
+    let mut dest = LauncherStore::open_in_memory().unwrap();
+    mk_host(&src, "web", None, None);
+    src.log_auth_event("web", None, "tui", "ok", "", None)
+        .unwrap();
+    let blocked: HashSet<String> = ["web".to_string()].into();
+
+    let plan = build_transfer_plan(
+        &snapshot(&src),
+        &dest_index(&dest),
+        &audit_selection("web"),
+        TransferMode::Move,
+        GroupTransferMode::GroupOnly,
+        &blocked,
+    );
+    let result = apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Move).unwrap();
+    assert_eq!(result.audit_events, 0);
+    assert_eq!(src.list_auth_events_for_host("web").unwrap().len(), 1);
+    assert!(dest.list_auth_events_for_host("web").unwrap().is_empty());
+}
+
+#[test]
+fn shared_tunnel_label_never_reaches_a_tunnel_of_an_unchosen_host() {
+    let mut src = LauncherStore::open_in_memory().unwrap();
+    let mut dest = LauncherStore::open_in_memory().unwrap();
+    mk_host(&src, "web", None, None);
+    mk_host(&src, "db", None, None);
+    let web = src.get_host_by_name("web").unwrap().unwrap().id;
+    let db = src.get_host_by_name("db").unwrap().unwrap().id;
+    // db's tunnel gets the lower id: first-match-by-label would pick it.
+    mk_tunnel(&src, db, "pg");
+    mk_tunnel(&src, web, "pg");
+    let web_tunnel = src
+        .list_tunnels()
+        .unwrap()
+        .into_iter()
+        .find(|t| t.host_id == Some(web))
+        .unwrap();
+
+    let selection = TransferSelection {
+        host_names: vec!["web".into()],
+        tunnel_names: vec![format!("tunnel#{}", web_tunnel.id)],
+        no_auto_carry: true,
+        ..Default::default()
+    };
+    let plan = build_transfer_plan(
+        &snapshot(&src),
+        &dest_index(&dest),
+        &selection,
+        TransferMode::Move,
+        GroupTransferMode::GroupOnly,
+        &HashSet::new(),
+    );
+    assert_eq!(plan.items.iter().filter(|i| i.kind == "tunnel").count(), 1);
+    apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Move).unwrap();
+
+    let moved = dest.list_tunnels().unwrap();
+    assert_eq!(moved.len(), 1);
+    assert_eq!(moved[0].label.as_deref(), Some("pg"));
+    assert!(
+        moved[0].host_id.is_some(),
+        "stays attached to the moved host"
+    );
+    let left = src.list_tunnels().unwrap();
+    assert_eq!(left.len(), 1, "db's tunnel is still at home");
+    assert_eq!(left[0].host_id, Some(db));
+}
+
+#[test]
+fn move_keeps_an_unchecked_tunnel_of_the_moved_host() {
+    let mut src = LauncherStore::open_in_memory().unwrap();
+    let mut dest = LauncherStore::open_in_memory().unwrap();
+    mk_host(&src, "web", None, None);
+    let web = src.get_host_by_name("web").unwrap().unwrap().id;
+    src.create_tunnel(&NewTunnel {
+        host_id: Some(web),
+        tunnel_type: TunnelType::Local,
+        local_port: 8080,
+        remote_host: "localhost".into(),
+        remote_port: 80,
+        label: Some("pg".into()),
+        auto_connect: true,
+    })
+    .unwrap();
+
+    let plan = build_transfer_plan(
+        &snapshot(&src),
+        &dest_index(&dest),
+        &TransferSelection {
+            host_names: vec!["web".into()],
+            no_auto_carry: true,
+            ..Default::default()
+        },
+        TransferMode::Move,
+        GroupTransferMode::GroupOnly,
+        &HashSet::new(),
+    );
+    apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Move).unwrap();
+
+    assert!(src.get_host_by_name("web").unwrap().is_none());
+    assert!(dest.list_tunnels().unwrap().is_empty());
+    // Not carried, so it must not die with the host's ON DELETE CASCADE.
+    let left = src.list_tunnels().unwrap();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].label.as_deref(), Some("pg"));
+    assert_eq!(left[0].host_id, None);
+    assert!(
+        !left[0].auto_connect,
+        "a host-less tunnel cannot keep-alive"
+    );
+}
+
+fn guided_group_selection() -> TransferSelection {
+    TransferSelection {
+        host_names: vec!["web".into()],
+        group_names: vec!["prod".into()],
+        no_auto_carry: true,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn guided_group_lands_with_its_defaults_and_the_chosen_host() {
+    let mut src = LauncherStore::open_in_memory().unwrap();
+    let mut dest = LauncherStore::open_in_memory().unwrap();
+    let group = src
+        .create_group(&NewHostGroup {
+            name: "prod".into(),
+            default_username: Some("deploy".into()),
+            default_port: Some(2222),
+            ..Default::default()
+        })
+        .unwrap()
+        .id;
+    mk_host(&src, "web", None, Some(group));
+
+    let plan = build_transfer_plan(
+        &snapshot(&src),
+        &dest_index(&dest),
+        &guided_group_selection(),
+        TransferMode::Copy,
+        GroupTransferMode::GroupOnly,
+        &HashSet::new(),
+    );
+    apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Copy).unwrap();
+
+    let dest_group = dest
+        .list_groups()
+        .unwrap()
+        .into_iter()
+        .find(|g| g.name == "prod")
+        .expect("group");
+    assert_eq!(dest_group.default_username.as_deref(), Some("deploy"));
+    assert_eq!(dest_group.default_port, Some(2222));
+    let dest_web = dest.get_host_by_name("web").unwrap().unwrap();
+    assert_eq!(
+        dest_web.group_id,
+        Some(dest_group.id),
+        "primary group wired"
+    );
+}
+
+#[test]
+fn guided_move_leaves_a_group_that_still_has_other_members() {
+    let mut src = LauncherStore::open_in_memory().unwrap();
+    let mut dest = LauncherStore::open_in_memory().unwrap();
+    let group = mk_group(&src, "prod");
+    mk_host(&src, "web", None, Some(group));
+    mk_host(&src, "db", None, Some(group)); // not migrating
+
+    let plan = build_transfer_plan(
+        &snapshot(&src),
+        &dest_index(&dest),
+        &guided_group_selection(),
+        TransferMode::Move,
+        GroupTransferMode::GroupOnly,
+        &HashSet::new(),
+    );
+    assert!(plan.leave_shared_groups);
+    apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Move).unwrap();
+
+    assert!(src.get_host_by_name("web").unwrap().is_none());
+    let db = src.get_host_by_name("db").unwrap().unwrap();
+    assert_eq!(db.group_id, Some(group), "db keeps its group");
+    assert!(src.list_groups().unwrap().iter().any(|g| g.name == "prod"));
+    // The destination has the group and the moved host.
+    let dest_group = dest
+        .list_groups()
+        .unwrap()
+        .into_iter()
+        .find(|g| g.name == "prod")
+        .unwrap();
+    assert_eq!(
+        dest.get_host_by_name("web").unwrap().unwrap().group_id,
+        Some(dest_group.id)
+    );
+}
+
+#[test]
+fn guided_move_deletes_the_group_once_every_member_moved() {
+    let mut src = LauncherStore::open_in_memory().unwrap();
+    let mut dest = LauncherStore::open_in_memory().unwrap();
+    let group = mk_group(&src, "prod");
+    mk_host(&src, "web", None, Some(group));
+
+    let plan = build_transfer_plan(
+        &snapshot(&src),
+        &dest_index(&dest),
+        &guided_group_selection(),
+        TransferMode::Move,
+        GroupTransferMode::GroupOnly,
+        &HashSet::new(),
+    );
+    apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Move).unwrap();
+    assert!(!src.list_groups().unwrap().iter().any(|g| g.name == "prod"));
+}
+
+#[test]
+fn explicit_group_move_still_deletes_the_group_and_promotes_members() {
+    // Without no_auto_carry (CLI, plain TUI scope) a moved group always goes:
+    // the documented "members stay, group moves" behaviour.
+    let mut src = LauncherStore::open_in_memory().unwrap();
+    let mut dest = LauncherStore::open_in_memory().unwrap();
+    let group = mk_group(&src, "prod");
+    mk_host(&src, "db", None, Some(group));
+    let plan = build_transfer_plan(
+        &snapshot(&src),
+        &dest_index(&dest),
+        &TransferSelection {
+            group_names: vec!["prod".into()],
+            ..Default::default()
+        },
+        TransferMode::Move,
+        GroupTransferMode::GroupOnly,
+        &HashSet::new(),
+    );
+    assert!(!plan.leave_shared_groups);
+    apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Move).unwrap();
+    assert!(!src.list_groups().unwrap().iter().any(|g| g.name == "prod"));
+    assert!(src.get_host_by_name("db").unwrap().is_some());
+}
+
+#[test]
+fn guided_move_keeps_a_parent_group_whose_child_group_stays() {
+    let mut src = LauncherStore::open_in_memory().unwrap();
+    let mut dest = LauncherStore::open_in_memory().unwrap();
+    let parent = src
+        .create_group(&NewHostGroup {
+            name: "prod".into(),
+            default_username: Some("deploy".into()),
+            ..Default::default()
+        })
+        .unwrap()
+        .id;
+    let child = src
+        .create_group(&NewHostGroup {
+            name: "prod-eu".into(),
+            parent_id: Some(parent),
+            ..Default::default()
+        })
+        .unwrap()
+        .id;
+    mk_host(&src, "web", None, Some(parent));
+    mk_host(&src, "eu1", None, Some(child)); // stays
+
+    let plan = build_transfer_plan(
+        &snapshot(&src),
+        &dest_index(&dest),
+        &guided_group_selection(),
+        TransferMode::Move,
+        GroupTransferMode::GroupOnly,
+        &HashSet::new(),
+    );
+    apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Move).unwrap();
+    // Deleting `prod` would have orphaned `prod-eu` and stripped the inherited
+    // username from `eu1`.
+    let groups = src.list_groups().unwrap();
+    let kept_child = groups.iter().find(|g| g.name == "prod-eu").unwrap();
+    assert_eq!(kept_child.parent_id, Some(parent));
+    assert!(groups.iter().any(|g| g.name == "prod"));
+}
+
+#[test]
+fn kept_host_cleanup_never_deletes_older_audit_events_of_the_same_name() {
+    // The destination holds leftover events under the name `web` (the host was
+    // deleted long ago). Only the events a run inserts may be rolled back.
+    let mut src = LauncherStore::open_in_memory().unwrap();
+    let mut dest = LauncherStore::open_in_memory().unwrap();
+    dest.log_auth_event("web", None, "tui", "ok", "old", None)
+        .unwrap();
+    mk_host(&src, "web", None, None);
+    src.log_auth_event("web", None, "tui", "ok", "new", None)
+        .unwrap();
+    let plan = build_transfer_plan(
+        &snapshot(&src),
+        &dest_index(&dest),
+        &audit_selection("web"),
+        TransferMode::Copy,
+        GroupTransferMode::GroupOnly,
+        &HashSet::new(),
+    );
+    apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Copy).unwrap();
+    assert_eq!(dest.list_auth_events_for_host("web").unwrap().len(), 2);
+}
+
+#[test]
+fn explicit_tunnel_without_its_host_lands_with_auto_connect_off() {
+    let mut src = LauncherStore::open_in_memory().unwrap();
+    let mut dest = LauncherStore::open_in_memory().unwrap();
+    mk_host(&src, "web", None, None);
+    let web = src.get_host_by_name("web").unwrap().unwrap().id;
+    src.create_tunnel(&NewTunnel {
+        host_id: Some(web),
+        tunnel_type: TunnelType::Local,
+        local_port: 8080,
+        remote_host: "localhost".into(),
+        remote_port: 80,
+        label: Some("pg".into()),
+        auto_connect: true,
+    })
+    .unwrap();
+    let plan = build_transfer_plan(
+        &snapshot(&src),
+        &dest_index(&dest),
+        &tunnel_selection(&["pg"]),
+        TransferMode::Copy,
+        GroupTransferMode::GroupOnly,
+        &HashSet::new(),
+    );
+    apply_transfer_plan(&mut src, &mut dest, &plan, TransferMode::Copy).unwrap();
+    let tunnels = dest.list_tunnels().unwrap();
+    assert_eq!(tunnels.len(), 1);
+    assert_eq!(tunnels[0].host_id, None);
+    assert!(
+        !tunnels[0].auto_connect,
+        "host-less, the keep-alive loop could only fail"
+    );
 }

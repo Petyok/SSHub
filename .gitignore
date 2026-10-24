@@ -17,3 +17,4 @@
 npm/dist/
 .cargo/
 /node_modules/
+/result

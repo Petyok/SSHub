@@ -4,6 +4,66 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-24
+
+### Added
+
+- **SFTP-style host transfer** - in the profile manager, `t`, pick the destination,
+  then `m` opens a dual-pane screen: this profile's hosts on the left, the other
+  profile's on the right, grouped and filterable with `/`. `→` stages a host (or
+  a whole group) to push, `←` stages one from the right pane to pull, a queue
+  strip shows what is staged and `c` continues. Pushes and pulls can be mixed;
+  they run one direction at a time, each with its own plan review.
+- **Guided profile migration** - the staged hosts then go through up to four
+  more checklists: the groups of those hosts, their tunnels, the identities
+  they (and the groups) use, and their audit logs. Only checked rows travel; a step with nothing to list is skipped, `b` steps back
+  (as far as the host checklist the dual-pane screen already filled in).
+  Audit events keep their timestamps and land under the host's name in the
+  destination (a move deletes them from the source). A guided move keeps a group
+  in the source while a host that is not moving still belongs to it.
+- **Go to a path in the SFTP browser** (issue #162, requested by
+  [@Frysuni](https://github.com/Frysuni)) - the browser could only filter the
+  current directory, so reaching `/var/www` or `~/.ssh` meant walking there one
+  folder at a time. `g` opens a prompt on the focused pane that takes an absolute
+  path, a relative one (`../other`) or `~/x`, and `Tab` completes the last
+  segment: one match is filled in, several extend to what they share and are
+  shown below the field. On the remote pane `~` is the login directory. A local
+  path that is not a directory is refused in the prompt; a refusal from the
+  server shows as the usual notice and the pane keeps its directory.
+- **Nix flake** (issue #163, requested by [@Frysuni](https://github.com/Frysuni)) - `nix run
+  github:Petyok/SSHub` runs SSHub and `nix profile install github:Petyok/SSHub` or a
+  NixOS flake input installs it declaratively (Linux x86_64 and aarch64). The package
+  links nixpkgs' OpenSSL, installs the man page, icon and desktop entry, and runs
+  with `openssh` on the end of `PATH`. CI builds it on x86_64 and aarch64 for every pull request
+  and every push to `main` and `development`, and pushes the build to the public `sshub.cachix.org` binary cache
+  that the flake declares, so installs substitute it instead of compiling. A NixOS
+  configuration gets that cache by importing `nixosModules.binaryCache`.
+- **What's new popup** - when `Shift+U` finishes installing an update, a
+  scrollable popup lists the changelog of every version between the running
+  one and the new one; off the dashboard it waits, and the "installed" toast
+  names the key. `Shift+W` on the hosts tab opens it again until the
+  restart, and otherwise shows the notes of the running version.
+
+### Fixed
+
+- **A key generated with a passphrase could silently come out unencrypted** -
+  when the temp directory is mounted `noexec`, ssh-keygen could not run the
+  passphrase helper, ignored it and wrote the key without protection while
+  SSHub reported success; checking an identity's passphrase could likewise call
+  a correct one wrong. The helper is now tried in the temp directory and in
+  `$XDG_RUNTIME_DIR` and used only where it runs, and a generated key that is
+  not encrypted is deleted with an error.
+- **Moving hosts to another profile now keeps their saved passwords** - a move
+  carries each moved host's password and each moved identity's passphrase into
+  the destination profile's keyring (the new rows are flagged as having one),
+  and only then removes them from the source. A secret that cannot be written
+  to the destination is not moved at all: the host or identity stays in the
+  source (a host's destination copy is removed again) and a popup or a warning
+  lists it, so the move can be repeated. `sshub ... transfer --move` then
+  exits 1. Copies still carry no secrets. Applies to the profile manager, the guided
+  migration and `sshub host|group|identity transfer --move`.
+  A tunnel transferred without its host now lands with auto-connect off.
+
 ## [0.19.2] - 2026-10-24
 
 ### Changed

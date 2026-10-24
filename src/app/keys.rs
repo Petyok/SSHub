@@ -167,6 +167,7 @@ impl App {
             AppMode::BroadcastCommand => self.handle_key_broadcast_command(key),
             AppMode::BroadcastPreview => self.handle_key_broadcast_preview(key),
             AppMode::Notice => self.handle_key_notice(key),
+            AppMode::WhatsNew => self.handle_key_whats_new(key),
             AppMode::KnownHosts => self.handle_key_known_hosts(key),
             AppMode::LogBrowser => self.handle_key_log_browser(key),
             AppMode::SnippetManage => self.handle_key_snippet_manage(key),
@@ -276,7 +277,7 @@ impl App {
     /// True while a dashboard tab has a text input capturing keys. These live
     /// in `AppMode::Normal`, unlike overlay inputs, which have their own mode
     /// and never see the global binds.
-    fn dashboard_text_input_active(&self) -> bool {
+    pub(crate) fn dashboard_text_input_active(&self) -> bool {
         (self.active_tab == 1
             && (self.sftp_picker_searching || self.sftp.as_ref().is_some_and(|s| s.searching)))
             || (matches!(self.active_tab, 2 | 3) && self.list_filter_editing)
@@ -327,6 +328,7 @@ impl App {
         match key.code {
             _ if self.is_action(KeyAction::Quit, &key) => self.request_quit(),
             _ if self.is_action(KeyAction::Update, &key) => self.press_update_key(),
+            _ if self.is_action(KeyAction::WhatsNew, &key) => self.open_whats_new(),
             _ if self.is_action(KeyAction::MoveHostUp, &key) => self.move_host_manual(-1)?,
             _ if self.is_action(KeyAction::MoveHostDown, &key) => self.move_host_manual(1)?,
             _ if self.is_action(KeyAction::MoveGroupUp, &key) => self.move_selection_by_group(-1),

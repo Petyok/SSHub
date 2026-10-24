@@ -203,7 +203,11 @@ impl App {
     /// → plan → explicit `y` confirm. Only `y` with a built plan applies;
     /// everything else adjusts or cancels.
     pub(crate) fn handle_key_profile_transfer(&mut self, key: KeyEvent) -> Result<()> {
-        if matches!(key.code, KeyCode::Esc) {
+        let screen_wants_escape = self
+            .pending_transfer
+            .as_ref()
+            .is_some_and(|pending| pending.screen_wants_escape());
+        if matches!(key.code, KeyCode::Esc) && !screen_wants_escape {
             self.cancel_pending_transfer();
             if let Some(picker) = self.profile_picker.as_mut() {
                 picker.set_error("transfer cancelled".into());
@@ -271,12 +275,33 @@ impl App {
             }
             return Ok(());
         }
+        let screen_open = self
+            .pending_transfer
+            .as_ref()
+            .is_some_and(|pending| pending.screen.is_some());
+        if screen_open {
+            return self.handle_key_host_transfer(key);
+        }
+        let wizard_open = self
+            .pending_transfer
+            .as_ref()
+            .is_some_and(|pending| pending.wizard.is_some() && pending.scope.is_none());
+        if wizard_open {
+            return self.handle_key_migration_wizard(key);
+        }
         let scope_missing = self
             .pending_transfer
             .as_ref()
             .is_some_and(|pending| pending.scope.is_none());
         if scope_missing {
             let scope = match key.code {
+                KeyCode::Char('m') => {
+                    match self.open_host_transfer_screen(Vec::new()) {
+                        Ok(()) => self.show_transfer_status(),
+                        Err(error) => self.show_transfer_error(error),
+                    }
+                    return Ok(());
+                }
                 KeyCode::Char('h') => self
                     .transfer_host_name()
                     .context("no host selected on the dashboard")
@@ -361,11 +386,34 @@ impl App {
                         .is_some_and(needs_explicit_confirm);
                     if !confirmed {
                         self.show_transfer_status();
-                    } else if let Err(error) = self.apply_pending_transfer() {
-                        self.show_transfer_error(error);
                     } else {
-                        self.close_profile_manager();
+                        match self.apply_pending_transfer() {
+                            Err(error) => self.show_transfer_error(error),
+                            // The other direction is armed and waiting.
+                            Ok(applied) if applied.more => {}
+                            Ok(applied) => {
+                                self.close_profile_manager();
+                                if let Some(text) = applied.warning {
+                                    // After closing: that resets `mode`.
+                                    self.notice_popup = Some(text);
+                                    self.mode = AppMode::Notice;
+                                }
+                            }
+                        }
                     }
+                }
+            }
+            KeyCode::Char('b')
+                if self.pending_transfer.as_ref().is_some_and(|pending| {
+                    matches!(pending.scope, Some(TransferScope::Migration(_)))
+                }) =>
+            {
+                // Back to the wizard's last step; its checklists are intact.
+                if let Some(pending) = self.pending_transfer.as_mut() {
+                    pending.scope = None;
+                    pending.plan = None;
+                    pending.dialog = None;
+                    pending.notice = None;
                 }
             }
             KeyCode::Char('m') => {

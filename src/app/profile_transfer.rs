@@ -14,8 +14,8 @@ use nucleo::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo::{Config, Matcher, Utf32Str};
 
 use crate::store::transfer::{
-    apply_transfer_plan, build_transfer_plan, DestIndex, GroupTransferMode, TransferMode,
-    TransferPlan, TransferSelection, TransferSnapshot,
+    apply_transfer_plan_with_secrets, build_transfer_plan, DestIndex, GroupTransferMode,
+    SecretStores, TransferMode, TransferPlan, TransferSelection, TransferSnapshot,
 };
 use crate::store::LauncherStore;
 
@@ -25,9 +25,14 @@ use crate::store::LauncherStore;
 #[derive(Debug, Clone)]
 pub enum TransferScope {
     Host(String),
-    Group { name: String, with_hosts: bool },
+    Group {
+        name: String,
+        with_hosts: bool,
+    },
     Identity(String),
     Tunnel(String),
+    /// Guided migration: the checked rows of the wizard steps.
+    Migration(TransferSelection),
 }
 
 impl TransferScope {
@@ -37,6 +42,7 @@ impl TransferScope {
             TransferScope::Group { .. } => "group",
             TransferScope::Identity(_) => "identity",
             TransferScope::Tunnel(_) => "tunnel",
+            TransferScope::Migration(_) => "migration",
         }
     }
 
@@ -46,6 +52,7 @@ impl TransferScope {
             | TransferScope::Group { name, .. }
             | TransferScope::Identity(name)
             | TransferScope::Tunnel(name) => name,
+            TransferScope::Migration(_) => "guided migration",
         }
     }
 
@@ -56,6 +63,7 @@ impl TransferScope {
             TransferScope::Group { name, .. } => selection.group_names.push(name.clone()),
             TransferScope::Identity(name) => selection.identity_names.push(name.clone()),
             TransferScope::Tunnel(name) => selection.tunnel_names.push(name.clone()),
+            TransferScope::Migration(chosen) => selection = chosen.clone(),
         }
         selection
     }
@@ -79,7 +87,11 @@ pub fn plan_text(plan: &TransferPlan) -> String {
         out.push_str("\n  (nothing selected)");
     }
     for item in &plan.items {
-        let mut line = format!("  [{}] '{}'", item.kind, item.src_name);
+        let mut line = if item.kind == "audit" {
+            format!("  [audit] events of '{}'", item.src_name)
+        } else {
+            format!("  [{}] '{}'", item.kind, item.src_name)
+        };
         if item.dest_name != item.src_name {
             line.push_str(&format!(" -> '{}'", item.dest_name));
         }
@@ -92,10 +104,11 @@ pub fn plan_text(plan: &TransferPlan) -> String {
         out.push('\n');
         out.push_str(&line);
     }
+    // Audit rows ride with their host (blocked together): not extra items.
     out.push_str(&format!(
         "\n{} to transfer, {} blocked — y: transfer    Esc: cancel",
-        plan.runnable().len(),
-        plan.blocked().len()
+        plan.runnable().iter().filter(|i| i.kind != "audit").count(),
+        plan.blocked().iter().filter(|i| i.kind != "audit").count()
     ));
     out
 }
@@ -152,6 +165,23 @@ pub struct PendingTransfer {
     /// line until the next key clears it. Kept off the picker message line so
     /// long transfer text can never overflow the picker's bounds.
     pub notice: Option<String>,
+    /// Guided migration steps (`m` at the scope pick). `Some` while its
+    /// checklists are open or being revisited; the plan review follows once
+    /// `scope` is set to [`TransferScope::Migration`].
+    pub wizard: Option<super::profile_migration::MigrationWizard>,
+    /// The batch in flight runs from the destination profile into the active
+    /// one (a pull). `dest_name`/`dest_db` always name the OTHER profile.
+    pub pull: bool,
+    /// The dual-pane host screen (`m` at the scope pick); `Some` only while it
+    /// is on screen.
+    pub screen: Option<super::host_transfer::HostTransferScreen>,
+    /// What was staged on the screen, kept while batches run so `b` can
+    /// return to it.
+    pub staged: Vec<super::host_transfer::Staged>,
+    /// Batches still to run after the current one.
+    pub batches: Vec<super::host_transfer::Batch>,
+    /// Warnings of batches already applied, shown with the last one.
+    pub warnings: Vec<String>,
 }
 
 /// Fuzzy-rank profile names against `query`, returning indices into `names`
@@ -193,6 +223,17 @@ pub(crate) fn rank_profile_names(names: &[String], query: &str) -> Vec<usize> {
 /// compact on tall terminals too.
 const DEST_PICKER_ROWS: usize = 6;
 
+/// Plan item rows the dialog shows before folding the rest into a count.
+const PLAN_ROWS: usize = 10;
+
+/// What [`crate::app::App::apply_pending_transfer`] leaves for the caller.
+pub(crate) struct Applied {
+    /// Warnings to show in the modal notice popup.
+    pub warning: Option<String>,
+    /// Another batch (the other direction) is armed: keep the dialog open.
+    pub more: bool,
+}
+
 impl PendingTransfer {
     fn new() -> Self {
         Self {
@@ -206,6 +247,12 @@ impl PendingTransfer {
             is_move: false,
             plan: None,
             dialog: None,
+            wizard: None,
+            pull: false,
+            screen: None,
+            staged: Vec::new(),
+            batches: Vec::new(),
+            warnings: Vec::new(),
             notice: None,
         }
     }
@@ -280,9 +327,16 @@ impl PendingTransfer {
                 lines.push("type to filter · ↑↓ select · Enter choose · Esc cancel".to_string());
                 lines
             }
+            (Some(dest), None, _) if self.wizard.is_some() => self
+                .wizard
+                .as_ref()
+                .map(|wizard| wizard.lines(dest, self.pull))
+                .unwrap_or_default(),
             (Some(dest), None, _) => vec![
                 format!("Transfer what to '{dest}'?"),
                 "h host · g group · i identity · t tunnel".to_string(),
+                "m pick hosts on two panes (push and pull), then groups → tunnels →".to_string(),
+                "  identities → audit".to_string(),
                 "Esc cancel".to_string(),
             ],
             (Some(_), Some(TransferScope::Group { name, .. }), None) => vec![
@@ -291,10 +345,42 @@ impl PendingTransfer {
             ],
             (Some(_), Some(_), Some(plan)) => {
                 let mut lines: Vec<String> = plan_text(plan).lines().map(str::to_string).collect();
+                // The popup cannot scroll and drops overflow from the bottom,
+                // which would hide the summary, move/copy and `y` hints of a
+                // big migration. Keep header and summary, fold the item rows,
+                // blocked and renamed ones first so they are never the hidden.
+                if lines.len() > PLAN_ROWS + 2 {
+                    let summary = lines.pop().unwrap_or_default();
+                    let header = lines.remove(0);
+                    let important =
+                        |l: &String| l.contains(" — blocked: ") || l.contains("(renamed: ");
+                    let (mut items, rest): (Vec<String>, Vec<String>) =
+                        lines.into_iter().partition(important);
+                    items.extend(rest);
+                    let hidden = items.len().saturating_sub(PLAN_ROWS);
+                    items.truncate(PLAN_ROWS);
+                    lines = vec![header];
+                    lines.extend(items);
+                    if hidden > 0 {
+                        lines.push(format!("  … {hidden} more item(s)"));
+                    }
+                    lines.push(summary);
+                }
+                if matches!(self.scope, Some(TransferScope::Migration(_))) {
+                    if let Some(wizard) = &self.wizard {
+                        lines.extend(wizard.losses());
+                    }
+                }
                 lines.push(format!(
                     "m: toggle move/copy (now {})",
                     if self.is_move { "move" } else { "copy" }
                 ));
+                if self.is_move && matches!(self.scope, Some(TransferScope::Migration(_))) {
+                    lines.push("move carries saved passwords to the destination".to_string());
+                }
+                if matches!(self.scope, Some(TransferScope::Migration(_))) {
+                    lines.push("b: back to the steps".to_string());
+                }
                 lines
             }
             (Some(_), Some(_), None) => vec!["building plan…".to_string()],
@@ -466,7 +552,7 @@ impl crate::app::App {
     /// destination index, then delegate planning to the engine. Never holds
     /// two store locks at once.
     pub(crate) fn rebuild_transfer_plan(&mut self) -> Result<()> {
-        let (dest_name, dest_db, scope, is_move) = match self.pending_transfer.as_ref() {
+        let (dest_name, dest_db, scope, is_move, pull) = match self.pending_transfer.as_ref() {
             Some(pending) => (
                 pending
                     .dest_name
@@ -481,14 +567,28 @@ impl crate::app::App {
                     .clone()
                     .context("choose a transfer scope first")?,
                 pending.is_move,
+                pending.pull,
             ),
             None => anyhow::bail!("no transfer in progress"),
         };
-        let snapshot = TransferSnapshot::capture(&self.store)?;
-        let dest_store =
-            LauncherStore::open(&dest_db).context("cannot open destination profile database")?;
-        let index = DestIndex::capture(&dest_store, dest_name)?;
-        let blocked = self.transfer_blocked_hosts();
+        let other_store =
+            LauncherStore::open(&dest_db).context("cannot open the other profile's database")?;
+        // A pull reads the other profile and writes the active one. Live
+        // sessions and tunnels only exist for the active profile, so a pull
+        // has nothing to block on.
+        let (snapshot, index, blocked) = if pull {
+            (
+                TransferSnapshot::capture(&other_store)?,
+                DestIndex::capture(&self.store, self.active_profile_name())?,
+                HashSet::new(),
+            )
+        } else {
+            (
+                TransferSnapshot::capture(&self.store)?,
+                DestIndex::capture(&other_store, dest_name)?,
+                self.transfer_blocked_hosts(),
+            )
+        };
         let mode = if is_move {
             TransferMode::Move
         } else {
@@ -518,57 +618,195 @@ impl crate::app::App {
     /// (plan, dialog, scope) intact so the user can retry or cancel instead
     /// of landing on a stranded scope with no plan. Only a successful apply
     /// clears the flow.
-    pub(crate) fn apply_pending_transfer(&mut self) -> Result<()> {
-        let (dest_name, dest_db, is_move, plan) = match self.pending_transfer.as_ref() {
+    ///
+    /// Returns what the caller must do next: the warnings to read (secrets
+    /// that could not be carried or removed; the dashboard toast drops long
+    /// text, so the caller shows them in the modal notice popup), and whether
+    /// another batch (the other direction) is already armed and waiting.
+    pub(crate) fn apply_pending_transfer(&mut self) -> Result<Applied> {
+        let (dest_name, dest_db, is_move, plan, pull) = match self.pending_transfer.as_ref() {
             Some(pending) => (
                 pending.dest_name.clone().unwrap_or_default(),
                 pending.dest_db.clone().unwrap_or_default(),
                 pending.is_move,
                 pending.plan.clone().context("nothing planned yet")?,
+                pending.pull,
             ),
             None => anyhow::bail!("no transfer in progress"),
         };
-        let src_db = self
+        let active_db = self
             .profile
             .as_ref()
             .context("no active profile")?
             .launcher_db();
+        // A pull runs the other way round: the other profile is the source.
+        let (src_db, dst_db) = if pull {
+            (dest_db.clone(), active_db)
+        } else {
+            (active_db, dest_db.clone())
+        };
         let mut src_store =
             LauncherStore::open(&src_db).context("cannot open source profile database")?;
         let mut dest_store =
-            LauncherStore::open(&dest_db).context("cannot open destination profile database")?;
+            LauncherStore::open(&dst_db).context("cannot open destination profile database")?;
         let mode = if is_move {
             TransferMode::Move
         } else {
             TransferMode::Copy
         };
+        // Resolved before the apply: a failure here must not strike after the
+        // destination has committed. A copy opens no credential store.
+        let carries_secrets = is_move
+            && plan
+                .runnable()
+                .iter()
+                .any(|item| matches!(item.kind, "host" | "identity"));
+        let other_secrets = if carries_secrets {
+            Some((self.open_profile_secrets)(
+                &self.transfer_dest_paths(&dest_name)?,
+            ))
+        } else {
+            None
+        };
         // Engine failures (rolled-back destination, untouched source) leave
         // `pending_transfer` in place via `?` above: the plan survives.
-        let result = apply_transfer_plan(&mut src_store, &mut dest_store, &plan, mode)?;
-        self.reload_hosts()?;
-        self.reload_identities()?;
-        self.reload_tunnels()?;
-        self.load_groups()?;
-        let mut notice = format!(
-            "Transferred {} item(s) to '{dest_name}'",
-            result.transferred
-        );
+        let result = apply_transfer_plan_with_secrets(
+            &mut src_store,
+            &mut dest_store,
+            &plan,
+            mode,
+            other_secrets.as_deref().map(|other| {
+                if pull {
+                    SecretStores {
+                        src: other,
+                        dest: self.password_store.as_ref(),
+                    }
+                } else {
+                    SecretStores {
+                        src: self.password_store.as_ref(),
+                        dest: other,
+                    }
+                }
+            }),
+        )?;
+        // Committed: the plan must never be re-applied (a retry would
+        // duplicate every row), whatever the follow-up steps do.
+        let (mut batches, mut warnings, is_move_next, staged) = match self.pending_transfer.take() {
+            Some(p) => (p.batches, p.warnings, p.is_move, p.staged),
+            None => (Vec::new(), Vec::new(), is_move, Vec::new()),
+        };
+        let to_name = if pull {
+            self.active_profile_name().to_string()
+        } else {
+            dest_name.clone()
+        };
+        let mut notice = format!("Transferred {} item(s) to '{to_name}'", result.transferred);
+        if result.audit_events > 0 {
+            notice.push_str(&format!(" + {} audit event(s)", result.audit_events));
+        }
         if !result.renamed.is_empty() {
             notice.push_str(&format!(" (renamed: {})", result.renamed.join(", ")));
         }
         if !result.blocked.is_empty() {
             notice.push_str(&format!(" (blocked: {})", result.blocked.join(", ")));
         }
-        let purge_failures = result.purge_source_secrets(self.password_store.as_ref());
-        if !purge_failures.is_empty() {
-            notice.push_str(&format!(
-                " WARNING: {}",
-                crate::store::transfer::secret_purge_warning(&purge_failures)
+        if !result.carry_failures.is_empty() {
+            warnings.push(crate::store::transfer::secret_carry_warning(
+                &result.carry_failures,
+                &result.kept_in_source,
             ));
         }
-        self.host_notice = Some(notice);
+        let purge_failures = match (pull, other_secrets.as_deref()) {
+            (true, Some(other)) => result.purge_source_secrets(other),
+            (true, None) => Vec::new(),
+            (false, _) => result.purge_source_secrets(self.password_store.as_ref()),
+        };
+        if !purge_failures.is_empty() {
+            warnings.push(crate::store::transfer::secret_purge_warning(
+                &purge_failures,
+            ));
+        }
+        let reloaded = self
+            .reload_hosts()
+            .and_then(|_| self.reload_identities())
+            .and_then(|_| self.reload_tunnels())
+            .and_then(|_| self.load_groups());
+        if let Err(error) = reloaded {
+            warnings.push(format!("the lists could not be reloaded: {error:#}"));
+        }
+        self.host_notice = Some(notice.clone());
         self.host_notice_at = Some(std::time::Instant::now());
-        self.pending_transfer = None;
-        Ok(())
+
+        if !batches.is_empty() {
+            // The other direction is still waiting: re-arm for it, keeping the
+            // staged queue (minus what just ran) so `b` returns to the screen.
+            let next = batches.remove(0);
+            let remaining: Vec<super::host_transfer::Staged> = std::iter::once(&next)
+                .chain(batches.iter())
+                .flat_map(|b| {
+                    b.hosts.iter().map(|host| super::host_transfer::Staged {
+                        pull: b.pull,
+                        host: host.clone(),
+                    })
+                })
+                .collect();
+            let mut pending = PendingTransfer::new();
+            pending.dest_name = Some(dest_name);
+            pending.dest_db = Some(dest_db);
+            pending.is_move = is_move_next;
+            pending.staged = remaining;
+            pending.batches = batches;
+            pending.warnings = warnings;
+            pending.notice = Some(format!(
+                "{notice}. Next: {} {} host(s).",
+                if next.pull { "pulling" } else { "pushing" },
+                next.hosts.len()
+            ));
+            self.pending_transfer = Some(pending);
+            if let Err(error) = self.start_batch(next) {
+                let staged_now = self
+                    .pending_transfer
+                    .as_ref()
+                    .map(|p| p.staged.clone())
+                    .unwrap_or(staged);
+                if self.open_host_transfer_screen(staged_now).is_ok() {
+                    if let Some(screen) = self
+                        .pending_transfer
+                        .as_mut()
+                        .and_then(|p| p.screen.as_mut())
+                    {
+                        screen.notice = Some(format!("{notice}. {error:#}"));
+                    }
+                }
+            }
+            return Ok(Applied {
+                warning: None,
+                more: true,
+            });
+        }
+        Ok(Applied {
+            warning: (!warnings.is_empty()).then(|| {
+                format!(
+                    "Transfer finished with warnings\n\n{notice}\n\n{}",
+                    warnings.join("\n")
+                )
+            }),
+            more: false,
+        })
+    }
+
+    /// Paths of the destination profile, for its credential store.
+    pub(crate) fn transfer_dest_paths(&self, name: &str) -> Result<crate::profile::ProfilePaths> {
+        let roots = self
+            .profile_roots()
+            .context("profile management is unavailable in compatibility mode")?;
+        let state = crate::profile::ProfileState::load(&roots.data_root)?
+            .context("profile registry is missing")?;
+        let record = state
+            .by_name(name)
+            .with_context(|| format!("no profile named '{name}'"))?
+            .clone();
+        let ssh_config = crate::profile::ssh_config_path_for_profile(&roots, &record)?;
+        Ok(crate::profile::profile_paths(&roots, &record, ssh_config))
     }
 }

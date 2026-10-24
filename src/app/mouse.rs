@@ -51,6 +51,7 @@ impl App {
                 | AppMode::ImportPrompt
                 | AppMode::SnippetForm
                 | AppMode::SnippetPicker
+                | AppMode::SftpPrompt
         ) || (self.mode == AppMode::Normal
             && matches!(self.active_tab, 2 | 3)
             && self.list_filter_editing);

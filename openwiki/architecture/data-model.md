@@ -157,14 +157,19 @@ ssh must refuse rather than connect without the bastion).
 `TransferSnapshot::capture` and `DestIndex::capture` copy plain DTOs out of the
 source and destination stores, so planning never holds a store lock and applying
 never holds two (the `LauncherStore` mutex is not reentrant).
-`build_transfer_plan` / `apply_transfer_plan` copy or move hosts, groups,
-identities and tunnels; clashes rename to `name (copy N)`
-(`unique_dest_name`). Copied hosts and identities start with
-`has_password = false` (a host keeps its `secret_lookup` spec); a **move** reports
-the deleted source ids in `TransferResult`, and the caller then runs
-`purge_source_secrets` on the source profile's credential store so the moved
-rows' passwords and passphrases do not stay behind (failures are surfaced as a
-warning). Callers: the profile manager and `sshub <entity> transfer`
+`build_transfer_plan` / `apply_transfer_plan_with_secrets` copy or move hosts,
+groups, identities, tunnels and audit events; clashes rename to `name (copy N)`
+(`unique_dest_name`). A copy leaves secrets alone: copied hosts and identities
+start with `has_password = false` (a host keeps its `secret_lookup` spec). A
+**move** first commits the destination rows, then carries each moved host's
+password and each moved identity's passphrase from the source credential store
+into the destination one (`carry_secrets`, under the new ids, flagging the new
+row `has_password`), and only then deletes the source rows. A row whose secret
+cannot be read, written or flagged stays in the source (its destination copy is
+removed again) and is listed in `TransferResult::carry_failures`; the caller
+then runs `purge_source_secrets` on the source store for what was deleted
+(failures surface as a warning). Callers: the profile manager, the guided
+migration and `sshub <entity> transfer`
 ([profiles](profiles.md#cross-profile-transfers)).
 
 ### Destructive purge

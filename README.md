@@ -72,7 +72,7 @@ The theme picker, with its detail preview next to the list, and the known hosts 
 - **Embedded SSH sessions**: connect opens an in-TUI PTY; detach with `Ctrl+D` and return to the dashboard while SSH keeps running; multiple session tabs, and `Alt+S` switches between open sessions with a searchable picker
 - **Interactive SSH authentication**: masked password, passphrase and one-time-code modals. Eligible managed credentials get a remember option that starts clear and is saved only after SSH confirms authentication; generic challenges are never saved. `Enter` submits, `Tab` selects remember, `Space` toggles it, and `Esc` (or `Ctrl+C`) cancels. New host keys require explicit `y` acceptance; changed keys require uppercase `A` to remove the identified stale entry and reconnect for confirmation. Fingerprints are shown unchanged; `PgUp/PgDn` scroll long prompts. A ProxyJump hop that asks for a password is answered with that hop host's own stored secret, never the destination's, and the modal names the hop. OpenSSH may record accepted keys in its configured known_hosts file. Tunnels, headless commands and Mosh keep their existing authentication paths.
 - **Hosts** — browse, search, and connect. Fuzzy search with `/`, multi-tag AND filter with `#`, favorites, nested groups, manual sort order
-- **SFTP file transfer** — a dual-pane browser with a staged transfer queue: navigate both sides, queue uploads and downloads (files or whole folders, transferred recursively), and run them with a progress bar. Files can be staged while the queue runs. The left pane is your local filesystem by default, or point it at a **second server** with `o` (`O` sends it back to local) to move files between two hosts — relayed through a local temp file, since SSH has no server-to-server copy. Manage files in place too: delete (`d`), new folder (`n`), rename/move (`R`), and change permissions (`M`, octal chmod)
+- **SFTP file transfer** — a dual-pane browser with a staged transfer queue: navigate both sides, queue uploads and downloads (files or whole folders, transferred recursively), and run them with a progress bar. Files can be staged while the queue runs. Jump straight to a directory by typing its path with `g` (`/home/me`, `../other`, `~/.ssh`; `Tab` completes the last segment). The left pane is your local filesystem by default, or point it at a **second server** with `o` (`O` sends it back to local) to move files between two hosts — relayed through a local temp file, since SSH has no server-to-server copy. Manage files in place too: delete (`d`), new folder (`n`), rename/move (`R`), and change permissions (`M`, octal chmod)
 - **OS auto-detection** — on first connect a background probe detects the remote distro and the host card renders its logo (Braille art in brand colors), just like Termius
 - **Multiple groups & Favorites** — a host can belong to several groups at once; a reserved Favorites group and a ★ marker in the list, toggled with `f`
 - **Tunnels** — define and manage SSH tunnels (local/remote/dynamic SOCKS). Start, stop, and monitor from the TUI. Per-tunnel **keep alive** auto-starts on launch and reconnects dropped forwards with exponential backoff (configurable in `config.toml`).
@@ -107,8 +107,9 @@ The theme picker, with its detail preview next to the list, and the known hosts 
 - **Import/Export**: import from `~/.ssh/config`, Termius backups, PuTTY (a Windows regedit `.reg` export or a Unix `~/.putty/sessions` directory), or mRemoteNG (`confCons.xml`); export managed hosts back to ssh config format (the export stops with an error naming the host if a name, address, user or ProxyJump could not be written safely). Only SSH sessions are imported (RDP/VNC/telnet entries are skipped), and encrypted mRemoteNG passwords are not decrypted (imported hosts carry no stored secret)
 - **Hot reload** — edits to `~/.ssh/config` update the host list live via file watcher
 - **Configurable keybindings**: rebind any action via `Ctrl+K`; stored in `config.toml` under `[keybinds]`
-- **Profiles**: isolated workspaces, each with its own databases, config, themes, logs and keyring namespace (see [Usage](#usage)). In the profile manager (`Alt+P`), `t` transfers a host, group, identity or tunnel to another profile; headless, `sshub host|group|identity|tunnel transfer --to PROFILE` does the same
+- **Profiles**: isolated workspaces, each with its own databases, config, themes, logs and keyring namespace (see [Usage](#usage)). In the profile manager (`Alt+P`), `t` transfers a host, group, identity or tunnel to another profile, or `m` after the destination opens an SFTP-style dual-pane screen to stage hosts for pushing (`→`) and pulling (`←`) between the two profiles, followed by their groups, tunnels, identities and audit logs step by step; headless, `sshub host|group|identity|tunnel transfer --to PROFILE` does the same for one entity
 - **Update notice** (`Shift+U`): on start SSHub asks GitHub for the latest release, and a newer one shows next to the version in the tab bar. `Shift+U` on the hosts tab installs it the way SSHub was installed (`npm install -g sshub-tui@<version>`, `cargo install sshub --version <version>`, or, for a release tarball, an in-place swap of the binary after checking it runs), then asks you to restart. While it installs, quitting always asks first. With no update known, `Shift+U` checks on demand. Needs `curl` (and `tar` for the tarball swap); `Check for updates` in Settings (`Ctrl+H`), or `[updates] check = false`, turns the start-up check off.
+- **What's new** (`Shift+W`): when `Shift+U` finishes an install, a popup shows the changelog of every version it brings (fetched from that release's `CHANGELOG.md`). `Shift+W` on the hosts tab reopens it until the restart, and otherwise shows the running version's notes.
 - **Mouse support**: click tabs, rows and hosts-tab panels, scroll lists, double-click to connect, start a tunnel or open an SFTP folder; on the SFTP tab a click picks a host or a pane's entry; in forms, dialogs and pickers a click focuses the field (cursor where you clicked) or highlights the row; a drag anywhere selects text and copies it on release
 
 ## Install
@@ -148,6 +149,54 @@ sudo pacman -S --needed dbus
 ```
 
 Prebuilt binaries for Linux and macOS are attached to each [GitHub release](https://github.com/Petyok/SSHub/releases).
+
+From the [Nix flake](flake.nix) (Linux x86_64 and aarch64), no toolchain required:
+
+```bash
+nix run github:Petyok/SSHub               # run it without installing
+nix profile install github:Petyok/SSHub   # then just: sshub
+```
+
+On NixOS, add it as a flake input, install the package system-wide, and import the
+module that points Nix at the prebuilt binaries:
+
+```nix
+# flake.nix
+inputs.sshub.url = "github:Petyok/SSHub";
+
+# configuration.nix (pass `inputs` to your modules, e.g. via specialArgs)
+imports = [ inputs.sshub.nixosModules.binaryCache ];
+environment.systemPackages = [
+  inputs.sshub.packages.${pkgs.stdenv.hostPlatform.system}.default
+];
+```
+
+Prebuilt binaries come from the [sshub.cachix.org](https://sshub.cachix.org) cache, so
+nothing is compiled. `nixosModules.binaryCache` only sets `nix.settings.substituters` and
+`nix.settings.trusted-public-keys`; skip it and set them yourself if you prefer:
+
+```nix
+nix.settings.substituters = [ "https://sshub.cachix.org" ];
+nix.settings.trusted-public-keys = [
+  "sshub.cachix.org-1:yniNe6K3gkRhTgoJL6Rh2Kvqjfaw7ZjTYEFTwIpYjKA="
+];
+```
+
+For `nix run` and `nix profile install` the flake declares the cache itself, and Nix asks
+whether to trust it the first time (answer `y`, or pass `--accept-flake-config`). That
+declaration is ignored when the flake is an input of another flake, hence the module. On a
+multi-user install a user who is not in `trusted-users` has the flake's cache ignored: add
+it to `trusted-substituters` (with the key above in `trusted-public-keys`) or add the user
+to `trusted-users`.
+
+The cache holds the build for the nixpkgs this flake pins. Overriding that with
+`inputs.sshub.inputs.nixpkgs.follows` changes the store path, so Nix compiles locally,
+and an older channel can also fail on an older Rust toolchain. The flake follows the
+default branch (`main`), so it tracks releases. The package links nixpkgs' OpenSSL, puts
+`openssh` on the end of `PATH` (your own `ssh` still wins), and installs the man page,
+icon and desktop entry. Shell completions are not packaged: they embed your host names,
+so generate them yourself as described under [Headless CLI](#headless-cli)
+(`sshub completions <shell>` works the same for a Nix install).
 
 At runtime, a Secret Service provider (gnome-keyring, KWallet, …) is preferred for secure credential storage. If one is not running or unlocked (e.g. in WSL, Docker, or headless SSH sessions), SSHub will fallback to storing credentials in a local owner-only restricted file (`credentials.json`), notifying you in the status bar.
 
@@ -425,6 +474,7 @@ arrives as arrow keys, exactly as in a real terminal.
 | `b`                | Broadcast a command to a group or tag |
 | `x`                | Cancel a running broadcast / clear its error toasts |
 | `Shift+U`          | Install the sshub update, or check for one |
+| `Shift+W`          | What's new: release notes of this version or the installed update |
 
 ### SFTP (tab 2)
 
@@ -433,6 +483,7 @@ arrives as arrow keys, exactly as in a real terminal.
 | `Enter`            | Connect to host · enter directory (`..` walks up)    |
 | `Tab`              | Switch focus between the panes                       |
 | `Backspace`        | Up one directory                                     |
+| `g`                | Go to a typed path (`Tab` completes)                 |
 | `←` / `→`          | Stage the focused pane's selection toward the other  |
 | `c` / `u`          | Run the queue / unstage the last transfer            |
 | `o` / `O`          | Left pane to a second server / back to local files   |

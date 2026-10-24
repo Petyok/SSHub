@@ -925,8 +925,12 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
             if let Some(picker) = &app.profile_picker {
                 picker.render(frame, app.theme());
             }
-            if app.pending_transfer.is_some() {
-                render_profile_transfer_popup(frame, app);
+            if let Some(pending) = &app.pending_transfer {
+                if pending.screen.is_some() {
+                    screens::host_transfer::render_host_transfer(frame, app);
+                } else {
+                    render_profile_transfer_popup(frame, app);
+                }
             }
         }
         AppMode::TunnelReconnectSettings => {
@@ -939,6 +943,7 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
         AppMode::BroadcastCommand => screens::broadcast::render_command_prompt(frame, app),
         AppMode::BroadcastPreview => screens::broadcast::render_preview(frame, app),
         AppMode::Notice => render_notice_popup(frame, app),
+        AppMode::WhatsNew => render_whats_new_popup(frame, app),
         AppMode::KnownHosts => screens::known_hosts::render_known_hosts(frame, app),
         AppMode::LogBrowser => screens::log_browser::render(frame, app),
         AppMode::SnippetManage => screens::snippet_manage::render_snippet_manage_popup(frame, app),
@@ -996,6 +1001,82 @@ fn render_notice_popup(frame: &mut Frame, app: &App) {
     );
 }
 
+/// The what's-new popup's frame for a terminal of `area`: the help popup's
+/// geometry, so long notes get the same room.
+fn whats_new_rect(area: Rect) -> Rect {
+    let width = (area.width * 70 / 100).max(40).min(area.width);
+    let height = (area.height * 60 / 100).max(16).min(area.height);
+    Rect::new(
+        area.x + (area.width.saturating_sub(width)) / 2,
+        area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    )
+}
+
+fn whats_new_paragraph(text: &str) -> Paragraph<'_> {
+    Paragraph::new(text).wrap(Wrap { trim: false })
+}
+
+/// Scroll ceiling of the what's-new body: wrapped lines past one screenful.
+/// Shared with the key handler so it never banks presses the view ignores.
+pub(crate) fn whats_new_max_scroll(area: Rect, app: &App) -> u16 {
+    let Some(popup) = app.update.whats_new.as_ref() else {
+        return 0;
+    };
+    // Borders and the footer row.
+    let inner = whats_new_rect(area).inner(Margin::new(1, 1));
+    let body_height = inner.height.saturating_sub(1) as usize;
+    let lines = whats_new_paragraph(&popup.text).line_count(inner.width);
+    u16::try_from(lines.saturating_sub(body_height)).unwrap_or(u16::MAX)
+}
+
+fn render_whats_new_popup(frame: &mut Frame, app: &App) {
+    let Some(popup) = app.update.whats_new.as_ref() else {
+        return;
+    };
+    let area = frame.area();
+    let popup_area = crate::tui::popup_open_rect(whats_new_rect(area), app);
+    let theme = app.theme();
+
+    open_popup(frame, popup_area, theme);
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(popup_border_style(theme, popup_area))
+            .title(Span::styled(
+                popup.title.as_str(),
+                theme.style(StyleRole::PopupTitle),
+            )),
+        popup_area,
+    );
+    paint_popup_border(frame, popup_area, theme);
+
+    let inner = popup_area.inner(Margin::new(1, 1));
+    let body = Rect::new(
+        inner.x,
+        inner.y,
+        inner.width,
+        inner.height.saturating_sub(1),
+    );
+    let scroll = popup.scroll.min(whats_new_max_scroll(area, app));
+    frame.render_widget(
+        whats_new_paragraph(&popup.text)
+            .style(theme.style(StyleRole::TextPrimary))
+            .scroll((scroll, 0)),
+        body,
+    );
+    frame.buffer_mut().set_string(
+        inner.x,
+        inner.y + inner.height.saturating_sub(1),
+        crate::tui::text::ellipsize(
+            "↑↓ PgUp/PgDn Home/End scroll · any other key closes",
+            inner.width as usize,
+        ),
+        theme.style(StyleRole::PopupHint),
+    );
+}
+
 fn render_sftp_prompt_popup(frame: &mut Frame, app: &App) {
     let Some(prompt) = app.sftp_prompt.as_ref() else {
         return;
@@ -1006,11 +1087,20 @@ fn render_sftp_prompt_popup(frame: &mut Frame, app: &App) {
         SftpPromptKind::Mkdir => (" New folder ", "New folder name:"),
         SftpPromptKind::Rename => (" Rename ", "Rename to:"),
         SftpPromptKind::Chmod => (" Permissions ", "Permissions (octal, e.g. 755):"),
+        SftpPromptKind::Goto => (
+            " Go to directory ",
+            "Directory (absolute, relative or ~/), Tab completes:",
+        ),
     };
 
     let area = frame.area();
     let popup_width = (area.width * 70 / 100).max(40).min(area.width);
-    let popup_height = if prompt.error.is_some() { 9 } else { 7 }.min(area.height);
+    let popup_height = if prompt.error.is_some() || prompt.hint.is_some() {
+        9
+    } else {
+        7
+    }
+    .min(area.height);
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
@@ -1040,9 +1130,23 @@ fn render_sftp_prompt_popup(frame: &mut Frame, app: &App) {
         ));
         lines.push((ratatui::text::Line::from(""), None));
     }
+    if let (None, Some(hint)) = (&prompt.error, &prompt.hint) {
+        lines.push((
+            ratatui::text::Line::from(Span::styled(
+                text::ellipsize(hint, (popup_width as usize).saturating_sub(4)),
+                theme.style(StyleRole::PopupHint),
+            )),
+            None,
+        ));
+        lines.push((ratatui::text::Line::from(""), None));
+    }
     lines.push((
         ratatui::text::Line::from(Span::styled(
-            "Enter: confirm  \u{2502}  Esc: cancel",
+            if prompt.kind == SftpPromptKind::Goto {
+                "Tab: complete  \u{2502}  Enter: go  \u{2502}  Esc: cancel"
+            } else {
+                "Enter: confirm  \u{2502}  Esc: cancel"
+            },
             theme.style(StyleRole::PopupHint),
         )),
         None,
@@ -1431,6 +1535,7 @@ fn footer_keybinds(
             ("c".into(), "run"),
             ("u".into(), "unstage"),
             ("d".into(), "delete"),
+            ("g".into(), "go to"),
             ("n".into(), "new dir"),
             ("R".into(), "rename"),
             ("M".into(), "chmod"),
@@ -2624,7 +2729,7 @@ fn render_profile_transfer_popup(frame: &mut Frame, app: &App) {
             let shown = crate::tui::text::ellipsize(line, budget);
             let style = if line.starts_with("! ") {
                 theme.style(StyleRole::PopupError)
-            } else if line.contains("Esc") {
+            } else if line.contains("Esc cancel") || line.contains("Esc: cancel") {
                 theme.style(StyleRole::TextMuted)
             } else if line == &lines[0] {
                 theme.style(StyleRole::TextBright)
@@ -7613,6 +7718,7 @@ marker = { foreground = \"#ab0005\" }\n\
             AppMode::ConfirmDelete,
             AppMode::Help,
             AppMode::Notice,
+            AppMode::WhatsNew,
             AppMode::ImportPrompt,
             AppMode::SftpPrompt,
         ];
@@ -7624,6 +7730,11 @@ marker = { foreground = \"#ab0005\" }\n\
                 app.enter_host_form(None, false).unwrap();
                 app.enter_identity_form(None).unwrap();
                 app.notice_popup = Some("boom".into());
+                app.update.whats_new = Some(crate::app::WhatsNew {
+                    title: " What's new ".into(),
+                    text: "## [0.1.0]\n\n- a long line of notes ".repeat(20),
+                    scroll: 99,
+                });
                 app.keybind_editor = Some(crate::app::KeybindEditor {
                     selected: 0,
                     scroll: 0,
@@ -7678,11 +7789,21 @@ marker = { foreground = \"#ab0005\" }\n\
                     value: "notes.txt".into(),
                     cursor: 0,
                     error: Some("exists".into()),
+                    hint: None,
                 });
                 app.mode = mode;
                 let buf = render_to_buffer(&app, w, h);
                 assert_eq!(buf.area.width, w, "{mode:?} at {w}x{h}");
                 assert_eq!(buf.area.height, h, "{mode:?} at {w}x{h}");
+                // The go-to-path prompt adds a hint line; it must clip too.
+                if let Some(p) = app.sftp_prompt.as_mut() {
+                    p.kind = crate::app::SftpPromptKind::Goto;
+                    p.error = None;
+                    p.hint = Some("docs/  data/  dumps/".into());
+                }
+                let buf = render_to_buffer(&app, w, h);
+                assert_eq!(buf.area.width, w, "{mode:?} goto at {w}x{h}");
+                assert_eq!(buf.area.height, h, "{mode:?} goto at {w}x{h}");
             }
         }
     }

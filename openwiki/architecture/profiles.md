@@ -112,7 +112,7 @@ boots.
 
 Engine: `src/store/transfer.rs` ([data model](data-model.md#cross-profile-transfer-engine-srcstoretransferrs)).
 Front ends: the profile manager (`t` / `T` in the list view arms
-`App::pending_transfer`; flow and rendering in `src/app/profile_transfer.rs`:
+`App::pending_transfer`; flow and rendering in `src/app/profile_transfer.rs`, with the dual-pane host screen of `m` in `src/app/host_transfer.rs` (push and pull batches run the same engine with the two stores swapped for a pull):
 destination, scope, plan, explicit `y`) and the CLI
 (`src/cli/transfer.rs`):
 
@@ -133,12 +133,22 @@ Rules enforced by the engine:
 - Destination writes run in one transaction and roll back on the first
   failure; a move deletes from the source in a second transaction only after
   the copy succeeded.
-- Identities are always copied; key files travel as paths and flags only and
-  secret contents are never read (new rows start with `has_password = false`;
-  a host keeps its `secret_lookup` spec). Groups land flattened at top level;
-  hosts land with `source = launcher`.
-- A **move** also purges the moved hosts' passwords and the orphaned
-  identities' passphrases from the *source* profile's credential store
-  (`TransferResult::purge_source_secrets`, called by the profile manager and
-  the CLI); keys it cannot delete are reported as a warning. Copies leave the
-  source secrets alone.
+- Identities are always copied; key files travel as paths and flags only.
+  A **copy** never reads secret contents (new rows start with
+  `has_password = false`; a host keeps its `secret_lookup` spec). Groups land
+  flattened at top level; hosts land with `source = launcher`.
+- A **move** is lossless for saved secrets. The profile manager and the CLI
+  call `apply_transfer_plan_with_secrets` with a `SecretStores { src, dest }`
+  pair (`credentials::open_for_profile`; opened only when a host or identity
+  moves). Between the destination commit and the source deletion the engine
+  reads each created host's and identity's `host:{id}` / `identity:{id}` secret
+  from the *source* store, writes it under
+  the new id in the *destination* store and sets `has_password` on the new row.
+  A flagged secret that is missing, unreadable or unwritable keeps its source
+  original: the host or identity (and a host's tunnels, audit events and
+  groups) is not deleted, a host's destination copy is removed again, and it
+  is listed in `TransferResult::kept_in_source` / `carry_failures`, so the move
+  can be repeated for it. The CLI then exits 1. Only then does
+  `purge_source_secrets` delete the secrets of the rows that were deleted; keys
+  it cannot delete are reported too. Copies leave the source secrets alone.
+- **Audit events** travel as `audit` plan items (`TransferSelection::audit_hosts`): one per transferred host, runnable only when the host is. They are inserted in the same destination transaction under the host's destination name, keeping their timestamps; a move deletes them from the source only for hosts it actually deleted. `no_auto_carry` (guided migration) drops the automatic identity and companion-tunnel carry so only listed rows travel.

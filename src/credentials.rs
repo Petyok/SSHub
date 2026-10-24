@@ -59,6 +59,21 @@ impl StoreLocator {
     }
 }
 
+/// The credential store of one profile: the OS keyring when usable, else the
+/// profile's `credentials.json`, always under the profile's key prefix.
+pub fn open_for_profile(paths: &crate::profile::ProfilePaths) -> Box<dyn PasswordStore> {
+    let prefix = paths.credential_prefix();
+    if check_keyring_available() {
+        let _ = migrate_fallback_to_keyring(&paths.credentials_file());
+        Box::new(NamespacedPasswordStore::new(Box::new(OsKeyring), prefix))
+    } else {
+        Box::new(NamespacedPasswordStore::new(
+            Box::new(FilePasswordStore::new(paths.credentials_file())),
+            prefix,
+        ))
+    }
+}
+
 /// Which credential-store entry holds a secret: a stored key (`host:3`,
 /// `identity:7`) or a host's Secret Service lookup spec (#142).
 #[derive(Clone, Debug, PartialEq, Eq)]

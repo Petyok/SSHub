@@ -99,7 +99,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "t/T",
-        desc: "Transfer a host, group, identity or tunnel to another profile (profile manager).",
+        desc: "Transfer a host, group, identity or tunnel to another profile (profile manager); m = two-pane host transfer (→ push, ← pull, c continue), then groups, tunnels, identities, audit logs.",
     },
     HelpItem::Blank,
     HelpItem::Section("hosts (tab 1)"),
@@ -166,6 +166,10 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     HelpItem::Entry {
         key: "Shift+U",
         desc: "Install the sshub update, or check for one",
+    },
+    HelpItem::Entry {
+        key: "Shift+W",
+        desc: "What's new: release notes of this version or the installed update",
     },
     HelpItem::Entry {
         key: "b",
@@ -688,6 +692,10 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     HelpItem::Entry {
         key: "M",
         desc: "Change permissions (chmod, octal)",
+    },
+    HelpItem::Entry {
+        key: "g",
+        desc: "Go to a typed directory (/abs, ../rel, ~/x); Tab completes the last segment",
     },
     HelpItem::Entry {
         key: "r",
