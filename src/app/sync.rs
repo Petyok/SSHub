@@ -1,17 +1,15 @@
 //! The Sync tab (tab 7) and its modals.
 //!
-//! The UI reads one plain view model, [`SyncView`], that the sync stages fill:
-//! nothing here depends on the op-log, the store or the sync worker. The view
-//! types mirror the names of the contract's `DeviceRow`, `DeviceStatus`,
-//! `DeviceRole` and `CredMode`, but are the UI's own structs. Building a
-//! `SyncView` from store rows happens in exactly one place, a refresh method on
-//! `App` that the stage that owns the store adds next to this module; the
-//! fields are public so that method just assigns them.
+//! The UI reads one plain view model, [`SyncView`]. The view types mirror the
+//! names of the contract's `DeviceRow`, `DeviceStatus`, `DeviceRole` and
+//! `CredMode`, but are the UI's own structs. The store fills them in exactly
+//! one place, `App::refresh_sync_view` in `sync_view.rs`, which also resolves
+//! pending operations (review) straight in the store.
 //!
-//! What the UI wants done (sync now, enroll a host, approve a change, ...) goes
-//! out as a [`SyncIntent`] pushed on [`SyncView::intents`]; the worker side
-//! drains them. While [`SyncView::worker`] is false nothing drains them, so the
-//! keys that would queue one say so instead.
+//! What needs the network or another stage (sync now, enroll a host, unlock)
+//! goes out as a [`SyncIntent`] pushed on [`SyncView::intents`]; the worker
+//! side drains them. While [`SyncView::worker`] is false nothing drains them,
+//! so the keys that would queue one say so instead.
 
 use ratatui::style::Style;
 
@@ -129,6 +127,8 @@ pub struct PendingOpView {
     pub device: String,
     pub summary: String,
     pub changes: Vec<ChangeView>,
+    /// Hash of the op, for approving or rejecting it in the store.
+    pub hash: [u8; 32],
 }
 
 /// How a share can reach the unlock modal.
@@ -326,9 +326,6 @@ pub enum SyncIntent {
     },
     Enroll {
         host: String,
-    },
-    Review {
-        approve: bool,
     },
     SasMatches(bool),
     Trust {
@@ -648,18 +645,21 @@ impl App {
                 });
             }
             SyncEvent::BehindPeer(id) => {
-                if let Some(d) = sync
+                let name = sync
                     .devices
-                    .iter_mut()
-                    .find(|d| d.id == id && d.status == DeviceStatusView::Operational)
-                {
-                    d.status = DeviceStatusView::Behind;
-                }
+                    .iter()
+                    .find(|d| d.id == id)
+                    .map_or_else(|| id.clone(), |d| d.name.clone());
+                self.host_notice = Some(format!(
+                    "{name} is behind: it could not prove it is current, so nothing moved; try again once it has synced"
+                ));
             }
             SyncEvent::Done => {
                 sync.syncing = false;
                 sync.progress = None;
                 sync.enrolling = None;
+                // Whatever the round moved is in the store now.
+                self.refresh_sync_view();
             }
             SyncEvent::Error(message) => {
                 sync.syncing = false;
@@ -972,9 +972,7 @@ impl App {
                 } else if up {
                     self.sync.review_selected = self.sync.review_selected.saturating_sub(1);
                 } else if plain('a') || plain('r') {
-                    self.sync.intents.push(SyncIntent::Review {
-                        approve: plain('a'),
-                    });
+                    self.sync_resolve_review(plain('a'));
                 }
             }
             AppMode::SyncUnlock => {
@@ -1078,6 +1076,7 @@ pub(crate) fn sample_sync_view() -> SyncView {
             hosts_opened: 3,
         }),
         review: vec![PendingOpView {
+            hash: [0; 32],
             device: "server".into(),
             summary: "edit host web-1".into(),
             changes: vec![ChangeView {
@@ -1223,11 +1222,13 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::SHIFT))
             .unwrap();
         assert_eq!(app.mode, AppMode::SyncReview);
+        // The sample's pending op is not in the store: resolving it says so.
         app.handle_key(key('a')).unwrap();
-        assert_eq!(
-            app.sync.intents.last(),
-            Some(&SyncIntent::Review { approve: true })
-        );
+        assert!(app
+            .host_notice
+            .as_deref()
+            .is_some_and(|n| n.starts_with("sync:")));
+        assert_eq!(app.sync.intents.len(), 1, "review never goes to the worker");
         app.handle_key(press(KeyCode::Esc)).unwrap();
         assert_eq!(app.mode, AppMode::Normal);
     }
@@ -1358,7 +1359,10 @@ mod tests {
         let mut app = app_with_worker(Box::new(|_k, device, ctx| {
             assert_eq!(device, "id-server");
             ctx.emit(SyncEvent::Progress("talking".into()));
-            Ok(RoundSummary { pending_arrived: 3 })
+            Ok(RoundSummary {
+                pending_arrived: 3,
+                ..Default::default()
+            })
         }));
         app.sync.intents.push(SyncIntent::SyncNow {
             device: "id-server".into(),
@@ -1367,7 +1371,10 @@ mod tests {
         assert!(app.sync.syncing, "a request marks the round as running");
         assert!(app.sync.intents.is_empty());
         pump(&mut app, |a| !a.sync.syncing);
-        assert_eq!(app.sync.pending, 2 + 3, "arrived ops add to the count");
+        // The round is done: the count is re-read from the store (empty here).
+        assert_eq!(app.sync.pending, 0);
+        app.apply_sync_event(crate::sync::client::SyncEvent::PendingArrived(3));
+        assert_eq!(app.sync.pending, 3, "arrived ops add to the count");
         assert_eq!(app.sync.progress, None);
         assert_eq!(app.sync.last_error, None);
     }
@@ -1415,12 +1422,17 @@ mod tests {
         for (device, check) in [
             (
                 "behind",
-                (|a: &App| a.sync.devices[0].status == DeviceStatusView::Behind)
-                    as fn(&App) -> bool,
+                (|a: &App| {
+                    a.host_notice
+                        .as_deref()
+                        .is_some_and(|n| n.starts_with("laptop is behind"))
+                }) as fn(&App) -> bool,
             ),
             ("fork", |a: &App| a.mode == AppMode::SyncForkAlert),
             ("fail", |a: &App| a.sync.last_error.is_some()),
         ] {
+            // Each finished round re-reads the (empty) store: put the sample back.
+            app.sync.devices = sample_sync_view().devices;
             app.sync.intents.push(SyncIntent::SyncNow {
                 device: device.into(),
             });

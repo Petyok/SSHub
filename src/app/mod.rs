@@ -34,13 +34,14 @@ mod sftp;
 mod snippets;
 mod suggestions;
 pub mod sync;
+mod sync_view;
 mod tags;
 pub mod test_connect;
 mod theme_picker;
 mod tunnels;
 mod types;
 mod update;
-mod util;
+pub(crate) mod util;
 mod workspaces;
 
 #[cfg(test)]
@@ -974,7 +975,7 @@ impl App {
                 password_store,
             },
         );
-        app.profile = Some(paths);
+        app.profile = Some(paths.clone());
         app.refresh_profile_count();
         if !keyring_available {
             app.host_notice =
@@ -991,6 +992,13 @@ impl App {
         // Also starts the ping worker.
         app.reload_hosts()?;
         app.refresh_auth_cache();
+
+        // Sync: the view from the store, and the worker that runs rounds over
+        // ssh (its identity loads on the first round, not now).
+        app.refresh_sync_view();
+        app.attach_sync_worker(crate::sync::client::spawn_sync_thread(
+            crate::sync::runtime::round_fn(paths, app.store.clone()),
+        ));
 
         // Spawn the OS auto-detect worker here (the on-disk constructor) rather
         // than in new_with_deps so unit tests that inject deps stay offline and

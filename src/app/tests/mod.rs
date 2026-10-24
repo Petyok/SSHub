@@ -159,6 +159,7 @@ mod session;
 mod sftp;
 mod snippets;
 mod suggestions;
+mod sync_store;
 mod tags;
 mod theme_picker;
 mod transfer_plan_confirm;
