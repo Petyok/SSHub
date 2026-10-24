@@ -198,10 +198,124 @@ pub struct ReleaseView {
     pub requester_id: String,
 }
 
-/// Vault first run: the six words.
-#[derive(Debug, Clone, PartialEq)]
+/// What stage 3 stores for Vault: the master phrase and the ring secret.
+/// Zeroized on drop; `Debug` never prints them.
+#[derive(Clone, PartialEq)]
+pub struct OnboardingSecrets {
+    pub phrase: zeroize::Zeroizing<String>,
+    pub ring_secret: zeroize::Zeroizing<[u8; 16]>,
+}
+
+impl std::fmt::Debug for OnboardingSecrets {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("OnboardingSecrets(..)")
+    }
+}
+
+/// Where the Vault first run stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnboardingStep {
+    /// The six words, shown once.
+    Show,
+    /// Two of the words, retyped from the paper.
+    Retype,
+    /// Choosing where the two sheets go; Enter writes them.
+    Kit,
+    /// Both sheets are written.
+    Done,
+}
+
+/// Vault first run: issue the phrase and ring secret, check the user wrote the
+/// phrase down, write the printable kit. The secrets live only here, in
+/// zeroizing buffers, until [`SyncIntent::OnboardingDone`] hands them on.
+#[derive(Clone, PartialEq)]
 pub struct OnboardingView {
-    pub words: Vec<String>,
+    pub step: OnboardingStep,
+    secrets: OnboardingSecrets,
+    /// Zero-based positions of the two words to retype, ascending.
+    pub quiz: [usize; 2],
+    pub quiz_done: usize,
+    pub typed: String,
+    pub phrase_path: String,
+    pub ring_path: String,
+    /// 0 edits `phrase_path`, 1 edits `ring_path`.
+    pub path_field: usize,
+    pub notice: Option<String>,
+}
+
+impl std::fmt::Debug for OnboardingView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OnboardingView")
+            .field("step", &self.step)
+            .finish_non_exhaustive()
+    }
+}
+
+impl OnboardingView {
+    /// A new phrase (10 CSPRNG bytes as six EFF words) and ring secret.
+    pub fn issue() -> Result<Self> {
+        use rand_core::{OsRng, RngCore};
+        // 10 bytes can exceed 7776^6; draw again until the value is in range.
+        let mut entropy = zeroize::Zeroizing::new([0u8; 10]);
+        loop {
+            OsRng.fill_bytes(&mut entropy[..]);
+            if crate::sync::crypto::eff_encode(&entropy).is_ok() {
+                break;
+            }
+        }
+        let mut ring = [0u8; 16];
+        OsRng.fill_bytes(&mut ring);
+        let first = OsRng.next_u32() as usize % 6;
+        let second = (first + 1 + OsRng.next_u32() as usize % 5) % 6;
+        let home = std::env::var_os("HOME").map_or_else(|| ".".into(), std::path::PathBuf::from);
+        let path = |name: &str| home.join(name).to_string_lossy().into_owned();
+        Self::with_secrets(
+            &entropy,
+            ring,
+            [first.min(second), first.max(second)],
+            (
+                path("sshub-vault-phrase.html"),
+                path("sshub-vault-ring-secret.html"),
+            ),
+        )
+    }
+
+    /// The same with the secrets, quiz and paths chosen by the caller.
+    pub fn with_secrets(
+        entropy: &[u8; 10],
+        ring_secret: [u8; 16],
+        quiz: [usize; 2],
+        paths: (String, String),
+    ) -> Result<Self> {
+        Ok(Self {
+            step: OnboardingStep::Show,
+            secrets: OnboardingSecrets {
+                phrase: zeroize::Zeroizing::new(crate::sync::crypto::eff_encode(entropy)?),
+                ring_secret: zeroize::Zeroizing::new(ring_secret),
+            },
+            quiz,
+            quiz_done: 0,
+            typed: String::new(),
+            phrase_path: paths.0,
+            ring_path: paths.1,
+            path_field: 0,
+            notice: None,
+        })
+    }
+
+    /// The six words, for the one screen that shows them.
+    pub fn words(&self) -> Vec<&str> {
+        self.secrets.phrase.split_whitespace().collect()
+    }
+
+    pub fn secrets(&self) -> &OnboardingSecrets {
+        &self.secrets
+    }
+
+    /// The word the user is asked to retype now.
+    pub(crate) fn quiz_word(&self) -> &str {
+        self.words()[self.quiz[self.quiz_done.min(1)]]
+    }
 }
 
 /// A request from the UI to the sync worker.
@@ -230,7 +344,9 @@ pub enum SyncIntent {
     Unlock {
         secrets: Vec<String>,
     },
-    OnboardingDone,
+    /// The Vault first run is finished: the phrase and ring secret for the
+    /// sync stage to store as the Vault configuration.
+    OnboardingDone(OnboardingSecrets),
 }
 
 /// What runs once credentials are open.
@@ -570,6 +686,156 @@ impl App {
         self.mode = AppMode::SyncOnboarding;
     }
 
+    /// Vault first run: issue a master phrase and ring secret and walk the user
+    /// through writing them down and printing the kit.
+    pub fn start_vault_onboarding(&mut self) -> Result<()> {
+        let view = OnboardingView::issue()?;
+        self.open_sync_onboarding(view);
+        Ok(())
+    }
+
+    /// One key of the Vault onboarding: show, retype two words, write the kit,
+    /// finish. Nothing leaves this screen except the final intent.
+    fn onboarding_key(&mut self, key: KeyEvent) {
+        enum Next {
+            Stay,
+            WriteKit,
+            Finish,
+        }
+        let Some(o) = self.sync.onboarding.as_mut() else {
+            return;
+        };
+        let editing = key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT;
+        let mut next = Next::Stay;
+        match o.step {
+            OnboardingStep::Show => {
+                if key.code == KeyCode::Enter {
+                    o.step = OnboardingStep::Retype;
+                    o.typed.clear();
+                    o.notice = None;
+                }
+            }
+            OnboardingStep::Retype => match key.code {
+                KeyCode::Enter => {
+                    let (n, want) = (o.quiz[o.quiz_done.min(1)] + 1, o.quiz_word().to_string());
+                    if o.typed.trim().eq_ignore_ascii_case(&want) {
+                        o.quiz_done += 1;
+                        o.notice = None;
+                        if o.quiz_done >= 2 {
+                            o.step = OnboardingStep::Kit;
+                        }
+                    } else {
+                        o.notice = Some(format!("that is not word {n}: check the phrase on paper"));
+                    }
+                    o.typed.clear();
+                }
+                // Back to the words, before anything is printed.
+                KeyCode::Esc => {
+                    o.step = OnboardingStep::Show;
+                    o.quiz_done = 0;
+                    o.typed.clear();
+                    o.notice = None;
+                }
+                KeyCode::Backspace => {
+                    o.typed.pop();
+                }
+                KeyCode::Char(c) if editing && !c.is_control() => o.typed.push(c),
+                _ => {}
+            },
+            OnboardingStep::Kit => {
+                let field = if o.path_field == 0 {
+                    &mut o.phrase_path
+                } else {
+                    &mut o.ring_path
+                };
+                match key.code {
+                    KeyCode::Enter => next = Next::WriteKit,
+                    KeyCode::Tab | KeyCode::BackTab | KeyCode::Up | KeyCode::Down => {
+                        o.path_field ^= 1;
+                    }
+                    KeyCode::Backspace => {
+                        field.pop();
+                    }
+                    KeyCode::Char(c) if editing && !c.is_control() => field.push(c),
+                    _ => {}
+                }
+            }
+            OnboardingStep::Done => {
+                if key.code == KeyCode::Enter {
+                    next = Next::Finish;
+                }
+            }
+        }
+        match next {
+            Next::Stay => {}
+            Next::WriteKit => self.write_onboarding_kit(),
+            Next::Finish => {
+                if let Some(o) = self.sync.onboarding.as_ref() {
+                    let secrets = o.secrets().clone();
+                    self.sync.intents.push(SyncIntent::OnboardingDone(secrets));
+                }
+                self.sync_close_modal();
+            }
+        }
+    }
+
+    /// Write the two sheets to the chosen paths, or say why not and write
+    /// neither: no overwrite, no shared path, no missing folder.
+    fn write_onboarding_kit(&mut self) {
+        use crate::app::kit;
+        let Some(o) = self.sync.onboarding.as_mut() else {
+            return;
+        };
+        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+        let expand = |raw: &str| {
+            let raw = raw.trim();
+            match (raw.strip_prefix("~/"), &home) {
+                (Some(rest), Some(home)) => home.join(rest),
+                _ => std::path::PathBuf::from(raw),
+            }
+        };
+        let (phrase_path, ring_path) = (expand(&o.phrase_path), expand(&o.ring_path));
+        let problem = if o.phrase_path.trim().is_empty() || o.ring_path.trim().is_empty() {
+            Some("choose a path for both sheets".to_string())
+        } else if phrase_path == ring_path {
+            Some("the two sheets need two different paths".to_string())
+        } else {
+            [&phrase_path, &ring_path].into_iter().find_map(|p| {
+                if p.exists() {
+                    Some(format!(
+                        "{} already exists: choose another path",
+                        p.display()
+                    ))
+                } else if p
+                    .parent()
+                    .is_some_and(|d| !d.as_os_str().is_empty() && !d.is_dir())
+                {
+                    Some(format!("{}: that folder does not exist", p.display()))
+                } else {
+                    None
+                }
+            })
+        };
+        if let Some(problem) = problem {
+            o.notice = Some(problem);
+            return;
+        }
+        let phrase_html = zeroize::Zeroizing::new(kit::phrase_sheet(&o.secrets.phrase));
+        let ring_html = zeroize::Zeroizing::new(kit::ring_sheet(&o.secrets.ring_secret));
+        if let Err(e) = kit::write_sheet(&phrase_path, &phrase_html) {
+            o.notice = Some(format!("{}: {e}", phrase_path.display()));
+            return;
+        }
+        if let Err(e) = kit::write_sheet(&ring_path, &ring_html) {
+            // Never leave half a kit behind.
+            let _ = std::fs::remove_file(&phrase_path);
+            o.notice = Some(format!("{}: {e}", ring_path.display()));
+            return;
+        }
+        o.notice = None;
+        o.step = OnboardingStep::Done;
+    }
+
     /// A fork proof arrived: take over the whole screen, over a live session
     /// too. Dismissing it restores the mode it interrupted.
     pub fn raise_sync_fork_alert(&mut self, view: ForkView) {
@@ -618,7 +884,8 @@ impl App {
             .filter_map(|r| match r {
                 crate::credentials::SecretRef::Key(k) => Some(k.clone()),
                 crate::credentials::SecretRef::Lookup(_)
-                | crate::credentials::SecretRef::Staged(_) => None,
+                | crate::credentials::SecretRef::Staged(_)
+                | crate::credentials::SecretRef::Handle(_) => None,
             })
             .collect();
         self.unlock_resume = Some(UnlockResume {
@@ -775,10 +1042,7 @@ impl App {
                     self.sync_close_modal();
                 }
             }
-            AppMode::SyncOnboarding if confirm => {
-                self.sync.intents.push(SyncIntent::OnboardingDone);
-                self.sync_close_modal();
-            }
+            AppMode::SyncOnboarding => self.onboarding_key(key),
             _ => {}
         }
         Ok(())
@@ -868,11 +1132,15 @@ pub(crate) fn sample_sync_view_with_modals() -> SyncView {
             requester: "new laptop".into(),
             requester_id: "id-9".into(),
         }),
-        onboarding: Some(OnboardingView {
-            words: ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"]
-                .map(String::from)
-                .to_vec(),
-        }),
+        onboarding: Some(
+            OnboardingView::with_secrets(
+                &[7u8; 10],
+                [9u8; 16],
+                [1, 4],
+                ("/tmp/sheet-a.html".into(), "/tmp/sheet-b.html".into()),
+            )
+            .unwrap(),
+        ),
         ..sample_sync_view()
     }
 }
@@ -1043,22 +1311,11 @@ mod tests {
             requester_id: "id-9".into(),
         });
         app.handle_key(press(KeyCode::Esc)).unwrap();
-        app.open_sync_onboarding(OnboardingView {
-            words: vec!["a".into(); 6],
-        });
-        app.handle_key(press(KeyCode::Esc)).unwrap();
-        assert_eq!(
-            app.mode,
-            AppMode::SyncOnboarding,
-            "Esc does not skip the words"
-        );
-        app.handle_key(press(KeyCode::Enter)).unwrap();
         assert_eq!(
             app.sync.intents,
             vec![
                 SyncIntent::SasMatches(true),
                 SyncIntent::Release { approve: false },
-                SyncIntent::OnboardingDone,
             ]
         );
         assert_eq!(app.mode, AppMode::Normal);
@@ -1192,8 +1449,8 @@ mod tests {
     fn without_a_worker_queued_requests_are_kept_not_dropped() {
         let mut app = configured_app();
         app.sync.worker = false;
-        app.sync.intents.push(SyncIntent::OnboardingDone);
+        app.sync.intents.push(SyncIntent::UnlockCode("x".into()));
         app.poll_sync();
-        assert_eq!(app.sync.intents, vec![SyncIntent::OnboardingDone]);
+        assert_eq!(app.sync.intents, vec![SyncIntent::UnlockCode("x".into())]);
     }
 }

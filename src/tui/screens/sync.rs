@@ -504,37 +504,106 @@ pub fn render_release_confirm(frame: &mut Frame, app: &App) {
 }
 
 pub fn render_onboarding(frame: &mut Frame, app: &App) {
+    use crate::app::sync::OnboardingStep;
     let Some(o) = app.sync.onboarding.as_ref() else {
         return;
     };
     let theme = app.theme();
     let text = theme.style(StyleRole::TextPrimary);
-    let body = vec![
-        Line::styled("Mode: Vault", theme.style(StyleRole::TextBright)),
-        Line::raw(""),
-        Line::styled(o.words.join(" "), theme.style(StyleRole::TextBright)),
-        Line::raw(""),
-        Line::styled(
-            "These six words are the credential store. There is no account to recover it from: lose them and the credentials are gone.",
-            text,
-        ),
-        Line::styled(
-            "The printed kit is a separate sheet. Do not photograph it: a photo in a phone gallery defeats what the sheet is for.",
-            text,
-        ),
-        Line::styled(
-            "Vault means a stolen machine reduces the protection to guessing the phrase. Moving to Quorum, where one device is not enough, needs a second holder.",
-            theme.style(StyleRole::TextMuted),
-        ),
-    ];
-    modal(
-        frame,
-        app,
-        "Set up sync",
-        76,
-        body,
-        "Enter: I have written the words down",
-    );
+    let muted = theme.style(StyleRole::TextMuted);
+    let bright = theme.style(StyleRole::TextBright);
+    let mut body = vec![Line::styled("Mode: Vault", bright), Line::raw("")];
+    let hint = match o.step {
+        // The one screen that shows the words.
+        OnboardingStep::Show => {
+            for (i, word) in o.words().iter().enumerate() {
+                body.push(Line::styled(format!("  {}  {word}", i + 1), bright));
+            }
+            body.extend([
+                Line::raw(""),
+                Line::styled(
+                    "These six words are the credential store. There is no account to recover it from: lose them and the credentials are gone.",
+                    text,
+                ),
+                Line::styled(
+                    "Write them on paper now. They are not shown again after this screen, and the printed kit is a separate sheet. Do not photograph it: a photo in a phone gallery defeats what the sheet is for.",
+                    text,
+                ),
+                Line::styled(
+                    "Vault means a stolen machine reduces the protection to guessing the phrase. Moving to Quorum, where one device is not enough, needs a second holder.",
+                    muted,
+                ),
+            ]);
+            "Enter: I have written the words down"
+        }
+        OnboardingStep::Retype => {
+            let n = o.quiz[o.quiz_done.min(1)] + 1;
+            body.extend([
+                Line::styled(
+                    "To be sure the paper is right, type two of the words from it.",
+                    text,
+                ),
+                Line::raw(""),
+                Line::styled(
+                    format!(
+                        "word {n} ({} of 2) \u{203a} {}\u{2588}",
+                        o.quiz_done + 1,
+                        o.typed
+                    ),
+                    theme.style(StyleRole::PickerQuery),
+                ),
+            ]);
+            if let Some(notice) = &o.notice {
+                body.push(Line::raw(""));
+                body.push(Line::styled(
+                    notice.clone(),
+                    theme.style(StyleRole::PopupError),
+                ));
+            }
+            "Enter check  Esc show the words again"
+        }
+        OnboardingStep::Kit => {
+            let field = |i: usize, label: &str, path: &str| {
+                let mark = if o.path_field == i { "\u{203a}" } else { " " };
+                let cursor = if o.path_field == i { "\u{2588}" } else { "" };
+                Line::styled(
+                    format!("{mark} {label}: {path}{cursor}"),
+                    if o.path_field == i { bright } else { text },
+                )
+            };
+            body.extend([
+                Line::styled(
+                    "The kit is two printable sheets, written as two files: the master phrase, and the ring secret as a QR code. Keep them apart. Print them, then delete the files.",
+                    text,
+                ),
+                Line::raw(""),
+                field(0, "phrase sheet", &o.phrase_path),
+                field(1, "ring secret sheet", &o.ring_path),
+            ]);
+            if let Some(notice) = &o.notice {
+                body.push(Line::raw(""));
+                body.push(Line::styled(
+                    notice.clone(),
+                    theme.style(StyleRole::PopupError),
+                ));
+            }
+            "Tab other field  Enter write both sheets"
+        }
+        OnboardingStep::Done => {
+            body.extend([
+                Line::styled("Both sheets are written (owner-only files):", text),
+                Line::styled(format!("  {}", o.phrase_path), bright),
+                Line::styled(format!("  {}", o.ring_path), bright),
+                Line::raw(""),
+                Line::styled(
+                    "Print them, keep them in two places, and delete the files. Do not photograph the sheets.",
+                    text,
+                ),
+            ]);
+            "Enter: finish"
+        }
+    };
+    modal(frame, app, "Set up sync", 76, body, hint);
 }
 
 #[cfg(test)]
@@ -633,7 +702,7 @@ mod tests {
             ),
             (
                 AppMode::SyncOnboarding,
-                &["Vault", "six words", "Do not photograph"][..],
+                &["Vault", "six words", "photograph"][..],
             ),
         ] {
             let app = app_in(mode);
@@ -733,6 +802,39 @@ mod tests {
         );
         assert!(text.contains("QR"), "{text}");
         assert!(text.contains("least"), "{text}");
+    }
+
+    #[test]
+    fn the_phrase_is_on_screen_in_the_show_step_only() {
+        use crate::app::sync::OnboardingStep;
+        let mut app = app_in(AppMode::SyncOnboarding);
+        let words: Vec<String> = app
+            .sync
+            .onboarding
+            .as_ref()
+            .unwrap()
+            .words()
+            .iter()
+            .map(|w| w.to_string())
+            .collect();
+        let shown = screen(&app, 110, 40);
+        for (i, w) in words.iter().enumerate() {
+            assert!(shown.contains(&format!("{}  {w}", i + 1)), "{w}: {shown}");
+        }
+        for (step, want) in [
+            (OnboardingStep::Retype, "type two of the words"),
+            (OnboardingStep::Kit, "phrase sheet"),
+            (OnboardingStep::Done, "Both sheets are written"),
+        ] {
+            app.sync.onboarding.as_mut().unwrap().step = step;
+            let s = screen(&app, 110, 40);
+            assert!(s.contains(want), "{step:?}: {s}");
+            for w in &words {
+                // The first word is also an ordinary English word in some
+                // sentences; the numbered list is what must be gone.
+                assert!(!s.contains(&format!("  {w}")), "{step:?} still shows {w}");
+            }
+        }
     }
 
     #[test]

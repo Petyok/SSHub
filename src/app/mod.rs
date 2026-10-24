@@ -17,6 +17,7 @@ mod identities;
 mod import;
 mod keygen;
 mod keys;
+pub mod kit;
 mod local_shell;
 mod log_browser;
 mod mouse;

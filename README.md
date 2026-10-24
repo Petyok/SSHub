@@ -566,6 +566,8 @@ Sync keeps hosts and credentials identical on your own devices, end to end encry
 
 A fork (a device that signed two different histories) takes over the whole screen and names the device; `Esc` closes the alert and the badge stays red. All five sync keys (`7`, `y`, `R`, `t` on the sync tab, `t` on the hosts tab) are rebindable in the keybind editor.
 
+Vault first run: the app issues a six-word master phrase (from the EFF list) and a ring secret, shows the words once, asks you to retype two of them, then writes the printable kit as two separate files at paths you choose: a phrase sheet and a ring secret sheet (the secret as a QR code and as text). Each carries the "do not photograph" warning, is created owner-only and never overwritten; the phrase is kept nowhere else on disk.
+
 ## Theming
 
 SSHub's colours live in TOML theme files you can copy, edit and switch at
