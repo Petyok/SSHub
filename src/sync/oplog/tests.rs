@@ -9,6 +9,10 @@ use crate::sync::limits::LAMPORT_JUMP_CAP;
 use rand_chacha::ChaCha8Rng;
 use rand_core::{RngCore, SeedableRng};
 
+thread_local! {
+    static CUR_SEED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
 pub(super) struct Peer {
     pub store: LauncherStore,
     pub id: DeviceIdentity,
@@ -43,7 +47,34 @@ impl Peer {
             for op in pending {
                 // An earlier approval may have voided this one (revoked author).
                 if let Err(e) = self.store.sync_resolve_pending(&op.hash(), true) {
-                    assert!(e.to_string().contains("not pending"), "{e}");
+                    if !e.to_string().contains("not pending") {
+                        let dump = self
+                            .store
+                            .with_conn(|c| {
+                                let mut out = String::new();
+                                for t in ["hosts", "host_groups", "identities"] {
+                                    let mut st = c.prepare(&format!("SELECT hex(uid), name FROM {t}"))?;
+                                    for r in st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
+                                        let (u, n) = r?;
+                                        out.push_str(&format!("{t} {} {n:?}\n", &u[..8]));
+                                    }
+                                }
+                                let mut st = c.prepare("SELECT kind, hex(uid), alive, name, name_lamport, name_device FROM sync_entities")?;
+                                for r in st.query_map([], |r| {
+                                    Ok(format!("cache {} {} alive={} {:?} {} {}", r.get::<_, String>(0)?, &r.get::<_, String>(1)?[..8], r.get::<_, i64>(2)?, r.get::<_, Option<String>>(3)?, r.get::<_, i64>(4)?, r.get::<_, String>(5)?))
+                                })? {
+                                    out.push_str(&r?);
+                                    out.push('\n');
+                                }
+                                Ok(out)
+                            })
+                            .unwrap();
+                        panic!(
+                            "seed {}: {e:#}\nfailing op: {:?}\n{dump}",
+                            CUR_SEED.with(|c| c.get()),
+                            op.body
+                        );
+                    }
                 }
             }
         }
@@ -1641,6 +1672,7 @@ fn gen_body(rng: &mut ChaCha8Rng) -> OpBody {
 }
 
 fn run_case(seed: u64, n_peers: usize, steps: usize) {
+    CUR_SEED.with(|c| c.set(seed));
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     let peers = ring(n_peers);
     let mut inbox: Vec<Vec<Op>> = vec![Vec::new(); n_peers];
