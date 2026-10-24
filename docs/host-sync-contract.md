@@ -20,8 +20,11 @@ Rust paths are under `crate::sync` (`src/sync/`), declared in `src/lib.rs` as
   and challenges, written by an explicit hand-ordered encoder (not by
   `#[derive(Serialize)]` field order), frozen by committed vectors under
   `tests/vectors/`. Form: deterministic compact JSON, fixed field order,
-  `prev_hash` as lowercase hex, other 32-byte values as number arrays exactly as
-  the vectors show, integers as plain JSON number literals (u64::MAX is
+  `prev_hash` and every fixed 32-byte value as lowercase hex strings, every
+  `Vec<u8>` as a base64 string (standard alphabet, padded; PoC B: number arrays
+  triple the size of the log; the PoC A rule vectors in `tests/vectors/op-rules/`
+  still show number arrays and are superseded by the final op vectors),
+  integers as plain JSON number literals (u64::MAX is
   `18446744073709551615`), strings as raw UTF-8 with only the mandatory JSON
   escapes. Rule for every consumer, the phone included: hash and verify over the
   exact bytes received, never re-serialise; a consumer that must parse numbers
@@ -56,7 +59,16 @@ Rust paths are under `crate::sync` (`src/sync/`), declared in `src/lib.rs` as
   `credentials::ensure_unlocked(&[SecretRef], &dyn Unlocker)`; TUI pre-flight
   before connect, sftp, broadcast and tunnel start; blocking CLI variant; hop
   secrets are staged to the askpass helper instead of re-read.
-- **ShareReshareConfirm (C7)** is part of the op set (section 3).
+- **Forward-secure resharing (C14, PoC B finding B6).** A reshare keeps the same
+  DEK, so old wrapped shares stay decryptable forever by a holder's long-lived
+  wrap key. Order of a revocation: remaining holders `rotate_wrap_keys` and
+  publish `WrapKeyRotate`; the reshare wraps to the new keys; after adoption
+  (every credential confirmed by a real unlock, or `WRAP_KEY_RETIRE_AFTER_SECS`)
+  each holder calls `retire_previous_wrap_keys`. `Vec<u8>` fields of ops are
+  base64 strings (standard alphabet, padded) in the canonical form. Residuals:
+  a key file copied before retirement, holders that cannot rotate (paper,
+  hardware key, a phone that has not contacted since), backups of deleted keys,
+  a lying contributor (denial of service). See `poc/results/B-reshare-cost.md`.
 - **Device key storage (C8).** `load_or_init_identity(&ProfilePaths, &dyn
   PasswordStore) -> Result<DeviceIdentity>`; file `<profile root>/sync/device.key`
   mode 0600, content encrypted with a random key held in the OS keyring, plain
@@ -133,6 +145,11 @@ impl DeviceIdentity {
     pub fn open_sealed(&self, ciphertext: &[u8]) -> anyhow::Result<Vec<u8>>;
     pub fn to_encrypted(&self, passphrase: &str) -> Vec<u8>;
     pub fn from_encrypted(blob: &[u8], passphrase: &str) -> anyhow::Result<Self>;
+    // Forward secrecy of wrapped shares (C14). Rotation returns the new public half to
+    // publish; the previous generation keeps unwrapping old blobs until retired.
+    pub fn rotate_wrap_keys(&mut self) -> DevicePublic;
+    pub fn retire_previous_wrap_keys(&mut self) -> usize;
+    pub fn wrap_key_generations(&self) -> usize;
 }
 pub fn verify(ed25519_pub: &[u8; 32], msg: &[u8], sig: &[u8; 64]) -> bool;
 
@@ -158,10 +175,15 @@ impl AlgTag {
 pub fn dek_generate() -> [u8; 32];
 pub fn dek_seal(dek: &[u8; 32], plaintext: &[u8]) -> Vec<u8>;
 pub fn dek_open(dek: &[u8; 32], ciphertext: &[u8]) -> anyhow::Result<Vec<u8>>;
+// Symmetric envelope with associated data (epoch share envelopes, C14): nonce(24) || ct.
+pub fn aead_seal(key: &[u8; 32], aad: &[u8], plaintext: &[u8]) -> Vec<u8>;
+pub fn aead_open(key: &[u8; 32], aad: &[u8], sealed: &[u8]) -> anyhow::Result<Vec<u8>>;
 
 // Shamir k-of-n over GF(256) on a 32-byte secret.
 pub struct Share { pub index: u8, pub bytes: Vec<u8> }
 pub fn shamir_split(secret: &[u8; 32], k: u8, n: u8) -> Vec<Share>;
+// Explicit x coordinates (holder indices need not be 1..=n after a revocation).
+pub fn shamir_split_at(secret: &[u8; 32], k: u8, indices: &[u8]) -> Vec<Share>;
 pub fn shamir_combine(shares: &[Share]) -> anyhow::Result<[u8; 32]>; // requester only, in memory
 
 // Resharing without reconstructing the secret. Reissue on holder add/revoke
@@ -251,8 +273,19 @@ pub enum OpBody {                              // canonical form: section 0 (C2)
     // requester is in the body as well as the header: a holder that checks only
     // the body must still see WHO asks.
     ShareRelease  { host_uid: HostUid, request_id: u64, requester: DeviceId },
-    ShareReshare  { epoch: u64, new_holders: Vec<DeviceId>, commitments: Vec<Vec<u8>> },
-    ShareReshareConfirm { reshare_hash: [u8; 32] },
+    // Forward-secure resharing (C14, PoC B). The contributor is the op's device.
+    // One per (contributor, recipient) per epoch: hybrid_wrap(to.pub, 32 byte session key).
+    ShareReshareSession { epoch: u64, to: DeviceId, sealed: Vec<u8> },
+    // One per holder per epoch: hybrid_wrap(own current pub, 32 byte storage key).
+    ShareStorageKey { epoch: u64, sealed: Vec<u8> },
+    // At most RESHARE_ITEMS_PER_OP items. Each sub-share is aead_seal(session key,
+    // aad = host_uid || epoch u64 BE || from index || to index, bytes).
+    ShareReshareBatch { epoch: u64, new_holders: Vec<DeviceId>, items: Vec<ReshareItem> },
+    // The holder's NEW share per credential: aead_seal(storage key,
+    // aad = host_uid || epoch u64 BE || own index, bytes). Replicates to every peer.
+    ShareReshareConfirmBatch { epoch: u64, items: Vec<ConfirmItem> },
+    // A device announces fresh wrap keys (self op, applied automatically). The signing key never rotates.
+    WrapKeyRotate { device_id: DeviceId, wrap_epoch: u64, x25519_pub: [u8; 32], mlkem_pub: Vec<u8> },
     CertIssue     { device_id: DeviceId, scope: CertScope, expiry: i64,
                     max_new_hosts_per_day: u32, epoch_lo: u64, epoch_hi: u64 },
     CertRevoke    { cert_id: [u8; 32] },
@@ -268,6 +301,8 @@ pub enum OpBody {                              // canonical form: section 0 (C2)
 }
 pub enum ThirdFactor { Paper, HardwareKey(DeviceId), EmailCode }
 pub struct WrappedShare { pub recipient: DeviceId, pub alg: AlgTag, pub sealed: Vec<u8> }
+pub struct ReshareItem { pub host_uid: HostUid, pub sub_shares: Vec<(DeviceId, Vec<u8>)>, pub commitments: Vec<Vec<u8>> }
+pub struct ConfirmItem { pub host_uid: HostUid, pub sealed_share: Vec<u8> }
 
 pub struct Op {
     pub device_id: DeviceId, pub seq: u64, pub lamport: u64,
@@ -303,6 +338,7 @@ pub struct DeviceRow {
     pub id: DeviceId, pub public: DevicePublic, pub name: String,
     pub role: DeviceRole, pub attendance: Attendance, pub status: DeviceStatus,
     pub exempt: bool, pub last_seen: i64, pub head_seq: u64,
+    pub wrap_epoch: u64,        // generation of the current wrap keys (C14)
 }
 pub enum DeviceStatus { Operational, Behind, Stale, Suspect, Compromised, Revoked }
 ```
@@ -482,6 +518,8 @@ offline; no real credentials, no real user directories.
 | `HELLO_TIMEOUT_SECS`, `ROUND_TIMEOUT_SECS`, `IDLE_TIMEOUT_SECS` | 10, 120, 30 | transport timeouts |
 | `PENDING_QUARANTINE_MAX_PER_DEVICE` | `10_000` | quarantine cap per device |
 | `TIMESTAMP_SKEW_GRACE_SECS` | `600` | informational skew grace (never used for ordering) |
+| `WRAP_KEY_RETIRE_AFTER_SECS` | `7 * 86_400` | previous wrap keys are dropped when all credentials are confirmed or after this long |
+| `RESHARE_ITEMS_PER_OP` | `200` | credentials per `ShareReshareBatch` or `ShareReshareConfirmBatch` op |
 | `SAS_WORDS`, `MASTER_PHRASE_WORDS`, `PAPER_WORDS` | 4, 6, 24 | word counts |
 
 The same table is appended to `docs/host-sync-design.md` as "Defaults chosen at

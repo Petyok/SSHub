@@ -153,28 +153,28 @@ pub fn hybrid_unwrap(id: &DeviceIdentity, blob: &[u8]) -> Result<Vec<u8>> {
     let header_end = nonce_at + 24;
     let ct = blob.get(header_end..).ok_or_else(trunc)?;
 
-    let x_ss = id.x_secret_bytes();
-    let x_ss = XSecret::from(*x_ss).diffie_hellman(&XPublic::from(eph_pub));
-    if !x_ss.was_contributory() {
-        bail!("wrapped blob with a low-order ephemeral key");
-    }
-    let kem_ss = Zeroizing::new(mlkem::decapsulate(id.mlkem_dk_bytes(), kem_ct)?);
-    let key = kdf(
-        x_ss.as_bytes(),
-        &kem_ss,
-        &eph_pub,
-        &id.public().x25519_pub,
-        kem_ct,
-    );
-    XChaCha20Poly1305::new((&*key).into())
-        .decrypt(
+    // try every wrapping generation the identity still holds, newest first
+    for keys in id.wrap_keys() {
+        let x_ss = XSecret::from(*keys.x_secret_bytes()).diffie_hellman(&XPublic::from(eph_pub));
+        if !x_ss.was_contributory() {
+            bail!("wrapped blob with a low-order ephemeral key");
+        }
+        let Ok(kem_ss) = mlkem::decapsulate(keys.mlkem_dk_bytes(), kem_ct) else {
+            continue;
+        };
+        let kem_ss = Zeroizing::new(kem_ss);
+        let key = kdf(x_ss.as_bytes(), &kem_ss, &eph_pub, &keys.x_public(), kem_ct);
+        if let Ok(plain) = XChaCha20Poly1305::new((&*key).into()).decrypt(
             (&nonce).into(),
             Payload {
                 msg: ct,
                 aad: &blob[..header_end],
             },
-        )
-        .map_err(|_| anyhow!("unwrap failed: not our blob, or tampered"))
+        ) {
+            return Ok(plain);
+        }
+    }
+    Err(anyhow!("unwrap failed: not our blob, or tampered"))
 }
 
 #[cfg(test)]
