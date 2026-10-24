@@ -1,0 +1,1093 @@
+//! Admin verbs of host sync: the Red ceremony, roles, factors, recovery, mode,
+//! exemption, bulk export, migration and the Vault kit. Every verb is a thin
+//! wrapper: the builders and the rules live in `crate::sync` (ceremony,
+//! recovery, revocation, modes, cred_ops, export); this file parses arguments,
+//! asks for secrets without echo, appends the op and prints where the ceremony
+//! stands.
+//!
+//! Headless like `sync_cmd`: dispatched from `main.rs` before `CliContext`.
+
+use std::path::PathBuf;
+use std::time::Duration;
+
+use anyhow::{anyhow, bail, ensure, Context, Result};
+use serde_json::{json, Value};
+use zeroize::Zeroizing;
+
+use crate::credentials::PasswordStore;
+use crate::profile::ProfilePaths;
+use crate::store::LauncherStore;
+use crate::sync::ceremony::{self, RedProof, RedStatus};
+use crate::sync::crypto::{paper_derive, DeviceIdentity, PaperDomain};
+use crate::sync::identity_store::{load_or_init_identity, save_identity};
+use crate::sync::oplog::{
+    CredMode, DeviceId, DeviceRole, DeviceRow, Op, OpBody, OpTier, ThirdFactor,
+};
+
+use super::help;
+
+pub const COMMANDS: [&str; 11] = [
+    "sync-revoke",
+    "sync-role",
+    "sync-approve",
+    "sync-factor",
+    "sync-factor-register",
+    "sync-recovery",
+    "sync-mode",
+    "sync-exemption",
+    "sync-export",
+    "sync-migrate",
+    "sync-import-kit",
+];
+
+const EMPTY_RING: &str = "No sync ring on this profile yet.";
+
+pub fn is_admin_command(cmd: &str) -> bool {
+    COMMANDS.contains(&cmd)
+}
+
+// ------------------------------------------------------------------ parsing
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FactorKind {
+    Paper,
+    Email,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecoveryCmd {
+    Start { paper: bool },
+    Approve(String),
+    Cancel { op: String, factor: FactorKind },
+    Status,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Cmd {
+    Revoke(String),
+    Role(String, DeviceRole),
+    Approve(String),
+    Factor(String, FactorKind),
+    FactorRegister(FactorKind, Option<String>),
+    Recovery(RecoveryCmd),
+    Mode(CredMode, Option<String>),
+    Exemption {
+        on: bool,
+        device: String,
+    },
+    Export {
+        window: u32,
+        out: PathBuf,
+        wait: u64,
+    },
+    Migrate {
+        remove_local: bool,
+    },
+    ImportKit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Opts {
+    pub json: bool,
+}
+
+/// Arguments after the global profile flags.
+pub fn parse(cmd: &str, args: &[String]) -> std::result::Result<(Cmd, Opts), String> {
+    let mut opts = Opts::default();
+    let mut pos: Vec<&str> = Vec::new();
+    let (mut paper, mut email_code, mut remove_local) = (false, false, false);
+    let (mut window, mut out, mut wait, mut sender, mut factor, mut cosigner) =
+        (None, None, 0u64, None, None, None);
+    let mut i = 0;
+    let value = |i: usize, flag: &str| -> std::result::Result<String, String> {
+        args.get(i + 1)
+            .filter(|v| !v.starts_with("--"))
+            .cloned()
+            .ok_or_else(|| format!("{flag} requires a value"))
+    };
+    while i < args.len() {
+        let a = args[i].as_str();
+        match a {
+            "--format" => {
+                opts.json = match value(i, a)?.as_str() {
+                    "plain" => false,
+                    "json" => true,
+                    other => return Err(format!("unknown format '{other}'")),
+                };
+                i += 2;
+            }
+            "--paper" => {
+                paper = true;
+                i += 1;
+            }
+            "--email-code" => {
+                email_code = true;
+                i += 1;
+            }
+            "--remove-local" => {
+                remove_local = true;
+                i += 1;
+            }
+            "--window" => {
+                window = Some(
+                    value(i, a)?
+                        .parse::<u32>()
+                        .map_err(|_| "--window takes a number of seconds".to_string())?,
+                );
+                i += 2;
+            }
+            "--out" => {
+                out = Some(PathBuf::from(value(i, a)?));
+                i += 2;
+            }
+            "--wait" => {
+                wait = value(i, a)?
+                    .parse::<u64>()
+                    .map_err(|_| "--wait takes a number of seconds".to_string())?;
+                i += 2;
+            }
+            "--sender" => {
+                sender = Some(value(i, a)?);
+                i += 2;
+            }
+            "--cosigner" => {
+                cosigner = Some(value(i, a)?);
+                i += 2;
+            }
+            "--factor" => {
+                factor = Some(match value(i, a)?.as_str() {
+                    "paper" => FactorKind::Paper,
+                    "email" => FactorKind::Email,
+                    other => return Err(format!("unknown factor '{other}' (paper or email)")),
+                });
+                i += 2;
+            }
+            _ if a.starts_with('-') => return Err(format!("unknown option '{a}' for {cmd}")),
+            _ => {
+                pos.push(a);
+                i += 1;
+            }
+        }
+    }
+    let exact = |n: usize, what: &str| -> std::result::Result<(), String> {
+        if pos.len() == n {
+            Ok(())
+        } else {
+            Err(format!("{cmd} takes {what}"))
+        }
+    };
+    let only = |flags: &[(&str, bool)]| -> std::result::Result<(), String> {
+        for (name, set) in flags {
+            if *set {
+                return Err(format!("{name} does not apply to {cmd}"));
+            }
+        }
+        Ok(())
+    };
+    let cmd_val = match cmd {
+        "sync-revoke" => {
+            exact(1, "one device")?;
+            Cmd::Revoke(pos[0].into())
+        }
+        "sync-role" => {
+            exact(2, "a device and holder|mirror")?;
+            let role = match pos[1] {
+                "holder" => DeviceRole::Holder,
+                "mirror" => DeviceRole::Mirror,
+                other => return Err(format!("unknown role '{other}' (holder or mirror)")),
+            };
+            Cmd::Role(pos[0].into(), role)
+        }
+        "sync-approve" => {
+            exact(1, "one op id")?;
+            Cmd::Approve(pos[0].into())
+        }
+        "sync-factor" => {
+            exact(1, "one op id")?;
+            let kind = match (paper, email_code) {
+                (true, false) => FactorKind::Paper,
+                (false, true) => FactorKind::Email,
+                _ => return Err("give exactly one of --paper and --email-code".into()),
+            };
+            Cmd::Factor(pos[0].into(), kind)
+        }
+        "sync-factor-register" => {
+            exact(1, "paper or email")?;
+            let kind = match pos[0] {
+                "paper" => FactorKind::Paper,
+                "email" => FactorKind::Email,
+                other => return Err(format!("unknown factor '{other}' (paper or email)")),
+            };
+            Cmd::FactorRegister(kind, sender)
+        }
+        "sync-recovery" => {
+            let sub = *pos
+                .first()
+                .ok_or("sync-recovery needs start, approve, cancel or status")?;
+            let rc = match sub {
+                "start" => {
+                    exact(1, "no argument after start")?;
+                    RecoveryCmd::Start { paper }
+                }
+                "approve" => {
+                    exact(2, "an op id after approve")?;
+                    RecoveryCmd::Approve(pos[1].into())
+                }
+                "cancel" => {
+                    exact(2, "an op id after cancel")?;
+                    RecoveryCmd::Cancel {
+                        op: pos[1].into(),
+                        factor: factor.ok_or("cancel needs --factor paper|email")?,
+                    }
+                }
+                "status" => {
+                    exact(1, "no argument after status")?;
+                    RecoveryCmd::Status
+                }
+                other => return Err(format!("unknown recovery step '{other}'")),
+            };
+            Cmd::Recovery(rc)
+        }
+        "sync-mode" => {
+            exact(1, "vault or quorum")?;
+            let to = match pos[0] {
+                "vault" => CredMode::Vault,
+                "quorum" => CredMode::Quorum,
+                other => return Err(format!("unknown mode '{other}' (vault or quorum)")),
+            };
+            Cmd::Mode(to, cosigner)
+        }
+        "sync-exemption" => {
+            exact(2, "on|off and a device")?;
+            let on = match pos[0] {
+                "on" => true,
+                "off" => false,
+                other => return Err(format!("unknown state '{other}' (on or off)")),
+            };
+            Cmd::Exemption {
+                on,
+                device: pos[1].into(),
+            }
+        }
+        "sync-export" => {
+            exact(0, "no positional argument")?;
+            let window = window.ok_or("sync-export needs --window <seconds>")?;
+            if window == 0 || window > 3600 {
+                return Err("--window is 1 to 3600 seconds".into());
+            }
+            Cmd::Export {
+                window,
+                out: out.clone().ok_or("sync-export needs --out <path>")?,
+                wait,
+            }
+        }
+        "sync-migrate" => {
+            exact(0, "no positional argument")?;
+            Cmd::Migrate { remove_local }
+        }
+        "sync-import-kit" => {
+            exact(0, "no positional argument")?;
+            Cmd::ImportKit
+        }
+        other => return Err(format!("unknown sync admin command {other}")),
+    };
+    // Flags that belong to other verbs are mistakes, not no-ops.
+    let uses_paper = matches!(
+        cmd_val,
+        Cmd::Recovery(RecoveryCmd::Start { .. }) | Cmd::Factor(..)
+    );
+    only(&[
+        ("--paper", paper && !uses_paper),
+        (
+            "--email-code",
+            email_code && !matches!(cmd_val, Cmd::Factor(..)),
+        ),
+        (
+            "--remove-local",
+            remove_local && !matches!(cmd_val, Cmd::Migrate { .. }),
+        ),
+        (
+            "--window",
+            window.is_some() && !matches!(cmd_val, Cmd::Export { .. }),
+        ),
+        (
+            "--out",
+            out.is_some() && !matches!(cmd_val, Cmd::Export { .. }),
+        ),
+    ])?;
+    Ok((cmd_val, opts))
+}
+
+// --------------------------------------------------------------------- entry
+
+/// Run one of the admin verbs; returns the process exit code.
+pub fn run(
+    cmd: &str,
+    args: &[String],
+    resolve: impl FnOnce() -> Result<ProfilePaths>,
+) -> Result<i32> {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        help::print_command_help(cmd);
+        return Ok(0);
+    }
+    let (parsed, opts) = match parse(cmd, args) {
+        Ok(p) => p,
+        Err(msg) => {
+            eprintln!("sshub: {msg}");
+            eprintln!("       run `sshub {cmd} --help` for usage");
+            return Ok(2);
+        }
+    };
+    let paths = match resolve() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("sshub: {e:#}");
+            return Ok(1);
+        }
+    };
+    Ok(match execute(&paths, parsed, opts) {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("sshub: {cmd}: {e:#}");
+            1
+        }
+    })
+}
+
+fn execute(paths: &ProfilePaths, cmd: Cmd, opts: Opts) -> Result<i32> {
+    let store = LauncherStore::open(paths.launcher_db()).context("open the launcher database")?;
+    let secrets = crate::credentials::open_for_profile(paths);
+    // Only the kit import may start from nothing; the others never create a device key.
+    if !matches!(cmd, Cmd::ImportKit) && store.sync_devices()?.is_empty() {
+        bail!("{EMPTY_RING}");
+    }
+    let mut id = load_or_init_identity(paths, secrets.as_ref())?;
+    let now = super::output::now_ts();
+    match cmd {
+        Cmd::Revoke(d) => {
+            let r = revoke(paths, &store, &mut id, secrets.as_ref(), &d, now)?;
+            report(opts, &r)
+        }
+        Cmd::Role(d, to) => report(opts, &role(&store, &id, &d, to, now)?),
+        Cmd::Approve(op) => report(opts, &approve(&store, &id, &op, now)?),
+        Cmd::Factor(op, kind) => {
+            let secret = match kind {
+                FactorKind::Paper => super::unlock::prompt_secret("Paper phrase (24 words): "),
+                FactorKind::Email => super::unlock::prompt_secret("Emailed code: "),
+            }
+            .context("no secret entered")?;
+            report(opts, &factor(&store, &id, &op, kind, &secret, now)?)
+        }
+        Cmd::FactorRegister(kind, sender) => {
+            let phrase = match kind {
+                FactorKind::Paper => Some(
+                    super::unlock::prompt_secret("Paper phrase (24 words): ")
+                        .context("no phrase entered")?,
+                ),
+                FactorKind::Email => None,
+            };
+            let r = factor_register(
+                &store,
+                &id,
+                kind,
+                phrase.as_deref().map(String::as_str),
+                sender.as_deref(),
+                now,
+            )?;
+            report(opts, &r)
+        }
+        Cmd::Recovery(rc) => recovery(&store, &id, rc, opts, now),
+        Cmd::Mode(to, cosigner) => {
+            let secrets_in = |label: &str| super::unlock::prompt_secret(label);
+            let phrase = secrets_in("Master phrase (six words): ").context("no phrase entered")?;
+            let ring = secrets
+                .get(crate::sync::runtime::RING_SECRET_KEY)?
+                .map(|t| crate::sync::quorum::parse_ring_secret(&t))
+                .transpose()?
+                .context("this profile has no ring secret; import the Vault kit first")?;
+            report(
+                opts,
+                &mode(&store, &id, to, cosigner.as_deref(), &phrase, &ring, now)?,
+            )
+        }
+        Cmd::Exemption { on, device } => {
+            if on {
+                bail!("enabling an exemption needs the slot builder (exemption::enable_body), which is not in the core yet");
+            }
+            report(opts, &exemption_off(&store, &id, &device, now)?)
+        }
+        Cmd::Export { window, out, wait } => export(paths, window, &out, wait, opts),
+        Cmd::Migrate { remove_local } => {
+            let local = crate::credentials::open_ungated_for_profile(paths);
+            let r = migrate(&store, &id, local.as_ref(), remove_local)?;
+            report(opts, &r)
+        }
+        Cmd::ImportKit => {
+            let kit = super::unlock::prompt_secret("Ring kit (sshub:ring:1:...): ")
+                .context("no kit entered")?;
+            let phrase = super::unlock::prompt_secret("Master phrase (six words): ")
+                .context("no phrase entered")?;
+            let local = crate::credentials::open_ungated_for_profile(paths);
+            let r = import_kit(
+                &store,
+                local.as_ref(),
+                &kit,
+                &phrase,
+                crate::sync::crypto::ARGON2_MASTER,
+            )?;
+            report(opts, &r)
+        }
+    }
+}
+
+// ------------------------------------------------------------------ reports
+
+/// What a verb did: lines for people, the same facts as JSON.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Report {
+    pub lines: Vec<String>,
+    pub json: Value,
+}
+
+fn report(opts: Opts, r: &Report) -> Result<i32> {
+    if opts.json {
+        println!("{}", serde_json::to_string_pretty(&r.json)?);
+    } else {
+        for l in &r.lines {
+            println!("{l}");
+        }
+    }
+    Ok(0)
+}
+
+fn short(h: &[u8; 32]) -> String {
+    h[..8].iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn proof_name(p: &RedProof) -> String {
+    match p {
+        RedProof::Phone => "phone".into(),
+        RedProof::SecondDevice => "second device".into(),
+        RedProof::Factor(None) => "third factor".into(),
+        RedProof::Factor(Some(ThirdFactor::Paper)) => "paper".into(),
+        RedProof::Factor(Some(ThirdFactor::EmailCode)) => "emailed code".into(),
+    }
+}
+
+/// The ceremony lines of a Red op: what is there and what is still missing.
+fn ceremony_lines(st: &RedStatus) -> Vec<String> {
+    let names = |v: &[RedProof]| v.iter().map(proof_name).collect::<Vec<_>>().join(", ");
+    let mut out = vec![format!(
+        "ceremony: have [{}], missing [{}]{}",
+        names(&st.have),
+        names(&st.missing),
+        if st.complete { " (complete)" } else { "" }
+    )];
+    if st.expired {
+        out.push("the ceremony expired: propose the change again".into());
+    }
+    if let Some(why) = &st.blocked {
+        out.push(format!("blocked: {why}"));
+    }
+    if st.single_machine_ring {
+        out.push("single machine ring: the paper phrase is required".into());
+    }
+    out
+}
+
+fn status_json(st: &RedStatus) -> Value {
+    json!({
+        "have": st.have.iter().map(proof_name).collect::<Vec<_>>(),
+        "missing": st.missing.iter().map(proof_name).collect::<Vec<_>>(),
+        "complete": st.complete,
+        "expired": st.expired,
+        "blocked": st.blocked,
+    })
+}
+
+/// Report for an op we just appended (or looked up): its tier and, for Red
+/// ops, where the ceremony stands.
+fn op_report(store: &LauncherStore, op: &Op, headline: String, now: i64) -> Result<Report> {
+    let mut lines = vec![headline];
+    let mut json = json!({ "op": hex(&op.hash()), "tier": format!("{:?}", op.tier()) });
+    if ceremony::is_gated(store, op)? {
+        let st = ceremony::red_status(store, op, now)?;
+        lines.extend(ceremony_lines(&st));
+        json["ceremony"] = status_json(&st);
+    } else if op.tier() == OpTier::Red {
+        lines.push("Red change without a ceremony gate here".into());
+    } else {
+        lines.push("peers apply this change after their review".into());
+    }
+    Ok(Report { lines, json })
+}
+
+fn hex(h: &[u8; 32]) -> String {
+    h.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+// ------------------------------------------------------------------ lookups
+
+pub(crate) fn find_device(store: &LauncherStore, spec: &str) -> Result<DeviceRow> {
+    let all = store.sync_devices()?;
+    let hits: Vec<&DeviceRow> = all
+        .iter()
+        .filter(|d| d.id.to_string().starts_with(spec) || d.name == spec)
+        .collect();
+    match hits.as_slice() {
+        [one] => Ok((*one).clone()),
+        [] => bail!("no device matches '{spec}' (see `sshub sync-status`)"),
+        _ => bail!("'{spec}' matches several devices; give more of the id"),
+    }
+}
+
+/// An op of the log by hash prefix (at least 6 hex digits).
+pub(crate) fn find_op(store: &LauncherStore, prefix: &str) -> Result<Op> {
+    ensure!(
+        prefix.len() >= 6 && prefix.bytes().all(|b| b.is_ascii_hexdigit()),
+        "an op id is at least 6 hex digits (see `sshub sync-review`)"
+    );
+    let want = prefix.to_ascii_lowercase();
+    store.with_conn(|conn| {
+        let mut stmt =
+            conn.prepare("SELECT op_hash FROM sync_ops WHERE lower(hex(op_hash)) LIKE ?1 || '%'")?;
+        let hashes: Vec<Vec<u8>> = stmt
+            .query_map([&want], |r| r.get(0))?
+            .collect::<std::result::Result<_, _>>()?;
+        match hashes.as_slice() {
+            [h] => {
+                let h: [u8; 32] = h
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| anyhow!("stored hash"))?;
+                Ok(crate::sync::oplog::merge::load_op(conn, &h)?
+                    .context("op vanished")?
+                    .op)
+            }
+            [] => bail!("no op matches '{prefix}'"),
+            _ => bail!("'{prefix}' matches several ops; give more digits"),
+        }
+    })
+}
+
+// -------------------------------------------------------------------- verbs
+
+pub(crate) fn role(
+    store: &LauncherStore,
+    id: &DeviceIdentity,
+    device: &str,
+    to: DeviceRole,
+    now: i64,
+) -> Result<Report> {
+    let row = find_device(store, device)?;
+    ensure!(row.role != to, "{} is already a {to:?}", short_id(&row.id));
+    let op = store.sync_append_local(
+        id,
+        OpBody::DeviceRoleChange {
+            device_id: row.id.clone(),
+            to,
+        },
+    )?;
+    op_report(
+        store,
+        &op,
+        format!(
+            "proposed: {} becomes {to:?} (op {})",
+            short_id(&row.id),
+            short(&op.hash())
+        ),
+        now,
+    )
+}
+
+fn short_id(id: &DeviceId) -> String {
+    id.to_string().chars().take(8).collect()
+}
+
+pub(crate) fn revoke(
+    paths: &ProfilePaths,
+    store: &LauncherStore,
+    id: &mut DeviceIdentity,
+    secrets: &dyn PasswordStore,
+    device: &str,
+    now: i64,
+) -> Result<Report> {
+    let row = find_device(store, device)?;
+    if row.role == DeviceRole::Holder {
+        crate::sync::revocation::check_revocable(store, &row.id, now)?;
+    }
+    let op = store.sync_append_local(
+        id,
+        OpBody::DeviceRevoke {
+            device_id: row.id.clone(),
+        },
+    )?;
+    let mut r = op_report(
+        store,
+        &op,
+        format!(
+            "proposed: revoke {} (op {})",
+            short_id(&row.id),
+            short(&op.hash())
+        ),
+        now,
+    )?;
+    // The cryptographic follow-up (rotate, reshare, adopt, retire) needs no
+    // prompt; every remaining holder runs it after each round.
+    let steps = drive_revocation(paths, store, id, secrets, now)?;
+    for s in &steps {
+        r.lines.push(format!("revocation step: {s}"));
+    }
+    r.json["steps"] = json!(steps);
+    Ok(r)
+}
+
+/// Do every revocation step this device owes right now.
+pub(crate) fn drive_revocation(
+    paths: &ProfilePaths,
+    store: &LauncherStore,
+    id: &mut DeviceIdentity,
+    secrets: &dyn PasswordStore,
+    now: i64,
+) -> Result<Vec<String>> {
+    let mut done = Vec::new();
+    for _ in 0..8 {
+        let actions = crate::sync::revocation::next_actions(store, id, now)?;
+        let Some(action) = actions.first() else { break };
+        let bodies = crate::sync::revocation::perform(store, id, action)?;
+        // The changed key file first, then the announcement.
+        save_identity(paths, secrets, id)?;
+        for b in bodies {
+            store.sync_append_local(id, b)?;
+        }
+        done.push(format!("{action:?}"));
+    }
+    Ok(done)
+}
+
+pub(crate) fn approve(
+    store: &LauncherStore,
+    id: &DeviceIdentity,
+    op_id: &str,
+    now: i64,
+) -> Result<Report> {
+    let op = find_op(store, op_id)?;
+    ceremony::require_gated(store, &op)?;
+    ensure!(
+        op.device_id != id.public().device_id(),
+        "propose from this device, approve from another one"
+    );
+    let vote = store.sync_append_local(id, ceremony::red_approve_body(&op))?;
+    ceremony::settle_red_ops(store, now)?;
+    op_report(
+        store,
+        &op,
+        format!(
+            "approved op {} as {} (vote {})",
+            short(&op.hash()),
+            short_id(&id.public().device_id()),
+            short(&vote.hash())
+        ),
+        now,
+    )
+}
+
+pub(crate) fn factor(
+    store: &LauncherStore,
+    id: &DeviceIdentity,
+    op_id: &str,
+    kind: FactorKind,
+    secret: &str,
+    now: i64,
+) -> Result<Report> {
+    let op = find_op(store, op_id)?;
+    ceremony::require_gated(store, &op)?;
+    let body = match kind {
+        FactorKind::Paper => {
+            let recover = paper_derive(secret, PaperDomain::Recover).context("the paper phrase")?;
+            ceremony::red_factor_paper(&recover, &op)
+        }
+        FactorKind::Email => ceremony::red_factor_email(store, secret.trim(), &op)?,
+    };
+    let sig = store.sync_append_local(id, body)?;
+    ceremony::settle_red_ops(store, now)?;
+    op_report(
+        store,
+        &op,
+        format!(
+            "third factor added to op {} (record {})",
+            short(&op.hash()),
+            short(&sig.hash())
+        ),
+        now,
+    )
+}
+
+pub(crate) fn factor_register(
+    store: &LauncherStore,
+    id: &DeviceIdentity,
+    kind: FactorKind,
+    phrase: Option<&str>,
+    sender: Option<&str>,
+    now: i64,
+) -> Result<Report> {
+    let (body, note) = match kind {
+        FactorKind::Paper => {
+            let phrase = phrase.context("the paper phrase is required")?;
+            (
+                ceremony::factor_register_paper(phrase).context("the paper phrase")?,
+                None,
+            )
+        }
+        FactorKind::Email => {
+            let sender_id: DeviceId = match sender {
+                Some(s) => find_device(store, s)?.id,
+                None => id.public().device_id(),
+            };
+            let (body, code) = ceremony::factor_register_email(&sender_id)?;
+            ceremony::remember_email_code(store, &code)?;
+            (body, Some(code))
+        }
+    };
+    let op = store.sync_append_local(id, body)?;
+    let mut r = op_report(
+        store,
+        &op,
+        format!("registered the {kind:?} factor (op {})", short(&op.hash())),
+        now,
+    )?;
+    if let Some(code) = note {
+        // Shown once: it is the factor itself.
+        r.lines.push(format!(
+            "email factor code (write it down, it is not shown again): {code}"
+        ));
+        r.json["code"] = json!(code);
+    }
+    Ok(r)
+}
+
+fn recovery(
+    store: &LauncherStore,
+    id: &DeviceIdentity,
+    rc: RecoveryCmd,
+    opts: Opts,
+    now: i64,
+) -> Result<i32> {
+    use crate::sync::recovery as rec;
+    match rc {
+        RecoveryCmd::Start { paper } => {
+            let (recover, third) = if paper {
+                let phrase = super::unlock::prompt_secret("Paper phrase (24 words): ")
+                    .context("no phrase entered")?;
+                (
+                    Some(paper_derive(&phrase, PaperDomain::Recover)?),
+                    ThirdFactor::EmailCode,
+                )
+            } else {
+                (None, ThirdFactor::Paper)
+            };
+            let body = rec::start_body(store, id, now, recover.as_ref(), third)?;
+            let op = store.sync_append_local(id, body)?;
+            report(opts, &Report {
+                lines: vec![format!("recovery started (op {}); the timelock runs once a third party has seen it", short(&op.hash()))],
+                json: json!({ "op": hex(&op.hash()) }),
+            })
+        }
+        RecoveryCmd::Approve(op_id) => {
+            let op = find_op(store, &op_id)?;
+            let v = store.sync_append_local(id, rec::approve_body(&op)?)?;
+            report(
+                opts,
+                &Report {
+                    lines: vec![format!(
+                        "approved recovery {} (vote {})",
+                        short(&op.hash()),
+                        short(&v.hash())
+                    )],
+                    json: json!({ "op": hex(&op.hash()), "vote": hex(&v.hash()) }),
+                },
+            )
+        }
+        RecoveryCmd::Cancel { op, factor } => {
+            let target = find_op(store, &op)?;
+            let f = match factor {
+                FactorKind::Paper => ThirdFactor::Paper,
+                FactorKind::Email => ThirdFactor::EmailCode,
+            };
+            let c = store.sync_append_local(id, rec::cancel_body(&target, false, Some(f))?)?;
+            report(
+                opts,
+                &Report {
+                    lines: vec![format!(
+                        "cancelled recovery {} (op {})",
+                        short(&target.hash()),
+                        short(&c.hash())
+                    )],
+                    json: json!({ "op": hex(&target.hash()), "cancel": hex(&c.hash()) }),
+                },
+            )
+        }
+        RecoveryCmd::Status => {
+            let ops = crate::sync::quorum::ops_of(store, "PhoneReenroll", None)?;
+            let mut lines = Vec::new();
+            let mut js = Vec::new();
+            for op in &ops {
+                let verdict = rec::validate_phone_reenroll(store, op, now)
+                    .map(|v| format!("{v:?}"))
+                    .unwrap_or_else(|e| format!("invalid: {e:#}"));
+                lines.push(format!("recovery {}: {verdict}", short(&op.hash())));
+                js.push(json!({ "op": hex(&op.hash()), "verdict": verdict }));
+            }
+            if lines.is_empty() {
+                lines.push("no recovery in the log".into());
+            }
+            report(
+                opts,
+                &Report {
+                    lines,
+                    json: json!({ "recoveries": js }),
+                },
+            )
+        }
+    }
+}
+
+pub(crate) fn mode(
+    store: &LauncherStore,
+    id: &DeviceIdentity,
+    to: CredMode,
+    cosigner: Option<&str>,
+    phrase: &str,
+    ring: &[u8; 16],
+    now: i64,
+) -> Result<Report> {
+    let cosigner = cosigner
+        .map(|c| find_device(store, c).map(|d| d.id))
+        .transpose()?;
+    ensure!(
+        store.sync_cred_mode()? == CredMode::Vault,
+        "from the command line only Vault to Quorum can open the credentials (the other direction needs shares from other holders: use the TUI)"
+    );
+    let open = |host: &crate::sync::oplog::HostUid| -> Result<Zeroizing<Vec<u8>>> {
+        let (ct, _) = store
+            .sync_cred_ciphertext(host)?
+            .context("credential has no ciphertext")?;
+        let dek = crate::sync::quorum::vault_open_dek(store, host, phrase, ring)?;
+        Ok(Zeroizing::new(crate::sync::crypto::dek_open(&dek, &ct)?))
+    };
+    let bodies = crate::sync::modes::mode_change_plan(store, &id.public(), to, cosigner, &open)?;
+    let n = bodies.len().saturating_sub(1);
+    let mut first = None;
+    for b in bodies {
+        let op = store.sync_append_local(id, b)?;
+        first.get_or_insert(op);
+    }
+    let op = first.context("empty mode plan")?;
+    op_report(
+        store,
+        &op,
+        format!(
+            "mode change to {to:?} proposed with {n} credentials re-wrapped (op {})",
+            short(&op.hash())
+        ),
+        now,
+    )
+}
+
+pub(crate) fn exemption_off(
+    store: &LauncherStore,
+    id: &DeviceIdentity,
+    device: &str,
+    now: i64,
+) -> Result<Report> {
+    let row = find_device(store, device)?;
+    ensure!(row.exempt, "{} has no exemption", short_id(&row.id));
+    let op = store.sync_append_local(
+        id,
+        OpBody::ExemptionSet {
+            device_id: row.id.clone(),
+            slot: None,
+        },
+    )?;
+    op_report(
+        store,
+        &op,
+        format!(
+            "exemption of {} switched off (op {})",
+            short_id(&row.id),
+            short(&op.hash())
+        ),
+        now,
+    )
+}
+
+/// Propose the export, wait (up to `wait` seconds) until its ceremony is
+/// complete, then export inside the window. Returns the report.
+pub(crate) fn export_flow(
+    store: &LauncherStore,
+    id: &DeviceIdentity,
+    window: u32,
+    out: &std::path::Path,
+    wait: u64,
+    clock: &dyn Fn() -> i64,
+    unlock: &mut dyn FnMut(&crate::sync::oplog::HostUid) -> Result<Option<String>>,
+) -> Result<Report> {
+    let me = id.public().device_id();
+    let op = store.sync_append_local(
+        id,
+        OpBody::BulkExport {
+            requester: me.clone(),
+            window_secs: window,
+        },
+    )?;
+    let started = clock();
+    // Our own proposal is applied locally at once; the ceremony is what lets the
+    // OTHER holders release shares, so wait for it before opening anything.
+    loop {
+        ceremony::settle_red_ops(store, clock())?;
+        let st = ceremony::red_status(store, &op, clock())?;
+        if let Some(why) = st.blocked {
+            bail!("the export is blocked: {why}");
+        }
+        if st.expired {
+            bail!("the ceremony expired");
+        }
+        if st.complete {
+            break;
+        }
+        if (clock() - started) as u64 >= wait {
+            let lines = ceremony_lines(&st);
+            bail!(
+                "the export ceremony is not complete (op {}): {}; approve it from the other devices, then run the command again with --wait",
+                short(&op.hash()),
+                lines.join("; ")
+            );
+        }
+        std::thread::sleep(Duration::from_secs(2));
+    }
+    let r = crate::sync::export::export_all(store, &me, clock, unlock, out)?;
+    Ok(Report {
+        lines: vec![format!(
+            "exported {} credentials ({} without a stored secret) to {}",
+            r.written,
+            r.skipped,
+            out.display()
+        )],
+        json: json!({ "op": hex(&op.hash()), "written": r.written, "skipped": r.skipped, "out": out.display().to_string() }),
+    })
+}
+
+fn export(
+    paths: &ProfilePaths,
+    window: u32,
+    out: &std::path::Path,
+    wait: u64,
+    opts: Opts,
+) -> Result<i32> {
+    let ctx = super::context::CliContext::bootstrap_with(paths.clone())?;
+    let local = crate::credentials::open_ungated_for_profile(paths);
+    let id = load_or_init_identity(paths, local.as_ref())?;
+    let mut unlock = |uid: &crate::sync::oplog::HostUid| -> Result<Option<String>> {
+        let Some(host) = ctx
+            .store
+            .list_hosts()?
+            .into_iter()
+            .find(|h| ctx.store.host_uid(h.id).ok().flatten().as_ref() == Some(uid))
+        else {
+            return Ok(None);
+        };
+        ctx.ensure_unlocked_for(&host.name, Some(&host), None, None)?;
+        ctx.password_store()
+            .get(&crate::credentials::host_key(host.id))
+    };
+    let r = export_flow(
+        &ctx.store,
+        &id,
+        window,
+        out,
+        wait,
+        &super::output::now_ts,
+        &mut unlock,
+    )?;
+    report(opts, &r)
+}
+
+pub(crate) fn migrate(
+    store: &LauncherStore,
+    id: &DeviceIdentity,
+    local: &dyn PasswordStore,
+    remove_local: bool,
+) -> Result<Report> {
+    ensure!(!store.sync_devices()?.is_empty(), "{EMPTY_RING}");
+    let rep = crate::sync::cred_ops::migrate_local_secrets(store, id, local)?;
+    let mut lines = vec![format!(
+        "{} secrets written as replicated credentials, {} skipped (nothing to read)",
+        rep.migrated.len(),
+        rep.skipped.len()
+    )];
+    if remove_local {
+        crate::sync::cred_ops::remove_local_copies(local, &rep)?;
+        lines.push("local copies removed".into());
+    } else {
+        lines.push(
+            "local copies kept; run again with --remove-local once the replicated copies open"
+                .into(),
+        );
+    }
+    Ok(Report {
+        json: json!({ "migrated": rep.migrated.len(), "skipped": rep.skipped.len(), "removed_local": remove_local }),
+        lines,
+    })
+}
+
+pub(crate) fn import_kit(
+    store: &LauncherStore,
+    local: &dyn PasswordStore,
+    kit: &str,
+    phrase: &str,
+    argon: crate::sync::crypto::Argon2Profile,
+) -> Result<Report> {
+    let ring = crate::sync::quorum::parse_ring_secret(kit.trim()).context("the ring kit")?;
+    crate::sync::crypto::eff_decode(phrase.trim())
+        .context("the master phrase is not 6 words of the EFF list")?;
+    crate::sync::quorum::vault_setup_with(store, phrase.trim(), &ring, argon)
+        .context("the master phrase")?;
+    local
+        .set(
+            crate::sync::runtime::RING_SECRET_KEY,
+            &crate::sync::quorum::ring_secret_text(&ring),
+        )
+        .context("keep the ring secret in the credential store")?;
+    Ok(Report {
+        lines: vec!["Vault kit imported: this machine can open the ring's credentials with the master phrase.".into()],
+        json: json!({ "imported": true }),
+    })
+}
+
+// --------------------------------------------------------------------- help
+
+pub fn print_help(cmd: &str) {
+    let (synopsis, text) = match cmd {
+        "sync-revoke" => ("sync-revoke <device> [--format plain|json]", "Revoke a device: Yellow for a mirror, Red for a holder (needs three holders before it). Prints the ceremony status and runs this device's revocation steps (rotate wrap keys, reshare, retire)."),
+        "sync-role" => ("sync-role <device> holder|mirror [--format plain|json]", "Promote a mirror to holder or demote a holder (Red)."),
+        "sync-approve" => ("sync-approve <op-id> [--format plain|json]", "Approve a pending Red op as this attended device (the second-device vote)."),
+        "sync-factor" => ("sync-factor <op-id> (--paper | --email-code) [--format plain|json]", "Add the third factor to a Red op. The 24 paper words or the emailed code are read without echo."),
+        "sync-factor-register" => ("sync-factor-register (paper | email) [--sender <device>] [--format plain|json]", "Register a third factor. Paper reads the 24 words without echo; email creates a code and shows it once."),
+        "sync-recovery" => ("sync-recovery (start [--paper] | approve <op-id> | cancel <op-id> --factor paper|email | status) [--format plain|json]", "Re-enroll the phone: start, approve as another attended device, cancel, or show the state of every recovery."),
+        "sync-mode" => ("sync-mode (vault | quorum) [--cosigner <device>] [--format plain|json]", "Change the credential mode (Red). From the command line only Vault to Quorum can open the credentials; the master phrase is read without echo."),
+        "sync-exemption" => ("sync-exemption (on | off) <device> [--format plain|json]", "Switch the master-phrase exemption of a device off (Red). Switching it on needs the TUI."),
+        "sync-export" => ("sync-export --window <seconds> --out <path> [--wait <seconds>] [--format plain|json]", "Bulk export (Red, window up to 3600 s): propose it, wait for the ceremony, then write every credential to a new 0600 file in the Termius CSV format (import it from a directory as L00t.csv)."),
+        "sync-migrate" => ("sync-migrate [--remove-local] [--format plain|json]", "Write this profile's existing host and identity secrets as replicated credentials; --remove-local deletes the local copies afterwards."),
+        "sync-import-kit" => ("sync-import-kit", "On a new machine: read the ring kit (sshub:ring:1:...) and the six master words without echo and set up the Vault here."),
+        _ => return,
+    };
+    println!("sshub {cmd} - {}", text.split('.').next().unwrap_or(""));
+    println!();
+    println!("USAGE:");
+    println!("    sshub [--profile NAME] {synopsis}");
+    println!();
+    println!("{text}");
+}
+
+#[cfg(test)]
+mod tests;

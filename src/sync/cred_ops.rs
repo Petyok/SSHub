@@ -115,6 +115,7 @@ pub fn cred_update_body_for(
             vec![vault_wrap(&vault, host, &dek)?]
         }
         CredMode::Quorum => {
+            super::quorum::paper_rule(store, super::quorum::live_holder_count(store)?)?;
             let recipients = share_recipients(store, me)?;
             ensure!(
                 recipients.len() >= SHARE_K as usize,
@@ -295,4 +296,286 @@ pub fn remove_local_copies(local: &dyn PasswordStore, report: &MigrationReport) 
         local.delete(k)?;
     }
     Ok(())
+}
+
+// ------------------------------------------------------------------ private ssh-agent
+
+/// How `ssh-add` obtains a key's passphrase without a terminal: the program and environment of the
+/// askpass helper (`SSH_ASKPASS_REQUIRE=force` is set on top).
+#[derive(Clone, Debug, Default)]
+pub struct AskpassEnv {
+    pub program: PathBuf,
+    pub env: Vec<(String, String)>,
+}
+
+/// A key held by the agent: the public key file ssh selects it with (public data, safe on disk).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentKey {
+    pub public_file: PathBuf,
+    /// The `ssh-add -L` line (type, base64, comment).
+    pub public_line: String,
+}
+
+/// A private `ssh-agent`, one per process, that holds synced identity keys so that no private key byte
+/// is ever written to disk on any OS. The agent socket lives in a 0700 directory; the key goes in over
+/// stdin (`ssh-add -`) with a lifetime; `ssh` is told `-o IdentityAgent=<socket> -o IdentitiesOnly=yes
+/// -i <public key file>`. Dropping the agent kills it and removes the directory.
+pub struct PrivateAgent {
+    child: std::process::Child,
+    dir: PathBuf,
+    sock: PathBuf,
+    next: usize,
+}
+
+impl PrivateAgent {
+    /// Start `ssh-agent -D -a <socket>` in a fresh private directory under the temp dir.
+    pub fn start() -> Result<Self> {
+        use rand_core::{OsRng, RngCore};
+        let mut r = [0u8; 4];
+        OsRng.fill_bytes(&mut r);
+        // Short on purpose: a unix socket path is limited to about 100 bytes (macOS temp dirs are long).
+        let dir = std::env::temp_dir().join(format!("sshub-a{}", hex::encode(r)));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&dir)
+                .with_context(|| format!("create {}", dir.display()))?;
+        }
+        #[cfg(not(unix))]
+        bail!("a private ssh-agent needs unix sockets");
+        let sock = dir.join("s");
+        let child = std::process::Command::new("ssh-agent")
+            .arg("-D")
+            .arg("-a")
+            .arg(&sock)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| {
+                let _ = fs::remove_dir_all(&dir);
+                anyhow!("could not start ssh-agent (is the OpenSSH client installed?): {e}")
+            })?;
+        let agent = Self {
+            child,
+            dir,
+            sock,
+            next: 0,
+        };
+        for _ in 0..100 {
+            if agent.sock.exists() {
+                return Ok(agent);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        bail!("ssh-agent did not create its socket")
+    }
+
+    pub fn socket(&self) -> &Path {
+        &self.sock
+    }
+
+    fn ssh_add(
+        &self,
+        args: &[&str],
+        stdin: Option<&[u8]>,
+        askpass: Option<&AskpassEnv>,
+    ) -> Result<std::process::Output> {
+        let mut cmd = std::process::Command::new("ssh-add");
+        cmd.args(args)
+            .env("SSH_AUTH_SOCK", &self.sock)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        if let Some(a) = askpass {
+            cmd.env("SSH_ASKPASS", &a.program)
+                .env("SSH_ASKPASS_REQUIRE", "force")
+                .env_remove("DISPLAY");
+            cmd.env("DISPLAY", "sshub");
+            for (k, v) in &a.env {
+                cmd.env(k, v);
+            }
+        }
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| anyhow!("could not run ssh-add: {e}"))?;
+        if let Some(bytes) = stdin {
+            child
+                .stdin
+                .take()
+                .context("ssh-add stdin")?
+                .write_all(bytes)?;
+        } else {
+            drop(child.stdin.take());
+        }
+        Ok(child.wait_with_output()?)
+    }
+
+    fn listed(&self) -> Result<Vec<String>> {
+        let out = self.ssh_add(&["-L"], None, None)?;
+        Ok(String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter(|l| !l.is_empty() && !l.starts_with("The agent has no"))
+            .map(String::from)
+            .collect())
+    }
+
+    /// Add a private key (PEM text) for `ttl_secs` and write its public key file. A passphrase-protected
+    /// key needs `askpass`.
+    pub fn add_key(
+        &mut self,
+        private_key: &str,
+        ttl_secs: u32,
+        askpass: Option<&AskpassEnv>,
+    ) -> Result<AgentKey> {
+        let before = self.listed()?;
+        let mut pem = zeroize::Zeroizing::new(private_key.as_bytes().to_vec());
+        if !pem.ends_with(b"\n") {
+            pem.push(b'\n');
+        }
+        let out = self.ssh_add(&["-t", &ttl_secs.to_string(), "-"], Some(&pem), askpass)?;
+        ensure!(
+            out.status.success(),
+            "ssh-add refused the key: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+        let line = self
+            .listed()?
+            .into_iter()
+            .find(|l| !before.contains(l))
+            .context("the key was added but the agent does not list it (already present?)")?;
+        self.next += 1;
+        let public_file = self.dir.join(format!("k{}.pub", self.next));
+        fs::write(&public_file, format!("{line}\n"))?;
+        Ok(AgentKey {
+            public_file,
+            public_line: line,
+        })
+    }
+
+    /// The `ssh` arguments that use only this agent and this key.
+    pub fn ssh_args(&self, key: &AgentKey) -> Vec<String> {
+        vec![
+            "-o".into(),
+            format!("IdentityAgent={}", self.sock.display()),
+            "-o".into(),
+            "IdentitiesOnly=yes".into(),
+            "-i".into(),
+            key.public_file.display().to_string(),
+        ]
+    }
+}
+
+impl Drop for PrivateAgent {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = fs::remove_dir_all(&self.dir);
+    }
+}
+
+#[cfg(test)]
+mod agent_tests {
+    use super::*;
+    use std::process::Command;
+
+    fn have(tool: &str) -> bool {
+        Command::new(tool).arg("-V").output().is_ok() || Command::new(tool).output().is_ok()
+    }
+
+    fn keygen(dir: &Path, name: &str, pass: &str) -> (String, String) {
+        let f = dir.join(name);
+        let st = Command::new("ssh-keygen")
+            .args(["-q", "-t", "ed25519", "-N", pass, "-C", "t", "-f"])
+            .arg(&f)
+            .status()
+            .unwrap();
+        assert!(st.success());
+        (
+            fs::read_to_string(&f).unwrap(),
+            fs::read_to_string(f.with_extension("pub")).unwrap(),
+        )
+    }
+
+    #[test]
+    fn the_agent_holds_the_key_ssh_selects_it_and_nothing_private_touches_the_disk() {
+        if !have("ssh-agent") || !have("ssh-keygen") {
+            eprintln!("skipped: no OpenSSH client tools");
+            return;
+        }
+        let work = std::env::temp_dir().join(format!("sshub-agent-test-{}", std::process::id()));
+        fs::create_dir_all(&work).unwrap();
+        let (pem, public) = keygen(&work, "plain", "");
+        let (pem_enc, public_enc) = keygen(&work, "locked", "correct horse");
+        let askpass = work.join("askpass.sh");
+        fs::write(&askpass, "#!/bin/sh\necho 'correct horse'\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&askpass, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let ask = AskpassEnv {
+            program: askpass.clone(),
+            env: vec![],
+        };
+
+        let (sock, dir);
+        {
+            let mut agent = PrivateAgent::start().unwrap();
+            sock = agent.socket().to_path_buf();
+            dir = sock.parent().unwrap().to_path_buf();
+            let k = agent.add_key(&pem, 600, None).unwrap();
+            let want: Vec<&str> = public.split_whitespace().take(2).collect();
+            let got: Vec<&str> = k.public_line.split_whitespace().take(2).collect();
+            assert_eq!(got, want, "the agent lists the key's public half");
+            let args = agent.ssh_args(&k);
+            assert_eq!(
+                &args[..4],
+                [
+                    "-o",
+                    &format!("IdentityAgent={}", sock.display()),
+                    "-o",
+                    "IdentitiesOnly=yes"
+                ]
+            );
+            assert_eq!(args[5], k.public_file.display().to_string());
+
+            // A passphrase-protected key needs the askpass and works with it; without it, it is refused.
+            assert!(agent.add_key(&pem_enc, 600, None).is_err());
+            let k2 = agent.add_key(&pem_enc, 600, Some(&ask)).unwrap();
+            assert_eq!(
+                k2.public_line.split_whitespace().nth(1),
+                public_enc.split_whitespace().nth(1)
+            );
+            // Garbage is refused and nothing is added.
+            assert!(agent.add_key("not a key", 600, None).is_err());
+
+            // The directory holds a socket and public files: no private key byte.
+            for entry in fs::read_dir(&dir).unwrap() {
+                let p = entry.unwrap().path();
+                if p.is_file() {
+                    assert!(
+                        !fs::read_to_string(&p)
+                            .unwrap_or_default()
+                            .contains("PRIVATE KEY"),
+                        "{}",
+                        p.display()
+                    );
+                }
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                assert_eq!(
+                    fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+                    0o700
+                );
+            }
+        }
+        // Dropping removes the directory (and the agent with it).
+        assert!(!dir.exists() && !sock.exists());
+        let _ = fs::remove_dir_all(&work);
+    }
 }

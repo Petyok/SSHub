@@ -1391,6 +1391,73 @@ fn sync_now_on_an_empty_profile_exits_zero_with_a_note() {
 }
 
 #[test]
+fn sync_now_reports_a_device_without_a_host_and_one_still_waiting_for_admission() {
+    use sshub::store::LauncherStore;
+    use sshub::sync::crypto::DeviceIdentity;
+    use sshub::sync::oplog::{Attendance, DeviceKind, DeviceRole, OpBody, VerifiedBy};
+    let d = dir();
+    {
+        let store = LauncherStore::open(d.path().join("launcher.db")).unwrap();
+        let author = LauncherStore::open_in_memory().unwrap();
+        let laptop = DeviceIdentity::generate();
+        for s in [&store, &author] {
+            s.sync_register_device(
+                &laptop.public(),
+                "laptop",
+                DeviceRole::Holder,
+                Attendance::Attended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+        }
+        // The ring announced a device this machine has not approved yet.
+        let op = author
+            .sync_append_local(
+                &laptop,
+                OpBody::DeviceAdd {
+                    device: DeviceIdentity::generate().public(),
+                    name: "newbie".into(),
+                    role: DeviceRole::Mirror,
+                    attendance: Attendance::Attended,
+                    kind: DeviceKind::Terminal,
+                    verified_by: VerifiedBy::Sas,
+                },
+            )
+            .unwrap();
+        store.sync_ingest(op).unwrap();
+    }
+    let out = sshub(d.path())
+        .args(["sync-now", "--format", "json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let rows: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    let row = |name: &str| {
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["name"] == name)
+            .unwrap_or_else(|| panic!("no row for {name}: {rows}"))
+            .clone()
+    };
+    assert_eq!(row("laptop")["status"], "skipped");
+    assert!(row("laptop")["reason"]
+        .as_str()
+        .unwrap()
+        .contains("sync-join"));
+    assert_eq!(row("newbie")["status"], "pending_admission");
+    sshub(d.path())
+        .arg("sync-now")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("laptop: skipped (no host known)"))
+        .stdout(predicate::str::contains("newbie: not admitted yet"));
+}
+
+#[test]
 fn sync_commands_print_their_own_help() {
     let d = dir();
     for cmd in [
@@ -1440,4 +1507,72 @@ fn sync_review_with_an_unknown_id_exits_two() {
         .args(["sync-review", "--approve", "dead", "--reject", "beef"])
         .assert()
         .code(2);
+}
+
+const ADMIN_VERBS: [&str; 11] = [
+    "sync-revoke",
+    "sync-role",
+    "sync-approve",
+    "sync-factor",
+    "sync-factor-register",
+    "sync-recovery",
+    "sync-mode",
+    "sync-exemption",
+    "sync-export",
+    "sync-migrate",
+    "sync-import-kit",
+];
+
+#[test]
+fn sync_admin_verbs_print_their_own_help() {
+    let d = dir();
+    for cmd in ADMIN_VERBS {
+        sshub(d.path())
+            .args([cmd, "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(format!("sshub {cmd} -")))
+            .stdout(predicate::str::contains("USAGE:"));
+    }
+}
+
+#[test]
+fn sync_admin_argument_errors_exit_two() {
+    let d = dir();
+    for args in [
+        vec!["sync-revoke"],
+        vec!["sync-role", "dev", "boss"],
+        vec!["sync-factor", "abcdef"],
+        vec!["sync-recovery"],
+        vec!["sync-mode", "both"],
+        vec!["sync-exemption", "maybe", "dev"],
+        vec!["sync-export", "--window", "60"],
+        vec!["sync-migrate", "--bogus"],
+        vec!["sync-import-kit", "extra"],
+    ] {
+        sshub(d.path()).args(&args).assert().code(2);
+    }
+}
+
+#[test]
+fn sync_admin_verbs_on_an_empty_profile_fail_without_a_device_key() {
+    let d = dir();
+    for args in [
+        vec!["sync-revoke", "dev"],
+        vec!["sync-role", "dev", "holder"],
+        vec!["sync-approve", "abcdef"],
+        vec!["sync-recovery", "status"],
+        vec!["sync-mode", "quorum"],
+        vec!["sync-export", "--window", "60", "--out", "x.csv"],
+        vec!["sync-migrate"],
+    ] {
+        sshub(d.path())
+            .args(&args)
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains(
+                "No sync ring on this profile yet.",
+            ));
+    }
+    assert!(!has_file_named(d.path(), "device.key"));
 }

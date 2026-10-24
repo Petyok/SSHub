@@ -1,7 +1,7 @@
 //! `LauncherStore::sync_*`: the op-log surface of the store (contract section 2).
 //! Every method is one short transaction; nothing here touches the network.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, ensure, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 
 use super::checkpoint::{
@@ -216,15 +216,21 @@ impl LauncherStore {
                 .optional()?;
             if let Some(f) = floor {
                 if after_seq.saturating_add(1) < f as u64 {
-                    return Err(super::checkpoint::Pruned { floor_seq: f as u64 }.into());
+                    return Err(super::checkpoint::Pruned {
+                        floor_seq: f as u64,
+                    }
+                    .into());
                 }
             }
             let after = i64::try_from(after_seq).unwrap_or(i64::MAX);
             let mut stmt = conn.prepare(
-                "SELECT op_hash FROM sync_ops WHERE device_id = ?1 AND seq > ?2 ORDER BY seq LIMIT ?3",
+                "SELECT op_hash FROM sync_ops WHERE device_id = ?1 AND seq > ?2
+                   AND COALESCE(reason, '') <> 'unknown-author' ORDER BY seq LIMIT ?3",
             )?;
             let hashes: Vec<Vec<u8>> = stmt
-                .query_map(params![device, after, MAX_OPS_PER_TAIL as i64], |r| r.get(0))?
+                .query_map(params![device, after, MAX_OPS_PER_TAIL as i64], |r| {
+                    r.get(0)
+                })?
                 .collect::<std::result::Result<_, _>>()?;
             hashes
                 .into_iter()
@@ -251,7 +257,13 @@ impl LauncherStore {
         self.with_conn(pending::list)
     }
 
-    /// Why an op is waiting: `tier`, `resurrection` or `revoke-conflict`.
+    /// EVERY pending op with the reason it waits (`tier`, `stale`, `resurrection`,
+    /// `revoke-conflict`, `unknown-author`), oldest first.
+    pub fn sync_pending_with_reasons(&self) -> Result<Vec<(Op, String)>> {
+        self.with_conn(pending::list_with_reasons)
+    }
+
+    /// Why an op is waiting: `tier`, `stale`, `resurrection`, `revoke-conflict` or `unknown-author`.
     pub fn sync_pending_reason(&self, op_hash: &[u8; 32]) -> Result<Option<String>> {
         self.with_conn(|conn| pending::reason(conn, op_hash))
     }
@@ -585,6 +597,13 @@ impl LauncherStore {
             },
             now,
         )?;
+        // Keep our own proposal (and its blob) so peers can fetch it.
+        self.sync_checkpoint_record(&CheckpointBundle {
+            proposal: op.clone(),
+            signs: vec![],
+            heads: vec![],
+            state: state.clone(),
+        })?;
         Ok((op, state))
     }
 
@@ -642,6 +661,111 @@ impl LauncherStore {
             checkpoint::bootstrap(&tx, bundle, trust, now_ts())?;
             tx.commit()?;
             Ok(())
+        })
+    }
+
+    /// The join anchor an inviter hands to a device it enrolls: its resolved state at its chain
+    /// heads, signed by the inviter alone. It is not a checkpoint and prunes nothing.
+    pub fn sync_join_anchor_build(&self, id: &DeviceIdentity) -> Result<CheckpointBundle> {
+        self.with_conn(|conn| checkpoint::build_join_anchor(conn, id, now_ts()))
+    }
+
+    /// The joiner adopts the anchor as its starting state (only
+    /// [`BootstrapTrust::Enrollment`]): the ring's devices and hosts are not its to review, only
+    /// ops above the cut are.
+    pub fn sync_join_adopt(&self, bundle: &CheckpointBundle, trust: &BootstrapTrust) -> Result<()> {
+        ensure!(
+            matches!(trust, BootstrapTrust::Enrollment { .. }),
+            "a join anchor is adopted with the enrollment trust only"
+        );
+        self.sync_bootstrap(bundle, trust)
+    }
+
+    /// Newest accepted checkpoint we can serve (announced in the hello).
+    pub fn sync_checkpoint_head(&self) -> Result<Option<[u8; 32]>> {
+        self.with_conn(checkpoint::servable_head)
+    }
+
+    /// The wire bytes of a checkpoint we hold the blob of.
+    pub fn sync_checkpoint_bytes(&self, proposal_hash: &[u8; 32]) -> Result<Option<Vec<u8>>> {
+        self.with_conn(|conn| {
+            Ok(
+                checkpoint::bundle_of(conn, proposal_hash)?
+                    .map(|b| checkpoint::bundle_to_bytes(&b)),
+            )
+        })
+    }
+
+    /// Proposals known as ops without a blob: to fetch from a peer.
+    pub fn sync_checkpoint_missing(&self) -> Result<Vec<[u8; 32]>> {
+        self.with_conn(checkpoint::missing_blobs)
+    }
+
+    /// Take the bytes of a checkpoint fetched from `peer`: record it (a proposal
+    /// to verify) or, with `adopt`, make it the base of this store.
+    pub fn sync_checkpoint_accept(
+        &self,
+        bytes: &[u8],
+        peer: &DeviceId,
+        adopt: bool,
+    ) -> Result<[u8; 32]> {
+        self.with_conn(|conn| {
+            let tx = tx(conn)?;
+            let h = checkpoint::accept_bytes(&tx, bytes, peer, adopt, now_ts())?;
+            tx.commit()?;
+            Ok(h)
+        })
+    }
+
+    /// Record a proposal with the sign ops we hold (the driver calls this).
+    pub fn sync_checkpoint_update(
+        &self,
+        proposal_hash: &[u8; 32],
+    ) -> Result<Option<CheckpointStatus>> {
+        self.with_conn(|conn| {
+            let tx = tx(conn)?;
+            let Some(mut bundle) = checkpoint::bundle_of(&tx, proposal_hash)? else {
+                return Ok(None);
+            };
+            bundle.signs = checkpoint::known_signs(&tx, proposal_hash)?;
+            let st = checkpoint::record(&tx, &bundle, now_ts())?;
+            tx.commit()?;
+            Ok(Some(st))
+        })
+    }
+
+    /// Ops and bytes appended since the lamport of the last accepted cut.
+    pub fn sync_log_growth(&self, since_lamport: u64) -> Result<(u64, u64)> {
+        self.with_conn(|conn| {
+            let (n, b): (i64, i64) = conn.query_row(
+                "SELECT COUNT(*), COALESCE(SUM(length(canonical)), 0) FROM sync_ops WHERE lamport > ?1",
+                params![since_lamport as i64],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            Ok((n as u64, b as u64))
+        })
+    }
+
+    /// Timestamp of the newest proposal we know of.
+    pub fn sync_last_checkpoint_time(&self) -> Result<Option<i64>> {
+        self.with_conn(|conn| {
+            Ok(
+                conn.query_row("SELECT MAX(proposed_at) FROM sync_checkpoints", [], |r| {
+                    r.get(0)
+                })?,
+            )
+        })
+    }
+
+    /// Timestamp of the newest reshare batch above `since_lamport`.
+    pub fn sync_last_reshare_time(&self, since_lamport: u64) -> Result<Option<i64>> {
+        self.with_conn(|conn| {
+            Ok(conn.query_row(
+                "SELECT MAX(timestamp) FROM sync_ops WHERE kind = 'ShareReshareBatch' AND lamport > ?1
+                   AND state IN ('applied','approved')",
+                params![since_lamport as i64],
+                |r| r.get(0),
+            )?)
         })
     }
 

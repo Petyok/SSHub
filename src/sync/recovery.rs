@@ -541,5 +541,149 @@ pub fn validate_phone_reenroll(
     Ok(m.verdict(now))
 }
 
+// ------------------------------------------------------------------ builders for the UI
+
+/// The `PhoneReenroll` op body a terminal proposes. `via_paper` authorizes by the paper phrase
+/// (typed on this machine, `paper_recover` is the identity derived from it) and then the third factor
+/// must be the emailed code; otherwise two other attended devices authorize with `RecoveryApprove`.
+pub fn start_body(
+    store: &LauncherStore,
+    me: &DeviceIdentity,
+    now: i64,
+    paper_recover: Option<&DeviceIdentity>,
+    third_factor: ThirdFactor,
+) -> Result<OpBody> {
+    let via_paper = paper_recover.is_some();
+    ensure!(
+        !(via_paper && third_factor == ThirdFactor::Paper),
+        "paper authorizes this recovery, so the third factor must be the emailed code"
+    );
+    let mut body = OpBody::PhoneReenroll {
+        initiated_at: now,
+        signers: Vec::new(),
+        via_paper,
+        third_factor,
+        liveness: liveness_set(store, &me.public().device_id(), now)?,
+        paper_sig: None,
+    };
+    if let Some(recover) = paper_recover {
+        let sig = paper_reenroll_sign(recover, &me.public().device_id(), &body);
+        if let OpBody::PhoneReenroll { paper_sig, .. } = &mut body {
+            *paper_sig = Some(sig);
+        }
+    }
+    Ok(body)
+}
+
+/// An attended device's vote, after its user confirmed the Red screen.
+pub fn approve_body(reenroll: &Op) -> Result<OpBody> {
+    ensure!(
+        matches!(reenroll.body, OpBody::PhoneReenroll { .. }),
+        "not a PhoneReenroll op"
+    );
+    Ok(OpBody::RecoveryApprove {
+        reenroll_hash: reenroll.hash(),
+    })
+}
+
+/// "I have seen this recovery at `now`": appended by an attended device when it displayed the op.
+pub fn ack_body(reenroll: &Op, now: i64) -> Result<OpBody> {
+    ensure!(
+        matches!(reenroll.body, OpBody::PhoneReenroll { .. }),
+        "not a PhoneReenroll op"
+    );
+    Ok(OpBody::RecoveryAck {
+        reenroll_hash: reenroll.hash(),
+        seen_at: now,
+    })
+}
+
+/// Cancel a recovery: by the live phone (no factor) or by a device with the third factor.
+pub fn cancel_body(reenroll: &Op, by_phone: bool, factor: Option<ThirdFactor>) -> Result<OpBody> {
+    ensure!(
+        matches!(reenroll.body, OpBody::PhoneReenroll { .. }),
+        "not a PhoneReenroll op"
+    );
+    ensure!(
+        by_phone || factor.is_some(),
+        "a cancellation from a device needs the third factor"
+    );
+    Ok(OpBody::PhoneReenrollCancel {
+        reenroll_hash: reenroll.hash(),
+        by_phone,
+        third_factor: if by_phone { None } else { factor },
+    })
+}
+
+/// Recoveries this device (attended, not the requester) has not acknowledged yet and that are still
+/// open. The UI shows each one and, once it is on screen, appends [`ack_body`].
+pub fn unacknowledged(store: &LauncherStore, me: &DeviceIdentity, now: i64) -> Result<Vec<Op>> {
+    let mine = me.public().device_id();
+    let devices = store.sync_devices()?;
+    if devices.iter().any(|d| d.id == mine && !attended_live(d)) {
+        return Ok(Vec::new());
+    }
+    let acks: Vec<[u8; 32]> = signed_ops(store, "RecoveryAck")?
+        .into_iter()
+        .filter(|a| a.device_id == mine)
+        .filter_map(|a| match a.body {
+            OpBody::RecoveryAck { reenroll_hash, .. } => Some(reenroll_hash),
+            _ => None,
+        })
+        .collect();
+    let mut out = Vec::new();
+    for op in signed_ops(store, "PhoneReenroll")? {
+        if op.device_id == mine || acks.contains(&op.hash()) {
+            continue;
+        }
+        if matches!(
+            validate_phone_reenroll(store, &op, now),
+            Ok(ReenrollVerdict::CancelledByPhone
+                | ReenrollVerdict::CancelledByFactor
+                | ReenrollVerdict::Completed)
+                | Err(_)
+        ) {
+            continue;
+        }
+        out.push(op);
+    }
+    Ok(out)
+}
+
+/// The ops that finish a recovery whose clock ran out: revoke the old phone and admit the new one
+/// (enrolled beforehand, see `phone_enroll`). The caller then reshares to the new holder set
+/// (`revocation::plan`) and calls [`clear_snapshots`].
+pub fn completion_bodies(
+    store: &LauncherStore,
+    reenroll: &Op,
+    now: i64,
+    new_phone: &super::crypto::DevicePublic,
+    name: &str,
+) -> Result<Vec<OpBody>> {
+    let verdict = validate_phone_reenroll(store, reenroll, now)?;
+    ensure!(
+        verdict == ReenrollVerdict::Ready,
+        "the recovery is not ready: {verdict:?}"
+    );
+    let old =
+        phone_device(store)?.ok_or_else(|| anyhow::anyhow!("the ring has no phone to replace"))?;
+    Ok(vec![
+        OpBody::DeviceRevoke { device_id: old },
+        OpBody::DeviceAdd {
+            device: new_phone.clone(),
+            name: name.to_string(),
+            role: super::oplog::DeviceRole::Holder,
+            attendance: super::oplog::Attendance::Attended,
+            kind: DeviceKind::Phone,
+            verified_by: super::oplog::VerifiedBy::Sas,
+        },
+    ])
+}
+
+/// Forget every stored short-code snapshot (they hold the OLD phone's shares). Returns how many.
+pub fn clear_snapshots(store: &LauncherStore) -> Result<usize> {
+    store.with_conn(|c| Ok(c.execute("DELETE FROM sync_meta WHERE key LIKE 'snapshot:%'", [])?))
+}
+
 #[cfg(test)]
 mod tests;

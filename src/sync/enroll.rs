@@ -19,8 +19,10 @@ use serde::{Deserialize, Serialize};
 use x25519_dalek::{EphemeralSecret, PublicKey as XPublic};
 
 use super::crypto::{chain_hash, sas_words, verify, DeviceIdentity, DevicePublic};
+use super::limits::CHECKPOINT_CHUNK_BYTES;
+use super::oplog::checkpoint::{bundle_from_bytes, bundle_to_bytes, BootstrapTrust};
 use super::oplog::{Attendance, DeviceKind, DeviceRole, OpBody, VerifiedBy};
-use super::protocol::{b64, hex32, hex64, Session, SyncLink, SyncMsg};
+use super::protocol::{b64, hex32, hex64, Session, SyncLink, SyncMsg, MAX_CHECKPOINT_BYTES};
 use super::quorum::{meta_get, meta_set};
 use super::ratchet::{pair_key_from_exchange, save_pair, PairState};
 use crate::store::LauncherStore;
@@ -239,6 +241,58 @@ pub(crate) fn confirm_message(role: u8, ok: bool, th: &[u8; 32]) -> Vec<u8> {
     m
 }
 
+/// Inviter side of the join anchor: the bundle in chunks, then its hash.
+fn send_anchor<L: SyncLink>(s: &mut Session<'_, L>, bytes: &[u8]) -> Result<()> {
+    for (i, chunk) in bytes.chunks(CHECKPOINT_CHUNK_BYTES).enumerate() {
+        s.send(&SyncMsg::EnrollAnchor {
+            offset: (i * CHECKPOINT_CHUNK_BYTES) as u64,
+            total: bytes.len() as u64,
+            data: chunk.to_vec(),
+        })?;
+    }
+    s.send(&SyncMsg::EnrollAnchorDone {
+        hash: chain_hash(bytes),
+    })
+}
+
+/// Joiner side: reassemble in order, bounded, and check the hash before anything is parsed.
+fn recv_anchor<L: SyncLink>(s: &mut Session<'_, L>) -> Result<Vec<u8>> {
+    let mut buf: Vec<u8> = Vec::new();
+    let mut total: Option<u64> = None;
+    loop {
+        match s.recv()? {
+            SyncMsg::EnrollAnchor {
+                offset,
+                total: t,
+                data,
+            } => {
+                ensure!(
+                    offset == buf.len() as u64
+                        && !data.is_empty()
+                        && data.len() <= CHECKPOINT_CHUNK_BYTES
+                        && t <= MAX_CHECKPOINT_BYTES
+                        && total.is_none_or(|p| p == t),
+                    "protocol violation: bad join anchor chunk"
+                );
+                total = Some(t);
+                buf.extend_from_slice(&data);
+                ensure!(
+                    buf.len() as u64 <= t,
+                    "protocol violation: join anchor longer than announced"
+                );
+            }
+            SyncMsg::EnrollAnchorDone { hash } => {
+                ensure!(
+                    total == Some(buf.len() as u64) && chain_hash(&buf) == hash,
+                    "the join anchor is incomplete or damaged"
+                );
+                return Ok(buf);
+            }
+            other => bail!("protocol violation: unexpected {other:?} during the join anchor"),
+        }
+    }
+}
+
 fn run<L: SyncLink>(
     link: &mut L,
     store: &LauncherStore,
@@ -368,6 +422,25 @@ fn run<L: SyncLink>(
         // The inviter admits the joiner as a mirror (Yellow on the rest of the ring) and, if it had no
         // ring yet, founds one: the ring id is the founder's device id.
         EnrollRole::Inviter => {
+            // The anchor carries this device's own row: it must say who it really is.
+            if !store
+                .sync_devices()?
+                .iter()
+                .any(|d| d.id == id.public().device_id())
+            {
+                store.sync_register_device(
+                    &id.public(),
+                    name,
+                    DeviceRole::Holder,
+                    if attended {
+                        Attendance::Attended
+                    } else {
+                        Attendance::Unattended
+                    },
+                    DeviceKind::Terminal,
+                    verified,
+                )?;
+            }
             let ring = match my_ring {
                 Some(r) => r,
                 None => {
@@ -401,12 +474,29 @@ fn run<L: SyncLink>(
                         anyhow!("device registered locally but the ring could not be told: {e}")
                     })?;
             }
+            send_anchor(&mut s, &bundle_to_bytes(&store.sync_join_anchor_build(id)?))?;
             ring
         }
         // The joiner trusts the inviter as a holder and takes over its ring.
         EnrollRole::Joiner => {
             let ring = peer_hello.ring.clone().unwrap_or_else(|| peer_id.clone());
             set_ring_id(store, &ring)?;
+            // The ring that existed is the starting state, not something to review (contract 3c).
+            let bundle = bundle_from_bytes(&recv_anchor(&mut s)?)?;
+            store.sync_join_adopt(
+                &bundle,
+                &BootstrapTrust::Enrollment {
+                    inviter: peer_id.clone(),
+                },
+            )?;
+            // A state carries no label for the inviter's own row; the joiner saw its name in the reveal.
+            store.with_conn(|c| {
+                c.execute(
+                    "UPDATE sync_devices SET name = ?2 WHERE device_id = ?1",
+                    rusqlite::params![peer_id, peer_reveal.name],
+                )?;
+                Ok(())
+            })?;
             store.sync_register_device(
                 &peer_pub,
                 &peer_reveal.name,
@@ -418,6 +508,26 @@ fn run<L: SyncLink>(
             ring
         }
     };
+    // A device knows its own attendance and role from the day it joins a ring: rules such as "an
+    // unattended device releases nothing without a certificate" ask the store about this device.
+    let my_id = id.public().device_id();
+    if !store.sync_devices()?.iter().any(|d| d.id == my_id) {
+        store.sync_register_device(
+            &id.public(),
+            name,
+            match role {
+                EnrollRole::Inviter => DeviceRole::Holder,
+                EnrollRole::Joiner => DeviceRole::Mirror,
+            },
+            if attended {
+                Attendance::Attended
+            } else {
+                Attendance::Unattended
+            },
+            DeviceKind::Terminal,
+            verified,
+        )?;
+    }
     save_pair(store, &peer_id, &PairState::fresh(key))?;
     Ok(EnrollOutcome {
         peer: peer_pub,

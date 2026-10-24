@@ -27,6 +27,7 @@ pub fn print_command_help(cmd: &str) {
         "sync-now" => print_sync_now(),
         "sync-status" => print_sync_status(),
         "sync-review" => print_sync_review(),
+        c if super::sync_admin::is_admin_command(c) => super::sync_admin::print_help(c),
         "import" => print_import(),
         "export" => print_export(),
         "completions" => print_completions(),
@@ -329,7 +330,9 @@ USAGE:
 
 <device> is a device name or an id prefix (an ambiguous one is an error).
 Without it every other ring device with a known host is synced; the rest are
-listed as `skipped (no host known)`. One line per device:
+listed as `skipped (no host known)` with how to record one (the hosts tab `t`, or
+`sshub sync-join <host>`); a device the ring announced that is still waiting for
+your approval shows as `not admitted yet`. One line per device:
     <name>: ok applied N, pending M, received R, sent S
 plus `behind:` / `suspect:` device ids when a round reports them.
 

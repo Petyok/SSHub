@@ -122,11 +122,59 @@ pub fn cert_allows(
     if !store.sync_cert_hosts_opened(&cert.id)?.contains(host) {
         let used = store.sync_cert_new_hosts_since(&cert.id, now - DAY)?;
         ensure!(
-            used < cert.max_new_hosts_per_day,
+            used < cert
+                .max_new_hosts_per_day
+                .saturating_add(extension_budget(store, cert, now)?),
             "the daily budget of new hosts is used up: the phone must extend the day"
         );
     }
     Ok(())
+}
+
+/// Extra new hosts the phone granted for the rolling day ending at `now` (R3b): `CertExtend` ops by the
+/// certificate's issuer before expiry, at most one counted per 24 hours, each valid for the 24 hours
+/// after it.
+pub fn extension_budget(store: &LauncherStore, cert: &DelegationCert, now: i64) -> Result<u32> {
+    let mut ops: Vec<_> = super::quorum::ops_of(store, "CertExtend", Some(&cert.issuer))?
+        .into_iter()
+        .filter_map(|o| match o.body {
+            OpBody::CertExtend {
+                cert_id,
+                extra_hosts,
+            } if cert_id == cert.id && o.timestamp < cert.expiry => {
+                Some((o.timestamp, extra_hosts))
+            }
+            _ => None,
+        })
+        .collect();
+    ops.sort();
+    let mut last: Option<i64> = None;
+    let mut sum = 0u32;
+    for (ts, extra) in ops {
+        if last.is_some_and(|l| ts - l < DAY) {
+            continue;
+        }
+        last = Some(ts);
+        if ts <= now && now - ts < DAY {
+            sum = sum.saturating_add(extra);
+        }
+    }
+    Ok(sum)
+}
+
+/// The request the terminal shows the phone when the daily budget is used up (kind 10).
+pub fn cert_extend_request(
+    cert_id: [u8; 32],
+    extra_hosts: u32,
+) -> Result<super::wire::CertExtendRequestWire> {
+    ensure!(
+        (1..=CERT_NEW_HOSTS_PER_DAY).contains(&extra_hosts),
+        "an extension is 1 to {CERT_NEW_HOSTS_PER_DAY} hosts"
+    );
+    Ok(super::wire::CertExtendRequestWire {
+        cert_id,
+        extra_hosts,
+    })
 }
 
 /// Checks a `CertIssue` op before it is shown for approval: structure, scope, term, budget and the
@@ -181,4 +229,46 @@ pub fn cert_opened_body(cert: &DelegationCert, host: &HostUid) -> OpBody {
         cert_id: cert.id,
         host_uid: *host,
     }
+}
+
+/// What a terminal shows the phone to ask for a trust session: the user's choices, with the phone's
+/// current epoch as the start of the epoch range (`epoch_slack` more epochs stay valid). The phone
+/// builds and signs the op; the terminal then receives it as courier ops or a pasted phone-ops frame.
+pub fn cert_request(
+    store: &LauncherStore,
+    delegate: &DeviceId,
+    scope: CertScope,
+    term_secs: i64,
+    max_new_hosts_per_day: u32,
+    epoch_slack: u64,
+    now: i64,
+) -> Result<super::wire::CertRequestWire> {
+    use anyhow::Context;
+    let phone = super::quorum::phone_device(store)?.context("the ring has no phone")?;
+    ensure!(
+        (1..=CERT_TERM_MAX_SECS).contains(&term_secs),
+        "the term must be between a second and 90 days"
+    );
+    ensure!(
+        (1..=CERT_NEW_HOSTS_PER_DAY).contains(&max_new_hosts_per_day),
+        "the daily budget is outside 1..=50"
+    );
+    let raw: [u8; 8] = hex::decode(delegate)
+        .ok()
+        .and_then(|b| b.try_into().ok())
+        .context("malformed device id")?;
+    let epoch = store.sync_epoch(&phone)?;
+    Ok(super::wire::CertRequestWire {
+        device_id: raw,
+        scope,
+        expiry: now + term_secs,
+        max_new_hosts_per_day,
+        epoch_lo: epoch,
+        epoch_hi: epoch.saturating_add(epoch_slack),
+    })
+}
+
+/// Revoke a certificate (Yellow): any attended holder writes it; peers stop honouring the cert at once.
+pub fn cert_revoke_body(cert: &DelegationCert) -> OpBody {
+    OpBody::CertRevoke { cert_id: cert.id }
 }

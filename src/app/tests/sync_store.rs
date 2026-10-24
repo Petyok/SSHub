@@ -198,7 +198,10 @@ fn attach_enrolling_worker_in(
     }
     let peer_for_thread = peer_store.clone();
     let peer_id = Arc::new(peer_id);
-    app.attach_sync_worker(spawn_sync_thread(Box::new(move |_kind, _host, ctx| {
+    app.attach_sync_worker(spawn_sync_thread(Box::new(move |kind, _host, ctx| {
+        if kind != crate::sync::client::Round::Enroll {
+            return Ok(Default::default());
+        }
         let (a, b) = UnixStream::pair().unwrap();
         let (peer_store, peer_id) = (peer_for_thread.clone(), peer_id.clone());
         let peer = std::thread::spawn(move || {
@@ -280,14 +283,17 @@ fn both_with_screens_compare_words_and_a_yes_joins_verified_by_sas() {
 
     app.handle_key(key_char('y')).unwrap();
     pump(&mut app, |a| a.sync.configured && !a.sync.syncing);
-    assert_eq!(app.sync.devices.len(), 1);
-    assert_eq!(app.sync.devices[0].id, peer_device);
-    assert_eq!(app.sync.devices[0].name, "hub");
-    assert_eq!(
-        app.sync.devices[0].role,
-        crate::app::sync::DeviceRoleView::Holder
-    );
-    assert_eq!(app.sync.devices[0].verified_by, Some(VerifiedBy::Sas));
+    // The ring knows the peer and, since enrollment records it, this device itself.
+    assert_eq!(app.sync.devices.len(), 2);
+    let peer = app
+        .sync
+        .devices
+        .iter()
+        .find(|d| d.id == peer_device)
+        .expect("the peer is listed");
+    assert_eq!(peer.name, "hub");
+    assert_eq!(peer.role, crate::app::sync::DeviceRoleView::Holder);
+    assert_eq!(peer.verified_by, Some(VerifiedBy::Sas));
     assert!(app.sync.last_error.is_none(), "{:?}", app.sync.last_error);
 }
 
@@ -301,11 +307,13 @@ fn a_peer_without_a_screen_gets_the_plain_warning_and_an_approval_joins() {
 
     app.handle_key(key_char('y')).unwrap();
     pump(&mut app, |a| a.sync.configured && !a.sync.syncing);
-    assert_eq!(app.sync.devices[0].id, peer_device);
-    assert_eq!(
-        app.sync.devices[0].verified_by,
-        Some(VerifiedBy::SshHostKey)
-    );
+    let peer = app
+        .sync
+        .devices
+        .iter()
+        .find(|d| d.id == peer_device)
+        .expect("the peer is listed");
+    assert_eq!(peer.verified_by, Some(VerifiedBy::SshHostKey));
     assert!(app.sync.last_error.is_none(), "{:?}", app.sync.last_error);
 }
 
@@ -383,4 +391,40 @@ fn a_share_release_names_the_requester_and_the_host_in_the_review() {
     let rows = app.store.sync_devices().unwrap();
     let view = crate::app::sync_view::pending_view(&app.store, &op, &rows, None);
     assert_eq!(view.summary, "release a share of web to laptop");
+}
+
+#[test]
+fn enter_on_a_compromised_device_shows_the_proof_and_the_next_steps() {
+    let (mut app, author) = app_with_author();
+    // The same device signs two different operations at one position.
+    let first = author.append(new_host("web", "10.0.0.1"));
+    let honest = author.append(HostFields::default());
+    let mut other = honest.clone();
+    other.body = OpBody::HostUpsert {
+        host_uid: UID,
+        fields: HostFields {
+            notes: Some(Some("different".into())),
+            ..Default::default()
+        },
+    };
+    other.signature = author.id.sign(&other.canonical_bytes());
+    for op in [first, honest, other] {
+        app.store.sync_ingest(op).unwrap();
+    }
+    app.refresh_sync_view();
+    app.active_tab = 6;
+    assert_eq!(
+        app.sync.devices[0].status,
+        crate::app::sync::DeviceStatusView::Compromised
+    );
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert_eq!(app.mode, AppMode::SyncForkAlert);
+    let fork = app.sync.fork.clone().unwrap();
+    assert_eq!(fork.device, "laptop");
+    assert!(
+        fork.evidence.iter().any(|l| l.starts_with("Proof:")),
+        "{:?}",
+        fork.evidence
+    );
+    assert!(fork.evidence.iter().any(|l| l.contains("hash")));
 }

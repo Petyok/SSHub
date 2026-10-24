@@ -284,7 +284,7 @@ pub const KIND_ENROLL_CONFIRM: u8 = 8;
 /// A phone chain moves a few small ops per courier trip: more than this, or a bigger op, is not a
 /// phone and is refused before it is parsed further.
 pub const MAX_COURIER_OPS: usize = 8;
-pub const MAX_COURIER_OP_BYTES: usize = 64 * 1024;
+pub const MAX_COURIER_OP_BYTES: usize = 256 * 1024;
 
 /// An op together with its signature, as the phone carries it.
 pub type SignedOpBytes = (Vec<u8>, [u8; 64]);
@@ -336,6 +336,9 @@ pub(crate) fn encode_op_list(ops: &[SignedOpBytes]) -> Vec<u8> {
 
 /// Parses a list starting at `body[0]`; returns the ops and the number of bytes used.
 pub(crate) fn decode_op_list(body: &[u8]) -> Result<(Vec<SignedOpBytes>, usize)> {
+    if body.len() > MAX_FRAME_BYTES {
+        bail!("op list exceeds the frame cap");
+    }
     let Some((&n, _)) = body.split_first() else {
         bail!("op list truncated");
     };
@@ -449,6 +452,157 @@ impl EnrollFrame {
                 })
             }
             k => bail!("wire kind {k} is not an enrollment frame"),
+        }
+    }
+}
+
+/// Kind 9, terminal to phone: what the user chose for a trust session. The phone shows it, and on
+/// approval builds and signs the `CertIssue` op itself (it is the author); nothing here is a
+/// signature. Layout: `device_id(8) || scope tag u8 [0: group uid(16) | 1: n u16 BE || n * uid(16)]
+/// || expiry i64 BE || max_new_hosts_per_day u32 BE || epoch_lo u64 BE || epoch_hi u64 BE`.
+pub const KIND_CERT_REQUEST: u8 = 9;
+/// A QR-sized list: more hosts than this belong in a group.
+pub const MAX_CERT_REQUEST_HOSTS: usize = 64;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CertRequestWire {
+    /// Raw 8 bytes of the delegate's device id (the id is their lowercase hex).
+    pub device_id: [u8; 8],
+    pub scope: super::oplog::CertScope,
+    pub expiry: i64,
+    pub max_new_hosts_per_day: u32,
+    pub epoch_lo: u64,
+    pub epoch_hi: u64,
+}
+
+impl CertRequestWire {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = frame_header(KIND_CERT_REQUEST);
+        out.extend_from_slice(&self.device_id);
+        match &self.scope {
+            super::oplog::CertScope::Group(g) => {
+                out.push(0);
+                out.extend_from_slice(g);
+            }
+            super::oplog::CertScope::Hosts(h) => {
+                out.push(1);
+                out.extend_from_slice(&(h.len() as u16).to_be_bytes());
+                for uid in h {
+                    out.extend_from_slice(uid);
+                }
+            }
+        }
+        out.extend_from_slice(&self.expiry.to_be_bytes());
+        out.extend_from_slice(&self.max_new_hosts_per_day.to_be_bytes());
+        out.extend_from_slice(&self.epoch_lo.to_be_bytes());
+        out.extend_from_slice(&self.epoch_hi.to_be_bytes());
+        out
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        use super::oplog::CertScope;
+        let body = unframe(bytes, KIND_CERT_REQUEST)?;
+        let short = || anyhow::anyhow!("certificate request is truncated");
+        let device_id: [u8; 8] = body.get(..8).ok_or_else(short)?.try_into().unwrap();
+        let mut at = 9;
+        let scope = match *body.get(8).ok_or_else(short)? {
+            0 => {
+                let g: [u8; 16] = body.get(at..at + 16).ok_or_else(short)?.try_into().unwrap();
+                at += 16;
+                CertScope::Group(g)
+            }
+            1 => {
+                let n =
+                    u16::from_be_bytes(body.get(at..at + 2).ok_or_else(short)?.try_into().unwrap())
+                        as usize;
+                at += 2;
+                if n == 0 || n > MAX_CERT_REQUEST_HOSTS {
+                    bail!(
+                        "a certificate request lists 1..={MAX_CERT_REQUEST_HOSTS} hosts, got {n}"
+                    );
+                }
+                let mut hosts = Vec::with_capacity(n);
+                for _ in 0..n {
+                    hosts.push(body.get(at..at + 16).ok_or_else(short)?.try_into().unwrap());
+                    at += 16;
+                }
+                CertScope::Hosts(hosts)
+            }
+            t => bail!("unknown certificate scope tag {t}"),
+        };
+        let rest = body.get(at..).ok_or_else(short)?;
+        if rest.len() != 8 + 4 + 8 + 8 {
+            bail!(
+                "certificate request has {} trailing or missing bytes",
+                rest.len() as i64 - 28
+            );
+        }
+        Ok(Self {
+            device_id,
+            scope,
+            expiry: i64::from_be_bytes(rest[..8].try_into().unwrap()),
+            max_new_hosts_per_day: u32::from_be_bytes(rest[8..12].try_into().unwrap()),
+            epoch_lo: u64::from_be_bytes(rest[12..20].try_into().unwrap()),
+            epoch_hi: u64::from_be_bytes(rest[20..28].try_into().unwrap()),
+        })
+    }
+
+    /// The op body the phone will sign.
+    pub fn to_body(&self) -> super::oplog::OpBody {
+        super::oplog::OpBody::CertIssue {
+            device_id: hex::encode(self.device_id),
+            scope: self.scope.clone(),
+            expiry: self.expiry,
+            max_new_hosts_per_day: self.max_new_hosts_per_day,
+            epoch_lo: self.epoch_lo,
+            epoch_hi: self.epoch_hi,
+        }
+    }
+}
+
+pub const KIND_CERT_EXTEND_REQUEST: u8 = 10;
+
+/// What the terminal shows the phone to extend a trust-session certificate's daily budget (R3b):
+/// `cert_id(32) || extra_hosts u32 BE`. The phone builds and signs `CertExtend` from it unchanged.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CertExtendRequestWire {
+    pub cert_id: [u8; 32],
+    pub extra_hosts: u32,
+}
+
+impl CertExtendRequestWire {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = frame_header(KIND_CERT_EXTEND_REQUEST);
+        out.extend_from_slice(&self.cert_id);
+        out.extend_from_slice(&self.extra_hosts.to_be_bytes());
+        out
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let body = unframe(bytes, KIND_CERT_EXTEND_REQUEST)?;
+        if body.len() != 36 {
+            bail!(
+                "a certificate extension request is 36 bytes, got {}",
+                body.len()
+            );
+        }
+        let extra_hosts = u32::from_be_bytes(body[32..].try_into().unwrap());
+        if extra_hosts == 0 || extra_hosts > super::limits::CERT_NEW_HOSTS_PER_DAY {
+            bail!(
+                "an extension is 1 to {} hosts",
+                super::limits::CERT_NEW_HOSTS_PER_DAY
+            );
+        }
+        Ok(Self {
+            cert_id: body[..32].try_into().unwrap(),
+            extra_hosts,
+        })
+    }
+
+    pub fn to_body(&self) -> super::oplog::OpBody {
+        super::oplog::OpBody::CertExtend {
+            cert_id: self.cert_id,
+            extra_hosts: self.extra_hosts,
         }
     }
 }
@@ -731,5 +885,60 @@ mod phone_frame_tests {
             EnrollFrame::decode(&notice.encode()).is_err(),
             "a notice is not an enrollment frame"
         );
+    }
+}
+
+#[cfg(test)]
+mod cert_request_tests {
+    use super::*;
+    use crate::sync::oplog::CertScope;
+
+    #[test]
+    fn a_certificate_request_round_trips_and_refuses_damage() {
+        let hosts = CertRequestWire {
+            device_id: [7; 8],
+            scope: CertScope::Hosts(vec![[1; 16], [2; 16]]),
+            expiry: 1_900_000_000,
+            max_new_hosts_per_day: 50,
+            epoch_lo: 3,
+            epoch_hi: 103,
+        };
+        let group = CertRequestWire {
+            scope: CertScope::Group([9; 16]),
+            ..hosts.clone()
+        };
+        for r in [&hosts, &group] {
+            assert_eq!(&CertRequestWire::decode(&r.encode()).unwrap(), r);
+        }
+        let mut long = hosts.encode();
+        long.push(0);
+        assert!(CertRequestWire::decode(&long).is_err());
+        let mut cut = hosts.encode();
+        cut.pop();
+        assert!(CertRequestWire::decode(&cut).is_err());
+        let mut bad_tag = hosts.encode();
+        bad_tag[HEADER + 8] = 7;
+        assert!(CertRequestWire::decode(&bad_tag).is_err());
+        let empty = CertRequestWire {
+            scope: CertScope::Hosts(vec![]),
+            ..hosts.clone()
+        };
+        assert!(CertRequestWire::decode(&empty.encode()).is_err());
+        let many = CertRequestWire {
+            scope: CertScope::Hosts(vec![[0; 16]; MAX_CERT_REQUEST_HOSTS + 1]),
+            ..hosts.clone()
+        };
+        assert!(CertRequestWire::decode(&many.encode()).is_err());
+        assert!(
+            matches!(hosts.to_body(), crate::sync::oplog::OpBody::CertIssue { ref device_id, .. } if device_id == "0707070707070707")
+        );
+        assert!(CertRequestWire::decode(
+            &ShareResponseWire {
+                request_id: 1,
+                ciphertext: vec![0; 4]
+            }
+            .encode()
+        )
+        .is_err());
     }
 }

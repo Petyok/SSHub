@@ -161,6 +161,7 @@ mod snippets;
 mod suggestions;
 mod sync_paths;
 mod sync_store;
+mod synced_keys;
 mod tags;
 mod theme_picker;
 mod transfer_plan_confirm;
