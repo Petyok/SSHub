@@ -18,6 +18,8 @@ Run: python3 tests/oracles/op_canonical.py [ops.json]
 Exit status 0 only if every check passes. A built-in self-test mutates a
 vector and requires the checks to fail, so a vacuous oracle cannot pass.
 """
+import contextlib
+import io
 import json
 import sys
 from pathlib import Path
@@ -199,7 +201,8 @@ def main():
     mut = json.loads(json.dumps(first))
     mut["op"]["seq"] += 1
     n = len(FAILS)
-    check_vector(mut, pub)
+    with contextlib.redirect_stdout(io.StringIO()):
+        check_vector(mut, pub)
     check("self-test: mutated input is caught", len(FAILS) - n == 3)
     del FAILS[n:]
     bad_sig = bytearray(bytes.fromhex(first["signature_hex"]))
