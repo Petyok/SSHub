@@ -9,10 +9,22 @@
 NAME=90-checkpoint-bootstrap
 
 ring2
-check "peer-a adds host big" "peer peer-a $SSHUB host add --name big --address big.internal"
-snow peer-b >/dev/null
-approve_all peer-b >/dev/null 2>&1 || true
-check "peer-a makes 5100 safe edits" "psh peer-a 'i=0; while [ \$i -lt 5100 ]; do sshub --profile default host edit big --set-notes n\$i >/dev/null 2>&1 || exit 1; i=\$((i+1)); done'"
+check "peer-a sets up the Vault" "printf '%s\n%s\n' '$KIT' '$PHRASE' | peer peer-a $SSHUB sync-import-kit"
+check "peer-b imports the kit" "printf '%s\n%s\n' '$KIT' '$PHRASE' | peer peer-b $SSHUB sync-import-kit"
+check "peer-a adds host big with a password" "printf 'pw0\n' | peer peer-a $SSHUB host add --name big --address big.internal --password-stdin"
+# Finding P1: `host edit` never appends an op, so the log cannot be grown with host
+# edits. A password edit appends one CredUpdate each: grow the log with those, until
+# the byte threshold (8 MiB) is passed (the op threshold of 5000 is the other trigger).
+grow='i=0; while [ $i -lt 6000 ]; do
+  printf "pw%s\n" "$i" | sshub --profile default host edit --name big --set-password-stdin >/dev/null 2>&1 || exit 1
+  i=$((i+1))
+  if [ $((i % 250)) -eq 0 ]; then
+    db=$(find "$HOME/.local/share/sshub" -name launcher.db | head -n1)
+    b=$(sqlite3 "$db" "SELECT coalesce(sum(length(canonical)),0) FROM sync_ops")
+    [ "$b" -lt 8800000 ] || exit 0
+  fi
+done'
+check "peer-a grows its log past the checkpoint threshold" "psh peer-a '$grow'"
 show "peer-a ops in the log" sq peer-a 'SELECT count(*) FROM sync_ops'
 for round in 1 2 3; do
   spread peer-b peer-a peer-b peer-a

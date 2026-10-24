@@ -13,6 +13,8 @@ check "peer-b imports the kit" "printf '%s\n%s\n' '$KIT' '$PHRASE' | peer peer-b
 check "peer-a stores host quorum1 with a password" "printf '%s\n' '$SECRET' | peer peer-a $SSHUB host add --name quorum1 --address quorum1.internal --password-stdin"
 check "peer-a migrates it into the ring" "peer peer-a $SSHUB sync-migrate"
 
+# A ring of two holders needs the paper registered first (product rule).
+show "peer-a registers the paper factor" sh -c "printf '%s\n' '$PAPER' | $C exec -T peer-a $SSHUB sync-factor-register paper --format json"
 show "peer-a sync-mode quorum (phrase on stdin)" sh -c "printf '%s\n' '$PHRASE' | $C exec -T peer-a $SSHUB sync-mode quorum --format json"
 expect "the mode change is proposed as a Red op with a ceremony" "$LAST_OUT" '.tier == "Red" and (.ceremony.missing | length) >= 0'
 MODE_OP=$(opid "$LAST_OUT")
