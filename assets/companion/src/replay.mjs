@@ -171,23 +171,3 @@ export async function replayVectors(vectorsText, effWordsText, opts = {}) {
   }
   return out;
 }
-
-// op-rules vectors (ops.json): canonical bytes and text, binding-independent op hash, Ed25519 verify.
-// Records share the shape of replayVectors so the node test and browser page can report them alike.
-export function replayOps(opsText) {
-  const ops = lib.parseJSONExact(opsText).ops;
-  return ops.map((e) => {
-    const t0 = performance.now();
-    let error = null;
-    try {
-      const op = opIn(e.op);
-      if (e.canonical_hex !== undefined) eqHex(hx(lib.opCanonicalBytes(op)), e.canonical_hex, `${e.id} canonical`);
-      if (e.canonical_text !== undefined) eqHex(new TextDecoder().decode(lib.opCanonicalBytes(op)), e.canonical_text, `${e.id} text`);
-      if (e.hash !== undefined) eqHex(hx(lib.opHash(op)), e.hash, `${e.id} hash`);
-      if (e.signature_valid !== undefined) assert.equal(lib.opVerify(op, h2b(e.signer_pub)), e.signature_valid, `${e.id} verify`);
-    } catch (err) {
-      error = String(err.message || err);
-    }
-    return { id: e.id, primitive: 'op_rules', profile: null, ok: error === null, ms: Math.round(performance.now() - t0), error };
-  });
-}

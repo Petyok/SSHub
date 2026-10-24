@@ -8,5 +8,8 @@
     "link": "node scripts/link-vendor.mjs",
     "test": "node scripts/link-vendor.mjs && node --test test/replay.test.js",
     "build": "node scripts/link-vendor.mjs && node build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
   }
 }
