@@ -12,9 +12,9 @@ Run `e2e-stage2e` on `poc/e2e` HEAD (after the `poc/tui` merge), log
 | 40-tamper | FAIL (2 failures) |
 
 Failing assertions are kept as they are. Each finding below is a product
-contradiction or an unexplained failure, with the exact output observed.
+contradiction or a test-side bug, with the exact output observed.
 
-## F1. Held host change never reaches the review queue (10)
+## F1. Held host change never reaches the review queue (product, 10)
 
 Command on peer-b after `peer-a host add --name web1 --address web1.internal`
 and `sync-now`:
@@ -45,7 +45,7 @@ pending but unrendered, or was never queued, is not determined.
 
 Same pattern for web2 (`reject held web2 change`).
 
-## F2. Ring device with no recorded host is omitted from `sync-now` (20)
+## F2. Ring device with no recorded host is omitted from `sync-now` (product, 20)
 
 Ring: peer-a founded via hub, peer-c joined via hub. peer-c has no host
 recorded for peer-a. peer-c `sync-now --format json` output:
@@ -63,29 +63,31 @@ the ring-to-host map is dropped instead of reported.
 
 Expected per help text: a `peer-a` row with `status == "skipped"`.
 
-## F3. Tamper step fails silently (40)
+## F3. Tamper step fails: test-side bug (40), now fixed
 
-`40-tamper.sh` runs on peer-a:
+Verified with a debug probe on a separate compose project (`sshub-dbg`), read
+only apart from the scenario's own steps. After scenario 40 as it was:
 
 ```
-db=$(find "$HOME/.local/share/sshub" -name launcher.db | head -n1)
-sqlite3 "$db" "UPDATE sync_ops SET canonical = zeroblob(1) || substr(canonical, 2) WHERE local = 1;"
-test "$(sqlite3 "$db" "SELECT count(*) FROM sync_ops WHERE local = 1;")" -gt 0
+$ sqlite3 "$db" "SELECT local, state, kind, count(*) ... FROM sync_ops GROUP BY local, state, kind;"
+0|pending|DeviceAdd|1|2067|2067
+local_count=0
 ```
 
-`psh peer-a "$tamper"` exits non-zero with empty stderr (`tamper peer-a local ops`
-shows `     | ` only). Schema check: `sync_ops.canonical BLOB NOT NULL`,
-`sync_ops.local INTEGER` (`src/store/migrate.rs:955-974`), so the UPDATE is
-valid SQL.
+Peer-a had no ring of its own, so `host add web40` wrote no `sync_ops` row
+authored locally. `local` is set only by `sync_append_local`
+(`src/sync/store_impl.rs:138`, `src/sync/merge.rs:141`), so `WHERE local = 1`
+matched nothing and the trailing `test ... -gt 0` failed with no output.
 
-Unverified hypothesis: the trailing `test ... -gt 0` fails silently when no
-local ops are marked `local = 1`. Not confirmed; needs a DB query inside the
-peer-a container.
+Test bug: scenario 40 never founded the ring on peer-a. Scenario 10 does
+`enroll_peer peer-a hub` first; scenario 40 went straight to peer-b joining
+peer-a. Fixed in `scenarios/40-tamper.sh` by adding the founding sequence from
+scenario 10. The tamper step now reports its exit status and an explicit
+message on failure, and `[ -n "$tout" ]` flags a silent failure.
 
-Consequence: peer-b's `sync-now` reports `rejected: 0`, `received: 0`,
-`sent: 1`. Because the tamper never ran, this does not show that the product
-accepts tampered ops. The scenario 40 result is therefore inconclusive, not a
-pass.
+Not yet rerun. Peer-b's `sync-now` in the failing run showed `rejected: 0`,
+`sent: 1`, `received: 0`; that result is not valid evidence until 40 runs on
+a ring that really has local ops.
 
 ## Verified passing behaviour
 
