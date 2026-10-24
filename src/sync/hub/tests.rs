@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use super::*;
 use crate::sync::cert::DelegationCert;
 use crate::sync::cred_ops::cred_put;
-use crate::sync::oplog::{Attendance, CertScope, DeviceKind, DeviceRole, ThirdFactor};
+use crate::sync::oplog::{Attendance, CertScope, DeviceKind, DeviceRole, ThirdFactor, VerifiedBy};
 use crate::sync::protocol::tests::{ring, Dev};
 use crate::sync::quorum::tests::{all_to_all, append, deliver, payload, quorum_mode};
 use crate::sync::quorum::{own_shares, release_share_for, Grant};
@@ -32,6 +32,7 @@ fn an_unattended_holder_releases_only_under_a_valid_certificate() {
             DeviceRole::Holder,
             Attendance::Unattended,
             DeviceKind::Terminal,
+            VerifiedBy::Sas,
         )
         .unwrap();
 

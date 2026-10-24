@@ -820,8 +820,8 @@ prompt names the requester; plaintext never touches disk.
   rests on the SSH host key.
 * `EnrollOutcome { peer, peer_name, sas, role, verified_by, ring }`; `VerifiedBy::{Sas, SshHostKey}` is
   `Sas` only when both sides had a screen. The record is `sync_meta` `verified_by:<device id>` (`sas` /
-  `ssh_host_key`), read by `enroll::verified_by`, shown per device on the Sync tab. (Replicating the record
-  with the `DeviceAdd` needs an op-log field; not done.)
+  `ssh_host_key`) is the replicated `DeviceAdd.verified_by` / `DeviceRow.verified_by` (op-log type
+  `VerifiedBy`), shown per device on the Sync tab.
 * Per verb. `sshub sync-enroll` (remote, run by `ssh P sshub sync-enroll`): responder, tty prompt only when
   stdin is a tty (`ssh -t`), else `None`. `sshub sync-join <peer>`: initiator, prompt on its tty. Hosts-tab
   `t` on P: the initiator end over `ssh P sshub sync-enroll` without a tty on P, so the TUI modal shows the
@@ -919,7 +919,7 @@ request_id, requester, eph_x25519_pub }` (the op gains the ephemeral key; Yellow
 holder's review modal naming the requester on its next sync). On approve the holder's TUI appends one
 `ShareGrant { host_uid, request_id, requester, epoch, sealed }` per share epoch it holds (newest first, at
 most 3; Green, inert data) with `sealed` as above; the requester finds it on its next sync
-(`quorum::peer_request`, `quorum::peer_poll`; to be written when the op-log has the two changes: `eph_x25519_pub` on `ShareRelease` and the `ShareGrant` op). The grant is sealed to the EPHEMERAL key, never to the
+(`quorum::peer_request`, `quorum::grant_bodies`, `quorum::peer_poll`; `ShareRelease` carries `eph_x25519_pub`). The grant is sealed to the EPHEMERAL key, never to the
 requester's wrap key: a grant wrapped to a long-lived key would let one stolen requester device open the
 credential forever. The ephemeral secret lives in the requester's memory only; if sshub exits the request
 is made again. No `sync-release` CLI verb: an attended holder approves in its TUI, an unattended holder
