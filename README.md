@@ -149,6 +149,54 @@ sudo pacman -S --needed dbus
 
 Prebuilt binaries for Linux and macOS are attached to each [GitHub release](https://github.com/Petyok/SSHub/releases).
 
+From the [Nix flake](flake.nix) (Linux x86_64 and aarch64), no toolchain required:
+
+```bash
+nix run github:Petyok/SSHub               # run it without installing
+nix profile install github:Petyok/SSHub   # then just: sshub
+```
+
+On NixOS, add it as a flake input, install the package system-wide, and import the
+module that points Nix at the prebuilt binaries:
+
+```nix
+# flake.nix
+inputs.sshub.url = "github:Petyok/SSHub";
+
+# configuration.nix (pass `inputs` to your modules, e.g. via specialArgs)
+imports = [ inputs.sshub.nixosModules.binaryCache ];
+environment.systemPackages = [
+  inputs.sshub.packages.${pkgs.stdenv.hostPlatform.system}.default
+];
+```
+
+Prebuilt binaries come from the [sshub.cachix.org](https://sshub.cachix.org) cache, so
+nothing is compiled. `nixosModules.binaryCache` only sets `nix.settings.substituters` and
+`nix.settings.trusted-public-keys`; skip it and set them yourself if you prefer:
+
+```nix
+nix.settings.substituters = [ "https://sshub.cachix.org" ];
+nix.settings.trusted-public-keys = [
+  "sshub.cachix.org-1:yniNe6K3gkRhTgoJL6Rh2Kvqjfaw7ZjTYEFTwIpYjKA="
+];
+```
+
+For `nix run` and `nix profile install` the flake declares the cache itself, and Nix asks
+whether to trust it the first time (answer `y`, or pass `--accept-flake-config`). That
+declaration is ignored when the flake is an input of another flake, hence the module. On a
+multi-user install a user who is not in `trusted-users` has the flake's cache ignored: add
+it to `trusted-substituters` (with the key above in `trusted-public-keys`) or add the user
+to `trusted-users`.
+
+The cache holds the build for the nixpkgs this flake pins. Overriding that with
+`inputs.sshub.inputs.nixpkgs.follows` changes the store path, so Nix compiles locally,
+and an older channel can also fail on an older Rust toolchain. The flake follows the
+default branch (`main`), so it tracks releases. The package links nixpkgs' OpenSSL, puts
+`openssh` on the end of `PATH` (your own `ssh` still wins), and installs the man page,
+icon and desktop entry. Shell completions are not packaged: they embed your host names,
+so generate them yourself as described under [Headless CLI](#headless-cli)
+(`sshub completions <shell>` works the same for a Nix install).
+
 At runtime, a Secret Service provider (gnome-keyring, KWallet, …) is preferred for secure credential storage. If one is not running or unlocked (e.g. in WSL, Docker, or headless SSH sessions), SSHub will fallback to storing credentials in a local owner-only restricted file (`credentials.json`), notifying you in the status bar.
 
 ```bash

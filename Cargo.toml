@@ -48,7 +48,8 @@ path = "src/lib.rs"
 # without a system OpenSSL present. It is a feature only so local development
 # can opt OUT with `--no-default-features` (see the `test` recipe in the
 # Justfile): linking the system libs saves ~120 MB of target/ per profile and
-# most of a cold build's wall clock. Nothing that ships may pass that flag.
+# most of a cold build's wall clock. Nothing that ships may pass that flag,
+# except the Nix package (flake.nix), which links nixpkgs' OpenSSL on purpose.
 default = ["vendored"]
 vendored = ["ssh2/vendored-openssl"]
 

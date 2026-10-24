@@ -15,6 +15,14 @@ All notable changes to SSHub are documented in this file.
   shown below the field. On the remote pane `~` is the login directory. A local
   path that is not a directory is refused in the prompt; a refusal from the
   server shows as the usual notice and the pane keeps its directory.
+- **Nix flake** (issue #163, requested by [@Frysuni](https://github.com/Frysuni)) - `nix run
+  github:Petyok/SSHub` runs SSHub and `nix profile install github:Petyok/SSHub` or a
+  NixOS flake input installs it declaratively (Linux x86_64 and aarch64). The package
+  links nixpkgs' OpenSSL, installs the man page, icon and desktop entry, and runs
+  with `openssh` on the end of `PATH`. CI builds it on x86_64 and aarch64 for every push
+  and pull request, and pushes the build to the public `sshub.cachix.org` binary cache
+  that the flake declares, so installs substitute it instead of compiling. A NixOS
+  configuration gets that cache by importing `nixosModules.binaryCache`.
 
 ## [0.19.2] - 2026-10-24
 
