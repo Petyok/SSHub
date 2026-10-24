@@ -22,6 +22,22 @@
     return out;
   }
 
+  // Deterministic bytes from a 32-bit seed (xorshift32). Sender and checker derive the same payload.
+  // Not a secret: used only so both ends can compare against a known expected value.
+  function seededBytes(n, seed) {
+    const out = new Uint8Array(n);
+    let x = seed >>> 0 || 1;
+    for (let i = 0; i < n; i++) {
+      x ^= x << 13; x >>>= 0; x ^= x >>> 17; x ^= x << 5; x >>>= 0;
+      out[i] = x & 0xff;
+    }
+    return out;
+  }
+
+  async function sha256Hex(bytes) {
+    return hex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
+  }
+
   function hex(bytes) {
     return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
   }
@@ -292,7 +308,7 @@
   }
 
   global.ShareLib = {
-    crc16, randomBytes, hex, equalBytes,
+    crc16, randomBytes, seededBytes, sha256Hex, hex, equalBytes,
     frame, deframe,
     CHUNK_HDR, fountainChunks, Reassembler, fountainReassemble,
     FSK, FSK_FAST, fskEncode, fskDecode, addNoise,
