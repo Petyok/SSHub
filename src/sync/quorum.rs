@@ -19,7 +19,9 @@ use super::crypto::{
     dek_open, derive_key, hybrid_unwrap, hybrid_wrap, paper_derive, vault_recipient_with,
     Argon2Profile, DeviceIdentity, DevicePublic, PaperDomain, Share, ALG_CURRENT, ARGON2_MASTER,
 };
-use super::oplog::{DeviceId, DeviceRole, DeviceStatus, HostUid, Op, OpBody, WrappedShare};
+use super::oplog::{
+    CredMode, DeviceId, DeviceRole, DeviceStatus, HostUid, Op, OpBody, WrappedShare,
+};
 use super::share_release::{combine_and_check, open_envelope_share, parse_wrapped_share_plaintext};
 use super::wire::{ChallengeWire, PhoneMaterial, ShareKind};
 use crate::credentials::{SecretGate, SecretRef, UnlockError, Unlocker};
@@ -156,6 +158,34 @@ pub fn vault_salt(ring_secret: &[u8; 16]) -> [u8; 16] {
         .unwrap()
 }
 
+/// The text on the printed ring-secret sheet (its QR and the hex groups encode the same thing):
+/// `sshub:ring:1:` and 32 lowercase hex digits.
+pub fn ring_secret_text(ring_secret: &[u8; 16]) -> String {
+    format!("sshub:ring:1:{}", hex::encode(ring_secret))
+}
+
+/// Parses the ring-secret sheet payload, as a QR scan or typed hex groups (spaces and dashes in
+/// the hex part are ignored, the prefix is optional when typing). Anything else is refused.
+pub fn parse_ring_secret(text: &str) -> Result<[u8; 16]> {
+    let t = text.trim();
+    let hex_part = t.strip_prefix("sshub:ring:1:").unwrap_or(t);
+    ensure!(
+        !hex_part.starts_with("sshub:"),
+        "this is not a version 1 ring secret"
+    );
+    let digits: String = hex_part
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '-')
+        .collect();
+    ensure!(digits.len() == 32, "a ring secret is 32 hex digits");
+    ensure!(
+        digits.chars().all(|c| c.is_ascii_hexdigit()),
+        "a ring secret is hexadecimal"
+    );
+    let bytes = hex::decode(digits.to_ascii_lowercase())?;
+    Ok(bytes.try_into().expect("16 bytes"))
+}
+
 /// The vault recipient's public key as this device knows it. LOCAL only (`sync_meta`, never
 /// replicated): a replicated vault key would let one device redirect every new credential to itself.
 pub fn vault_pub(store: &LauncherStore) -> Result<Option<DevicePublic>> {
@@ -171,6 +201,8 @@ pub fn vault_setup(
     master_phrase: &str,
     ring_secret: &[u8; 16],
 ) -> Result<DevicePublic> {
+    super::crypto::eff_decode(master_phrase)
+        .context("the master phrase is not 6 words of the EFF list")?;
     vault_setup_with(store, master_phrase, ring_secret, ARGON2_MASTER)
 }
 
@@ -570,10 +602,11 @@ impl QuorumUnlocker {
             .map_err(fail)?
             .ok_or_else(|| UnlockError::Failed("no such credential".into()))?;
         let vault = vault_pub(&self.store).map_err(fail)?.map(|v| v.device_id());
-        let dek = if vault
-            .as_ref()
-            .is_some_and(|v| wraps.iter().any(|w| w.recipient == *v))
-        {
+        let is_vault = self.store.sync_cred_mode().map_err(fail)? == CredMode::Vault
+            || vault
+                .as_ref()
+                .is_some_and(|v| wraps.iter().any(|w| w.recipient == *v));
+        let dek = if is_vault {
             let ring = self.ring_secret.as_ref().ok_or_else(|| {
                 UnlockError::NeedsShares("this device has no ring secret: import the kit".into())
             })?;

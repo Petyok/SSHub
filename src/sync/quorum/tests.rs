@@ -779,3 +779,134 @@ fn migration_reads_local_secrets_replicates_them_and_removes_the_copies_only_on_
         .is_none());
     let _ = std::fs::remove_file(keyfile);
 }
+
+#[test]
+fn the_ring_secret_sheet_payload_parses_exactly() {
+    let secret: [u8; 16] = std::array::from_fn(|i| (i * 17) as u8);
+    let text = ring_secret_text(&secret);
+    assert_eq!(text, "sshub:ring:1:00112233445566778899aabbccddeeff");
+    assert_eq!(parse_ring_secret(&text).unwrap(), secret);
+    assert_eq!(parse_ring_secret(&format!("  {text}\n")).unwrap(), secret);
+    assert_eq!(
+        parse_ring_secret("0011 2233 4455 6677 8899 AABB CCDD EEFF").unwrap(),
+        secret,
+        "typed hex groups"
+    );
+    assert!(parse_ring_secret("sshub:ring:2:00112233445566778899aabbccddeeff").is_err());
+    assert!(parse_ring_secret("sshub:ring:1:00112233445566778899aabbccddee").is_err());
+    assert!(parse_ring_secret("sshub:ring:1:zz112233445566778899aabbccddeeff").is_err());
+    assert!(parse_ring_secret("").is_err());
+    let store = LauncherStore::open_in_memory().unwrap();
+    assert!(vault_setup(&store, "not six eff words", &secret).is_err());
+}
+
+struct NoSource;
+
+impl ShareSource for NoSource {
+    fn master_phrase(&self) -> Option<Zeroizing<String>> {
+        None
+    }
+
+    fn second_share(
+        &self,
+        _: &HostUid,
+        _: u64,
+        _: &Share,
+    ) -> std::result::Result<Share, UnlockError> {
+        Err(UnlockError::NeedsShares("no peer".into()))
+    }
+}
+
+fn unlocker(d: &Dev, source: Box<dyn ShareSource>, ring: Option<[u8; 16]>) -> QuorumUnlocker {
+    QuorumUnlocker::with_profile(
+        d.store.clone(),
+        d.id.clone(),
+        Arc::new(crate::credentials::SecretGate::default()),
+        source,
+        ring,
+        FAST,
+    )
+}
+
+fn peer(d: &Dev) -> Box<dyn ShareSource> {
+    Box::new(FromPeer {
+        store: d.store.clone(),
+        id: d.id.clone(),
+    })
+}
+
+#[test]
+fn p0_a_copy_of_one_device_opens_nothing_through_the_unlocker_and_one_more_share_opens_it() {
+    // Quorum ring.
+    let d = ring(3);
+    quorum_mode(&d[0]);
+    all_to_all(&d);
+    let host = [41u8; 16];
+    cred_put(&d[0].store, &d[0].id, &host, &payload("quorum-secret")).unwrap();
+    all_to_all(&d);
+    // The copy: device 2's key and the whole log in a fresh process, no other share.
+    let copy = Dev::with(d[2].id.clone());
+    for x in &d {
+        copy.trust(x);
+        deliver(x, &copy);
+    }
+    assert!(matches!(
+        unlocker(&copy, Box::new(NoSource), None).open_one(&host),
+        Err(UnlockError::NeedsShares(_))
+    ));
+    assert!(
+        matches!(
+            unlocker(&copy, Box::new(NoSource), Some(RING)).open_one(&host),
+            Err(UnlockError::NeedsShares(_))
+        ),
+        "a ring secret does not help a quorum credential"
+    );
+    let opened = unlocker(&copy, peer(&d[1]), None).open_one(&host).unwrap();
+    assert_eq!(
+        CredPayload::from_bytes(&opened)
+            .unwrap()
+            .password
+            .as_deref(),
+        Some("quorum-secret")
+    );
+
+    // Vault ring: the copy of a machine has the device key and the log; the ring secret is not in it.
+    let v = ring(2);
+    for x in &v {
+        vault_setup_with(&x.store, PHRASE, &RING, FAST).unwrap();
+    }
+    cred_put(&v[0].store, &v[0].id, &host, &payload("vault-secret")).unwrap();
+    all_to_all(&v);
+    let vcopy = Dev::with(v[1].id.clone());
+    for x in &v {
+        vcopy.trust(x);
+        deliver(x, &vcopy);
+    }
+    assert!(
+        unlocker(&vcopy, Box::new(NoSource), None)
+            .open_one(&host)
+            .is_err(),
+        "no ring secret, no phrase"
+    );
+    assert!(
+        unlocker(&vcopy, peer(&v[0]), None).open_one(&host).is_err(),
+        "the phrase without the ring secret"
+    );
+    assert!(
+        matches!(
+            unlocker(&vcopy, Box::new(NoSource), Some(RING)).open_one(&host),
+            Err(UnlockError::Cancelled)
+        ),
+        "the ring secret without the phrase"
+    );
+    let opened = unlocker(&vcopy, peer(&v[0]), Some(RING))
+        .open_one(&host)
+        .unwrap();
+    assert_eq!(
+        CredPayload::from_bytes(&opened)
+            .unwrap()
+            .password
+            .as_deref(),
+        Some("vault-secret")
+    );
+}
