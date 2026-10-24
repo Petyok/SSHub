@@ -363,17 +363,36 @@ and `src/sync/identity_store.rs` is the reference.
 
 **Canonical form details (C2).** Header field order is `device_id, seq, lamport,
 prev_hash, timestamp, epoch, alg, body`; `alg` is the two-byte wire form
-`[sig, wrap]` (`[1,1]` today); the body is externally tagged,
-`{"Variant":{fields in the order of section 2}}`; uids are 32 lowercase hex
-characters; `[u8; 32]` hashes, ciphertexts, sealed shares, commitments and
-device keys are arrays of numbers; `ThirdFactor` is `"Paper"`, `"EmailCode"` or
-`{"HardwareKey":"<device id>"}`; `CertScope` is `{"Group":"<uid>"}` or
-`{"Hosts":["<uid>",...]}`; `HeadAttest` (in `PhoneReenroll.liveness`) is
-`{"device_id","seq","chain_hash"}`. Decoding is strict: `Op::from_canonical`
-re-encodes and refuses bytes that differ from what the encoder would write.
-Final vectors: `tests/vectors/op/ops.json` (every body variant plus edge cases),
-reproduced by the independent oracle `tests/oracles/op_canonical.py`;
-`tests/vectors/op-rules/` stays as the PoC A rule conformance set.
+`[sig, wrap]` as a JSON array (`[1,1]` today, the only number array left); the
+body is externally tagged, `{"Variant":{fields in the order of section 2}}`;
+uids are 32 lowercase hex characters; fixed `[u8; 32]` values (`prev_hash`,
+`chain_hash`, `cert_id`, `reenroll_hash`, `ed25519_pub`, `x25519_pub`) are
+lowercase hex strings; every `Vec<u8>` (`ciphertext`, `sealed`, `sealed_share`,
+`mlkem_pub`, each `commitments` entry, the bytes of a `sub_shares` pair) is a
+base64 string (standard alphabet, padded); `sub_shares` entries are
+`["<device id>","<base64>"]` pairs; `ReshareItem` is `{host_uid, sub_shares,
+commitments}`, `ConfirmItem` is `{host_uid, sealed_share}`; `ThirdFactor` is
+`"Paper"`, `"EmailCode"` or `{"HardwareKey":"<device id>"}`; `CertScope` is
+`{"Group":"<uid>"}` or `{"Hosts":["<uid>",...]}`; `HeadAttest` (in
+`PhoneReenroll.liveness`) is `{"device_id","seq","chain_hash"}`. Decoding is
+strict: `Op::from_canonical` re-encodes and refuses bytes that differ from what
+the encoder would write (wrong alphabet, missing padding, uppercase hex, key
+order, whitespace). An op larger than `MAX_FRAME_BYTES` is refused at ingest.
+Final vectors: `tests/vectors/op/ops.json` (every body variant plus edge cases,
+inputs with `Vec<u8>` as hex), reproduced by the independent oracle
+`tests/oracles/op_canonical.py`; `tests/vectors/op-rules/` is the superseded PoC A
+number-array set.
+
+**C14 ops.** `ShareReshareSession`, `ShareStorageKey`, `ShareReshareBatch`,
+`ShareReshareConfirmBatch` (at most `RESHARE_ITEMS_PER_OP` items, enforced at
+ingest and by `sync_append_local`) and `WrapKeyRotate` are Green: cryptographic
+data only, the ring ceremony around them (`DeviceRevoke`, holder changes) is
+Red. Stage 1 stores them in the chain; stage 3 reads them with
+`sync_chain_tail`. `WrapKeyRotate` must be signed by `device_id` itself
+(`Rejected` otherwise); on effect it records the replaced and the new
+generation in `sync_wrap_history` and, when `wrap_epoch` is above the stored one
+and the keys validate (`DevicePublic::validate`), replaces `x25519`/`mlkem` in
+`sync_devices` and sets `DeviceRow.wrap_epoch`. The signing key never changes.
 
 **Patch fields.** `HostUpsert`, `GroupUpsert` and `IdentityUpsert` carry a patch:
 absent key = untouched, explicit `null` = cleared, absent keys are omitted, key
@@ -436,11 +455,12 @@ An approved `DeviceRevoke` voids the target's ops with lamport at or above the
 revoke's; a revoke never loses an automatic tie-break.
 
 **Tiers** (`tier::body_tier`): Green = upserts with only safe fields,
-`CertHostOpened`, `RecoveryAck`, `HeadAttest`. Yellow = upserts touching any
+`CertHostOpened`, `RecoveryAck`, `HeadAttest`, `WrapKeyRotate` and the four reshare
+ops. Yellow = upserts touching any
 dangerous (or unclassified) field, the three deletes, `CredUpdate`,
-`ShareRelease`, `ShareReshareConfirm`, `CertRevoke`, `PhoneReenrollCancel`,
+`ShareRelease`, `CertRevoke`, `PhoneReenrollCancel`,
 `DeviceAdd` of a mirror. Red = `DeviceAdd` of a holder, `DeviceRevoke`,
-`ShareReshare`, `CertIssue`, `PhoneReenroll`, `ModeChange`. Only Green applies
+`CertIssue`, `PhoneReenroll`, `ModeChange`. Only Green applies
 without review.
 
 **State model.** Entity state is a deterministic function of the effective ops:
@@ -456,8 +476,8 @@ device. Effects of non-entity ops (`DeviceAdd`, `CredUpdate`, certificates,
 undone by a later void (ring-membership ops are always reviewed by a human).
 
 **Schema.** Tables of `migrate_v21_to_v22`: the 11 of section 2 plus
-`sync_fields` (per-field write registers) and `sync_entities` (cache of
-liveness and base name). `sync_ops` also stores `kind` and `subject`. The DDL is
+`sync_fields` (per-field write registers), `sync_entities` (cache of
+liveness and base name) and `sync_wrap_history` (wrap key generations). `sync_ops` also stores `kind` and `subject`. The DDL is
 `SYNC_SCHEMA` in `src/store/migrate.rs`. Uids of new rows come from an
 `AFTER INSERT` trigger (`randomblob(16)`, SQLite's OS-seeded CSPRNG); the seeded
 Favorites group and Default identity have fixed uids
