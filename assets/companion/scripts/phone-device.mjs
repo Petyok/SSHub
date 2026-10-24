@@ -180,6 +180,24 @@ export class Chrome {
     return targetId;
   }
   // Every evaluation has a deadline: a page that waits on a permission prompt must not hang the run.
+  // The owner opens OUR page in a tab himself (a real tap is needed for the camera prompt); the tab is
+  // found by its URL (filtered to our own origin, no other tab is read) and driven like our own.
+  async adoptTab(prefix, waitS = 300) {
+    for (let i = 0; i < waitS * 2; i++) {
+      const list = await (await fetch('http://127.0.0.1:9222/json/list')).json();
+      const t = list.find((x) => x.type === 'page' && x.url.startsWith(prefix));
+      if (t) {
+        this.targetId = t.id;
+        this.sessionId = (await this.send('Target.attachToTarget', { targetId: t.id, flatten: true }, false)).sessionId;
+        await this.send('Page.enable');
+        await this.send('Runtime.enable');
+        this.viaIntent = true;
+        return t.id;
+      }
+      await sleep(500);
+    }
+    throw new Error(`no tab of ours appeared (${prefix})`);
+  }
   async eval(expression, { await: aw = true, gesture = false, timeoutMs = 30000 } = {}) {
     const call = this.send('Runtime.evaluate', { expression, awaitPromise: aw, returnByValue: true, userGesture: gesture });
     let timer;

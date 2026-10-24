@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ORIGIN, cleanup, guard, setup, sleep, state } from './phone-device.mjs';
+import { BROWSER_PKG, ORIGIN, adb, cleanup, guard, setup, sleep, state } from './phone-device.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cmd = process.argv[2];
@@ -49,18 +49,20 @@ const stop = (child) =>
 // Hard preflight: never start a timed block on an input that is not live. The camera must deliver a
 // live video track with a picture within 10 s and the scanner must decode a first frame of the
 // terminal's QR within 10 s more; otherwise the block aborts with the exact reason.
-async function preflightCamera() {
+async function preflightCamera({ decode = true } = {}) {
   const status = () => phoneEval(`JSON.stringify((() => { const v = document.querySelector('#cam'); const t = v && v.srcObject ? v.srcObject.getVideoTracks()[0] : null; return { stream: !!(v && v.srcObject), w: v && v.videoWidth, track: t && t.readyState, label: t && t.label, have: document.querySelector('#have').innerText, total: document.querySelector('#total').innerText }; })())`, { timeoutMs: 8000 }).then(JSON.parse);
   const perm = await phoneEval(`navigator.permissions.query({ name: 'camera' }).then((p) => p.state)`, { timeoutMs: 5000 }).catch(() => 'unknown');
   await phoneClick('#start');
   let st = null;
-  for (let i = 0; i < 20; i++) {
+  const holdS = Number(arg('hold', 10));
+  for (let i = 0; i < holdS * 2; i++) {
     st = await status();
     if (st.track === 'live' && st.w > 0) break;
     await sleep(500);
   }
-  if (!(st.track === 'live' && st.w > 0)) throw new Error(`PREFLIGHT FAILED: the camera is not live after 10 s (permission state ${perm}, stream ${st.stream}, track ${st.track}); Chrome probably lacks the Android camera permission`);
+  if (!(st.track === 'live' && st.w > 0)) throw new Error(`PREFLIGHT FAILED: the camera is not live after ${holdS} s (permission state ${perm}, stream ${st.stream}, track ${st.track}); Chrome probably lacks the Android camera permission`);
   console.log(JSON.stringify({ preflight: 'camera live', track: st.label, width: st.w }));
+  if (!decode) return;
   for (let i = 0; i < 20; i++) {
     st = await status();
     if (st.total !== '?' || Number(st.have) > 0) break;
@@ -114,8 +116,15 @@ async function terminalBlock({ label, version, bytes, cols, rows, runs }) {
 }
 
 async function camera() {
-  await state.chrome.openTab('about:blank');
-  await state.chrome.grant(['videoCapture']);
+  if (process.argv.includes('--adopt')) {
+    console.log(`WAITING: open ${ORIGIN}/qr-scanner.html?seed=1&len=1714 in Chrome on the phone, tap Start camera, tap Allow`);
+    await state.chrome.adoptTab(`${ORIGIN}/qr-scanner.html`, 600);
+    await state.chrome.send('Page.bringToFront').catch(() => {});
+    console.log('adopted the tab the owner opened');
+  } else {
+    await state.chrome.openTab('about:blank');
+    await state.chrome.grant(['videoCapture']);
+  }
   const runs = Number(arg('runs', 5));
   const blocks = [
     { label: 'v5 80x24 1714 B', version: 5, bytes: 1714, cols: 80, rows: 24 },
@@ -313,11 +322,21 @@ async function audio() {
   if (only === 'qr' || (!only && !process.argv.includes('--noqr'))) await qrBlock({ runs });
 }
 
+async function preflightOnly() {
+  const cam = adb(['shell', 'dumpsys', 'package', BROWSER_PKG]).split('\n').filter((l) => /android\.permission\.CAMERA: granted/.test(l)).map((l) => l.trim().split(',')[0]);
+  console.log(JSON.stringify({ android_camera_permission: [...new Set(cam)] }));
+  await state.chrome.openTab('about:blank');
+  await state.chrome.prepare({ camera: true, silent: true });
+  await state.chrome.goto(`${ORIGIN}/qr-scanner.html?seed=1&len=1714`);
+  await preflightCamera({ decode: false });
+}
+
 let code = 0;
 try {
   guard('start');
   await setup();
-  if (cmd === 'camera') await camera();
+  if (cmd === 'preflight') await preflightOnly();
+  else if (cmd === 'camera') await camera();
   else if (cmd === 'audio') await audio();
   else throw new Error(`unknown command ${cmd}`);
 } catch (e) {
