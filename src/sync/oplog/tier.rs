@@ -165,6 +165,7 @@ pub fn body_tier(body: &OpBody) -> OpTier {
         OpBody::CertHostOpened { .. }
         | OpBody::RecoveryAck { .. }
         | OpBody::HeadAttest { .. }
+        | OpBody::ShareGrant { .. }
         | OpBody::CheckpointPropose { .. }
         | OpBody::CheckpointSign { .. }
         | OpBody::WrapKeyRotate { .. }

@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use x25519_dalek::{EphemeralSecret, PublicKey as XPublic};
 
 use super::crypto::{chain_hash, sas_words, verify, DeviceIdentity, DevicePublic};
-use super::oplog::{Attendance, DeviceKind, DeviceRole, OpBody};
+use super::oplog::{Attendance, DeviceKind, DeviceRole, OpBody, VerifiedBy};
 use super::protocol::{b64, hex32, hex64, Session, SyncLink, SyncMsg};
 use super::quorum::{meta_get, meta_set};
 use super::ratchet::{pair_key_from_exchange, save_pair, PairState};
@@ -191,23 +191,6 @@ pub enum EnrollRole {
     Joiner,
 }
 
-/// How a device was admitted. `Sas`: two humans compared the words. `SshHostKey`: only one side had a
-/// screen, the other's identity rests on the SSH host key the attended user verified.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VerifiedBy {
-    Sas,
-    SshHostKey,
-}
-
-impl VerifiedBy {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Sas => "sas",
-            Self::SshHostKey => "ssh_host_key",
-        }
-    }
-}
-
 /// Decides the roles from both hellos. `initiator` is the side that opened the connection.
 pub fn decide_role(
     mine: &Option<String>,
@@ -236,17 +219,6 @@ pub fn ring_id(store: &LauncherStore) -> Result<Option<String>> {
 
 fn set_ring_id(store: &LauncherStore, ring: &str) -> Result<()> {
     meta_set(store, "ring_id", ring.as_bytes())
-}
-
-/// How `device` was admitted on this device (local record; shown per device on the Sync tab).
-pub fn verified_by(store: &LauncherStore, device: &str) -> Result<Option<VerifiedBy>> {
-    Ok(
-        meta_get(store, &format!("verified_by:{device}"))?.and_then(|b| match b.as_slice() {
-            b"sas" => Some(VerifiedBy::Sas),
-            b"ssh_host_key" => Some(VerifiedBy::SshHostKey),
-            _ => None,
-        }),
-    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -410,6 +382,7 @@ fn run<L: SyncLink>(
                 DeviceRole::Mirror,
                 attendance,
                 DeviceKind::Terminal,
+                verified,
             )?;
             if !known {
                 store
@@ -421,6 +394,7 @@ fn run<L: SyncLink>(
                             role: DeviceRole::Mirror,
                             attendance,
                             kind: DeviceKind::Terminal,
+                            verified_by: verified,
                         },
                     )
                     .map_err(|e| {
@@ -439,15 +413,11 @@ fn run<L: SyncLink>(
                 DeviceRole::Holder,
                 attendance,
                 DeviceKind::Terminal,
+                verified,
             )?;
             ring
         }
     };
-    meta_set(
-        store,
-        &format!("verified_by:{peer_id}"),
-        verified.as_str().as_bytes(),
-    )?;
     save_pair(store, &peer_id, &PairState::fresh(key))?;
     Ok(EnrollOutcome {
         peer: peer_pub,

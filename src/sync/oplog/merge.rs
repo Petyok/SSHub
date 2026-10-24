@@ -437,14 +437,15 @@ fn effects(conn: &Connection, op: &Op, hash: &[u8; 32]) -> Result<()> {
             role,
             attendance,
             kind,
+            verified_by,
         } => {
             if device.validate().is_ok()
                 && device.device_id() == device_id_of_pub(&device.ed25519_pub)
             {
                 conn.execute(
                     "INSERT OR IGNORE INTO sync_devices
-                       (device_id, ed25519, x25519, mlkem, name, role, attendance, kind, last_seen, added_by)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9)",
+                       (device_id, ed25519, x25519, mlkem, name, role, attendance, kind, verified_by, last_seen, added_by)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10)",
                     params![
                         device.device_id(),
                         &device.ed25519_pub[..],
@@ -454,6 +455,7 @@ fn effects(conn: &Connection, op: &Op, hash: &[u8; 32]) -> Result<()> {
                         role_db(*role),
                         attendance_db(*attendance),
                         kind_db(*kind),
+                        verified_db(*verified_by),
                         &hash[..],
                     ],
                 )?;
@@ -626,6 +628,13 @@ pub(crate) fn role_db(r: DeviceRole) -> &'static str {
     match r {
         DeviceRole::Holder => "holder",
         DeviceRole::Mirror => "mirror",
+    }
+}
+
+pub(crate) fn verified_db(v: VerifiedBy) -> &'static str {
+    match v {
+        VerifiedBy::Sas => "sas",
+        VerifiedBy::SshHostKey => "ssh_host_key",
     }
 }
 
