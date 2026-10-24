@@ -26,6 +26,11 @@ expect "peer-b sync-now reaches peer-a ok" "$out" '[.[] | select(.name=="peer-a"
 
 st=$(peer peer-b $SSHUB sync-status --format json 2>/dev/null || true)
 expect "address change held as pending on peer-b" "$st" '.pending >= 1'
+# Raw review queue, so a failing rid lookup shows what peer-b actually reports.
+echo "--- peer-b sync-review (plain)"
+peer peer-b $SSHUB sync-review 2>&1 || true
+echo "--- peer-b sync-review (json)"
+peer peer-b $SSHUB sync-review --format json 2>&1 || true
 check "web1 address not applied before approval" "! peer peer-b $SSHUB host list 2>/dev/null | grep -q web1.internal"
 check "held web1 change is in the review queue" "test -n '$(rid web1.internal)'"
 check "approve held web1 change on peer-b" "peer peer-b $SSHUB sync-review --approve $(rid web1.internal)"

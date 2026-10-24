@@ -14,10 +14,11 @@ tamper='db=$(find "$HOME/.local/share/sshub" -name launcher.db | head -n1)
 [ -n "$db" ] || { echo "no launcher.db"; exit 1; }
 sqlite3 "$db" "UPDATE sync_ops SET canonical = zeroblob(1) || substr(canonical, 2) WHERE local = 1;"
 test "$(sqlite3 "$db" "SELECT count(*) FROM sync_ops WHERE local = 1;")" -gt 0'
-if psh peer-a "$tamper"; then
+if tout=$(psh peer-a "$tamper" 2>&1); then
   echo "ok   tampered peer-a local ops"
 else
   echo "FAIL tamper peer-a local ops"
+  echo "$tout" | while IFS= read -r l; do echo "     | $l"; done
   fail=$((fail + 1))
 fi
 
