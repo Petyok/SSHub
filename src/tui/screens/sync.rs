@@ -97,14 +97,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     ));
     let selected = sync.selected.min(sync.devices.len().saturating_sub(1));
     for (i, d) in sync.devices.iter().enumerate() {
-        let (glyph, role) = match d.status {
-            DeviceStatusView::Operational => ("\u{25cf}", ColorRole::StatusSuccess),
-            DeviceStatusView::Behind => ("\u{25d0}", ColorRole::StatusWarning),
-            DeviceStatusView::Stale => ("\u{25cb}", ColorRole::StatusWarning),
-            DeviceStatusView::Suspect => ("\u{25b2}", ColorRole::StatusWarning),
-            DeviceStatusView::Compromised => ("\u{2716}", ColorRole::StatusError),
-            DeviceStatusView::Revoked => ("\u{25cb}", ColorRole::StatusUnknown),
-        };
+        let (glyph, role) = d.status.glyph();
         let role_label = match d.role {
             crate::app::sync::DeviceRoleView::Holder => "holder",
             crate::app::sync::DeviceRoleView::Mirror => "mirror",
@@ -139,9 +132,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-/// A centered popup with wrapped `body` and a one-line `hint` on its last row.
-fn modal(frame: &mut Frame, app: &App, title: &str, width: u16, body: Vec<Line>, hint: &str) {
-    let area = frame.area();
+/// Size of a popup for `body` plus `extra` rows below it, before the terminal
+/// clamps it: `(width, height, wrapped rows + 1 slack)`.
+fn popup_wh(area: Rect, width: u16, body: &[Line], extra: u16) -> (u16, u16, usize) {
     let w = width.min(area.width.saturating_sub(2));
     // Rows after wrapping, so a long paragraph is not cut off by its popup.
     let text_w = usize::from(w.saturating_sub(4)).max(1);
@@ -150,10 +143,31 @@ fn modal(frame: &mut Frame, app: &App, title: &str, width: u16, body: Vec<Line>,
         .map(|l| l.width().div_ceil(text_w).max(1))
         .sum::<usize>();
     let h = (rows as u16)
+        .saturating_add(extra)
         .saturating_add(4)
         .min(area.height.saturating_sub(2));
+    (w, h, rows)
+}
+
+/// A centered popup with wrapped `body` and a one-line `hint` on its last row.
+fn modal(frame: &mut Frame, app: &App, title: &str, width: u16, body: Vec<Line>, hint: &str) {
+    modal_with_extra(frame, app, title, width, body, hint, 0);
+}
+
+/// [`modal`] with `extra` rows reserved under the body; returns that area.
+fn modal_with_extra(
+    frame: &mut Frame,
+    app: &App,
+    title: &str,
+    width: u16,
+    body: Vec<Line>,
+    hint: &str,
+    extra: u16,
+) -> Option<Rect> {
+    let area = frame.area();
+    let (w, h, rows) = popup_wh(area, width, &body, extra);
     if w < 8 || h < 4 {
-        return;
+        return None;
     }
     let popup = Rect::new(
         area.x + (area.width - w) / 2,
@@ -175,12 +189,9 @@ fn modal(frame: &mut Frame, app: &App, title: &str, width: u16, body: Vec<Line>,
         popup,
     );
     let inner = popup.inner(Margin::new(2, 1));
-    let body_area = Rect::new(
-        inner.x,
-        inner.y,
-        inner.width,
-        inner.height.saturating_sub(1),
-    );
+    let usable = inner.height.saturating_sub(1);
+    let body_h = ((rows - 1) as u16).min(usable);
+    let body_area = Rect::new(inner.x, inner.y, inner.width, body_h);
     frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), body_area);
     frame.buffer_mut().set_string(
         inner.x,
@@ -189,6 +200,11 @@ fn modal(frame: &mut Frame, app: &App, title: &str, width: u16, body: Vec<Line>,
         theme.style(StyleRole::PopupHint),
     );
     crate::tui::paint_popup_border(frame, popup, theme);
+    // The slack row sits between the body and the extra area.
+    let top = inner.y + body_h + 1;
+    let extra_h = usable.saturating_sub(body_h + 1).min(extra);
+    (extra > 0 && extra_h > 0 && top < inner.bottom())
+        .then(|| Rect::new(inner.x, top, inner.width, extra_h))
 }
 
 fn row(selected: bool, text: String, app: &App) -> Line<'static> {
@@ -239,6 +255,7 @@ pub fn render_review(frame: &mut Frame, app: &App) {
 }
 
 pub fn render_unlock(frame: &mut Frame, app: &App) {
+    use crate::tui::widgets::qr_frames::{cells_needed, needed_version, render as render_qr};
     let Some(u) = app.sync.unlock.as_ref() else {
         return;
     };
@@ -253,18 +270,65 @@ pub fn render_unlock(frame: &mut Frame, app: &App) {
             theme.style(StyleRole::TextPrimary),
         ),
     ];
-    for (path, status) in &u.paths {
+    for p in &u.paths {
         body.push(Line::styled(
-            format!("  {path}: {status}"),
+            format!("  {}: {}", p.kind.label(), p.status),
             theme.style(StyleRole::TextMuted),
         ));
     }
     body.push(Line::raw(""));
     body.push(Line::styled(
-        format!("code \u{203a} {}\u{2588}", u.code),
+        format!("code or words \u{203a} {}\u{2588}", u.code),
         theme.style(StyleRole::PickerQuery),
     ));
-    modal(frame, app, "Unlock", 70, body, "Enter submit  Esc cancel");
+
+    let mut width = 70;
+    let mut extra = 0;
+    if let Ok(version) = needed_version(&u.frames) {
+        let (cw, ch) = cells_needed(version);
+        width = width.max(cw + 4);
+        extra = ch + 1; // the code and the "frame i/n" line
+        let area = frame.area();
+        let (w, h, rows) = popup_wh(area, width, &body, extra);
+        if w != width || h != rows as u16 + extra + 4 {
+            // The popup would be clamped: say what is needed, draw no code.
+            let need_w = width + 2;
+            let need_h = rows as u16 + extra + 4 + 2;
+            body.push(Line::raw(""));
+            body.push(Line::styled(
+                format!(
+                    "The QR code needs a terminal of at least {need_w}x{need_h} (this one is {}x{}).",
+                    area.width, area.height
+                ),
+                app.theme().style(StyleRole::PopupWarning),
+            ));
+            extra = 0;
+        }
+    } else if needed_version(&u.frames) == Err(crate::tui::widgets::qr_frames::QrPlan::TooLarge) {
+        body.push(Line::raw(""));
+        body.push(Line::styled(
+            "The challenge is too large for a QR code: use the clipboard or the words.",
+            app.theme().style(StyleRole::PopupWarning),
+        ));
+    }
+    let hint = "Enter submit  Esc cancel";
+    let Some(qr_area) = modal_with_extra(frame, app, "Unlock", width, body, hint, extra) else {
+        return;
+    };
+    let code_rows = qr_area.height.saturating_sub(1);
+    let index = app.sync.qr_frame % u.frames.len().max(1);
+    render_qr(
+        frame.buffer_mut(),
+        Rect::new(qr_area.x, qr_area.y, qr_area.width, code_rows),
+        &u.frames,
+        index,
+    );
+    frame.buffer_mut().set_string(
+        qr_area.x,
+        qr_area.bottom() - 1,
+        format!("frame {}/{}", index + 1, u.frames.len()),
+        theme.style(StyleRole::TextMuted),
+    );
 }
 
 pub fn render_sas(frame: &mut Frame, app: &App) {
@@ -535,7 +599,12 @@ mod tests {
             ),
             (
                 AppMode::SyncUnlock,
-                &["1 of 2 shares", "audio: listening", "ab-12"][..],
+                &[
+                    "1 of 2 shares",
+                    "clipboard: listening",
+                    "phone (QR)",
+                    "ab-12",
+                ][..],
             ),
             (
                 AppMode::SyncSas,
@@ -564,6 +633,97 @@ mod tests {
                 assert!(s.contains(want), "{mode:?} {want}: {s}");
             }
         }
+    }
+
+    /// Every cell the QR widget drew (half block, pure black/white), as the
+    /// module matrix with its quiet zone: `(version, side x side grid)`.
+    fn read_qr(buf: &ratatui::buffer::Buffer) -> Option<(i16, Vec<Vec<bool>>)> {
+        use ratatui::style::Color;
+        let pure = |c: Color| c == Color::Rgb(0, 0, 0) || c == Color::Rgb(255, 255, 255);
+        let cells: Vec<(u16, u16)> = (0..buf.area.height)
+            .flat_map(|y| (0..buf.area.width).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                let c = buf.cell((x, y)).unwrap();
+                c.symbol() == "\u{2580}" && pure(c.fg) && pure(c.bg)
+            })
+            .collect();
+        let (x0, x1) = (
+            cells.iter().map(|c| c.0).min()?,
+            cells.iter().map(|c| c.0).max()?,
+        );
+        let (y0, y1) = (
+            cells.iter().map(|c| c.1).min()?,
+            cells.iter().map(|c| c.1).max()?,
+        );
+        let side = (x1 - x0 + 1) as usize;
+        let mut grid = vec![vec![false; side]; (y1 - y0 + 1) as usize * 2];
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                let c = buf.cell((x, y)).unwrap();
+                let r = (y - y0) as usize * 2;
+                grid[r][(x - x0) as usize] = c.fg == Color::Rgb(0, 0, 0);
+                grid[r + 1][(x - x0) as usize] = c.bg == Color::Rgb(0, 0, 0);
+            }
+        }
+        grid.truncate(side);
+        Some((((side - 8 - 17) / 4) as i16, grid))
+    }
+
+    fn draw(app: &App, w: u16, h: u16) -> ratatui::buffer::Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+        terminal.draw(|f| crate::tui::render(f, app)).unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    #[test]
+    fn unlock_modal_shows_each_frame_as_a_decodable_code() {
+        use qrcode::{Color as Module, EcLevel, QrCode, Version};
+        let mut app = app_in(AppMode::SyncUnlock);
+        let frames = app.sync.unlock.as_ref().unwrap().frames.clone();
+        let mut seen = Vec::new();
+        for i in 0..frames.len() {
+            app.sync.qr_frame = i;
+            let buf = draw(&app, 110, 60);
+            let (version, grid) = read_qr(&buf).expect("a code is drawn");
+            let want =
+                QrCode::with_version(&frames[i], Version::Normal(version), EcLevel::M).unwrap();
+            let n = want.width();
+            for (y, row) in grid.iter().enumerate() {
+                for (x, &dark) in row.iter().enumerate() {
+                    let inside = (4..4 + n).contains(&x) && (4..4 + n).contains(&y);
+                    let expect = inside && want.to_colors()[(y - 4) * n + (x - 4)] == Module::Dark;
+                    assert_eq!(dark, expect, "frame {i} module ({x},{y})");
+                }
+            }
+            let text: String = (0..buf.area.height)
+                .flat_map(|y| (0..buf.area.width).map(move |x| (x, y)))
+                .map(|(x, y)| buf.cell((x, y)).unwrap().symbol().to_string())
+                .collect();
+            assert!(
+                text.contains(&format!("frame {}/{}", i + 1, frames.len())),
+                "{i}"
+            );
+            seen.push(grid);
+        }
+        assert!(seen[0] != seen[1], "frames differ on screen");
+    }
+
+    #[test]
+    fn a_small_terminal_gets_the_needed_size_instead_of_a_code() {
+        let app = app_in(AppMode::SyncUnlock);
+        let buf = draw(&app, 100, 30);
+        assert!(read_qr(&buf).is_none(), "no unreadable code is drawn");
+        let text: String = (0..buf.area.height)
+            .flat_map(|y| (0..buf.area.width).map(move |x| (x, y)))
+            .map(|(x, y)| buf.cell((x, y)).unwrap().symbol().to_string())
+            .collect();
+        // The message wraps inside the popup, so match whole tokens, not phrases.
+        assert!(
+            text.contains("100x30"),
+            "the terminal size is reported: {text}"
+        );
+        assert!(text.contains("QR"), "{text}");
+        assert!(text.contains("least"), "{text}");
     }
 
     #[test]

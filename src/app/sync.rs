@@ -50,6 +50,19 @@ impl DeviceStatusView {
             Self::Revoked => "revoked",
         }
     }
+
+    /// The status glyph and the colour role it is drawn in.
+    pub fn glyph(self) -> (&'static str, crate::theme::catalog::ColorRole) {
+        use crate::theme::catalog::ColorRole::*;
+        match self {
+            Self::Operational => ("\u{25cf}", StatusSuccess),
+            Self::Behind => ("\u{25d0}", StatusWarning),
+            Self::Stale => ("\u{25cb}", StatusWarning),
+            Self::Suspect => ("\u{25b2}", StatusWarning),
+            Self::Compromised => ("\u{2716}", StatusError),
+            Self::Revoked => ("\u{25cb}", StatusUnknown),
+        }
+    }
 }
 
 /// What a device may do in the ring (the contract's `DeviceRole`).
@@ -118,15 +131,47 @@ pub struct PendingOpView {
     pub changes: Vec<ChangeView>,
 }
 
-/// The unlock modal: shares collected so far and the short-code field.
+/// How a share can reach the unlock modal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnlockPathKind {
+    Peer,
+    PhoneQr,
+    Clipboard,
+    ShortCode,
+    Words24,
+}
+
+impl UnlockPathKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Peer => "peer device",
+            Self::PhoneQr => "phone (QR)",
+            Self::Clipboard => "clipboard",
+            Self::ShortCode => "short code",
+            Self::Words24 => "24 words",
+        }
+    }
+}
+
+/// One unlock path and where it stands, e.g. `(Clipboard, "listening")`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnlockPathView {
+    pub kind: UnlockPathKind,
+    pub status: String,
+}
+
+/// The unlock modal: shares collected so far, the challenge QR and the code
+/// field.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnlockView {
     pub host: String,
     pub have: usize,
     pub need: usize,
-    /// `(path, status)` per unlock path, e.g. `("audio", "listening")`.
-    pub paths: Vec<(String, String)>,
-    /// The short code typed so far.
+    pub paths: Vec<UnlockPathView>,
+    /// Challenge payloads, one QR frame each, looped at 8 fps. Empty hides the
+    /// QR.
+    pub frames: Vec<Vec<u8>>,
+    /// The short code or words typed so far.
     pub code: String,
 }
 
@@ -202,6 +247,9 @@ pub struct SyncView {
     pub onboarding: Option<OnboardingView>,
     /// Requests for the worker, oldest first.
     pub intents: Vec<SyncIntent>,
+    /// Unlock QR frame shown now; advanced from the app tick.
+    pub qr_frame: usize,
+    qr_last: Option<std::time::Instant>,
     /// Mode the fork alert interrupted, restored on dismissal.
     fork_return: Option<AppMode>,
 }
@@ -353,8 +401,20 @@ impl App {
 
     /// Open the unlock modal over whatever is on screen.
     pub fn open_sync_unlock(&mut self, view: UnlockView) {
+        self.sync.qr_frame = 0;
+        self.sync.qr_last = None;
         self.sync.unlock = Some(view);
         self.mode = AppMode::SyncUnlock;
+    }
+
+    /// App-tick hook: step the unlock QR's frame at 8 fps while its modal is up.
+    pub(crate) fn advance_sync_qr(&mut self, now: std::time::Instant) {
+        if self.mode != AppMode::SyncUnlock {
+            return;
+        }
+        let count = self.sync.unlock.as_ref().map_or(0, |u| u.frames.len());
+        let sync = &mut self.sync;
+        crate::tui::widgets::qr_frames::advance(&mut sync.qr_frame, &mut sync.qr_last, now, count);
     }
 
     pub fn open_sync_sas(&mut self, view: SasView) {
@@ -548,7 +608,19 @@ pub(crate) fn sample_sync_view_with_modals() -> SyncView {
             host: "web-1".into(),
             have: 1,
             need: 2,
-            paths: vec![("audio".into(), "listening".into())],
+            paths: vec![
+                UnlockPathView {
+                    kind: UnlockPathKind::Clipboard,
+                    status: "listening".into(),
+                },
+                UnlockPathView {
+                    kind: UnlockPathKind::PhoneQr,
+                    status: "show the code to your phone".into(),
+                },
+            ],
+            frames: (0..3u8)
+                .map(|i| (0..100u8).map(|b| b.wrapping_mul(7) ^ i).collect())
+                .collect(),
             code: "ab-12".into(),
         }),
         sas: Some(SasView {
@@ -689,7 +761,11 @@ mod tests {
             host: "web-1".into(),
             have: 1,
             need: 2,
-            paths: vec![("audio".into(), "listening".into())],
+            paths: vec![UnlockPathView {
+                kind: UnlockPathKind::Clipboard,
+                status: "listening".into(),
+            }],
+            frames: Vec::new(),
             code: String::new(),
         });
         app.handle_paste("ab-12\n").unwrap();
@@ -754,5 +830,19 @@ mod tests {
             ]
         );
         assert_eq!(app.mode, AppMode::Normal);
+    }
+
+    #[test]
+    fn the_app_tick_steps_the_unlock_qr_frame_only_while_its_modal_is_up() {
+        let mut app = configured_app();
+        app.sync = sample_sync_view_with_modals();
+        app.mode = AppMode::SyncUnlock;
+        let t0 = std::time::Instant::now();
+        app.advance_sync_qr(t0);
+        app.advance_sync_qr(t0 + std::time::Duration::from_millis(130));
+        assert_eq!(app.sync.qr_frame, 1);
+        app.mode = AppMode::Normal;
+        app.advance_sync_qr(t0 + std::time::Duration::from_secs(2));
+        assert_eq!(app.sync.qr_frame, 1, "no stepping behind another screen");
     }
 }

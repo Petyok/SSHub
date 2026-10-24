@@ -703,6 +703,8 @@ impl App {
             self.anim_prev_audit = (self.audit_filter, self.audit_range);
             self.audit_filter_at = Some(std::time::Instant::now());
         }
+        // The unlock modal's QR steps its frame from this tick.
+        self.advance_sync_qr(std::time::Instant::now());
         self.detect_sftp_navigation();
         // A transfer staged since the last tick flies its row in (#35).
         let queued = self.sftp.as_ref().map(|s| s.queue.len()).unwrap_or(0);
