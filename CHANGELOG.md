@@ -37,13 +37,6 @@ All notable changes to SSHub are documented in this file.
   that the flake declares, so installs substitute it instead of compiling. A NixOS
   configuration gets that cache by importing `nixosModules.binaryCache`.
 
-### Changed
-
-- **README media trimmed to what matters** - five GIFs (hero, connect, map,
-  SFTP, broadcast) and four screenshots (hosts, map, add host, theme picker)
-  instead of eight and ten, with a new map GIF and screenshot. The demo hosts
-  now route Databases and Quad9 through jump hosts so the map has a tree to show.
-
 ### Fixed
 
 - **Moving hosts to another profile now keeps their saved passwords** - a move

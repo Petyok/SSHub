@@ -476,8 +476,9 @@ impl MigrationWizard {
         if below > 0 {
             lines.push(format!("  … {below} more"));
         }
+        // On the first step `b` returns to the dual-pane screen.
         let back = if self.history.is_empty() {
-            "b scopes"
+            "b back to hosts"
         } else {
             "b back"
         };
@@ -625,6 +626,16 @@ mod tests {
         let index = wizard.rows().iter().position(|r| r.key == key).unwrap();
         wizard.cursor = index;
         wizard.toggle();
+    }
+
+    #[test]
+    fn the_first_step_names_where_b_goes() {
+        let mut w = wizard();
+        let hint = |w: &MigrationWizard| w.lines("work", false).last().cloned().unwrap();
+        assert!(hint(&w).contains("b back to hosts"), "{}", hint(&w));
+        check(&mut w, "a");
+        w.advance().unwrap();
+        assert!(!hint(&w).contains("to hosts"), "{}", hint(&w));
     }
 
     #[test]

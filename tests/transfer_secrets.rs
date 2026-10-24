@@ -523,3 +523,155 @@ fn a_flagged_secret_missing_from_the_source_store_keeps_the_host() {
     assert_eq!(result.kept_in_source, ["web"]);
     assert!(src.get_host_by_name("web").unwrap().is_some());
 }
+
+/// Every public path that can keep a host behind (a failed carry) must leave
+/// each identity and group it planned in at least one profile: a move that
+/// strands nothing in the destination must not also delete the source row.
+fn assert_nothing_lost(src: &LauncherStore, dest: &LauncherStore) {
+    for name in ["deploy"] {
+        let found = |s: &LauncherStore| {
+            s.list_identities()
+                .unwrap()
+                .iter()
+                .any(|i| i.name.starts_with(name))
+        };
+        assert!(found(src) || found(dest), "identity {name} lost");
+    }
+    let found = |s: &LauncherStore| {
+        s.list_groups()
+            .unwrap()
+            .iter()
+            .any(|g| g.name.starts_with("prod"))
+    };
+    assert!(found(src) || found(dest), "group prod lost");
+}
+
+/// `web` (flagged password, absent from the source store, so it is kept) and
+/// `db` share group `prod`, whose default identity `deploy` has a secret.
+fn kept_host_fixture() -> (LauncherStore, FakeSecrets) {
+    use sshub::store::NewHostGroup;
+    let src = LauncherStore::open_in_memory().unwrap();
+    let ident = secret_identity(&src);
+    let group = src
+        .create_group(&NewHostGroup {
+            name: "prod".into(),
+            default_identity_id: Some(ident),
+            ..Default::default()
+        })
+        .unwrap();
+    for (name, flagged) in [("web", true), ("db", false)] {
+        src.create_host(&NewHost {
+            group_id: Some(group.id),
+            identity_id: Some(ident),
+            has_password: flagged,
+            ..NewHost::launcher(name, &format!("{name}.example.com"))
+        })
+        .unwrap();
+    }
+    let secrets = FakeSecrets::default();
+    secrets.set(&identity_key(ident), "pw").unwrap();
+    (src, secrets)
+}
+
+fn move_with(
+    src: &mut LauncherStore,
+    selection: TransferSelection,
+    groups: GroupTransferMode,
+    src_secrets: &FakeSecrets,
+) -> LauncherStore {
+    let mut dest = LauncherStore::open_in_memory().unwrap();
+    let dest_secrets = FakeSecrets::default();
+    let plan = build_transfer_plan(
+        &TransferSnapshot::capture(src).unwrap(),
+        &DestIndex::capture(&dest, "dest").unwrap(),
+        &selection,
+        TransferMode::Move,
+        groups,
+        &HashSet::new(),
+    );
+    apply_transfer_plan_with_secrets(
+        src,
+        &mut dest,
+        &plan,
+        TransferMode::Move,
+        Some(SecretStores {
+            src: src_secrets,
+            dest: &dest_secrets,
+        }),
+    )
+    .unwrap();
+    dest
+}
+
+#[test]
+fn guided_move_with_a_kept_host_strands_no_group_or_identity() {
+    let (mut src, secrets) = kept_host_fixture();
+    let dest = move_with(
+        &mut src,
+        TransferSelection {
+            host_names: vec!["web".into(), "db".into()],
+            group_names: vec!["prod".into()],
+            identity_names: vec!["deploy".into()],
+            no_auto_carry: true,
+            ..Default::default()
+        },
+        GroupTransferMode::GroupOnly,
+        &secrets,
+    );
+    assert!(src.get_host_by_name("web").unwrap().is_some(), "kept");
+    assert!(dest.get_host_by_name("db").unwrap().is_some(), "moved");
+    assert_nothing_lost(&src, &dest);
+}
+
+#[test]
+fn single_host_move_with_a_kept_host_strands_no_group_or_identity() {
+    let (mut src, secrets) = kept_host_fixture();
+    let dest = move_with(
+        &mut src,
+        TransferSelection {
+            host_names: vec!["web".into()],
+            ..Default::default()
+        },
+        GroupTransferMode::GroupOnly,
+        &secrets,
+    );
+    assert!(src.get_host_by_name("web").unwrap().is_some(), "kept");
+    assert_nothing_lost(&src, &dest);
+}
+
+#[test]
+fn group_move_with_hosts_and_a_kept_host_strands_no_group_or_identity() {
+    let (mut src, secrets) = kept_host_fixture();
+    let dest = move_with(
+        &mut src,
+        TransferSelection {
+            group_names: vec!["prod".into()],
+            ..Default::default()
+        },
+        GroupTransferMode::WithHosts,
+        &secrets,
+    );
+    assert!(src.get_host_by_name("web").unwrap().is_some(), "kept");
+    assert_nothing_lost(&src, &dest);
+}
+
+#[test]
+fn identity_move_whose_secret_is_missing_keeps_the_identity() {
+    let (mut src, _) = kept_host_fixture();
+    // `deploy` is flagged but the source store holds nothing for it.
+    let dest = move_with(
+        &mut src,
+        TransferSelection {
+            identity_names: vec!["deploy".into()],
+            ..Default::default()
+        },
+        GroupTransferMode::GroupOnly,
+        &FakeSecrets::default(),
+    );
+    assert_nothing_lost(&src, &dest);
+    assert!(src
+        .list_identities()
+        .unwrap()
+        .iter()
+        .any(|i| i.name == "deploy"));
+}
