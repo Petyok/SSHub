@@ -362,3 +362,42 @@ fn an_identitys_key_bytes_replicate_with_its_passphrase() {
     assert_eq!(payload.password.as_deref(), Some("pass"));
     assert_eq!(payload.private_key.as_deref(), Some(text));
 }
+
+#[test]
+fn an_admin_job_runs_on_the_worker_with_the_device_identity_and_reports_back() {
+    let mut f = fixture();
+    pump(&mut f.app, "the ring", |a| a.sync.configured);
+    f.app.run_sync_job(|env| {
+        let op = env.store.sync_append_local(
+            &env.identity,
+            crate::sync::oplog::OpBody::HostUpsert {
+                host_uid: [4; 16],
+                fields: crate::sync::oplog::HostFields {
+                    name: Some("from-a-job".into()),
+                    address: Some("10.9.9.9".into()),
+                    ..Default::default()
+                },
+            },
+        )?;
+        Ok(format!("appended op {}", op.seq))
+    });
+    pump(&mut f.app, "the job's notice", |a| {
+        a.host_notice
+            .as_deref()
+            .is_some_and(|n| n.starts_with("appended op"))
+    });
+    assert!(f
+        .app
+        .store
+        .get_host_by_name("from-a-job")
+        .unwrap()
+        .is_some());
+
+    // A failing job says why instead of dying silently.
+    f.app.run_sync_job(|_| anyhow::bail!("nothing doing"));
+    pump(&mut f.app, "the failure", |a| {
+        a.host_notice
+            .as_deref()
+            .is_some_and(|n| n.contains("nothing doing"))
+    });
+}

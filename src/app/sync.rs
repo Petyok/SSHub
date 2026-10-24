@@ -373,6 +373,8 @@ pub enum SyncIntent {
     OnboardingDone(OnboardingSecrets),
     /// Ask the worker which device this is (loads the device key).
     Identify,
+    /// An admin job to run on the worker with the device identity.
+    Job(crate::sync::runtime::JobBox),
 }
 
 /// What runs once credentials are open.
@@ -654,6 +656,21 @@ impl App {
         self.mode = AppMode::SyncSas;
     }
 
+    /// Run `job` on the sync worker with the device identity: the way every
+    /// admin operation appends ops. Its returned line becomes the notice.
+    pub(crate) fn run_sync_job(
+        &mut self,
+        job: impl FnOnce(&crate::sync::runtime::JobEnv) -> Result<String> + Send + 'static,
+    ) {
+        if !self.sync.worker {
+            self.host_notice = Some(NO_WORKER.into());
+            return;
+        }
+        self.sync
+            .intents
+            .push(SyncIntent::Job(crate::sync::runtime::JobBox::new(job)));
+    }
+
     /// Hand the worker the protocol package built; the tab's keys then work.
     pub fn attach_sync_worker(&mut self, handle: crate::sync::client::SyncHandle) {
         self.sync.worker = true;
@@ -703,6 +720,7 @@ impl App {
                     SyncCmd::UnlockCode(code.clone())
                 }
                 SyncIntent::Identify => SyncCmd::Identify,
+                SyncIntent::Job(job) => SyncCmd::Job(job.clone()),
                 SyncIntent::Release { approve, hash } => SyncCmd::Release {
                     approve: *approve,
                     hash: *hash,
@@ -750,6 +768,7 @@ impl App {
                     peer_has_screen: info.peer_has_screen,
                 });
             }
+            SyncEvent::Notice(message) => self.host_notice = Some(message),
             SyncEvent::ThisDevice(id) => {
                 for d in &mut sync.devices {
                     d.this = d.id == id;
