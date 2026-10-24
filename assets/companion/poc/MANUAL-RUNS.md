@@ -11,7 +11,7 @@ Automated offline checks live in `run-offline.mjs`. The runs below need a phone,
    `python3 -m http.server --bind 127.0.0.1 8443 -d assets/companion/poc`
 4. On the phone's browser, open `http://localhost:8443/qr-scanner.html?seed=1&len=4096`.
    Chrome treats `localhost` as a secure context, so the camera API is available.
-5. On the laptop, open `http://localhost:8443/share-transmit.html?seed=1&len=56&version=10` for H (sender) and `share-receive.html` on the phone for H (receiver), or swap roles as the run needs.
+5. For H, the phone is the sender: open `http://localhost:8443/share-transmit.html?seed=1&len=56&version=10` on the phone. The laptop is the receiver: open `http://localhost:8443/share-receive.html?seed=1&len=56` on the laptop.
 
 Hold the phone steady, screen at about 15 cm from the QR, room light on. Note the lighting in the table.
 
@@ -28,9 +28,9 @@ Hold the phone steady, screen at about 15 cm from the QR, room light on. Note th
 
 ## H3: over-the-air audio success (10 attempts, under 5 s, at least 8 of 10)
 
-- Laptop speaker: `share-transmit.html`, press Send audio burst, profile slow or fast.
-- Phone: `share-receive.html`, press Arm mic, then Run trial, one trial per burst.
-- Export the CSV from the receiver. Record distance, volume, room, and profile per run.
+- Phone (sender): `share-transmit.html`, press Send audio burst, profile slow or fast. Hold the phone speaker toward the laptop mic.
+- Laptop (receiver): `share-receive.html`, press Arm mic, then Run trial, one trial per burst.
+- Export the CSV from the receiver on the laptop. Record distance, volume, room, and profile per run.
 
 ## H4: channel matrix (10 attempts per cell)
 
