@@ -9,8 +9,9 @@ cd "$HERE" || exit 2
 P=sshub-hostsync-e2e
 C="docker compose -p $P -f docker-compose.yml"
 PEERS="peer-a peer-b peer-c hub"
+HOPS="jump dest"
 E2E_DIR=$HERE
-export E2E_DIR C PEERS
+export E2E_DIR C PEERS HOPS
 
 cleanup() {
   $C down -v --remove-orphans >/dev/null 2>&1 || true
@@ -22,7 +23,7 @@ echo "$(date -u +%H:%M:%S) compose up --build"
 $C up --build -d || { echo "compose up failed"; exit 1; }
 
 echo "$(date -u +%H:%M:%S) waiting for sshd on every peer and mailpit"
-for s in $PEERS; do
+for s in $PEERS $HOPS; do
   i=0
   until $C exec -T "$s" sh -c 'ssh-keyscan -p 2222 127.0.0.1 2>/dev/null | grep -q ssh-ed25519'; do
     i=$((i + 1))

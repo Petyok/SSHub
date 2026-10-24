@@ -12,6 +12,7 @@ x-peer: &peer
     - mesh:/mesh
   environment: &peer-env
     PEERS: "peer-a peer-b peer-c hub"
+    HOPS: "jump dest"
   depends_on:
     mailpit:
       condition: service_started
@@ -47,6 +48,20 @@ services:
     environment:
       <<: *peer-env
       PEER_NAME: hub
+
+  jump:
+    <<: *peer
+    hostname: jump
+    environment:
+      <<: *peer-env
+      PEER_NAME: jump
+
+  dest:
+    <<: *peer
+    hostname: dest
+    environment:
+      <<: *peer-env
+      PEER_NAME: dest
 
   mailpit:
     image: axllent/mailpit:v1.32.0

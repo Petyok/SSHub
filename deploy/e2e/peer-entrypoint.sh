@@ -8,6 +8,7 @@ set -eu
 MESH=/mesh
 SSH_PORT=2222
 H="$HOME"
+ALL="$PEERS ${HOPS:-}"
 
 # Fresh host key per container: the pinned known_hosts is the only trust anchor.
 rm -f "$H/ssh/host_ed25519" "$H/ssh/host_ed25519.pub"
@@ -21,7 +22,7 @@ cut -d' ' -f1,2 "$H/ssh/host_ed25519.pub" > "$MESH/$PEER_NAME.hostkey"
 i=0
 while :; do
   missing=0
-  for p in $PEERS; do
+  for p in $ALL; do
     [ -s "$MESH/$p.pub" ] && [ -s "$MESH/$p.hostkey" ] || missing=1
   done
   [ "$missing" -eq 0 ] && break
@@ -32,14 +33,14 @@ done
 
 : > "$H/.ssh/authorized_keys"
 : > "$H/.ssh/known_hosts"
-for p in $PEERS; do
+for p in $ALL; do
   cat "$MESH/$p.pub" >> "$H/.ssh/authorized_keys"
   echo "[$p]:$SSH_PORT $(cat "$MESH/$p.hostkey")" >> "$H/.ssh/known_hosts"
 done
 chmod 0600 "$H/.ssh/authorized_keys" "$H/.ssh/known_hosts"
 
 cat > "$H/.ssh/config" <<EOF
-Host $PEERS
+Host $ALL
   Port $SSH_PORT
   User ci
   IdentityFile $H/.ssh/id_ed25519
