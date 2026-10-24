@@ -30,7 +30,11 @@ pub fn uid_hex(uid: &Uid) -> String {
 
 /// Inverse of [`uid_hex`]: exactly 32 lowercase hex characters.
 pub fn uid_from_hex(s: &str) -> Option<Uid> {
-    if s.len() != 32 || !s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+    if s.len() != 32
+        || !s
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
         return None;
     }
     let mut out = [0u8; 16];
@@ -82,7 +86,13 @@ macro_rules! uid_lookups {
     };
 }
 
-uid_lookups!("hosts", host_uid, host_id_by_uid, host_uid_on, host_id_by_uid_on);
+uid_lookups!(
+    "hosts",
+    host_uid,
+    host_id_by_uid,
+    host_uid_on,
+    host_id_by_uid_on
+);
 uid_lookups!(
     "host_groups",
     group_uid,
@@ -115,7 +125,10 @@ mod tests {
     fn well_known_uids_are_sixteen_bytes_and_distinct() {
         assert_ne!(FAVORITES_GROUP_UID, DEFAULT_IDENTITY_UID);
         assert_eq!(uid_hex(&FAVORITES_GROUP_UID).len(), 32);
-        assert_eq!(uid_from_hex(&uid_hex(&DEFAULT_IDENTITY_UID)), Some(DEFAULT_IDENTITY_UID));
+        assert_eq!(
+            uid_from_hex(&uid_hex(&DEFAULT_IDENTITY_UID)),
+            Some(DEFAULT_IDENTITY_UID)
+        );
         assert_eq!(uid_from_hex("AB"), None);
         assert_eq!(uid_from_hex(&"A".repeat(32)), None);
     }
@@ -128,7 +141,10 @@ mod tests {
         assert_eq!(b.favorites_group_uid().unwrap(), FAVORITES_GROUP_UID);
         for s in [&a, &b] {
             let default = s.get_identity_by_name("Default").unwrap().unwrap();
-            assert_eq!(s.identity_uid(default.id).unwrap(), Some(DEFAULT_IDENTITY_UID));
+            assert_eq!(
+                s.identity_uid(default.id).unwrap(),
+                Some(DEFAULT_IDENTITY_UID)
+            );
         }
     }
 
@@ -149,7 +165,10 @@ mod tests {
                 ..Default::default()
             })
             .unwrap();
-        let (u1, u2) = (s.host_uid(h1.id).unwrap().unwrap(), s.host_uid(h2.id).unwrap().unwrap());
+        let (u1, u2) = (
+            s.host_uid(h1.id).unwrap().unwrap(),
+            s.host_uid(h2.id).unwrap().unwrap(),
+        );
         assert_ne!(u1, u2);
         assert_eq!(s.host_id_by_uid(&u1).unwrap(), Some(h1.id));
         assert_eq!(s.host_id_by_uid(&[9; 16]).unwrap(), None);

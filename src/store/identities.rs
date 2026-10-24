@@ -71,49 +71,7 @@ impl LauncherStore {
     }
 
     pub fn update_identity(&self, id: i64, update: &IdentityUpdate) -> Result<Option<Identity>> {
-        let current = match self.get_identity(id)? {
-            Some(v) => v,
-            None => return Ok(None),
-        };
-
-        let name = update.name.as_ref().unwrap_or(&current.name);
-        let username = match &update.username {
-            Some(v) => v.clone(),
-            None => current.username.clone(),
-        };
-        let private_key = match &update.private_key {
-            Some(v) => v.clone(),
-            None => current.private_key.clone(),
-        };
-        let certificate = match &update.certificate {
-            Some(v) => v.clone(),
-            None => current.certificate.clone(),
-        };
-        let sort_order = match update.sort_order {
-            Some(v) => v,
-            None => self.get_identity_sort_order(id)?.unwrap_or(0),
-        };
-        let has_password = update.has_password.unwrap_or(current.has_password);
-
-        self.with_conn(|conn| {
-            conn.execute(
-                "UPDATE identities
-                 SET name = ?1, username = ?2, private_key = ?3, certificate = ?4, sort_order = ?5, has_password = ?6
-                 WHERE id = ?7",
-                params![
-                    name,
-                    username,
-                    path_to_opt_str(private_key.as_ref()),
-                    path_to_opt_str(certificate.as_ref()),
-                    sort_order,
-                    i64::from(has_password),
-                    id,
-                ],
-            )?;
-            Ok(())
-        })?;
-
-        self.get_identity(id)
+        self.with_conn(|conn| update_identity_on(conn, id, update))
     }
 
     /// Count launcher hosts referencing this identity.
@@ -139,22 +97,69 @@ impl LauncherStore {
             Ok(DeleteIdentityOutcome::NotFound)
         }
     }
-
-    fn get_identity_sort_order(&self, id: i64) -> Result<Option<i32>> {
-        self.with_conn(|conn| {
-            conn.query_row(
-                "SELECT sort_order FROM identities WHERE id = ?1",
-                params![id],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(Into::into)
-        })
-    }
 }
+/// Connection-level identity read-merge-write (the body of
+/// [`LauncherStore::update_identity`]); the caller owns the transaction.
+pub(crate) fn update_identity_on(
+    conn: &rusqlite::Connection,
+    id: i64,
+    update: &IdentityUpdate,
+) -> Result<Option<Identity>> {
+    let row = conn
+        .prepare(
+            "SELECT id, name, username, private_key, certificate, has_password, sort_order
+             FROM identities WHERE id = ?1",
+        )?
+        .query_row(params![id], |row| {
+            Ok((row_to_identity(row)?, row.get::<_, i32>(6)?))
+        })
+        .optional()?;
+    let Some((current, current_sort)) = row else {
+        return Ok(None);
+    };
+
+    let name = update.name.as_ref().unwrap_or(&current.name);
+    let username = match &update.username {
+        Some(v) => v.clone(),
+        None => current.username.clone(),
+    };
+    let private_key = match &update.private_key {
+        Some(v) => v.clone(),
+        None => current.private_key.clone(),
+    };
+    let certificate = match &update.certificate {
+        Some(v) => v.clone(),
+        None => current.certificate.clone(),
+    };
+    let sort_order = update.sort_order.unwrap_or(current_sort);
+    let has_password = update.has_password.unwrap_or(current.has_password);
+
+    conn.execute(
+        "UPDATE identities
+         SET name = ?1, username = ?2, private_key = ?3, certificate = ?4, sort_order = ?5, has_password = ?6
+         WHERE id = ?7",
+        params![
+            name,
+            username,
+            path_to_opt_str(private_key.as_ref()),
+            path_to_opt_str(certificate.as_ref()),
+            sort_order,
+            i64::from(has_password),
+            id,
+        ],
+    )?;
+
+    conn.prepare(
+        "SELECT id, name, username, private_key, certificate, has_password FROM identities WHERE id = ?1",
+    )?
+    .query_row(params![id], row_to_identity)
+    .optional()
+    .map_err(Into::into)
+}
+
 /// Connection-level identity insert for multi-statement transfers: the caller
 /// holds the transaction (see `store::transfer::apply_transfer_plan`).
-pub(super) fn create_identity_on(
+pub(crate) fn create_identity_on(
     conn: &rusqlite::Connection,
     identity: &NewIdentity,
 ) -> Result<Identity> {
@@ -186,7 +191,7 @@ pub(super) fn create_identity_on(
 }
 
 /// Connection-level host-reference count (caller holds the transaction).
-pub(super) fn count_hosts_using_identity_on(conn: &rusqlite::Connection, id: i64) -> Result<usize> {
+pub(crate) fn count_hosts_using_identity_on(conn: &rusqlite::Connection, id: i64) -> Result<usize> {
     conn.query_row(
         "SELECT COUNT(*) FROM hosts WHERE identity_id = ?1",
         params![id],
@@ -196,7 +201,7 @@ pub(super) fn count_hosts_using_identity_on(conn: &rusqlite::Connection, id: i64
 }
 
 /// Connection-level identity delete (caller holds the transaction).
-pub(super) fn delete_identity_on(conn: &rusqlite::Connection, id: i64) -> Result<bool> {
+pub(crate) fn delete_identity_on(conn: &rusqlite::Connection, id: i64) -> Result<bool> {
     conn.execute("DELETE FROM identities WHERE id = ?1", params![id])?;
     Ok(conn.changes() > 0)
 }

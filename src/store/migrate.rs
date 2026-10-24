@@ -962,6 +962,8 @@ CREATE TABLE IF NOT EXISTS sync_ops (
     epoch       INTEGER NOT NULL,
     canonical   BLOB NOT NULL,
     signature   BLOB NOT NULL,
+    kind        TEXT NOT NULL,
+    subject     TEXT,
     state       TEXT NOT NULL
         CHECK (state IN ('applied','pending','approved','rejected','void')),
     reason      TEXT,
@@ -971,6 +973,7 @@ CREATE TABLE IF NOT EXISTS sync_ops (
 );
 CREATE INDEX IF NOT EXISTS sync_ops_lamport ON sync_ops(lamport);
 CREATE INDEX IF NOT EXISTS sync_ops_state ON sync_ops(state);
+CREATE INDEX IF NOT EXISTS sync_ops_subject ON sync_ops(kind, subject);
 
 CREATE TABLE IF NOT EXISTS sync_chain_heads (
     device_id TEXT PRIMARY KEY,
@@ -1075,6 +1078,20 @@ CREATE TABLE IF NOT EXISTS sync_fields (
     PRIMARY KEY (kind, uid, field, op_hash)
 );
 CREATE INDEX IF NOT EXISTS sync_fields_op ON sync_fields(op_hash);
+
+-- Cache of the effective view of each replicated entity: liveness and the base
+-- name with the key of the write that set it (the name tie-break). Recomputed
+-- from sync_fields whenever an entity is touched; never authoritative.
+CREATE TABLE IF NOT EXISTS sync_entities (
+    kind         TEXT NOT NULL,
+    uid          BLOB NOT NULL,
+    alive        INTEGER NOT NULL,
+    name         TEXT,
+    name_lamport INTEGER NOT NULL DEFAULT 0,
+    name_device  TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (kind, uid)
+);
+CREATE INDEX IF NOT EXISTS sync_entities_name ON sync_entities(kind, name);
 ";
 
 fn table_sql(conn: &Connection, table: &str) -> Result<String> {
@@ -1841,7 +1858,7 @@ INSERT INTO host_groups (name, sort_order, reserved, created_at)
         assert_eq!(tags, "[]");
     }
 
-    const SYNC_TABLES: [&str; 12] = [
+    const SYNC_TABLES: [&str; 13] = [
         "sync_ops",
         "sync_chain_heads",
         "sync_pending_ops",
@@ -1854,6 +1871,7 @@ INSERT INTO host_groups (name, sort_order, reserved, created_at)
         "sync_epochs",
         "sync_meta",
         "sync_fields",
+        "sync_entities",
     ];
 
     /// Put a current database back to exactly the v21 shape: no uid columns,
@@ -1910,7 +1928,10 @@ INSERT INTO host_groups (name, sort_order, reserved, created_at)
         assert_eq!(count(&conn, "SELECT version FROM schema_version"), 22);
         for t in ["hosts", "host_groups", "identities"] {
             assert_eq!(
-                count(&conn, &format!("SELECT COUNT(*) FROM {t} WHERE uid IS NULL")),
+                count(
+                    &conn,
+                    &format!("SELECT COUNT(*) FROM {t} WHERE uid IS NULL")
+                ),
                 0,
                 "{t}: every row has a uid"
             );
@@ -1919,26 +1940,43 @@ INSERT INTO host_groups (name, sort_order, reserved, created_at)
                 count(&conn, &format!("SELECT COUNT(*) FROM {t}")),
                 "{t}: uids are distinct"
             );
-            assert_eq!(count(&conn, &format!("SELECT COUNT(*) FROM {t} WHERE length(uid) != 16")), 0);
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!("SELECT COUNT(*) FROM {t} WHERE length(uid) != 16")
+                ),
+                0
+            );
         }
         let fav: Vec<u8> = conn
-            .query_row("SELECT uid FROM host_groups WHERE reserved = 1", [], |r| r.get(0))
+            .query_row("SELECT uid FROM host_groups WHERE reserved = 1", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(fav, super::super::uid::FAVORITES_GROUP_UID);
         let default: Vec<u8> = conn
-            .query_row("SELECT uid FROM identities WHERE name = 'Default'", [], |r| r.get(0))
+            .query_row(
+                "SELECT uid FROM identities WHERE name = 'Default'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(default, super::super::uid::DEFAULT_IDENTITY_UID);
 
         // No cascade loss: the rebuild hazard of v16 and v21 does not apply.
-        assert_eq!(count(&conn, "SELECT COUNT(*) FROM host_group_memberships"), memberships);
+        assert_eq!(
+            count(&conn, "SELECT COUNT(*) FROM host_group_memberships"),
+            memberships
+        );
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM tunnels"), tunnels);
 
         for table in SYNC_TABLES {
             assert_eq!(
                 count(
                     &conn,
-                    &format!("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='{table}'")
+                    &format!(
+                        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='{table}'"
+                    )
                 ),
                 1,
                 "{table} exists"
@@ -1981,7 +2019,10 @@ INSERT INTO host_groups (name, sort_order, reserved, created_at)
             [],
         )
         .unwrap();
-        assert_eq!(count(&conn, "SELECT COUNT(*) FROM hosts WHERE uid IS NULL"), 0);
+        assert_eq!(
+            count(&conn, "SELECT COUNT(*) FROM hosts WHERE uid IS NULL"),
+            0
+        );
 
         // Idempotent: nothing changes on the second run, uids stay put.
         let before: Vec<Vec<u8>> = conn
