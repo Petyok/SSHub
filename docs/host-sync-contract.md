@@ -722,6 +722,10 @@ Code: `src/sync/{quorum,reshare,cred_ops,cert,modes,recovery}.rs` (plus the phon
   vault recipient and keeps its PUBLIC key in `sync_meta` under `vault_pub`. That key is LOCAL and is
   never replicated: a replicated vault key would let one device redirect every new credential to
   itself. The ring secret is kept by the caller in the profile credential store (`sync-ring-secret`).
+  The printed ring-secret sheet (poc/tui onboarding) encodes the text `sshub:ring:1:<32 lowercase hex>`
+  in its QR (the hex is also printed in groups); `ring_secret_text` and `parse_ring_secret` are the only
+  writer and reader of it, and `parse_ring_secret` also accepts typed hex groups. `vault_setup` takes the
+  phrase and ring secret of `SyncIntent::OnboardingDone` and refuses a phrase that is not 6 EFF words.
   A vault credential is one `WrappedShare { recipient: vault id, sealed: hybrid_wrap(vault_pub,
   host_uid || DEK) }`; `vault_open_dek(store, host, phrase, ring_secret)` opens it and checks the
   credential by AEAD.

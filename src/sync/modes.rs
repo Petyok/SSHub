@@ -47,8 +47,7 @@ pub fn mode_change_plan(
         );
     }
     for host in credentials(store)? {
-        let plain =
-            open(&host).context("opening a credential for the migration")?;
+        let plain = open(&host).context("opening a credential for the migration")?;
         let payload = CredPayload::from_bytes(&plain)?;
         bodies.push(cred_update_body_for(store, me, &host, &payload, to)?);
     }

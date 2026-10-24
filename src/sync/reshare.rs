@@ -249,6 +249,7 @@ pub fn reissue_receive(
         bodies: Vec::new(),
     };
     let mut confirms = Vec::new();
+    let mut storage: Option<Zeroizing<[u8; 32]>> = None;
     let mut hosts: Vec<HostUid> = batches
         .iter()
         .flat_map(|b| b.2.iter().map(|i| i.host_uid))
@@ -304,7 +305,14 @@ pub fn reissue_receive(
         let Ok(share) = reshare_combine(my_index, &group[..SHARE_K as usize]) else {
             continue;
         };
-        let key = storage_key_for(store, id, epoch, &mut plan)?;
+        let key = match &storage {
+            Some(k) => k.clone(),
+            None => {
+                let k = storage_key_for(store, id, epoch, &mut plan)?;
+                storage = Some(k.clone());
+                k
+            }
+        };
         confirms.push(ConfirmItem {
             host_uid: host,
             sealed_share: aead_seal(

@@ -331,7 +331,10 @@ fn storage_key(store: &LauncherStore, id: &DeviceIdentity, epoch: u64) -> Result
         if let OpBody::ShareStorageKey { epoch: e, sealed } = &op.body {
             if *e == epoch {
                 let k = Zeroizing::new(hybrid_unwrap(id, sealed)?);
-                return k.as_slice().try_into().map_err(|_| anyhow!("storage key has the wrong length"));
+                return k
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| anyhow!("storage key has the wrong length"));
             }
         }
     }
