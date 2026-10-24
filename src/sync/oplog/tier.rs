@@ -149,7 +149,6 @@ pub fn body_tier(body: &OpBody) -> OpTier {
         | OpBody::IdentityDelete { .. }
         | OpBody::CredUpdate { .. }
         | OpBody::ShareRelease { .. }
-        | OpBody::ShareReshareConfirm { .. }
         | OpBody::CertRevoke { .. }
         | OpBody::PhoneReenrollCancel { .. } => OpTier::Yellow,
         OpBody::DeviceAdd { role, .. } => match role {
@@ -157,13 +156,19 @@ pub fn body_tier(body: &OpBody) -> OpTier {
             DeviceRole::Mirror => OpTier::Yellow,
         },
         OpBody::DeviceRevoke { .. }
-        | OpBody::ShareReshare { .. }
         | OpBody::CertIssue { .. }
         | OpBody::PhoneReenroll { .. }
         | OpBody::ModeChange { .. } => OpTier::Red,
-        OpBody::CertHostOpened { .. } | OpBody::RecoveryAck { .. } | OpBody::HeadAttest { .. } => {
-            OpTier::Green
-        }
+        // Cryptographic data only: it changes nothing a user could be tricked
+        // into trusting, and the ring ceremony around it is Red.
+        OpBody::CertHostOpened { .. }
+        | OpBody::RecoveryAck { .. }
+        | OpBody::HeadAttest { .. }
+        | OpBody::WrapKeyRotate { .. }
+        | OpBody::ShareReshareSession { .. }
+        | OpBody::ShareStorageKey { .. }
+        | OpBody::ShareReshareBatch { .. }
+        | OpBody::ShareReshareConfirmBatch { .. } => OpTier::Green,
     }
 }
 

@@ -15,7 +15,7 @@ use super::op::*;
 use super::store_impl::IngestOutcome;
 use crate::sync::apply::{reproject, validate_body};
 use crate::sync::crypto::ALG_CURRENT;
-use crate::sync::limits::{LAMPORT_JUMP_CAP, PENDING_QUARANTINE_MAX_PER_DEVICE};
+use crate::sync::limits::{LAMPORT_JUMP_CAP, MAX_FRAME_BYTES, PENDING_QUARANTINE_MAX_PER_DEVICE};
 
 fn reject(msg: impl Into<String>) -> Result<IngestOutcome> {
     Ok(IngestOutcome::Rejected(msg.into()))
@@ -63,12 +63,21 @@ pub(crate) fn ingest_capped(
     if !op.verify(&signer) {
         return reject("bad signature");
     }
+    if op.canonical_bytes().len() > MAX_FRAME_BYTES {
+        return reject("op is larger than a transport frame");
+    }
     if let Err(why) = validate_body(&op.body) {
         return reject(format!("invalid op: {why}"));
     }
     if let OpBody::ShareRelease { requester, .. } = &op.body {
         if *requester != op.device_id {
             return reject("invalid op: requester differs from the signer");
+        }
+    }
+
+    if let OpBody::WrapKeyRotate { device_id, .. } = &op.body {
+        if *device_id != op.device_id {
+            return reject("invalid op: wrap keys can only be rotated by their own device");
         }
     }
 

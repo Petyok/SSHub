@@ -540,6 +540,51 @@ fn effects(conn: &Connection, op: &Op, hash: &[u8; 32]) -> Result<()> {
                 )?;
             }
         }
+        OpBody::WrapKeyRotate {
+            device_id,
+            wrap_epoch,
+            x25519_pub,
+            mlkem_pub,
+        } if *device_id == op.device_id && *wrap_epoch > 0 => {
+            let cur: Option<(Vec<u8>, Vec<u8>, Vec<u8>, i64)> = conn
+                .query_row(
+                    "SELECT ed25519, x25519, mlkem, wrap_epoch FROM sync_devices WHERE device_id = ?1",
+                    params![device_id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )
+                .optional()?;
+            let Some((ed, x, ml, cur_epoch)) = cur else {
+                return Ok(());
+            };
+            let Ok(ed25519_pub) = <[u8; 32]>::try_from(ed) else {
+                return Ok(());
+            };
+            let next = crate::sync::crypto::DevicePublic {
+                ed25519_pub,
+                x25519_pub: *x25519_pub,
+                mlkem_pub: mlkem_pub.clone(),
+            };
+            if next.validate().is_err() {
+                return Ok(());
+            }
+            // History first: the generation being replaced stays addressable.
+            conn.execute(
+                "INSERT OR IGNORE INTO sync_wrap_history (device_id, wrap_epoch, x25519, mlkem)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![device_id, cur_epoch, x, ml],
+            )?;
+            conn.execute(
+                "INSERT OR IGNORE INTO sync_wrap_history (device_id, wrap_epoch, x25519, mlkem)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![device_id, *wrap_epoch as i64, &x25519_pub[..], mlkem_pub],
+            )?;
+            if *wrap_epoch as i64 > cur_epoch {
+                conn.execute(
+                    "UPDATE sync_devices SET x25519 = ?2, mlkem = ?3, wrap_epoch = ?4 WHERE device_id = ?1",
+                    params![device_id, &x25519_pub[..], mlkem_pub, *wrap_epoch as i64],
+                )?;
+            }
+        }
         OpBody::HeadAttest {
             device_id,
             seq,

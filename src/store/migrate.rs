@@ -1002,10 +1002,21 @@ CREATE TABLE IF NOT EXISTS sync_devices (
     attendance TEXT NOT NULL CHECK (attendance IN ('attended','unattended')),
     status     TEXT NOT NULL DEFAULT 'operational',
     exempt     INTEGER NOT NULL DEFAULT 0,
+    wrap_epoch INTEGER NOT NULL DEFAULT 0,
     last_seen  INTEGER NOT NULL DEFAULT 0,
     added_by   BLOB,
     fork_a     BLOB,
     fork_b     BLOB
+);
+
+-- Every generation of a device's wrap public keys (C14): `sync_devices` holds the
+-- current one, old shares stay addressable by the generation they were wrapped to.
+CREATE TABLE IF NOT EXISTS sync_wrap_history (
+    device_id  TEXT NOT NULL,
+    wrap_epoch INTEGER NOT NULL,
+    x25519     BLOB NOT NULL,
+    mlkem      BLOB NOT NULL,
+    PRIMARY KEY (device_id, wrap_epoch)
 );
 
 CREATE TABLE IF NOT EXISTS sync_tombstones (
@@ -1858,7 +1869,7 @@ INSERT INTO host_groups (name, sort_order, reserved, created_at)
         assert_eq!(tags, "[]");
     }
 
-    const SYNC_TABLES: [&str; 13] = [
+    const SYNC_TABLES: [&str; 14] = [
         "sync_ops",
         "sync_chain_heads",
         "sync_pending_ops",
@@ -1872,6 +1883,7 @@ INSERT INTO host_groups (name, sort_order, reserved, created_at)
         "sync_meta",
         "sync_fields",
         "sync_entities",
+        "sync_wrap_history",
     ];
 
     /// Put a current database back to exactly the v21 shape: no uid columns,

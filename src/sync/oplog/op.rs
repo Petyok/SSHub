@@ -50,6 +50,19 @@ pub enum CertScope {
     Hosts(Vec<HostUid>),
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ReshareItem {
+    pub host_uid: HostUid,
+    pub sub_shares: Vec<(DeviceId, Vec<u8>)>,
+    pub commitments: Vec<Vec<u8>>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ConfirmItem {
+    pub host_uid: HostUid,
+    pub sealed_share: Vec<u8>,
+}
+
 /// An unsigned claim "device `device_id` had head `chain_hash` at `seq`".
 /// Self-signed attestations (fork proof material) are [`super::fork::SignedHead`].
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -149,13 +162,35 @@ pub enum OpBody {
         request_id: u64,
         requester: DeviceId,
     },
-    ShareReshare {
+    /// One per (contributor, recipient) per epoch: `hybrid_wrap(to.pub, session key)`.
+    /// The contributor is the op's device.
+    ShareReshareSession {
+        epoch: u64,
+        to: DeviceId,
+        sealed: Vec<u8>,
+    },
+    /// One per holder per epoch: `hybrid_wrap(own current pub, storage key)`.
+    ShareStorageKey {
+        epoch: u64,
+        sealed: Vec<u8>,
+    },
+    /// At most `RESHARE_ITEMS_PER_OP` items.
+    ShareReshareBatch {
         epoch: u64,
         new_holders: Vec<DeviceId>,
-        commitments: Vec<Vec<u8>>,
+        items: Vec<ReshareItem>,
     },
-    ShareReshareConfirm {
-        reshare_hash: [u8; 32],
+    /// The holder's new share per credential; at most `RESHARE_ITEMS_PER_OP` items.
+    ShareReshareConfirmBatch {
+        epoch: u64,
+        items: Vec<ConfirmItem>,
+    },
+    /// A device announces fresh wrap keys (self op). The signing key never rotates.
+    WrapKeyRotate {
+        device_id: DeviceId,
+        wrap_epoch: u64,
+        x25519_pub: [u8; 32],
+        mlkem_pub: Vec<u8>,
     },
     CertIssue {
         device_id: DeviceId,

@@ -56,7 +56,17 @@ fn value(b: &mut Vec<u8>, v: &Value) {
     serde_json::to_writer(&mut *b, v).expect("value serialises");
 }
 
-fn bytes_arr(b: &mut Vec<u8>, bytes: &[u8]) {
+/// `Vec<u8>` fields: base64 string, standard alphabet, padded.
+fn b64(b: &mut Vec<u8>, bytes: &[u8]) {
+    string(b, &b64_encode(bytes));
+}
+
+/// Fixed 32-byte fields: lowercase hex string.
+fn hex32(b: &mut Vec<u8>, bytes: &[u8; 32]) {
+    string(b, &hex_lower(bytes));
+}
+
+fn small_arr(b: &mut Vec<u8>, bytes: &[u8]) {
     b.push(b'[');
     for (i, x) in bytes.iter().enumerate() {
         if i > 0 {
@@ -90,7 +100,7 @@ fn strings(b: &mut Vec<u8>, items: &[String]) {
 }
 
 fn alg(b: &mut Vec<u8>, a: AlgTag) {
-    bytes_arr(b, &a.to_bytes());
+    small_arr(b, &a.to_bytes());
 }
 
 fn third_factor(b: &mut Vec<u8>, t: &ThirdFactor) {
@@ -109,7 +119,7 @@ fn head_attest(b: &mut Vec<u8>, h: &HeadAttest) {
     let mut o = Obj::new(b);
     string(o.key("device_id"), &h.device_id);
     write!(o.key("seq"), "{}", h.seq).expect("vec write");
-    bytes_arr(o.key("chain_hash"), &h.chain_hash);
+    hex32(o.key("chain_hash"), &h.chain_hash);
     o.end();
 }
 
@@ -135,8 +145,11 @@ pub fn body_name(body: &OpBody) -> &'static str {
         OpBody::DeviceAdd { .. } => "DeviceAdd",
         OpBody::DeviceRevoke { .. } => "DeviceRevoke",
         OpBody::ShareRelease { .. } => "ShareRelease",
-        OpBody::ShareReshare { .. } => "ShareReshare",
-        OpBody::ShareReshareConfirm { .. } => "ShareReshareConfirm",
+        OpBody::ShareReshareSession { .. } => "ShareReshareSession",
+        OpBody::ShareStorageKey { .. } => "ShareStorageKey",
+        OpBody::ShareReshareBatch { .. } => "ShareReshareBatch",
+        OpBody::ShareReshareConfirmBatch { .. } => "ShareReshareConfirmBatch",
+        OpBody::WrapKeyRotate { .. } => "WrapKeyRotate",
         OpBody::CertIssue { .. } => "CertIssue",
         OpBody::CertRevoke { .. } => "CertRevoke",
         OpBody::CertHostOpened { .. } => "CertHostOpened",
@@ -177,7 +190,7 @@ fn body(b: &mut Vec<u8>, body: &OpBody) {
             wrapped_shares,
         } => {
             uid_str(o.key("host_uid"), host_uid);
-            bytes_arr(o.key("ciphertext"), ciphertext);
+            b64(o.key("ciphertext"), ciphertext);
             let b = o.key("wrapped_shares");
             b.push(b'[');
             for (i, s) in wrapped_shares.iter().enumerate() {
@@ -187,7 +200,7 @@ fn body(b: &mut Vec<u8>, body: &OpBody) {
                 let mut so = Obj::new(b);
                 string(so.key("recipient"), &s.recipient);
                 alg(so.key("alg"), s.alg);
-                bytes_arr(so.key("sealed"), &s.sealed);
+                b64(so.key("sealed"), &s.sealed);
                 so.end();
             }
             b.push(b']');
@@ -199,9 +212,9 @@ fn body(b: &mut Vec<u8>, body: &OpBody) {
             attendance,
         } => {
             let mut d = Obj::new(o.key("device"));
-            bytes_arr(d.key("ed25519_pub"), &device.ed25519_pub);
-            bytes_arr(d.key("x25519_pub"), &device.x25519_pub);
-            bytes_arr(d.key("mlkem_pub"), &device.mlkem_pub);
+            hex32(d.key("ed25519_pub"), &device.ed25519_pub);
+            hex32(d.key("x25519_pub"), &device.x25519_pub);
+            b64(d.key("mlkem_pub"), &device.mlkem_pub);
             d.end();
             string(o.key("name"), name);
             string(o.key("role"), role_str(*role));
@@ -217,25 +230,81 @@ fn body(b: &mut Vec<u8>, body: &OpBody) {
             write!(o.key("request_id"), "{request_id}").expect("vec write");
             string(o.key("requester"), requester);
         }
-        OpBody::ShareReshare {
+        OpBody::ShareReshareSession { epoch, to, sealed } => {
+            write!(o.key("epoch"), "{epoch}").expect("vec write");
+            string(o.key("to"), to);
+            b64(o.key("sealed"), sealed);
+        }
+        OpBody::ShareStorageKey { epoch, sealed } => {
+            write!(o.key("epoch"), "{epoch}").expect("vec write");
+            b64(o.key("sealed"), sealed);
+        }
+        OpBody::ShareReshareBatch {
             epoch,
             new_holders,
-            commitments,
+            items,
         } => {
             write!(o.key("epoch"), "{epoch}").expect("vec write");
             strings(o.key("new_holders"), new_holders);
-            let b = o.key("commitments");
+            let b = o.key("items");
             b.push(b'[');
-            for (i, c) in commitments.iter().enumerate() {
+            for (i, it) in items.iter().enumerate() {
                 if i > 0 {
                     b.push(b',');
                 }
-                bytes_arr(b, c);
+                let mut io = Obj::new(b);
+                uid_str(io.key("host_uid"), &it.host_uid);
+                let sb = io.key("sub_shares");
+                sb.push(b'[');
+                for (j, (dev, bytes)) in it.sub_shares.iter().enumerate() {
+                    if j > 0 {
+                        sb.push(b',');
+                    }
+                    sb.push(b'[');
+                    string(sb, dev);
+                    sb.push(b',');
+                    b64(sb, bytes);
+                    sb.push(b']');
+                }
+                sb.push(b']');
+                let cb = io.key("commitments");
+                cb.push(b'[');
+                for (j, c) in it.commitments.iter().enumerate() {
+                    if j > 0 {
+                        cb.push(b',');
+                    }
+                    b64(cb, c);
+                }
+                cb.push(b']');
+                io.end();
             }
             b.push(b']');
         }
-        OpBody::ShareReshareConfirm { reshare_hash } => {
-            bytes_arr(o.key("reshare_hash"), reshare_hash)
+        OpBody::ShareReshareConfirmBatch { epoch, items } => {
+            write!(o.key("epoch"), "{epoch}").expect("vec write");
+            let b = o.key("items");
+            b.push(b'[');
+            for (i, it) in items.iter().enumerate() {
+                if i > 0 {
+                    b.push(b',');
+                }
+                let mut io = Obj::new(b);
+                uid_str(io.key("host_uid"), &it.host_uid);
+                b64(io.key("sealed_share"), &it.sealed_share);
+                io.end();
+            }
+            b.push(b']');
+        }
+        OpBody::WrapKeyRotate {
+            device_id,
+            wrap_epoch,
+            x25519_pub,
+            mlkem_pub,
+        } => {
+            string(o.key("device_id"), device_id);
+            write!(o.key("wrap_epoch"), "{wrap_epoch}").expect("vec write");
+            hex32(o.key("x25519_pub"), x25519_pub);
+            b64(o.key("mlkem_pub"), mlkem_pub);
         }
         OpBody::CertIssue {
             device_id,
@@ -267,9 +336,9 @@ fn body(b: &mut Vec<u8>, body: &OpBody) {
             write!(o.key("epoch_lo"), "{epoch_lo}").expect("vec write");
             write!(o.key("epoch_hi"), "{epoch_hi}").expect("vec write");
         }
-        OpBody::CertRevoke { cert_id } => bytes_arr(o.key("cert_id"), cert_id),
+        OpBody::CertRevoke { cert_id } => hex32(o.key("cert_id"), cert_id),
         OpBody::CertHostOpened { cert_id, host_uid } => {
-            bytes_arr(o.key("cert_id"), cert_id);
+            hex32(o.key("cert_id"), cert_id);
             uid_str(o.key("host_uid"), host_uid);
         }
         OpBody::PhoneReenroll {
@@ -298,7 +367,7 @@ fn body(b: &mut Vec<u8>, body: &OpBody) {
             by_phone,
             third_factor: tf,
         } => {
-            bytes_arr(o.key("reenroll_hash"), reenroll_hash);
+            hex32(o.key("reenroll_hash"), reenroll_hash);
             write!(o.key("by_phone"), "{by_phone}").expect("vec write");
             let b = o.key("third_factor");
             match tf {
@@ -310,7 +379,7 @@ fn body(b: &mut Vec<u8>, body: &OpBody) {
             reenroll_hash,
             seen_at,
         } => {
-            bytes_arr(o.key("reenroll_hash"), reenroll_hash);
+            hex32(o.key("reenroll_hash"), reenroll_hash);
             write!(o.key("seen_at"), "{seen_at}").expect("vec write");
         }
         OpBody::ModeChange {
@@ -335,7 +404,7 @@ fn body(b: &mut Vec<u8>, body: &OpBody) {
         } => {
             string(o.key("device_id"), device_id);
             write!(o.key("seq"), "{seq}").expect("vec write");
-            bytes_arr(o.key("chain_hash"), chain_hash);
+            hex32(o.key("chain_hash"), chain_hash);
         }
     }
     o.end();
@@ -492,12 +561,7 @@ pub fn decode_op(bytes: &[u8], signature: [u8; 64]) -> Result<Op> {
         },
         timestamp: get_i64(m, "timestamp")?,
         epoch: get_u64(m, "epoch")?,
-        alg: {
-            let a: [u8; 2] = get_bytes(m, "alg")?
-                .try_into()
-                .map_err(|_| anyhow!("alg must be two bytes"))?;
-            AlgTag::from_bytes(a)?
-        },
+        alg: { get_alg(m, "alg")? },
         body: decode_body(get(m, "body")?)?,
         signature,
     };
@@ -544,16 +608,14 @@ fn get_bool(m: &Map<String, Value>, k: &str) -> Result<bool> {
         .ok_or_else(|| anyhow!("{k} must be a boolean"))
 }
 
+/// Base64 string to bytes (the encoder's form is re-checked by the strict
+/// round trip, so padding and alphabet quirks cannot slip through).
 fn bytes_of(v: &Value, k: &str) -> Result<Vec<u8>> {
-    v.as_array()
-        .ok_or_else(|| anyhow!("{k} must be an array of bytes"))?
-        .iter()
-        .map(|x| {
-            x.as_u64()
-                .and_then(|n| u8::try_from(n).ok())
-                .ok_or_else(|| anyhow!("{k} must hold bytes"))
-        })
-        .collect()
+    b64_decode(
+        v.as_str()
+            .ok_or_else(|| anyhow!("{k} must be a base64 string"))?,
+    )
+    .ok_or_else(|| anyhow!("{k} is not valid base64"))
 }
 
 fn get_bytes(m: &Map<String, Value>, k: &str) -> Result<Vec<u8>> {
@@ -561,9 +623,83 @@ fn get_bytes(m: &Map<String, Value>, k: &str) -> Result<Vec<u8>> {
 }
 
 fn get_32(m: &Map<String, Value>, k: &str) -> Result<[u8; 32]> {
-    get_bytes(m, k)?
-        .try_into()
-        .map_err(|_| anyhow!("{k} must be 32 bytes"))
+    let h = get_string(m, k)?;
+    ensure!(
+        h.len() == 64
+            && h.bytes()
+                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)),
+        "{k} must be 64 lowercase hex characters"
+    );
+    let mut out = [0u8; 32];
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&h[2 * i..2 * i + 2], 16)?;
+    }
+    Ok(out)
+}
+
+fn get_alg(m: &Map<String, Value>, k: &str) -> Result<AlgTag> {
+    let a: [u8; 2] = get(m, k)?
+        .as_array()
+        .ok_or_else(|| anyhow!("{k} must be a two byte array"))?
+        .iter()
+        .map(|x| x.as_u64().and_then(|n| u8::try_from(n).ok()))
+        .collect::<Option<Vec<u8>>>()
+        .and_then(|v| v.try_into().ok())
+        .ok_or_else(|| anyhow!("{k} must be two bytes"))?;
+    AlgTag::from_bytes(a)
+}
+
+const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/// Standard alphabet, padded (RFC 4648 section 4).
+fn b64_encode(data: &[u8]) -> String {
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let n = (u32::from(chunk[0]) << 16)
+            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*chunk.get(2).unwrap_or(&0));
+        out.push(B64[(n >> 18) as usize & 63] as char);
+        out.push(B64[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            B64[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            B64[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+pub(super) fn b64_decode(s: &str) -> Option<Vec<u8>> {
+    let bytes = s.as_bytes();
+    if bytes.len() % 4 != 0 {
+        return None;
+    }
+    let val = |c: u8| B64.iter().position(|x| *x == c).map(|p| p as u32);
+    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
+    for (i, quad) in bytes.chunks(4).enumerate() {
+        let last = (i + 1) * 4 == bytes.len();
+        let pad = quad.iter().rev().take_while(|c| **c == b'=').count();
+        if pad > 2 || (pad > 0 && !last) {
+            return None;
+        }
+        let mut n = 0u32;
+        for (j, c) in quad.iter().enumerate() {
+            n = (n << 6) | if j >= 4 - pad { 0 } else { val(*c)? };
+        }
+        out.push((n >> 16) as u8);
+        if pad < 2 {
+            out.push((n >> 8) as u8);
+        }
+        if pad < 1 {
+            out.push(n as u8);
+        }
+    }
+    Some(out)
 }
 
 fn uid_of(v: &Value, k: &str) -> Result<Uid> {
@@ -648,12 +784,9 @@ fn decode_body(v: &Value) -> Result<OpBody> {
                 .iter()
                 .map(|s| {
                     let s = as_obj(s)?;
-                    let a: [u8; 2] = get_bytes(s, "alg")?
-                        .try_into()
-                        .map_err(|_| anyhow!("alg must be two bytes"))?;
                     Ok(WrappedShare {
                         recipient: get_string(s, "recipient")?,
-                        alg: AlgTag::from_bytes(a)?,
+                        alg: get_alg(s, "alg")?,
                         sealed: get_bytes(s, "sealed")?,
                     })
                 })
@@ -688,16 +821,59 @@ fn decode_body(v: &Value) -> Result<OpBody> {
             request_id: get_u64(m, "request_id")?,
             requester: get_string(m, "requester")?,
         },
-        "ShareReshare" => OpBody::ShareReshare {
+        "ShareReshareSession" => OpBody::ShareReshareSession {
+            epoch: get_u64(m, "epoch")?,
+            to: get_string(m, "to")?,
+            sealed: get_bytes(m, "sealed")?,
+        },
+        "ShareStorageKey" => OpBody::ShareStorageKey {
+            epoch: get_u64(m, "epoch")?,
+            sealed: get_bytes(m, "sealed")?,
+        },
+        "ShareReshareBatch" => OpBody::ShareReshareBatch {
             epoch: get_u64(m, "epoch")?,
             new_holders: get_strings(m, "new_holders")?,
-            commitments: get_array(m, "commitments")?
+            items: get_array(m, "items")?
                 .iter()
-                .map(|c| bytes_of(c, "commitments"))
+                .map(|it| {
+                    let it = as_obj(it)?;
+                    Ok(ReshareItem {
+                        host_uid: get_uid(it, "host_uid")?,
+                        sub_shares: get_array(it, "sub_shares")?
+                            .iter()
+                            .map(|p| match p.as_array().map(Vec::as_slice) {
+                                Some([d, b]) => {
+                                    Ok((str_of(d, "sub_shares")?, bytes_of(b, "sub_shares")?))
+                                }
+                                _ => bail!("sub_shares entries are [device, base64] pairs"),
+                            })
+                            .collect::<Result<_>>()?,
+                        commitments: get_array(it, "commitments")?
+                            .iter()
+                            .map(|c| bytes_of(c, "commitments"))
+                            .collect::<Result<_>>()?,
+                    })
+                })
                 .collect::<Result<_>>()?,
         },
-        "ShareReshareConfirm" => OpBody::ShareReshareConfirm {
-            reshare_hash: get_32(m, "reshare_hash")?,
+        "ShareReshareConfirmBatch" => OpBody::ShareReshareConfirmBatch {
+            epoch: get_u64(m, "epoch")?,
+            items: get_array(m, "items")?
+                .iter()
+                .map(|it| {
+                    let it = as_obj(it)?;
+                    Ok(ConfirmItem {
+                        host_uid: get_uid(it, "host_uid")?,
+                        sealed_share: get_bytes(it, "sealed_share")?,
+                    })
+                })
+                .collect::<Result<_>>()?,
+        },
+        "WrapKeyRotate" => OpBody::WrapKeyRotate {
+            device_id: get_string(m, "device_id")?,
+            wrap_epoch: get_u64(m, "wrap_epoch")?,
+            x25519_pub: get_32(m, "x25519_pub")?,
+            mlkem_pub: get_bytes(m, "mlkem_pub")?,
         },
         "CertIssue" => {
             let sc = as_obj(get(m, "scope")?)?;

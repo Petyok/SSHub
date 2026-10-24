@@ -15,17 +15,8 @@ use crate::sync::crypto::{
 };
 use serde_json::{json, Map, Value};
 
-const BYTE_KEYS: [&str; 9] = [
-    "ed25519_pub",
-    "x25519_pub",
-    "mlkem_pub",
-    "ciphertext",
-    "sealed",
-    "reshare_hash",
-    "reenroll_hash",
-    "chain_hash",
-    "cert_id",
-];
+/// `Vec<u8>` fields: base64 in the canonical form, hex in the logical input.
+const VEC_KEYS: [&str; 4] = ["mlkem_pub", "ciphertext", "sealed", "sealed_share"];
 
 fn signer() -> DeviceIdentity {
     paper_derive(&bip39_encode(&[0x11; 32]), PaperDomain::Unwrap).unwrap()
@@ -316,28 +307,108 @@ fn cases() -> Vec<(&'static str, Op)> {
             ),
         ),
         (
-            "share-reshare",
+            "share-reshare-session",
             mk(
                 17,
                 17,
                 1,
                 2,
-                OpBody::ShareReshare {
+                OpBody::ShareReshareSession {
                     epoch: 2,
-                    new_holders: vec![dev.clone(), other.clone()],
-                    commitments: vec![vec![1, 2, 3], vec![], vec![255; 33]],
+                    to: other.clone(),
+                    sealed: (0..=255).rev().collect(),
                 },
             ),
         ),
         (
-            "share-reshare-confirm",
+            "share-storage-key-empty",
             mk(
                 18,
                 18,
                 1,
                 2,
-                OpBody::ShareReshareConfirm {
-                    reshare_hash: [0xee; 32],
+                OpBody::ShareStorageKey {
+                    epoch: u64::MAX,
+                    sealed: vec![],
+                },
+            ),
+        ),
+        (
+            "share-reshare-batch",
+            mk(
+                31,
+                31,
+                1,
+                2,
+                OpBody::ShareReshareBatch {
+                    epoch: 2,
+                    new_holders: vec![dev.clone(), other.clone()],
+                    items: vec![
+                        ReshareItem {
+                            host_uid: u(1),
+                            sub_shares: vec![
+                                (dev.clone(), vec![1, 2, 3, 4]),
+                                (other.clone(), vec![0xfb, 0xff]),
+                            ],
+                            commitments: vec![vec![1, 2, 3], vec![], vec![255; 33]],
+                        },
+                        ReshareItem {
+                            host_uid: u(2),
+                            sub_shares: vec![],
+                            commitments: vec![],
+                        },
+                    ],
+                },
+            ),
+        ),
+        (
+            "share-reshare-batch-empty",
+            mk(
+                32,
+                32,
+                1,
+                2,
+                OpBody::ShareReshareBatch {
+                    epoch: 0,
+                    new_holders: vec![],
+                    items: vec![],
+                },
+            ),
+        ),
+        (
+            "share-reshare-confirm-batch",
+            mk(
+                33,
+                33,
+                1,
+                2,
+                OpBody::ShareReshareConfirmBatch {
+                    epoch: 2,
+                    items: vec![
+                        ConfirmItem {
+                            host_uid: u(1),
+                            sealed_share: vec![7; 49],
+                        },
+                        ConfirmItem {
+                            host_uid: u(2),
+                            sealed_share: vec![],
+                        },
+                    ],
+                },
+            ),
+        ),
+        (
+            "wrap-key-rotate",
+            mk(
+                34,
+                34,
+                1,
+                2,
+                OpBody::WrapKeyRotate {
+                    device_id: dev.clone(),
+                    wrap_epoch: 1,
+                    x25519_pub: peer(0x23).x25519_pub,
+                    mlkem_pub: peer(0x23).mlkem_pub,
                 },
             ),
         ),
@@ -549,9 +620,16 @@ fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
-/// Canonical JSON with byte strings turned into hex, so the oracle input does
-/// not repeat the encoding it has to rebuild.
+/// Canonical JSON with `Vec<u8>` fields turned into hex, so the oracle input
+/// does not repeat the encoding it has to rebuild (fixed 32-byte values are hex
+/// in the canonical form already).
 fn logical(v: Value, key: &str) -> Value {
+    let unb64 = |x: &Value| {
+        Value::String(hex(&crate::sync::oplog::canonical::b64_decode(
+            x.as_str().unwrap(),
+        )
+        .unwrap()))
+    };
     match v {
         Value::Object(m) => Value::Object(
             m.into_iter()
@@ -561,19 +639,13 @@ fn logical(v: Value, key: &str) -> Value {
                 })
                 .collect::<Map<_, _>>(),
         ),
-        Value::Array(a) if BYTE_KEYS.contains(&key) => Value::String(hex(&a
-            .iter()
-            .map(|x| x.as_u64().unwrap() as u8)
-            .collect::<Vec<_>>())),
-        Value::Array(a) if key == "commitments" => Value::Array(
+        Value::String(_) if VEC_KEYS.contains(&key) => unb64(&v),
+        Value::Array(a) if key == "commitments" => Value::Array(a.iter().map(unb64).collect()),
+        Value::Array(a) if key == "sub_shares" => Value::Array(
             a.into_iter()
-                .map(|x| {
-                    Value::String(hex(&x
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .map(|n| n.as_u64().unwrap() as u8)
-                        .collect::<Vec<_>>()))
+                .map(|p| {
+                    let p = p.as_array().unwrap();
+                    Value::Array(vec![p[0].clone(), unb64(&p[1])])
                 })
                 .collect(),
         ),
@@ -665,5 +737,5 @@ fn every_body_variant_has_a_vector() {
         .iter()
         .map(|(_, op)| super::canonical::body_name(&op.body))
         .collect();
-    assert_eq!(names.len(), 20, "{names:?}");
+    assert_eq!(names.len(), 23, "{names:?}");
 }

@@ -8,16 +8,19 @@ with libraries that are not the Rust implementation (python-blake3,
 cryptography). It does not read any Rust source.
 
 Rules used (contract C2): compact JSON, fixed hand-ordered fields, `prev_hash`
-lowercase hex, other byte strings as arrays of numbers, uids as 32 lowercase hex
-characters (already strings in the inputs), integers as plain literals, strings
-as raw UTF-8 with only the mandatory JSON escapes, alg as the two-byte wire
-form, bodies externally tagged, patch fields omitted when absent and `null`
-when cleared (the vector input simply omits or nulls them).
+and every fixed 32-byte value as lowercase hex strings, every `Vec<u8>` as a
+base64 string (standard alphabet, padded), uids as 32 lowercase hex characters
+(already strings in the inputs), integers as plain literals, strings as raw
+UTF-8 with only the mandatory JSON escapes, alg as the two-byte wire form
+`[sig, wrap]`, bodies externally tagged, patch fields omitted when absent and
+`null` when cleared (the vector input simply omits or nulls them). In the
+inputs every `Vec<u8>` is given as hex; the oracle converts it to base64.
 
 Run: python3 tests/oracles/op_canonical.py [ops.json]
 Exit status 0 only if every check passes. A built-in self-test mutates a
 vector and requires the checks to fail, so a vacuous oracle cannot pass.
 """
+import base64
 import contextlib
 import io
 import json
@@ -44,8 +47,11 @@ BODY_ORDER = {
     "DeviceAdd": ["device", "name", "role", "attendance"],
     "DeviceRevoke": ["device_id"],
     "ShareRelease": ["host_uid", "request_id", "requester"],
-    "ShareReshare": ["epoch", "new_holders", "commitments"],
-    "ShareReshareConfirm": ["reshare_hash"],
+    "ShareReshareSession": ["epoch", "to", "sealed"],
+    "ShareStorageKey": ["epoch", "sealed"],
+    "ShareReshareBatch": ["epoch", "new_holders", "items"],
+    "ShareReshareConfirmBatch": ["epoch", "items"],
+    "WrapKeyRotate": ["device_id", "wrap_epoch", "x25519_pub", "mlkem_pub"],
     "CertIssue": ["device_id", "scope", "expiry", "max_new_hosts_per_day", "epoch_lo", "epoch_hi"],
     "CertRevoke": ["cert_id"],
     "CertHostOpened": ["cert_id", "host_uid"],
@@ -54,6 +60,12 @@ BODY_ORDER = {
     "RecoveryAck": ["reenroll_hash", "seen_at"],
     "ModeChange": ["to", "migrated_on", "cosigner"],
     "HeadAttest": ["device_id", "seq", "chain_hash"],
+}
+
+# Items of the reshare batches (contract section 2: ReshareItem, ConfirmItem).
+ITEM_ORDER = {
+    "ShareReshareBatch": ["host_uid", "sub_shares", "commitments"],
+    "ShareReshareConfirmBatch": ["host_uid", "sealed_share"],
 }
 
 # Contract section 2 and "Patch fields": order of the fields objects.
@@ -66,9 +78,10 @@ FIELDS_ORDER = {
     "IdentityUpsert": ["name", "username", "has_password"],
 }
 
-# Byte strings: given as hex in the inputs, written as number arrays.
-BYTES_KEYS = {"ed25519_pub", "x25519_pub", "mlkem_pub", "ciphertext", "sealed", "reshare_hash",
-              "reenroll_hash", "chain_hash", "cert_id"}
+# Fixed 32-byte values: hex strings in the inputs and in the canonical form.
+HEX32_KEYS = {"ed25519_pub", "x25519_pub", "reenroll_hash", "chain_hash", "cert_id"}
+# Vec<u8>: hex in the inputs, base64 in the canonical form.
+VEC_KEYS = {"mlkem_pub", "ciphertext", "sealed", "sealed_share"}
 
 FAILS = []
 COUNT = 0
@@ -92,8 +105,8 @@ def num(v):
     return str(v)
 
 
-def byte_array(hexstr):
-    return "[" + ",".join(str(b) for b in bytes.fromhex(hexstr)) + "]"
+def b64(hexstr):
+    return s(base64.b64encode(bytes.fromhex(hexstr)).decode("ascii"))
 
 
 def obj(pairs):
@@ -108,10 +121,16 @@ def value(key, v):
     """Serialise one input value by the key it sits under."""
     if v is None:
         return "null"
-    if key in BYTES_KEYS:
-        return byte_array(v)
+    if key in VEC_KEYS:
+        return b64(v)
+    if key in HEX32_KEYS:
+        assert len(v) == 64 and v == v.lower()
+        bytes.fromhex(v)
+        return s(v)
     if key == "commitments":
-        return seq([byte_array(c) for c in v])
+        return seq([b64(c) for c in v])
+    if key == "sub_shares":
+        return seq([seq([s(d), b64(b)]) for d, b in v])
     if key == "alg":
         return seq([str(x) for x in v])
     if isinstance(v, bool):
@@ -153,6 +172,9 @@ def body(b):
             out.append((k, obj([(f, value(f, inner["fields"][f])) for f in order if f in inner["fields"]])))
         elif k in ("liveness", "wrapped_shares"):
             out.append((k, seq([value(k, x) for x in inner[k]])))
+        elif k == "items":
+            order = ITEM_ORDER[name]
+            out.append((k, seq([obj([(f, value(f, it[f])) for f in order]) for it in inner[k]])))
         else:
             out.append((k, value(k, inner[k])))
     return obj([(name, obj(out))])

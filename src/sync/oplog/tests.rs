@@ -201,13 +201,36 @@ fn sample_bodies() -> Vec<OpBody> {
             request_id: u64::MAX,
             requester: "0011223344556677".into(),
         },
-        OpBody::ShareReshare {
+        OpBody::ShareReshareSession {
+            epoch: 2,
+            to: "0011223344556677".into(),
+            sealed: vec![1, 2, 3, 4],
+        },
+        OpBody::ShareStorageKey {
+            epoch: 2,
+            sealed: vec![],
+        },
+        OpBody::ShareReshareBatch {
             epoch: 2,
             new_holders: vec!["a".into(), "b".into()],
-            commitments: vec![vec![1, 2], vec![]],
+            items: vec![ReshareItem {
+                host_uid: uid(1),
+                sub_shares: vec![("a".into(), vec![9; 5]), ("b".into(), vec![])],
+                commitments: vec![vec![1, 2], vec![]],
+            }],
         },
-        OpBody::ShareReshareConfirm {
-            reshare_hash: [7; 32],
+        OpBody::ShareReshareConfirmBatch {
+            epoch: 2,
+            items: vec![ConfirmItem {
+                host_uid: uid(1),
+                sealed_share: vec![255; 7],
+            }],
+        },
+        OpBody::WrapKeyRotate {
+            device_id: "0011223344556677".into(),
+            wrap_epoch: 1,
+            x25519_pub: [3; 32],
+            mlkem_pub: vec![0, 1, 2],
         },
         OpBody::CertIssue {
             device_id: "0011223344556677".into(),
@@ -1306,6 +1329,203 @@ fn replayed_ops_after_a_restart_do_not_change_anything() {
     );
     assert_eq!(b.store.sync_pending().unwrap().len(), 0);
     let _ = NewHostGroup::default();
+}
+
+#[test]
+fn base64_and_hex_forms_in_the_canonical_text() {
+    let op = wrap(OpBody::ShareStorageKey {
+        epoch: 1,
+        sealed: vec![0xfb, 0xff, 0x01],
+    });
+    let text = String::from_utf8(op.canonical_bytes()).unwrap();
+    assert!(text.contains("\"sealed\":\"+/8B\""), "{text}");
+    let op = wrap(OpBody::CertRevoke {
+        cert_id: [0xab; 32],
+    });
+    let text = String::from_utf8(op.canonical_bytes()).unwrap();
+    assert!(
+        text.contains(&format!("\"cert_id\":\"{}\"", "ab".repeat(32))),
+        "{text}"
+    );
+    // Padding variants and the wrong alphabet are refused by the strict decoder.
+    for n in 0..5usize {
+        let op = wrap(OpBody::ShareStorageKey {
+            epoch: 1,
+            sealed: vec![7; n],
+        });
+        let good = String::from_utf8(op.canonical_bytes()).unwrap();
+        assert!(Op::from_canonical(good.as_bytes(), op.signature).is_ok());
+        let b = match n {
+            0 => String::new(),
+            _ => good
+                .split("\"sealed\":\"")
+                .nth(1)
+                .unwrap()
+                .split('"')
+                .next()
+                .unwrap()
+                .to_string(),
+        };
+        if b.ends_with('=') {
+            let unpadded = good.replace(&b, b.trim_end_matches('='));
+            assert!(Op::from_canonical(unpadded.as_bytes(), op.signature).is_err());
+        }
+        if !b.is_empty() {
+            let urlsafe =
+                good.replace(&b, &b.replace('+', "-").replace('/', "_").replace('A', "-"));
+            assert!(Op::from_canonical(urlsafe.as_bytes(), op.signature).is_err());
+        }
+    }
+}
+
+#[test]
+fn reshare_and_wrap_rotation_ops_are_green_and_bounded() {
+    let ring = ring(2);
+    let (a, b) = (&ring[0], &ring[1]);
+    let item = |n: u8| ConfirmItem {
+        host_uid: uid(n),
+        sealed_share: vec![n; 4],
+    };
+    let session = a.append(OpBody::ShareReshareSession {
+        epoch: 1,
+        to: b.dev(),
+        sealed: vec![1; 8],
+    });
+    let batch = a.append(OpBody::ShareReshareBatch {
+        epoch: 1,
+        new_holders: vec![b.dev()],
+        items: vec![],
+    });
+    let confirm = a.append(OpBody::ShareReshareConfirmBatch {
+        epoch: 1,
+        items: vec![item(1)],
+    });
+    let key = a.append(OpBody::ShareStorageKey {
+        epoch: 1,
+        sealed: vec![2; 8],
+    });
+    for op in [&session, &batch, &confirm, &key] {
+        assert_eq!(op.tier(), OpTier::Green);
+    }
+    for o in pull(b, a) {
+        assert!(matches!(o, IngestOutcome::Applied), "{o:?}");
+    }
+    // Over the item limit: refused by the sender and by a hostile one.
+    let too_many: Vec<ConfirmItem> = (0..=crate::sync::limits::RESHARE_ITEMS_PER_OP)
+        .map(|i| item(i as u8))
+        .collect();
+    assert!(a
+        .store
+        .sync_append_local(
+            &a.id,
+            OpBody::ShareReshareConfirmBatch {
+                epoch: 1,
+                items: too_many.clone()
+            }
+        )
+        .is_err());
+    let mut forged = Op {
+        device_id: a.dev(),
+        seq: 5,
+        lamport: 50,
+        prev_hash: key.hash(),
+        timestamp: 0,
+        epoch: 0,
+        alg: ALG_CURRENT,
+        body: OpBody::ShareReshareConfirmBatch {
+            epoch: 1,
+            items: too_many,
+        },
+        signature: [0; 64],
+    };
+    forged.signature = a.id.sign(&forged.canonical_bytes());
+    assert!(rejected(&b.store.sync_ingest(forged).unwrap()).contains("item limit"));
+}
+
+#[test]
+fn wrap_key_rotation_replaces_the_current_keys_and_keeps_the_history() {
+    let ring = ring(2);
+    let (a, b) = (&ring[0], &ring[1]);
+    // A third device that a and b trust, whose id rotates its wrap keys.
+    let mut ident = Peer::new();
+    for p in [a, b] {
+        p.store
+            .sync_register_device(
+                &ident.id.public(),
+                "rot",
+                DeviceRole::Holder,
+                Attendance::Attended,
+            )
+            .unwrap();
+    }
+    let old = ident.id.public();
+    let new = ident.id.rotate_wrap_keys();
+    assert_eq!(
+        new.ed25519_pub, old.ed25519_pub,
+        "the signing key never rotates"
+    );
+    assert_ne!(new.x25519_pub, old.x25519_pub);
+    let rotate = |epoch: u64, p: &DevicePublic| OpBody::WrapKeyRotate {
+        device_id: ident.dev(),
+        wrap_epoch: epoch,
+        x25519_pub: p.x25519_pub,
+        mlkem_pub: p.mlkem_pub.clone(),
+    };
+    let op = ident.append(rotate(1, &new));
+    assert_eq!(op.tier(), OpTier::Green);
+    let row = |p: &Peer| {
+        p.store
+            .sync_devices()
+            .unwrap()
+            .into_iter()
+            .find(|d| d.id == ident.dev())
+            .unwrap()
+    };
+    assert!(matches!(
+        a.store.sync_ingest(op.clone()).unwrap(),
+        IngestOutcome::Applied
+    ));
+    assert_eq!(row(a).public, new);
+    assert_eq!(row(a).wrap_epoch, 1);
+    let generations: i64 = a
+        .store
+        .with_conn(|c| {
+            Ok(c.query_row(
+                "SELECT COUNT(*) FROM sync_wrap_history WHERE device_id = ?1",
+                [ident.dev()],
+                |r| r.get(0),
+            )?)
+        })
+        .unwrap();
+    assert_eq!(
+        generations, 2,
+        "old and new generation are both addressable"
+    );
+
+    // Only the device itself may rotate its keys.
+    let mut hostile = Op {
+        device_id: a.dev(),
+        seq: 1,
+        lamport: 1,
+        prev_hash: [0; 32],
+        timestamp: 0,
+        epoch: 0,
+        alg: ALG_CURRENT,
+        body: rotate(9, &new),
+        signature: [0; 64],
+    };
+    hostile.signature = a.id.sign(&hostile.canonical_bytes());
+    assert!(rejected(&b.store.sync_ingest(hostile).unwrap()).contains("own device"));
+
+    // A later op at an equal epoch never rolls the keys back.
+    let stale = ident.append(rotate(1, &old));
+    a.store.sync_ingest(stale).unwrap();
+    assert_eq!(row(a).public, new);
+
+    // b receives the same chain and ends in the same place.
+    pull(b, &ident);
+    assert_eq!(row(b).public, new);
+    assert_eq!(row(b).wrap_epoch, 1);
 }
 
 // -------------------------------------------------- convergence property

@@ -43,6 +43,8 @@ pub struct DeviceRow {
     pub exempt: bool,
     pub last_seen: i64,
     pub head_seq: u64,
+    /// Generation of the current wrap keys (C14).
+    pub wrap_epoch: u64,
 }
 
 fn tx(conn: &Connection) -> Result<Transaction<'_>> {
@@ -219,7 +221,8 @@ impl LauncherStore {
                 "SELECT d.device_id, d.ed25519, d.x25519, d.mlkem, d.name, d.role, d.attendance,
                         d.status, d.exempt, d.last_seen,
                         COALESCE((SELECT seq FROM sync_chain_heads h WHERE h.device_id = d.device_id), 0),
-                        COALESCE((SELECT epoch FROM sync_epochs e WHERE e.device_id = d.device_id), 0)
+                        COALESCE((SELECT epoch FROM sync_epochs e WHERE e.device_id = d.device_id), 0),
+                        d.wrap_epoch
                  FROM sync_devices d ORDER BY d.device_id",
             )?;
             let rows = stmt.query_map([], |r| {
@@ -236,11 +239,13 @@ impl LauncherStore {
                     r.get::<_, i64>(9)?,
                     r.get::<_, i64>(10)?,
                     r.get::<_, i64>(11)?,
+                    r.get::<_, i64>(12)?,
                 ))
             })?;
             let mut out = Vec::new();
             for row in rows {
-                let (id, ed, x, mlkem, name, role, att, status, exempt, last_seen, head, epoch) = row?;
+                let (id, ed, x, mlkem, name, role, att, status, exempt, last_seen, head, epoch, wrap_epoch) =
+                    row?;
                 let status = match status.as_str() {
                     "compromised" => DeviceStatus::Compromised,
                     "revoked" => DeviceStatus::Revoked,
@@ -265,6 +270,7 @@ impl LauncherStore {
                     exempt,
                     last_seen,
                     head_seq: head as u64,
+                    wrap_epoch: wrap_epoch as u64,
                 });
             }
             Ok(out)

@@ -26,6 +26,8 @@ use crate::store::{
 use crate::sync::oplog::op::{GroupFields, HostFields, IdentityFields, OpBody};
 use crate::sync::oplog::tier::EntityKind;
 
+use crate::sync::limits::RESHARE_ITEMS_PER_OP;
+
 const MAX_STR: usize = 4096;
 const MAX_LIST: usize = 1024;
 
@@ -48,6 +50,23 @@ pub fn validate_body(body: &OpBody) -> std::result::Result<(), String> {
         OpBody::IdentityUpsert { fields, .. } => validate_identity(fields),
         OpBody::GroupDelete { group_uid } => reserved_check(EntityKind::Group, group_uid),
         OpBody::DeviceAdd { name, .. } => text("device name", name),
+        OpBody::ShareReshareBatch {
+            new_holders, items, ..
+        } => {
+            if items.len() > RESHARE_ITEMS_PER_OP || new_holders.len() > MAX_LIST {
+                return Err("reshare batch is over the item limit".into());
+            }
+            Ok(())
+        }
+        OpBody::ShareReshareConfirmBatch { items, .. } => {
+            if items.len() > RESHARE_ITEMS_PER_OP {
+                return Err("confirm batch is over the item limit".into());
+            }
+            Ok(())
+        }
+        OpBody::WrapKeyRotate { wrap_epoch, .. } if *wrap_epoch == 0 => {
+            Err("wrap_epoch starts at 1".into())
+        }
         _ => Ok(()),
     }
 }
