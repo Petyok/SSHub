@@ -46,7 +46,8 @@ done
 st=$(peer peer-c $SSHUB sync-status --format json 2>/dev/null || true)
 expect "peer-b is revoked on peer-c once the ceremony is complete" "$st" '[.devices[] | select(.name=="peer-b") | .status] == ["revoked"]'
 show "peer-b after the revocation: a round with peer-a" peer peer-b $SSHUB sync-now --format json
-check "the revoked device is refused by peer-a" "printf '%s' '$LAST_OUT' | grep -q Revoked"
+RV_OUT=$LAST_OUT
+check "the revoked device is refused by peer-a" 'printf "%s" "$RV_OUT" | grep -q Revoked'
 echo "--- GAP: 'the revoked device's old share opens nothing new' has no CLI verb (share release is TUI only, see 60)"
 dump_state "after revoke"
 

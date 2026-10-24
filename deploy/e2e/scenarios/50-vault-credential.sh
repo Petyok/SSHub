@@ -35,7 +35,8 @@ expect "peer-b opens the credential with the phrase" "$LAST_OUT" '[.. | .has_sto
 
 psh peer-b 'rm -rf /tmp/copy && mkdir -p /tmp/copy/.local/share && cp -a "$HOME/.local/share/sshub" /tmp/copy/.local/share/'
 show "a copy of peer-b's data dir alone, no phrase" psh peer-b 'HOME=/tmp/copy sshub --profile default host resolve vault1 --format json </dev/null'
-check "the copy opens nothing" "[ $LAST_RC -ne 0 ] || ! printf '%s' '$LAST_OUT' | pjq -e '[.. | .has_stored_secret? // empty] | any' >/dev/null"
+CP_RC=$LAST_RC; CP_OUT=$LAST_OUT
+check "the copy opens nothing" '[ "$CP_RC" -ne 0 ] || ! printf "%s" "$CP_OUT" | pjq -e "[.. | .has_stored_secret? // empty] | any" >/dev/null'
 check "the copy holds no plaintext password" "! psh peer-b 'grep -rF \"$SECRET\" /tmp/copy' >/dev/null 2>&1"
 check "peer-b's own store holds no plaintext password either" "! psh peer-b 'grep -rF \"$SECRET\" \"\$HOME/.local/share/sshub\"' >/dev/null 2>&1"
 check "peer-a keeps no plaintext copy after host add either" "! psh peer-a 'grep -rF \"$SECRET\" \"\$HOME/.local/share/sshub\"' >/dev/null 2>&1"
