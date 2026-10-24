@@ -107,7 +107,7 @@ export function assembleServeDir() {
   fs.writeFileSync(path.join(dir, 'blank.html'), '<!doctype html><title>bench</title>');
   fs.writeFileSync(path.join(dir, 'gum.html'), '<!doctype html><title>gum</title><button id="b">camera</button><pre id="o">idle</pre><script>document.getElementById("b").onclick=async()=>{document.getElementById("o").textContent="asking";try{const s=await navigator.mediaDevices.getUserMedia({video:true});document.getElementById("o").textContent="ok "+s.getVideoTracks()[0].label;s.getTracks().forEach(t=>t.stop())}catch(e){document.getElementById("o").textContent="error "+e.name+" "+e.message}}</script>');
   const poc = path.join(root, 'poc');
-  for (const f of ['qr-scanner.html', 'share-transmit.html', 'share-receive.html', 'share-lib.js']) put(path.join(poc, f), f);
+  for (const f of ['qr-scanner.html', 'share-transmit.html', 'share-receive.html', 'reverse-qr-receive.html', 'share-lib.js']) put(path.join(poc, f), f);
   for (const f of ['jsQR.js', 'qrcode.js']) put(path.join(poc, 'vendor', f), `vendor/${f}`);
   const bench = process.env.D3_BENCH_DIR;
   if (bench) for (const f of ['measure.html', 'hash-wasm-argon2.umd.min.js']) put(path.join(bench, f), f);

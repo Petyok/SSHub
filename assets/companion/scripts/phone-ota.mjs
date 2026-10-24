@@ -20,7 +20,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BROWSER_PKG, ORIGIN, adb, cleanup, guard, setup, sleep, state } from './phone-device.mjs';
+import { BROWSER_PKG, ORIGIN, adb, cleanup, guard, screencap, setup, sleep, state } from './phone-device.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cmd = process.argv[2];
@@ -264,6 +264,7 @@ async function laptopBrowser() {
   const proc = spawn('chromium', [
     `--user-data-dir=${dir}`, `--remote-debugging-port=${port}`, '--no-first-run', '--no-default-browser-check',
     '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required', '--disable-extensions',
+    '--class=sshub-bench-rx', '--window-size=1200,760',
     'about:blank',
   ], { stdio: 'ignore' });
   let version = null;
@@ -297,6 +298,18 @@ async function laptopBrowser() {
     ws.send(JSON.stringify({ id: i, method, params, ...(session && sessionId ? { sessionId } : {}) }));
   });
   const { targetId } = await send('Target.createTarget', { url: 'about:blank' }, false);
+  await send('Target.activateTarget', { targetId }, false).catch(() => {});
+  // Float and centre OUR window (found by its own class) so the live preview is large and visible.
+  for (let i = 0; i < 30; i++) {
+    const mine = JSON.parse(execFileSync('hyprctl', ['clients', '-j'], { encoding: 'utf8' })).find((c) => c.class === 'sshub-bench-rx');
+    if (!mine) { await sleep(200); continue; }
+    const a = `address:${mine.address}`;
+    const dsp = (e) => execFileSync('hyprctl', ['dispatch', `hl.dsp.window.${e}`], { encoding: 'utf8' });
+    dsp(`float({ action = "set", window = "${a}" })`);
+    dsp(`resize({ x = 1200, y = 760, window = "${a}" })`);
+    dsp(`center({ window = "${a}" })`);
+    break;
+  }
   sessionId = (await send('Target.attachToTarget', { targetId, flatten: true }, false)).sessionId;
   await send('Runtime.enable');
   await send('Page.enable');
@@ -370,56 +383,103 @@ async function audioBlock({ label, profile, len, runs }) {
     await laptop.close();
   }
 }
+// One diagnostic look at the phone's reverse-QR page: numbers from the page plus ONE screen capture
+// (temp file, viewed by the director and deleted at once).
+async function diag() {
+  await state.chrome.openTab('about:blank');
+  await state.chrome.prepare({ camera: false, silent: true });
+  await state.chrome.goto(`${ORIGIN}/share-transmit.html?${arg('query', 'seed=1&len=56&version=10')}`);
+  await phoneClick('#qr');
+  await sleep(800);
+  console.log(await phoneEval(`JSON.stringify((() => { const c = document.querySelector('#qrc'); const r = c.getBoundingClientRect(); return { dpr: devicePixelRatio, innerWidth, innerHeight, canvas_css_w: r.width, canvas_css_h: r.height, canvas_px_w: c.width, css_left: r.left, css_top: r.top, visual_w: visualViewport.width, screen_w: screen.width }; })())`));
+  const png = `/tmp/phone-diag-${process.pid}.png`;
+  screencap(png);
+  console.log(`SCREENCAP ${png}`);
+  await sleep(Number(arg('hold', 1)) * 1000);
+}
 
-async function qrBlock({ runs }) {
+
+// Reverse QR: the phone shows a full-width looping code, the laptop webcam reads it. The laptop page
+// shows the live preview with an overlay so the holder can aim. One getUserMedia on the laptop.
+// Per version: patient preflight (first valid chunk, up to 60 s while the holder moves 15-45 cm), a
+// survey (module size / success by phone-screen width in webcam px), then timed trials (30 s cap).
+// A version that fails steps one version down (once).
+async function reverseQr() {
+  const runs = Number(arg('runs', 10));
+  const len = Number(arg('len', 160));
+  const fps = Number(arg('fps', 4));
+  const ladder = String(arg('versions', '6,4')).split(',').map(Number);
+  const surveyS = Number(arg('survey', 20));
   const laptop = await laptopBrowser();
+  const rx = (expr, gesture) => laptop.ev(expr, gesture);
+  const phoneScreenMm = 67.7; // [INFERENCE] Samsung SM-A536E 6.5 in 20:9, width from the diagonal
   try {
+    await state.chrome.openTab('about:blank');
     await state.chrome.prepare({ camera: false, silent: true });
-    await state.chrome.goto(`${ORIGIN}/share-transmit.html?seed=1&len=56&version=10`);
-    await phoneEval(`navigator.wakeLock && navigator.wakeLock.request('screen').then((l) => { window.__wl = l; }, () => {})`);
-    await phoneClick('#qr');
-    await laptop.goto(`http://127.0.0.1:8443/share-receive.html`);
-    await laptop.ev(`(() => { document.querySelector('#seed').value = 1; document.querySelector('#len').value = 56; document.querySelector('#useqr').checked = true; return true; })()`);
-    await laptop.ev(`document.querySelector('#arm').click()`, true);
-    for (let i = 0; i < 100 && (await laptop.ev(`document.querySelector('#status').textContent`)) !== 'armed'; i++) await sleep(200);
-    // preflight: the laptop webcam must deliver a picture and the phone must be showing its QR
-    let w = 0;
-    for (let i = 0; i < 20 && !w; i++) {
-      w = await laptop.ev(`document.querySelector('#cam').videoWidth`);
-      if (!w) await sleep(500);
-    }
-    if (!w) throw new Error('PREFLIGHT FAILED: the laptop webcam delivered no picture within 10 s');
-    const shown = await phoneEval(`!!document.querySelector('#qrc') && document.querySelector('#qrc').width > 0`, { timeoutMs: 8000 });
-    if (!shown) throw new Error('PREFLIGHT FAILED: the phone is not showing a QR code');
-    console.log(JSON.stringify({ preflight: 'webcam live and QR shown', webcam_width: w }));
-    // receiver preflight: one unrecorded trial must decode a frame (the page gives a trial 10 s)
-    const pre = await laptop.ev(`(async () => { const n = document.querySelectorAll('#rows tr').length; document.querySelector('#trial').click(); for (let i = 0; i < 120; i++) { await new Promise((r) => setTimeout(r, 100)); if (document.querySelectorAll('#rows tr').length > n) return Array.from(document.querySelector('#rows tr:last-child').cells).map((c) => c.textContent); } return null; })()`, true);
-    if (!pre || pre[3] !== 'true') throw new Error('PREFLIGHT FAILED: the laptop webcam is live but decoded no QR from the phone screen within 10 s (distance, angle, brightness)');
-    console.log(JSON.stringify({ preflight: 'first QR decoded by the laptop webcam', ms: pre[4] }));
-    await sleep(1000);
-    const rows = [];
-    for (let trial = 1; trial <= runs; trial++) {
-      const b = guard(`qr trial ${trial}`);
-      const before = await laptop.ev(`document.querySelectorAll('#rows tr').length`);
-      await laptop.ev(`document.querySelector('#trial').click()`, true);
-      let row = null;
-      for (let i = 0; i < 160; i++) {
-        const n = await laptop.ev(`document.querySelectorAll('#rows tr').length`);
-        if (n > before) {
-          row = await laptop.ev(`Array.from(document.querySelector('#rows tr:last-child').cells).map((c) => c.textContent)`);
-          break;
-        }
-        await sleep(100);
+    await laptop.goto(`http://127.0.0.1:8443/reverse-qr-receive.html`);
+    const cam = await rx(`__rx.start()`, true);
+    if (!(cam.track === 'live' && cam.w > 0)) throw new Error(`PREFLIGHT FAILED: the laptop webcam is not live (track ${cam.track}, width ${cam.w})`);
+    console.log(JSON.stringify({ preflight: 'laptop webcam live', ...cam }));
+    const results = [];
+    for (let vi = 0; vi < ladder.length; vi++) {
+      const version = ladder[vi];
+      const tag = `reverse QR v${version} ${len} B ${fps} fps`;
+      await state.chrome.goto(`${ORIGIN}/share-transmit.html?seed=1&len=${len}&version=${version}&full=1&auto=1&fps=${fps}`);
+      await phoneEval(`navigator.wakeLock && navigator.wakeLock.request('screen').then((l) => { window.__wl = l; }, () => {})`);
+      await sleep(800);
+      const tx = await phoneEval(`JSON.stringify(window.__tx.info)`).then(JSON.parse);
+      console.log(JSON.stringify({ sender_page: tx }));
+      await rx(`__rx.reset(${len}, 1)`);
+      // ---- patient preflight
+      await rx(`__rx.setBanner('PREFLIGHT v${version}: hold the phone screen to the webcam, move SLOWLY between 15 and 45 cm. Waits up to 60 s for the first QR.')`);
+      const first = await rx(`__rx.waitFirst(60000)`);
+      if (!first) {
+        const lg = await rx(`__rx.takeLog()`);
+        const seen = lg.filter((e) => e[4]).length, bright = lg.filter((e) => e[1] > 0).length;
+        const widths = lg.map((e) => e[1]).filter(Boolean).sort((a, b) => a - b);
+        record({ block: tag, preflight: 'FAILED', frames: lg.length, qr_seen: seen, frames_with_phone_region: bright, phone_region_px_median: widths[Math.floor(widths.length / 2)] ?? null, phone_region_px_max: widths[widths.length - 1] ?? null });
+        results.push({ version, failed: 'preflight' });
+        if (vi + 1 < ladder.length) continue;
+        throw new Error(`PREFLIGHT FAILED for every version tried (${ladder.slice(0, vi + 1).join(', ')}): no valid chunk decoded within 60 s each; see the recorded diagnostics`);
       }
-      const ok = row && row[3] === 'true';
-      const r = { block: 'reverse QR v10 56 B (phone screen to laptop webcam)', trial, ok, ms: ok ? Number(row[4]) : null, temp_c: b.tempC };
-      rows.push(r);
-      record(r);
-      await sleep(1000);
+      console.log(JSON.stringify({ preflight: 'first valid chunk decoded by the laptop webcam', version, ms: first.ms, module_px: +first.modulePx.toFixed(2), phone_region_px: first.brightW, sharp: +first.sharp.toFixed(1) }));
+      // ---- survey: keep moving, count decode success by phone-screen width
+      await rx(`__rx.setBanner('SURVEY v${version} (${surveyS} s): keep moving SLOWLY, near (15 cm) and far (45 cm), the overlay shows what works')`);
+      await rx(`__rx.takeLog()`);
+      await sleep(surveyS * 1000);
+      const lg = await rx(`__rx.takeLog()`);
+      const bins = {};
+      for (const e of lg) {
+        if (!e[1]) continue;
+        const k = Math.floor(e[1] / 100) * 100;
+        const b = (bins[k] ||= { frames: 0, seen: 0, valid: 0 });
+        b.frames++; b.seen += e[4]; b.valid += e[3];
+      }
+      const vm = lg.filter((e) => e[3]).map((e) => e[5]).filter(Boolean).sort((a, b) => a - b);
+      const vw = lg.filter((e) => e[3]).map((e) => e[1]).sort((a, b) => a - b);
+      const estCm = (modPx) => +((phoneScreenMm * tx.width_fraction * (1280 / (modPx * tx.modules))) / 1.33 / 10).toFixed(0); // [INFERENCE] webcam horizontal field = 1.33 x distance
+      record({ block: tag, survey: true, frames: lg.length, valid_frames: vm.length, module_px_min_valid: vm[0] ?? null, module_px_max_valid: vm[vm.length - 1] ?? null, module_px_median_valid: vm[Math.floor(vm.length / 2)] ?? null, phone_region_px_min_valid: vw[0] ?? null, phone_region_px_max_valid: vw[vw.length - 1] ?? null, est_distance_cm_at_min_module: vm[0] ? estCm(vm[0]) : null, est_distance_cm_at_max_module: vm.length ? estCm(vm[vm.length - 1]) : null, by_phone_region_px: bins, sender: tx });
+      // ---- timed trials
+      await rx(`__rx.setBanner('TRIALS v${version}: hold the phone STILL where the overlay was green (${runs} short runs)')`);
+      await sleep(3000);
+      const rows = [];
+      for (let trial = 1; trial <= runs; trial++) {
+        const b = guard(`${tag} trial ${trial}`);
+        const r = await rx(`__rx.trial(30000)`);
+        const row = { block: tag, trial, ok: r.ok, ms: r.ok ? r.ms : null, have: r.have, total: r.total, frames: r.frames, qr_seen: r.seen, valid: r.valid, temp_c: b.tempC };
+        rows.push(row);
+        record(row);
+        await sleep(800);
+      }
+      const okRows = rows.filter((r) => r.ok);
+      record({ block: tag, summary: true, trials: runs, ok: okRows.length, worst_ms: okRows.length ? Math.max(...okRows.map((r) => r.ms)) : null, median_ms: median(okRows.map((r) => r.ms)) });
+      results.push({ version, ok: okRows.length });
+      if (okRows.length >= 8) break;
     }
-    const okRows = rows.filter((r) => r.ok);
-    record({ block: 'reverse QR v10 56 B', summary: true, trials: runs, ok: okRows.length, median_ms: median(okRows.map((r) => r.ms)) });
+    await rx(`__rx.setBanner('done - you can put the phone down')`);
+    await sleep(1500);
   } finally {
+    await rx(`__rx.stop()`).catch(() => {});
     await laptop.close();
   }
 }
@@ -431,7 +491,6 @@ async function audio() {
   const blocks = [
     ['fast', 56], ['slow', 56], ['fast', 128],
   ].filter(([p, l]) => (!only && true) || only === `${p}${l}`);
-  if (only === 'qr') blocks.length = 0;
   let firstOk = null;
   for (const [profile, len] of blocks) {
     const ok = await audioBlock({ label: `audio ${profile} ${len} B`, profile, len, runs });
@@ -442,7 +501,6 @@ async function audio() {
     }
     await sleep(8000);
   }
-  if (only === 'qr' || (!only && !process.argv.includes('--noqr'))) await qrBlock({ runs });
 }
 
 async function preflightOnly() {
@@ -483,6 +541,21 @@ try {
   await setup();
   if (cmd === 'preflight') await preflightOnly();
   else if (cmd === 'camera') await camera();
+  else if (cmd === 'diag') await diag();
+  else if (cmd === 'reverseqr') await reverseQr();
+  else if (cmd === 'rxsmoke') {
+    // laptop side only: webcam live, overlay running, per-frame measurements present
+    const laptop = await laptopBrowser();
+    try {
+      await laptop.goto('http://127.0.0.1:8443/reverse-qr-receive.html');
+      console.log(JSON.stringify(await laptop.ev(`__rx.start()`, true)));
+      await sleep(3000);
+      console.log(JSON.stringify({ counters: await laptop.ev(`__rx.counters()`), log_sample: (await laptop.ev(`__rx.takeLog()`)).slice(-2), hud: await laptop.ev(`document.getElementById('hud').textContent`) }));
+    } finally {
+      await laptop.ev(`__rx.stop()`).catch(() => {});
+      await laptop.close();
+    }
+  }
   else if (cmd === 'audio') await audio();
   else throw new Error(`unknown command ${cmd}`);
 } catch (e) {
