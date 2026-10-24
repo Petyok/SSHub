@@ -408,6 +408,14 @@ pub fn render_fork_alert(frame: &mut Frame, app: &App) {
     let body = vec![
         Line::styled(format!("{} forked its history", f.device), red),
         Line::styled(f.detail.clone(), theme.style(StyleRole::TextMuted)),
+    ];
+    let mut body = body;
+    body.extend(
+        f.evidence
+            .iter()
+            .map(|l| Line::styled(l.clone(), theme.style(StyleRole::TextMuted))),
+    );
+    let body_rest = vec![
         Line::raw(""),
         Line::styled(
             "It signed two different histories under one identity. Treat everything it has sent as untrusted.",
@@ -416,20 +424,28 @@ pub fn render_fork_alert(frame: &mut Frame, app: &App) {
         Line::raw(""),
         Line::styled("What to do now:", text),
         Line::styled(
-            "  1. Do not approve changes from this device or release shares to it.",
+            "  1. Do not approve changes from this device or release shares to it (review rejects its operations: R, then r).",
             text,
         ),
         Line::styled(
-            "  2. Revoke it from a trusted device (Sync tab, device details).",
+            "  2. Revoke it from a trusted device: `sshub sync-revoke <device>` there, or the Sync tab on a device that holds shares.",
             text,
         ),
-        Line::styled("  3. Change the credentials it could read.", text),
+        Line::styled(
+            "  3. Change every credential it could read (they were open on it), then save them again so they replicate under the new ring.",
+            text,
+        ),
+        Line::styled(
+            "  4. If it is yours and was cloned, re-enroll it afterwards as a new device.",
+            text,
+        ),
         Line::raw(""),
         Line::styled(
-            "Esc closes this alert; the sync badge stays red.",
+            "Esc closes this alert; the sync badge stays red. Enter on its row in the Sync tab shows this again.",
             theme.style(StyleRole::PopupHint),
         ),
     ];
+    body.extend(body_rest);
     frame.render_widget(
         Paragraph::new(body).wrap(Wrap { trim: false }),
         area.inner(Margin::new(3, 2)),

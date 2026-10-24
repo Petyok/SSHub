@@ -209,6 +209,8 @@ pub struct SasView {
 pub struct ForkView {
     pub device: String,
     pub detail: String,
+    /// What the proof consists of, one line each (hashes, seqs).
+    pub evidence: Vec<String>,
 }
 
 /// The holder-side share release confirmation. Names the requesting device.
@@ -428,6 +430,8 @@ pub struct SyncView {
     pub unlock_running: bool,
     /// This device's id, once the worker has loaded its identity.
     pub this_device: Option<String>,
+    /// A behind peer and the host to re-enroll it through, after a round said so.
+    pub reenroll: Option<(String, String)>,
     identify_after: bool,
     /// Release requests this holder already answered (the op may stay pending
     /// until the worker has resolved it).
@@ -512,6 +516,7 @@ impl App {
             _ if self.is_action(KeyAction::SyncNow, &key) => self.sync_now(),
             _ if self.is_action(KeyAction::SyncReview, &key) => self.sync_open_review(),
             _ if self.is_action(KeyAction::SyncTrust, &key) => self.sync_open_trust(),
+            _ if self.is_action(KeyAction::Connect, &key) => self.sync_open_selected(),
             _ => {}
         }
         Ok(())
@@ -539,6 +544,50 @@ impl App {
             Some((_, true)) => self.host_notice = Some("that is this device: pick another".into()),
             Some((device, false)) => self.sync.intents.push(SyncIntent::SyncNow { device }),
             None => self.host_notice = Some("no device to sync with".into()),
+        }
+    }
+
+    /// Enter on a device row: the evidence of a compromised device, or the
+    /// guided way back for one that is behind or stale.
+    fn sync_open_selected(&mut self) {
+        let Some(d) = self.sync.selected_device().cloned() else {
+            return;
+        };
+        match d.status {
+            DeviceStatusView::Compromised => {
+                let evidence = self
+                    .store
+                    .sync_fork_evidence(&d.id)
+                    .ok()
+                    .flatten()
+                    .map(|e| super::sync_view::evidence_lines(&e))
+                    .unwrap_or_default();
+                self.raise_sync_fork_alert(ForkView {
+                    device: d.name.clone(),
+                    detail: format!("device id {}", d.id),
+                    evidence,
+                });
+            }
+            DeviceStatusView::Behind | DeviceStatusView::Stale => {
+                if !self.sync_ready() || d.this {
+                    return;
+                }
+                match self.sync.reenroll.clone().filter(|(id, _)| *id == d.id) {
+                    // A round already said it is behind: enroll again.
+                    Some((_, host)) => {
+                        self.sync.reenroll = None;
+                        self.sync.intents.push(SyncIntent::Enroll { host });
+                    }
+                    None => {
+                        self.host_notice = Some(format!(
+                            "syncing with {} first; if it reports behind again, press Enter once more to re-enroll it",
+                            d.name
+                        ));
+                        self.sync.intents.push(SyncIntent::SyncNow { device: d.id });
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -734,9 +783,17 @@ impl App {
                     .iter()
                     .find(|d| d.id == id)
                     .map_or_else(|| id.clone(), |d| d.name.clone());
+                let evidence = self
+                    .store
+                    .sync_fork_evidence(&id)
+                    .ok()
+                    .flatten()
+                    .map(|e| super::sync_view::evidence_lines(&e))
+                    .unwrap_or_default();
                 self.raise_sync_fork_alert(ForkView {
                     device,
                     detail: format!("device id {id}: two different histories under one identity"),
+                    evidence,
                 });
             }
             SyncEvent::BehindPeer(id) => {
@@ -745,9 +802,20 @@ impl App {
                     .iter()
                     .find(|d| d.id == id)
                     .map_or_else(|| id.clone(), |d| d.name.clone());
-                self.host_notice = Some(format!(
-                    "{name} is behind: it could not prove it is current, so nothing moved; try again once it has synced"
-                ));
+                let host = self
+                    .profile
+                    .as_ref()
+                    .and_then(|p| crate::sync::runtime::Peers::load(p).ok())
+                    .and_then(|p| p.host_of(&id).map(str::to_string));
+                self.host_notice = Some(match &host {
+                    Some(h) => format!(
+                        "{name} is behind: it could not prove it is current, so nothing moved. Select it and press Enter to re-enroll it through {h} (a repeat ceremony; nothing about its role changes)"
+                    ),
+                    None => format!(
+                        "{name} is behind and no host is known for it: press t on its host in the hosts tab to re-enroll it"
+                    ),
+                });
+                self.sync.reenroll = host.map(|h| (id, h));
             }
             SyncEvent::Done => {
                 sync.syncing = false;
@@ -1240,6 +1308,7 @@ pub(crate) fn sample_sync_view_with_modals() -> SyncView {
         fork: Some(ForkView {
             device: "server".into(),
             detail: "two different ops at seq 9".into(),
+            evidence: vec!["op 1a2b3c4d and op 5e6f7a8b at seq 9".into()],
         }),
         release: Some(ReleaseView {
             host: "web-1".into(),
@@ -1404,6 +1473,7 @@ mod tests {
         app.raise_sync_fork_alert(ForkView {
             device: "server".into(),
             detail: "two different ops at seq 9".into(),
+            evidence: Vec::new(),
         });
         assert_eq!(app.mode, AppMode::SyncForkAlert);
         // A letter would go to the PTY in session mode; the alert eats it.
@@ -1611,6 +1681,50 @@ mod tests {
         assert_eq!(status(UnlockPathKind::Phrase), Some("type the words"));
         assert_eq!(status(UnlockPathKind::Peer), Some("laptop is asking you"));
         assert_eq!(u.paths.len(), 2, "a path is updated, not repeated");
+    }
+
+    #[test]
+    fn a_behind_peer_offers_a_guided_re_enroll_through_its_recorded_host() {
+        use crate::sync::client::SyncEvent;
+        let dir = tempfile::tempdir().unwrap();
+        let paths = crate::profile::ProfilePaths {
+            data_root: dir.path().to_path_buf(),
+            id: "t".into(),
+            name: "t".into(),
+            root: dir.path().to_path_buf(),
+            config_file: dir.path().join("config.toml"),
+            ssh_config: dir.path().join("ssh_config"),
+            compat: false,
+        };
+        let mut app = configured_app();
+        app.profile = Some(paths.clone());
+        app.active_tab = 6;
+        app.sync.devices[1].status = DeviceStatusView::Behind;
+        app.sync.selected = 1;
+        let id = app.sync.devices[1].id.clone();
+
+        // No host recorded: the way out is the hosts tab.
+        app.apply_sync_event(SyncEvent::BehindPeer(id.clone()));
+        assert!(app.sync.reenroll.is_none());
+        assert!(app.host_notice.as_deref().unwrap().contains("hosts tab"));
+
+        crate::sync::runtime::Peers::record(&paths, &id, "hub").unwrap();
+        app.apply_sync_event(SyncEvent::BehindPeer(id.clone()));
+        assert_eq!(app.sync.reenroll, Some((id.clone(), "hub".into())));
+        assert!(app.host_notice.as_deref().unwrap().contains("through hub"));
+
+        app.sync.intents.clear();
+        app.handle_key(press(KeyCode::Enter)).unwrap();
+        assert_eq!(
+            app.sync.intents,
+            vec![SyncIntent::Enroll { host: "hub".into() }]
+        );
+
+        // Without a round having said so, Enter syncs first.
+        app.sync.intents.clear();
+        app.sync.reenroll = None;
+        app.handle_key(press(KeyCode::Enter)).unwrap();
+        assert_eq!(app.sync.intents, vec![SyncIntent::SyncNow { device: id }]);
     }
 
     #[test]

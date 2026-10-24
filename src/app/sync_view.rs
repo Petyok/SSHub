@@ -237,6 +237,42 @@ pub(crate) fn pending_view(
     }
 }
 
+/// The proof of a fork as lines for the alert: what was signed twice and where.
+pub(crate) fn evidence_lines(e: &crate::sync::oplog::ForkEvidence) -> Vec<String> {
+    use crate::sync::oplog::ForkEvidence;
+    let h = |b: &[u8; 32]| {
+        b[..4]
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect::<String>()
+    };
+    let op = |o: &Op| {
+        format!(
+            "operation seq {} lamport {} hash {}",
+            o.seq,
+            o.lamport,
+            h(&o.hash())
+        )
+    };
+    match e {
+        ForkEvidence::Ops(a, b) => vec![
+            "Proof: two different operations signed by the same device at the same position".into(),
+            format!("  {}", op(a)),
+            format!("  {}", op(b)),
+        ],
+        ForkEvidence::OpAndHead(o, head) => vec![
+            "Proof: an operation and a signed head that contradict each other".into(),
+            format!("  {}", op(o)),
+            format!("  signed head seq {} hash {}", head.seq, h(&head.hash)),
+        ],
+        ForkEvidence::Heads(a, b) => vec![
+            "Proof: two signed heads that cannot both be true".into(),
+            format!("  signed head seq {} hash {}", a.seq, h(&a.hash)),
+            format!("  signed head seq {} hash {}", b.seq, h(&b.hash)),
+        ],
+    }
+}
+
 impl App {
     /// Re-read the Sync view from the store. A ring exists once the store knows
     /// a device. On a read failure the view keeps what it had and says why.

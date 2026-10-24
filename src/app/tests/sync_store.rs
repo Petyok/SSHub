@@ -392,3 +392,39 @@ fn a_share_release_names_the_requester_and_the_host_in_the_review() {
     let view = crate::app::sync_view::pending_view(&app.store, &op, &rows, None);
     assert_eq!(view.summary, "release a share of web to laptop");
 }
+
+#[test]
+fn enter_on_a_compromised_device_shows_the_proof_and_the_next_steps() {
+    let (mut app, author) = app_with_author();
+    // The same device signs two different operations at one position.
+    let first = author.append(new_host("web", "10.0.0.1"));
+    let honest = author.append(HostFields::default());
+    let mut other = honest.clone();
+    other.body = OpBody::HostUpsert {
+        host_uid: UID,
+        fields: HostFields {
+            notes: Some(Some("different".into())),
+            ..Default::default()
+        },
+    };
+    other.signature = author.id.sign(&other.canonical_bytes());
+    for op in [first, honest, other] {
+        app.store.sync_ingest(op).unwrap();
+    }
+    app.refresh_sync_view();
+    app.active_tab = 6;
+    assert_eq!(
+        app.sync.devices[0].status,
+        crate::app::sync::DeviceStatusView::Compromised
+    );
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert_eq!(app.mode, AppMode::SyncForkAlert);
+    let fork = app.sync.fork.clone().unwrap();
+    assert_eq!(fork.device, "laptop");
+    assert!(
+        fork.evidence.iter().any(|l| l.starts_with("Proof:")),
+        "{:?}",
+        fork.evidence
+    );
+    assert!(fork.evidence.iter().any(|l| l.contains("hash")));
+}

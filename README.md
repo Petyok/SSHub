@@ -574,6 +574,7 @@ Review lists each waiting change with its fields as `old -> new`; fields that ca
 |-----|--------|
 | `↑` / `↓` | Select a device |
 | `y` | Sync now with the selected device |
+| `Enter` | On a compromised device: its proof and what to do next. On a behind or stale one: sync first, then (if it is still behind) re-enroll it through its recorded host |
 | `R` | Review the changes waiting for approval (`a` approve, `r` reject, `Esc` close) |
 | `t` | Open a trust session: pick the scope first, then the term (7, 30 or 90 days) |
 
