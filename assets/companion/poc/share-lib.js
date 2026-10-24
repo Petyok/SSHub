@@ -112,14 +112,15 @@
     return r.bytes;
   }
 
-  // ---- MFSK audio modem: 16 tones (4 bits/symbol), 1600 Hz + i*100 Hz, 60 ms symbols,
-  // raised-cosine edges, 1000 Hz sync tone as preamble and timing anchor.
-  // Tone frequencies are multiples of 100 Hz and symbols are 60 ms, so tones are orthogonal
-  // over a symbol window (integer cycles).
+  // ---- MFSK audio modem: 16 tones (4 bits/symbol), 1600 Hz + i*100 Hz, raised-cosine edges,
+  // 1000 Hz sync tone as preamble and timing anchor. Tone spacing is 100 Hz, an integer multiple
+  // of 1/symbol for both profiles (60 ms and 30 ms), so tones stay orthogonal over a symbol.
   const FSK = {
     sampleRate: 48000, base: 1600, step: 100, nTones: 16,
     symMs: 60, rampMs: 5, preambleMs: 300, syncHz: 1000, amp: 0.5, hopMs: 10,
   };
+  // Second profile: half-length symbols, shorter ramps. Same tones and sync.
+  const FSK_FAST = Object.assign({}, FSK, { symMs: 30, rampMs: 3 });
 
   function ramped(n, N, R) {
     // raised-cosine envelope over R samples at each end of an N-sample symbol
@@ -133,10 +134,10 @@
     for (let n = 0; n < N; n++) out[off + n] = FSK.amp * ramped(n, N, R) * Math.sin(w * n);
   }
 
-  function fskEncode(bytes) {
+  function fskEncode(bytes, F = FSK) {
     const sr = FSK.sampleRate;
-    const N = Math.round((sr * FSK.symMs) / 1000);
-    const R = Math.round((sr * FSK.rampMs) / 1000);
+    const N = Math.round((sr * F.symMs) / 1000);
+    const R = Math.round((sr * F.rampMs) / 1000);
     const P = Math.round((sr * FSK.preambleMs) / 1000);
     const nibbles = [];
     for (const b of bytes) { nibbles.push(b >> 4, b & 0x0f); }
@@ -159,9 +160,9 @@
   }
 
   // Returns { ok: true, payload, startMs, nibbles } or { ok: false, error }.
-  function fskDecode(samples) {
+  function fskDecode(samples, F = FSK) {
     const sr = FSK.sampleRate;
-    const N = Math.round((sr * FSK.symMs) / 1000);
+    const N = Math.round((sr * F.symMs) / 1000);
     const P = Math.round((sr * FSK.preambleMs) / 1000);
     const hop = Math.round((sr * FSK.hopMs) / 1000);
     const win = hop * 4;
@@ -294,7 +295,7 @@
     crc16, randomBytes, hex, equalBytes,
     frame, deframe,
     CHUNK_HDR, fountainChunks, Reassembler, fountainReassemble,
-    FSK, fskEncode, fskDecode, addNoise,
+    FSK, FSK_FAST, fskEncode, fskDecode, addNoise,
     qrFor, byteCapacity, drawQR, scanCanvas,
   };
 })(window);

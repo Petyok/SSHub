@@ -19,8 +19,8 @@
 "use strict";
 const L = window.ShareLib;
 
-// Terminal palettes. The QR is drawn with the foreground colour as dark modules, so the dark
-// palette shows a light-on-dark code (inverted polarity). The runner decodes both ways.
+// The QR is always drawn as explicit black modules on a white field with its own quiet zone,
+// whatever the terminal theme is. The dark palette is recorded but not used for the code.
 const THEMES = {
   light: { background: "#ffffff", foreground: "#000000" },
   dark:  { background: "#000000", foreground: "#ffffff" },
@@ -75,12 +75,12 @@ window.renderQR = async function (o) {
   const width = lines[0].length;
   const fits = width <= o.cols && lines.length <= o.rows;
   const res = {
+    lines: lines.length, width, cols: o.cols, rows: o.rows, theme_requested: o.theme, theme_drawn: "light", quiet,
     version: o.version, modules: qr.getModuleCount(), payload_bytes: cap,
-    lines: lines.length, width, cols: o.cols, rows: o.rows, theme: o.theme, quiet,
     fits, expected_hex: L.hex(payload),
   };
   if (!fits) return res;
-  fresh(o.cols, o.rows, o.theme);
+  fresh(o.cols, o.rows, "light");
   await new Promise((r) => term.write(lines.join("\r\n"), r));
   await nextFrame();
   const el = host.querySelector(".xterm-screen") || host;
