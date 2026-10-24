@@ -589,7 +589,12 @@ fn bad_signature_unknown_device_gap_duplicate_and_chain_breaks_are_rejected() {
 
     let stranger = Peer::new();
     let so = stranger.append(upsert(2, hf("x", "10.0.0.9")));
-    assert!(rejected(&b.store.sync_ingest(so).unwrap()).contains("unknown device"));
+    // A stranger's op cannot be checked: it waits for a human, takes no effect.
+    assert!(matches!(
+        b.store.sync_ingest(so).unwrap(),
+        IngestOutcome::Pending
+    ));
+    assert!(b.host(&uid(2)).is_none());
 
     assert!(rejected(&b.store.sync_ingest(o2.clone()).unwrap()).contains("gap"));
     assert!(matches!(
@@ -1195,7 +1200,15 @@ fn ring_membership_ops_always_wait_and_take_effect_on_approval() {
         .all(|d| d.id != newcomer.dev()));
     // Until approved the newcomer is a stranger.
     let early = newcomer.append(upsert(5, hf("n", "10.0.0.5")));
-    assert!(rejected(&b.store.sync_ingest(early.clone()).unwrap()).contains("unknown device"));
+    assert!(matches!(
+        b.store.sync_ingest(early.clone()).unwrap(),
+        IngestOutcome::Pending
+    ));
+    assert!(b
+        .store
+        .sync_chain_tail(&newcomer.dev(), 0)
+        .unwrap()
+        .is_empty());
     b.store.sync_resolve_pending(&add.hash(), true).unwrap();
     let row = b
         .store
@@ -2698,4 +2711,152 @@ fn cert_extend_is_green_inert_and_bounded() {
             )
             .is_err());
     }
+}
+
+// ------------------------------------------------------------------ join anchor
+
+fn host_n(i: u32) -> OpBody {
+    let mut u = [0u8; 16];
+    u[..4].copy_from_slice(&i.to_be_bytes());
+    OpBody::HostUpsert {
+        host_uid: u,
+        fields: hf(&format!("h{i}"), "10.0.0.1"),
+    }
+}
+
+#[test]
+fn a_joiner_adopts_the_anchor_reviews_nothing_below_the_cut_and_only_what_comes_after() {
+    let ring = live_ring(vec![Peer::new(), Peer::new()]);
+    let (a, b) = (&ring[0], &ring[1]);
+    for i in 0..500 {
+        a.append(host_n(i));
+    }
+    touch(&ring);
+    settle(&ring);
+    // A real checkpoint is not an anchor either.
+    let (cp, _) = checkpoint_round(&ring, 0, crate::store::now_ts());
+    let joiner = Peer::new();
+    a.append(add_device_body(&joiner, DeviceRole::Mirror));
+    let bundle = a.store.sync_join_anchor_build(&a.id).unwrap();
+
+    // Only as a join anchor, and only with the inviter the user verified.
+    for wrong in [
+        BootstrapTrust::Enrollment { inviter: b.dev() },
+        BootstrapTrust::Anchor(a.dev()),
+        BootstrapTrust::RingFingerprint(ring_fingerprint(&bundle.state).unwrap()),
+    ] {
+        assert!(
+            joiner.store.sync_join_adopt(&bundle, &wrong).is_err(),
+            "{wrong:?}"
+        );
+    }
+    assert!(joiner
+        .store
+        .sync_bootstrap(&bundle, &BootstrapTrust::Anchor(a.dev()))
+        .unwrap_err()
+        .to_string()
+        .contains("join anchor"));
+    assert!(joiner
+        .store
+        .sync_join_adopt(&cp, &BootstrapTrust::Enrollment { inviter: a.dev() })
+        .unwrap_err()
+        .to_string()
+        .contains("prune checkpoint"));
+    // Nor does a join anchor pass as a checkpoint to anyone else.
+    assert!(b.store.sync_checkpoint_record(&bundle).is_err());
+
+    joiner
+        .store
+        .sync_join_adopt(&bundle, &BootstrapTrust::Enrollment { inviter: a.dev() })
+        .unwrap();
+    assert_eq!(
+        joiner.pending(),
+        0,
+        "the joiner reviews nothing below the cut"
+    );
+    assert_eq!(joiner.store.list_hosts().unwrap().len(), 502);
+    let devices: Vec<_> = joiner
+        .store
+        .sync_devices()
+        .unwrap()
+        .into_iter()
+        .map(|d| d.id)
+        .collect();
+    for d in [a.dev(), b.dev(), joiner.dev()] {
+        assert!(devices.contains(&d), "{d}");
+    }
+    assert!(joiner.store.sync_checkpoints().unwrap().is_empty());
+
+    // A dangerous change made after the cut is a foreign change under review.
+    let dangerous = HostFields {
+        address: Some("6.6.6.6".into()),
+        ..Default::default()
+    };
+    let mut u = [0u8; 16];
+    u[..4].copy_from_slice(&3u32.to_be_bytes());
+    let op = b.append(OpBody::HostUpsert {
+        host_uid: u,
+        fields: dangerous,
+    });
+    pull(&joiner, b);
+    let pending = joiner.store.sync_pending_with_reasons().unwrap();
+    assert_eq!(pending.len(), 1, "{pending:?}");
+    assert_eq!(pending[0].0.hash(), op.hash());
+    assert_eq!(pending[0].1, "tier");
+}
+
+#[test]
+fn an_op_of_an_unknown_author_waits_with_its_reason_and_never_takes_effect() {
+    let ring = ring(2);
+    let (a, b) = (&ring[0], &ring[1]);
+    let newcomer = Peer::new();
+    let op = newcomer.append(upsert(5, hf("n", "10.0.0.5")));
+    assert!(matches!(
+        b.store.sync_ingest(op.clone()).unwrap(),
+        IngestOutcome::Pending
+    ));
+    let pending = b.store.sync_pending_with_reasons().unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].1, "unknown-author");
+    assert_eq!(b.store.sync_pending().unwrap().len(), 1);
+    // Nothing of it exists: no host, no chain, nothing to serve, no fork evidence.
+    assert!(b.host(&uid(5)).is_none());
+    assert!(b
+        .store
+        .sync_chain_heads()
+        .unwrap()
+        .iter()
+        .all(|(d, _, _)| *d != newcomer.dev()));
+    assert!(b
+        .store
+        .sync_chain_tail(&newcomer.dev(), 0)
+        .unwrap()
+        .is_empty());
+    assert!(rejected(&b.store.sync_ingest(op.clone()).unwrap()).contains("duplicate"));
+    // Approving before the author is a device is refused; rejecting forgets the op.
+    assert!(b
+        .store
+        .sync_resolve_pending(&op.hash(), true)
+        .unwrap_err()
+        .to_string()
+        .contains("not a device of the ring yet"));
+    b.store.sync_resolve_pending(&op.hash(), false).unwrap();
+    assert_eq!(b.pending(), 0);
+
+    // Once the author is admitted, the op goes through the ordinary checks.
+    let add = a.append(add_device_body(&newcomer, DeviceRole::Mirror));
+    b.store.sync_ingest(add.clone()).unwrap();
+    b.store.sync_resolve_pending(&add.hash(), true).unwrap();
+    assert!(matches!(
+        b.store.sync_ingest(op).unwrap(),
+        IngestOutcome::Pending
+    ));
+    let reasons: Vec<String> = b
+        .store
+        .sync_pending_with_reasons()
+        .unwrap()
+        .into_iter()
+        .map(|(_, r)| r)
+        .collect();
+    assert_eq!(reasons, vec!["tier".to_string()]);
 }
