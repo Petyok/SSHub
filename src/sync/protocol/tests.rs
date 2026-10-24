@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 
 use super::*;
 use crate::sync::crypto::DeviceIdentity;
-use crate::sync::oplog::{Attendance, DeviceRole, HostFields, OpBody};
+use crate::sync::oplog::{Attendance, DeviceKind, DeviceRole, HostFields, OpBody};
 use crate::sync::ratchet::{load_pair, save_pair};
 
 type Hook = Box<dyn FnMut(&mut Value) -> bool + Send>;
@@ -95,12 +95,21 @@ impl Dev {
     }
 
     pub(crate) fn trust(&self, other: &Dev) {
+        self.trust_as(other, DeviceKind::Terminal);
+    }
+
+    pub(crate) fn trust_as(&self, other: &Dev, kind: DeviceKind) {
+        self.trust_with(other, Attendance::Attended, kind);
+    }
+
+    pub(crate) fn trust_with(&self, other: &Dev, attendance: Attendance, kind: DeviceKind) {
         self.store
             .sync_register_device(
                 &other.id.public(),
                 "peer",
                 DeviceRole::Holder,
-                Attendance::Attended,
+                attendance,
+                kind,
             )
             .unwrap();
     }

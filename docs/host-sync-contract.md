@@ -799,6 +799,35 @@ Invariants: `shamir_combine` is called only by the requester assembling k=2 in
 memory; reissue is resharing only; the phone signs the binding hash; a release
 prompt names the requester; plaintext never touches disk.
 
+### 3b. Enrollment roles and honest SAS (supersedes the enrollment lines of 3a)
+
+* First frame of an enrollment, both ways: `EnrollHello { ring: Option<String>, screen: bool }`
+  (`ring` is the founder's device id kept in `sync_meta` `ring_id`; `screen` is "a human at a tty will
+  decide"). The responder speaks first as before; then `EnrollCommit`, `EnrollReveal`, `EnrollConfirm`
+  unchanged (the commitment scheme and `confirm_message` bytes are untouched, the phone page is unaffected).
+* `enroll::decide_role(mine_ring, their_ring, am_initiator)`: a ring on one side makes that side the
+  `Inviter`; a blank side is the `Joiner`; two blank sides: the initiator invites and founds the ring
+  (ring id = its device id); the same ring on both sides: a repeat ceremony, the initiator invites and no
+  second `DeviceAdd` is written; two different rings: `Bye` and `Err("merging rings is not supported ...")`.
+* The inviter registers the joiner as `Mirror` and appends `DeviceAdd` (once, if the joiner was not known);
+  the joiner registers the inviter as `Holder` and takes over the ring id. An unattended inviter does the
+  same; the op is Yellow on the other devices, pending until an attended user approves.
+* `run_sync_enroll(link, store, id, name, attended, Option<&mut dyn SasConfirm>)` (the remote end, roles from
+  the handshake) and `run_sync_join(..)` (the initiating end) take `None` when there is no tty: that side
+  never calls a confirm, sends `screen: false` and its `Confirm { ok: true }` means "admitted on the strength
+  of the authenticated ssh session". `SasConfirm::confirm(&SasPrompt { sas, peer_name, peer_has_screen })`
+  must say plainly when `peer_has_screen` is false that the words prove nothing and that the peer's identity
+  rests on the SSH host key.
+* `EnrollOutcome { peer, peer_name, sas, role, verified_by, ring }`; `VerifiedBy::{Sas, SshHostKey}` is
+  `Sas` only when both sides had a screen. The record is `sync_meta` `verified_by:<device id>` (`sas` /
+  `ssh_host_key`), read by `enroll::verified_by`, shown per device on the Sync tab. (Replicating the record
+  with the `DeviceAdd` needs an op-log field; not done.)
+* Per verb. `sshub sync-enroll` (remote, run by `ssh P sshub sync-enroll`): responder, tty prompt only when
+  stdin is a tty (`ssh -t`), else `None`. `sshub sync-join <peer>`: initiator, prompt on its tty. Hosts-tab
+  `t` on P: the initiator end over `ssh P sshub sync-enroll` without a tty on P, so the TUI modal shows the
+  words with `peer_has_screen = false` and the plain warning; the local machine invites when it has a ring,
+  founds one when both are blank, joins P's ring when only P has one.
+
 ### 4a. Stage 3 as built (WP3a, WP3c): supersedes the sketch above where they differ
 
 Code: `src/sync/{quorum,reshare,cred_ops,cert,modes,recovery}.rs` (plus the phone wire frames in `wire.rs`).

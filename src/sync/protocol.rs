@@ -293,6 +293,7 @@ pub enum SyncMsg {
         #[serde(with = "hex32")]
         mac: [u8; 32],
     },
+    EnrollHello(super::enroll::EnrollHello),
     EnrollCommit {
         #[serde(with = "hex32")]
         commit: [u8; 32],
@@ -319,6 +320,7 @@ impl SyncMsg {
             Self::EndWants => "end_wants",
             Self::Finish { .. } => "finish",
             Self::Ack { .. } => "ack",
+            Self::EnrollHello(_) => "enroll_hello",
             Self::EnrollCommit { .. } => "enroll_commit",
             Self::EnrollReveal(_) => "enroll_reveal",
             Self::EnrollConfirm(_) => "enroll_confirm",
@@ -433,7 +435,7 @@ impl<'a, L: SyncLink> Session<'a, L> {
         Ok(m)
     }
 
-    fn bye(&mut self, reason: &str) {
+    pub(crate) fn bye(&mut self, reason: &str) {
         let _ = self.send(&SyncMsg::Bye {
             reason: reason.into(),
         });

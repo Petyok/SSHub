@@ -173,8 +173,8 @@ const EXPECT: [(&str, &str); 9] = [
     ("await-ack", "eeooeeoeeeoeoee"),
     ("timelock", "eeooeeoeeeoeoee"),
     ("ready", "eeooeeoeeeoeoeo"),
-    ("cancelled-phone", "eeeeeeeeeeeeeee"),
-    ("cancelled-factor", "eeeeeeeeeeeeeee"),
+    ("cancelled-phone", "eeeeeeeeeeoeeee"),
+    ("cancelled-factor", "eeeeeeeeeeoeeee"),
     ("completed", "eeeeeeeeeeeeeee"),
 ];
 
@@ -340,4 +340,307 @@ fn cancellation_wins_over_everything_and_a_live_phone_needs_no_factor() {
             .is_err(),
         "a compromised peer cannot cancel for free"
     );
+}
+
+// ------------------------------------------------------------------ over the log
+
+mod over_the_log {
+    use super::*;
+    use crate::sync::crypto::{bip39_encode, paper_derive, PaperDomain};
+    use crate::sync::oplog::{Attendance, DeviceKind, HeadAttest, Op, OpBody, ThirdFactor};
+    use crate::sync::protocol::tests::Dev;
+    use crate::sync::quorum::paper_setup;
+    use crate::sync::quorum::tests::{append, deliver};
+
+    /// 0 requester, 1 and 2 attended terminals, 3 the unattended hub, 4 the phone, 5 an observer
+    /// that never writes and judges.
+    struct World {
+        d: Vec<Dev>,
+    }
+
+    const R: usize = 0;
+    const A: usize = 1;
+    const B: usize = 2;
+    const H: usize = 3;
+    const P: usize = 4;
+    const OBS: usize = 5;
+
+    fn world() -> World {
+        let d: Vec<Dev> = (0..6).map(|_| Dev::new()).collect();
+        for (i, x) in d.iter().enumerate() {
+            for (j, y) in d.iter().enumerate() {
+                if i == j {
+                    continue;
+                }
+                let kind = if j == P {
+                    DeviceKind::Phone
+                } else {
+                    DeviceKind::Terminal
+                };
+                let attendance = if j == H {
+                    Attendance::Unattended
+                } else {
+                    Attendance::Attended
+                };
+                x.trust_with(y, attendance, kind);
+            }
+        }
+        World { d }
+    }
+
+    impl World {
+        fn sync(&self) {
+            for x in &self.d {
+                for y in &self.d {
+                    if x.did != y.did {
+                        deliver(x, y);
+                    }
+                }
+            }
+        }
+
+        fn reenroll(
+            &self,
+            via_paper: bool,
+            paper_sig: Option<[u8; 64]>,
+            drop_liveness_of: Option<usize>,
+        ) -> Op {
+            let now = crate::store::now_ts();
+            let mut liveness =
+                crate::sync::recovery::liveness_set(&self.d[R].store, &self.d[R].did, now).unwrap();
+            if let Some(i) = drop_liveness_of {
+                liveness.retain(|a| a.device_id != self.d[i].did);
+            }
+            let op = append(
+                &self.d[R],
+                OpBody::PhoneReenroll {
+                    initiated_at: now,
+                    signers: vec![],
+                    via_paper,
+                    third_factor: if via_paper {
+                        ThirdFactor::EmailCode
+                    } else {
+                        ThirdFactor::Paper
+                    },
+                    liveness,
+                    paper_sig,
+                },
+            );
+            self.sync();
+            op
+        }
+
+        fn verdict(&self, op: &Op, now: i64) -> anyhow::Result<ReenrollVerdict> {
+            validate_phone_reenroll(&self.d[OBS].store, op, now)
+        }
+    }
+
+    #[test]
+    fn approvals_acknowledgement_clock_and_cancellations_over_a_real_log() {
+        let w = world();
+        let op = w.reenroll(false, None, None);
+        let now = op.timestamp + 60;
+        assert_eq!(
+            w.verdict(&op, now).unwrap(),
+            ReenrollVerdict::AwaitingApproval { have: 0, need: 2 }
+        );
+
+        // The hub's approval and acknowledgement count for nothing.
+        append(
+            &w.d[H],
+            OpBody::RecoveryApprove {
+                reenroll_hash: op.hash(),
+            },
+        );
+        append(
+            &w.d[H],
+            OpBody::RecoveryAck {
+                reenroll_hash: op.hash(),
+                seen_at: now,
+            },
+        );
+        // One attended approval, then the requester's own (ignored), then a second attended one.
+        append(
+            &w.d[A],
+            OpBody::RecoveryApprove {
+                reenroll_hash: op.hash(),
+            },
+        );
+        append(
+            &w.d[R],
+            OpBody::RecoveryApprove {
+                reenroll_hash: op.hash(),
+            },
+        );
+        w.sync();
+        assert_eq!(
+            w.verdict(&op, now).unwrap(),
+            ReenrollVerdict::AwaitingApproval { have: 1, need: 2 }
+        );
+        append(
+            &w.d[B],
+            OpBody::RecoveryApprove {
+                reenroll_hash: op.hash(),
+            },
+        );
+        w.sync();
+        assert_eq!(
+            w.verdict(&op, now).unwrap(),
+            ReenrollVerdict::AwaitingAck,
+            "the hub's acknowledgement did not start the clock"
+        );
+
+        append(
+            &w.d[A],
+            OpBody::RecoveryAck {
+                reenroll_hash: op.hash(),
+                seen_at: now,
+            },
+        );
+        w.sync();
+        let ready_at = now + RECOVERY_TIMELOCK_SECS;
+        assert_eq!(
+            w.verdict(&op, now + 10).unwrap(),
+            ReenrollVerdict::NeedsMoreTime { ready_at }
+        );
+        assert_eq!(w.verdict(&op, ready_at).unwrap(), ReenrollVerdict::Ready);
+
+        // A device cancels without the factor: ignored. With it: cancelled. The phone cancels alone.
+        append(
+            &w.d[B],
+            OpBody::PhoneReenrollCancel {
+                reenroll_hash: op.hash(),
+                by_phone: false,
+                third_factor: None,
+            },
+        );
+        w.sync();
+        assert_eq!(w.verdict(&op, ready_at).unwrap(), ReenrollVerdict::Ready);
+        append(
+            &w.d[B],
+            OpBody::PhoneReenrollCancel {
+                reenroll_hash: op.hash(),
+                by_phone: false,
+                third_factor: Some(ThirdFactor::Paper),
+            },
+        );
+        w.sync();
+        assert_eq!(
+            w.verdict(&op, ready_at).unwrap(),
+            ReenrollVerdict::CancelledByFactor
+        );
+        append(
+            &w.d[P],
+            OpBody::PhoneReenrollCancel {
+                reenroll_hash: op.hash(),
+                by_phone: true,
+                third_factor: None,
+            },
+        );
+        w.sync();
+        assert_eq!(
+            w.verdict(&op, ready_at).unwrap(),
+            ReenrollVerdict::CancelledByPhone
+        );
+    }
+
+    #[test]
+    fn a_replayed_proposal_a_short_liveness_set_and_the_same_factor_twice_are_refused() {
+        let w = world();
+        let first = w.reenroll(false, None, None);
+        assert!(w.verdict(&first, first.timestamp).is_ok());
+        // The same body again, in a new op: refused. The first stays valid.
+        let again = append(&w.d[R], first.body.clone());
+        w.sync();
+        assert!(w
+            .verdict(&again, again.timestamp)
+            .unwrap_err()
+            .to_string()
+            .contains("replay"));
+        assert!(w.verdict(&first, first.timestamp).is_ok());
+
+        // A liveness set that leaves out a device the judge knows to be fresh.
+        let short = w.reenroll(false, None, Some(A));
+        assert!(w
+            .verdict(&short, short.timestamp)
+            .unwrap_err()
+            .to_string()
+            .contains("liveness"));
+    }
+
+    #[test]
+    fn paper_authorizes_alone_with_a_signature_over_the_body_and_never_with_the_same_factor_twice()
+    {
+        let w = world();
+        let phrase = bip39_encode(&[0x5a; 32]);
+        for x in &w.d {
+            paper_setup(&x.store, &phrase).unwrap();
+        }
+        let recover = paper_derive(&phrase, PaperDomain::Recover).unwrap();
+        let now = crate::store::now_ts();
+        let liveness: Vec<HeadAttest> =
+            crate::sync::recovery::liveness_set(&w.d[R].store, &w.d[R].did, now).unwrap();
+        let body =
+            |sig: Option<[u8; 64]>, via_paper: bool, tf: ThirdFactor| OpBody::PhoneReenroll {
+                initiated_at: now,
+                signers: vec![],
+                via_paper,
+                third_factor: tf,
+                liveness: liveness.clone(),
+                paper_sig: sig,
+            };
+        let unsigned = body(None, true, ThirdFactor::EmailCode);
+        let sig = paper_reenroll_sign(&recover, &w.d[R].did, &unsigned);
+        let signed = append(&w.d[R], body(Some(sig), true, ThirdFactor::EmailCode));
+        w.sync();
+        assert_eq!(
+            w.verdict(&signed, signed.timestamp).unwrap(),
+            ReenrollVerdict::AwaitingAck,
+            "paper authorizes by itself"
+        );
+        // Approvals are not counted next to a paper signature.
+        append(
+            &w.d[A],
+            OpBody::RecoveryApprove {
+                reenroll_hash: signed.hash(),
+            },
+        );
+        append(
+            &w.d[B],
+            OpBody::RecoveryApprove {
+                reenroll_hash: signed.hash(),
+            },
+        );
+        w.sync();
+        assert_eq!(
+            w.verdict(&signed, signed.timestamp).unwrap(),
+            ReenrollVerdict::AwaitingAck
+        );
+
+        // A signature made for another requester or another body does not verify.
+        let mut other = body(None, true, ThirdFactor::EmailCode);
+        if let OpBody::PhoneReenroll { initiated_at, .. } = &mut other {
+            *initiated_at += 1;
+        }
+        let stolen = paper_reenroll_sign(&recover, &w.d[R].did, &other);
+        let bad = append(&w.d[R], body(Some(stolen), true, ThirdFactor::EmailCode));
+        w.sync();
+        assert!(w.verdict(&bad, bad.timestamp).is_err());
+        // Paper twice (authorization and third factor) is one artifact.
+        let sig2 =
+            paper_reenroll_sign(&recover, &w.d[R].did, &body(None, true, ThirdFactor::Paper));
+        let twice = append(&w.d[R], body(Some(sig2), true, ThirdFactor::Paper));
+        w.sync();
+        assert!(w.verdict(&twice, twice.timestamp).is_err());
+        // A paper signature on a recovery that claims no paper is refused outright.
+        let confused = append(&w.d[R], body(Some(sig), false, ThirdFactor::Paper));
+        w.sync();
+        assert!(w.verdict(&confused, confused.timestamp).is_err());
+        // The phone does not request its own replacement; an unattended device cannot request one.
+        let by_phone = append(&w.d[P], body(None, false, ThirdFactor::Paper));
+        let by_hub = append(&w.d[H], body(None, false, ThirdFactor::EmailCode));
+        w.sync();
+        assert!(w.verdict(&by_phone, by_phone.timestamp).is_err());
+        assert!(w.verdict(&by_hub, by_hub.timestamp).is_err());
+    }
 }

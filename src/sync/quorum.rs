@@ -273,7 +273,30 @@ pub(crate) fn vault_wrap(
 pub fn paper_setup(store: &LauncherStore, phrase: &str) -> Result<DevicePublic> {
     let public = paper_derive(phrase, PaperDomain::Unwrap)?.public();
     meta_set(store, "paper_pub", &pub_to_bytes(&public))?;
+    // The recovery key is separate: it authorizes a phone replacement and nothing else.
+    let recover = paper_derive(phrase, PaperDomain::Recover)?.public();
+    meta_set(store, "paper_recover_pub", &recover.ed25519_pub)?;
     Ok(public)
+}
+
+/// The paper phrase's recovery verification key (ed25519), as registered by [`paper_setup`].
+pub fn paper_recover_pub(store: &LauncherStore) -> Result<Option<[u8; 32]>> {
+    Ok(meta_get(store, "paper_recover_pub")?.and_then(|b| b.try_into().ok()))
+}
+
+/// The ring's phone: the one device of kind `Phone` that is not revoked or compromised.
+pub fn phone_device(store: &LauncherStore) -> Result<Option<DeviceId>> {
+    let mut phones: Vec<DeviceId> = store
+        .sync_devices()?
+        .into_iter()
+        .filter(|d| {
+            d.kind == super::oplog::DeviceKind::Phone
+                && !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
+        })
+        .map(|d| d.id)
+        .collect();
+    ensure!(phones.len() <= 1, "the ring has more than one live phone");
+    Ok(phones.pop())
 }
 
 pub fn paper_pub(store: &LauncherStore) -> Result<Option<DevicePublic>> {

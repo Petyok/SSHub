@@ -183,7 +183,10 @@ impl Recovery {
                 self.first_ack = Some(self.first_ack.map_or(seen_at, |t| t.min(seen_at)));
             }
             Event::CancelByPhone { by_phone } => {
-                self.open()?;
+                // The phone's own signature proves it is alive, so it outranks a cancellation
+                // that needed the third factor, whichever arrived first.
+                ensure!(self.proposal.is_some(), "no recovery has been proposed");
+                ensure!(!self.completed, "the recovery is already completed");
                 ensure!(
                     by_phone,
                     "only the phone's own signature cancels without a factor"
@@ -253,6 +256,289 @@ pub fn replay(events: impl IntoIterator<Item = Event>) -> Result<Recovery> {
         r.apply(e)?;
     }
     Ok(r)
+}
+
+// ------------------------------------------------------------------ over the log
+
+use super::crypto::{verify, DeviceIdentity, ALG_CURRENT};
+use super::limits::LIVE_DEVICE_WINDOW_SECS;
+use super::oplog::{DeviceKind, DeviceRow, DeviceStatus, HeadAttest, Op, OpBody, ThirdFactor};
+use super::quorum::{paper_recover_pub, phone_device};
+use crate::store::LauncherStore;
+
+const PAPER_DOMAIN: &[u8] = b"sshub/sync/reenroll/paper/v1";
+
+/// The bytes the paper/recover key signs for a re-enrollment: a domain tag, the requester and the
+/// op body without its `paper_sig` under a fixed header, so the signature does not depend on the
+/// requester's chain position (the op does not exist yet when the paper is typed).
+pub fn paper_reenroll_preimage(requester: &DeviceId, body: &OpBody) -> Vec<u8> {
+    let mut body = body.clone();
+    if let OpBody::PhoneReenroll { paper_sig, .. } = &mut body {
+        *paper_sig = None;
+    }
+    let header = Op {
+        device_id: requester.clone(),
+        seq: 0,
+        lamport: 0,
+        prev_hash: [0; 32],
+        timestamp: 0,
+        epoch: 0,
+        alg: ALG_CURRENT,
+        body,
+        signature: [0; 64],
+    };
+    [
+        PAPER_DOMAIN,
+        requester.as_bytes(),
+        &header.canonical_bytes(),
+    ]
+    .concat()
+}
+
+/// `paper_sig` for a `PhoneReenroll` body, made on the machine where the phrase was typed.
+pub fn paper_reenroll_sign(
+    paper_recover: &DeviceIdentity,
+    requester: &DeviceId,
+    body: &OpBody,
+) -> [u8; 64] {
+    paper_recover.sign(&paper_reenroll_preimage(requester, body))
+}
+
+/// The head attestations a requester puts into `PhoneReenroll.liveness`: itself and every device it
+/// knows to be fresh, each with the chain head it holds.
+pub fn liveness_set(store: &LauncherStore, me: &DeviceId, now: i64) -> Result<Vec<HeadAttest>> {
+    let heads = store.sync_chain_heads()?;
+    let mut ids: Vec<DeviceId> = fresh_devices(store, now)?
+        .into_iter()
+        .map(|d| d.id)
+        .collect();
+    if !ids.contains(me) {
+        ids.push(me.clone());
+    }
+    Ok(ids
+        .into_iter()
+        .map(|id| {
+            let (seq, chain_hash) = heads
+                .iter()
+                .find(|(d, _, _)| *d == id)
+                .map_or((0, [0; 32]), |(_, s, h)| (*s, *h));
+            HeadAttest {
+                device_id: id,
+                seq,
+                chain_hash,
+            }
+        })
+        .collect())
+}
+
+fn fresh_devices(store: &LauncherStore, now: i64) -> Result<Vec<DeviceRow>> {
+    Ok(store
+        .sync_devices()?
+        .into_iter()
+        .filter(|d| {
+            !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
+                && now - d.last_seen <= LIVE_DEVICE_WINDOW_SECS
+        })
+        .collect())
+}
+
+fn attended_live(row: &DeviceRow) -> bool {
+    row.attendance == super::oplog::Attendance::Attended
+        && !matches!(
+            row.status,
+            DeviceStatus::Revoked | DeviceStatus::Compromised
+        )
+}
+
+/// Ops of one kind in any state but rejected or void, in log order: a recovery vote is a signed
+/// statement whether or not this device's user has reviewed it yet.
+fn signed_ops(store: &LauncherStore, kind: &str) -> Result<Vec<Op>> {
+    store.with_conn(|c| {
+        let mut st = c.prepare(
+            "SELECT canonical, signature FROM sync_ops
+             WHERE kind = ?1 AND state NOT IN ('rejected','void') ORDER BY lamport, device_id, seq",
+        )?;
+        let rows = st
+            .query_map(rusqlite::params![kind], |r| {
+                Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        rows.into_iter()
+            .map(|(c, s)| {
+                Op::from_canonical(
+                    &c,
+                    s.try_into()
+                        .map_err(|_| anyhow::anyhow!("stored signature"))?,
+                )
+            })
+            .collect()
+    })
+}
+
+/// Where the re-enrollment proposed by `op` stands at `now`, judged from the log in `store`.
+/// A bad proposal (backdated, same factor twice, bad paper signature, a liveness set that leaves out
+/// a fresh device, a replay of an earlier proposal) is an error. Events that do not qualify (an
+/// unattended acknowledgement, a cancellation without the factor) are ignored, not errors: anyone
+/// can send them.
+pub fn validate_phone_reenroll(
+    store: &LauncherStore,
+    op: &Op,
+    now: i64,
+) -> Result<ReenrollVerdict> {
+    let OpBody::PhoneReenroll {
+        initiated_at,
+        via_paper,
+        third_factor,
+        liveness,
+        paper_sig,
+        ..
+    } = &op.body
+    else {
+        bail!("not a PhoneReenroll op");
+    };
+    let hash = op.hash();
+    let devices = store.sync_devices()?;
+    let requester = devices
+        .iter()
+        .find(|d| d.id == op.device_id)
+        .ok_or_else(|| anyhow::anyhow!("the requester is not a device of this ring"))?;
+    ensure!(
+        attended_live(requester),
+        "an unattended or revoked device cannot request a recovery"
+    );
+    ensure!(
+        requester.kind == DeviceKind::Terminal,
+        "the phone does not request its own replacement"
+    );
+
+    // A second proposal with the same content is a replay, whatever op carries it.
+    for other in signed_ops(store, "PhoneReenroll")? {
+        if other.hash() != hash && other.body == op.body {
+            ensure!(
+                (other.lamport, &other.device_id, other.seq) > (op.lamport, &op.device_id, op.seq),
+                "this PhoneReenroll repeats an earlier one: replays are refused"
+            );
+        }
+    }
+
+    // Authorization and the third factor.
+    let paper_ok = match (via_paper, paper_sig) {
+        (true, Some(sig)) => paper_recover_pub(store)?
+            .is_some_and(|k| verify(&k, &paper_reenroll_preimage(&op.device_id, &op.body), sig)),
+        (true, None) => false,
+        (false, None) => true,
+        (false, Some(_)) => {
+            bail!("a paper signature on a recovery that is not authorized by paper")
+        }
+    };
+    let factor_distinct = match third_factor {
+        ThirdFactor::EmailCode => true,
+        ThirdFactor::Paper => !*via_paper,
+        #[allow(unreachable_patterns)]
+        _ => false,
+    };
+
+    // Liveness: every device this store knows to be fresh must be in the set, and where the set and
+    // this store hold the same chain position they must agree on the head.
+    let heads = store.sync_chain_heads()?;
+    let mut liveness_ok = true;
+    for d in fresh_devices(store, *initiated_at)? {
+        match liveness.iter().find(|a| a.device_id == d.id) {
+            None => liveness_ok = false,
+            Some(a) => {
+                if let Some((_, seq, h)) = heads.iter().find(|(id, _, _)| *id == d.id) {
+                    if a.seq == *seq && a.chain_hash != *h {
+                        liveness_ok = false;
+                    }
+                }
+            }
+        }
+    }
+
+    let mut m = Recovery::new();
+    m.apply(Event::Propose(Proposal {
+        hash,
+        requester: op.device_id.clone(),
+        timestamp: op.timestamp,
+        initiated_at: *initiated_at,
+        authorization: if *via_paper {
+            Authorization::Paper {
+                signature_valid: paper_ok,
+            }
+        } else {
+            Authorization::Approvals
+        },
+        third_factor_distinct: factor_distinct,
+        liveness_ok,
+    }))?;
+
+    let phone = phone_device(store)?;
+    let row = |id: &DeviceId| devices.iter().find(|d| d.id == *id);
+    let mut events: Vec<(u64, DeviceId, u64, Event)> = Vec::new();
+    for a in signed_ops(store, "RecoveryApprove")? {
+        if let OpBody::RecoveryApprove { reenroll_hash } = &a.body {
+            if *reenroll_hash == hash {
+                let attended = row(&a.device_id).is_some_and(attended_live);
+                events.push((
+                    a.lamport,
+                    a.device_id.clone(),
+                    a.seq,
+                    Event::Approve {
+                        by: a.device_id.clone(),
+                        attended,
+                    },
+                ));
+            }
+        }
+    }
+    for a in signed_ops(store, "RecoveryAck")? {
+        if let OpBody::RecoveryAck {
+            reenroll_hash,
+            seen_at,
+        } = &a.body
+        {
+            if *reenroll_hash == hash {
+                let attended = row(&a.device_id).is_some_and(attended_live);
+                events.push((
+                    a.lamport,
+                    a.device_id.clone(),
+                    a.seq,
+                    Event::Ack {
+                        by: a.device_id.clone(),
+                        seen_at: *seen_at,
+                        attended,
+                    },
+                ));
+            }
+        }
+    }
+    for c in signed_ops(store, "PhoneReenrollCancel")? {
+        if let OpBody::PhoneReenrollCancel {
+            reenroll_hash,
+            by_phone,
+            third_factor,
+        } = &c.body
+        {
+            if *reenroll_hash == hash {
+                let ev = if *by_phone {
+                    Event::CancelByPhone {
+                        by_phone: phone.as_ref() == Some(&c.device_id),
+                    }
+                } else {
+                    Event::CancelByDevice {
+                        with_factor: third_factor.is_some()
+                            && row(&c.device_id).is_some_and(attended_live),
+                    }
+                };
+                events.push((c.lamport, c.device_id.clone(), c.seq, ev));
+            }
+        }
+    }
+    events.sort_by(|a, b| (a.0, &a.1, a.2).cmp(&(b.0, &b.1, b.2)));
+    for (_, _, _, ev) in events {
+        let _ = m.apply(ev); // an event that does not qualify changes nothing
+    }
+    Ok(m.verdict(now))
 }
 
 #[cfg(test)]
