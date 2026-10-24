@@ -109,6 +109,7 @@ vt100 = "0.16"
 # generation is pinned for the whole epic; ml-kem is pinned exactly (its README
 # says it was never independently audited, hence hybrid wrapping with X25519).
 argon2 = "0.5"
+base64 = "0.22"
 bip39 = "2"
 blake3 = "1"
 chacha20poly1305 = "0.10"
