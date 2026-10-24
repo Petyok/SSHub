@@ -929,7 +929,7 @@ pub(crate) fn mode(
         }
     }
     ensure!(
-        store.sync_cred_mode()? == CredMode::Vault,
+        crate::sync::ceremony::effective_cred_mode(store)? == CredMode::Vault,
         "from the command line only Vault to Quorum can open the credentials (the other direction needs shares from other holders: use the TUI)"
     );
     let body = crate::sync::modes::mode_change_body(store, &me, to, cosigner)?;
