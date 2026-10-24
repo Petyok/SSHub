@@ -540,3 +540,41 @@ fn an_unattended_inviter_admits_a_mirror_the_ring_still_has_to_approve() {
     }
     assert_eq!(member.store.sync_pending().unwrap().len(), 1);
 }
+
+struct Rec(Arc<Mutex<Vec<EnrollProgress>>>);
+
+impl SasConfirm for Rec {
+    fn confirm(&mut self, _: &SasPrompt<'_>) -> bool {
+        true
+    }
+    fn progress(&mut self, p: EnrollProgress) {
+        self.0.lock().unwrap().push(p);
+    }
+}
+
+#[test]
+fn the_joiner_reports_receiving_adopting_and_adopted_with_the_host_count() {
+    let (e, j) = (Dev::new(), Dev::new());
+    e.append_host();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let mut uj = Rec(seen.clone());
+    let mut ue = |_: &SasPrompt<'_>| true;
+    let (re, rj) = enroll(&e, &j, &mut ue, &mut uj);
+    re.unwrap();
+    rj.unwrap();
+    let seen = seen.lock().unwrap().clone();
+    assert!(
+        matches!(
+            seen.first(),
+            Some(EnrollProgress::Receiving { chunk: 1, .. })
+        ),
+        "{seen:?}"
+    );
+    assert_eq!(
+        seen[seen.len() - 2..],
+        [
+            EnrollProgress::Adopting { hosts: 1 },
+            EnrollProgress::Adopted { hosts: 1 }
+        ]
+    );
+}

@@ -3,7 +3,7 @@
 // All of it is public or low-value data; the secret lives only in the PIN-wrapped key blob.
 import { hexOf } from './lib.mjs';
 import { blake3 } from '../vendor/noble-hashes-2.4.0/blake3.js';
-import { encodeHeadAttest, encodePhoneReenrollCancel, parseOp, signOp, ZERO32 } from './ops.mjs';
+import { encodeCertExtend, encodeCertIssue, encodeCertRevoke, encodeHeadAttest, encodePhoneReenrollCancel, encodeRedPhoneSign, encodeShareReshareConfirmBatch, encodeShareStorageKey, encodeWrapKeyRotate, parseOp, signOp, ZERO32 } from './ops.mjs';
 import { crockfordEncode, snapshotSeal } from './quorum.mjs';
 import { randomBytes } from './keys.mjs';
 
@@ -16,7 +16,7 @@ export const SNAPSHOT_PROFILE_WEAK = { mem_kib: 64 * 1024, iters: 8 };
 // by seq. A longer gap than this needs the phone to touch another terminal.
 export const COURIER_TAIL = 8;
 
-export const emptyState = () => ({ v: 1, enrolled: null, ring: {}, aliases: {}, chain: [], epoch: '0', lamport: '0', snapshots: {} });
+export const emptyState = () => ({ v: 1, enrolled: null, ring: {}, aliases: {}, chain: [], epoch: '0', lamport: '0', wrapEpoch: 0, snapshots: {} });
 
 // ------------------------------------------------------------ storage backends
 
@@ -106,10 +106,35 @@ export function appendReenrollCancel(state, id, reenrollHashHex, now, seen) {
   return appendCanonical(state, id, encodePhoneReenrollCancel(nextHeader(state, id, now, seen), reenrollHashHex), now);
 }
 
+// Announces the next wrap key generation (C14 step 1). The caller then rebuilds the identity at
+// the new epoch; blobs wrapped to older generations stay readable (see keys.mjs).
+export function appendWrapKeyRotate(state, id, newGen, now, seen) {
+  const wrap_epoch = (state.wrapEpoch || 0) + 1;
+  const r = appendCanonical(state, id, encodeWrapKeyRotate(nextHeader(state, id, now, seen), { device_id: id.deviceId, wrap_epoch, x25519_pub: newGen.xPub, mlkem_pub: newGen.mlkemPub }), now);
+  state.wrapEpoch = wrap_epoch;
+  return r;
+}
+
+export const appendShareStorageKey = (state, id, epoch, sealed, now, seen) =>
+  appendCanonical(state, id, encodeShareStorageKey(nextHeader(state, id, now, seen), { epoch, sealed }), now);
+
+export const appendConfirmBatch = (state, id, epoch, items, now, seen) =>
+  appendCanonical(state, id, encodeShareReshareConfirmBatch(nextHeader(state, id, now, seen), { epoch, items }), now);
+
+export function appendRedPhoneSign(state, id, opHashHex, now, seen) {
+  return appendCanonical(state, id, encodeRedPhoneSign(nextHeader(state, id, now, seen), opHashHex), now);
+}
+
+// Trust sessions (4c-2): the phone is the author of CertIssue, CertRevoke and CertExtend. The caller (cert.mjs)
+// has already enforced the limits; these only chain, sign and return the new entry (entry.hash is the cert id).
+export const appendCertIssue = (state, id, req, now, seen) => appendCanonical(state, id, encodeCertIssue(nextHeader(state, id, now, seen), req), now);
+export const appendCertRevoke = (state, id, certIdHex, now, seen) => appendCanonical(state, id, encodeCertRevoke(nextHeader(state, id, now, seen), certIdHex), now);
+export const appendCertExtend = (state, id, certIdHex, extraHosts, now, seen) => appendCanonical(state, id, encodeCertExtend(nextHeader(state, id, now, seen), certIdHex, extraHosts), now);
+
 // Newest ops of the chain as { canonical, signature } for the courier lists.
-export function courierOps(state) {
+export function courierOps(state, count = COURIER_TAIL) {
   const hex = (s) => Uint8Array.from(s.match(/../g) ?? [], (b) => parseInt(b, 16));
-  return state.chain.slice(-COURIER_TAIL).map((e) => ({ canonical: hex(e.canonical), signature: hex(e.signature) }));
+  return state.chain.slice(-count).map((e) => ({ canonical: hex(e.canonical), signature: hex(e.signature) }));
 }
 
 // ------------------------------------------------------------ short-code snapshots

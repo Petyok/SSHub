@@ -53,6 +53,7 @@ impl App {
                 | AppMode::SnippetPicker
                 | AppMode::SyncUnlock
                 | AppMode::SyncOnboarding
+                | AppMode::SyncPrompt
                 | AppMode::SftpPrompt
         ) || (self.mode == AppMode::Normal
             && matches!(self.active_tab, 2 | 3)

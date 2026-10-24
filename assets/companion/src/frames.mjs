@@ -4,16 +4,26 @@
 //
 //   frame      = "SWR1" || version u16 BE || kind u8 || body
 //   kind 3     = recovery notice (terminal -> phone): op_len u32 BE || op_canonical || op_signature(64)
-//   kind 5     = phone ops (phone -> terminal): n u8 || n * (op_len u32 BE || op_canonical || sig(64))
+//   kind 5     = ops list (both directions): n u8 || n * (op_len u32 BE || op_canonical || sig(64)); at most 8 ops,
+//                each at most 256 KiB, the list at most 1 MiB (wire.rs MAX_COURIER_OPS, MAX_COURIER_OP_BYTES)
 //   kind 6     = enroll commit:  role u8 || commit(32)
 //   kind 7     = enroll reveal:  role u8 || reveal bytes (enroll.rs Reveal::bytes)
 //   kind 8     = enroll confirm: role u8 || ok u8 || signature(64)
+//   kind 9     = trust-session request (terminal -> phone): device_id(8) || scope tag u8 [0: group uid(16) |
+//                1: n u16 BE (1..=64) || n * uid(16)] || expiry i64 BE || max_new_hosts_per_day u32 BE ||
+//                epoch_lo u64 BE || epoch_hi u64 BE   (wire.rs CertRequestWire)
+//   kind 10    = trust-session budget extension request: cert_id(32) || extra_hosts u32 BE (CertExtendRequestWire)
 //   reply      = share(33) [|| 0x01 || approval_sig(64) || n u8 || n * (len u32 BE || op || sig(64))
 //                           || snap u8 [|| host_uid(16) || blob_len u16 BE || blob]]
 import { blake3 } from '../vendor/noble-hashes-2.4.0/blake3.js';
 import { concat, utf8 } from './lib.mjs';
 
-export const KIND = { CHALLENGE: 1, RESPONSE: 2, RECOVERY_NOTICE: 3, PHONE_OPS: 5, ENROLL_COMMIT: 6, ENROLL_REVEAL: 7, ENROLL_CONFIRM: 8 };
+export const KIND = { CHALLENGE: 1, RESPONSE: 2, RECOVERY_NOTICE: 3, PHONE_OPS: 5, ENROLL_COMMIT: 6, ENROLL_REVEAL: 7, ENROLL_CONFIRM: 8, CERT_REQUEST: 9, CERT_EXTEND_REQUEST: 10 };
+export const MAX_COURIER_OPS = 8;
+export const MAX_COURIER_OP_BYTES = 256 * 1024;
+export const MAX_COURIER_LIST_BYTES = 1024 * 1024;
+export const MAX_CERT_REQUEST_HOSTS = 64;
+export const CERT_NEW_HOSTS_PER_DAY = 50; // limits.rs
 export const ROLE_JOINING = 0; // the phone: the joining device (enroll.rs INITIATOR)
 export const ROLE_EXISTING = 1; // the terminal that enrols it (enroll.rs RESPONDER)
 const MAGIC = Uint8Array.of(0x53, 0x57, 0x52, 0x31);
@@ -36,20 +46,25 @@ export function decodeFrame(frame) {
 // ------------------------------------------------------------ ops lists
 
 function encodeOpList(ops) {
-  if (ops.length > 255) throw new Error('too many ops');
-  return concat(Uint8Array.of(ops.length), ...ops.flatMap((o) => [u32(o.canonical.length), o.canonical, o.signature]));
+  if (ops.length > MAX_COURIER_OPS) throw new Error(`at most ${MAX_COURIER_OPS} ops per list`);
+  for (const o of ops) if (o.canonical.length > MAX_COURIER_OP_BYTES) throw new Error(`an op over ${MAX_COURIER_OP_BYTES} bytes does not fit a list`);
+  const out = concat(Uint8Array.of(ops.length), ...ops.flatMap((o) => [u32(o.canonical.length), o.canonical, o.signature]));
+  if (out.length > MAX_COURIER_LIST_BYTES) throw new Error('the list is over 1 MiB');
+  return out;
 }
 
-// Returns { ops, end } for a list starting at body[at].
+// Returns { ops, end } for a list starting at body[at]; the caps are those of wire.rs decode_op_list.
 function decodeOpList(body, at) {
   if (body.length < at + 1) throw new Error('op list truncated');
+  if (body.length - at > MAX_COURIER_LIST_BYTES) throw new Error('op list exceeds the frame cap');
   const n = body[at++];
+  if (n > MAX_COURIER_OPS) throw new Error(`op list of ${n} ops exceeds the cap of ${MAX_COURIER_OPS}`);
   const ops = [];
   for (let i = 0; i < n; i++) {
     if (body.length < at + 4) throw new Error('op list truncated');
     const len = rd32(body, at);
     at += 4;
-    if (body.length < at + len + 64) throw new Error('op list truncated');
+    if (len > MAX_COURIER_OP_BYTES || body.length < at + len + 64) throw new Error('op list entry is oversize or truncated');
     ops.push({ canonical: body.slice(at, at + len), signature: body.slice(at + len, at + len + 64) });
     at += len + 64;
   }
@@ -57,6 +72,16 @@ function decodeOpList(body, at) {
 }
 
 export const encodePhoneOps = (ops) => encodeFrame(KIND.PHONE_OPS, encodeOpList(ops));
+
+// Kind 5 carries ops in both directions: the phone's own ops to a terminal, and the reshare ops
+// of an epoch (sessions sealed to the phone, batches) from a terminal to the phone.
+export function decodePhoneOps(frame) {
+  const { kind, body } = decodeFrame(frame);
+  if (kind !== KIND.PHONE_OPS) throw new Error('not an ops frame');
+  const { ops, end } = decodeOpList(body, 0);
+  if (end !== body.length) throw new Error('ops frame has trailing bytes');
+  return ops;
+}
 
 export function decodeRecoveryNotice(frame) {
   const { kind, body } = decodeFrame(frame);
@@ -66,6 +91,78 @@ export function decodeRecoveryNotice(frame) {
   if (body.length !== 4 + len + 64) throw new Error('recovery notice length does not match its fields');
   return { op_canonical: body.slice(4, 4 + len), op_signature: body.slice(4 + len) };
 }
+
+// ------------------------------------------------------------ trust sessions (kinds 9 and 10)
+
+const rd64 = (b, at) => new DataView(b.buffer, b.byteOffset + at, 8);
+const hexU = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+const u64 = (n) => {
+  const b = new Uint8Array(8);
+  new DataView(b.buffer).setBigUint64(0, BigInt(n));
+  return b;
+};
+const i64 = (n) => {
+  const b = new Uint8Array(8);
+  new DataView(b.buffer).setBigInt64(0, BigInt(n));
+  return b;
+};
+
+// { device_id: hex(16), scope: { group } | { hosts: [hex32] }, expiry: BigInt, max_new_hosts_per_day: number,
+//   epoch_lo: BigInt, epoch_hi: BigInt }. Throws on anything wire.rs CertRequestWire::decode refuses.
+export function decodeCertRequest(frame) {
+  const { kind, body } = decodeFrame(frame);
+  if (kind !== KIND.CERT_REQUEST) throw new Error('not a trust-session request');
+  const short = () => new Error('the trust-session request is truncated');
+  if (body.length < 9) throw short();
+  const device_id = hexU(body.subarray(0, 8));
+  let at = 9;
+  let scope;
+  if (body[8] === 0) {
+    if (body.length < at + 16) throw short();
+    scope = { group: hexU(body.subarray(at, at + 16)) };
+    at += 16;
+  } else if (body[8] === 1) {
+    if (body.length < at + 2) throw short();
+    const n = rd16(body, at);
+    at += 2;
+    if (n === 0 || n > MAX_CERT_REQUEST_HOSTS) throw new Error(`a trust-session request lists 1..=${MAX_CERT_REQUEST_HOSTS} hosts, got ${n}`);
+    const hosts = [];
+    for (let i = 0; i < n; i++) {
+      if (body.length < at + 16) throw short();
+      hosts.push(hexU(body.subarray(at, at + 16)));
+      at += 16;
+    }
+    scope = { hosts };
+  } else throw new Error(`unknown scope tag ${body[8]}`);
+  if (body.length !== at + 28) throw new Error('the trust-session request has trailing or missing bytes');
+  return {
+    device_id,
+    scope,
+    expiry: rd64(body, at).getBigInt64(0),
+    max_new_hosts_per_day: rd32(body, at + 8),
+    epoch_lo: rd64(body, at + 12).getBigUint64(0),
+    epoch_hi: rd64(body, at + 20).getBigUint64(0),
+  };
+}
+
+// The terminal side (tests only): the inverse of decodeCertRequest.
+export function encodeCertRequest(r) {
+  const hex = (s) => Uint8Array.from(s.match(/../g), (b) => parseInt(b, 16));
+  const scope = r.scope.group ? concat(Uint8Array.of(0), hex(r.scope.group)) : concat(Uint8Array.of(1), u16(r.scope.hosts.length), ...r.scope.hosts.map(hex));
+  return encodeFrame(KIND.CERT_REQUEST, hex(r.device_id), scope, i64(r.expiry), u32(r.max_new_hosts_per_day), u64(r.epoch_lo), u64(r.epoch_hi));
+}
+
+// { cert_id: hex(32), extra_hosts }; extra_hosts 1..=CERT_NEW_HOSTS_PER_DAY like wire.rs.
+export function decodeCertExtendRequest(frame) {
+  const { kind, body } = decodeFrame(frame);
+  if (kind !== KIND.CERT_EXTEND_REQUEST) throw new Error('not a budget extension request');
+  if (body.length !== 36) throw new Error(`a budget extension request is 36 bytes, got ${body.length}`);
+  const extra_hosts = rd32(body, 32);
+  if (extra_hosts === 0 || extra_hosts > CERT_NEW_HOSTS_PER_DAY) throw new Error(`an extension is 1 to ${CERT_NEW_HOSTS_PER_DAY} hosts`);
+  return { cert_id: hexU(body.subarray(0, 32)), extra_hosts };
+}
+
+export const encodeCertExtendRequest = (r) => encodeFrame(KIND.CERT_EXTEND_REQUEST, Uint8Array.from(r.cert_id.match(/../g), (b) => parseInt(b, 16)), u32(r.extra_hosts));
 
 // ------------------------------------------------------------ share reply plaintext
 

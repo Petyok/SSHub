@@ -391,6 +391,7 @@ Host valid-one valid-two
                 remote_command: None,
                 certificate_file: None,
                 has_proxy_command: false,
+                identity_agent: None,
             }
         );
     }

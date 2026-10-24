@@ -85,6 +85,11 @@ pub fn cert_allows(
         cert.id == cert.op.hash(),
         "certificate id does not match its op"
     );
+    // The phone's own op counts only once its ceremony completed, on every device.
+    ensure!(
+        super::ceremony::in_force(store, &cert.op)?,
+        "the certificate's ceremony is not complete"
+    );
     ensure!(
         cert.device_id == *requester,
         "the certificate was issued to another device"
@@ -201,9 +206,9 @@ pub fn validate_cert_issue(store: &LauncherStore, op: &Op, phone: &DeviceId) -> 
         ),
         CertScope::Group(_) => {}
     }
-    let holders = store
-        .sync_devices()?
-        .into_iter()
+    let devices = super::ceremony::effective_devices(store, None)?;
+    let holders = devices
+        .iter()
         .filter(|d| {
             d.role == DeviceRole::Holder
                 && !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
@@ -214,8 +219,7 @@ pub fn validate_cert_issue(store: &LauncherStore, op: &Op, phone: &DeviceId) -> 
         "trust sessions need at least three holders: with fewer nobody enforces the certificate"
     );
     ensure!(
-        store
-            .sync_devices()?
+        devices
             .iter()
             .any(|d| d.id == cert.device_id && d.role == DeviceRole::Holder),
         "the certificate names a device that is not a holder"

@@ -58,6 +58,7 @@ pub enum FactorKind {
 pub enum RecoveryCmd {
     Start { paper: bool },
     Approve(String),
+    Ack(String),
     Cancel { op: String, factor: FactorKind },
     Status,
 }
@@ -232,6 +233,10 @@ pub fn parse(cmd: &str, args: &[String]) -> std::result::Result<(Cmd, Opts), Str
                 "approve" => {
                     exact(2, "an op id after approve")?;
                     RecoveryCmd::Approve(pos[1].into())
+                }
+                "ack" => {
+                    exact(2, "an op id after ack")?;
+                    RecoveryCmd::Ack(pos[1].into())
                 }
                 "cancel" => {
                     exact(2, "an op id after cancel")?;
@@ -460,7 +465,7 @@ fn report(opts: Opts, r: &Report) -> Result<i32> {
     Ok(0)
 }
 
-fn short(h: &[u8; 32]) -> String {
+pub(crate) fn short(h: &[u8; 32]) -> String {
     h[..8].iter().map(|b| format!("{b:02x}")).collect()
 }
 
@@ -507,7 +512,12 @@ fn status_json(st: &RedStatus) -> Value {
 
 /// Report for an op we just appended (or looked up): its tier and, for Red
 /// ops, where the ceremony stands.
-fn op_report(store: &LauncherStore, op: &Op, headline: String, now: i64) -> Result<Report> {
+pub(crate) fn op_report(
+    store: &LauncherStore,
+    op: &Op,
+    headline: String,
+    now: i64,
+) -> Result<Report> {
     let mut lines = vec![headline];
     let mut json = json!({ "op": hex(&op.hash()), "tier": format!("{:?}", op.tier()) });
     if ceremony::is_gated(store, op)? {
@@ -808,6 +818,21 @@ fn recovery(
                 },
             )
         }
+        RecoveryCmd::Ack(op_id) => {
+            let op = find_op(store, &op_id)?;
+            let a = store.sync_append_local(id, rec::ack_body(&op, now)?)?;
+            report(
+                opts,
+                &Report {
+                    lines: vec![format!(
+                        "acknowledged recovery {} (record {})",
+                        short(&op.hash()),
+                        short(&a.hash())
+                    )],
+                    json: json!({ "op": hex(&op.hash()), "ack": hex(&a.hash()) }),
+                },
+            )
+        }
         RecoveryCmd::Cancel { op, factor } => {
             let target = find_op(store, &op)?;
             let f = match factor {
@@ -864,10 +889,8 @@ pub(crate) fn mode(
     let cosigner = cosigner
         .map(|c| find_device(store, c).map(|d| d.id))
         .transpose()?;
-    ensure!(
-        store.sync_cred_mode()? == CredMode::Vault,
-        "from the command line only Vault to Quorum can open the credentials (the other direction needs shares from other holders: use the TUI)"
-    );
+    let me = id.public();
+    // Second call, after the ceremony: re-encrypt. Nothing is re-encrypted before the ring agreed.
     let open = |host: &crate::sync::oplog::HostUid| -> Result<Zeroizing<Vec<u8>>> {
         let (ct, _) = store
             .sync_cred_ciphertext(host)?
@@ -875,19 +898,47 @@ pub(crate) fn mode(
         let dek = crate::sync::quorum::vault_open_dek(store, host, phrase, ring)?;
         Ok(Zeroizing::new(crate::sync::crypto::dek_open(&dek, &ct)?))
     };
-    let bodies = crate::sync::modes::mode_change_plan(store, &id.public(), to, cosigner, &open)?;
-    let n = bodies.len().saturating_sub(1);
-    let mut first = None;
-    for b in bodies {
-        let op = store.sync_append_local(id, b)?;
-        first.get_or_insert(op);
+    if let Some(mc) = crate::sync::modes::own_mode_change(store, &me.device_id())? {
+        if matches!(&mc.body, OpBody::ModeChange { to: t, .. } if *t == to) {
+            if !crate::sync::ceremony::in_force(store, &mc)? {
+                return op_report(
+                    store,
+                    &mc,
+                    format!(
+                        "the mode change to {to:?} is still waiting for its ceremony (op {}); run this again once it completed",
+                        short(&mc.hash())
+                    ),
+                    now,
+                );
+            }
+            ensure!(
+                to == CredMode::Quorum,
+                "from the command line only Vault to Quorum can open the credentials (the other direction needs shares from other holders: use the TUI)"
+            );
+            let bodies = crate::sync::modes::mode_migration(store, &me, &open)?;
+            let n = bodies.len();
+            for b in bodies {
+                store.sync_append_local(id, b)?;
+            }
+            return op_report(
+                store,
+                &mc,
+                format!("{n} credentials re-wrapped for {to:?}"),
+                now,
+            );
+        }
     }
-    let op = first.context("empty mode plan")?;
+    ensure!(
+        store.sync_cred_mode()? == CredMode::Vault,
+        "from the command line only Vault to Quorum can open the credentials (the other direction needs shares from other holders: use the TUI)"
+    );
+    let body = crate::sync::modes::mode_change_body(store, &me, to, cosigner)?;
+    let op = store.sync_append_local(id, body)?;
     op_report(
         store,
         &op,
         format!(
-            "mode change to {to:?} proposed with {n} credentials re-wrapped (op {})",
+            "mode change to {to:?} proposed (op {}); once its ceremony completed, run this again to re-encrypt the credentials",
             short(&op.hash())
         ),
         now,
@@ -1073,7 +1124,7 @@ pub fn print_help(cmd: &str) {
         "sync-approve" => ("sync-approve <op-id> [--format plain|json]", "Approve a pending Red op as this attended device (the second-device vote)."),
         "sync-factor" => ("sync-factor <op-id> (--paper | --email-code) [--format plain|json]", "Add the third factor to a Red op. The 24 paper words or the emailed code are read without echo."),
         "sync-factor-register" => ("sync-factor-register (paper | email) [--sender <device>] [--format plain|json]", "Register a third factor. Paper reads the 24 words without echo; email creates a code and shows it once."),
-        "sync-recovery" => ("sync-recovery (start [--paper] | approve <op-id> | cancel <op-id> --factor paper|email | status) [--format plain|json]", "Re-enroll the phone: start, approve as another attended device, cancel, or show the state of every recovery."),
+        "sync-recovery" => ("sync-recovery (start [--paper] | approve <op-id> | ack <op-id> | cancel <op-id> --factor paper|email | status) [--format plain|json]", "Re-enroll the phone: start, approve or acknowledge as another attended device, cancel, or show the state of every recovery."),
         "sync-mode" => ("sync-mode (vault | quorum) [--cosigner <device>] [--format plain|json]", "Change the credential mode (Red). From the command line only Vault to Quorum can open the credentials; the master phrase is read without echo."),
         "sync-exemption" => ("sync-exemption (on | off) <device> [--format plain|json]", "Switch the master-phrase exemption of a device off (Red). Switching it on needs the TUI."),
         "sync-export" => ("sync-export --window <seconds> --out <path> [--wait <seconds>] [--format plain|json]", "Bulk export (Red, window up to 3600 s): propose it, wait for the ceremony, then write every credential to a new 0600 file in the Termius CSV format (import it from a directory as L00t.csv)."),

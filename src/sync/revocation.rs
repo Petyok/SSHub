@@ -44,8 +44,7 @@ pub enum RevocationAction {
 }
 
 fn live_holders(store: &LauncherStore) -> Result<Vec<super::oplog::DeviceRow>> {
-    Ok(store
-        .sync_devices()?
+    Ok(super::ceremony::effective_devices(store, None)?
         .into_iter()
         .filter(|d| {
             d.role == DeviceRole::Holder
@@ -81,13 +80,17 @@ pub fn check_revocable(store: &LauncherStore, target: &DeviceId, now: i64) -> Re
 
 /// The newest revoked holder whose reshare is not finished: `(op lamport, timestamp, revoked id)`.
 fn open_revocation(store: &LauncherStore) -> Result<Option<(u64, i64, DeviceId)>> {
-    let devices = store.sync_devices()?;
+    let devices = super::ceremony::effective_devices(store, None)?;
     let batches = ops_of(store, "ShareReshareBatch", None)?;
     let mut open = None;
     for op in ops_of(store, "DeviceRevoke", None)? {
         let OpBody::DeviceRevoke { device_id } = &op.body else {
             continue;
         };
+        // A revocation nobody completed reshares nothing.
+        if !super::ceremony::in_force(store, &op)? {
+            continue;
+        }
         let was_holder = devices
             .iter()
             .any(|d| d.id == *device_id && d.role == DeviceRole::Holder);
@@ -117,7 +120,7 @@ pub fn next_actions(
     now: i64,
 ) -> Result<Vec<RevocationAction>> {
     let me = id.public().device_id();
-    let devices = store.sync_devices()?;
+    let devices = super::ceremony::effective_devices(store, None)?;
     let am_holder = devices
         .iter()
         .any(|d| d.id == me && d.role == DeviceRole::Holder && d.status != DeviceStatus::Revoked);
@@ -217,7 +220,7 @@ pub fn next_actions(
 /// exemption was enabled or disabled (C10). No wrap-key rotation is needed: nobody lost access.
 fn membership_reshare(store: &LauncherStore, me: &DeviceId) -> Result<Option<RevocationAction>> {
     use super::oplog::CredMode;
-    if store.sync_cred_mode()? != CredMode::Quorum
+    if super::ceremony::effective_cred_mode(store)? != CredMode::Quorum
         || super::reshare::quorum_credentials(store)?.is_empty()
     {
         return Ok(None);

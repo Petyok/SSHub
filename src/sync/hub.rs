@@ -201,6 +201,16 @@ pub fn run_sync_serve_notify<L: SyncLink>(
         if let Err(e) = sent {
             eprintln!("sshub: could not announce recovery operations: {e:#}");
         }
+        // This device may be the sender of the emailed third factor: mail the code once the other proofs are in.
+        let mailed = super::ceremony::send_owed_codes(
+            store,
+            &id.public().device_id(),
+            crate::store::now_ts(),
+            &mut |subject, body| super::notify::send_notification(cfg, subject, body),
+        );
+        if let Err(e) = mailed {
+            eprintln!("sshub: could not mail a factor code: {e:#}");
+        }
     }
     round
 }
