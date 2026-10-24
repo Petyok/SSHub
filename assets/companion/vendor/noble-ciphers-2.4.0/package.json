@@ -1,0 +1,79 @@
+{
+  "name": "@noble/ciphers",
+  "version": "2.4.0",
+  "description": "Audited & minimal JS implementation of Salsa20, ChaCha and AES",
+  "files": [
+    "src",
+    "*.js",
+    "*.d.ts"
+  ],
+  "devDependencies": {
+    "@paulmillr/jsbt": "0.7.1",
+    "bismar": "0.1.8",
+    "@scure/base": "2.3.0",
+    "@types/node": "26.3.0",
+    "fast-check": "4.2.0",
+    "prettier": "3.9.6",
+    "typescript": "6.0.3"
+  },
+  "scripts": {
+    "benchmark": "node benchmark/ciphers.ts",
+    "benchmark:thirdparty": "cd benchmark/thirdparty; npm ci; node index.ts",
+    "benchmark:size": "bismar -bsm",
+    "build": "tsc",
+    "check": "jsbt-check",
+    "build:clean": "rm *.{js,d.ts} 2> /dev/null",
+    "format": "prettier --write 'src/**/*.{js,ts}' 'test/**/*.{js,ts,mjs}'",
+    "test": "node test/index.ts",
+    "test:bun": "bun test/index.ts",
+    "test:slow": "node test/crosstest.test.ts slow"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./_arx.js": "./_arx.js",
+    "./_poly1305.js": "./_poly1305.js",
+    "./_polyval.js": "./_polyval.js",
+    "./aes.js": "./aes.js",
+    "./chacha.js": "./chacha.js",
+    "./ff1.js": "./ff1.js",
+    "./salsa.js": "./salsa.js",
+    "./utils.js": "./utils.js",
+    "./webcrypto.js": "./webcrypto.js"
+  },
+  "engines": {
+    "node": ">= 20.19.0"
+  },
+  "keywords": [
+    "salsa20",
+    "chacha",
+    "aes",
+    "cryptography",
+    "crypto",
+    "noble",
+    "cipher",
+    "ciphers",
+    "xsalsa20",
+    "xchacha20",
+    "poly1305",
+    "xsalsa20poly1305",
+    "chacha20poly1305",
+    "xchacha20poly1305",
+    "secretbox",
+    "rijndael",
+    "siv",
+    "ff1"
+  ],
+  "homepage": "https://paulmillr.com/noble/",
+  "funding": "https://paulmillr.com/funding/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/paulmillr/noble-ciphers.git"
+  },
+  "type": "module",
+  "main": "index.js",
+  "module": "index.js",
+  "types": "index.d.ts",
+  "sideEffects": false,
+  "author": "Paul Miller (https://paulmillr.com)",
+  "license": "MIT"
+}

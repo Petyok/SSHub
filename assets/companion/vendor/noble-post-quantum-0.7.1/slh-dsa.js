@@ -1,0 +1,814 @@
+/**
+ * SLH-DSA: StateLess Hash-based Digital Signature Standard from
+ * [FIPS-205](https://csrc.nist.gov/pubs/fips/205/ipd). A.k.a. Sphincs+ v3.1.
+ *
+ * There are many different kinds of SLH, but basically `sha2` / `shake` indicate internal hash,
+ * `128` / `192` / `256` indicate security level, and `s` /`f` indicate trade-off (Small / Fast).
+ *
+ * Hashes function similarly to signatures. You hash a private key to get a public key,
+ * which can be used to verify the private key. However, this only works once since
+ * disclosing the pre-image invalidates the key.
+ *
+ * To address the "one-time" limitation, we can use a Merkle tree root hash:
+ * h(h(h(0) || h(1)) || h(h(2) || h(3))))
+ *
+ * This allows us to have the same public key output from the hash, but disclosing one
+ * path in the tree doesn't invalidate the others. By choosing a path related to the
+ * message, we can "sign" it.
+ *
+ * Limitation: Only a fixed number of signatures can be made. For instance, a Merkle tree
+ * with depth 8 allows 256 distinct messages. Using different trees for each node can
+ * prevent forgeries, but the key will still degrade over time.
+ *
+ * WOTS: One-time signatures (can be forged if same key used twice).
+ * FORS: Forest of Random Subsets
+ *
+ * Check out [official site](https://sphincs.org) & [repo](https://github.com/sphincs/sphincsplus).
+ * @module
+ */
+/*! noble-post-quantum - MIT License (c) 2024 Paul Miller (paulmillr.com) */
+import { hmac } from '@noble/hashes/hmac.js';
+import { bytesToNumberBE, numberToBytesBE } from '@noble/curves/utils.js';
+import { sha256, sha512 } from '@noble/hashes/sha2.js';
+import { shake256 } from '@noble/hashes/sha3.js';
+import { concatBytes, createView } from '@noble/hashes/utils.js';
+import { abytes, checkHash, cleanBytes, copyBytes, equalBytes, getMask, getMessage, getMessagePrehash, randomBytes, splitCoder, validateSigOpts, validateVerOpts, vecCoder, } from "./utils.js";
+// Keys the internal SLH-DSA surface accepts. `context` is deliberately absent: the public
+// wrappers consume it when they format M' and must not forward it, because a key that is
+// accepted and then never read is the same silent downgrade this validation exists to prevent.
+// `extraEntropy` is signing-only, so verification (which takes no options of its own) has none.
+const INTERNAL_SIG_OPT_KEYS = /* @__PURE__ */ Object.freeze(['extraEntropy']);
+const INTERNAL_VER_OPT_KEYS = /* @__PURE__ */ Object.freeze([]);
+/** Winternitz signature params. */
+/**
+ * Built-in SLH-DSA Table 2 subset keyed by strength/profile.
+ * SHA2 and SHAKE pairs share the same numeric rows here, so the hash family is chosen separately.
+ * `securityLevel` stores 128/192/256-bit strengths for `checkHash(...)`,
+ * not Table 2's category labels 1/3/5.
+ * Other Table 2 columns such as `m`, public-key bytes, and signature bytes
+ * stay derived at the export layer.
+ */
+export const PARAMS = /* @__PURE__ */ (() => Object.freeze({
+    '128f': Object.freeze({ W: 16, N: 16, H: 66, D: 22, K: 33, A: 6, securityLevel: 128 }),
+    '128s': Object.freeze({ W: 16, N: 16, H: 63, D: 7, K: 14, A: 12, securityLevel: 128 }),
+    '192f': Object.freeze({ W: 16, N: 24, H: 66, D: 22, K: 33, A: 8, securityLevel: 192 }),
+    '192s': Object.freeze({ W: 16, N: 24, H: 63, D: 7, K: 17, A: 14, securityLevel: 192 }),
+    '256f': Object.freeze({ W: 16, N: 32, H: 68, D: 17, K: 35, A: 9, securityLevel: 256 }),
+    '256s': Object.freeze({ W: 16, N: 32, H: 64, D: 8, K: 22, A: 14, securityLevel: 256 }),
+}))();
+// FIPS 205 `ADRS.setTypeAndClear(...)` selectors. Local names shorten the spec labels
+// (`WOTS_HASH` -> `WOTS`, `TREE` -> `HASHTREE`, `FORS_ROOTS` -> `FORSPK`), and `setAddr({ type })`
+// below only writes the type word; callers still need to preserve or overwrite the trailing words.
+const AddressType = {
+    WOTS: 0,
+    WOTSPK: 1,
+    HASHTREE: 2,
+    FORSTREE: 3,
+    FORSPK: 4,
+    WOTSPRF: 5,
+    FORSPRF: 6,
+};
+// Local FIPS 205 Algorithm 4 `base_2^b(...)` implementation. Bits are consumed in big-endian
+// order within each input byte, and callers must provide at least `ceil(outLen * b / 8)` bytes;
+// short inputs are not rejected and would zero-extend implicitly.
+const base2b = (outLen, b) => {
+    const mask = getMask(b);
+    return (bytes) => {
+        const baseB = new Uint32Array(outLen);
+        for (let out = 0, pos = 0, bits = 0, total = 0; out < outLen; out++) {
+            while (bits < b) {
+                total = (total << 8) | bytes[pos++];
+                bits += 8;
+            }
+            bits -= b;
+            baseB[out] = (total >>> bits) & mask;
+        }
+        return baseB;
+    };
+};
+const _1n = /* @__PURE__ */ BigInt(1);
+const _8n = /* @__PURE__ */ BigInt(8);
+const _0xffn = /* @__PURE__ */ BigInt(0xff);
+function getMaskBig(bits) {
+    return (_1n << BigInt(bits)) - _1n; // 4 -> 0b1111
+}
+/** One parameter/hash instantiation of the public SLH-DSA API.
+ * `keygen(seed)` is a deterministic 3N-byte library hook around the internal keygen flow,
+ * and `getPublicKey(secretKey)` only extracts the embedded public key
+ * instead of recomputing `PK.root`.
+ */
+function gen(opts, hashOpts_) {
+    const hashOpts = hashOpts_;
+    const { N, W, H, D, K, A, securityLevel: securityLevel } = opts;
+    const getContext = hashOpts.getContext(opts);
+    if (W !== 16)
+        throw new Error('Unsupported Winternitz parameter');
+    const WOTS_LOGW = 4;
+    const WOTS_LEN1 = Math.floor((8 * N) / WOTS_LOGW);
+    const WOTS_LEN2 = N <= 8 ? 2 : N <= 136 ? 3 : 4;
+    const TREE_HEIGHT = Math.floor(H / D);
+    const WOTS_LEN = WOTS_LEN1 + WOTS_LEN2;
+    let ADDR_BYTES = 22;
+    let OFFSET_LAYER = 0;
+    let OFFSET_TREE = 1;
+    let OFFSET_TYPE = 9;
+    let OFFSET_KP_ADDR2 = 12;
+    let OFFSET_KP_ADDR1 = 13;
+    let OFFSET_CHAIN_ADDR = 17;
+    let OFFSET_TREE_INDEX = 18;
+    let OFFSET_HASH_ADDR = 21;
+    if (!hashOpts.isCompressed) {
+        ADDR_BYTES = 32;
+        OFFSET_LAYER += 3;
+        OFFSET_TREE += 7;
+        OFFSET_TYPE += 10;
+        OFFSET_KP_ADDR2 += 10;
+        OFFSET_KP_ADDR1 += 10;
+        OFFSET_CHAIN_ADDR += 10;
+        OFFSET_TREE_INDEX += 10;
+        OFFSET_HASH_ADDR += 10;
+    }
+    // Mutates and returns `addr` in place. For the built-in parameter sets, the layer / chain /
+    // hash / height / keypair values fit in the low byte(s), and the tree value fits in 64 bits,
+    // so the untouched leading bytes in the wider FIPS 205 ADRS / ADRS_c fields stay zero.
+    // `height` / `chain` and `index` / `hash` share the same spec words, so callers must use the
+    // address-type-specific combinations instead of mixing both meanings in one call.
+    const setAddr = (opts, addr = new Uint8Array(ADDR_BYTES)) => {
+        // These objects are created in hot internal loops, so avoid cloning them. Read only own fields:
+        // absent address words must stay absent even if Object.prototype was polluted.
+        const type = Object.hasOwn(opts, 'type') ? opts.type : undefined;
+        const height = Object.hasOwn(opts, 'height') ? opts.height : undefined;
+        const tree = Object.hasOwn(opts, 'tree') ? opts.tree : undefined;
+        const layer = Object.hasOwn(opts, 'layer') ? opts.layer : undefined;
+        const index = Object.hasOwn(opts, 'index') ? opts.index : undefined;
+        const chain = Object.hasOwn(opts, 'chain') ? opts.chain : undefined;
+        const hash = Object.hasOwn(opts, 'hash') ? opts.hash : undefined;
+        const keypair = Object.hasOwn(opts, 'keypair') ? opts.keypair : undefined;
+        const subtreeAddr = Object.hasOwn(opts, 'subtreeAddr') ? opts.subtreeAddr : undefined;
+        const keypairAddr = Object.hasOwn(opts, 'keypairAddr') ? opts.keypairAddr : undefined;
+        if (height !== undefined)
+            addr[OFFSET_CHAIN_ADDR] = height;
+        if (layer !== undefined)
+            addr[OFFSET_LAYER] = layer;
+        if (type !== undefined)
+            addr[OFFSET_TYPE] = type;
+        if (chain !== undefined)
+            addr[OFFSET_CHAIN_ADDR] = chain;
+        if (hash !== undefined)
+            addr[OFFSET_HASH_ADDR] = hash;
+        // Manual big-endian writes: setAddr runs in the innermost WOTS/tree loops, and creating a
+        // DataView per call was a measurable share of sign() time.
+        if (index !== undefined) {
+            addr[OFFSET_TREE_INDEX + 0] = index >>> 24;
+            addr[OFFSET_TREE_INDEX + 1] = index >>> 16;
+            addr[OFFSET_TREE_INDEX + 2] = index >>> 8;
+            addr[OFFSET_TREE_INDEX + 3] = index;
+        }
+        if (subtreeAddr)
+            addr.set(subtreeAddr.subarray(0, OFFSET_TREE + 8));
+        if (tree !== undefined) {
+            let t = tree;
+            for (let i = 7; i >= 0; i--, t >>= _8n)
+                addr[OFFSET_TREE + i] = Number(t & _0xffn);
+        }
+        if (keypair !== undefined) {
+            addr[OFFSET_KP_ADDR1] = keypair;
+            if (TREE_HEIGHT > 8)
+                addr[OFFSET_KP_ADDR2] = keypair >>> 8;
+        }
+        if (keypairAddr) {
+            addr.set(keypairAddr.subarray(0, OFFSET_TREE + 8));
+            addr[OFFSET_KP_ADDR1] = keypairAddr[OFFSET_KP_ADDR1];
+            if (TREE_HEIGHT > 8)
+                addr[OFFSET_KP_ADDR2] = keypairAddr[OFFSET_KP_ADDR2];
+        }
+        return addr;
+    };
+    const chainCoder = base2b(WOTS_LEN2, WOTS_LOGW);
+    const chainLengths = (msg) => {
+        const W1 = base2b(WOTS_LEN1, WOTS_LOGW)(msg);
+        let csum = 0;
+        for (let i = 0; i < W1.length; i++)
+            csum += W - 1 - W1[i]; // ▷ Compute checksum
+        // csum ← csum ≪ ((8 − ((len2 · lg(w)) mod 8)) mod 8
+        csum <<= (8 - ((WOTS_LEN2 * WOTS_LOGW) % 8)) % 8;
+        // Checksum to base(LOG_W)
+        const W2 = chainCoder(numberToBytesBE(csum, Math.ceil((WOTS_LEN2 * WOTS_LOGW) / 8)));
+        // W1 || W2 (concatBytes cannot concat TypedArrays)
+        const lengths = new Uint32Array(WOTS_LEN);
+        lengths.set(W1);
+        lengths.set(W2, W1.length);
+        return lengths;
+    };
+    const messageToIndices = base2b(K, A);
+    const TREE_BITS = TREE_HEIGHT * (D - 1);
+    const LEAF_BITS = TREE_HEIGHT;
+    const hashMsgCoder = splitCoder('hashedMessage', Math.ceil((A * K) / 8), Math.ceil(TREE_BITS / 8), Math.ceil(TREE_HEIGHT / 8));
+    // `pkSeed` is the full public key byte string `PK.seed || PK.root`; after splitting `Hmsg`,
+    // mask away any spare high bits so `idx_tree` / `idx_leaf` match the spec's final mod-2^k steps.
+    const hashMessage = (R, pkSeed, msg, context) => {
+        const rawContext = context;
+        // digest ← Hmsg(R, PK.seed, PK.root, M)
+        const digest = rawContext.Hmsg(R, pkSeed, msg, hashMsgCoder.bytesLen);
+        const [md, tmpIdxTree, tmpIdxLeaf] = hashMsgCoder.decode(digest);
+        const tree = bytesToNumberBE(tmpIdxTree) & getMaskBig(TREE_BITS);
+        const leafIdx = Number(bytesToNumberBE(tmpIdxLeaf)) & getMask(LEAF_BITS);
+        return { tree, leafIdx, md };
+    };
+    // Iterative `xmss_node` / `xmss_sign` core: mutate `treeAddr` in place, collapse completed
+    // sibling pairs on `stack`, and record the sibling whenever the current subtree is the auth-path
+    // neighbor of the target leaf at that height.
+    const treehash = (height, fn) => function treehash_i(context, leafIdx, idxOffset, treeAddr, info) {
+        const rawContext = context;
+        const leafFn = fn;
+        const maxIdx = (1 << height) - 1;
+        const stack = new Uint8Array(height * N);
+        const authPath = new Uint8Array(height * N);
+        // One node buffer per treehash call (not per leaf): both halves are fully overwritten at
+        // each use, and the returned root aliases cur1, which is never reused after return.
+        const current = new Uint8Array(2 * N);
+        const cur0 = current.subarray(0, N);
+        const cur1 = current.subarray(N);
+        for (let idx = 0;; idx++) {
+            const addrOffset = idx + idxOffset;
+            cur1.set(leafFn(leafIdx, addrOffset, rawContext, info));
+            let h = 0;
+            for (let i = idx, o = idxOffset, l = leafIdx;; h++, i >>>= 1, l >>>= 1, o >>>= 1) {
+                if (h === height)
+                    return { root: cur1, authPath }; // Returns from here
+                if ((i ^ l) === 1)
+                    authPath.subarray(h * N).set(cur1); // authPath.push(cur1)
+                if ((i & 1) === 0 && idx < maxIdx)
+                    break;
+                setAddr({ height: h + 1, index: (i >> 1) + (o >> 1) }, treeAddr);
+                cur0.set(stack.subarray(h * N).subarray(0, N));
+                cur1.set(rawContext.thashN(2, current, treeAddr));
+            }
+            stack.subarray(h * N).set(cur1); // stack.push(cur1)
+        }
+        // @ts-ignore
+        throw new Error('Unreachable code path reached, report this error');
+    };
+    const wotsTreehash = treehash(TREE_HEIGHT, (leafIdx, addrOffset, context, info) => {
+        const rawContext = context;
+        const wotsPk = new Uint8Array(WOTS_LEN * N);
+        // `keygen()` passes `leafIdx = ~0 >>> 0`, so no real XMSS leaf matches and this suppresses
+        // WOTS signature capture while still hashing every chain to its public-key endpoint.
+        const wotsKmask = addrOffset === leafIdx ? 0 : ~0 >>> 0;
+        setAddr({ keypair: addrOffset }, info.leafAddr);
+        setAddr({ keypair: addrOffset }, info.pkAddr);
+        for (let i = 0; i < WOTS_LEN; i++) {
+            const wotsK = info.wotsSteps[i] | wotsKmask;
+            const pk = wotsPk.subarray(i * N, (i + 1) * N);
+            setAddr({ chain: i, hash: 0, type: AddressType.WOTSPRF }, info.leafAddr);
+            pk.set(rawContext.PRFaddr(info.leafAddr));
+            setAddr({ type: AddressType.WOTS }, info.leafAddr);
+            for (let k = 0;; k++) {
+                if (k === wotsK)
+                    info.wotsSig.subarray(i * N).set(pk); //wotsSig.push()
+                if (k === W - 1)
+                    break;
+                setAddr({ hash: k }, info.leafAddr);
+                pk.set(rawContext.thash1(pk, info.leafAddr));
+            }
+        }
+        return rawContext.thashN(WOTS_LEN, wotsPk, info.pkAddr);
+    });
+    const forsTreehash = treehash(A, (_, addrOffset, context, forsLeafAddr) => {
+        const rawContext = context;
+        setAddr({ type: AddressType.FORSPRF, index: addrOffset }, forsLeafAddr);
+        const prf = rawContext.PRFaddr(forsLeafAddr);
+        setAddr({ type: AddressType.FORSTREE }, forsLeafAddr);
+        return rawContext.thash1(prf, forsLeafAddr);
+    });
+    // Fuse `xmss_sign` with the subtree-root computation needed by `ht_sign`, so one tree walk
+    // yields both the WOTS/auth-path signature and the root that the next hypertree layer signs.
+    const merkleSign = (context, wotsAddr, treeAddr, leafIdx, prevRoot = new Uint8Array(N)) => {
+        setAddr({ type: AddressType.HASHTREE }, treeAddr);
+        // State variables
+        const info = {
+            wotsSig: new Uint8Array(wotsCoder.bytesLen),
+            wotsSteps: chainLengths(prevRoot),
+            leafAddr: setAddr({ subtreeAddr: wotsAddr }),
+            pkAddr: setAddr({ type: AddressType.WOTSPK, subtreeAddr: wotsAddr }),
+        };
+        const { root, authPath } = wotsTreehash(context, leafIdx, 0, treeAddr, info);
+        return {
+            root,
+            sigWots: info.wotsSig.subarray(0, WOTS_LEN * N),
+            sigAuth: authPath,
+        };
+    };
+    const computeRoot = (leaf, leafIdx, idxOffset, authPath, treeHeight, context, addr) => {
+        const rawContext = context;
+        const buffer = new Uint8Array(2 * N);
+        const b0 = buffer.subarray(0, N);
+        const b1 = buffer.subarray(N, 2 * N);
+        // Algorithm 11 hashes `node || AUTH[k]` for even nodes and `AUTH[k] || node` for odd ones,
+        // so reuse one `2N` buffer and just swap which half receives the sibling at each level.
+        // `idxOffset` carries the subtree base for the shared FORS path, so `leafIdx + idxOffset`
+        // tracks the same tree-global index updates that Algorithms 11 and 17 apply to ADRS.
+        // First iter
+        if ((leafIdx & 1) !== 0) {
+            b1.set(leaf.subarray(0, N));
+            b0.set(authPath.subarray(0, N));
+        }
+        else {
+            b0.set(leaf.subarray(0, N));
+            b1.set(authPath.subarray(0, N));
+        }
+        leafIdx >>>= 1;
+        idxOffset >>>= 1;
+        // Rest
+        for (let i = 0; i < treeHeight - 1; i++, leafIdx >>= 1, idxOffset >>= 1) {
+            setAddr({ height: i + 1, index: leafIdx + idxOffset }, addr);
+            const a = authPath.subarray((i + 1) * N, (i + 2) * N);
+            if ((leafIdx & 1) !== 0) {
+                b1.set(rawContext.thashN(2, buffer, addr));
+                b0.set(a);
+            }
+            else {
+                buffer.set(rawContext.thashN(2, buffer, addr));
+                b1.set(a);
+            }
+        }
+        // Root
+        setAddr({ height: treeHeight, index: leafIdx + idxOffset }, addr);
+        return rawContext.thashN(2, buffer, addr);
+    };
+    const seedCoder = splitCoder('seed', N, N, N);
+    const publicCoder = splitCoder('publicKey', N, N);
+    const secretCoder = splitCoder('secretKey', N, N, publicCoder.bytesLen);
+    const forsCoder = vecCoder(splitCoder('fors', N, N * A), K);
+    const wotsCoder = vecCoder(splitCoder('wots', WOTS_LEN * N, TREE_HEIGHT * N), D);
+    const sigCoder = splitCoder('signature', N, forsCoder, wotsCoder); // random || fors || wots
+    const internal = Object.freeze({
+        info: Object.freeze({ type: 'internal-slh-dsa' }),
+        lengths: Object.freeze({
+            publicKey: publicCoder.bytesLen,
+            secretKey: secretCoder.bytesLen,
+            signature: sigCoder.bytesLen,
+            seed: seedCoder.bytesLen,
+            signRand: N,
+        }),
+        keygen(seed) {
+            if (seed !== undefined)
+                abytes(seed, seedCoder.bytesLen, 'seed');
+            seed = seed === undefined ? randomBytes(seedCoder.bytesLen) : copyBytes(seed);
+            // Set SK.seed, SK.prf, and PK.seed to random n-byte
+            const [secretSeed, secretPRF, publicSeed] = seedCoder.decode(seed);
+            const context = getContext(publicSeed, secretSeed);
+            // ADRS.setLayerAddress(d − 1)
+            const topTreeAddr = setAddr({ layer: D - 1 });
+            const wotsAddr = setAddr({ layer: D - 1 });
+            //PK.root ←_xmss node(SK.seed, 0, h′, PK.seed, ADRS)
+            const { root } = merkleSign(context, wotsAddr, topTreeAddr, ~0 >>> 0);
+            const publicKey = publicCoder.encode([publicSeed, root]);
+            const secretKey = secretCoder.encode([secretSeed, secretPRF, publicKey]);
+            context.clean();
+            cleanBytes(secretSeed, secretPRF, root, wotsAddr, topTreeAddr);
+            return {
+                publicKey: publicKey,
+                secretKey: secretKey,
+            };
+        },
+        getPublicKey: (secretKey) => {
+            const [_skSeed, _skPRF, pk] = secretCoder.decode(secretKey);
+            return Uint8Array.from(pk);
+        },
+        sign: (msg, sk, opts = {}) => {
+            opts = validateSigOpts(opts, INTERNAL_SIG_OPT_KEYS);
+            let { extraEntropy: random } = opts;
+            const [skSeed, skPRF, pk] = secretCoder.decode(sk); // todo: fix
+            const [pkSeed, _] = publicCoder.decode(pk);
+            // Set opt_rand to either PK.seed or to a random n-byte string
+            if (random === false)
+                random = copyBytes(pkSeed);
+            else if (random === undefined)
+                random = randomBytes(N);
+            else
+                random = copyBytes(random);
+            abytes(random, N);
+            const context = getContext(pkSeed, skSeed);
+            // Generate randomizer
+            const R = context.PRFmsg(skPRF, random, msg); // R ← PRFmsg(SK.prf, opt_rand, M)
+            let { tree, leafIdx, md } = hashMessage(R, pk, msg, context);
+            // Create FORS signatures
+            const wotsAddr = setAddr({
+                type: AddressType.WOTS,
+                tree,
+                keypair: leafIdx,
+            });
+            const roots = [];
+            const forsLeaf = setAddr({ keypairAddr: wotsAddr });
+            const forsTreeAddr = setAddr({ keypairAddr: wotsAddr });
+            const indices = messageToIndices(md);
+            const fors = [];
+            for (let i = 0; i < indices.length; i++) {
+                const idxOffset = i << A;
+                setAddr({
+                    type: AddressType.FORSPRF,
+                    height: 0,
+                    index: indices[i] + idxOffset,
+                }, forsTreeAddr);
+                // Copy: PRFaddr returns a per-context scratch view, and this value is retained in
+                // `fors` across the many PRFaddr calls inside forsTreehash below.
+                const prf = copyBytes(context.PRFaddr(forsTreeAddr));
+                setAddr({ type: AddressType.FORSTREE }, forsTreeAddr);
+                const { root, authPath } = forsTreehash(context, indices[i], idxOffset, forsTreeAddr, forsLeaf);
+                roots.push(root);
+                fors.push([prf, authPath]);
+            }
+            const forsPkAddr = setAddr({
+                type: AddressType.FORSPK,
+                keypairAddr: wotsAddr,
+            });
+            // Copy: thashN returns a per-context scratch view, and `root` lives across every hash
+            // call in the hypertree loop below (it is also mutated via root.set).
+            const root = copyBytes(context.thashN(K, concatBytes(...roots), forsPkAddr));
+            // WOTS signatures
+            const treeAddr = setAddr({ type: AddressType.HASHTREE });
+            const wots = [];
+            for (let i = 0; i < D; i++, tree >>= BigInt(TREE_HEIGHT)) {
+                setAddr({ tree, layer: i }, treeAddr);
+                setAddr({ subtreeAddr: treeAddr, keypair: leafIdx }, wotsAddr);
+                const { sigWots, sigAuth, root: r, } = merkleSign(context, wotsAddr, treeAddr, leafIdx, root);
+                root.set(r);
+                cleanBytes(r);
+                wots.push([sigWots, sigAuth]);
+                leafIdx = Number(tree & getMaskBig(TREE_HEIGHT));
+            }
+            context.clean();
+            const SIG = sigCoder.encode([R, fors, wots]);
+            cleanBytes(R, random, treeAddr, wotsAddr, forsLeaf, forsTreeAddr, indices, roots);
+            return SIG;
+        },
+        verify: (sig, msg, publicKey, opts = {}) => {
+            // The internal verify reads no options; reject any so a stray key (e.g. a caller
+            // mistaking this for the public verify and passing `context`) is reported rather than
+            // silently swallowed by this function's arity.
+            validateVerOpts(opts, INTERNAL_VER_OPT_KEYS);
+            const [pkSeed, pubRoot] = publicCoder.decode(publicKey);
+            const pk = publicKey;
+            // FIPS 205 Algorithm 20 step 1: wrong-length signatures return false instead of throwing
+            // (same as ml-dsa). Must run before sigCoder.decode, which throws on length mismatch.
+            // Preserve TypeError for non-byte API arguments before treating byte lengths as invalid.
+            abytes(sig, undefined, 'signature');
+            if (sig.length !== sigCoder.bytesLen)
+                return false;
+            const [random, forsVec, wotsVec] = sigCoder.decode(sig);
+            const context = getContext(pkSeed);
+            let { tree, leafIdx, md } = hashMessage(random, pk, msg, context);
+            const wotsAddr = setAddr({
+                type: AddressType.WOTS,
+                tree,
+                keypair: leafIdx,
+            });
+            // FORS signature
+            const roots = [];
+            const forsTreeAddr = setAddr({
+                type: AddressType.FORSTREE,
+                keypairAddr: wotsAddr,
+            });
+            const indices = messageToIndices(md);
+            for (let i = 0; i < forsVec.length; i++) {
+                const [prf, authPath] = forsVec[i];
+                const idxOffset = i << A;
+                setAddr({ height: 0, index: indices[i] + idxOffset }, forsTreeAddr);
+                const leaf = context.thash1(prf, forsTreeAddr);
+                // Copy: computeRoot returns a thashN scratch view, and roots are retained across the
+                // remaining FORS iterations (computeRoot itself copies `leaf` before hashing).
+                roots.push(copyBytes(computeRoot(leaf, indices[i], idxOffset, authPath, A, context, forsTreeAddr)));
+            }
+            const forsPkAddr = setAddr({
+                type: AddressType.FORSPK,
+                keypairAddr: wotsAddr,
+            });
+            // Copy: `root` must survive the thash1/thashN calls of the WOTS chain loop below.
+            let root = copyBytes(context.thashN(K, concatBytes(...roots), forsPkAddr)); // root = thash()
+            // WOTS signature
+            const treeAddr = setAddr({ type: AddressType.HASHTREE });
+            const wotsPkAddr = setAddr({ type: AddressType.WOTSPK });
+            const wotsPk = new Uint8Array(WOTS_LEN * N);
+            for (let i = 0; i < wotsVec.length; i++, tree >>= BigInt(TREE_HEIGHT)) {
+                const [wots, sigAuth] = wotsVec[i];
+                setAddr({ tree, layer: i }, treeAddr);
+                setAddr({ subtreeAddr: treeAddr, keypair: leafIdx }, wotsAddr);
+                setAddr({ keypairAddr: wotsAddr }, wotsPkAddr);
+                const lengths = chainLengths(root);
+                for (let i = 0; i < WOTS_LEN; i++) {
+                    setAddr({ chain: i }, wotsAddr);
+                    const steps = W - 1 - lengths[i];
+                    const start = lengths[i];
+                    const out = wotsPk.subarray(i * N);
+                    out.set(wots.subarray(i * N, (i + 1) * N));
+                    for (let j = start; j < start + steps && j < W; j++) {
+                        setAddr({ hash: j }, wotsAddr);
+                        out.set(context.thash1(out, wotsAddr));
+                    }
+                }
+                const leaf = context.thashN(WOTS_LEN, wotsPk, wotsPkAddr);
+                // Copy: `root` is read by chainLengths / equalBytes after later hash calls.
+                root = copyBytes(computeRoot(leaf, leafIdx, 0, sigAuth, TREE_HEIGHT, context, treeAddr));
+                leafIdx = Number(tree & getMaskBig(TREE_HEIGHT));
+            }
+            return equalBytes(root, pubRoot);
+        },
+    });
+    return Object.freeze({
+        info: Object.freeze({ type: 'slh-dsa' }),
+        internal,
+        securityLevel: securityLevel,
+        lengths: internal.lengths,
+        keygen: internal.keygen,
+        getPublicKey: internal.getPublicKey,
+        sign: (msg, secretKey, opts = {}) => {
+            opts = validateSigOpts(opts);
+            const M = getMessage(msg, opts.context);
+            // `context` is consumed by getMessage() above; forwarding it would make the internal
+            // surface accept a key it never reads.
+            const res = internal.sign(M, secretKey, { extraEntropy: opts.extraEntropy });
+            cleanBytes(M);
+            return res;
+        },
+        verify: (sig, msg, publicKey, opts = {}) => {
+            opts = validateVerOpts(opts);
+            return internal.verify(sig, getMessage(msg, opts.context), publicKey);
+        },
+        prehash: (hash) => {
+            checkHash(hash, securityLevel);
+            const rawHash = hash;
+            return Object.freeze({
+                info: Object.freeze({ type: 'hashslh-dsa' }),
+                lengths: internal.lengths,
+                keygen: internal.keygen,
+                getPublicKey: internal.getPublicKey,
+                sign: (msg, secretKey, opts = {}) => {
+                    opts = validateSigOpts(opts);
+                    const M = getMessagePrehash(rawHash, msg, opts.context);
+                    // As above: getMessagePrehash() consumes `context`, so it must not travel further.
+                    const res = internal.sign(M, secretKey, { extraEntropy: opts.extraEntropy });
+                    cleanBytes(M);
+                    return res;
+                },
+                verify: (sig, msg, publicKey, opts = {}) => {
+                    opts = validateVerOpts(opts);
+                    return internal.verify(sig, getMessagePrehash(rawHash, msg, opts.context), publicKey);
+                },
+            });
+        },
+    });
+}
+// FIPS 205 §11.1 SHAKE instantiation: this path hashes the full uncompressed address bytes,
+// unlike the compressed 22-byte SHA2 path in §11.2.
+const genShake = () => (opts) => (pubSeed, skSeed) => {
+    const { N } = opts;
+    const stats = { prf: 0, thash: 0, hmsg: 0, gen_message_random: 0 };
+    // §11.1 prefixes PRF/F/H/T_l with `PK.seed`, so cache that absorbed prefix once and clone it
+    // for each address-bound call instead of reabsorbing the same seed every time.
+    const h0 = shake256.create({}).update(pubSeed);
+    const h0tmp = h0.clone();
+    // Per-context output scratch: thash1/thashN/PRFaddr return these buffers directly, so
+    // callers must consume or copy a result before the next call on the same lane.
+    const thashOut = new Uint8Array(N);
+    const prfOut = new Uint8Array(N);
+    const thash = (blocks, input, addr) => {
+        stats.thash++;
+        const len = blocks * N;
+        h0._cloneInto(h0tmp)
+            .update(addr)
+            .update(input.length === len ? input : input.subarray(0, len))
+            .xofInto(thashOut);
+        return thashOut;
+    };
+    return {
+        PRFaddr: (addr) => {
+            if (!skSeed)
+                throw new Error('no sk seed');
+            stats.prf++;
+            h0._cloneInto(h0tmp).update(addr).update(skSeed).xofInto(prfOut);
+            return prfOut;
+        },
+        PRFmsg: (skPRF, random, msg) => {
+            stats.gen_message_random++;
+            return shake256
+                .create({})
+                .update(skPRF)
+                .update(random)
+                .update(msg)
+                .digest()
+                .subarray(0, N);
+        },
+        Hmsg: (R, pk, m, outLen) => {
+            stats.hmsg++;
+            return shake256.create({}).update(R.subarray(0, N)).update(pk).update(m).xof(outLen);
+        },
+        thash1: thash.bind(null, 1),
+        thashN: thash,
+        clean: () => {
+            h0.destroy();
+            h0tmp.destroy();
+            cleanBytes(thashOut, prfOut);
+            //console.log(stats);
+        },
+    };
+};
+const SHAKE_SIMPLE = /* @__PURE__ */ (() => ({ isCompressed: false, getContext: genShake() }))();
+/**
+ * SLH-DSA-SHAKE-128f: Table 2 row `n=16, h=66, d=22, h'=3, a=6, k=33, lg w=4, m=34`;
+ * lengths `publicKey=32`, `secretKey=64`, `signature=17088`, `seed=48`, `signRand=16`.
+ * Also exposes `.prehash(...)`.
+ */
+export const slh_dsa_shake_128f = /* @__PURE__ */ (() => gen(PARAMS['128f'], SHAKE_SIMPLE))();
+/**
+ * SLH-DSA-SHAKE-128s: Table 2 row `n=16, h=63, d=7, h'=9, a=12, k=14, lg w=4, m=30`;
+ * lengths `publicKey=32`, `secretKey=64`, `signature=7856`, `seed=48`, `signRand=16`.
+ * Also exposes `.prehash(...)`.
+ */
+export const slh_dsa_shake_128s = /* @__PURE__ */ (() => gen(PARAMS['128s'], SHAKE_SIMPLE))();
+/**
+ * SLH-DSA-SHAKE-192f: Table 2 row `n=24, h=66, d=22, h'=3, a=8, k=33, lg w=4, m=42`;
+ * lengths `publicKey=48`, `secretKey=96`, `signature=35664`, `seed=72`, `signRand=24`.
+ * Also exposes `.prehash(...)`.
+ */
+export const slh_dsa_shake_192f = /* @__PURE__ */ (() => gen(PARAMS['192f'], SHAKE_SIMPLE))();
+/**
+ * SLH-DSA-SHAKE-192s: Table 2 row `n=24, h=63, d=7, h'=9, a=14, k=17, lg w=4, m=39`;
+ * lengths `publicKey=48`, `secretKey=96`, `signature=16224`, `seed=72`, `signRand=24`.
+ * Also exposes `.prehash(...)`.
+ */
+export const slh_dsa_shake_192s = /* @__PURE__ */ (() => gen(PARAMS['192s'], SHAKE_SIMPLE))();
+/**
+ * SLH-DSA-SHAKE-256f: Table 2 row `n=32, h=68, d=17, h'=4, a=9, k=35, lg w=4, m=49`;
+ * lengths `publicKey=64`, `secretKey=128`, `signature=49856`, `seed=96`, `signRand=32`.
+ * Also exposes `.prehash(...)`.
+ */
+export const slh_dsa_shake_256f = /* @__PURE__ */ (() => gen(PARAMS['256f'], SHAKE_SIMPLE))();
+/**
+ * SLH-DSA-SHAKE-256s: Table 2 row `n=32, h=64, d=8, h'=8, a=14, k=22, lg w=4, m=47`;
+ * lengths `publicKey=64`, `secretKey=128`, `signature=29792`, `seed=96`, `signRand=32`.
+ * Also exposes `.prehash(...)`.
+ */
+export const slh_dsa_shake_256s = /* @__PURE__ */ (() => gen(PARAMS['256s'], SHAKE_SIMPLE))();
+// FIPS 205 §11.2 SHA2 instantiation. The `h0` / `h1` split is intentional:
+// category-1 keeps everything on SHA-256, while category-3/5 keep `PRFaddr` / `thash1`
+// on SHA-256 but switch `PRFmsg`, `Hmsg`, and multi-block `thashN` to SHA-512.
+const genSha = (h0, h1) => (opts) => (pub_seed, sk_seed) => {
+    const { N } = opts;
+    /*
+    Perf debug stats, how much hashes we call?
+    128f_simple: { prf: 8305, thash: 96_922, hmsg: 1, gen_message_random: 1, mgf1: 2 }
+    256s_robust: { prf: 497_686, thash: 2_783_203, hmsg: 1, gen_message_random: 1, mgf1: 2_783_205}
+    256f_simple: { prf: 36_179, thash: 309_693, hmsg: 1, gen_message_random: 1, mgf1: 2 }
+    */
+    const stats = { prf: 0, thash: 0, hmsg: 0, gen_message_random: 0, mgf1: 0 };
+    const counterB = new Uint8Array(4);
+    const counterV = createView(counterB);
+    // §11.2 prefixes SHA2 PRF/F/H/T_l with `PK.seed || toByte(0, blockLen-N)`, so cache the
+    // zero-padded seed block once for the SHA-256 lane and once for the SHA-512 lane.
+    const h0ps = h0
+        .create()
+        .update(pub_seed)
+        .update(new Uint8Array(h0.blockLen - N));
+    const h1ps = h1
+        .create()
+        .update(pub_seed)
+        .update(new Uint8Array(h1.blockLen - N));
+    const h0tmp = h0ps.clone();
+    const h1tmp = h1ps.clone();
+    // Per-context output scratch: thash1/thashN/PRFaddr return views into these buffers, so
+    // callers must consume or copy a result before the next call on the same lane (see Context
+    // docs). digestInto also skips digest()'s per-call destroy(): the tmp states are fully
+    // overwritten by the next _cloneInto and wiped in clean().
+    const h0out = new Uint8Array(h0.outputLen);
+    const h1out = new Uint8Array(h1.outputLen);
+    const prfOut = new Uint8Array(h0.outputLen);
+    const h0outN = h0out.subarray(0, N);
+    const h1outN = h1out.subarray(0, N);
+    const prfOutN = prfOut.subarray(0, N);
+    // https://www.rfc-editor.org/rfc/rfc8017.html#appendix-B.2.1
+    // This local helper is intentionally stricter than generic MGF1 reuse: current SLH-DSA callers
+    // only request tiny `m`-byte outputs, but the guard below rejects `length > 2^32` instead of
+    // RFC 8017's broader `maskLen > 2^32 * hLen` bound.
+    function mgf1(seed, length, hash) {
+        stats.mgf1++;
+        const out = new Uint8Array(Math.ceil(length / hash.outputLen) * hash.outputLen);
+        // NOT 2^32-1
+        if (length > 2 ** 32)
+            throw new Error('mask too long');
+        for (let counter = 0, o = out; o.length; counter++) {
+            counterV.setUint32(0, counter, false);
+            hash.create().update(seed).update(counterB).digestInto(o);
+            o = o.subarray(hash.outputLen);
+        }
+        cleanBytes(out.subarray(length));
+        return out.subarray(0, length);
+    }
+    const thash = (h, hTmp, out, outN) => (blocks, input, addr) => {
+        stats.thash++;
+        const len = blocks * N;
+        h._cloneInto(hTmp)
+            .update(addr)
+            .update(input.length === len ? input : input.subarray(0, len))
+            .digestInto(out);
+        return outN;
+    };
+    return {
+        PRFaddr: (addr) => {
+            if (!sk_seed)
+                throw new Error('No sk seed');
+            stats.prf++;
+            h0ps
+                ._cloneInto(h0tmp)
+                .update(addr)
+                .update(sk_seed)
+                .digestInto(prfOut);
+            return prfOutN;
+        },
+        PRFmsg: (skPRF, random, msg) => {
+            stats.gen_message_random++;
+            return hmac
+                .create(h1, skPRF)
+                .update(random)
+                .update(msg)
+                .digest()
+                .subarray(0, N);
+        },
+        Hmsg: (R, pk, m, outLen) => {
+            stats.hmsg++;
+            const seed = concatBytes(R.subarray(0, N), pk.subarray(0, N), h1.create().update(R.subarray(0, N)).update(pk).update(m).digest());
+            return mgf1(seed, outLen, h1);
+        },
+        thash1: thash(h0ps, h0tmp, h0out, h0outN).bind(null, 1),
+        thashN: thash(h1ps, h1tmp, h1out, h1outN),
+        clean: () => {
+            h0ps.destroy();
+            h1ps.destroy();
+            h0tmp.destroy();
+            h1tmp.destroy();
+            cleanBytes(h0out, h1out, prfOut);
+            //console.log(stats);
+        },
+    };
+};
+const SHA256_SIMPLE = /* @__PURE__ */ (() => ({
+    isCompressed: true,
+    getContext: genSha(sha256, sha256),
+}))();
+const SHA512_SIMPLE = /* @__PURE__ */ (() => ({
+    isCompressed: true,
+    getContext: genSha(sha256, sha512),
+}))();
+/**
+ * SLH-DSA-SHA2-128f: Table 2 row `n=16, h=66, d=22, h'=3, a=6, k=33, lg w=4, m=34`;
+ * lengths `publicKey=32`, `secretKey=64`, `signature=17088`, `seed=48`, `signRand=16`.
+ * Also exposes `.prehash(...)`.
+ * @example
+ * Generate deterministic SLH-DSA keys, sign one message, and verify the signature.
+ * ```ts
+ * import { sha256 } from '@noble/hashes/sha2.js';
+ * import { slh_dsa_sha2_128f } from '@noble/post-quantum/slh-dsa.js';
+ * const seed = new Uint8Array(slh_dsa_sha2_128f.lengths.seed!);
+ * const { secretKey, publicKey } = slh_dsa_sha2_128f.keygen(seed);
+ * const msg = new TextEncoder().encode('hello noble');
+ * const sig = slh_dsa_sha2_128f.sign(msg, secretKey);
+ * const isValid = slh_dsa_sha2_128f.verify(sig, msg, publicKey);
+ * const recovered = slh_dsa_sha2_128f.getPublicKey(secretKey);
+ * const context = new Uint8Array([1, 2, 3]);
+ * const prehash = slh_dsa_sha2_128f.prehash(sha256);
+ * const preSig = prehash.sign(msg, secretKey, { context });
+ * const preValid = prehash.verify(preSig, msg, publicKey, { context });
+ * const internalSig = slh_dsa_sha2_128f.internal.sign(msg, secretKey);
+ * ```
+ */
+export const slh_dsa_sha2_128f = /* @__PURE__ */ (() => gen(PARAMS['128f'], SHA256_SIMPLE))();
+/**
+ * SLH-DSA-SHA2-128s: Table 2 row `n=16, h=63, d=7, h'=9, a=12, k=14, lg w=4, m=30`;
+ * lengths `publicKey=32`, `secretKey=64`, `signature=7856`, `seed=48`, `signRand=16`.
+ * Also exposes `.prehash(...)`.
+ */
+export const slh_dsa_sha2_128s = /* @__PURE__ */ (() => gen(PARAMS['128s'], SHA256_SIMPLE))();
+/**
+ * SLH-DSA-SHA2-192f: Table 2 row `n=24, h=66, d=22, h'=3, a=8, k=33, lg w=4, m=42`;
+ * lengths `publicKey=48`, `secretKey=96`, `signature=35664`, `seed=72`, `signRand=24`.
+ * Also exposes `.prehash(...)`.
+ */
+export const slh_dsa_sha2_192f = /* @__PURE__ */ (() => gen(PARAMS['192f'], SHA512_SIMPLE))();
+/**
+ * SLH-DSA-SHA2-192s: Table 2 row `n=24, h=63, d=7, h'=9, a=14, k=17, lg w=4, m=39`;
+ * lengths `publicKey=48`, `secretKey=96`, `signature=16224`, `seed=72`, `signRand=24`.
+ * Also exposes `.prehash(...)`.
+ */
+export const slh_dsa_sha2_192s = /* @__PURE__ */ (() => gen(PARAMS['192s'], SHA512_SIMPLE))();
+/**
+ * SLH-DSA-SHA2-256f: Table 2 row `n=32, h=68, d=17, h'=4, a=9, k=35, lg w=4, m=49`;
+ * lengths `publicKey=64`, `secretKey=128`, `signature=49856`, `seed=96`, `signRand=32`.
+ * Also exposes `.prehash(...)`.
+ */
+export const slh_dsa_sha2_256f = /* @__PURE__ */ (() => gen(PARAMS['256f'], SHA512_SIMPLE))();
+/**
+ * SLH-DSA-SHA2-256s: Table 2 row `n=32, h=64, d=8, h'=8, a=14, k=22, lg w=4, m=47`;
+ * lengths `publicKey=64`, `secretKey=128`, `signature=29792`, `seed=96`, `signRand=32`.
+ * Also exposes `.prehash(...)`.
+ */
+export const slh_dsa_sha2_256s = /* @__PURE__ */ (() => gen(PARAMS['256s'], SHA512_SIMPLE))();

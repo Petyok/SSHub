@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PoC C scanner</title>
+<style>
+  body { font: 14px/1.4 monospace; margin: 0; padding: 8px; background: #fff; color: #000; }
+  video, canvas.work { width: 100%; max-width: 480px; display: block; background: #000; }
+  canvas.work { display: none; }
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, 10px); gap: 1px; margin: 6px 0; }
+  #grid div { width: 10px; height: 10px; background: #ddd; }
+  #grid div.ok { background: #000; }
+  .pass { color: #060; font-weight: bold; } .fail { color: #900; font-weight: bold; }
+  button { font: inherit; padding: 6px 10px; margin: 4px 4px 4px 0; }
+</style>
+</head>
+<body>
+<p>
+  Expected: <span id="exp">none (add ?seed=N&amp;len=M to the URL)</span>
+</p>
+<video id="cam" playsinline muted></video>
+<canvas id="work" class="work"></canvas>
+<p>
+  <button id="start">Start camera</button>
+  <button id="reset">Reset</button>
+</p>
+<p id="status">idle</p>
+<p>have <span id="have">0</span> / total <span id="total">?</span> · bad <span id="bad">0</span> · dupes <span id="dupes">0</span> · elapsed <span id="elapsed">0.0</span> s</p>
+<div id="grid"></div>
+<p id="result"></p>
+<script src="vendor/jsQR.js"></script>
+<script src="share-lib.js"></script>
+<script>
+(() => {
+  const L = window.ShareLib;
+  const $ = (id) => document.getElementById(id);
+  const q = new URLSearchParams(location.search);
+  const seed = q.has("seed") ? Number(q.get("seed")) : null;
+  const len = q.has("len") ? Number(q.get("len")) : null;
+  let expected = null;
+  if (seed !== null && len !== null) {
+    expected = L.seededBytes(len, seed);
+    $("exp").textContent = `seed ${seed}, ${len} bytes, sha256 pending`;
+    L.sha256Hex(expected).then((h) => { $("exp").textContent = `seed ${seed}, ${len} bytes, sha256 ${h}`; });
+  }
+  let rs, t0 = null, timer = null, stream = null, lastIdx = -1, done = false;
+  const cam = $("cam"), work = $("work"), ctx = work.getContext("2d", { willReadFrequently: true });
+
+  function reset() {
+    rs = new L.Reassembler(); t0 = null; done = false; lastIdx = -1;
+    $("grid").innerHTML = ""; $("result").textContent = ""; $("status").textContent = "scanning";
+    $("total").textContent = "?";
+  }
+
+  function paintGrid() {
+    const g = $("grid");
+    if (rs.total < 0 || rs.total > 400) { g.textContent = rs.total > 400 ? `grid hidden (${rs.total} chunks)` : ""; return; }
+    if (g.childElementCount !== rs.total) {
+      g.innerHTML = "";
+      for (let i = 0; i < rs.total; i++) g.appendChild(document.createElement("div"));
+    }
+    for (const idx of rs.parts.keys()) g.children[idx].classList.add("ok");
+  }
+
+  async function onComplete() {
+    done = true;
+    const got = rs.bytes;
+    const hash = await L.sha256Hex(got);
+    const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
+    $("status").textContent = "complete";
+    let verdict = "";
+    if (expected) {
+      const same = L.equalBytes(got, expected);
+      verdict = same ? `<span class="pass">MATCH</span>` : `<span class="fail">MISMATCH</span>`;
+    }
+    $("result").innerHTML = `complete in ${elapsed} s, ${got.length} bytes, sha256 ${hash} ${verdict}`;
+  }
+
+  function tick() {
+    if (!stream || done) return;
+    if (cam.readyState < 2) return;
+    work.width = cam.videoWidth; work.height = cam.videoHeight;
+    ctx.drawImage(cam, 0, 0);
+    const bytes = L.scanCanvas(work);
+    if (bytes) {
+      if (t0 === null) t0 = performance.now();
+      const st = rs.add(bytes);
+      $("have").textContent = st.have;
+      $("total").textContent = st.total;
+      $("bad").textContent = rs.bad;
+      $("dupes").textContent = rs.dupes;
+      $("elapsed").textContent = t0 === null ? "0.0" : ((performance.now() - t0) / 1000).toFixed(1);
+      paintGrid();
+      if (st.complete) onComplete();
+    }
+  }
+
+  $("start").onclick = async () => {
+    if (stream) return;
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+    cam.srcObject = stream;
+    await cam.play();
+    reset();
+    timer = setInterval(tick, 50);
+  };
+  $("reset").onclick = reset;
+  reset();
+  window.__scanner = { reset, state: () => ({ have: rs.parts.size, total: rs.total, bad: rs.bad, dupes: rs.dupes, complete: !!rs.bytes }) };
+})();
+</script>
+</body>
+</html>
