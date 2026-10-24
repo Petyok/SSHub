@@ -1086,3 +1086,352 @@ fn an_own_chain_that_diverges_from_the_checkpoint_is_refused_naming_the_seq() {
         cut_seq
     );
 }
+
+// ======================================================== review round 1 (protocol)
+
+#[test]
+fn rv_headattest_with_a_malformed_device_id_wedges_every_round() {
+    let d = ring(3);
+    let (a, b, c) = (&d[0], &d[1], &d[2]);
+    // The op itself is refused by the static checks (ingest runs the same ones).
+    let e = a
+        .store
+        .sync_append_local(
+            &a.id,
+            OpBody::HeadAttest {
+                device_id: "zz".into(),
+                seq: 1,
+                chain_hash: [7; 32],
+            },
+        )
+        .unwrap_err();
+    assert!(e.to_string().contains("16 lowercase hex"), "{e:#}");
+    // A peer's gossip with a bad entry is skipped, the round goes on.
+    ok(scripted(
+        b,
+        a,
+        |h| {
+            h.gossip.push(WireHead {
+                device_id: "zz".into(),
+                seq: 1,
+                hash: [7; 32],
+                sig: [0; 64],
+            })
+        },
+        |_, ops| ops,
+    ));
+    let (cb, sb) = round(b, c);
+    assert!(
+        cb.is_ok() && sb.is_ok(),
+        "honest b<->c round failed: client {:?} server {:?}",
+        cb.err(),
+        sb.err()
+    );
+}
+
+#[test]
+fn an_op_derived_head_claim_never_shadows_or_replaces_a_signed_head() {
+    let d = ring(2);
+    let (a, b) = (&d[0], &d[1]);
+    let op = a.append(1, "x");
+    b.store
+        .sync_append_local(
+            &b.id,
+            OpBody::HeadAttest {
+                device_id: b.did.clone(),
+                seq: 1,
+                chain_hash: op.hash(),
+            },
+        )
+        .unwrap();
+    // The claim is stored unsigned and is not gossiped.
+    let gossip = |x: &Dev| -> usize {
+        x.store
+            .with_conn(|c| {
+                Ok(c.query_row(
+                    "SELECT count(*) FROM sync_head_attests WHERE length(signature) = 64",
+                    [],
+                    |r| r.get::<_, i64>(0),
+                )? as usize)
+            })
+            .unwrap()
+    };
+    assert_eq!(gossip(b), 0);
+}
+
+#[test]
+fn rv_bundle_hex_slice_panics_and_poisons_the_store() {
+    let d = ring(2);
+    let s = format!("a\u{e9}{}", "a".repeat(125));
+    assert_eq!(s.len(), 128);
+    let v = json!({"proposal": {"c": "", "s": s}, "signs": [], "heads": [], "state": ""});
+    let bytes = serde_json::to_vec(&v).unwrap();
+    let store = &d[0].store;
+    let peer = d[1].did.clone();
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        store.sync_checkpoint_accept(&bytes, &peer, false)
+    }));
+    let panicked = r.is_err();
+    let usable = store.sync_devices().is_ok();
+    assert!(
+        !panicked && usable,
+        "panicked={panicked} store usable afterwards={usable}"
+    );
+}
+
+#[test]
+fn rv_forged_checkpoint_from_any_peer_replaces_the_state() {
+    let now = crate::store::now_ts();
+    let atk = ring(2);
+    let (m, m2) = (&atk[0], &atk[1]);
+    let honest = Dev::new();
+    let v = Dev::new();
+    v.trust(m);
+    v.trust(&honest);
+    v.store
+        .sync_register_device(
+            &v.id.public(),
+            "self",
+            DeviceRole::Holder,
+            Attendance::Attended,
+            DeviceKind::Terminal,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+    for s in [m, m2] {
+        s.trust(&v);
+        s.trust(&honest);
+    }
+    m.store
+        .sync_append_local(
+            &m.id,
+            OpBody::HostUpsert {
+                host_uid: [0xEE; 16],
+                fields: HostFields {
+                    name: Some("evil".into()),
+                    address: Some("evil.example".into()),
+                    ..Default::default()
+                },
+            },
+        )
+        .unwrap();
+    for s in [m, m2] {
+        s.store
+            .with_conn(|c| {
+                c.execute(
+                    "UPDATE sync_devices SET status='compromised', fork_a=?2, fork_b=?2 WHERE device_id=?1",
+                    rusqlite::params![honest.did, {
+                        let mut blob = vec![b'H'];
+                        blob.extend_from_slice(&[0u8; 64 + 32]);
+                        blob.extend_from_slice(&1u64.to_be_bytes());
+                        blob.extend_from_slice(honest.did.as_bytes());
+                        blob
+                    }],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+    }
+    let refs = [m, m2];
+    many_ops(&refs, 1, 4);
+    checkpoint(&refs, 0, now);
+    many_ops(&refs, 100, 4);
+    checkpoint(&refs, 1, now + 100);
+    many_ops(&refs, 150, 2);
+    converge(&refs);
+    m.store.sync_prune(now + 8 * 86_400 + 1_000).unwrap();
+    let (vs, _) = ok(round(&v, m));
+    assert!(vs.adopted.is_some(), "{vs:?}");
+    // v never reviewed anything, yet:
+    let devs = v.store.sync_devices().unwrap();
+    let injected = devs.iter().any(|d| d.id == m2.did);
+    let framed = devs
+        .iter()
+        .find(|d| d.id == honest.did)
+        .is_some_and(|d| d.status == DeviceStatus::Compromised);
+    let addr: Option<String> = v
+        .store
+        .with_conn(|c| {
+            Ok(
+                c.query_row("SELECT address FROM hosts WHERE name='evil'", [], |r| {
+                    r.get(0)
+                })
+                .ok(),
+            )
+        })
+        .unwrap();
+    let pending = v.store.sync_pending().unwrap().len();
+    assert!(
+        !injected && !framed && addr.is_none() && pending == 0,
+        "attacker device injected={injected}; honest device marked compromised without proof={framed}; evil host applied={addr:?}; pending={pending}"
+    );
+}
+
+#[test]
+fn rv_future_dated_checkpoint_makes_every_honest_op_wait_as_stale() {
+    let d = ring(3);
+    let (a, b, c) = (&d[0], &d[1], &d[2]);
+    let refs: Vec<&Dev> = d.iter().collect();
+    let now = crate::store::now_ts();
+    many_ops(&refs, 1, 2);
+    converge(&refs);
+    let (op, _) = a
+        .store
+        .sync_checkpoint_propose(&a.id, None, now + 31 * 86_400)
+        .unwrap();
+    for _ in 0..3 {
+        converge(&refs);
+    }
+    let accepted = b.store.sync_checkpoints().unwrap().into_iter().any(|c| {
+        c.proposal_hash == op.hash() && c.status == crate::sync::oplog::CheckpointStatus::Accepted
+    });
+    b.append(77, "after");
+    ok(round(b, c));
+    let reasons = c.store.sync_pending_with_reasons().unwrap();
+    let stale = reasons.iter().filter(|(_, r)| r == "stale").count();
+    assert!(
+        stale == 0,
+        "accepted at b={accepted}; {stale} plain Green ops of an honest device wait as 'stale' on c"
+    );
+}
+
+#[test]
+fn rv_an_offline_rival_wins_a_name_and_renames_the_real_host() {
+    let d = ring(2);
+    let (a, b) = (&d[0], &d[1]);
+    for n in 0..10u8 {
+        b.append(50 + n, &format!("x{n}"));
+    }
+    b.store
+        .sync_append_local(
+            &b.id,
+            OpBody::HostUpsert {
+                host_uid: [1; 16],
+                fields: HostFields {
+                    name: Some("prod".into()),
+                    address: Some("p.example".into()),
+                    ..Default::default()
+                },
+            },
+        )
+        .unwrap();
+    // a, offline: its own host, then a Safe rename.
+    a.store
+        .sync_append_local(
+            &a.id,
+            OpBody::HostUpsert {
+                host_uid: [2; 16],
+                fields: HostFields {
+                    name: Some("test".into()),
+                    address: Some("q.example".into()),
+                    ..Default::default()
+                },
+            },
+        )
+        .unwrap();
+    a.store
+        .sync_append_local(
+            &a.id,
+            OpBody::HostUpsert {
+                host_uid: [2; 16],
+                fields: HostFields {
+                    name: Some("prod".into()),
+                    ..Default::default()
+                },
+            },
+        )
+        .unwrap();
+    ok(round(a, b));
+    // b's user approves what is shown as a new host, and sees the rename as its own item.
+    let held = b.store.sync_pending_with_reasons().unwrap();
+    let rename = held
+        .iter()
+        .find(|(o, _)| matches!(&o.body, OpBody::HostUpsert { host_uid, fields } if *host_uid == [2; 16] && fields.name.as_deref() == Some("prod")))
+        .expect("the rename onto a taken name waits for review");
+    assert_eq!(rename.1, "tier");
+    for (op, _) in &held {
+        if op.hash() != rename.0.hash() {
+            b.store.sync_resolve_pending(&op.hash(), true).unwrap();
+        }
+    }
+    let by_name: Option<String> = b
+        .store
+        .with_conn(|c| {
+            Ok(
+                c.query_row("SELECT address FROM hosts WHERE name='prod'", [], |r| {
+                    r.get(0)
+                })
+                .ok(),
+            )
+        })
+        .unwrap();
+    assert_eq!(
+        by_name.as_deref(),
+        Some("p.example"),
+        "the name prod now resolves to the other host"
+    );
+}
+
+#[test]
+fn rv_unbounded_green_op_is_refused_before_it_is_stored_or_relayed() {
+    let d = ring(2);
+    let a = &d[0];
+    let e = a
+        .store
+        .sync_append_local(
+            &a.id,
+            OpBody::ShareStorageKey {
+                epoch: 1,
+                sealed: vec![7u8; 400_000],
+            },
+        )
+        .unwrap_err();
+    assert!(e.to_string().contains("sealed key is over"), "{e:#}");
+    assert_eq!(a.store.sync_log_growth(0).unwrap().0, 0);
+}
+
+#[test]
+fn rv_the_largest_accepted_op_fits_a_tail_frame() {
+    use crate::sync::oplog::MAX_OP_BYTES;
+    let d = ring(2);
+    let a = &d[0];
+    // The biggest op the store takes, built by hand (the body caps keep honest ops far below).
+    let mut op = a
+        .store
+        .sync_append_local(
+            &a.id,
+            OpBody::HeadAttest {
+                device_id: a.did.clone(),
+                seq: 1,
+                chain_hash: [1; 32],
+            },
+        )
+        .unwrap();
+    op.body = OpBody::ShareStorageKey {
+        epoch: 1,
+        sealed: vec![7u8; 1],
+    };
+    let fill = MAX_OP_BYTES - op.canonical_bytes().len();
+    op.body = OpBody::ShareStorageKey {
+        epoch: 1,
+        sealed: vec![7u8; 1 + fill / 2],
+    };
+    // JSON hex-escapes nothing, but the exact byte count is not the point: stay below the limit.
+    while op.canonical_bytes().len() > MAX_OP_BYTES {
+        if let OpBody::ShareStorageKey { sealed, .. } = &mut op.body {
+            sealed.pop();
+        }
+    }
+    let frame = serde_json::to_value(&SyncMsg::Tail {
+        device_id: a.did.clone(),
+        ops: vec![WireOp::of(&op)],
+    })
+    .unwrap();
+    let r = crate::sync::transport::write_frame(&mut Vec::new(), &frame);
+    assert!(
+        r.is_ok(),
+        "an op of {} bytes does not fit a frame: {:?}",
+        op.canonical_bytes().len(),
+        r.err()
+    );
+}

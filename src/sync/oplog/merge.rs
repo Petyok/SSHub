@@ -558,6 +558,10 @@ impl<'a> Settler<'a> {
                 OpBody::DeviceAdd { device, .. } => {
                     self.queue.push_back(Work::Author(device.device_id()));
                 }
+                // The delegate's own CertHostOpened ops are judged against the certificate.
+                OpBody::CertIssue { device_id, .. } => {
+                    self.queue.push_back(Work::Author(device_id.clone()));
+                }
                 _ => {}
             }
         }

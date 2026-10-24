@@ -414,4 +414,40 @@ mod tests {
         );
         assert_eq!(announce_exports(&store, &mut |_, _| Ok(())).unwrap(), 1);
     }
+
+    #[test]
+    fn the_window_opens_when_this_device_saw_the_ceremony_complete_not_at_the_op_stamp() {
+        let (store, id, did) = setup();
+        // The requester wrote 10 days ago into its op; this device received it at 5000.
+        open_window(&store, &id, &did, 1_000, 60);
+        store
+            .with_conn(|c| {
+                c.execute(
+                    "UPDATE sync_ops SET received_at = 5000 WHERE kind = 'BulkExport'",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        let mut none = |_: &HostUid| -> Result<Option<String>> { panic!("closed") };
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("a.csv");
+        assert!(export_all(&store, &did, &|| 1_030, &mut none, &dest).is_err());
+        assert!(active_window(&store, &did, 5_030).unwrap().is_some());
+        assert!(active_window(&store, &did, 5_060).unwrap().is_none());
+        // A stamp in the far future does not open the window later either.
+        let (store, id, did) = setup();
+        open_window(&store, &id, &did, 9_000_000, 60);
+        store
+            .with_conn(|c| {
+                c.execute(
+                    "UPDATE sync_ops SET received_at = 1000 WHERE kind = 'BulkExport'",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(active_window(&store, &did, 1_030).unwrap().is_some());
+        assert!(active_window(&store, &did, 9_000_030).unwrap().is_none());
+    }
 }
