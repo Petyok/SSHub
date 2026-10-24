@@ -15,7 +15,8 @@
 use anyhow::{bail, Result};
 
 use super::crypto::chain_hash;
-use super::limits::MAX_FRAME_BYTES;
+use super::fountain::fountain_encode;
+use super::limits::{MAX_FRAME_BYTES, QR_PARITY_PERCENT};
 
 pub const SYNC_WIRE_V1: u16 = 1;
 pub const WIRE_MAGIC: [u8; 4] = *b"SWR1";
@@ -37,8 +38,15 @@ pub struct ChallengeWire {
 
 /// The exact bytes an approving holder signs:
 /// `tag || proto_version u16 LE || canonical_op || nonce || expiry i64 LE || eph || request_id u64 LE`.
-pub fn binding_preimage(op_canonical: &[u8], nonce: &[u8; 32], expiry: i64, eph: &[u8; 32], request_id: u64) -> Vec<u8> {
-    let mut b = Vec::with_capacity(DOMAIN_TAG_CHALLENGE.len() + 2 + op_canonical.len() + 32 + 8 + 32 + 8);
+pub fn binding_preimage(
+    op_canonical: &[u8],
+    nonce: &[u8; 32],
+    expiry: i64,
+    eph: &[u8; 32],
+    request_id: u64,
+) -> Vec<u8> {
+    let mut b =
+        Vec::with_capacity(DOMAIN_TAG_CHALLENGE.len() + 2 + op_canonical.len() + 32 + 8 + 32 + 8);
     b.extend_from_slice(DOMAIN_TAG_CHALLENGE);
     b.extend_from_slice(&SYNC_WIRE_V1.to_le_bytes());
     b.extend_from_slice(op_canonical);
@@ -50,13 +58,37 @@ pub fn binding_preimage(op_canonical: &[u8], nonce: &[u8; 32], expiry: i64, eph:
 }
 
 /// `BLAKE3(binding_preimage(..))`.
-pub fn binding_hash(op_canonical: &[u8], nonce: &[u8; 32], expiry: i64, eph: &[u8; 32], request_id: u64) -> [u8; 32] {
-    chain_hash(&binding_preimage(op_canonical, nonce, expiry, eph, request_id))
+pub fn binding_hash(
+    op_canonical: &[u8],
+    nonce: &[u8; 32],
+    expiry: i64,
+    eph: &[u8; 32],
+    request_id: u64,
+) -> [u8; 32] {
+    chain_hash(&binding_preimage(
+        op_canonical,
+        nonce,
+        expiry,
+        eph,
+        request_id,
+    ))
 }
 
 impl ChallengeWire {
+    /// Animated QR frames for this challenge: the encoded frame cut into `frame_bytes` pieces
+    /// (the QR byte capacity at level M, see `fountain::frame_bytes_for_area`) with the default parity.
+    pub fn to_qr_frames(&self, frame_bytes: usize) -> Result<Vec<Vec<u8>>> {
+        fountain_encode(&self.encode(), frame_bytes, QR_PARITY_PERCENT)
+    }
+
     pub fn binding_hash(&self) -> [u8; 32] {
-        binding_hash(&self.op_canonical, &self.nonce, self.expiry, &self.eph_x25519_pub, self.request_id)
+        binding_hash(
+            &self.op_canonical,
+            &self.nonce,
+            self.expiry,
+            &self.eph_x25519_pub,
+            self.request_id,
+        )
     }
 
     pub fn encode(&self) -> Vec<u8> {
@@ -65,7 +97,11 @@ impl ChallengeWire {
         out.extend_from_slice(&self.expiry.to_be_bytes());
         out.extend_from_slice(&self.eph_x25519_pub);
         out.extend_from_slice(&self.request_id.to_be_bytes());
-        out.extend_from_slice(&u32::try_from(self.op_canonical.len()).expect("op fits a frame").to_be_bytes());
+        out.extend_from_slice(
+            &u32::try_from(self.op_canonical.len())
+                .expect("op fits a frame")
+                .to_be_bytes(),
+        );
         out.extend_from_slice(&self.op_canonical);
         out.extend_from_slice(&self.op_signature);
         out
@@ -118,7 +154,10 @@ impl ShareResponseWire {
         if len > MAX_FRAME_BYTES as u64 || body.len() as u64 != 16 + len {
             bail!("share response length does not match its length field");
         }
-        Ok(Self { request_id: u64::from_be_bytes(body[..8].try_into().unwrap()), ciphertext: body[16..].to_vec() })
+        Ok(Self {
+            request_id: u64::from_be_bytes(body[..8].try_into().unwrap()),
+            ciphertext: body[16..].to_vec(),
+        })
     }
 }
 
@@ -196,16 +235,25 @@ mod tests {
 
     #[test]
     fn share_response_round_trip_and_rejections() {
-        let r = ShareResponseWire { request_id: 42, ciphertext: vec![1, 2, 3] };
+        let r = ShareResponseWire {
+            request_id: 42,
+            ciphertext: vec![1, 2, 3],
+        };
         let bytes = r.encode();
         assert_eq!(ShareResponseWire::decode(&bytes).unwrap(), r);
-        assert_eq!(&bytes[7..], &[0, 0, 0, 0, 0, 0, 0, 42, 0, 0, 0, 0, 0, 0, 0, 3, 1, 2, 3]);
+        assert_eq!(
+            &bytes[7..],
+            &[0, 0, 0, 0, 0, 0, 0, 42, 0, 0, 0, 0, 0, 0, 0, 3, 1, 2, 3]
+        );
         assert!(ShareResponseWire::decode(&bytes[..bytes.len() - 1]).is_err());
         let mut bomb = bytes.clone();
         bomb[15..23].copy_from_slice(&u64::MAX.to_be_bytes());
         assert!(ShareResponseWire::decode(&bomb).is_err());
         assert!(ChallengeWire::decode(&bytes).is_err(), "kind mismatch");
-        let empty = ShareResponseWire { request_id: 1, ciphertext: vec![] };
+        let empty = ShareResponseWire {
+            request_id: 1,
+            ciphertext: vec![],
+        };
         assert_eq!(ShareResponseWire::decode(&empty.encode()).unwrap(), empty);
     }
 
@@ -227,7 +275,13 @@ mod tests {
             assert_ne!(t.binding_hash(), h);
         }
         // the domain tag comes first and the version is little endian
-        let pre = binding_preimage(&c.op_canonical, &c.nonce, c.expiry, &c.eph_x25519_pub, c.request_id);
+        let pre = binding_preimage(
+            &c.op_canonical,
+            &c.nonce,
+            c.expiry,
+            &c.eph_x25519_pub,
+            c.request_id,
+        );
         assert!(pre.starts_with(b"sshub/sync/challenge/v1\x01\x00"));
     }
 }

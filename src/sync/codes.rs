@@ -48,7 +48,11 @@ pub fn normalize_code(input: &str) -> Result<String> {
 
 /// Groups of `group` characters separated by hyphens: `K7Q2-9FMX-C41T-8PWD`.
 pub fn format_groups(code: &str, group: usize) -> String {
-    code.as_bytes().chunks(group).map(|c| std::str::from_utf8(c).unwrap()).collect::<Vec<_>>().join("-")
+    code.as_bytes()
+        .chunks(group)
+        .map(|c| std::str::from_utf8(c).unwrap())
+        .collect::<Vec<_>>()
+        .join("-")
 }
 
 /// 16 characters (80 bits) of true randomness, shown in groups of four.
@@ -81,7 +85,10 @@ mod tests {
 
     #[test]
     fn normalisation_is_forgiving_about_look_alikes_and_strict_about_the_rest() {
-        assert_eq!(normalize_code("k7q2-9fmx c41t-8pwd").unwrap(), "K7Q29FMXC41T8PWD");
+        assert_eq!(
+            normalize_code("k7q2-9fmx c41t-8pwd").unwrap(),
+            "K7Q29FMXC41T8PWD"
+        );
         assert_eq!(normalize_code("OIl0").unwrap(), "0110");
         assert!(normalize_code("U").is_err());
         assert!(normalize_code("K7Q2-9FM!").is_err());

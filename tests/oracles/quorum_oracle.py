@@ -114,11 +114,11 @@ def run(path):
         elif p == "fountain_encode":
             payload = h(i["payload"])
             fb, pct = par["frame_bytes"], par["parity_percent"]
-            header_len = 16
+            header_len = 8
             block = fb - header_len
             k = -(-len(payload) // block)
             groups = 0 if (k < 2 or pct == 0) else max(1, -(-k * pct // 100))
-            doc = blake3.blake3(payload).digest()[:4]
+            doc = blake3.blake3(payload).digest()[:2]
             blocks = [payload[j * block:(j + 1) * block].ljust(block, b"\0") for j in range(k)]
             frames = []
             for seq in range(k + groups):
@@ -129,7 +129,7 @@ def run(path):
                     chunk = bytes(block)
                     for j in range(g, k, groups):
                         chunk = bytes(a ^ b for a, b in zip(chunk, blocks[j]))
-                frames.append((b"QF" + doc + struct.pack(">IHHH", len(payload), block, groups, seq) + chunk).hex())
+                frames.append((b"Q" + doc + struct.pack(">HBH", len(payload), groups, seq) + chunk).hex())
             check(vid, frames == o["frames"])
         else:
             check(vid, False, f"no oracle case for {p}")

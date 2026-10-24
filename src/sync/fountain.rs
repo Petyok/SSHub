@@ -5,26 +5,28 @@
 //! receiver that misses a frame catches it on the next lap.
 //!
 //! ```text
-//! frame = "QF" || doc_id(4) || total_len u32 BE || block_size u16 BE || groups u16 BE || seq u16 BE || block(block_size)
+//! frame = 0x51 || doc_id(2) || total_len u16 BE || groups u8 || seq u16 BE || block
 //! ```
 //!
-//! `doc_id` is the first 4 bytes of BLAKE3 of the payload (it separates documents on screen and
-//! checks reassembly, it is not authentication: the challenge inside is signed). Data frames have
-//! `seq < k`; the last block is zero padded. `groups` is `G`, the number of parity groups (0 = none),
-//! carried in every frame so a receiver never guesses it. With `G` parity groups, parity frame `g` (seq `k + g`)
-//! is the XOR of the blocks whose index is congruent to `g` modulo `G`.
+//! The header is 8 bytes because at 80x24 a QR code holds 84 bytes (version 5, level M).
+//! `block` is the rest of the frame, so the block size is implied by the frame length. `doc_id`
+//! is the first 2 bytes of BLAKE3 of the payload: it separates documents on screen and checks
+//! reassembly, it is not authentication (the challenge inside is signed). Data frames have
+//! `seq < k`; the last block is zero padded. `groups` is `G`, the number of parity groups
+//! (0 = none), carried in every frame so a receiver never guesses it. Parity frame `g`
+//! (`seq = k + g`) is the XOR of the blocks whose index is congruent to `g` modulo `G`.
 
 use anyhow::{bail, Result};
 
 use super::crypto::chain_hash;
 
-const MAGIC: &[u8; 2] = b"QF";
-pub const FRAME_HEADER: usize = 2 + 4 + 4 + 2 + 2 + 2;
+const MAGIC: u8 = 0x51;
+pub const FRAME_HEADER: usize = 1 + 2 + 2 + 1 + 2;
 /// Payloads above this are refused (a QR animation of this size is already minutes long).
-pub const MAX_PAYLOAD: usize = 256 * 1024;
+pub const MAX_PAYLOAD: usize = u16::MAX as usize;
 
-fn doc_id(payload: &[u8]) -> [u8; 4] {
-    chain_hash(payload)[..4].try_into().unwrap()
+fn doc_id(payload: &[u8]) -> [u8; 2] {
+    chain_hash(payload)[..2].try_into().unwrap()
 }
 
 /// Number of parity groups for `k` data blocks.
@@ -36,26 +38,57 @@ pub fn parity_groups(k: usize, parity_percent: u32) -> usize {
     }
 }
 
+/// Byte capacity of a QR code at error correction level M (byte mode), versions 1 to 20.
+const CAPACITY_M: [usize; 20] = [
+    14, 26, 42, 62, 84, 106, 122, 152, 180, 213, 251, 287, 331, 362, 412, 450, 504, 560, 624, 666,
+];
+
+/// QR version (1..=20) whose code, drawn with half-blocks (one module per column, two per row),
+/// fits `cols` x `rows` of terminal cells with a 4 module quiet zone on every side; `None` if
+/// not even version 1 fits.
+pub fn qr_version_for_area(cols: u16, rows: u16) -> Option<usize> {
+    let side = (i32::from(cols) - 8).min(2 * i32::from(rows) - 8);
+    let version = (side - 17) / 4;
+    (version >= 1).then(|| version.min(20) as usize)
+}
+
+/// Frame size (QR byte capacity at level M) for the terminal area a modal can use, e.g.
+/// 84 bytes for a full 80x24 screen (version 5), 331 bytes for 120x40 (version 13). `rows` is
+/// what the caller can give the code, quiet zone included: every row of text beside it costs
+/// two modules of height.
+pub fn frame_bytes_for_area(cols: u16, rows: u16) -> Option<usize> {
+    qr_version_for_area(cols, rows).map(|v| CAPACITY_M[v - 1])
+}
+
 /// Frames for one lap: all data frames, then the parity frames. Each frame is at most
 /// `frame_bytes` long (the QR byte budget).
-pub fn fountain_encode(payload: &[u8], frame_bytes: usize, parity_percent: u32) -> Result<Vec<Vec<u8>>> {
+pub fn fountain_encode(
+    payload: &[u8],
+    frame_bytes: usize,
+    parity_percent: u32,
+) -> Result<Vec<Vec<u8>>> {
     if payload.is_empty() || payload.len() > MAX_PAYLOAD {
-        bail!("payload must be 1..={MAX_PAYLOAD} bytes, got {}", payload.len());
+        bail!(
+            "payload must be 1..={MAX_PAYLOAD} bytes, got {}",
+            payload.len()
+        );
     }
-    if frame_bytes <= FRAME_HEADER || frame_bytes - FRAME_HEADER > u16::MAX as usize {
+    if frame_bytes <= FRAME_HEADER {
         bail!("frame size {frame_bytes} leaves no room for data");
     }
     let block = frame_bytes - FRAME_HEADER;
     let k = payload.len().div_ceil(block);
     let groups = parity_groups(k, parity_percent);
+    if groups > u8::MAX as usize || k + groups > u16::MAX as usize {
+        bail!("{k} blocks with {groups} parity groups do not fit the frame header");
+    }
     let id = doc_id(payload);
     let mk = |seq: usize, data: &[u8]| {
-        let mut f = Vec::with_capacity(FRAME_HEADER + block);
-        f.extend_from_slice(MAGIC);
+        let mut f = Vec::with_capacity(frame_bytes);
+        f.push(MAGIC);
         f.extend_from_slice(&id);
-        f.extend_from_slice(&(payload.len() as u32).to_be_bytes());
-        f.extend_from_slice(&(block as u16).to_be_bytes());
-        f.extend_from_slice(&(groups as u16).to_be_bytes());
+        f.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+        f.push(groups as u8);
         f.extend_from_slice(&(seq as u16).to_be_bytes());
         f.extend_from_slice(data);
         f
@@ -90,9 +123,17 @@ pub enum Push {
     OtherDocument,
 }
 
+struct Head {
+    id: [u8; 2],
+    total: usize,
+    block: usize,
+    groups: usize,
+    k: usize,
+}
+
 #[derive(Default)]
 pub struct FountainDecoder {
-    head: Option<([u8; 4], usize, usize, usize, usize)>, // doc id, total_len, block size, groups, k
+    head: Option<Head>,
     blocks: Vec<Option<Vec<u8>>>,
     parity: Vec<Option<Vec<u8>>>,
 }
@@ -104,32 +145,42 @@ impl FountainDecoder {
 
     /// `(blocks held, blocks needed)`, or `None` before the first frame.
     pub fn progress(&self) -> Option<(usize, usize)> {
-        self.head.map(|(_, _, _, _, k)| (self.blocks.iter().flatten().count(), k))
+        self.head
+            .as_ref()
+            .map(|h| (self.blocks.iter().flatten().count(), h.k))
     }
 
     pub fn push(&mut self, frame: &[u8]) -> Result<Push> {
-        if frame.len() <= FRAME_HEADER || &frame[..2] != MAGIC {
+        if frame.len() <= FRAME_HEADER || frame[0] != MAGIC {
             bail!("not a fountain frame");
         }
-        let id: [u8; 4] = frame[2..6].try_into().unwrap();
-        let total = u32::from_be_bytes(frame[6..10].try_into().unwrap()) as usize;
-        let block = u16::from_be_bytes(frame[10..12].try_into().unwrap()) as usize;
-        let groups = u16::from_be_bytes(frame[12..14].try_into().unwrap()) as usize;
-        let seq = u16::from_be_bytes(frame[14..16].try_into().unwrap()) as usize;
-        if block == 0 || frame.len() != FRAME_HEADER + block || total == 0 || total > MAX_PAYLOAD {
+        let id: [u8; 2] = frame[1..3].try_into().unwrap();
+        let total = u16::from_be_bytes(frame[3..5].try_into().unwrap()) as usize;
+        let groups = frame[5] as usize;
+        let seq = u16::from_be_bytes(frame[6..8].try_into().unwrap()) as usize;
+        let block = frame.len() - FRAME_HEADER;
+        if total == 0 {
             bail!("malformed fountain frame");
         }
         let k = total.div_ceil(block);
         if groups > k || seq >= k + groups {
             bail!("fountain frame index out of range");
         }
-        match self.head {
+        match &self.head {
             None => {
-                self.head = Some((id, total, block, groups, k));
+                self.head = Some(Head {
+                    id,
+                    total,
+                    block,
+                    groups,
+                    k,
+                });
                 self.blocks = vec![None; k];
                 self.parity = vec![None; groups];
             }
-            Some((hid, ht, hb, hg, _)) if (hid, ht, hb, hg) != (id, total, block, groups) => return Ok(Push::OtherDocument),
+            Some(h) if (h.id, h.total, h.block, h.groups) != (id, total, block, groups) => {
+                return Ok(Push::OtherDocument)
+            }
             Some(_) => {}
         }
         let data = frame[FRAME_HEADER..].to_vec();
@@ -147,16 +198,24 @@ impl FountainDecoder {
             self.parity[g] = Some(data);
         }
         self.repair();
-        Ok(if self.blocks.iter().flatten().count() > before { Push::Progress } else { Push::Redundant })
+        Ok(if self.blocks.iter().flatten().count() > before {
+            Push::Progress
+        } else {
+            Push::Redundant
+        })
     }
 
     /// Repairs a block wherever a group has exactly one missing block and its parity frame.
     fn repair(&mut self) {
-        let Some((_, _, block, groups, k)) = self.head else { return };
-        for g in 0..groups {
+        let Some(h) = &self.head else { return };
+        for g in 0..h.groups {
             let Some(p) = &self.parity[g] else { continue };
-            let members: Vec<usize> = (g..k).step_by(groups).collect();
-            let missing: Vec<usize> = members.iter().copied().filter(|i| self.blocks[*i].is_none()).collect();
+            let members: Vec<usize> = (g..h.k).step_by(h.groups).collect();
+            let missing: Vec<usize> = members
+                .iter()
+                .copied()
+                .filter(|i| self.blocks[*i].is_none())
+                .collect();
             if missing.len() == 1 {
                 let mut x = p.clone();
                 for i in members.iter().filter(|i| **i != missing[0]) {
@@ -164,7 +223,6 @@ impl FountainDecoder {
                         *a ^= b;
                     }
                 }
-                debug_assert_eq!(x.len(), block);
                 self.blocks[missing[0]] = Some(x);
             }
         }
@@ -172,13 +230,13 @@ impl FountainDecoder {
 
     /// The payload once every block is held; an error if the reassembly does not match the document id.
     pub fn finish(&self) -> Result<Option<Vec<u8>>> {
-        let Some((id, total, _, _, _)) = self.head else { return Ok(None) };
+        let Some(h) = &self.head else { return Ok(None) };
         if self.blocks.iter().any(Option::is_none) {
             return Ok(None);
         }
         let mut out: Vec<u8> = self.blocks.iter().flatten().flatten().copied().collect();
-        out.truncate(total);
-        if doc_id(&out) != id {
+        out.truncate(h.total);
+        if doc_id(&out) != h.id {
             bail!("reassembled payload does not match its document id (a frame from another source was mixed in)");
         }
         Ok(Some(out))
@@ -203,11 +261,15 @@ mod tests {
 
     #[test]
     fn round_trip_for_awkward_sizes() {
-        for n in [1usize, 2, 235, 236, 237, 1000, 4096, 10_000] {
+        for n in [1usize, 2, 241, 242, 243, 1000, 4096, 10_000] {
             for parity in [0u32, 25, 100] {
                 let frames = fountain_encode(&payload(n), 250, parity).unwrap();
                 assert!(frames.iter().all(|f| f.len() <= 250));
-                assert_eq!(collect(&frames).unwrap(), payload(n), "n={n} parity={parity}");
+                assert_eq!(
+                    collect(&frames).unwrap(),
+                    payload(n),
+                    "n={n} parity={parity}"
+                );
             }
         }
     }
@@ -227,15 +289,23 @@ mod tests {
         let p = payload(2000);
         let frames = fountain_encode(&p, 250, 25).unwrap();
         let k = p.len().div_ceil(250 - FRAME_HEADER);
-        // drop one data block per parity group, keep every parity frame
         let groups = parity_groups(k, 25);
-        let dropped: Vec<usize> = (0..groups.min(k)).collect();
-        let kept: Vec<Vec<u8>> = frames.iter().enumerate().filter(|(i, _)| !dropped.contains(i)).map(|(_, f)| f.clone()).collect();
+        let dropped: Vec<usize> = (0..groups.min(k)).collect(); // one block per group
+        let kept: Vec<Vec<u8>> = frames
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !dropped.contains(i))
+            .map(|(_, f)| f.clone())
+            .collect();
         assert_eq!(collect(&kept).unwrap(), p);
-        // dropping two blocks of one group cannot be repaired by that group alone
         if groups < k {
-            let two = [0usize, groups];
-            let kept: Vec<Vec<u8>> = frames.iter().enumerate().filter(|(i, _)| !two.contains(i)).map(|(_, f)| f.clone()).collect();
+            let two = [0usize, groups]; // two blocks of one group cannot be repaired by that group
+            let kept: Vec<Vec<u8>> = frames
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !two.contains(i))
+                .map(|(_, f)| f.clone())
+                .collect();
             assert!(collect(&kept).is_none());
         }
     }
@@ -259,7 +329,6 @@ mod tests {
         let mut d = FountainDecoder::new();
         d.push(&a[0]).unwrap();
         assert_eq!(d.push(&b[1]).unwrap(), Push::OtherDocument);
-        // a frame with the right header but altered content is caught at reassembly
         let mut bad = a[1].clone();
         let last = bad.len() - 1;
         bad[last] ^= 1;
@@ -273,17 +342,92 @@ mod tests {
     #[test]
     fn malformed_frames_and_bounds() {
         assert!(FountainDecoder::new().push(b"xx").is_err());
-        assert!(FountainDecoder::new().push(&[b'Q', b'F', 0, 0, 0, 0, 0, 0, 0, 5, 0, 3, 0, 0, 0, 0, 1, 2]).is_err(), "length does not match block size");
+        assert!(
+            FountainDecoder::new()
+                .push(&[0x00, 0, 0, 0, 5, 0, 0, 0, 1, 2])
+                .is_err(),
+            "bad magic"
+        );
+        assert!(
+            FountainDecoder::new()
+                .push(&[MAGIC, 0, 0, 0, 0, 0, 0, 0, 1])
+                .is_err(),
+            "zero total length"
+        );
+        assert!(
+            FountainDecoder::new()
+                .push(&[MAGIC, 0, 0, 0, 3, 9, 0, 0, 1])
+                .is_err(),
+            "more groups than blocks"
+        );
+        assert!(
+            FountainDecoder::new()
+                .push(&[MAGIC, 0, 0, 0, 3, 0, 0, 5, 1])
+                .is_err(),
+            "sequence out of range"
+        );
         assert!(fountain_encode(&[], 250, 25).is_err());
         assert!(fountain_encode(&payload(10), FRAME_HEADER, 25).is_err());
         assert!(fountain_encode(&vec![0; MAX_PAYLOAD + 1], 250, 25).is_err());
+        assert!(
+            fountain_encode(&payload(60_000), 12, 100).is_err(),
+            "too many blocks for the header"
+        );
     }
 
     #[test]
     fn frame_count_matches_the_budget_arithmetic() {
-        // 2.4 KiB challenge at 250 byte frames: 234 data bytes per frame
         let frames = fountain_encode(&payload(2400), 250, 25).unwrap();
         let k = 2400usize.div_ceil(250 - FRAME_HEADER);
         assert_eq!(frames.len(), k + parity_groups(k, 25));
+    }
+
+    #[test]
+    fn terminal_areas_map_to_the_qr_versions_the_poc_expects() {
+        assert_eq!(
+            qr_version_for_area(80, 24),
+            Some(5),
+            "a full 80x24 screen: version 5"
+        );
+        assert_eq!(frame_bytes_for_area(80, 24), Some(84));
+        assert_eq!(
+            qr_version_for_area(80, 20),
+            Some(3),
+            "four rows of text beside the code cost two versions"
+        );
+        assert_eq!(qr_version_for_area(120, 40), Some(13), "120x40: version 13");
+        assert_eq!(frame_bytes_for_area(120, 40), Some(331));
+        assert_eq!(qr_version_for_area(10, 10), None);
+        assert!(qr_version_for_area(500, 500).unwrap() <= 20);
+    }
+
+    /// The capacity table is checked against an independent encoder: a full frame must encode at
+    /// exactly its version, one byte more must not.
+    #[test]
+    fn capacity_table_matches_the_qr_encoder() {
+        use qrcode::{EcLevel, QrCode, Version};
+        for (i, cap) in CAPACITY_M.iter().enumerate() {
+            let v = Version::Normal(i as i16 + 1);
+            assert!(
+                QrCode::with_version(vec![0xA5u8; *cap], v, EcLevel::M).is_ok(),
+                "version {} should hold {cap} bytes",
+                i + 1
+            );
+            assert!(
+                QrCode::with_version(vec![0xA5u8; cap + 1], v, EcLevel::M).is_err(),
+                "version {} must not hold {}",
+                i + 1,
+                cap + 1
+            );
+        }
+    }
+
+    #[test]
+    fn every_frame_of_a_real_sized_challenge_encodes_as_a_qr_code_at_its_budget() {
+        use qrcode::{EcLevel, QrCode, Version};
+        let frames = fountain_encode(&payload(3000), 84, 25).unwrap();
+        for f in &frames {
+            assert!(QrCode::with_version(f.as_slice(), Version::Normal(5), EcLevel::M).is_ok());
+        }
     }
 }

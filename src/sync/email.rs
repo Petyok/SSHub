@@ -7,7 +7,10 @@
 //! Argon2id with the email profile.
 
 use anyhow::{anyhow, bail, Result};
-use chacha20poly1305::{aead::{Aead, KeyInit, Payload}, XChaCha20Poly1305};
+use chacha20poly1305::{
+    aead::{Aead, KeyInit, Payload},
+    XChaCha20Poly1305,
+};
 use rand_core::{OsRng, RngCore};
 use zeroize::Zeroizing;
 
@@ -23,7 +26,10 @@ pub const MIN_EMAIL_CODE_CHARS: usize = 20;
 fn key_for(code: &str, salt: &[u8; 16], profile: Argon2Profile) -> Result<Zeroizing<[u8; 32]>> {
     let code = normalize_code(code)?;
     if code.len() < MIN_EMAIL_CODE_CHARS {
-        bail!("an emailed code has at least {MIN_EMAIL_CODE_CHARS} characters, got {}", code.len());
+        bail!(
+            "an emailed code has at least {MIN_EMAIL_CODE_CHARS} characters, got {}",
+            code.len()
+        );
     }
     Ok(Zeroizing::new(try_argon2_derive(&code, salt, profile)?))
 }
@@ -36,11 +42,23 @@ pub fn email_fragment_seal(fragment: &[u8], code: &str) -> Result<Vec<u8>> {
     seal_with(fragment, code, ARGON2_EMAIL, salt, nonce)
 }
 
-pub(crate) fn seal_with(fragment: &[u8], code: &str, profile: Argon2Profile, salt: [u8; 16], nonce: [u8; 24]) -> Result<Vec<u8>> {
+pub(crate) fn seal_with(
+    fragment: &[u8],
+    code: &str,
+    profile: Argon2Profile,
+    salt: [u8; 16],
+    nonce: [u8; 24],
+) -> Result<Vec<u8>> {
     let key = key_for(code, &salt, profile)?;
     let mut out = [MAGIC.as_slice(), &[VERSION], &salt, &nonce].concat();
     let ct = XChaCha20Poly1305::new((&*key).into())
-        .encrypt((&nonce).into(), Payload { msg: fragment, aad: &out })
+        .encrypt(
+            (&nonce).into(),
+            Payload {
+                msg: fragment,
+                aad: &out,
+            },
+        )
         .expect("XChaCha20-Poly1305 encrypt");
     out.extend_from_slice(&ct);
     Ok(out)
@@ -61,7 +79,13 @@ pub(crate) fn open_with(blob: &[u8], code: &str, profile: Argon2Profile) -> Resu
     let nonce = &blob[21..45];
     let key = key_for(code, &salt, profile)?;
     XChaCha20Poly1305::new((&*key).into())
-        .decrypt(nonce.into(), Payload { msg: &blob[HEADER..], aad: &blob[..HEADER] })
+        .decrypt(
+            nonce.into(),
+            Payload {
+                msg: &blob[HEADER..],
+                aad: &blob[..HEADER],
+            },
+        )
         .map_err(|_| anyhow!("wrong code or damaged fragment"))
 }
 
@@ -70,20 +94,35 @@ mod tests {
     use super::*;
     use crate::sync::codes::gen_email_code;
 
-    const CHEAP: Argon2Profile = Argon2Profile { mem_kib: 64, iters: 1 };
+    const CHEAP: Argon2Profile = Argon2Profile {
+        mem_kib: 64,
+        iters: 1,
+    };
 
     #[test]
     fn round_trip_and_rejections() {
         let code = gen_email_code();
         let blob = seal_with(b"fragment bytes", &code, CHEAP, [1; 16], [2; 24]).unwrap();
         assert_eq!(open_with(&blob, &code, CHEAP).unwrap(), b"fragment bytes");
-        assert_eq!(open_with(&blob, &code.to_lowercase().replace('-', ""), CHEAP).unwrap(), b"fragment bytes");
+        assert_eq!(
+            open_with(&blob, &code.to_lowercase().replace('-', ""), CHEAP).unwrap(),
+            b"fragment bytes"
+        );
         let other = gen_email_code();
         assert!(open_with(&blob, &other, CHEAP).is_err());
-        assert!(open_with(&blob, "ABCDE-FGHJK", CHEAP).is_err(), "too short to be a real code");
+        assert!(
+            open_with(&blob, "ABCDE-FGHJK", CHEAP).is_err(),
+            "too short to be a real code"
+        );
         let mut t = blob.clone();
         t[6] ^= 1;
-        assert!(open_with(&t, &code, CHEAP).is_err(), "header is authenticated");
-        assert!(seal_with(b"x", "ABCDE", CHEAP, [0; 16], [0; 24]).is_err(), "a short code cannot seal");
+        assert!(
+            open_with(&t, &code, CHEAP).is_err(),
+            "header is authenticated"
+        );
+        assert!(
+            seal_with(b"x", "ABCDE", CHEAP, [0; 16], [0; 24]).is_err(),
+            "a short code cannot seal"
+        );
     }
 }

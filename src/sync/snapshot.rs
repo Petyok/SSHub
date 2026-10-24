@@ -12,13 +12,18 @@
 //! nonce(24) || ct`; everything before `ct` is associated data. `sealed` is `nonce || ct`.
 
 use anyhow::{anyhow, bail, Result};
-use chacha20poly1305::{aead::{Aead, KeyInit, Payload}, XChaCha20Poly1305};
+use chacha20poly1305::{
+    aead::{Aead, KeyInit, Payload},
+    XChaCha20Poly1305,
+};
 use rand_core::{OsRng, RngCore};
 use zeroize::Zeroizing;
 
 use super::codes::normalize_code;
 use super::crypto::{try_argon2_derive, Argon2Profile, Share, ARGON2_SNAPSHOT};
-use super::limits::{SNAPSHOT_ARGON2_FLOOR, SNAPSHOT_CODE_CHARS, SNAPSHOT_TTL_SECS, TIMESTAMP_SKEW_GRACE_SECS};
+use super::limits::{
+    SNAPSHOT_ARGON2_FLOOR, SNAPSHOT_CODE_CHARS, SNAPSHOT_TTL_SECS, TIMESTAMP_SKEW_GRACE_SECS,
+};
 
 const MAGIC: &[u8; 4] = b"SSHN";
 const VERSION: u8 = 1;
@@ -36,7 +41,8 @@ pub struct SnapshotBlob {
 impl SnapshotBlob {
     /// True when the phone had to use less memory or fewer passes than the published floor.
     pub fn is_weakened(&self) -> bool {
-        self.profile.mem_kib < SNAPSHOT_ARGON2_FLOOR.mem_kib || self.profile.iters < SNAPSHOT_ARGON2_FLOOR.iters
+        self.profile.mem_kib < SNAPSHOT_ARGON2_FLOOR.mem_kib
+            || self.profile.iters < SNAPSHOT_ARGON2_FLOOR.iters
     }
 
     fn header(&self) -> Vec<u8> {
@@ -62,7 +68,10 @@ impl SnapshotBlob {
             bail!("unsupported snapshot version {}", b[4]);
         }
         Ok(Self {
-            profile: Argon2Profile { mem_kib: u32::from_be_bytes(b[5..9].try_into().unwrap()), iters: u32::from_be_bytes(b[9..13].try_into().unwrap()) },
+            profile: Argon2Profile {
+                mem_kib: u32::from_be_bytes(b[5..9].try_into().unwrap()),
+                iters: u32::from_be_bytes(b[9..13].try_into().unwrap()),
+            },
             issued_at: i64::from_be_bytes(b[13..21].try_into().unwrap()),
             salt: b[21..37].try_into().unwrap(),
             sealed: b[37..].to_vec(),
@@ -73,7 +82,10 @@ impl SnapshotBlob {
 fn key_for(code: &str, salt: &[u8; 16], profile: Argon2Profile) -> Result<Zeroizing<[u8; 32]>> {
     let code = normalize_code(code)?;
     if code.len() != SNAPSHOT_CODE_CHARS {
-        bail!("a snapshot code has {SNAPSHOT_CODE_CHARS} characters, got {}", code.len());
+        bail!(
+            "a snapshot code has {SNAPSHOT_CODE_CHARS} characters, got {}",
+            code.len()
+        );
     }
     Ok(Zeroizing::new(try_argon2_derive(&code, salt, profile)?))
 }
@@ -84,7 +96,12 @@ pub fn snapshot_seal(share: &Share, code: &str, now: i64) -> SnapshotBlob {
     snapshot_seal_with_profile(share, code, now, ARGON2_SNAPSHOT).expect("a well formed code")
 }
 
-pub fn snapshot_seal_with_profile(share: &Share, code: &str, now: i64, profile: Argon2Profile) -> Result<SnapshotBlob> {
+pub fn snapshot_seal_with_profile(
+    share: &Share,
+    code: &str,
+    now: i64,
+    profile: Argon2Profile,
+) -> Result<SnapshotBlob> {
     let mut salt = [0u8; 16];
     let mut nonce = [0u8; 24];
     OsRng.fill_bytes(&mut salt);
@@ -92,13 +109,31 @@ pub fn snapshot_seal_with_profile(share: &Share, code: &str, now: i64, profile: 
     seal_with(share, code, now, profile, salt, nonce)
 }
 
-pub(crate) fn seal_with(share: &Share, code: &str, now: i64, profile: Argon2Profile, salt: [u8; 16], nonce: [u8; 24]) -> Result<SnapshotBlob> {
+pub(crate) fn seal_with(
+    share: &Share,
+    code: &str,
+    now: i64,
+    profile: Argon2Profile,
+    salt: [u8; 16],
+    nonce: [u8; 24],
+) -> Result<SnapshotBlob> {
     let key = key_for(code, &salt, profile)?;
-    let mut blob = SnapshotBlob { salt, profile, issued_at: now, sealed: Vec::new() };
+    let mut blob = SnapshotBlob {
+        salt,
+        profile,
+        issued_at: now,
+        sealed: Vec::new(),
+    };
     let mut plain = Zeroizing::new(vec![share.index]);
     plain.extend_from_slice(&share.bytes);
     let ct = XChaCha20Poly1305::new((&*key).into())
-        .encrypt((&nonce).into(), Payload { msg: &plain, aad: &blob.header() })
+        .encrypt(
+            (&nonce).into(),
+            Payload {
+                msg: &plain,
+                aad: &blob.header(),
+            },
+        )
         .expect("XChaCha20-Poly1305 encrypt");
     blob.sealed = [nonce.as_slice(), ct.as_slice()].concat();
     Ok(blob)
@@ -120,13 +155,22 @@ pub fn snapshot_open(blob: &SnapshotBlob, code: &str, now: i64) -> Result<Share>
     let (nonce, ct) = blob.sealed.split_at(24);
     let plain = Zeroizing::new(
         XChaCha20Poly1305::new((&*key).into())
-            .decrypt(nonce.into(), Payload { msg: ct, aad: &blob.header() })
+            .decrypt(
+                nonce.into(),
+                Payload {
+                    msg: ct,
+                    aad: &blob.header(),
+                },
+            )
             .map_err(|_| anyhow!("wrong code or damaged snapshot"))?,
     );
     if plain.len() != 33 || plain[0] == 0 {
         bail!("snapshot holds a malformed share");
     }
-    Ok(Share { index: plain[0], bytes: plain[1..].to_vec() })
+    Ok(Share {
+        index: plain[0],
+        bytes: plain[1..].to_vec(),
+    })
 }
 
 #[cfg(test)]
@@ -134,10 +178,16 @@ mod tests {
     use super::*;
     use crate::sync::codes::gen_snapshot_code;
 
-    const CHEAP: Argon2Profile = Argon2Profile { mem_kib: 64, iters: 1 };
+    const CHEAP: Argon2Profile = Argon2Profile {
+        mem_kib: 64,
+        iters: 1,
+    };
 
     fn share() -> Share {
-        Share { index: 3, bytes: vec![0x5a; 32] }
+        Share {
+            index: 3,
+            bytes: vec![0x5a; 32],
+        }
     }
 
     #[test]
@@ -145,7 +195,10 @@ mod tests {
         let code = gen_snapshot_code();
         let blob = snapshot_seal_with_profile(&share(), &code, 1_000, CHEAP).unwrap();
         assert_eq!(snapshot_open(&blob, &code, 2_000).unwrap(), share());
-        assert_eq!(snapshot_open(&blob, &code.to_lowercase().replace('-', " "), 2_000).unwrap(), share());
+        assert_eq!(
+            snapshot_open(&blob, &code.to_lowercase().replace('-', " "), 2_000).unwrap(),
+            share()
+        );
         assert_eq!(SnapshotBlob::from_bytes(&blob.to_bytes()).unwrap(), blob);
     }
 
@@ -153,11 +206,26 @@ mod tests {
     fn rejections_happen_before_and_after_argon2() {
         let code = "K7Q2-9FMX-C41T-8PWD";
         let blob = snapshot_seal_with_profile(&share(), code, 1_000, CHEAP).unwrap();
-        assert!(snapshot_open(&blob, "K7Q2-9FMX-C41T-8PWE", 1_001).is_err(), "wrong code");
-        assert!(snapshot_open(&blob, "K7Q2-9FMX-C41T", 1_001).is_err(), "short code");
-        assert!(snapshot_open(&blob, code, 1_000 + SNAPSHOT_TTL_SECS + 1).is_err(), "expired");
-        assert!(snapshot_open(&blob, code, 1_000 + SNAPSHOT_TTL_SECS).is_ok(), "last second of the term");
-        assert!(snapshot_open(&blob, code, 1_000 - TIMESTAMP_SKEW_GRACE_SECS - 1).is_err(), "dated in the future");
+        assert!(
+            snapshot_open(&blob, "K7Q2-9FMX-C41T-8PWE", 1_001).is_err(),
+            "wrong code"
+        );
+        assert!(
+            snapshot_open(&blob, "K7Q2-9FMX-C41T", 1_001).is_err(),
+            "short code"
+        );
+        assert!(
+            snapshot_open(&blob, code, 1_000 + SNAPSHOT_TTL_SECS + 1).is_err(),
+            "expired"
+        );
+        assert!(
+            snapshot_open(&blob, code, 1_000 + SNAPSHOT_TTL_SECS).is_ok(),
+            "last second of the term"
+        );
+        assert!(
+            snapshot_open(&blob, code, 1_000 - TIMESTAMP_SKEW_GRACE_SECS - 1).is_err(),
+            "dated in the future"
+        );
         let mut t = blob.clone();
         t.issued_at += 1; // the header is associated data
         assert!(snapshot_open(&t, code, 1_001).is_err());
@@ -165,7 +233,10 @@ mod tests {
         t.profile.iters += 1;
         assert!(snapshot_open(&t, code, 1_001).is_err());
         let mut bomb = blob.clone();
-        bomb.profile = Argon2Profile { mem_kib: u32::MAX, iters: 1 };
+        bomb.profile = Argon2Profile {
+            mem_kib: u32::MAX,
+            iters: 1,
+        };
         assert!(snapshot_open(&bomb, code, 1_001).is_err(), "memory bomb");
         assert!(SnapshotBlob::from_bytes(&blob.to_bytes()[..40]).is_err());
     }
@@ -174,7 +245,10 @@ mod tests {
     fn a_weakened_profile_is_flagged() {
         let blob = snapshot_seal_with_profile(&share(), "K7Q2-9FMX-C41T-8PWD", 0, CHEAP).unwrap();
         assert!(blob.is_weakened());
-        let floor = SnapshotBlob { profile: SNAPSHOT_ARGON2_FLOOR, ..blob };
+        let floor = SnapshotBlob {
+            profile: SNAPSHOT_ARGON2_FLOOR,
+            ..blob
+        };
         assert!(!floor.is_weakened());
     }
 }
