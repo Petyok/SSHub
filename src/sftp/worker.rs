@@ -26,6 +26,10 @@ pub enum SftpCommand {
     /// List a directory. Only the `Remote` side is serviced here; the UI reads
     /// the local filesystem itself via `std::fs`.
     ListDir(Side, PathBuf),
+    /// List a remote directory only to complete a typed path. Unlike `ListDir`
+    /// the answer does not replace a pane's listing, and a failure is an empty
+    /// answer rather than an `Error` (a half-typed path is not an error).
+    ListNames(PathBuf),
     /// Run the given transfers in order.
     RunQueue(Vec<QueuedTransfer>),
     /// Delete a remote path (recursively if `is_dir`).
@@ -49,6 +53,9 @@ pub enum SftpEvent {
     ConnectFailed(String),
     /// A directory listing completed.
     DirListing(Side, PathBuf, Vec<super::model::FileEntry>),
+    /// The answer to `ListNames`: the directory asked about and its entries
+    /// (empty when it could not be listed).
+    Names(PathBuf, Vec<super::model::FileEntry>),
     /// Progress for the transfer at `index` of `total`.
     Progress {
         index: usize,
@@ -113,6 +120,12 @@ fn worker_loop(
                     Err(e) => SftpEvent::Error(format!("{e:#}")),
                 };
                 if evt_tx.send(evt).is_err() {
+                    return;
+                }
+            }
+            SftpCommand::ListNames(path) => {
+                let entries = transport.list_dir(&path).unwrap_or_default();
+                if evt_tx.send(SftpEvent::Names(path, entries)).is_err() {
                     return;
                 }
             }
@@ -722,6 +735,28 @@ mod tests {
             vec![SftpCommand::ListDir(Side::Local, PathBuf::from("/home"))],
         );
         assert!(events.is_empty());
+    }
+
+    #[test]
+    fn list_names_answers_without_a_listing_or_an_error() {
+        let entries = vec![entry("docs", true)];
+        let mut t = MockTransport::new(0).with_listing("/srv", entries.clone());
+        let events = drive(
+            &mut t,
+            vec![
+                SftpCommand::ListNames(PathBuf::from("/srv")),
+                // Not listable: an empty answer, never an Error (that would
+                // set the notice and the run-failed flag for a half-typed path).
+                SftpCommand::ListNames(PathBuf::from("/nope")),
+            ],
+        );
+        assert_eq!(events.len(), 2);
+        assert!(
+            matches!(&events[0], SftpEvent::Names(p, got) if p == Path::new("/srv") && got == &entries)
+        );
+        assert!(
+            matches!(&events[1], SftpEvent::Names(p, got) if p == Path::new("/nope") && got.is_empty())
+        );
     }
 
     #[test]

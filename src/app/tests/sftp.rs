@@ -480,3 +480,179 @@ fn the_sftp_tab_renders_through_the_active_theme() {
         "a remote directory row wears `components.sftp.remote`"
     );
 }
+
+fn dir_entry(name: &str) -> crate::sftp::model::FileEntry {
+    crate::sftp::model::FileEntry {
+        name: name.into(),
+        is_dir: true,
+        size: 0,
+        is_symlink: false,
+        perm: None,
+    }
+}
+
+fn type_text(app: &mut App, text: &str) {
+    for c in text.chars() {
+        app.handle_key(key_char(c)).unwrap();
+    }
+}
+
+/// A browser whose focused (left) pane is a real temp directory holding
+/// `alpha/`, `alps/`, `beta/` and a plain file.
+fn local_browser() -> (App, tempfile::TempDir) {
+    use crate::sftp::model::{Focus, SftpState};
+    let tmp = tempfile::tempdir().unwrap();
+    for d in ["alpha", "alps", "beta"] {
+        std::fs::create_dir(tmp.path().join(d)).unwrap();
+    }
+    std::fs::write(tmp.path().join("file.txt"), b"x").unwrap();
+    let mut state = SftpState::new("/srv", tmp.path());
+    state.focus = Focus::Local;
+    state
+        .local
+        .set_entries(["alpha", "alps", "beta"].map(dir_entry).to_vec());
+    let mut app = test_app(vec![]);
+    app.active_tab = 1;
+    app.sftp = Some(state);
+    (app, tmp)
+}
+
+#[test]
+fn goto_tab_completes_one_match_and_extends_several_locally() {
+    let (mut app, tmp) = local_browser();
+
+    // Named in the pane's own listing: one match fills in with a slash.
+    app.handle_key(key_char('g')).unwrap();
+    type_text(&mut app, "b");
+    app.handle_key(key(KeyCode::Tab)).unwrap();
+    let p = app.sftp_prompt.as_ref().unwrap();
+    assert_eq!(p.value, "beta/");
+    assert_eq!(p.hint, None);
+
+    // Several: the shared prefix, and the candidates in the hint.
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    app.handle_key(key_char('g')).unwrap();
+    type_text(&mut app, "al");
+    app.handle_key(key(KeyCode::Tab)).unwrap();
+    let p = app.sftp_prompt.as_ref().unwrap();
+    assert_eq!(p.value, "alp");
+    assert_eq!(p.hint.as_deref(), Some("alpha/  alps/"));
+
+    // Another directory is read off the disk, not out of the pane's listing:
+    // from inside `beta`, `../al` names the temp dir's children.
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    app.sftp.as_mut().unwrap().local.cwd = tmp.path().join("beta");
+    app.sftp.as_mut().unwrap().local.set_entries(Vec::new());
+    app.handle_key(key_char('g')).unwrap();
+    type_text(&mut app, "../al");
+    app.handle_key(key(KeyCode::Tab)).unwrap();
+    let p = app.sftp_prompt.as_ref().unwrap();
+    assert_eq!(p.value, "../alp");
+    assert_eq!(p.hint.as_deref(), Some("alpha/  alps/"));
+}
+
+#[test]
+fn goto_refuses_a_local_file_and_enters_a_directory() {
+    let (mut app, tmp) = local_browser();
+    let start = app.sftp.as_ref().unwrap().local.cwd.clone();
+
+    app.handle_key(key_char('g')).unwrap();
+    type_text(&mut app, &tmp.path().join("file.txt").display().to_string());
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert_eq!(app.mode, AppMode::SftpPrompt, "the prompt stays open");
+    let error = app.sftp_prompt.as_ref().unwrap().error.clone().unwrap();
+    assert!(error.starts_with("not a directory: "), "{error}");
+    assert_eq!(app.sftp.as_ref().unwrap().local.cwd, start);
+
+    // The same prompt then takes a directory: the pane moves and the prompt closes.
+    for _ in 0.."file.txt".len() {
+        app.handle_key(key(KeyCode::Backspace)).unwrap();
+    }
+    type_text(&mut app, "alpha");
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert_eq!(app.mode, AppMode::Normal);
+    assert!(app.sftp_prompt.is_none());
+    assert_eq!(
+        app.sftp.as_ref().unwrap().local.cwd,
+        tmp.path().join("alpha")
+    );
+}
+
+#[test]
+fn goto_ignores_a_listing_that_is_not_the_one_asked_for() {
+    use crate::sftp::model::{SftpState, Side};
+    use crate::sftp::{SftpCommand, SftpEvent};
+    use std::path::PathBuf;
+
+    let mut app = test_app(vec![]);
+    let (tx, rx) = std::sync::mpsc::channel::<SftpCommand>();
+    app.sftp_tx = Some(tx);
+    app.sftp = Some(SftpState::new("/srv", "/data")); // right pane has focus
+    app.active_tab = 1;
+
+    // `home/d` is not the pane's own directory, so the worker is asked.
+    app.handle_key(key_char('g')).unwrap();
+    type_text(&mut app, "home/d");
+    app.handle_key(key(KeyCode::Tab)).unwrap();
+    let asked = std::iter::from_fn(|| rx.try_recv().ok())
+        .find_map(|c| match c {
+            SftpCommand::ListNames(p) => Some(p),
+            _ => None,
+        })
+        .expect("a ListNames request");
+    assert_eq!(asked, PathBuf::from("/srv/home"));
+    let before = app.sftp_prompt.clone().unwrap();
+    assert_eq!(before.hint.as_deref(), Some("completing..."));
+
+    // An answer about another directory, or from the other pane's worker,
+    // changes nothing.
+    let names = || vec![dir_entry("data"), dir_entry("docs")];
+    app.apply_sftp_event(SftpEvent::Names("/srv/other".into(), names()));
+    assert_eq!(app.sftp_prompt.as_ref(), Some(&before));
+    app.apply_sftp_event_left(SftpEvent::Names("/srv/home".into(), names()));
+    assert_eq!(app.sftp_prompt.as_ref(), Some(&before));
+
+    // The right answer fills the hint in.
+    app.apply_sftp_event(SftpEvent::Names("/srv/home".into(), names()));
+    let p = app.sftp_prompt.as_ref().unwrap();
+    assert_eq!(
+        (p.value.as_str(), p.hint.as_deref()),
+        ("home/d", Some("data/  docs/"))
+    );
+    assert_eq!(p.side, Side::Remote);
+
+    // Once the prompt is gone a late answer is dropped without a trace.
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    app.apply_sftp_event(SftpEvent::Names("/srv/home".into(), names()));
+    assert!(app.sftp_prompt.is_none());
+    assert_eq!(app.mode, AppMode::Normal);
+}
+
+#[test]
+fn goto_without_a_worker_says_so_instead_of_completing() {
+    use crate::sftp::model::SftpState;
+    let mut app = test_app(vec![]);
+    app.sftp = Some(SftpState::new("/srv", "/data"));
+    app.active_tab = 1;
+    app.handle_key(key_char('g')).unwrap();
+    type_text(&mut app, "home/d");
+    app.handle_key(key(KeyCode::Tab)).unwrap();
+    assert_eq!(
+        app.sftp_prompt.as_ref().unwrap().hint.as_deref(),
+        Some("not connected")
+    );
+}
+
+#[test]
+fn tab_in_the_mkdir_prompt_leaves_the_name_alone() {
+    let (mut app, _tmp) = local_browser();
+    app.handle_key(key_char('n')).unwrap();
+    type_text(&mut app, "al");
+    app.handle_key(key(KeyCode::Tab)).unwrap();
+    let p = app.sftp_prompt.as_ref().unwrap();
+    assert_eq!(
+        p.value, "al",
+        "the pane lists alpha/ but this is a new name"
+    );
+    assert_eq!((p.hint.as_deref(), p.error.as_deref()), (None, None));
+}
