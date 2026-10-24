@@ -13,7 +13,7 @@
 //! snippets, sort order, key file paths. Hop tokens naming a saved host travel as
 //! `#<uid hex>` and are rendered as the local host name here.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -372,8 +372,12 @@ pub fn reproject(conn: &Connection, touched: &Touched) -> Result<()> {
 
     // Deletions first: a dead row may still hold a name a live one now wants.
     for kind in [EntityKind::Host, EntityKind::Group, EntityKind::Identity] {
-        for ((k, uid), view) in views.iter().filter(|((k, _), v)| *k == kind && !v.alive) {
-            project_row(conn, *k, uid, view)?;
+        for ((k, uid), view) in views
+            .iter()
+            .filter(|((k, _), v)| *k == kind && (!v.alive || !is_complete(kind, v)))
+        {
+            project_row(conn, *k, uid, view)
+                .with_context(|| format!("delete {} {}", k.as_str(), uid_hex(uid)))?;
         }
     }
 
@@ -397,7 +401,8 @@ pub fn reproject(conn: &Connection, touched: &Touched) -> Result<()> {
                     conn.execute(
                         &format!("UPDATE {table} SET name = ?1 WHERE id = ?2"),
                         params![format!("\u{1}sync:{id}"), id],
-                    )?;
+                    )
+                    .with_context(|| format!("park {} {}", kind.as_str(), uid_hex(uid)))?;
                 }
             }
         }
@@ -405,7 +410,8 @@ pub fn reproject(conn: &Connection, touched: &Touched) -> Result<()> {
 
     for kind in [EntityKind::Identity, EntityKind::Group, EntityKind::Host] {
         for ((_, uid), view) in views.iter().filter(|((k, _), v)| *k == kind && v.alive) {
-            project_row(conn, kind, uid, view)?;
+            project_row(conn, kind, uid, view)
+                .with_context(|| format!("project {} {}", kind.as_str(), uid_hex(uid)))?;
         }
         // Groups reference groups (parent) and each other's rows: a second
         // sweep resolves references to rows created later in the first.
@@ -498,6 +504,13 @@ fn local_id(conn: &Connection, kind: EntityKind, uid: &Uid) -> Result<Option<i64
     }
 }
 
+/// Does the effective view hold what a row needs (a name, and for a host an
+/// address)? Incomplete entities have no sync-made row.
+fn is_complete(kind: EntityKind, view: &View) -> bool {
+    view.base_name().is_some()
+        && (kind != EntityKind::Host || matches!(view.opt_str("address"), Some(Some(_))))
+}
+
 fn created_by_sync(conn: &Connection, kind: EntityKind, uid: &Uid) -> Result<bool> {
     Ok(conn
         .query_row(
@@ -555,9 +568,7 @@ fn project_row(conn: &Connection, kind: EntityKind, uid: &Uid, view: &View) -> R
         return Ok(());
     }
     let name = rendered_name(conn, kind, uid, view)?;
-    let complete = name.is_some()
-        && (kind != EntityKind::Host || matches!(view.opt_str("address"), Some(Some(_))));
-    let Some(name) = name.filter(|_| complete) else {
+    let Some(name) = name.filter(|_| is_complete(kind, view)) else {
         // An entity whose effective view lacks its required fields (an op that
         // set them became pending again) has no row: remove the one the
         // projection made, never one the user already had.
