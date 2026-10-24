@@ -56,7 +56,7 @@ fn sub_aad(host: &HostUid, epoch: u64, from: &DeviceId, to: &DeviceId) -> Vec<u8
     .concat()
 }
 
-fn quorum_credentials(store: &LauncherStore) -> Result<Vec<HostUid>> {
+pub(crate) fn quorum_credentials(store: &LauncherStore) -> Result<Vec<HostUid>> {
     store.with_conn(|c| {
         let mut st = c.prepare("SELECT host_uid FROM sync_cred_state ORDER BY host_uid")?;
         let rows = st
@@ -99,10 +99,16 @@ pub fn reissue_plan(
 ) -> Result<ReissuePlan> {
     let me = id.public().device_id();
     let mut holders = new_holders.to_vec();
-    // The paper is a permanent holder: it gets a share index too, its sub-shares sealed to its
-    // permanent recipient key instead of a session key (it is offline and adopts nothing).
-    let paper = paper_pub(store)?;
-    if let Some(p) = &paper {
+    // The paper and every exemption slot are permanent holders: each gets a share index too, its
+    // sub-shares sealed to its permanent recipient key instead of a session key (they are offline
+    // and adopt nothing).
+    let mut permanent: Vec<DevicePublic> = paper_pub(store)?.into_iter().collect();
+    permanent.extend(
+        super::exemption::active_slots(store)?
+            .into_iter()
+            .map(|(_, p)| p),
+    );
+    for p in &permanent {
         holders.push(p.device_id());
     }
     holders.sort();
@@ -112,12 +118,12 @@ pub fn reissue_plan(
         "a sharing needs at least two holders"
     );
     ensure!(holders.len() <= 255, "too many holders");
-    let paper_id = paper.as_ref().map(|p| p.device_id());
+    let is_permanent = |h: &DeviceId| permanent.iter().any(|p| p.device_id() == *h);
     let publics = holders
         .iter()
-        .map(|h| match &paper {
-            Some(p) if Some(h) == paper_id.as_ref() => Ok(p.clone()),
-            _ => holder_public(store, &id.public(), h),
+        .map(|h| match permanent.iter().find(|p| p.device_id() == *h) {
+            Some(p) => Ok(p.clone()),
+            None => holder_public(store, &id.public(), h),
         })
         .collect::<Result<Vec<_>>>()?;
     let indices: Vec<u8> = (1..=holders.len() as u8).collect();
@@ -128,7 +134,7 @@ pub fn reissue_plan(
     };
     let mut sessions: Vec<Option<Zeroizing<[u8; 32]>>> = Vec::new();
     for (h, public) in holders.iter().zip(&publics) {
-        if Some(h) == paper_id.as_ref() {
+        if is_permanent(h) {
             sessions.push(None);
             continue;
         }

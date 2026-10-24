@@ -384,6 +384,11 @@ pub fn share_recipients(
             out.push((p.device_id(), p));
         }
     }
+    for (_, slot) in super::exemption::active_slots(store)? {
+        if !out.iter().any(|(id, _)| *id == slot.device_id()) {
+            out.push((slot.device_id(), slot));
+        }
+    }
     out.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(out)
 }
@@ -700,7 +705,32 @@ impl QuorumUnlocker {
             let mine = own_shares(&self.store, &self.id, host).map_err(fail)?;
             let mut last = UnlockError::NeedsShares("another holder must release a share".into());
             let mut found = None;
+            // An exempt device holds the slot's share too: the phrase opens the credential alone.
+            let exempt_phrase = if super::exemption::active_slots(&self.store)
+                .map_err(fail)?
+                .iter()
+                .any(|(d, _)| *d == self.id.public().device_id())
+            {
+                self.source.master_phrase()
+            } else {
+                None
+            };
             for (epoch, share) in mine {
+                if let Some(phrase) = &exempt_phrase {
+                    if let Ok(slot) = super::exemption::slot_share(
+                        &self.store,
+                        &self.id,
+                        phrase,
+                        host,
+                        epoch,
+                        self.argon,
+                    ) {
+                        if let Ok(dek) = assemble_dek(&self.store, host, share.clone(), slot) {
+                            found = Some((epoch, dek));
+                            break;
+                        }
+                    }
+                }
                 match self.source.second_share(host, epoch, &share) {
                     Ok(second) => match assemble_dek(&self.store, host, share, second) {
                         Ok(dek) => {

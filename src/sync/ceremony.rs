@@ -49,6 +49,7 @@ pub fn is_gated(store: &LauncherStore, op: &Op) -> Result<bool> {
         | OpBody::CertIssue { .. }
         | OpBody::ModeChange { .. }
         | OpBody::FactorRegister { .. }
+        | OpBody::ExemptionSet { .. }
         | OpBody::BulkExport { .. } => true,
         OpBody::DeviceRevoke { device_id } => store
             .sync_devices()?
@@ -157,6 +158,19 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
                 );
             }
         }
+        OpBody::ExemptionSet {
+            device_id,
+            slot: Some(_),
+        } => {
+            let attended_terminal = devices.iter().any(|d| {
+                d.id == *device_id && terminal_holder(d) && d.attendance == Attendance::Attended
+            });
+            if store.sync_cred_mode()? != CredMode::Quorum {
+                blocked = Some("the exemption exists only in a Quorum ring".to_string());
+            } else if !attended_terminal {
+                blocked = Some("only an attended holder terminal can be exempt".to_string());
+            }
+        }
         OpBody::BulkExport { window_secs, .. } if *window_secs == 0 || *window_secs > 3600 => {
             blocked = Some("a bulk export window is 1 to 3600 seconds".to_string());
         }
@@ -182,7 +196,9 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
 
     // Second attended holder terminal.
     let delegate = match &op.body {
-        OpBody::CertIssue { device_id, .. } => Some(device_id.clone()),
+        OpBody::CertIssue { device_id, .. } | OpBody::ExemptionSet { device_id, .. } => {
+            Some(device_id.clone())
+        }
         _ => None,
     };
     let cosigner = match &op.body {

@@ -37,6 +37,6 @@ pub use shamir::{
     shamir_split_at, ReshareContribution, Share,
 };
 pub use vault::vault_recipient;
-pub(crate) use vault::vault_recipient_with;
+pub(crate) use vault::{exempt_slot_with, vault_recipient_with};
 pub use words::{bip39_decode, bip39_encode, eff_decode, eff_encode};
 pub use wrap::{blob_alg, hybrid_unwrap, hybrid_wrap, try_hybrid_wrap};

@@ -1344,3 +1344,57 @@ fn revoking_a_holder_runs_rotate_reshare_adopt_and_retire_without_prompts() {
         "one remaining holder cannot contribute"
     );
 }
+
+struct OnlyPhrase(&'static str);
+
+impl ShareSource for OnlyPhrase {
+    fn master_phrase(&self) -> Option<Zeroizing<String>> {
+        Some(Zeroizing::new(self.0.into()))
+    }
+
+    fn second_share(
+        &self,
+        _: &HostUid,
+        _: u64,
+        _: &Share,
+    ) -> std::result::Result<Share, UnlockError> {
+        Err(UnlockError::NeedsShares("no peer".into()))
+    }
+}
+
+#[test]
+fn the_exempt_device_opens_through_the_unlocker_with_the_phrase_and_no_peer() {
+    let d = ring(3);
+    quorum_mode(&d[0]);
+    all_to_all(&d);
+    append(
+        &d[0],
+        crate::sync::exemption::enable_body(&d[0].id, PHRASE, FAST),
+    );
+    all_to_all(&d);
+    let host = [91u8; 16];
+    cred_put(&d[1].store, &d[1].id, &host, &payload("exempt-secret")).unwrap();
+    all_to_all(&d);
+
+    let opened = unlocker(&d[0], Box::new(OnlyPhrase(PHRASE)), None)
+        .open_one(&host)
+        .unwrap();
+    assert_eq!(
+        CredPayload::from_bytes(&opened)
+            .unwrap()
+            .password
+            .as_deref(),
+        Some("exempt-secret")
+    );
+    // Wrong phrase on the exempt device, or the right phrase on any other device: nothing opens.
+    assert!(unlocker(
+        &d[0],
+        Box::new(OnlyPhrase("not the right words at all")),
+        None
+    )
+    .open_one(&host)
+    .is_err());
+    assert!(unlocker(&d[1], Box::new(OnlyPhrase(PHRASE)), None)
+        .open_one(&host)
+        .is_err());
+}
