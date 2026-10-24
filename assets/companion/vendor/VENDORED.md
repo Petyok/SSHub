@@ -37,3 +37,13 @@ Notes:
 - EFF-7776 wordlist is NOT vendored as a package: it is read from
   `poc/crypto-interop/wordlists/eff_large.txt` (7776 words) and inlined by the
   build script.
+
+## Added for the phone page (stage 5 UI)
+
+Copied unmodified from `poc/vendor/` (fetched there with `npm pack`, tarball hashes in `poc/vendor/VENDORED.md`).
+These two have no `package.json` here, so `scripts/link-vendor.mjs` ignores them; the sources import them by path.
+
+| file | package | version | licence | sha256 of the file |
+|---|---|---|---|---|
+| `qrcode-generator-1.4.4/qrcode.cjs` (renamed from qrcode.js: package.json says type module, the UMD needs .cjs) | qrcode-generator | 1.4.4 | MIT (header in file) | 18ae399f81182bc9de916e9c77b195df20cc58d6f2d55a62b085a299f1bf1780 |
+| `jsqr-1.4.0/jsQR.cjs` | jsqr | 1.4.0 | Apache-2.0 (`jsqr-1.4.0/LICENSE-jsqr`) | bc40c8a15196236b2314db0856f72ca0b49980cd5413b8c852a7349f5fee0859 |

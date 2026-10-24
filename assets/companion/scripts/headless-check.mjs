@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const file = path.resolve(here, '..', 'sshub-companion.html');
+const file = path.resolve(here, '..', 'build', 'selftest.html');
 const body = fs.readFileSync(file);
 
 const server = http.createServer((req, res) => {
