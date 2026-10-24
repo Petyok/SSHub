@@ -28,7 +28,15 @@ pub struct DelegationCert {
 
 impl DelegationCert {
     pub fn from_op(op: &Op) -> Result<Self> {
-        let OpBody::CertIssue { device_id, scope, expiry, max_new_hosts_per_day, epoch_lo, epoch_hi } = &op.body else {
+        let OpBody::CertIssue {
+            device_id,
+            scope,
+            expiry,
+            max_new_hosts_per_day,
+            epoch_lo,
+            epoch_hi,
+        } = &op.body
+        else {
             bail!("not a certificate op");
         };
         Ok(Self {
@@ -50,7 +58,9 @@ impl DelegationCert {
 }
 
 fn host_in_group(store: &LauncherStore, host: &HostUid, group: &GroupUid) -> Result<bool> {
-    let (Some(h), Some(g)) = (store.host_id_by_uid(host)?, store.group_id_by_uid(group)?) else { return Ok(false) };
+    let (Some(h), Some(g)) = (store.host_id_by_uid(host)?, store.group_id_by_uid(group)?) else {
+        return Ok(false);
+    };
     store.with_conn(|c| {
         Ok(c.query_row("SELECT EXISTS(SELECT 1 FROM host_group_memberships WHERE host_id = ?1 AND group_id = ?2)", params![h, g], |r| r.get(0))?)
     })
@@ -67,24 +77,54 @@ pub fn cert_allows(
     phone_head_ts: i64,
     now: i64,
 ) -> Result<()> {
-    ensure!(cert.op.verify(issuer_ed25519) && device_id_of(issuer_ed25519) == cert.issuer, "the certificate is not signed by the phone");
-    ensure!(cert.id == cert.op.hash(), "certificate id does not match its op");
-    ensure!(cert.device_id == *requester, "the certificate was issued to another device");
-    ensure!(!store.sync_cert_revoked(&cert.id)?, "the certificate was revoked");
+    ensure!(
+        cert.op.verify(issuer_ed25519) && device_id_of(issuer_ed25519) == cert.issuer,
+        "the certificate is not signed by the phone"
+    );
+    ensure!(
+        cert.id == cert.op.hash(),
+        "certificate id does not match its op"
+    );
+    ensure!(
+        cert.device_id == *requester,
+        "the certificate was issued to another device"
+    );
+    ensure!(
+        !store.sync_cert_revoked(&cert.id)?,
+        "the certificate was revoked"
+    );
     ensure!(now < cert.expiry, "the certificate has expired");
-    ensure!(cert.expiry - cert.issued_at() <= CERT_TERM_MAX_SECS, "the certificate term exceeds the cap");
-    ensure!(now - phone_head_ts <= PHONE_FRESH_SECS, "the phone has not been seen recently enough to vouch for a trust session");
+    ensure!(
+        cert.expiry - cert.issued_at() <= CERT_TERM_MAX_SECS,
+        "the certificate term exceeds the cap"
+    );
+    ensure!(
+        now - phone_head_ts <= PHONE_FRESH_SECS,
+        "the phone has not been seen recently enough to vouch for a trust session"
+    );
     let epoch = store.sync_epoch(&cert.issuer)?;
-    ensure!((cert.epoch_range.0..=cert.epoch_range.1).contains(&epoch), "the phone's epoch is outside the certificate's range");
+    ensure!(
+        (cert.epoch_range.0..=cert.epoch_range.1).contains(&epoch),
+        "the phone's epoch is outside the certificate's range"
+    );
     match &cert.scope {
-        CertScope::Hosts(list) => ensure!(list.contains(host), "the host is outside the certificate's scope"),
-        CertScope::Group(g) => ensure!(host_in_group(store, host, g)?, "the host is outside the certificate's group"),
+        CertScope::Hosts(list) => ensure!(
+            list.contains(host),
+            "the host is outside the certificate's scope"
+        ),
+        CertScope::Group(g) => ensure!(
+            host_in_group(store, host, g)?,
+            "the host is outside the certificate's group"
+        ),
     }
     // Hosts already opened under this certificate are free; a new one counts against the
     // ring-wide daily budget, read from the log.
     if !store.sync_cert_hosts_opened(&cert.id)?.contains(host) {
         let used = store.sync_cert_new_hosts_since(&cert.id, now - DAY)?;
-        ensure!(used < cert.max_new_hosts_per_day, "the daily budget of new hosts is used up: the phone must extend the day");
+        ensure!(
+            used < cert.max_new_hosts_per_day,
+            "the daily budget of new hosts is used up: the phone must extend the day"
+        );
     }
     Ok(())
 }
@@ -94,24 +134,51 @@ pub fn cert_allows(
 pub fn validate_cert_issue(store: &LauncherStore, op: &Op, phone: &DeviceId) -> Result<()> {
     let cert = DelegationCert::from_op(op)?;
     ensure!(cert.issuer == *phone, "only the phone issues certificates");
-    ensure!(cert.expiry > op.timestamp && cert.expiry - op.timestamp <= CERT_TERM_MAX_SECS, "the term must be positive and at most 90 days");
-    ensure!((1..=CERT_NEW_HOSTS_PER_DAY).contains(&cert.max_new_hosts_per_day), "the daily budget is outside 1..=50");
-    ensure!(cert.epoch_range.0 <= cert.epoch_range.1, "the epoch range is inverted");
+    ensure!(
+        cert.expiry > op.timestamp && cert.expiry - op.timestamp <= CERT_TERM_MAX_SECS,
+        "the term must be positive and at most 90 days"
+    );
+    ensure!(
+        (1..=CERT_NEW_HOSTS_PER_DAY).contains(&cert.max_new_hosts_per_day),
+        "the daily budget is outside 1..=50"
+    );
+    ensure!(
+        cert.epoch_range.0 <= cert.epoch_range.1,
+        "the epoch range is inverted"
+    );
     match &cert.scope {
-        CertScope::Hosts(h) => ensure!(!h.is_empty() && h.len() <= 10_000, "an explicit host list must be non-empty"),
+        CertScope::Hosts(h) => ensure!(
+            !h.is_empty() && h.len() <= 10_000,
+            "an explicit host list must be non-empty"
+        ),
         CertScope::Group(_) => {}
     }
     let holders = store
         .sync_devices()?
         .into_iter()
-        .filter(|d| d.role == DeviceRole::Holder && !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised))
+        .filter(|d| {
+            d.role == DeviceRole::Holder
+                && !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
+        })
         .count();
-    ensure!(holders >= 3, "trust sessions need at least three holders: with fewer nobody enforces the certificate");
-    ensure!(store.sync_devices()?.iter().any(|d| d.id == cert.device_id && d.role == DeviceRole::Holder), "the certificate names a device that is not a holder");
+    ensure!(
+        holders >= 3,
+        "trust sessions need at least three holders: with fewer nobody enforces the certificate"
+    );
+    ensure!(
+        store
+            .sync_devices()?
+            .iter()
+            .any(|d| d.id == cert.device_id && d.role == DeviceRole::Holder),
+        "the certificate names a device that is not a holder"
+    );
     Ok(())
 }
 
 /// The `CertHostOpened` record a releasing holder appends the first time a host is opened.
 pub fn cert_opened_body(cert: &DelegationCert, host: &HostUid) -> OpBody {
-    OpBody::CertHostOpened { cert_id: cert.id, host_uid: *host }
+    OpBody::CertHostOpened {
+        cert_id: cert.id,
+        host_uid: *host,
+    }
 }

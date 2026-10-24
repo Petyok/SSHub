@@ -29,8 +29,8 @@ const TRANSCRIPT_CTX: &[u8] = b"sshub/sync/enroll/transcript/v1";
 const MAX_NAME_BYTES: usize = 64;
 
 /// Role bytes inside the commitments (not the transport roles).
-const INITIATOR: u8 = 0;
-const RESPONDER: u8 = 1;
+pub(crate) const INITIATOR: u8 = 0;
+pub(crate) const RESPONDER: u8 = 1;
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct Reveal {
@@ -57,7 +57,7 @@ pub struct Confirm {
 }
 
 impl Reveal {
-    fn bytes(&self) -> Vec<u8> {
+    pub(crate) fn bytes(&self) -> Vec<u8> {
         let mut b = Vec::with_capacity(1400);
         b.extend_from_slice(&self.ed25519_pub);
         b.extend_from_slice(&self.x25519_pub);
@@ -168,7 +168,7 @@ pub struct EnrollOutcome {
     pub sas: String,
 }
 
-fn confirm_message(role: u8, ok: bool, th: &[u8; 32]) -> Vec<u8> {
+pub(crate) fn confirm_message(role: u8, ok: bool, th: &[u8; 32]) -> Vec<u8> {
     let mut m = b"sshub/sync/enroll/confirm/v1".to_vec();
     m.push(role);
     m.push(u8::from(ok));

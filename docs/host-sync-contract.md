@@ -709,6 +709,71 @@ Invariants: `shamir_combine` is called only by the requester assembling k=2 in
 memory; reissue is resharing only; the phone signs the binding hash; a release
 prompt names the requester; plaintext never touches disk.
 
+### 4a. Stage 3 as built (WP3a, WP3c): supersedes the sketch above where they differ
+
+Code: `src/sync/{quorum,reshare,cred_ops,cert,modes,recovery}.rs` (plus the phone wire frames in `wire.rs`).
+
+* **Share indices are positions.** A sharing is a sorted list of holder ids; a holder's index is its
+  1-based position. The list of the original sharing is the recipient list of the `CredUpdate` (the
+  vault recipient excluded); the list of reshare epoch `e` is `new_holders` of its batch ops.
+  Nothing else stores indices, so receivers compute contributor and own indices themselves.
+* **Vault.** The ring salt is `BLAKE3 derive_key("sshub/sync/vault/salt/v1", ring_secret)[..16]`, so a
+  new machine needs only the kit and the phrase. `vault_setup(store, phrase, ring_secret)` derives the
+  vault recipient and keeps its PUBLIC key in `sync_meta` under `vault_pub`. That key is LOCAL and is
+  never replicated: a replicated vault key would let one device redirect every new credential to
+  itself. The ring secret is kept by the caller in the profile credential store (`sync-ring-secret`).
+  A vault credential is one `WrappedShare { recipient: vault id, sealed: hybrid_wrap(vault_pub,
+  host_uid || DEK) }`; `vault_open_dek(store, host, phrase, ring_secret)` opens it and checks the
+  credential by AEAD.
+* **Quorum.** `cred_put(store, id, host, &CredPayload)` writes `CredUpdate` under the ring's mode:
+  vault, or `shamir_split_at(dek, 2, 1..=n)` to `share_recipients` (holders that are not revoked or
+  compromised, the device itself, plus the paper unwrap key from `paper_setup`), sorted by id.
+  `CredPayload` is strict JSON `{"v":1,"password"?,"private_key"?}` sealed under the DEK.
+* **Reading shares.** `own_shares(store, id, host)` returns this holder's shares newest sharing first
+  (envelope shares of reshare epochs, then the original wrap); `assemble_dek(store, host, mine,
+  second)` combines two and checks by opening the credential. A reshare is adopted only by a real
+  unlock under it (`mark_adopted`, `unadopted(store, epoch)`); only then may previous wrap keys be retired.
+* **Reshare (`reissue_plan`, `reissue_receive`).** `reissue_plan(store, id, new_holders, epoch) ->
+  ReissuePlan { epoch, bodies }` replaces the sketch `reissue_plan(store, new_holders)`: it needs the
+  contributor's identity. Bodies: one `ShareReshareSession` per new holder, then `ShareReshareBatch` ops
+  of at most `RESHARE_ITEMS_PER_OP` items. A sub-share is `aead_seal(session key, aad, old_epoch u64 BE
+  || from index || 32 bytes)` with `aad = host_uid || epoch u64 BE || contributor id || recipient id`
+  (device id strings, not indices: a receiver does not know the contributor's old index before it
+  decrypts). `reissue_receive` combines two contributors' sub-shares with `reshare_combine`, publishes
+  a `ShareStorageKey` and a `ShareReshareConfirmBatch` (`aead_seal(storage key, host_uid || epoch ||
+  own index, share)`). `shamir_combine` is never called; `COMBINE_CALLS` (per thread, test only) proves it.
+  The paper recipient is offline and cannot take part: it keeps the sharing it was written for.
+* **Challenge.** `Challenge { op, nonce, expiry, eph_x25519_pub, request_id, phone_material }` with
+  `to_wire`, `to_qr_payload(frame_bytes) -> Result<Vec<Vec<u8>>>`, `binding_hash`, `binding_preimage`;
+  `make_challenge(store, id, host, phone, now, ttl)` appends the `ShareRelease` op and returns the
+  challenge and the ephemeral secret; `release_share(store, id, host, epoch, eph_pub)` seals a share
+  for a requester.
+* **Unlocker.** `QuorumUnlocker::new(store, id, gate, ShareSource, ring_secret)` implements
+  `credentials::Unlocker`: it sets the gate's synced check (`host:<id>` / `identity:<id>` map to uids,
+  synced means a `sync_cred_state` row exists) and opens credentials into the gate. `ShareSource`
+  (`master_phrase()`, `second_share(host, epoch, mine)`) is implemented by whoever owns the interaction.
+* **Certificates.** `DelegationCert::from_op(&Op)`; `cert_allows(cert, issuer_ed25519, store, requester,
+  host, phone_head_ts, now)` adds the `requester` argument (the device that asks) and checks signature,
+  issuer, delegatee, revocation, expiry and term cap, phone freshness (`PHONE_FRESH_SECS`), the phone's
+  epoch range, scope (group membership or explicit list) and the ring-wide budget read from
+  `sync_cert_hosts_opened`; hosts already opened are free. `validate_cert_issue` adds the three-holder rule.
+* **Modes.** `mode_change_plan(store, me_public, to, cosigner, open)` returns the `ModeChange` followed
+  by one `CredUpdate` per credential re-encrypted under a fresh DEK; Quorum to Vault needs a co-signer;
+  `validate_mode_change` checks `migrated_on` and the co-signer. History is not erased: old log entries
+  stay openable by whoever held the old shape.
+* **Recovery.** `recovery::Recovery` is a pure state machine (events `Propose`, `Approve`, `Ack`,
+  `CancelByPhone`, `CancelByDevice`, `Complete { now }`); verdicts add `AwaitingApproval { have, need }`
+  and `Completed` to the sketch. A second `PhoneReenroll`, replayed or fresh, is refused; a backdated
+  `initiated_at` is refused; approvals do not count next to a paper signature.
+* **Identity keys and migration.** `materialise_key(payload, dir, identity_uid)` writes the key with
+  mode 0600 (create-new) and removes it on drop; the caller chooses a tmpfs `dir`.
+  `migrate_local_secrets(store, id, ungated_store)` READS `host:<id>` secrets and identity key files
+  into credentials; `remove_local_copies` deletes the local entries only after the user confirmed.
+* **Phone wire (C16, owned here).** Courier op lists are capped at `MAX_COURIER_OPS` (8) ops of at
+  most `MAX_COURIER_OP_BYTES` (64 KiB) each, in both `PhoneOpsWire` and the reply extension.
+  `ReplyExt::approved_by(phone_ed25519, binding_preimage)` is the check that ties an extension to the
+  phone that was asked: replies are sealed to a public ephemeral key, so anyone can build one.
+
 ## 5. Stage 3.5: Hub
 
 `deploy/hub/docker-compose.yml` and `sshub hub-serve` (headless branch in

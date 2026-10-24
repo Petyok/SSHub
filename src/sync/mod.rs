@@ -13,12 +13,13 @@ pub mod identity_store;
 pub mod limits;
 pub mod modes;
 pub mod oplog;
+#[cfg(test)]
+mod phone_fixtures;
 pub mod protocol;
 pub mod quorum;
 pub mod ratchet;
+pub mod recovery;
 pub mod reshare;
-#[cfg(test)]
-mod phone_fixtures;
 pub mod share_release;
 pub mod snapshot;
 pub mod transport;

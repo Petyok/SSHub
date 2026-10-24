@@ -88,7 +88,7 @@ impl Dev {
     pub(crate) fn with(id: Arc<DeviceIdentity>) -> Self {
         let did = id.public().device_id();
         Self {
-            store: LauncherStore::open_in_memory().unwrap(),
+            store: Arc::new(LauncherStore::open_in_memory().unwrap()),
             id,
             did,
         }

@@ -10,7 +10,9 @@ use anyhow::{anyhow, bail, ensure, Context, Result};
 use serde_json::{json, Value};
 use zeroize::Zeroize;
 
-use super::crypto::{dek_generate, dek_seal, hybrid_wrap, shamir_split_at, ALG_CURRENT};
+use super::crypto::{
+    dek_generate, dek_seal, hybrid_wrap, shamir_split_at, DevicePublic, ALG_CURRENT,
+};
 use super::oplog::{CredMode, HostUid, Op, OpBody, WrappedShare};
 use super::quorum::{share_recipients, vault_pub, vault_wrap, SHARE_K};
 use super::share_release::wrapped_share_plaintext;
@@ -53,14 +55,31 @@ impl CredPayload {
 
     pub fn from_bytes(b: &[u8]) -> Result<Self> {
         let v: Value = serde_json::from_slice(b).context("credential payload is not JSON")?;
-        let m = v.as_object().context("credential payload is not an object")?;
-        ensure!(m.get("v") == Some(&json!(1)), "unsupported credential payload version");
+        let m = v
+            .as_object()
+            .context("credential payload is not an object")?;
+        ensure!(
+            m.get("v") == Some(&json!(1)),
+            "unsupported credential payload version"
+        );
         let mut out = Self::default();
         for (k, val) in m {
             match k.as_str() {
                 "v" => {}
-                "password" => out.password = Some(val.as_str().context("password is not a string")?.to_string()),
-                "private_key" => out.private_key = Some(val.as_str().context("private_key is not a string")?.to_string()),
+                "password" => {
+                    out.password = Some(
+                        val.as_str()
+                            .context("password is not a string")?
+                            .to_string(),
+                    )
+                }
+                "private_key" => {
+                    out.private_key = Some(
+                        val.as_str()
+                            .context("private_key is not a string")?
+                            .to_string(),
+                    )
+                }
                 other => bail!("unknown credential field {other}"),
             }
         }
@@ -69,23 +88,38 @@ impl CredPayload {
 }
 
 /// Seal `payload` under a fresh DEK and wrap the DEK for the ring's mode. The caller appends the result.
-pub fn cred_update_body(store: &LauncherStore, host: &HostUid, payload: &CredPayload) -> Result<OpBody> {
-    cred_update_body_for(store, host, payload, store.sync_cred_mode()?)
+pub fn cred_update_body(
+    store: &LauncherStore,
+    me: &DevicePublic,
+    host: &HostUid,
+    payload: &CredPayload,
+) -> Result<OpBody> {
+    cred_update_body_for(store, me, host, payload, store.sync_cred_mode()?)
 }
 
 /// [`cred_update_body`] for an explicit mode (a mode change writes the new shape before the mode
 /// itself has been applied).
-pub fn cred_update_body_for(store: &LauncherStore, host: &HostUid, payload: &CredPayload, mode: CredMode) -> Result<OpBody> {
+pub fn cred_update_body_for(
+    store: &LauncherStore,
+    me: &DevicePublic,
+    host: &HostUid,
+    payload: &CredPayload,
+    mode: CredMode,
+) -> Result<OpBody> {
     let dek = zeroize::Zeroizing::new(dek_generate());
     let ciphertext = dek_seal(&dek, &payload.to_bytes());
     let wrapped_shares = match mode {
         CredMode::Vault => {
-            let vault = vault_pub(store)?.context("no vault is set up on this device: run ring setup or import the kit")?;
+            let vault = vault_pub(store)?
+                .context("no vault is set up on this device: run ring setup or import the kit")?;
             vec![vault_wrap(&vault, host, &dek)?]
         }
         CredMode::Quorum => {
-            let recipients = share_recipients(store)?;
-            ensure!(recipients.len() >= SHARE_K as usize, "quorum mode needs at least two holders (a second device, the phone or the paper)");
+            let recipients = share_recipients(store, me)?;
+            ensure!(
+                recipients.len() >= SHARE_K as usize,
+                "quorum mode needs at least two holders (a second device, the phone or the paper)"
+            );
             ensure!(recipients.len() <= 255, "too many holders");
             let indices: Vec<u8> = (1..=recipients.len() as u8).collect();
             let shares = shamir_split_at(&dek, SHARE_K, &indices);
@@ -100,12 +134,21 @@ pub fn cred_update_body_for(store: &LauncherStore, host: &HostUid, payload: &Cre
                 .collect()
         }
     };
-    Ok(OpBody::CredUpdate { host_uid: *host, ciphertext, wrapped_shares })
+    Ok(OpBody::CredUpdate {
+        host_uid: *host,
+        ciphertext,
+        wrapped_shares,
+    })
 }
 
 /// Create or replace the credential of `host` (a host or identity uid) and chain the op.
-pub fn cred_put(store: &LauncherStore, id: &super::crypto::DeviceIdentity, host: &HostUid, payload: &CredPayload) -> Result<Op> {
-    store.sync_append_local(id, cred_update_body(store, host, payload)?)
+pub fn cred_put(
+    store: &LauncherStore,
+    id: &super::crypto::DeviceIdentity,
+    host: &HostUid,
+    payload: &CredPayload,
+) -> Result<Op> {
+    store.sync_append_local(id, cred_update_body(store, &id.public(), host, payload)?)
 }
 
 /// An identity key written to a file ssh can read; removed on drop.
@@ -127,15 +170,28 @@ impl Drop for MaterialisedKey {
 
 /// Write the key of an opened identity credential to `dir/<uid>` with mode 0600 (create-new, so an
 /// existing file is never followed or overwritten). `dir` should be tmpfs: the caller decides.
-pub fn materialise_key(payload: &CredPayload, dir: &Path, identity_uid: &HostUid) -> Result<Option<MaterialisedKey>> {
-    let Some(key) = &payload.private_key else { return Ok(None) };
+pub fn materialise_key(
+    payload: &CredPayload,
+    dir: &Path,
+    identity_uid: &HostUid,
+) -> Result<Option<MaterialisedKey>> {
+    let Some(key) = &payload.private_key else {
+        return Ok(None);
+    };
     #[cfg(unix)]
     {
         use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
-        fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)?;
         let path = dir.join(uid_hex(identity_uid));
         let _ = fs::remove_file(&path);
-        let mut f = fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&path)?;
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)?;
         f.write_all(key.as_bytes())?;
         if !key.ends_with('\n') {
             f.write_all(b"\n")?;
@@ -164,7 +220,11 @@ pub struct MigrationReport {
 /// and write them as encrypted replicated credentials. `local` must be the profile's ungated
 /// store (a gated one answers `Locked` for synced keys). The local copies stay until
 /// [`remove_local_copies`] after the user confirmed.
-pub fn migrate_local_secrets(store: &LauncherStore, id: &super::crypto::DeviceIdentity, local: &dyn PasswordStore) -> Result<MigrationReport> {
+pub fn migrate_local_secrets(
+    store: &LauncherStore,
+    id: &super::crypto::DeviceIdentity,
+    local: &dyn PasswordStore,
+) -> Result<MigrationReport> {
     struct Row {
         key: String,
         uid: HostUid,
@@ -172,27 +232,58 @@ pub fn migrate_local_secrets(store: &LauncherStore, id: &super::crypto::DeviceId
     }
     let rows: Vec<Row> = store.with_conn(|c| {
         let mut out = Vec::new();
-        let mut st = c.prepare("SELECT id, uid FROM hosts WHERE uid IS NOT NULL AND has_password = 1 ORDER BY id")?;
+        let mut st = c.prepare(
+            "SELECT id, uid FROM hosts WHERE uid IS NOT NULL AND has_password = 1 ORDER BY id",
+        )?;
         for r in st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?)))? {
             let (rid, uid) = r?;
-            out.push(Row { key: crate::credentials::host_key(rid), uid: uid.try_into().map_err(|_| anyhow!("host uid"))?, key_path: None });
+            out.push(Row {
+                key: crate::credentials::host_key(rid),
+                uid: uid.try_into().map_err(|_| anyhow!("host uid"))?,
+                key_path: None,
+            });
         }
-        let mut st = c.prepare("SELECT id, uid, private_key FROM identities WHERE uid IS NOT NULL ORDER BY id")?;
-        for r in st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?, r.get::<_, Option<String>>(2)?)))? {
+        let mut st = c.prepare(
+            "SELECT id, uid, private_key FROM identities WHERE uid IS NOT NULL ORDER BY id",
+        )?;
+        for r in st.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, Vec<u8>>(1)?,
+                r.get::<_, Option<String>>(2)?,
+            ))
+        })? {
             let (rid, uid, key_path) = r?;
-            out.push(Row { key: crate::credentials::identity_key(rid), uid: uid.try_into().map_err(|_| anyhow!("identity uid"))?, key_path });
+            out.push(Row {
+                key: crate::credentials::identity_key(rid),
+                uid: uid.try_into().map_err(|_| anyhow!("identity uid"))?,
+                key_path,
+            });
         }
         Ok(out)
     })?;
     let mut report = MigrationReport::default();
     for row in rows {
         let password = local.get(&row.key).ok().flatten();
-        let private_key = row.key_path.as_deref().filter(|p| !p.is_empty()).and_then(|p| fs::read_to_string(crate::ssh::expand_tilde(p)).ok()).filter(|t| crate::ssh::looks_like_private_key(t));
+        let private_key = row
+            .key_path
+            .as_deref()
+            .filter(|p| !p.is_empty())
+            .and_then(|p| fs::read_to_string(crate::ssh::expand_tilde(p)).ok())
+            .filter(|t| crate::ssh::looks_like_private_key(t));
         if password.is_none() && private_key.is_none() {
             report.skipped.push(row.key);
             continue;
         }
-        cred_put(store, id, &row.uid, &CredPayload { password, private_key })?;
+        cred_put(
+            store,
+            id,
+            &row.uid,
+            &CredPayload {
+                password,
+                private_key,
+            },
+        )?;
         report.migrated.push(row.key);
     }
     Ok(report)
