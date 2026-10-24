@@ -9,9 +9,7 @@ use anyhow::{Context, Result};
 
 use crate::app::{resolve_pending_secret_for_managed, HostEntry};
 use crate::config::AppConfig;
-use crate::credentials::{
-    ensure_unlocked, locked_refs, needs_share_message, open_for_profile, PasswordStore,
-};
+use crate::credentials::{ensure_unlocked, locked_refs, open_for_profile, PasswordStore};
 use crate::hosts::load_merged_hosts;
 use crate::metadata::MetadataDb;
 use crate::profile::ProfilePaths;
@@ -66,7 +64,14 @@ impl CliContext {
     /// touch a secret (`host list`, `completions`, ...) must not open it.
     pub fn password_store(&self) -> &dyn PasswordStore {
         self.password_store
-            .get_or_init(|| open_for_profile(&self.profile))
+            .get_or_init(|| {
+                let store = open_for_profile(&self.profile);
+                // From here on the ring's credentials answer Locked until opened.
+                if let Some(gate) = store.shared_gate() {
+                    crate::sync::runtime::guard_synced_credentials(&gate, self.store.clone());
+                }
+                store
+            })
             .as_ref()
     }
 
@@ -149,12 +154,16 @@ impl CliContext {
         if locked.is_empty() {
             return Ok(());
         }
-        match &self.unlocker {
-            Some(u) => {
-                ensure_unlocked(&locked, u.as_ref()).map_err(|e| anyhow::anyhow!("{label}: {e}"))
+        let built;
+        let unlocker: &dyn crate::credentials::Unlocker = match &self.unlocker {
+            Some(u) => u.as_ref(),
+            None => {
+                built = super::unlock::default_unlocker(self)
+                    .map_err(|e| anyhow::anyhow!("{label}: {e:#}"))?;
+                &built
             }
-            None => anyhow::bail!("{label}: {}", needs_share_message()),
-        }
+        };
+        ensure_unlocked(&locked, unlocker).map_err(|e| anyhow::anyhow!("{label}: {e}"))
     }
 
     pub fn resolve_tunnel_secret(
