@@ -1,7 +1,9 @@
 #!/bin/sh
-# 10: peer-b enrolls to peer-a; a host added on peer-a reaches peer-b, where
-# address changes are held for review (Dangerous field, see tier.rs). One held
-# change is approved and must apply; another is rejected and must not.
+# 10: peer-a founds the ring with hub, peer-b joins through hub and is approved
+# on peer-a. peer-b then records peer-a directly (a repeat ceremony), so a host
+# added on peer-a reaches peer-b. Address changes are held for review (Dangerous
+# field, see tier.rs): one held change is approved and must apply, another is
+# rejected and must not.
 . "$E2E_DIR/lib.sh"
 NAME=10-enroll-and-sync
 
@@ -12,7 +14,11 @@ rid() {
 }
 
 reset_peers
-check "peer-b joins peer-a's ring" "enroll_peer peer-b peer-a"
+check "peer-a founds the ring with hub" "enroll_peer peer-a hub"
+check "peer-b joins via hub" "enroll_peer peer-b hub"
+check "peer-a approves peer-b's admission" "approve_all peer-a"
+check "peer-b records peer-a directly" "enroll_peer peer-b peer-a"
+dump_state "after enrollment"
 check "peer-a adds host web1" "peer peer-a $SSHUB host add --name web1 --address web1.internal"
 
 out=$(snow peer-b)
@@ -30,5 +36,6 @@ snow peer-b >/dev/null
 check "held web2 change is in the review queue" "test -n '$(rid web2.internal)'"
 check "reject held web2 change on peer-b" "peer peer-b $SSHUB sync-review --reject $(rid web2.internal)"
 check "web2 address absent after rejection" "! peer peer-b $SSHUB host list 2>/dev/null | grep -q web2.internal"
+dump_state "after review"
 
 finish "$NAME"
