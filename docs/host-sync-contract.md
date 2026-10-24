@@ -320,6 +320,120 @@ environment, os_icon, tags, notes, favorite, secret_lookup, has_password,
 group_uids, identity_uid`. Hop tokens in `proxy_jump` are stored as uids and
 rendered as names locally; apply rewrites them.
 
+### 2a. Stage 1 as built (WP1a, WP1b)
+
+Binding addenda to section 2; the code in `src/sync/oplog/`, `src/sync/apply.rs`
+and `src/sync/identity_store.rs` is the reference.
+
+**Canonical form details (C2).** Header field order is `device_id, seq, lamport,
+prev_hash, timestamp, epoch, alg, body`; `alg` is the two-byte wire form
+`[sig, wrap]` (`[1,1]` today); the body is externally tagged,
+`{"Variant":{fields in the order of section 2}}`; uids are 32 lowercase hex
+characters; `[u8; 32]` hashes, ciphertexts, sealed shares, commitments and
+device keys are arrays of numbers; `ThirdFactor` is `"Paper"`, `"EmailCode"` or
+`{"HardwareKey":"<device id>"}`; `CertScope` is `{"Group":"<uid>"}` or
+`{"Hosts":["<uid>",...]}`; `HeadAttest` (in `PhoneReenroll.liveness`) is
+`{"device_id","seq","chain_hash"}`. Decoding is strict: `Op::from_canonical`
+re-encodes and refuses bytes that differ from what the encoder would write.
+Final vectors: `tests/vectors/op/ops.json` (every body variant plus edge cases),
+reproduced by the independent oracle `tests/oracles/op_canonical.py`;
+`tests/vectors/op-rules/` stays as the PoC A rule conformance set.
+
+**Patch fields.** `HostUpsert`, `GroupUpsert` and `IdentityUpsert` carry a patch:
+absent key = untouched, explicit `null` = cleared, absent keys are omitted, key
+order fixed:
+
+- host: `name, label, address, port, username, proxy_jump, forward_agent,
+  remote_command, transport, environment, os_icon, tags, notes, favorite,
+  secret_lookup, has_password, group_uids, identity_uid`. `transport` is the DB
+  string (`ssh`, `mosh`); `group_uids` is sorted, unique and never holds the
+  Favorites uid (that is `favorite`); `tags` keep their order.
+- group: `name, default_identity_uid, default_username, default_port,
+  default_proxy_jump, default_transport, default_forward_agent, parent_uid`.
+- identity: `name, username, has_password` (key file paths never replicate).
+
+A hop token in `proxy_jump` or `default_proxy_jump` that names a saved launcher
+host travels as `#<uid hex>`; any other hop token is a plain `[user@]host[:port]`
+checked by `map::hops::validate_raw`. Apply renders `#uid` as the local host
+name (`sync_hops_to_wire` does the inverse when authoring); an unresolvable hop
+clears the column and keeps the register.
+
+**Types added.** `CertScope` lives in `oplog::op` (stage 3 re-exports it, it does
+not redefine it). `HeadAttest` is an unsigned claim; the self-signed form is
+`fork::SignedHead { device_id, seq, hash, sig }` (signature over
+`"sshub/sync/head/v1" || device_id || 0x00 || seq u64 BE || hash`).
+`fork::HeadVerdict { Consistent, Ahead, Fork, Rejected }`,
+`fork::ForkEvidence { Ops, OpAndHead, Heads }`, `merge::TieBreak { First, Second,
+ManualReview }` and `merge::tie_break(a, b)` are exported from `oplog`.
+
+**Extra `LauncherStore` methods** (beyond section 2): `sync_register_device(public,
+name, role, attendance)` (the trust anchor written by an enrollment ceremony),
+`sync_chain_heads()`, `sync_pending_reason(hash)`, `sync_record_head(&SignedHead)`,
+`sync_fork_evidence(device)`, `sync_mark_suspect(device)`, `sync_state_hash()`,
+`sync_projection_hash()`, `sync_projection_dump()`, `sync_hops_to_wire(str)`.
+`sync_append_local` validates the body like ingest does and stores the op as
+`approved` (the user made the change). `sync_chain_tail` returns at most
+`MAX_OPS_PER_TAIL` ops.
+
+**Ingest verdicts.** `Rejected` (not chained, nothing stored): seq, lamport or
+epoch above `i64::MAX` or zero; unknown or compromised signer; unsupported alg;
+bad signature; invalid field values (option-like names and addresses,
+`destination_problem`, bad hops, port 0, unknown transport, unsorted
+`group_uids`, ops on the local-only Favorites group, `ShareRelease` whose
+`requester` is not the signer); duplicate; gap; `prev_hash` mismatch; lamport not
+increasing along the chain; lamport above `max_known + LAMPORT_JUMP_CAP`;
+quarantine full for the device. `ForkProof(stored, new)` when a valid op has the
+seq of a different stored op (device becomes `compromised`, evidence kept).
+Otherwise the op is chained and stored: `Applied` or `Pending`; an op signed at
+or after its author's approved revocation is chained but `void` and reported as
+`Rejected("void: ...")`.
+
+**Op states** (`sync_ops.state`): `applied` (Green, automatic), `pending`,
+`approved` (review or own op), `rejected` (review refused; kept so the chain
+stays whole), `void`. Applied and approved ops are effective; only they feed
+state. The state is a function of the op and the rest of the log, never of
+arrival order. Pending reasons: `tier` (Yellow or Red, or a dangerous field
+anywhere in the op: the whole op waits, its safe fields included),
+`resurrection` (an edit with lamport strictly above an effective tombstone),
+`revoke-conflict` (author has a pending revoke at or below the op's lamport).
+An approved `DeviceRevoke` voids the target's ops with lamport at or above the
+revoke's; a revoke never loses an automatic tie-break.
+
+**Tiers** (`tier::body_tier`): Green = upserts with only safe fields,
+`CertHostOpened`, `RecoveryAck`, `HeadAttest`. Yellow = upserts touching any
+dangerous (or unclassified) field, the three deletes, `CredUpdate`,
+`ShareRelease`, `ShareReshareConfirm`, `CertRevoke`, `PhoneReenrollCancel`,
+`DeviceAdd` of a mirror. Red = `DeviceAdd` of a holder, `DeviceRevoke`,
+`ShareReshare`, `CertIssue`, `PhoneReenroll`, `ModeChange`. Only Green applies
+without review.
+
+**State model.** Entity state is a deterministic function of the effective ops:
+per-field last writer wins by `(lamport, device_id, seq)` over `sync_fields`; an
+entity is alive iff its newest effective write has a strictly higher lamport than
+its newest effective tombstone. Rows are a projection written through the
+existing `*_on` helpers and validators. Two live entities that want one name: the
+holder of the older name write `(lamport, device_id)` keeps it, the other renders
+as `name (<first 8 uid hex>)`; a local-only row (ssh_config, pre-sync) always
+keeps its name. A group whose parent chain cycles loses its parent on every
+device. Effects of non-entity ops (`DeviceAdd`, `CredUpdate`, certificates,
+`ModeChange`, `HeadAttest`) run once when the op becomes effective and are not
+undone by a later void (ring-membership ops are always reviewed by a human).
+
+**Schema.** Tables of `migrate_v21_to_v22`: the 11 of section 2 plus
+`sync_fields` (per-field write registers) and `sync_entities` (cache of
+liveness and base name). `sync_ops` also stores `kind` and `subject`. The DDL is
+`SYNC_SCHEMA` in `src/store/migrate.rs`. Uids of new rows come from an
+`AFTER INSERT` trigger (`randomblob(16)`, SQLite's OS-seeded CSPRNG); the seeded
+Favorites group and Default identity have fixed uids
+(`FAVORITES_GROUP_UID`, `DEFAULT_IDENTITY_UID` in `src/store/uid.rs`).
+
+**Device key (C8) as built.** `load_or_init_identity` keeps the passphrase of
+`device.key` (random 256 bits, `to_encrypted`) in the profile's credential store
+under `sync-device-key`: the OS keyring normally; in the `credentials.json`
+fallback it sits next to the file, so the 0600 mode is the whole protection, as for
+every secret there. A key file whose passphrase is missing is an error, never a
+silent regeneration.
+
 ## 3. Stage 2: `src/sync/{protocol,ratchet,enroll,client}.rs` (WP2a, WP2b)
 
 ```rust
