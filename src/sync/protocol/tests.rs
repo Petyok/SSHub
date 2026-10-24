@@ -75,7 +75,7 @@ impl SyncLink for PipeLink {
 }
 
 pub(crate) struct Dev {
-    pub store: LauncherStore,
+    pub store: Arc<LauncherStore>,
     pub id: Arc<DeviceIdentity>,
     pub did: DeviceId,
 }
@@ -88,7 +88,7 @@ impl Dev {
     pub(crate) fn with(id: Arc<DeviceIdentity>) -> Self {
         let did = id.public().device_id();
         Self {
-            store: LauncherStore::open_in_memory().unwrap(),
+            store: Arc::new(LauncherStore::open_in_memory().unwrap()),
             id,
             did,
         }
@@ -134,7 +134,7 @@ impl Dev {
     }
 }
 
-fn ring(n: usize) -> Vec<Dev> {
+pub(crate) fn ring(n: usize) -> Vec<Dev> {
     let devs: Vec<Dev> = (0..n).map(|_| Dev::new()).collect();
     for a in &devs {
         for b in &devs {
