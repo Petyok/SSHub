@@ -10,6 +10,7 @@ pub mod cred_ops;
 pub mod crypto;
 pub mod email;
 pub mod enroll;
+pub mod export;
 pub mod fountain;
 pub mod hub;
 pub mod identity_store;

@@ -107,7 +107,14 @@ pub enum BootstrapTrust {
     RingFingerprint(String),
     /// A device whose key the user verified (SAS) at enrollment.
     Anchor(DeviceId),
+    /// The inviter that enrolled this device: the bundle is a join anchor (its state as of
+    /// its chain heads, signed by the inviter alone), never a prune checkpoint.
+    Enrollment { inviter: DeviceId },
 }
+
+/// `prev_checkpoint` of a join anchor. No real checkpoint carries it, so an anchor never
+/// continues the checkpoint chain and a checkpoint is never taken for an anchor.
+pub(crate) const JOIN_ANCHOR_PREV: [u8; 32] = [0xA5; 32];
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct PruneReport {
@@ -208,6 +215,19 @@ fn writes_of(op: &Op, hash: &[u8; 32]) -> Vec<RawWrite> {
                 "kind": super::merge::kind_db(*kind),
                 "verified_by": super::merge::verified_db(*verified_by),
                 "added_by": hex(hash),
+            }),
+        )],
+        OpBody::ExemptionSet { device_id, slot } => vec![(
+            "exempt",
+            device_id.clone(),
+            0,
+            json!({
+                "on": slot.is_some(),
+                "slot": slot.as_ref().map(|p| json!({
+                    "ed25519": hex(&p.ed25519_pub),
+                    "x25519": hex(&p.x25519_pub),
+                    "mlkem": b64_encode(&p.mlkem_pub),
+                })),
             }),
         )],
         OpBody::DeviceRoleChange { device_id, to } => vec![(
@@ -551,6 +571,12 @@ fn device_section(
         if let Some(r) = wins.get(&("role".to_string(), key.clone())) {
             m.insert("role".into(), r.value["role"].clone());
         }
+        m.insert(
+            "exempt".into(),
+            json!(wins
+                .get(&("exempt".to_string(), key.clone()))
+                .is_some_and(|e| e.value["on"] == true)),
+        );
         m.insert("wrap_epoch".into(), json!(wrap_epoch));
         m.insert(
             "status".into(),
@@ -1045,6 +1071,10 @@ pub(crate) fn record(
 ) -> Result<CheckpointStatus> {
     let proposal = &bundle.proposal;
     let (cut, state_hash, state_len, prev, required) = propose_parts(proposal)?;
+    ensure!(
+        *prev != JOIN_ANCHOR_PREV,
+        "a join anchor is not a checkpoint"
+    );
     let proposer_pub = device_pub(conn, &proposal.device_id)?.context("unknown proposer")?;
     ensure!(proposal.verify(&proposer_pub), "bad proposal signature");
     let hash = proposal.hash();
@@ -1609,6 +1639,82 @@ pub fn ring_fingerprint(state: &[u8]) -> Result<String> {
 
 // ------------------------------------------------------------------ bootstrap
 
+/// The inviter's resolved state at its chain heads as a join anchor: a proposal and one signature,
+/// both by `id` and neither entered into any log. The joiner adopts it as its starting state.
+pub(crate) fn build_join_anchor(
+    conn: &Connection,
+    id: &crate::sync::crypto::DeviceIdentity,
+    now: i64,
+) -> Result<CheckpointBundle> {
+    let me = id.public().device_id();
+    let mut cut = local_heads(conn)?;
+    cut.sort_by(|a, b| a.device_id.cmp(&b.device_id));
+    ensure!(!cut.is_empty(), "this device has nothing to hand over yet");
+    let state = fold_state(conn, &cut, now)?;
+    let doc: Value = serde_json::from_slice(&state)?;
+    ensure!(
+        doc["devices"]
+            .as_array()
+            .is_some_and(|d| d.iter().any(|d| d["id"] == me.as_str())),
+        "this device is not in the ring's device table"
+    );
+    let mut heads = Vec::new();
+    for c in &cut {
+        heads.push(
+            op_at(conn, &c.device_id, c.seq)?
+                .with_context(|| format!("head op of {} is missing", c.device_id))?
+                .op,
+        );
+    }
+    let (seq, prev_hash, lamport) = cut
+        .iter()
+        .find(|c| c.device_id == me)
+        .map_or((1, ZERO, 0), |c| (c.seq + 1, c.op_hash, c.lamport));
+    let lamport = lamport.max(cut.iter().map(|c| c.lamport).max().unwrap_or(0)) + 1;
+    let epoch: Option<i64> = conn
+        .query_row(
+            "SELECT epoch FROM sync_epochs WHERE device_id = ?1",
+            params![me],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let mut proposal = Op {
+        device_id: me.clone(),
+        seq,
+        lamport,
+        prev_hash,
+        timestamp: now,
+        epoch: epoch.unwrap_or(0) as u64,
+        alg: crate::sync::crypto::ALG_CURRENT,
+        body: OpBody::CheckpointPropose {
+            state_hash: chain_hash(&state),
+            state_len: state.len() as u64,
+            prev_checkpoint: JOIN_ANCHOR_PREV,
+            required: vec![me.clone()],
+            cut,
+        },
+        signature: [0u8; 64],
+    };
+    proposal.signature = id.sign(&proposal.canonical_bytes());
+    let mut sign = Op {
+        seq: seq + 1,
+        lamport: lamport + 1,
+        prev_hash: proposal.hash(),
+        body: OpBody::CheckpointSign {
+            proposal_hash: proposal.hash(),
+        },
+        signature: [0u8; 64],
+        ..proposal.clone()
+    };
+    sign.signature = id.sign(&sign.canonical_bytes());
+    Ok(CheckpointBundle {
+        proposal,
+        signs: vec![sign],
+        heads,
+        state,
+    })
+}
+
 pub(crate) fn bootstrap(
     conn: &Connection,
     bundle: &CheckpointBundle,
@@ -1616,7 +1722,16 @@ pub(crate) fn bootstrap(
     now: i64,
 ) -> Result<()> {
     let proposal = &bundle.proposal;
-    let (cut, state_hash, state_len, _prev, required) = propose_parts(proposal)?;
+    let (cut, state_hash, state_len, prev, required) = propose_parts(proposal)?;
+    let join = matches!(trust, BootstrapTrust::Enrollment { .. });
+    ensure!(
+        (*prev == JOIN_ANCHOR_PREV) == join,
+        if join {
+            "this bundle is a prune checkpoint, not a join anchor"
+        } else {
+            "a join anchor is not a checkpoint: it is accepted only at enrollment"
+        }
+    );
     ensure!(
         chain_hash(&bundle.state) == *state_hash && bundle.state.len() as u64 == state_len,
         "the state blob does not match the proposal"
@@ -1643,11 +1758,6 @@ pub(crate) fn bootstrap(
         "the state's cut differs from the proposal's"
     );
     // Required set from the blob's own table, and every one of them signed.
-    let want = required_of(&devices, proposal.timestamp);
-    ensure!(
-        want == *required,
-        "the proposal's required set does not match the state's device table"
-    );
     let proposal_hash = proposal.hash();
     let mut signers = BTreeSet::new();
     for s in &bundle.signs {
@@ -1658,14 +1768,36 @@ pub(crate) fn bootstrap(
             signers.insert(s.device_id.clone());
         }
     }
-    ensure!(
-        required.iter().all(|r| signers.contains(r)),
-        "not every required device signed"
-    );
-    ensure!(
-        signers.len() >= CHECKPOINT_SIGN_MIN,
-        "fewer than {CHECKPOINT_SIGN_MIN} signers"
-    );
+    if let BootstrapTrust::Enrollment { inviter } = trust {
+        // Alone, by the inviter the user verified; its id is its key's id.
+        ensure!(
+            proposal.device_id == *inviter && *required == [inviter.clone()],
+            "a join anchor is proposed and required by the inviter alone"
+        );
+        ensure!(
+            key_of_device(inviter)
+                .is_some_and(|k| crate::sync::crypto::device_id_of(&k) == *inviter),
+            "the inviter's key does not match its id"
+        );
+        ensure!(
+            signers.contains(inviter),
+            "the inviter did not sign the anchor"
+        );
+    } else {
+        let want = required_of(&devices, proposal.timestamp);
+        ensure!(
+            want == *required,
+            "the proposal's required set does not match the state's device table"
+        );
+        ensure!(
+            required.iter().all(|r| signers.contains(r)),
+            "not every required device signed"
+        );
+        ensure!(
+            signers.len() >= CHECKPOINT_SIGN_MIN,
+            "fewer than {CHECKPOINT_SIGN_MIN} signers"
+        );
+    }
     // Chain anchors: the head ops of the cut.
     for c in cut {
         let head = bundle
@@ -1704,6 +1836,8 @@ pub(crate) fn bootstrap(
                 "the anchor device did not sign this checkpoint"
             );
         }
+        // Checked with the signers above.
+        BootstrapTrust::Enrollment { .. } => {}
     }
     let have_ops: i64 = conn.query_row("SELECT COUNT(*) FROM sync_ops", [], |r| r.get(0))?;
     ensure!(have_ops == 0, "bootstrap needs a store without op history");
@@ -1799,6 +1933,10 @@ pub(crate) fn bootstrap(
     rebuild_caches(conn, now)?;
     reproject(conn, &touched)?;
 
+    // A join anchor is a starting state, not a checkpoint: it is not recorded as one.
+    if join {
+        return Ok(());
+    }
     // Record the checkpoint itself as accepted.
     conn.execute(
         "INSERT OR REPLACE INTO sync_checkpoints (proposal_hash, device_id, prev, state_hash, state_len, cut,
@@ -1898,6 +2036,12 @@ fn rebuild_caches(conn: &Connection, now: i64) -> Result<()> {
                         v["verified_by"].as_str().unwrap_or("sas"),
                         now,
                     ],
+                )?;
+            }
+            "exempt" => {
+                conn.execute(
+                    "UPDATE sync_devices SET exempt = ?2 WHERE device_id = ?1",
+                    params![key, v["on"] == true],
                 )?;
             }
             "cred" => {

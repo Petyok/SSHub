@@ -36,7 +36,7 @@ impl ShareSource for PromptShares {
 
 /// A line from the controlling terminal with echo off, or from stdin when
 /// there is no terminal.
-fn prompt_secret(label: &str) -> Option<Zeroizing<String>> {
+pub(crate) fn prompt_secret(label: &str) -> Option<Zeroizing<String>> {
     let tty = std::fs::OpenOptions::new()
         .read(true)
         .write(true)

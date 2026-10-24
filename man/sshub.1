@@ -508,6 +508,44 @@ Irreversible; requires
 Leaves
 .I ~/.ssh/config
 untouched.
+.TP
+.B sshub sync\-revoke \fIDEVICE\fR
+Revoke a device: Yellow for a mirror, Red for a holder. Prints the ceremony status.
+.TP
+.B sshub sync\-role \fIDEVICE\fR \fBholder\fR|\fBmirror\fR
+Promote or demote a device (Red).
+.TP
+.B sshub sync\-approve \fIOP\fR
+Approve a pending Red op as this attended device.
+.TP
+.B sshub sync\-factor \fIOP\fR \fB\-\-paper\fR|\fB\-\-email\-code\fR
+Add the third factor to a Red op; the secret is read without echo.
+.TP
+.B sshub sync\-factor\-register \fBpaper\fR|\fBemail\fR \fR[\fB\-\-sender\fR \fIDEVICE\fR]
+Register a third factor.
+.TP
+.B sshub sync\-recovery \fBstart\fR \fR[\fB\-\-paper\fR]|\fBapprove\fR \fIOP\fR|\fBack\fR \fIOP\fR|\fBcancel\fR \fIOP\fR \fB\-\-factor\fR \fBpaper\fR|\fBemail\fR|\fBstatus\fR
+Phone re-enrollment.
+.TP
+.B sshub sync\-mode \fBvault\fR|\fBquorum\fR \fR[\fB\-\-cosigner\fR \fIDEVICE\fR]
+Change the credential mode (Red).
+.TP
+.B sshub sync\-exemption \fBon\fR|\fBoff\fR \fIDEVICE\fR
+Master-phrase exemption of a device.
+.TP
+.B sshub sync\-export \fB\-\-window\fR \fISECS\fR \fB\-\-out\fR \fIPATH\fR \fR[\fB\-\-wait\fR \fISECS\fR]
+Bulk export inside a Red-approved window, as a Termius CSV (mode 0600).
+.TP
+.B sshub sync\-migrate \fR[\fB\-\-remove\-local\fR]
+Write existing local secrets as replicated credentials.
+.TP
+.B sshub sync\-import\-kit
+Read the ring kit and the six master words without echo.
+.PP
+All of these accept
+.B \-\-format plain|json
+and the global
+.BR \-\-profile .
 .SH EXIT STATUS
 .TP
 .B 0

@@ -467,7 +467,7 @@ fn garbage_frames_and_wrong_order_end_the_round() {
 }
 
 #[test]
-fn ops_of_a_device_only_the_peer_knows_are_refused_without_harm() {
+fn ops_of_a_device_only_the_peer_knows_wait_for_review_without_harm() {
     let d = ring(2);
     let x = Dev::new();
     d[0].trust(&x);
@@ -478,7 +478,10 @@ fn ops_of_a_device_only_the_peer_knows_are_refused_without_harm() {
     d[0].append(1, "real");
     let (c, _) = ok(round(&d[1], &d[0]));
     assert_eq!(c.applied, 1);
-    assert!(c.rejected >= 1);
+    assert_eq!(c.pending_arrived, 1);
+    let held = d[1].store.sync_pending_with_reasons().unwrap();
+    assert_eq!(held.len(), 1);
+    assert_eq!(held[0].1, "unknown-author");
     assert!(d[1]
         .store
         .sync_chain_heads()
