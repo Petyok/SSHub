@@ -12,13 +12,12 @@ All notable changes to SSHub are documented in this file.
   a whole group) to push, `←` stages one from the right pane to pull, a queue
   strip shows what is staged and `c` continues. Pushes and pulls can be mixed;
   they run one direction at a time, each with its own plan review.
-- **Guided profile migration** - the staged hosts then go through five checklists: hosts, the groups of those hosts, their
-  tunnels, the identities they (and the groups) use, and their audit logs. Only
-  checked rows travel; a step with nothing to list is skipped, `b` steps back.
+- **Guided profile migration** - the staged hosts then go through five
+  checklists: hosts, the groups of those hosts, their tunnels, the identities
+  they (and the groups) use, and their audit logs. Only checked rows travel; a step with nothing to list is skipped, `b` steps back.
   Audit events keep their timestamps and land under the host's name in the
   destination (a move deletes them from the source). A guided move keeps a group
   in the source while a host that is not moving still belongs to it.
-
 - **Go to a path in the SFTP browser** (issue #162, requested by
   [@Frysuni](https://github.com/Frysuni)) - the browser could only filter the
   current directory, so reaching `/var/www` or `~/.ssh` meant walking there one
@@ -50,9 +49,9 @@ All notable changes to SSHub are documented in this file.
   and only then removes them from the source. A secret that cannot be written
   to the destination is not moved at all: the host or identity stays in the
   source (a host's destination copy is removed again) and a popup or a warning
-  lists it, so the move can be repeated. `sshub ... transfer --move` then exits 1. Copies still carry no
-  secrets. Applies to the profile manager, the guided migration and
-  `sshub host|group|identity transfer --move`.
+  lists it, so the move can be repeated. `sshub ... transfer --move` then
+  exits 1. Copies still carry no secrets. Applies to the profile manager, the guided
+  migration and `sshub host|group|identity transfer --move`.
   A tunnel transferred without its host now lands with auto-connect off.
 
 ## [0.19.2] - 2026-10-24
