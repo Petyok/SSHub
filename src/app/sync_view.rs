@@ -371,14 +371,13 @@ impl App {
     fn try_refresh_sync_view(&mut self) -> Result<()> {
         let store = self.store.clone();
         let rows = store.sync_devices()?;
-        let ops = store.sync_pending()?;
-        let review: Vec<PendingOpView> = ops
+        // Every pending op with its reason, `unknown-author` ones included.
+        let held = store.sync_pending_with_reasons()?;
+        let review: Vec<PendingOpView> = held
             .iter()
-            .map(|op| {
-                let reason = store.sync_pending_reason(&op.hash()).ok().flatten();
-                pending_view(&store, op, &rows, reason)
-            })
+            .map(|(op, reason)| pending_view(&store, op, &rows, Some(reason.clone())))
             .collect();
+        let ops: Vec<Op> = held.into_iter().map(|(op, _)| op).collect();
         let cred_mode = if rows.is_empty() {
             None
         } else {

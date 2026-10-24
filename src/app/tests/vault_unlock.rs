@@ -401,3 +401,73 @@ fn an_admin_job_runs_on_the_worker_with_the_device_identity_and_reports_back() {
             .is_some_and(|n| n.contains("nothing doing"))
     });
 }
+
+#[test]
+fn importing_the_kit_on_a_second_machine_sets_the_vault_up_from_the_two_secrets() {
+    let mut f = fixture();
+    // The fixture's worker is the "second machine": it has no ring yet.
+    let kit = crate::sync::quorum::ring_secret_text(&[5u8; 16]);
+    let phrase = crate::sync::crypto::eff_encode(&[0x07; 10]).unwrap();
+    crate::app::sync_flows::import_kit(&mut f.app);
+    // The onboarding intent queued by the fixture would race this: drop it.
+    f.app
+        .sync
+        .intents
+        .retain(|i| !matches!(i, SyncIntent::OnboardingDone(_)));
+    type_and_enter(&mut f.app, &kit);
+    type_and_enter(&mut f.app, &phrase);
+    pump(&mut f.app, "the import", |a| {
+        a.mode == AppMode::SyncInfo || a.host_notice.is_some()
+    });
+    assert!(vault_pub(&f.app.store).unwrap().is_some());
+    let stored = file_secrets(&f.paths)
+        .get(RING_SECRET_KEY)
+        .unwrap()
+        .unwrap();
+    assert_eq!(parse_ring_secret(&stored).unwrap(), [5u8; 16]);
+}
+
+#[test]
+fn moving_local_secrets_into_the_ring_keeps_them_until_asked_to_remove() {
+    let mut f = fixture();
+    pump(&mut f.app, "the ring", |a| a.sync.configured);
+    let host = f
+        .app
+        .store
+        .create_host(&crate::store::NewHost::launcher("web", "10.0.0.1"))
+        .unwrap();
+    let skey = host_key(host.id);
+    f.app
+        .store
+        .update_host(
+            host.id,
+            &crate::store::HostUpdate {
+                has_password: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    // A secret saved before the host was synced, in the local store.
+    file_secrets(&f.paths).set(&skey, "old-local").unwrap();
+    let uid = f.app.store.host_uid(host.id).unwrap().unwrap();
+    assert!(f.app.store.sync_cred_ciphertext(&uid).unwrap().is_none());
+
+    crate::app::sync_flows::migrate(&mut f.app, false);
+    pump(&mut f.app, "the migration", |a| {
+        a.mode == AppMode::SyncInfo || a.host_notice.is_some()
+    });
+    assert!(
+        f.app.store.sync_cred_ciphertext(&uid).unwrap().is_some(),
+        "replicated"
+    );
+    assert_eq!(
+        file_secrets(&f.paths).get(&skey).unwrap().as_deref(),
+        Some("old-local"),
+        "the local copy stays until asked"
+    );
+
+    f.app.handle_key(key(KeyCode::Esc)).unwrap();
+    crate::app::sync_flows::migrate(&mut f.app, true);
+    pump(&mut f.app, "the removal", |a| a.mode == AppMode::SyncInfo);
+    assert!(file_secrets(&f.paths).get(&skey).unwrap().is_none());
+}

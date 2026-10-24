@@ -585,7 +585,7 @@ fn verified_str(v: VerifiedBy) -> &'static str {
 fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
     let store = open_store(paths)?;
     let rows = store.sync_devices()?;
-    let pending = store.sync_pending()?.len();
+    let pending = store.sync_pending_with_reasons()?.len();
     let mode = lower(store.sync_cred_mode()?);
     let peers = Peers::load(paths)?;
     if json_out {
@@ -655,13 +655,11 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
     use crate::app::sync_view::pending_view;
     let store = open_store(paths)?;
     let rows = store.sync_devices()?;
-    let ops = store.sync_pending()?;
-    let views: Vec<_> = ops
+    // Every pending op with its reason (`unknown-author` ones included).
+    let views: Vec<_> = store
+        .sync_pending_with_reasons()?
         .iter()
-        .map(|op| {
-            let reason = store.sync_pending_reason(&op.hash()).ok().flatten();
-            pending_view(&store, op, &rows, reason)
-        })
+        .map(|(op, reason)| pending_view(&store, op, &rows, Some(reason.clone())))
         .collect();
     if let Some((approve, prefix)) = resolve {
         let hashes: Vec<[u8; 32]> = views.iter().map(|v| v.hash).collect();

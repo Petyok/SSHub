@@ -612,6 +612,10 @@ impl App {
         }
     }
 
+    pub(crate) fn sync_open_review_pub(&mut self) {
+        self.sync_open_review();
+    }
+
     fn sync_open_review(&mut self) {
         if !self.sync.configured {
             self.host_notice = Some(NOT_SET_UP.into());
@@ -786,6 +790,10 @@ impl App {
                     words: info.words,
                     peer_has_screen: info.peer_has_screen,
                 });
+            }
+            SyncEvent::Notice(message) if message.contains('\n') => {
+                let lines = message.lines().map(str::to_string).collect();
+                self.sync_info("Done", lines);
             }
             SyncEvent::Notice(message) => self.host_notice = Some(message),
             SyncEvent::ThisDevice(id) => {

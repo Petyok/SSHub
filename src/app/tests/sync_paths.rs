@@ -608,3 +608,86 @@ fn open_review(app: &mut App) {
         .unwrap();
     assert_eq!(app.mode, AppMode::SyncReview);
 }
+
+fn mark_this_device(r: &mut Ring) {
+    r.app.sync.this_device = Some(r.d[1].did.clone());
+    r.app.refresh_sync_view();
+    assert!(r.app.sync.devices.iter().any(|d| d.this));
+}
+
+fn enter(app: &mut App) {
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+}
+
+#[test]
+fn the_role_flow_proposes_a_change_for_the_chosen_device_through_the_worker() {
+    let mut r = ring(None);
+    mark_this_device(&mut r);
+    crate::app::sync_flows::role(&mut r.app);
+    assert_eq!(r.app.mode, AppMode::SyncMenu);
+    enter(&mut r.app); // the first other device
+    assert_eq!(r.app.mode, AppMode::SyncMenu, "now the role menu");
+    r.app.handle_key(key(KeyCode::Down)).unwrap();
+    enter(&mut r.app); // Mirror
+    pump(&mut r.app, "the proposal panel", |a| {
+        a.mode == AppMode::SyncInfo
+    });
+    let ops = crate::sync::quorum::ops_of(&r.app.store, "DeviceRoleChange", None).unwrap();
+    assert_eq!(ops.len(), 1, "one DeviceRoleChange was appended");
+}
+
+#[test]
+fn revoking_needs_the_devices_name_typed_back() {
+    let mut r = ring(None);
+    mark_this_device(&mut r);
+    crate::app::sync_flows::revoke(&mut r.app);
+    enter(&mut r.app);
+    assert_eq!(r.app.mode, AppMode::SyncPrompt);
+    type_and_enter(&mut r.app, "not the name");
+    assert!(r
+        .app
+        .host_notice
+        .as_deref()
+        .is_some_and(|n| n.contains("nothing changed")));
+    assert!(
+        crate::sync::quorum::ops_of(&r.app.store, "DeviceRevoke", None)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn the_paper_phrase_is_shown_once_and_registered_only_when_typed_back_exactly() {
+    let mut r = ring(None);
+    crate::app::sync_flows::paper_setup(&mut r.app);
+    assert_eq!(r.app.mode, AppMode::SyncInfo);
+    let words = r.app.sync_paper.clone().expect("held in memory");
+    assert_eq!(words.split_whitespace().count(), 24);
+    r.app.handle_key(key(KeyCode::Esc)).unwrap();
+
+    // A wrong copy registers nothing and drops the phrase.
+    crate::app::sync_flows::paper_register(&mut r.app);
+    type_and_enter(&mut r.app, "wrong words");
+    assert!(r.app.sync_paper.is_none());
+    assert!(
+        crate::sync::quorum::ops_of(&r.app.store, "FactorRegister", None)
+            .unwrap()
+            .is_empty()
+    );
+
+    // The right copy registers it as the third factor.
+    crate::app::sync_flows::paper_setup(&mut r.app);
+    let words = r.app.sync_paper.clone().unwrap();
+    r.app.handle_key(key(KeyCode::Esc)).unwrap();
+    crate::app::sync_flows::paper_register(&mut r.app);
+    type_and_enter(&mut r.app, &words);
+    pump(&mut r.app, "the registration", |a| {
+        a.mode == AppMode::SyncInfo
+    });
+    assert_eq!(
+        crate::sync::quorum::ops_of(&r.app.store, "FactorRegister", None)
+            .unwrap()
+            .len(),
+        1
+    );
+}

@@ -597,8 +597,11 @@ pub fn round_fn(deps: RoundDeps) -> RoundFn {
                     argon: deps.argon,
                     open_secrets: deps.open_secrets,
                 };
-                let message = job(&env)?;
-                ctx.emit(SyncEvent::Notice(message));
+                let outcome = job(&env);
+                // A job may have rotated the device keys: reload on the next round.
+                drop(env);
+                runtime = None;
+                ctx.emit(SyncEvent::Notice(outcome?));
                 Ok(RoundSummary::default())
             }
             Round::Identify => {

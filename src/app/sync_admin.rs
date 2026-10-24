@@ -6,7 +6,32 @@ use super::*;
 
 /// The menu entries, in order.
 pub(crate) fn entries() -> Vec<(String, MenuFn)> {
-    vec![("Ring overview".to_string(), Box::new(overview) as MenuFn)]
+    use super::sync_flows as f;
+    let item = |label: &str, run: fn(&mut App)| (label.to_string(), Box::new(run) as MenuFn);
+    vec![
+        item("Ring overview", overview),
+        item("Review changes waiting for approval", |app| {
+            app.sync_open_review_pub()
+        }),
+        item("Revoke a device", f::revoke),
+        item("Change a device's role (holder or mirror)", f::role),
+        item("Switch the credential mode (Vault, Quorum)", f::mode),
+        item("Recovery of a lost phone", f::recovery),
+        item("Paper phrase: create and show", f::paper_setup),
+        item(
+            "Paper phrase: register what I wrote down",
+            f::paper_register,
+        ),
+        item("Emailed code as third factor: register", f::email_factor),
+        item("Move this machine's saved secrets into the ring", |app| {
+            f::migrate(app, false)
+        }),
+        item(
+            "Remove the local copies once the ring's copies open",
+            |app| f::migrate(app, true),
+        ),
+        item("Import the Vault kit (second machine)", f::import_kit),
+    ]
 }
 
 /// Who is in the ring and how it is set up, as a panel.
