@@ -207,14 +207,39 @@ pub struct OnboardingView {
 /// A request from the UI to the sync worker.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SyncIntent {
-    SyncNow { device: String },
-    Enroll { host: String },
-    Review { approve: bool },
+    SyncNow {
+        device: String,
+    },
+    Enroll {
+        host: String,
+    },
+    Review {
+        approve: bool,
+    },
     SasMatches(bool),
-    Trust { scope: usize, term_days: u32 },
-    Release { approve: bool },
+    Trust {
+        scope: usize,
+        term_days: u32,
+    },
+    Release {
+        approve: bool,
+    },
     UnlockCode(String),
+    /// Open these synced credentials (store keys) so the action that needs
+    /// them can go on; answered by the stage that assembles shares.
+    Unlock {
+        secrets: Vec<String>,
+    },
     OnboardingDone,
+}
+
+/// What runs once credentials are open.
+type ResumeFn = Box<dyn FnOnce(&mut App) -> Result<()>>;
+
+/// An action held back until credentials it needs are open.
+pub(crate) struct UnlockResume {
+    refs: Vec<crate::credentials::SecretRef>,
+    run: ResumeFn,
 }
 
 /// Everything the Sync UI draws. `Default` is the unconfigured profile.
@@ -440,6 +465,7 @@ impl App {
     /// worker's events into the [`SyncView`]. This is the one place worker
     /// events become view state.
     pub fn poll_sync(&mut self) {
+        self.poll_unlock_resume();
         self.forward_sync_intents();
         while let Some(Ok(event)) = self.sync_worker.as_ref().map(|w| w.try_recv()) {
             self.apply_sync_event(event);
@@ -561,7 +587,97 @@ impl App {
         sync.sas = None;
         sync.release = None;
         sync.onboarding = None;
+        // Closing the modal abandons the action that was waiting on it.
+        self.unlock_resume = None;
         self.mode = AppMode::Normal;
+    }
+
+    /// The gate before any path that reads credentials. `true`: nothing it
+    /// needs is locked, go ahead. `false`: it is blocked and `resume` will run
+    /// by itself once the credentials are open (modal and request to the sync
+    /// stage), or the user was told why it cannot (no sync worker to open them).
+    pub(crate) fn preflight_unlock(
+        &mut self,
+        refs: Vec<crate::credentials::SecretRef>,
+        label: &str,
+        resume: impl FnOnce(&mut App) -> Result<()> + 'static,
+    ) -> bool {
+        let locked = crate::credentials::locked_refs(self.password_store.as_ref(), &refs);
+        if locked.is_empty() {
+            return true;
+        }
+        if !self.sync.worker {
+            self.host_notice = Some(format!(
+                "{label}: {}",
+                crate::credentials::needs_share_message()
+            ));
+            return false;
+        }
+        let secrets = locked
+            .iter()
+            .filter_map(|r| match r {
+                crate::credentials::SecretRef::Key(k) => Some(k.clone()),
+                crate::credentials::SecretRef::Lookup(_)
+                | crate::credentials::SecretRef::Staged(_) => None,
+            })
+            .collect();
+        self.unlock_resume = Some(UnlockResume {
+            refs: locked,
+            run: Box::new(resume),
+        });
+        self.open_sync_unlock(UnlockView {
+            host: label.into(),
+            have: 0,
+            need: 0,
+            paths: Vec::new(),
+            frames: Vec::new(),
+            code: String::new(),
+        });
+        self.sync.intents.push(SyncIntent::Unlock { secrets });
+        false
+    }
+
+    /// Whether `tunnel` would read a synced credential that is still locked.
+    /// Cheap when nothing is synced: it asks the gate before touching the
+    /// store. Used by the paths that start tunnels with no one at the keyboard.
+    pub(crate) fn tunnel_credentials_locked(&self, tunnel: &crate::store::Tunnel) -> bool {
+        if !self.password_store.gate().is_some_and(|g| g.guards_any()) {
+            return false;
+        }
+        let host = tunnel
+            .host_id
+            .and_then(|id| self.store.get_host(id).ok().flatten());
+        let resolved = host
+            .as_ref()
+            .and_then(|h| self.store.resolve_connection(h).ok());
+        let refs = crate::app::connection_secret_refs(
+            &self.store,
+            &self.hosts,
+            host.as_ref(),
+            resolved.as_ref().and_then(|r| r.identity.as_ref()),
+            resolved.as_ref().and_then(|r| r.proxy_jump.as_deref()),
+        );
+        !crate::credentials::locked_refs(self.password_store.as_ref(), &refs).is_empty()
+    }
+
+    /// Per tick: run the action that waited on an unlock once its credentials
+    /// are open.
+    pub(crate) fn poll_unlock_resume(&mut self) {
+        let ready = self.unlock_resume.as_ref().is_some_and(|r| {
+            crate::credentials::locked_refs(self.password_store.as_ref(), &r.refs).is_empty()
+        });
+        if !ready {
+            return;
+        }
+        let Some(resume) = self.unlock_resume.take() else {
+            return;
+        };
+        if self.mode == AppMode::SyncUnlock {
+            self.sync_close_modal();
+        }
+        if let Err(e) = (resume.run)(self) {
+            self.host_notice = Some(format!("{e:#}"));
+        }
     }
 
     /// Keys of every Sync modal. The fork alert is claimed ahead of everything
