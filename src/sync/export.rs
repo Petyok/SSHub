@@ -37,7 +37,7 @@ impl ExportWindow {
 type ExportOp = ([u8; 32], DeviceId, i64, u32);
 
 fn approved_exports(store: &LauncherStore) -> Result<Vec<ExportOp>> {
-    store.with_conn(|conn| {
+    let rows: Vec<crate::sync::oplog::Op> = store.with_conn(|conn| {
         let mut stmt = conn.prepare(
             "SELECT op_hash FROM sync_ops WHERE kind = 'BulkExport' AND state IN ('approved','applied')
              ORDER BY lamport",
@@ -49,17 +49,25 @@ fn approved_exports(store: &LauncherStore) -> Result<Vec<ExportOp>> {
         for h in hashes {
             let h: [u8; 32] = h.try_into().map_err(|_| anyhow::anyhow!("stored hash"))?;
             if let Some(row) = load_op(conn, &h)? {
-                if let OpBody::BulkExport {
-                    requester,
-                    window_secs,
-                } = row.op.body
-                {
-                    out.push((h, requester, row.op.timestamp, window_secs));
-                }
+                out.push(row.op);
             }
         }
         Ok(out)
-    })
+    })?;
+    let mut out = Vec::new();
+    for op in rows {
+        if let OpBody::BulkExport {
+            requester,
+            window_secs,
+        } = &op.body
+        {
+            // Only a completed ceremony opens a window, the proposer's own request included.
+            if crate::sync::ceremony::in_force(store, &op)? {
+                out.push((op.hash(), requester.clone(), op.timestamp, *window_secs));
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// The newest approved window of `requester` that contains `now`.
@@ -215,6 +223,7 @@ mod tests {
 
     fn setup() -> (LauncherStore, DeviceIdentity, DeviceId) {
         let store = LauncherStore::open_in_memory().unwrap();
+        crate::sync::ceremony::test_force(&store, true);
         let id = DeviceIdentity::generate();
         let did = id.public().device_id();
         store

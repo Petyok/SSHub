@@ -21,6 +21,7 @@ use crate::credentials::UnlockError;
 use crate::sync::client::SyncEvent;
 use crate::sync::codes::normalize_code;
 use crate::sync::crypto::Share;
+use crate::sync::media::{MediaEvent, MediaKind};
 use crate::sync::oplog::{DeviceKind, DeviceRole, DeviceStatus, HostUid};
 use crate::sync::protocol::{ShareAsk, ShareReply};
 use crate::sync::quorum::{
@@ -29,7 +30,8 @@ use crate::sync::quorum::{
 use crate::sync::runtime::{Peers, SyncRuntime};
 use crate::sync::share_release::unwrap_share_response;
 use crate::sync::unlock_paths::{
-    apply_reply_ext, full_entry_share, open_phone_reply_clipboard, share_from_code,
+    apply_reply_ext, full_entry_share, open_phone_reply, open_phone_reply_clipboard,
+    share_from_code,
 };
 
 /// How long a phone challenge stays valid.
@@ -38,6 +40,8 @@ const CHALLENGE_TTL_SECS: i64 = 600;
 const QR_AREA: (u16, u16) = (76, 44);
 /// How long the modal waits for the user before the unlock gives up.
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(600);
+/// How often the wait looks at the listeners and the typed answers.
+const MEDIA_POLL: Duration = Duration::from_millis(200);
 /// How often the attended path syncs with the holders while the user may type.
 const ATTENDED_POLL: Duration = Duration::from_secs(4);
 
@@ -80,7 +84,7 @@ impl UiShares {
     /// Ask each holder that is reachable and not the phone; `Granted` ends it.
     fn via_trusted_peers(&self, host: &HostUid, epoch: u64) -> Option<Share> {
         let rt = &self.runtime;
-        let rows = rt.store.sync_devices().ok()?;
+        let rows = crate::sync::ceremony::effective_devices(&rt.store, None).ok()?;
         let me = rt.identity.public().device_id();
         let peers = Peers::load(&rt.paths).ok()?;
         for d in rows.iter().filter(|d| {
@@ -141,23 +145,55 @@ impl UiShares {
         }
         let reply = open_phone_reply_clipboard(text, &ask.challenge, &ask.eph, &ask.phone_ed25519)
             .map_err(|e| (UnlockPathKind::Clipboard, e))?;
+        Ok(self.keep_reply(reply, UnlockPathKind::Clipboard))
+    }
+
+    /// A verified reply: keep its courier ops and snapshot, return the share.
+    /// Failing to keep the extras must not lose a good reply.
+    fn keep_reply(
+        &self,
+        reply: crate::sync::unlock_paths::PhoneReply,
+        kind: UnlockPathKind,
+    ) -> Share {
         if let Some(ext) = &reply.ext {
-            // The reply is good; failing to keep its courier ops must not lose it.
-            if let Err(e) = apply_reply_ext(store, ext) {
-                self.say(
-                    UnlockPathKind::Clipboard,
-                    format!("reply accepted; courier ops not kept: {e:#}"),
-                );
+            if let Err(e) = apply_reply_ext(&self.runtime.store, ext) {
+                self.say(kind, format!("reply accepted; courier ops not kept: {e:#}"));
             }
         }
-        Ok(reply.share)
+        reply.share
+    }
+
+    /// What a listener (microphone, camera) reports: statuses and progress
+    /// into the modal, a reply checked against the challenge.
+    fn media_event(&self, event: MediaEvent, ask: Option<&PhoneAsk>) -> Option<Share> {
+        let path = |k: MediaKind| match k {
+            MediaKind::Audio => UnlockPathKind::Audio,
+            MediaKind::Camera => UnlockPathKind::Camera,
+        };
+        match event {
+            MediaEvent::Status(k, line) => self.say(path(k), line),
+            MediaEvent::Progress(k, held, needed) => {
+                self.say(path(k), format!("reading the code: {held} of {needed}"));
+            }
+            MediaEvent::Reply(k, bytes) => {
+                let ask = ask?;
+                match open_phone_reply(&bytes, &ask.challenge, &ask.eph, &ask.phone_ed25519) {
+                    Ok(reply) => return Some(self.keep_reply(reply, path(k))),
+                    Err(e) => self.say(path(k), format!("not accepted: {e:#}")),
+                }
+            }
+        }
+        None
     }
 
     /// The holders worth asking: other terminals that hold shares, not revoked
     /// or compromised, that this device knows how to reach.
     fn reachable_holders(&self) -> Vec<(crate::sync::oplog::DeviceId, String)> {
         let rt = &self.runtime;
-        let (Ok(rows), Ok(peers)) = (rt.store.sync_devices(), Peers::load(&rt.paths)) else {
+        let (Ok(rows), Ok(peers)) = (
+            crate::sync::ceremony::effective_devices(&rt.store, None),
+            Peers::load(&rt.paths),
+        ) else {
             return Vec::new();
         };
         let me = rt.identity.public().device_id();
@@ -276,9 +312,25 @@ impl UiShares {
                 "no holder released a share, none can be asked from here, and the ring has no phone: unlock on a device that can, or use a Vault ring".into(),
             ));
         }
+        // The microphone and the camera listen only while this wait lasts.
+        let (media_tx, media_rx) = std::sync::mpsc::channel();
+        #[cfg(test)]
+        test_hooks::register(&rt.paths.root, media_tx.clone());
+        let _listening = phone
+            .as_ref()
+            .map(|_| crate::sync::media::listen(&[MediaKind::Audio, MediaKind::Camera], media_tx));
+        let mut last_poll: Option<std::time::Instant> = None;
         let result = (|| loop {
             if let Some(req) = &request {
-                if let Some(share) = self.poll_attended(&holders, req, epoch) {
+                if last_poll.is_none_or(|t| t.elapsed() >= ATTENDED_POLL) {
+                    last_poll = Some(std::time::Instant::now());
+                    if let Some(share) = self.poll_attended(&holders, req, epoch) {
+                        return Ok(share);
+                    }
+                }
+            }
+            while let Ok(event) = media_rx.try_recv() {
+                if let Some(share) = self.media_event(event, phone.as_ref()) {
                     return Ok(share);
                 }
             }
@@ -286,7 +338,7 @@ impl UiShares {
                 .answers
                 .lock()
                 .map_err(|_| failed(anyhow!("lock")))?
-                .recv_timeout(ATTENDED_POLL)
+                .recv_timeout(MEDIA_POLL)
             {
                 Ok(text) => {
                     let Some(ask) = &phone else {
@@ -333,5 +385,31 @@ impl ShareSource for UiShares {
             return Ok(share);
         }
         self.wait_for_second(host, epoch)
+    }
+}
+
+/// Tests reach the running wait's media channel by profile directory.
+#[cfg(test)]
+pub(crate) mod test_hooks {
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+    use std::sync::mpsc::Sender;
+    use std::sync::Mutex;
+
+    use crate::sync::media::MediaEvent;
+
+    static CHANNELS: Mutex<Option<HashMap<PathBuf, Sender<MediaEvent>>>> = Mutex::new(None);
+
+    pub(crate) fn register(root: &Path, tx: Sender<MediaEvent>) {
+        CHANNELS
+            .lock()
+            .unwrap()
+            .get_or_insert_with(HashMap::new)
+            .insert(root.to_path_buf(), tx);
+    }
+
+    /// The sender of the wait running for `root`, once it started.
+    pub(crate) fn channel(root: &Path) -> Option<Sender<MediaEvent>> {
+        CHANNELS.lock().unwrap().as_ref()?.get(root).cloned()
     }
 }

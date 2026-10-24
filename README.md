@@ -337,16 +337,26 @@ sshub audit stats --days 7
 # The jump-host map as a Graphviz graph
 sshub map --dot | dot -Tsvg -o map.svg
 
-# Host sync between your own devices (end to end encrypted, over ssh)
+# Host sync between your own devices (end to end encrypted, over ssh); see "Sync (tab 7)"
 sshub sync-join laptop                        # enroll with the device at host "laptop": compare the words (or, if it has no screen, approve the admission)
 sshub sync-now                                # sync with every ring device that has a known host
 sshub sync-now laptop --format json           # one device, by name or id prefix
-sshub sync-status                             # ring devices, pending changes, credential mode
-sshub sync-review                             # changes waiting for review (id, author, field diffs)
+sshub sync-status                             # ring devices (this one marked), how each was verified, pending changes, credential mode
+sshub sync-review                             # every change waiting for review (id, author, reason, field diffs, Red ceremony)
 sshub sync-review --approve 3fa9c1            # or --reject; id = unique prefix (4+ hex chars)
-# Exit codes of sync-now: 0 ok, 1 offline/failed, 2 usage, 3 fork detected.
-# sync-serve / sync-enroll are what a peer runs over ssh; not for interactive use.
-# sync-status shows how each device was verified (sas, or ssh_host_key).
+sshub sync-revoke <device>                    # revoke a device (Red for a holder)
+sshub sync-role <device> holder|mirror        # promote or demote (Red)
+sshub sync-approve <op-id>                    # second-device vote on a Red change
+sshub sync-factor <op-id> --paper|--email-code   # third factor, read without echo
+sshub sync-factor-register paper|email [--sender <device>]
+sshub sync-recovery start [--paper] | approve <op-id> | ack <op-id> | cancel <op-id> --factor paper|email | status
+sshub sync-mode vault|quorum [--cosigner <device>]   # two steps: the first call proposes the change (Red); run it again once its ceremony completed to re-encrypt the credentials
+sshub sync-exemption on|off <device>          # master-phrase exemption (on needs the TUI)
+sshub sync-export --window <seconds> --out <path> [--wait <seconds>]   # bulk export (Red, window <= 3600 s, 0600 file)
+sshub sync-migrate [--remove-local]           # replicate this profile's saved secrets
+sshub sync-import-kit                         # second machine: set up the Vault from the kit and the phrase
+# Exit codes of sync-now: 0 ok, 1 offline/failed, 2 usage, 3 fork detected. Admin verbs: 0 ok, 1 error, 2 usage.
+# sync-serve / sync-enroll are what a peer runs over ssh (frames on stdin and stdout); not for interactive use.
 
 # Inventory sync with ~/.ssh/config
 sshub import                                  # import hosts from ssh config (--from ssh)
@@ -566,22 +576,99 @@ In the host form, the ProxyJump field is the hop editor: `a` add a saved host, `
 
 ### Sync (tab 7)
 
-Sync keeps hosts and credentials identical on your own devices, end to end encrypted. Until a ring exists the tab says so and how to start or join one: `t` on the hosts tab enrolls a machine as one of your devices, and `sshub sync-join <a reachable device>` joins a blank machine. Enrollment shows four words. When both ends have a screen you compare them and answer yes only if they are identical (verified by SAS). When the other end has no terminal (for example `t` enrolls a server over a plain ssh command) the words prove nothing: the dialog says so, and you approve the admission on the strength of the SSH host key you verified for that host (recorded as verified by the SSH host key). Which of the two admitted a device is shown per device on this tab and in `sshub sync-status`. Roles follow ring membership, not who connected: the side that already has a ring invites, a blank side joins, and two different rings are never merged. Once a ring exists the tab lists the devices with their status and role, the credential mode, the trust session and the number of changes waiting, and the tab bar shows `⇅N ⏳Nops` (red when a device is compromised).
+Sync keeps hosts and credentials identical on your own devices (laptops, a server, a phone as the second factor), end to end encrypted, over plain `ssh`: a sync is `ssh <peer> sshub sync-serve`, with no daemon and no open port. Design and threat model: [docs/host-sync-design.md](docs/host-sync-design.md). The phone companion page and how to test it: [docs/host-sync-companion.md](docs/host-sync-companion.md).
 
-Review lists each waiting change with its fields as `old -> new`; fields that can redirect a connection (address, port, user, proxy jump, remote command, credentials) are marked `!` and drawn in the error colour. `a` approves and applies the change, `r` rejects it; both act on the store at once. Sync state lives in the profile directory under `sync/`: `device.key` (this device's identity, encrypted; its passphrase is in the credential store) and `peers.json` (which ssh host reaches which device). Both are owner-only files, belong to one profile, and are never copied by profile transfers or the guided migration, which move hosts, groups, identities and tunnels only.
+#### Vault and Quorum
 
-| Key | Action |
-|-----|--------|
-| `↑` / `↓` | Select a device |
-| `y` | Sync now with the selected device |
-| `R` | Review the changes waiting for approval (`a` approve, `r` reject, `Esc` close) |
-| `t` | Open a trust session: pick the scope first, then the term (7, 30 or 90 days) |
+**Vault** is the default. Every credential is encrypted under a key derived from a six-word master phrase and a ring secret (a QR on the printed kit), so any machine with the kit and the phrase can open them and no second device is needed. Its strength is the cost of guessing the phrase: a stolen device holds the ciphertext and the ring secret, so the phrase is what remains. **Quorum** splits each credential's key into shares held by your devices, the phone and a paper phrase, and any two open it: nothing on a stolen machine can be guessed, a second share has to come from a holder that agrees (a holder under a trust session, an attended holder approving on its screen, the phone). Switching modes is a Red change.
 
-A fork (a device that signed two different histories) takes over the whole screen and names the device; `Esc` closes the alert and the badge stays red. All five sync keys (`7`, `y`, `R`, `t` on the sync tab, `t` on the hosts tab) are rebindable in the keybind editor.
+What sync does not protect against (the design's honest list, word for word):
 
-Vault first run: the app issues a six-word master phrase (from the EFF list) and a ring secret, shows the words once, asks you to retype two of them, then writes the printable kit as two separate files at paths you choose: a phrase sheet and a ring secret sheet (the secret as a QR code and as text). Each carries the "do not photograph" warning, is created owner-only and never overwritten; the phrase is kept nowhere else on disk.
+- **Genesis:** if the first machine is compromised while the ring is created, no scheme detects it.
+- **Metadata:** addresses, `proxy_jump`, notes, groups are readable by every ring device. That is what makes sync work. Only credentials are encrypted.
+- **Revocation is not retroactive:** a revoked device keeps what it already downloaded; revocation protects the future (reissue), not the past.
+- **Revocation is not instant:** it propagates on sync. The window is narrowed by the freshness check before every release, not closed.
+- **The trust-certificate window:** an attacker on a trusted machine reaches credentials inside the certificate's scope, bounded by the new-host budget. Over a full term they cover the scope; what bounds them is the scope, what notices them is the visible list of opened hosts.
+- **A stolen device in Vault mode:** the machine holds the ciphertext and the ring secret, so the master phrase remains to be guessed: strength by cost, not by impossibility. In Quorum mode there is nothing to guess.
+- **A holder in someone else's datacenter:** a VPS holder puts a share of every key on the most exposed machine in the ring. VPS plus any one device is every credential. Allowed, warned about, not defended.
+- **Paper plus any one computer:** two shares of two. The recovery phrase is a key to everything, like a wallet seed.
+- **The printed kit** (ring secret QR, and in Vault mode the master phrase): it reconstitutes Vault mode without any device of yours. Treat it as the credential store itself, never photograph it.
+- **A phone that only ever sees one machine:** a compromised courier can withhold its ops until the phone touches any other device; bounded by the freshness threshold.
+- **Checkpoints:** pruning forgets old ops on the devices that prune, not on the revoked device or in backups; a fork hidden below an accepted cut is no longer provable by a pruned peer.
+- **A password changed on the server itself**, outside sshub, is not detected.
+- **Old wrapped shares after a revocation:** the forward-secure wrap keys of Quorum mode protect against theft after retirement for holders that can rotate. Not covered: a copy of a holder's key file taken before retirement; holders that cannot rotate (the paper phrase, a phone that has not contacted a terminal since the revocation), whose theft still combines with the revoked device's old share; backups and flash storage that keep a deleted key; and a lying contributor, which can make a credential unrecoverable (the password is then re-entered) but cannot disclose one.
 
-When the first run finishes the ring exists on this machine: the master-phrase key is derived (one second or two, 1 GiB of memory), the ring secret goes to the profile's credential store, and this device becomes the ring's first entry. A synced credential stays locked until opened: a connect, SFTP, tunnel, broadcast or key push that needs one opens the unlock modal, where you type the six words of the master phrase (the CLI asks on the terminal without echo). Credentials that need a second device's share (Quorum rings) cannot be opened yet.
+#### Keys
+
+| Key | Where | Action |
+|-----|-------|--------|
+| `7` | anywhere | Open the Sync tab; until a ring exists it says how to start or join one |
+| `↑` / `↓` | Sync tab | Select a device |
+| `y` | Sync tab | Sync now with the selected device (not with this device) |
+| `Enter` | Sync tab | On a compromised device: its proof and what to do next. On a behind or stale one: sync first, then (if it is still behind) re-enroll it through its recorded host |
+| `R` | Sync tab | Review every change waiting for approval |
+| `t` | Sync tab | Start a trust session: scope (a group, or hosts marked with Space, at most 64; never everything), term (7, 30 or 90 days), budget |
+| `M` | Sync tab | Manage the ring: overview, trust sessions, revoke a device, roles, credential mode (propose, then finish the switch once the ring agreed), add my phone, paste phone ops, recovery, paper and emailed-code factors, exemption, bulk export, move local secrets into the ring, import the Vault kit |
+| `t` | Hosts tab | Make the selected host one of your sync devices |
+| `a` `r` `p` `e` | Review | `a` approve (for a Red change: add this device's approval), `r` reject, `p` type the paper phrase (24 words, nothing is shown), `e` type the emailed code, `Esc` close |
+
+All six sync keys (tab, now, review, trust, manage, and `t` on the hosts tab) are rebindable in the keybind editor. A fork (a device that signed two different histories) takes over the whole screen and names the device; `Esc` closes the alert and the badge stays red. The tab bar shows `⇅N ⏳Nops`, red when a device is compromised.
+
+#### Starting a ring, joining, unlocking
+
+First run on a machine with no ring: the app issues a six-word master phrase (from the EFF list) and a ring secret, shows the words once, asks you to retype two of them, then writes the printable kit as two separate files at paths you choose: a phrase sheet and a ring secret sheet (the secret as a QR code and as text). Each carries the "do not photograph" warning, is created owner-only and never overwritten; the phrase is kept nowhere else on disk. The ring then exists on this machine: the master-phrase key is derived (one second or two, 1 GiB of memory), the ring secret goes to the profile's credential store, and this device becomes the ring's first entry. On a second machine, `M` then "Import the Vault kit" (or `sshub sync-import-kit`) sets up the Vault from the kit and the phrase.
+
+Joining: `t` on the hosts tab or `sshub sync-join <host>`. Enrollment shows four words. When both ends have a screen you compare them and answer yes only if they are identical (verified by SAS). When the other end has no terminal (for example `t` enrolls a server over a plain ssh command) the words prove nothing: the dialog says so, and you approve the admission on the strength of the SSH host key you verified for that host (recorded as verified by the SSH host key). Which of the two admitted a device is shown per device on this tab and in `sshub sync-status`. Roles follow ring membership, not who connected: the side that already has a ring invites, a blank side joins, and two different rings are never merged.
+
+A synced credential stays locked until opened: a connect, SFTP, tunnel, broadcast or key push that needs one opens the unlock modal. In Vault mode you type the six words (the CLI asks on the terminal without echo). In Quorum mode the modal asks holders that may release under a trust session, asks attended holders to approve on their screen, and arms the phone: it shows the phone's challenge code and accepts the pasted reply, the 16 character short code or the 24 words, and, in builds with the opt-in `audio` and `camera` features, listens for the phone's sound or reads its code by itself while the modal is open (the modal says when a listener is not compiled in or finds no device). A synced identity's key never touches a disk: it lives in a private `ssh-agent` of this process (and in memory for SFTP) until you lock or quit.
+
+While the profile is in a ring, saving a password, a passphrase or an identity's key file (host form, identity form, key generation, the auth prompt's remember choice, `host add --password-stdin`, `identity add`) writes a replicated credential instead of a local keyring entry, and clearing one replicates the clearing. `M` then "Move this machine's saved secrets into the ring" replicates what was saved before.
+
+#### Review and the Red ceremony
+
+Review lists every waiting change with why it waits (`tier`, `stale`, `resurrection`, `revoke-conflict`, `unknown-author`) and its fields as `old -> new`; fields that can redirect a connection (address, port, user, proxy jump, remote command, credentials) are marked `!` and drawn in the error colour. `a` approves and applies an ordinary change, `r` rejects it; both act on the store at once.
+
+A **Red** change (revoking a holder, changing a role, switching the credential mode, issuing a trust session, registering a third factor, the master-phrase exemption, a bulk export) takes effect only when three proofs are in the log: the phone's signature, a second attended holder's approval, and a third factor from outside the devices (the paper phrase or an emailed code). Review shows which are present and which are missing; with one attended holder only, the second device is waived and the paper is required. `a` adds this device's approval, `p` and `e` type the third factor; a change whose time ran out is rejected. The approving device never approves for the proposer: propose on one device, approve on another.
+
+#### Trust sessions, recovery, paper
+
+`t` on the Sync tab (or `M`, "Trust session") asks the phone to certify that this machine may open a group or host list for a while without asking each time: a looping QR carries the request, the phone's answer is pasted back, and the ceremony above completes it. `M` also extends a trust session's daily budget (a second QR) or revokes it. Recovery of a lost phone (start, approve, acknowledge, cancel, status) is under `M` and in `sshub sync-recovery`. The paper phrase is created and shown once, registered only when you type it back exactly, and can be written to one printable sheet (a single owner-only HTML file with the 24 words, the "do not photograph" warning and the sentence that the sheet is the credential store). The emailed code is registered once and shown once.
+
+#### The phone companion
+
+`M` also enrolls the phone from the terminal ("Add my phone"): the terminal shows each step as a looping QR, you paste the phone's matching frame (base64, as the page copies it), both show four words that must be identical, and the phone is then registered and proposed as a holder (a Red change, finished by the ceremony). "Paste phone ops" takes in the ops list the phone copies out. A switch from Vault to Quorum is the same two steps as `sshub sync-mode quorum`: `M`, "Switch the credential mode" proposes it and shows the ceremony; once the ring agreed the same entry reads "Finish the switch to Quorum" and re-wraps the credentials (it asks the master phrase, nothing is shown).
+
+The phone is the second factor: `assets/companion/sshub-companion.html` is one self-contained page (its release fingerprint is shown on it and in `assets/companion/FINGERPRINT`). To test it on an Android phone from a development machine, serve the folder on localhost and reverse the port over USB so the page runs in a secure context (camera and microphone work there):
+
+```bash
+python3 -m http.server 8443 --bind 127.0.0.1 --directory assets/companion &
+adb reverse tcp:8443 tcp:8443
+# on the phone: open http://localhost:8443/sshub-companion.html
+```
+
+#### Configuration and build options
+
+```toml
+[sync]
+auto_sync_on_start = true   # one sync round with every device that has a known host when sshub starts
+
+[sync.notify]               # off until `command` is set; mails a recovery announcement or a third-factor code
+command = "/usr/sbin/sendmail -t -i"   # split without a shell; needs -t (recipients from the headers) and -i (a lone "." must not end the body)
+to = ["me@example.com"]
+from = "sshub@example.com"
+```
+
+The mail is sent by `sshub sync-serve` on the device that serves the round (the Hub, in a ring with one); SMTP credentials belong to the sendmail command's own configuration, never to this file. The phone receivers are opt-in cargo features, off in release binaries: `audio` (microphone, FSK burst) needs the ALSA development files on Linux (`libasound2-dev` on Debian and Ubuntu) and CoreAudio on macOS; `camera` (webcam, the phone's reverse QR) needs nothing extra on Linux (V4L2) and uses AVFoundation on macOS. The developer check is:
+
+```bash
+cargo build --features audio,camera
+cargo clippy --all-targets --features audio,camera -- -D warnings
+cargo run --example media-probe --features audio,camera   # lists the devices and listens briefly
+```
+
+#### Where sync keeps its state
+
+Sync state lives in the profile directory under `sync/`: `device.key` (this device's identity, encrypted; its passphrase is in the credential store) and `peers.json` (which ssh host reaches which device). Both are owner-only files, belong to one profile, and are never copied by profile transfers or the guided migration, which move hosts, groups, identities and tunnels only.
 
 ## Theming
 
@@ -669,6 +756,10 @@ max_entries_per_host = 200  # Settings adjusts it between 1 and 2000
 
 [ssh]
 config_path = "~/.ssh/config"   # this profile's ssh_config source (profile mode only; SSHUB_SSH_CONFIG wins)
+
+[sync]
+auto_sync_on_start = true       # host sync: one round with known devices at start (see "Sync (tab 7)")
+# [sync.notify] command = "/usr/sbin/sendmail -t -i" ... mails recovery announcements and codes
 
 [keybinds]
 profiles_manage = ["Alt+P"]     # every action is a list of key specs; Ctrl+K edits them

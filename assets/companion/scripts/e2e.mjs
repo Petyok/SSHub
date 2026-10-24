@@ -21,9 +21,14 @@ import { bytesOf, edSign, edVerify, hexOf, identityFromIkm, sasWords } from '../
 import { DocumentCollector } from '../src/scan.mjs';
 import { fountainEncode } from '../src/quorum.mjs';
 import {
-  commitOf, confirmMessage, decodeEnroll, decodeFrame, encodeEnrollConfirm, parseReplyPlain, transcriptHash, KIND,
+  commitOf, confirmMessage, decodeEnroll, decodeFrame, decodePhoneOps, encodeCertExtendRequest, encodeCertRequest, encodeEnrollConfirm, encodeFrame, encodePhoneOps, parseReplyPlain, transcriptHash, KIND,
 } from '../src/frames.mjs';
-import { sealedBoxOpen } from '../src/lib.mjs';
+import { b64dec, parseOp } from '../src/ops.mjs';
+import { envelopeAad, ownStorageKey } from '../src/reshare.mjs';
+import { EPOCH as RESHARE_EPOCH, hostBytes, scenario } from '../test/reshare-scenario.mjs';
+import { blake3 } from '../vendor/noble-hashes-2.4.0/blake3.js';
+import { xchacha20poly1305 } from '../vendor/noble-ciphers-2.4.0/chacha.js';
+import { reshareCombine, sealedBoxOpen, shamirCombine } from '../src/lib.mjs';
 import { identityOfSecret, secretFromWords } from '../src/keys.mjs';
 
 const require = createRequire(import.meta.url);
@@ -508,12 +513,331 @@ for (const [name, fragment, why] of [
   await page.click('#cancel-recovery');
   await page.waitForSelector('#cancel-b64');
   const cancel = await captureDoc(page, '#reverse-qr');
-  fs.writeFileSync(path.join(OUT, 'cancel-frame.bin'), cancel.doc);
+  const pastedCancel = Buffer.from(await page.locator('#cancel-b64').inputValue(), 'base64');
+  check('the cancellation is also offered as paste text equal to the QR document', Buffer.from(cancel.doc).equals(pastedCancel), pastedCancel.length, 'bytes');
+  fs.writeFileSync(path.join(OUT, 'cancel-frame.bin'), pastedCancel);
   const k = decodeFrame(cancel.doc).kind;
   check('the phone cancels the recovery with its own signed op, no factor needed', k === KIND.PHONE_OPS, `${cancel.doc.length} bytes, kind ${k}`);
   await context.close();
 }
 
+// ============================================================ 4b. Red operations, export as text, reshare
+
+const noticeFrame = (canonical, signature) => encodeFrame(KIND.RECOVERY_NOTICE, Uint8Array.of(canonical.length >>> 24, (canonical.length >>> 16) & 255, (canonical.length >>> 8) & 255, canonical.length & 255), canonical, signature);
+const opsVec = load('ops.vectors.json');
+const noticeY4m = (id) => {
+  const v = opsVec.vectors.find((x) => x.id === id);
+  const f = path.join(OUT, `red-${id}.y4m`);
+  writeY4m(f, fountainEncode(noticeFrame(h(v.canonical_hex), h(v.signature_hex)), 84, 25));
+  return { f, v };
+};
+const scanNotice = async (id, { time = fx.now } = {}) => {
+  const { f, v } = noticeY4m(id);
+  const { context } = await launch({ y4m: f, profile: PROFILE });
+  const page = await openPage(context, { time });
+  await unlock(page);
+  await page.click('#scan-release');
+  await Promise.race([page.waitForSelector('#red-banner', { timeout: 60000 }), page.waitForSelector('#refusal', { timeout: 60000 })]);
+  return { context, page, v };
+};
+
+{
+  const { context, page, v } = await scanNotice('device-add-holder', { time: 100 });
+  const banner = await text(page, '#red-banner');
+  check('a Red operation notice is described from its bytes: kind, proposer, three proofs', /DeviceAdd proposed by/.test(banner) && /three proofs/.test(banner), banner.slice(0, 90));
+  const hot = await page.locator('#desc .v[data-danger="1"]').count();
+  check('every row of a holder admission is highlighted as dangerous', hot >= 4, hot, 'rows');
+  await page.click('#red-approve');
+  await page.waitForSelector('#ops-b64');
+  const pasted = Buffer.from((await page.locator('#ops-b64').inputValue()), 'base64');
+  const qr = await captureDoc(page, '#reverse-qr');
+  check('the signed proof is offered as a QR code and as the same paste text', Buffer.from(qr.doc).equals(pasted), pasted.length, 'bytes');
+  const ops = decodePhoneOps(qr.doc);
+  const last = parseOp(ops[ops.length - 1].canonical);
+  check('the phone proof is a RedPhoneSign naming the exact op hash, signed by the phone', last.kind === 'RedPhoneSign' && last.fields.op_hash === hexOf(blake3(h(v.canonical_hex))) && edVerify(phone.edPub, ops[ops.length - 1].canonical, ops[ops.length - 1].signature), last.fields.op_hash.slice(0, 16));
+  await context.close();
+}
+for (const [id, time, fragment, why] of [
+  ['device-add-holder', 1 + 4 * 86400, 'days old', 'a Red notice older than the ceremony TTL'],
+  ['host-upsert-full', 1893452500, 'needs nothing from this phone', 'a notice that is not a Red operation'],
+]) {
+  const { context, page } = await scanNotice(id, { time });
+  const t = await text(page, '#refusal');
+  check(`refused: ${why}`, t.includes(fragment) && (await page.locator('#red-approve').count()) === 0, t.slice(0, 100));
+  await context.close();
+}
+{
+  const { context, page } = await scanNotice('cert-issue-hosts', { time: 100 });
+  check('a trust certificate written by another device cannot be approved (the phone issues its own)', (await page.locator('#red-blocked').count()) === 1 && (await page.locator('#red-approve').count()) === 0, await text(page, '#red-blocked'));
+  await context.close();
+}
+{
+  // export as text for a terminal without a camera
+  const { context } = await launch({ profile: PROFILE });
+  const page = await openPage(context);
+  await unlock(page);
+  await page.click('#export-ops');
+  await page.click('#export-tail');
+  await page.waitForSelector('#ops-b64');
+  const pasted = Buffer.from(await page.locator('#ops-b64').inputValue(), 'base64');
+  const qr = await captureDoc(page, '#reverse-qr');
+  const ops = decodePhoneOps(pasted);
+  check('the export text is a kind 5 frame of at most 8 signed phone ops, equal to the QR', Buffer.from(qr.doc).equals(pasted) && ops.length >= 1 && ops.length <= 8 && ops.every((o) => edVerify(phone.edPub, o.canonical, o.signature)), `${ops.length} ops, ${pasted.length} bytes`);
+  await context.close();
+}
+{
+  // reshare: a rotation, then adoption of a reshare built by two contributors, then a release still works
+  const secret = h('55'.repeat(32));
+  const sc = scenario({ phone, secret });
+  const opsFile = path.join(OUT, 'reshare.y4m');
+  writeY4m(opsFile, fountainEncode(encodePhoneOps(sc.signed), 84, 25));
+  const { context } = await launch({ y4m: opsFile, profile: 'reshare' });
+  const page = await openPage(context);
+  await page.fill('#words-input', fx.phone.words);
+  await page.fill('#pin1', PIN);
+  await page.fill('#pin2', PIN);
+  await page.click('#restore');
+  await page.waitForSelector('#device-id');
+  await page.click('#reshare');
+  await page.click('#reshare-load');
+  await page.waitForSelector('#reshare-summary', { timeout: 60000 });
+  const sum = await text(page, '#reshare-summary');
+  check('the reshare summary names the epoch, the holder number and the contributors', /Epoch 1, 4 holders/.test(sum) && /Credentials ready: 1/.test(sum) && /signature not checked/.test(sum), sum.replace(/\n/g, ' ').slice(0, 120));
+  await page.click('#reshare-publish');
+  await page.waitForSelector('#ops-b64');
+  const out = decodePhoneOps(Buffer.from(await page.locator('#ops-b64').inputValue(), 'base64'));
+  const kinds = out.map((o) => parseOp(o.canonical).kind);
+  check('adopting publishes a ShareStorageKey and a ShareReshareConfirmBatch signed by the phone', kinds.join() === 'ShareStorageKey,ShareReshareConfirmBatch' && out.every((o) => edVerify(phone.edPub, o.canonical, o.signature)), kinds.join());
+  const key = ownStorageKey(phone, out.map((o) => ({ canonical: hexOf(o.canonical) })), 1);
+  const item = parseOp(out[1].canonical).fields.items[0];
+  const sealed = b64dec(item.sealed_share);
+  const myIndex = sc.holders.indexOf(phone.deviceId) + 1;
+  const mine = xchacha20poly1305(key, sealed.slice(0, 24), envelopeAad(hostBytes, 1, myIndex)).decrypt(sealed.slice(24));
+  const otherIdx = sc.holders.indexOf(sc.ids.D) + 1;
+  const cs = [sc.ids.cA, sc.ids.cB].map((c) => ({ from: c.from, sub_shares: [c.sub_shares.find(([x]) => x === otherIdx)] }));
+  const recovered = shamirCombine([{ index: mine[0], bytes: mine.slice(1) }, reshareCombine(otherIdx, cs)]);
+  check('the new share the page sealed combines with another new holder to the credential secret', hexOf(recovered) === hexOf(secret), 'secret equal');
+  await page.click('#send-done');
+  await page.click('#reshare');
+  await page.click('#rotate');
+  await page.waitForSelector('#ops-b64');
+  const rot = decodePhoneOps(Buffer.from(await page.locator('#ops-b64').inputValue(), 'base64'));
+  const rotOp = parseOp(rot[rot.length - 1].canonical);
+  const gen1 = identityOfSecret(h(fx.phone.secret_hex), 1);
+  check('rotating wrap keys publishes the next generation derived from the same words', rotOp.kind === 'WrapKeyRotate' && rotOp.fields.wrap_epoch === 1 && rotOp.fields.x25519_pub === hexOf(gen1.xPub), rotOp.fields.x25519_pub.slice(0, 16));
+  await context.close();
+}
+{
+  // after the rotation the page still releases a share wrapped to the first generation
+  const { context, page } = await scanChallenge('good', { profile: 'reshare' });
+  check('a share wrapped to the old wrap key still releases after a rotation', (await page.locator('#approve').count()) === 1 && (await page.locator('#checks .check.bad').count()) === 0, 'approval screen reached');
+  await context.close();
+}
+
+// ============================================================ 4c. the Rust reshare fixture, trust sessions (P1)
+
+const opJson = (o) => {
+  const p = parseOp(o.canonical);
+  return { kind: p.kind, device_id: p.device_id, seq: Number(p.seq), lamport: Number(p.lamport), canonical_hex: hexOf(o.canonical), sig_hex: hexOf(o.signature) };
+};
+const restoreFlow = async (page) => {
+  await page.waitForSelector('#words-input');
+  await page.fill('#words-input', fx.phone.words);
+  await page.fill('#pin1', PIN);
+  await page.fill('#pin2', PIN);
+  await page.click('#restore');
+  await page.waitForSelector('#device-id');
+};
+{
+  // The committed reshare of the Rust side (test/fixtures/reshare.json), delivered as a terminal would: the
+  // batches and this phone's sessions in one kind 5 list. What the page publishes goes to reshare-out.json,
+  // which the Rust verifier opens (e2e_the_pages_reshare_ops_open_on_the_terminal).
+  const rfx = load('reshare.json');
+  const sub = rfx.ops.map((o) => ({ canonical: h(o.canonical_hex), signature: h(o.sig_hex) })).filter((o) => {
+    const p = parseOp(o.canonical);
+    return p.kind === 'ShareReshareBatch' || (p.kind === 'ShareReshareSession' && p.fields.to === phone.deviceId);
+  });
+  const opsFile = path.join(OUT, 'reshare-fx.y4m');
+  writeY4m(opsFile, fountainEncode(encodePhoneOps(sub), 84, 25));
+  const { context } = await launch({ y4m: opsFile, profile: 'reshare-fx' });
+  const page = await openPage(context);
+  await restoreFlow(page);
+  await page.click('#reshare');
+  const limits = await text(page, '#reshare-limits');
+  check('the reshare screen says that a ring of two terminals and the phone cannot revoke a terminal by resharing', /ring of two terminals plus this phone cannot revoke a terminal by resharing/.test(limits), limits.replace(/\n/g, ' ').slice(0, 110));
+  await page.click('#reshare-load');
+  await page.waitForSelector('#reshare-summary', { timeout: 90000 });
+  const sum = await text(page, '#reshare-summary');
+  check('the Rust fixture reshare is read: epoch, three holders, two credentials ready', /Epoch 1, 3 holders/.test(sum) && /Credentials ready: 2/.test(sum), sum.replace(/\n/g, ' ').slice(0, 100));
+  await page.click('#reshare-publish');
+  await page.waitForSelector('#ops-b64');
+  const out = decodePhoneOps(Buffer.from(await page.locator('#ops-b64').inputValue(), 'base64'));
+  check('the fixture reshare publishes a ShareStorageKey and a ShareReshareConfirmBatch signed by the phone', out.map((o) => parseOp(o.canonical).kind).join() === 'ShareStorageKey,ShareReshareConfirmBatch' && out.every((o) => edVerify(phone.edPub, o.canonical, o.signature)), out.length, 'ops');
+  const key = ownStorageKey(phone, out.map((o) => ({ canonical: hexOf(o.canonical) })), rfx.epoch);
+  const myIndex = rfx.new_holders.sorted_ids.indexOf(phone.deviceId) + 1;
+  let same = 0;
+  for (const item of parseOp(out[1].canonical).fields.items) {
+    const sealed = b64dec(item.sealed_share);
+    const plain = xchacha20poly1305(key, sealed.slice(0, 24), envelopeAad(h(item.host_uid), rfx.epoch, myIndex)).decrypt(sealed.slice(24));
+    const want = rfx.expected_phone_shares[item.host_uid];
+    if (want && plain[0] === want.index && hexOf(plain.slice(1)) === want.bytes_hex) same++;
+  }
+  check('the shares the page sealed are the shares the Rust receiver committed', same === Object.keys(rfx.expected_phone_shares).length, same, 'credentials');
+  fs.writeFileSync(path.join(OUT, 'reshare-out.json'), JSON.stringify({ ops: out.map(opJson) }, null, 1));
+  await context.close();
+}
+
+{
+  // Trust sessions: the phone authors CertIssue, CertExtend and CertRevoke. Requests arrive as kind 9 / kind 10
+  // documents (pasted: the camera path is the same code as every other scan). The clock moves between page
+  // loads so the 24 hour rule can be seen. The whole chain goes to cert-out.json for the Rust verifier.
+  const T0 = Math.floor(Date.now() / 1000);
+  const DAY = 86400;
+  const DELEGATE = identityOfSecret(h('71'.repeat(32))).deviceId;
+  const HOSTS = ['0a', '0b', '0c'].map((x) => x.repeat(16));
+  const req = (over = {}) => ({ device_id: DELEGATE, scope: { hosts: HOSTS }, expiry: BigInt(T0 + 7 * DAY), max_new_hosts_per_day: 2, epoch_lo: 0n, epoch_hi: 5n, ...over });
+  const pasteDoc = async (page, bytes) => {
+    await page.click('summary');
+    await page.fill('#paste', Buffer.from(bytes).toString('base64'));
+    await page.click('#paste-go');
+  };
+  const sendRequest = async (page, bytes) => {
+    await page.click('#trust');
+    await page.click('#scan-cert');
+    await pasteDoc(page, bytes);
+  };
+  const sendExtend = async (page, certId, extra) => {
+    await page.click('#trust');
+    await page.click('#scan-extend');
+    await pasteDoc(page, encodeCertExtendRequest({ cert_id: certId, extra_hosts: extra }));
+  };
+  const opsOfPage = async (page) => decodePhoneOps(Buffer.from(await page.locator('#ops-b64').inputValue(), 'base64'));
+  const lastOp = (ops) => parseOp(ops[ops.length - 1].canonical);
+  const signedByPhone = (ops) => ops.every((o) => edVerify(phone.edPub, o.canonical, o.signature));
+  const startPage = async (time, first = false) => {
+    const { context } = await launch({ profile: 'certs' });
+    const page = await openPage(context, { time });
+    if (first) await restoreFlow(page);
+    else await unlock(page);
+    return { context, page };
+  };
+
+  // ---- load 1: refusals, then a certificate
+  let { context, page } = await startPage(T0, true);
+  const refusals = [
+    ['a term of 90 days and a second', req({ expiry: BigInt(T0 + 90 * DAY + 1) }), /longer than 90 days/],
+    ['an expiry that is not in the future', req({ expiry: BigInt(T0) }), /not in the future/],
+    ['a daily budget of 0', req({ max_new_hosts_per_day: 0 }), /between 1 and 50/],
+    ['a daily budget of 51', req({ max_new_hosts_per_day: 51 }), /between 1 and 50/],
+    ['an inverted epoch range', req({ epoch_lo: 9n, epoch_hi: 1n }), /inverted/],
+    ['a request that names the phone itself', req({ device_id: phone.deviceId }), /does not delegate to itself/],
+  ];
+  for (const [why, r, re] of refusals) {
+    await sendRequest(page, encodeCertRequest(r));
+    await page.waitForSelector('#cert-refusal');
+    const t = await text(page, '#cert-refusal');
+    check(`trust session refused: ${why}`, re.test(t) && (await page.locator('#cert-approve').count()) === 0, t.slice(0, 90));
+    await page.click('#refuse');
+  }
+  const uids = (n) => Array.from({ length: n }, (_, i) => i.toString(16).padStart(2, '0').repeat(16));
+  for (const [why, r] of [['65 hosts', req({ scope: { hosts: uids(65) } })], ['an empty scope', req({ scope: { hosts: [] } })]]) {
+    await sendRequest(page, encodeCertRequest(r));
+    await page.waitForSelector('#refusal');
+    const t = await text(page, '#refusal');
+    check(`trust session refused: ${why}`, /1\.\.=64 hosts/.test(t), t.slice(0, 90));
+    await page.click('#back');
+  }
+  await page.click('#trust');
+  check('after the refusals the phone has issued nothing', (await page.locator('#no-certs').count()) === 1, 'no certificates');
+  await page.click('#back');
+
+  await sendRequest(page, encodeCertRequest(req()));
+  await page.waitForSelector('#cert-approve');
+  const desc = await text(page, '#desc');
+  check('the request is described from its bytes: device, every host, term and budget', desc.includes(DELEGATE) && HOSTS.every((x) => desc.includes(x)) && /7 days/.test(desc) && /New hosts per day\s+2/.test(desc), desc.replace(/\n/g, ' ').slice(0, 100));
+  check('a device this phone has not met is called out', (await page.locator('#cert-unknown').count()) === 1, 'warning shown');
+  await page.click('#cert-approve');
+  await page.waitForSelector('#ops-b64');
+  const pasted = Buffer.from(await page.locator('#ops-b64').inputValue(), 'base64');
+  const qr = await captureDoc(page, '#reverse-qr');
+  check('the signed certificate is offered as a QR code and as the same paste text', Buffer.from(qr.doc).equals(pasted), pasted.length, 'bytes');
+  const issued = await opsOfPage(page);
+  const certOp = lastOp(issued);
+  const certId = hexOf(blake3(issued[issued.length - 1].canonical));
+  const f = certOp.fields;
+  check('CertIssue is authored and signed by the phone with the request fields unchanged', certOp.kind === 'CertIssue' && certOp.device_id === phone.deviceId && signedByPhone(issued)
+    && f.device_id === DELEGATE && f.scope.Hosts.join() === HOSTS.join() && Number(f.expiry) === T0 + 7 * DAY && f.max_new_hosts_per_day === 2 && Number(f.epoch_lo) === 0 && Number(f.epoch_hi) === 5, certId.slice(0, 16));
+  await page.click('#send-done');
+  await context.close();
+
+  // ---- load 2: an extension, a second one inside 24 hours is refused
+  ({ context, page } = await startPage(T0 + 3600));
+  await sendExtend(page, certId, 5);
+  await page.waitForSelector('#ext-approve');
+  await page.click('#ext-approve');
+  await page.waitForSelector('#ops-b64');
+  let ops = await opsOfPage(page);
+  check('CertExtend is authored by the phone from the kind 10 request, fields unchanged', lastOp(ops).kind === 'CertExtend' && lastOp(ops).fields.cert_id === certId && lastOp(ops).fields.extra_hosts === 5 && signedByPhone(ops), `extra ${lastOp(ops).fields.extra_hosts}`);
+  await page.click('#send-done');
+  await sendExtend(page, certId, 3);
+  await page.waitForSelector('#cert-refusal');
+  let t = await text(page, '#cert-refusal');
+  check('a second extension of the same certificate within 24 hours is refused', /one per 24 hours/.test(t) && (await page.locator('#ext-approve').count()) === 0, t.slice(0, 100));
+  await page.click('#refuse');
+  await sendExtend(page, 'ee'.repeat(32), 3);
+  await page.waitForSelector('#cert-refusal');
+  t = await text(page, '#cert-refusal');
+  check('an extension of a certificate this phone did not issue is refused', /did not issue/.test(t) && (await page.locator('#ext-approve').count()) === 0, t.slice(0, 80));
+  await page.click('#refuse');
+  await context.close();
+
+  // ---- load 3: a day later it is possible again
+  ({ context, page } = await startPage(T0 + 3600 + DAY + 10));
+  await sendExtend(page, certId, 7);
+  await page.waitForSelector('#ext-approve');
+  await page.click('#ext-approve');
+  await page.waitForSelector('#ops-b64');
+  ops = await opsOfPage(page);
+  check('24 hours later the next extension is signed', lastOp(ops).kind === 'CertExtend' && lastOp(ops).fields.extra_hosts === 7 && signedByPhone(ops), `extra ${lastOp(ops).fields.extra_hosts}`);
+  await page.click('#send-done');
+  await page.click('#trust');
+  const line = await text(page, `#cert-${certId.slice(0, 8)}`);
+  check('the trust session list shows the certificate as active and extended twice', /Active/.test(line) && /extended 2x/.test(line), line.replace(/\n/g, ' ').slice(0, 110));
+  await context.close();
+
+  // ---- load 4: revoke, then a certificate for a group; the chain goes to the Rust verifier
+  const T3 = T0 + 3600 + DAY + 60;
+  ({ context, page } = await startPage(T3));
+  await page.click('#trust');
+  await page.click(`#revoke-${certId.slice(0, 8)}`);
+  await page.waitForSelector('#ops-b64');
+  ops = await opsOfPage(page);
+  check('CertRevoke is signed by the phone for exactly that certificate', lastOp(ops).kind === 'CertRevoke' && lastOp(ops).fields.cert_id === certId && signedByPhone(ops), certId.slice(0, 16));
+  await page.click('#send-done');
+  await page.click('#trust');
+  const after = await text(page, `#cert-${certId.slice(0, 8)}`);
+  check('a revoked trust session is listed as revoked and offers no revoke button', /Revoked/.test(after) && (await page.locator(`#revoke-${certId.slice(0, 8)}`).count()) === 0, after.replace(/\n/g, ' ').slice(0, 90));
+  await page.click('#back');
+  await sendExtend(page, certId, 2);
+  await page.waitForSelector('#cert-refusal');
+  t = await text(page, '#cert-refusal');
+  check('a revoked certificate cannot be extended', /revoked/.test(t) && (await page.locator('#ext-approve').count()) === 0, t.slice(0, 90));
+  await page.click('#refuse');
+  await sendRequest(page, encodeCertRequest(req({ scope: { group: '06'.repeat(16) }, expiry: BigInt(T3 + 30 * DAY) })));
+  await page.waitForSelector('#cert-approve');
+  check('a group scope is described as the hosts of that group', /group/.test(await text(page, '#desc')) && (await text(page, '#desc')).includes('06'.repeat(16)), 'group rows');
+  await page.click('#cert-approve');
+  await page.waitForSelector('#ops-b64');
+  await page.click('#send-done');
+  await page.click('#export-ops');
+  await page.click('#export-tail');
+  await page.waitForSelector('#ops-b64');
+  const chain = await opsOfPage(page);
+  const kinds = chain.map((o) => parseOp(o.canonical).kind).join();
+  check('the phone chain is CertIssue, CertExtend, CertExtend, CertRevoke, CertIssue, all signed by the phone', kinds === 'CertIssue,CertExtend,CertExtend,CertRevoke,CertIssue' && signedByPhone(chain) && chain.every((o, i) => Number(parseOp(o.canonical).seq) === i + 1), kinds);
+  fs.writeFileSync(path.join(OUT, 'cert-out.json'), JSON.stringify({ ops: chain.map(opJson) }, null, 1));
+  await context.close();
+}
 // ============================================================ 5. backup words and fingerprint
 
 {

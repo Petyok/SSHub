@@ -330,7 +330,9 @@ USAGE:
 
 <device> is a device name or an id prefix (an ambiguous one is an error).
 Without it every other ring device with a known host is synced; the rest are
-listed as `skipped (no host known)`. One line per device:
+listed as `skipped (no host known)` with how to record one (the hosts tab `t`, or
+`sshub sync-join <host>`); a device the ring announced that is still waiting for
+your approval shows as `not admitted yet`. One line per device:
     <name>: ok applied N, pending M, received R, sent S
 plus `behind:` / `suspect:` device ids when a round reports them.
 
@@ -352,8 +354,12 @@ USAGE:
 
 Without a flag, lists each change waiting for review: a 12-character id, the
 author device, a summary, and one line per field (`[!]` marks a dangerous
-field). --approve / --reject take a unique prefix (at least 4 hex characters)
-of an id and resolve the change in the store, the same way the TUI does.
+field). EVERY waiting change is listed with why it waits: the reason is in
+brackets after the summary (`tier`, `stale`, `resurrection`, `revoke-conflict`,
+`unknown-author`) and is the `reason` field of the JSON items. A Red change
+shows its ceremony (proofs present and missing). --approve / --reject take a
+unique prefix (at least 4 hex characters) of an id and resolve the change the
+way the TUI does: a Red change is approved only when its ceremony is complete.
 Read-only otherwise; never creates a device key.
 
 EXIT CODES:

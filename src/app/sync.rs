@@ -102,6 +102,8 @@ pub struct DeviceView {
     pub head_seq: u64,
     /// How this device was admitted, from the local enrollment record.
     pub verified_by: Option<crate::sync::oplog::VerifiedBy>,
+    /// This machine itself (enrollment records it in the ring).
+    pub this: bool,
 }
 
 /// The active trust session, if one is open.
@@ -123,6 +125,20 @@ pub struct ChangeView {
     pub dangerous: bool,
 }
 
+/// Where the Red ceremony of a pending change stands.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RedView {
+    /// Proofs present, one line each.
+    pub have: Vec<String>,
+    /// Proofs still missing, one line each.
+    pub missing: Vec<String>,
+    pub expired: bool,
+    /// A rule that makes the change impossible (too few live holders ...).
+    pub blocked: Option<String>,
+    /// Only one attended holder terminal: the second device is waived, the paper needed.
+    pub single_machine: bool,
+}
+
 /// One pending operation awaiting review.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PendingOpView {
@@ -131,6 +147,10 @@ pub struct PendingOpView {
     pub changes: Vec<ChangeView>,
     /// Hash of the op, for approving or rejecting it in the store.
     pub hash: [u8; 32],
+    /// Why it waits (`tier`, `unknown-author`, ...), when the store says.
+    pub reason: Option<String>,
+    /// The ceremony of a Red change; `None` for everything else.
+    pub red: Option<RedView>,
 }
 
 /// How a share can reach the unlock modal.
@@ -143,6 +163,10 @@ pub enum UnlockPathKind {
     Words24,
     /// The master phrase of a Vault ring.
     Phrase,
+    /// The microphone listening for the phone's sound.
+    Audio,
+    /// The camera reading the phone's code.
+    Camera,
 }
 
 impl UnlockPathKind {
@@ -154,6 +178,8 @@ impl UnlockPathKind {
             Self::ShortCode => "short code",
             Self::Words24 => "24 words",
             Self::Phrase => "master phrase",
+            Self::Audio => "microphone",
+            Self::Camera => "camera",
         }
     }
 }
@@ -207,6 +233,8 @@ pub struct SasView {
 pub struct ForkView {
     pub device: String,
     pub detail: String,
+    /// What the proof consists of, one line each (hashes, seqs).
+    pub evidence: Vec<String>,
 }
 
 /// The holder-side share release confirmation. Names the requesting device.
@@ -349,10 +377,6 @@ pub enum SyncIntent {
         host: String,
     },
     SasMatches(bool),
-    Trust {
-        scope: usize,
-        term_days: u32,
-    },
     /// The holder's answer to a release request: approve (and grant) or refuse.
     Release {
         approve: bool,
@@ -367,6 +391,10 @@ pub enum SyncIntent {
     /// The Vault first run is finished: the phrase and ring secret for the
     /// sync stage to store as the Vault configuration.
     OnboardingDone(OnboardingSecrets),
+    /// Ask the worker which device this is (loads the device key).
+    Identify,
+    /// An admin job to run on the worker with the device identity.
+    Job(crate::sync::runtime::JobBox),
 }
 
 /// What runs once credentials are open.
@@ -398,7 +426,11 @@ pub struct SyncView {
     pub review_selected: usize,
     /// Scope choices for a new trust session (groups, host lists).
     pub trust_scopes: Vec<String>,
+    /// What each of `trust_scopes` certifies, in the same order.
+    pub trust_scope_values: Vec<crate::sync::oplog::CertScope>,
     pub trust_scope_selected: usize,
+    /// Hosts marked with Space in the scope step; when any, they are the scope.
+    pub trust_marked: Vec<crate::sync::oplog::HostUid>,
     pub trust_ttl_selected: usize,
     pub unlock: Option<UnlockView>,
     pub sas: Option<SasView>,
@@ -422,6 +454,11 @@ pub struct SyncView {
     /// Store keys the open unlock modal is for, and whether its round runs.
     pub unlock_keys: Vec<String>,
     pub unlock_running: bool,
+    /// This device's id, once the worker has loaded its identity.
+    pub this_device: Option<String>,
+    /// A behind peer and the host to re-enroll it through, after a round said so.
+    pub reenroll: Option<(String, String)>,
+    identify_after: bool,
     /// Release requests this holder already answered (the op may stay pending
     /// until the worker has resolved it).
     pub answered_releases: Vec<[u8; 32]>,
@@ -505,6 +542,8 @@ impl App {
             _ if self.is_action(KeyAction::SyncNow, &key) => self.sync_now(),
             _ if self.is_action(KeyAction::SyncReview, &key) => self.sync_open_review(),
             _ if self.is_action(KeyAction::SyncTrust, &key) => self.sync_open_trust(),
+            _ if self.is_action(KeyAction::SyncAdmin, &key) => self.open_sync_admin(),
+            _ if self.is_action(KeyAction::Connect, &key) => self.sync_open_selected(),
             _ => {}
         }
         Ok(())
@@ -528,10 +567,63 @@ impl App {
         if !self.sync_ready() {
             return;
         }
-        match self.sync.selected_device().map(|d| d.id.clone()) {
-            Some(device) => self.sync.intents.push(SyncIntent::SyncNow { device }),
+        match self.sync.selected_device().map(|d| (d.id.clone(), d.this)) {
+            Some((_, true)) => self.host_notice = Some("that is this device: pick another".into()),
+            Some((device, false)) => self.sync.intents.push(SyncIntent::SyncNow { device }),
             None => self.host_notice = Some("no device to sync with".into()),
         }
+    }
+
+    /// Enter on a device row: the evidence of a compromised device, or the
+    /// guided way back for one that is behind or stale.
+    fn sync_open_selected(&mut self) {
+        let Some(d) = self.sync.selected_device().cloned() else {
+            return;
+        };
+        match d.status {
+            DeviceStatusView::Compromised => {
+                let evidence = self
+                    .store
+                    .sync_fork_evidence(&d.id)
+                    .ok()
+                    .flatten()
+                    .map(|e| super::sync_view::evidence_lines(&e))
+                    .unwrap_or_default();
+                self.raise_sync_fork_alert(ForkView {
+                    device: d.name.clone(),
+                    detail: format!("device id {}", d.id),
+                    evidence,
+                });
+            }
+            DeviceStatusView::Behind | DeviceStatusView::Stale => {
+                if !self.sync_ready() || d.this {
+                    return;
+                }
+                match self.sync.reenroll.clone().filter(|(id, _)| *id == d.id) {
+                    // A round already said it is behind: enroll again.
+                    Some((_, host)) => {
+                        self.sync.reenroll = None;
+                        self.sync.intents.push(SyncIntent::Enroll { host });
+                    }
+                    None => {
+                        self.host_notice = Some(format!(
+                            "syncing with {} first; if it reports behind again, press Enter once more to re-enroll it",
+                            d.name
+                        ));
+                        self.sync.intents.push(SyncIntent::SyncNow { device: d.id });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn sync_open_trust_pub(&mut self) {
+        self.sync_open_trust();
+    }
+
+    pub(crate) fn sync_open_review_pub(&mut self) {
+        self.sync_open_review();
     }
 
     fn sync_open_review(&mut self) {
@@ -551,7 +643,9 @@ impl App {
         } else if self.sync.trust_scopes.is_empty() {
             self.host_notice = Some("no group or host list to scope a trust session to".into());
         } else {
-            self.sync.trust_scope_selected = 0;
+            self.sync.trust_scope_selected =
+                super::sync_trust::default_scope(&self.store, &self.sync.trust_scopes);
+            self.sync.trust_marked.clear();
             self.sync.trust_ttl_selected = TRUST_TTL_DEFAULT;
             self.mode = AppMode::TrustSessionScope;
         }
@@ -584,10 +678,13 @@ impl App {
 
     /// App-tick hook: step the unlock QR's frame at 8 fps while its modal is up.
     pub(crate) fn advance_sync_qr(&mut self, now: std::time::Instant) {
-        if self.mode != AppMode::SyncUnlock {
-            return;
-        }
-        let count = self.sync.unlock.as_ref().map_or(0, |u| u.frames.len());
+        let count = match (self.mode, self.sync_ui.as_ref()) {
+            (AppMode::SyncUnlock, _) => self.sync.unlock.as_ref().map_or(0, |u| u.frames.len()),
+            (AppMode::SyncPrompt, Some(super::sync_ui::SyncUi::Prompt { frames, .. })) => {
+                frames.len()
+            }
+            _ => return,
+        };
         let sync = &mut self.sync;
         crate::tui::widgets::qr_frames::advance(&mut sync.qr_frame, &mut sync.qr_last, now, count);
     }
@@ -595,6 +692,21 @@ impl App {
     pub fn open_sync_sas(&mut self, view: SasView) {
         self.sync.sas = Some(view);
         self.mode = AppMode::SyncSas;
+    }
+
+    /// Run `job` on the sync worker with the device identity: the way every
+    /// admin operation appends ops. Its returned line becomes the notice.
+    pub(crate) fn run_sync_job(
+        &mut self,
+        job: impl FnOnce(&crate::sync::runtime::JobEnv) -> Result<String> + Send + 'static,
+    ) {
+        if !self.sync.worker {
+            self.host_notice = Some(NO_WORKER.into());
+            return;
+        }
+        self.sync
+            .intents
+            .push(SyncIntent::Job(crate::sync::runtime::JobBox::new(job)));
     }
 
     /// Hand the worker the protocol package built; the tab's keys then work.
@@ -609,6 +721,7 @@ impl App {
     pub fn poll_sync(&mut self) {
         self.poll_unlock_resume();
         self.forward_sync_intents();
+        super::sync_phone::tick(self);
         while let Some(Ok(event)) = self.sync_worker.as_ref().map(|w| w.try_recv()) {
             self.apply_sync_event(event);
         }
@@ -619,11 +732,11 @@ impl App {
         if self.sync_worker.is_none() || self.sync.intents.is_empty() {
             return;
         }
-        let mut kept = Vec::new();
         for intent in std::mem::take(&mut self.sync.intents) {
             let cmd = match &intent {
                 SyncIntent::SyncNow { device } => SyncCmd::SyncNow(device.clone()),
                 SyncIntent::Enroll { host } => {
+                    self.sync.identify_after = true;
                     self.sync.enrolling = Some(host.clone());
                     SyncCmd::EnrollBegin(host.clone())
                 }
@@ -644,15 +757,15 @@ impl App {
                     }
                     SyncCmd::UnlockCode(code.clone())
                 }
+                SyncIntent::Identify => SyncCmd::Identify,
+                SyncIntent::Job(job) => SyncCmd::Job(job.clone()),
                 SyncIntent::Release { approve, hash } => SyncCmd::Release {
                     approve: *approve,
                     hash: *hash,
                 },
-                SyncIntent::OnboardingDone(secrets) => SyncCmd::Onboard(Box::new(secrets.clone())),
-                // Answered by later stages, not by the transport worker.
-                _ => {
-                    kept.push(intent);
-                    continue;
+                SyncIntent::OnboardingDone(secrets) => {
+                    self.sync.identify_after = true;
+                    SyncCmd::Onboard(Box::new(secrets.clone()))
                 }
             };
             if !matches!(cmd, SyncCmd::EnrollConfirmSas(_)) {
@@ -670,7 +783,6 @@ impl App {
                 ));
             }
         }
-        self.sync.intents = kept;
     }
 
     fn apply_sync_event(&mut self, event: crate::sync::client::SyncEvent) {
@@ -687,6 +799,18 @@ impl App {
                     words: info.words,
                     peer_has_screen: info.peer_has_screen,
                 });
+            }
+            SyncEvent::Notice(message) if message.is_empty() => {}
+            SyncEvent::Notice(message) if message.contains('\n') => {
+                let lines = message.lines().map(str::to_string).collect();
+                self.sync_info("Done", lines);
+            }
+            SyncEvent::Notice(message) => self.host_notice = Some(message),
+            SyncEvent::ThisDevice(id) => {
+                for d in &mut sync.devices {
+                    d.this = d.id == id;
+                }
+                sync.this_device = Some(id);
             }
             SyncEvent::UnlockPrompt(text) => {
                 if let Some(u) = sync.unlock.as_mut() {
@@ -715,9 +839,17 @@ impl App {
                     .iter()
                     .find(|d| d.id == id)
                     .map_or_else(|| id.clone(), |d| d.name.clone());
+                let evidence = self
+                    .store
+                    .sync_fork_evidence(&id)
+                    .ok()
+                    .flatten()
+                    .map(|e| super::sync_view::evidence_lines(&e))
+                    .unwrap_or_default();
                 self.raise_sync_fork_alert(ForkView {
                     device,
                     detail: format!("device id {id}: two different histories under one identity"),
+                    evidence,
                 });
             }
             SyncEvent::BehindPeer(id) => {
@@ -726,9 +858,20 @@ impl App {
                     .iter()
                     .find(|d| d.id == id)
                     .map_or_else(|| id.clone(), |d| d.name.clone());
-                self.host_notice = Some(format!(
-                    "{name} is behind: it could not prove it is current, so nothing moved; try again once it has synced"
-                ));
+                let host = self
+                    .profile
+                    .as_ref()
+                    .and_then(|p| crate::sync::runtime::Peers::load(p).ok())
+                    .and_then(|p| p.host_of(&id).map(str::to_string));
+                self.host_notice = Some(match &host {
+                    Some(h) => format!(
+                        "{name} is behind: it could not prove it is current, so nothing moved. Select it and press Enter to re-enroll it through {h} (a repeat ceremony; nothing about its role changes)"
+                    ),
+                    None => format!(
+                        "{name} is behind and no host is known for it: press t on its host in the hosts tab to re-enroll it"
+                    ),
+                });
+                self.sync.reenroll = host.map(|h| (id, h));
             }
             SyncEvent::Done => {
                 sync.syncing = false;
@@ -737,6 +880,10 @@ impl App {
                 sync.unlock_running = false;
                 // Whatever the round moved is in the store now.
                 self.refresh_sync_view();
+                // A ring just came into being here: learn which device this is.
+                if std::mem::take(&mut self.sync.identify_after) && self.sync.configured {
+                    self.sync.intents.push(SyncIntent::Identify);
+                }
             }
             SyncEvent::Error(message) => {
                 sync.syncing = false;
@@ -1054,8 +1201,10 @@ impl App {
                     self.sync.review_selected = (self.sync.review_selected + 1).min(last);
                 } else if up {
                     self.sync.review_selected = self.sync.review_selected.saturating_sub(1);
-                } else if plain('a') || plain('r') {
-                    self.sync_resolve_review(plain('a'));
+                } else if let KeyCode::Char(c @ ('a' | 'r' | 'p' | 'e')) = key.code {
+                    if key.modifiers.is_empty() {
+                        self.sync_review_key(c);
+                    }
                 }
             }
             AppMode::SyncUnlock => {
@@ -1091,6 +1240,8 @@ impl App {
                 let last = self.sync.trust_scopes.len().saturating_sub(1);
                 if cancel {
                     self.mode = AppMode::Normal;
+                } else if plain(' ') {
+                    super::sync_trust::toggle_mark(self);
                 } else if confirm {
                     self.mode = AppMode::TrustSessionTtl;
                 } else if down {
@@ -1104,11 +1255,8 @@ impl App {
                 if cancel {
                     self.mode = AppMode::TrustSessionScope;
                 } else if confirm {
-                    self.sync.intents.push(SyncIntent::Trust {
-                        scope: self.sync.trust_scope_selected,
-                        term_days: TRUST_TTL_DAYS[self.sync.trust_ttl_selected],
-                    });
                     self.mode = AppMode::Normal;
+                    super::sync_trust::begin(self, TRUST_TTL_DAYS[self.sync.trust_ttl_selected]);
                 } else if down {
                     self.sync.trust_ttl_selected =
                         (self.sync.trust_ttl_selected + 1).min(TRUST_TTL_DAYS.len() - 1);
@@ -1149,6 +1297,7 @@ pub(crate) fn sample_sync_view() -> SyncView {
         last_seen: Some(1_700_000_000),
         head_seq: 7,
         verified_by: Some(crate::sync::oplog::VerifiedBy::Sas),
+        this: false,
     };
     SyncView {
         configured: true,
@@ -1166,6 +1315,8 @@ pub(crate) fn sample_sync_view() -> SyncView {
         }),
         review: vec![PendingOpView {
             hash: [0; 32],
+            reason: None,
+            red: None,
             device: "server".into(),
             summary: "edit host web-1".into(),
             changes: vec![ChangeView {
@@ -1176,6 +1327,10 @@ pub(crate) fn sample_sync_view() -> SyncView {
             }],
         }],
         trust_scopes: vec!["group staging".into(), "group prod".into()],
+        trust_scope_values: vec![
+            crate::sync::oplog::CertScope::Group([1; 16]),
+            crate::sync::oplog::CertScope::Group([2; 16]),
+        ],
         ..SyncView::default()
     }
 }
@@ -1216,6 +1371,7 @@ pub(crate) fn sample_sync_view_with_modals() -> SyncView {
         fork: Some(ForkView {
             device: "server".into(),
             detail: "two different ops at seq 9".into(),
+            evidence: vec!["op 1a2b3c4d and op 5e6f7a8b at seq 9".into()],
         }),
         release: Some(ReleaseView {
             host: "web-1".into(),
@@ -1337,14 +1493,9 @@ mod tests {
         assert_eq!(TRUST_TTL_DAYS[app.sync.trust_ttl_selected], 30);
         app.handle_key(press(KeyCode::Down)).unwrap();
         app.handle_key(press(KeyCode::Enter)).unwrap();
-        assert_eq!(app.mode, AppMode::Normal);
-        assert_eq!(
-            app.sync.intents,
-            vec![SyncIntent::Trust {
-                scope: 1,
-                term_days: 90
-            }]
-        );
+        // The term is chosen: the budget is asked next (the sample's scopes are
+        // labels only, so the flow stops there with a notice).
+        assert!(app.mode == AppMode::Normal || app.mode == AppMode::SyncPrompt);
     }
 
     #[test]
@@ -1380,6 +1531,7 @@ mod tests {
         app.raise_sync_fork_alert(ForkView {
             device: "server".into(),
             detail: "two different ops at seq 9".into(),
+            evidence: Vec::new(),
         });
         assert_eq!(app.mode, AppMode::SyncForkAlert);
         // A letter would go to the PTY in session mode; the alert eats it.
@@ -1587,6 +1739,50 @@ mod tests {
         assert_eq!(status(UnlockPathKind::Phrase), Some("type the words"));
         assert_eq!(status(UnlockPathKind::Peer), Some("laptop is asking you"));
         assert_eq!(u.paths.len(), 2, "a path is updated, not repeated");
+    }
+
+    #[test]
+    fn a_behind_peer_offers_a_guided_re_enroll_through_its_recorded_host() {
+        use crate::sync::client::SyncEvent;
+        let dir = tempfile::tempdir().unwrap();
+        let paths = crate::profile::ProfilePaths {
+            data_root: dir.path().to_path_buf(),
+            id: "t".into(),
+            name: "t".into(),
+            root: dir.path().to_path_buf(),
+            config_file: dir.path().join("config.toml"),
+            ssh_config: dir.path().join("ssh_config"),
+            compat: false,
+        };
+        let mut app = configured_app();
+        app.profile = Some(paths.clone());
+        app.active_tab = 6;
+        app.sync.devices[1].status = DeviceStatusView::Behind;
+        app.sync.selected = 1;
+        let id = app.sync.devices[1].id.clone();
+
+        // No host recorded: the way out is the hosts tab.
+        app.apply_sync_event(SyncEvent::BehindPeer(id.clone()));
+        assert!(app.sync.reenroll.is_none());
+        assert!(app.host_notice.as_deref().unwrap().contains("hosts tab"));
+
+        crate::sync::runtime::Peers::record(&paths, &id, "hub").unwrap();
+        app.apply_sync_event(SyncEvent::BehindPeer(id.clone()));
+        assert_eq!(app.sync.reenroll, Some((id.clone(), "hub".into())));
+        assert!(app.host_notice.as_deref().unwrap().contains("through hub"));
+
+        app.sync.intents.clear();
+        app.handle_key(press(KeyCode::Enter)).unwrap();
+        assert_eq!(
+            app.sync.intents,
+            vec![SyncIntent::Enroll { host: "hub".into() }]
+        );
+
+        // Without a round having said so, Enter syncs first.
+        app.sync.intents.clear();
+        app.sync.reenroll = None;
+        app.handle_key(press(KeyCode::Enter)).unwrap();
+        assert_eq!(app.sync.intents, vec![SyncIntent::SyncNow { device: id }]);
     }
 
     #[test]

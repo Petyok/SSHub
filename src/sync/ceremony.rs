@@ -15,7 +15,7 @@ use super::oplog::{
     Attendance, CredMode, DeviceId, DeviceKind, DeviceRole, DeviceRow, DeviceStatus, Op, OpBody,
     ThirdFactor,
 };
-use super::quorum::{meta_get, meta_set, ops_of, phone_device};
+use super::quorum::{meta_get, meta_set, ops_of};
 use crate::store::LauncherStore;
 
 const FACTOR_DOMAIN: &[u8] = b"sshub/sync/red/factor/v1";
@@ -49,6 +49,7 @@ pub fn is_gated(store: &LauncherStore, op: &Op) -> Result<bool> {
         | OpBody::CertIssue { .. }
         | OpBody::ModeChange { .. }
         | OpBody::FactorRegister { .. }
+        | OpBody::ExemptionSet { .. }
         | OpBody::BulkExport { .. } => true,
         OpBody::DeviceRevoke { device_id } => store
             .sync_devices()?
@@ -57,6 +58,126 @@ pub fn is_gated(store: &LauncherStore, op: &Op) -> Result<bool> {
             .is_none_or(|d| d.role == DeviceRole::Holder),
         _ => false,
     })
+}
+
+/// The ceremony-complete view of a Red op: every device, the proposer included, acts on a gated op only
+/// once its proofs are in. A proposer applies its own op at once (it is "approved by definition"), so
+/// anything that reaches OTHER devices' data (shares, wraps, recipients, mode, certificates, export
+/// windows) must read the world through [`in_force`] and [`effective_devices`], never the raw table.
+/// Time does not matter: an op that completed stays in force after the pending window.
+pub fn in_force(store: &LauncherStore, op: &Op) -> Result<bool> {
+    #[cfg(test)]
+    if meta_get(store, "test_all_in_force")?.is_some_and(|v| !v.is_empty()) {
+        return Ok(true);
+    }
+    if !is_gated(store, op)? {
+        return Ok(true);
+    }
+    Ok(red_status(store, op, op.timestamp)?.missing.is_empty())
+}
+
+/// Test switch: with it on, every op counts as in force on this store (fixtures that exercise what
+/// happens AFTER a ceremony, not the ceremony). Off for the tests of the ceremony itself.
+#[cfg(test)]
+pub(crate) fn test_force(store: &LauncherStore, on: bool) {
+    meta_set(store, "test_all_in_force", if on { b"1" } else { b"" }).unwrap();
+}
+
+/// The newest op with `lamport <= upto` that made `device` a holder, if any, as `(lamport, op)`.
+fn establishing_op(
+    store: &LauncherStore,
+    device: &DeviceId,
+    upto: Option<u64>,
+) -> Result<Option<Op>> {
+    let mut newest: Option<Op> = None;
+    for kind in ["DeviceAdd", "DeviceRoleChange"] {
+        for op in ops_of(store, kind, None)? {
+            let (who, to_holder) = match &op.body {
+                OpBody::DeviceAdd { device, role, .. } => {
+                    (device.device_id(), *role == DeviceRole::Holder)
+                }
+                OpBody::DeviceRoleChange { device_id, to } => {
+                    (device_id.clone(), *to == DeviceRole::Holder)
+                }
+                _ => continue,
+            };
+            if who != *device || upto.is_some_and(|u| op.lamport > u) {
+                continue;
+            }
+            if newest.as_ref().is_none_or(|n| n.lamport < op.lamport) {
+                newest = Some(op.clone());
+            }
+            let _ = to_holder;
+        }
+    }
+    Ok(newest)
+}
+
+fn holder_established(store: &LauncherStore, device: &DeviceId, upto: Option<u64>) -> Result<bool> {
+    let Some(op) = establishing_op(store, device, upto)? else {
+        return Ok(true); // a founder, or a holder adopted with an anchor
+    };
+    let to_holder = match &op.body {
+        OpBody::DeviceAdd { role, .. } => *role == DeviceRole::Holder,
+        OpBody::DeviceRoleChange { to, .. } => *to == DeviceRole::Holder,
+        _ => false,
+    };
+    if !to_holder || upto == Some(op.lamport) {
+        return Ok(true);
+    }
+    in_force(store, &op)
+}
+
+fn revoke_in_force(store: &LauncherStore, device: &DeviceId, upto: Option<u64>) -> Result<bool> {
+    let mut any = false;
+    for op in ops_of(store, "DeviceRevoke", None)? {
+        if matches!(&op.body, OpBody::DeviceRevoke { device_id } if device_id == device)
+            && !upto.is_some_and(|u| op.lamport > u)
+        {
+            any = true;
+            if upto == Some(op.lamport) || in_force(store, &op)? {
+                return Ok(true);
+            }
+        }
+    }
+    // No revoke op in the log (an anchor, or a revoked non-holder): the row stands.
+    Ok(!any)
+}
+
+/// The device table as the ceremony sees it at `upto` (a lamport bound; `None` = now): a device whose
+/// promotion to holder is not in force is a mirror, a device whose revocation is not in force is not
+/// revoked. Every consumer that counts holders, wraps to them, reshares to them or lets them vote reads this.
+pub fn effective_devices(store: &LauncherStore, upto: Option<u64>) -> Result<Vec<DeviceRow>> {
+    let mut rows = store.sync_devices()?;
+    for d in rows.iter_mut() {
+        if d.role == DeviceRole::Holder && !holder_established(store, &d.id, upto)? {
+            d.role = DeviceRole::Mirror;
+        }
+        if d.status == DeviceStatus::Revoked && !revoke_in_force(store, &d.id, upto)? {
+            d.status = DeviceStatus::Operational;
+        }
+    }
+    Ok(rows)
+}
+
+/// The credential mode the ring has agreed to: the projection's mode, unless the newest `ModeChange` is
+/// not in force (its proposer applied it at once, nobody else did), then the mode before it.
+pub fn effective_cred_mode(store: &LauncherStore) -> Result<CredMode> {
+    let mode = store.sync_cred_mode()?;
+    if let Some(mc) = ops_of(store, "ModeChange", None)?.pop() {
+        if !in_force(store, &mc)? {
+            return Ok(match mode {
+                CredMode::Vault => CredMode::Quorum,
+                CredMode::Quorum => CredMode::Vault,
+            });
+        }
+    }
+    Ok(mode)
+}
+
+/// Pending only because its author is not an accepted device yet.
+pub(crate) fn awaits_author(store: &LauncherStore, op: &Op) -> Result<bool> {
+    Ok(store.sync_pending_reason(&op.hash())?.as_deref() == Some("unknown-author"))
 }
 
 fn factor_message(op_hash: &[u8; 32], proposer: &DeviceId) -> Vec<u8> {
@@ -68,19 +189,35 @@ type Registration = ([u8; 32], Vec<u8>, Option<DeviceId>);
 
 /// The newest applied registration of `factor`.
 fn registered(store: &LauncherStore, factor: ThirdFactor) -> Result<Option<Registration>> {
-    Ok(ops_of(store, "FactorRegister", None)?
-        .into_iter()
-        .rev()
-        .find_map(|o| match o.body {
-            OpBody::FactorRegister {
-                factor: f,
-                public,
-                sealed,
-                sender,
-                ..
-            } if f == factor => Some((public, sealed, sender)),
-            _ => None,
-        }))
+    registered_before(store, factor, None)
+}
+
+/// The newest registration of `factor` that is IN FORCE and older than `before` (a lamport bound; a
+/// factor signs only what was proposed after it was registered). Bounded so that evaluating one
+/// registration only looks at older ones.
+fn registered_before(
+    store: &LauncherStore,
+    factor: ThirdFactor,
+    before: Option<u64>,
+) -> Result<Option<Registration>> {
+    for o in ops_of(store, "FactorRegister", None)?.into_iter().rev() {
+        if before.is_some_and(|b| o.lamport >= b) {
+            continue;
+        }
+        if let OpBody::FactorRegister {
+            factor: f,
+            public,
+            sealed,
+            sender,
+            ..
+        } = &o.body
+        {
+            if *f == factor && in_force(store, &o)? {
+                return Ok(Some((*public, sealed.clone(), sender.clone())));
+            }
+        }
+    }
+    Ok(None)
 }
 
 fn terminal_holder(d: &DeviceRow) -> bool {
@@ -94,8 +231,8 @@ fn terminal_holder(d: &DeviceRow) -> bool {
 pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus> {
     let hash = op.hash();
     let proposer = &op.device_id;
-    let devices = store.sync_devices()?;
-    let phone = phone_device(store)?;
+    let devices = effective_devices(store, Some(op.lamport))?;
+    let phone = super::quorum::phone_device_in(&devices)?;
     let expired = now - op.timestamp > RED_CEREMONY_TTL_SECS;
     let valid_proof =
         |p: &Op| p.lamport > op.lamport && p.timestamp - op.timestamp <= RED_CEREMONY_TTL_SECS;
@@ -129,15 +266,45 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
                 .iter()
                 .filter(|d| terminal_holder(d) && d.id != *device_id)
                 .count();
+            let holder_count = devices
+                .iter()
+                .filter(|d| {
+                    d.role == DeviceRole::Holder
+                        && !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
+                })
+                .count();
             if devices
                 .iter()
                 .any(|d| d.id == *device_id && d.role == DeviceRole::Holder)
+                && holder_count > 0
+            {
+                if let Err(e) = super::quorum::paper_rule(store, holder_count - 1) {
+                    blocked = Some(e.to_string());
+                }
+            }
+            if blocked.is_none()
+                && devices
+                    .iter()
+                    .any(|d| d.id == *device_id && d.role == DeviceRole::Holder)
                 && remaining < 2
             {
                 blocked = Some(
                     "revoking a holder needs at least two remaining terminal holders to contribute"
                         .to_string(),
                 );
+            }
+        }
+        OpBody::ExemptionSet {
+            device_id,
+            slot: Some(_),
+        } => {
+            let attended_terminal = devices.iter().any(|d| {
+                d.id == *device_id && terminal_holder(d) && d.attendance == Attendance::Attended
+            });
+            if store.sync_cred_mode()? != CredMode::Quorum {
+                blocked = Some("the exemption exists only in a Quorum ring".to_string());
+            } else if !attended_terminal {
+                blocked = Some("only an attended holder terminal can be exempt".to_string());
             }
         }
         OpBody::BulkExport { window_secs, .. } if *window_secs == 0 || *window_secs > 3600 => {
@@ -165,7 +332,9 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
 
     // Second attended holder terminal.
     let delegate = match &op.body {
-        OpBody::CertIssue { device_id, .. } => Some(device_id.clone()),
+        OpBody::CertIssue { device_id, .. } | OpBody::ExemptionSet { device_id, .. } => {
+            Some(device_id.clone())
+        }
         _ => None,
     };
     let cosigner = match &op.body {
@@ -209,8 +378,8 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
     }
 
     // Third factor.
-    let paper = registered(store, ThirdFactor::Paper)?;
-    let email = registered(store, ThirdFactor::EmailCode)?;
+    let paper = registered_before(store, ThirdFactor::Paper, Some(op.lamport))?;
+    let email = registered_before(store, ThirdFactor::EmailCode, Some(op.lamport))?;
     let replacing = match &op.body {
         OpBody::FactorRegister { factor, .. } => Some(factor.clone()),
         _ => None,
@@ -238,7 +407,7 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
         let Some(key) = key else { continue };
         // Replacing a registered factor needs the factor being replaced, not just any.
         if let Some(r) = &replacing {
-            if registered(store, r.clone())?.is_some() && factor != r {
+            if registered_before(store, r.clone(), Some(op.lamport))?.is_some() && factor != r {
                 continue;
             }
         }
@@ -286,7 +455,8 @@ pub struct SettleReport {
 pub fn settle_red_ops(store: &LauncherStore, now: i64) -> Result<SettleReport> {
     let mut report = SettleReport::default();
     for op in store.sync_pending()? {
-        if !is_gated(store, &op)? {
+        // An op of an unknown author is unverifiable and inert: it waits for the author's admission.
+        if !is_gated(store, &op)? || awaits_author(store, &op)? {
             continue;
         }
         let st = red_status(store, &op, now)?;
@@ -366,14 +536,8 @@ pub fn red_factor_email(store: &LauncherStore, code: &str, op: &Op) -> Result<Op
 }
 
 /// Register the paper's recovery key as a factor (first registration needs phone + second device only).
-pub fn factor_register_paper(paper_recover: &DeviceIdentity) -> OpBody {
-    OpBody::FactorRegister {
-        factor: ThirdFactor::Paper,
-        public: paper_recover.public().ed25519_pub,
-        sealed: Vec::new(),
-        salt: [0; 16],
-        sender: None,
-    }
+pub fn factor_register_paper(phrase: &str) -> Result<OpBody> {
+    super::quorum::paper_registration(phrase)
 }
 
 /// Register the emailed-code factor: a random seed becomes the `email` key, sealed under a fresh code.
@@ -453,6 +617,24 @@ pub fn owed_code_mails(
         ));
     }
     Ok(out)
+}
+
+/// Mail every owed code through `send(subject, body)`; an op is marked mailed only after its send
+/// succeeded, so a failing mail server loses nothing and blocks nobody. Returns how many went out.
+pub fn send_owed_codes(
+    store: &LauncherStore,
+    me: &DeviceId,
+    now: i64,
+    send: &mut dyn FnMut(&str, &str) -> Result<()>,
+) -> Result<usize> {
+    let mut sent = 0;
+    for (hash, subject, body) in owed_code_mails(store, me, now)? {
+        if send(&subject, &body).is_ok() {
+            mark_code_sent(store, &hash)?;
+            sent += 1;
+        }
+    }
+    Ok(sent)
 }
 
 pub fn mark_code_sent(store: &LauncherStore, op_hash: &[u8; 32]) -> Result<()> {

@@ -34,6 +34,12 @@ mod sftp;
 mod snippets;
 mod suggestions;
 pub mod sync;
+mod sync_admin;
+mod sync_flows;
+mod sync_flows_more;
+pub(crate) mod sync_phone;
+pub(crate) mod sync_trust;
+pub(crate) mod sync_ui;
 pub(crate) mod sync_view;
 mod tags;
 pub mod test_connect;
@@ -310,6 +316,12 @@ pub struct App {
     pub sync_worker: Option<crate::sync::client::SyncHandle>,
     /// The action waiting for a credential unlock, if any.
     pub(crate) unlock_resume: Option<sync::UnlockResume>,
+    /// The open generic Sync modal (prompt, menu or panel).
+    pub(crate) sync_ui: Option<sync_ui::SyncUi>,
+    /// Phone enrollment in progress (see `app/sync_phone.rs`).
+    pub(crate) phone_flow: Option<sync_phone::PhoneFlow>,
+    /// The paper phrase just created, until the user typed it back (memory only).
+    pub(crate) sync_paper: Option<zeroize::Zeroizing<String>>,
     /// Tracker line an Esc dismiss applies to: the ghost stays hidden until
     /// the input line changes. `None` while nothing is dismissed.
     pub ghost_dismissed_for: Option<String>,
@@ -998,6 +1010,12 @@ impl App {
         // ssh (its identity loads on the first round, not now).
         app.refresh_sync_view();
         crate::sync::runtime::guard_synced_credentials(&gate, app.store.clone());
+        crate::sync::runtime::StoreReplicator::install(
+            &gate,
+            paths.clone(),
+            app.store.clone(),
+            crate::credentials::open_ungated_for_profile,
+        );
         app.attach_sync_worker(crate::sync::client::spawn_sync_thread(
             crate::sync::runtime::round_fn(crate::sync::runtime::RoundDeps::for_profile(
                 paths,
@@ -1006,6 +1024,9 @@ impl App {
             )),
         ));
         app.queue_auto_sync();
+        if app.sync.configured {
+            app.sync.intents.push(sync::SyncIntent::Identify);
+        }
 
         // Spawn the OS auto-detect worker here (the on-disk constructor) rather
         // than in new_with_deps so unit tests that inject deps stay offline and
@@ -1092,6 +1113,9 @@ impl App {
             snippet_picker: None,
             sync: sync::SyncView::default(),
             unlock_resume: None,
+            sync_ui: None,
+            phone_flow: None,
+            sync_paper: None,
             sync_worker: None,
             ghost_dismissed_for: None,
             ghost_host_cache: std::cell::RefCell::new(None),

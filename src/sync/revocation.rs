@@ -44,8 +44,7 @@ pub enum RevocationAction {
 }
 
 fn live_holders(store: &LauncherStore) -> Result<Vec<super::oplog::DeviceRow>> {
-    Ok(store
-        .sync_devices()?
+    Ok(super::ceremony::effective_devices(store, None)?
         .into_iter()
         .filter(|d| {
             d.role == DeviceRole::Holder
@@ -62,6 +61,7 @@ pub fn check_revocable(store: &LauncherStore, target: &DeviceId, now: i64) -> Re
         holders.iter().any(|d| d.id == *target),
         "{target} is not a live holder"
     );
+    super::quorum::paper_rule(store, holders.len() - 1)?;
     let remaining: Vec<_> = holders
         .iter()
         .filter(|d| d.id != *target && d.kind == DeviceKind::Terminal)
@@ -80,13 +80,17 @@ pub fn check_revocable(store: &LauncherStore, target: &DeviceId, now: i64) -> Re
 
 /// The newest revoked holder whose reshare is not finished: `(op lamport, timestamp, revoked id)`.
 fn open_revocation(store: &LauncherStore) -> Result<Option<(u64, i64, DeviceId)>> {
-    let devices = store.sync_devices()?;
+    let devices = super::ceremony::effective_devices(store, None)?;
     let batches = ops_of(store, "ShareReshareBatch", None)?;
     let mut open = None;
     for op in ops_of(store, "DeviceRevoke", None)? {
         let OpBody::DeviceRevoke { device_id } = &op.body else {
             continue;
         };
+        // A revocation nobody completed reshares nothing.
+        if !super::ceremony::in_force(store, &op)? {
+            continue;
+        }
         let was_holder = devices
             .iter()
             .any(|d| d.id == *device_id && d.role == DeviceRole::Holder);
@@ -116,7 +120,7 @@ pub fn next_actions(
     now: i64,
 ) -> Result<Vec<RevocationAction>> {
     let me = id.public().device_id();
-    let devices = store.sync_devices()?;
+    let devices = super::ceremony::effective_devices(store, None)?;
     let am_holder = devices
         .iter()
         .any(|d| d.id == me && d.role == DeviceRole::Holder && d.status != DeviceStatus::Revoked);
@@ -161,6 +165,7 @@ pub fn next_actions(
         }
     }
     let Some((lamport, revoked_at, _revoked)) = open_revocation(store)? else {
+        out.extend(membership_reshare(store, &me)?);
         return Ok(out);
     };
     let remaining = live_holders(store)?;
@@ -208,6 +213,74 @@ pub fn next_actions(
         return Ok(out);
     }
     Ok(out)
+}
+
+/// A reshare that is not a revocation: the holders of the ring (plus the paper and the exemption slots)
+/// differ from the holders the credentials are shared among: a holder was promoted (C3), or an
+/// exemption was enabled or disabled (C10). No wrap-key rotation is needed: nobody lost access.
+fn membership_reshare(store: &LauncherStore, me: &DeviceId) -> Result<Option<RevocationAction>> {
+    use super::oplog::CredMode;
+    if super::ceremony::effective_cred_mode(store)? != CredMode::Quorum
+        || super::reshare::quorum_credentials(store)?.is_empty()
+    {
+        return Ok(None);
+    }
+    let live = live_holders(store)?;
+    let terminals = live.iter().filter(|d| d.kind == DeviceKind::Terminal);
+    if terminals.clone().count() < 2 || !terminals.clone().any(|d| d.id == *me) {
+        return Ok(None);
+    }
+    let mut new_holders: Vec<DeviceId> = live.iter().map(|d| d.id.clone()).collect();
+    new_holders.sort();
+    let mut expected: BTreeSet<DeviceId> = new_holders.iter().cloned().collect();
+    if let Some(p) = paper_pub(store)? {
+        expected.insert(p.device_id());
+    }
+    for (_, slot) in super::exemption::active_slots(store)? {
+        expected.insert(slot.device_id());
+    }
+    let batches = ops_of(store, "ShareReshareBatch", None)?;
+    let latest = batches
+        .iter()
+        .filter_map(|b| match &b.body {
+            OpBody::ShareReshareBatch {
+                epoch, new_holders, ..
+            } => Some((*epoch, new_holders.iter().cloned().collect::<BTreeSet<_>>())),
+            _ => None,
+        })
+        .max_by_key(|(e, _)| *e);
+    let (epoch, needed) = match latest {
+        // Someone already started the right sharing: join it until two contributors exist.
+        Some((e, set)) if set == expected => {
+            let contributors: BTreeSet<&DeviceId> = batches
+                .iter()
+                .filter(
+                    |b| matches!(&b.body, OpBody::ShareReshareBatch { epoch, .. } if *epoch == e),
+                )
+                .map(|b| &b.device_id)
+                .collect();
+            let mine = ops_of(store, "ShareReshareSession", Some(me))?.iter().any(
+                |o| matches!(&o.body, OpBody::ShareReshareSession { epoch, .. } if *epoch == e),
+            );
+            (
+                e,
+                contributors.len() < 2 && !mine && !contributors.contains(me),
+            )
+        }
+        Some(_) => (next_epoch(store)?, true),
+        None => {
+            let mut differ = false;
+            for host in super::reshare::quorum_credentials(store)? {
+                if let Some((_, wraps)) = store.sync_cred_ciphertext(&host)? {
+                    let have: BTreeSet<DeviceId> =
+                        wraps.iter().map(|w| w.recipient.clone()).collect();
+                    differ |= have != expected;
+                }
+            }
+            (next_epoch(store)?, differ)
+        }
+    };
+    Ok(needed.then_some(RevocationAction::Contribute { epoch, new_holders }))
 }
 
 /// Do one action. Returns the bodies to append. `Rotate` and `Retire` change `id`: save it first.

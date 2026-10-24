@@ -27,6 +27,7 @@ fn ring(n: usize) -> Vec<Dev> {
     ids.into_iter()
         .map(|id| {
             let store = LauncherStore::open_in_memory().unwrap();
+            crate::sync::ceremony::test_force(&store, true);
             for (i, p) in publics.iter().enumerate() {
                 store
                     .sync_register_device(
@@ -254,8 +255,20 @@ fn quorum_mode_needs_no_credentials_to_open_and_then_flips() {
         1_000,
     )
     .unwrap();
-    assert!(rep.lines[0].contains("0 credentials"), "{rep:?}");
+    assert!(rep.lines[0].contains("proposed"), "{rep:?}");
     assert_eq!(r[0].store.sync_cred_mode().unwrap(), CredMode::Quorum);
+    // After the ceremony (the fixture counts it as complete) the second call re-encrypts.
+    let rep = mode(
+        &r[0].store,
+        &r[0].id,
+        CredMode::Quorum,
+        None,
+        "w",
+        &[0; 16],
+        1_000,
+    )
+    .unwrap();
+    assert!(rep.lines[0].contains("0 credentials"), "{rep:?}");
     // From the command line the way back cannot open anything.
     assert!(mode(
         &r[0].store,

@@ -16,7 +16,7 @@ cp sshub-companion.html /tmp/build1.html
 step build-again node build.mjs
 cmp sshub-companion.html /tmp/build1.html && echo "REPRODUCIBLE yes" || { echo "REPRODUCIBLE no"; fail=1; }
 step build-selftest node build.mjs --selftest
-step node-tests node --test test/phone.test.mjs test/quorum.test.mjs test/replay.test.js
+step node-tests node --test test/phone.test.mjs test/phone2.test.mjs test/phone3.test.mjs test/quorum.test.mjs test/replay.test.js
 step headless-replay node scripts/headless-check.mjs
 rm -rf /tmp/e2e
 step e2e env E2E_OUT=/tmp/e2e node scripts/e2e.mjs

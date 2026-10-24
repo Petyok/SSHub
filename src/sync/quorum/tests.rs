@@ -9,11 +9,9 @@ use zeroize::Zeroizing;
 use super::*;
 use crate::credentials::{ensure_unlocked, PasswordStore, QuorumGatedStore};
 use crate::sync::cert::{cert_allows, validate_cert_issue, DelegationCert};
-use crate::sync::cred_ops::{
-    cred_put, materialise_key, migrate_local_secrets, remove_local_copies, CredPayload,
-};
+use crate::sync::cred_ops::{cred_put, migrate_local_secrets, remove_local_copies, CredPayload};
 use crate::sync::crypto::{bip39_encode, shamir_combine, COMBINE_CALLS};
-use crate::sync::modes::{mode_change_plan, validate_mode_change};
+use crate::sync::modes::validate_mode_change;
 use crate::sync::oplog::{CertScope, CredMode};
 use crate::sync::protocol::tests::{ring, Dev};
 use crate::sync::reshare::{next_epoch, reissue_plan, reissue_receive, unadopted};
@@ -352,6 +350,11 @@ impl ShareSource for FromPeer {
 #[test]
 fn the_unlocker_fills_the_gate_for_a_real_host_row_and_nothing_else() {
     let d = ring(2);
+    // Exactly two holders: the paper is mandatory.
+    append(
+        &d[0],
+        paper_registration(&bip39_encode(&[0x71; 32])).unwrap(),
+    );
     quorum_mode(&d[0]);
     all_to_all(&d);
     let row = d[0]
@@ -524,6 +527,46 @@ fn certificates_are_enforced_by_the_holders() {
             .contains("budget")
     );
 
+    // R3b: only the issuing phone extends the day, by one extension per 24 hours.
+    append(
+        &d[2],
+        OpBody::CertExtend {
+            cert_id: cert3.id,
+            extra_hosts: 5,
+        },
+    );
+    all_to_all(&d);
+    assert_eq!(
+        crate::sync::cert::extension_budget(&d[2].store, &cert3, t).unwrap(),
+        0,
+        "a holder cannot extend"
+    );
+    let req = crate::sync::cert::cert_extend_request(cert3.id, 1).unwrap();
+    assert_eq!(
+        crate::sync::wire::CertExtendRequestWire::decode(&req.encode()).unwrap(),
+        req
+    );
+    append(phone, req.to_body());
+    append(
+        phone,
+        OpBody::CertExtend {
+            cert_id: cert3.id,
+            extra_hosts: 7,
+        },
+    );
+    all_to_all(&d);
+    assert_eq!(
+        crate::sync::cert::extension_budget(&d[2].store, &cert3, t).unwrap(),
+        1,
+        "the second extension inside 24 hours does not count"
+    );
+    assert!(cert_allows(&cert3, &pk, &d[2].store, &d[1].did, &host_c, t, t).is_ok());
+    assert_eq!(
+        crate::sync::cert::extension_budget(&d[2].store, &cert3, t + 2 * 86_400).unwrap(),
+        0,
+        "an extension covers its own day only"
+    );
+
     // Revocation arrives with the next sync.
     append(phone, OpBody::CertRevoke { cert_id: cert.id });
     all_to_all(&d);
@@ -553,10 +596,17 @@ fn certificates_are_enforced_by_the_holders() {
 
 #[test]
 fn a_mode_change_re_encrypts_under_new_deks_and_going_back_needs_a_cosigner() {
-    let d = ring(3);
+    use crate::sync::modes::{mode_change_body, mode_migration};
+    let d = ring_phone(3); // 0, 1, 2 terminals; 3 the phone
     for x in &d {
         vault_setup_with(&x.store, PHRASE, &RING, FAST).unwrap();
     }
+    let paper = bip39_encode(&[0x55; 32]);
+    let reg = append(
+        &d[0],
+        crate::sync::quorum::paper_registration(&paper).unwrap(),
+    );
+    complete(&d, &reg, 1, None);
     let hosts = [[31u8; 16], [32u8; 16]];
     for h in &hosts {
         cred_put(&d[0].store, &d[0].id, h, &payload(&format!("v{}", h[0]))).unwrap();
@@ -569,15 +619,24 @@ fn a_mode_change_re_encrypts_under_new_deks_and_going_back_needs_a_cosigner() {
         let (ct, _) = d[0].store.sync_cred_ciphertext(h)?.unwrap();
         Ok(Zeroizing::new(dek_open(&dek, &ct)?))
     };
-    let bodies = mode_change_plan(
-        &d[0].store,
-        &d[0].id.public(),
-        CredMode::Quorum,
-        None,
-        &open_vault,
-    )
-    .unwrap();
-    assert_eq!(bodies.len(), 1 + hosts.len());
+    let body = mode_change_body(&d[0].store, &d[0].id.public(), CredMode::Quorum, None).unwrap();
+    let mc = append(&d[0], body);
+    // Proposed, not complete: nothing is re-encrypted and new credentials stay in the old shape.
+    assert!(mode_migration(&d[0].store, &d[0].id.public(), &open_vault)
+        .unwrap_err()
+        .to_string()
+        .contains("ceremony"));
+    assert_eq!(
+        crate::sync::ceremony::effective_cred_mode(&d[0].store).unwrap(),
+        CredMode::Vault
+    );
+    complete(&d, &mc, 1, Some(&paper));
+    assert_eq!(
+        crate::sync::ceremony::effective_cred_mode(&d[0].store).unwrap(),
+        CredMode::Quorum
+    );
+    let bodies = mode_migration(&d[0].store, &d[0].id.public(), &open_vault).unwrap();
+    assert_eq!(bodies.len(), hosts.len());
     for b in bodies {
         append(&d[0], b);
     }
@@ -585,7 +644,11 @@ fn a_mode_change_re_encrypts_under_new_deks_and_going_back_needs_a_cosigner() {
     assert_eq!(d[1].store.sync_cred_mode().unwrap(), CredMode::Quorum);
     let after = d[0].store.sync_cred_ciphertext(&hosts[0]).unwrap().unwrap();
     assert_ne!(before.0, after.0, "a fresh DEK, a fresh ciphertext");
-    assert_eq!(after.1.len(), 3, "one share per holder");
+    assert_eq!(
+        after.1.len(),
+        5,
+        "one share per holder, the phone and the paper"
+    );
     // The new shape opens with two shares, not with the vault.
     let s0 = own_shares(&d[0].store, &d[0].id, &hosts[0])
         .unwrap()
@@ -605,30 +668,15 @@ fn a_mode_change_re_encrypts_under_new_deks_and_going_back_needs_a_cosigner() {
     assert!(vault_open_dek_with(&d[0].store, &hosts[0], PHRASE, &RING, FAST).is_err());
 
     // Back to Vault: a co-signer is required.
-    let open_quorum = |h: &HostUid| -> anyhow::Result<Zeroizing<Vec<u8>>> {
-        let s0 = own_shares(&d[0].store, &d[0].id, h)?.remove(0).1;
-        let s1 = own_shares(&d[1].store, &d[1].id, h)?.remove(0).1;
-        let dek = assemble_dek(&d[0].store, h, s0, s1)?;
-        let (ct, _) = d[0].store.sync_cred_ciphertext(h)?.unwrap();
-        Ok(Zeroizing::new(dek_open(&dek, &ct)?))
-    };
-    assert!(mode_change_plan(
-        &d[0].store,
-        &d[0].id.public(),
-        CredMode::Vault,
-        None,
-        &open_quorum
-    )
-    .is_err());
-    let bodies = mode_change_plan(
+    assert!(mode_change_body(&d[0].store, &d[0].id.public(), CredMode::Vault, None).is_err());
+    let back = mode_change_body(
         &d[0].store,
         &d[0].id.public(),
         CredMode::Vault,
         Some(d[1].did.clone()),
-        &open_quorum,
     )
     .unwrap();
-    let mc = append(&d[0], bodies[0].clone());
+    let mc = append(&d[0], back);
     assert!(validate_mode_change(&d[2].store, &mc).is_ok());
     let alone = append(
         &d[0],
@@ -654,7 +702,7 @@ fn a_mode_change_re_encrypts_under_new_deks_and_going_back_needs_a_cosigner() {
 }
 
 #[test]
-fn payload_is_strict_keys_materialise_with_a_private_mode_and_vanish() {
+fn payload_is_strict() {
     let p = CredPayload {
         password: Some("p".into()),
         private_key: Some(
@@ -665,25 +713,6 @@ fn payload_is_strict_keys_materialise_with_a_private_mode_and_vanish() {
     assert!(CredPayload::from_bytes(br#"{"v":2}"#).is_err());
     assert!(CredPayload::from_bytes(br#"{"v":1,"extra":1}"#).is_err());
     assert!(CredPayload::from_bytes(b"[]").is_err());
-    let dir = std::env::temp_dir().join(format!("sshub-mat-{}", std::process::id()));
-    let uid = [5u8; 16];
-    let path = {
-        let k = materialise_key(&p, &dir, &uid).unwrap().unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        assert_eq!(
-            std::fs::metadata(k.path()).unwrap().permissions().mode() & 0o777,
-            0o600
-        );
-        assert!(std::fs::read_to_string(k.path())
-            .unwrap()
-            .ends_with("KEY-----\n"));
-        k.path().to_path_buf()
-    };
-    assert!(!path.exists(), "the file goes with the guard");
-    assert!(materialise_key(&payload("only a password"), &dir, &uid)
-        .unwrap()
-        .is_none());
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 struct MemStore(Mutex<HashMap<String, String>>);
@@ -1338,4 +1367,112 @@ fn revoking_a_holder_runs_rotate_reshare_adopt_and_retire_without_prompts() {
         check_revocable(&two[0].store, &two[1].did, now).is_err(),
         "one remaining holder cannot contribute"
     );
+}
+
+struct OnlyPhrase(&'static str);
+
+impl ShareSource for OnlyPhrase {
+    fn master_phrase(&self) -> Option<Zeroizing<String>> {
+        Some(Zeroizing::new(self.0.into()))
+    }
+
+    fn second_share(
+        &self,
+        _: &HostUid,
+        _: u64,
+        _: &Share,
+    ) -> std::result::Result<Share, UnlockError> {
+        Err(UnlockError::NeedsShares("no peer".into()))
+    }
+}
+
+#[test]
+fn the_exempt_device_opens_through_the_unlocker_with_the_phrase_and_no_peer() {
+    let d = ring(3);
+    quorum_mode(&d[0]);
+    all_to_all(&d);
+    append(
+        &d[0],
+        crate::sync::exemption::enable_body(&d[0].id, PHRASE, FAST),
+    );
+    all_to_all(&d);
+    let host = [91u8; 16];
+    cred_put(&d[1].store, &d[1].id, &host, &payload("exempt-secret")).unwrap();
+    all_to_all(&d);
+
+    let opened = unlocker(&d[0], Box::new(OnlyPhrase(PHRASE)), None)
+        .open_one(&host)
+        .unwrap();
+    assert_eq!(
+        CredPayload::from_bytes(&opened)
+            .unwrap()
+            .password
+            .as_deref(),
+        Some("exempt-secret")
+    );
+    // Wrong phrase on the exempt device, or the right phrase on any other device: nothing opens.
+    assert!(unlocker(
+        &d[0],
+        Box::new(OnlyPhrase("not the right words at all")),
+        None
+    )
+    .open_one(&host)
+    .is_err());
+    assert!(unlocker(&d[1], Box::new(OnlyPhrase(PHRASE)), None)
+        .open_one(&host)
+        .is_err());
+}
+
+/// `n` terminals plus a phone (the last device): the shape the Red ceremony needs.
+pub(crate) fn ring_phone(n: usize) -> Vec<Dev> {
+    use crate::sync::oplog::{Attendance, DeviceKind, DeviceRole, VerifiedBy};
+    let devs: Vec<Dev> = (0..=n).map(|_| Dev::new()).collect();
+    for d in &devs {
+        crate::sync::ceremony::test_force(&d.store, false);
+    }
+    for (i, a) in devs.iter().enumerate() {
+        for (j, b) in devs.iter().enumerate() {
+            if i != j {
+                let kind = if j == n {
+                    DeviceKind::Phone
+                } else {
+                    DeviceKind::Terminal
+                };
+                a.trust_with(b, Attendance::Attended, kind);
+            }
+        }
+        a.store
+            .sync_register_device(
+                &a.id.public(),
+                "self",
+                DeviceRole::Holder,
+                Attendance::Attended,
+                if i == n {
+                    DeviceKind::Phone
+                } else {
+                    DeviceKind::Terminal
+                },
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+    }
+    devs
+}
+
+/// Finish the ceremony of `op` as the ring would: the phone signs (unless it wrote the op), terminal
+/// `second` approves, and with `paper` the paper factor signs too. Everyone has the op first.
+pub(crate) fn complete(d: &[Dev], op: &Op, second: usize, paper: Option<&str>) {
+    use crate::sync::ceremony::{red_approve_body, red_factor_paper, red_phone_sign_body};
+    use crate::sync::crypto::{paper_derive, PaperDomain};
+    let phone = d.len() - 1;
+    all_to_all(d);
+    if op.device_id != d[phone].did {
+        append(&d[phone], red_phone_sign_body(op));
+    }
+    append(&d[second], red_approve_body(op));
+    if let Some(phrase) = paper {
+        let recover = paper_derive(phrase, PaperDomain::Recover).unwrap();
+        append(&d[second], red_factor_paper(&recover, op));
+    }
+    all_to_all(d);
 }

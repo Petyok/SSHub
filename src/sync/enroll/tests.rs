@@ -81,6 +81,22 @@ fn honest_enrollment_shows_the_same_words_and_leaves_a_working_pair() {
     assert_eq!(re.sas, rj.sas);
     assert_eq!(re.sas.split('-').count(), 4);
     assert_eq!(re.peer_name, "joining");
+    // The joiner starts from the inviter's state: its chain is there and nothing is waiting for review.
+    assert!(j
+        .store
+        .sync_chain_heads()
+        .unwrap()
+        .iter()
+        .any(|(d, _, _)| *d == e.did));
+    assert!(j.store.sync_pending().unwrap().is_empty());
+    let ids: Vec<_> = j
+        .store
+        .sync_devices()
+        .unwrap()
+        .into_iter()
+        .map(|d| d.id)
+        .collect();
+    assert!(ids.contains(&e.did) && ids.contains(&j.did), "{ids:?}");
     let (pe, pj) = (
         load_pair(&e.store, &j.did).unwrap().unwrap(),
         load_pair(&j.store, &e.did).unwrap().unwrap(),
@@ -523,4 +539,42 @@ fn an_unattended_inviter_admits_a_mirror_the_ring_still_has_to_approve() {
         member.store.sync_ingest(op).unwrap();
     }
     assert_eq!(member.store.sync_pending().unwrap().len(), 1);
+}
+
+struct Rec(Arc<Mutex<Vec<EnrollProgress>>>);
+
+impl SasConfirm for Rec {
+    fn confirm(&mut self, _: &SasPrompt<'_>) -> bool {
+        true
+    }
+    fn progress(&mut self, p: EnrollProgress) {
+        self.0.lock().unwrap().push(p);
+    }
+}
+
+#[test]
+fn the_joiner_reports_receiving_adopting_and_adopted_with_the_host_count() {
+    let (e, j) = (Dev::new(), Dev::new());
+    e.append_host();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let mut uj = Rec(seen.clone());
+    let mut ue = |_: &SasPrompt<'_>| true;
+    let (re, rj) = enroll(&e, &j, &mut ue, &mut uj);
+    re.unwrap();
+    rj.unwrap();
+    let seen = seen.lock().unwrap().clone();
+    assert!(
+        matches!(
+            seen.first(),
+            Some(EnrollProgress::Receiving { chunk: 1, .. })
+        ),
+        "{seen:?}"
+    );
+    assert_eq!(
+        seen[seen.len() - 2..],
+        [
+            EnrollProgress::Adopting { hosts: 1 },
+            EnrollProgress::Adopted { hosts: 1 }
+        ]
+    );
 }

@@ -20,8 +20,9 @@ use crate::store::LauncherStore;
 use crate::sync::client::{
     Round, RoundCtx, RoundFn, SasPromptInfo, SshTransport, SyncCmd, SyncEvent, TransportError,
 };
+use crate::sync::cred_ops::{cred_put, CredPayload};
 use crate::sync::crypto::{Argon2Profile, DeviceIdentity, ARGON2_MASTER};
-use crate::sync::enroll::{run_sync_join, EnrollOutcome, SasConfirm, SasPrompt};
+use crate::sync::enroll::{run_sync_join, EnrollOutcome, EnrollProgress, SasConfirm, SasPrompt};
 use crate::sync::identity_store::load_or_init_identity;
 use crate::sync::oplog::{Attendance, DeviceId, DeviceKind, DeviceRole, VerifiedBy};
 use crate::sync::protocol::{run_round, run_share_request, RoundSummary, ShareAsk, ShareReply};
@@ -173,10 +174,34 @@ impl SyncRuntime {
             })?;
         let host = resolve_host(&self.store, &spec)
             .map_err(|e| TransportError::Offline(format!("{e:#}")))?;
-        self.transport(host, SERVE_COMMAND)
-            .run(cancel, Limits::default(), |conn| {
-                run_round(conn, &self.store, &self.identity, device)
-            })
+        let summary =
+            self.transport(host, SERVE_COMMAND)
+                .run(cancel, Limits::default(), |conn| {
+                    run_round(conn, &self.store, &self.identity, device)
+                })?;
+        self.mail_owed_codes();
+        Ok(summary)
+    }
+
+    /// After a completed round: when this device is the registered sender of an
+    /// emailed third-factor code that a Red change now waits for, mail it through
+    /// `[sync.notify]`. A missing or broken config, or a failing mail command,
+    /// sends nothing and marks nothing (the next round tries again); nothing is
+    /// printed because this also runs under the TUI.
+    fn mail_owed_codes(&self) {
+        let Ok(config) = crate::config::load_config_at(&self.paths.config_file) else {
+            return;
+        };
+        let notify = &config.sync.notify;
+        if notify.command.is_none() {
+            return;
+        }
+        let _ = crate::sync::ceremony::send_owed_codes(
+            &self.store,
+            &self.identity.public().device_id(),
+            crate::store::now_ts(),
+            &mut |subject, body| crate::sync::notify::send_notification(notify, subject, body),
+        );
     }
 
     /// Ask `holder` for a share over its recorded host, inside an authenticated
@@ -248,7 +273,172 @@ impl SasConfirm for UiSas<'_, '_> {
             }
         }
     }
+
+    fn progress(&mut self, p: EnrollProgress) {
+        self.0.emit(SyncEvent::Progress(progress_line(p)));
+    }
 }
+
+/// The worker's status line for a join anchor step.
+pub(crate) fn progress_line(p: EnrollProgress) -> String {
+    match p {
+        EnrollProgress::Receiving { chunk, total } => {
+            format!("receiving the ring ({chunk}/{total})")
+        }
+        EnrollProgress::Adopting { hosts } => format!("adopting the ring ({hosts} hosts)"),
+        EnrollProgress::Adopted { hosts } => format!("adopted the ring ({hosts} hosts)"),
+    }
+}
+
+/// Saves of secrets become replicated credentials while the profile is in a
+/// ring (installed on the gate, so every `PasswordStore::set` and `delete`
+/// goes through it, TUI and CLI alike).
+pub struct StoreReplicator {
+    store: Arc<LauncherStore>,
+    paths: ProfilePaths,
+    open_secrets: fn(&ProfilePaths) -> Box<dyn PasswordStore>,
+    gate: std::sync::Weak<SecretGate>,
+    identity: Mutex<Option<Arc<DeviceIdentity>>>,
+}
+
+impl StoreReplicator {
+    pub fn install(
+        gate: &Arc<SecretGate>,
+        paths: ProfilePaths,
+        store: Arc<LauncherStore>,
+        open_secrets: fn(&ProfilePaths) -> Box<dyn PasswordStore>,
+    ) {
+        gate.set_replicator(Box::new(Self {
+            store,
+            paths,
+            open_secrets,
+            gate: Arc::downgrade(gate),
+            identity: Mutex::new(None),
+        }));
+    }
+
+    fn identity(&self) -> Result<Arc<DeviceIdentity>> {
+        let mut slot = self.identity.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.is_none() {
+            let secrets = (self.open_secrets)(&self.paths);
+            *slot = Some(Arc::new(load_or_init_identity(
+                &self.paths,
+                secrets.as_ref(),
+            )?));
+        }
+        Ok(slot.clone().expect("set above"))
+    }
+
+    /// The key file text of identity `id`, when it has one that is a key.
+    fn key_text(&self, id: i64) -> Option<String> {
+        let path = self.store.get_identity(id).ok().flatten()?.private_key?;
+        let text =
+            std::fs::read_to_string(crate::ssh::expand_tilde(&path.to_string_lossy())).ok()?;
+        crate::ssh::looks_like_private_key(&text).then_some(text)
+    }
+
+    fn in_ring(&self) -> Result<bool> {
+        Ok(!self.store.sync_devices()?.is_empty())
+    }
+}
+
+impl crate::credentials::Replicator for StoreReplicator {
+    fn replicate(&self, key: &str, password: Option<&str>) -> Result<bool> {
+        let Some(uid) = crate::sync::quorum::secret_uid(&self.store, key) else {
+            return Ok(false);
+        };
+        if !self.in_ring()? {
+            return Ok(false);
+        }
+        let synced = self.store.sync_cred_ciphertext(&uid)?.is_some();
+        if password.is_none() && !synced {
+            return Ok(false);
+        }
+        let private_key = key
+            .strip_prefix("identity:")
+            .and_then(|i| i.parse::<i64>().ok())
+            .and_then(|id| self.key_text(id));
+        let payload = CredPayload {
+            password: password.map(str::to_string),
+            private_key,
+        };
+        let identity = self.identity()?;
+        cred_put(&self.store, &identity, &uid, &payload)?;
+        Ok(true)
+    }
+
+    fn replicate_identity_key(&self, identity_id: i64) -> Result<bool> {
+        let key = crate::credentials::identity_key(identity_id);
+        let Some(uid) = crate::sync::quorum::secret_uid(&self.store, &key) else {
+            return Ok(false);
+        };
+        let Some(private_key) = self.key_text(identity_id) else {
+            return Ok(false);
+        };
+        if !self.in_ring()? {
+            return Ok(false);
+        }
+        let synced = self.store.sync_cred_ciphertext(&uid)?.is_some();
+        let open = self.gate.upgrade().and_then(|g| g.get(&key));
+        let password = match (open, synced) {
+            (Some(p), _) => (!p.is_empty()).then(|| p.to_string()),
+            (None, false) => (self.open_secrets)(&self.paths).get(&key).ok().flatten(),
+            (None, true) => anyhow::bail!(
+                "this identity's credential is locked: unlock it, then save again to replicate the key"
+            ),
+        };
+        let payload = CredPayload {
+            password,
+            private_key: Some(private_key),
+        };
+        let identity = self.identity()?;
+        cred_put(&self.store, &identity, &uid, &payload)?;
+        Ok(true)
+    }
+}
+
+/// What an admin job gets on the worker: the store, this device's identity and
+/// the profile's secrets.
+pub struct JobEnv {
+    pub store: Arc<LauncherStore>,
+    pub identity: Arc<DeviceIdentity>,
+    pub paths: ProfilePaths,
+    pub gate: Arc<SecretGate>,
+    pub argon: Argon2Profile,
+    pub open_secrets: fn(&ProfilePaths) -> Box<dyn PasswordStore>,
+}
+
+/// A job: runs once on the worker, returns the line to tell the user.
+pub type JobFn = Box<dyn FnOnce(&JobEnv) -> Result<String> + Send>;
+
+/// A [`JobFn`] that can ride in a command and an intent: cloneable, compared by
+/// identity, taken once.
+#[derive(Clone)]
+pub struct JobBox(Arc<Mutex<Option<JobFn>>>);
+
+impl JobBox {
+    pub fn new(job: impl FnOnce(&JobEnv) -> Result<String> + Send + 'static) -> Self {
+        Self(Arc::new(Mutex::new(Some(Box::new(job)))))
+    }
+
+    pub fn take(&self) -> Option<JobFn> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+}
+
+impl std::fmt::Debug for JobBox {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("JobBox(..)")
+    }
+}
+
+impl PartialEq for JobBox {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for JobBox {}
 
 /// Credential-store entry holding the ring secret of this profile's Vault.
 pub const RING_SECRET_KEY: &str = "sync-ring-secret";
@@ -395,7 +585,7 @@ fn release_round(deps: &RoundDeps, identity: &DeviceIdentity, spec: &str) -> Res
         .into_iter()
         .find(|o| o.hash() == hash)
         .context("that release request is no longer waiting")?;
-    deps.store.sync_resolve_pending(&hash, approve)?;
+    crate::sync::ceremony::resolve(&deps.store, &hash, approve, crate::store::now_ts())?;
     if approve {
         for body in crate::sync::quorum::grant_bodies(&deps.store, identity, &op)? {
             deps.store.sync_append_local(identity, body)?;
@@ -431,6 +621,30 @@ pub fn round_fn(deps: RoundDeps) -> RoundFn {
             }
             Round::Unlock => {
                 unlock_round(&deps, rt, device, ctx)?;
+                Ok(RoundSummary::default())
+            }
+            Round::Job => {
+                let job = ctx
+                    .take_job()
+                    .and_then(|j| j.take())
+                    .context("the job was already taken")?;
+                let env = JobEnv {
+                    store: deps.store.clone(),
+                    identity: rt.identity.clone(),
+                    paths: deps.paths.clone(),
+                    gate: deps.gate.clone(),
+                    argon: deps.argon,
+                    open_secrets: deps.open_secrets,
+                };
+                let outcome = job(&env);
+                // A job may have rotated the device keys: reload on the next round.
+                drop(env);
+                runtime = None;
+                ctx.emit(SyncEvent::Notice(outcome?));
+                Ok(RoundSummary::default())
+            }
+            Round::Identify => {
+                ctx.emit(SyncEvent::ThisDevice(rt.identity.public().device_id()));
                 Ok(RoundSummary::default())
             }
             Round::Release => {

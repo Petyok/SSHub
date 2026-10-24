@@ -3,10 +3,15 @@
 <head>
 <meta charset="utf-8">
 <title>PoC H transmit</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   body { font: 14px monospace; background: #fff; color: #000; margin: 16px; }
   button { font: inherit; padding: 6px 12px; }
   canvas { image-rendering: pixelated; border: 0; }
+  /* ?full=1: only the code, as wide as the screen (what a webcam needs) */
+  body.full { margin: 0; }
+  body.full > :not(canvas):not(script) { display: none; }
+  body.full canvas { display: block; }
 </style>
 </head>
 <body>
@@ -53,16 +58,31 @@
   };
 
   // Loop the indexed chunk set. Sender loops; receiver needs one full pass plus gaps.
+  // ?full=1 draws the code with an integer number of device pixels per module, as wide as the
+  // screen (CSS width = canvas px / devicePixelRatio); ?fps=N sets the frame rate, ?auto=1 starts it.
+  const full = q.get("full") === "1";
+  const fps = Number(q.get("fps") || 8);
+  if (full) document.body.classList.add("full");
   let timer = null, i = 0;
   const canvas = $("qrc");
+  const info = { version, chunkSize, frames: frames.length, fps, full };
   function show() {
     const qr = L.qrFor(frames[i], version, "M");
-    L.drawQR(canvas, qr, 4, 4);
+    const n = qr.getModuleCount();
+    if (full) {
+      const dpr = window.devicePixelRatio || 1;
+      const s = Math.max(1, Math.floor((window.innerWidth * dpr) / (n + 8)));
+      L.drawQR(canvas, qr, s, 4);
+      canvas.style.width = canvas.width / dpr + "px";
+      canvas.style.height = canvas.height / dpr + "px";
+      Object.assign(info, { modules: n, device_px_per_module: s, canvas_device_px: canvas.width, dpr, inner_w: window.innerWidth, width_fraction: canvas.width / (window.innerWidth * dpr) });
+    } else L.drawQR(canvas, qr, 4, 4);
     i = (i + 1) % frames.length;
   }
-  $("qr").onclick = () => { if (!timer) { show(); timer = setInterval(show, 125); } };
+  $("qr").onclick = () => { if (!timer) { show(); timer = setInterval(show, 1000 / fps); } };
   $("stopqr").onclick = () => { clearInterval(timer); timer = null; };
-  window.__tx = { payload, frames, chunkSize };
+  if (q.get("auto") === "1") $("qr").click();
+  window.__tx = { payload, frames, chunkSize, info };
 })();
 </script>
 </body>

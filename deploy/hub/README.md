@@ -6,13 +6,13 @@ authoritative copy, and does not vote. Your devices keep working without it.
 
 ## What it does and does not do
 
-- **Does**: accepts key-based SSH logins for the `hub` account, so a terminal can
-  reach it as a normal sshub host. It can send notifications through a
-  sendmail-compatible command (msmtp here), using send-only SMTP credentials
-  that live on the hub, not on your devices.
-- **Does not**: serve the mirror itself yet. The `hub-serve` subcommand is not in
-  this build, so the container runs sshd and sshub but does not mirror anything.
-  Treat this image as the groundwork for that step.
+- **Does**: runs as an ordinary sshub ring device: an unattended mirror behind
+  this sshd. Terminals reach it with `ssh hub sshub sync-serve`. Key-based SSH
+  logins for the `hub` account are accepted. When it receives recovery ops, it
+  announces them through the `[sync.notify]` mail command, using send-only SMTP
+  credentials that live on the hub, not on your devices.
+- **Does not**: add a `hub-serve` verb or run a daemon of its own. It holds no
+  authoritative copy and does not vote. Your devices keep working without it.
 - **Does not** hold your secrets in the image. Keys, SMTP settings and sshub
   config are mounted from the host.
 
@@ -64,6 +64,9 @@ authoritative copy, and does not vote. Your devices keep working without it.
 
 4. Add the hub to your terminal as a normal host: address = this machine, port =
    `HUB_PORT`, user = `hub`, key = the one from step 1.
+
+   A headless hub is enrolled from a terminal, so one human sees both ends:
+   `ssh -t hub sshub sync-enroll`.
 
 ## Operations
 

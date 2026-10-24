@@ -495,9 +495,33 @@ type SyncedCheck = Box<dyn Fn(&str) -> bool + Send + Sync>;
 pub struct SecretGate {
     synced: std::sync::RwLock<Option<SyncedCheck>>,
     unlocked: std::sync::Mutex<HashMap<String, zeroize::Zeroizing<String>>>,
+    replicator: std::sync::OnceLock<Box<dyn Replicator>>,
+    /// Identities whose key this gate put into the private agent.
+    key_ids: std::sync::Mutex<std::collections::BTreeSet<i64>>,
+    /// The one private ssh-agent of this process, started with the first key.
+    agent: std::sync::Mutex<Option<crate::sync::cred_ops::PrivateAgent>>,
+}
+
+/// Turns a secret save into a replicated credential when the profile is in a
+/// ring: every write that goes through the gated store calls it first.
+pub trait Replicator: Send + Sync {
+    /// Save `password` (or clear it, `None`) of store key `key` as a synced
+    /// credential. `Ok(false)`: not a ring credential, store it locally.
+    fn replicate(&self, key: &str, password: Option<&str>) -> Result<bool>;
+    /// The key bytes of identity `identity_id` changed: replicate them too.
+    fn replicate_identity_key(&self, identity_id: i64) -> Result<bool>;
 }
 
 impl SecretGate {
+    /// Install the replicator once; a second call is ignored.
+    pub fn set_replicator(&self, replicator: Box<dyn Replicator>) {
+        let _ = self.replicator.set(replicator);
+    }
+
+    pub fn replicator(&self) -> Option<&dyn Replicator> {
+        self.replicator.get().map(|r| r.as_ref())
+    }
+
     /// Say which keys are synced credentials. Until this is called nothing is:
     /// every secret is local and passes through.
     pub fn set_synced_check(&self, check: impl Fn(&str) -> bool + Send + Sync + 'static) {
@@ -544,8 +568,82 @@ impl SecretGate {
             .cloned()
     }
 
-    /// Forget every opened secret (zeroized as they drop).
+    /// An opened synced identity's private key goes into this process's private
+    /// ssh-agent (started on the first key; socket in a 0700 directory) and
+    /// into memory for in-process SFTP: no private key byte touches a disk.
+    /// The passphrase, if the gate holds one for the same credential, reaches
+    /// `ssh-add` through the askpass helper. The agent dies on
+    /// [`SecretGate::lock_all`] and when the gate drops.
+    pub fn insert_private_key(
+        &self,
+        key: &str,
+        pem: zeroize::Zeroizing<String>,
+    ) -> anyhow::Result<()> {
+        let id: i64 = key
+            .strip_prefix("identity:")
+            .and_then(|i| i.parse().ok())
+            .ok_or_else(|| anyhow::anyhow!("{key} is not an identity credential"))?;
+        // The passphrase (if any) answers ssh-add's prompt through the helper.
+        let passphrase = self.get(key).filter(|p| !p.is_empty());
+        let staged = match &passphrase {
+            Some(p) => Some(
+                crate::session::askpass::AskpassSecret::staged(
+                    Some(&crate::session::PendingSecret::Passphrase(p.to_string())),
+                    &[],
+                )
+                .map_err(|e| anyhow::anyhow!("could not stage the key passphrase: {e}"))?,
+            ),
+            None => None,
+        };
+        let askpass = match &staged {
+            Some(guard) => {
+                let exe = crate::session::askpass::helper_exe()?;
+                Some(crate::sync::cred_ops::AskpassEnv {
+                    env: guard.env(&exe),
+                    program: exe,
+                })
+            }
+            None => None,
+        };
+        let mut agent = self.agent.lock().unwrap_or_else(|e| e.into_inner());
+        if agent.is_none() {
+            *agent = Some(crate::sync::cred_ops::PrivateAgent::start()?);
+        }
+        let live = agent.as_mut().expect("started above");
+        let added = live.add_key(&pem, KEY_TTL_SECS, askpass.as_ref())?;
+        SYNCED_KEYS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                id,
+                SyncedKey {
+                    pem,
+                    socket: live.socket().to_path_buf(),
+                    public_file: added.public_file,
+                },
+            );
+        self.key_ids
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id);
+        Ok(())
+    }
+
+    /// Forget every opened secret (zeroized as they drop) and stop the private
+    /// agent with the keys in it.
     pub fn lock_all(&self) {
+        let ids: Vec<i64> =
+            std::mem::take(&mut *self.key_ids.lock().unwrap_or_else(|e| e.into_inner()))
+                .into_iter()
+                .collect();
+        if !ids.is_empty() {
+            let mut keys = SYNCED_KEYS.lock().unwrap_or_else(|e| e.into_inner());
+            for id in ids {
+                keys.remove(&id);
+            }
+        }
+        // Dropping the agent kills it and removes its directory.
+        *self.agent.lock().unwrap_or_else(|e| e.into_inner()) = None;
         let closed: Vec<_> = self
             .unlocked
             .lock()
@@ -573,6 +671,122 @@ impl Drop for SecretGate {
     fn drop(&mut self) {
         self.lock_all();
     }
+}
+
+/// How long the private agent keeps a synced identity's key.
+const KEY_TTL_SECS: u32 = 8 * 3600;
+
+struct SyncedKey {
+    pem: zeroize::Zeroizing<String>,
+    socket: std::path::PathBuf,
+    public_file: std::path::PathBuf,
+}
+
+/// Opened synced identity keys by identity id (see
+/// [`SecretGate::insert_private_key`]).
+static SYNCED_KEYS: std::sync::Mutex<std::collections::BTreeMap<i64, SyncedKey>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// How ssh reaches an opened synced identity: the private agent's socket and
+/// the public key file that selects the key in it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentUse {
+    pub socket: std::path::PathBuf,
+    pub public_file: std::path::PathBuf,
+}
+
+pub fn synced_identity_agent(id: i64) -> Option<AgentUse> {
+    SYNCED_KEYS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&id)
+        .map(|k| AgentUse {
+            socket: k.socket.clone(),
+            public_file: k.public_file.clone(),
+        })
+}
+
+/// Jump hosts (as ssh is given them) whose identity has no key on this disk,
+/// noted by the hop resolver so the connection builder can point ssh at the
+/// private agent for them.
+static HOP_IDENTITIES: std::sync::Mutex<std::collections::BTreeMap<String, i64>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+pub fn note_hop_identity(via: &str, identity_id: i64) {
+    HOP_IDENTITIES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(via.to_string(), identity_id);
+}
+
+/// The host part of one `-J` token: `user@host:port`, `[v6]:port` or a name.
+fn jump_token_host(token: &str) -> &str {
+    let t = token.rsplit_once('@').map_or(token, |(_, h)| h);
+    if let Some(inner) = t.strip_prefix('[') {
+        return inner.split_once(']').map_or(inner, |(h, _)| h);
+    }
+    match t.rsplit_once(':') {
+        Some((h, port)) if !h.contains(':') && port.chars().all(|c| c.is_ascii_digit()) => h,
+        _ => t,
+    }
+}
+
+/// A per-connection ssh config for jump hosts that need a synced key: the
+/// hop's `Host` block (private agent, its public key, IdentitiesOnly) first,
+/// then the user's own config, so `-F <this>` changes nothing else. ssh passes
+/// `-F` to the jump command, which `-o` options are not. Written 0600 into the
+/// agent's 0700 directory, removed with it. `None` when no hop needs it.
+pub fn hop_agent_config(jump: &str) -> Option<std::path::PathBuf> {
+    let noted = HOP_IDENTITIES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let mut blocks = String::new();
+    let mut dir = None;
+    for token in jump.split(',') {
+        let host = jump_token_host(token.trim());
+        let Some(agent) = noted.get(host).and_then(|id| synced_identity_agent(*id)) else {
+            continue;
+        };
+        dir = agent.socket.parent().map(std::path::Path::to_path_buf);
+        blocks.push_str(&format!(
+            "Host {host}\n    IdentityAgent {}\n    IdentityFile {}\n    IdentitiesOnly yes\n",
+            agent.socket.display(),
+            agent.public_file.display()
+        ));
+    }
+    let dir = dir?;
+    let text = format!(
+        "# sshub: synced keys for jump hosts, then your own configuration\n{blocks}Include ~/.ssh/config\nInclude /etc/ssh/ssh_config\n"
+    );
+    let name = format!(
+        "hops-{}.conf",
+        &blake3::hash(text.as_bytes()).to_hex()[..12]
+    );
+    let path = dir.join(name);
+    if !path.exists() {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .ok()?;
+        f.write_all(text.as_bytes()).ok()?;
+    }
+    Some(path)
+}
+
+/// The key bytes behind an agent public file, for in-process SFTP
+/// (`userauth_pubkey_memory`): memory only.
+pub fn synced_key_for_public_file(path: &std::path::Path) -> Option<zeroize::Zeroizing<String>> {
+    SYNCED_KEYS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+        .find(|k| k.public_file == path)
+        .map(|k| k.pem.clone())
 }
 
 // A process-wide count of the opened synced plaintexts, by hash, so a path that
@@ -654,6 +868,14 @@ impl PasswordStore for QuorumGatedStore {
     }
 
     fn set(&self, key: &str, password: &str) -> Result<()> {
+        if let Some(r) = self.gate.replicator() {
+            if r.replicate(key, Some(password))? {
+                // The user just typed it: it is open in this process.
+                self.gate
+                    .insert(key, zeroize::Zeroizing::new(password.to_string()));
+                return Ok(());
+            }
+        }
         if self.gate.is_synced(key) {
             anyhow::bail!(
                 "{key} is a synced credential: change it through sync, not the local store"
@@ -663,6 +885,13 @@ impl PasswordStore for QuorumGatedStore {
     }
 
     fn delete(&self, key: &str) -> Result<()> {
+        if let Some(r) = self.gate.replicator() {
+            if r.replicate(key, None)? {
+                self.gate
+                    .insert(key, zeroize::Zeroizing::new(String::new()));
+                return Ok(());
+            }
+        }
         if self.gate.is_synced(key) {
             anyhow::bail!(
                 "{key} is a synced credential: remove it through sync, not the local store"

@@ -43,6 +43,18 @@ pub fn phrase_sheet(phrase: &str) -> String {
     )
 }
 
+/// The paper phrase sheet: the 24 words, numbered.
+pub fn paper_sheet(words: &str) -> String {
+    let words: String = words
+        .split_whitespace()
+        .map(|w| format!("<li>{w}</li>\n"))
+        .collect();
+    page(
+        "sshub: paper phrase",
+        &format!("<ol class=\"secret\">\n{words}</ol>\n<p>Twenty-four words, in this order.</p>\n"),
+    )
+}
+
 /// The QR of `payload` as an inline SVG: black modules on white with a
 /// 4-module quiet zone, one `path` of unit squares.
 pub fn qr_svg(payload: &str) -> String {

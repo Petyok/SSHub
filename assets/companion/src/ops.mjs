@@ -26,8 +26,12 @@ const DANGER = {
   IdentityUpsert: '*', IdentityDelete: '*', CredUpdate: '*', DeviceAdd: '*', DeviceRevoke: '*',
   ShareRelease: new Set(['host_uid', 'requester']), ShareReshareSession: '*', ShareStorageKey: '*',
   ShareReshareBatch: '*', ShareReshareConfirmBatch: '*', WrapKeyRotate: '*', CertIssue: '*',
-  CertRevoke: '*', CertHostOpened: '*', PhoneReenroll: '*', PhoneReenrollCancel: '*',
+  CertRevoke: '*', CertHostOpened: '*', CertExtend: '*', PhoneReenroll: '*', PhoneReenrollCancel: '*',
   RecoveryAck: '*', ModeChange: '*', HeadAttest: null,
+  // Red ceremony (C17): the three proof ops are inert, the other three are Red themselves.
+  RedApprove: null, RedPhoneSign: null, RedFactor: null, FactorRegister: '*', DeviceRoleChange: '*', BulkExport: '*', ExemptionSet: '*',
+  // Added by the op-log package: a share handed to a requester, a recovery approval, checkpoints.
+  ShareGrant: '*', RecoveryApprove: '*', CheckpointPropose: null, CheckpointSign: null,
 };
 export const KNOWN_KINDS = Object.keys(DANGER);
 
@@ -158,3 +162,56 @@ export function encodePhoneReenrollCancel(h, reenrollHashHex) {
 
 export const opHashHex = (canonical) => hexOf(blake3(canonical));
 export const signOp = (edSeed, canonical) => edSign(edSeed, canonical);
+
+// OpBody::RedPhoneSign { op_hash }: the phone's proof that it saw the Red op with this hash.
+export function encodeRedPhoneSign(h, opHashHexStr) {
+  return utf8(`${header(h)}{"RedPhoneSign":{"op_hash":${str(opHashHexStr)}}}}`);
+}
+
+// OpBody::CertIssue { device_id, scope, expiry, max_new_hosts_per_day, epoch_lo, epoch_hi } with the fields of a
+// kind 9 request UNCHANGED (CertRequestWire::to_body). scope is { group } or { hosts: [hex] } as decoded.
+export function encodeCertIssue(h, r) {
+  const uid = (u) => str(u);
+  const scope = r.scope.group ? `{"Group":${uid(r.scope.group)}}` : `{"Hosts":[${r.scope.hosts.map(uid).join(',')}]}`;
+  return utf8(`${header(h)}{"CertIssue":{"device_id":${str(r.device_id)},"scope":${scope},"expiry":${asBig(r.expiry)},"max_new_hosts_per_day":${asBig(r.max_new_hosts_per_day)},"epoch_lo":${asBig(r.epoch_lo)},"epoch_hi":${asBig(r.epoch_hi)}}}}`);
+}
+
+// OpBody::CertRevoke { cert_id }
+export const encodeCertRevoke = (h, certIdHex) => utf8(`${header(h)}{"CertRevoke":{"cert_id":${str(certIdHex)}}}}`);
+
+// OpBody::CertExtend { cert_id, extra_hosts }
+export const encodeCertExtend = (h, certIdHex, extraHosts) => utf8(`${header(h)}{"CertExtend":{"cert_id":${str(certIdHex)},"extra_hosts":${asBig(extraHosts)}}}}`);
+
+// Red operations (design "The Red ceremony"): a Red op needs the phone's proof. A mirror
+// DeviceAdd and a DeviceRevoke of a mirror are Yellow in the ring; the phone cannot tell a
+// holder from a mirror in a revoke, so it signs any DeviceRevoke the user approves (the proof is inert).
+export function isRedOp(op) {
+  if (op.kind === 'DeviceAdd') return op.fields.role === 'Holder';
+  return ['DeviceRevoke', 'CertIssue', 'ModeChange', 'FactorRegister', 'DeviceRoleChange', 'BulkExport', 'ExemptionSet'].includes(op.kind);
+}
+
+export const b64enc = (bytes) => {
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 8192) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+  return btoa(s);
+};
+export const b64dec = (text) => {
+  if (typeof text !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(text) || text.length % 4) throw new Error('not base64');
+  return Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
+};
+
+// OpBody::WrapKeyRotate { device_id, wrap_epoch, x25519_pub, mlkem_pub }
+export function encodeWrapKeyRotate(h, r) {
+  return utf8(`${header(h)}{"WrapKeyRotate":{"device_id":${str(r.device_id)},"wrap_epoch":${asBig(r.wrap_epoch)},"x25519_pub":${str(hexOf(r.x25519_pub))},"mlkem_pub":${str(b64enc(r.mlkem_pub))}}}}`);
+}
+
+// OpBody::ShareStorageKey { epoch, sealed }
+export function encodeShareStorageKey(h, r) {
+  return utf8(`${header(h)}{"ShareStorageKey":{"epoch":${asBig(r.epoch)},"sealed":${str(b64enc(r.sealed))}}}}`);
+}
+
+// OpBody::ShareReshareConfirmBatch { epoch, items: [{ host_uid, sealed_share }] }
+export function encodeShareReshareConfirmBatch(h, r) {
+  const items = r.items.map((i) => `{"host_uid":${str(i.host_uid)},"sealed_share":${str(b64enc(i.sealed_share))}}`).join(',');
+  return utf8(`${header(h)}{"ShareReshareConfirmBatch":{"epoch":${asBig(r.epoch)},"items":[${items}]}}}`);
+}

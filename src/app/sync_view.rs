@@ -38,6 +38,7 @@ pub(crate) fn device_view(row: &DeviceRow) -> DeviceView {
         last_seen: (row.last_seen > 0).then_some(row.last_seen),
         head_seq: row.head_seq,
         verified_by: None,
+        this: false,
     }
 }
 
@@ -225,6 +226,7 @@ pub(crate) fn pending_view(
                 .to_string()
         }
     };
+    let reason_text = reason.clone();
     if let Some(reason) = reason {
         summary.push_str(&format!(" [{reason}]"));
     }
@@ -233,7 +235,128 @@ pub(crate) fn pending_view(
         summary,
         changes,
         hash: op.hash(),
+        reason: reason_text,
+        red: red_view(store, op),
     }
+}
+
+pub(crate) fn proof_label(p: &crate::sync::ceremony::RedProof) -> &'static str {
+    use crate::sync::ceremony::RedProof;
+    use crate::sync::oplog::ThirdFactor;
+    match p {
+        RedProof::Phone => "phone signature",
+        RedProof::SecondDevice => "second attended device",
+        RedProof::Factor(None) => "third factor (paper or emailed code)",
+        RedProof::Factor(Some(ThirdFactor::Paper)) => "paper phrase (24 words)",
+        RedProof::Factor(Some(_)) => "emailed code",
+    }
+}
+
+/// The ceremony of `op`, when it is a gated Red change.
+fn red_view(store: &LauncherStore, op: &Op) -> Option<super::sync::RedView> {
+    use crate::sync::ceremony::{is_gated, red_status};
+    if !is_gated(store, op).ok()? {
+        return None;
+    }
+    let st = red_status(store, op, crate::store::now_ts()).ok()?;
+    Some(super::sync::RedView {
+        have: st.have.iter().map(|p| proof_label(p).to_string()).collect(),
+        missing: st
+            .missing
+            .iter()
+            .map(|p| proof_label(p).to_string())
+            .collect(),
+        expired: st.expired,
+        blocked: st.blocked,
+        single_machine: st.single_machine_ring,
+    })
+}
+
+/// The proof of a fork as lines for the alert: what was signed twice and where.
+pub(crate) fn evidence_lines(e: &crate::sync::oplog::ForkEvidence) -> Vec<String> {
+    use crate::sync::oplog::ForkEvidence;
+    let h = |b: &[u8; 32]| {
+        b[..4]
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect::<String>()
+    };
+    let op = |o: &Op| {
+        format!(
+            "operation seq {} lamport {} hash {}",
+            o.seq,
+            o.lamport,
+            h(&o.hash())
+        )
+    };
+    match e {
+        ForkEvidence::Ops(a, b) => vec![
+            "Proof: two different operations signed by the same device at the same position".into(),
+            format!("  {}", op(a)),
+            format!("  {}", op(b)),
+        ],
+        ForkEvidence::OpAndHead(o, head) => vec![
+            "Proof: an operation and a signed head that contradict each other".into(),
+            format!("  {}", op(o)),
+            format!("  signed head seq {} hash {}", head.seq, h(&head.hash)),
+        ],
+        ForkEvidence::Heads(a, b) => vec![
+            "Proof: two signed heads that cannot both be true".into(),
+            format!("  signed head seq {} hash {}", a.seq, h(&a.hash)),
+            format!("  signed head seq {} hash {}", b.seq, h(&b.hash)),
+        ],
+    }
+}
+
+enum RedProofInput {
+    Approve,
+    Paper(zeroize::Zeroizing<String>),
+    Email(zeroize::Zeroizing<String>),
+}
+
+/// Add one proof to a pending Red change on the worker and settle: the change
+/// takes effect only when the ceremony is complete.
+fn red_proof(
+    env: &crate::sync::runtime::JobEnv,
+    hash: &[u8; 32],
+    proof: RedProofInput,
+) -> Result<String> {
+    use crate::sync::ceremony;
+    let op = env
+        .store
+        .sync_pending()?
+        .into_iter()
+        .find(|o| o.hash() == *hash)
+        .ok_or_else(|| anyhow::anyhow!("that change is no longer waiting"))?;
+    ceremony::require_gated(&env.store, &op)?;
+    let body = match proof {
+        RedProofInput::Approve => ceremony::red_approve_body(&op),
+        RedProofInput::Paper(words) => {
+            let recover = crate::sync::crypto::paper_derive(
+                words.trim(),
+                crate::sync::crypto::PaperDomain::Recover,
+            )?;
+            ceremony::red_factor_paper(&recover, &op)
+        }
+        RedProofInput::Email(code) => ceremony::red_factor_email(&env.store, code.trim(), &op)?,
+    };
+    env.store.sync_append_local(&env.identity, body)?;
+    let now = crate::store::now_ts();
+    let report = ceremony::settle_red_ops(&env.store, now)?;
+    if report.applied.contains(hash) {
+        return Ok("the ceremony is complete: the change took effect".into());
+    }
+    let left = ceremony::red_status(&env.store, &op, now)?
+        .missing
+        .iter()
+        .map(|p| proof_label(p))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Ok(if left.is_empty() {
+        "proof added".to_string()
+    } else {
+        format!("proof added; still missing: {left}")
+    })
 }
 
 impl App {
@@ -247,23 +370,24 @@ impl App {
 
     fn try_refresh_sync_view(&mut self) -> Result<()> {
         let store = self.store.clone();
-        let rows = store.sync_devices()?;
-        let ops = store.sync_pending()?;
-        let review: Vec<PendingOpView> = ops
+        // Roles and the mode as the ceremony sees them: a change whose proofs are not in is not in force.
+        let rows = crate::sync::ceremony::effective_devices(&store, None)?;
+        // Every pending op with its reason, `unknown-author` ones included.
+        let held = store.sync_pending_with_reasons()?;
+        let review: Vec<PendingOpView> = held
             .iter()
-            .map(|op| {
-                let reason = store.sync_pending_reason(&op.hash()).ok().flatten();
-                pending_view(&store, op, &rows, reason)
-            })
+            .map(|(op, reason)| pending_view(&store, op, &rows, Some(reason.clone())))
             .collect();
+        let ops: Vec<Op> = held.into_iter().map(|(op, _)| op).collect();
         let cred_mode = if rows.is_empty() {
             None
         } else {
-            Some(match store.sync_cred_mode()? {
+            Some(match crate::sync::ceremony::effective_cred_mode(&store)? {
                 CredMode::Vault => CredModeView::Vault,
                 CredMode::Quorum => CredModeView::Quorum,
             })
         };
+        let this_device = self.sync.this_device.clone();
         let sync = &mut self.sync;
         sync.configured = !rows.is_empty();
         sync.devices = rows
@@ -271,6 +395,7 @@ impl App {
             .map(|r| {
                 let mut v = device_view(r);
                 v.verified_by = Some(r.verified_by);
+                v.this = this_device.as_deref() == Some(r.id.as_str());
                 v
             })
             .collect();
@@ -279,6 +404,7 @@ impl App {
         sync.review_selected = sync.review_selected.min(review.len().saturating_sub(1));
         sync.review = review;
         sync.cred_mode = cred_mode;
+        (sync.trust_scopes, sync.trust_scope_values) = super::sync_trust::scope_choices(&store);
         // A holder is asked for a share: the prompt names the requester.
         if self.mode == AppMode::Normal && self.sync.release.is_none() {
             let answered = self.sync.answered_releases.clone();
@@ -314,6 +440,20 @@ impl App {
         Ok(())
     }
 
+    /// An identity's key file was set or changed: replicate its bytes with the
+    /// credential when the profile is in a ring (the passphrase goes through
+    /// `PasswordStore::set` on its own).
+    pub(crate) fn replicate_identity_key(&mut self, id: i64) {
+        let result = self
+            .password_store
+            .gate()
+            .and_then(|g| g.replicator())
+            .map(|r| r.replicate_identity_key(id));
+        if let Some(Err(e)) = result {
+            self.identity_notice = Some(format!("Saved, but replicating the key failed: {e:#}"));
+        }
+    }
+
     /// `[sync] auto_sync_on_start`: queue one sync with every ring device that
     /// has a known host. Quiet when there is no ring or no host to reach.
     pub fn queue_auto_sync(&mut self) {
@@ -340,13 +480,50 @@ impl App {
         }
     }
 
+    /// A key in the review list: `a` approve (a Red change: add this device's
+    /// approval), `r` reject, `p` type the paper phrase, `e` type the emailed code.
+    pub(crate) fn sync_review_key(&mut self, c: char) {
+        let Some(sel) = self.sync.review.get(self.sync.review_selected) else {
+            return;
+        };
+        let hash = sel.hash;
+        match (c, sel.red.is_some()) {
+            ('r', _) | ('a', false) => self.sync_resolve_review(c == 'a'),
+            ('a', true) => {
+                self.run_sync_job(move |env| red_proof(env, &hash, RedProofInput::Approve))
+            }
+            ('p', true) => self.sync_prompt(
+                "Paper phrase",
+                "Type the 24 words of the paper phrase (nothing is shown)",
+                true,
+                move |app, words| {
+                    app.run_sync_job(move |env| {
+                        red_proof(env, &hash, RedProofInput::Paper(words.into()))
+                    })
+                },
+            ),
+            ('e', true) => self.sync_prompt(
+                "Emailed code",
+                "Type the code from the email (nothing is shown)",
+                true,
+                move |app, code| {
+                    app.run_sync_job(move |env| {
+                        red_proof(env, &hash, RedProofInput::Email(code.into()))
+                    })
+                },
+            ),
+            _ => {}
+        }
+    }
+
     /// Approve or reject the highlighted pending operation in the store.
     pub(crate) fn sync_resolve_review(&mut self, approve: bool) {
         let Some(op) = self.sync.review.get(self.sync.review_selected) else {
             return;
         };
         let hash = op.hash;
-        match self.store.sync_resolve_pending(&hash, approve) {
+        // The only way a screen approves: a Red change needs its ceremony.
+        match crate::sync::ceremony::resolve(&self.store, &hash, approve, crate::store::now_ts()) {
             Ok(()) => {
                 self.refresh_sync_view();
                 // A change that took effect shows in the hosts list.

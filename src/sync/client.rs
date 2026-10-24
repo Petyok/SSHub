@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 use super::transport::{Conn, Limits, CANCEL_POLL};
 use crate::app::sync::{OnboardingSecrets, UnlockPathKind};
 use crate::ssh::{build_ssh_argv, SshHost};
+pub use crate::sync::runtime::{JobBox, JobEnv, JobFn};
 
 // The worker speaks the protocol's own types.
 pub use crate::sync::oplog::DeviceId;
@@ -231,6 +232,10 @@ pub enum SyncCmd {
         approve: bool,
         hash: [u8; 32],
     },
+    /// Load the device key and report which device this is.
+    Identify,
+    /// Run a job with the device identity on the worker.
+    Job(JobBox),
     Shutdown,
 }
 
@@ -249,6 +254,10 @@ pub enum SyncEvent {
     Progress(String),
     PendingArrived(usize),
     SasPrompt(SasPromptInfo),
+    /// This device's id.
+    ThisDevice(DeviceId),
+    /// A job finished: what it did, for the notice line.
+    Notice(String),
     /// What the running unlock asks the user for (shown in the unlock modal).
     UnlockPrompt(String),
     /// Where one unlock path stands (`peer device: asked laptop`, `phone: waiting`).
@@ -278,6 +287,10 @@ pub enum Round {
     Onboard,
     /// Answer a release request; the device argument is `<0|1>:<op hash hex>`.
     Release,
+    /// Report this device's id.
+    Identify,
+    /// Run a job with the device identity (admin operations).
+    Job,
 }
 
 /// A round's window onto the worker: report events, and wait for the UI's
@@ -287,6 +300,7 @@ pub struct RoundCtx<'a> {
     cmds: &'a Receiver<SyncCmd>,
     cancel: Arc<AtomicBool>,
     secrets: Option<OnboardingSecrets>,
+    job: Option<JobBox>,
 }
 
 impl RoundCtx<'_> {
@@ -303,6 +317,11 @@ impl RoundCtx<'_> {
     /// The secrets an [`SyncCmd::Onboard`] command carried, once.
     pub fn take_secrets(&mut self) -> Option<OnboardingSecrets> {
         self.secrets.take()
+    }
+
+    /// The job a [`SyncCmd::Job`] carried.
+    pub fn take_job(&mut self) -> Option<JobBox> {
+        self.job.take()
     }
 
     /// The flag to hand to [`SshTransport::run`]: set when the worker is told
@@ -358,6 +377,7 @@ pub fn spawn_sync_thread(mut round: RoundFn) -> SyncHandle {
                 break;
             }
             let mut secrets = None;
+            let mut job = None;
             let (kind, device) = match cmd {
                 SyncCmd::SyncNow(d) => (Round::Sync, d),
                 SyncCmd::EnrollBegin(d) => (Round::Enroll, d),
@@ -365,6 +385,11 @@ pub fn spawn_sync_thread(mut round: RoundFn) -> SyncHandle {
                 SyncCmd::Onboard(s) => {
                     secrets = Some(*s);
                     (Round::Onboard, String::new())
+                }
+                SyncCmd::Identify => (Round::Identify, String::new()),
+                SyncCmd::Job(j) => {
+                    job = Some(j);
+                    (Round::Job, String::new())
                 }
                 SyncCmd::Release { approve, hash } => (
                     Round::Release,
@@ -385,6 +410,7 @@ pub fn spawn_sync_thread(mut round: RoundFn) -> SyncHandle {
                 cmds: &cmd_rx,
                 cancel: worker_cancel.clone(),
                 secrets,
+                job,
             };
             let done = match catch_unwind(AssertUnwindSafe(|| round(kind, &device, &mut ctx))) {
                 Ok(Ok(summary)) => {

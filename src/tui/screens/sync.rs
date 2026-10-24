@@ -8,6 +8,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use crate::app::sync::{DeviceStatusView, TRUST_TTL_DAYS};
 use crate::app::App;
 use crate::config::KeyAction;
+use crate::sync::oplog::CertScope;
 use crate::theme::catalog::{ColorRole, StyleRole};
 
 fn key_of(app: &App, action: KeyAction) -> String {
@@ -113,7 +114,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         };
         let mut row = format!(
             " {:<18} {:<8} {:<13} {:<10} #{}",
-            d.name,
+            if d.this {
+                format!("{} (this)", d.name)
+            } else {
+                d.name.clone()
+            },
             role_label,
             d.status.label(),
             ago(d.last_seen),
@@ -259,18 +264,59 @@ pub fn render_review(frame: &mut Frame, app: &App) {
             style,
         ));
     }
-    modal(
-        frame,
-        app,
-        "Review changes",
-        90,
-        body,
-        "\u{2191}\u{2193} select  a approve  r reject  Esc close",
-    );
+    let op = &sync.review[selected];
+    if let Some(reason) = &op.reason {
+        body.push(Line::styled(
+            format!("  waiting because: {reason}"),
+            app.theme().style(StyleRole::TextMuted),
+        ));
+    }
+    if let Some(red) = &op.red {
+        body.push(Line::raw(""));
+        body.push(Line::styled(
+            "Red change: it takes effect only with all three proofs",
+            color(app, ColorRole::StatusWarning),
+        ));
+        for have in &red.have {
+            body.push(Line::styled(
+                format!("  \u{2713} {have}"),
+                color(app, ColorRole::StatusSuccess),
+            ));
+        }
+        for missing in &red.missing {
+            body.push(Line::styled(
+                format!("  \u{25cb} {missing}: missing"),
+                color(app, ColorRole::StatusWarning),
+            ));
+        }
+        if red.single_machine {
+            body.push(Line::styled(
+                "  one attended holder only: the second device is waived, the paper is required",
+                app.theme().style(StyleRole::TextMuted),
+            ));
+        }
+        if let Some(why) = &red.blocked {
+            body.push(Line::styled(
+                format!("  impossible as it stands: {why}"),
+                color(app, ColorRole::StatusError),
+            ));
+        }
+        if red.expired {
+            body.push(Line::styled(
+                "  the time for this ceremony ran out: reject it and propose it again",
+                color(app, ColorRole::StatusError),
+            ));
+        }
+    }
+    let hint = if op.red.is_some() {
+        "\u{2191}\u{2193} select  a add my approval  p paper  e emailed code  r reject  Esc close"
+    } else {
+        "\u{2191}\u{2193} select  a approve  r reject  Esc close"
+    };
+    modal(frame, app, "Review changes", 96, body, hint);
 }
 
 pub fn render_unlock(frame: &mut Frame, app: &App) {
-    use crate::tui::widgets::qr_frames::{cells_needed, needed_version, render as render_qr};
     let Some(u) = app.sync.unlock.as_ref() else {
         return;
     };
@@ -297,9 +343,30 @@ pub fn render_unlock(frame: &mut Frame, app: &App) {
         theme.style(StyleRole::PickerQuery),
     ));
 
+    qr_modal(
+        frame,
+        app,
+        "Unlock",
+        body,
+        &u.frames,
+        "Enter submit  Esc cancel",
+    );
+}
+
+/// A modal with `body` and, when it fits, the looping QR of `frames` under it.
+fn qr_modal(
+    frame: &mut Frame,
+    app: &App,
+    title: &str,
+    mut body: Vec<Line<'static>>,
+    frames: &[Vec<u8>],
+    hint: &str,
+) {
+    use crate::tui::widgets::qr_frames::{cells_needed, needed_version, render as render_qr};
+    let theme = app.theme();
     let mut width = 70;
     let mut extra = 0;
-    if let Ok(version) = needed_version(&u.frames) {
+    if let Ok(version) = needed_version(frames) {
         let (cw, ch) = cells_needed(version);
         width = width.max(cw + 4);
         extra = ch + 1; // the code and the "frame i/n" line
@@ -319,29 +386,28 @@ pub fn render_unlock(frame: &mut Frame, app: &App) {
             ));
             extra = 0;
         }
-    } else if needed_version(&u.frames) == Err(crate::tui::widgets::qr_frames::QrPlan::TooLarge) {
+    } else if needed_version(frames) == Err(crate::tui::widgets::qr_frames::QrPlan::TooLarge) {
         body.push(Line::raw(""));
         body.push(Line::styled(
             "The challenge is too large for a QR code: use the clipboard or the words.",
             app.theme().style(StyleRole::PopupWarning),
         ));
     }
-    let hint = "Enter submit  Esc cancel";
-    let Some(qr_area) = modal_with_extra(frame, app, "Unlock", width, body, hint, extra) else {
+    let Some(qr_area) = modal_with_extra(frame, app, title, width, body, hint, extra) else {
         return;
     };
     let code_rows = qr_area.height.saturating_sub(1);
-    let index = app.sync.qr_frame % u.frames.len().max(1);
+    let index = app.sync.qr_frame % frames.len().max(1);
     render_qr(
         frame.buffer_mut(),
         Rect::new(qr_area.x, qr_area.y, qr_area.width, code_rows),
-        &u.frames,
+        frames,
         index,
     );
     frame.buffer_mut().set_string(
         qr_area.x,
         qr_area.bottom() - 1,
-        format!("frame {}/{}", index + 1, u.frames.len()),
+        format!("frame {}/{}", index + 1, frames.len()),
         theme.style(StyleRole::TextMuted),
     );
 }
@@ -404,6 +470,14 @@ pub fn render_fork_alert(frame: &mut Frame, app: &App) {
     let body = vec![
         Line::styled(format!("{} forked its history", f.device), red),
         Line::styled(f.detail.clone(), theme.style(StyleRole::TextMuted)),
+    ];
+    let mut body = body;
+    body.extend(
+        f.evidence
+            .iter()
+            .map(|l| Line::styled(l.clone(), theme.style(StyleRole::TextMuted))),
+    );
+    let body_rest = vec![
         Line::raw(""),
         Line::styled(
             "It signed two different histories under one identity. Treat everything it has sent as untrusted.",
@@ -412,24 +486,111 @@ pub fn render_fork_alert(frame: &mut Frame, app: &App) {
         Line::raw(""),
         Line::styled("What to do now:", text),
         Line::styled(
-            "  1. Do not approve changes from this device or release shares to it.",
+            "  1. Do not approve changes from this device or release shares to it (review rejects its operations: R, then r).",
             text,
         ),
         Line::styled(
-            "  2. Revoke it from a trusted device (Sync tab, device details).",
+            "  2. Revoke it from a trusted device: `sshub sync-revoke <device>` there, or the Sync tab on a device that holds shares.",
             text,
         ),
-        Line::styled("  3. Change the credentials it could read.", text),
+        Line::styled(
+            "  3. Change every credential it could read (they were open on it), then save them again so they replicate under the new ring.",
+            text,
+        ),
+        Line::styled(
+            "  4. If it is yours and was cloned, re-enroll it afterwards as a new device.",
+            text,
+        ),
         Line::raw(""),
         Line::styled(
-            "Esc closes this alert; the sync badge stays red.",
+            "Esc closes this alert; the sync badge stays red. Enter on its row in the Sync tab shows this again.",
             theme.style(StyleRole::PopupHint),
         ),
     ];
+    body.extend(body_rest);
     frame.render_widget(
         Paragraph::new(body).wrap(Wrap { trim: false }),
         area.inner(Margin::new(3, 2)),
     );
+}
+
+/// The generic Sync modals: a prompt, a menu or a text panel.
+pub fn render_sync_ui(frame: &mut Frame, app: &App) {
+    use crate::app::sync_ui::SyncUi;
+    let Some(ui) = app.sync_ui.as_ref() else {
+        return;
+    };
+    let theme = app.theme();
+    match ui {
+        SyncUi::Prompt {
+            title,
+            label,
+            masked,
+            value,
+            lines,
+            frames,
+            ..
+        } => {
+            let shown = if *masked {
+                "\u{2022}".repeat(value.chars().count())
+            } else {
+                // Long pasted answers show their tail, never a wall of text.
+                let n = value.chars().count();
+                if n > 60 {
+                    format!("\u{2026}{}", value.chars().skip(n - 59).collect::<String>())
+                } else {
+                    value.clone()
+                }
+            };
+            let mut body: Vec<Line> = lines
+                .iter()
+                .map(|l| Line::styled(l.clone(), theme.style(StyleRole::TextPrimary)))
+                .collect();
+            if !lines.is_empty() {
+                body.push(Line::raw(""));
+            }
+            body.push(Line::styled(
+                label.clone(),
+                theme.style(StyleRole::TextPrimary),
+            ));
+            body.push(Line::styled(
+                format!("\u{203a} {shown}\u{2588}"),
+                theme.style(StyleRole::PickerQuery),
+            ));
+            if frames.is_empty() {
+                modal(frame, app, title, 76, body, "Enter submit  Esc cancel");
+            } else {
+                qr_modal(frame, app, title, body, frames, "Enter submit  Esc cancel");
+            }
+        }
+        SyncUi::Menu {
+            title,
+            items,
+            selected,
+        } => {
+            let selected = (*selected).min(items.len().saturating_sub(1));
+            let body: Vec<Line> = items
+                .iter()
+                .enumerate()
+                .map(|(i, (text, _))| row(i == selected, text.clone(), app))
+                .collect();
+            modal(
+                frame,
+                app,
+                title,
+                70,
+                body,
+                "\u{2191}\u{2193} select  Enter run  Esc close",
+            );
+        }
+        SyncUi::Info { title, lines } => {
+            let body: Vec<Line> = lines
+                .iter()
+                .map(|l| Line::styled(l.clone(), theme.style(StyleRole::TextPrimary)))
+                .collect();
+            modal(frame, app, title, 84, body, "Esc close");
+        }
+    }
 }
 
 pub fn render_trust_scope(frame: &mut Frame, app: &App) {
@@ -448,8 +609,13 @@ pub fn render_trust_scope(frame: &mut Frame, app: &App) {
     body.extend(
         sync.trust_scopes
             .iter()
+            .zip(&sync.trust_scope_values)
             .enumerate()
-            .map(|(i, s)| row(i == selected, s.clone(), app)),
+            .map(|(i, (s, v))| {
+                let marked = matches!(v, CertScope::Hosts(h) if h.len() == 1 && sync.trust_marked.contains(&h[0]));
+                let box_ = if marked { "[x]" } else if matches!(v, CertScope::Hosts(_)) { "[ ]" } else { "   " };
+                row(i == selected, format!("{box_} {s}"), app)
+            }),
     );
     modal(
         frame,
@@ -457,17 +623,14 @@ pub fn render_trust_scope(frame: &mut Frame, app: &App) {
         "Trust session: scope",
         72,
         body,
-        "\u{2191}\u{2193} select  Enter next  Esc cancel",
+        "\u{2191}\u{2193} select  Space mark hosts (max 64)  Enter next  Esc cancel",
     );
 }
 
 pub fn render_trust_ttl(frame: &mut Frame, app: &App) {
     let sync = &app.sync;
     let selected = sync.trust_ttl_selected.min(TRUST_TTL_DAYS.len() - 1);
-    let scope = sync
-        .trust_scopes
-        .get(sync.trust_scope_selected)
-        .map_or("-", String::as_str);
+    let scope = crate::app::sync_trust::chosen(sync).map_or("-".to_string(), |(_, l)| l);
     let mut body = vec![
         Line::styled(
             format!("Scope: {scope}"),
