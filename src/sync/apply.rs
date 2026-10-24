@@ -64,6 +64,17 @@ pub fn validate_body(body: &OpBody) -> std::result::Result<(), String> {
             }
             Ok(())
         }
+        OpBody::CheckpointPropose { cut, required, .. } => {
+            if cut.len() > 4 * MAX_LIST || required.len() > 4 * MAX_LIST {
+                return Err("checkpoint cut is too large".into());
+            }
+            if cut.windows(2).any(|w| w[0].device_id >= w[1].device_id)
+                || required.windows(2).any(|w| w[0] >= w[1])
+            {
+                return Err("cut and required must be sorted and unique".into());
+            }
+            Ok(())
+        }
         OpBody::WrapKeyRotate { wrap_epoch, .. } if *wrap_epoch == 0 => {
             Err("wrap_epoch starts at 1".into())
         }
@@ -252,8 +263,9 @@ pub fn effective_view(conn: &Connection, kind: EntityKind, uid: &Uid) -> Result<
     let mut view = View::default();
     let mut stmt = conn.prepare_cached(
         "SELECT f.field, f.value, f.lamport, f.device_id
-         FROM sync_fields f JOIN sync_ops o ON o.op_hash = f.op_hash
-         WHERE f.kind = ?1 AND f.uid = ?2 AND o.state IN ('applied','approved')
+         FROM sync_fields f LEFT JOIN sync_ops o ON o.op_hash = f.op_hash
+         WHERE f.kind = ?1 AND f.uid = ?2
+           AND (o.state IN ('applied','approved') OR f.op_hash = zeroblob(32))
          ORDER BY f.lamport, f.device_id, f.seq",
     )?;
     let rows = stmt.query_map(params![kind.as_str(), &uid[..]], |r| {
@@ -278,8 +290,9 @@ pub fn effective_view(conn: &Connection, kind: EntityKind, uid: &Uid) -> Result<
         view.fields.insert(field, serde_json::from_str(&value)?);
     }
     let tomb: Option<i64> = conn.query_row(
-        "SELECT MAX(t.lamport) FROM sync_tombstones t JOIN sync_ops o ON o.op_hash = t.op_hash
-         WHERE t.kind = ?1 AND t.uid = ?2 AND o.state IN ('applied','approved')",
+        "SELECT MAX(t.lamport) FROM sync_tombstones t LEFT JOIN sync_ops o ON o.op_hash = t.op_hash
+         WHERE t.kind = ?1 AND t.uid = ?2
+           AND (o.state IN ('applied','approved') OR t.op_hash = zeroblob(32))",
         params![kind.as_str(), &uid[..]],
         |r| r.get(0),
     )?;

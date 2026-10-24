@@ -107,11 +107,6 @@ fn third_factor(b: &mut Vec<u8>, t: &ThirdFactor) {
     match t {
         ThirdFactor::Paper => string(b, "Paper"),
         ThirdFactor::EmailCode => string(b, "EmailCode"),
-        ThirdFactor::HardwareKey(id) => {
-            let mut o = Obj::new(b);
-            string(o.key("HardwareKey"), id);
-            o.end();
-        }
     }
 }
 
@@ -158,6 +153,9 @@ pub fn body_name(body: &OpBody) -> &'static str {
         OpBody::RecoveryAck { .. } => "RecoveryAck",
         OpBody::ModeChange { .. } => "ModeChange",
         OpBody::HeadAttest { .. } => "HeadAttest",
+        OpBody::RecoveryApprove { .. } => "RecoveryApprove",
+        OpBody::CheckpointPropose { .. } => "CheckpointPropose",
+        OpBody::CheckpointSign { .. } => "CheckpointSign",
     }
 }
 
@@ -210,6 +208,7 @@ fn body(b: &mut Vec<u8>, body: &OpBody) {
             name,
             role,
             attendance,
+            kind,
         } => {
             let mut d = Obj::new(o.key("device"));
             hex32(d.key("ed25519_pub"), &device.ed25519_pub);
@@ -219,6 +218,7 @@ fn body(b: &mut Vec<u8>, body: &OpBody) {
             string(o.key("name"), name);
             string(o.key("role"), role_str(*role));
             string(o.key("attendance"), attendance_str(*attendance));
+            string(o.key("kind"), kind_str(*kind));
         }
         OpBody::DeviceRevoke { device_id } => string(o.key("device_id"), device_id),
         OpBody::ShareRelease {
@@ -347,6 +347,7 @@ fn body(b: &mut Vec<u8>, body: &OpBody) {
             via_paper,
             third_factor: tf,
             liveness,
+            paper_sig,
         } => {
             write!(o.key("initiated_at"), "{initiated_at}").expect("vec write");
             strings(o.key("signers"), signers);
@@ -361,7 +362,40 @@ fn body(b: &mut Vec<u8>, body: &OpBody) {
                 head_attest(b, h);
             }
             b.push(b']');
+            let b = o.key("paper_sig");
+            match paper_sig {
+                Some(sig) => string(b, &hex_lower(sig)),
+                None => b.extend_from_slice(b"null"),
+            }
         }
+        OpBody::RecoveryApprove { reenroll_hash } => hex32(o.key("reenroll_hash"), reenroll_hash),
+        OpBody::CheckpointPropose {
+            cut,
+            state_hash,
+            state_len,
+            prev_checkpoint,
+            required,
+        } => {
+            let b = o.key("cut");
+            b.push(b'[');
+            for (i, c) in cut.iter().enumerate() {
+                if i > 0 {
+                    b.push(b',');
+                }
+                let mut co = Obj::new(b);
+                string(co.key("device_id"), &c.device_id);
+                write!(co.key("seq"), "{}", c.seq).expect("vec write");
+                hex32(co.key("op_hash"), &c.op_hash);
+                write!(co.key("lamport"), "{}", c.lamport).expect("vec write");
+                co.end();
+            }
+            b.push(b']');
+            hex32(o.key("state_hash"), state_hash);
+            write!(o.key("state_len"), "{state_len}").expect("vec write");
+            hex32(o.key("prev_checkpoint"), prev_checkpoint);
+            strings(o.key("required"), required);
+        }
+        OpBody::CheckpointSign { proposal_hash } => hex32(o.key("proposal_hash"), proposal_hash),
         OpBody::PhoneReenrollCancel {
             reenroll_hash,
             by_phone,
@@ -415,6 +449,13 @@ fn role_str(r: DeviceRole) -> &'static str {
     match r {
         DeviceRole::Holder => "Holder",
         DeviceRole::Mirror => "Mirror",
+    }
+}
+
+fn kind_str(k: DeviceKind) -> &'static str {
+    match k {
+        DeviceKind::Terminal => "Terminal",
+        DeviceKind::Phone => "Phone",
     }
 }
 
@@ -637,6 +678,23 @@ fn get_32(m: &Map<String, Value>, k: &str) -> Result<[u8; 32]> {
     Ok(out)
 }
 
+fn get_64(v: &Value) -> Result<[u8; 64]> {
+    let h = v
+        .as_str()
+        .ok_or_else(|| anyhow!("paper_sig must be a hex string"))?;
+    ensure!(
+        h.len() == 128
+            && h.bytes()
+                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)),
+        "paper_sig must be 128 lowercase hex characters"
+    );
+    let mut out = [0u8; 64];
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&h[2 * i..2 * i + 2], 16)?;
+    }
+    Ok(out)
+}
+
 fn get_alg(m: &Map<String, Value>, k: &str) -> Result<AlgTag> {
     let a: [u8; 2] = get(m, k)?
         .as_array()
@@ -652,7 +710,7 @@ fn get_alg(m: &Map<String, Value>, k: &str) -> Result<AlgTag> {
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 /// Standard alphabet, padded (RFC 4648 section 4).
-fn b64_encode(data: &[u8]) -> String {
+pub(super) fn b64_encode(data: &[u8]) -> String {
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let n = (u32::from(chunk[0]) << 16)
@@ -743,9 +801,6 @@ fn third_factor_of(v: &Value) -> Result<ThirdFactor> {
     match v {
         Value::String(s) if s == "Paper" => Ok(ThirdFactor::Paper),
         Value::String(s) if s == "EmailCode" => Ok(ThirdFactor::EmailCode),
-        Value::Object(m) if m.len() == 1 => {
-            Ok(ThirdFactor::HardwareKey(get_string(m, "HardwareKey")?))
-        }
         _ => bail!("unknown third factor"),
     }
 }
@@ -810,6 +865,11 @@ fn decode_body(v: &Value) -> Result<OpBody> {
                     "Attended" => Attendance::Attended,
                     "Unattended" => Attendance::Unattended,
                     a => bail!("unknown attendance {a}"),
+                },
+                kind: match get_string(m, "kind")?.as_str() {
+                    "Terminal" => DeviceKind::Terminal,
+                    "Phone" => DeviceKind::Phone,
+                    k => bail!("unknown device kind {k}"),
                 },
             }
         }
@@ -910,6 +970,10 @@ fn decode_body(v: &Value) -> Result<OpBody> {
             signers: get_strings(m, "signers")?,
             via_paper: get_bool(m, "via_paper")?,
             third_factor: third_factor_of(get(m, "third_factor")?)?,
+            paper_sig: match get(m, "paper_sig")? {
+                Value::Null => None,
+                v => Some(get_64(v)?),
+            },
             liveness: get_array(m, "liveness")?
                 .iter()
                 .map(|h| {
@@ -929,6 +993,30 @@ fn decode_body(v: &Value) -> Result<OpBody> {
                 Value::Null => None,
                 v => Some(third_factor_of(v)?),
             },
+        },
+        "RecoveryApprove" => OpBody::RecoveryApprove {
+            reenroll_hash: get_32(m, "reenroll_hash")?,
+        },
+        "CheckpointPropose" => OpBody::CheckpointPropose {
+            cut: get_array(m, "cut")?
+                .iter()
+                .map(|c| {
+                    let c = as_obj(c)?;
+                    Ok(CutEntry {
+                        device_id: get_string(c, "device_id")?,
+                        seq: get_u64(c, "seq")?,
+                        op_hash: get_32(c, "op_hash")?,
+                        lamport: get_u64(c, "lamport")?,
+                    })
+                })
+                .collect::<Result<_>>()?,
+            state_hash: get_32(m, "state_hash")?,
+            state_len: get_u64(m, "state_len")?,
+            prev_checkpoint: get_32(m, "prev_checkpoint")?,
+            required: get_strings(m, "required")?,
+        },
+        "CheckpointSign" => OpBody::CheckpointSign {
+            proposal_hash: get_32(m, "proposal_hash")?,
         },
         "RecoveryAck" => OpBody::RecoveryAck {
             reenroll_hash: get_32(m, "reenroll_hash")?,

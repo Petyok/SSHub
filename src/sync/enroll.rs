@@ -19,8 +19,9 @@ use serde::{Deserialize, Serialize};
 use x25519_dalek::{EphemeralSecret, PublicKey as XPublic};
 
 use super::crypto::{chain_hash, sas_words, verify, DeviceIdentity, DevicePublic};
-use super::oplog::{Attendance, DeviceRole, OpBody};
+use super::oplog::{Attendance, DeviceKind, DeviceRole, OpBody};
 use super::protocol::{b64, hex32, hex64, Session, SyncLink, SyncMsg};
+use super::quorum::{meta_get, meta_set};
 use super::ratchet::{pair_key_from_exchange, save_pair, PairState};
 use crate::store::LauncherStore;
 
@@ -149,16 +150,103 @@ impl Party {
     }
 }
 
-/// The human decision. Implementations show `sas` and the peer's claimed name and return whether
-/// the words match; give up (return `false`) after their own timeout.
-pub trait SasConfirm {
-    fn confirm(&mut self, sas: &str, peer_name: &str) -> bool;
+/// What the human at a screen is shown. `peer_has_screen` is false when the other device cannot show
+/// the words to anyone (no tty): then comparing them proves nothing, the other device's identity
+/// rests on the SSH host key that was verified, and the prompt must say so plainly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SasPrompt<'a> {
+    pub sas: &'a str,
+    pub peer_name: &'a str,
+    pub peer_has_screen: bool,
 }
 
-impl<F: FnMut(&str, &str) -> bool> SasConfirm for F {
-    fn confirm(&mut self, sas: &str, peer_name: &str) -> bool {
-        self(sas, peer_name)
+/// The human decision. Implementations show the prompt and return whether the user admits the
+/// device; give up (return `false`) after their own timeout. A side that has no human passes no
+/// implementation at all and never confirms as if a human had.
+pub trait SasConfirm {
+    fn confirm(&mut self, prompt: &SasPrompt<'_>) -> bool;
+}
+
+impl<F: FnMut(&SasPrompt<'_>) -> bool> SasConfirm for F {
+    fn confirm(&mut self, prompt: &SasPrompt<'_>) -> bool {
+        self(prompt)
     }
+}
+
+/// First frame of an enrollment, both ways: ring membership and whether a human can see words.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub struct EnrollHello {
+    /// The ring this device belongs to (the device id of its founder), `None` for a blank device.
+    pub ring: Option<String>,
+    /// A human at a tty will see the words and decide.
+    pub screen: bool,
+}
+
+/// Roles follow ring membership, not the direction of the ssh connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnrollRole {
+    /// Has (or, being the initiator of two blank devices, creates) the ring and admits the other.
+    Inviter,
+    /// Joins the inviter's ring.
+    Joiner,
+}
+
+/// How a device was admitted. `Sas`: two humans compared the words. `SshHostKey`: only one side had a
+/// screen, the other's identity rests on the SSH host key the attended user verified.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerifiedBy {
+    Sas,
+    SshHostKey,
+}
+
+impl VerifiedBy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Sas => "sas",
+            Self::SshHostKey => "ssh_host_key",
+        }
+    }
+}
+
+/// Decides the roles from both hellos. `initiator` is the side that opened the connection.
+pub fn decide_role(
+    mine: &Option<String>,
+    theirs: &Option<String>,
+    initiator: bool,
+) -> Result<EnrollRole, &'static str> {
+    match (mine, theirs) {
+        (Some(a), Some(b)) if a != b => {
+            Err("merging rings is not supported: both devices already belong to a ring")
+        }
+        // The same ring: a repeat ceremony (rehabilitation); the initiator invites.
+        (Some(_), Some(_)) | (None, None) => Ok(if initiator {
+            EnrollRole::Inviter
+        } else {
+            EnrollRole::Joiner
+        }),
+        (Some(_), None) => Ok(EnrollRole::Inviter),
+        (None, Some(_)) => Ok(EnrollRole::Joiner),
+    }
+}
+
+/// The ring this device belongs to: the device id of its founder, kept locally.
+pub fn ring_id(store: &LauncherStore) -> Result<Option<String>> {
+    Ok(meta_get(store, "ring_id")?.and_then(|b| String::from_utf8(b).ok()))
+}
+
+fn set_ring_id(store: &LauncherStore, ring: &str) -> Result<()> {
+    meta_set(store, "ring_id", ring.as_bytes())
+}
+
+/// How `device` was admitted on this device (local record; shown per device on the Sync tab).
+pub fn verified_by(store: &LauncherStore, device: &str) -> Result<Option<VerifiedBy>> {
+    Ok(
+        meta_get(store, &format!("verified_by:{device}"))?.and_then(|b| match b.as_slice() {
+            b"sas" => Some(VerifiedBy::Sas),
+            b"ssh_host_key" => Some(VerifiedBy::SshHostKey),
+            _ => None,
+        }),
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,6 +254,9 @@ pub struct EnrollOutcome {
     pub peer: DevicePublic,
     pub peer_name: String,
     pub sas: String,
+    pub role: EnrollRole,
+    pub verified_by: VerifiedBy,
+    pub ring: String,
 }
 
 pub(crate) fn confirm_message(role: u8, ok: bool, th: &[u8; 32]) -> Vec<u8> {
@@ -183,7 +274,7 @@ fn run<L: SyncLink>(
     name: &str,
     attended: bool,
     initiator: bool,
-    ui: &mut dyn SasConfirm,
+    mut ui: Option<&mut dyn SasConfirm>,
 ) -> Result<EnrollOutcome> {
     let mut s = Session::new(link, initiator);
     let me = Party::new(id, name, attended);
@@ -192,9 +283,6 @@ fn run<L: SyncLink>(
     } else {
         (RESPONDER, INITIATOR)
     };
-    let my_commit = me.commit(my_role);
-    let peer_commit;
-    let peer_reveal;
     macro_rules! want {
         ($pat:pat => $out:expr) => {
             match s.recv()? {
@@ -203,6 +291,31 @@ fn run<L: SyncLink>(
             }
         };
     }
+    // Hellos first: who has a ring decides who invites, whatever the ssh direction.
+    let my_ring = ring_id(store)?;
+    let my_hello = EnrollHello {
+        ring: my_ring.clone(),
+        screen: ui.is_some(),
+    };
+    let peer_hello = if initiator {
+        let h = want!(SyncMsg::EnrollHello(h) => h);
+        s.send(&SyncMsg::EnrollHello(my_hello.clone()))?;
+        h
+    } else {
+        s.send(&SyncMsg::EnrollHello(my_hello.clone()))?;
+        want!(SyncMsg::EnrollHello(h) => h)
+    };
+    let role = match decide_role(&my_ring, &peer_hello.ring, initiator) {
+        Ok(r) => r,
+        Err(why) => {
+            s.bye(why);
+            bail!("{why}");
+        }
+    };
+
+    let my_commit = me.commit(my_role);
+    let peer_commit;
+    let peer_reveal;
     if initiator {
         peer_commit = want!(SyncMsg::EnrollCommit { commit } => commit);
         s.send(&SyncMsg::EnrollCommit { commit: my_commit })?;
@@ -227,7 +340,16 @@ fn run<L: SyncLink>(
     };
     let th = transcript_hash(ri, rr);
     let sas = sas_words(&th);
-    let ok = ui.confirm(&sas, &peer_reveal.name);
+    // A side without a human never confirms as if one had looked: it admits on the strength of the
+    // authenticated ssh session and says so in its hello (`screen: false`).
+    let ok = match ui.as_deref_mut() {
+        Some(ui) => ui.confirm(&SasPrompt {
+            sas: &sas,
+            peer_name: &peer_reveal.name,
+            peer_has_screen: peer_hello.screen,
+        }),
+        None => true,
+    };
     let mine = Confirm {
         ok,
         sig: id.sign(&confirm_message(my_role, ok, &th)),
@@ -258,61 +380,108 @@ fn run<L: SyncLink>(
 
     let key = pair_key_from_exchange(&me.shared(&peer_reveal.eph), &th);
     let peer_pub = peer_reveal.public();
-    // The joining device is a mirror until the ring approves more; the existing device is a holder.
-    let peer_device_role = if initiator {
-        DeviceRole::Holder
-    } else {
-        DeviceRole::Mirror
-    };
+    let peer_id = peer_pub.device_id();
     let attendance = if peer_reveal.attended {
         Attendance::Attended
     } else {
         Attendance::Unattended
     };
-    store.sync_register_device(&peer_pub, &peer_reveal.name, peer_device_role, attendance)?;
-    save_pair(store, &peer_pub.device_id(), &PairState::fresh(key))?;
-    if !initiator {
-        store
-            .sync_append_local(
-                id,
-                OpBody::DeviceAdd {
-                    device: peer_pub.clone(),
-                    name: peer_reveal.name.clone(),
-                    role: DeviceRole::Mirror,
-                    attendance,
-                },
-            )
-            .map_err(|e| {
-                anyhow!("device registered locally but the ring could not be told: {e}")
-            })?;
-    }
+    let verified = if ui.is_some() && peer_hello.screen {
+        VerifiedBy::Sas
+    } else {
+        VerifiedBy::SshHostKey
+    };
+    let known = store.sync_devices()?.iter().any(|d| d.id == peer_id);
+    let ring = match role {
+        // The inviter admits the joiner as a mirror (Yellow on the rest of the ring) and, if it had no
+        // ring yet, founds one: the ring id is the founder's device id.
+        EnrollRole::Inviter => {
+            let ring = match my_ring {
+                Some(r) => r,
+                None => {
+                    let r = id.public().device_id();
+                    set_ring_id(store, &r)?;
+                    r
+                }
+            };
+            store.sync_register_device(
+                &peer_pub,
+                &peer_reveal.name,
+                DeviceRole::Mirror,
+                attendance,
+                DeviceKind::Terminal,
+            )?;
+            if !known {
+                store
+                    .sync_append_local(
+                        id,
+                        OpBody::DeviceAdd {
+                            device: peer_pub.clone(),
+                            name: peer_reveal.name.clone(),
+                            role: DeviceRole::Mirror,
+                            attendance,
+                            kind: DeviceKind::Terminal,
+                        },
+                    )
+                    .map_err(|e| {
+                        anyhow!("device registered locally but the ring could not be told: {e}")
+                    })?;
+            }
+            ring
+        }
+        // The joiner trusts the inviter as a holder and takes over its ring.
+        EnrollRole::Joiner => {
+            let ring = peer_hello.ring.clone().unwrap_or_else(|| peer_id.clone());
+            set_ring_id(store, &ring)?;
+            store.sync_register_device(
+                &peer_pub,
+                &peer_reveal.name,
+                DeviceRole::Holder,
+                attendance,
+                DeviceKind::Terminal,
+            )?;
+            ring
+        }
+    };
+    meta_set(
+        store,
+        &format!("verified_by:{peer_id}"),
+        verified.as_str().as_bytes(),
+    )?;
+    save_pair(store, &peer_id, &PairState::fresh(key))?;
     Ok(EnrollOutcome {
         peer: peer_pub,
         peer_name: peer_reveal.name,
         sas,
+        role,
+        verified_by: verified,
+        ring,
     })
 }
 
-/// Existing device (`sshub sync-enroll`): waits for a joining device to connect.
+/// The remote end of an enrollment (`sshub sync-enroll`, run over ssh). It learns its role from the
+/// handshake: it invites if it has a ring, joins if it is blank and the caller has one. `ui` is `None`
+/// when there is no tty: it then never confirms as a human would.
 pub fn run_sync_enroll<L: SyncLink>(
     link: &mut L,
     store: &LauncherStore,
     id: &DeviceIdentity,
     name: &str,
     attended: bool,
-    ui: &mut dyn SasConfirm,
+    ui: Option<&mut dyn SasConfirm>,
 ) -> Result<EnrollOutcome> {
     run(link, store, id, name, attended, false, ui)
 }
 
-/// Joining device: connects to an existing one and verifies the words.
+/// The initiating end (`sshub sync-join <peer>`, hosts-tab `t`): opens the connection. Its role is
+/// decided the same way; of two blank devices the initiator founds the ring and invites.
 pub fn run_sync_join<L: SyncLink>(
     link: &mut L,
     store: &LauncherStore,
     id: &DeviceIdentity,
     name: &str,
     attended: bool,
-    ui: &mut dyn SasConfirm,
+    ui: Option<&mut dyn SasConfirm>,
 ) -> Result<EnrollOutcome> {
     run(link, store, id, name, attended, true, ui)
 }

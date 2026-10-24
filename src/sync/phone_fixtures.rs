@@ -565,7 +565,15 @@ fn e2e_response_opens_with_the_ephemeral_secret() {
         .iter()
         .find(|x| x["name"] == "good")
         .unwrap();
-    let want = &c.phone_share;
+    // The page used the committed shares; `cast()` splits with fresh coefficients every run, so
+    // the expectation comes from the fixture, never from a new split.
+    let fixture_share = |v: &Value| Share {
+        index: v["index"].as_u64().unwrap() as u8,
+        bytes: unhex(&v["bytes_hex"]),
+    };
+    let want_share = fixture_share(&main["phone_share"]);
+    let requester_share = fixture_share(&main["requester_share"]);
+    let want = &want_share;
     let ct = std::fs::read(d.join("response-full.bin")).unwrap();
     let resp = ShareResponseWire::decode(&ct).expect("the page emitted an exact ShareResponseWire");
     assert_eq!(resp.request_id, 4242);
@@ -574,7 +582,7 @@ fn e2e_response_opens_with_the_ephemeral_secret() {
     let released = share;
     assert_eq!(
         combine_and_check(
-            &c.requester_share,
+            &requester_share,
             &released,
             &unhex(&main["credential_ciphertext_hex"])
         )

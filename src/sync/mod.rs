@@ -9,6 +9,7 @@ pub mod crypto;
 pub mod email;
 pub mod enroll;
 pub mod fountain;
+pub mod hub;
 pub mod identity_store;
 pub mod limits;
 pub mod modes;
@@ -25,6 +26,7 @@ pub mod runtime;
 pub mod share_release;
 pub mod snapshot;
 pub mod transport;
+pub mod unlock_paths;
 #[cfg(test)]
 mod vectors;
 pub mod wire;

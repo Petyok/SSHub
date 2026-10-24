@@ -273,7 +273,30 @@ pub(crate) fn vault_wrap(
 pub fn paper_setup(store: &LauncherStore, phrase: &str) -> Result<DevicePublic> {
     let public = paper_derive(phrase, PaperDomain::Unwrap)?.public();
     meta_set(store, "paper_pub", &pub_to_bytes(&public))?;
+    // The recovery key is separate: it authorizes a phone replacement and nothing else.
+    let recover = paper_derive(phrase, PaperDomain::Recover)?.public();
+    meta_set(store, "paper_recover_pub", &recover.ed25519_pub)?;
     Ok(public)
+}
+
+/// The paper phrase's recovery verification key (ed25519), as registered by [`paper_setup`].
+pub fn paper_recover_pub(store: &LauncherStore) -> Result<Option<[u8; 32]>> {
+    Ok(meta_get(store, "paper_recover_pub")?.and_then(|b| b.try_into().ok()))
+}
+
+/// The ring's phone: the one device of kind `Phone` that is not revoked or compromised.
+pub fn phone_device(store: &LauncherStore) -> Result<Option<DeviceId>> {
+    let mut phones: Vec<DeviceId> = store
+        .sync_devices()?
+        .into_iter()
+        .filter(|d| {
+            d.kind == super::oplog::DeviceKind::Phone
+                && !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
+        })
+        .map(|d| d.id)
+        .collect();
+    ensure!(phones.len() <= 1, "the ring has more than one live phone");
+    Ok(phones.pop())
 }
 
 pub fn paper_pub(store: &LauncherStore) -> Result<Option<DevicePublic>> {
@@ -684,6 +707,113 @@ impl Unlocker for QuorumUnlocker {
     }
 }
 
+/// Why a holder releases a share.
+pub enum Grant<'a> {
+    /// The user of this (attended) device approved the prompt that named the requester.
+    Approved,
+    /// A trust-session certificate allows it. The caller supplies what `cert_allows` needs.
+    Cert {
+        cert: &'a super::cert::DelegationCert,
+        issuer_ed25519: [u8; 32],
+        phone_head_ts: i64,
+        now: i64,
+    },
+}
+
+/// Whether this device is recorded as unattended (a VPS holder, the Hub). A device not in its own
+/// table has never written anything and is attended by definition.
+pub fn is_unattended(store: &LauncherStore, me: &DevicePublic) -> Result<bool> {
+    Ok(store
+        .sync_devices()?
+        .iter()
+        .any(|d| d.id == me.device_id() && d.attendance == super::oplog::Attendance::Unattended))
+}
+
+/// [`release_share`] behind the rule that an unattended holder releases nothing outside an active
+/// certificate: a prompt nobody reads is no consent. Returns the sealed reply and, when a
+/// certificate was used for a host not yet opened under it, the `CertHostOpened` body to append.
+pub fn release_share_for(
+    store: &LauncherStore,
+    id: &DeviceIdentity,
+    host: &HostUid,
+    epoch: u64,
+    eph_x25519_pub: &[u8; 32],
+    requester: &DeviceId,
+    grant: Grant<'_>,
+) -> Result<(Vec<u8>, Option<OpBody>)> {
+    let opened = match grant {
+        Grant::Approved => {
+            ensure!(
+                !is_unattended(store, &id.public())?,
+                "an unattended device releases shares only under a valid trust certificate"
+            );
+            None
+        }
+        Grant::Cert {
+            cert,
+            issuer_ed25519,
+            phone_head_ts,
+            now,
+        } => {
+            super::cert::cert_allows(
+                cert,
+                &issuer_ed25519,
+                store,
+                requester,
+                host,
+                phone_head_ts,
+                now,
+            )?;
+            (!store.sync_cert_hosts_opened(&cert.id)?.contains(host))
+                .then(|| super::cert::cert_opened_body(cert, host))
+        }
+    };
+    Ok((
+        release_share(store, id, host, epoch, eph_x25519_pub)?,
+        opened,
+    ))
+}
+
+/// The trust-session path on the holder's side: finds a certificate of `requester` that allows
+/// `host` right now and releases under it. `Err` carries the reason of the last certificate that
+/// refused, or says there is none; the caller defers the request.
+pub fn trust_grant(
+    store: &LauncherStore,
+    id: &DeviceIdentity,
+    requester: &DeviceId,
+    host: &HostUid,
+    epoch: u64,
+    eph_x25519_pub: &[u8; 32],
+    now: i64,
+) -> Result<(Vec<u8>, Option<OpBody>)> {
+    let phone = phone_device(store)?.context("the ring has no phone: no certificate can exist")?;
+    let row = store
+        .sync_devices()?
+        .into_iter()
+        .find(|d| d.id == phone)
+        .context("the phone is not a device of this ring")?;
+    let mut last = anyhow!("the requester holds no trust certificate");
+    for op in ops_of(store, "CertIssue", Some(&phone))?.into_iter().rev() {
+        let Ok(cert) = super::cert::DelegationCert::from_op(&op) else {
+            continue;
+        };
+        if cert.device_id != *requester {
+            continue;
+        }
+        let grant = Grant::Cert {
+            cert: &cert,
+            issuer_ed25519: row.public.ed25519_pub,
+            phone_head_ts: row.last_seen,
+            now,
+        };
+        match release_share_for(store, id, host, epoch, eph_x25519_pub, requester, grant) {
+            Ok(done) => return Ok(done),
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
+}
+
 /// Releases `share` to a requester's ephemeral key after the holder's user approved.
 pub fn release_share(
     store: &LauncherStore,
@@ -704,4 +834,4 @@ pub fn release_share(
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

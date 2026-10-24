@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PoC H receive</title>
+<style>
+  body { font: 14px monospace; background: #fff; color: #000; margin: 16px; }
+  button, select { font: inherit; padding: 6px 12px; }
+  video { width: 320px; background: #000; }
+  table { border-collapse: collapse; margin-top: 8px; }
+  td, th { border: 1px solid #000; padding: 2px 8px; text-align: right; }
+</style>
+</head>
+<body>
+<h3>PoC H receive (mic FSK + camera QR)</h3>
+<p>
+  seed <input id="seed" type="number" value="1" size="6"> len <input id="len" type="number" value="56" size="5"> ·
+  profile <select id="profile"><option value="slow">slow (60 ms)</option><option value="fast">fast (30 ms)</option></select> ·
+  <label><input id="useqr" type="checkbox" checked> camera QR</label>
+</p>
+<p>
+  <button id="arm">Arm mic</button>
+  <button id="trial">Run trial (10 s max)</button>
+  <button id="csv">Export CSV</button>
+  successes <span id="count">0/0</span>
+</p>
+<p><video id="cam" autoplay playsinline muted></video></p>
+<canvas id="scan" width="320" height="240" hidden></canvas>
+<p id="status"></p>
+<table><thead><tr><th>trial</th><th>audio ok</th><th>audio ms</th><th>qr ok</th><th>qr ms</th></tr></thead><tbody id="rows"></tbody></table>
+<script src="vendor/jsQR.js"></script>
+<script src="share-lib.js"></script>
+<script>
+(function () {
+  "use strict";
+  const L = window.ShareLib;
+  const $ = (id) => document.getElementById(id);
+  const RING_S = 12, WINDOW_MS = 10000, STEP_MS = 500;
+  let ctx = null, ring = null, ringPos = 0, filled = 0, proc = null, stream = null, camStream = null;
+  const trials = [];
+
+  function expected() {
+    const len = Number($("len").value);
+    const seed = Number($("seed").value);
+    return L.seededBytes(len, seed);
+  }
+  function profile() { return $("profile").value === "fast" ? L.FSK_FAST : L.FSK; }
+
+  // ponytail: ScriptProcessorNode is deprecated but needs no worklet file; fine for a PoC bench
+  $("arm").onclick = async () => {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    ctx = new AudioContext({ sampleRate: L.FSK.sampleRate });
+    const src = ctx.createMediaStreamSource(stream);
+    ring = new Float32Array(RING_S * L.FSK.sampleRate);
+    proc = ctx.createScriptProcessor(4096, 1, 1);
+    proc.onaudioprocess = (e) => {
+      const d = e.inputBuffer.getChannelData(0);
+      for (let k = 0; k < d.length; k++) { ring[ringPos] = d[k]; ringPos = (ringPos + 1) % ring.length; }
+      filled = Math.min(filled + d.length, ring.length);
+    };
+    src.connect(proc); proc.connect(ctx.destination);
+    if ($("useqr").checked) {
+      camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      $("cam").srcObject = camStream;
+    }
+    $("status").textContent = "armed";
+  };
+
+  // Snapshot the ring in chronological order.
+  function snapshot() {
+    const out = new Float32Array(filled);
+    const start = (ringPos - filled + ring.length) % ring.length;
+    for (let k = 0; k < filled; k++) out[k] = ring[(start + k) % ring.length];
+    return out;
+  }
+
+  function runQrPath(expect, t0, result) {
+    const r = new L.Reassembler();
+    const canvas = $("scan");
+    const ctx2 = canvas.getContext("2d");
+    const v = $("cam");
+    return new Promise((resolve) => {
+      const tick = setInterval(() => {
+        if (performance.now() - t0 > WINDOW_MS) { clearInterval(tick); resolve(); return; }
+        if (v.videoWidth === 0) return;
+        canvas.width = v.videoWidth; canvas.height = v.videoHeight;
+        ctx2.drawImage(v, 0, 0);
+        const frame = L.scanCanvas(canvas);
+        if (frame) {
+          const st = r.add(frame);
+          if (st.complete) {
+            result.qrOk = L.equalBytes(st.bytes, expect);
+            result.qrMs = Math.round(performance.now() - t0);
+            clearInterval(tick); resolve();
+          }
+        }
+      }, 100);
+    });
+  }
+
+  function runAudioPath(expect, t0, result) {
+    return new Promise((resolve) => {
+      const tick = setInterval(() => {
+        const elapsed = performance.now() - t0;
+        if (elapsed > WINDOW_MS) { clearInterval(tick); resolve(); return; }
+        const d = snapshot();
+        const res = L.fskDecode(d, profile());
+        if (res.ok && L.equalBytes(res.payload, expect)) {
+          result.audioOk = true;
+          result.audioMs = Math.round(elapsed);
+          clearInterval(tick); resolve();
+        }
+      }, STEP_MS);
+    });
+  }
+
+  $("trial").onclick = async () => {
+    if (!ring) { $("status").textContent = "arm mic first"; return; }
+    const expect = expected();
+    const result = { audioOk: false, audioMs: null, qrOk: false, qrMs: null };
+    const t0 = performance.now();
+    $("status").textContent = "listening...";
+    const jobs = [runAudioPath(expect, t0, result)];
+    if ($("useqr").checked && camStream) jobs.push(runQrPath(expect, t0, result));
+    await Promise.all(jobs);
+    trials.push(result);
+    const row = $("rows").insertRow();
+    [trials.length, result.audioOk, result.audioMs ?? "-", result.qrOk, result.qrMs ?? "-"].forEach((x) => { row.insertCell().textContent = String(x); });
+    const ok = trials.filter((t) => t.audioOk).length;
+    $("count").textContent = ok + "/" + trials.length;
+    $("status").textContent = "trial " + trials.length + " done";
+  };
+
+  $("csv").onclick = () => {
+    const lines = ["trial,audio_ok,audio_ms,qr_ok,qr_ms"];
+    trials.forEach((t, i) => lines.push([i + 1, t.audioOk, t.audioMs ?? "", t.qrOk, t.qrMs ?? ""].join(",")));
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([lines.join("\n") + "\n"], { type: "text/csv" }));
+    a.download = "share-receive-trials.csv";
+    a.click();
+  };
+})();
+</script>
+</body>
+</html>

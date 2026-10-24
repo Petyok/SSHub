@@ -673,13 +673,35 @@ opens nothing, so it needs no secrecy and no special credentials.
    the Hub.
 2. `ssh peer sshub sync-enroll`: identity key exchange (Ed25519 + X25519 +
    ML-KEM).
-3. **SAS verification with 4 words** using a **commitment scheme** (both sides
+3. **Roles follow ring membership, not the direction of the ssh connection.**
+   Both ends say in their first frame whether they belong to a ring (the ring id
+   is the device id of its founder) and whether a human sits at a tty. The side
+   that has a ring invites; a blank side joins; of two blank sides the one that
+   initiated (pressed `T`, ran `sync-join`) founds the ring and invites; two
+   different rings are refused ("merging rings is not supported").
+4. **SAS verification with 4 words** using a **commitment scheme** (both sides
    commit to their ephemeral keys by hash, then reveal; otherwise a MITM grinds
    keys until the SAS matches): ~44 bits, `harbor-globe-lantern-mint`. Words, not
    emoji: terminals do not always render emoji, and words can be read over the
    phone. The handiest second screen is the phone.
-4. The device enters as a **mirror** (Yellow: one signature + user approve).
-5. **Promotion to holder is separate and Red**, and needs two holders online for
+5. **A side without a human never confirms as if one had looked.** A `sync-enroll`
+   that runs over ssh without a tty has nobody to compare words with, and the
+   words it could print travel back through the same ssh channel to the human at
+   the other end: that is SSH host-key trust dressed as a SAS. So such a side
+   sends `screen: false` and admits on the strength of the authenticated session;
+   the attended side shows the four words AND says plainly that the other device
+   has no screen and that its identity rests on the SSH host key that was
+   verified. The attended user's approval is the admission. Each admission is
+   recorded as `sas` (both sides had a screen and a human compared) or
+   `ssh_host_key` and shown per device on the Sync tab. A real SAS needs two
+   humans, e.g. `sshub sync-join` typed on the new machine while the ring
+   member runs the enrollment in its TUI.
+6. The device enters as a **mirror** (Yellow: one signature + user approve). When
+   the only reachable participant is unattended (the Hub), it admits the joiner
+   as a mirror and appends the `DeviceAdd`; every attended device holds that op
+   as pending until one of its users approves it in review, so the joiner is
+   known only to the Hub until then.
+7. **Promotion to holder is separate and Red**, and needs two holders online for
    the resharing protocol.
 
 Minimal topology: 1 machine + phone (Quorum k=2 works, without trust sessions and

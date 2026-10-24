@@ -1,0 +1,82 @@
+{
+  "name": "@noble/post-quantum",
+  "version": "0.7.1",
+  "description": "Auditable & minimal JS implementation of post-quantum cryptography: FIPS 203, 204, 205, Falcon",
+  "files": [
+    "*.js",
+    "*.d.ts",
+    "src"
+  ],
+  "dependencies": {
+    "@noble/ciphers": "2.4.0",
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0"
+  },
+  "devDependencies": {
+    "@paulmillr/jsbt": "0.7.1",
+    "bismar": "0.1.8",
+    "@types/node": "26.2.0",
+    "fast-check": "4.2.0",
+    "prettier": "3.9.6",
+    "typescript": "6.0.3"
+  },
+  "scripts": {
+    "benchmark": "node benchmark/pq.ts",
+    "benchmark:size": "bismar -bsm",
+    "build": "tsc",
+    "check": "jsbt-check",
+    "build:clean": "rm *.{js,d.ts} 2> /dev/null",
+    "format": "prettier --write 'src/**/*.{js,ts}' 'test/**/*.{js,ts,mjs}'",
+    "test": "node --no-warnings test/index.ts",
+    "test:bun": "bun test/index.ts",
+    "test:deno": "deno --allow-env --allow-read test/index.ts",
+    "test:slow": "SLOW_TESTS=1 node test/index.ts"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./_crystals.js": "./_crystals.js",
+    "./falcon.js": "./falcon.js",
+    "./hybrid.js": "./hybrid.js",
+    "./ml-dsa.js": "./ml-dsa.js",
+    "./ml-kem.js": "./ml-kem.js",
+    "./slh-dsa.js": "./slh-dsa.js",
+    "./utils.js": "./utils.js",
+    "./webcrypto.js": "./webcrypto.js"
+  },
+  "engines": {
+    "node": ">= 20.19.0"
+  },
+  "keywords": [
+    "ml-kem",
+    "ml-dsa",
+    "slh-dsa",
+    "kyber",
+    "dilithium",
+    "sphincs",
+    "fips203",
+    "fips204",
+    "fips205",
+    "falcon",
+    "xwing",
+    "kitchensink",
+    "pqc",
+    "post-quantum",
+    "public-key",
+    "crypto",
+    "noble",
+    "cryptography"
+  ],
+  "homepage": "https://paulmillr.com/noble/",
+  "funding": "https://paulmillr.com/funding/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/paulmillr/noble-post-quantum.git"
+  },
+  "type": "module",
+  "main": "index.js",
+  "module": "index.js",
+  "types": "index.d.ts",
+  "sideEffects": false,
+  "author": "Paul Miller (https://paulmillr.com)",
+  "license": "MIT"
+}

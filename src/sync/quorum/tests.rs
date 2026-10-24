@@ -26,14 +26,14 @@ const FAST: Argon2Profile = Argon2Profile {
 const PHRASE: &str = "alpha bravo charlie delta echo foxtrot";
 const RING: [u8; 16] = [3; 16];
 
-fn approve_all(d: &Dev) {
+pub(crate) fn approve_all(d: &Dev) {
     for op in d.store.sync_pending().unwrap() {
         d.store.sync_resolve_pending(&op.hash(), true).unwrap();
     }
 }
 
 /// What a sync round does: ingest every chain tail `to` lacks, then the user approves what waits.
-fn deliver(from: &Dev, to: &Dev) {
+pub(crate) fn deliver(from: &Dev, to: &Dev) {
     for (dev, _, _) in from.store.sync_chain_heads().unwrap() {
         let have = to
             .store
@@ -49,7 +49,7 @@ fn deliver(from: &Dev, to: &Dev) {
     approve_all(to);
 }
 
-fn all_to_all(devs: &[Dev]) {
+pub(crate) fn all_to_all(devs: &[Dev]) {
     for _ in 0..2 {
         for a in devs {
             for b in devs {
@@ -61,11 +61,11 @@ fn all_to_all(devs: &[Dev]) {
     }
 }
 
-fn append(d: &Dev, body: OpBody) -> Op {
+pub(crate) fn append(d: &Dev, body: OpBody) -> Op {
     d.store.sync_append_local(&d.id, body).unwrap()
 }
 
-fn quorum_mode(d: &Dev) {
+pub(crate) fn quorum_mode(d: &Dev) {
     append(
         d,
         OpBody::ModeChange {
@@ -76,7 +76,7 @@ fn quorum_mode(d: &Dev) {
     );
 }
 
-fn payload(pw: &str) -> CredPayload {
+pub(crate) fn payload(pw: &str) -> CredPayload {
     CredPayload {
         password: Some(pw.into()),
         private_key: None,
@@ -1033,4 +1033,116 @@ fn paper_survives_a_revocation_reshare_and_opens_with_the_laptop_after_the_phone
         papers_after
     )
     .is_err());
+}
+
+#[test]
+fn the_trust_session_path_grants_under_a_certificate_and_defers_without_one() {
+    use crate::sync::cert::cert_opened_body;
+    use crate::sync::oplog::{CertScope, DeviceKind};
+    use crate::sync::protocol::tests::pipe_pair;
+    use crate::sync::protocol::{run_share_request, run_sync_serve, ShareAsk, ShareReply};
+
+    // 0 phone, 1 requester, 2 holder that answers, 3 another holder
+    let d: Vec<_> = (0..4).map(|_| Dev::new()).collect();
+    for (i, x) in d.iter().enumerate() {
+        for (j, y) in d.iter().enumerate() {
+            if i != j {
+                x.trust_as(
+                    y,
+                    if j == 0 {
+                        DeviceKind::Phone
+                    } else {
+                        DeviceKind::Terminal
+                    },
+                );
+            }
+        }
+    }
+    quorum_mode(&d[2]);
+    all_to_all(&d);
+    let host = [81u8; 16];
+    cred_put(&d[2].store, &d[2].id, &host, &payload("trusted")).unwrap();
+    let now = crate::store::now_ts();
+    let issue = |who: usize, scope: CertScope| {
+        append(
+            &d[0],
+            OpBody::CertIssue {
+                device_id: d[who].did.clone(),
+                scope,
+                expiry: now + 7 * 86_400,
+                max_new_hosts_per_day: 5,
+                epoch_lo: 0,
+                epoch_hi: 9,
+            },
+        )
+    };
+    issue(1, CertScope::Hosts(vec![host]));
+    issue(3, CertScope::Hosts(vec![[99u8; 16]]));
+    all_to_all(&d);
+
+    let eph_secret = x25519_dalek::StaticSecret::from([13u8; 32]);
+    let ask = |rid: u64| ShareAsk {
+        host_uid: host,
+        epoch: 0,
+        eph: x25519_dalek::PublicKey::from(&eph_secret).to_bytes(),
+        request_id: rid,
+    };
+    let run = |requester: usize, rid: u64| {
+        let (mut cl, mut sl) = pipe_pair();
+        let (hs, hi) = (&d[2].store, &d[2].id);
+        std::thread::scope(|sc| {
+            let h = sc.spawn(move || run_sync_serve(hs, hi, &mut sl));
+            let r = run_share_request(
+                &mut cl,
+                &d[requester].store,
+                &d[requester].id,
+                &d[2].did,
+                &ask(rid),
+            );
+            drop(cl);
+            (r, h.join().unwrap())
+        })
+    };
+
+    // The requester with a certificate for this host is granted a share sealed to its key.
+    let (r, served) = run(1, 7);
+    served.unwrap();
+    let ShareReply::Granted(sealed) = r.unwrap() else {
+        panic!("expected a grant")
+    };
+    let second =
+        crate::sync::share_release::unwrap_share_response(&eph_secret.to_bytes(), &sealed).unwrap();
+    let mine = own_shares(&d[1].store, &d[1].id, &host)
+        .unwrap()
+        .remove(0)
+        .1;
+    let dek = assemble_dek(&d[1].store, &host, mine, second).unwrap();
+    assert_eq!(
+        open_payload(&d[1].store, &host, &dek).password.as_deref(),
+        Some("trusted")
+    );
+    // The first release of the host was recorded in the log by the holder.
+    assert_eq!(
+        d[2].store
+            .sync_cert_hosts_opened(
+                &crate::sync::cert::DelegationCert::from_op(
+                    &ops_of(&d[2].store, "CertIssue", None).unwrap()[0]
+                )
+                .unwrap()
+                .id
+            )
+            .unwrap(),
+        vec![host]
+    );
+
+    // A device whose certificate covers another host, and one with no certificate, are deferred.
+    for (who, rid) in [(3usize, 8u64), (0usize, 9u64)] {
+        let (r, served) = run(who, rid);
+        served.unwrap();
+        assert!(
+            matches!(r.unwrap(), ShareReply::Deferred(_)),
+            "device {who}"
+        );
+    }
+    let _ = cert_opened_body;
 }
