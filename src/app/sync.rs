@@ -730,9 +730,13 @@ pub(crate) fn sample_sync_view_with_modals() -> SyncView {
                     status: "show the code to your phone".into(),
                 },
             ],
-            frames: (0..3u8)
-                .map(|i| (0..100u8).map(|b| b.wrapping_mul(7) ^ i).collect())
-                .collect(),
+            // A real challenge-sized payload cut for a 100x40 area (version 13).
+            frames: crate::sync::fountain::fountain_encode(
+                &(0..600u32).map(|b| (b * 7) as u8).collect::<Vec<u8>>(),
+                crate::sync::fountain::frame_bytes_for_area(100, 40).unwrap(),
+                crate::sync::limits::QR_PARITY_PERCENT,
+            )
+            .unwrap(),
             code: "ab-12".into(),
         }),
         sas: Some(SasView {

@@ -14,9 +14,8 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-/// Frames shown per second. Mirrors `limits::QR_FPS` (8 by default); switched
-/// to that constant when `src/sync/limits.rs` carries it.
-pub const FPS: u32 = 8;
+/// Frames shown per second.
+pub const FPS: u32 = crate::sync::limits::QR_FPS;
 /// Time one frame stays on screen.
 pub const FRAME_PERIOD: Duration = Duration::from_millis(1000 / FPS as u64);
 /// Quiet zone around the code, in modules.
@@ -36,16 +35,11 @@ pub fn cells_needed(version: i16) -> (u16, u16) {
     (side as u16, side.div_ceil(2) as u16)
 }
 
-/// The largest version that fits `w` columns by `h` rows, one module per
-/// column and two per row. This is the single seam to `fountain::
-/// qr_version_for_area`, which owns the rule (`80x24` is version 5, `120x40`
-/// is version 13) and replaces this body when it lands on the integration
-/// branch; nothing else here knows a size.
+/// The largest version that fits `w` columns by `h` rows (one module per
+/// column, two per row, 4-module quiet zone); the rule lives in
+/// `fountain::qr_version_for_area`, so the frames and the widget agree.
 fn version_for_area(w: u16, h: u16) -> Option<i16> {
-    (1..=40).rev().find(|&v| {
-        let (cw, ch) = cells_needed(v);
-        cw <= w && ch <= h
-    })
+    crate::sync::fountain::qr_version_for_area(w, h).map(|v| v as i16)
 }
 
 /// What [`render`] decided for an area.
@@ -165,6 +159,48 @@ mod tests {
         (0..len)
             .map(|i| (i as u8).wrapping_mul(31) ^ seed)
             .collect()
+    }
+
+    /// Real fountain frames, drawn and read back from the cells, reassemble
+    /// the original payload through the decoder.
+    #[test]
+    fn rendered_fountain_frames_reassemble_the_payload() {
+        use crate::sync::fountain::{fountain_encode, frame_bytes_for_area, FountainDecoder};
+        let area = Rect::new(2, 1, 90, 40);
+        let secret = payload(700, 9);
+        let fb = frame_bytes_for_area(area.width, area.height).unwrap();
+        let frames = fountain_encode(&secret, fb, 25).unwrap();
+        assert!(frames.len() > 3, "a payload that needs several frames");
+        let mut decoder = FountainDecoder::new();
+        for index in 0..frames.len() {
+            let mut buf = Buffer::empty(Rect::new(0, 0, 100, 50));
+            let QrPlan::Fits { version } = render(&mut buf, area, &frames, index) else {
+                panic!("fountain frames must fit the area they were sized for");
+            };
+            let grid = read_back(&buf, area, version);
+            // Which frame do these cells encode? No QR decoder is available,
+            // so match against the encoding of every frame; exactly one fits.
+            let n = modules(version);
+            let matches: Vec<usize> = (0..frames.len())
+                .filter(|&j| {
+                    let code =
+                        QrCode::with_version(&frames[j], Version::Normal(version), EcLevel::M)
+                            .unwrap();
+                    let colors = code.to_colors();
+                    (0..grid.len()).all(|y| {
+                        (0..grid.len()).all(|x| {
+                            let inside =
+                                (QUIET..QUIET + n).contains(&x) && (QUIET..QUIET + n).contains(&y);
+                            grid[y][x]
+                                == (inside && colors[(y - QUIET) * n + (x - QUIET)] == Module::Dark)
+                        })
+                    })
+                })
+                .collect();
+            assert_eq!(matches, vec![index], "the cells show frame {index}");
+            decoder.push(&frames[matches[0]]).unwrap();
+        }
+        assert_eq!(decoder.finish().unwrap(), Some(secret));
     }
 
     /// Read the drawn code back into a module matrix (quiet zone included),
