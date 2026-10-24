@@ -466,6 +466,10 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "Open a trust session: pick the scope first, then the term (7, 30 or 90 days)",
     },
     HelpItem::Entry {
+        key: "M",
+        desc: "Manage the ring: revoke a device, change roles, switch the credential mode, recovery, paper",
+    },
+    HelpItem::Entry {
         key: "",
         desc: "A synced credential opens in a modal when something needs it: type the six words of the master phrase and press Enter (Esc cancels).",
     },

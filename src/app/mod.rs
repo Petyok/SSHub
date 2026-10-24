@@ -34,6 +34,8 @@ mod sftp;
 mod snippets;
 mod suggestions;
 pub mod sync;
+mod sync_admin;
+pub(crate) mod sync_ui;
 pub(crate) mod sync_view;
 mod tags;
 pub mod test_connect;
@@ -310,6 +312,8 @@ pub struct App {
     pub sync_worker: Option<crate::sync::client::SyncHandle>,
     /// The action waiting for a credential unlock, if any.
     pub(crate) unlock_resume: Option<sync::UnlockResume>,
+    /// The open generic Sync modal (prompt, menu or panel).
+    pub(crate) sync_ui: Option<sync_ui::SyncUi>,
     /// Tracker line an Esc dismiss applies to: the ghost stays hidden until
     /// the input line changes. `None` while nothing is dismissed.
     pub ghost_dismissed_for: Option<String>,
@@ -1101,6 +1105,7 @@ impl App {
             snippet_picker: None,
             sync: sync::SyncView::default(),
             unlock_resume: None,
+            sync_ui: None,
             sync_worker: None,
             ghost_dismissed_for: None,
             ghost_host_cache: std::cell::RefCell::new(None),

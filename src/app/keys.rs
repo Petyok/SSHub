@@ -187,6 +187,9 @@ impl App {
             | AppMode::TrustSessionTtl
             | AppMode::SyncReleaseConfirm
             | AppMode::SyncOnboarding => self.handle_key_sync_modal(key),
+            AppMode::SyncPrompt | AppMode::SyncMenu | AppMode::SyncInfo => {
+                self.handle_key_sync_ui(key)
+            }
             AppMode::Connecting | AppMode::Session => self.handle_key_session(key),
             AppMode::Normal => self.handle_key_dashboard_tab(key),
         }

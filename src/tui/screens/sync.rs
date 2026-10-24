@@ -452,6 +452,66 @@ pub fn render_fork_alert(frame: &mut Frame, app: &App) {
     );
 }
 
+/// The generic Sync modals: a prompt, a menu or a text panel.
+pub fn render_sync_ui(frame: &mut Frame, app: &App) {
+    use crate::app::sync_ui::SyncUi;
+    let Some(ui) = app.sync_ui.as_ref() else {
+        return;
+    };
+    let theme = app.theme();
+    match ui {
+        SyncUi::Prompt {
+            title,
+            label,
+            masked,
+            value,
+            ..
+        } => {
+            let shown = if *masked {
+                "\u{2022}".repeat(value.chars().count())
+            } else {
+                value.clone()
+            };
+            let body = vec![
+                Line::styled(label.clone(), theme.style(StyleRole::TextPrimary)),
+                Line::raw(""),
+                Line::styled(
+                    format!("\u{203a} {shown}\u{2588}"),
+                    theme.style(StyleRole::PickerQuery),
+                ),
+            ];
+            modal(frame, app, title, 76, body, "Enter submit  Esc cancel");
+        }
+        SyncUi::Menu {
+            title,
+            items,
+            selected,
+        } => {
+            let selected = (*selected).min(items.len().saturating_sub(1));
+            let body: Vec<Line> = items
+                .iter()
+                .enumerate()
+                .map(|(i, (text, _))| row(i == selected, text.clone(), app))
+                .collect();
+            modal(
+                frame,
+                app,
+                title,
+                70,
+                body,
+                "\u{2191}\u{2193} select  Enter run  Esc close",
+            );
+        }
+        SyncUi::Info { title, lines } => {
+            let body: Vec<Line> = lines
+                .iter()
+                .map(|l| Line::styled(l.clone(), theme.style(StyleRole::TextPrimary)))
+                .collect();
+            modal(frame, app, title, 84, body, "Esc close");
+        }
+    }
+}
+
 pub fn render_trust_scope(frame: &mut Frame, app: &App) {
     let sync = &app.sync;
     if sync.trust_scopes.is_empty() {
