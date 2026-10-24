@@ -910,3 +910,127 @@ fn p0_a_copy_of_one_device_opens_nothing_through_the_unlocker_and_one_more_share
         Some("vault-secret")
     );
 }
+
+#[test]
+fn paper_survives_a_revocation_reshare_and_opens_with_the_laptop_after_the_phone_is_lost() {
+    // {laptop, phone, removed holder} plus the paper phrase.
+    let d = ring(3);
+    let (laptop, phone, removed) = (&d[0], &d[1], &d[2]);
+    let phrase = bip39_encode(&[0x24; 32]);
+    for x in &d {
+        paper_setup(&x.store, &phrase).unwrap();
+    }
+    let paper = paper_derive(&phrase, PaperDomain::Unwrap).unwrap();
+    quorum_mode(laptop);
+    all_to_all(&d);
+    let before = [[51u8; 16], [52u8; 16]];
+    for h in &before {
+        cred_put(
+            &laptop.store,
+            &laptop.id,
+            h,
+            &payload(&format!("old{}", h[0])),
+        )
+        .unwrap();
+    }
+    all_to_all(&d);
+    let removed_old = own_shares(&removed.store, &removed.id, &before[0])
+        .unwrap()
+        .remove(0)
+        .1;
+    let paper_old = own_shares(&laptop.store, &paper, &before[0])
+        .unwrap()
+        .remove(0)
+        .1;
+
+    // Revoke the third holder and reshare to the two that remain. Nobody types the paper phrase.
+    append(
+        laptop,
+        OpBody::DeviceRevoke {
+            device_id: removed.did.clone(),
+        },
+    );
+    all_to_all(&d[..2]);
+    let epoch = next_epoch(&laptop.store).unwrap();
+    let holders = vec![laptop.did.clone(), phone.did.clone()];
+    let combines = COMBINE_CALLS.with(|c| c.get());
+    for who in [laptop, phone] {
+        for body in reissue_plan(&who.store, &who.id, &holders, epoch)
+            .unwrap()
+            .bodies
+        {
+            append(who, body);
+        }
+    }
+    all_to_all(&d[..2]);
+    for who in [laptop, phone] {
+        for body in reissue_receive(&who.store, &who.id, epoch).unwrap().bodies {
+            append(who, body);
+        }
+    }
+    all_to_all(&d[..2]);
+    assert_eq!(
+        COMBINE_CALLS.with(|c| c.get()),
+        combines,
+        "the reshare never reconstructs, paper included"
+    );
+
+    // A credential created after the reshare: the removed holder is not a recipient, the paper is.
+    let after = [53u8; 16];
+    cred_put(&laptop.store, &laptop.id, &after, &payload("new53")).unwrap();
+    all_to_all(&d[..2]);
+    assert!(own_shares(&removed.store, &removed.id, &after).is_err());
+
+    // The phone is lost. The laptop and the paper still open every credential.
+    for h in before.iter().chain(std::iter::once(&after)) {
+        let mine = own_shares(&laptop.store, &laptop.id, h).unwrap().remove(0);
+        let papers = own_shares(&laptop.store, &paper, h).unwrap().remove(0);
+        assert_eq!(
+            mine.0, papers.0,
+            "both at the newest sharing of that credential"
+        );
+        let dek = assemble_dek(&laptop.store, h, mine.1, papers.1).unwrap();
+        let want = if h[0] == 53 {
+            "new53".to_string()
+        } else {
+            format!("old{}", h[0])
+        };
+        assert_eq!(
+            open_payload(&laptop.store, h, &dek)
+                .password
+                .clone()
+                .unwrap(),
+            want
+        );
+    }
+    assert_eq!(
+        own_shares(&laptop.store, &paper, &before[0]).unwrap()[0].0,
+        epoch,
+        "the paper's share of an old credential is the reshared one"
+    );
+
+    // The removed holder's old share does not combine with the paper's new share, and has nothing for
+    // credentials created after the reshare.
+    let paper_new = own_shares(&laptop.store, &paper, &before[0])
+        .unwrap()
+        .remove(0)
+        .1;
+    assert!(assemble_dek(&laptop.store, &before[0], removed_old.clone(), paper_new).is_err());
+    // Residual (B6, as documented): the old sharing is still there; a revoked device that keeps its old
+    // wrap key plus the paper's OLD share opens what existed before the reshare, never what came after.
+    assert!(assemble_dek(&laptop.store, &before[0], removed_old, paper_old).is_ok());
+    let papers_after = own_shares(&laptop.store, &paper, &after)
+        .unwrap()
+        .remove(0)
+        .1;
+    assert!(assemble_dek(
+        &laptop.store,
+        &after,
+        Share {
+            index: 3,
+            bytes: vec![0; 32]
+        },
+        papers_after
+    )
+    .is_err());
+}

@@ -410,6 +410,15 @@ pub fn own_shares(
             }
         }
     }
+    // The paper adopts nothing: at the epochs it is a holder of, rebuild its share from the
+    // sub-shares the contributors sealed to its permanent key.
+    for e in super::reshare::reshare_epochs(store)? {
+        if !out.iter().any(|(x, _)| *x == e) {
+            if let Ok(share) = super::reshare::paper_share_at(store, id, host, e) {
+                out.push((e, share));
+            }
+        }
+    }
     out.sort_by_key(|(e, _)| std::cmp::Reverse(*e));
     out.dedup_by_key(|(e, _)| *e);
     if let Some((_, wraps)) = store.sync_cred_ciphertext(host)? {
