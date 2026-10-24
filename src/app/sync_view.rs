@@ -370,7 +370,8 @@ impl App {
 
     fn try_refresh_sync_view(&mut self) -> Result<()> {
         let store = self.store.clone();
-        let rows = store.sync_devices()?;
+        // Roles and the mode as the ceremony sees them: a change whose proofs are not in is not in force.
+        let rows = crate::sync::ceremony::effective_devices(&store, None)?;
         // Every pending op with its reason, `unknown-author` ones included.
         let held = store.sync_pending_with_reasons()?;
         let review: Vec<PendingOpView> = held
@@ -381,7 +382,7 @@ impl App {
         let cred_mode = if rows.is_empty() {
             None
         } else {
-            Some(match store.sync_cred_mode()? {
+            Some(match crate::sync::ceremony::effective_cred_mode(&store)? {
                 CredMode::Vault => CredModeView::Vault,
                 CredMode::Quorum => CredModeView::Quorum,
             })

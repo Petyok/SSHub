@@ -539,7 +539,7 @@ fn hex(h: &[u8; 32]) -> String {
 // ------------------------------------------------------------------ lookups
 
 pub(crate) fn find_device(store: &LauncherStore, spec: &str) -> Result<DeviceRow> {
-    let all = store.sync_devices()?;
+    let all = crate::sync::ceremony::effective_devices(store, None)?;
     let hits: Vec<&DeviceRow> = all
         .iter()
         .filter(|d| d.id.to_string().starts_with(spec) || d.name == spec)
@@ -1125,7 +1125,7 @@ pub fn print_help(cmd: &str) {
         "sync-factor" => ("sync-factor <op-id> (--paper | --email-code) [--format plain|json]", "Add the third factor to a Red op. The 24 paper words or the emailed code are read without echo."),
         "sync-factor-register" => ("sync-factor-register (paper | email) [--sender <device>] [--format plain|json]", "Register a third factor. Paper reads the 24 words without echo; email creates a code and shows it once."),
         "sync-recovery" => ("sync-recovery (start [--paper] | approve <op-id> | ack <op-id> | cancel <op-id> --factor paper|email | status) [--format plain|json]", "Re-enroll the phone: start, approve or acknowledge as another attended device, cancel, or show the state of every recovery."),
-        "sync-mode" => ("sync-mode (vault | quorum) [--cosigner <device>] [--format plain|json]", "Change the credential mode (Red). From the command line only Vault to Quorum can open the credentials; the master phrase is read without echo."),
+        "sync-mode" => ("sync-mode (vault | quorum) [--cosigner <device>] [--format plain|json]", "Change the credential mode (Red), in two steps: the first call proposes it and shows the ceremony; run it again once the ring agreed to re-encrypt the credentials. From the command line only Vault to Quorum can open the credentials; the master phrase is read without echo."),
         "sync-exemption" => ("sync-exemption (on | off) <device> [--format plain|json]", "Switch the master-phrase exemption of a device off (Red). Switching it on needs the TUI."),
         "sync-export" => ("sync-export --window <seconds> --out <path> [--wait <seconds>] [--format plain|json]", "Bulk export (Red, window up to 3600 s): propose it, wait for the ceremony, then write every credential to a new 0600 file in the Termius CSV format (import it from a directory as L00t.csv)."),
         "sync-migrate" => ("sync-migrate [--remove-local] [--format plain|json]", "Write this profile's existing host and identity secrets as replicated credentials; --remove-local deletes the local copies afterwards."),

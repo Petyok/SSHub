@@ -84,7 +84,7 @@ impl UiShares {
     /// Ask each holder that is reachable and not the phone; `Granted` ends it.
     fn via_trusted_peers(&self, host: &HostUid, epoch: u64) -> Option<Share> {
         let rt = &self.runtime;
-        let rows = rt.store.sync_devices().ok()?;
+        let rows = crate::sync::ceremony::effective_devices(&rt.store, None).ok()?;
         let me = rt.identity.public().device_id();
         let peers = Peers::load(&rt.paths).ok()?;
         for d in rows.iter().filter(|d| {
@@ -190,7 +190,10 @@ impl UiShares {
     /// or compromised, that this device knows how to reach.
     fn reachable_holders(&self) -> Vec<(crate::sync::oplog::DeviceId, String)> {
         let rt = &self.runtime;
-        let (Ok(rows), Ok(peers)) = (rt.store.sync_devices(), Peers::load(&rt.paths)) else {
+        let (Ok(rows), Ok(peers)) = (
+            crate::sync::ceremony::effective_devices(&rt.store, None),
+            Peers::load(&rt.paths),
+        ) else {
             return Vec::new();
         };
         let me = rt.identity.public().device_id();
