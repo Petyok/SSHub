@@ -62,6 +62,27 @@ snow() {
   peer "$1" $SSHUB sync-now --format json 2>/dev/null || true
 }
 
+# Approve every pending change on an attended peer. Each id from the JSON list
+# of sync-review is approved in turn; an empty queue approves nothing.
+approve_all() {
+  p=$1
+  for id in $(peer "$p" $SSHUB sync-review --format json 2>/dev/null | pjq -r '.[].id' 2>/dev/null || true); do
+    peer "$p" $SSHUB sync-review --approve "$id" || return 1
+  done
+}
+
+# Evidence for the run log: sync status and the raw peers.json of every peer.
+# Printed only, never asserted on. peers.json holds no secrets.
+dump_state() {
+  echo "=== state: $1"
+  for p in $PEERS; do
+    echo "--- $p sync-status"
+    peer "$p" $SSHUB sync-status --format json 2>&1 || true
+    echo "--- $p peers.json"
+    psh "$p" 'find "$HOME" -path "*/sync/peers.json" -exec cat {} \;' 2>&1 || true
+  done
+}
+
 # Finish: print the scenario marker and exit with the failure status.
 finish() {
   if [ "$fail" -eq 0 ]; then

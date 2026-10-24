@@ -67,4 +67,7 @@ SetEnv DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/bus
 EOF
 
 echo "peer-entrypoint: $PEER_NAME ready, sshd on $SSH_PORT"
-exec /usr/sbin/sshd -D -e -f "$H/ssh/sshd_config"
+# sshd daemonizes (pid in $H/ssh/sshd.pid) so scenarios can stop and restart it.
+# This shell holds the container open; as PID 1 sshd would ignore SIGTERM.
+/usr/sbin/sshd -e -f "$H/ssh/sshd_config"
+exec sleep infinity
