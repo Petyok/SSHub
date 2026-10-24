@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PoC C QR budget rig (offline)</title>
+<link rel="stylesheet" href="vendor/xterm.css">
+<script src="vendor/xterm.js"></script>
+<script src="vendor/qrcode.js"></script>
+<script src="vendor/jsQR.js"></script>
+<script src="share-lib.js"></script>
+<style>
+  html, body { margin: 0; background: #444; }
+  #host { display: inline-block; }
+</style>
+</head>
+<body>
+<div id="host"></div>
+<script>
+"use strict";
+const L = window.ShareLib;
+
+// Terminal palettes. The QR is drawn with the foreground colour as dark modules, so the dark
+// palette shows a light-on-dark code (inverted polarity). The runner decodes both ways.
+const THEMES = {
+  light: { background: "#ffffff", foreground: "#000000" },
+  dark:  { background: "#000000", foreground: "#ffffff" },
+};
+
+let term = null;
+const host = document.getElementById("host");
+
+function seededBytes(n, seed) {
+  const out = new Uint8Array(n);
+  let s = seed >>> 0;
+  for (let i = 0; i < n; i++) { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; out[i] = s >>> 24; }
+  return out;
+}
+
+// Half-block rendering: each text cell carries two vertical modules.
+function halfBlockLines(qr, quiet) {
+  const n = qr.getModuleCount();
+  const dark = (r, c) => r >= 0 && c >= 0 && r < n && c < n && qr.isDark(r, c);
+  const lines = [];
+  for (let r = -quiet; r < n + quiet; r += 2) {
+    let s = "";
+    for (let c = -quiet; c < n + quiet; c++) {
+      const t = dark(r, c), b = dark(r + 1, c);
+      s += t && b ? "\u2588" : t ? "\u2580" : b ? "\u2584" : " ";
+    }
+    lines.push(s);
+  }
+  return lines;
+}
+
+function fresh(cols, rows, themeName) {
+  host.innerHTML = "";
+  if (term) term.dispose();
+  term = new Terminal({
+    cols, rows, scrollback: 0, fontSize: 14, lineHeight: 1.0,
+    fontFamily: "monospace", theme: THEMES[themeName], cursorBlink: false,
+    allowProposedApi: true,
+  });
+  term.open(host);
+}
+
+const nextFrame = () => new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
+
+// C1: draw the largest payload that fits `version` at M into a cols x rows terminal.
+window.renderQR = async function (o) {
+  const quiet = o.quiet == null ? 4 : o.quiet;
+  const cap = L.byteCapacity(o.version, "M");
+  const payload = seededBytes(cap, o.seed || 1);
+  const qr = L.qrFor(payload, o.version, "M");
+  const lines = halfBlockLines(qr, quiet);
+  const width = lines[0].length;
+  const fits = width <= o.cols && lines.length <= o.rows;
+  const res = {
+    version: o.version, modules: qr.getModuleCount(), payload_bytes: cap,
+    lines: lines.length, width, cols: o.cols, rows: o.rows, theme: o.theme, quiet,
+    fits, expected_hex: L.hex(payload),
+  };
+  if (!fits) return res;
+  fresh(o.cols, o.rows, o.theme);
+  await new Promise((r) => term.write(lines.join("\r\n"), r));
+  await nextFrame();
+  const el = host.querySelector(".xterm-screen") || host;
+  const rect = el.getBoundingClientRect();
+  res.cell_w_px = +(rect.width / o.cols).toFixed(3);
+  res.cell_h_px = +(rect.height / o.rows).toFixed(3);
+  res.cell_aspect_h_over_w = +(res.cell_h_px / res.cell_w_px).toFixed(3);
+  return res;
+};
+
+// Capacity table at M and L for the runner's record.
+window.capacityTable = function (maxV) {
+  const out = [];
+  for (let v = 1; v <= maxV; v++) {
+    out.push({ version: v, modules: 17 + 4 * v, bytes_M: L.byteCapacity(v, "M"), bytes_L: L.byteCapacity(v, "L") });
+  }
+  return out;
+};
+
+// C3: frames for a payload at a fixed version, rendered to canvas, decoded in memory, reassembled offline.
+window.runC3 = function (o) {
+  const cap = L.byteCapacity(o.version, "M");
+  const chunk = cap - L.CHUNK_HDR;
+  const canvas = document.createElement("canvas");
+  const rows = [];
+  for (const size of o.sizes) {
+    const data = seededBytes(size, 99 + size);
+    const chunks = L.fountainChunks(data, chunk);
+    let decodeFail = 0;
+    const decoded = [];
+    for (const c of chunks) {
+      L.drawQR(canvas, L.qrFor(c, o.version, "M"), 4, 4);
+      const got = L.scanCanvas(canvas);
+      if (got && L.equalBytes(got, c)) decoded.push(got); else decodeFail++;
+    }
+    const re = new L.Reassembler();
+    for (const f of decoded) re.add(f);
+    const offlineOk = re.bytes !== null && L.equalBytes(re.bytes, data);
+    const row = {
+      version: o.version, payload_bytes: size, chunk_bytes: chunk, frame_payload_bytes: cap,
+      frames: chunks.length, qr_decode_fail: decodeFail, offline_reassembly_ok: offlineOk,
+    };
+    for (const fps of o.fps) row["cycle_s_at_" + fps + "fps"] = +(chunks.length / fps).toFixed(3);
+    rows.push(row);
+  }
+  return rows;
+};
+
+window.ready = true;
+</script>
+</body>
+</html>
