@@ -172,7 +172,9 @@ impl Default for SyncConfig {
 pub struct NotifyConfig {
     /// Full command line, split into arguments without a shell, for example
     /// `/usr/sbin/sendmail -t -i`. It must take the recipients from the message
-    /// headers (`-t`). Quote an argument with `"` or `'` if it contains spaces.
+    /// headers (`-t`) and must pass `-i` (or `-oi`): without it sendmail ends the
+    /// message at a line holding only `.`, which would cut the body short. Quote
+    /// an argument with `"` or `'` if it contains spaces.
     #[serde(default)]
     pub command: Option<String>,
     /// Recipient addresses, written into the To header.
