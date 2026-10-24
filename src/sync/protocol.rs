@@ -793,7 +793,11 @@ fn my_heads(store: &LauncherStore) -> Result<BTreeMap<DeviceId, (u64, [u8; 32])>
 }
 
 /// Sort per chain, ingest, and retry what failed only for order (unknown author, gap) once the rest landed.
-fn ingest_ops(store: &LauncherStore, ops: Vec<Op>, sum: &mut RoundSummary) -> Result<bool> {
+pub(crate) fn ingest_ops(
+    store: &LauncherStore,
+    ops: Vec<Op>,
+    sum: &mut RoundSummary,
+) -> Result<bool> {
     let mut queue = ops;
     queue.sort_by(|a, b| (&a.device_id, a.seq).cmp(&(&b.device_id, b.seq)));
     let mut any = false;

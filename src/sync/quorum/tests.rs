@@ -26,14 +26,14 @@ const FAST: Argon2Profile = Argon2Profile {
 const PHRASE: &str = "alpha bravo charlie delta echo foxtrot";
 const RING: [u8; 16] = [3; 16];
 
-fn approve_all(d: &Dev) {
+pub(crate) fn approve_all(d: &Dev) {
     for op in d.store.sync_pending().unwrap() {
         d.store.sync_resolve_pending(&op.hash(), true).unwrap();
     }
 }
 
 /// What a sync round does: ingest every chain tail `to` lacks, then the user approves what waits.
-fn deliver(from: &Dev, to: &Dev) {
+pub(crate) fn deliver(from: &Dev, to: &Dev) {
     for (dev, _, _) in from.store.sync_chain_heads().unwrap() {
         let have = to
             .store
@@ -49,7 +49,7 @@ fn deliver(from: &Dev, to: &Dev) {
     approve_all(to);
 }
 
-fn all_to_all(devs: &[Dev]) {
+pub(crate) fn all_to_all(devs: &[Dev]) {
     for _ in 0..2 {
         for a in devs {
             for b in devs {
@@ -61,11 +61,11 @@ fn all_to_all(devs: &[Dev]) {
     }
 }
 
-fn append(d: &Dev, body: OpBody) -> Op {
+pub(crate) fn append(d: &Dev, body: OpBody) -> Op {
     d.store.sync_append_local(&d.id, body).unwrap()
 }
 
-fn quorum_mode(d: &Dev) {
+pub(crate) fn quorum_mode(d: &Dev) {
     append(
         d,
         OpBody::ModeChange {
@@ -76,7 +76,7 @@ fn quorum_mode(d: &Dev) {
     );
 }
 
-fn payload(pw: &str) -> CredPayload {
+pub(crate) fn payload(pw: &str) -> CredPayload {
     CredPayload {
         password: Some(pw.into()),
         private_key: None,

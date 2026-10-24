@@ -684,6 +684,73 @@ impl Unlocker for QuorumUnlocker {
     }
 }
 
+/// Why a holder releases a share.
+pub enum Grant<'a> {
+    /// The user of this (attended) device approved the prompt that named the requester.
+    Approved,
+    /// A trust-session certificate allows it. The caller supplies what `cert_allows` needs.
+    Cert {
+        cert: &'a super::cert::DelegationCert,
+        issuer_ed25519: [u8; 32],
+        phone_head_ts: i64,
+        now: i64,
+    },
+}
+
+/// Whether this device is recorded as unattended (a VPS holder, the Hub). A device not in its own
+/// table has never written anything and is attended by definition.
+pub fn is_unattended(store: &LauncherStore, me: &DevicePublic) -> Result<bool> {
+    Ok(store
+        .sync_devices()?
+        .iter()
+        .any(|d| d.id == me.device_id() && d.attendance == super::oplog::Attendance::Unattended))
+}
+
+/// [`release_share`] behind the rule that an unattended holder releases nothing outside an active
+/// certificate: a prompt nobody reads is no consent. Returns the sealed reply and, when a
+/// certificate was used for a host not yet opened under it, the `CertHostOpened` body to append.
+pub fn release_share_for(
+    store: &LauncherStore,
+    id: &DeviceIdentity,
+    host: &HostUid,
+    epoch: u64,
+    eph_x25519_pub: &[u8; 32],
+    requester: &DeviceId,
+    grant: Grant<'_>,
+) -> Result<(Vec<u8>, Option<OpBody>)> {
+    let opened = match grant {
+        Grant::Approved => {
+            ensure!(
+                !is_unattended(store, &id.public())?,
+                "an unattended device releases shares only under a valid trust certificate"
+            );
+            None
+        }
+        Grant::Cert {
+            cert,
+            issuer_ed25519,
+            phone_head_ts,
+            now,
+        } => {
+            super::cert::cert_allows(
+                cert,
+                &issuer_ed25519,
+                store,
+                requester,
+                host,
+                phone_head_ts,
+                now,
+            )?;
+            (!store.sync_cert_hosts_opened(&cert.id)?.contains(host))
+                .then(|| super::cert::cert_opened_body(cert, host))
+        }
+    };
+    Ok((
+        release_share(store, id, host, epoch, eph_x25519_pub)?,
+        opened,
+    ))
+}
+
 /// Releases `share` to a requester's ephemeral key after the holder's user approved.
 pub fn release_share(
     store: &LauncherStore,
@@ -704,4 +771,4 @@ pub fn release_share(
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

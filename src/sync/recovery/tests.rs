@@ -32,6 +32,7 @@ fn ack(at: i64) -> Event {
     Event::Ack {
         by: id("relay-peer"),
         seen_at: at,
+        attended: true,
     }
 }
 
@@ -127,6 +128,7 @@ fn events() -> Vec<(&'static str, Event)> {
             Event::Ack {
                 by: id("req"),
                 seen_at: T0 + 20,
+                attended: true,
             },
         ),
         (
@@ -134,6 +136,15 @@ fn events() -> Vec<(&'static str, Event)> {
             Event::Ack {
                 by: id("relay-peer"),
                 seen_at: T0 - 10_000,
+                attended: true,
+            },
+        ),
+        (
+            "ack-unattended",
+            Event::Ack {
+                by: id("hub"),
+                seen_at: T0 + 20,
+                attended: false,
             },
         ),
         ("cancel-by-phone", Event::CancelByPhone { by_phone: true }),
@@ -155,16 +166,16 @@ fn events() -> Vec<(&'static str, Event)> {
 
 /// `o` the event is accepted in that state, `e` it is refused. Columns follow `events()`.
 const EXPECT: [(&str, &str); 9] = [
-    // propose, invalid, approve, again, by-req, unattended, ack, ack-req, ack-pre, phone, phone-false, factor, no-factor, complete
-    ("idle", "oeeeeeeeeeeeee"),
-    ("await0", "eeooeeoeeoeoee"),
-    ("await1", "eeooeeoeeoeoee"),
-    ("await-ack", "eeooeeoeeoeoee"),
-    ("timelock", "eeooeeoeeoeoee"),
-    ("ready", "eeooeeoeeoeoeo"),
-    ("cancelled-phone", "eeeeeeeeeeeeee"),
-    ("cancelled-factor", "eeeeeeeeeeeeee"),
-    ("completed", "eeeeeeeeeeeeee"),
+    // propose, invalid, approve, again, by-req, unattended, ack, ack-req, ack-pre, ack-unattended, phone, phone-false, factor, no-factor, complete
+    ("idle", "oeeeeeeeeeeeeee"),
+    ("await0", "eeooeeoeeeoeoee"),
+    ("await1", "eeooeeoeeeoeoee"),
+    ("await-ack", "eeooeeoeeeoeoee"),
+    ("timelock", "eeooeeoeeeoeoee"),
+    ("ready", "eeooeeoeeeoeoeo"),
+    ("cancelled-phone", "eeeeeeeeeeeeeee"),
+    ("cancelled-factor", "eeeeeeeeeeeeeee"),
+    ("completed", "eeeeeeeeeeeeeee"),
 ];
 
 #[test]

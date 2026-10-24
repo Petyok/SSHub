@@ -70,10 +70,12 @@ pub enum Event {
         by: DeviceId,
         attended: bool,
     },
-    /// "I have seen the op at `seen_at`" by `by`.
+    /// "I have seen the op at `seen_at`" by `by`; `attended` is whether that device is attended
+    /// (an unattended device, the Hub for one, has seen nothing and cannot start the clock).
     Ack {
         by: DeviceId,
         seen_at: i64,
+        attended: bool,
     },
     /// Cancellation authored by the phone itself (`by_phone`), proving it is alive.
     CancelByPhone {
@@ -163,8 +165,13 @@ impl Recovery {
                 ensure!(attended, "only attended devices approve a recovery");
                 self.approvals.insert(by);
             }
-            Event::Ack { by, seen_at } => {
+            Event::Ack {
+                by,
+                seen_at,
+                attended,
+            } => {
                 let p = self.open()?;
+                ensure!(attended, "only an attended device acknowledges a recovery: an unattended device has seen nothing");
                 ensure!(
                     by != p.requester,
                     "the requester cannot acknowledge its own recovery"
