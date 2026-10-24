@@ -38,6 +38,7 @@ pub(crate) fn device_view(row: &DeviceRow) -> DeviceView {
         last_seen: (row.last_seen > 0).then_some(row.last_seen),
         head_seq: row.head_seq,
         verified_by: None,
+        this: false,
     }
 }
 
@@ -236,6 +237,42 @@ pub(crate) fn pending_view(
     }
 }
 
+/// The proof of a fork as lines for the alert: what was signed twice and where.
+pub(crate) fn evidence_lines(e: &crate::sync::oplog::ForkEvidence) -> Vec<String> {
+    use crate::sync::oplog::ForkEvidence;
+    let h = |b: &[u8; 32]| {
+        b[..4]
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect::<String>()
+    };
+    let op = |o: &Op| {
+        format!(
+            "operation seq {} lamport {} hash {}",
+            o.seq,
+            o.lamport,
+            h(&o.hash())
+        )
+    };
+    match e {
+        ForkEvidence::Ops(a, b) => vec![
+            "Proof: two different operations signed by the same device at the same position".into(),
+            format!("  {}", op(a)),
+            format!("  {}", op(b)),
+        ],
+        ForkEvidence::OpAndHead(o, head) => vec![
+            "Proof: an operation and a signed head that contradict each other".into(),
+            format!("  {}", op(o)),
+            format!("  signed head seq {} hash {}", head.seq, h(&head.hash)),
+        ],
+        ForkEvidence::Heads(a, b) => vec![
+            "Proof: two signed heads that cannot both be true".into(),
+            format!("  signed head seq {} hash {}", a.seq, h(&a.hash)),
+            format!("  signed head seq {} hash {}", b.seq, h(&b.hash)),
+        ],
+    }
+}
+
 impl App {
     /// Re-read the Sync view from the store. A ring exists once the store knows
     /// a device. On a read failure the view keeps what it had and says why.
@@ -264,6 +301,7 @@ impl App {
                 CredMode::Quorum => CredModeView::Quorum,
             })
         };
+        let this_device = self.sync.this_device.clone();
         let sync = &mut self.sync;
         sync.configured = !rows.is_empty();
         sync.devices = rows
@@ -271,6 +309,7 @@ impl App {
             .map(|r| {
                 let mut v = device_view(r);
                 v.verified_by = Some(r.verified_by);
+                v.this = this_device.as_deref() == Some(r.id.as_str());
                 v
             })
             .collect();
@@ -312,6 +351,20 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    /// An identity's key file was set or changed: replicate its bytes with the
+    /// credential when the profile is in a ring (the passphrase goes through
+    /// `PasswordStore::set` on its own).
+    pub(crate) fn replicate_identity_key(&mut self, id: i64) {
+        let result = self
+            .password_store
+            .gate()
+            .and_then(|g| g.replicator())
+            .map(|r| r.replicate_identity_key(id));
+        if let Some(Err(e)) = result {
+            self.identity_notice = Some(format!("Saved, but replicating the key failed: {e:#}"));
+        }
     }
 
     /// `[sync] auto_sync_on_start`: queue one sync with every ring device that

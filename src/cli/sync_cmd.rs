@@ -37,6 +37,10 @@ const COMMANDS: [&str; 6] = [
     "sync-review",
 ];
 
+/// Appended to every device sync-now cannot reach for want of a host.
+const HOW_TO_RECORD_A_HOST: &str =
+    "press t on its host in the hosts tab, or run `sshub sync-join <host>` (a repeat ceremony records it)";
+
 const EMPTY_RING: &str = "No sync ring on this profile yet.";
 
 pub fn is_sync_command(cmd: &str) -> bool {
@@ -371,6 +375,8 @@ fn resolve_device<'a>(devices: &'a [(String, String)], query: &str) -> Result<&'
 enum Outcome {
     Ok(Box<RoundSummary>),
     Skipped,
+    /// Announced by the ring, waiting for this machine's approval.
+    Admitting,
     Failed(String),
 }
 
@@ -395,6 +401,18 @@ fn now(paths: &ProfilePaths, device: Option<&str>, json_out: bool) -> Result<i32
         }
         return Ok(0);
     }
+    // Devices the ring announced that this machine has not admitted yet.
+    let admitting: Vec<(String, String)> = store
+        .sync_pending()?
+        .iter()
+        .filter_map(|op| match &op.body {
+            crate::sync::oplog::OpBody::DeviceAdd { device, name, .. } => {
+                Some((device.device_id(), name.clone()))
+            }
+            _ => None,
+        })
+        .filter(|(id, _)| !rows.iter().any(|r| r.id == *id))
+        .collect();
     drop(store);
     let rt = runtime(paths)?;
     let me = rt.identity.public().device_id();
@@ -424,6 +442,11 @@ fn now(paths: &ProfilePaths, device: Option<&str>, json_out: bool) -> Result<i32
         };
         results.push((id, name, outcome));
     }
+    if device.is_none() {
+        for (id, name) in admitting {
+            results.push((id, name, Outcome::Admitting));
+        }
+    }
 
     let mut fork = false;
     let mut failed = false;
@@ -433,9 +456,21 @@ fn now(paths: &ProfilePaths, device: Option<&str>, json_out: bool) -> Result<i32
         match outcome {
             Outcome::Skipped => {
                 if !json_out {
-                    println!("{name}: skipped (no host known)");
+                    println!("{name}: skipped (no host known); {HOW_TO_RECORD_A_HOST}");
                 }
-                array.push(json!({"device": id, "name": name, "status": "skipped"}));
+                array.push(json!({
+                    "device": id, "name": name, "status": "skipped",
+                    "reason": format!("no host known; {HOW_TO_RECORD_A_HOST}"),
+                }));
+            }
+            Outcome::Admitting => {
+                if !json_out {
+                    println!("{name}: not admitted yet (waiting for approval: sshub sync-review)");
+                }
+                array.push(json!({
+                    "device": id, "name": name, "status": "pending_admission",
+                    "reason": "waiting for approval: sshub sync-review",
+                }));
             }
             Outcome::Failed(r) => {
                 attempted = true;

@@ -574,6 +574,7 @@ Review lists each waiting change with its fields as `old -> new`; fields that ca
 |-----|--------|
 | `↑` / `↓` | Select a device |
 | `y` | Sync now with the selected device |
+| `Enter` | On a compromised device: its proof and what to do next. On a behind or stale one: sync first, then (if it is still behind) re-enroll it through its recorded host |
 | `R` | Review the changes waiting for approval (`a` approve, `r` reject, `Esc` close) |
 | `t` | Open a trust session: pick the scope first, then the term (7, 30 or 90 days) |
 
@@ -581,7 +582,7 @@ A fork (a device that signed two different histories) takes over the whole scree
 
 Vault first run: the app issues a six-word master phrase (from the EFF list) and a ring secret, shows the words once, asks you to retype two of them, then writes the printable kit as two separate files at paths you choose: a phrase sheet and a ring secret sheet (the secret as a QR code and as text). Each carries the "do not photograph" warning, is created owner-only and never overwritten; the phrase is kept nowhere else on disk.
 
-When the first run finishes the ring exists on this machine: the master-phrase key is derived (one second or two, 1 GiB of memory), the ring secret goes to the profile's credential store, and this device becomes the ring's first entry. A synced credential stays locked until opened: a connect, SFTP, tunnel, broadcast or key push that needs one opens the unlock modal, where you type the six words of the master phrase (the CLI asks on the terminal without echo). Credentials that need a second device's share (Quorum rings) cannot be opened yet.
+When the first run finishes the ring exists on this machine: the master-phrase key is derived (one second or two, 1 GiB of memory), the ring secret goes to the profile's credential store, and this device becomes the ring's first entry. A synced credential stays locked until opened: a connect, SFTP, tunnel, broadcast or key push that needs one opens the unlock modal, where you type the six words of the master phrase (the CLI asks on the terminal without echo). While the profile is in a ring, saving a password, a passphrase or an identity's key file (host form, identity form, key generation, the auth prompt's remember choice, `host add --password-stdin`, `identity add`) writes a replicated credential instead of a local keyring entry, and clearing one replicates the clearing; the value stays open in this process until it exits. Credentials that need a second device's share (Quorum rings) cannot be opened yet.
 
 ## Theming
 

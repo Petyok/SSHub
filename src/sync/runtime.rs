@@ -20,6 +20,7 @@ use crate::store::LauncherStore;
 use crate::sync::client::{
     Round, RoundCtx, RoundFn, SasPromptInfo, SshTransport, SyncCmd, SyncEvent, TransportError,
 };
+use crate::sync::cred_ops::{cred_put, CredPayload};
 use crate::sync::crypto::{Argon2Profile, DeviceIdentity, ARGON2_MASTER};
 use crate::sync::enroll::{run_sync_join, EnrollOutcome, SasConfirm, SasPrompt};
 use crate::sync::identity_store::load_or_init_identity;
@@ -250,6 +251,113 @@ impl SasConfirm for UiSas<'_, '_> {
     }
 }
 
+/// Saves of secrets become replicated credentials while the profile is in a
+/// ring (installed on the gate, so every `PasswordStore::set` and `delete`
+/// goes through it, TUI and CLI alike).
+pub struct StoreReplicator {
+    store: Arc<LauncherStore>,
+    paths: ProfilePaths,
+    open_secrets: fn(&ProfilePaths) -> Box<dyn PasswordStore>,
+    gate: std::sync::Weak<SecretGate>,
+    identity: Mutex<Option<Arc<DeviceIdentity>>>,
+}
+
+impl StoreReplicator {
+    pub fn install(
+        gate: &Arc<SecretGate>,
+        paths: ProfilePaths,
+        store: Arc<LauncherStore>,
+        open_secrets: fn(&ProfilePaths) -> Box<dyn PasswordStore>,
+    ) {
+        gate.set_replicator(Box::new(Self {
+            store,
+            paths,
+            open_secrets,
+            gate: Arc::downgrade(gate),
+            identity: Mutex::new(None),
+        }));
+    }
+
+    fn identity(&self) -> Result<Arc<DeviceIdentity>> {
+        let mut slot = self.identity.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.is_none() {
+            let secrets = (self.open_secrets)(&self.paths);
+            *slot = Some(Arc::new(load_or_init_identity(
+                &self.paths,
+                secrets.as_ref(),
+            )?));
+        }
+        Ok(slot.clone().expect("set above"))
+    }
+
+    /// The key file text of identity `id`, when it has one that is a key.
+    fn key_text(&self, id: i64) -> Option<String> {
+        let path = self.store.get_identity(id).ok().flatten()?.private_key?;
+        let text =
+            std::fs::read_to_string(crate::ssh::expand_tilde(&path.to_string_lossy())).ok()?;
+        crate::ssh::looks_like_private_key(&text).then_some(text)
+    }
+
+    fn in_ring(&self) -> Result<bool> {
+        Ok(!self.store.sync_devices()?.is_empty())
+    }
+}
+
+impl crate::credentials::Replicator for StoreReplicator {
+    fn replicate(&self, key: &str, password: Option<&str>) -> Result<bool> {
+        let Some(uid) = crate::sync::quorum::secret_uid(&self.store, key) else {
+            return Ok(false);
+        };
+        if !self.in_ring()? {
+            return Ok(false);
+        }
+        let synced = self.store.sync_cred_ciphertext(&uid)?.is_some();
+        if password.is_none() && !synced {
+            return Ok(false);
+        }
+        let private_key = key
+            .strip_prefix("identity:")
+            .and_then(|i| i.parse::<i64>().ok())
+            .and_then(|id| self.key_text(id));
+        let payload = CredPayload {
+            password: password.map(str::to_string),
+            private_key,
+        };
+        let identity = self.identity()?;
+        cred_put(&self.store, &identity, &uid, &payload)?;
+        Ok(true)
+    }
+
+    fn replicate_identity_key(&self, identity_id: i64) -> Result<bool> {
+        let key = crate::credentials::identity_key(identity_id);
+        let Some(uid) = crate::sync::quorum::secret_uid(&self.store, &key) else {
+            return Ok(false);
+        };
+        let Some(private_key) = self.key_text(identity_id) else {
+            return Ok(false);
+        };
+        if !self.in_ring()? {
+            return Ok(false);
+        }
+        let synced = self.store.sync_cred_ciphertext(&uid)?.is_some();
+        let open = self.gate.upgrade().and_then(|g| g.get(&key));
+        let password = match (open, synced) {
+            (Some(p), _) => (!p.is_empty()).then(|| p.to_string()),
+            (None, false) => (self.open_secrets)(&self.paths).get(&key).ok().flatten(),
+            (None, true) => anyhow::bail!(
+                "this identity's credential is locked: unlock it, then save again to replicate the key"
+            ),
+        };
+        let payload = CredPayload {
+            password,
+            private_key: Some(private_key),
+        };
+        let identity = self.identity()?;
+        cred_put(&self.store, &identity, &uid, &payload)?;
+        Ok(true)
+    }
+}
+
 /// Credential-store entry holding the ring secret of this profile's Vault.
 pub const RING_SECRET_KEY: &str = "sync-ring-secret";
 
@@ -431,6 +539,10 @@ pub fn round_fn(deps: RoundDeps) -> RoundFn {
             }
             Round::Unlock => {
                 unlock_round(&deps, rt, device, ctx)?;
+                Ok(RoundSummary::default())
+            }
+            Round::Identify => {
+                ctx.emit(SyncEvent::ThisDevice(rt.identity.public().device_id()));
                 Ok(RoundSummary::default())
             }
             Round::Release => {

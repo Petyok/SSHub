@@ -102,6 +102,7 @@ impl App {
                         ));
                     }
                 }
+                self.replicate_identity_key(created.id);
                 self.identity_notice =
                     Some(format!("Generated key and identity '{}'", identity_name));
             }
