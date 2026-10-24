@@ -61,6 +61,13 @@ export function devtoolsSocket() {
   if (!want) throw new Error(`no devtools socket for ${BROWSER_PKG}; the owner must enable remote debugging in the browser`);
   return want;
 }
+// One diagnostic screen capture to a temp file (the owner allows it at diagnostic steps only; the
+// caller views it and deletes it at once, it is never copied or committed).
+export function screencap(file) {
+  const png = execFileSync('adb', ['-s', SERIAL, 'exec-out', 'screencap', '-p'], { maxBuffer: 1 << 26 });
+  fs.writeFileSync(file, png, { mode: 0o600 });
+  return file;
+}
 export const adbDevices = () => execFileSync('adb', ['devices', '-l'], { encoding: 'utf8' }); // read-only, no serial filter needed
 
 // ------------------------------------------------------------ battery guard
@@ -98,6 +105,7 @@ export function assembleServeDir() {
   const selftest = path.join(root, 'build', 'selftest.html');
   if (fs.existsSync(selftest)) put(selftest, 'selftest.html');
   fs.writeFileSync(path.join(dir, 'blank.html'), '<!doctype html><title>bench</title>');
+  fs.writeFileSync(path.join(dir, 'gum.html'), '<!doctype html><title>gum</title><button id="b">camera</button><pre id="o">idle</pre><script>document.getElementById("b").onclick=async()=>{document.getElementById("o").textContent="asking";try{const s=await navigator.mediaDevices.getUserMedia({video:true});document.getElementById("o").textContent="ok "+s.getVideoTracks()[0].label;s.getTracks().forEach(t=>t.stop())}catch(e){document.getElementById("o").textContent="error "+e.name+" "+e.message}}</script>');
   const poc = path.join(root, 'poc');
   for (const f of ['qr-scanner.html', 'share-transmit.html', 'share-receive.html', 'share-lib.js']) put(path.join(poc, f), f);
   for (const f of ['jsQR.js', 'qrcode.js']) put(path.join(poc, 'vendor', f), `vendor/${f}`);

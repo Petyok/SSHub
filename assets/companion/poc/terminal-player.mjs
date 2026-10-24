@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 // Terminal player for PoC C4 (handheld read). Loops the indexed QR frames as half-block text.
 // Usage: node terminal-player.mjs [--version 5] [--ecl M] [--bytes 4096] [--seed 1] [--fps 8]
-//                                 [--seconds 0] [--once]
+//                                 [--seconds 0] [--once] [--report FILE]
+// --report writes the real terminal size and the size the code needs; when the code does not fit
+// (a wrapped half-block QR is striped and unreadable) the player exits with status 3 instead of drawing.
 // Loads vendor/qrcode.js and share-lib.js into a vm context; no npm dependencies.
 // Dark modules are explicit truecolor black, light modules explicit white, quiet zone 4.
 // Expected payload (seed, length, sha256) goes to stderr so the phone side can compare.
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import vm from "node:vm";
 import { dirname, join } from "node:path";
@@ -57,6 +59,19 @@ function render(qr) {
     out += "\x1b[0m\n";
   }
   return { text: out, lines: Math.ceil(size / 2), width: size };
+}
+
+const report = opt("report", "");
+if (report) {
+  const need = render(qrs[0]);
+  const cols = process.stdout.columns || 0;
+  const rowsT = process.stdout.rows || 0;
+  const fits = cols >= need.width && rowsT >= need.lines;
+  writeFileSync(report, JSON.stringify({ columns: cols, rows: rowsT, need_width: need.width, need_lines: need.lines, fits }));
+  if (!fits) {
+    process.stderr.write(`QR needs ${need.width}x${need.lines} cells, terminal is ${cols}x${rowsT}\n`);
+    process.exit(3);
+  }
 }
 
 if (once) {

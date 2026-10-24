@@ -12,7 +12,10 @@
 // Env: PHONE_SERIAL (adb serial, not committed), PLAYER (terminal-player.mjs path, default the poc one).
 // One block at a time (the laptop has four weak threads); every block ends by closing the window or
 // browser it opened and deleting the temporary profile.
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
+import vm from 'node:vm';
+import zlib from 'node:zlib';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -45,6 +48,94 @@ const stop = (child) =>
     setTimeout(res, 5000);
   });
 
+
+// ------------------------------------------------------------ sender preflight (laptop side)
+const require = createRequire(import.meta.url);
+const jsQR = require('../vendor/jsqr-1.4.0/jsQR.cjs');
+function pngToRgba(buf) {
+  let at = 8;
+  let w = 0, h = 0, ct = 0;
+  const idat = [];
+  while (at < buf.length) {
+    const len = buf.readUInt32BE(at);
+    const type = buf.toString('latin1', at + 4, at + 8);
+    const body = buf.subarray(at + 8, at + 8 + len);
+    if (type === 'IHDR') {
+      w = body.readUInt32BE(0);
+      h = body.readUInt32BE(4);
+      ct = body[9];
+      if (body[8] !== 8 || body[12] !== 0 || (ct !== 2 && ct !== 6)) throw new Error('unsupported PNG layout');
+    } else if (type === 'IDAT') idat.push(body);
+    at += 12 + len;
+  }
+  const bpp = ct === 6 ? 4 : 3;
+  const raw = zlib.inflateSync(Buffer.concat(idat));
+  const stride = w * bpp;
+  const out = new Uint8ClampedArray(w * h * 4);
+  let prev = Buffer.alloc(stride);
+  for (let y = 0; y < h; y++) {
+    const f = raw[y * (stride + 1)];
+    const line = Buffer.from(raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1)));
+    for (let i = 0; i < stride; i++) {
+      const a = i >= bpp ? line[i - bpp] : 0;
+      const b = prev[i];
+      const c = i >= bpp ? prev[i - bpp] : 0;
+      let add = 0;
+      if (f === 1) add = a;
+      else if (f === 2) add = b;
+      else if (f === 3) add = (a + b) >> 1;
+      else if (f === 4) {
+        const p = a + b - c;
+        const pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+        add = pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+      }
+      line[i] = (line[i] + add) & 255;
+    }
+    for (let x = 0; x < w; x++) {
+      out[(y * w + x) * 4] = line[x * bpp];
+      out[(y * w + x) * 4 + 1] = line[x * bpp + 1];
+      out[(y * w + x) * 4 + 2] = line[x * bpp + 2];
+      out[(y * w + x) * 4 + 3] = 255;
+    }
+    prev = line;
+  }
+  return { data: out, w, h };
+}
+function shareLib() {
+  const ctx = { console };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  for (const f of ['vendor/qrcode.js', 'share-lib.js']) vm.runInContext(fs.readFileSync(path.resolve(here, '..', 'poc', f), 'utf8'), ctx, { filename: f });
+  return ctx.ShareLib;
+}
+// Crops ONLY our own window (geometry of its class from hyprctl), decodes the QR in it and requires
+// a valid chunk (CRC) of the expected document. The capture is deleted at once.
+function senderPreflight(cls, report) {
+  let rep = null;
+  try {
+    rep = JSON.parse(fs.readFileSync(report, 'utf8'));
+  } catch {
+    throw new Error('SENDER PREFLIGHT FAILED: the player wrote no size report (the window did not start)');
+  }
+  console.log(JSON.stringify({ sender_window_cells: `${rep.columns}x${rep.rows}`, qr_needs_cells: `${rep.need_width}x${rep.need_lines}`, fits: rep.fits }));
+  if (!rep.fits) throw new Error(`SENDER PREFLIGHT FAILED: the QR needs ${rep.need_width}x${rep.need_lines} cells but the window has ${rep.columns}x${rep.rows}`);
+  const mine = JSON.parse(execFileSync('hyprctl', ['clients', '-j'], { encoding: 'utf8' })).find((c) => c.class === cls);
+  if (!mine) throw new Error('SENDER PREFLIGHT FAILED: our window is not on the screen');
+  const png = '/tmp/c4-sender-check.png';
+  try {
+    execFileSync('grim', ['-g', `${mine.at[0]},${mine.at[1]} ${mine.size[0]}x${mine.size[1]}`, png]);
+    const img = pngToRgba(fs.readFileSync(png));
+    const r = jsQR(img.data, img.w, img.h, { inversionAttempts: 'attemptBoth' });
+    if (!r) throw new Error('SENDER PREFLIGHT FAILED: the QR in the window does not decode');
+    const L = shareLib();
+    const st = new L.Reassembler().add(Uint8Array.from(r.binaryData));
+    if (!(st.have >= 1 && st.total > 0)) throw new Error('SENDER PREFLIGHT FAILED: the decoded chunk is not valid (CRC)');
+    console.log(JSON.stringify({ sender_preflight: 'window QR decodes', chunks_total: st.total, window_px: `${mine.size[0]}x${mine.size[1]}` }));
+  } finally {
+    fs.rmSync(png, { force: true });
+  }
+}
+
 // ------------------------------------------------------------ C4: terminal to phone camera
 // Hard preflight: never start a timed block on an input that is not live. The camera must deliver a
 // live video track with a picture within 10 s and the scanner must decode a first frame of the
@@ -72,16 +163,18 @@ async function preflightCamera({ decode = true } = {}) {
   console.log(JSON.stringify({ preflight: 'first QR frame decoded', have: st.have, total: st.total }));
 }
 
-async function terminalBlock({ label, version, bytes, cols, rows, runs }) {
+async function terminalBlock({ label, version, bytes, cols, rows, runs, font }) {
   const cls = 'sshub-bench-c4';
+  const report = `/tmp/c4-player-report-${process.pid}.json`;
   const win = spawn('kitty', [
     '--class', cls, '--title', cls,
     '-o', 'remember_window_size=no', '-o', `initial_window_width=${cols}c`, '-o', `initial_window_height=${rows}c`,
-    '-o', 'confirm_os_window_close=0',
-    process.execPath, PLAYER, '--version', String(version), '--bytes', String(bytes), '--seed', '1', '--fps', '8',
+    '-o', 'confirm_os_window_close=0', '-o', 'background_opacity=1', ...(font ? ['-o', `font_size=${font}`] : []),
+    process.execPath, PLAYER, '--version', String(version), '--bytes', String(bytes), '--seed', '1', '--fps', '8', '--report', report,
   ], { stdio: 'ignore' });
   try {
     await sleep(2500);
+    senderPreflight(cls, report);
     await state.chrome.prepare({ camera: true, silent: true });
     await state.chrome.goto(`${ORIGIN}/qr-scanner.html?seed=1&len=${bytes}&facing=${arg('facing', 'environment')}`);
     await phoneEval(`navigator.wakeLock && navigator.wakeLock.request('screen').then((l) => { window.__wl = l; }, () => {})`);
@@ -112,6 +205,7 @@ async function terminalBlock({ label, version, bytes, cols, rows, runs }) {
     record({ block: label, summary: true, runs, ok: okRows.length, worst_elapsed_s: okRows.length ? Math.max(...okRows.map((r) => r.elapsed_s)) : null, median_elapsed_s: median(okRows.map((r) => r.elapsed_s)), worst_wall_s: Math.max(...rowsOut.map((r) => r.wall_s)) });
   } finally {
     await stop(win);
+    fs.rmSync(report, { force: true });
   }
 }
 
@@ -129,8 +223,8 @@ async function camera() {
   const blocks = [
     { label: 'v5 80x24 1714 B', version: 5, bytes: 1714, cols: 80, rows: 24 },
     { label: 'v5 80x24 4096 B', version: 5, bytes: 4096, cols: 80, rows: 24 },
-    { label: 'v13 120x40 1714 B', version: 13, bytes: 1714, cols: 120, rows: 40 },
-    { label: 'v13 120x40 4096 B', version: 13, bytes: 4096, cols: 120, rows: 40 },
+    { label: 'v13 120x40 1714 B', version: 13, bytes: 1714, cols: 120, rows: 40, font: arg('font13', '11') },
+    { label: 'v13 120x40 4096 B', version: 13, bytes: 4096, cols: 120, rows: 40, font: arg('font13', '11') },
   ].filter((b) => !arg('only') || b.label.startsWith(arg('only')));
   for (const b of blocks) {
     await terminalBlock({ ...b, runs });
@@ -331,8 +425,31 @@ async function preflightOnly() {
   await preflightCamera({ decode: false });
 }
 
+// Sender side only (no phone involved): open each window, check size and decode the QR in it.
+async function senderOnly() {
+  for (const [version, bytes, cols, rows, font] of [[5, 1714, 80, 24, null], [13, 1714, 120, 40, arg('font13', '11')]]) {
+    const cls = 'sshub-bench-c4';
+    const report = `/tmp/c4-player-report-${process.pid}.json`;
+    const win = spawn('kitty', ['--class', cls, '--title', cls, '-o', 'remember_window_size=no', '-o', `initial_window_width=${cols}c`, '-o', `initial_window_height=${rows}c`, '-o', 'confirm_os_window_close=0', '-o', 'background_opacity=1', ...(font ? ['-o', `font_size=${font}`] : []), process.execPath, PLAYER, '--version', String(version), '--bytes', String(bytes), '--seed', '1', '--fps', '8', '--report', report], { stdio: 'ignore' });
+    try {
+      await sleep(2500);
+      senderPreflight(cls, report);
+    } catch (e) {
+      console.log(`v${version}: ${e.message}`);
+    } finally {
+      await stop(win);
+      fs.rmSync(report, { force: true });
+    }
+    await sleep(2000);
+  }
+}
+
 let code = 0;
 try {
+  if (cmd === 'sender') {
+    await senderOnly();
+    process.exit(0);
+  }
   guard('start');
   await setup();
   if (cmd === 'preflight') await preflightOnly();
