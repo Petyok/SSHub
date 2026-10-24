@@ -819,8 +819,7 @@ prompt names the requester; plaintext never touches disk.
   must say plainly when `peer_has_screen` is false that the words prove nothing and that the peer's identity
   rests on the SSH host key.
 * `EnrollOutcome { peer, peer_name, sas, role, verified_by, ring }`; `VerifiedBy::{Sas, SshHostKey}` is
-  `Sas` only when both sides had a screen. The record is `sync_meta` `verified_by:<device id>` (`sas` /
-  `ssh_host_key`) is the replicated `DeviceAdd.verified_by` / `DeviceRow.verified_by` (op-log type
+  `Sas` only when both sides had a screen. The record is the replicated `DeviceAdd.verified_by` / `DeviceRow.verified_by` (op-log type
   `VerifiedBy`), shown per device on the Sync tab.
 * Per verb. `sshub sync-enroll` (remote, run by `ssh P sshub sync-enroll`): responder, tty prompt only when
   stdin is a tty (`ssh -t`), else `None`. `sshub sync-join <peer>`: initiator, prompt on its tty. Hosts-tab
