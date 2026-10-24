@@ -338,7 +338,7 @@ sshub audit stats --days 7
 sshub map --dot | dot -Tsvg -o map.svg
 
 # Host sync between your own devices (end to end encrypted, over ssh)
-sshub sync-join laptop                        # join the ring of the device at host "laptop" (compare the words, answer y)
+sshub sync-join laptop                        # enroll with the device at host "laptop": compare the words (or, if it has no screen, approve the admission)
 sshub sync-now                                # sync with every ring device that has a known host
 sshub sync-now laptop --format json           # one device, by name or id prefix
 sshub sync-status                             # ring devices, pending changes, credential mode
@@ -346,6 +346,7 @@ sshub sync-review                             # changes waiting for review (id, 
 sshub sync-review --approve 3fa9c1            # or --reject; id = unique prefix (4+ hex chars)
 # Exit codes of sync-now: 0 ok, 1 offline/failed, 2 usage, 3 fork detected.
 # sync-serve / sync-enroll are what a peer runs over ssh; not for interactive use.
+# sync-status shows how each device was verified (sas, or ssh_host_key).
 
 # Inventory sync with ~/.ssh/config
 sshub import                                  # import hosts from ssh config (--from ssh)
@@ -565,7 +566,7 @@ In the host form, the ProxyJump field is the hop editor: `a` add a saved host, `
 
 ### Sync (tab 7)
 
-Sync keeps hosts and credentials identical on your own devices, end to end encrypted. Until a ring exists the tab says so and how to start or join one: `t` on the hosts tab enrolls a machine as one of your devices, and `sshub sync-join <a reachable device>` joins a blank machine. Once a ring exists the tab lists the devices with their status and role, the credential mode, the trust session and the number of changes waiting, and the tab bar shows `⇅N ⏳Nops` (red when a device is compromised).
+Sync keeps hosts and credentials identical on your own devices, end to end encrypted. Until a ring exists the tab says so and how to start or join one: `t` on the hosts tab enrolls a machine as one of your devices, and `sshub sync-join <a reachable device>` joins a blank machine. Enrollment shows four words. When both ends have a screen you compare them and answer yes only if they are identical (verified by SAS). When the other end has no terminal (for example `t` enrolls a server over a plain ssh command) the words prove nothing: the dialog says so, and you approve the admission on the strength of the SSH host key you verified for that host (recorded as verified by the SSH host key). Which of the two admitted a device is shown per device on this tab and in `sshub sync-status`. Roles follow ring membership, not who connected: the side that already has a ring invites, a blank side joins, and two different rings are never merged. Once a ring exists the tab lists the devices with their status and role, the credential mode, the trust session and the number of changes waiting, and the tab bar shows `⇅N ⏳Nops` (red when a device is compromised).
 
 Review lists each waiting change with its fields as `old -> new`; fields that can redirect a connection (address, port, user, proxy jump, remote command, credentials) are marked `!` and drawn in the error colour. `a` approves and applies the change, `r` rejects it; both act on the store at once. Sync state lives in the profile directory under `sync/`: `device.key` (this device's identity, encrypted; its passphrase is in the credential store) and `peers.json` (which ssh host reaches which device). Both are owner-only files, belong to one profile, and are never copied by profile transfers or the guided migration, which move hosts, groups, identities and tunnels only.
 

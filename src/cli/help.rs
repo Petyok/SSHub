@@ -285,11 +285,13 @@ fn print_sync_enroll() {
 USAGE:
     sshub [--profile NAME] sync-enroll
 
-Run by the joining device over ssh (`sshub sync-join <host>`). The four SAS
-words and the joining device's name are shown on /dev/tty and confirmed with
-y/n. Without a terminal (the usual case over ssh) they are printed to stderr as
-`SAS words: <words> (peer <name>)` and accepted: the human comparison is done
-on the joining side.
+Run by the joining device over ssh (`sshub sync-join <host>`). Roles come from
+the handshake: the side that already has a ring invites, a blank side joins.
+With a terminal (`ssh -t`) the four SAS words are shown on /dev/tty and
+confirmed with y/n. Without one (the usual case) there is no human here: the
+device never confirms as one, tells the peer it has no screen, and admits on
+the strength of the authenticated ssh session; the words go to stderr for the
+log only. The peer then sees that its words prove nothing.
 
 EXIT CODES:
     0  enrolled
@@ -305,9 +307,11 @@ USAGE:
     sshub [--profile NAME] sync-join <host>
 
 <host> is a host name from the launcher list or [user@]host[:port]. It runs
-`sshub sync-enroll` there over ssh. Compare the printed words with the ones the
-other device shows, then answer y (anything else, or EOF, refuses). The host is
-remembered for `sync-now`. This device is a mirror until the ring approves more.
+`sshub sync-enroll` there over ssh. If the other end has a screen too, compare
+the printed words with its words and answer y (anything else, or EOF, refuses).
+If it has none, the words prove nothing: you are asked `Admit this device?`
+and its identity rests on the SSH host key you verified. The host is remembered
+for `sync-now`. A joining device is a mirror until the ring approves more.
 
 EXIT CODES:
     0  joined

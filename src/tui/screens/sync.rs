@@ -119,6 +119,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             ago(d.last_seen),
             d.head_seq
         );
+        if let Some(v) = d.verified_by {
+            row.push_str(match v {
+                crate::sync::enroll::VerifiedBy::Sas => "  verified: sas",
+                crate::sync::enroll::VerifiedBy::SshHostKey => "  verified: ssh host key",
+            });
+        }
         if d.unattended {
             row.push_str("  unattended");
         }
@@ -345,7 +351,7 @@ pub fn render_sas(frame: &mut Frame, app: &App) {
         return;
     };
     let theme = app.theme();
-    let body = vec![
+    let mut body = vec![
         Line::styled(
             format!("Enrolling with {}", s.peer),
             theme.style(StyleRole::TextPrimary),
@@ -353,19 +359,29 @@ pub fn render_sas(frame: &mut Frame, app: &App) {
         Line::raw(""),
         Line::styled(s.words.clone(), theme.style(StyleRole::TextBright)),
         Line::raw(""),
-        Line::styled(
+    ];
+    let hint = if s.peer_has_screen {
+        body.push(Line::styled(
             "Both screens must show exactly these words. If they differ, someone is in the middle: answer no.",
             theme.style(StyleRole::TextMuted),
-        ),
-    ];
-    modal(
-        frame,
-        app,
-        "Verify device",
-        70,
-        body,
-        "y words match  n / Esc they differ",
-    );
+        ));
+        "y words match  n / Esc they differ"
+    } else {
+        body.push(Line::styled(
+            format!(
+                "The other device has no screen: these words prove nothing. Its identity rests on the SSH host key you verified for {}.",
+                s.peer
+            ),
+            theme.style(StyleRole::PopupWarning),
+        ));
+        body.push(Line::raw(""));
+        body.push(Line::styled(
+            format!("Admit {} to your ring?", s.peer_name),
+            theme.style(StyleRole::TextPrimary),
+        ));
+        "y approve the admission  n / Esc refuse"
+    };
+    modal(frame, app, "Verify device", 70, body, hint);
 }
 
 /// Full-screen alert; takes the whole frame.
@@ -626,6 +642,24 @@ mod tests {
             out.push('\n');
         }
         out
+    }
+
+    #[test]
+    fn sas_modal_without_a_peer_screen_says_the_words_prove_nothing() {
+        let mut app = app_in(AppMode::SyncSas);
+        let sas = app.sync.sas.as_mut().unwrap();
+        sas.peer_has_screen = false;
+        sas.peer = "hub".into();
+        let s = screen(&app, 110, 36);
+        for want in [
+            "has no screen",
+            "prove nothing",
+            "SSH host key you verified for hub",
+            "approve the admission",
+        ] {
+            assert!(s.contains(want), "{want}: {s}");
+        }
+        assert!(!s.contains("Both screens must show"), "{s}");
     }
 
     fn app_in(mode: AppMode) -> App {

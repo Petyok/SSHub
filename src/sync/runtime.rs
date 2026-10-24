@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -18,15 +18,16 @@ use crate::profile::ProfilePaths;
 use crate::ssh::SshHost;
 use crate::store::LauncherStore;
 use crate::sync::client::{
-    Round, RoundCtx, RoundFn, SshTransport, SyncCmd, SyncEvent, TransportError,
+    Round, RoundCtx, RoundFn, SasPromptInfo, SshTransport, SyncCmd, SyncEvent, TransportError,
 };
-use crate::sync::crypto::{Argon2Profile, DeviceIdentity, Share, ARGON2_MASTER};
-use crate::sync::enroll::{run_sync_join, EnrollOutcome, SasConfirm};
+use crate::sync::crypto::{Argon2Profile, DeviceIdentity, ARGON2_MASTER};
+use crate::sync::enroll::{run_sync_join, EnrollOutcome, SasConfirm, SasPrompt};
 use crate::sync::identity_store::load_or_init_identity;
-use crate::sync::oplog::{Attendance, DeviceId, DeviceRole, HostUid};
-use crate::sync::protocol::{run_round, RoundSummary};
-use crate::sync::quorum::{parse_ring_secret, ring_secret_text, QuorumUnlocker, ShareSource};
+use crate::sync::oplog::{Attendance, DeviceId, DeviceKind, DeviceRole};
+use crate::sync::protocol::{run_round, run_share_request, RoundSummary, ShareAsk, ShareReply};
+use crate::sync::quorum::{parse_ring_secret, ring_secret_text, QuorumUnlocker};
 use crate::sync::transport::Limits;
+use crate::sync::ui_shares::UiShares;
 
 /// What runs on the far side of the ssh connection.
 pub const SERVE_COMMAND: &str = "sshub sync-serve";
@@ -178,6 +179,27 @@ impl SyncRuntime {
             })
     }
 
+    /// Ask `holder` for a share over its recorded host, inside an authenticated
+    /// session (the trust-session path).
+    pub(crate) fn share_request(
+        &self,
+        holder: &DeviceId,
+        ask: &ShareAsk,
+    ) -> Result<ShareReply, TransportError> {
+        let spec = Peers::load(&self.paths)
+            .map_err(|e| TransportError::Failed(format!("{e:#}")))?
+            .host_of(holder)
+            .map(str::to_string)
+            .ok_or_else(|| TransportError::Offline("no host is known for this device".into()))?;
+        let host = resolve_host(&self.store, &spec)
+            .map_err(|e| TransportError::Offline(format!("{e:#}")))?;
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.transport(host, SERVE_COMMAND)
+            .run(&cancel, Limits::default(), |conn| {
+                run_share_request(conn, &self.store, &self.identity, holder, ask)
+            })
+    }
+
     /// Join the ring of the participant at `host_spec`: run `sshub sync-enroll`
     /// there, compare the words through `ui`, and remember the host.
     pub fn join(
@@ -192,7 +214,14 @@ impl SyncRuntime {
         let outcome =
             self.transport(host, ENROLL_COMMAND)
                 .run(cancel, enroll_limits(), |conn| {
-                    run_sync_join(conn, &self.store, &self.identity, &name, true, ui)
+                    run_sync_join(
+                        conn,
+                        &self.store,
+                        &self.identity,
+                        &name,
+                        true,
+                        Some(&mut *ui),
+                    )
                 })?;
         Peers::record(&self.paths, &outcome.peer.device_id(), host_spec)
             .map_err(|e| TransportError::Failed(format!("enrolled, but {e:#}")))?;
@@ -205,8 +234,12 @@ impl SyncRuntime {
 pub(crate) struct UiSas<'a, 'b>(pub &'a RoundCtx<'b>);
 
 impl SasConfirm for UiSas<'_, '_> {
-    fn confirm(&mut self, sas: &str, _peer_name: &str) -> bool {
-        self.0.emit(SyncEvent::SasPrompt(sas.to_string()));
+    fn confirm(&mut self, prompt: &SasPrompt<'_>) -> bool {
+        self.0.emit(SyncEvent::SasPrompt(SasPromptInfo {
+            words: prompt.sas.to_string(),
+            peer_name: prompt.peer_name.to_string(),
+            peer_has_screen: prompt.peer_has_screen,
+        }));
         loop {
             match self.0.recv_cmd(Duration::from_secs(600)) {
                 Some(SyncCmd::EnrollConfirmSas(ok)) => return ok,
@@ -232,6 +265,8 @@ pub struct RoundDeps {
     /// Opens the profile's UNGATED credential store: the device key
     /// passphrase and the ring secret live there.
     pub open_secrets: fn(&ProfilePaths) -> Box<dyn PasswordStore>,
+    /// A program to run where the argv names `ssh` (tests).
+    pub ssh_program: Option<String>,
 }
 
 impl RoundDeps {
@@ -246,6 +281,7 @@ impl RoundDeps {
             gate,
             argon: ARGON2_MASTER,
             open_secrets: crate::credentials::open_ungated_for_profile,
+            ssh_program: None,
         }
     }
 }
@@ -259,39 +295,6 @@ pub fn guard_synced_credentials(gate: &SecretGate, store: Arc<LauncherStore>) {
     });
 }
 
-/// Asks the user through the unlock modal. The master phrase is what they
-/// type; a second share has no way in yet (see `second_share`).
-struct UiShares {
-    events: Sender<SyncEvent>,
-    answers: Mutex<Receiver<String>>,
-}
-
-impl ShareSource for UiShares {
-    fn master_phrase(&self) -> Option<Zeroizing<String>> {
-        let _ = self.events.send(SyncEvent::UnlockPrompt(
-            "Type the six words of the master phrase, then Enter".into(),
-        ));
-        let answers = self.answers.lock().ok()?;
-        answers
-            .recv_timeout(Duration::from_secs(600))
-            .ok()
-            .map(Zeroizing::new)
-    }
-
-    fn second_share(
-        &self,
-        _host: &HostUid,
-        _epoch: u64,
-        _mine: &Share,
-    ) -> std::result::Result<Share, UnlockError> {
-        // ponytail: the peer, phone, short-code and 24-word paths wait on the
-        // protocol pieces that carry them (ShareRequest, snapshot blobs).
-        Err(UnlockError::NeedsShares(
-            "no way to ask another holder from here yet: use a Vault ring, or unlock on a device that can".into(),
-        ))
-    }
-}
-
 fn read_ring_secret(deps: &RoundDeps) -> Option<[u8; 16]> {
     let text = (deps.open_secrets)(&deps.paths)
         .get(RING_SECRET_KEY)
@@ -302,12 +305,7 @@ fn read_ring_secret(deps: &RoundDeps) -> Option<[u8; 16]> {
 /// Run the unlock on its own thread and pump the UI's answers to it until it
 /// finishes: the share source blocks on the answers, the worker keeps reading
 /// commands.
-fn unlock_round(
-    deps: &RoundDeps,
-    identity: &Arc<DeviceIdentity>,
-    keys: &str,
-    ctx: &RoundCtx<'_>,
-) -> Result<()> {
+fn unlock_round(deps: &RoundDeps, rt: &SyncRuntime, keys: &str, ctx: &RoundCtx<'_>) -> Result<()> {
     let refs: Vec<SecretRef> = keys
         .lines()
         .map(|k| SecretRef::Key(k.to_string()))
@@ -316,10 +314,11 @@ fn unlock_round(
     let source = UiShares {
         events: ctx.event_sender(),
         answers: Mutex::new(answer_rx),
+        runtime: rt.clone(),
     };
     let unlocker = QuorumUnlocker::with_profile(
         deps.store.clone(),
-        identity.clone(),
+        rt.identity.clone(),
         deps.gate.clone(),
         Box::new(source),
         read_ring_secret(deps),
@@ -365,12 +364,16 @@ fn onboard_round(deps: &RoundDeps, identity: &DeviceIdentity, s: &OnboardingSecr
         .set(RING_SECRET_KEY, &text)
         .context("keep the ring secret in the credential store")?;
     if deps.store.sync_devices()?.is_empty() {
+        let me = identity.public();
         deps.store.sync_register_device(
-            &identity.public(),
+            &me,
             &device_name(),
             DeviceRole::Holder,
             Attendance::Attended,
+            DeviceKind::Terminal,
         )?;
+        // The first device founds the ring: enrollment roles follow `ring_id`.
+        crate::sync::quorum::meta_set(&deps.store, "ring_id", me.device_id().as_bytes())?;
     }
     Ok(())
 }
@@ -383,11 +386,9 @@ pub fn round_fn(deps: RoundDeps) -> RoundFn {
         if runtime.is_none() {
             let secrets = (deps.open_secrets)(&deps.paths);
             let identity = load_or_init_identity(&deps.paths, secrets.as_ref())?;
-            runtime = Some(SyncRuntime::new(
-                deps.paths.clone(),
-                deps.store.clone(),
-                identity,
-            ));
+            let mut rt = SyncRuntime::new(deps.paths.clone(), deps.store.clone(), identity);
+            rt.ssh_program = deps.ssh_program.clone();
+            runtime = Some(rt);
         }
         let rt = runtime.as_ref().expect("set above");
         let cancel = ctx.cancel_flag().clone();
@@ -403,7 +404,7 @@ pub fn round_fn(deps: RoundDeps) -> RoundFn {
                 })
             }
             Round::Unlock => {
-                unlock_round(&deps, &rt.identity, device, ctx)?;
+                unlock_round(&deps, rt, device, ctx)?;
                 Ok(RoundSummary::default())
             }
             Round::Onboard => {

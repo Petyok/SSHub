@@ -71,6 +71,7 @@ fn fixture() -> Fixture {
         gate: gate.clone(),
         argon: FAST,
         open_secrets: file_secrets,
+        ssh_program: None,
     };
     app.attach_sync_worker(spawn_sync_thread(round_fn(deps)));
     let view = OnboardingView::with_secrets(
