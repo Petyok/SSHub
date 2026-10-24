@@ -38,6 +38,7 @@ pub(crate) fn device_view(row: &DeviceRow) -> DeviceView {
         last_seen: (row.last_seen > 0).then_some(row.last_seen),
         head_seq: row.head_seq,
         verified_by: None,
+        this: false,
     }
 }
 
@@ -264,6 +265,7 @@ impl App {
                 CredMode::Quorum => CredModeView::Quorum,
             })
         };
+        let this_device = self.sync.this_device.clone();
         let sync = &mut self.sync;
         sync.configured = !rows.is_empty();
         sync.devices = rows
@@ -271,6 +273,7 @@ impl App {
             .map(|r| {
                 let mut v = device_view(r);
                 v.verified_by = Some(r.verified_by);
+                v.this = this_device.as_deref() == Some(r.id.as_str());
                 v
             })
             .collect();

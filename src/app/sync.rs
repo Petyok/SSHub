@@ -102,6 +102,8 @@ pub struct DeviceView {
     pub head_seq: u64,
     /// How this device was admitted, from the local enrollment record.
     pub verified_by: Option<crate::sync::oplog::VerifiedBy>,
+    /// This machine itself (enrollment records it in the ring).
+    pub this: bool,
 }
 
 /// The active trust session, if one is open.
@@ -367,6 +369,8 @@ pub enum SyncIntent {
     /// The Vault first run is finished: the phrase and ring secret for the
     /// sync stage to store as the Vault configuration.
     OnboardingDone(OnboardingSecrets),
+    /// Ask the worker which device this is (loads the device key).
+    Identify,
 }
 
 /// What runs once credentials are open.
@@ -422,6 +426,9 @@ pub struct SyncView {
     /// Store keys the open unlock modal is for, and whether its round runs.
     pub unlock_keys: Vec<String>,
     pub unlock_running: bool,
+    /// This device's id, once the worker has loaded its identity.
+    pub this_device: Option<String>,
+    identify_after: bool,
     /// Release requests this holder already answered (the op may stay pending
     /// until the worker has resolved it).
     pub answered_releases: Vec<[u8; 32]>,
@@ -528,8 +535,9 @@ impl App {
         if !self.sync_ready() {
             return;
         }
-        match self.sync.selected_device().map(|d| d.id.clone()) {
-            Some(device) => self.sync.intents.push(SyncIntent::SyncNow { device }),
+        match self.sync.selected_device().map(|d| (d.id.clone(), d.this)) {
+            Some((_, true)) => self.host_notice = Some("that is this device: pick another".into()),
+            Some((device, false)) => self.sync.intents.push(SyncIntent::SyncNow { device }),
             None => self.host_notice = Some("no device to sync with".into()),
         }
     }
@@ -624,6 +632,7 @@ impl App {
             let cmd = match &intent {
                 SyncIntent::SyncNow { device } => SyncCmd::SyncNow(device.clone()),
                 SyncIntent::Enroll { host } => {
+                    self.sync.identify_after = true;
                     self.sync.enrolling = Some(host.clone());
                     SyncCmd::EnrollBegin(host.clone())
                 }
@@ -644,11 +653,15 @@ impl App {
                     }
                     SyncCmd::UnlockCode(code.clone())
                 }
+                SyncIntent::Identify => SyncCmd::Identify,
                 SyncIntent::Release { approve, hash } => SyncCmd::Release {
                     approve: *approve,
                     hash: *hash,
                 },
-                SyncIntent::OnboardingDone(secrets) => SyncCmd::Onboard(Box::new(secrets.clone())),
+                SyncIntent::OnboardingDone(secrets) => {
+                    self.sync.identify_after = true;
+                    SyncCmd::Onboard(Box::new(secrets.clone()))
+                }
                 // Answered by later stages, not by the transport worker.
                 _ => {
                     kept.push(intent);
@@ -687,6 +700,12 @@ impl App {
                     words: info.words,
                     peer_has_screen: info.peer_has_screen,
                 });
+            }
+            SyncEvent::ThisDevice(id) => {
+                for d in &mut sync.devices {
+                    d.this = d.id == id;
+                }
+                sync.this_device = Some(id);
             }
             SyncEvent::UnlockPrompt(text) => {
                 if let Some(u) = sync.unlock.as_mut() {
@@ -737,6 +756,10 @@ impl App {
                 sync.unlock_running = false;
                 // Whatever the round moved is in the store now.
                 self.refresh_sync_view();
+                // A ring just came into being here: learn which device this is.
+                if std::mem::take(&mut self.sync.identify_after) && self.sync.configured {
+                    self.sync.intents.push(SyncIntent::Identify);
+                }
             }
             SyncEvent::Error(message) => {
                 sync.syncing = false;
@@ -1149,6 +1172,7 @@ pub(crate) fn sample_sync_view() -> SyncView {
         last_seen: Some(1_700_000_000),
         head_seq: 7,
         verified_by: Some(crate::sync::oplog::VerifiedBy::Sas),
+        this: false,
     };
     SyncView {
         configured: true,

@@ -198,7 +198,10 @@ fn attach_enrolling_worker_in(
     }
     let peer_for_thread = peer_store.clone();
     let peer_id = Arc::new(peer_id);
-    app.attach_sync_worker(spawn_sync_thread(Box::new(move |_kind, _host, ctx| {
+    app.attach_sync_worker(spawn_sync_thread(Box::new(move |kind, _host, ctx| {
+        if kind != crate::sync::client::Round::Enroll {
+            return Ok(Default::default());
+        }
         let (a, b) = UnixStream::pair().unwrap();
         let (peer_store, peer_id) = (peer_for_thread.clone(), peer_id.clone());
         let peer = std::thread::spawn(move || {
@@ -282,7 +285,12 @@ fn both_with_screens_compare_words_and_a_yes_joins_verified_by_sas() {
     pump(&mut app, |a| a.sync.configured && !a.sync.syncing);
     // The ring knows the peer and, since enrollment records it, this device itself.
     assert_eq!(app.sync.devices.len(), 2);
-    let peer = app.sync.devices.iter().find(|d| d.id == peer_device).expect("the peer is listed");
+    let peer = app
+        .sync
+        .devices
+        .iter()
+        .find(|d| d.id == peer_device)
+        .expect("the peer is listed");
     assert_eq!(peer.name, "hub");
     assert_eq!(peer.role, crate::app::sync::DeviceRoleView::Holder);
     assert_eq!(peer.verified_by, Some(VerifiedBy::Sas));
@@ -299,7 +307,12 @@ fn a_peer_without_a_screen_gets_the_plain_warning_and_an_approval_joins() {
 
     app.handle_key(key_char('y')).unwrap();
     pump(&mut app, |a| a.sync.configured && !a.sync.syncing);
-    let peer = app.sync.devices.iter().find(|d| d.id == peer_device).expect("the peer is listed");
+    let peer = app
+        .sync
+        .devices
+        .iter()
+        .find(|d| d.id == peer_device)
+        .expect("the peer is listed");
     assert_eq!(peer.verified_by, Some(VerifiedBy::SshHostKey));
     assert!(app.sync.last_error.is_none(), "{:?}", app.sync.last_error);
 }

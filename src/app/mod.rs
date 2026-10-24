@@ -1012,6 +1012,9 @@ impl App {
             )),
         ));
         app.queue_auto_sync();
+        if app.sync.configured {
+            app.sync.intents.push(sync::SyncIntent::Identify);
+        }
 
         // Spawn the OS auto-detect worker here (the on-disk constructor) rather
         // than in new_with_deps so unit tests that inject deps stay offline and

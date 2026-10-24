@@ -390,7 +390,13 @@ device was verified (by SAS, or by the SSH host key only). Exits 0 when joined, 
 Sync with one ring device (name or unique id prefix) or, without
 .IR DEVICE ,
 with every other ring device that has a known host; the rest are reported as
-.BR "skipped (no host known)" .
+.BR "skipped (no host known)"
+(with how to record one: the hosts tab key
+.BR t ,
+or
+.BR "sshub sync\-join" )
+and a device still waiting for approval as
+.BR "not admitted yet" .
 One line per device:
 .B <name>: ok applied N, pending M, received R, sent S
 (plus

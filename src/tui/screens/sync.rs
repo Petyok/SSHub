@@ -113,7 +113,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         };
         let mut row = format!(
             " {:<18} {:<8} {:<13} {:<10} #{}",
-            d.name,
+            if d.this {
+                format!("{} (this)", d.name)
+            } else {
+                d.name.clone()
+            },
             role_label,
             d.status.label(),
             ago(d.last_seen),

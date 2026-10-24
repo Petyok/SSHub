@@ -541,6 +541,10 @@ pub fn round_fn(deps: RoundDeps) -> RoundFn {
                 unlock_round(&deps, rt, device, ctx)?;
                 Ok(RoundSummary::default())
             }
+            Round::Identify => {
+                ctx.emit(SyncEvent::ThisDevice(rt.identity.public().device_id()));
+                Ok(RoundSummary::default())
+            }
             Round::Release => {
                 release_round(&deps, &rt.identity, device)?;
                 Ok(RoundSummary::default())
