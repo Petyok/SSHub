@@ -204,3 +204,42 @@ fn twenty_four_words_are_the_share_bytes_and_the_index_comes_from_the_sharing() 
         }
     );
 }
+
+#[test]
+fn typed_paper_words_are_the_second_share_for_a_lone_terminal_and_wrong_words_open_nothing() {
+    use crate::sync::quorum::paper_registration;
+    let d = ring(3);
+    let phrase = bip39_encode(&[0x61; 32]);
+    // The paper is published through the log: only d[0] ever typed it.
+    crate::sync::quorum::tests::append(&d[0], paper_registration(&phrase).unwrap());
+    quorum_mode(&d[0]);
+    all_to_all(&d);
+    let host = [72u8; 16];
+    // d[1] never saw the phrase and still wraps the credential to the paper.
+    cred_put(&d[1].store, &d[1].id, &host, &payload("lone")).unwrap();
+    all_to_all(&d);
+    let (epoch, mine) = own_shares(&d[2].store, &d[2].id, &host).unwrap().remove(0);
+    let second = paper_second_share(&d[2].store, &host, epoch, &phrase).unwrap();
+    let dek = assemble_dek(&d[2].store, &host, mine, second).unwrap();
+    let (ct, _) = d[2].store.sync_cred_ciphertext(&host).unwrap().unwrap();
+    assert!(crate::sync::crypto::dek_open(&dek, &ct).is_ok());
+    // Another phrase is no key to any share.
+    let other = bip39_encode(&[0x62; 32]);
+    assert!(paper_second_share(&d[2].store, &host, epoch, &other).is_err());
+}
+
+#[test]
+fn a_ring_of_exactly_two_holders_needs_the_paper_before_credentials_or_a_mode_change() {
+    use crate::sync::quorum::paper_registration;
+    let d = ring(2);
+    quorum_mode(&d[0]);
+    all_to_all(&d);
+    let host = [73u8; 16];
+    let err = cred_put(&d[0].store, &d[0].id, &host, &payload("x")).unwrap_err();
+    assert!(format!("{err:#}").contains("paper"), "{err:#}");
+    crate::sync::quorum::tests::append(
+        &d[0],
+        paper_registration(&bip39_encode(&[0x63; 32])).unwrap(),
+    );
+    cred_put(&d[0].store, &d[0].id, &host, &payload("x")).unwrap();
+}

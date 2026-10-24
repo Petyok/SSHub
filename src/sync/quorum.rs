@@ -299,10 +299,61 @@ pub fn phone_device(store: &LauncherStore) -> Result<Option<DeviceId>> {
     Ok(phones.pop())
 }
 
+/// The paper's unwrap public key: the one a `FactorRegister { Paper }` replicated in `sealed` (so every
+/// device wraps new credentials to it), else the local record of the device that ran [`paper_setup`].
 pub fn paper_pub(store: &LauncherStore) -> Result<Option<DevicePublic>> {
+    for op in ops_of(store, "FactorRegister", None)?.into_iter().rev() {
+        if let OpBody::FactorRegister {
+            factor: super::oplog::ThirdFactor::Paper,
+            sealed,
+            ..
+        } = &op.body
+        {
+            if !sealed.is_empty() {
+                return pub_from_bytes(sealed).map(Some);
+            }
+        }
+    }
     meta_get(store, "paper_pub")?
         .map(|b| pub_from_bytes(&b))
         .transpose()
+}
+
+/// The `FactorRegister` body that publishes the paper: its recovery key as the factor verifier and its
+/// unwrap public key as the share recipient. The setup helper of the paper ceremony; the first
+/// registration needs only the phone and a second device (bootstrap, contract 4c).
+pub fn paper_registration(phrase: &str) -> Result<OpBody> {
+    let unwrap = paper_derive(phrase, PaperDomain::Unwrap)?.public();
+    let recover = paper_derive(phrase, PaperDomain::Recover)?.public();
+    Ok(OpBody::FactorRegister {
+        factor: super::oplog::ThirdFactor::Paper,
+        public: recover.ed25519_pub,
+        sealed: pub_to_bytes(&unwrap),
+        salt: [0; 16],
+        sender: None,
+    })
+}
+
+/// The mandatory-paper rule: a Quorum ring that would hold exactly two holders needs a registered paper,
+/// because losing either device would otherwise lose every credential. `holders_after` is the number of
+/// live holders (terminals and phone) the change leaves.
+pub fn paper_rule(store: &LauncherStore, holders_after: usize) -> Result<()> {
+    if holders_after == 2 && paper_pub(store)?.is_none() {
+        bail!("a ring with exactly two holders needs the paper registered first: losing either device would lose every credential");
+    }
+    Ok(())
+}
+
+/// Live holders of the ring (not revoked, not compromised).
+pub fn live_holder_count(store: &LauncherStore) -> Result<usize> {
+    Ok(store
+        .sync_devices()?
+        .into_iter()
+        .filter(|d| {
+            d.role == DeviceRole::Holder
+                && !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
+        })
+        .count())
 }
 
 // ------------------------------------------------------------------ sharings

@@ -91,7 +91,7 @@ fn a_gated_op_waits_for_all_three_proofs_from_the_right_participants() {
     let recover = paper_derive(&phrase, PaperDomain::Recover).unwrap();
 
     // Bootstrap: registering the first factor needs the phone and a second device, nothing else.
-    let reg = propose(&d, R, factor_register_paper(&recover));
+    let reg = propose(&d, R, factor_register_paper(&phrase).unwrap());
     append(&d[P], red_phone_sign_body(&reg));
     append(&d[A], red_approve_body(&reg));
     sync(&d);
@@ -222,7 +222,7 @@ fn a_ring_of_one_terminal_waives_the_second_device_and_requires_the_paper() {
     let d = world(&[R]);
     let phrase = bip39_encode(&[0x32; 32]);
     let recover = paper_derive(&phrase, PaperDomain::Recover).unwrap();
-    let reg = propose(&d, R, factor_register_paper(&recover));
+    let reg = propose(&d, R, factor_register_paper(&phrase).unwrap());
     append(&d[P], red_phone_sign_body(&reg));
     sync(&d);
     // First factor ever: bootstrap, phone only.
@@ -260,7 +260,7 @@ fn a_cert_issue_is_proposed_by_the_phone_and_needs_a_second_device_that_is_not_t
     let d = world(&[R, A, B]);
     let phrase = bip39_encode(&[0x33; 32]);
     let recover = paper_derive(&phrase, PaperDomain::Recover).unwrap();
-    let reg = propose(&d, R, factor_register_paper(&recover));
+    let reg = propose(&d, R, factor_register_paper(&phrase).unwrap());
     append(&d[P], red_phone_sign_body(&reg));
     append(&d[A], red_approve_body(&reg));
     sync(&d);
@@ -298,7 +298,7 @@ fn the_emailed_code_is_a_factor_and_its_sender_mails_only_when_the_other_proofs_
     let d = world(&[R, A, B]);
     let phrase = bip39_encode(&[0x34; 32]);
     let recover = paper_derive(&phrase, PaperDomain::Recover).unwrap();
-    let reg = propose(&d, R, factor_register_paper(&recover));
+    let reg = propose(&d, R, factor_register_paper(&phrase).unwrap());
     append(&d[P], red_phone_sign_body(&reg));
     append(&d[A], red_approve_body(&reg));
     sync(&d);

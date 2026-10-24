@@ -352,6 +352,11 @@ impl ShareSource for FromPeer {
 #[test]
 fn the_unlocker_fills_the_gate_for_a_real_host_row_and_nothing_else() {
     let d = ring(2);
+    // Exactly two holders: the paper is mandatory.
+    append(
+        &d[0],
+        paper_registration(&bip39_encode(&[0x71; 32])).unwrap(),
+    );
     quorum_mode(&d[0]);
     all_to_all(&d);
     let row = d[0]
