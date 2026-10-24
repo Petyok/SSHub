@@ -34,8 +34,8 @@ use crate::sync::unlock_paths::{
     share_from_code,
 };
 
-/// How long a phone challenge stays valid.
-const CHALLENGE_TTL_SECS: i64 = 600;
+/// How long a phone challenge stays valid (the contract's bound).
+const CHALLENGE_TTL_SECS: i64 = crate::sync::limits::CHALLENGE_EXPIRY_SECS;
 /// The terminal area the challenge QR is sized for (columns, rows).
 const QR_AREA: (u16, u16) = (76, 44);
 /// How long the modal waits for the user before the unlock gives up.

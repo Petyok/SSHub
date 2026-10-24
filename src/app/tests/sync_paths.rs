@@ -467,7 +467,9 @@ fn a_release_request_opens_the_holders_modal_and_approving_grants_the_requester(
     let view = r.app.sync.release.clone().unwrap();
     assert_eq!(view.requester_id, r.d[2].did);
     assert_eq!(view.host, "web");
+    assert!(view.age_secs < 60, "the request age is shown: {view:?}");
 
+    r.app.sync.release_opened = Some(Instant::now() - Duration::from_secs(2));
     r.app.handle_key(key_char('y')).unwrap();
     pump(&mut r.app, "the grants", |a| {
         a.sync.pending == 0 && !a.sync.syncing
@@ -489,6 +491,7 @@ fn refusing_a_release_request_grants_nothing_and_does_not_ask_again() {
     let mut r = ring(None);
     let req = request_from_device_2(&mut r);
     assert_eq!(r.app.mode, AppMode::SyncReleaseConfirm);
+    r.app.sync.release_opened = Some(Instant::now() - Duration::from_secs(2));
     r.app.handle_key(key_char('n')).unwrap();
     pump(&mut r.app, "the refusal", |a| {
         a.sync.pending == 0 && !a.sync.syncing

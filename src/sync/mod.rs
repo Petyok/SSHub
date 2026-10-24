@@ -6,6 +6,7 @@ pub mod cert;
 pub mod checkpoint_driver;
 pub mod client;
 pub mod codes;
+pub mod companion;
 pub mod cred_ops;
 pub mod crypto;
 pub mod email;

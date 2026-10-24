@@ -663,7 +663,7 @@ pub fn render_release_confirm(frame: &mut Frame, app: &App) {
             theme.style(StyleRole::TextBright),
         ),
         Line::styled(
-            format!("to open {}", r.host),
+            format!("to open {} (asked {} s ago)", r.host, r.age_secs),
             theme.style(StyleRole::TextPrimary),
         ),
         Line::raw(""),

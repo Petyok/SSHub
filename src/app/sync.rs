@@ -25,6 +25,8 @@ const NO_WORKER: &str = "sync is not available in this build yet";
 pub const TRUST_TTL_DAYS: [u32; 3] = [7, 30, 90];
 /// Index of the default term in [`TRUST_TTL_DAYS`].
 pub const TRUST_TTL_DEFAULT: usize = 1;
+/// Keys are ignored this long after the share release confirmation opens.
+const RELEASE_KEY_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Health of a device in the ring (the contract's `DeviceStatus`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -245,6 +247,8 @@ pub struct ReleaseView {
     pub requester_id: String,
     /// Hash of the pending `ShareRelease` op this answers.
     pub hash: [u8; 32],
+    /// How old the request was when it opened.
+    pub age_secs: i64,
 }
 
 /// What stage 3 stores for Vault: the master phrase and the ring secret.
@@ -316,7 +320,7 @@ impl OnboardingView {
         OsRng.fill_bytes(&mut ring);
         let first = OsRng.next_u32() as usize % 6;
         let second = (first + 1 + OsRng.next_u32() as usize % 5) % 6;
-        let home = std::env::var_os("HOME").map_or_else(|| ".".into(), std::path::PathBuf::from);
+        let home = kit::default_dir();
         let path = |name: &str| home.join(name).to_string_lossy().into_owned();
         Self::with_secrets(
             &entropy,
@@ -437,6 +441,8 @@ pub struct SyncView {
     /// Set by a fork proof; stays set after the alert is dismissed.
     pub fork: Option<ForkView>,
     pub release: Option<ReleaseView>,
+    /// When the release confirmation opened: keys are ignored for its first moments.
+    pub release_opened: Option<std::time::Instant>,
     pub onboarding: Option<OnboardingView>,
     /// Requests for the worker, oldest first.
     pub intents: Vec<SyncIntent>,
@@ -903,6 +909,7 @@ impl App {
 
     pub fn open_sync_release_confirm(&mut self, view: ReleaseView) {
         self.sync.release = Some(view);
+        self.sync.release_opened = Some(std::time::Instant::now());
         self.mode = AppMode::SyncReleaseConfirm;
     }
 
@@ -1265,7 +1272,16 @@ impl App {
                 }
             }
             AppMode::SyncReleaseConfirm => {
-                let approve = confirm || self.is_action(KeyAction::ConfirmYes, &key);
+                // A modal that opens while the user is pressing Enter must not approve by itself:
+                // keys are ignored at first, and only an explicit `y` releases.
+                if self
+                    .sync
+                    .release_opened
+                    .is_some_and(|t| t.elapsed() < RELEASE_KEY_DELAY)
+                {
+                    return Ok(());
+                }
+                let approve = plain('y');
                 if approve || cancel || plain('n') {
                     if let Some(hash) = self.sync.release.as_ref().map(|r| r.hash) {
                         self.sync.answered_releases.push(hash);
@@ -1378,6 +1394,7 @@ pub(crate) fn sample_sync_view_with_modals() -> SyncView {
             requester: "new laptop".into(),
             requester_id: "id-9".into(),
             hash: [7; 32],
+            age_secs: 12,
         }),
         onboarding: Some(
             OnboardingView::with_secrets(
@@ -1557,7 +1574,9 @@ mod tests {
             requester: "new laptop".into(),
             requester_id: "id-9".into(),
             hash: [7; 32],
+            age_secs: 3,
         });
+        age_the_release_modal(&mut app);
         app.handle_key(press(KeyCode::Esc)).unwrap();
         assert_eq!(
             app.sync.intents,
@@ -1570,6 +1589,46 @@ mod tests {
             ]
         );
         assert_eq!(app.mode, AppMode::Normal);
+    }
+
+    fn age_the_release_modal(app: &mut App) {
+        app.sync.release_opened =
+            Some(std::time::Instant::now() - std::time::Duration::from_secs(2));
+    }
+
+    fn release_modal() -> App {
+        let mut app = configured_app();
+        app.open_sync_release_confirm(ReleaseView {
+            host: "web-1".into(),
+            requester: "new laptop".into(),
+            requester_id: "id-9".into(),
+            hash: [7; 32],
+            age_secs: 3,
+        });
+        app
+    }
+
+    #[test]
+    fn a_release_needs_an_explicit_y_after_the_first_moments() {
+        // Keys pressed as the modal opens (even `y`) are ignored.
+        let mut app = release_modal();
+        app.handle_key(press(KeyCode::Char('y'))).unwrap();
+        assert_eq!(app.mode, AppMode::SyncReleaseConfirm);
+        assert!(app.sync.intents.is_empty());
+        // Enter never approves, even later.
+        age_the_release_modal(&mut app);
+        app.handle_key(press(KeyCode::Enter)).unwrap();
+        assert_eq!(app.mode, AppMode::SyncReleaseConfirm);
+        assert!(app.sync.intents.is_empty());
+        // An explicit `y` does.
+        app.handle_key(press(KeyCode::Char('y'))).unwrap();
+        assert_eq!(
+            app.sync.intents,
+            vec![SyncIntent::Release {
+                approve: true,
+                hash: [7; 32]
+            }]
+        );
     }
 
     #[test]

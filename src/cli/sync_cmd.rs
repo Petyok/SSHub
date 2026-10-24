@@ -233,6 +233,11 @@ fn mail_owed_codes(
     }
 }
 
+/// A string a ring peer wrote, safe to print: control characters shown escaped.
+fn plain(text: &str) -> String {
+    super::theme::sanitize_foreign(text)
+}
+
 fn is_yes(line: &str) -> bool {
     matches!(line.trim().to_lowercase().as_str(), "y" | "yes")
 }
@@ -503,10 +508,11 @@ fn now(paths: &ProfilePaths, device: Option<&str>, json_out: bool) -> Result<i32
     let mut attempted = false;
     let mut array = Vec::new();
     for (id, name, outcome) in &results {
+        let shown = plain(name);
         match outcome {
             Outcome::Skipped => {
                 if !json_out {
-                    println!("{name}: skipped (no host known); {HOW_TO_RECORD_A_HOST}");
+                    println!("{shown}: skipped (no host known); {HOW_TO_RECORD_A_HOST}");
                 }
                 array.push(json!({
                     "device": id, "name": name, "status": "skipped",
@@ -515,7 +521,7 @@ fn now(paths: &ProfilePaths, device: Option<&str>, json_out: bool) -> Result<i32
             }
             Outcome::Admitting => {
                 if !json_out {
-                    println!("{name}: not admitted yet (waiting for approval: sshub sync-review)");
+                    println!("{shown}: not admitted yet (waiting for approval: sshub sync-review)");
                 }
                 array.push(json!({
                     "device": id, "name": name, "status": "pending_admission",
@@ -526,7 +532,7 @@ fn now(paths: &ProfilePaths, device: Option<&str>, json_out: bool) -> Result<i32
                 attempted = true;
                 failed = true;
                 if !json_out {
-                    println!("{name}: offline/failed: {r}");
+                    println!("{shown}: offline/failed: {r}");
                 }
                 array.push(json!({"device": id, "name": name, "status": "failed", "error": r}));
             }
@@ -535,12 +541,12 @@ fn now(paths: &ProfilePaths, device: Option<&str>, json_out: bool) -> Result<i32
                 if !s.forks.is_empty() {
                     fork = true;
                     if !json_out {
-                        println!("FORK DETECTED: {name}");
+                        println!("FORK DETECTED: {shown}");
                     }
                 }
                 if !json_out {
                     let mut line = format!(
-                        "{name}: ok applied {}, pending {}, received {}, sent {}",
+                        "{shown}: ok applied {}, pending {}, received {}, sent {}",
                         s.applied, s.pending_arrived, s.received, s.sent
                     );
                     if !s.behind.is_empty() {
@@ -623,7 +629,10 @@ fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
                 })
             })
             .collect();
-        let doc = json!({"devices": devices, "pending": pending, "credential_mode": mode});
+        let doc = json!({
+            "devices": devices, "pending": pending, "credential_mode": mode,
+            "companion_fingerprint": crate::sync::companion::COMPANION_FINGERPRINT,
+        });
         println!("{}", serde_json::to_string_pretty(&doc)?);
         return Ok(0);
     }
@@ -634,7 +643,7 @@ fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
     for r in &rows {
         println!(
             "{} ({}) role {} status {} last seen {} head {} host {} verified {}",
-            r.name,
+            plain(&r.name),
             short(&r.id),
             lower(r.role),
             lower(r.status),
@@ -646,6 +655,11 @@ fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
     }
     println!("Pending changes: {pending}");
     println!("Credential mode: {mode}");
+    println!(
+        "Phone page of this build: {} ({})",
+        crate::sync::companion::COMPANION_FINGERPRINT,
+        crate::sync::companion::COMPARE_HINT
+    );
     Ok(0)
 }
 
@@ -703,7 +717,7 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
             });
             println!("{}", serde_json::to_string_pretty(&doc)?);
         } else {
-            println!("{verb} {id}: {}", view.summary);
+            println!("{verb} {id}: {}", plain(&view.summary));
         }
         return Ok(0);
     }
@@ -732,10 +746,20 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
         return Ok(0);
     }
     for v in &views {
-        println!("{}  {}  {}", &hex(&v.hash)[..12], v.device, v.summary);
+        println!(
+            "{}  {}  {}",
+            &hex(&v.hash)[..12],
+            plain(&v.device),
+            plain(&v.summary)
+        );
         for c in &v.changes {
             let mark = if c.dangerous { "[!]" } else { "   " };
-            println!("  {mark} {}: {} -> {}", c.field, c.from, c.to);
+            println!(
+                "  {mark} {}: {} -> {}",
+                c.field,
+                plain(&c.from),
+                plain(&c.to)
+            );
         }
         if let Some(red) = &v.red {
             println!("  Red change, three proofs needed:");
@@ -746,7 +770,7 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
                 println!("    missing: {m}");
             }
             if let Some(why) = &red.blocked {
-                println!("    impossible as it stands: {why}");
+                println!("    impossible as it stands: {}", plain(why));
             }
             if red.expired {
                 println!("    expired: reject it and propose it again");
