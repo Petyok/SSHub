@@ -142,7 +142,7 @@ Rules enforced by the engine:
   pair (`credentials::open_for_profile`; opened only when a host or identity
   moves). Between the destination commit and the source deletion the engine
   reads each created host's and identity's `host:{id}` / `identity:{id}` secret
-  (only rows flagged `has_password`) from the *source* store, writes it under
+  from the *source* store, writes it under
   the new id in the *destination* store and sets `has_password` on the new row.
   A flagged secret that is missing, unreadable or unwritable keeps its source
   original: the host or identity (and a host's tunnels, audit events and
