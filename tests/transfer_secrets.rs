@@ -528,15 +528,16 @@ fn a_flagged_secret_missing_from_the_source_store_keeps_the_host() {
 /// each identity and group it planned in at least one profile: a move that
 /// strands nothing in the destination must not also delete the source row.
 fn assert_nothing_lost(src: &LauncherStore, dest: &LauncherStore) {
-    for name in ["deploy"] {
-        let found = |s: &LauncherStore| {
-            s.list_identities()
-                .unwrap()
-                .iter()
-                .any(|i| i.name.starts_with(name))
-        };
-        assert!(found(src) || found(dest), "identity {name} lost");
-    }
+    let has_identity = |s: &LauncherStore| {
+        s.list_identities()
+            .unwrap()
+            .iter()
+            .any(|i| i.name.starts_with("deploy"))
+    };
+    assert!(
+        has_identity(src) || has_identity(dest),
+        "identity deploy lost"
+    );
     let found = |s: &LauncherStore| {
         s.list_groups()
             .unwrap()
@@ -564,7 +565,7 @@ fn kept_host_fixture() -> (LauncherStore, FakeSecrets) {
             group_id: Some(group.id),
             identity_id: Some(ident),
             has_password: flagged,
-            ..NewHost::launcher(name, &format!("{name}.example.com"))
+            ..NewHost::launcher(name, format!("{name}.example.com"))
         })
         .unwrap();
     }
