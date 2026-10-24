@@ -1005,6 +1005,7 @@ impl App {
                 gate,
             )),
         ));
+        app.queue_auto_sync();
 
         // Spawn the OS auto-detect worker here (the on-disk constructor) rather
         // than in new_with_deps so unit tests that inject deps stay offline and

@@ -5,7 +5,8 @@ use super::*;
 use crate::store::LauncherStore;
 use crate::sync::client::spawn_sync_thread;
 use crate::sync::crypto::DeviceIdentity;
-use crate::sync::enroll::{run_sync_enroll, run_sync_join};
+use crate::sync::enroll::{run_sync_enroll, run_sync_join, SasPrompt};
+use crate::sync::oplog::VerifiedBy;
 use crate::sync::oplog::{Attendance, DeviceRole, HostFields, Op, OpBody};
 use crate::sync::runtime::UiSas;
 use crate::sync::transport::{Conn, Limits};
@@ -49,6 +50,8 @@ fn app_with_author() -> (App, Author) {
                 "laptop",
                 DeviceRole::Holder,
                 Attendance::Attended,
+                crate::sync::oplog::DeviceKind::Terminal,
+                VerifiedBy::Sas,
             )
             .unwrap();
     }
@@ -165,14 +168,34 @@ fn the_diff_shows_the_current_value_and_marks_only_dangerous_fields() {
     assert!(!by("notes").dangerous);
 }
 
+/// The peer of an enrollment.
+#[derive(Clone, Copy)]
+enum Peer {
+    /// A human at a screen, answering the words.
+    Screen { agrees: bool },
+    /// No tty on the peer (`None` for the confirm).
+    NoScreen,
+}
+
 /// A worker whose rounds run against an in-process existing device: the real
-/// enrollment code on both ends over a socket pair, the peer agreeing.
-fn attach_enrolling_worker(app: &mut App, peer_agrees: bool) -> (Arc<LauncherStore>, String) {
+/// enrollment code on both ends over a socket pair. `rings` gives each side
+/// its own ring id (`local`, `peer`); by default the peer founded a ring and
+/// this device joins it.
+fn attach_enrolling_worker_in(
+    app: &mut App,
+    peer_kind: Peer,
+    rings: Option<(&'static str, &'static str)>,
+) -> (Arc<LauncherStore>, String) {
     let store = app.store.clone();
     let id = Arc::new(DeviceIdentity::generate());
     let peer_store = Arc::new(LauncherStore::open_in_memory().unwrap());
     let peer_id = DeviceIdentity::generate();
     let peer_device = peer_id.public().device_id();
+    let peer_ring = rings.map_or_else(|| peer_device.clone(), |(_, p)| p.to_string());
+    crate::sync::quorum::meta_set(&peer_store, "ring_id", peer_ring.as_bytes()).unwrap();
+    if let Some((local, _)) = rings {
+        crate::sync::quorum::meta_set(&store, "ring_id", local.as_bytes()).unwrap();
+    }
     let peer_for_thread = peer_store.clone();
     let peer_id = Arc::new(peer_id);
     app.attach_sync_worker(spawn_sync_thread(Box::new(move |_kind, _host, ctx| {
@@ -185,14 +208,15 @@ fn attach_enrolling_worker(app: &mut App, peer_agrees: bool) -> (Arc<LauncherSto
                 Limits::default(),
                 Arc::new(AtomicBool::new(false)),
             );
-            run_sync_enroll(
-                &mut conn,
-                &peer_store,
-                &peer_id,
-                "hub",
-                true,
-                &mut |_: &str, _: &str| peer_agrees,
-            )
+            match peer_kind {
+                Peer::Screen { agrees } => {
+                    let mut ui = move |_: &SasPrompt<'_>| agrees;
+                    run_sync_enroll(&mut conn, &peer_store, &peer_id, "hub", true, Some(&mut ui))
+                }
+                Peer::NoScreen => {
+                    run_sync_enroll(&mut conn, &peer_store, &peer_id, "hub", true, None)
+                }
+            }
         });
         let mut conn = Conn::new(
             a.try_clone().unwrap(),
@@ -200,7 +224,7 @@ fn attach_enrolling_worker(app: &mut App, peer_agrees: bool) -> (Arc<LauncherSto
             Limits::default(),
             Arc::new(AtomicBool::new(false)),
         );
-        let joined = run_sync_join(&mut conn, &store, &id, "me", true, &mut UiSas(ctx));
+        let joined = run_sync_join(&mut conn, &store, &id, "me", true, Some(&mut UiSas(ctx)));
         let _ = peer.join();
         let outcome = joined?;
         Ok(crate::sync::protocol::RoundSummary {
@@ -210,6 +234,16 @@ fn attach_enrolling_worker(app: &mut App, peer_agrees: bool) -> (Arc<LauncherSto
         })
     })));
     (peer_store, peer_device)
+}
+
+fn attach_enrolling_worker(app: &mut App, peer_agrees: bool) -> (Arc<LauncherStore>, String) {
+    attach_enrolling_worker_in(
+        app,
+        Peer::Screen {
+            agrees: peer_agrees,
+        },
+        None,
+    )
 }
 
 fn pump(app: &mut App, until: impl Fn(&App) -> bool) {
@@ -225,17 +259,23 @@ fn pump(app: &mut App, until: impl Fn(&App) -> bool) {
     }
 }
 
-#[test]
-fn enrolling_a_host_shows_the_words_and_a_yes_joins_the_ring() {
-    let mut app = test_app(vec![]);
-    let (_peer, peer_device) = attach_enrolling_worker(&mut app, true);
-    assert!(!app.sync.configured);
+fn start_enroll(app: &mut App) {
     app.sync
         .intents
         .push(crate::app::sync::SyncIntent::Enroll { host: "hub".into() });
+}
+
+#[test]
+fn both_with_screens_compare_words_and_a_yes_joins_verified_by_sas() {
+    let mut app = test_app(vec![]);
+    let (_peer, peer_device) = attach_enrolling_worker(&mut app, true);
+    assert!(!app.sync.configured);
+    start_enroll(&mut app);
     pump(&mut app, |a| a.mode == AppMode::SyncSas);
     let sas = app.sync.sas.clone().unwrap();
     assert_eq!(sas.peer, "hub");
+    assert_eq!(sas.peer_name, "hub");
+    assert!(sas.peer_has_screen);
     assert_eq!(sas.words.split('-').count(), 4, "{}", sas.words);
 
     app.handle_key(key_char('y')).unwrap();
@@ -247,6 +287,25 @@ fn enrolling_a_host_shows_the_words_and_a_yes_joins_the_ring() {
         app.sync.devices[0].role,
         crate::app::sync::DeviceRoleView::Holder
     );
+    assert_eq!(app.sync.devices[0].verified_by, Some(VerifiedBy::Sas));
+    assert!(app.sync.last_error.is_none(), "{:?}", app.sync.last_error);
+}
+
+#[test]
+fn a_peer_without_a_screen_gets_the_plain_warning_and_an_approval_joins() {
+    let mut app = test_app(vec![]);
+    let (_peer, peer_device) = attach_enrolling_worker_in(&mut app, Peer::NoScreen, None);
+    start_enroll(&mut app);
+    pump(&mut app, |a| a.mode == AppMode::SyncSas);
+    assert!(!app.sync.sas.as_ref().unwrap().peer_has_screen);
+
+    app.handle_key(key_char('y')).unwrap();
+    pump(&mut app, |a| a.sync.configured && !a.sync.syncing);
+    assert_eq!(app.sync.devices[0].id, peer_device);
+    assert_eq!(
+        app.sync.devices[0].verified_by,
+        Some(VerifiedBy::SshHostKey)
+    );
     assert!(app.sync.last_error.is_none(), "{:?}", app.sync.last_error);
 }
 
@@ -254,9 +313,7 @@ fn enrolling_a_host_shows_the_words_and_a_yes_joins_the_ring() {
 fn declining_the_words_joins_nothing_and_says_so() {
     let mut app = test_app(vec![]);
     attach_enrolling_worker(&mut app, true);
-    app.sync
-        .intents
-        .push(crate::app::sync::SyncIntent::Enroll { host: "hub".into() });
+    start_enroll(&mut app);
     pump(&mut app, |a| a.mode == AppMode::SyncSas);
     app.handle_key(key_char('n')).unwrap();
     pump(&mut app, |a| a.sync.last_error.is_some());
@@ -266,6 +323,40 @@ fn declining_the_words_joins_nothing_and_says_so() {
         app.sync.last_error
     );
     assert!(!app.sync.configured);
+    assert!(app.store.sync_devices().unwrap().is_empty());
+}
+
+#[test]
+fn declining_the_admission_of_a_screenless_peer_joins_nothing() {
+    let mut app = test_app(vec![]);
+    attach_enrolling_worker_in(&mut app, Peer::NoScreen, None);
+    start_enroll(&mut app);
+    pump(&mut app, |a| a.mode == AppMode::SyncSas);
+    app.handle_key(key_char('n')).unwrap();
+    pump(&mut app, |a| a.sync.last_error.is_some());
+    assert!(!app.sync.configured);
+    assert!(app.store.sync_devices().unwrap().is_empty());
+}
+
+#[test]
+fn two_different_rings_cannot_be_merged() {
+    let mut app = test_app(vec![]);
+    attach_enrolling_worker_in(
+        &mut app,
+        Peer::Screen { agrees: true },
+        Some(("ring-local", "ring-peer")),
+    );
+    start_enroll(&mut app);
+    pump(&mut app, |a| a.sync.last_error.is_some());
+    assert!(
+        app.sync
+            .last_error
+            .as_deref()
+            .unwrap()
+            .contains("merging rings is not supported"),
+        "{:?}",
+        app.sync.last_error
+    );
     assert!(app.store.sync_devices().unwrap().is_empty());
 }
 
@@ -285,6 +376,7 @@ fn a_share_release_names_the_requester_and_the_host_in_the_review() {
                 host_uid: uid,
                 request_id: 7,
                 requester: author.id.public().device_id(),
+                eph_x25519_pub: [3; 32],
             },
         )
         .unwrap();

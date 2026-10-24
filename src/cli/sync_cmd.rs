@@ -19,9 +19,10 @@ use crate::profile::ProfilePaths;
 use crate::store::LauncherStore;
 use crate::sync::client::TransportError;
 use crate::sync::crypto::DeviceIdentity;
-use crate::sync::enroll::run_sync_enroll;
+use crate::sync::enroll::{run_sync_enroll, EnrollRole, SasConfirm, SasPrompt};
 use crate::sync::identity_store::load_or_init_identity;
-use crate::sync::protocol::{run_sync_serve, RoundSummary};
+use crate::sync::oplog::VerifiedBy;
+use crate::sync::protocol::RoundSummary;
 use crate::sync::runtime::{device_name, enroll_limits, Peers, SyncRuntime};
 use crate::sync::transport::{Conn, Limits};
 
@@ -188,7 +189,16 @@ fn serve(paths: &ProfilePaths) -> Result<i32> {
         Limits::default(),
         Arc::new(AtomicBool::new(false)),
     );
-    run_sync_serve(&store, &identity, &mut conn)?;
+    // A broken config must not stop a peer from syncing: serve without mail.
+    let config = crate::config::load_config_at(&paths.config_file)
+        .map_err(|e| eprintln!("sshub: config not read, no notifications: {e:#}"))
+        .ok();
+    crate::sync::hub::run_sync_serve_notify(
+        &store,
+        &identity,
+        &mut conn,
+        config.as_ref().map(|c| &c.sync.notify),
+    )?;
     Ok(0)
 }
 
@@ -196,28 +206,54 @@ fn is_yes(line: &str) -> bool {
     matches!(line.trim().to_lowercase().as_str(), "y" | "yes")
 }
 
-/// Ask on the controlling terminal; with none, report the words on stderr and
-/// accept (the human comparison happens on the joining side).
-fn confirm_on_tty(sas: &str, peer: &str) -> bool {
-    let tty = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open("/dev/tty")
-        .and_then(|w| w.try_clone().map(|r| (w, r)));
-    let Ok((mut w, r)) = tty else {
-        eprintln!("SAS words: {sas} (peer {peer})");
-        return true;
-    };
-    let _ = write!(
-        w,
-        "Enrolling {peer}. Compare these words with the other device: {sas}\nDo they match? [y/N] "
-    );
-    let _ = w.flush();
-    let mut line = String::new();
-    BufReader::new(r).read_line(&mut line).is_ok() && is_yes(&line)
+/// Said wherever the words cannot be compared with a second screen.
+const NO_SCREEN_NOTE: &str = "The other device has no screen: these words prove nothing. Its identity rests on the SSH host key you verified for";
+
+/// The question for one SAS prompt, shown on whichever terminal asks.
+fn sas_question(p: &SasPrompt<'_>, host: Option<&str>) -> String {
+    if p.peer_has_screen {
+        format!(
+            "Enrolling {}. Compare these words with the other device: {}\nDo they match? [y/N] ",
+            p.peer_name, p.sas
+        )
+    } else {
+        format!(
+            "Enrolling {}. SAS words: {}\n{NO_SCREEN_NOTE} {}.\nAdmit this device? [y/N] ",
+            p.peer_name,
+            p.sas,
+            host.unwrap_or("this connection")
+        )
+    }
+}
+
+/// `sync-enroll` on a terminal (`ssh -t`): ask on /dev/tty.
+struct TtyPrompt;
+
+impl SasConfirm for TtyPrompt {
+    fn confirm(&mut self, p: &SasPrompt<'_>) -> bool {
+        let tty = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/tty")
+            .and_then(|w| w.try_clone().map(|r| (w, r)));
+        let Ok((mut w, r)) = tty else {
+            return false;
+        };
+        let _ = write!(w, "{}", sas_question(p, None));
+        let _ = w.flush();
+        let mut line = String::new();
+        BufReader::new(r).read_line(&mut line).is_ok() && is_yes(&line)
+    }
+}
+
+fn stdin_is_tty() -> bool {
+    // SAFETY: isatty only inspects descriptor 0.
+    unsafe { libc::isatty(0) == 1 }
 }
 
 fn enroll(paths: &ProfilePaths) -> Result<i32> {
+    // Decided before the protocol takes over stdin.
+    let interactive = stdin_is_tty();
     let out = take_protocol_stdout()?;
     let store = open_store(paths)?;
     let identity = open_identity(paths)?;
@@ -227,14 +263,27 @@ fn enroll(paths: &ProfilePaths) -> Result<i32> {
         enroll_limits(),
         Arc::new(AtomicBool::new(false)),
     );
-    run_sync_enroll(
-        &mut conn,
-        &store,
-        &identity,
-        &device_name(),
-        true,
-        &mut confirm_on_tty,
-    )?;
+    // Without a tty there is no human here: never confirm as one. The words go
+    // to stderr for the log only.
+    let mut logged = |p: &SasPrompt<'_>| {
+        eprintln!(
+            "SAS words: {} (peer has screen: {}) (peer {})",
+            p.sas,
+            if p.peer_has_screen { "yes" } else { "no" },
+            p.peer_name
+        );
+        TtyPrompt.confirm(p)
+    };
+    let ui: Option<&mut dyn SasConfirm> = if interactive { Some(&mut logged) } else { None };
+    let outcome = run_sync_enroll(&mut conn, &store, &identity, &device_name(), true, ui)?;
+    if !interactive {
+        // No human here, so nothing says whether the peer had a screen: this
+        // line is for the log only.
+        eprintln!(
+            "SAS words: {} (peer has screen: unknown, no tty here; admitted on the SSH session)",
+            outcome.sas
+        );
+    }
     Ok(0)
 }
 
@@ -251,21 +300,40 @@ fn runtime(paths: &ProfilePaths) -> Result<SyncRuntime> {
 fn join(paths: &ProfilePaths, host: &str) -> Result<i32> {
     let rt = runtime(paths)?;
     let cancel = Arc::new(AtomicBool::new(false));
-    let mut ui = |sas: &str, peer: &str| {
-        println!("Compare these words with the other device: {sas}");
-        println!("Peer: {peer}");
-        print!("Do they match? [y/N] ");
+    let mut ui = |p: &SasPrompt<'_>| {
+        if p.peer_has_screen {
+            println!("Compare these words with the other device: {}", p.sas);
+            println!("Peer: {}", p.peer_name);
+            print!("Do they match? [y/N] ");
+        } else {
+            println!("SAS words: {}", p.sas);
+            println!("Peer: {}", p.peer_name);
+            println!("{NO_SCREEN_NOTE} {host}.");
+            print!("Admit this device? [y/N] ");
+        }
         let _ = std::io::stdout().flush();
         let mut line = String::new();
         std::io::stdin().read_line(&mut line).is_ok() && is_yes(&line)
     };
     match rt.join(host, &mut ui, &cancel) {
         Ok(o) => {
-            println!(
-                "Joined the ring of {} (device {}). This device is a mirror until the ring approves more.",
-                o.peer_name,
-                short(&o.peer.device_id())
-            );
+            let how = match o.verified_by {
+                VerifiedBy::Sas => "verified by SAS",
+                VerifiedBy::SshHostKey => "verified by the SSH host key only",
+            };
+            let id = o.peer.device_id();
+            match o.role {
+                EnrollRole::Joiner => println!(
+                    "Joined the ring of {} (device {}), {how}. This device is a mirror until the ring approves more.",
+                    o.peer_name,
+                    short(&id)
+                ),
+                EnrollRole::Inviter => println!(
+                    "Admitted {} (device {}) to this ring as a mirror, {how}.",
+                    o.peer_name,
+                    short(&id)
+                ),
+            }
             Ok(0)
         }
         Err(e) => Ok(failure(&format!("sync-join: {e}"))),
@@ -301,7 +369,7 @@ fn resolve_device<'a>(devices: &'a [(String, String)], query: &str) -> Result<&'
 }
 
 enum Outcome {
-    Ok(RoundSummary),
+    Ok(Box<RoundSummary>),
     Skipped,
     Failed(String),
 }
@@ -350,7 +418,7 @@ fn now(paths: &ProfilePaths, device: Option<&str>, json_out: bool) -> Result<i32
             Outcome::Skipped
         } else {
             match rt.sync_with(&id, &cancel) {
-                Ok(s) => Outcome::Ok(s),
+                Ok(s) => Outcome::Ok(Box::new(s)),
                 Err(e) => Outcome::Failed(reason(&e).to_string()),
             }
         };
@@ -445,6 +513,13 @@ fn lower<T: std::fmt::Debug>(v: T) -> String {
 }
 
 /// Read-only: never creates the device key.
+fn verified_str(v: VerifiedBy) -> &'static str {
+    match v {
+        VerifiedBy::Sas => "sas",
+        VerifiedBy::SshHostKey => "ssh_host_key",
+    }
+}
+
 fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
     let store = open_store(paths)?;
     let rows = store.sync_devices()?;
@@ -459,6 +534,7 @@ fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
                     "id": r.id, "name": r.name, "role": lower(r.role),
                     "status": lower(r.status), "last_seen": r.last_seen,
                     "head_seq": r.head_seq, "host": peers.host_of(&r.id),
+                    "verified_by": verified_str(r.verified_by),
                 })
             })
             .collect();
@@ -472,7 +548,7 @@ fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
     }
     for r in &rows {
         println!(
-            "{} ({}) role {} status {} last seen {} head {} host {}",
+            "{} ({}) role {} status {} last seen {} head {} host {} verified {}",
             r.name,
             short(&r.id),
             lower(r.role),
@@ -480,6 +556,7 @@ fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
             age(r.last_seen),
             r.head_seq,
             peers.host_of(&r.id).unwrap_or("-"),
+            verified_str(r.verified_by),
         );
     }
     println!("Pending changes: {pending}");
@@ -705,6 +782,8 @@ mod tests {
                 "laptop",
                 DeviceRole::Holder,
                 Attendance::Attended,
+                crate::sync::oplog::DeviceKind::Terminal,
+                VerifiedBy::Sas,
             )
             .unwrap();
         }

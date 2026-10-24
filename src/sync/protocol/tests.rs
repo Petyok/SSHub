@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 
 use super::*;
 use crate::sync::crypto::DeviceIdentity;
-use crate::sync::oplog::{Attendance, DeviceKind, DeviceRole, HostFields, OpBody};
+use crate::sync::oplog::{Attendance, DeviceKind, DeviceRole, HostFields, OpBody, VerifiedBy};
 use crate::sync::ratchet::{load_pair, save_pair};
 
 type Hook = Box<dyn FnMut(&mut Value) -> bool + Send>;
@@ -110,6 +110,7 @@ impl Dev {
                 DeviceRole::Holder,
                 attendance,
                 kind,
+                VerifiedBy::Sas,
             )
             .unwrap();
     }

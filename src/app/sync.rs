@@ -100,6 +100,8 @@ pub struct DeviceView {
     /// Unix seconds of the last contact, `None` when never seen.
     pub last_seen: Option<i64>,
     pub head_seq: u64,
+    /// How this device was admitted, from the local enrollment record.
+    pub verified_by: Option<crate::sync::oplog::VerifiedBy>,
 }
 
 /// The active trust session, if one is open.
@@ -189,9 +191,15 @@ pub struct UnlockView {
 /// The enrollment SAS screen.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SasView {
+    /// The host the enrollment runs against.
     pub peer: String,
+    /// The device name the peer claims.
+    pub peer_name: String,
     /// The words both screens must show, e.g. `harbor-globe-lantern-mint`.
     pub words: String,
+    /// A human at the other end sees the same words. When false the words prove
+    /// nothing and the admission rests on the SSH host key.
+    pub peer_has_screen: bool,
 }
 
 /// The fork alert: which device equivocated.
@@ -207,6 +215,8 @@ pub struct ReleaseView {
     pub host: String,
     pub requester: String,
     pub requester_id: String,
+    /// Hash of the pending `ShareRelease` op this answers.
+    pub hash: [u8; 32],
 }
 
 /// What stage 3 stores for Vault: the master phrase and the ring secret.
@@ -343,8 +353,10 @@ pub enum SyncIntent {
         scope: usize,
         term_days: u32,
     },
+    /// The holder's answer to a release request: approve (and grant) or refuse.
     Release {
         approve: bool,
+        hash: [u8; 32],
     },
     UnlockCode(String),
     /// Open these synced credentials (store keys) so the action that needs
@@ -410,6 +422,9 @@ pub struct SyncView {
     /// Store keys the open unlock modal is for, and whether its round runs.
     pub unlock_keys: Vec<String>,
     pub unlock_running: bool,
+    /// Release requests this holder already answered (the op may stay pending
+    /// until the worker has resolved it).
+    pub answered_releases: Vec<[u8; 32]>,
     /// Mode the fork alert interrupted, restored on dismissal.
     fork_return: Option<AppMode>,
 }
@@ -629,6 +644,10 @@ impl App {
                     }
                     SyncCmd::UnlockCode(code.clone())
                 }
+                SyncIntent::Release { approve, hash } => SyncCmd::Release {
+                    approve: *approve,
+                    hash: *hash,
+                },
                 SyncIntent::OnboardingDone(secrets) => SyncCmd::Onboard(Box::new(secrets.clone())),
                 // Answered by later stages, not by the transport worker.
                 _ => {
@@ -660,9 +679,14 @@ impl App {
         match event {
             SyncEvent::Progress(line) => sync.progress = Some(line),
             SyncEvent::PendingArrived(n) => sync.pending += n,
-            SyncEvent::SasPrompt(words) => {
+            SyncEvent::SasPrompt(info) => {
                 let peer = sync.enrolling.clone().unwrap_or_else(|| "peer".into());
-                self.open_sync_sas(SasView { peer, words });
+                self.open_sync_sas(SasView {
+                    peer,
+                    peer_name: info.peer_name,
+                    words: info.words,
+                    peer_has_screen: info.peer_has_screen,
+                });
             }
             SyncEvent::UnlockPrompt(text) => {
                 if let Some(u) = sync.unlock.as_mut() {
@@ -1095,7 +1119,12 @@ impl App {
             AppMode::SyncReleaseConfirm => {
                 let approve = confirm || self.is_action(KeyAction::ConfirmYes, &key);
                 if approve || cancel || plain('n') {
-                    self.sync.intents.push(SyncIntent::Release { approve });
+                    if let Some(hash) = self.sync.release.as_ref().map(|r| r.hash) {
+                        self.sync.answered_releases.push(hash);
+                        self.sync
+                            .intents
+                            .push(SyncIntent::Release { approve, hash });
+                    }
                     self.sync_close_modal();
                 }
             }
@@ -1119,6 +1148,7 @@ pub(crate) fn sample_sync_view() -> SyncView {
         exempt: false,
         last_seen: Some(1_700_000_000),
         head_seq: 7,
+        verified_by: Some(crate::sync::oplog::VerifiedBy::Sas),
     };
     SyncView {
         configured: true,
@@ -1179,7 +1209,9 @@ pub(crate) fn sample_sync_view_with_modals() -> SyncView {
         }),
         sas: Some(SasView {
             peer: "laptop".into(),
+            peer_name: "laptop".into(),
             words: "harbor-globe-lantern-mint".into(),
+            peer_has_screen: true,
         }),
         fork: Some(ForkView {
             device: "server".into(),
@@ -1189,6 +1221,7 @@ pub(crate) fn sample_sync_view_with_modals() -> SyncView {
             host: "web-1".into(),
             requester: "new laptop".into(),
             requester_id: "id-9".into(),
+            hash: [7; 32],
         }),
         onboarding: Some(
             OnboardingView::with_secrets(
@@ -1362,20 +1395,26 @@ mod tests {
         let mut app = configured_app();
         app.open_sync_sas(SasView {
             peer: "laptop".into(),
+            peer_name: "laptop".into(),
             words: "harbor-globe-lantern-mint".into(),
+            peer_has_screen: true,
         });
         app.handle_key(press(KeyCode::Enter)).unwrap();
         app.open_sync_release_confirm(ReleaseView {
             host: "web-1".into(),
             requester: "new laptop".into(),
             requester_id: "id-9".into(),
+            hash: [7; 32],
         });
         app.handle_key(press(KeyCode::Esc)).unwrap();
         assert_eq!(
             app.sync.intents,
             vec![
                 SyncIntent::SasMatches(true),
-                SyncIntent::Release { approve: false },
+                SyncIntent::Release {
+                    approve: false,
+                    hash: [7; 32]
+                },
             ]
         );
         assert_eq!(app.mode, AppMode::Normal);
@@ -1443,7 +1482,11 @@ mod tests {
         use crate::sync::client::{Round, RoundSummary, SyncCmd, SyncEvent};
         let mut app = app_with_worker(Box::new(|kind, _d, ctx| {
             assert_eq!(kind, Round::Enroll);
-            ctx.emit(SyncEvent::SasPrompt("harbor-globe-lantern-mint".into()));
+            ctx.emit(SyncEvent::SasPrompt(crate::sync::client::SasPromptInfo {
+                words: "harbor-globe-lantern-mint".into(),
+                peer_name: "laptop".into(),
+                peer_has_screen: true,
+            }));
             match ctx.recv_cmd(std::time::Duration::from_secs(5)) {
                 Some(SyncCmd::EnrollConfirmSas(true)) => Ok(RoundSummary::default()),
                 other => anyhow::bail!("not confirmed: {other:?}"),

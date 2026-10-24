@@ -19,6 +19,17 @@ fn recorder() -> (Seen, impl FnMut(&SasPrompt<'_>) -> bool + Send) {
     })
 }
 
+/// How the store recorded the admission of `device` (the replicated `DeviceRow.verified_by`).
+fn admitted_as(store: &LauncherStore, device: &str) -> VerifiedBy {
+    store
+        .sync_devices()
+        .unwrap()
+        .into_iter()
+        .find(|d| d.id == device)
+        .unwrap()
+        .verified_by
+}
+
 fn hello(ring: Option<&str>, screen: bool) -> SyncMsg {
     SyncMsg::EnrollHello(EnrollHello {
         ring: ring.map(String::from),
@@ -444,8 +455,8 @@ fn a_side_without_a_screen_never_confirms_as_a_human_and_the_record_says_so() {
         (VerifiedBy::SshHostKey, VerifiedBy::SshHostKey)
     );
     assert_eq!(
-        verified_by(&local.store, &remote.did).unwrap(),
-        Some(VerifiedBy::SshHostKey)
+        admitted_as(&local.store, &remote.did),
+        VerifiedBy::SshHostKey
     );
 
     // The attended user can still refuse, and nobody is registered.
@@ -469,10 +480,7 @@ fn a_side_without_a_screen_never_confirms_as_a_human_and_the_record_says_so() {
         (re.unwrap().verified_by, rj.unwrap().verified_by),
         (VerifiedBy::Sas, VerifiedBy::Sas)
     );
-    assert_eq!(
-        verified_by(&e.store, &j.did).unwrap(),
-        Some(VerifiedBy::Sas)
-    );
+    assert_eq!(admitted_as(&e.store, &j.did), VerifiedBy::Sas);
 }
 
 #[test]

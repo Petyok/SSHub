@@ -540,17 +540,18 @@ pub fn make_challenge(
     let mut rid = [0u8; 8];
     OsRng.fill_bytes(&mut rid);
     let request_id = u64::from_be_bytes(rid) >> 11; // within the integer range every language keeps exactly
+    let mut secret = Zeroizing::new([0u8; 32]);
+    OsRng.fill_bytes(&mut *secret);
+    let eph = XPublic::from(&XSecret::from(*secret)).to_bytes();
     let op = store.sync_append_local(
         id,
         OpBody::ShareRelease {
             host_uid: *host,
             request_id,
             requester: me,
+            eph_x25519_pub: eph,
         },
     )?;
-    let mut secret = Zeroizing::new([0u8; 32]);
-    OsRng.fill_bytes(&mut *secret);
-    let eph = XPublic::from(&XSecret::from(*secret)).to_bytes();
     let mut nonce = [0u8; 32];
     OsRng.fill_bytes(&mut nonce);
     Ok((
@@ -835,3 +836,132 @@ pub fn release_share(
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+/// An attended-path request in flight: the `ShareRelease` op and the ephemeral secret that opens the
+/// grants. The secret lives in memory only; if sshub exits the request is made again.
+pub struct PeerRequest {
+    pub op: Op,
+    pub request_id: u64,
+    pub host: HostUid,
+    eph_secret: Zeroizing<[u8; 32]>,
+}
+
+/// The requester appends a `ShareRelease` carrying a fresh ephemeral key. The holders' review modals
+/// name this device on their next sync.
+pub fn peer_request(
+    store: &LauncherStore,
+    id: &DeviceIdentity,
+    host: &HostUid,
+) -> Result<PeerRequest> {
+    let mut rid = [0u8; 8];
+    OsRng.fill_bytes(&mut rid);
+    let request_id = u64::from_be_bytes(rid) >> 11;
+    let mut secret = Zeroizing::new([0u8; 32]);
+    OsRng.fill_bytes(&mut *secret);
+    let eph = XPublic::from(&XSecret::from(*secret)).to_bytes();
+    let op = store.sync_append_local(
+        id,
+        OpBody::ShareRelease {
+            host_uid: *host,
+            request_id,
+            requester: id.public().device_id(),
+            eph_x25519_pub: eph,
+        },
+    )?;
+    Ok(PeerRequest {
+        op,
+        request_id,
+        host: *host,
+        eph_secret: secret,
+    })
+}
+
+/// Grants a holder appends after its user approved the `ShareRelease` `release` in review: one
+/// `ShareGrant` per share epoch it holds, newest first, at most [`MAX_GRANTS`], each sealed to the
+/// request's ephemeral key.
+pub fn grant_bodies(
+    store: &LauncherStore,
+    id: &DeviceIdentity,
+    release: &Op,
+) -> Result<Vec<OpBody>> {
+    let OpBody::ShareRelease {
+        host_uid,
+        request_id,
+        requester,
+        eph_x25519_pub,
+    } = &release.body
+    else {
+        bail!("not a ShareRelease");
+    };
+    ensure!(
+        *requester == release.device_id,
+        "the request names another requester than its author"
+    );
+    ensure!(
+        *requester != id.public().device_id(),
+        "a device does not grant itself"
+    );
+    ensure!(
+        !is_unattended(store, &id.public())?,
+        "an unattended device releases shares only under a valid trust certificate"
+    );
+    let state: Option<String> = store.with_conn(|c| {
+        Ok(c.query_row(
+            "SELECT state FROM sync_ops WHERE op_hash = ?1",
+            params![&release.hash()[..]],
+            |r| r.get(0),
+        )
+        .optional()?)
+    })?;
+    ensure!(
+        matches!(state.as_deref(), Some("approved")),
+        "the release was not approved in review"
+    );
+    let mut out = Vec::new();
+    for (epoch, share) in own_shares(store, id, host_uid)?
+        .into_iter()
+        .take(MAX_GRANTS)
+    {
+        out.push(OpBody::ShareGrant {
+            host_uid: *host_uid,
+            request_id: *request_id,
+            requester: requester.clone(),
+            epoch,
+            sealed: super::share_release::seal_share_response(eph_x25519_pub, &share),
+        });
+    }
+    Ok(out)
+}
+
+/// At most this many grants per release.
+pub const MAX_GRANTS: usize = 3;
+
+/// The requester looks for a holder's grant of the sharing at `epoch`; `Ok(None)` means none has
+/// arrived yet.
+pub fn peer_poll(store: &LauncherStore, req: &PeerRequest, epoch: u64) -> Result<Option<Share>> {
+    let me = &req.op.device_id;
+    for op in ops_of(store, "ShareGrant", None)? {
+        if let OpBody::ShareGrant {
+            host_uid,
+            request_id,
+            requester,
+            epoch: e,
+            sealed,
+        } = &op.body
+        {
+            if *host_uid == req.host
+                && *request_id == req.request_id
+                && requester == me
+                && *e == epoch
+                && op.device_id != *me
+            {
+                if let Ok(share) =
+                    super::share_release::unwrap_share_response(&req.eph_secret, sealed)
+                {
+                    return Ok(Some(share));
+                }
+            }
+        }
+    }
+    Ok(None)
+}

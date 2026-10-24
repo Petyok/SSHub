@@ -26,6 +26,7 @@ pub mod runtime;
 pub mod share_release;
 pub mod snapshot;
 pub mod transport;
+pub mod ui_shares;
 pub mod unlock_paths;
 #[cfg(test)]
 mod vectors;

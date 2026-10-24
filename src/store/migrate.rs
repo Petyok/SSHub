@@ -1005,6 +1005,7 @@ CREATE TABLE IF NOT EXISTS sync_devices (
     status     TEXT NOT NULL DEFAULT 'operational',
     exempt     INTEGER NOT NULL DEFAULT 0,
     wrap_epoch INTEGER NOT NULL DEFAULT 0,
+    verified_by TEXT NOT NULL DEFAULT 'sas' CHECK (verified_by IN ('sas','ssh_host_key')),
     last_seen  INTEGER NOT NULL DEFAULT 0,
     added_by   BLOB,
     fork_a     BLOB,

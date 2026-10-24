@@ -93,6 +93,7 @@ fn ring(n: usize) -> Vec<Peer> {
                     DeviceRole::Holder,
                     Attendance::Attended,
                     DeviceKind::Terminal,
+                    VerifiedBy::Sas,
                 )
                 .unwrap();
         }
@@ -225,6 +226,7 @@ fn sample_bodies() -> Vec<OpBody> {
             role: DeviceRole::Mirror,
             attendance: Attendance::Unattended,
             kind: DeviceKind::Phone,
+            verified_by: VerifiedBy::SshHostKey,
         },
         OpBody::DeviceRevoke {
             device_id: "ffeeddccbbaa9988".into(),
@@ -233,6 +235,14 @@ fn sample_bodies() -> Vec<OpBody> {
             host_uid: uid(1),
             request_id: u64::MAX,
             requester: "0011223344556677".into(),
+            eph_x25519_pub: [8; 32],
+        },
+        OpBody::ShareGrant {
+            host_uid: uid(1),
+            request_id: 7,
+            requester: "0011223344556677".into(),
+            epoch: 3,
+            sealed: vec![5; 128],
         },
         OpBody::ShareReshareSession {
             epoch: 2,
@@ -1122,6 +1132,7 @@ fn add_device_body(p: &Peer, role: DeviceRole) -> OpBody {
         role,
         attendance: Attendance::Attended,
         kind: DeviceKind::Terminal,
+        verified_by: VerifiedBy::Sas,
     }
 }
 
@@ -1535,6 +1546,7 @@ fn wrap_key_rotation_replaces_the_current_keys_and_keeps_the_history() {
                 DeviceRole::Holder,
                 Attendance::Attended,
                 DeviceKind::Terminal,
+                VerifiedBy::Sas,
             )
             .unwrap();
     }
@@ -1877,6 +1889,7 @@ fn live_ring(peers: Vec<Peer>) -> Vec<Peer> {
                     DeviceRole::Holder,
                     Attendance::Attended,
                     DeviceKind::Terminal,
+                    VerifiedBy::Sas,
                 )
                 .unwrap();
         }
