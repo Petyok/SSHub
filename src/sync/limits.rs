@@ -19,6 +19,8 @@ pub const PHONE_FRESH_WARN_SECS: i64 = 7 * DAY;
 /// Window in which a device's self-signed head counts as "live" for recovery.
 pub const LIVE_DEVICE_WINDOW_SECS: i64 = 14 * DAY;
 /// Timelock of `PhoneReenroll`.
+/// A Red op that has not completed its ceremony by then is dropped; proofs older than this do not count.
+pub const RED_CEREMONY_TTL_SECS: i64 = 3 * DAY;
 pub const RECOVERY_TIMELOCK_SECS: i64 = 7 * DAY;
 /// Lifetime of a share-release challenge.
 pub const CHALLENGE_EXPIRY_SECS: i64 = 120;
