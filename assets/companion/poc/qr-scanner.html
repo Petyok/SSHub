@@ -44,7 +44,7 @@
     $("exp").textContent = `seed ${seed}, ${len} bytes, sha256 pending`;
     L.sha256Hex(expected).then((h) => { $("exp").textContent = `seed ${seed}, ${len} bytes, sha256 ${h}`; });
   }
-  let rs, t0 = null, timer = null, stream = null, lastIdx = -1, done = false;
+  let rs, t0 = null, timer = null, stream = null, starting = false, lastIdx = -1, done = false;
   const cam = $("cam"), work = $("work"), ctx = work.getContext("2d", { willReadFrequently: true });
 
   function reset() {
@@ -97,9 +97,14 @@
   }
 
   $("start").onclick = async () => {
-    if (stream) return;
+    if (stream || starting) return;
+    starting = true;
     // ?facing=user uses the front camera (screen toward the laptop), default is the rear camera
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: q.get("facing") === "user" ? "user" : "environment" }, audio: false });
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: q.get("facing") === "user" ? "user" : "environment" }, audio: false });
+    } finally {
+      starting = false;
+    }
     cam.srcObject = stream;
     await cam.play();
     reset();

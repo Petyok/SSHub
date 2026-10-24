@@ -136,6 +136,34 @@ function senderPreflight(cls, report) {
   }
 }
 
+// Our own kitty window, made floating and sized to fit the QR (a tiled window shares the workspace and
+// is too small). hyprctl is addressed to OUR window only. The player starts 2 s after the window has
+// its final size, so it measures the real tty.
+async function benchWindow(cls, cols, rows, font, argv) {
+  const win = spawn('kitty', [
+    '--class', cls, '--title', cls,
+    '-o', 'remember_window_size=no', '-o', `initial_window_width=${cols}c`, '-o', `initial_window_height=${rows}c`,
+    '-o', 'confirm_os_window_close=0', '-o', 'background_opacity=1', ...(font ? ['-o', `font_size=${font}`] : []),
+    'sh', '-c', 'sleep 2; exec "$@"', 'sh', ...argv,
+  ], { stdio: 'ignore' });
+  for (let i = 0; i < 20; i++) {
+    await sleep(100);
+    const mine = JSON.parse(execFileSync('hyprctl', ['clients', '-j'], { encoding: 'utf8' })).find((c) => c.class === cls);
+    if (!mine) continue;
+    const a = `address:${mine.address}`;
+    const mon = JSON.parse(execFileSync('hyprctl', ['monitors', '-j'], { encoding: 'utf8' }))[0];
+    const w = Math.min(mon.width - 40, 800), h = Math.min(mon.height - 60, 870);
+    const dsp = (e) => execFileSync('hyprctl', ['dispatch', `hl.dsp.window.${e}`], { encoding: 'utf8' });
+    dsp(`float({ action = "set", window = "${a}" })`);
+    dsp(`resize({ x = ${w}, y = ${h}, window = "${a}" })`);
+    dsp(`center({ window = "${a}" })`);
+    break;
+  }
+  return win;
+}
+// Exactly one camera request per block: release the page's stream before it is replaced or left.
+const stopCamera = () => phoneEval(`(() => { const v = document.querySelector('#cam'); if (v && v.srcObject) { v.srcObject.getTracks().forEach((t) => t.stop()); v.srcObject = null; } return true; })()`, { timeoutMs: 5000 }).catch(() => {});
+
 // ------------------------------------------------------------ C4: terminal to phone camera
 // Hard preflight: never start a timed block on an input that is not live. The camera must deliver a
 // live video track with a picture within 10 s and the scanner must decode a first frame of the
@@ -166,16 +194,12 @@ async function preflightCamera({ decode = true } = {}) {
 async function terminalBlock({ label, version, bytes, cols, rows, runs, font }) {
   const cls = 'sshub-bench-c4';
   const report = `/tmp/c4-player-report-${process.pid}.json`;
-  const win = spawn('kitty', [
-    '--class', cls, '--title', cls,
-    '-o', 'remember_window_size=no', '-o', `initial_window_width=${cols}c`, '-o', `initial_window_height=${rows}c`,
-    '-o', 'confirm_os_window_close=0', '-o', 'background_opacity=1', ...(font ? ['-o', `font_size=${font}`] : []),
-    process.execPath, PLAYER, '--version', String(version), '--bytes', String(bytes), '--seed', '1', '--fps', '8', '--report', report,
-  ], { stdio: 'ignore' });
+  const win = await benchWindow(cls, cols, rows, font, [process.execPath, PLAYER, '--version', String(version), '--bytes', String(bytes), '--seed', '1', '--fps', '8', '--report', report]);
   try {
-    await sleep(2500);
+    await sleep(4500);
     senderPreflight(cls, report);
     await state.chrome.prepare({ camera: true, silent: true });
+    await stopCamera();
     await state.chrome.goto(`${ORIGIN}/qr-scanner.html?seed=1&len=${bytes}&facing=${arg('facing', 'environment')}`);
     await phoneEval(`navigator.wakeLock && navigator.wakeLock.request('screen').then((l) => { window.__wl = l; }, () => {})`);
     await preflightCamera();
@@ -204,6 +228,7 @@ async function terminalBlock({ label, version, bytes, cols, rows, runs, font }) 
     const okRows = rowsOut.filter((r) => r.ok);
     record({ block: label, summary: true, runs, ok: okRows.length, worst_elapsed_s: okRows.length ? Math.max(...okRows.map((r) => r.elapsed_s)) : null, median_elapsed_s: median(okRows.map((r) => r.elapsed_s)), worst_wall_s: Math.max(...rowsOut.map((r) => r.wall_s)) });
   } finally {
+    await stopCamera();
     await stop(win);
     fs.rmSync(report, { force: true });
   }
@@ -430,9 +455,9 @@ async function senderOnly() {
   for (const [version, bytes, cols, rows, font] of [[5, 1714, 80, 24, null], [13, 1714, 120, 40, arg('font13', '11')]]) {
     const cls = 'sshub-bench-c4';
     const report = `/tmp/c4-player-report-${process.pid}.json`;
-    const win = spawn('kitty', ['--class', cls, '--title', cls, '-o', 'remember_window_size=no', '-o', `initial_window_width=${cols}c`, '-o', `initial_window_height=${rows}c`, '-o', 'confirm_os_window_close=0', '-o', 'background_opacity=1', ...(font ? ['-o', `font_size=${font}`] : []), process.execPath, PLAYER, '--version', String(version), '--bytes', String(bytes), '--seed', '1', '--fps', '8', '--report', report], { stdio: 'ignore' });
+    const win = await benchWindow(cls, cols, rows, font, [process.execPath, PLAYER, '--version', String(version), '--bytes', String(bytes), '--seed', '1', '--fps', '8', '--report', report]);
     try {
-      await sleep(2500);
+      await sleep(4500);
       senderPreflight(cls, report);
     } catch (e) {
       console.log(`v${version}: ${e.message}`);
