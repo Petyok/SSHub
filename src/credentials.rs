@@ -87,9 +87,12 @@ pub fn open_for_profile(paths: &crate::profile::ProfilePaths) -> Box<dyn Passwor
 pub enum SecretRef {
     Key(String),
     Lookup(String),
-    /// A synced credential already open in this process, for a child that
-    /// cannot open it itself (the askpass helper).
+    /// A synced credential already open in this process, held by whoever
+    /// stages it for a child that cannot open it itself (the askpass helper).
     Staged(StagedValue),
+    /// What the child sees of a [`SecretRef::Staged`]: a handle to ask the
+    /// staging process for, never the value.
+    Handle(String),
 }
 
 /// Plaintext of an opened synced credential. Zeroized on drop; `Debug` never
@@ -120,6 +123,8 @@ impl SecretRef {
             Self::Key(key) => store.get(key).ok().flatten(),
             Self::Lookup(spec) => store.lookup(spec).ok(),
             Self::Staged(value) => Some(value.value().to_string()),
+            // Only the staging process holds the value; the helper asks for it.
+            Self::Handle(_) => None,
         }
     }
 }
@@ -461,7 +466,9 @@ impl std::fmt::Display for Locked {
                 "{key} is a synced credential and is locked: it needs a second share"
             ),
             SecretRef::Lookup(spec) => write!(f, "secret lookup {spec} is locked"),
-            SecretRef::Staged(_) => write!(f, "a staged credential is locked"),
+            SecretRef::Staged(_) | SecretRef::Handle(_) => {
+                write!(f, "a staged credential is locked")
+            }
         }
     }
 }
@@ -505,10 +512,16 @@ impl SecretGate {
 
     /// Open `key` for this process.
     pub fn insert(&self, key: impl Into<String>, value: zeroize::Zeroizing<String>) {
-        self.unlocked
+        let hash = value_hash(&value);
+        let old = self
+            .unlocked
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(key.into(), value);
+        open_values_add(hash);
+        if let Some(old) = old {
+            open_values_remove(value_hash(&old));
+        }
     }
 
     /// The opened plaintext of `key`, if it is open.
@@ -522,10 +535,15 @@ impl SecretGate {
 
     /// Forget every opened secret (zeroized as they drop).
     pub fn lock_all(&self) {
-        self.unlocked
+        let closed: Vec<_> = self
+            .unlocked
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .clear();
+            .drain()
+            .collect();
+        for (_, value) in closed {
+            open_values_remove(value_hash(&value));
+        }
     }
 
     /// The synced credentials among `refs` that are not open yet.
@@ -533,11 +551,57 @@ impl SecretGate {
         refs.iter()
             .filter(|r| match r {
                 SecretRef::Key(key) => self.is_synced(key) && self.get(key).is_none(),
-                SecretRef::Lookup(_) | SecretRef::Staged(_) => false,
+                SecretRef::Lookup(_) | SecretRef::Staged(_) | SecretRef::Handle(_) => false,
             })
             .cloned()
             .collect()
     }
+}
+
+impl Drop for SecretGate {
+    fn drop(&mut self) {
+        self.lock_all();
+    }
+}
+
+// A process-wide count of the opened synced plaintexts, by hash, so a path that
+// only holds a secret's value (the askpass staging) can tell it is synced and
+// keep it off the disk. Hashes only: no second copy of a plaintext lives here.
+static OPEN_VALUES: std::sync::Mutex<Option<HashMap<[u8; 32], usize>>> =
+    std::sync::Mutex::new(None);
+
+fn value_hash(value: &str) -> [u8; 32] {
+    *blake3::hash(value.as_bytes()).as_bytes()
+}
+
+fn open_values_add(hash: [u8; 32]) {
+    let mut map = OPEN_VALUES.lock().unwrap_or_else(|e| e.into_inner());
+    *map.get_or_insert_with(HashMap::new)
+        .entry(hash)
+        .or_insert(0) += 1;
+}
+
+fn open_values_remove(hash: [u8; 32]) {
+    let mut map = OPEN_VALUES.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(map) = map.as_mut() {
+        if let Some(n) = map.get_mut(&hash) {
+            *n -= 1;
+            if *n == 0 {
+                map.remove(&hash);
+            }
+        }
+    }
+}
+
+/// Whether `value` is the plaintext of a synced credential that is open in
+/// this process. A local secret equal to one is treated the same: it takes the
+/// safer route.
+pub fn is_open_synced_value(value: &str) -> bool {
+    OPEN_VALUES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .is_some_and(|map| map.contains_key(&value_hash(value)))
 }
 
 /// Decorator around a profile's store: a synced credential is answered from
