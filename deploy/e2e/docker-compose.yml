@@ -1,0 +1,61 @@
+name: sshub-hostsync-e2e
+
+# Host-sync e2e stack: three attended peers, a hub mirror, and a mail catcher.
+# Everything lives on one internal network with no published host ports.
+# Run through deploy/e2e/run.sh; do not run it on a laptop (builds happen on gpu-serv).
+
+x-peer: &peer
+  image: sshub-hostsync-e2e-peer:local
+  pull_policy: never
+  networks: [e2e]
+  volumes:
+    - mesh:/mesh
+  environment: &peer-env
+    PEERS: "peer-a peer-b peer-c hub"
+  depends_on:
+    mailpit:
+      condition: service_started
+
+services:
+  peer-a:
+    <<: *peer
+    build:
+      context: ../..
+      dockerfile: deploy/e2e/Dockerfile
+    hostname: peer-a
+    environment:
+      <<: *peer-env
+      PEER_NAME: peer-a
+
+  peer-b:
+    <<: *peer
+    hostname: peer-b
+    environment:
+      <<: *peer-env
+      PEER_NAME: peer-b
+
+  peer-c:
+    <<: *peer
+    hostname: peer-c
+    environment:
+      <<: *peer-env
+      PEER_NAME: peer-c
+
+  hub:
+    <<: *peer
+    hostname: hub
+    environment:
+      <<: *peer-env
+      PEER_NAME: hub
+
+  mailpit:
+    image: axllent/mailpit:v1.32.0
+    hostname: mailpit
+    networks: [e2e]
+
+networks:
+  e2e:
+    internal: true
+
+volumes:
+  mesh:
