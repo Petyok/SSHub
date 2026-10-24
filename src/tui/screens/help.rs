@@ -471,6 +471,10 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "",
+        desc: "In the M menu: master-phrase exemption (enable on this machine, or switch off for a device: with it this machine alone plus the master phrase opens every credential), bulk export (propose, then Export: continue once the other devices approved; the file is written owner-only and never overwritten), and a printable paper phrase sheet (while the words are still in memory).",
+    },
+    HelpItem::Entry {
+        key: "",
         desc: "A synced credential opens in a modal when something needs it: type the six words of the master phrase and press Enter (Esc cancels).",
     },
     HelpItem::Entry {

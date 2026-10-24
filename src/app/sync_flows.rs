@@ -12,17 +12,20 @@ use crate::sync::identity_store::load_or_init_identity;
 use crate::sync::oplog::{CredMode, DeviceRole, ThirdFactor};
 use crate::sync::runtime::{JobEnv, RING_SECRET_KEY};
 
-fn now() -> i64 {
+pub(super) fn now() -> i64 {
     crate::store::now_ts()
 }
 
 /// A job whose result is a report: its lines become the panel or notice.
-fn report_job(app: &mut App, f: impl FnOnce(&JobEnv) -> Result<admin::Report> + Send + 'static) {
+pub(super) fn report_job(
+    app: &mut App,
+    f: impl FnOnce(&JobEnv) -> Result<admin::Report> + Send + 'static,
+) {
     app.run_sync_job(move |env| Ok(f(env)?.lines.join("\n")));
 }
 
 /// A menu of the ring's other devices; `next` gets the chosen one's id and name.
-fn pick_device(
+pub(super) fn pick_device(
     app: &mut App,
     title: &str,
     keep: fn(&DeviceView) -> bool,

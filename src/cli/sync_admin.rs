@@ -465,7 +465,7 @@ fn report(opts: Opts, r: &Report) -> Result<i32> {
     Ok(0)
 }
 
-fn short(h: &[u8; 32]) -> String {
+pub(crate) fn short(h: &[u8; 32]) -> String {
     h[..8].iter().map(|b| format!("{b:02x}")).collect()
 }
 
@@ -512,7 +512,12 @@ fn status_json(st: &RedStatus) -> Value {
 
 /// Report for an op we just appended (or looked up): its tier and, for Red
 /// ops, where the ceremony stands.
-fn op_report(store: &LauncherStore, op: &Op, headline: String, now: i64) -> Result<Report> {
+pub(crate) fn op_report(
+    store: &LauncherStore,
+    op: &Op,
+    headline: String,
+    now: i64,
+) -> Result<Report> {
     let mut lines = vec![headline];
     let mut json = json!({ "op": hex(&op.hash()), "tier": format!("{:?}", op.tier()) });
     if ceremony::is_gated(store, op)? {

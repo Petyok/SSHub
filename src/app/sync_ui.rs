@@ -16,6 +16,9 @@ pub(crate) enum SyncUi {
         masked: bool,
         value: String,
         on_submit: PromptFn,
+        /// Text shown above the field, and QR frames looped under it (empty: none).
+        lines: Vec<String>,
+        frames: Vec<Vec<u8>>,
     },
     Menu {
         title: String,
@@ -44,8 +47,33 @@ impl App {
             masked,
             value: String::new(),
             on_submit: Box::new(on_submit),
+            lines: Vec::new(),
+            frames: Vec::new(),
         });
         self.mode = AppMode::SyncPrompt;
+    }
+
+    /// A prompt with explanatory lines and a looping QR (for the phone to scan)
+    /// over its field.
+    pub(crate) fn sync_prompt_qr(
+        &mut self,
+        title: impl Into<String>,
+        lines: Vec<String>,
+        frames: Vec<Vec<u8>>,
+        label: impl Into<String>,
+        on_submit: impl FnOnce(&mut App, String) + 'static,
+    ) {
+        self.sync_prompt(title, label, false, on_submit);
+        if let Some(SyncUi::Prompt {
+            lines: l,
+            frames: f,
+            ..
+        }) = self.sync_ui.as_mut()
+        {
+            *l = lines;
+            *f = frames;
+        }
+        self.sync.qr_frame = 0;
     }
 
     /// Offer a list of actions; Enter runs the highlighted one.
@@ -90,6 +118,8 @@ impl App {
                 masked,
                 mut value,
                 on_submit,
+                lines,
+                frames,
             } => {
                 if cancel {
                     self.mode = AppMode::Normal;
@@ -115,6 +145,8 @@ impl App {
                         masked,
                         value,
                         on_submit,
+                        lines,
+                        frames,
                     });
                 }
             }

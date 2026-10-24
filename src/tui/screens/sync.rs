@@ -316,7 +316,6 @@ pub fn render_review(frame: &mut Frame, app: &App) {
 }
 
 pub fn render_unlock(frame: &mut Frame, app: &App) {
-    use crate::tui::widgets::qr_frames::{cells_needed, needed_version, render as render_qr};
     let Some(u) = app.sync.unlock.as_ref() else {
         return;
     };
@@ -343,9 +342,30 @@ pub fn render_unlock(frame: &mut Frame, app: &App) {
         theme.style(StyleRole::PickerQuery),
     ));
 
+    qr_modal(
+        frame,
+        app,
+        "Unlock",
+        body,
+        &u.frames,
+        "Enter submit  Esc cancel",
+    );
+}
+
+/// A modal with `body` and, when it fits, the looping QR of `frames` under it.
+fn qr_modal(
+    frame: &mut Frame,
+    app: &App,
+    title: &str,
+    mut body: Vec<Line<'static>>,
+    frames: &[Vec<u8>],
+    hint: &str,
+) {
+    use crate::tui::widgets::qr_frames::{cells_needed, needed_version, render as render_qr};
+    let theme = app.theme();
     let mut width = 70;
     let mut extra = 0;
-    if let Ok(version) = needed_version(&u.frames) {
+    if let Ok(version) = needed_version(frames) {
         let (cw, ch) = cells_needed(version);
         width = width.max(cw + 4);
         extra = ch + 1; // the code and the "frame i/n" line
@@ -365,29 +385,28 @@ pub fn render_unlock(frame: &mut Frame, app: &App) {
             ));
             extra = 0;
         }
-    } else if needed_version(&u.frames) == Err(crate::tui::widgets::qr_frames::QrPlan::TooLarge) {
+    } else if needed_version(frames) == Err(crate::tui::widgets::qr_frames::QrPlan::TooLarge) {
         body.push(Line::raw(""));
         body.push(Line::styled(
             "The challenge is too large for a QR code: use the clipboard or the words.",
             app.theme().style(StyleRole::PopupWarning),
         ));
     }
-    let hint = "Enter submit  Esc cancel";
-    let Some(qr_area) = modal_with_extra(frame, app, "Unlock", width, body, hint, extra) else {
+    let Some(qr_area) = modal_with_extra(frame, app, title, width, body, hint, extra) else {
         return;
     };
     let code_rows = qr_area.height.saturating_sub(1);
-    let index = app.sync.qr_frame % u.frames.len().max(1);
+    let index = app.sync.qr_frame % frames.len().max(1);
     render_qr(
         frame.buffer_mut(),
         Rect::new(qr_area.x, qr_area.y, qr_area.width, code_rows),
-        &u.frames,
+        frames,
         index,
     );
     frame.buffer_mut().set_string(
         qr_area.x,
         qr_area.bottom() - 1,
-        format!("frame {}/{}", index + 1, u.frames.len()),
+        format!("frame {}/{}", index + 1, frames.len()),
         theme.style(StyleRole::TextMuted),
     );
 }
@@ -507,22 +526,41 @@ pub fn render_sync_ui(frame: &mut Frame, app: &App) {
             label,
             masked,
             value,
+            lines,
+            frames,
             ..
         } => {
             let shown = if *masked {
                 "\u{2022}".repeat(value.chars().count())
             } else {
-                value.clone()
+                // Long pasted answers show their tail, never a wall of text.
+                let n = value.chars().count();
+                if n > 60 {
+                    format!("\u{2026}{}", value.chars().skip(n - 59).collect::<String>())
+                } else {
+                    value.clone()
+                }
             };
-            let body = vec![
-                Line::styled(label.clone(), theme.style(StyleRole::TextPrimary)),
-                Line::raw(""),
-                Line::styled(
-                    format!("\u{203a} {shown}\u{2588}"),
-                    theme.style(StyleRole::PickerQuery),
-                ),
-            ];
-            modal(frame, app, title, 76, body, "Enter submit  Esc cancel");
+            let mut body: Vec<Line> = lines
+                .iter()
+                .map(|l| Line::styled(l.clone(), theme.style(StyleRole::TextPrimary)))
+                .collect();
+            if !lines.is_empty() {
+                body.push(Line::raw(""));
+            }
+            body.push(Line::styled(
+                label.clone(),
+                theme.style(StyleRole::TextPrimary),
+            ));
+            body.push(Line::styled(
+                format!("\u{203a} {shown}\u{2588}"),
+                theme.style(StyleRole::PickerQuery),
+            ));
+            if frames.is_empty() {
+                modal(frame, app, title, 76, body, "Enter submit  Esc cancel");
+            } else {
+                qr_modal(frame, app, title, body, frames, "Enter submit  Esc cancel");
+            }
         }
         SyncUi::Menu {
             title,

@@ -240,7 +240,7 @@ pub(crate) fn pending_view(
     }
 }
 
-fn proof_label(p: &crate::sync::ceremony::RedProof) -> &'static str {
+pub(crate) fn proof_label(p: &crate::sync::ceremony::RedProof) -> &'static str {
     use crate::sync::ceremony::RedProof;
     use crate::sync::oplog::ThirdFactor;
     match p {
@@ -403,6 +403,7 @@ impl App {
         sync.review_selected = sync.review_selected.min(review.len().saturating_sub(1));
         sync.review = review;
         sync.cred_mode = cred_mode;
+        (sync.trust_scopes, sync.trust_scope_values) = super::sync_trust::scope_choices(&store);
         // A holder is asked for a share: the prompt names the requester.
         if self.mode == AppMode::Normal && self.sync.release.is_none() {
             let answered = self.sync.answered_releases.clone();

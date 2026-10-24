@@ -34,7 +34,7 @@ fn file_secrets(p: &ProfilePaths) -> Box<dyn PasswordStore> {
     Box::new(FilePasswordStore::new(p.credentials_file()))
 }
 
-fn pump(app: &mut App, what: &str, until: impl Fn(&App) -> bool) {
+pub(super) fn pump(app: &mut App, what: &str, until: impl Fn(&App) -> bool) {
     let end = Instant::now() + Duration::from_secs(30);
     while !until(app) {
         assert!(
@@ -49,17 +49,17 @@ fn pump(app: &mut App, what: &str, until: impl Fn(&App) -> bool) {
 }
 
 /// An app that is device 1 of a Quorum ring: 0 phone, 1 this app, 2 a holder.
-struct Ring {
-    app: App,
-    gate: Arc<SecretGate>,
-    paths: ProfilePaths,
-    d: Vec<Dev>,
-    host: HostUid,
-    key: String,
+pub(super) struct Ring {
+    pub(super) app: App,
+    pub(super) gate: Arc<SecretGate>,
+    pub(super) paths: ProfilePaths,
+    pub(super) d: Vec<Dev>,
+    pub(super) host: HostUid,
+    pub(super) key: String,
     _dir: tempfile::TempDir,
 }
 
-fn ring(ssh_program: Option<String>) -> Ring {
+pub(super) fn ring(ssh_program: Option<String>) -> Ring {
     let dir = tempfile::tempdir().unwrap();
     let paths = ProfilePaths {
         data_root: dir.path().to_path_buf(),
@@ -165,7 +165,7 @@ fn status(app: &App, kind: crate::app::sync::UnlockPathKind) -> Option<String> {
         .map(|p| p.status.clone())
 }
 
-fn type_and_enter(app: &mut App, text: &str) {
+pub(super) fn type_and_enter(app: &mut App, text: &str) {
     for c in text.chars() {
         app.handle_key(key_char(c)).unwrap();
     }
@@ -505,7 +505,7 @@ fn refusing_a_release_request_grants_nothing_and_does_not_ask_again() {
 }
 
 /// Ingest only (`all_to_all` approves what waits, which a Red change must not get).
-fn ingest_from(from: &Dev, to: &Dev) {
+pub(super) fn ingest_from(from: &Dev, to: &Dev) {
     let have = to
         .store
         .sync_chain_heads()
@@ -523,11 +523,8 @@ fn a_red_change_shows_its_ceremony_and_takes_effect_only_when_all_proofs_are_in(
     use crate::sync::ceremony::{factor_register_paper, red_phone_sign_body, settle_red_ops};
     let mut r = ring(None);
     let words = crate::sync::crypto::bip39_encode(&[7u8; 32]);
-    let recover =
-        crate::sync::crypto::paper_derive(&words, crate::sync::crypto::PaperDomain::Recover)
-            .unwrap();
     // The holder proposes registering the paper as a third factor.
-    let proposal = append(&r.d[2], factor_register_paper(&recover));
+    let proposal = append(&r.d[2], factor_register_paper(&words).unwrap());
     ingest_from(&r.d[2], &r.d[1]);
     r.app.refresh_sync_view();
     let red = r.app.sync.review[0]
@@ -576,10 +573,7 @@ fn the_paper_phrase_is_typed_without_echo_and_added_as_a_factor_proof() {
     use crate::sync::ceremony::factor_register_paper;
     let mut r = ring(None);
     let words = crate::sync::crypto::bip39_encode(&[9u8; 32]);
-    let recover =
-        crate::sync::crypto::paper_derive(&words, crate::sync::crypto::PaperDomain::Recover)
-            .unwrap();
-    append(&r.d[2], factor_register_paper(&recover));
+    append(&r.d[2], factor_register_paper(&words).unwrap());
     ingest_from(&r.d[2], &r.d[1]);
     r.app.refresh_sync_view();
     open_review(&mut r.app);
@@ -609,13 +603,13 @@ fn open_review(app: &mut App) {
     assert_eq!(app.mode, AppMode::SyncReview);
 }
 
-fn mark_this_device(r: &mut Ring) {
+pub(super) fn mark_this_device(r: &mut Ring) {
     r.app.sync.this_device = Some(r.d[1].did.clone());
     r.app.refresh_sync_view();
     assert!(r.app.sync.devices.iter().any(|d| d.this));
 }
 
-fn enter(app: &mut App) {
+pub(super) fn enter(app: &mut App) {
     app.handle_key(key(KeyCode::Enter)).unwrap();
 }
 
@@ -725,4 +719,190 @@ fn a_reply_heard_or_seen_opens_the_credential_and_a_reply_for_another_request_is
     let good = bytes_of(&phone_reply_text(&frames, &phone_share(&r)));
     tx.send(MediaEvent::Reply(MediaKind::Audio, good)).unwrap();
     assert_resumed_and_open(&mut r);
+}
+
+/// A group with one host in the app's store, for scoping a trust session.
+fn group_with_host(r: &Ring) -> (crate::sync::oplog::CertScope, [u8; 16]) {
+    let group = r
+        .app
+        .store
+        .create_group(&crate::store::NewHostGroup {
+            name: "staging".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let host = r
+        .app
+        .store
+        .create_host(&crate::store::NewHost {
+            group_id: Some(group.id),
+            ..crate::store::NewHost::launcher("stg-1", "10.0.0.7")
+        })
+        .unwrap();
+    let guid = r.app.store.group_uid(group.id).unwrap().unwrap();
+    let huid = r.app.store.host_uid(host.id).unwrap().unwrap();
+    (crate::sync::oplog::CertScope::Group(guid), huid)
+}
+
+fn frames_of_prompt(app: &App) -> Vec<Vec<u8>> {
+    match app.sync_ui.as_ref() {
+        Some(crate::app::sync_ui::SyncUi::Prompt { frames, .. }) => frames.clone(),
+        _ => panic!("no QR prompt is open"),
+    }
+}
+
+fn decode_frames(frames: &[Vec<u8>]) -> Vec<u8> {
+    let mut d = FountainDecoder::new();
+    for f in frames {
+        d.push(f).unwrap();
+    }
+    d.finish().unwrap().expect("all frames")
+}
+
+#[test]
+fn a_trust_session_is_scoped_to_a_group_or_a_host_never_everything() {
+    let mut r = ring(None);
+    let (scope, _) = group_with_host(&r);
+    r.app.refresh_sync_view();
+    let labels = r.app.sync.trust_scopes.clone();
+    assert!(
+        labels.iter().any(|l| l.starts_with("group staging")),
+        "{labels:?}"
+    );
+    assert!(labels.iter().any(|l| l == "host stg-1"));
+    assert!(!labels
+        .iter()
+        .any(|l| l.to_lowercase().contains("everything")));
+    assert!(r.app.sync.trust_scope_values.contains(&scope));
+}
+
+#[test]
+fn the_trust_flow_shows_the_phone_a_request_and_takes_its_answer_into_the_ceremony() {
+    use crate::sync::oplog::{CertScope, OpBody};
+    use crate::sync::wire::{CertRequestWire, PhoneOpsWire};
+    let mut r = ring(None);
+    mark_this_device(&mut r);
+    let (_, huid) = group_with_host(&r);
+    r.app.refresh_sync_view();
+    // The host's scope, chosen through the real menus.
+    let pick = r
+        .app
+        .sync
+        .trust_scope_values
+        .iter()
+        .position(|s| *s == CertScope::Hosts(vec![huid]))
+        .unwrap();
+    r.app.active_tab = 6;
+    r.app.handle_key(key_char('t')).unwrap();
+    assert_eq!(r.app.mode, AppMode::TrustSessionScope);
+    r.app.sync.trust_scope_selected = pick;
+    enter(&mut r.app); // scope
+    enter(&mut r.app); // term: the default month
+    assert_eq!(r.app.mode, AppMode::SyncPrompt, "the budget is asked");
+    type_and_enter(&mut r.app, "5");
+    // The request is a looping QR whose bytes say what was asked.
+    let wire = CertRequestWire::decode(&decode_frames(&frames_of_prompt(&r.app))).unwrap();
+    assert_eq!(wire.scope, CertScope::Hosts(vec![huid]));
+    assert_eq!(wire.max_new_hosts_per_day, 5);
+    assert_eq!(wire.device_id[..], hex::decode(&r.d[1].did).unwrap()[..8]);
+
+    // The phone approves and returns its signed certificate; the user pastes it.
+    ingest_from(&r.d[2], &r.d[0]);
+    let now = crate::store::now_ts();
+    let issue = append(
+        &r.d[0],
+        OpBody::CertIssue {
+            device_id: r.d[1].did.clone(),
+            scope: CertScope::Hosts(vec![huid]),
+            expiry: now + 30 * 86_400,
+            max_new_hosts_per_day: 5,
+            epoch_lo: 0,
+            epoch_hi: 9,
+        },
+    );
+    let answer = B64.encode(
+        PhoneOpsWire {
+            ops: vec![(issue.canonical_bytes(), issue.signature)],
+        }
+        .encode(),
+    );
+    type_and_enter(&mut r.app, &answer);
+    pump(&mut r.app, "the ceremony status", |a| {
+        a.mode == AppMode::SyncInfo
+    });
+    // The change waits in Review with its ceremony; nothing applied by itself.
+    r.app.refresh_sync_view();
+    let cert = r
+        .app
+        .sync
+        .review
+        .iter()
+        .find(|p| p.summary.to_lowercase().contains("cert"))
+        .or_else(|| r.app.sync.review.first());
+    assert!(
+        cert.is_some_and(|c| c.red.is_some()),
+        "{:?}",
+        r.app.sync.review
+    );
+}
+
+#[test]
+fn a_garbage_answer_from_the_phone_is_refused_and_a_trust_session_can_be_revoked() {
+    use crate::sync::oplog::{CertScope, OpBody};
+    let mut r = ring(None);
+    mark_this_device(&mut r);
+    let (_, huid) = group_with_host(&r);
+    let now = crate::store::now_ts();
+    ingest_from(&r.d[2], &r.d[0]);
+    let issue = append(
+        &r.d[0],
+        OpBody::CertIssue {
+            device_id: r.d[1].did.clone(),
+            scope: CertScope::Hosts(vec![huid]),
+            expiry: now + 30 * 86_400,
+            max_new_hosts_per_day: 5,
+            epoch_lo: 0,
+            epoch_hi: 9,
+        },
+    );
+    // The certificate arrives and is approved (as the ceremony would).
+    ingest_from(&r.d[0], &r.d[1]);
+    let _ = r.app.store.sync_resolve_pending(&issue.hash(), true);
+    r.app.refresh_sync_view();
+
+    // Extending asks the phone: the request shows as a QR; a paste that is not
+    // the phone's answer is refused with a notice.
+    crate::app::sync_trust::extend(&mut r.app);
+    if r.app.mode == AppMode::SyncMenu {
+        enter(&mut r.app);
+        type_and_enter(&mut r.app, "3");
+        let wire = crate::sync::wire::CertExtendRequestWire::decode(&decode_frames(
+            &frames_of_prompt(&r.app),
+        ))
+        .unwrap();
+        assert_eq!(wire.extra_hosts, 3);
+        assert_eq!(wire.cert_id, issue.hash());
+        type_and_enter(&mut r.app, "not the answer");
+        assert!(r
+            .app
+            .host_notice
+            .as_deref()
+            .is_some_and(|n| n.contains("not the phone's answer")));
+
+        crate::app::sync_trust::revoke(&mut r.app);
+        enter(&mut r.app);
+        pump(&mut r.app, "the revocation", |a| {
+            a.host_notice
+                .as_deref()
+                .is_some_and(|n| n.contains("revoked"))
+        });
+        assert_eq!(
+            crate::sync::quorum::ops_of(&r.app.store, "CertRevoke", None)
+                .unwrap()
+                .len(),
+            1
+        );
+    } else {
+        panic!("the certificate was not listed: {:?}", r.app.host_notice);
+    }
 }

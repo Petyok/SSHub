@@ -377,10 +377,6 @@ pub enum SyncIntent {
         host: String,
     },
     SasMatches(bool),
-    Trust {
-        scope: usize,
-        term_days: u32,
-    },
     /// The holder's answer to a release request: approve (and grant) or refuse.
     Release {
         approve: bool,
@@ -430,6 +426,8 @@ pub struct SyncView {
     pub review_selected: usize,
     /// Scope choices for a new trust session (groups, host lists).
     pub trust_scopes: Vec<String>,
+    /// What each of `trust_scopes` certifies, in the same order.
+    pub trust_scope_values: Vec<crate::sync::oplog::CertScope>,
     pub trust_scope_selected: usize,
     pub trust_ttl_selected: usize,
     pub unlock: Option<UnlockView>,
@@ -618,6 +616,10 @@ impl App {
         }
     }
 
+    pub(crate) fn sync_open_trust_pub(&mut self) {
+        self.sync_open_trust();
+    }
+
     pub(crate) fn sync_open_review_pub(&mut self) {
         self.sync_open_review();
     }
@@ -639,7 +641,8 @@ impl App {
         } else if self.sync.trust_scopes.is_empty() {
             self.host_notice = Some("no group or host list to scope a trust session to".into());
         } else {
-            self.sync.trust_scope_selected = 0;
+            self.sync.trust_scope_selected =
+                super::sync_trust::default_scope(&self.store, &self.sync.trust_scopes);
             self.sync.trust_ttl_selected = TRUST_TTL_DEFAULT;
             self.mode = AppMode::TrustSessionScope;
         }
@@ -672,10 +675,13 @@ impl App {
 
     /// App-tick hook: step the unlock QR's frame at 8 fps while its modal is up.
     pub(crate) fn advance_sync_qr(&mut self, now: std::time::Instant) {
-        if self.mode != AppMode::SyncUnlock {
-            return;
-        }
-        let count = self.sync.unlock.as_ref().map_or(0, |u| u.frames.len());
+        let count = match (self.mode, self.sync_ui.as_ref()) {
+            (AppMode::SyncUnlock, _) => self.sync.unlock.as_ref().map_or(0, |u| u.frames.len()),
+            (AppMode::SyncPrompt, Some(super::sync_ui::SyncUi::Prompt { frames, .. })) => {
+                frames.len()
+            }
+            _ => return,
+        };
         let sync = &mut self.sync;
         crate::tui::widgets::qr_frames::advance(&mut sync.qr_frame, &mut sync.qr_last, now, count);
     }
@@ -722,7 +728,6 @@ impl App {
         if self.sync_worker.is_none() || self.sync.intents.is_empty() {
             return;
         }
-        let mut kept = Vec::new();
         for intent in std::mem::take(&mut self.sync.intents) {
             let cmd = match &intent {
                 SyncIntent::SyncNow { device } => SyncCmd::SyncNow(device.clone()),
@@ -758,11 +763,6 @@ impl App {
                     self.sync.identify_after = true;
                     SyncCmd::Onboard(Box::new(secrets.clone()))
                 }
-                // Answered by later stages, not by the transport worker.
-                _ => {
-                    kept.push(intent);
-                    continue;
-                }
             };
             if !matches!(cmd, SyncCmd::EnrollConfirmSas(_)) {
                 self.sync.syncing = true;
@@ -779,7 +779,6 @@ impl App {
                 ));
             }
         }
-        self.sync.intents = kept;
     }
 
     fn apply_sync_event(&mut self, event: crate::sync::client::SyncEvent) {
@@ -1249,11 +1248,12 @@ impl App {
                 if cancel {
                     self.mode = AppMode::TrustSessionScope;
                 } else if confirm {
-                    self.sync.intents.push(SyncIntent::Trust {
-                        scope: self.sync.trust_scope_selected,
-                        term_days: TRUST_TTL_DAYS[self.sync.trust_ttl_selected],
-                    });
                     self.mode = AppMode::Normal;
+                    super::sync_trust::begin(
+                        self,
+                        self.sync.trust_scope_selected,
+                        TRUST_TTL_DAYS[self.sync.trust_ttl_selected],
+                    );
                 } else if down {
                     self.sync.trust_ttl_selected =
                         (self.sync.trust_ttl_selected + 1).min(TRUST_TTL_DAYS.len() - 1);
@@ -1324,6 +1324,10 @@ pub(crate) fn sample_sync_view() -> SyncView {
             }],
         }],
         trust_scopes: vec!["group staging".into(), "group prod".into()],
+        trust_scope_values: vec![
+            crate::sync::oplog::CertScope::Group([1; 16]),
+            crate::sync::oplog::CertScope::Group([2; 16]),
+        ],
         ..SyncView::default()
     }
 }
@@ -1486,14 +1490,9 @@ mod tests {
         assert_eq!(TRUST_TTL_DAYS[app.sync.trust_ttl_selected], 30);
         app.handle_key(press(KeyCode::Down)).unwrap();
         app.handle_key(press(KeyCode::Enter)).unwrap();
-        assert_eq!(app.mode, AppMode::Normal);
-        assert_eq!(
-            app.sync.intents,
-            vec![SyncIntent::Trust {
-                scope: 1,
-                term_days: 90
-            }]
-        );
+        // The term is chosen: the budget is asked next (the sample's scopes are
+        // labels only, so the flow stops there with a notice).
+        assert!(app.mode == AppMode::Normal || app.mode == AppMode::SyncPrompt);
     }
 
     #[test]
