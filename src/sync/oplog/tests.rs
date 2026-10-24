@@ -372,6 +372,18 @@ fn sample_bodies() -> Vec<OpBody> {
             requester: "0011223344556677".into(),
             window_secs: 3600,
         },
+        OpBody::ExemptionSet {
+            device_id: "0011223344556677".into(),
+            slot: None,
+        },
+        OpBody::ExemptionSet {
+            device_id: "0011223344556677".into(),
+            slot: Some(DeviceIdentity::generate().public()),
+        },
+        OpBody::CertExtend {
+            cert_id: [8; 32],
+            extra_hosts: 50,
+        },
         OpBody::CheckpointPropose {
             cut: vec![
                 CutEntry {
@@ -2607,4 +2619,62 @@ fn ceremony_records_are_green_and_bounded() {
     assert_eq!(a.append(export(3600)).tier(), OpTier::Red);
     assert!(a.store.sync_append_local(&a.id, export(3601)).is_err());
     assert!(a.store.sync_append_local(&a.id, export(0)).is_err());
+}
+
+#[test]
+fn exemption_set_projects_the_flag_and_the_newest_op_wins() {
+    let ring = ring(2);
+    let (a, b) = (&ring[0], &ring[1]);
+    let slot = DeviceIdentity::generate().public();
+    let exempt = |p: &Peer| {
+        p.store
+            .sync_devices()
+            .unwrap()
+            .into_iter()
+            .find(|d| d.id == a.dev())
+            .unwrap()
+            .exempt
+    };
+    let on = a.append(OpBody::ExemptionSet {
+        device_id: a.dev(),
+        slot: Some(slot),
+    });
+    assert_eq!(on.tier(), OpTier::Red);
+    assert!(exempt(a));
+    assert!(matches!(b.store.sync_ingest(on.clone()).unwrap(), IngestOutcome::Pending));
+    assert!(!exempt(b), "waits for the ceremony");
+    b.store.sync_resolve_pending(&on.hash(), true).unwrap();
+    assert!(exempt(b));
+    let off = a.append(OpBody::ExemptionSet {
+        device_id: a.dev(),
+        slot: None,
+    });
+    b.store.sync_ingest(off.clone()).unwrap();
+    b.store.sync_resolve_pending(&off.hash(), true).unwrap();
+    assert!(!exempt(a) && !exempt(b));
+    // An invalid slot key is refused before it is chained.
+    let bad = DevicePublic {
+        ed25519_pub: [0; 32],
+        x25519_pub: [0; 32],
+        mlkem_pub: vec![1, 2, 3],
+    };
+    assert!(a
+        .store
+        .sync_append_local(&a.id, OpBody::ExemptionSet { device_id: a.dev(), slot: Some(bad) })
+        .is_err());
+}
+
+#[test]
+fn cert_extend_is_green_inert_and_bounded() {
+    let ring = ring(2);
+    let (a, b) = (&ring[0], &ring[1]);
+    let op = a.append(OpBody::CertExtend { cert_id: [1; 32], extra_hosts: 10 });
+    assert_eq!(op.tier(), OpTier::Green);
+    assert!(matches!(b.store.sync_ingest(op).unwrap(), IngestOutcome::Applied));
+    for n in [0u32, 51] {
+        assert!(a
+            .store
+            .sync_append_local(&a.id, OpBody::CertExtend { cert_id: [1; 32], extra_hosts: n })
+            .is_err());
+    }
 }

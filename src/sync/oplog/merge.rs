@@ -479,6 +479,24 @@ fn effects(conn: &Connection, op: &Op, hash: &[u8; 32]) -> Result<()> {
                 )?;
             }
         }
+        OpBody::ExemptionSet { device_id, slot } => {
+            // Newest write per device wins, whatever order ops became effective.
+            let incoming = lww_key(op.lamport, &op.device_id);
+            let key = format!("exempt-key:{device_id}");
+            let cur: Option<Vec<u8>> = conn
+                .query_row("SELECT value FROM sync_meta WHERE key = ?1", params![key], |r| r.get(0))
+                .optional()?;
+            if cur.is_none_or(|c| String::from_utf8_lossy(&c).as_ref() < incoming.as_str()) {
+                conn.execute(
+                    "INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?1, ?2)",
+                    params![key, incoming.as_bytes()],
+                )?;
+                conn.execute(
+                    "UPDATE sync_devices SET exempt = ?2 WHERE device_id = ?1",
+                    params![device_id, slot.is_some()],
+                )?;
+            }
+        }
         OpBody::DeviceRoleChange { device_id, to } => {
             conn.execute(
                 "UPDATE sync_devices SET role = ?2 WHERE device_id = ?1",

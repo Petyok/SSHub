@@ -65,6 +65,8 @@ BODY_ORDER = {
     "FactorRegister": ["factor", "public", "sealed", "salt", "sender"],
     "DeviceRoleChange": ["device_id", "to"],
     "BulkExport": ["requester", "window_secs"],
+    "ExemptionSet": ["device_id", "slot"],
+    "CertExtend": ["cert_id", "extra_hosts"],
     "RecoveryAck": ["reenroll_hash", "seen_at"],
     "CheckpointPropose": ["cut", "state_hash", "state_len", "prev_checkpoint", "required"],
     "CheckpointSign": ["proposal_hash"],
@@ -173,7 +175,7 @@ def value(key, v):
 
 
 def nested_order(key, v):
-    if key == "device":
+    if key in ("device", "slot"):
         return ["ed25519_pub", "x25519_pub", "mlkem_pub"]
     if key == "wrapped_shares":
         return ["recipient", "alg", "sealed"]
