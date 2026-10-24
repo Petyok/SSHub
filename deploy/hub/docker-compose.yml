@@ -1,0 +1,26 @@
+name: sshub-hub
+
+# Hub: a mirror with a permanent address. See README.md before running it.
+# Run from this directory: docker compose up -d --build
+# The build context is the repository root, so the image compiles the same sshub.
+
+services:
+  hub:
+    build:
+      context: ../..
+      dockerfile: deploy/hub/Dockerfile
+    image: sshub-hub:local
+    restart: unless-stopped
+    ports:
+      - "${HUB_PORT:-2222}:2222"
+    volumes:
+      - hub-data:/home/hub/.local/share/sshub
+      # Public keys allowed to log in as "hub". Must be owned by uid 10001.
+      - ./authorized_keys:/home/hub/.ssh/authorized_keys:ro
+      # Optional, for notifications: msmtp config with send-only SMTP credentials.
+      # - ./msmtprc:/etc/msmtprc:ro
+      # Optional: sshub config (see README for the [sync.notify] block).
+      # - ./config.toml:/home/hub/.config/sshub/config.toml:ro
+
+volumes:
+  hub-data:
