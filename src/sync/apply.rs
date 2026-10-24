@@ -498,11 +498,31 @@ fn local_id(conn: &Connection, kind: EntityKind, uid: &Uid) -> Result<Option<i64
     }
 }
 
+fn created_by_sync(conn: &Connection, kind: EntityKind, uid: &Uid) -> Result<bool> {
+    Ok(conn
+        .query_row(
+            "SELECT created FROM sync_entities WHERE kind = ?1 AND uid = ?2",
+            params![kind.as_str(), &uid[..]],
+            |r| r.get(0),
+        )
+        .optional()?
+        .unwrap_or(false))
+}
+
+fn mark_created(conn: &Connection, kind: EntityKind, uid: &Uid, v: bool) -> Result<()> {
+    conn.execute(
+        "UPDATE sync_entities SET created = ?3 WHERE kind = ?1 AND uid = ?2",
+        params![kind.as_str(), &uid[..], v],
+    )?;
+    Ok(())
+}
+
 fn set_uid(conn: &Connection, kind: EntityKind, id: i64, uid: &Uid) -> Result<()> {
     conn.execute(
         &format!("UPDATE {} SET uid = ?1 WHERE id = ?2", table_of(kind)),
         params![&uid[..], id],
     )?;
+    mark_created(conn, kind, uid, true)?;
     Ok(())
 }
 
@@ -534,8 +554,24 @@ fn project_row(conn: &Connection, kind: EntityKind, uid: &Uid, view: &View) -> R
         }
         return Ok(());
     }
-    let Some(name) = rendered_name(conn, kind, uid, view)? else {
-        return Ok(()); // no name yet: cannot create a row
+    let name = rendered_name(conn, kind, uid, view)?;
+    let complete = name.is_some()
+        && (kind != EntityKind::Host || matches!(view.opt_str("address"), Some(Some(_))));
+    let Some(name) = name.filter(|_| complete) else {
+        // An entity whose effective view lacks its required fields (an op that
+        // set them became pending again) has no row: remove the one the
+        // projection made, never one the user already had.
+        if let Some(id) = existing {
+            if created_by_sync(conn, kind, uid)? {
+                match kind {
+                    EntityKind::Host => store::delete_host_on(conn, id)?,
+                    EntityKind::Group => store::delete_group_on(conn, id)?,
+                    EntityKind::Identity => store::delete_identity_on(conn, id)?,
+                };
+                mark_created(conn, kind, uid, false)?;
+            }
+        }
+        return Ok(());
     };
     match kind {
         EntityKind::Identity => project_identity(conn, uid, view, existing, &name),

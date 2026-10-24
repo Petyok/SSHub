@@ -1100,6 +1100,9 @@ CREATE TABLE IF NOT EXISTS sync_entities (
     name         TEXT,
     name_lamport INTEGER NOT NULL DEFAULT 0,
     name_device  TEXT NOT NULL DEFAULT '',
+    -- 1 when the projection created the row (and may remove it again if the
+    -- entity loses its required fields), 0 for a row the user already had.
+    created      INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (kind, uid)
 );
 CREATE INDEX IF NOT EXISTS sync_entities_name ON sync_entities(kind, name);

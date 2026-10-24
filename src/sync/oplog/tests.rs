@@ -1231,6 +1231,34 @@ fn a_pending_revoke_holds_concurrent_green_edits_for_review_and_rejecting_it_rel
 }
 
 #[test]
+fn an_entity_that_loses_its_name_to_a_void_loses_the_row_the_sync_made() {
+    let ring = ring(3);
+    let (a, b, c) = (&ring[0], &ring[1], &ring[2]);
+    let revoke = c.append(OpBody::DeviceRevoke { device_id: a.dev() });
+    let create = a.append(upsert(1, hf("web", "10.0.0.1")));
+    assert!(create.lamport >= revoke.lamport);
+    b.store.sync_ingest(create.clone()).unwrap();
+    b.store.sync_resolve_pending(&create.hash(), true).unwrap();
+    assert_eq!(b.host(&uid(1)).unwrap().name, "web");
+    // b adds a name-less safe edit, and another host that wants the same name.
+    b.append(upsert(
+        1,
+        HostFields {
+            notes: Some(Some("n".into())),
+            ..Default::default()
+        },
+    ));
+    b.append(upsert(2, hf("web", "10.0.0.2")));
+    assert_eq!(b.host(&uid(2)).unwrap().name, "web (02020202)");
+    // The revoke voids a's create: host 1 has no name any more, its row goes
+    // and host 2 takes the name (no UNIQUE clash, no stale row).
+    b.store.sync_ingest(revoke.clone()).unwrap();
+    b.store.sync_resolve_pending(&revoke.hash(), true).unwrap();
+    assert!(b.host(&uid(1)).is_none());
+    assert_eq!(b.host(&uid(2)).unwrap().name, "web");
+}
+
+#[test]
 fn tie_break_orders_by_lamport_then_device_and_a_revoke_goes_to_review() {
     let ring = ring(2);
     let (a, b) = (&ring[0], &ring[1]);
