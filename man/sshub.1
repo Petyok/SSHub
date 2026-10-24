@@ -366,6 +366,50 @@ gradient directions and the perimeter rule, the complete role catalogue, and
 worked examples) is in
 .I docs/theme\-system.md
 in the source tree.
+.SS Host sync (headless, encrypted peer-to-peer)
+.TP
+.B sshub sync\-join \fIHOST\fR
+Join the ring of the device at
+.IR HOST ,
+a launcher host name or
+.RI [ USER @] HOST [: PORT ].
+Runs
+.B sshub sync\-enroll
+there over ssh. The four SAS words and the peer name are printed on stdout;
+compare them with the other device and answer
+.B y
+on stdin (anything else, or EOF, refuses). Exits 0 when joined, 1 on failure,
+2 on usage error.
+.TP
+.B sshub sync\-now \fR[\fIDEVICE\fR] [\fB\-\-format\fR \fBplain\fR|\fBjson\fR]
+Sync with one ring device (name or unique id prefix) or, without
+.IR DEVICE ,
+with every other ring device that has a known host; the rest are reported as
+.BR "skipped (no host known)" .
+One line per device:
+.B <name>: ok applied N, pending M, received R, sent S
+(plus
+.B behind
+and
+.B suspect
+ids). Exit 0 on success or when nothing could be attempted, 1 when a device was
+offline or failed, 2 on usage error, 3 when a fork is proven
+.RB ( "FORK DETECTED: <name>" ).
+.TP
+.B sshub sync\-status \fR[\fB\-\-format\fR \fBplain\fR|\fBjson\fR]
+Read-only: ring devices (name, short id, role, status, last seen, head seq,
+host), pending change count and credential mode. Never creates a device key.
+.TP
+.B sshub sync\-serve
+.TQ
+.B sshub sync\-enroll
+Run by a peer over ssh; stdin and stdout carry protocol frames only (one sync
+round, or the existing-device side of an enrollment). Not for interactive use.
+.B sync\-enroll
+asks for the SAS confirmation on /dev/tty when there is one; otherwise it prints
+.B SAS words: <words> (peer <name>)
+to stderr and accepts, because the human comparison happens on the joining side.
+Exit 0 on success, 1 on error.
 .SS Inventory and config
 .TP
 .B sshub tags \fR[\fB\-\-format\fR \fIF\fR]

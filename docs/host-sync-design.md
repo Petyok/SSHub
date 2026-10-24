@@ -19,8 +19,7 @@ the 20.09 review" at the end lists what this document changes beyond v4's prose.
 P2P synchronization of hosts between a user's machines over SSH itself (no
 servers, no daemons), with signed hash-chained op-logs, danger tiers for
 operations, and two credential modes: **Vault** (a master phrase, the default)
-and **Quorum** (Shamir k=2 with the phone, a hardware key or paper as the second
-holder). In Quorum mode a single peer is unable to decrypt credentials; in Vault
+and **Quorum** (Shamir k=2 with the phone or paper as the second holder). In Quorum mode a single peer is unable to decrypt credentials; in Vault
 mode a single peer plus an offline search of the master phrase is enough, and we
 say so everywhere the promise is made.
 
@@ -69,11 +68,13 @@ word; a promise we cannot keep is worse than no promise.
 - **A phone that only ever sees one machine:** a compromised courier can withhold
   its ops until the phone touches any other device; bounded by the freshness
   threshold.
+- **Checkpoints** (see their own section): pruning forgets old ops on the devices that prune, not on the
+  revoked device or in backups; a fork hidden below an accepted cut is no longer provable by a pruned peer.
 - **A password changed on the server itself**, outside sshub, is not detected.
 - **Old wrapped shares after a revocation.** The forward-secure wrap keys of Quorum mode protect against theft
   after retirement for holders that can rotate. Not covered: a copy of a holder's
   key file taken before retirement; holders that cannot rotate (the paper phrase,
-  a hardware key, a phone that has not contacted a terminal since the revocation),
+  a phone that has not contacted a terminal since the revocation),
   whose theft still combines with the revoked device's old share; backups and
   flash storage that keep a deleted key; and a lying contributor, which can make
   a credential unrecoverable (the password is then re-entered) but cannot disclose
@@ -93,7 +94,7 @@ colours only.
 |------|------------|--------------|
 | Green | reading metadata (host list, host N), no credentials | valid peer signature, served immediately |
 | Yellow | releasing a share (= the credential of one host); applying a foreign host modification/deletion; admitting a **mirror** | signature + op-log + user approve; a share release additionally requires phone participation or a valid delegation certificate |
-| Red | bulk credential export; adding/revoking a **holder**; enabling a trust session; replacing the phone; **changing the credential mode** | phone participation + a signature from a second **attended** device + a third factor that lives outside your devices (paper phrase by default; a second hardware key or an emailed code as options). The three factors must come from three different participants. For phone loss, the recovery path below. |
+| Red | bulk credential export; adding/revoking a **holder**; enabling a trust session; replacing the phone; **changing the credential mode** | phone participation + a signature from a second **attended** device + a third factor that lives outside your devices (paper phrase by default; an emailed code as an option). The three factors must come from three different participants. For phone loss, the recovery path below. |
 
 Promotion of a device to holder is Red **and** additionally requires two genuine
 holders online (the resharing protocol needs k contributors). A mirror's
@@ -213,6 +214,168 @@ requester (see "Share release").
   clone keeps the original looking stale, and the ceremony falls on the victim.
   Not closed; surfaced in the UI as "this device was rehabilitated N times".
 
+## Checkpoints and pruning
+
+The op-log is append-only and replicates to every peer, so without a way to forget it grows
+forever: every credential edit appends its wrapped shares again, every revocation appends a
+reshare of every credential, and every superseded field write stays. PoC B measured it:
+1000 credentials with 4 holders are a 7.2 MB log; one revocation adds 1.8 MB (batched
+envelopes) to 17.6 MB (naive), and the old wrapped shares stay readable on every disk that
+holds the log. A **checkpoint** certifies the resolved state at a cut of the log, and once it
+is accepted, ops below an older cut may be deleted locally.
+
+### What a checkpoint is
+
+Two parts. The **state blob** is canonical JSON (the same canonical rules as ops, keys sorted,
+no local fields), hashed with BLAKE3. The **proposal** is a normal op in the proposer's chain
+that carries only the hash, so ops stay small:
+
+`CheckpointPropose { cut, state_hash, state_len, prev_checkpoint, required }` and, from each
+required signer, `CheckpointSign { proposal_hash }`.
+
+The state holds exactly what a device needs to continue without the pruned ops:
+
+| Section | Content | Why |
+|---|---|---|
+| `cut` | for every device (revoked ones too): `device_id`, `seq`, `op_hash`, `lamport` of its last op in the cut | chain anchors: the first op after the cut must have `prev_hash` equal to this hash |
+| `devices` | public keys (current wrap generation only), name, role, attendance, kind, status (`operational`, `revoked`, `compromised`), `wrap_epoch`, who added or revoked it (op hashes), exemption flag | ring membership; the device table is also the basis of the ring fingerprint |
+| `mode` | current credential mode | |
+| `entities` | for every live host, group, identity: per field the WINNING write (`value`, `lamport`, `device_id`, `seq`); for every deleted one: its tombstone key `(lamport, device_id, op_hash)` until the tombstone horizon | a later op is compared against the winner's key exactly as before, so ties and revoke precedence still resolve identically |
+| `creds` | per credential: `ciphertext`, and the LIVE shares only: the envelope shares of the current holders of the latest reshare epoch, or the wrapped shares of the credential op if it was never resharded | superseded edits and old epochs are what gets forgotten |
+| `storage_keys` | the current epoch's `ShareStorageKey` blob per holder | envelope shares need them |
+| `certs` | active delegation certificates with their opened-host lists and the opens of the last rolling day | the ring-wide budget and the visible list survive |
+| `epochs` | ratchet epoch and wrap epoch per device | |
+| `heads` | per device, the latest self-signed head attestation `(seq, hash, signature)` | gossip and fork checks keep working |
+| `forks` | the two conflicting ops (in full) of every fork proof | `compromised` is permanent and must stay provable |
+
+Not in the state: pending (undecided) ops, rejected ops, local approvals, `last_seen`,
+anything per device that is not shared. A checkpoint is the resolved state, and resolving
+dangerous fields needs a human on each device, so it is only defined where every device that
+signs has decided every op below the cut (see verification).
+
+### When one is proposed
+
+By any attended terminal, automatically, when the log since the last accepted checkpoint
+reaches 5,000 ops or 8 MiB, or 7 days after a reshare finished (the retirement boundary of
+the wrap keys), at most one a day otherwise; or by hand. Never while a `PhoneReenroll` timelock
+is running, and never with an op below the cut that this device still has pending: the
+proposer first resolves or waits. Competing proposals with the same `prev_checkpoint`
+resolve by the usual order, lowest `(lamport, device_id)` wins and the others are void.
+
+### Who signs, at what tier, and why that is enough
+
+A checkpoint opens nothing, releases no key and changes nobody's authority, so the ops are
+**Green** and need no human. What protects the ring is that they are inert until verified:
+
+- **An existing device never trusts a state blob.** It rebuilds the state from its own store
+  as of the cut and compares hashes. Equal: it signs. Different: it does not sign, marks the
+  proposal `disputed` and shows which ops differ. One compromised device can therefore
+  never make an honest device adopt a false state, with or without signatures.
+- **Signatures exist for devices that cannot compare**: a fresh device, and a device that
+  fell behind the retention window. A checkpoint is `accepted` only when signed by **every
+  live attended terminal in its own device table, and by at least two**. "Live" means a
+  self-signed head no older than 14 days at the proposal's timestamp. The phone is not a
+  signer (it keeps no store to compare against), an unattended Hub is not a signer.
+  A ring with a single machine cannot checkpoint, and says so.
+- A false proposal from one compromised device collects at most its own signature, because
+  every honest device refuses; it stays unaccepted, and the disagreement is shown as a
+  `suspect` signal (not proof, so no red screen: it could also be a bug or an undecided
+  approval).
+
+The price of "every live attended terminal" is that one machine in a drawer for ten days delays
+pruning until it syncs or goes stale. That is the boring failure: nothing is lost, the log
+just grows a little longer.
+
+### Verification on a device that has the log
+
+1. It has every op up to the cut (it syncs the missing ones first) and no op below the cut is
+   pending locally.
+2. Its rebuilt state hash equals `state_hash`; its device table yields the same `required` set.
+3. The proposal and the signatures verify; `prev_checkpoint` is the last accepted one.
+4. When all required signatures are present it records the checkpoint as `accepted`.
+
+### Pruning
+
+An accepted checkpoint `C_n` lets a device delete, **7 days after acceptance** and only once a
+previous accepted checkpoint `C_(n-1)` exists, everything below the cut of `C_(n-1)`:
+
+- op rows below the cut, except the head op of every device at the cut, which is kept in full
+  (it anchors the chain and is the evidence for a fork at the cut);
+- superseded field writes, superseded credential ops, old reshare ops, old head attestations;
+- tombstones older than 90 days;
+- wrap key generations older than the current one.
+
+Two spans stay on disk (between `C_(n-1)` and now) so that a device that is one checkpoint
+behind still syncs by tail and does not need a bootstrap. The first checkpoint prunes
+nothing; the first prune happens after the second.
+
+This deletes the old wrapped shares: every `CredUpdate` and reshare op that carried them is
+in the pruned part, so an honest device keeps no old blob that a later theft of a
+non-rotating key (paper, phone) could open. It does not recall copies: the revoked device,
+unpruned devices and backups keep theirs. Pruning shrinks the exposure to those copies; it
+does not close it, and the timescale is weeks, not days (the checkpoint after the reshare,
+7 days of delay, then one more checkpoint).
+
+Fork proofs and head attestations across a prune: hashes and signatures of the heads at the
+cut are kept, and recorded fork proofs are kept in full. An op with `seq` equal to the cut
+head's `seq` but a different hash is still a provable fork (the kept head op is the second
+witness). An op below a device's cut `seq` is ignored as already covered; a fork hidden
+below an accepted cut can no longer be proven by a pruned peer, only by one that kept the
+old ops. That is accepted: all required signers compared the state at the cut.
+
+### A fresh device
+
+It asks a peer for the latest accepted checkpoint, receives the proposal, the signatures, the
+head ops and the state blob (in chunks under the frame cap), and checks: the blob hashes to
+`state_hash`, the heads match the cut, the signatures cover the required set computed from
+the blob's own device table. That proves the blob is what the ring's devices signed, not that
+the ring is the user's ring, so the trust anchor is separate: either one signer is a device
+whose key the user verified with the SAS at enrollment, or the user compares the **ring
+fingerprint**, 8 words (88 bits) of the device table hash, with the one shown on an attended
+device (the Hub case). Eight words and not four because a static artifact can be ground
+offline; the four word SAS is protected by the commitment scheme and this is not. Then it
+materialises the state into its tables, sets each chain head from the cut and syncs the tails.
+It holds no history below the cut and cannot serve any.
+
+### A device that was offline
+
+- Behind by less than the retained span: it syncs by tail as always.
+- Behind past it (a peer answers `Pruned` for ops it needs): it adopts the latest accepted
+  checkpoint. A device that was not stale does this without ceremony, since it can see that
+  every required signer signed; its own unsynced ops chain from its head, which is the cut
+  head, and are replayed on top.
+- A device that was `stale` at the checkpoint (no contact for 30 days): its unsynced ops enter
+  review as pending whatever their fields, because a safe-field write to a host deleted and
+  forgotten meanwhile would resurrect it; adoption itself needs the rehabilitation of the
+  epoch ratchet (phone signature or repeated SAS).
+- Tombstones are carried for 90 days, longer than the stale threshold, so a device that is
+  merely stale can never resurrect a host; a device offline for more than 90 days is
+  re-enrolled.
+
+### Size, measured (PoC B, 1000 credentials, 4 holders, credentials only)
+
+| Moment | Log on disk |
+|---|---|
+| before the revocation | 7.18 MB |
+| after it, naive per-share wraps | 24.74 MB |
+| after it, epoch envelopes batched 200 per op | 8.98 MB |
+| after an accepted checkpoint and the second-span prune | 0.61 MB state + 4 head ops + the tail |
+
+Hosts, groups and identities add their winning field values to the state, a few hundred bytes
+each. The state is smaller than the log before the revocation because the reshare turned
+1.2 KB hybrid wraps into 73 byte envelopes; credentials that were never resharded keep their
+1.2 KB wraps in the state. Verification is a hash over the whole state, one pass: no Merkle
+tree is needed at these sizes (0.6 to 0.9 MB for 1000 credentials).
+
+### Residual risks of checkpoints
+
+- A device that signs a state it compared wrongly (a bug) lets a bad state become accepted;
+  the defence is the requirement that every live attended terminal signs.
+- A compromised device plus a fresh device that takes its fingerprint on trust: the
+  fingerprint comparison is the control.
+- Pruned peers cannot prove forks below their cut; a peer that kept the old ops can.
+- Pruning on one device does not delete copies elsewhere (see above).
+
 ## Credentials
 
 ### Common to both modes
@@ -253,7 +416,7 @@ requester (see "Share release").
 ### Quorum mode
 
 - The DEK is split with Shamir k-of-n, **k=2**: one share per holder (machine,
-  phone, hardware key, paper).
+  phone, paper).
 - **Replication invariant:** every recipient's wrapped share travels inside the
   op and replicates to **all** peers, so revoking a holder loses nobody else's
   share.
@@ -289,10 +452,12 @@ requester (see "Share release").
   `paper/unwrap` (the share recipient key) and `paper/recover` (the recovery
   authorization key). Typing the phrase to unlock a credential hands the machine
   `paper/unwrap`; it must not also hand it the ability to authorize a recovery.
-- **A hardware key as holder** stores the secret that unwraps its shares, not the
-  shares themselves. **One user-presence gesture per credential unwrap** — a
-  session-wide touch would let a compromised laptop drain every credential the
-  moment the key is inserted.
+- **Hardware keys are out of this version.** A key as a holder would have to enforce one
+  user-presence gesture per credential unwrap (a session-wide touch would let a compromised
+  laptop drain every credential the moment the key is inserted), and that property has not been
+  verified on real hardware (PoC E was not run). A factor whose central property is unproven
+  does not go into Red operations, so neither a hardware-key holder nor a hardware-key third
+  factor ships. They can return as an addition once measured.
 
 ### Mode transitions (Red, both directions)
 
@@ -315,7 +480,7 @@ ring. The master-phrase slot is then bound to that device: the share replicates
 like all the others, but unwraps only for someone holding both the phrase and
 that machine's key. No invariant breaks. For that machine, "one stolen device is
 not enough" stops being true, so it is labelled an **exemption**, per row, and
-the alternatives (hardware key, unattended holder + trust mode) are offered
+the alternative (an unattended holder + trust mode) is offered
 first — the exemption is usually requested for the laptop most likely to be
 stolen.
 
@@ -361,9 +526,8 @@ at once; the TUI listens to all of them and the first success wins.
    success** (`request_id` is a fast filter, not trust). The design intends key
    material to transit a third-party clipboard sync service in encrypted form;
    that is stated, not implied.
-4. **Hardware key:** not a channel — a touch replaces the whole ceremony.
-5. **Short code (repeat access):** see snapshots below.
-6. **Full manual entry (guaranteed fallback):** the share typed as a BIP39
+4. **Short code (repeat access):** see snapshots below.
+5. **Full manual entry (guaranteed fallback):** the share typed as a BIP39
    24-word phrase with autocompletion and checksum.
 
 A **USB cable** is the better channel and arrives with the native app: a browser
@@ -448,9 +612,9 @@ may satisfy two of its requirements.
    a laptop must not be a permanent deadlock.
 2. **A third factor from outside your devices**, and it must be a **different
    artifact than (1)**: if paper provided the authorization, the third factor is
-   a second hardware key or an emailed code. In a one-machine ring this means the
-   user needs one factor bought in advance; the product says so at setup rather
-   than at the emergency.
+   an emailed code. In a one-machine ring this means the emailed code has to be
+   set up in advance, with a sender that is neither the requester nor the second
+   vote; the product says so at setup rather than at the emergency.
 3. **A timelock of 7 days**, during which the op sits on every device's screen.
 4. **At least one `RecoveryAck`** — a signed "I have seen this recovery op at
    time T" from a device other than the requester and other than the relay that
@@ -480,7 +644,6 @@ Paper by default. Email is an option, not a requirement.
 | Factor | Setup | On the road | For whom |
 |---|---|---|---|
 | **Paper phrase** (default) | none, it already exists | no — it is in a safe | everyone |
-| **A second hardware key** | buy and enroll | yes | people doing Red operations away from home |
 | **Emailed code** (option) | send-only SMTP | yes | people whom the first two do not suit |
 
 Rationale for the demotion: a factor that requires writing SMTP credentials into
@@ -520,7 +683,7 @@ opens nothing, so it needs no secrecy and no special credentials.
    the resharing protocol.
 
 Minimal topology: 1 machine + phone (Quorum k=2 works, without trust sessions and
-with a mandatory paper share). Recommended: >=2 machines + phone or key, plus a
+with a mandatory paper share). Recommended: >=2 machines + phone, plus a
 mirror at a permanent address as the meeting point.
 
 ## UI
@@ -632,8 +795,7 @@ what the implementation codes against. Each is cheap now and structural later.
    lives on its own sheet, and is in the residual-risk list (review H3).
 6. **`everything` is not a valid trust scope**, and the picker has a default
    (review H4).
-7. **One user-presence gesture per credential** on a hardware-key holder
-   (review M1).
+7. *(Withdrawn: hardware-key holders are out of this version, see Quorum mode.)*
 8. **The master phrase uses the EFF 7776 list**, named explicitly, because the
    product already ships a 2048-word BIP39 list and 6 of those words is 66 bits,
    not 77 (review M2).

@@ -29,6 +29,11 @@ const TOP_LEVEL: &[&str] = &[
     "map",
     "tags",
     "sync",
+    "sync-join",
+    "sync-now",
+    "sync-status",
+    "sync-serve",
+    "sync-enroll",
     "import",
     "export",
     "completions",
@@ -283,7 +288,7 @@ _sshub_completions() {{
                 COMPREPLY=( $(compgen -W "$theme_sub" -- "$cur") )
             fi
             ;;
-        tags|sync|import|export)
+        tags|sync|import|export|sync-now|sync-status)
             COMPREPLY=( $(compgen -W "--format plain json --stdout -o --cache" -- "$cur") )
             ;;
     esac

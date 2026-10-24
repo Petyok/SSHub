@@ -104,6 +104,17 @@ fn cmd_resolve(ctx: &CliContext, args: &[String]) -> Result<i32> {
         host_usage("resolve requires <name>");
     };
     let entry = ctx.host_by_name(name)?;
+    // `has_stored_secret` and the argv depend on the credential being open.
+    let resolved = match entry.managed() {
+        Some(m) => ctx.store.resolve_connection(m).ok(),
+        None => None,
+    };
+    ctx.ensure_unlocked_for(
+        name,
+        entry.managed(),
+        resolved.as_ref().and_then(|r| r.identity.as_ref()),
+        resolved.as_ref().and_then(|r| r.proxy_jump.as_deref()),
+    )?;
     let resolve = host_resolve_json(entry, &ctx.store, ctx.password_store(), verbose);
     match fmt {
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&resolve)?),
@@ -153,6 +164,12 @@ fn cmd_connect(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
         None => None,
     };
     let effective_identity = resolved.as_ref().and_then(|r| r.identity.as_ref());
+    ctx.ensure_unlocked_for(
+        &host_name,
+        entry.managed(),
+        effective_identity,
+        resolved.as_ref().and_then(|r| r.proxy_jump.as_deref()),
+    )?;
     let (pending_secret, credential_diag) =
         resolve_pending_secret(&entry, effective_identity, ctx.password_store());
     if verbose {

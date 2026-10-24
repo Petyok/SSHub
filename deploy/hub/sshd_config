@@ -1,0 +1,18 @@
+# sshd for the hub container. Key-only login for the "hub" account.
+Port 2222
+ListenAddress 0.0.0.0
+HostKey /home/hub/.local/share/sshub/ssh-host-keys/ssh_host_ed25519_key
+PidFile /run/sshd/sshd.pid
+
+PermitRootLogin no
+AllowUsers hub
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+AuthorizedKeysFile /home/hub/.ssh/authorized_keys
+StrictModes yes
+UsePAM no
+X11Forwarding no
+AllowAgentForwarding no
+AllowTcpForwarding no
+PermitTunnel no

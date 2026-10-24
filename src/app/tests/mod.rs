@@ -142,6 +142,7 @@ pub(crate) fn legacy_meta(entry: &mut HostEntry) -> &mut crate::metadata::HostMe
 
 mod broadcast;
 mod cert_agent;
+mod credential_gate;
 mod field_click;
 mod ghost;
 mod host_crud;
@@ -158,8 +159,11 @@ mod session;
 mod sftp;
 mod snippets;
 mod suggestions;
+mod sync_store;
 mod tags;
 mod theme_picker;
 mod transfer_plan_confirm;
 mod transport;
+mod vault_onboarding;
+mod vault_unlock;
 mod workspaces;

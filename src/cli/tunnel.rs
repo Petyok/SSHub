@@ -186,7 +186,11 @@ fn cmd_start(ctx: &CliContext, args: &[String]) -> Result<()> {
     let token = positional_one(&a, "start")?;
     let tunnel = ctx.resolve_tunnel(token)?;
     let host = ctx.resolve_tunnel_host(&tunnel)?;
-    let (secret, _) = ctx.resolve_tunnel_secret(&host);
+    let resolved = ctx
+        .store
+        .resolve_connection(&host)
+        .unwrap_or_else(|_| crate::store::ResolvedConnection::from_stored(&host));
+    let secret = gated_tunnel_secret(ctx, &host, &resolved)?;
     let label = tunnel.label.as_deref().unwrap_or("");
     let host_name = host.name.as_str();
 
@@ -195,10 +199,6 @@ fn cmd_start(ctx: &CliContext, args: &[String]) -> Result<()> {
     }
 
     let data_dir = ctx.profile.tunnel_base().to_path_buf();
-    let resolved = ctx
-        .store
-        .resolve_connection(&host)
-        .unwrap_or_else(|_| crate::store::ResolvedConnection::from_stored(&host));
     let hops = crate::app::hop_secrets(
         &ctx.store,
         &ctx.hosts,
@@ -219,6 +219,23 @@ fn cmd_start(ctx: &CliContext, args: &[String]) -> Result<()> {
         tunnel.id, tunnel.local_port
     );
     Ok(())
+}
+
+/// The host's stored secret for a tunnel, after opening locked synced
+/// credentials of the host, its identity and its jump hops. Gating here covers
+/// the foreground and detached starts, which stage the same hop secrets.
+fn gated_tunnel_secret(
+    ctx: &CliContext,
+    host: &crate::store::ManagedHost,
+    resolved: &crate::store::ResolvedConnection,
+) -> Result<Option<crate::session::PendingSecret>> {
+    ctx.ensure_unlocked_for(
+        &host.name,
+        Some(host),
+        resolved.identity.as_ref(),
+        resolved.proxy_jump.as_deref(),
+    )?;
+    Ok(ctx.resolve_tunnel_secret(host).0)
 }
 
 fn run_foreground(
@@ -391,4 +408,40 @@ struct TunnelShowRow {
     state: String,
     created_at: i64,
     updated_at: i64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::context::gate_tests::{assert_needs_share, gated_ctx, open};
+
+    #[test]
+    fn locked_credential_stops_tunnel_start_before_ssh_spawns() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ctx, gate, key) = gated_ctx(dir.path());
+        let host = ctx.managed_host_by_name("web").unwrap();
+        let id = ctx
+            .store
+            .create_tunnel(&NewTunnel {
+                host_id: Some(host.id),
+                tunnel_type: TunnelType::Local,
+                local_port: 18080,
+                remote_host: "localhost".into(),
+                remote_port: 80,
+                label: None,
+                auto_connect: false,
+            })
+            .unwrap();
+        let args = ["start".to_string(), id.to_string()];
+        let err = crate::cli::run_subcommand(&mut ctx, "tunnel", &args).unwrap_err();
+        assert_needs_share(err);
+
+        open(&gate, &key);
+        // Starting would now spawn ssh; the secret it stages is the plaintext.
+        let resolved = ctx.store.resolve_connection(&host).unwrap();
+        let secret = gated_tunnel_secret(&ctx, &host, &resolved)
+            .unwrap()
+            .unwrap();
+        assert_eq!(secret.value(), "pw");
+    }
 }

@@ -51,6 +51,8 @@ impl App {
                 | AppMode::ImportPrompt
                 | AppMode::SnippetForm
                 | AppMode::SnippetPicker
+                | AppMode::SyncUnlock
+                | AppMode::SyncOnboarding
                 | AppMode::SftpPrompt
         ) || (self.mode == AppMode::Normal
             && matches!(self.active_tab, 2 | 3)
@@ -91,6 +93,10 @@ impl App {
 
     /// Handle a mouse event — clicks, scroll wheel, etc.
     pub fn handle_mouse(&mut self, mouse: MouseEvent) -> Result<()> {
+        // The fork alert is the whole frame; nothing under it is clickable.
+        if self.mode == AppMode::SyncForkAlert {
+            return Ok(());
+        }
         if matches!(self.mode, AppMode::Connecting | AppMode::Session) {
             // A drag begun over an overlay that closed mid-gesture must not
             // resurface as a highlight on the next one.
@@ -224,6 +230,7 @@ impl App {
                         self.refresh_audit_events();
                     }
                     5 => self.switch_to_map_tab(),
+                    6 => self.switch_to_sync_tab(),
                     _ => {}
                 }
             }

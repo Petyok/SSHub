@@ -337,6 +337,14 @@ sshub audit stats --days 7
 # The jump-host map as a Graphviz graph
 sshub map --dot | dot -Tsvg -o map.svg
 
+# Host sync between your own devices (end to end encrypted, over ssh)
+sshub sync-join laptop                        # join the ring of the device at host "laptop" (compare the words, answer y)
+sshub sync-now                                # sync with every ring device that has a known host
+sshub sync-now laptop --format json           # one device, by name or id prefix
+sshub sync-status                             # ring devices, pending changes, credential mode
+# Exit codes of sync-now: 0 ok, 1 offline/failed, 2 usage, 3 fork detected.
+# sync-serve / sync-enroll are what a peer runs over ssh; not for interactive use.
+
 # Inventory sync with ~/.ssh/config
 sshub import                                  # import hosts from ssh config (--from ssh)
 sshub import --from termius ./termius-export  # import a Termius export dir (L00t.csv)
@@ -388,7 +396,7 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 
 | Key              | Action                          |
 |------------------|---------------------------------|
-| `1`..`6`, `h` / `i` | Switch tab (hosts/sftp/tunnels/identities/audit/map); `h` is hosts, `i` identities |
+| `1`..`7`, `h` / `i` | Switch tab (hosts/sftp/tunnels/identities/audit/map/sync); `h` is hosts, `i` identities |
 | `Esc`            | Back / close overlay            |
 | `Ctrl+H`         | Settings (theme, transparency, logging, ping, updates, profiles, command history); fixed, not rebindable |
 | `Ctrl+K`         | Keybind editor                  |
@@ -475,6 +483,7 @@ arrives as arrow keys, exactly as in a real terminal.
 | `x`                | Cancel a running broadcast / clear its error toasts |
 | `Shift+U`          | Install the sshub update, or check for one |
 | `Shift+W`          | What's new: release notes of this version or the installed update |
+| `t`                | Make the selected host one of your sync devices (once sync is set up) |
 
 ### SFTP (tab 2)
 
@@ -551,6 +560,23 @@ arrives as arrow keys, exactly as in a real terminal.
 Under 80x24 the map becomes an outline (one hop per row); under 40x12 it asks for a bigger terminal.
 
 In the host form, the ProxyJump field is the hop editor: `a` add a saved host, `r` a raw hop, `Enter` replace, `d` remove, `Ctrl+↑` / `Ctrl+↓` move, `n` direct (stores `none`, overriding a group jump), `X` clear (inherit), `t` test the chain. ssh_config hosts stay read-only.
+
+### Sync (tab 7)
+
+Sync keeps hosts and credentials identical on your own devices, end to end encrypted. Until a ring exists the tab says so and how to start or join one: `t` on the hosts tab enrolls a machine as one of your devices, and `sshub sync-join <a reachable device>` joins a blank machine. Once a ring exists the tab lists the devices with their status and role, the credential mode, the trust session and the number of changes waiting, and the tab bar shows `⇅N ⏳Nops` (red when a device is compromised).
+
+| Key | Action |
+|-----|--------|
+| `↑` / `↓` | Select a device |
+| `y` | Sync now with the selected device |
+| `R` | Review the changes waiting for approval (`a` approve, `r` reject, `Esc` close) |
+| `t` | Open a trust session: pick the scope first, then the term (7, 30 or 90 days) |
+
+A fork (a device that signed two different histories) takes over the whole screen and names the device; `Esc` closes the alert and the badge stays red. All five sync keys (`7`, `y`, `R`, `t` on the sync tab, `t` on the hosts tab) are rebindable in the keybind editor.
+
+Vault first run: the app issues a six-word master phrase (from the EFF list) and a ring secret, shows the words once, asks you to retype two of them, then writes the printable kit as two separate files at paths you choose: a phrase sheet and a ring secret sheet (the secret as a QR code and as text). Each carries the "do not photograph" warning, is created owner-only and never overwritten; the phrase is kept nowhere else on disk.
+
+When the first run finishes the ring exists on this machine: the master-phrase key is derived (one second or two, 1 GiB of memory), the ring secret goes to the profile's credential store, and this device becomes the ring's first entry. A synced credential stays locked until opened: a connect, SFTP, tunnel, broadcast or key push that needs one opens the unlock modal, where you type the six words of the master phrase (the CLI asks on the terminal without echo). Credentials that need a second device's share (Quorum rings) cannot be opened yet.
 
 ## Theming
 

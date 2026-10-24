@@ -603,13 +603,13 @@
 74,4, ,rgb:3d4a44,reset,reset,0
 75,4, ,rgb:3d4a44,reset,reset,0
 76,4, ,rgb:3d4a44,reset,reset,0
-77,4, ,reset,reset,reset,0
-78,4, ,reset,reset,reset,0
-79,4, ,reset,reset,reset,0
-80,4, ,reset,reset,reset,0
-81,4, ,reset,reset,reset,0
-82,4, ,reset,reset,reset,0
-83,4, ,reset,reset,reset,0
+77,4, ,rgb:3d4a44,reset,reset,0
+78,4,7,rgb:6a7a72,reset,reset,0
+79,4, ,rgb:3d4a44,reset,reset,0
+80,4, ,rgb:3d4a44,reset,reset,0
+81,4,s,rgb:3d4a44,reset,reset,0
+82,4,y,rgb:3d4a44,reset,reset,0
+83,4,n,rgb:3d4a44,reset,reset,0
 84,4, ,reset,reset,reset,0
 85,4, ,reset,reset,reset,0
 86,4, ,reset,reset,reset,0

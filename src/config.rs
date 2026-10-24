@@ -145,6 +145,46 @@ impl Default for UpdatesConfig {
     }
 }
 
+/// Host sync (epic #13): background sync and the out-of-band notifications.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncConfig {
+    /// Run a sync round against reachable devices when sshub starts. Off: sync
+    /// only when asked. Nothing is sent to a machine that cannot be reached.
+    #[serde(default = "default_true")]
+    pub auto_sync_on_start: bool,
+    #[serde(default)]
+    pub notify: NotifyConfig,
+}
+
+impl Default for SyncConfig {
+    fn default() -> Self {
+        Self {
+            auto_sync_on_start: true,
+            notify: NotifyConfig::default(),
+        }
+    }
+}
+
+/// Notifications (a recovery started, a Hub went quiet), sent through a local
+/// sendmail-compatible command. Off until `command` is set. SMTP credentials
+/// belong to that command's own config, never to this file.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct NotifyConfig {
+    /// Full command line, split into arguments without a shell, for example
+    /// `/usr/sbin/sendmail -t -i`. It must take the recipients from the message
+    /// headers (`-t`) and must pass `-i` (or `-oi`): without it sendmail ends the
+    /// message at a line holding only `.`, which would cut the body short. Quote
+    /// an argument with `"` or `'` if it contains spaces.
+    #[serde(default)]
+    pub command: Option<String>,
+    /// Recipient addresses, written into the To header.
+    #[serde(default)]
+    pub to: Vec<String>,
+    /// Sender address, written into the From header.
+    #[serde(default)]
+    pub from: Option<String>,
+}
+
 fn default_tunnel_reconnect_max_attempts() -> u32 {
     12
 }
@@ -364,6 +404,8 @@ pub struct AppConfig {
     pub updates: UpdatesConfig,
     #[serde(default)]
     pub ssh: SshSourceConfig,
+    #[serde(default)]
+    pub sync: SyncConfig,
 }
 
 /// Path to `config.toml` inside [`config_dir`].
@@ -1330,5 +1372,39 @@ confirm_quit = false
             assert!(!toml.contains(retired), "{retired} written: {toml}");
         }
         assert_eq!(config.appearance.active_theme, "default");
+    }
+
+    #[test]
+    fn sync_defaults_when_the_section_is_missing() {
+        let config = parse_config_str("").unwrap();
+        assert!(config.sync.auto_sync_on_start);
+        assert!(config.sync.notify.command.is_none());
+        assert!(config.sync.notify.to.is_empty());
+        assert!(config.sync.notify.from.is_none());
+    }
+
+    #[test]
+    fn sync_section_parses_notify_settings() {
+        let config = parse_config_str(
+            "[sync]\nauto_sync_on_start = false\n\n[sync.notify]\ncommand = \"/usr/sbin/sendmail -t -i\"\nto = [\"me@example.com\"]\nfrom = \"sshub@example.com\"\n",
+        )
+        .unwrap();
+        assert!(!config.sync.auto_sync_on_start);
+        assert_eq!(
+            config.sync.notify.command.as_deref(),
+            Some("/usr/sbin/sendmail -t -i")
+        );
+        assert_eq!(config.sync.notify.to, ["me@example.com"]);
+        assert_eq!(
+            config.sync.notify.from.as_deref(),
+            Some("sshub@example.com")
+        );
+    }
+
+    #[test]
+    fn an_empty_sync_section_keeps_the_defaults() {
+        let config = parse_config_str("[sync]\n[sync.notify]\n").unwrap();
+        assert!(config.sync.auto_sync_on_start);
+        assert!(config.sync.notify.command.is_none());
     }
 }

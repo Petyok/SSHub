@@ -27,13 +27,16 @@ pub use argon::{
 };
 pub use dek::{aead_open, aead_seal, dek_generate, dek_open, dek_seal};
 pub use hash::{chain_hash, derive_key};
-pub use identity::{device_id_of, verify, DeviceIdentity, DevicePublic};
+pub use identity::{device_id_of, open_sealed_with_secret, verify, DeviceIdentity, DevicePublic};
 pub use paper::{paper_derive, PaperDomain};
 pub use sas::sas_words;
+#[cfg(test)]
+pub(crate) use shamir::COMBINE_CALLS;
 pub use shamir::{
     reshare_combine, reshare_contribute, reshare_verify, shamir_combine, shamir_split,
     shamir_split_at, ReshareContribution, Share,
 };
 pub use vault::vault_recipient;
+pub(crate) use vault::vault_recipient_with;
 pub use words::{bip39_decode, bip39_encode, eff_decode, eff_encode};
 pub use wrap::{blob_alg, hybrid_unwrap, hybrid_wrap, try_hybrid_wrap};

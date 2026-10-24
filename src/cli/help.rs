@@ -21,6 +21,11 @@ pub fn print_command_help(cmd: &str) {
         "map" => print_map(),
         "tags" => print_tags(),
         "sync" => print_sync(),
+        "sync-serve" => print_sync_serve(),
+        "sync-enroll" => print_sync_enroll(),
+        "sync-join" => print_sync_join(),
+        "sync-now" => print_sync_now(),
+        "sync-status" => print_sync_status(),
         "import" => print_import(),
         "export" => print_export(),
         "completions" => print_completions(),
@@ -252,6 +257,95 @@ fn print_sync() {
 
 USAGE:
     sshub sync"#
+    );
+}
+
+fn print_sync_serve() {
+    println!(
+        r#"sshub sync-serve - answer one host-sync round on stdin/stdout
+
+USAGE:
+    sshub [--profile NAME] sync-serve
+
+Run by a peer over ssh (`ssh host sshub sync-serve`); not meant for a terminal.
+Stdout carries only protocol frames, the server speaks first, and one round is
+served. Errors go to stderr.
+
+EXIT CODES:
+    0  round completed
+    1  error"#
+    );
+}
+
+fn print_sync_enroll() {
+    println!(
+        r#"sshub sync-enroll - existing-device side of an enrollment, on stdin/stdout
+
+USAGE:
+    sshub [--profile NAME] sync-enroll
+
+Run by the joining device over ssh (`sshub sync-join <host>`). The four SAS
+words and the joining device's name are shown on /dev/tty and confirmed with
+y/n. Without a terminal (the usual case over ssh) they are printed to stderr as
+`SAS words: <words> (peer <name>)` and accepted: the human comparison is done
+on the joining side.
+
+EXIT CODES:
+    0  enrolled
+    1  error or refused"#
+    );
+}
+
+fn print_sync_join() {
+    println!(
+        r#"sshub sync-join - join the ring of another device
+
+USAGE:
+    sshub [--profile NAME] sync-join <host>
+
+<host> is a host name from the launcher list or [user@]host[:port]. It runs
+`sshub sync-enroll` there over ssh. Compare the printed words with the ones the
+other device shows, then answer y (anything else, or EOF, refuses). The host is
+remembered for `sync-now`. This device is a mirror until the ring approves more.
+
+EXIT CODES:
+    0  joined
+    1  failed or refused
+    2  usage error"#
+    );
+}
+
+fn print_sync_now() {
+    println!(
+        r#"sshub sync-now - sync with ring devices over ssh
+
+USAGE:
+    sshub [--profile NAME] sync-now [<device>] [--format plain|json]
+
+<device> is a device name or an id prefix (an ambiguous one is an error).
+Without it every other ring device with a known host is synced; the rest are
+listed as `skipped (no host known)`. One line per device:
+    <name>: ok applied N, pending M, received R, sent S
+plus `behind:` / `suspect:` device ids when a round reports them.
+
+EXIT CODES:
+    0  done (also when nothing could be attempted)
+    1  a device was offline or the round failed
+    2  usage error
+    3  fork detected (`FORK DETECTED: <name>`)"#
+    );
+}
+
+fn print_sync_status() {
+    println!(
+        r#"sshub sync-status - show the sync ring (read-only)
+
+USAGE:
+    sshub [--profile NAME] sync-status [--format plain|json]
+
+Lists ring devices (name, short id, role, status, last seen, head seq, host if
+known), the number of pending changes and the credential mode. Never creates a
+device key. An empty profile prints `No sync ring on this profile yet.`"#
     );
 }
 

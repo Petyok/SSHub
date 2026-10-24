@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 
 use crate::app::{resolve_pending_secret_for_managed, HostEntry};
 use crate::config::AppConfig;
-use crate::credentials::{open_for_profile, PasswordStore};
+use crate::credentials::{ensure_unlocked, locked_refs, open_for_profile, PasswordStore};
 use crate::hosts::load_merged_hosts;
 use crate::metadata::MetadataDb;
 use crate::profile::ProfilePaths;
@@ -23,6 +23,9 @@ pub struct CliContext {
     pub resolver: SshConfigResolver,
     /// Opened on first use, see [`CliContext::password_store`].
     pub(crate) password_store: OnceCell<Box<dyn PasswordStore>>,
+    /// Opens synced credentials for a blocking CLI command; `None` until the
+    /// sync stage provides one.
+    pub(crate) unlocker: Option<Box<dyn crate::credentials::Unlocker>>,
     pub hosts: Vec<HostEntry>,
     /// Resolved profile workspace for this invocation.
     pub profile: ProfilePaths,
@@ -44,6 +47,7 @@ impl CliContext {
             metadata,
             resolver,
             password_store: OnceCell::new(),
+            unlocker: None,
             hosts: Vec::new(),
             profile: paths,
         };
@@ -60,7 +64,14 @@ impl CliContext {
     /// touch a secret (`host list`, `completions`, ...) must not open it.
     pub fn password_store(&self) -> &dyn PasswordStore {
         self.password_store
-            .get_or_init(|| open_for_profile(&self.profile))
+            .get_or_init(|| {
+                let store = open_for_profile(&self.profile);
+                // From here on the ring's credentials answer Locked until opened.
+                if let Some(gate) = store.shared_gate() {
+                    crate::sync::runtime::guard_synced_credentials(&gate, self.store.clone());
+                }
+                store
+            })
             .as_ref()
     }
 
@@ -124,6 +135,35 @@ impl CliContext {
         self.store
             .get_host(host_id)?
             .with_context(|| format!("host {host_id} not found for tunnel {}", tunnel.id))
+    }
+
+    /// Gate for synced credentials, to run BEFORE a secret is resolved for a
+    /// connection: opens what is locked through `self.unlocker` (blocking), or
+    /// fails cleanly when there is none. Opens the credential store, so call
+    /// it only from paths that read secrets anyway.
+    pub fn ensure_unlocked_for(
+        &self,
+        label: &str,
+        managed: Option<&ManagedHost>,
+        identity: Option<&Identity>,
+        jump: Option<&str>,
+    ) -> Result<()> {
+        let refs =
+            crate::app::connection_secret_refs(&self.store, &self.hosts, managed, identity, jump);
+        let locked = locked_refs(self.password_store(), &refs);
+        if locked.is_empty() {
+            return Ok(());
+        }
+        let built;
+        let unlocker: &dyn crate::credentials::Unlocker = match &self.unlocker {
+            Some(u) => u.as_ref(),
+            None => {
+                built = super::unlock::default_unlocker(self)
+                    .map_err(|e| anyhow::anyhow!("{label}: {e:#}"))?;
+                &built
+            }
+        };
+        ensure_unlocked(&locked, unlocker).map_err(|e| anyhow::anyhow!("{label}: {e}"))
     }
 
     pub fn resolve_tunnel_secret(
@@ -233,5 +273,141 @@ pub(crate) mod tests {
             ctx.password_store.get().is_none(),
             "completions opened the credential store"
         );
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod gate_tests {
+    use super::tests::bootstrapped;
+    use super::*;
+    use crate::credentials::{QuorumGatedStore, SecretGate, SecretRef, UnlockError, Unlocker};
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use zeroize::Zeroizing;
+
+    #[derive(Default)]
+    struct MemStore(Mutex<HashMap<String, String>>);
+
+    impl PasswordStore for MemStore {
+        fn get(&self, key: &str) -> Result<Option<String>> {
+            Ok(self.0.lock().unwrap().get(key).cloned())
+        }
+        fn set(&self, key: &str, password: &str) -> Result<()> {
+            self.0.lock().unwrap().insert(key.into(), password.into());
+            Ok(())
+        }
+        fn delete(&self, key: &str) -> Result<()> {
+            self.0.lock().unwrap().remove(key);
+            Ok(())
+        }
+    }
+
+    /// Opens every locked key with the plaintext "pw".
+    struct TestUnlocker(Arc<SecretGate>);
+
+    impl Unlocker for TestUnlocker {
+        fn gate(&self) -> &SecretGate {
+            &self.0
+        }
+        fn unlock(&self, locked: &[SecretRef]) -> std::result::Result<(), UnlockError> {
+            for r in locked {
+                if let SecretRef::Key(k) = r {
+                    self.0.insert(k.clone(), Zeroizing::new("pw".into()));
+                }
+            }
+            Ok(())
+        }
+    }
+
+    /// A context over a throwaway profile with host "web", whose credential
+    /// store is in memory and treats every `host:*` key as synced and locked.
+    pub(crate) fn gated_ctx(dir: &std::path::Path) -> (CliContext, Arc<SecretGate>, String) {
+        let ctx = bootstrapped(dir, &["web"]);
+        let store = QuorumGatedStore::new(Box::new(MemStore::default()));
+        let gate = store.gate_handle();
+        gate.set_synced_check(|k| k.starts_with("host:"));
+        assert!(ctx.password_store.set(Box::new(store)).is_ok());
+        let id = ctx.host_by_name("web").unwrap().managed().unwrap().id;
+        let key = crate::credentials::host_key(id);
+        (ctx, gate, key)
+    }
+
+    pub(crate) fn open(gate: &SecretGate, key: &str) {
+        gate.insert(key, Zeroizing::new("pw".into()));
+    }
+
+    pub(crate) fn assert_needs_share(err: anyhow::Error) {
+        assert!(
+            format!("{err:#}").contains("needs a second share"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    fn web(ctx: &CliContext) -> ManagedHost {
+        ctx.managed_host_by_name("web").unwrap()
+    }
+
+    #[test]
+    fn locked_credential_fails_without_unlocker_and_passes_once_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let (ctx, gate, key) = gated_ctx(dir.path());
+        let host = web(&ctx);
+        let err = ctx
+            .ensure_unlocked_for("web", Some(&host), None, None)
+            .unwrap_err();
+        assert_needs_share(err);
+        open(&gate, &key);
+        ctx.ensure_unlocked_for("web", Some(&host), None, None)
+            .unwrap();
+    }
+
+    #[test]
+    fn unlocker_opens_a_locked_credential() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ctx, gate, key) = gated_ctx(dir.path());
+        ctx.unlocker = Some(Box::new(TestUnlocker(gate.clone())));
+        let host = web(&ctx);
+        ctx.ensure_unlocked_for("web", Some(&host), None, None)
+            .unwrap();
+        assert_eq!(gate.get(&key).as_deref().map(String::as_str), Some("pw"));
+    }
+
+    #[test]
+    fn local_credentials_pass_through_the_gate() {
+        let dir = tempfile::tempdir().unwrap();
+        let (ctx, gate, _) = gated_ctx(dir.path());
+        gate.set_synced_check(|_| false);
+        let host = web(&ctx);
+        ctx.ensure_unlocked_for("web", Some(&host), None, None)
+            .unwrap();
+    }
+
+    #[test]
+    fn connect_exec_and_resolve_refuse_a_locked_credential_before_spawning() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ctx, gate, key) = gated_ctx(dir.path());
+        let connect = ["connect", "web"].map(String::from);
+        let exec = ["web", "--", "true"].map(String::from);
+        let resolve = ["resolve", "web"].map(String::from);
+        // Each of these fails in the gate, ahead of any `which`/ssh spawn.
+        for (cmd, args) in [
+            ("host", &connect[..]),
+            ("exec", &exec[..]),
+            ("host", &resolve[..]),
+        ] {
+            let err = crate::cli::run_subcommand(&mut ctx, cmd, args).unwrap_err();
+            assert_needs_share(err);
+        }
+        // Open: `host resolve` goes all the way through and reports the secret.
+        open(&gate, &key);
+        assert_eq!(
+            crate::cli::run_subcommand(&mut ctx, "host", &resolve).unwrap(),
+            0
+        );
+        // connect/exec would spawn ssh from here on; what they hand to it is
+        // the same call, which now resolves to the opened plaintext.
+        let entry = ctx.host_by_name("web").unwrap().clone();
+        let (secret, _) = crate::app::resolve_pending_secret(&entry, None, ctx.password_store());
+        assert_eq!(secret.unwrap().value(), "pw");
     }
 }
