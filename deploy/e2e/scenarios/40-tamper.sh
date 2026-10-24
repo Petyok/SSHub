@@ -5,7 +5,10 @@
 NAME=40-tamper
 
 reset_peers
-check "peer-b joins peer-a's ring" "enroll_peer peer-b peer-a"
+check "peer-a founds the ring with hub" "enroll_peer peer-a hub"
+check "peer-b joins via hub" "enroll_peer peer-b hub"
+check "peer-a approves peer-b's admission" "approve_all peer-a"
+check "peer-b records peer-a directly" "enroll_peer peer-b peer-a"
 check "peer-a adds host web40" "peer peer-a $SSHUB host add --name web40 --address web40.internal"
 
 # Overwrite the first byte of every locally authored canonical payload on peer-a.
@@ -14,11 +17,14 @@ tamper='db=$(find "$HOME/.local/share/sshub" -name launcher.db | head -n1)
 [ -n "$db" ] || { echo "no launcher.db"; exit 1; }
 sqlite3 "$db" "UPDATE sync_ops SET canonical = zeroblob(1) || substr(canonical, 2) WHERE local = 1;"
 test "$(sqlite3 "$db" "SELECT count(*) FROM sync_ops WHERE local = 1;")" -gt 0'
-if tout=$(psh peer-a "$tamper" 2>&1); then
+tout=$(psh peer-a "$tamper" 2>&1)
+rc=$?
+if [ "$rc" -eq 0 ]; then
   echo "ok   tampered peer-a local ops"
 else
-  echo "FAIL tamper peer-a local ops"
+  echo "FAIL tamper step could not corrupt peer-a local ops (exit $rc)"
   echo "$tout" | while IFS= read -r l; do echo "     | $l"; done
+  [ -n "$tout" ] || echo "     | (no output: check the local ops count in the tamper SQL)"
   fail=$((fail + 1))
 fi
 
