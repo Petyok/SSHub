@@ -73,8 +73,7 @@ fn holder_public(store: &LauncherStore, me: &DevicePublic, id: &DeviceId) -> Res
     if *id == me.device_id() {
         return Ok(me.clone());
     }
-    let row = store
-        .sync_devices()?
+    let row = super::ceremony::effective_devices(store, None)?
         .into_iter()
         .find(|d| d.id == *id)
         .with_context(|| format!("{id} is not a device of this ring"))?;

@@ -16,6 +16,9 @@ const OBS: usize = 5; // observer that judges
 
 fn world(terminals: &[usize]) -> Vec<Dev> {
     let d: Vec<Dev> = (0..6).map(|_| Dev::new()).collect();
+    for x in &d {
+        crate::sync::ceremony::test_force(&x.store, false);
+    }
     for (i, x) in d.iter().enumerate() {
         for (j, y) in d.iter().enumerate() {
             if i == j || !(terminals.contains(&j) || j == H || j == P) {
@@ -361,4 +364,193 @@ fn the_emailed_code_is_a_factor_and_its_sender_mails_only_when_the_other_proofs_
     append(&d[R], red_factor_email(&d[R].store, &code, &op).unwrap());
     sync(&d);
     assert!(red_status(&d[OBS].store, &op, now).unwrap().complete);
+}
+
+// ---------------------------------------------------------------- the ceremony-complete rule (contract 4g)
+
+mod in_force {
+    use super::*;
+    use crate::sync::crypto::{bip39_encode, Argon2Profile};
+    use crate::sync::quorum::tests::{append, complete, ring_phone};
+    use crate::sync::quorum::{live_holder_count, paper_pub, paper_registration, share_recipients};
+
+    const TEST: Argon2Profile = Argon2Profile {
+        mem_kib: 64,
+        iters: 1,
+    };
+
+    /// Three terminals (0, 1, 2) and the phone (3), the paper registered through a completed ceremony.
+    fn ring_with_paper() -> (Vec<Dev>, String) {
+        let d = ring_phone(3);
+        let phrase = bip39_encode(&[0x77; 32]);
+        let reg = append(&d[0], paper_registration(&phrase).unwrap());
+        complete(&d, &reg, 1, None);
+        (d, phrase)
+    }
+
+    #[test]
+    fn a_paper_registration_changes_who_is_wrapped_to_only_when_complete() {
+        let d = ring_phone(3);
+        let phrase = bip39_encode(&[0x77; 32]);
+        let reg = append(&d[0], paper_registration(&phrase).unwrap());
+        assert!(
+            paper_pub(&d[0].store).unwrap().is_none(),
+            "the proposer too"
+        );
+        let n = share_recipients(&d[0].store, &d[0].id.public())
+            .unwrap()
+            .len();
+        complete(&d, &reg, 1, None);
+        for x in &d {
+            assert!(paper_pub(&x.store).unwrap().is_some());
+        }
+        assert_eq!(
+            share_recipients(&d[0].store, &d[0].id.public())
+                .unwrap()
+                .len(),
+            n + 1
+        );
+    }
+
+    #[test]
+    fn an_exemption_wraps_nothing_until_complete() {
+        let (d, phrase) = ring_with_paper();
+        let ex = append(
+            &d[0],
+            crate::sync::exemption::enable_body(&d[0].id, "some words here", TEST),
+        );
+        all_to_all_pull(&d);
+        for x in &d {
+            assert!(crate::sync::exemption::active_slots(&x.store)
+                .unwrap()
+                .is_empty());
+        }
+        complete(&d, &ex, 1, Some(&phrase));
+        for x in &d {
+            assert_eq!(
+                crate::sync::exemption::active_slots(&x.store)
+                    .unwrap()
+                    .len(),
+                1
+            );
+        }
+    }
+
+    #[test]
+    fn a_promotion_gets_no_shares_until_complete() {
+        let (d, phrase) = ring_with_paper();
+        let who = d[2].did.clone();
+        let promo = append(
+            &d[0],
+            OpBody::DeviceRoleChange {
+                device_id: who.clone(),
+                to: DeviceRole::Holder,
+            },
+        );
+        let has = |x: &Dev| {
+            share_recipients(&x.store, &x.id.public())
+                .unwrap()
+                .iter()
+                .any(|(id, _)| *id == who)
+        };
+        assert!(!has(&d[0]), "not a recipient on the proposer");
+        assert!(crate::sync::reshare::reissue_plan(
+            &d[0].store,
+            &d[0].id,
+            &[d[0].did.clone(), d[1].did.clone(), who.clone()],
+            1
+        )
+        .is_err());
+        complete(&d, &promo, 1, Some(&phrase));
+        assert!(has(&d[0]) && has(&d[1]));
+    }
+
+    #[test]
+    fn a_certificate_counts_nowhere_until_complete() {
+        use crate::sync::cert::cert_allows;
+        use crate::sync::oplog::CertScope;
+        let (d, phrase) = ring_with_paper();
+        let phone = &d[3];
+        let host = [41u8; 16];
+        let now = crate::store::now_ts();
+        let op = append(
+            phone,
+            OpBody::CertIssue {
+                device_id: d[1].did.clone(),
+                scope: CertScope::Hosts(vec![host]),
+                expiry: now + 3600,
+                max_new_hosts_per_day: 2,
+                epoch_lo: 0,
+                epoch_hi: 10,
+            },
+        );
+        all_to_all_pull(&d);
+        let cert = crate::sync::cert::DelegationCert::from_op(&op).unwrap();
+        let pk = phone.id.public().ed25519_pub;
+        let at = op.timestamp + 5;
+        for x in &d[..3] {
+            let err = cert_allows(&cert, &pk, &x.store, &d[1].did, &host, at, at).unwrap_err();
+            assert!(err.to_string().contains("ceremony"), "{err}");
+        }
+        complete(&d, &op, 2, Some(&phrase));
+        for x in &d[..3] {
+            cert_allows(&cert, &pk, &x.store, &d[1].did, &host, at, at).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_revocation_reshares_nothing_until_complete() {
+        use crate::sync::revocation::next_actions;
+        let (d, phrase) = ring_with_paper();
+        let target = d[2].did.clone();
+        let holders = live_holder_count(&d[0].store).unwrap();
+        let rev = append(&d[0], OpBody::DeviceRevoke { device_id: target });
+        let now = crate::store::now_ts();
+        assert_eq!(
+            live_holder_count(&d[0].store).unwrap(),
+            holders,
+            "still a holder"
+        );
+        assert!(next_actions(&d[0].store, &d[0].id, now).unwrap().is_empty());
+        complete(&d, &rev, 1, Some(&phrase));
+        assert_eq!(live_holder_count(&d[0].store).unwrap(), holders - 1);
+        assert!(!next_actions(&d[0].store, &d[0].id, now).unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_export_window_opens_only_when_complete() {
+        let (d, phrase) = ring_with_paper();
+        let op = append(
+            &d[1],
+            OpBody::BulkExport {
+                requester: d[1].did.clone(),
+                window_secs: 600,
+            },
+        );
+        let at = op.timestamp + 1;
+        assert!(
+            crate::sync::export::active_window(&d[1].store, &d[1].did, at)
+                .unwrap()
+                .is_none()
+        );
+        complete(&d, &op, 0, Some(&phrase));
+        assert!(
+            crate::sync::export::active_window(&d[1].store, &d[1].did, at)
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    /// Ingest everything everywhere without clicking approve (the ceremony decides, not the fixture).
+    fn all_to_all_pull(d: &[Dev]) {
+        for _ in 0..2 {
+            for a in d {
+                for b in d {
+                    if a.did != b.did {
+                        pull(a, b);
+                    }
+                }
+            }
+        }
+    }
 }

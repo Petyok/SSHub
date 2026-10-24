@@ -864,10 +864,8 @@ pub(crate) fn mode(
     let cosigner = cosigner
         .map(|c| find_device(store, c).map(|d| d.id))
         .transpose()?;
-    ensure!(
-        store.sync_cred_mode()? == CredMode::Vault,
-        "from the command line only Vault to Quorum can open the credentials (the other direction needs shares from other holders: use the TUI)"
-    );
+    let me = id.public();
+    // Second call, after the ceremony: re-encrypt. Nothing is re-encrypted before the ring agreed.
     let open = |host: &crate::sync::oplog::HostUid| -> Result<Zeroizing<Vec<u8>>> {
         let (ct, _) = store
             .sync_cred_ciphertext(host)?
@@ -875,19 +873,47 @@ pub(crate) fn mode(
         let dek = crate::sync::quorum::vault_open_dek(store, host, phrase, ring)?;
         Ok(Zeroizing::new(crate::sync::crypto::dek_open(&dek, &ct)?))
     };
-    let bodies = crate::sync::modes::mode_change_plan(store, &id.public(), to, cosigner, &open)?;
-    let n = bodies.len().saturating_sub(1);
-    let mut first = None;
-    for b in bodies {
-        let op = store.sync_append_local(id, b)?;
-        first.get_or_insert(op);
+    if let Some(mc) = crate::sync::modes::own_mode_change(store, &me.device_id())? {
+        if matches!(&mc.body, OpBody::ModeChange { to: t, .. } if *t == to) {
+            if !crate::sync::ceremony::in_force(store, &mc)? {
+                return op_report(
+                    store,
+                    &mc,
+                    format!(
+                        "the mode change to {to:?} is still waiting for its ceremony (op {}); run this again once it completed",
+                        short(&mc.hash())
+                    ),
+                    now,
+                );
+            }
+            ensure!(
+                to == CredMode::Quorum,
+                "from the command line only Vault to Quorum can open the credentials (the other direction needs shares from other holders: use the TUI)"
+            );
+            let bodies = crate::sync::modes::mode_migration(store, &me, &open)?;
+            let n = bodies.len();
+            for b in bodies {
+                store.sync_append_local(id, b)?;
+            }
+            return op_report(
+                store,
+                &mc,
+                format!("{n} credentials re-wrapped for {to:?}"),
+                now,
+            );
+        }
     }
-    let op = first.context("empty mode plan")?;
+    ensure!(
+        store.sync_cred_mode()? == CredMode::Vault,
+        "from the command line only Vault to Quorum can open the credentials (the other direction needs shares from other holders: use the TUI)"
+    );
+    let body = crate::sync::modes::mode_change_body(store, &me, to, cosigner)?;
+    let op = store.sync_append_local(id, body)?;
     op_report(
         store,
         &op,
         format!(
-            "mode change to {to:?} proposed with {n} credentials re-wrapped (op {})",
+            "mode change to {to:?} proposed (op {}); once its ceremony completed, run this again to re-encrypt the credentials",
             short(&op.hash())
         ),
         now,

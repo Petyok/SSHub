@@ -332,8 +332,7 @@ pub fn liveness_set(store: &LauncherStore, me: &DeviceId, now: i64) -> Result<Ve
 }
 
 fn fresh_devices(store: &LauncherStore, now: i64) -> Result<Vec<DeviceRow>> {
-    Ok(store
-        .sync_devices()?
+    Ok(super::ceremony::effective_devices(store, None)?
         .into_iter()
         .filter(|d| {
             !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
@@ -397,7 +396,7 @@ pub fn validate_phone_reenroll(
         bail!("not a PhoneReenroll op");
     };
     let hash = op.hash();
-    let devices = store.sync_devices()?;
+    let devices = super::ceremony::effective_devices(store, None)?;
     let requester = devices
         .iter()
         .find(|d| d.id == op.device_id)
@@ -619,7 +618,7 @@ pub fn cancel_body(reenroll: &Op, by_phone: bool, factor: Option<ThirdFactor>) -
 /// open. The UI shows each one and, once it is on screen, appends [`ack_body`].
 pub fn unacknowledged(store: &LauncherStore, me: &DeviceIdentity, now: i64) -> Result<Vec<Op>> {
     let mine = me.public().device_id();
-    let devices = store.sync_devices()?;
+    let devices = super::ceremony::effective_devices(store, None)?;
     if devices.iter().any(|d| d.id == mine && !attended_live(d)) {
         return Ok(Vec::new());
     }

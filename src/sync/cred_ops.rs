@@ -94,7 +94,13 @@ pub fn cred_update_body(
     host: &HostUid,
     payload: &CredPayload,
 ) -> Result<OpBody> {
-    cred_update_body_for(store, me, host, payload, store.sync_cred_mode()?)
+    cred_update_body_for(
+        store,
+        me,
+        host,
+        payload,
+        super::ceremony::effective_cred_mode(store)?,
+    )
 }
 
 /// [`cred_update_body`] for an explicit mode (a mode change writes the new shape before the mode
