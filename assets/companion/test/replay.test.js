@@ -15,12 +15,12 @@ const failures = (recs) => recs.filter((r) => !r.ok).map((r) => `${r.id}: ${r.er
 
 test('crypto vectors (vectors.json): 0 mismatches, none skipped', async () => {
   const recs = await replayVectors(vectorsText, effText);
-  assert.equal(recs.length, 45, 'expected 45 vectors');
+  assert.equal(recs.length, JSON.parse(vectorsText).vectors.length, 'every vector in the file is replayed');
   assert.deepEqual(failures(recs), []);
 });
 
 test('op-rules vectors (ops.json): 0 mismatches, none skipped', () => {
   const recs = replayOps(opsText);
-  assert.equal(recs.length, 13, 'expected 13 ops');
+  assert.equal(recs.length, JSON.parse(opsText).ops.length, 'every op in the file is replayed');
   assert.deepEqual(failures(recs), []);
 });

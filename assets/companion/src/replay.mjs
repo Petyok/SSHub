@@ -63,6 +63,9 @@ export async function replayVectors(vectorsText, effWordsText, opts = {}) {
         return eqHex(hx(lib.dekSeal(h2b(i.dek), h2b(i.plaintext), h2b(p.nonce))), o.ct, v.id);
       case 'argon2id':
         return eqHex(hx(await lib.argon2idDerive(i.input, h2b(i.salt), { mem_kib: p.mem_kib, iters: p.iters })), o.key, v.id);
+      case 'sas_words':
+        if (lib.sasWords(h2b(i.transcript_hash)) !== o.words) throw new Error(`MISMATCH ${v.id}`);
+        return;
       case 'bip39':
         eqHex(lib.bip39Encode(h2b(i.entropy)), o.phrase, `${v.id} phrase`);
         if (o.decode_ok !== undefined && o.decode_ok) lib.bip39Decode(o.phrase);
@@ -71,7 +74,8 @@ export async function replayVectors(vectorsText, effWordsText, opts = {}) {
         return eqHex(lib.effEncode(EFF_WORDS, h2b(i.entropy)), o.phrase, v.id);
       case 'shamir_split': {
         const rng = lib.chachaRngStream(h2b(p.rng_seed), 32 * Math.max(0, (p.k | 0) - 1));
-        const shares = lib.splitAtIndicesSeeded(h2b(i.secret), p.k, Array.from({ length: p.n }, (_, idx) => idx + 1), rng);
+        const indices = p.indices ?? Array.from({ length: p.n }, (_, idx) => idx + 1);
+        const shares = lib.splitAtIndicesSeeded(h2b(i.secret), p.k, indices, rng);
         const rustShares = o.shares.map((s) => `${String(s.index).padStart(2, '0')}${s.bytes_hex}`);
         eqHex(shares.map((s) => `${String(s.index).padStart(2, '0')}${hx(s.bytes)}`).join(''), rustShares.join(''), `${v.id} shares`);
         return;

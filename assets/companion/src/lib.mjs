@@ -157,6 +157,13 @@ export const bip39Decode = (phrase) => {
   return entropy;
 };
 
+// SAS: first four 11-bit BIP-39 indices of the transcript hash, hyphen-joined.
+export const sasWords = (transcriptHash32) => {
+  let bits = '';
+  for (const b of transcriptHash32) bits += b.toString(2).padStart(8, '0');
+  return [0, 1, 2, 3].map((i) => bip39Wordlist[parseInt(bits.slice(i * 11, i * 11 + 11), 2)]).join('-');
+};
+
 // ---------------------------------------------------------------- EFF-7776 (Rust: stage-0 Task 12, u128 arithmetic)
 
 // words: string[7776]. Both sides use wordlists/eff_large.txt.
