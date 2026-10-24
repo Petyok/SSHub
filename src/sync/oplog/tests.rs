@@ -4,7 +4,7 @@ use super::*;
 use crate::store::{
     uid_hex, LauncherStore, ManagedHost, NewHost, NewHostGroup, FAVORITES_GROUP_UID,
 };
-use crate::sync::crypto::{DeviceIdentity, ALG_CURRENT};
+use crate::sync::crypto::{DeviceIdentity, DevicePublic, ALG_CURRENT};
 use crate::sync::limits::LAMPORT_JUMP_CAP;
 use rand_chacha::ChaCha8Rng;
 use rand_core::{RngCore, SeedableRng};
@@ -1347,34 +1347,23 @@ fn base64_and_hex_forms_in_the_canonical_text() {
         text.contains(&format!("\"cert_id\":\"{}\"", "ab".repeat(32))),
         "{text}"
     );
-    // Padding variants and the wrong alphabet are refused by the strict decoder.
-    for n in 0..5usize {
-        let op = wrap(OpBody::ShareStorageKey {
-            epoch: 1,
-            sealed: vec![7; n],
-        });
-        let good = String::from_utf8(op.canonical_bytes()).unwrap();
-        assert!(Op::from_canonical(good.as_bytes(), op.signature).is_ok());
-        let b = match n {
-            0 => String::new(),
-            _ => good
-                .split("\"sealed\":\"")
-                .nth(1)
-                .unwrap()
-                .split('"')
-                .next()
-                .unwrap()
-                .to_string(),
-        };
-        if b.ends_with('=') {
-            let unpadded = good.replace(&b, b.trim_end_matches('='));
-            assert!(Op::from_canonical(unpadded.as_bytes(), op.signature).is_err());
-        }
-        if !b.is_empty() {
-            let urlsafe =
-                good.replace(&b, &b.replace('+', "-").replace('/', "_").replace('A', "-"));
-            assert!(Op::from_canonical(urlsafe.as_bytes(), op.signature).is_err());
-        }
+    // Wrong alphabet and missing padding are refused by the strict decoder.
+    let op = wrap(OpBody::ShareStorageKey {
+        epoch: 1,
+        sealed: vec![0xfb, 0xff],
+    });
+    let good = String::from_utf8(op.canonical_bytes()).unwrap();
+    assert!(good.contains("\"sealed\":\"+/8=\""), "{good}");
+    assert!(Op::from_canonical(good.as_bytes(), op.signature).is_ok());
+    for bad in [
+        good.replace("+/8=", "-_8="),
+        good.replace("+/8=", "+/8"),
+        good.replace("+/8=", "+/9="),
+    ] {
+        assert!(
+            Op::from_canonical(bad.as_bytes(), op.signature).is_err(),
+            "{bad}"
+        );
     }
 }
 
