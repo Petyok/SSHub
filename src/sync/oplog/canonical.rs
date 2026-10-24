@@ -731,57 +731,17 @@ fn get_alg(m: &Map<String, Value>, k: &str) -> Result<AlgTag> {
     AlgTag::from_bytes(a)
 }
 
-const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
 /// Standard alphabet, padded (RFC 4648 section 4).
 pub(super) fn b64_encode(data: &[u8]) -> String {
-    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let n = (u32::from(chunk[0]) << 16)
-            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
-            | u32::from(*chunk.get(2).unwrap_or(&0));
-        out.push(B64[(n >> 18) as usize & 63] as char);
-        out.push(B64[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 {
-            B64[(n >> 6) as usize & 63] as char
-        } else {
-            '='
-        });
-        out.push(if chunk.len() > 2 {
-            B64[n as usize & 63] as char
-        } else {
-            '='
-        });
-    }
-    out
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(data)
 }
 
+/// Strict: the standard engine requires canonical padding and rejects
+/// whitespace, other alphabets and non-zero trailing bits.
 pub(super) fn b64_decode(s: &str) -> Option<Vec<u8>> {
-    let bytes = s.as_bytes();
-    if !bytes.len().is_multiple_of(4) {
-        return None;
-    }
-    let val = |c: u8| B64.iter().position(|x| *x == c).map(|p| p as u32);
-    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
-    for (i, quad) in bytes.chunks(4).enumerate() {
-        let last = (i + 1) * 4 == bytes.len();
-        let pad = quad.iter().rev().take_while(|c| **c == b'=').count();
-        if pad > 2 || (pad > 0 && !last) {
-            return None;
-        }
-        let mut n = 0u32;
-        for (j, c) in quad.iter().enumerate() {
-            n = (n << 6) | if j >= 4 - pad { 0 } else { val(*c)? };
-        }
-        out.push((n >> 16) as u8);
-        if pad < 2 {
-            out.push((n >> 8) as u8);
-        }
-        if pad < 1 {
-            out.push(n as u8);
-        }
-    }
-    Some(out)
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.decode(s).ok()
 }
 
 fn uid_of(v: &Value, k: &str) -> Result<Uid> {
