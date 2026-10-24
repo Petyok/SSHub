@@ -668,6 +668,281 @@
         "domain": "recover"
       },
       "primitive": "paper_derive"
+    },
+    {
+      "id": "shamir-2of3",
+      "inputs": {
+        "secret": "7777777777777777777777777777777777777777777777777777777777777777"
+      },
+      "outputs": {
+        "shares": [
+          {
+            "bytes_hex": "7b555a2eddefe69e3c11e1e5b93978feadb7ec2afb3df80d25dcc417b6cf1593",
+            "index": 1
+          },
+          {
+            "bytes_hex": "6f332dc5385c4ebee1bb4048f0eb697ed8ec5acd74e37283d33a0ab7ee1cb3a4",
+            "index": 2
+          },
+          {
+            "bytes_hex": "6311009c92c4df57aaddd6da3ea566f7022cc190f8a9fdf98191b9d72fa4d140",
+            "index": 3
+          }
+        ]
+      },
+      "params": {
+        "indices": [
+          1,
+          2,
+          3
+        ],
+        "k": 2,
+        "rng_seed": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "primitive": "shamir_split"
+    },
+    {
+      "id": "shamir-2of3-combine-first",
+      "inputs": {
+        "shares": [
+          {
+            "bytes_hex": "7b555a2eddefe69e3c11e1e5b93978feadb7ec2afb3df80d25dcc417b6cf1593",
+            "index": 1
+          },
+          {
+            "bytes_hex": "6f332dc5385c4ebee1bb4048f0eb697ed8ec5acd74e37283d33a0ab7ee1cb3a4",
+            "index": 2
+          }
+        ]
+      },
+      "outputs": {
+        "secret": "7777777777777777777777777777777777777777777777777777777777777777"
+      },
+      "params": {
+        "k": 2
+      },
+      "primitive": "shamir_combine"
+    },
+    {
+      "id": "shamir-2of3-combine-last",
+      "inputs": {
+        "shares": [
+          {
+            "bytes_hex": "6f332dc5385c4ebee1bb4048f0eb697ed8ec5acd74e37283d33a0ab7ee1cb3a4",
+            "index": 2
+          },
+          {
+            "bytes_hex": "6311009c92c4df57aaddd6da3ea566f7022cc190f8a9fdf98191b9d72fa4d140",
+            "index": 3
+          }
+        ]
+      },
+      "outputs": {
+        "secret": "7777777777777777777777777777777777777777777777777777777777777777"
+      },
+      "params": {
+        "k": 2
+      },
+      "primitive": "shamir_combine"
+    },
+    {
+      "id": "shamir-3of5",
+      "inputs": {
+        "secret": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f"
+      },
+      "outputs": {
+        "shares": [
+          {
+            "bytes_hex": "02b9ac828a8045d286e09471f68695f4a3278e08f6fcc639239c94f3eb6ff504",
+            "index": 1
+          },
+          {
+            "bytes_hex": "c6c2f1509b2b6cf50c1c1fe4d312e2a54ae4e1876f75ea593d5712416f2664c2",
+            "index": 2
+          },
+          {
+            "bytes_hex": "843a1f9155ee6f60c2b5c1de69d9391eb9923ddccddc7a374692dce9d814cf99",
+            "index": 3
+          },
+          {
+            "bytes_hex": "5fe7f47b9a48a202e193054f849609aad55f6f73a9aa1f2ee80fdb3039d7edd2",
+            "index": 4
+          },
+          {
+            "bytes_hex": "1d1f1aba548da1972f3adb753e5dd2112629b3280b038f4093ca15988ee54689",
+            "index": 5
+          }
+        ]
+      },
+      "params": {
+        "indices": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "k": 3,
+        "rng_seed": "2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "primitive": "shamir_split"
+    },
+    {
+      "id": "shamir-3of5-combine-first",
+      "inputs": {
+        "shares": [
+          {
+            "bytes_hex": "02b9ac828a8045d286e09471f68695f4a3278e08f6fcc639239c94f3eb6ff504",
+            "index": 1
+          },
+          {
+            "bytes_hex": "c6c2f1509b2b6cf50c1c1fe4d312e2a54ae4e1876f75ea593d5712416f2664c2",
+            "index": 2
+          },
+          {
+            "bytes_hex": "843a1f9155ee6f60c2b5c1de69d9391eb9923ddccddc7a374692dce9d814cf99",
+            "index": 3
+          }
+        ]
+      },
+      "outputs": {
+        "secret": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f"
+      },
+      "params": {
+        "k": 3
+      },
+      "primitive": "shamir_combine"
+    },
+    {
+      "id": "shamir-3of5-combine-last",
+      "inputs": {
+        "shares": [
+          {
+            "bytes_hex": "843a1f9155ee6f60c2b5c1de69d9391eb9923ddccddc7a374692dce9d814cf99",
+            "index": 3
+          },
+          {
+            "bytes_hex": "5fe7f47b9a48a202e193054f849609aad55f6f73a9aa1f2ee80fdb3039d7edd2",
+            "index": 4
+          },
+          {
+            "bytes_hex": "1d1f1aba548da1972f3adb753e5dd2112629b3280b038f4093ca15988ee54689",
+            "index": 5
+          }
+        ]
+      },
+      "outputs": {
+        "secret": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f"
+      },
+      "params": {
+        "k": 3
+      },
+      "primitive": "shamir_combine"
+    },
+    {
+      "id": "reshare-contribute-1",
+      "inputs": {
+        "share": {
+          "bytes_hex": "0023a923aaaaa245c490b103ef44c9bceebb8931b04f3167804c1502e05bfc2b",
+          "index": 1
+        }
+      },
+      "outputs": {
+        "commitments": [
+          "7e0c1ffb85b4ad05f2775a1464e13cdd022808d7dfdb5c11930509d46e81bd09",
+          "df347474c2f06929e8657e866fc917af6e77e7a70c9d6761b67a6654eab12f51",
+          "0add42da5be4d675b258ba86196e3488bd3bb38fbb86293887a4db5b1c9d3fd5"
+        ],
+        "from": 1,
+        "sub_shares": [
+          {
+            "bytes_hex": "53274f8852c8220c3e88dca9d25357d17eff9cf04d67608e4e9460eeccbd11e8",
+            "index": 10
+          },
+          {
+            "bytes_hex": "208307b0196365d8277dfbb8fd2a13f69ff5b7308b63414a0288b2a76cf5717a",
+            "index": 11
+          },
+          {
+            "bytes_hex": "62d2e418f31fabc268800ecf305ed4030ec36646ef7fa620fddcba4321164aa9",
+            "index": 12
+          }
+        ]
+      },
+      "params": {
+        "k": 2,
+        "new_indices": [
+          10,
+          11,
+          12
+        ],
+        "rng_seed": "4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "primitive": "reshare"
+    },
+    {
+      "id": "reshare-contribute-3",
+      "inputs": {
+        "share": {
+          "bytes_hex": "ee8b0e8b0b0b1321b94526ebc422ae31c7386ebd253fbd47753ad1e8d503f193",
+          "index": 3
+        }
+      },
+      "outputs": {
+        "commitments": [
+          "94b343531ac725458afbd2e529b4bef20bc2f9fe9d10549baa1101022d05dbcd",
+          "49712fccfe7af3de2b0d4fc0040c3870b4ba2694eda5456ff1fcab9526efd953",
+          "e48bff708e47e07271c2ed0100553af514e0b89cd0747612dbfdc122585670c7"
+        ],
+        "from": 3,
+        "sub_shares": [
+          {
+            "bytes_hex": "62ce48192adbae9ccda36cd85c4de00dd84e3cd4cbea475a03212e4a107d9dfc",
+            "index": 10
+          },
+          {
+            "bytes_hex": "d2ed10aa5494c6f436ebc352ee38eb0bf2e76657d0285e22aaafba0874879389",
+            "index": 11
+          },
+          {
+            "bytes_hex": "ef04839e3562c5f7e108a3c9dd68da192495fbf391501151d8287bdd5357b9d9",
+            "index": 12
+          }
+        ]
+      },
+      "params": {
+        "k": 2,
+        "new_indices": [
+          10,
+          11,
+          12
+        ],
+        "rng_seed": "5555555555555555555555555555555555555555555555555555555555555555"
+      },
+      "primitive": "reshare"
+    },
+    {
+      "id": "reshare-combine",
+      "inputs": {
+        "shares": [
+          {
+            "bytes_hex": "c6dec14d6e4c6444ca10841c955c81bf2d2acce20eacfee4e54347bca2dd57e2",
+            "index": 10
+          },
+          {
+            "bytes_hex": "59b481bdb295b9cea236e7cd79236f0524fc528e2bcbc37e5616b67d60cc008e",
+            "index": 11
+          }
+        ]
+      },
+      "outputs": {
+        "secret": "7777777777777777777777777777777777777777777777777777777777777777"
+      },
+      "params": {
+        "k": 2,
+        "note": "shares assembled by resharing holders 1 and 3 to indices 10..12"
+      },
+      "primitive": "shamir_combine"
     }
   ]
 }

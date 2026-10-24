@@ -12,6 +12,7 @@ mod hash;
 mod identity;
 mod mlkem;
 mod paper;
+mod shamir;
 mod vault;
 mod words;
 mod wrap;
@@ -27,6 +28,10 @@ pub use dek::{dek_generate, dek_open, dek_seal};
 pub use hash::{chain_hash, derive_key};
 pub use identity::{device_id_of, verify, DeviceIdentity, DevicePublic};
 pub use paper::{paper_derive, PaperDomain};
+pub use shamir::{
+    reshare_combine, reshare_contribute, reshare_verify, shamir_combine, shamir_split,
+    ReshareContribution, Share,
+};
 pub use vault::vault_recipient;
 pub use words::{bip39_decode, bip39_encode, eff_decode, eff_encode};
 pub use wrap::{blob_alg, hybrid_unwrap, hybrid_wrap, try_hybrid_wrap};

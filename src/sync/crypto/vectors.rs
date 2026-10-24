@@ -14,6 +14,9 @@ use super::hash::{chain_hash, derive_key, derive_xof};
 use super::identity::{verify, DeviceIdentity};
 use super::mlkem;
 use super::paper::{paper_derive, PaperDomain};
+use super::shamir::{
+    reshare_combine, reshare_contribute_with, shamir_combine, split_at_indices, Share,
+};
 use super::vault::vault_recipient_with;
 use super::words::{bip39_encode, eff_encode};
 use super::wrap::{hybrid_unwrap, hybrid_wrap_with};
@@ -329,6 +332,74 @@ pub(super) fn build(include_slow: bool) -> Vec<Value> {
             json!({ "phrase": paper }),
             pubs(&pubk),
         ));
+    }
+    // Shamir and resharing. Randomness is ChaCha20Rng seeded with the recorded seed; the k - 1
+    // coefficient rows are drawn as consecutive 32 byte fills.
+    {
+        use rand_chacha::{rand_core::SeedableRng, ChaCha20Rng};
+        let share_json = |s: &Share| json!({ "index": s.index, "bytes_hex": hx(&s.bytes) });
+        let secret_77 = [0x77u8; 32];
+        let secret_cnt: [u8; 32] = counting(32, 0x40).try_into().unwrap();
+        for (id, k, n, seed, secret) in [
+            ("shamir-2of3", 2u8, 3u8, [0x11u8; 32], secret_77),
+            ("shamir-3of5", 3, 5, [0x22; 32], secret_cnt),
+        ] {
+            let indices: Vec<u8> = (1..=n).collect();
+            let shares = split_at_indices(&secret, k, &indices, &mut ChaCha20Rng::from_seed(seed));
+            v.push(vector(
+                id,
+                "shamir_split",
+                json!({ "k": k, "indices": indices, "rng_seed": hx(&seed) }),
+                json!({ "secret": hx(&secret) }),
+                json!({ "shares": shares.iter().map(share_json).collect::<Vec<_>>() }),
+            ));
+            for (suffix, subset) in [
+                ("first", shares[..k as usize].to_vec()),
+                ("last", shares[shares.len() - k as usize..].to_vec()),
+            ] {
+                assert_eq!(shamir_combine(&subset).unwrap(), secret);
+                v.push(vector(
+                    format!("{id}-combine-{suffix}"),
+                    "shamir_combine",
+                    json!({ "k": k }),
+                    json!({ "shares": subset.iter().map(share_json).collect::<Vec<_>>() }),
+                    json!({ "secret": hx(&secret) }),
+                ));
+            }
+        }
+        // holders 1 and 3 of a 2-of-3 sharing re-split to indices 10, 11, 12
+        let old = split_at_indices(
+            &secret_77,
+            2,
+            &[1, 2, 3],
+            &mut ChaCha20Rng::from_seed([0x33; 32]),
+        );
+        let new_indices = [10u8, 11, 12];
+        let mut contributions = Vec::new();
+        for (holder, seed) in [(0usize, [0x44u8; 32]), (2, [0x55; 32])] {
+            let c = reshare_contribute_with(
+                &old[holder],
+                &new_indices,
+                2,
+                &mut ChaCha20Rng::from_seed(seed),
+            );
+            v.push(vector(
+                format!("reshare-contribute-{}", old[holder].index),
+                "reshare",
+                json!({ "k": 2, "new_indices": new_indices, "rng_seed": hx(&seed) }),
+                json!({ "share": share_json(&old[holder]) }),
+                json!({ "from": c.from,
+                        "sub_shares": c.sub_shares.iter().map(|(i, b)| json!({ "index": i, "bytes_hex": hx(b) })).collect::<Vec<_>>(),
+                        "commitments": c.commitments.iter().map(|c| hx(c)).collect::<Vec<_>>() }),
+            ));
+            contributions.push(c);
+        }
+        let new_shares: Vec<Share> = new_indices
+            .iter()
+            .map(|&i| reshare_combine(i, &contributions).unwrap())
+            .collect();
+        assert_eq!(shamir_combine(&new_shares[..2]).unwrap(), secret_77);
+        v.push(vector("reshare-combine", "shamir_combine", json!({ "k": 2, "note": "shares assembled by resharing holders 1 and 3 to indices 10..12" }), json!({ "shares": new_shares[..2].iter().map(share_json).collect::<Vec<_>>() }), json!({ "secret": hx(&secret_77) })));
     }
     v
 }
