@@ -18,6 +18,7 @@ use super::op::*;
 use super::tier::EntityKind;
 use crate::store::{uid_hex, Uid};
 use crate::sync::apply::Touched;
+use crate::sync::limits::TIMESTAMP_SKEW_GRACE_SECS;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum State {
@@ -340,7 +341,94 @@ fn resurrects(conn: &Connection, op: &Op) -> Result<bool> {
 
 /// The tier of an op in this store: a revoke is Yellow when the target is a
 /// mirror, Red when it is a holder or unknown.
+/// Kinds of the share machinery: only a holder has any business writing them.
+fn holder_only(body: &OpBody) -> bool {
+    matches!(
+        body,
+        OpBody::ShareReshareSession { .. }
+            | OpBody::ShareStorageKey { .. }
+            | OpBody::ShareReshareBatch { .. }
+            | OpBody::ShareReshareConfirmBatch { .. }
+            | OpBody::WrapKeyRotate { .. }
+            | OpBody::CertHostOpened { .. }
+    )
+}
+
+/// The author of a [`holder_only`] op is an effective holder (and for `CertHostOpened` not
+/// the delegate the certificate was issued to: the holders open, the delegate does not vouch
+/// for itself).
+fn author_may_write(conn: &Connection, op: &Op) -> Result<bool> {
+    let role: Option<(String, String)> = conn
+        .query_row(
+            "SELECT role, status FROM sync_devices WHERE device_id = ?1",
+            params![op.device_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let holder = role.is_some_and(|(r, s)| r == "holder" && s != "revoked" && s != "compromised");
+    if !holder {
+        return Ok(false);
+    }
+    if let OpBody::CertHostOpened { cert_id, .. } = &op.body {
+        let delegate: Option<String> = conn
+            .query_row(
+                "SELECT device_id FROM sync_delegation_certs WHERE cert_id = ?1",
+                params![&cert_id[..]],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if delegate.as_deref() == Some(op.device_id.as_str()) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// The name a Safe upsert claims, with the entity that claims it.
+fn claimed_name(body: &OpBody) -> Option<(EntityKind, Uid, String)> {
+    match body {
+        OpBody::HostUpsert { host_uid, fields } => {
+            Some((EntityKind::Host, *host_uid, fields.name.clone()?))
+        }
+        OpBody::GroupUpsert { group_uid, fields } => {
+            Some((EntityKind::Group, *group_uid, fields.name.clone()?))
+        }
+        OpBody::IdentityUpsert {
+            identity_uid,
+            fields,
+        } => Some((EntityKind::Identity, *identity_uid, fields.name.clone()?)),
+        _ => None,
+    }
+}
+
+/// Does another live entity (or a local-only row) already hold this name?
+fn name_taken(conn: &Connection, kind: EntityKind, uid: &Uid, name: &str) -> Result<bool> {
+    let table = match kind {
+        EntityKind::Host => "hosts",
+        EntityKind::Group => "host_groups",
+        EntityKind::Identity => "identities",
+    };
+    let cached: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sync_entities WHERE kind = ?1 AND alive = 1 AND name = ?2 AND uid != ?3)",
+        params![kind.as_str(), name, &uid[..]],
+        |r| r.get(0),
+    )?;
+    let row: bool = conn.query_row(
+        &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE name = ?1 AND uid != ?2)"),
+        params![name, &uid[..]],
+        |r| r.get(0),
+    )?;
+    Ok(cached || row)
+}
+
 pub(crate) fn effective_tier(conn: &Connection, op: &Op) -> Result<OpTier> {
+    // A rename onto a name another live entity holds would silently re-point that name
+    // (the older claim wins the name, the other gets a suffix): a human decides.
+    if let Some((kind, uid, name)) = claimed_name(&op.body) {
+        if op.tier() == OpTier::Green && name_taken(conn, kind, &uid, &name)? {
+            return Ok(OpTier::Yellow);
+        }
+    }
     if let OpBody::DeviceRevoke { device_id } = &op.body {
         let role: Option<String> = conn
             .query_row(
@@ -360,6 +448,7 @@ pub(crate) fn effective_tier(conn: &Connection, op: &Op) -> Result<OpTier> {
 pub(crate) fn desired_state(
     conn: &Connection,
     row: &OpRow,
+    now: i64,
 ) -> Result<(State, Option<&'static str>)> {
     let op = &row.op;
     if row.state == State::Rejected {
@@ -371,8 +460,22 @@ pub(crate) fn desired_state(
     if row.state == State::Approved || row.local {
         return Ok((State::Approved, None));
     }
-    if effective_tier(conn, op)? != OpTier::Green {
+    let tier = effective_tier(conn, op)?;
+    // A timestamp the author chose beyond the skew grace would stretch every window measured
+    // on it (the Red ceremony TTL, proof ages): a Red op like that is refused outright, anything
+    // else waits until the clock has caught up or a human approves it.
+    let future = op.timestamp > now.saturating_add(TIMESTAMP_SKEW_GRACE_SECS);
+    if future && tier == OpTier::Red {
+        return Ok((State::Rejected, Some("future-dated")));
+    }
+    if tier != OpTier::Green {
         return Ok((State::Pending, Some("tier")));
+    }
+    if holder_only(&op.body) && !author_may_write(conn, op)? {
+        return Ok((State::Pending, Some("not-holder")));
+    }
+    if future {
+        return Ok((State::Pending, Some("future-dated")));
     }
     if super::checkpoint::stale_above_cut(conn, op)? {
         // A device that was stale at an accepted checkpoint: its later ops wait
@@ -447,6 +550,16 @@ impl<'a> Settler<'a> {
         }
         if state.effective() && !row.state.effective() {
             effects(self.conn, &row.op, &row.hash)?;
+            // Becoming a holder (or a device at all) re-judges what that device already wrote.
+            match &row.op.body {
+                OpBody::DeviceRoleChange { device_id, .. } => {
+                    self.queue.push_back(Work::Author(device_id.clone()));
+                }
+                OpBody::DeviceAdd { device, .. } => {
+                    self.queue.push_back(Work::Author(device.device_id()));
+                }
+                _ => {}
+            }
         }
         Ok(())
     }
@@ -472,7 +585,7 @@ impl<'a> Settler<'a> {
                 )?,
             };
             for row in rows {
-                let (state, reason) = desired_state(self.conn, &row)?;
+                let (state, reason) = desired_state(self.conn, &row, self.now)?;
                 self.transition(&row, state, reason)?;
             }
             self.done.insert(work);
@@ -700,11 +813,13 @@ fn effects(conn: &Connection, op: &Op, hash: &[u8; 32]) -> Result<()> {
             device_id,
             seq,
             chain_hash,
-        } => {
+        } if *device_id == op.device_id => {
+            // An unsigned claim (empty signature): it never proves anything, is never gossiped
+            // and never shadows a genuine signed head (those replace it).
             conn.execute(
                 "INSERT OR IGNORE INTO sync_head_attests (device_id, seq, chain_hash, signature)
-                 VALUES (?1, ?2, ?3, ?4)",
-                params![device_id, *seq as i64, &chain_hash[..], &op.signature[..]],
+                 VALUES (?1, ?2, ?3, X'')",
+                params![device_id, *seq as i64, &chain_hash[..]],
             )?;
         }
         _ => {}
