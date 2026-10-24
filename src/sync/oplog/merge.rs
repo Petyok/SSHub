@@ -546,7 +546,8 @@ fn effects(conn: &Connection, op: &Op, hash: &[u8; 32]) -> Result<()> {
             x25519_pub,
             mlkem_pub,
         } if *device_id == op.device_id && *wrap_epoch > 0 => {
-            let cur: Option<(Vec<u8>, Vec<u8>, Vec<u8>, i64)> = conn
+            type DeviceKeys = (Vec<u8>, Vec<u8>, Vec<u8>, i64);
+            let cur: Option<DeviceKeys> = conn
                 .query_row(
                     "SELECT ed25519, x25519, mlkem, wrap_epoch FROM sync_devices WHERE device_id = ?1",
                     params![device_id],
