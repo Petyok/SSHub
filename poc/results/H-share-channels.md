@@ -12,11 +12,11 @@ H3 (over-the-air success, 10 attempts) and H4 (channel matrix, 10 attempts per c
 | H1 framing corruption | single corrupted byte rejected | true | bool | PASS |
 | H1 framed length, 56-byte payload | LEN:1 + payload + CRC16 | 59 | bytes | MEASURED |
 | H1 clean FSK round-trip, 56-byte payload | decoded equals payload, 50 trials | 50 of 50 | trials | PASS |
-| H1 burst duration, 56-byte payload | 300 ms preamble + 118 nibbles × 60 ms (spec expects ≈7.38 s) | 7380 | ms | PASS (within 7 to 9 s) |
-| H1 simulated noise, SNR 20 dB | round-trip, 50 trials | 50 of 50 | trials | MEASURED |
-| H1 simulated noise, SNR 10 dB | round-trip, 50 trials | 49 of 50 | trials | MEASURED |
-| H1 simulated noise, SNR 5 dB | round-trip, 50 trials | 41 of 50 | trials | MEASURED |
-| H1 simulated noise, SNR 0 dB | round-trip, 50 trials | 39 of 50 | trials | MEASURED |
+| H1 burst duration, 56-byte payload, slow profile (60 ms symbols) | 300 ms preamble + 118 nibbles × 60 ms (spec expects ≈7.38 s) | 7380 | ms | PASS (within 7 to 9 s) |
+| H1 clean FSK round-trip, fast profile (30 ms symbols), 56-byte payload | decoded equals payload, 50 trials | 50 of 50 | trials | PASS |
+| H1 burst duration, fast profile | 300 ms preamble + 118 nibbles × 30 ms | 3840 | ms | MEASURED |
+| H1 simulated noise, slow profile, SNR 20 / 10 / 5 / 0 dB | round-trip, 50 trials each | 50 / 49 / 41 / 33 | trials | MEASURED (round 1 gave 50 / 49 / 41 / 39 at 0 dB; round 3 value is the current one) |
+| H1 simulated noise, fast profile, SNR 20 / 10 / 5 / 0 dB | round-trip, 50 trials each | 50 / 50 / 47 / 42 | trials | MEASURED |
 | H2 direct, 4096 B, in order | reassembled equals payload | true (41 chunks) | bool | PASS |
 | H2 direct, 4096 B, reversed with duplicates | reassembled equals payload | true | bool | PASS |
 | H2 direct, 4096 B, 20% gaps then loop | complete after loop | true, 78 frames consumed | bool | PASS |
@@ -30,7 +30,7 @@ H3 (over-the-air success, 10 attempts) and H4 (channel matrix, 10 attempts per c
 
 ## Method
 
-- `assets/companion/poc/share-lib.js` (`window.ShareLib`): CRC-16/CCITT-FALSE, frame/deframe (LEN:1, payload, CRC16 BE), indexed looped chunks (header idx:2 total:2 chunkCRC:2, 6 bytes; NOT rateless), reassembler, MFSK encoder/decoder (48 kHz, 16 tones from 1600 Hz in 100 Hz steps, 60 ms symbols, 5 ms ramp, 300 ms preamble, 1000 Hz sync, Goertzel detection with 1 ms alignment search).
+- `assets/companion/poc/share-lib.js` (`window.ShareLib`): CRC-16/CCITT-FALSE, frame/deframe (LEN:1, payload, CRC16 BE), indexed looped chunks (header idx:2 total:2 chunkCRC:2, 6 bytes; NOT rateless), reassembler, MFSK encoder/decoder (48 kHz, 16 tones from 1600 Hz in 100 Hz steps, 1000 Hz sync, Goertzel detection with 1 ms alignment search). Two profiles: slow (60 ms symbols, 5 ms ramp) and fast `FSK_FAST` (30 ms symbols, 3 ms ramp).
 - `share-channel-bench.html` `runSelfTests`, executed in headless Chromium 156 by `run-offline.mjs`.
 - H1 noise: additive white Gaussian noise at the stated SNR, relative to buffer power. SIMULATED. It is not room acoustics, speaker response, or microphone response.
 - H2 QR: frames rendered with qrcode-generator, decoded with jsQR 1.4.0 (inversion attempts both), in memory. No camera.
@@ -39,7 +39,7 @@ H3 (over-the-air success, 10 attempts) and H4 (channel matrix, 10 attempts per c
 ## Commands and logs
 
 - `gpu-verify/tools.sh <hs-phone> phone-offline -- 'env PY=/opt/oracle/bin/python PLAYWRIGHT_MJS=/opt/node/lib/node_modules/playwright/index.mjs OUT_DIR=/tmp/poc-c-png PORT=8771 node /work/assets/companion/poc/run-offline.mjs'`
-- Log: `gpu-verify/logs/phone-offline-20261024T134320.log`. Self-test elapsed 12811 ms. `page_errors` empty.
+- Log (round 3, current): `gpu-verify/logs/phone-offline-r3-20261024T134956.log`. `page_errors` empty. Round 1 log `phone-offline-20261024T134320.log` is superseded.
 
 ## Tool versions
 
