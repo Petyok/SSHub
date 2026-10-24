@@ -281,6 +281,11 @@ pub const KIND_ENROLL_COMMIT: u8 = 6;
 pub const KIND_ENROLL_REVEAL: u8 = 7;
 pub const KIND_ENROLL_CONFIRM: u8 = 8;
 
+/// A phone chain moves a few small ops per courier trip: more than this, or a bigger op, is not a
+/// phone and is refused before it is parsed further.
+pub const MAX_COURIER_OPS: usize = 8;
+pub const MAX_COURIER_OP_BYTES: usize = 64 * 1024;
+
 /// An op together with its signature, as the phone carries it.
 pub type SignedOpBytes = (Vec<u8>, [u8; 64]);
 
@@ -316,7 +321,10 @@ impl RecoveryNoticeWire {
 }
 
 pub(crate) fn encode_op_list(ops: &[SignedOpBytes]) -> Vec<u8> {
-    assert!(ops.len() <= 255, "at most 255 ops per list");
+    assert!(
+        ops.len() <= MAX_COURIER_OPS,
+        "at most {MAX_COURIER_OPS} ops per list"
+    );
     let mut out = vec![ops.len() as u8];
     for (op, sig) in ops {
         out.extend_from_slice(&(op.len() as u32).to_be_bytes());
@@ -331,6 +339,9 @@ pub(crate) fn decode_op_list(body: &[u8]) -> Result<(Vec<SignedOpBytes>, usize)>
     let Some((&n, _)) = body.split_first() else {
         bail!("op list truncated");
     };
+    if n as usize > MAX_COURIER_OPS {
+        bail!("op list of {n} ops exceeds the cap of {MAX_COURIER_OPS}");
+    }
     let mut at = 1;
     let mut ops = Vec::with_capacity(n as usize);
     for _ in 0..n {
@@ -339,8 +350,8 @@ pub(crate) fn decode_op_list(body: &[u8]) -> Result<(Vec<SignedOpBytes>, usize)>
         }
         let len = u32::from_be_bytes(body[at..at + 4].try_into().unwrap()) as usize;
         at += 4;
-        if len > MAX_FRAME_BYTES || body.len() < at + len + 64 {
-            bail!("op list truncated");
+        if len > MAX_COURIER_OP_BYTES || body.len() < at + len + 64 {
+            bail!("op list entry is oversize or truncated");
         }
         ops.push((
             body[at..at + len].to_vec(),
@@ -671,7 +682,10 @@ mod phone_frame_tests {
             op_canonical: b"{\"op\":1}".to_vec(),
             op_signature: [9; 64],
         };
-        assert_eq!(RecoveryNoticeWire::decode(&notice.encode()).unwrap(), notice);
+        assert_eq!(
+            RecoveryNoticeWire::decode(&notice.encode()).unwrap(),
+            notice
+        );
         let mut cut = notice.encode();
         cut.pop();
         assert!(RecoveryNoticeWire::decode(&cut).is_err());
@@ -683,14 +697,39 @@ mod phone_frame_tests {
         let mut long = ops.encode();
         long.push(0);
         assert!(PhoneOpsWire::decode(&long).is_err(), "trailing bytes");
+        let many = encode_op_list(&vec![(b"a".to_vec(), [1; 64]); MAX_COURIER_OPS]);
+        assert_eq!(decode_op_list(&many).unwrap().0.len(), MAX_COURIER_OPS);
+        let mut over = many.clone();
+        over[0] = (MAX_COURIER_OPS + 1) as u8;
+        assert!(decode_op_list(&over).is_err(), "too many ops");
+        let big = [
+            vec![1u8],
+            ((MAX_COURIER_OP_BYTES + 1) as u32).to_be_bytes().to_vec(),
+            vec![0; MAX_COURIER_OP_BYTES + 1 + 64],
+        ]
+        .concat();
+        assert!(decode_op_list(&big).is_err(), "oversize op");
 
         for f in [
-            EnrollFrame::Commit { role: 1, commit: [3; 32] },
-            EnrollFrame::Reveal { role: 0, reveal: vec![4; 50] },
-            EnrollFrame::Confirm { role: 1, ok: false, sig: [5; 64] },
+            EnrollFrame::Commit {
+                role: 1,
+                commit: [3; 32],
+            },
+            EnrollFrame::Reveal {
+                role: 0,
+                reveal: vec![4; 50],
+            },
+            EnrollFrame::Confirm {
+                role: 1,
+                ok: false,
+                sig: [5; 64],
+            },
         ] {
             assert_eq!(EnrollFrame::decode(&f.encode()).unwrap(), f);
         }
-        assert!(EnrollFrame::decode(&notice.encode()).is_err(), "a notice is not an enrollment frame");
+        assert!(
+            EnrollFrame::decode(&notice.encode()).is_err(),
+            "a notice is not an enrollment frame"
+        );
     }
 }

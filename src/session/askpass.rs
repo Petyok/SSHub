@@ -76,9 +76,12 @@ impl AskpassSecret {
     /// jump hops' secrets. The first line is the destination's; a `C<TAB>p|k`
     /// line says whether it is a password or a key passphrase; an `S` line
     /// names the credential store; every other line is one hop reference
-    /// (`H<TAB>class<TAB>user<TAB>host<TAB>key<TAB>via<TAB>ref…`). A hop's
-    /// secret is never written: the helper reads it from the store when that
-    /// hop's prompt arrives. The helper answers a hop's prompt from the line
+    /// (`H<TAB>class<TAB>user<TAB>host<TAB>key<TAB>via<TAB>ref…`). A local
+    /// hop secret is never written: the helper reads it from the store when
+    /// that hop's prompt arrives. A synced credential already unlocked in this
+    /// process is the exception, since the helper cannot unlock it: it travels
+    /// as a `v:` ref in this owner-only file, like the destination's own
+    /// secret. The helper answers a hop's prompt from the line
     /// that names that hop, and the destination's prompt with the first line,
     /// only for a prompt of its class: never the other way round.
     pub fn staged(
@@ -124,9 +127,11 @@ impl AskpassSecret {
             writeln!(f, "{line}")?;
         }
         for hop in hops {
-            // Without the store, or with another one than the `S` line names,
-            // the helper could not read the secret: leave the hop out.
-            if store_line.is_none() || hop.store.as_ref() != store {
+            // A hop whose secrets are all staged values needs no store. Any
+            // other, without the store or with another one than the `S` line
+            // names, could not be read by the helper: leave it out.
+            let only_staged = hop.refs.iter().all(|r| matches!(r, SecretRef::Staged(_)));
+            if !only_staged && (store_line.is_none() || hop.store.as_ref() != store) {
                 continue;
             }
             let class = match hop.class {
@@ -143,6 +148,10 @@ impl AskpassSecret {
                 .map(|r| match r {
                     SecretRef::Key(k) => format!("k:{k}"),
                     SecretRef::Lookup(s) => format!("l:{s}"),
+                    // An opened synced credential: the helper cannot open it,
+                    // so it travels in this owner-only file like the
+                    // destination's own secret.
+                    SecretRef::Staged(v) => format!("v:{}", v.value()),
                 })
                 .collect();
             // The format cannot hold a tab or a line break. Such a hop is left
@@ -373,6 +382,9 @@ fn parse_hop(line: &str) -> Option<super::hop_auth::HopSecret> {
         .filter_map(|r| match r.split_at_checked(2)? {
             ("k:", key) => Some(SecretRef::Key(key.to_string())),
             ("l:", spec) => Some(SecretRef::Lookup(spec.to_string())),
+            ("v:", value) => Some(SecretRef::Staged(crate::credentials::StagedValue::new(
+                value.to_string(),
+            ))),
             _ => None,
         })
         .collect();
@@ -415,7 +427,14 @@ fn parse_staged(text: &str) -> Staged<'_> {
 /// no store, no reference that resolves, or a value ssh could not take as one
 /// line, and the hop's prompt is left to the user.
 fn hop_value(hop: &super::hop_auth::HopSecret) -> Option<String> {
-    let store = hop.store.as_ref()?.open();
+    // A staged value needs no store; a store-less hop reads only those.
+    let store = hop.store.as_ref().map_or_else(
+        || {
+            Box::new(crate::credentials::NoopPasswordStore)
+                as Box<dyn crate::credentials::PasswordStore>
+        },
+        StoreLocator::open,
+    );
     hop.refs
         .iter()
         .find_map(|r| r.read(store.as_ref()))
@@ -930,6 +949,40 @@ mod tests {
         .unwrap();
         let text = std::fs::read_to_string(&guard.path).unwrap();
         assert!(parse_staged(&text).hops.is_empty(), "{text}");
+    }
+
+    #[test]
+    fn an_unlocked_hop_secret_reaches_the_helper_with_no_store_to_reopen() {
+        // The helper cannot unlock a synced credential: the value is staged
+        // in the owner-only file and read back from it, store or not.
+        let hop = super::super::hop_auth::HopSecret {
+            user: Some("ops".into()),
+            host: "10.0.4.11".into(),
+            via: "lb-1".into(),
+            key_path: None,
+            class: PromptClass::Password,
+            refs: vec![SecretRef::Staged(crate::credentials::StagedValue::new(
+                "hop-s3cr3t".into(),
+            ))],
+            store: None,
+        };
+        let guard = AskpassSecret::staged(None, &[hop]).unwrap();
+        let text = std::fs::read_to_string(guard.path()).unwrap();
+        assert!(text.contains("v:hop-s3cr3t"), "{text}");
+        let staged = parse_staged(&text);
+        assert_eq!(staged.hops.len(), 1);
+        assert_eq!(hop_value(&staged.hops[0]).as_deref(), Some("hop-s3cr3t"));
+        // A value ssh could not take as one line is not staged.
+        let bad = super::super::hop_auth::HopSecret {
+            refs: vec![SecretRef::Staged(crate::credentials::StagedValue::new(
+                "two\nlines".into(),
+            ))],
+            ..staged.hops[0].clone()
+        };
+        let guard = AskpassSecret::staged(None, &[bad]).unwrap();
+        assert!(!std::fs::read_to_string(guard.path())
+            .unwrap()
+            .contains("two"));
     }
 
     #[test]

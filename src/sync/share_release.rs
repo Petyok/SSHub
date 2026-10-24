@@ -76,7 +76,11 @@ impl ReplyExt {
             Some((host, blob)) => {
                 out.push(1);
                 out.extend_from_slice(host);
-                out.extend_from_slice(&u16::try_from(blob.len()).expect("blob fits u16").to_be_bytes());
+                out.extend_from_slice(
+                    &u16::try_from(blob.len())
+                        .expect("blob fits u16")
+                        .to_be_bytes(),
+                );
                 out.extend_from_slice(blob);
             }
         }
@@ -97,7 +101,10 @@ impl ReplyExt {
                 if b.len() != at + 19 + len {
                     bail!("snapshot length does not match the reply");
                 }
-                Some((b[at + 1..at + 17].try_into().unwrap(), b[at + 19..].to_vec()))
+                Some((
+                    b[at + 1..at + 17].try_into().unwrap(),
+                    b[at + 19..].to_vec(),
+                ))
             }
             _ => bail!("bad snapshot section in the reply"),
         };
@@ -106,6 +113,16 @@ impl ReplyExt {
             ops,
             snapshot,
         })
+    }
+}
+
+impl ReplyExt {
+    /// Did the phone sign this challenge? The reply is sealed to a PUBLIC ephemeral key, so anyone can
+    /// build one; only this check ties the extension to the phone that was asked. `binding_preimage` is
+    /// `Challenge::binding_preimage`, which covers the whole op, nonce, expiry, ephemeral key, request id
+    /// and the phone material that was shown. The phone signs the PREIMAGE (`Challenge::binding_preimage`).
+    pub fn approved_by(&self, phone_ed25519: &[u8; 32], binding_preimage: &[u8]) -> bool {
+        super::crypto::verify(phone_ed25519, binding_preimage, &self.approval_sig)
     }
 }
 
@@ -120,7 +137,7 @@ pub fn unwrap_share_reply(
     eph_priv: &[u8; 32],
     ciphertext: &[u8],
 ) -> Result<(Share, Option<ReplyExt>)> {
-    let plain = open_sealed_with_secret(eph_priv, ciphertext)?;
+    let plain = zeroize::Zeroizing::new(open_sealed_with_secret(eph_priv, ciphertext)?);
     if plain.len() < 33 {
         bail!("a share is 33 bytes with a nonzero index");
     }
@@ -248,7 +265,8 @@ mod tests {
             share,
             "the plain helper ignores the extension"
         );
-        let junk = DeviceIdentity::seal_to(&eph_pub, &[share_to_bytes(&share), vec![9, 9]].concat());
+        let junk =
+            DeviceIdentity::seal_to(&eph_pub, &[share_to_bytes(&share), vec![9, 9]].concat());
         assert!(unwrap_share_reply(&eph.to_bytes(), &junk).is_err());
     }
 }

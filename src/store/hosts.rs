@@ -18,17 +18,7 @@ impl LauncherStore {
     }
 
     pub fn get_group(&self, id: i64) -> Result<Option<HostGroup>> {
-        self.with_conn(|conn| {
-            conn.prepare(
-                "SELECT id, name, sort_order, default_identity_id, default_username,
-                        default_port, default_proxy_jump, default_transport,
-                        default_forward_agent, parent_id, reserved
-                 FROM host_groups WHERE id = ?1",
-            )?
-            .query_row(params![id], row_to_group)
-            .optional()
-            .map_err(Into::into)
-        })
+        self.with_conn(|conn| load_group_by_id(conn, id))
     }
 
     pub fn list_groups(&self) -> Result<Vec<HostGroup>> {
@@ -50,63 +40,7 @@ impl LauncherStore {
     }
 
     pub fn update_group(&self, id: i64, update: &HostGroupUpdate) -> Result<Option<HostGroup>> {
-        let current = match self.get_group(id)? {
-            Some(v) => v,
-            None => return Ok(None),
-        };
-
-        // Reserved groups (Favorites) are app-managed: refuse renames as a no-op
-        // (returns the group unchanged rather than erroring).
-        if current.reserved && update.name.is_some() {
-            return Ok(Some(current));
-        }
-
-        let name = update.name.as_ref().unwrap_or(&current.name);
-        let sort_order = update.sort_order.unwrap_or(current.sort_order);
-        let default_identity_id = update
-            .default_identity_id
-            .unwrap_or(current.default_identity_id);
-        let default_username = update
-            .default_username
-            .clone()
-            .unwrap_or(current.default_username);
-        let default_port = update.default_port.unwrap_or(current.default_port);
-        let default_proxy_jump = update
-            .default_proxy_jump
-            .clone()
-            .unwrap_or(current.default_proxy_jump);
-        let default_transport = update
-            .default_transport
-            .unwrap_or(current.default_transport);
-        let default_forward_agent = update
-            .default_forward_agent
-            .unwrap_or(current.default_forward_agent);
-        let parent_id = update.parent_id.unwrap_or(current.parent_id);
-
-        self.with_conn(|conn| {
-            conn.execute(
-                "UPDATE host_groups
-                 SET name = ?1, sort_order = ?2, default_identity_id = ?3, parent_id = ?4,
-                     default_username = ?5, default_port = ?6, default_proxy_jump = ?7,
-                     default_transport = ?8, default_forward_agent = ?9
-                 WHERE id = ?10",
-                params![
-                    name,
-                    sort_order,
-                    default_identity_id,
-                    parent_id,
-                    default_username,
-                    default_port.map(i64::from),
-                    default_proxy_jump,
-                    default_transport.map(|t| t.to_db()),
-                    default_forward_agent.map(i64::from),
-                    id
-                ],
-            )?;
-            Ok(())
-        })?;
-
-        self.get_group(id)
+        self.with_conn(|conn| update_group_on(conn, id, update))
     }
     pub fn delete_group(&self, id: i64) -> Result<bool> {
         // Reserved groups (Favorites) can't be deleted.
@@ -238,157 +172,12 @@ impl LauncherStore {
     }
 
     pub fn update_host(&self, id: i64, update: &HostUpdate) -> Result<Option<ManagedHost>> {
-        if let Some(name) = &update.name {
-            reject_option_like("name", name)?;
-        }
-        if let Some(address) = &update.address {
-            reject_option_like("address", address)?;
-        }
-        if let Some(Some(user)) = &update.username {
-            reject_option_like("username", user)?;
-        }
         // Read-merge-write under one transaction on one connection: a
         // concurrent writer (watcher reimport, second instance) can no longer
         // slip between the read and the write and get its change overwritten.
         self.with_conn(|conn| {
             let tx = conn.unchecked_transaction()?;
-
-            let current = match load_host_by_id(conn, id)? {
-                Some(v) => v,
-                None => return Ok(None),
-            };
-
-            if current.source == HostSource::SshConfig && update_changes_connection_fields(update) {
-                anyhow::bail!("connection fields are read-only for ssh_config hosts");
-            }
-
-            let label = match &update.label {
-                Some(v) => v.clone(),
-                None => current.label.clone(),
-            };
-            let name = update.name.as_ref().unwrap_or(&current.name).clone();
-            let address = update.address.as_ref().unwrap_or(&current.address).clone();
-            let port = match update.port {
-                Some(v) => v,
-                None => current.port,
-            };
-            let group_id = match &update.group_id {
-                Some(v) => *v,
-                None => current.group_id,
-            };
-            let identity_id = match &update.identity_id {
-                Some(v) => *v,
-                None => current.identity_id,
-            };
-            let tags = update.tags.as_ref().unwrap_or(&current.tags).clone();
-            let notes = match &update.notes {
-                Some(v) => v.clone(),
-                None => current.notes.clone(),
-            };
-            let os_icon = match &update.os_icon {
-                Some(v) => v.clone(),
-                None => current.os_icon.clone(),
-            };
-            let proxy_jump = match &update.proxy_jump {
-                Some(v) => v.clone(),
-                None => current.proxy_jump.clone(),
-            };
-            let forward_agent = match update.forward_agent {
-                Some(v) => v,
-                None => current.forward_agent,
-            };
-            let remote_command = match &update.remote_command {
-                Some(v) => v.clone(),
-                None => current.remote_command.clone(),
-            };
-            let environment = match &update.environment {
-                Some(v) => v.clone(),
-                None => current.environment.clone(),
-            };
-            let favorite = update.favorite.unwrap_or(current.favorite);
-            let sort_order = update.sort_order.unwrap_or(current.sort_order);
-            let has_password = update.has_password.unwrap_or(current.has_password);
-            let secret_lookup = match &update.secret_lookup {
-                Some(v) => v.clone(),
-                None => current.secret_lookup.clone(),
-            };
-            let username = match &update.username {
-                Some(v) => v.clone(),
-                None => current.username.clone(),
-            };
-            let session_logging = update
-                .session_logging
-                .unwrap_or(current.session_logging);
-            let ping = update.ping.unwrap_or(current.ping);
-            let transport = match update.transport {
-                Some(v) => v,
-                None => current.transport,
-            };
-            let tags_json = tags_to_json(&tags)?;
-            let now = now_ts();
-
-            conn.execute(
-                "UPDATE hosts
-                 SET name = ?1, label = ?2, address = ?3, port = ?4, group_id = ?5, identity_id = ?6,
-                     os_icon = ?7, tags = ?8, notes = ?9, proxy_jump = ?10, forward_agent = ?11,
-                     remote_command = ?12, favorite = ?13, sort_order = ?14, has_password = ?15, username = ?16, updated_at = ?17,
-                     environment = ?19, session_logging = ?20, transport = ?21, ping = ?22,
-                     secret_lookup = ?23
-                 WHERE id = ?18",
-                params![
-                    name,
-                    label,
-                    address,
-                    port.map(i64::from),
-                    group_id,
-                    identity_id,
-                    os_icon,
-                    tags_json,
-                    notes,
-                    proxy_jump,
-                    forward_agent.map(i64::from),
-                    remote_command,
-                    i64::from(favorite),
-                    sort_order,
-                    i64::from(has_password),
-                    username,
-                    now,
-                    id,
-                    environment,
-                    session_logging.to_db(),
-                    transport.map(|t| t.to_db()),
-                    ping.to_db(),
-                    secret_lookup,
-                ],
-            )?;
-
-            // Single-group edit path: when the primary group changes, move the
-            // membership too (drop the old primary, add the new one). Other
-            // memberships (Favorites, extra groups) are left untouched. The
-            // multi-select save path uses `set_host_groups` directly instead.
-            if update.group_id.is_some() && group_id != current.group_id {
-                if let Some(old) = current.group_id {
-                    conn.execute(
-                        "DELETE FROM host_group_memberships WHERE host_id = ?1 AND group_id = ?2",
-                        params![id, old],
-                    )?;
-                }
-                if let Some(new) = group_id {
-                    conn.execute(
-                        "INSERT OR IGNORE INTO host_group_memberships (host_id, group_id)
-                         VALUES (?1, ?2)",
-                        params![id, new],
-                    )?;
-                }
-            }
-
-            // Favourite status is stored as Favorites membership (source of
-            // truth for reads); sync it when the caller sets `favorite`.
-            if let Some(fav) = update.favorite {
-                sync_favorite_membership(conn, id, fav)?;
-            }
-
-            let updated = load_host_by_id(conn, id)?;
+            let updated = update_host_on(conn, id, update)?;
             tx.commit()?;
             Ok(updated)
         })
@@ -850,9 +639,236 @@ impl LauncherStore {
         })
     }
 }
+/// Connection-level host read-merge-write (the body of
+/// [`LauncherStore::update_host`]); the caller owns the transaction.
+pub(crate) fn update_host_on(
+    conn: &rusqlite::Connection,
+    id: i64,
+    update: &HostUpdate,
+) -> Result<Option<ManagedHost>> {
+    if let Some(name) = &update.name {
+        reject_option_like("name", name)?;
+    }
+    if let Some(address) = &update.address {
+        reject_option_like("address", address)?;
+    }
+    if let Some(Some(user)) = &update.username {
+        reject_option_like("username", user)?;
+    }
+    let current = match load_host_by_id(conn, id)? {
+        Some(v) => v,
+        None => return Ok(None),
+    };
+
+    if current.source == HostSource::SshConfig && update_changes_connection_fields(update) {
+        anyhow::bail!("connection fields are read-only for ssh_config hosts");
+    }
+
+    let label = match &update.label {
+        Some(v) => v.clone(),
+        None => current.label.clone(),
+    };
+    let name = update.name.as_ref().unwrap_or(&current.name).clone();
+    let address = update.address.as_ref().unwrap_or(&current.address).clone();
+    let port = match update.port {
+        Some(v) => v,
+        None => current.port,
+    };
+    let group_id = match &update.group_id {
+        Some(v) => *v,
+        None => current.group_id,
+    };
+    let identity_id = match &update.identity_id {
+        Some(v) => *v,
+        None => current.identity_id,
+    };
+    let tags = update.tags.as_ref().unwrap_or(&current.tags).clone();
+    let notes = match &update.notes {
+        Some(v) => v.clone(),
+        None => current.notes.clone(),
+    };
+    let os_icon = match &update.os_icon {
+        Some(v) => v.clone(),
+        None => current.os_icon.clone(),
+    };
+    let proxy_jump = match &update.proxy_jump {
+        Some(v) => v.clone(),
+        None => current.proxy_jump.clone(),
+    };
+    let forward_agent = match update.forward_agent {
+        Some(v) => v,
+        None => current.forward_agent,
+    };
+    let remote_command = match &update.remote_command {
+        Some(v) => v.clone(),
+        None => current.remote_command.clone(),
+    };
+    let environment = match &update.environment {
+        Some(v) => v.clone(),
+        None => current.environment.clone(),
+    };
+    let favorite = update.favorite.unwrap_or(current.favorite);
+    let sort_order = update.sort_order.unwrap_or(current.sort_order);
+    let has_password = update.has_password.unwrap_or(current.has_password);
+    let secret_lookup = match &update.secret_lookup {
+        Some(v) => v.clone(),
+        None => current.secret_lookup.clone(),
+    };
+    let username = match &update.username {
+        Some(v) => v.clone(),
+        None => current.username.clone(),
+    };
+    let session_logging = update.session_logging.unwrap_or(current.session_logging);
+    let ping = update.ping.unwrap_or(current.ping);
+    let transport = match update.transport {
+        Some(v) => v,
+        None => current.transport,
+    };
+    let tags_json = tags_to_json(&tags)?;
+    let now = now_ts();
+
+    conn.execute(
+            "UPDATE hosts
+             SET name = ?1, label = ?2, address = ?3, port = ?4, group_id = ?5, identity_id = ?6,
+                 os_icon = ?7, tags = ?8, notes = ?9, proxy_jump = ?10, forward_agent = ?11,
+                 remote_command = ?12, favorite = ?13, sort_order = ?14, has_password = ?15, username = ?16, updated_at = ?17,
+                 environment = ?19, session_logging = ?20, transport = ?21, ping = ?22,
+                 secret_lookup = ?23
+             WHERE id = ?18",
+            params![
+                name,
+                label,
+                address,
+                port.map(i64::from),
+                group_id,
+                identity_id,
+                os_icon,
+                tags_json,
+                notes,
+                proxy_jump,
+                forward_agent.map(i64::from),
+                remote_command,
+                i64::from(favorite),
+                sort_order,
+                i64::from(has_password),
+                username,
+                now,
+                id,
+                environment,
+                session_logging.to_db(),
+                transport.map(|t| t.to_db()),
+                ping.to_db(),
+                secret_lookup,
+            ],
+        )?;
+
+    // Single-group edit path: when the primary group changes, move the
+    // membership too (drop the old primary, add the new one). Other
+    // memberships (Favorites, extra groups) are left untouched. The
+    // multi-select save path uses `set_host_groups` directly instead.
+    if update.group_id.is_some() && group_id != current.group_id {
+        if let Some(old) = current.group_id {
+            conn.execute(
+                "DELETE FROM host_group_memberships WHERE host_id = ?1 AND group_id = ?2",
+                params![id, old],
+            )?;
+        }
+        if let Some(new) = group_id {
+            conn.execute(
+                "INSERT OR IGNORE INTO host_group_memberships (host_id, group_id)
+                     VALUES (?1, ?2)",
+                params![id, new],
+            )?;
+        }
+    }
+
+    // Favourite status is stored as Favorites membership (source of
+    // truth for reads); sync it when the caller sets `favorite`.
+    if let Some(fav) = update.favorite {
+        sync_favorite_membership(conn, id, fav)?;
+    }
+
+    load_host_by_id(conn, id)
+}
+
+/// Connection-level group read-merge-write (the body of
+/// [`LauncherStore::update_group`]); the caller owns the transaction.
+pub(crate) fn update_group_on(
+    conn: &rusqlite::Connection,
+    id: i64,
+    update: &HostGroupUpdate,
+) -> Result<Option<HostGroup>> {
+    let current = match load_group_by_id(conn, id)? {
+        Some(v) => v,
+        None => return Ok(None),
+    };
+
+    // Reserved groups (Favorites) are app-managed: refuse renames as a no-op
+    // (returns the group unchanged rather than erroring).
+    if current.reserved && update.name.is_some() {
+        return Ok(Some(current));
+    }
+
+    let name = update.name.as_ref().unwrap_or(&current.name);
+    let sort_order = update.sort_order.unwrap_or(current.sort_order);
+    let default_identity_id = update
+        .default_identity_id
+        .unwrap_or(current.default_identity_id);
+    let default_username = update
+        .default_username
+        .clone()
+        .unwrap_or(current.default_username);
+    let default_port = update.default_port.unwrap_or(current.default_port);
+    let default_proxy_jump = update
+        .default_proxy_jump
+        .clone()
+        .unwrap_or(current.default_proxy_jump);
+    let default_transport = update
+        .default_transport
+        .unwrap_or(current.default_transport);
+    let default_forward_agent = update
+        .default_forward_agent
+        .unwrap_or(current.default_forward_agent);
+    let parent_id = update.parent_id.unwrap_or(current.parent_id);
+
+    conn.execute(
+        "UPDATE host_groups
+         SET name = ?1, sort_order = ?2, default_identity_id = ?3, parent_id = ?4,
+             default_username = ?5, default_port = ?6, default_proxy_jump = ?7,
+             default_transport = ?8, default_forward_agent = ?9
+         WHERE id = ?10",
+        params![
+            name,
+            sort_order,
+            default_identity_id,
+            parent_id,
+            default_username,
+            default_port.map(i64::from),
+            default_proxy_jump,
+            default_transport.map(|t| t.to_db()),
+            default_forward_agent.map(i64::from),
+            id
+        ],
+    )?;
+
+    load_group_by_id(conn, id)
+}
+
+fn load_group_by_id(conn: &rusqlite::Connection, id: i64) -> Result<Option<HostGroup>> {
+    conn.prepare(
+        "SELECT id, name, sort_order, default_identity_id, default_username,
+                default_port, default_proxy_jump, default_transport,
+                default_forward_agent, parent_id, reserved
+         FROM host_groups WHERE id = ?1",
+    )?
+    .query_row(params![id], row_to_group)
+    .optional()
+    .map_err(Into::into)
+}
+
 /// Connection-level group insert for multi-statement transfers: the caller
 /// holds the transaction (see `store::transfer::apply_transfer_plan`).
-pub(super) fn create_group_on(
+pub(crate) fn create_group_on(
     conn: &rusqlite::Connection,
     group: &NewHostGroup,
 ) -> Result<HostGroup> {
@@ -941,7 +957,7 @@ pub(super) fn delete_auth_events_since_on(
 }
 
 /// Connection-level host insert + reload (caller holds the transaction).
-pub(super) fn create_host_on(conn: &rusqlite::Connection, host: &NewHost) -> Result<ManagedHost> {
+pub(crate) fn create_host_on(conn: &rusqlite::Connection, host: &NewHost) -> Result<ManagedHost> {
     reject_option_like("name", &host.name)?;
     reject_option_like("address", &host.address)?;
     if let Some(user) = &host.username {
@@ -1038,7 +1054,7 @@ pub(super) fn set_host_environment_on(
 }
 
 /// Connection-level host delete (caller holds the transaction).
-pub(super) fn delete_host_on(conn: &rusqlite::Connection, id: i64) -> Result<bool> {
+pub(crate) fn delete_host_on(conn: &rusqlite::Connection, id: i64) -> Result<bool> {
     conn.execute("DELETE FROM hosts WHERE id = ?1", params![id])?;
     Ok(conn.changes() > 0)
 }
@@ -1048,7 +1064,7 @@ pub(super) fn delete_host_on(conn: &rusqlite::Connection, id: i64) -> Result<boo
 /// The FK nulls hosts.group_id for hosts whose primary was this group, and
 /// CASCADE drops its membership rows; the primary is then recomputed from a
 /// remaining real membership so group_id doesn't desync.
-pub(super) fn delete_group_on(conn: &rusqlite::Connection, id: i64) -> Result<bool> {
+pub(crate) fn delete_group_on(conn: &rusqlite::Connection, id: i64) -> Result<bool> {
     conn.execute("DELETE FROM host_groups WHERE id = ?1", params![id])?;
     let changed = conn.changes() > 0;
     conn.execute(
@@ -1101,7 +1117,7 @@ pub fn is_option_like(value: &str) -> bool {
 /// `id` locally. `ssh::safe_ssh_target` neutralises such a row at connect time,
 /// but nothing legitimate looks like this, and refusing the write is where the
 /// user (or an import of a file someone else wrote) finds out. See issue #101.
-fn reject_option_like(field: &str, value: &str) -> Result<()> {
+pub(crate) fn reject_option_like(field: &str, value: &str) -> Result<()> {
     if is_option_like(value) {
         anyhow::bail!(
             "host {field} '{value}' starts with '-', which ssh reads as an option rather than \

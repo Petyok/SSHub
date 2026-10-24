@@ -433,6 +433,140 @@ Constants in `limits.rs`: `CHECKPOINT_OPS`, `CHECKPOINT_BYTES`, `CHECKPOINT_MIN_
 `CHECKPOINT_AFTER_RESHARE_SECS`, `CHECKPOINT_PRUNE_DELAY_SECS`, `CHECKPOINT_RETAIN_SPANS`,
 `CHECKPOINT_SIGN_MIN`, `CHECKPOINT_CHUNK_BYTES`, `TOMBSTONE_KEEP_SECS`, `RING_FINGERPRINT_WORDS`.
 
+### 2a. Stage 1 as built (WP1a, WP1b)
+
+Binding addenda to section 2; the code in `src/sync/oplog/`, `src/sync/apply.rs`
+and `src/sync/identity_store.rs` is the reference.
+
+**Canonical form details (C2).** Header field order is `device_id, seq, lamport,
+prev_hash, timestamp, epoch, alg, body`; `alg` is the two-byte wire form
+`[sig, wrap]` as a JSON array (`[1,1]` today, the only number array left); the
+body is externally tagged, `{"Variant":{fields in the order of section 2}}`;
+uids are 32 lowercase hex characters; fixed `[u8; 32]` values (`prev_hash`,
+`chain_hash`, `cert_id`, `reenroll_hash`, `ed25519_pub`, `x25519_pub`) are
+lowercase hex strings; every `Vec<u8>` (`ciphertext`, `sealed`, `sealed_share`,
+`mlkem_pub`, each `commitments` entry, the bytes of a `sub_shares` pair) is a
+base64 string (standard alphabet, padded); `sub_shares` entries are
+`["<device id>","<base64>"]` pairs; `ReshareItem` is `{host_uid, sub_shares,
+commitments}`, `ConfirmItem` is `{host_uid, sealed_share}`; `ThirdFactor` is
+`"Paper"`, `"EmailCode"` or `{"HardwareKey":"<device id>"}`; `CertScope` is
+`{"Group":"<uid>"}` or `{"Hosts":["<uid>",...]}`; `HeadAttest` (in
+`PhoneReenroll.liveness`) is `{"device_id","seq","chain_hash"}`. Decoding is
+strict: `Op::from_canonical` re-encodes and refuses bytes that differ from what
+the encoder would write (wrong alphabet, missing padding, uppercase hex, key
+order, whitespace). An op larger than `MAX_FRAME_BYTES` is refused at ingest.
+Final vectors: `tests/vectors/op/ops.json` (every body variant plus edge cases,
+inputs with `Vec<u8>` as hex), reproduced by the independent oracle
+`tests/oracles/op_canonical.py`; `tests/vectors/op-rules/` is the superseded PoC A
+number-array set.
+
+**C14 ops.** `ShareReshareSession`, `ShareStorageKey`, `ShareReshareBatch`,
+`ShareReshareConfirmBatch` (at most `RESHARE_ITEMS_PER_OP` items, enforced at
+ingest and by `sync_append_local`) and `WrapKeyRotate` are Green: cryptographic
+data only, the ring ceremony around them (`DeviceRevoke`, holder changes) is
+Red. Stage 1 stores them in the chain; stage 3 reads them with
+`sync_chain_tail`. `WrapKeyRotate` must be signed by `device_id` itself
+(`Rejected` otherwise); on effect it records the replaced and the new
+generation in `sync_wrap_history` and, when `wrap_epoch` is above the stored one
+and the keys validate (`DevicePublic::validate`), replaces `x25519`/`mlkem` in
+`sync_devices` and sets `DeviceRow.wrap_epoch`. The signing key never changes.
+
+**Patch fields.** `HostUpsert`, `GroupUpsert` and `IdentityUpsert` carry a patch:
+absent key = untouched, explicit `null` = cleared, absent keys are omitted, key
+order fixed:
+
+- host: `name, label, address, port, username, proxy_jump, forward_agent,
+  remote_command, transport, environment, os_icon, tags, notes, favorite,
+  secret_lookup, has_password, group_uids, identity_uid`. `transport` is the DB
+  string (`ssh`, `mosh`); `group_uids` is sorted, unique and never holds the
+  Favorites uid (that is `favorite`); `tags` keep their order.
+- group: `name, default_identity_uid, default_username, default_port,
+  default_proxy_jump, default_transport, default_forward_agent, parent_uid`.
+- identity: `name, username, has_password` (key file paths never replicate).
+
+A hop token in `proxy_jump` or `default_proxy_jump` that names a saved launcher
+host travels as `#<uid hex>`; any other hop token is a plain `[user@]host[:port]`
+checked by `map::hops::validate_raw`. Apply renders `#uid` as the local host
+name (`sync_hops_to_wire` does the inverse when authoring); an unresolvable hop
+clears the column and keeps the register.
+
+**Types added.** `CertScope` lives in `oplog::op` (stage 3 re-exports it, it does
+not redefine it). `HeadAttest` is an unsigned claim; the self-signed form is
+`fork::SignedHead { device_id, seq, hash, sig }` (signature over
+`"sshub/sync/head/v1" || device_id || 0x00 || seq u64 BE || hash`).
+`fork::HeadVerdict { Consistent, Ahead, Fork, Rejected }`,
+`fork::ForkEvidence { Ops, OpAndHead, Heads }`, `merge::TieBreak { First, Second,
+ManualReview }` and `merge::tie_break(a, b)` are exported from `oplog`.
+
+**Extra `LauncherStore` methods** (beyond section 2): `sync_register_device(public,
+name, role, attendance)` (the trust anchor written by an enrollment ceremony),
+`sync_chain_heads()`, `sync_pending_reason(hash)`, `sync_record_head(&SignedHead)`,
+`sync_fork_evidence(device)`, `sync_mark_suspect(device)`, `sync_state_hash()`,
+`sync_projection_hash()`, `sync_projection_dump()`, `sync_hops_to_wire(str)`.
+`sync_append_local` validates the body like ingest does and stores the op as
+`approved` (the user made the change). `sync_chain_tail` returns at most
+`MAX_OPS_PER_TAIL` ops.
+
+**Ingest verdicts.** `Rejected` (not chained, nothing stored): seq, lamport or
+epoch above `i64::MAX` or zero; unknown or compromised signer; unsupported alg;
+bad signature; invalid field values (option-like names and addresses,
+`destination_problem`, bad hops, port 0, unknown transport, unsorted
+`group_uids`, ops on the local-only Favorites group, `ShareRelease` whose
+`requester` is not the signer); duplicate; gap; `prev_hash` mismatch; lamport not
+increasing along the chain; lamport above `max_known + LAMPORT_JUMP_CAP`;
+quarantine full for the device. `ForkProof(stored, new)` when a valid op has the
+seq of a different stored op (device becomes `compromised`, evidence kept).
+Otherwise the op is chained and stored: `Applied` or `Pending`; an op signed at
+or after its author's approved revocation is chained but `void` and reported as
+`Rejected("void: ...")`.
+
+**Op states** (`sync_ops.state`): `applied` (Green, automatic), `pending`,
+`approved` (review or own op), `rejected` (review refused; kept so the chain
+stays whole), `void`. Applied and approved ops are effective; only they feed
+state. The state is a function of the op and the rest of the log, never of
+arrival order. Pending reasons: `tier` (Yellow or Red, or a dangerous field
+anywhere in the op: the whole op waits, its safe fields included),
+`resurrection` (an edit with lamport strictly above an effective tombstone),
+`revoke-conflict` (author has a pending revoke at or below the op's lamport).
+An approved `DeviceRevoke` voids the target's ops with lamport at or above the
+revoke's; a revoke never loses an automatic tie-break.
+
+**Tiers** (`tier::body_tier`): Green = upserts with only safe fields,
+`CertHostOpened`, `RecoveryAck`, `HeadAttest`, `WrapKeyRotate` and the four reshare
+ops. Yellow = upserts touching any
+dangerous (or unclassified) field, the three deletes, `CredUpdate`,
+`ShareRelease`, `CertRevoke`, `PhoneReenrollCancel`,
+`DeviceAdd` of a mirror. Red = `DeviceAdd` of a holder, `DeviceRevoke`,
+`CertIssue`, `PhoneReenroll`, `ModeChange`. Only Green applies
+without review.
+
+**State model.** Entity state is a deterministic function of the effective ops:
+per-field last writer wins by `(lamport, device_id, seq)` over `sync_fields`; an
+entity is alive iff its newest effective write has a strictly higher lamport than
+its newest effective tombstone. Rows are a projection written through the
+existing `*_on` helpers and validators. Two live entities that want one name: the
+holder of the older name write `(lamport, device_id)` keeps it, the other renders
+as `name (<first 8 uid hex>)`; a local-only row (ssh_config, pre-sync) always
+keeps its name. A group whose parent chain cycles loses its parent on every
+device. Effects of non-entity ops (`DeviceAdd`, `CredUpdate`, certificates,
+`ModeChange`, `HeadAttest`) run once when the op becomes effective and are not
+undone by a later void (ring-membership ops are always reviewed by a human).
+
+**Schema.** Tables of `migrate_v21_to_v22`: the 11 of section 2 plus
+`sync_fields` (per-field write registers), `sync_entities` (cache of
+liveness and base name) and `sync_wrap_history` (wrap key generations). `sync_ops` also stores `kind` and `subject`. The DDL is
+`SYNC_SCHEMA` in `src/store/migrate.rs`. Uids of new rows come from an
+`AFTER INSERT` trigger (`randomblob(16)`, SQLite's OS-seeded CSPRNG); the seeded
+Favorites group and Default identity have fixed uids
+(`FAVORITES_GROUP_UID`, `DEFAULT_IDENTITY_UID` in `src/store/uid.rs`).
+
+**Device key (C8) as built.** `load_or_init_identity` keeps the passphrase of
+`device.key` (random 256 bits, `to_encrypted`) in the profile's credential store
+under `sync-device-key`: the OS keyring normally; in the `credentials.json`
+fallback it sits next to the file, so the 0600 mode is the whole protection, as for
+every secret there. A key file whose passphrase is missing is an error, never a
+silent regeneration.
+
 ## 3. Stage 2: `src/sync/{protocol,ratchet,enroll,client}.rs` (WP2a, WP2b)
 
 ```rust
@@ -478,6 +612,45 @@ from `limits.rs`, stderr separate, EOF and timeout handled. `sync-serve`,
 `sync-enroll`, `sync-join` and `hub-serve` are headless branches in `main.rs`
 next to `theme` (no `CliContext`, stdout carries frames only). The existing
 `sshub sync` (ssh_config refresh) is unchanged.
+
+### 3a. Stage 2 as built (WP2a): supersedes the sketch above where they differ
+
+Code: `src/sync/{protocol,ratchet,enroll}.rs`. The `SyncMsg` shapes above were a sketch; the built set is
+`Hello`, `Auth`, `Prove`, `Heads`, `WantTail`, `Tail`, `Pruned`, `WantCheckpoint`, `CheckpointChunk`,
+`EndWants`, `Finish`, `Ack`, `EnrollCommit`, `EnrollReveal`, `EnrollConfirm`, `Bye`, as internally tagged
+JSON (`{"t": "..."}`; byte fields hex for fixed arrays, base64 for `Vec<u8>`). The round order is
+`Hello(S) Hello(C) Auth(C) Auth(S) Prove(C) Prove(S) Heads(C) Heads(S)`, the client pulls
+(`WantTail`/`Tail`, `EndWants`), the server pulls, `Finish(C) Finish(S) Ack(C)`.
+
+* `Hello { proto, min_proto, device_id, nonce, eph, checkpoint }` has NO epoch: the server speaks first
+  and does not know the client yet. The pair epoch travels in `Prove { epoch: Option<u64>, mac }`
+  after `Auth`. `Auth` is a device-key signature over the hello transcript.
+* `Heads { heads: Vec<HeadRef{device_id, seq, hash}>, own: Option<WireHead>, gossip: Vec<WireHead>,
+  forks: Vec<WireFork> }`. `WireHead` is a self-signed head `{device_id, seq, hash, sig}`; the unsigned
+  `HeadRef` carries no signature (supersedes `HeadRef.sig` above).
+* `Tail { device_id, ops: Vec<WireOp> }` with `WireOp { canonical: base64, sig: hex64 }`; the receiver
+  decodes with `Op::from_canonical(canonical, sig)` (strict) and sorts per chain before ingest.
+* Caps: `MAX_OPS_PER_TAIL`, `MAX_HEADS` 256, `MAX_GOSSIP_HEADS` 64, `MAX_FORK_PROOFS` 16,
+  `MAX_WANTS_PER_PHASE` 1024, `MAX_OPS_PER_ROUND` 200000; a `Tail` frame is cut at half of `MAX_FRAME_BYTES`.
+* Ratchet: pair keys are per pair of devices, stored in `sync_meta` under `pair:<device_id>`
+  (`PairState { epoch, key, next, prev }`). `ratchet_epoch` and `epoch_mac` are BLAKE3 keyed hashes
+  (not HMAC) with domain strings `sshub/sync/ratchet/v1` and `sshub/sync/epoch-mac/v1`. `K(0)` comes from
+  the ephemeral X25519 exchange of the first authenticated round or of an enrollment. The server commits
+  a step only after the client's `Ack`; the client keeps `K(epoch-1)`.
+* Round functions are generic over `SyncLink` (`send(&Value)`, `recv() -> Value`, `recv_first()`),
+  implemented by `transport::Conn`:
+  `run_round(&mut L, &LauncherStore, &DeviceIdentity, &DeviceId) -> Result<RoundSummary>` (client),
+  `run_sync_serve(&LauncherStore, &DeviceIdentity, &mut L) -> Result<RoundSummary>`.
+* `RoundSummary { peer, pending_arrived, applied, rejected, duplicates, reject_reasons (max 8), received,
+  sent, forks, behind, suspect, epoch_advanced, first_contact, peer_checkpoint: Option<[u8;32]>,
+  needs_checkpoint: Vec<DeviceId> }`. Hard failures are `Err`; `behind` is `Ok` and no op moved.
+* Enrollment: `enroll::run_sync_enroll(&mut L, store, id, name, attended, &mut dyn SasConfirm)` (existing
+  device, speaks first) and `run_sync_join(..)` (joining device) return
+  `EnrollOutcome { peer, peer_name, sas }`. `SasConfirm::confirm(sas, peer_name) -> bool` has a blanket
+  impl for `FnMut(&str, &str) -> bool`; the caller blocks in it on the human. The existing device
+  registers the joiner as `Mirror` and appends a `DeviceAdd`; the joiner registers the existing device as
+  `Holder`. Both save `K(0)` as a fresh pair. Enrollment waits for a human: build its `Conn` with long
+  `Limits` (idle and round), not the 30 s idle default.
 
 ## 4. Stage 3: `src/sync/{wire,quorum,share_release,snapshot,cert,recovery,modes,cred_ops}.rs` (WP3a, WP3c)
 
@@ -535,6 +708,75 @@ pub fn validate_phone_reenroll(store: &LauncherStore, op: &Op, now: i64)
 Invariants: `shamir_combine` is called only by the requester assembling k=2 in
 memory; reissue is resharing only; the phone signs the binding hash; a release
 prompt names the requester; plaintext never touches disk.
+
+### 4a. Stage 3 as built (WP3a, WP3c): supersedes the sketch above where they differ
+
+Code: `src/sync/{quorum,reshare,cred_ops,cert,modes,recovery}.rs` (plus the phone wire frames in `wire.rs`).
+
+* **Share indices are positions.** A sharing is a sorted list of holder ids; a holder's index is its
+  1-based position. The list of the original sharing is the recipient list of the `CredUpdate` (the
+  vault recipient excluded); the list of reshare epoch `e` is `new_holders` of its batch ops.
+  Nothing else stores indices, so receivers compute contributor and own indices themselves.
+* **Vault.** The ring salt is `BLAKE3 derive_key("sshub/sync/vault/salt/v1", ring_secret)[..16]`, so a
+  new machine needs only the kit and the phrase. `vault_setup(store, phrase, ring_secret)` derives the
+  vault recipient and keeps its PUBLIC key in `sync_meta` under `vault_pub`. That key is LOCAL and is
+  never replicated: a replicated vault key would let one device redirect every new credential to
+  itself. The ring secret is kept by the caller in the profile credential store (`sync-ring-secret`).
+  The printed ring-secret sheet (poc/tui onboarding) encodes the text `sshub:ring:1:<32 lowercase hex>`
+  in its QR (the hex is also printed in groups); `ring_secret_text` and `parse_ring_secret` are the only
+  writer and reader of it, and `parse_ring_secret` also accepts typed hex groups. `vault_setup` takes the
+  phrase and ring secret of `SyncIntent::OnboardingDone` and refuses a phrase that is not 6 EFF words.
+  A vault credential is one `WrappedShare { recipient: vault id, sealed: hybrid_wrap(vault_pub,
+  host_uid || DEK) }`; `vault_open_dek(store, host, phrase, ring_secret)` opens it and checks the
+  credential by AEAD.
+* **Quorum.** `cred_put(store, id, host, &CredPayload)` writes `CredUpdate` under the ring's mode:
+  vault, or `shamir_split_at(dek, 2, 1..=n)` to `share_recipients` (holders that are not revoked or
+  compromised, the device itself, plus the paper unwrap key from `paper_setup`), sorted by id.
+  `CredPayload` is strict JSON `{"v":1,"password"?,"private_key"?}` sealed under the DEK.
+* **Reading shares.** `own_shares(store, id, host)` returns this holder's shares newest sharing first
+  (envelope shares of reshare epochs, then the original wrap); `assemble_dek(store, host, mine,
+  second)` combines two and checks by opening the credential. A reshare is adopted only by a real
+  unlock under it (`mark_adopted`, `unadopted(store, epoch)`); only then may previous wrap keys be retired.
+* **Reshare (`reissue_plan`, `reissue_receive`).** `reissue_plan(store, id, new_holders, epoch) ->
+  ReissuePlan { epoch, bodies }` replaces the sketch `reissue_plan(store, new_holders)`: it needs the
+  contributor's identity. Bodies: one `ShareReshareSession` per new holder, then `ShareReshareBatch` ops
+  of at most `RESHARE_ITEMS_PER_OP` items. A sub-share is `aead_seal(session key, aad, old_epoch u64 BE
+  || from index || 32 bytes)` with `aad = host_uid || epoch u64 BE || contributor id || recipient id`
+  (device id strings, not indices: a receiver does not know the contributor's old index before it
+  decrypts). `reissue_receive` combines two contributors' sub-shares with `reshare_combine`, publishes
+  a `ShareStorageKey` and a `ShareReshareConfirmBatch` (`aead_seal(storage key, host_uid || epoch ||
+  own index, share)`). `shamir_combine` is never called; `COMBINE_CALLS` (per thread, test only) proves it.
+  The paper recipient is offline and cannot take part: it keeps the sharing it was written for.
+* **Challenge.** `Challenge { op, nonce, expiry, eph_x25519_pub, request_id, phone_material }` with
+  `to_wire`, `to_qr_payload(frame_bytes) -> Result<Vec<Vec<u8>>>`, `binding_hash`, `binding_preimage`;
+  `make_challenge(store, id, host, phone, now, ttl)` appends the `ShareRelease` op and returns the
+  challenge and the ephemeral secret; `release_share(store, id, host, epoch, eph_pub)` seals a share
+  for a requester.
+* **Unlocker.** `QuorumUnlocker::new(store, id, gate, ShareSource, ring_secret)` implements
+  `credentials::Unlocker`: it sets the gate's synced check (`host:<id>` / `identity:<id>` map to uids,
+  synced means a `sync_cred_state` row exists) and opens credentials into the gate. `ShareSource`
+  (`master_phrase()`, `second_share(host, epoch, mine)`) is implemented by whoever owns the interaction.
+* **Certificates.** `DelegationCert::from_op(&Op)`; `cert_allows(cert, issuer_ed25519, store, requester,
+  host, phone_head_ts, now)` adds the `requester` argument (the device that asks) and checks signature,
+  issuer, delegatee, revocation, expiry and term cap, phone freshness (`PHONE_FRESH_SECS`), the phone's
+  epoch range, scope (group membership or explicit list) and the ring-wide budget read from
+  `sync_cert_hosts_opened`; hosts already opened are free. `validate_cert_issue` adds the three-holder rule.
+* **Modes.** `mode_change_plan(store, me_public, to, cosigner, open)` returns the `ModeChange` followed
+  by one `CredUpdate` per credential re-encrypted under a fresh DEK; Quorum to Vault needs a co-signer;
+  `validate_mode_change` checks `migrated_on` and the co-signer. History is not erased: old log entries
+  stay openable by whoever held the old shape.
+* **Recovery.** `recovery::Recovery` is a pure state machine (events `Propose`, `Approve`, `Ack`,
+  `CancelByPhone`, `CancelByDevice`, `Complete { now }`); verdicts add `AwaitingApproval { have, need }`
+  and `Completed` to the sketch. A second `PhoneReenroll`, replayed or fresh, is refused; a backdated
+  `initiated_at` is refused; approvals do not count next to a paper signature.
+* **Identity keys and migration.** `materialise_key(payload, dir, identity_uid)` writes the key with
+  mode 0600 (create-new) and removes it on drop; the caller chooses a tmpfs `dir`.
+  `migrate_local_secrets(store, id, ungated_store)` READS `host:<id>` secrets and identity key files
+  into credentials; `remove_local_copies` deletes the local entries only after the user confirmed.
+* **Phone wire (C16, owned here).** Courier op lists are capped at `MAX_COURIER_OPS` (8) ops of at
+  most `MAX_COURIER_OP_BYTES` (64 KiB) each, in both `PhoneOpsWire` and the reply extension.
+  `ReplyExt::approved_by(phone_ed25519, binding_preimage)` is the check that ties an extension to the
+  phone that was asked: replies are sealed to a public ephemeral key, so anyone can build one.
 
 ## 5. Stage 3.5: Hub
 

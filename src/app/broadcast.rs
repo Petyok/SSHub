@@ -230,7 +230,13 @@ impl App {
             edit_targets: false,
         });
         self.host_notice = None;
-        self.resolve_broadcast_candidates();
+        // Locked credentials: the unlock runs first, then this step repeats.
+        if !self.resolve_broadcast_candidates() {
+            if self.mode != AppMode::SyncUnlock {
+                self.broadcast_setup = None; // nothing can unlock: no wizard
+            }
+            return;
+        }
         let any = self
             .broadcast_setup
             .as_ref()
@@ -266,10 +272,12 @@ impl App {
                     s.menu_selected = s.menu_selected.saturating_sub(1);
                 }
             }
-            KeyCode::Enter => {
-                self.resolve_broadcast_candidates();
+            KeyCode::Enter if self.resolve_broadcast_candidates() => {
                 self.mode = AppMode::BroadcastCommand;
             }
+            // Blocked on a locked credential: the unlock modal is open (or the
+            // user was told why not); the step repeats after the unlock.
+            KeyCode::Enter => {}
             _ => {}
         }
         Ok(())
@@ -278,14 +286,16 @@ impl App {
     /// Fill `candidates` from the highlighted target: managed hosts only, kept in
     /// host-list order, each selected by default. Also derives the display
     /// `target_label` shown in the prompt / panel header.
-    fn resolve_broadcast_candidates(&mut self) {
+    /// `false` when a credential the hosts need is still locked: the unlock
+    /// runs first and this step repeats by itself afterwards.
+    fn resolve_broadcast_candidates(&mut self) -> bool {
         let target = match self
             .broadcast_setup
             .as_ref()
             .and_then(|s| s.options.get(s.menu_selected))
         {
             Some(t) => t.clone(),
-            None => return,
+            None => return true,
         };
 
         let target_label = match &target {
@@ -299,6 +309,7 @@ impl App {
         // Hosts whose ProxyJump cannot be resolved are left out: running ssh
         // without the jump would reach them directly, which nobody asked for.
         let mut refused: Vec<String> = Vec::new();
+        let mut needed: Vec<crate::credentials::SecretRef> = Vec::new();
         let candidates: Vec<BroadcastCandidate> = self
             .hosts
             .iter()
@@ -323,6 +334,13 @@ impl App {
                     }
                     None => None,
                 };
+                needed.extend(connection_secret_refs(
+                    launcher,
+                    &self.hosts,
+                    entry.managed(),
+                    effective.as_ref().and_then(|r| r.identity.as_ref()),
+                    effective.as_ref().and_then(|r| r.proxy_jump.as_deref()),
+                ));
                 let secret = resolve_pending_secret(
                     entry,
                     effective.as_ref().and_then(|r| r.identity.as_ref()),
@@ -354,6 +372,15 @@ impl App {
             })
             .collect();
 
+        if !self.preflight_unlock(needed, &target_label, |app| {
+            if app.resolve_broadcast_candidates() {
+                app.mode = AppMode::BroadcastCommand;
+            }
+            Ok(())
+        }) {
+            return false;
+        }
+
         if !refused.is_empty() {
             self.host_notice = Some(format!("Not included: {}", refused.join("; ")));
         }
@@ -362,6 +389,7 @@ impl App {
             s.target_label = target_label;
             s.preview_selected = 0;
         }
+        true
     }
 
     /// Stage 2: single-line command entry. Mirrors the SFTP prompt's text-input

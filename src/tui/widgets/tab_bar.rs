@@ -56,18 +56,20 @@ fn resolve_version_label(var: Option<String>) -> Option<String> {
 }
 
 /// Tab definitions: (number label, display name).
-const TABS: [(&str, &str); 6] = [
+const TABS: [(&str, &str); 7] = [
     ("1", "hosts"),
     ("2", "sftp"),
     ("3", "tunnels"),
     ("4", "identities"),
     ("5", "audit"),
     ("6", "map"),
+    ("7", "sync"),
 ];
 
-/// Compact tab spacing leaves room for the profile and badges at 120 columns.
+/// Compact tab spacing leaves room for the profile and badges at 120 columns,
+/// and keeps all seven tabs on screen below 90.
 fn tabs_compact(width: u16, has_profile: bool) -> bool {
-    has_profile && width < 132
+    width < 90 || (has_profile && width < 143)
 }
 
 /// Blank columns after each tab.
@@ -95,23 +97,36 @@ pub fn tab_at(x: u16, area: Rect, has_profile: bool) -> Option<usize> {
     None
 }
 
+/// What the tab bar shows besides the tabs and the version.
+#[derive(Debug, Clone, Default)]
+pub struct TabBadges {
+    /// Release-check state appended to the version, e.g. `↑ v0.18.0`.
+    pub update: Option<String>,
+    /// Sync badge (`⇅2 ⏳1ops`) and its colour, drawn right after the tabs.
+    pub sync: Option<(String, Style)>,
+}
+
 /// Render the tab bar into a 1-row `area`.
 ///
 /// * `active_tab` — 1-based index (1 = hosts, 2 = tunnels, …)
 /// * `scope_path` — shown at far right, e.g. `"~/.config/sshub"`
-/// * `update` — release-check state appended to the version, e.g. `↑ v0.18.0`
 pub fn render_tab_bar(
     frame: &mut Frame,
     area: Rect,
     active_tab: usize,
     scope_path: &str,
     profile_name: Option<&str>,
-    update: Option<&str>,
+    badges: &TabBadges,
     theme: &ResolvedTheme,
 ) {
     if area.height == 0 || area.width == 0 {
         return;
     }
+    let update = badges.update.as_deref();
+    let sync = badges
+        .sync
+        .as_ref()
+        .map(|(text, style)| (text.as_str(), *style));
     // A pending update rides on the version label, in the warning colour.
     let version: Option<std::borrow::Cow<str>> = version_label().map(|v| match update {
         Some(badge) => format!("{v}  {badge}").into(),
@@ -170,7 +185,16 @@ pub fn render_tab_bar(
         buf.set_string(x, y, &"   "[..gap as usize], dim);
         x += gap;
     }
-    // Where the tabs end: the scope and version go before a tab does.
+    // The sync badge sits right after the tabs; the profile, scope and version
+    // move right of it, and it is skipped when the row is too narrow for both.
+    if let Some((badge, style)) = sync {
+        let w = Span::raw(badge).width() as u16;
+        if x + 1 + w + 12 <= area.right() {
+            buf.set_string(x + 1, y, badge, style);
+            x += w + 2;
+        }
+    }
+    // Where the tabs (and badge) end: the scope and version go before a tab does.
     let tabs_end = x;
     if compact {
         // One column between the last tab and the profile label.
@@ -189,16 +213,19 @@ pub fn render_tab_bar(
             let scope_len = 7 + Span::raw(scope_path).width();
             let version_width = version.map(|label| Span::raw(label).width()).unwrap_or(0);
             let version_part = version.map_or(0, |_| 2 + version_width);
-            // An update badge outranks the scope path, which never changes:
-            // when both do not fit, the scope goes rather than everything.
-            let show_scope =
-                update.is_none() || PREFIX.len() + 8 + 2 + scope_len + version_part <= available;
+            // An update badge outranks the scope path, which never changes, and
+            // the room of the profile name: when the scope and the version do
+            // not both fit, the scope goes rather than everything, and a
+            // pending update keeps its place even if the name shrinks to a
+            // few columns.
+            let min_name = if update.is_some() { 2 } else { 8 };
+            let show_scope = PREFIX.len() + min_name + 2 + scope_len + version_part <= available;
             let badges_width = if show_scope {
                 scope_len + version_part
             } else {
                 version_width
             };
-            let reserve_badges = PREFIX.len() + 8 + 2 + badges_width <= available;
+            let reserve_badges = PREFIX.len() + min_name + 2 + badges_width <= available;
             let name_budget =
                 available - PREFIX.len() - if reserve_badges { badges_width + 2 } else { 0 };
             let name = if name_width <= name_budget {

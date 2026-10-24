@@ -198,6 +198,28 @@ impl App {
             return Ok(());
         };
 
+        // The key's passphrase and every secret the login to the host reads
+        // must be open first; the push then runs again by itself.
+        let pre = entry
+            .managed()
+            .and_then(|m| self.store.resolve_connection(m).ok());
+        let mut refs = connection_secret_refs(
+            &self.store,
+            &self.hosts,
+            entry.managed(),
+            pre.as_ref().and_then(|r| r.identity.as_ref()),
+            pre.as_ref().and_then(|r| r.proxy_jump.as_deref()),
+        );
+        refs.push(crate::credentials::SecretRef::Key(
+            crate::credentials::identity_key(identity.id),
+        ));
+        let (again_entry, again_identity) = (entry.clone(), identity.clone());
+        if !self.preflight_unlock(refs, entry.name(), move |app| {
+            app.push_public_key_to_host(&again_entry, &again_identity)
+        }) {
+            return Ok(());
+        }
+
         let passphrase = if identity.has_password {
             self.password_store
                 .get(&crate::credentials::identity_key(identity.id))

@@ -104,6 +104,7 @@ impl TestRun {
 }
 
 /// The target a chain test ends on.
+#[derive(Clone, Copy)]
 pub(crate) enum TestTarget {
     /// A host of [`App::hosts`].
     Host(usize),
@@ -288,6 +289,30 @@ impl App {
         hops: &[TestHop],
         target: TestTarget,
     ) {
+        // Every host of the chain may read a stored secret: open the synced
+        // ones first, then run this same test.
+        let chain = hops_before(hops);
+        let target_host = match target {
+            TestTarget::Host(h) => self.hosts.get(h).and_then(|e| e.managed()).cloned(),
+            _ => None,
+        };
+        let resolved = target_host
+            .as_ref()
+            .and_then(|m| self.store.resolve_connection(m).ok());
+        let refs = connection_secret_refs(
+            &self.store,
+            &self.hosts,
+            target_host.as_ref(),
+            resolved.as_ref().and_then(|r| r.identity.as_ref()),
+            (!chain.is_empty()).then_some(chain.as_str()),
+        );
+        let (again_owner, again_title, again_hops) = (owner.clone(), title.clone(), hops.to_vec());
+        if !self.preflight_unlock(refs, &title, move |app| {
+            app.start_test(again_owner, again_title, &again_hops, target);
+            Ok(())
+        }) {
+            return;
+        }
         let steps = self.test_steps(hops, target);
         if steps.is_empty() {
             self.host_notice = Some("nothing to test".into());

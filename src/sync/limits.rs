@@ -71,6 +71,11 @@ pub const MAX_FRAME_BYTES: usize = 1 << 20;
 pub const MAX_JSON_DEPTH: usize = 32;
 pub const MAX_OPS_PER_TAIL: usize = 2_000;
 pub const HELLO_TIMEOUT_SECS: u64 = 10;
+/// Client side only: hard deadline from spawning the ssh child to the peer's first frame
+/// (PoC F: ssh `ConnectTimeout=4` plus a margin), so a dead or slow host fails fast.
+/// `HELLO_TIMEOUT_SECS` above is the other direction: how long an established session
+/// waits for the opening Hello of the other side once the connection is up.
+pub const CONNECT_TO_HELLO_MS: u64 = 4_500;
 pub const ROUND_TIMEOUT_SECS: u64 = 120;
 pub const IDLE_TIMEOUT_SECS: u64 = 30;
 /// Previous wrapping keys are dropped when every credential is confirmed under the new

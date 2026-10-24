@@ -41,6 +41,20 @@ impl App {
             None => None,
         };
         let effective_identity = resolved.as_ref().and_then(|r| r.identity.as_ref());
+        // Synced credentials this connection reads (host, identity, jump
+        // hops) must be open first; if not, the connect waits for the unlock.
+        let refs = connection_secret_refs(
+            &self.store,
+            &self.hosts,
+            entry.managed(),
+            effective_identity,
+            resolved.as_ref().and_then(|r| r.proxy_jump.as_deref()),
+        );
+        let label = entry.name().to_string();
+        let again = entry.clone();
+        if !self.preflight_unlock(refs, &label, move |app| app.connect_host_entry(again)) {
+            return Ok(());
+        }
         let (pending_secret, credential_diag): (Option<crate::session::PendingSecret>, String) =
             resolve_pending_secret(&entry, effective_identity, self.password_store.as_ref());
 
