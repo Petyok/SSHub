@@ -52,6 +52,15 @@ fn main() -> Result<()> {
         std::process::exit(code);
     }
 
+    // Red/admin verbs of host sync (headless, same shape).
+    if let Some(cmd) = args
+        .first()
+        .filter(|c| sshub::cli::sync_admin::is_admin_command(c))
+    {
+        let code = sshub::cli::sync_admin::run(cmd, &args[1..], || resolve_cli_profile(&startup))?;
+        std::process::exit(code);
+    }
+
     if let Some(cmd) = args.first() {
         if sshub::cli::is_subcommand(cmd) {
             let code = run_cli(&startup, &args)?;
