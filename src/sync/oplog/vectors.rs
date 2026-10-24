@@ -652,6 +652,102 @@ fn cases() -> Vec<(&'static str, Op)> {
             ),
         ),
         (
+            "red-approve",
+            mk(
+                41,
+                41,
+                1,
+                2,
+                OpBody::RedApprove {
+                    op_hash: [0x61; 32],
+                },
+            ),
+        ),
+        (
+            "red-phone-sign",
+            mk(
+                42,
+                42,
+                1,
+                2,
+                OpBody::RedPhoneSign {
+                    op_hash: [0x62; 32],
+                },
+            ),
+        ),
+        (
+            "red-factor",
+            mk(
+                43,
+                43,
+                1,
+                2,
+                OpBody::RedFactor {
+                    op_hash: [0x63; 32],
+                    factor: ThirdFactor::EmailCode,
+                    sig: [0xc3; 64],
+                },
+            ),
+        ),
+        (
+            "factor-register-paper",
+            mk(
+                44,
+                44,
+                1,
+                2,
+                OpBody::FactorRegister {
+                    factor: ThirdFactor::Paper,
+                    public: [0x64; 32],
+                    sealed: vec![],
+                    salt: [0x0f; 16],
+                    sender: None,
+                },
+            ),
+        ),
+        (
+            "factor-register-email",
+            mk(
+                45,
+                45,
+                1,
+                2,
+                OpBody::FactorRegister {
+                    factor: ThirdFactor::EmailCode,
+                    public: [0x65; 32],
+                    sealed: (0..128).collect(),
+                    salt: [0xf0; 16],
+                    sender: Some(other.clone()),
+                },
+            ),
+        ),
+        (
+            "device-role-change",
+            mk(
+                46,
+                46,
+                1,
+                2,
+                OpBody::DeviceRoleChange {
+                    device_id: other.clone(),
+                    to: DeviceRole::Holder,
+                },
+            ),
+        ),
+        (
+            "bulk-export",
+            mk(
+                47,
+                47,
+                1,
+                2,
+                OpBody::BulkExport {
+                    requester: dev.clone(),
+                    window_secs: 3600,
+                },
+            ),
+        ),
+        (
             "checkpoint-propose",
             mk(
                 36,
@@ -846,5 +942,5 @@ fn every_body_variant_has_a_vector() {
         .iter()
         .map(|(_, op)| super::canonical::body_name(&op.body))
         .collect();
-    assert_eq!(names.len(), 27, "{names:?}");
+    assert_eq!(names.len(), 33, "{names:?}");
 }

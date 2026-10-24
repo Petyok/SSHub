@@ -210,6 +210,12 @@ fn writes_of(op: &Op, hash: &[u8; 32]) -> Vec<RawWrite> {
                 "added_by": hex(hash),
             }),
         )],
+        OpBody::DeviceRoleChange { device_id, to } => vec![(
+            "role",
+            device_id.clone(),
+            0,
+            json!({ "role": super::merge::role_db(*to) }),
+        )],
         OpBody::DeviceRevoke { device_id } => {
             vec![("revoke", device_id.clone(), 0, json!({ "by": hex(hash) }))]
         }
@@ -540,6 +546,9 @@ fn device_section(
             m.insert("x25519".into(), wr.value["x25519"].clone());
             m.insert("mlkem".into(), wr.value["mlkem"].clone());
             wrap_epoch = wr.ord;
+        }
+        if let Some(r) = wins.get(&("role".to_string(), key.clone())) {
+            m.insert("role".into(), r.value["role"].clone());
         }
         m.insert("wrap_epoch".into(), json!(wrap_epoch));
         m.insert(
@@ -1867,7 +1876,10 @@ fn rebuild_caches(conn: &Connection, now: i64) -> Result<()> {
                         x,
                         ml,
                         v["name"].as_str().unwrap_or(""),
-                        v["role"].as_str().unwrap_or("mirror"),
+                        wins.get(&("role".to_string(), key.clone()))
+                            .and_then(|r| r.value["role"].as_str())
+                            .or(v["role"].as_str())
+                            .unwrap_or("mirror"),
                         v["attendance"].as_str().unwrap_or("attended"),
                         v["kind"].as_str().unwrap_or("terminal"),
                         if revoked { "revoked" } else { "operational" },
