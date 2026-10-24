@@ -192,6 +192,7 @@ fn writes_of(op: &Op, hash: &[u8; 32]) -> Vec<RawWrite> {
             role,
             attendance,
             kind,
+            verified_by,
         } if device.validate().is_ok() => vec![(
             "device",
             device.device_id(),
@@ -205,6 +206,7 @@ fn writes_of(op: &Op, hash: &[u8; 32]) -> Vec<RawWrite> {
                 "role": super::merge::role_db(*role),
                 "attendance": super::merge::attendance_db(*attendance),
                 "kind": super::merge::kind_db(*kind),
+                "verified_by": super::merge::verified_db(*verified_by),
                 "added_by": hex(hash),
             }),
         )],
@@ -302,6 +304,7 @@ pub(crate) fn record_anchor_device(
     role: DeviceRole,
     attendance: Attendance,
     kind: DeviceKind,
+    verified_by: VerifiedBy,
 ) -> Result<()> {
     let value = json!({
         "id": public.device_id(),
@@ -312,6 +315,7 @@ pub(crate) fn record_anchor_device(
         "role": super::merge::role_db(role),
         "attendance": super::merge::attendance_db(attendance),
         "kind": super::merge::kind_db(kind),
+        "verified_by": super::merge::verified_db(verified_by),
         "added_by": Value::Null,
     });
     conn.execute(
@@ -1007,7 +1011,7 @@ fn signers_of(conn: &Connection, proposal: &[u8; 32]) -> Result<Vec<DeviceId>> {
     Ok(rows.collect::<std::result::Result<_, _>>()?)
 }
 
-fn attended_terminal(conn: &Connection, device: &str) -> Result<bool> {
+pub(crate) fn attended_terminal(conn: &Connection, device: &str) -> Result<bool> {
     Ok(conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM sync_devices WHERE device_id = ?1 AND kind = 'terminal'
            AND attendance = 'attended' AND status NOT IN ('revoked','compromised'))",
@@ -1071,7 +1075,8 @@ pub(crate) fn record(
         let Some(p) = device_pub(conn, &sign.device_id)? else {
             continue;
         };
-        if !sign.verify(&p) {
+        // Unattended devices never sign: their signature proves a file was read.
+        if !sign.verify(&p) || !attended_terminal(conn, &sign.device_id)? {
             continue;
         }
         conn.execute(
@@ -1854,8 +1859,8 @@ fn rebuild_caches(conn: &Connection, now: i64) -> Result<()> {
                 let revoked = wins.contains_key(&("revoke".to_string(), key.clone()));
                 conn.execute(
                     "INSERT OR REPLACE INTO sync_devices
-                       (device_id, ed25519, x25519, mlkem, name, role, attendance, kind, status, wrap_epoch, last_seen)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                       (device_id, ed25519, x25519, mlkem, name, role, attendance, kind, status, wrap_epoch, verified_by, last_seen)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                     params![
                         key,
                         unhex(v["ed25519"].as_str().unwrap_or("")),
@@ -1867,6 +1872,7 @@ fn rebuild_caches(conn: &Connection, now: i64) -> Result<()> {
                         v["kind"].as_str().unwrap_or("terminal"),
                         if revoked { "revoked" } else { "operational" },
                         we,
+                        v["verified_by"].as_str().unwrap_or("sas"),
                         now,
                     ],
                 )?;

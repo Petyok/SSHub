@@ -64,6 +64,12 @@ pub fn validate_body(body: &OpBody) -> std::result::Result<(), String> {
             }
             Ok(())
         }
+        OpBody::ShareGrant { sealed, .. } => {
+            if sealed.len() > 128 {
+                return Err("a share grant is at most 128 bytes".into());
+            }
+            Ok(())
+        }
         OpBody::CheckpointPropose { cut, required, .. } => {
             if cut.len() > 4 * MAX_LIST || required.len() > 4 * MAX_LIST {
                 return Err("checkpoint cut is too large".into());
