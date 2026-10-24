@@ -12,6 +12,7 @@ pub mod limits;
 pub mod oplog;
 pub mod protocol;
 pub mod ratchet;
+pub mod runtime;
 pub mod share_release;
 pub mod snapshot;
 pub mod transport;

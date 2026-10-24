@@ -17,8 +17,9 @@ use std::time::{Duration, Instant};
 use super::transport::{Conn, Limits, CANCEL_POLL};
 use crate::ssh::{build_ssh_argv, SshHost};
 
-/// A device in the ring. The stage-1 type is a plain string too.
-pub type DeviceId = String;
+// The worker speaks the protocol's own types.
+pub use crate::sync::oplog::DeviceId;
+pub use crate::sync::protocol::RoundSummary;
 
 /// The error event text for a worker thread that is gone.
 pub const WORKER_STOPPED: &str = "sync worker stopped";
@@ -237,13 +238,6 @@ pub enum Round {
     Enroll,
 }
 
-/// What a finished round hands back.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct RoundSummary {
-    /// Operations that arrived and wait for review.
-    pub pending_arrived: usize,
-}
-
 /// A round's window onto the worker: report events, and wait for the UI's
 /// answers (the enrollment SAS confirmation).
 pub struct RoundCtx<'a> {
@@ -330,6 +324,14 @@ pub fn spawn_sync_thread(mut round: RoundFn) -> SyncHandle {
                     if summary.pending_arrived > 0 {
                         let _ = evt_tx.send(SyncEvent::PendingArrived(summary.pending_arrived));
                     }
+                    for id in summary.forks {
+                        let _ = evt_tx.send(SyncEvent::ForkDetected(id));
+                    }
+                    for id in summary.behind {
+                        let _ = evt_tx.send(SyncEvent::BehindPeer(id));
+                    }
+                    // `suspect` is already in the store as a device status:
+                    // the view re-reads it when the round is done.
                     SyncEvent::Done
                 }
                 Ok(Err(e)) => SyncEvent::Error(format!("{e:#}")),
@@ -415,6 +417,7 @@ mod tests {
             t.join().unwrap();
             Ok(RoundSummary {
                 pending_arrived: hello["pending"].as_u64().unwrap() as usize,
+                ..Default::default()
             })
         })
     }
@@ -492,6 +495,30 @@ mod tests {
         handle.send(SyncCmd::SyncNow("laptop".into())).unwrap();
         let seen = collect(&handle, terminal);
         assert_eq!(seen, vec![SyncEvent::PendingArrived(2), SyncEvent::Done]);
+    }
+
+    #[test]
+    fn a_rounds_forks_and_behind_peers_become_events() {
+        let handle = spawn_sync_thread(Box::new(|_, _, _| {
+            Ok(RoundSummary {
+                pending_arrived: 1,
+                forks: vec!["evil".into()],
+                behind: vec!["slow".into()],
+                suspect: vec!["odd".into()],
+                ..Default::default()
+            })
+        }));
+        handle.send(SyncCmd::SyncNow("laptop".into())).unwrap();
+        let seen = collect(&handle, terminal);
+        assert_eq!(
+            seen,
+            vec![
+                SyncEvent::PendingArrived(1),
+                SyncEvent::ForkDetected("evil".into()),
+                SyncEvent::BehindPeer("slow".into()),
+                SyncEvent::Done,
+            ]
+        );
     }
 
     #[test]
