@@ -364,6 +364,20 @@ pub trait SyncLink {
     }
 }
 
+impl SyncLink for super::transport::Conn {
+    fn send(&mut self, v: &Value) -> Result<()> {
+        Ok(Self::send(self, v)?)
+    }
+
+    fn recv(&mut self) -> Result<Value> {
+        Ok(Self::recv(self)?)
+    }
+
+    fn recv_first(&mut self) -> Result<Value> {
+        Ok(self.recv_hello()?)
+    }
+}
+
 /// Why a round ended early without being a failure of this side.
 #[derive(Debug)]
 enum Stop {

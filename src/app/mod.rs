@@ -304,6 +304,8 @@ pub struct App {
     pub snippet_picker: Option<SnippetPickerState>,
     /// Everything the Sync tab and its modals draw; see [`sync::SyncView`].
     pub sync: sync::SyncView,
+    /// The sync worker, once the protocol package attaches one.
+    pub sync_worker: Option<crate::sync::client::SyncHandle>,
     /// Tracker line an Esc dismiss applies to: the ghost stays hidden until
     /// the input line changes. `None` while nothing is dismissed.
     pub ghost_dismissed_for: Option<String>,
@@ -1068,6 +1070,7 @@ impl App {
             snippet_form: None,
             snippet_picker: None,
             sync: sync::SyncView::default(),
+            sync_worker: None,
             ghost_dismissed_for: None,
             ghost_host_cache: std::cell::RefCell::new(None),
             snippet_notice: None,

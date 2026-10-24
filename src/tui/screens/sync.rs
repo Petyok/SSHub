@@ -87,6 +87,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         format!("credentials: {mode}   pending: {}   {trust}", sync.pending),
         muted,
     ));
+    if let Some(error) = &sync.last_error {
+        lines.push(Line::styled(
+            format!("last sync failed: {error}"),
+            color(app, ColorRole::StatusError),
+        ));
+    } else if sync.syncing {
+        let step = sync.progress.as_deref().unwrap_or("connecting");
+        lines.push(Line::styled(format!("syncing: {step}"), muted));
+    }
     lines.push(Line::raw(""));
     lines.push(Line::styled(
         format!(

@@ -8,8 +8,22 @@
 
 use std::fmt;
 use std::io::{self, Read, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
 
-use super::limits::{MAX_FRAME_BYTES, MAX_JSON_DEPTH};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+
+use super::limits::{self, MAX_FRAME_BYTES, MAX_JSON_DEPTH};
+
+/// Hard deadline from the start of a connection to the peer's hello (PoC F:
+/// `ConnectTimeout=4` plus 500 ms keeps an offline verdict under five seconds).
+pub const CONNECT_TO_HELLO: Duration = Duration::from_millis(4500);
+/// How often a blocked wait looks at the cancel flag.
+pub(crate) const CANCEL_POLL: Duration = Duration::from_millis(100);
 
 #[derive(Debug)]
 pub enum FrameError {
@@ -26,12 +40,18 @@ impl fmt::Display for FrameError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             FrameError::Oversize(n) => {
-                write!(f, "length prefix {n} exceeds the {MAX_FRAME_BYTES} byte frame cap")
+                write!(
+                    f,
+                    "length prefix {n} exceeds the {MAX_FRAME_BYTES} byte frame cap"
+                )
             }
             FrameError::Empty => write!(f, "zero-length frame"),
             FrameError::Truncated => write!(f, "stream ended inside a frame"),
             FrameError::Depth(d) => {
-                write!(f, "JSON nesting depth {d} exceeds the cap of {MAX_JSON_DEPTH}")
+                write!(
+                    f,
+                    "JSON nesting depth {d} exceeds the cap of {MAX_JSON_DEPTH}"
+                )
             }
             FrameError::Utf8 => write!(f, "frame body is not valid UTF-8"),
             FrameError::Json(e) => write!(f, "frame body is not valid JSON: {e}"),
@@ -122,6 +142,171 @@ pub fn check_depth(body: &[u8]) -> Result<(), FrameError> {
     Ok(())
 }
 
+// ── Connection ───────────────────────────────────────────
+
+/// Deadlines of one connection.
+#[derive(Debug, Clone, Copy)]
+pub struct Limits {
+    /// From [`Conn::new`] to the peer's hello.
+    pub hello: Duration,
+    /// Longest silence while waiting for a frame.
+    pub idle: Duration,
+    /// The whole round, from [`Conn::new`].
+    pub round: Duration,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            hello: CONNECT_TO_HELLO,
+            idle: Duration::from_secs(limits::IDLE_TIMEOUT_SECS),
+            round: Duration::from_secs(limits::ROUND_TIMEOUT_SECS),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ConnError {
+    /// A deadline passed.
+    Timeout,
+    /// The peer closed the stream.
+    Closed,
+    /// The worker is shutting down.
+    Cancelled,
+    Frame(FrameError),
+    /// A well-formed frame that is not the message type asked for.
+    Decode(String),
+    Io(io::Error),
+}
+
+impl fmt::Display for ConnError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ConnError::Timeout => write!(f, "timed out waiting for the peer"),
+            ConnError::Closed => write!(f, "the peer closed the connection"),
+            ConnError::Cancelled => write!(f, "cancelled"),
+            ConnError::Frame(e) => write!(f, "bad frame from the peer: {e}"),
+            ConnError::Decode(e) => write!(f, "unexpected message from the peer: {e}"),
+            ConnError::Io(e) => write!(f, "io: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for ConnError {}
+
+type Incoming = Result<Option<serde_json::Value>, FrameError>;
+
+/// A framed, deadline-bound connection over any reader and writer: ssh child
+/// pipes on the client, stdin and stdout in `sync-serve`. A reader thread
+/// turns the peer's byte stream into frames, so waits can time out and be
+/// cancelled; writes go straight to the peer. Frames are JSON: byte fields in
+/// a message type travel as base64.
+pub struct Conn {
+    writer: Box<dyn Write + Send>,
+    rx: Receiver<Incoming>,
+    started: Instant,
+    limits: Limits,
+    cancel: Arc<AtomicBool>,
+    hello_seen: Arc<AtomicBool>,
+}
+
+impl Conn {
+    pub fn new(
+        mut reader: impl Read + Send + 'static,
+        writer: impl Write + Send + 'static,
+        limits: Limits,
+        cancel: Arc<AtomicBool>,
+    ) -> Conn {
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || loop {
+            let frame = read_frame(&mut reader);
+            let last = !matches!(frame, Ok(Some(_)));
+            if tx.send(frame).is_err() || last {
+                break;
+            }
+        });
+        Conn {
+            writer: Box::new(writer),
+            rx,
+            started: Instant::now(),
+            limits,
+            cancel,
+            hello_seen: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Send one message as a frame.
+    pub fn send_msg<T: Serialize>(&mut self, msg: &T) -> Result<(), ConnError> {
+        let value = serde_json::to_value(msg).map_err(|e| ConnError::Decode(e.to_string()))?;
+        self.send(&value)
+    }
+
+    /// The peer's first message, within the connect-to-hello deadline.
+    pub fn recv_hello_msg<T: DeserializeOwned>(&mut self) -> Result<T, ConnError> {
+        decode(self.recv_hello()?)
+    }
+
+    /// The next message: within the idle timeout and the round deadline.
+    pub fn recv_msg<T: DeserializeOwned>(&mut self) -> Result<T, ConnError> {
+        decode(self.recv()?)
+    }
+
+    /// [`Conn::send_msg`] for a raw JSON value.
+    pub fn send(&mut self, frame: &serde_json::Value) -> Result<(), ConnError> {
+        write_frame(&mut self.writer, frame).map_err(ConnError::Io)
+    }
+
+    /// [`Conn::recv_hello_msg`] for a raw JSON value.
+    pub fn recv_hello(&mut self) -> Result<serde_json::Value, ConnError> {
+        let left = (self.started + self.limits.hello).saturating_duration_since(Instant::now());
+        let hello = self.wait(left)?;
+        self.hello_seen.store(true, Ordering::SeqCst);
+        Ok(hello)
+    }
+
+    /// [`Conn::recv_msg`] for a raw JSON value.
+    pub fn recv(&mut self) -> Result<serde_json::Value, ConnError> {
+        let round_left =
+            (self.started + self.limits.round).saturating_duration_since(Instant::now());
+        self.wait(self.limits.idle.min(round_left))
+    }
+
+    fn wait(&mut self, within: Duration) -> Result<serde_json::Value, ConnError> {
+        let deadline = Instant::now() + within;
+        loop {
+            if self.cancel.load(Ordering::SeqCst) {
+                return Err(ConnError::Cancelled);
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(ConnError::Timeout);
+            }
+            match self.rx.recv_timeout(left.min(CANCEL_POLL)) {
+                Ok(Ok(Some(v))) => return Ok(v),
+                Ok(Ok(None)) | Err(RecvTimeoutError::Disconnected) => {
+                    return Err(ConnError::Closed)
+                }
+                Ok(Err(e)) => return Err(ConnError::Frame(e)),
+                Err(RecvTimeoutError::Timeout) => {}
+            }
+        }
+    }
+
+    /// Whether the peer's hello arrived (what separates "offline" from "failed").
+    pub fn hello_seen(&self) -> bool {
+        self.hello_seen.load(Ordering::SeqCst)
+    }
+
+    /// The hello flag, for a watchdog that must not hold the connection.
+    pub(crate) fn hello_flag(&self) -> Arc<AtomicBool> {
+        self.hello_seen.clone()
+    }
+}
+
+fn decode<T: DeserializeOwned>(value: serde_json::Value) -> Result<T, ConnError> {
+    serde_json::from_value(value).map_err(|e| ConnError::Decode(e.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,7 +365,11 @@ mod tests {
             ),
             ("trailing garbage after JSON", frame(b"{}xyz"), false),
             ("zero-length frame", frame(&[]), false),
-            ("control: nested arrays depth 32 (accepted)", nested(32), true),
+            (
+                "control: nested arrays depth 32 (accepted)",
+                nested(32),
+                true,
+            ),
         ]
     }
 
@@ -239,9 +428,9 @@ mod tests {
 
     #[test]
     fn the_depth_cap_is_exact_and_ignores_brackets_inside_strings() {
-        assert!(check_depth(&vec![b'['; MAX_JSON_DEPTH]).is_ok());
+        assert!(check_depth(&[b'['; MAX_JSON_DEPTH]).is_ok());
         assert!(matches!(
-            check_depth(&vec![b'['; MAX_JSON_DEPTH + 1]),
+            check_depth(&[b'['; MAX_JSON_DEPTH + 1]),
             Err(FrameError::Depth(d)) if d == MAX_JSON_DEPTH + 1
         ));
         let deep_string = format!("\"{}\\\"{}\"", "[".repeat(100), "{".repeat(100));
@@ -258,7 +447,10 @@ mod tests {
         let mut r = Cursor::new(wire);
         assert_eq!(read_frame(&mut r).unwrap(), Some(a));
         assert_eq!(read_frame(&mut r).unwrap(), Some(b));
-        assert!(read_frame(&mut r).unwrap().is_none(), "clean EOF at a boundary");
+        assert!(
+            read_frame(&mut r).unwrap().is_none(),
+            "clean EOF at a boundary"
+        );
     }
 
     #[test]
@@ -307,5 +499,139 @@ mod tests {
         let err = write_frame(&mut sink, &big).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
         assert!(sink.is_empty(), "nothing reached the wire");
+    }
+}
+
+#[cfg(test)]
+mod conn_tests {
+    use super::*;
+    use serde::Deserialize;
+    use serde_json::json;
+    use std::os::unix::net::UnixStream;
+
+    fn quick() -> Limits {
+        Limits {
+            hello: Duration::from_millis(200),
+            idle: Duration::from_millis(200),
+            round: Duration::from_secs(5),
+        }
+    }
+
+    fn pair(limits: Limits) -> (Conn, UnixStream, Arc<AtomicBool>) {
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let conn = Conn::new(ours.try_clone().unwrap(), ours, limits, cancel.clone());
+        (conn, theirs, cancel)
+    }
+
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    #[serde(tag = "type", rename_all = "snake_case")]
+    enum Msg {
+        Hello { version: u16 },
+        Bye,
+    }
+
+    #[test]
+    fn typed_messages_round_trip_over_an_in_process_pipe() {
+        let (mut conn, mut peer, _) = pair(quick());
+        let t = thread::spawn(move || {
+            let m = read_frame(&mut peer).unwrap().unwrap();
+            write_frame(&mut peer, &m).unwrap(); // echo
+        });
+        conn.send_msg(&Msg::Hello { version: 1 }).unwrap();
+        assert_eq!(
+            conn.recv_hello_msg::<Msg>().unwrap(),
+            Msg::Hello { version: 1 }
+        );
+        assert!(conn.hello_seen());
+        t.join().unwrap();
+    }
+
+    #[test]
+    fn a_message_of_the_wrong_shape_is_a_decode_error_not_a_panic() {
+        let (mut conn, mut peer, _) = pair(quick());
+        write_frame(&mut peer, &json!({"type": "nonsense"})).unwrap();
+        assert!(matches!(conn.recv_msg::<Msg>(), Err(ConnError::Decode(_))));
+    }
+
+    #[test]
+    fn a_silent_peer_misses_the_hello_deadline_and_the_idle_timeout() {
+        let (mut conn, _peer, _) = pair(quick());
+        let start = Instant::now();
+        assert!(matches!(
+            conn.recv_hello_msg::<Msg>(),
+            Err(ConnError::Timeout)
+        ));
+        assert!(!conn.hello_seen());
+        assert!(start.elapsed() < Duration::from_secs(2));
+        assert!(matches!(conn.recv_msg::<Msg>(), Err(ConnError::Timeout)));
+    }
+
+    #[test]
+    fn the_round_deadline_cuts_a_chatty_connection_short() {
+        let limits = Limits {
+            round: Duration::from_millis(150),
+            ..quick()
+        };
+        let (mut conn, _peer, _) = pair(limits);
+        thread::sleep(Duration::from_millis(200));
+        assert!(matches!(conn.recv_msg::<Msg>(), Err(ConnError::Timeout)));
+    }
+
+    #[test]
+    fn eof_and_bad_frames_surface_as_errors() {
+        let (mut conn, peer, _) = pair(quick());
+        drop(peer);
+        assert!(matches!(conn.recv_msg::<Msg>(), Err(ConnError::Closed)));
+        assert!(
+            matches!(conn.recv_msg::<Msg>(), Err(ConnError::Closed)),
+            "and stays closed"
+        );
+
+        let (mut conn, mut peer, _) = pair(quick());
+        peer.write_all(&[0xff, 0xff, 0xff, 0xff]).unwrap();
+        assert!(matches!(
+            conn.recv_msg::<Msg>(),
+            Err(ConnError::Frame(FrameError::Oversize(_)))
+        ));
+    }
+
+    #[test]
+    fn cancelling_wakes_a_blocked_wait() {
+        let (mut conn, _peer, cancel) = pair(Limits::default());
+        let flag = cancel.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(50));
+            flag.store(true, Ordering::SeqCst);
+        });
+        let start = Instant::now();
+        assert!(matches!(conn.recv_msg::<Msg>(), Err(ConnError::Cancelled)));
+        assert!(start.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn the_server_side_works_over_any_reader_and_writer() {
+        // What `sync-serve` does over stdin and stdout: here, two pipes.
+        let (to_server, server_in) = UnixStream::pair().unwrap();
+        let (server_out, from_server) = UnixStream::pair().unwrap();
+        let mut server = Conn::new(
+            server_in,
+            server_out,
+            quick(),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let mut client = Conn::new(
+            from_server,
+            to_server,
+            quick(),
+            Arc::new(AtomicBool::new(false)),
+        );
+        client.send_msg(&Msg::Bye).unwrap();
+        assert_eq!(server.recv_msg::<Msg>().unwrap(), Msg::Bye);
+        server.send_msg(&Msg::Hello { version: 2 }).unwrap();
+        assert_eq!(
+            client.recv_hello_msg::<Msg>().unwrap(),
+            Msg::Hello { version: 2 }
+        );
     }
 }
