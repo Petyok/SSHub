@@ -774,6 +774,46 @@ pub fn release_share_for(
     ))
 }
 
+/// The trust-session path on the holder's side: finds a certificate of `requester` that allows
+/// `host` right now and releases under it. `Err` carries the reason of the last certificate that
+/// refused, or says there is none; the caller defers the request.
+pub fn trust_grant(
+    store: &LauncherStore,
+    id: &DeviceIdentity,
+    requester: &DeviceId,
+    host: &HostUid,
+    epoch: u64,
+    eph_x25519_pub: &[u8; 32],
+    now: i64,
+) -> Result<(Vec<u8>, Option<OpBody>)> {
+    let phone = phone_device(store)?.context("the ring has no phone: no certificate can exist")?;
+    let row = store
+        .sync_devices()?
+        .into_iter()
+        .find(|d| d.id == phone)
+        .context("the phone is not a device of this ring")?;
+    let mut last = anyhow!("the requester holds no trust certificate");
+    for op in ops_of(store, "CertIssue", Some(&phone))?.into_iter().rev() {
+        let Ok(cert) = super::cert::DelegationCert::from_op(&op) else {
+            continue;
+        };
+        if cert.device_id != *requester {
+            continue;
+        }
+        let grant = Grant::Cert {
+            cert: &cert,
+            issuer_ed25519: row.public.ed25519_pub,
+            phone_head_ts: row.last_seen,
+            now,
+        };
+        match release_share_for(store, id, host, epoch, eph_x25519_pub, requester, grant) {
+            Ok(done) => return Ok(done),
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
+}
+
 /// Releases `share` to a requester's ephemeral key after the holder's user approved.
 pub fn release_share(
     store: &LauncherStore,

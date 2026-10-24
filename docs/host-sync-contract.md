@@ -900,8 +900,7 @@ Code: `src/sync/{quorum,reshare,cred_ops,cert,modes,recovery}.rs` (plus the phon
 ### 4b. Second-share paths (how a terminal gets the share it does not hold)
 
 `ShareSource::second_share(host, epoch, mine)` is answered by one of five paths. Which ring device is
-the phone: the unique non-revoked device whose `DeviceRow.kind` is `Phone` (`quorum::phone_device(store)`,
-available when `DeviceKind` lands in the op-log; until then the phone paths report `NeedsShares`).
+the phone: the unique non-revoked device whose `DeviceRow.kind` is `Phone` (`quorum::phone_device(store)`).
 
 **Peer, trust session (synchronous, inside an authenticated session).** After `Prove` the client may send
 `ShareRequest { host_uid, request_id, eph_x25519_pub, epoch }` instead of `Heads`; the holder's `sync-serve`
@@ -910,15 +909,17 @@ bytes) or `ShareDeferred { request_id, reason }`, then both sides finish the rou
 when this device holds the share, the requester holds a non-revoked `CertIssue` from the phone for it, and
 `cert_allows` passes (scope, expiry, phone freshness, ring-wide budget); a new host is recorded with a
 `CertHostOpened` op. A holder that is attended or unattended is treated the same on this path: the
-certificate IS the consent. `Deferred` sends the requester to the next path. The client side is
-`protocol::run_share_request`.
+certificate IS the consent. `Deferred` sends the requester to the next path. Built: client
+`protocol::run_share_request(conn, store, id, holder, &ShareAsk { host_uid, epoch, eph, request_id }) ->
+ShareReply::{Granted(sealed), Deferred(reason)}`; holder side inside `run_sync_serve` via
+`quorum::trust_grant`.
 
 **Peer, attended (asynchronous, through the op-log).** The requester appends `ShareRelease { host_uid,
 request_id, requester, eph_x25519_pub }` (the op gains the ephemeral key; Yellow, so it shows up in the
 holder's review modal naming the requester on its next sync). On approve the holder's TUI appends one
 `ShareGrant { host_uid, request_id, requester, epoch, sealed }` per share epoch it holds (newest first, at
 most 3; Green, inert data) with `sealed` as above; the requester finds it on its next sync
-(`quorum::peer_request`, `quorum::peer_poll`). The grant is sealed to the EPHEMERAL key, never to the
+(`quorum::peer_request`, `quorum::peer_poll`; to be written when the op-log has the two changes: `eph_x25519_pub` on `ShareRelease` and the `ShareGrant` op). The grant is sealed to the EPHEMERAL key, never to the
 requester's wrap key: a grant wrapped to a long-lived key would let one stolen requester device open the
 credential forever. The ephemeral secret lives in the requester's memory only; if sshub exits the request
 is made again. No `sync-release` CLI verb: an attended holder approves in its TUI, an unattended holder
