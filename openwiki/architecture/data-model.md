@@ -53,7 +53,7 @@ migrations and seeds the "Default" identity. `run_migrations`
 3. One transaction: the base v2 schema (`CREATE TABLE IF NOT EXISTS`), then
    every `migrate_vN_to_vN+1` step below the current version, then the legacy
    metadata import (fresh DB only), then `schema_version` is set to
-   **`SCHEMA_VERSION = 21`**. Column adds are guarded with `pragma_table_info`
+   **`SCHEMA_VERSION = 22`**. Column adds are guarded with `pragma_table_info`
    so re-runs are safe.
 
 Migration history worth knowing:

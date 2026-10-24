@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: i64 = 21;
+const SCHEMA_VERSION: i64 = 22;
 
 /// Name of the reserved, auto-created "Favorites" group. Membership in it is the
 /// source of truth for a host's favourite status.
@@ -245,6 +245,10 @@ pub(crate) fn run_migrations(conn: &Connection, launcher_path: &Path) -> Result<
 
     if current < 21 {
         migrate_v20_to_v21(conn)?;
+    }
+
+    if current < 22 {
+        migrate_v21_to_v22(conn)?;
     }
 
     // Runs last so all columns it writes to (e.g. environment) already exist.
@@ -886,6 +890,224 @@ fn migrate_v20_to_v21(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Host sync (#13): stable replicated ids and the op-log tables.
+///
+/// Local integer ids stay the row keys and the foreign-key targets; a 16 byte
+/// `uid` is added next to them for everything that crosses devices. Three rules
+/// from the v16 and v21 history shape this migration:
+/// - the columns come from `ALTER TABLE ... ADD COLUMN`, never from a rebuild
+///   (`DROP TABLE hosts` fires the children's `ON DELETE CASCADE`);
+/// - uniqueness is a `UNIQUE INDEX`, not a column constraint;
+/// - no sync table references `hosts(id)`; they key on `uid` BLOBs.
+///
+/// Rows inserted later get a uid from an `AFTER INSERT` trigger, so every
+/// existing insert path (`create_host_on`, ssh_config import, transfers) stays
+/// untouched. Seeded rows get the fixed uids of [`super::uid`], so two devices
+/// agree on them without talking.
+fn migrate_v21_to_v22(conn: &Connection) -> Result<()> {
+    for table in ["hosts", "host_groups", "identities"] {
+        let has_col: bool = conn
+            .prepare(&format!(
+                "SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = 'uid'"
+            ))?
+            .query_row([], |row| row.get::<_, i64>(0))
+            .map(|c| c > 0)?;
+        if !has_col {
+            conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN uid BLOB;"))?;
+        }
+    }
+    conn.execute(
+        "UPDATE host_groups SET uid = ?1
+         WHERE reserved = 1 AND uid IS NULL
+           AND id = (SELECT MIN(id) FROM host_groups WHERE reserved = 1)",
+        params![&super::uid::FAVORITES_GROUP_UID[..]],
+    )?;
+    conn.execute(
+        "UPDATE identities SET uid = ?1 WHERE name = 'Default' AND uid IS NULL",
+        params![&super::uid::DEFAULT_IDENTITY_UID[..]],
+    )?;
+    conn.execute_batch(
+        "UPDATE hosts SET uid = randomblob(16) WHERE uid IS NULL;
+         UPDATE host_groups SET uid = randomblob(16) WHERE uid IS NULL;
+         UPDATE identities SET uid = randomblob(16) WHERE uid IS NULL;
+         CREATE UNIQUE INDEX IF NOT EXISTS hosts_uid ON hosts(uid);
+         CREATE UNIQUE INDEX IF NOT EXISTS host_groups_uid ON host_groups(uid);
+         CREATE UNIQUE INDEX IF NOT EXISTS identities_uid ON identities(uid);
+         CREATE TRIGGER IF NOT EXISTS hosts_uid_ai AFTER INSERT ON hosts
+             WHEN NEW.uid IS NULL
+             BEGIN UPDATE hosts SET uid = randomblob(16) WHERE id = NEW.id; END;
+         CREATE TRIGGER IF NOT EXISTS host_groups_uid_ai AFTER INSERT ON host_groups
+             WHEN NEW.uid IS NULL
+             BEGIN UPDATE host_groups SET uid = randomblob(16) WHERE id = NEW.id; END;
+         CREATE TRIGGER IF NOT EXISTS identities_uid_ai AFTER INSERT ON identities
+             WHEN NEW.uid IS NULL
+             BEGIN UPDATE identities SET uid = randomblob(16) WHERE id = NEW.id; END;",
+    )?;
+    conn.execute_batch(SYNC_SCHEMA)?;
+    Ok(())
+}
+
+/// Sync tables (schema v22). `u64` protocol numbers (seq, lamport, epoch) are
+/// stored as SQLite INTEGER, so ingest refuses anything above `i64::MAX`.
+/// `state` of an op: `applied` (auto, Green), `pending` (awaiting review),
+/// `approved` (review accepted), `rejected` (review refused, kept for the
+/// chain), `void` (author revoked at or below this lamport).
+const SYNC_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS sync_ops (
+    op_hash     BLOB PRIMARY KEY,
+    device_id   TEXT NOT NULL,
+    seq         INTEGER NOT NULL,
+    lamport     INTEGER NOT NULL,
+    prev_hash   BLOB NOT NULL,
+    epoch       INTEGER NOT NULL,
+    canonical   BLOB NOT NULL,
+    signature   BLOB NOT NULL,
+    kind        TEXT NOT NULL,
+    subject     TEXT,
+    state       TEXT NOT NULL
+        CHECK (state IN ('applied','pending','approved','rejected','void')),
+    reason      TEXT,
+    local       INTEGER NOT NULL DEFAULT 0,
+    received_at INTEGER NOT NULL,
+    UNIQUE (device_id, seq)
+);
+CREATE INDEX IF NOT EXISTS sync_ops_lamport ON sync_ops(lamport);
+CREATE INDEX IF NOT EXISTS sync_ops_state ON sync_ops(state);
+CREATE INDEX IF NOT EXISTS sync_ops_subject ON sync_ops(kind, subject);
+
+CREATE TABLE IF NOT EXISTS sync_chain_heads (
+    device_id TEXT PRIMARY KEY,
+    seq       INTEGER NOT NULL,
+    op_hash   BLOB NOT NULL,
+    lamport   INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sync_pending_ops (
+    op_hash     BLOB PRIMARY KEY,
+    device_id   TEXT NOT NULL,
+    entity_kind TEXT,
+    entity_uid  BLOB,
+    reason      TEXT NOT NULL,
+    received_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sync_pending_ops_device ON sync_pending_ops(device_id);
+
+CREATE TABLE IF NOT EXISTS sync_devices (
+    device_id  TEXT PRIMARY KEY,
+    ed25519    BLOB NOT NULL,
+    x25519     BLOB NOT NULL,
+    mlkem      BLOB NOT NULL,
+    name       TEXT NOT NULL,
+    role       TEXT NOT NULL CHECK (role IN ('holder','mirror')),
+    attendance TEXT NOT NULL CHECK (attendance IN ('attended','unattended')),
+    status     TEXT NOT NULL DEFAULT 'operational',
+    exempt     INTEGER NOT NULL DEFAULT 0,
+    wrap_epoch INTEGER NOT NULL DEFAULT 0,
+    last_seen  INTEGER NOT NULL DEFAULT 0,
+    added_by   BLOB,
+    fork_a     BLOB,
+    fork_b     BLOB
+);
+
+-- Every generation of a device's wrap public keys (C14): `sync_devices` holds the
+-- current one, old shares stay addressable by the generation they were wrapped to.
+CREATE TABLE IF NOT EXISTS sync_wrap_history (
+    device_id  TEXT NOT NULL,
+    wrap_epoch INTEGER NOT NULL,
+    x25519     BLOB NOT NULL,
+    mlkem      BLOB NOT NULL,
+    PRIMARY KEY (device_id, wrap_epoch)
+);
+
+CREATE TABLE IF NOT EXISTS sync_tombstones (
+    kind      TEXT NOT NULL,
+    uid       BLOB NOT NULL,
+    lamport   INTEGER NOT NULL,
+    device_id TEXT NOT NULL,
+    op_hash   BLOB NOT NULL,
+    PRIMARY KEY (kind, uid, op_hash)
+);
+
+CREATE TABLE IF NOT EXISTS sync_head_attests (
+    device_id  TEXT NOT NULL,
+    seq        INTEGER NOT NULL,
+    chain_hash BLOB NOT NULL,
+    signature  BLOB NOT NULL,
+    PRIMARY KEY (device_id, seq, chain_hash)
+);
+
+CREATE TABLE IF NOT EXISTS sync_delegation_certs (
+    cert_id               BLOB PRIMARY KEY,
+    device_id             TEXT NOT NULL,
+    scope                 TEXT NOT NULL,
+    expiry                INTEGER NOT NULL,
+    max_new_hosts_per_day INTEGER NOT NULL,
+    epoch_lo              INTEGER NOT NULL,
+    epoch_hi              INTEGER NOT NULL,
+    issuer                TEXT NOT NULL,
+    revoked               INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS sync_cert_hosts_opened (
+    cert_id   BLOB NOT NULL,
+    host_uid  BLOB NOT NULL,
+    opened_at INTEGER NOT NULL,
+    PRIMARY KEY (cert_id, host_uid)
+);
+
+CREATE TABLE IF NOT EXISTS sync_cred_state (
+    host_uid       BLOB PRIMARY KEY,
+    ciphertext     BLOB NOT NULL,
+    wrapped_shares TEXT NOT NULL,
+    lamport        INTEGER NOT NULL,
+    device_id      TEXT NOT NULL,
+    op_hash        BLOB NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sync_epochs (
+    device_id TEXT PRIMARY KEY,
+    epoch     INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sync_meta (
+    key   TEXT PRIMARY KEY,
+    value BLOB NOT NULL
+);
+
+-- Per-field writes of host, group and identity upserts. Every write is kept;
+-- the effective value of a field is the newest write (lamport, device, seq)
+-- among writes whose op is applied or approved. Keyed by uid, never by row id.
+CREATE TABLE IF NOT EXISTS sync_fields (
+    kind      TEXT NOT NULL,
+    uid       BLOB NOT NULL,
+    field     TEXT NOT NULL,
+    op_hash   BLOB NOT NULL,
+    lamport   INTEGER NOT NULL,
+    device_id TEXT NOT NULL,
+    seq       INTEGER NOT NULL,
+    value     TEXT NOT NULL,
+    PRIMARY KEY (kind, uid, field, op_hash)
+);
+CREATE INDEX IF NOT EXISTS sync_fields_op ON sync_fields(op_hash);
+
+-- Cache of the effective view of each replicated entity: liveness and the base
+-- name with the key of the write that set it (the name tie-break). Recomputed
+-- from sync_fields whenever an entity is touched; never authoritative.
+CREATE TABLE IF NOT EXISTS sync_entities (
+    kind         TEXT NOT NULL,
+    uid          BLOB NOT NULL,
+    alive        INTEGER NOT NULL,
+    name         TEXT,
+    name_lamport INTEGER NOT NULL DEFAULT 0,
+    name_device  TEXT NOT NULL DEFAULT '',
+    -- 1 when the projection created the row (and may remove it again if the
+    -- entity loses its required fields), 0 for a row the user already had.
+    created      INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (kind, uid)
+);
+CREATE INDEX IF NOT EXISTS sync_entities_name ON sync_entities(kind, name);
+";
+
 fn table_sql(conn: &Connection, table: &str) -> Result<String> {
     Ok(conn.query_row(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
@@ -1366,7 +1588,7 @@ INSERT INTO host_groups (name, sort_order, reserved, created_at)
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .unwrap();
-        assert_eq!((version, workspaces, hosts), (21, 0, 1));
+        assert_eq!((version, workspaces, hosts), (SCHEMA_VERSION, 0, 1));
         let snapshots: Vec<String> = std::fs::read_dir(dir.path())
             .unwrap()
             .flatten()
@@ -1648,6 +1870,216 @@ INSERT INTO host_groups (name, sort_order, reserved, created_at)
             .unwrap();
         assert_eq!(environment.as_deref(), Some("prod"));
         assert_eq!(tags, "[]");
+    }
+
+    const SYNC_TABLES: [&str; 14] = [
+        "sync_ops",
+        "sync_chain_heads",
+        "sync_pending_ops",
+        "sync_devices",
+        "sync_tombstones",
+        "sync_head_attests",
+        "sync_delegation_certs",
+        "sync_cert_hosts_opened",
+        "sync_cred_state",
+        "sync_epochs",
+        "sync_meta",
+        "sync_fields",
+        "sync_entities",
+        "sync_wrap_history",
+    ];
+
+    /// Put a current database back to exactly the v21 shape: no uid columns,
+    /// indexes or triggers, no sync tables. Oracle for the upgrade tests: the
+    /// DDL is dropped by hand here, not by anything the migration owns.
+    fn downgrade_to_v21(conn: &Connection) {
+        for table in SYNC_TABLES {
+            conn.execute_batch(&format!("DROP TABLE {table};")).unwrap();
+        }
+        for t in ["hosts", "host_groups", "identities"] {
+            conn.execute_batch(&format!(
+                "DROP TRIGGER {t}_uid_ai; DROP INDEX {t}_uid; ALTER TABLE {t} DROP COLUMN uid;"
+            ))
+            .unwrap();
+        }
+        set_schema_version(conn, 21).unwrap();
+    }
+
+    fn count(conn: &Connection, sql: &str) -> i64 {
+        conn.query_row(sql, [], |r| r.get(0)).unwrap()
+    }
+
+    /// v21 -> v22 on a database with data: every row gets a distinct uid, the
+    /// seeded rows get the well-known ones, nothing cascades away, a snapshot of
+    /// the v21 file is taken, the sync tables exist, and a second run is a no-op.
+    #[test]
+    fn migration_v22_backfills_uids_without_losing_children() {
+        let dir = temp_dir();
+        let db_path = dir.path().join("launcher.db");
+        let conn = Connection::open(&db_path).unwrap();
+        run_migrations(&conn, &db_path).unwrap();
+        conn.execute_batch(
+            "INSERT INTO identities (name, created_at) VALUES ('Default', 1);
+             INSERT INTO identities (name, created_at) VALUES ('work', 1);
+             INSERT INTO host_groups (name, created_at) VALUES ('prod', 1);
+             INSERT INTO hosts (name, address, transport, created_at, updated_at)
+                 VALUES ('a', '10.0.0.1', 'ssh', 1, 1), ('b', '10.0.0.2', 'ssh', 1, 1);
+             INSERT INTO host_group_memberships (host_id, group_id)
+                 SELECT h.id, g.id FROM hosts h, host_groups g;
+             INSERT INTO tunnels (host_id, tunnel_type, local_port, remote_host,
+                                  remote_port, created_at, updated_at)
+                 SELECT id, 'L', 8080, 'localhost', 80, 1, 1 FROM hosts;",
+        )
+        .unwrap();
+        let memberships = count(&conn, "SELECT COUNT(*) FROM host_group_memberships");
+        let tunnels = count(&conn, "SELECT COUNT(*) FROM tunnels");
+        assert!(memberships >= 4 && tunnels == 2);
+        downgrade_to_v21(&conn);
+        drop(conn);
+
+        let conn = Connection::open(&db_path).unwrap();
+        run_migrations(&conn, &db_path).unwrap();
+
+        assert_eq!(count(&conn, "SELECT version FROM schema_version"), 22);
+        for t in ["hosts", "host_groups", "identities"] {
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!("SELECT COUNT(*) FROM {t} WHERE uid IS NULL")
+                ),
+                0,
+                "{t}: every row has a uid"
+            );
+            assert_eq!(
+                count(&conn, &format!("SELECT COUNT(DISTINCT uid) FROM {t}")),
+                count(&conn, &format!("SELECT COUNT(*) FROM {t}")),
+                "{t}: uids are distinct"
+            );
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!("SELECT COUNT(*) FROM {t} WHERE length(uid) != 16")
+                ),
+                0
+            );
+        }
+        let fav: Vec<u8> = conn
+            .query_row("SELECT uid FROM host_groups WHERE reserved = 1", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(fav, super::super::uid::FAVORITES_GROUP_UID);
+        let default: Vec<u8> = conn
+            .query_row(
+                "SELECT uid FROM identities WHERE name = 'Default'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(default, super::super::uid::DEFAULT_IDENTITY_UID);
+
+        // No cascade loss: the rebuild hazard of v16 and v21 does not apply.
+        assert_eq!(
+            count(&conn, "SELECT COUNT(*) FROM host_group_memberships"),
+            memberships
+        );
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM tunnels"), tunnels);
+
+        for table in SYNC_TABLES {
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!(
+                        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='{table}'"
+                    )
+                ),
+                1,
+                "{table} exists"
+            );
+        }
+        // No sync table references hosts: the rebuild would cascade into it.
+        for table in SYNC_TABLES {
+            let refs: i64 = conn
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM pragma_foreign_key_list('{table}')"),
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(refs, 0, "{table} must not carry foreign keys");
+        }
+
+        // The v21 snapshot was written before anything changed.
+        let backups: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("launcher.db.bak-v21-"))
+            .collect();
+        assert_eq!(backups.len(), 1, "one v21 snapshot: {backups:?}");
+        let old = Connection::open(dir.path().join(&backups[0])).unwrap();
+        assert_eq!(
+            count(
+                &old,
+                "SELECT COUNT(*) FROM pragma_table_info('hosts') WHERE name = 'uid'"
+            ),
+            0,
+            "the snapshot predates the uid column"
+        );
+
+        // A host inserted afterwards through plain SQL still gets a uid.
+        conn.execute(
+            "INSERT INTO hosts (name, address, transport, created_at, updated_at)
+             VALUES ('c', '10.0.0.3', 'ssh', 1, 1)",
+            [],
+        )
+        .unwrap();
+        assert_eq!(
+            count(&conn, "SELECT COUNT(*) FROM hosts WHERE uid IS NULL"),
+            0
+        );
+
+        // Idempotent: nothing changes on the second run, uids stay put.
+        let before: Vec<Vec<u8>> = conn
+            .prepare("SELECT uid FROM hosts ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        run_migrations(&conn, &db_path).unwrap();
+        let after: Vec<Vec<u8>> = conn
+            .prepare("SELECT uid FROM hosts ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(before, after);
+    }
+
+    /// Re-running the v22 step on an already-migrated database (a crash between
+    /// the step and the version write) must neither fail nor reshuffle uids.
+    #[test]
+    fn migration_v22_step_is_rerunnable() {
+        let dir = temp_dir();
+        let db_path = dir.path().join("launcher.db");
+        let conn = Connection::open(&db_path).unwrap();
+        run_migrations(&conn, &db_path).unwrap();
+        conn.execute(
+            "INSERT INTO hosts (name, address, transport, created_at, updated_at)
+             VALUES ('a', '10.0.0.1', 'ssh', 1, 1)",
+            [],
+        )
+        .unwrap();
+        let uid: Vec<u8> = conn
+            .query_row("SELECT uid FROM hosts WHERE name = 'a'", [], |r| r.get(0))
+            .unwrap();
+        migrate_v21_to_v22(&conn).unwrap();
+        let again: Vec<u8> = conn
+            .query_row("SELECT uid FROM hosts WHERE name = 'a'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(uid, again);
     }
 
     #[test]
