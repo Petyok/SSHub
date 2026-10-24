@@ -115,3 +115,33 @@ Other rows:
 - The courier carries the last 8 ops; a longer gap needs the phone to touch another terminal.
 - Slow Argon2 phone: the 256 MiB x 4 snapshot profile falls back to 64 MiB x 8, recorded in the blob and flagged; not exercised on a slow device.
 - An unknown requester is warned about, not refused: the phone only learns a terminal's key at enrollment.
+
+## Real phone
+
+Device: Samsung SM-A536E, Android 16, Chrome 155.0.8059.84, USB. Driver: `assets/companion/scripts/phone-device.mjs page` (CDP over `adb forward`, one tab of its own, page served from the laptop through `adb reverse`, site data of `http://localhost:8443` cleared and the tab closed at the end). The page's camera, microphone, speaker and clipboard were NOT used: `getUserMedia` is refused, `AudioContext` removed and clipboard writes refused inside the page by the driver, challenges are pasted from the Rust fixtures into the paste box, and the page clock is shifted to the fixture time inside the page only. 23 checks, 0 failed (battery 60 percent, 34 C throughout).
+
+| claim | measured | PASS/FAIL |
+|---|---|---|
+| tab visible (the page locks itself when hidden) | visible | PASS |
+| crypto vectors replay on the phone (the 1 GiB MASTER vector and one more MASTER-profile vector are left out via `#skip-master`) | 56 of 58 replayed, 2 skipped, 227 ms | PASS |
+| key created under a PIN, 24 backup words | 943 ms including Argon2id 64 MiB x 3 | PASS |
+| device id derives from the shown words | equal | PASS |
+| IndexedDB holds the PIN-wrapped secret only | 101 bytes, `SSHP`, no key bytes | PASS |
+| reload asks for the PIN, wrong PIN refused, right PIN unlocks | 697 ms unlock | PASS |
+| restore from 24 words gives the fixture identity | equal | PASS |
+| pasted Rust challenge: requester named, requester and credential highlighted | 2 rows | PASS |
+| binding words equal the Rust binding hash words | equal | PASS |
+| checks pass (one warning: a fresh phone has not met the requester) | 0 failed | PASS |
+| approve with a short code (Argon2id 256 MiB x 4 included) | 3,418 ms | PASS |
+| reverse QR reply (read back from the page canvas) opens with the ephemeral secret to the phone share | 711 bytes | PASS |
+| approval signature verifies over the binding preimage | verifies | PASS |
+| reply carries the courier op and the short-code blob | 1 op, 110 B blob | PASS |
+| a second short code for a live credential is refused | checkbox locked | PASS |
+| envelope (post-reshare) share unwraps, chain continues | ops 1, 2 | PASS |
+| refused: wrong host in the material; request id mismatch; expired | refusal text as on the desktop | PASS |
+| a tampered op from an unmet requester | refused (host mismatch in the material; its signature cannot be checked on a fresh phone) | PASS |
+| export text equals the QR and carries signed phone ops | 2 ops | PASS |
+| a Red notice is described and offers the phone proof | red banner | PASS |
+| the proof is a RedPhoneSign naming the exact op hash, signed by the phone | equal | PASS |
+
+Not run on the phone: camera scanning, microphone, speaker, handheld QR (PoC C4/H over the air are measured separately in `C-qr-budget.md` and `H-share-channels.md`), the clipboard, enrollment with SAS (needs the camera), Brave or Samsung Internet, iOS.

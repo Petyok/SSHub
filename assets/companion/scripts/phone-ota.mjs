@@ -57,7 +57,7 @@ async function terminalBlock({ label, version, bytes, cols, rows, runs }) {
   try {
     await sleep(2500);
     await state.chrome.prepare({ camera: true, silent: true });
-    await state.chrome.goto(`${ORIGIN}/qr-scanner.html?seed=1&len=${bytes}`);
+    await state.chrome.goto(`${ORIGIN}/qr-scanner.html?seed=1&len=${bytes}&facing=${arg('facing', 'environment')}`);
     await phoneEval(`navigator.wakeLock && navigator.wakeLock.request('screen').then((l) => { window.__wl = l; }, () => {})`);
     await phoneClick('#start');
     for (let i = 0; i < 50 && !(await phoneEval(`!!document.querySelector('#cam').srcObject`)); i++) await sleep(200);
@@ -262,7 +262,8 @@ async function audio() {
   const only = arg('only', '');
   const blocks = [
     ['fast', 56], ['slow', 56], ['fast', 128],
-  ].filter(([p, l]) => !only || only === `${p}${l}`);
+  ].filter(([p, l]) => (!only && true) || only === `${p}${l}`);
+  if (only === 'qr') blocks.length = 0;
   let firstOk = null;
   for (const [profile, len] of blocks) {
     const ok = await audioBlock({ label: `audio ${profile} ${len} B`, profile, len, runs });
@@ -273,7 +274,7 @@ async function audio() {
     }
     await sleep(8000);
   }
-  if (!only || only === 'qr') await qrBlock({ runs });
+  if (only === 'qr' || (!only && !process.argv.includes('--noqr'))) await qrBlock({ runs });
 }
 
 let code = 0;

@@ -34,9 +34,11 @@ const ALLOWED = [
   /^shell dumpsys battery$/,
   /^shell dumpsys thermalservice$/,
   /^shell dumpsys package com\.android\.chrome$/,
+  /^shell dumpsys package com\.brave\.browser$/,
+  /^shell cat \/proc\/net\/unix$/,
   /^shell am start -a android\.intent\.action\.VIEW -d http:\/\/localhost:8443\/[A-Za-z0-9_.\/-]*$/,
   /^reverse tcp:8443 tcp:8443$/,
-  /^forward tcp:9222 localabstract:chrome_devtools_remote$/,
+  /^forward tcp:9222 localabstract:[A-Za-z0-9_.]*devtools_remote$/,
   /^reverse --remove tcp:8443$/,
   /^forward --remove tcp:9222$/,
   /^reverse --list$/,
@@ -46,6 +48,17 @@ export function adb(args) {
   const line = args.join(' ');
   if (!ALLOWED.some((r) => r.test(line))) throw new Error(`adb command not allowed: ${line}`);
   return execFileSync('adb', ['-s', SERIAL, ...args], { encoding: 'utf8', maxBuffer: 1 << 24 });
+}
+// The browser in the foreground (Chrome or Brave): its devtools socket is found read-only in
+// /proc/net/unix (only the matching lines are used), never guessed.
+export const BROWSER_PKG = process.env.BROWSER_PKG || 'com.android.chrome';
+export function devtoolsSocket() {
+  const lines = adb(['shell', 'cat', '/proc/net/unix']).split('\n').filter((l) => l.includes('devtools_remote'));
+  const names = [...new Set(lines.map((l) => /@([A-Za-z0-9_.]*devtools_remote)/.exec(l)?.[1]).filter(Boolean))];
+  const want = names.find((n) => n.startsWith(BROWSER_PKG)) || names.find((n) => n === 'chrome_devtools_remote') || null;
+  console.log(JSON.stringify({ devtools_sockets: names, using: want }));
+  if (!want) throw new Error(`no devtools socket for ${BROWSER_PKG}; the owner must enable remote debugging in the browser`);
+  return want;
 }
 export const adbDevices = () => execFileSync('adb', ['devices', '-l'], { encoding: 'utf8' }); // read-only, no serial filter needed
 
@@ -116,6 +129,7 @@ export class Chrome {
   }
   async connect() {
     const v = await (await fetch('http://127.0.0.1:9222/json/version')).json();
+    this.version = v;
     this.ws = new WebSocket(v.webSocketDebuggerUrl);
     await new Promise((res, rej) => {
       this.ws.onopen = res;
@@ -250,15 +264,18 @@ export async function setup() {
   state.dir = assembleServeDir();
   state.server = await startServer(state.dir);
   adb(['reverse', 'tcp:8443', 'tcp:8443']);
-  adb(['forward', 'tcp:9222', 'localabstract:chrome_devtools_remote']);
+  adb(['forward', 'tcp:9222', `localabstract:${devtoolsSocket()}`]);
   state.chrome = new Chrome();
   state.browser = await state.chrome.connect();
+  const pkg = state.chrome.version['Android-Package'];
+  console.log(JSON.stringify({ devtools_owner: pkg || '(not reported)' }));
+  if (pkg && pkg !== BROWSER_PKG) throw new Error(`the devtools socket belongs to ${pkg}, not ${BROWSER_PKG}`);
   return state;
 }
 
 // ------------------------------------------------------------ subcommands
 const cmd = process.argv[2];
-const runs = Number(process.argv[process.argv.indexOf('--runs') + 1] || 5);
+const runs = process.argv.includes('--runs') ? Number(process.argv[process.argv.indexOf('--runs') + 1]) : 5;
 const median = (a) => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)];
 
 export function recon() {
@@ -268,7 +285,8 @@ export function recon() {
     manufacturer: prop('ro.product.manufacturer'),
     android: prop('ro.build.version.release'),
     sdk: prop('ro.build.version.sdk'),
-    chrome: /versionName=(\S+)/.exec(adb(['shell', 'dumpsys', 'package', 'com.android.chrome']))?.[1],
+    browser: BROWSER_PKG,
+    browser_version: /versionName=(\S+)/.exec(adb(['shell', 'dumpsys', 'package', BROWSER_PKG]))?.[1],
     battery: battery(),
   };
   console.log(JSON.stringify(out));
@@ -311,7 +329,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       if (cmd === 'd3') await d3(ctx);
       else if (cmd === 'page') {
         const { runPage } = await import('./phone-page-flows.mjs');
-        await runPage(ctx);
+        // a watchdog so that a stuck page still ends in the cleanup below
+        await Promise.race([runPage({ ...ctx, ORIGIN, clearSiteData, coolDown, guard, sleep }), sleep(20 * 60 * 1000).then(() => { throw new Error('page flows timed out after 20 minutes'); })]);
       } else throw new Error(`unknown command ${cmd}`);
     }
   } catch (e) {

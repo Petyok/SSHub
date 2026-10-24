@@ -98,7 +98,8 @@
 
   $("start").onclick = async () => {
     if (stream) return;
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+    // ?facing=user uses the front camera (screen toward the laptop), default is the rear camera
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: q.get("facing") === "user" ? "user" : "environment" }, audio: false });
     cam.srcObject = stream;
     await cam.play();
     reset();

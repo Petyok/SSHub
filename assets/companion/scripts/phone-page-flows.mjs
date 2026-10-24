@@ -13,7 +13,6 @@ import { DocumentCollector } from '../src/scan.mjs';
 import { KIND, decodeFrame, decodePhoneOps, parseReplyPlain } from '../src/frames.mjs';
 import { identityOfSecret, secretFromWords } from '../src/keys.mjs';
 import { parseOp } from '../src/ops.mjs';
-import { ORIGIN, clearSiteData, coolDown, guard, sleep } from './phone-device.mjs';
 
 const require = createRequire(import.meta.url);
 const jsQR = require('../vendor/jsqr-1.4.0/jsQR.cjs');
@@ -23,7 +22,9 @@ const load = (n) => JSON.parse(fs.readFileSync(path.join(root, 'test/fixtures', 
 const h = (x) => bytesOf(x);
 const PIN = 'correct-pin-17';
 
-export async function runPage({ chrome }) {
+// Helpers come from phone-device.mjs through the argument: importing it here would be a cycle
+// through its top-level await.
+export async function runPage({ chrome, ORIGIN, clearSiteData, coolDown, guard, sleep }) {
   const fx = load('challenges.json');
   const ops = load('ops.vectors.json');
   const phone = identityOfSecret(h(fx.phone.secret_hex));
