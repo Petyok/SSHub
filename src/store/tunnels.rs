@@ -104,6 +104,19 @@ pub(super) fn delete_tunnel_on(conn: &rusqlite::Connection, id: i64) -> Result<b
     Ok(affected > 0)
 }
 
+/// Detach every tunnel of `host_id` (caller holds the transaction). A transfer
+/// move calls it before deleting the host, so a tunnel the plan does not carry
+/// survives as host-less instead of vanishing through `ON DELETE CASCADE`.
+/// `auto_connect` is cleared: without a host the keep-alive loop could only
+/// fail on it every cycle.
+pub(super) fn detach_tunnels_of_host_on(conn: &rusqlite::Connection, host_id: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE tunnels SET host_id = NULL, auto_connect = 0 WHERE host_id = ?1",
+        params![host_id],
+    )?;
+    Ok(())
+}
+
 fn row_to_tunnel(row: &rusqlite::Row<'_>) -> rusqlite::Result<Tunnel> {
     Ok(Tunnel {
         id: row.get(0)?,

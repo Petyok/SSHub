@@ -6,6 +6,18 @@ All notable changes to SSHub are documented in this file.
 
 ### Added
 
+- **SFTP-style host transfer** - in the profile manager, `t`, pick the destination,
+  then `m` opens a dual-pane screen: this profile's hosts on the left, the other
+  profile's on the right, grouped and filterable with `/`. `→` stages a host (or
+  a whole group) to push, `←` stages one from the right pane to pull, a queue
+  strip shows what is staged and `c` continues. Pushes and pulls can be mixed;
+  they run one direction at a time, each with its own plan review.
+- **Guided profile migration** - the staged hosts then go through five
+  checklists: hosts, the groups of those hosts, their tunnels, the identities
+  they (and the groups) use, and their audit logs. Only checked rows travel; a step with nothing to list is skipped, `b` steps back.
+  Audit events keep their timestamps and land under the host's name in the
+  destination (a move deletes them from the source). A guided move keeps a group
+  in the source while a host that is not moving still belongs to it.
 - **Go to a path in the SFTP browser** (issue #162, requested by
   [@Frysuni](https://github.com/Frysuni)) - the browser could only filter the
   current directory, so reaching `/var/www` or `~/.ssh` meant walking there one
@@ -28,6 +40,19 @@ All notable changes to SSHub are documented in this file.
   one and the new one; off the dashboard it waits, and the "installed" toast
   names the key. `Shift+W` on the hosts tab opens it again until the
   restart, and otherwise shows the notes of the running version.
+
+### Fixed
+
+- **Moving hosts to another profile now keeps their saved passwords** - a move
+  carries each moved host's password and each moved identity's passphrase into
+  the destination profile's keyring (the new rows are flagged as having one),
+  and only then removes them from the source. A secret that cannot be written
+  to the destination is not moved at all: the host or identity stays in the
+  source (a host's destination copy is removed again) and a popup or a warning
+  lists it, so the move can be repeated. `sshub ... transfer --move` then
+  exits 1. Copies still carry no secrets. Applies to the profile manager, the guided
+  migration and `sshub host|group|identity transfer --move`.
+  A tunnel transferred without its host now lands with auto-connect off.
 
 ## [0.19.2] - 2026-10-24
 

@@ -19,8 +19,8 @@ use anyhow::{Context, Result};
 use super::context::CliContext;
 use super::parse::{take_flag, take_opt, usage, CONFIRM_YES};
 use crate::store::transfer::{
-    apply_transfer_plan, build_transfer_plan, DestIndex, GroupTransferMode, TransferMode,
-    TransferPlan, TransferSelection, TransferSnapshot,
+    apply_transfer_plan_with_secrets, build_transfer_plan, DestIndex, GroupTransferMode,
+    SecretStores, TransferMode, TransferPlan, TransferSelection, TransferSnapshot,
 };
 use crate::store::LauncherStore;
 use crate::tunnel::{ensure_tunnel_pid_dir, tunnel_runtime_state, TunnelRuntimeState};
@@ -105,6 +105,7 @@ pub fn cmd_host_transfer(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
         group_names: Vec::new(),
         identity_names: Vec::new(),
         tunnel_names: Vec::new(),
+        ..Default::default()
     };
     run_transfer(ctx, &selection, GroupTransferMode::GroupOnly, &targs)
 }
@@ -133,12 +134,13 @@ pub fn cmd_group_transfer(ctx: &mut CliContext, args: &[String]) -> Result<i32> 
         group_names: vec![group.name],
         identity_names: Vec::new(),
         tunnel_names: Vec::new(),
+        ..Default::default()
     };
     run_transfer(ctx, &selection, group_mode, &targs)
 }
 
 /// `identity transfer --name NAME --to PROFILE [--move] [--yes]`.
-/// Only the key *path* is carried; secret material is never copied.
+/// Only the key *path* is carried; a passphrase travels only with `--move`.
 pub fn cmd_identity_transfer(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     let mut rest = args.to_vec();
     let name =
@@ -150,6 +152,7 @@ pub fn cmd_identity_transfer(ctx: &mut CliContext, args: &[String]) -> Result<i3
         group_names: Vec::new(),
         identity_names: vec![identity.name],
         tunnel_names: Vec::new(),
+        ..Default::default()
     };
     run_transfer(ctx, &selection, GroupTransferMode::GroupOnly, &targs)
 }
@@ -184,6 +187,7 @@ pub fn cmd_tunnel_transfer(ctx: &mut CliContext, args: &[String]) -> Result<i32>
         group_names: Vec::new(),
         identity_names: Vec::new(),
         tunnel_names: keys,
+        ..Default::default()
     };
     run_transfer(ctx, &selection, GroupTransferMode::GroupOnly, &targs)
 }
@@ -265,15 +269,28 @@ fn run_transfer(
         return Ok(1);
     }
 
-    // Copy path resolution only happens inside the engine; secrets stay put.
+    // A copy leaves secrets alone. A move carries every saved secret to the
+    // destination profile before the engine deletes anything from the source;
+    // the stores are opened only when a host or identity is moving, so a move
+    // of tunnels or groups never touches the keyring.
     // Engine failures (rolled-back destination, untouched source) propagate
     // as an error exit instead of a partial success.
+    let carries_secrets = targs.move_mode
+        && plan
+            .runnable()
+            .iter()
+            .any(|item| matches!(item.kind, "host" | "identity"));
+    let dest_secrets = carries_secrets.then(|| crate::credentials::open_for_profile(&dest_paths));
     let mut src_store = src_store;
-    let result = apply_transfer_plan(
+    let result = apply_transfer_plan_with_secrets(
         &mut src_store,
         &mut dest_store,
         &plan,
         transfer_mode(targs.move_mode),
+        dest_secrets.as_deref().map(|dest| SecretStores {
+            src: ctx.password_store(),
+            dest,
+        }),
     )?;
 
     println!(
@@ -286,6 +303,15 @@ fn run_transfer(
     for blocked in &result.blocked {
         println!("  blocked: {blocked}");
     }
+    if !result.carry_failures.is_empty() {
+        eprintln!(
+            "warning: {}",
+            crate::store::transfer::secret_carry_warning(
+                &result.carry_failures,
+                &result.kept_in_source
+            )
+        );
+    }
     if !result.deleted_host_ids.is_empty() || !result.deleted_identity_ids.is_empty() {
         let failures = result.purge_source_secrets(ctx.password_store());
         if !failures.is_empty() {
@@ -296,7 +322,12 @@ fn run_transfer(
         }
     }
     ctx.reload_hosts()?;
-    Ok(0)
+    // A move that had to leave rows behind is not a clean success for scripts.
+    Ok(if result.carry_failures.is_empty() {
+        0
+    } else {
+        1
+    })
 }
 
 /// Fresh mode value per call: the contract does not promise `Copy`.

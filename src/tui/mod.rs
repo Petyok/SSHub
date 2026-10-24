@@ -925,8 +925,12 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
             if let Some(picker) = &app.profile_picker {
                 picker.render(frame, app.theme());
             }
-            if app.pending_transfer.is_some() {
-                render_profile_transfer_popup(frame, app);
+            if let Some(pending) = &app.pending_transfer {
+                if pending.screen.is_some() {
+                    screens::host_transfer::render_host_transfer(frame, app);
+                } else {
+                    render_profile_transfer_popup(frame, app);
+                }
             }
         }
         AppMode::TunnelReconnectSettings => {
@@ -2725,7 +2729,7 @@ fn render_profile_transfer_popup(frame: &mut Frame, app: &App) {
             let shown = crate::tui::text::ellipsize(line, budget);
             let style = if line.starts_with("! ") {
                 theme.style(StyleRole::PopupError)
-            } else if line.contains("Esc") {
+            } else if line.contains("Esc cancel") || line.contains("Esc: cancel") {
                 theme.style(StyleRole::TextMuted)
             } else if line == &lines[0] {
                 theme.style(StyleRole::TextBright)

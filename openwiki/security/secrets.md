@@ -57,10 +57,13 @@ only `has_password` flags and the `secret_lookup` spec, never secret material.
 - [Termius import](../domain/hosts-identities.md#imports-srcimport) re-stores
   secrets with write verification and reports `keyring_failures`.
 - `sshub db purge` orphans keyring entries by design; deleting a profile purges
-  its namespaced entries. A profile **move** transfer deletes the moved hosts'
-  and identities' `host:{id}` / `identity:{id}` entries from the source
-  profile's store (`TransferResult::purge_source_secrets`) and puts any failure
-  in the notice; a copy leaves the source's secrets alone.
+  its namespaced entries. A profile **move** transfer first carries the moved hosts'
+  and identities' `host:{id}` / `identity:{id}` secrets into the destination
+  profile's store under the new ids (`apply_transfer_plan_with_secrets`), then
+  deletes them from the source (`TransferResult::purge_source_secrets`). A row
+  whose secret could not be carried is not deleted from the source at all, so
+  the move can be repeated, and the failure is shown in a popup (TUI) or on
+  stderr (CLI). A copy carries nothing and leaves the source's secrets alone.
 
 ### Which secret a connection uses
 

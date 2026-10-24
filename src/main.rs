@@ -205,8 +205,9 @@ TUNNELS:
 
 TRANSFER (copy to another profile):
     The plan prints first; without --yes it asks y/N. --move deletes the
-    originals afterwards; --with-hosts (group) brings the member hosts along.
-    Identities carry the key path only, never secret material.
+    originals afterwards and carries saved passwords and passphrases to the
+    destination (exit 1 if one could not be carried); --with-hosts (group)
+    brings the member hosts along. Identities carry the key path.
 
 SFTP (one-shot):
     sshub sftp ls|get|put|rm|mkdir|rename|chmod …

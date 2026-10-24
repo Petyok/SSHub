@@ -11,6 +11,7 @@ pub mod hop_editor;
 mod host_crud;
 mod host_detail;
 mod host_form;
+pub(crate) mod host_transfer;
 mod hostlist;
 mod identities;
 mod import;
@@ -22,6 +23,7 @@ mod mouse;
 pub mod network_map;
 pub(crate) mod panes;
 mod profile_manager;
+pub(crate) mod profile_migration;
 pub(crate) mod profile_transfer;
 mod push_key;
 mod session;
@@ -203,6 +205,10 @@ pub struct App {
     /// while choosing destination/scope/confirming; the plan applies only on
     /// explicit `y`.
     pub pending_transfer: Option<profile_transfer::PendingTransfer>,
+    /// Opens a profile's credential store for a move's secret carry. A field
+    /// so tests can keep the real OS keyring out of the transfer.
+    pub(crate) open_profile_secrets:
+        fn(&crate::profile::ProfilePaths) -> Box<dyn crate::credentials::PasswordStore>,
     profile_return_mode: AppMode,
     pub profile_count: usize,
     /// Active tag filters. A host matches when it carries every selected tag
@@ -1007,6 +1013,7 @@ impl App {
             profile_picker: None,
             pending_profile: None,
             pending_transfer: None,
+            open_profile_secrets: crate::credentials::open_for_profile,
             profile_return_mode: AppMode::Normal,
             profile_count: 1,
             tag_filters: Vec::new(),
