@@ -43,7 +43,7 @@ export function adoptOwnChain(state, identity, ops) {
     chain.push(prev);
   }
   state.chain = chain;
-  state.lamport = chain.reduce((m, e) => maxBig(m, big(e.lamport)), big(state.lamport));
+  state.lamport = String(chain.reduce((m, e) => maxBig(m, big(e.lamport)), big(state.lamport)));
   state.epoch = String(parsed.reduce((m, p) => maxBig(m, big(p.op.epoch)), big(state.epoch)));
   state.headPending = false;
   return { head_seq: prev.seq, ops: chain.length };

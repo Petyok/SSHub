@@ -393,7 +393,9 @@ export function parseJSONExact(text) {
     const isInt = i >= text.length || !/[.eE]/.test(text[i]);
     if (!isInt) {
       while (i < text.length && /[0-9.eE+-]/.test(text[i])) i++;
-      return Number(text.slice(start, i)); // floats never appear in canonical ops
+      const f = text.slice(start, i);
+      if (!/^-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?$/.test(f)) throw fail('bad number');
+      return Number(f); // floats never appear in canonical ops
     }
     const tok = text.slice(start, i);
     if (!/^-?[0-9]+$/.test(tok)) throw fail('bad number');

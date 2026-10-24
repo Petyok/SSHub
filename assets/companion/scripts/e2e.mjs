@@ -234,7 +234,7 @@ const terminal = identityFromIkm(h(fx.requester.ikm_hex), fx.requester.context);
   await page.fill('#pin1', 'abc');
   await page.fill('#pin2', 'abc');
   await page.click('#create');
-  check('a short PIN is refused', /at least 6/.test(await text(page, '#setup-error')), await text(page, '#setup-error'));
+  check('a short PIN is refused', /at least 10/.test(await text(page, '#setup-error')), await text(page, '#setup-error'));
   await page.fill('#pin1', PIN);
   await page.fill('#pin2', PIN);
   await page.click('#create');
