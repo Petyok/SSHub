@@ -8,7 +8,7 @@ NAME=10-enroll-and-sync
 # id of the pending review entry whose change sets address to $1 (empty if none)
 rid() {
   peer peer-b $SSHUB sync-review --format json 2>/dev/null \
-    | jq -r --arg v "$1" '[.[] | select(any(.changes[]; .to == $v)) | .id][0] // empty'
+    | pjq -r --arg v "$1" '[.[] | select(any(.changes[]; .to == $v)) | .id][0] // empty'
 }
 
 reset_peers

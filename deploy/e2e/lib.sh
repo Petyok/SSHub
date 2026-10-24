@@ -5,6 +5,8 @@
 C=${C:-docker compose -p sshub-hostsync-e2e -f "$E2E_DIR/docker-compose.yml"}
 PEERS=${PEERS:-"peer-a peer-b peer-c hub"}
 SSHUB="sshub --profile default"
+# jq runs inside the peer image: the gpu-serv runner has no jq installed.
+pjq() { docker run --rm -i --entrypoint jq sshub-hostsync-e2e-peer:local "$@"; }
 fail=0
 
 # Run argv inside a peer as user ci.
@@ -29,7 +31,7 @@ check() {
 # JSON predicate: expect "description" "$json" '.pending >= 1'
 expect() {
   desc=$1; json=$2; pred=$3
-  if printf '%s' "$json" | jq -e "$pred" >/dev/null 2>&1; then
+  if printf '%s' "$json" | pjq -e "$pred" >/dev/null 2>&1; then
     echo "ok   $desc"
   else
     echo "FAIL $desc (predicate: $pred)"
