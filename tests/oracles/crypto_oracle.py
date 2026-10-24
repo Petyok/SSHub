@@ -244,7 +244,7 @@ def run(path):
             salt, nonce = h(par["salt"]), h(par["nonce"])
             key = argon(i["passphrase"], salt, pr["mem_kib"], pr["iters"])
             header = b"SSHK\x01" + struct.pack(">II", pr["mem_kib"], pr["iters"]) + salt + nonce
-            plain = idn["ed_seed"] + idn["x_sec"] + idn["dk"]
+            plain = idn["ed_seed"] + idn["x_sec"] + idn["dk"] + b"\x00"  # no older wrapping generations
             check(vid, (header + aead_seal(key, nonce, plain, header)).hex() == o["blob"])
         elif p == "sealed_box":
             idn = identity_from_xof(par["recipient_context"], h(i["recipient_ikm"]))

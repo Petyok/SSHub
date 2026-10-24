@@ -154,6 +154,12 @@ pub fn shamir_split(secret: &[u8; 32], k: u8, n: u8) -> Vec<Share> {
     split_at_indices(secret, k, &indices, &mut OsRng)
 }
 
+/// Splits at explicit x coordinates (the current holder indices need not be 1..=n after a
+/// revocation). Panics on index 0, duplicates, or fewer indices than `k`.
+pub fn shamir_split_at(secret: &[u8; 32], k: u8, indices: &[u8]) -> Vec<Share> {
+    split_at_indices(secret, k, indices, &mut OsRng)
+}
+
 /// The polynomial's value at zero for exactly the subset given. The threshold is not
 /// recorded in a share: a subset smaller than k yields an unrelated value, which the AEAD
 /// layer above (credential decryption) rejects. Only the requester calls this, in memory.
