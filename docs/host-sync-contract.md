@@ -141,6 +141,18 @@ pub fn verify(ed25519_pub: &[u8; 32], msg: &[u8], sig: &[u8; 64]) -> bool;
 pub fn hybrid_wrap(recipient: &DevicePublic, plaintext: &[u8]) -> Vec<u8>;
 pub fn hybrid_unwrap(id: &DeviceIdentity, blob: &[u8]) -> anyhow::Result<Vec<u8>>;
 pub fn blob_alg(blob: &[u8]) -> anyhow::Result<AlgTag>;
+// Fallible form for recipient keys that arrive from other devices.
+pub fn try_hybrid_wrap(recipient: &DevicePublic, plaintext: &[u8]) -> anyhow::Result<Vec<u8>>;
+pub fn device_id_of(ed25519_pub: &[u8; 32]) -> String;   // hex of the first 8 bytes
+impl DevicePublic {
+    pub fn validate(&self) -> anyhow::Result<()>;        // run on every key from another device
+    pub fn device_id(&self) -> String;
+}
+pub fn derive_key(context: &str, ikm: &[u8]) -> [u8; 32];  // BLAKE3 derive_key
+impl AlgTag {
+    pub const fn to_bytes(self) -> [u8; 2];
+    pub fn from_bytes(b: [u8; 2]) -> anyhow::Result<Self>;
+}
 
 // DEK: XChaCha20-Poly1305.
 pub fn dek_generate() -> [u8; 32];
@@ -169,6 +181,9 @@ pub const ARGON2_MASTER:   Argon2Profile;  // 1 GiB x t=1
 pub const ARGON2_SNAPSHOT: Argon2Profile;  // phone default; actual profile rides in the blob
 pub const ARGON2_EMAIL:    Argon2Profile;  // code has >= 100 bits, memory buys nothing
 pub fn argon2_derive(input: &str, salt: &[u8; 16], p: Argon2Profile) -> [u8; 32];
+// Fallible form with profile bounds, for profiles read from untrusted blobs.
+pub fn try_argon2_derive(input: &str, salt: &[u8; 16], p: Argon2Profile) -> anyhow::Result<[u8; 32]>;
+impl Argon2Profile { pub fn validate(&self) -> anyhow::Result<()>; }
 
 // Vault mode: recipient derived from the master phrase AND the ring secret.
 // The ring secret is 128 bits, identical across the ring, never in synced data.
@@ -195,6 +210,25 @@ pub fn chain_hash(bytes: &[u8]) -> [u8; 32];
 ```
 
 Secret-bearing types (`DeviceIdentity`, `Share`, DEKs) zeroize on drop.
+
+Frozen derivations (committed vectors in `tests/vectors/crypto/`, recomputed by
+the Python oracle `tests/oracles/crypto_oracle.py`):
+
+- `verify` is strict RFC 8032 (canonical S); browsers call noble with
+  `zip215: false`.
+- Identity from seed: `BLAKE3 derive_key(context, ikm)` as 128 bytes of output =
+  Ed25519 seed (32) || X25519 secret (32) || ML-KEM `d` (32) || ML-KEM `z` (32).
+- Paper: `ikm` = the 32 bytes of the 24 word phrase, contexts
+  `sshub/sync/paper/unwrap/v1` and `sshub/sync/paper/recover/v1`.
+- Vault: `stretched = Argon2id(lowercase single-spaced phrase, salt, ARGON2_MASTER)`;
+  `seed = derive_key("sshub/sync/vault/seed/v1", stretched || ring_secret)`; identity
+  from `seed` with context `sshub/sync/vault/v1`.
+- Hybrid wrap key: `derive_key("sshub/sync/wrap/v1", x25519_ss || mlkem_ss ||
+  eph_pub || recipient_x25519_pub || kem_ct)`, header as AEAD associated data (C12).
+- Sealed box: C11, AEAD associated data `eph_pub || recipient_pub`.
+- Device key file: `"SSHK" || 1 || mem u32 BE || iters u32 BE || salt(16) ||
+  nonce(24) || ct`, plaintext `ed25519 seed || x25519 secret || ML-KEM dk (2400)`,
+  header as associated data.
 
 ## 2. Stage 1: `src/sync/oplog/` and schema v22 (WP1a, WP1b)
 
@@ -437,6 +471,8 @@ offline; no real credentials, no real user directories.
 | `SNAPSHOT_ARGON2_FLOOR` | `{ mem_kib: 262_144, iters: 4 }` | phone profile floor |
 | `ARGON2_MASTER_PROFILE` | `{ mem_kib: 1_048_576, iters: 1 }` | master phrase |
 | `ARGON2_EMAIL_PROFILE` | `{ mem_kib: 19_456, iters: 2 }` | email code |
+| `ARGON2_DEVICE_KEY_PROFILE` | `{ mem_kib: 65_536, iters: 3 }` | local device key file passphrase |
+| `ARGON2_MAX_MEM_KIB`, `ARGON2_MAX_ITERS` | `2 * 1_048_576`, `16` | bounds for a profile read from an untrusted blob |
 | `QR_FRAME_PAYLOAD_BYTES` | `250` | payload per QR frame, ECC level M |
 | `QR_FPS` | `4` | animated frame rate |
 | `QR_PARITY_PERCENT` | `25` | XOR parity frames in the loop |
