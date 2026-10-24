@@ -69,6 +69,12 @@ impl CliContext {
                 // From here on the ring's credentials answer Locked until opened.
                 if let Some(gate) = store.shared_gate() {
                     crate::sync::runtime::guard_synced_credentials(&gate, self.store.clone());
+                    crate::sync::runtime::StoreReplicator::install(
+                        &gate,
+                        self.profile.clone(),
+                        self.store.clone(),
+                        crate::credentials::open_ungated_for_profile,
+                    );
                 }
                 store
             })

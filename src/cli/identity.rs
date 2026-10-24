@@ -138,6 +138,12 @@ fn cmd_add(ctx: &CliContext, args: &[String]) -> Result<i32> {
     if let Some(pw) = password {
         ctx.password_store().set(&identity_key(created.id), &pw)?;
     }
+    if created.private_key.is_some() {
+        // In a ring the key bytes replicate with the credential.
+        if let Some(r) = ctx.password_store().gate().and_then(|g| g.replicator()) {
+            r.replicate_identity_key(created.id)?;
+        }
+    }
 
     println!("created identity '{}'", created.name);
     Ok(0)
@@ -210,8 +216,13 @@ fn cmd_edit(ctx: &CliContext, args: &[String]) -> Result<i32> {
             ..Default::default()
         },
     )?;
-    if updated.is_none() {
+    let Some(updated) = updated else {
         fail(&format!("identity '{name}' not found"));
+    };
+    if updated.private_key != identity.private_key {
+        if let Some(r) = ctx.password_store().gate().and_then(|g| g.replicator()) {
+            r.replicate_identity_key(updated.id)?;
+        }
     }
     println!("updated identity '{name}'");
     Ok(0)

@@ -495,9 +495,29 @@ type SyncedCheck = Box<dyn Fn(&str) -> bool + Send + Sync>;
 pub struct SecretGate {
     synced: std::sync::RwLock<Option<SyncedCheck>>,
     unlocked: std::sync::Mutex<HashMap<String, zeroize::Zeroizing<String>>>,
+    replicator: std::sync::OnceLock<Box<dyn Replicator>>,
+}
+
+/// Turns a secret save into a replicated credential when the profile is in a
+/// ring: every write that goes through the gated store calls it first.
+pub trait Replicator: Send + Sync {
+    /// Save `password` (or clear it, `None`) of store key `key` as a synced
+    /// credential. `Ok(false)`: not a ring credential, store it locally.
+    fn replicate(&self, key: &str, password: Option<&str>) -> Result<bool>;
+    /// The key bytes of identity `identity_id` changed: replicate them too.
+    fn replicate_identity_key(&self, identity_id: i64) -> Result<bool>;
 }
 
 impl SecretGate {
+    /// Install the replicator once; a second call is ignored.
+    pub fn set_replicator(&self, replicator: Box<dyn Replicator>) {
+        let _ = self.replicator.set(replicator);
+    }
+
+    pub fn replicator(&self) -> Option<&dyn Replicator> {
+        self.replicator.get().map(|r| r.as_ref())
+    }
+
     /// Say which keys are synced credentials. Until this is called nothing is:
     /// every secret is local and passes through.
     pub fn set_synced_check(&self, check: impl Fn(&str) -> bool + Send + Sync + 'static) {
@@ -654,6 +674,14 @@ impl PasswordStore for QuorumGatedStore {
     }
 
     fn set(&self, key: &str, password: &str) -> Result<()> {
+        if let Some(r) = self.gate.replicator() {
+            if r.replicate(key, Some(password))? {
+                // The user just typed it: it is open in this process.
+                self.gate
+                    .insert(key, zeroize::Zeroizing::new(password.to_string()));
+                return Ok(());
+            }
+        }
         if self.gate.is_synced(key) {
             anyhow::bail!(
                 "{key} is a synced credential: change it through sync, not the local store"
@@ -663,6 +691,13 @@ impl PasswordStore for QuorumGatedStore {
     }
 
     fn delete(&self, key: &str) -> Result<()> {
+        if let Some(r) = self.gate.replicator() {
+            if r.replicate(key, None)? {
+                self.gate
+                    .insert(key, zeroize::Zeroizing::new(String::new()));
+                return Ok(());
+            }
+        }
         if self.gate.is_synced(key) {
             anyhow::bail!(
                 "{key} is a synced credential: remove it through sync, not the local store"

@@ -64,6 +64,12 @@ fn fixture() -> Fixture {
     let gate = gated.gate_handle();
     let mut app = test_app_with_store(vec![], Box::new(gated));
     guard_synced_credentials(&gate, app.store.clone());
+    crate::sync::runtime::StoreReplicator::install(
+        &gate,
+        paths.clone(),
+        app.store.clone(),
+        file_secrets,
+    );
     app.profile = Some(paths.clone());
     let deps = RoundDeps {
         paths: paths.clone(),
@@ -229,4 +235,130 @@ fn closing_the_unlock_modal_abandons_the_round_and_leaves_the_credential_locked(
 
 fn key_esc() -> KeyEvent {
     key(KeyCode::Esc)
+}
+
+fn replicated_payload(f: &Fixture, host_id: i64) -> crate::sync::cred_ops::CredPayload {
+    let uid = f.app.store.host_uid(host_id).unwrap().unwrap();
+    let dek = crate::sync::quorum::vault_open_dek_with(&f.app.store, &uid, &f.phrase, &RING, FAST)
+        .unwrap();
+    let (ct, _) = f.app.store.sync_cred_ciphertext(&uid).unwrap().unwrap();
+    crate::sync::cred_ops::CredPayload::from_bytes(
+        &crate::sync::crypto::dek_open(&dek, &ct).unwrap(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn saving_a_password_in_a_ring_replicates_it_and_never_stores_it_locally() {
+    let mut f = fixture();
+    pump(&mut f.app, "the ring", |a| a.sync.configured);
+    let host = f
+        .app
+        .store
+        .create_host(&crate::store::NewHost::launcher("web", "10.0.0.1"))
+        .unwrap();
+    let key = host_key(host.id);
+
+    f.app.password_store.set(&key, "s3cret").unwrap();
+    assert_eq!(
+        replicated_payload(&f, host.id).password.as_deref(),
+        Some("s3cret")
+    );
+    assert_eq!(
+        f.gate.get(&key).as_deref().map(String::as_str),
+        Some("s3cret"),
+        "open now"
+    );
+    assert!(
+        file_secrets(&f.paths).get(&key).unwrap().is_none(),
+        "not in the local store"
+    );
+
+    // A new value replaces it, through the same call every form uses.
+    f.app.put_secret(&key, "n3w").unwrap();
+    assert_eq!(
+        replicated_payload(&f, host.id).password.as_deref(),
+        Some("n3w")
+    );
+
+    // Clearing it replicates the clearing.
+    f.app.put_secret(&key, "").unwrap();
+    assert_eq!(replicated_payload(&f, host.id).password, None);
+}
+
+#[test]
+fn without_a_ring_secrets_stay_in_the_local_store() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = ProfilePaths {
+        data_root: dir.path().to_path_buf(),
+        id: "t".into(),
+        name: "t".into(),
+        root: dir.path().to_path_buf(),
+        config_file: dir.path().join("config.toml"),
+        ssh_config: dir.path().join("ssh_config"),
+        compat: false,
+    };
+    let gated = QuorumGatedStore::new(file_secrets(&paths));
+    let gate = gated.gate_handle();
+    let app = test_app_with_store(vec![], Box::new(gated));
+    guard_synced_credentials(&gate, app.store.clone());
+    crate::sync::runtime::StoreReplicator::install(
+        &gate,
+        paths.clone(),
+        app.store.clone(),
+        file_secrets,
+    );
+    let host = app
+        .store
+        .create_host(&crate::store::NewHost::launcher("web", "10.0.0.1"))
+        .unwrap();
+    app.password_store.set(&host_key(host.id), "local").unwrap();
+    assert_eq!(
+        file_secrets(&paths)
+            .get(&host_key(host.id))
+            .unwrap()
+            .as_deref(),
+        Some("local")
+    );
+}
+
+#[test]
+fn an_identitys_key_bytes_replicate_with_its_passphrase() {
+    let mut f = fixture();
+    pump(&mut f.app, "the ring", |a| a.sync.configured);
+    let key_file = f.paths.root.join("id_test");
+    let text = "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----\n";
+    std::fs::write(&key_file, text).unwrap();
+    let identity = f
+        .app
+        .store
+        .create_identity(&crate::store::NewIdentity {
+            name: "work".into(),
+            username: None,
+            private_key: Some(key_file.clone()),
+            certificate: None,
+            sort_order: 0,
+            has_password: true,
+        })
+        .unwrap();
+    f.app
+        .password_store
+        .set(&crate::credentials::identity_key(identity.id), "pass")
+        .unwrap();
+    f.app.replicate_identity_key(identity.id);
+    assert!(
+        f.app.identity_notice.is_none(),
+        "{:?}",
+        f.app.identity_notice
+    );
+    let uid = f.app.store.identity_uid(identity.id).unwrap().unwrap();
+    let dek = crate::sync::quorum::vault_open_dek_with(&f.app.store, &uid, &f.phrase, &RING, FAST)
+        .unwrap();
+    let (ct, _) = f.app.store.sync_cred_ciphertext(&uid).unwrap().unwrap();
+    let payload = crate::sync::cred_ops::CredPayload::from_bytes(
+        &crate::sync::crypto::dek_open(&dek, &ct).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(payload.password.as_deref(), Some("pass"));
+    assert_eq!(payload.private_key.as_deref(), Some(text));
 }

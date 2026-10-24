@@ -314,6 +314,20 @@ impl App {
         Ok(())
     }
 
+    /// An identity's key file was set or changed: replicate its bytes with the
+    /// credential when the profile is in a ring (the passphrase goes through
+    /// `PasswordStore::set` on its own).
+    pub(crate) fn replicate_identity_key(&mut self, id: i64) {
+        let result = self
+            .password_store
+            .gate()
+            .and_then(|g| g.replicator())
+            .map(|r| r.replicate_identity_key(id));
+        if let Some(Err(e)) = result {
+            self.identity_notice = Some(format!("Saved, but replicating the key failed: {e:#}"));
+        }
+    }
+
     /// `[sync] auto_sync_on_start`: queue one sync with every ring device that
     /// has a known host. Quiet when there is no ring or no host to reach.
     pub fn queue_auto_sync(&mut self) {
