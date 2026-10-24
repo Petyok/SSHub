@@ -17,6 +17,8 @@ pub mod protocol;
 pub mod quorum;
 pub mod ratchet;
 pub mod reshare;
+#[cfg(test)]
+mod phone_fixtures;
 pub mod share_release;
 pub mod snapshot;
 pub mod transport;
