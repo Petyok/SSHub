@@ -129,9 +129,26 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
                 .iter()
                 .filter(|d| terminal_holder(d) && d.id != *device_id)
                 .count();
+            let holder_count = devices
+                .iter()
+                .filter(|d| {
+                    d.role == DeviceRole::Holder
+                        && !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
+                })
+                .count();
             if devices
                 .iter()
                 .any(|d| d.id == *device_id && d.role == DeviceRole::Holder)
+                && holder_count > 0
+            {
+                if let Err(e) = super::quorum::paper_rule(store, holder_count - 1) {
+                    blocked = Some(e.to_string());
+                }
+            }
+            if blocked.is_none()
+                && devices
+                    .iter()
+                    .any(|d| d.id == *device_id && d.role == DeviceRole::Holder)
                 && remaining < 2
             {
                 blocked = Some(
@@ -366,14 +383,8 @@ pub fn red_factor_email(store: &LauncherStore, code: &str, op: &Op) -> Result<Op
 }
 
 /// Register the paper's recovery key as a factor (first registration needs phone + second device only).
-pub fn factor_register_paper(paper_recover: &DeviceIdentity) -> OpBody {
-    OpBody::FactorRegister {
-        factor: ThirdFactor::Paper,
-        public: paper_recover.public().ed25519_pub,
-        sealed: Vec::new(),
-        salt: [0; 16],
-        sender: None,
-    }
+pub fn factor_register_paper(phrase: &str) -> Result<OpBody> {
+    super::quorum::paper_registration(phrase)
 }
 
 /// Register the emailed-code factor: a random seed becomes the `email` key, sealed under a fresh code.

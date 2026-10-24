@@ -72,7 +72,8 @@ pub fn validate_body(body: &OpBody) -> std::result::Result<(), String> {
         }
         OpBody::FactorRegister { factor, sealed, .. } => {
             let max = match factor {
-                crate::sync::oplog::op::ThirdFactor::Paper => 0,
+                // The paper's unwrap public key (ed25519 + x25519 + ML-KEM-768), so every device wraps to it.
+                crate::sync::oplog::op::ThirdFactor::Paper => 1500,
                 crate::sync::oplog::op::ThirdFactor::EmailCode => 128,
             };
             if sealed.len() > max {

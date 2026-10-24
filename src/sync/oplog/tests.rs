@@ -2594,7 +2594,7 @@ fn ceremony_records_are_green_and_bounded() {
     );
     assert!(a
         .store
-        .sync_append_local(&a.id, reg(ThirdFactor::Paper, vec![1]))
+        .sync_append_local(&a.id, reg(ThirdFactor::Paper, vec![1; 1501]))
         .is_err());
     assert!(a
         .store

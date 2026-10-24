@@ -62,6 +62,7 @@ pub fn check_revocable(store: &LauncherStore, target: &DeviceId, now: i64) -> Re
         holders.iter().any(|d| d.id == *target),
         "{target} is not a live holder"
     );
+    super::quorum::paper_rule(store, holders.len() - 1)?;
     let remaining: Vec<_> = holders
         .iter()
         .filter(|d| d.id != *target && d.kind == DeviceKind::Terminal)

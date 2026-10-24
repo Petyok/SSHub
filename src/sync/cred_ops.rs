@@ -115,6 +115,7 @@ pub fn cred_update_body_for(
             vec![vault_wrap(&vault, host, &dek)?]
         }
         CredMode::Quorum => {
+            super::quorum::paper_rule(store, super::quorum::live_holder_count(store)?)?;
             let recipients = share_recipients(store, me)?;
             ensure!(
                 recipients.len() >= SHARE_K as usize,
