@@ -27,12 +27,13 @@ use crate::sync::transport::{Conn, Limits};
 
 use super::help;
 
-const COMMANDS: [&str; 5] = [
+const COMMANDS: [&str; 6] = [
     "sync-serve",
     "sync-enroll",
     "sync-join",
     "sync-now",
     "sync-status",
+    "sync-review",
 ];
 
 const EMPTY_RING: &str = "No sync ring on this profile yet.";
@@ -70,6 +71,7 @@ pub fn run(
             parsed.json,
         ),
         "sync-status" => status(&paths, parsed.json),
+        "sync-review" => review(&paths, parsed.json, parsed.resolve.as_ref()),
         other => anyhow::bail!("unknown sync command: {other}"),
     };
     Ok(match result {
@@ -93,14 +95,17 @@ fn failure(msg: &str) -> i32 {
 struct Parsed {
     positionals: Vec<String>,
     json: bool,
+    /// `sync-review`: (approve, id prefix).
+    resolve: Option<(bool, String)>,
 }
 
 /// Arguments after the (already extracted) global profile flags.
 fn parse_args(cmd: &str, args: &[String]) -> Result<Parsed, String> {
-    let takes_format = matches!(cmd, "sync-now" | "sync-status");
+    let takes_format = matches!(cmd, "sync-now" | "sync-status" | "sync-review");
     let mut out = Parsed {
         positionals: Vec::new(),
         json: false,
+        resolve: None,
     };
     let mut i = 0;
     while i < args.len() {
@@ -112,6 +117,16 @@ fn parse_args(cmd: &str, args: &[String]) -> Result<Parsed, String> {
                 Some(other) => return Err(format!("unknown format '{other}'")),
                 None => return Err("--format requires a value".into()),
             };
+            i += 2;
+        } else if cmd == "sync-review" && (a == "--approve" || a == "--reject") {
+            let id = args
+                .get(i + 1)
+                .filter(|v| !v.starts_with('-'))
+                .ok_or_else(|| format!("{a} requires an op id"))?;
+            if out.resolve.is_some() {
+                return Err("give exactly one of --approve and --reject".into());
+            }
+            out.resolve = Some((a == "--approve", id.clone()));
             i += 2;
         } else if a.starts_with('-') {
             return Err(format!("unknown option '{a}' for {cmd}"));
@@ -472,6 +487,95 @@ fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
     Ok(0)
 }
 
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The one full hash among `hashes` that starts with `prefix` (hex, at least
+/// four characters).
+fn resolve_prefix(hashes: &[[u8; 32]], prefix: &str) -> Result<[u8; 32], String> {
+    let p = prefix.to_lowercase();
+    if p.len() < 4 || !p.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(format!(
+            "'{prefix}' is not an op id (at least 4 hex characters)"
+        ));
+    }
+    let hits: Vec<&[u8; 32]> = hashes.iter().filter(|h| hex(*h).starts_with(&p)).collect();
+    match hits.as_slice() {
+        [] => Err(format!("no pending op matches '{prefix}'")),
+        [one] => Ok(**one),
+        _ => Err(format!(
+            "'{prefix}' matches several pending ops; use more characters"
+        )),
+    }
+}
+
+/// Review pending changes. Read-only apart from the one resolution; never
+/// loads or creates the device identity.
+fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>) -> Result<i32> {
+    use crate::app::sync_view::pending_view;
+    let store = open_store(paths)?;
+    let rows = store.sync_devices()?;
+    let ops = store.sync_pending()?;
+    let views: Vec<_> = ops
+        .iter()
+        .map(|op| {
+            let reason = store.sync_pending_reason(&op.hash()).ok().flatten();
+            pending_view(&store, op, &rows, reason)
+        })
+        .collect();
+    if let Some((approve, prefix)) = resolve {
+        let hashes: Vec<[u8; 32]> = views.iter().map(|v| v.hash).collect();
+        let hash = match resolve_prefix(&hashes, prefix) {
+            Ok(h) => h,
+            Err(msg) => return Ok(usage_error("sync-review", &msg)),
+        };
+        let view = views
+            .iter()
+            .find(|v| v.hash == hash)
+            .expect("resolved above");
+        let id = hex(&hash)[..12].to_string();
+        store.sync_resolve_pending(&hash, *approve)?;
+        let verb = if *approve { "Approved" } else { "Rejected" };
+        if json_out {
+            let doc = json!({
+                "id": id, "result": verb.to_lowercase(), "summary": view.summary,
+            });
+            println!("{}", serde_json::to_string_pretty(&doc)?);
+        } else {
+            println!("{verb} {id}: {}", view.summary);
+        }
+        return Ok(0);
+    }
+    if json_out {
+        let list: Vec<_> = views
+            .iter()
+            .map(|v| {
+                json!({
+                    "id": &hex(&v.hash)[..12], "author": v.device, "summary": v.summary,
+                    "changes": v.changes.iter().map(|c| json!({
+                        "field": c.field, "from": c.from, "to": c.to, "dangerous": c.dangerous,
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&list)?);
+        return Ok(0);
+    }
+    if views.is_empty() {
+        println!("Nothing waiting for review.");
+        return Ok(0);
+    }
+    for v in &views {
+        println!("{}  {}  {}", &hex(&v.hash)[..12], v.device, v.summary);
+        for c in &v.changes {
+            let mark = if c.dangerous { "[!]" } else { "   " };
+            println!("  {mark} {}: {} -> {}", c.field, c.from, c.to);
+        }
+    }
+    Ok(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -535,10 +639,110 @@ mod tests {
     }
 
     #[test]
+    fn parse_review_flags() {
+        let p = parse_args("sync-review", &s(&["--approve", "abcd"])).unwrap();
+        assert_eq!(p.resolve, Some((true, "abcd".to_string())));
+        let p = parse_args("sync-review", &s(&["--reject", "abcd", "--format", "json"])).unwrap();
+        assert_eq!(p.resolve, Some((false, "abcd".to_string())));
+        assert!(p.json);
+        assert!(parse_args("sync-review", &s(&["--approve", "a", "--reject", "b"])).is_err());
+        assert!(parse_args("sync-review", &s(&["--approve"])).is_err());
+        assert!(parse_args("sync-review", &s(&["extra"])).is_err());
+        assert!(parse_args("sync-now", &s(&["--approve", "abcd"])).is_err());
+    }
+
+    #[test]
+    fn prefix_resolution() {
+        let mut a = [0u8; 32];
+        a[0] = 0xab;
+        a[1] = 0xcd;
+        let mut b = a;
+        b[2] = 0x01;
+        let mut c = [0u8; 32];
+        c[0] = 0x12;
+        c[1] = 0x34;
+        let all = [a, b, c];
+        assert_eq!(resolve_prefix(&all, "1234"), Ok(c));
+        assert_eq!(
+            resolve_prefix(&all, "1234AB"),
+            Err("no pending op matches '1234AB'".into())
+        );
+        assert!(resolve_prefix(&all, "abcd")
+            .unwrap_err()
+            .contains("several"));
+        assert_eq!(resolve_prefix(&all, "abcd01"), Ok(b));
+        assert!(resolve_prefix(&all, "12").unwrap_err().contains("4 hex"));
+        assert!(resolve_prefix(&all, "zzzz").is_err());
+    }
+
+    #[test]
     fn yes_answers() {
         assert!(is_yes("y\n"));
         assert!(is_yes(" YES "));
         assert!(!is_yes(""));
         assert!(!is_yes("n"));
+    }
+
+    /// A profile whose store holds one pending host creation from `laptop`.
+    fn profile_with_pending() -> (tempfile::TempDir, ProfilePaths, String) {
+        use crate::sync::oplog::{Attendance, DeviceRole, HostFields, OpBody};
+        let dir = tempfile::tempdir().unwrap();
+        let paths = ProfilePaths {
+            data_root: dir.path().to_path_buf(),
+            id: "t".into(),
+            name: "t".into(),
+            root: dir.path().to_path_buf(),
+            config_file: dir.path().join("config.toml"),
+            ssh_config: dir.path().join("ssh_config"),
+            compat: false,
+        };
+        let store = LauncherStore::open(paths.launcher_db()).unwrap();
+        let author = LauncherStore::open_in_memory().unwrap();
+        let id = DeviceIdentity::generate();
+        for st in [&store, &author] {
+            st.sync_register_device(
+                &id.public(),
+                "laptop",
+                DeviceRole::Holder,
+                Attendance::Attended,
+            )
+            .unwrap();
+        }
+        let op = author
+            .sync_append_local(
+                &id,
+                OpBody::HostUpsert {
+                    host_uid: [9; 16],
+                    fields: HostFields {
+                        name: Some("web".into()),
+                        address: Some("10.0.0.1".into()),
+                        ..Default::default()
+                    },
+                },
+            )
+            .unwrap();
+        store.sync_ingest(op.clone()).unwrap();
+        (dir, paths, hex(&op.hash())[..12].to_string())
+    }
+
+    #[test]
+    fn approving_by_prefix_applies_the_op_and_rejecting_drops_it() {
+        let (_d, paths, id) = profile_with_pending();
+        assert_eq!(review(&paths, false, None).unwrap(), 0);
+        assert_eq!(
+            review(&paths, false, Some(&(true, id[..6].into()))).unwrap(),
+            0
+        );
+        let store = LauncherStore::open(paths.launcher_db()).unwrap();
+        assert!(store.get_host_by_name("web").unwrap().is_some());
+        assert!(store.sync_pending().unwrap().is_empty());
+        // Nothing left: the same id is now unknown (usage error).
+        assert_eq!(review(&paths, false, Some(&(true, id.clone()))).unwrap(), 2);
+
+        let (_d, paths, id) = profile_with_pending();
+        assert_eq!(review(&paths, true, Some(&(false, id))).unwrap(), 0);
+        let store = LauncherStore::open(paths.launcher_db()).unwrap();
+        assert!(store.get_host_by_name("web").unwrap().is_none());
+        assert!(store.sync_pending().unwrap().is_empty());
     }
 }

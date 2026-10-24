@@ -26,6 +26,7 @@ pub fn print_command_help(cmd: &str) {
         "sync-join" => print_sync_join(),
         "sync-now" => print_sync_now(),
         "sync-status" => print_sync_status(),
+        "sync-review" => print_sync_review(),
         "import" => print_import(),
         "export" => print_export(),
         "completions" => print_completions(),
@@ -333,6 +334,27 @@ EXIT CODES:
     1  a device was offline or the round failed
     2  usage error
     3  fork detected (`FORK DETECTED: <name>`)"#
+    );
+}
+
+fn print_sync_review() {
+    println!(
+        r#"sshub sync-review - list, approve or reject pending sync changes
+
+USAGE:
+    sshub [--profile NAME] sync-review [--format plain|json]
+    sshub [--profile NAME] sync-review (--approve <id> | --reject <id>) [--format plain|json]
+
+Without a flag, lists each change waiting for review: a 12-character id, the
+author device, a summary, and one line per field (`[!]` marks a dangerous
+field). --approve / --reject take a unique prefix (at least 4 hex characters)
+of an id and resolve the change in the store, the same way the TUI does.
+Read-only otherwise; never creates a device key.
+
+EXIT CODES:
+    0  listed, approved or rejected (also when nothing is waiting)
+    1  store error
+    2  usage error (unknown or ambiguous id, both flags, bad option)"#
     );
 }
 

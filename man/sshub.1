@@ -400,6 +400,20 @@ offline or failed, 2 on usage error, 3 when a fork is proven
 Read-only: ring devices (name, short id, role, status, last seen, head seq,
 host), pending change count and credential mode. Never creates a device key.
 .TP
+.B sshub sync\-review \fR[\fB\-\-approve\fR \fIID\fR | \fB\-\-reject\fR \fIID\fR] [\fB\-\-format\fR \fBplain\fR|\fBjson\fR]
+List the changes waiting for review: a 12-character id, the author device, a
+summary and one line per field (marked
+.B [!]
+when dangerous). With
+.B \-\-approve
+or
+.B \-\-reject
+the change whose id starts with
+.I ID
+(at least 4 hex characters, unique) is resolved in the store like in the TUI.
+Never creates a device key. Exit 0 on success or empty queue, 1 on a store
+error, 2 on an unknown or ambiguous id or bad options.
+.TP
 .B sshub sync\-serve
 .TQ
 .B sshub sync\-enroll

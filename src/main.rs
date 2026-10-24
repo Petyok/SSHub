@@ -235,6 +235,7 @@ HOST SYNC (headless; encrypted peer-to-peer over ssh):
     sshub sync-join <host>                   Join the ring of the device at <host>
     sshub sync-now [<device>] [--format plain|json]   Sync with ring devices
     sshub sync-status [--format plain|json]  Ring devices, pending changes, credential mode
+    sshub sync-review [--approve <id> | --reject <id>] [--format plain|json]   Review pending changes
     sshub sync-serve | sync-enroll           Run by a peer over ssh (frames on stdin/stdout)
 
 INVENTORY / CONFIG:

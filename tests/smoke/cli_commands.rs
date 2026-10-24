@@ -1399,6 +1399,7 @@ fn sync_commands_print_their_own_help() {
         "sync-join",
         "sync-now",
         "sync-status",
+        "sync-review",
     ] {
         sshub(d.path())
             .args([cmd, "--help"])
@@ -1406,4 +1407,37 @@ fn sync_commands_print_their_own_help() {
             .success()
             .stdout(predicate::str::contains(format!("sshub {cmd} -")));
     }
+}
+
+#[test]
+fn sync_review_empty_queue_is_quiet_and_creates_no_device_key() {
+    let d = dir();
+    sshub(d.path())
+        .arg("sync-review")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Nothing waiting for review."));
+    let out = sshub(d.path())
+        .args(["sync-review", "--format", "json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(v, serde_json::json!([]));
+    assert!(!has_file_named(d.path(), "device.key"));
+}
+
+#[test]
+fn sync_review_with_an_unknown_id_exits_two() {
+    let d = dir();
+    sshub(d.path())
+        .args(["sync-review", "--approve", "deadbeef"])
+        .assert()
+        .code(2);
+    sshub(d.path())
+        .args(["sync-review", "--approve", "dead", "--reject", "beef"])
+        .assert()
+        .code(2);
 }
