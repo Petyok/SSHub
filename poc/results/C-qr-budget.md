@@ -1,6 +1,6 @@
 # PoC C: QR budget (offline portion)
 
-VERDICT BLOCKED
+VERDICT PARTIAL (C4 measured on a real phone for four sizes, C5 not run; see "Over the air")
 
 C4 (handheld worst case, 5 runs) and C5 (recovery after interruption) need a physical phone and were NOT run. The offline measurements below (C1 to C3) are complete. The phone model is not named because no phone was used.
 
@@ -82,3 +82,25 @@ Headless Chromium with a fake camera from y4m. Not a phone and not handheld. Log
 - Real-camera decode at either geometry.
 - Laptop Chromium run of C1 (container only).
 - Fountain coding is indexed looped chunks, not rateless. The spec's C5 implication (rateless) is not tested here.
+
+## Over the air (C4, real phone)
+
+Setup: Samsung SM-A536E (Android 16, Chrome 155.0.8059.84), rear camera (480 px wide preview in the page), phone held still by the maintainer, laptop screen showing the animated code in one kitty window (truecolor half blocks, black on white, quiet zone 4, 8 fps, indexed looped chunks of the PoC H scheme: 6 byte chunk header plus the code capacity). Room as reported: quiet, normal indoor light. Scanner: `poc/qr-scanner.html` (jsQR 1.4.0 on every camera frame, about 20 Hz), 5 runs per block, "elapsed" = from the first decoded frame of the run to a matching sha256, "wall" = from the Reset tap to completion. Driver: `assets/companion/scripts/phone-ota.mjs camera`. Battery 33 to 34 C throughout.
+
+Windows: the tiling window manager gives a window of 701x825 px, not 80x24 or 120x40 cells (66x35 cells at the owner's 12.5 pt font for v5; 82x43 cells at 10 pt for v13). The codes have the size of those terminals (v5 is 45x23 cells, v13 is 77x39 cells); the physical size of v13 is about 80% of what it would be at the owner's font.
+
+| block | chunks | distance | runs ok | worst elapsed | median elapsed | runs (s) |
+|---|---|---|---|---|---|---|
+| v5, 1714 B (the real challenge size) | 22 | ~30 cm | 5 of 5 | 7.47 s | 4.07 s | 7.47, 5.32, 4.07, 2.62, 2.62 |
+| v5, 4096 B | 53 | ~30 cm | 5 of 5 | 21.78 s | 18.72 s | 19.40, 15.39, 21.78, 8.52, 18.72 |
+| v13, 1714 B | 6 | ~50 to 60 cm | 5 of 5 | 1.19 s | 0.66 s | 0.62, 0.58, 1.19, 0.66, 1.18 |
+| v13, 4096 B | 13 | ~50 to 60 cm | 1 valid run of 2 (stopped) | 3.08 s (one run) | n/a | 3.08, then run 2 saw only 1 of 13 chunks in 30 s (289 duplicate reads of one frame, the display or the camera image stopped changing) and Chrome on the phone went away; not repeated |
+
+Reading against the criterion (C4: under 5 s at 80x24, five runs): the 80x24 case with the real challenge (v5, 1714 B, 22 frames) is NOT under 5 s in every run: the worst run took 7.5 s and the median 4.1 s; the first runs were slower (7.5, 5.3 s) while the aim was settling, the last two took 2.6 s (a lap at 8 fps is 22 / 8 = 2.75 s, so 2.6 s is one lap). With 4096 B (53 frames, a lap of 6.6 s) the phone needed 2 to 3 laps (median 18.7 s). The 120x40 case (v13) is much faster because the challenge is 6 frames (a lap of 0.75 s): worst 1.2 s. Duplicate counts were high at v5 (up to 120): the phone decodes about 20 frames per second against 8 on screen, and a missed frame costs a whole lap, since there is no parity in this PoC scheme (the product uses parity frames, 25 percent, and the same loop).
+
+Findings from running it:
+
+- A half-block QR wider than the terminal wraps and turns into horizontal stripes. A first v13 attempt used a tiled window that was 66 to 73 cells wide for a 77 cell code and produced exactly that; the player now measures the tty and refuses to draw (exit status 3), and the bench checks the sender before every block: a capture of only the bench window, decoded with jsQR, deleted at once.
+- Android Chrome only asks for the camera through a collapsed permission chip in the address bar; the first run of getUserMedia stayed pending until Chrome was restarted after the Android permission was granted.
+
+Not run: **C5** (recovery after covering the screen mid-scan), a front camera run, handheld (the phone was held by the maintainer at a fixed spot, not walked around), other lighting. The real sshub unlock modal has not been decoded yet.
