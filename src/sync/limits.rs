@@ -62,7 +62,9 @@ pub const ARGON2_MAX_MEM_KIB: u32 = 2 * 1_048_576;
 pub const ARGON2_MAX_ITERS: u32 = 16;
 /// QR payload bytes per frame (error correction level M) and animation settings.
 pub const QR_FRAME_PAYLOAD_BYTES: usize = 250;
-pub const QR_FPS: u32 = 4;
+/// Frames per second of the animated QR (PoC C measured the pipeline at 8; the real phone
+/// measurement, C4, tunes it).
+pub const QR_FPS: u32 = 8;
 pub const QR_PARITY_PERCENT: u32 = 25;
 /// Transport caps.
 pub const MAX_FRAME_BYTES: usize = 1 << 20;

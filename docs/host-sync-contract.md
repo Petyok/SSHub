@@ -305,6 +305,8 @@ pub enum OpBody {                              // canonical form: section 0 (C2)
     HeadAttest    { device_id: DeviceId, seq: u64, chain_hash: [u8; 32] },
 }
 pub enum ThirdFactor { Paper, HardwareKey(DeviceId), EmailCode }
+// sealed = hybrid_wrap(recipient pub, host_uid || index || share): the credential id is inside the
+// wrap and every unwrapper compares it with the credential it is acting for (confused deputy).
 pub struct WrappedShare { pub recipient: DeviceId, pub alg: AlgTag, pub sealed: Vec<u8> }
 pub struct ReshareItem { pub host_uid: HostUid, pub sub_shares: Vec<(DeviceId, Vec<u8>)>, pub commitments: Vec<Vec<u8>> }
 pub struct ConfirmItem { pub host_uid: HostUid, pub sealed_share: Vec<u8> }
@@ -404,14 +406,23 @@ next to `theme` (no `CliContext`, stdout carries frames only). The existing
 
 ```rust
 pub struct Challenge { pub op: Op, pub nonce: [u8; 32], pub expiry: i64,
-    pub eph_x25519_pub: [u8; 32], pub request_id: u64 }
+    pub eph_x25519_pub: [u8; 32], pub request_id: u64,
+    pub phone_material: PhoneMaterial }
+// What the phone needs to recover ITS share for the credential (it stores no credential keys):
+// kind 0 = the hybrid wrapped share of the credential op, plaintext host_uid || index || share;
+// kind 1 = after a reshare, the envelope share (aead aad host_uid || epoch || index) plus the
+// phone's ShareStorageKey blob of that epoch. The phone MUST compare the host_uid inside the
+// unwrapped share (or the envelope aad) with the host_uid of the op it is asked to approve,
+// otherwise a requester could pair a description for host A with the share of host B.
+pub struct PhoneMaterial { pub kind: ShareKind, pub epoch: u64, pub share_blob: Vec<u8>, pub storage_blob: Vec<u8> }
 impl Challenge {
-    pub fn to_qr_payload(&self, qr_budget: usize) -> Vec<Vec<u8>>;   // fountain frames
-    // H(domain_tag || proto_version_le || canonical_op || nonce || expiry_le || eph || request_id_le)
-    // domain_tag = b"sshub/sync/challenge/v1", proto_version u16. WHOLE op, not body.
+    pub fn to_qr_payload(&self, frame_bytes: usize) -> Vec<Vec<u8>>;   // fountain frames, see src/sync/fountain.rs
+    // H(domain_tag || proto_version_le || canonical_op || nonce || expiry_le || eph || request_id_le
+    //   || H(phone_material)); domain_tag = b"sshub/sync/challenge/v1", proto_version u16.
+    // WHOLE op, not body, and the exact material that was shown.
     pub fn binding_hash(&self) -> [u8; 32];
 }
-pub const SYNC_WIRE_V1: u16 = 1;   // frame: b"SWR1" || version u16 BE || kind u8 || body
+pub const SYNC_WIRE_V1: u16 = 1;   // frame: b"SWR1" || version u16 BE || kind u8 || body, layouts in src/sync/wire.rs
 pub fn unwrap_share_response(eph_priv: &[u8; 32], ciphertext: &[u8]) -> anyhow::Result<Share>;
 
 pub enum UnlockPath { Peer(DeviceId), PhoneAudio, PhoneReverseQr, PhoneClipboard,
@@ -514,8 +525,8 @@ offline; no real credentials, no real user directories.
 | `ARGON2_EMAIL_PROFILE` | `{ mem_kib: 19_456, iters: 2 }` | email code |
 | `ARGON2_DEVICE_KEY_PROFILE` | `{ mem_kib: 65_536, iters: 3 }` | local device key file passphrase |
 | `ARGON2_MAX_MEM_KIB`, `ARGON2_MAX_ITERS` | `2 * 1_048_576`, `16` | bounds for a profile read from an untrusted blob |
-| `QR_FRAME_PAYLOAD_BYTES` | `250` | payload per QR frame, ECC level M |
-| `QR_FPS` | `4` | animated frame rate |
+| `QR_FRAME_PAYLOAD_BYTES` | `250` | frame size when the terminal area is unknown (QR byte capacity at level M, version 11); the unlock modal normally uses `fountain::frame_bytes_for_area` (84 bytes full 80x24, 331 bytes 120x40) |
+| `QR_FPS` | `8` | animated frame rate (PoC C measured the pipeline at 8; the real phone measurement tunes it) |
 | `QR_PARITY_PERCENT` | `25` | XOR parity frames in the loop |
 | `MAX_FRAME_BYTES` | `1 << 20` | transport frame cap |
 | `MAX_JSON_DEPTH` | `32` | frame JSON depth cap |
