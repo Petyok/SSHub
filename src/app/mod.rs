@@ -998,6 +998,12 @@ impl App {
         // ssh (its identity loads on the first round, not now).
         app.refresh_sync_view();
         crate::sync::runtime::guard_synced_credentials(&gate, app.store.clone());
+        crate::sync::runtime::StoreReplicator::install(
+            &gate,
+            paths.clone(),
+            app.store.clone(),
+            crate::credentials::open_ungated_for_profile,
+        );
         app.attach_sync_worker(crate::sync::client::spawn_sync_thread(
             crate::sync::runtime::round_fn(crate::sync::runtime::RoundDeps::for_profile(
                 paths,
@@ -1006,6 +1012,9 @@ impl App {
             )),
         ));
         app.queue_auto_sync();
+        if app.sync.configured {
+            app.sync.intents.push(sync::SyncIntent::Identify);
+        }
 
         // Spawn the OS auto-detect worker here (the on-disk constructor) rather
         // than in new_with_deps so unit tests that inject deps stay offline and

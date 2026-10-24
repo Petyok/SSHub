@@ -856,6 +856,49 @@ prompt names the requester; plaintext never touches disk.
   words with `peer_has_screen = false` and the plain warning; the local machine invites when it has a ring,
   founds one when both are blank, joins P's ring when only P has one.
 
+### 3d. Synced identity keys: a private ssh-agent (C19)
+
+A synced identity's private key must never be written to disk on any OS (macOS has no tmpfs runtime dir,
+Linux sessions without logind have none either), so the earlier `materialise_key` file is replaced:
+
+* External `ssh` (sessions, tunnels, exec): `cred_ops::PrivateAgent` is one `ssh-agent -D -a <socket>` per
+  process in a 0700 temp dir, started on the first synced key. `add_key(pem, ttl, askpass)` feeds the key over
+  stdin to `ssh-add -t <ttl> -` (a passphrase through the existing askpass helper, `SSH_ASKPASS_REQUIRE=force`),
+  reads the new public line back with `ssh-add -L`, and writes the **public** key file. `ssh_args(&key)` returns
+  `-o IdentityAgent=<socket> -o IdentitiesOnly=yes -i <public file>`. Drop kills the agent and removes the dir.
+  TTL = the unlock TTL. A missing OpenSSH client makes the unlock fail loudly with that reason.
+* In-process libssh2 (SFTP): authenticate with the key bytes held in the gate, in memory
+  (`userauth_pubkey_memory`), no agent, no file.
+* Jump hosts: a `ProxyJump` hop must use the same `-o IdentityAgent` and `IdentitiesOnly`; the connect path
+  passes them to the jump command too (TUI worker, to verify on a real two-hop run).
+
+Who: core (me) `PrivateAgent`, `AskpassEnv`, `AgentKey` in `cred_ops.rs`; `materialise_key` is removed once the
+gate has moved over. TUI worker: the gate's `insert_private_key` starts or reuses one agent and stores the
+`AgentKey`; connect paths add `ssh_args`; lock/drop drops the agent; the sftp path uses memory auth.
+No private key byte on disk, ever; the agent socket and public files are the only artifacts.
+
+### 3c. Join-time anchor (C18): spec
+
+After `EnrollConfirm` succeeds and the inviter appended `DeviceAdd` for the joiner, the inviter sends the
+join anchor over the same authenticated enrollment channel and the joiner adopts it; new frames after
+`EnrollConfirm`: `EnrollAnchor { index: u32, total: u32, #[b64] bytes }` (chunks of at most
+`CHECKPOINT_CHUNK_BYTES`, at most `CHECKPOINT_BYTES` in all) and `EnrollAnchorDone { #[hex32] bundle_hash }`.
+The bundle is the C15 checkpoint bundle format (cut = the inviter's chain heads, canonical state blob, the
+inviter's signed head); it carries the signature of the inviter only and is accepted only through
+`sync_join_adopt(bundle, inviter)`, which verifies the inviter's signature and that the state hash recomputes,
+then adopts like `sync_bootstrap` with trust `BootstrapTrust::Enrollment(inviter)`. A bundle with one signature
+is never accepted as a prune checkpoint.
+
+Rules: (1) the joiner's own `DeviceAdd` is inside the cut and never pending on the joiner; (2) everything at or
+below the cut is the starting state, not reviewed; (3) ops above the cut are reviewed as usual; (4) an op
+whose author is not an accepted device is stored as pending with reason `unknown-author` (capped by
+`PENDING_QUARANTINE_MAX_PER_DEVICE`) instead of being rejected, and settles when the author is admitted;
+(5) `sync_pending()` returns every pending op and the review screens and `sync-review` list all of them with
+`sync_pending_reason`; (6) the joiner's local hosts stay local until the user chooses to share them.
+Op-log: `sync_join_anchor_build(&self, joiner: &DeviceId) -> Result<CheckpointBundle>`, `sync_join_adopt`,
+the `unknown-author` reason, `BootstrapTrust::Enrollment`. Core (me): the two frames in `enroll.rs` and the
+call order; TUI: the review listing and the progress text "adopting the ring (N hosts)".
+
 ### 4a. Stage 3 as built (WP3a, WP3c): supersedes the sketch above where they differ
 
 Code: `src/sync/{quorum,reshare,cred_ops,cert,modes,recovery}.rs` (plus the phone wire frames in `wire.rs`).
@@ -1238,3 +1281,16 @@ offline; no real credentials, no real user directories.
 
 The same table is appended to `docs/host-sync-design.md` as "Defaults chosen at
 implementation" by WP-DOCS.
+
+### 4f. Paper replication and the mandatory-paper rule (C5)
+
+`FactorRegister { Paper }` carries in `sealed` the paper's UNWRAP public key (`pub_to_bytes`: ed25519, x25519,
+ML-KEM-768; at most 1500 bytes) next to the recovery verifier in `public`. `quorum::paper_pub` reads the newest
+applied registration, so every device wraps new credentials to the paper and reshares include it
+(`quorum::paper_registration(phrase)` builds the op: the setup helper, a Red op whose first registration needs only
+the phone and a second device). Typed paper words open a credential as the second share next to the device's own:
+`unlock_paths::paper_second_share(store, host, epoch, phrase)`. A Quorum ring with exactly two live holders needs
+the paper (`quorum::paper_rule`): refused for new credentials, a mode change to Quorum and a revocation that would
+leave two holders. A reshare also runs when the holders differ from those the credentials are shared among
+(a promoted holder, an enabled or disabled exemption): `revocation::next_actions` returns `Contribute` and
+`Receive` without a rotation step.

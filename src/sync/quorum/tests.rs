@@ -352,6 +352,11 @@ impl ShareSource for FromPeer {
 #[test]
 fn the_unlocker_fills_the_gate_for_a_real_host_row_and_nothing_else() {
     let d = ring(2);
+    // Exactly two holders: the paper is mandatory.
+    append(
+        &d[0],
+        paper_registration(&bip39_encode(&[0x71; 32])).unwrap(),
+    );
     quorum_mode(&d[0]);
     all_to_all(&d);
     let row = d[0]
@@ -522,6 +527,46 @@ fn certificates_are_enforced_by_the_holders() {
             .unwrap_err()
             .to_string()
             .contains("budget")
+    );
+
+    // R3b: only the issuing phone extends the day, by one extension per 24 hours.
+    append(
+        &d[2],
+        OpBody::CertExtend {
+            cert_id: cert3.id,
+            extra_hosts: 5,
+        },
+    );
+    all_to_all(&d);
+    assert_eq!(
+        crate::sync::cert::extension_budget(&d[2].store, &cert3, t).unwrap(),
+        0,
+        "a holder cannot extend"
+    );
+    let req = crate::sync::cert::cert_extend_request(cert3.id, 1).unwrap();
+    assert_eq!(
+        crate::sync::wire::CertExtendRequestWire::decode(&req.encode()).unwrap(),
+        req
+    );
+    append(phone, req.to_body());
+    append(
+        phone,
+        OpBody::CertExtend {
+            cert_id: cert3.id,
+            extra_hosts: 7,
+        },
+    );
+    all_to_all(&d);
+    assert_eq!(
+        crate::sync::cert::extension_budget(&d[2].store, &cert3, t).unwrap(),
+        1,
+        "the second extension inside 24 hours does not count"
+    );
+    assert!(cert_allows(&cert3, &pk, &d[2].store, &d[1].did, &host_c, t, t).is_ok());
+    assert_eq!(
+        crate::sync::cert::extension_budget(&d[2].store, &cert3, t + 2 * 86_400).unwrap(),
+        0,
+        "an extension covers its own day only"
     );
 
     // Revocation arrives with the next sync.
@@ -1338,4 +1383,58 @@ fn revoking_a_holder_runs_rotate_reshare_adopt_and_retire_without_prompts() {
         check_revocable(&two[0].store, &two[1].did, now).is_err(),
         "one remaining holder cannot contribute"
     );
+}
+
+struct OnlyPhrase(&'static str);
+
+impl ShareSource for OnlyPhrase {
+    fn master_phrase(&self) -> Option<Zeroizing<String>> {
+        Some(Zeroizing::new(self.0.into()))
+    }
+
+    fn second_share(
+        &self,
+        _: &HostUid,
+        _: u64,
+        _: &Share,
+    ) -> std::result::Result<Share, UnlockError> {
+        Err(UnlockError::NeedsShares("no peer".into()))
+    }
+}
+
+#[test]
+fn the_exempt_device_opens_through_the_unlocker_with_the_phrase_and_no_peer() {
+    let d = ring(3);
+    quorum_mode(&d[0]);
+    all_to_all(&d);
+    append(
+        &d[0],
+        crate::sync::exemption::enable_body(&d[0].id, PHRASE, FAST),
+    );
+    all_to_all(&d);
+    let host = [91u8; 16];
+    cred_put(&d[1].store, &d[1].id, &host, &payload("exempt-secret")).unwrap();
+    all_to_all(&d);
+
+    let opened = unlocker(&d[0], Box::new(OnlyPhrase(PHRASE)), None)
+        .open_one(&host)
+        .unwrap();
+    assert_eq!(
+        CredPayload::from_bytes(&opened)
+            .unwrap()
+            .password
+            .as_deref(),
+        Some("exempt-secret")
+    );
+    // Wrong phrase on the exempt device, or the right phrase on any other device: nothing opens.
+    assert!(unlocker(
+        &d[0],
+        Box::new(OnlyPhrase("not the right words at all")),
+        None
+    )
+    .open_one(&host)
+    .is_err());
+    assert!(unlocker(&d[1], Box::new(OnlyPhrase(PHRASE)), None)
+        .open_one(&host)
+        .is_err());
 }

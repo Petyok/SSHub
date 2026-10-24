@@ -454,6 +454,10 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "Sync now with the selected device",
     },
     HelpItem::Entry {
+        key: "Enter",
+        desc: "Compromised device: show the proof and next steps. Behind or stale device: sync it, then re-enroll it if it is still behind",
+    },
+    HelpItem::Entry {
         key: "R",
         desc: "Review the changes waiting for approval (a approve, r reject, Esc close)",
     },

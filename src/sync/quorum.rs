@@ -299,10 +299,61 @@ pub fn phone_device(store: &LauncherStore) -> Result<Option<DeviceId>> {
     Ok(phones.pop())
 }
 
+/// The paper's unwrap public key: the one a `FactorRegister { Paper }` replicated in `sealed` (so every
+/// device wraps new credentials to it), else the local record of the device that ran [`paper_setup`].
 pub fn paper_pub(store: &LauncherStore) -> Result<Option<DevicePublic>> {
+    for op in ops_of(store, "FactorRegister", None)?.into_iter().rev() {
+        if let OpBody::FactorRegister {
+            factor: super::oplog::ThirdFactor::Paper,
+            sealed,
+            ..
+        } = &op.body
+        {
+            if !sealed.is_empty() {
+                return pub_from_bytes(sealed).map(Some);
+            }
+        }
+    }
     meta_get(store, "paper_pub")?
         .map(|b| pub_from_bytes(&b))
         .transpose()
+}
+
+/// The `FactorRegister` body that publishes the paper: its recovery key as the factor verifier and its
+/// unwrap public key as the share recipient. The setup helper of the paper ceremony; the first
+/// registration needs only the phone and a second device (bootstrap, contract 4c).
+pub fn paper_registration(phrase: &str) -> Result<OpBody> {
+    let unwrap = paper_derive(phrase, PaperDomain::Unwrap)?.public();
+    let recover = paper_derive(phrase, PaperDomain::Recover)?.public();
+    Ok(OpBody::FactorRegister {
+        factor: super::oplog::ThirdFactor::Paper,
+        public: recover.ed25519_pub,
+        sealed: pub_to_bytes(&unwrap),
+        salt: [0; 16],
+        sender: None,
+    })
+}
+
+/// The mandatory-paper rule: a Quorum ring that would hold exactly two holders needs a registered paper,
+/// because losing either device would otherwise lose every credential. `holders_after` is the number of
+/// live holders (terminals and phone) the change leaves.
+pub fn paper_rule(store: &LauncherStore, holders_after: usize) -> Result<()> {
+    if holders_after == 2 && paper_pub(store)?.is_none() {
+        bail!("a ring with exactly two holders needs the paper registered first: losing either device would lose every credential");
+    }
+    Ok(())
+}
+
+/// Live holders of the ring (not revoked, not compromised).
+pub fn live_holder_count(store: &LauncherStore) -> Result<usize> {
+    Ok(store
+        .sync_devices()?
+        .into_iter()
+        .filter(|d| {
+            d.role == DeviceRole::Holder
+                && !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
+        })
+        .count())
 }
 
 // ------------------------------------------------------------------ sharings
@@ -331,6 +382,11 @@ pub fn share_recipients(
     if let Some(p) = paper_pub(store)? {
         if !out.iter().any(|(id, _)| *id == p.device_id()) {
             out.push((p.device_id(), p));
+        }
+    }
+    for (_, slot) in super::exemption::active_slots(store)? {
+        if !out.iter().any(|(id, _)| *id == slot.device_id()) {
+            out.push((slot.device_id(), slot));
         }
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
@@ -649,7 +705,32 @@ impl QuorumUnlocker {
             let mine = own_shares(&self.store, &self.id, host).map_err(fail)?;
             let mut last = UnlockError::NeedsShares("another holder must release a share".into());
             let mut found = None;
+            // An exempt device holds the slot's share too: the phrase opens the credential alone.
+            let exempt_phrase = if super::exemption::active_slots(&self.store)
+                .map_err(fail)?
+                .iter()
+                .any(|(d, _)| *d == self.id.public().device_id())
+            {
+                self.source.master_phrase()
+            } else {
+                None
+            };
             for (epoch, share) in mine {
+                if let Some(phrase) = &exempt_phrase {
+                    if let Ok(slot) = super::exemption::slot_share(
+                        &self.store,
+                        &self.id,
+                        phrase,
+                        host,
+                        epoch,
+                        self.argon,
+                    ) {
+                        if let Ok(dek) = assemble_dek(&self.store, host, share.clone(), slot) {
+                            found = Some((epoch, dek));
+                            break;
+                        }
+                    }
+                }
                 match self.source.second_share(host, epoch, &share) {
                     Ok(second) => match assemble_dek(&self.store, host, share, second) {
                         Ok(dek) => {
@@ -697,12 +778,17 @@ impl Unlocker for QuorumUnlocker {
             let plain = self.open_one(&uid)?;
             let payload = super::cred_ops::CredPayload::from_bytes(&plain)
                 .map_err(|e| UnlockError::Failed(e.to_string()))?;
-            // The gate holds the password the TUI asks the store for; an identity key travels
-            // separately through `cred_ops::materialise`.
+            // The gate holds the password the TUI asks the store for; an identity key goes to the
+            // gate's key holder (a private ssh-agent, contract 3d), never to a file of its own.
             self.gate.insert(
                 key.clone(),
                 Zeroizing::new(payload.password.clone().unwrap_or_default()),
             );
+            if let Some(k) = payload.private_key.clone() {
+                self.gate
+                    .insert_private_key(key, Zeroizing::new(k))
+                    .map_err(|e| UnlockError::Failed(format!("{e:#}")))?;
+            }
         }
         Ok(())
     }

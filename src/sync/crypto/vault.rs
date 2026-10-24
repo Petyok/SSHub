@@ -39,6 +39,20 @@ pub(crate) fn vault_recipient_with(
     (id.public(), id)
 }
 
+/// The exemption slot's identity (contract 4e): the phrase stretched like the vault's, mixed with a
+/// per-device binding that only the device key can produce, so it opens for someone holding both.
+pub(crate) fn exempt_slot_with(
+    master_phrase: &str,
+    device_bind: &[u8; 32],
+    salt: &[u8; 16],
+    profile: Argon2Profile,
+) -> DeviceIdentity {
+    let stretched = Zeroizing::new(argon2_derive(&normalize(master_phrase), salt, profile));
+    let ikm = Zeroizing::new([stretched.as_slice(), device_bind.as_slice()].concat());
+    let seed = Zeroizing::new(derive_key("sshub/sync/exempt/seed/v1", &ikm));
+    DeviceIdentity::from_seed(&seed, "sshub/sync/exempt/v1")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
