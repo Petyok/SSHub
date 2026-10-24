@@ -718,3 +718,182 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod mail_tests {
+    use super::*;
+    use crate::sync::ceremony::{
+        factor_register_email, factor_register_paper, owed_code_mails, red_approve_body,
+        red_factor_paper, red_phone_sign_body, remember_email_code, settle_red_ops,
+    };
+    use crate::sync::crypto::{bip39_encode, paper_derive, PaperDomain};
+    use crate::sync::oplog::{CredMode, OpBody};
+    use crate::sync::protocol::tests::Dev;
+    use crate::sync::quorum::tests::append;
+
+    /// Everything of `from`'s log that `to` lacks, ingested without anyone approving.
+    fn sync(d: &[Dev]) {
+        for from in d {
+            for to in d {
+                if from.did == to.did {
+                    continue;
+                }
+                for (dev, _, _) in from.store.sync_chain_heads().unwrap() {
+                    let have = to
+                        .store
+                        .sync_chain_heads()
+                        .unwrap()
+                        .into_iter()
+                        .find(|(x, _, _)| *x == dev)
+                        .map_or(0, |(_, s, _)| s);
+                    for op in from.store.sync_chain_tail(&dev, have).unwrap() {
+                        to.store.sync_ingest(op).unwrap();
+                    }
+                }
+            }
+        }
+    }
+
+    /// A fake sendmail: appends what it is given to `capture`, then exits with `code`.
+    fn fake_sendmail(dir: &std::path::Path, capture: &std::path::Path, code: i32) -> String {
+        let script = dir.join(format!("sendmail{code}.sh"));
+        std::fs::write(
+            &script,
+            format!("#!/bin/sh\ncat >> '{}'\nexit {code}\n", capture.display()),
+        )
+        .unwrap();
+        format!("/bin/sh {}", script.display())
+    }
+
+    #[test]
+    fn a_completed_round_mails_each_owed_code_once_and_marks_it_only_when_the_mail_went() {
+        // 0 proposer, 1 and 2 attended terminals, 3 unattended hub, 4 phone.
+        let d: Vec<Dev> = (0..5).map(|_| Dev::new()).collect();
+        for x in &d {
+            crate::sync::ceremony::test_force(&x.store, false);
+        }
+        for (i, x) in d.iter().enumerate() {
+            for (j, y) in d.iter().enumerate() {
+                if i == j || j == 0 {
+                    continue;
+                }
+                let (attendance, kind) = match j {
+                    3 => (Attendance::Unattended, DeviceKind::Terminal),
+                    4 => (Attendance::Attended, DeviceKind::Phone),
+                    _ => (Attendance::Attended, DeviceKind::Terminal),
+                };
+                x.trust_with(y, attendance, kind);
+            }
+            // The proposer is known to everybody as an attended terminal.
+        }
+        for x in d.iter().skip(1) {
+            x.trust_with(&d[0], Attendance::Attended, DeviceKind::Terminal);
+        }
+        d[3].store
+            .sync_register_device(
+                &d[3].id.public(),
+                "hub",
+                DeviceRole::Holder,
+                Attendance::Unattended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+        let propose = |from: usize, body: OpBody| {
+            let op = append(&d[from], body);
+            sync(&d);
+            op
+        };
+        let phrase = bip39_encode(&[0x35; 32]);
+        let recover = paper_derive(&phrase, PaperDomain::Recover).unwrap();
+        let reg = propose(0, factor_register_paper(&phrase).unwrap());
+        append(&d[4], red_phone_sign_body(&reg));
+        append(&d[1], red_approve_body(&reg));
+        sync(&d);
+        for x in &d {
+            settle_red_ops(&x.store, reg.timestamp + 5).unwrap();
+        }
+        // Device 2 is the registered sender of the emailed code.
+        let (body, code) = factor_register_email(&d[2].did).unwrap();
+        let ereg = propose(0, body);
+        append(&d[4], red_phone_sign_body(&ereg));
+        append(&d[1], red_approve_body(&ereg));
+        append(&d[0], red_factor_paper(&recover, &ereg));
+        sync(&d);
+        for x in &d {
+            settle_red_ops(&x.store, ereg.timestamp + 5).unwrap();
+        }
+        remember_email_code(&d[2].store, &code).unwrap();
+        sync(&d);
+        let op = propose(
+            0,
+            OpBody::ModeChange {
+                to: CredMode::Quorum,
+                migrated_on: d[0].did.clone(),
+                cosigner: None,
+            },
+        );
+        append(&d[4], red_phone_sign_body(&op));
+        append(&d[1], red_approve_body(&op));
+        sync(&d);
+        let now = crate::store::now_ts();
+        assert_eq!(
+            owed_code_mails(&d[2].store, &d[2].did, now).unwrap().len(),
+            1,
+            "the sender owes the code once the other proofs are in"
+        );
+
+        // This device (2) runs a completed client round with [sync.notify] configured.
+        let dir = tempfile::tempdir().unwrap();
+        let paths = ProfilePaths {
+            data_root: dir.path().to_path_buf(),
+            id: "t".into(),
+            name: "t".into(),
+            root: dir.path().to_path_buf(),
+            config_file: dir.path().join("config.toml"),
+            ssh_config: dir.path().join("ssh_config"),
+            compat: false,
+        };
+        let capture = dir.path().join("mail.txt");
+        let rt = SyncRuntime {
+            paths: paths.clone(),
+            store: d[2].store.clone(),
+            identity: d[2].id.clone(),
+            ssh_program: None,
+        };
+        let configure = |command: &str| {
+            std::fs::write(
+                &paths.config_file,
+                format!(
+                    "[sync.notify]\ncommand = \"{command}\"\nto = [\"me@example.com\"]\nfrom = \"sshub@example.com\"\n"
+                ),
+            )
+            .unwrap();
+        };
+        let owed = || owed_code_mails(&d[2].store, &d[2].did, now).unwrap().len();
+
+        // No config: nothing is sent, nothing is marked.
+        rt.mail_owed_codes();
+        assert_eq!(owed(), 1);
+
+        // A failing mail command marks nothing (the next round tries again).
+        configure(&fake_sendmail(dir.path(), &capture, 1));
+        rt.mail_owed_codes();
+        assert_eq!(owed(), 1, "a failed mail is still owed");
+
+        // A working one sends the code once and marks it.
+        capture
+            .exists()
+            .then(|| std::fs::remove_file(&capture).unwrap());
+        configure(&fake_sendmail(dir.path(), &capture, 0));
+        rt.mail_owed_codes();
+        assert_eq!(owed(), 0, "marked after the send");
+        let mail = std::fs::read_to_string(&capture).unwrap();
+        assert_eq!(mail.matches(&code).count(), 1, "{mail}");
+        assert!(mail.contains("To: me@example.com"), "{mail}");
+
+        // The next round sends nothing more.
+        rt.mail_owed_codes();
+        assert_eq!(std::fs::read_to_string(&capture).unwrap(), mail);
+    }
+}

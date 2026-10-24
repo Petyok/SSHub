@@ -328,37 +328,47 @@ fn runtime(paths: &ProfilePaths) -> Result<SyncRuntime> {
     Ok(SyncRuntime::new(paths.clone(), Arc::new(store), identity))
 }
 
-/// `sync-join`'s prompt: the words on stdout, the anchor's progress on stderr.
-struct JoinPrompt<'a> {
+/// `sync-join`'s prompt: the words on `out`, the anchor's progress on `err`, the
+/// answer from `input` (the terminal's stdin, stdout and stderr in the CLI).
+struct JoinPrompt<'a, I, O, E> {
     host: &'a str,
+    input: I,
+    out: O,
+    err: E,
 }
 
-impl SasConfirm for JoinPrompt<'_> {
+impl<I: BufRead, O: Write, E: Write> SasConfirm for JoinPrompt<'_, I, O, E> {
     fn confirm(&mut self, p: &SasPrompt<'_>) -> bool {
+        let out = &mut self.out;
         if p.peer_has_screen {
-            println!("Compare these words with the other device: {}", p.sas);
-            println!("Peer: {}", p.peer_name);
-            print!("Do they match? [y/N] ");
+            let _ = writeln!(out, "Compare these words with the other device: {}", p.sas);
+            let _ = writeln!(out, "Peer: {}", p.peer_name);
+            let _ = write!(out, "Do they match? [y/N] ");
         } else {
-            println!("SAS words: {}", p.sas);
-            println!("Peer: {}", p.peer_name);
-            println!("{NO_SCREEN_NOTE} {}.", self.host);
-            print!("Admit this device? [y/N] ");
+            let _ = writeln!(out, "SAS words: {}", p.sas);
+            let _ = writeln!(out, "Peer: {}", p.peer_name);
+            let _ = writeln!(out, "{NO_SCREEN_NOTE} {}.", self.host);
+            let _ = write!(out, "Admit this device? [y/N] ");
         }
-        let _ = std::io::stdout().flush();
+        let _ = out.flush();
         let mut line = String::new();
-        std::io::stdin().read_line(&mut line).is_ok() && is_yes(&line)
+        self.input.read_line(&mut line).is_ok() && is_yes(&line)
     }
 
     fn progress(&mut self, p: EnrollProgress) {
-        eprintln!("{}", crate::sync::runtime::progress_line(p));
+        let _ = writeln!(self.err, "{}", crate::sync::runtime::progress_line(p));
     }
 }
 
 fn join(paths: &ProfilePaths, host: &str) -> Result<i32> {
     let rt = runtime(paths)?;
     let cancel = Arc::new(AtomicBool::new(false));
-    let mut ui = JoinPrompt { host };
+    let mut ui = JoinPrompt {
+        host,
+        input: std::io::stdin().lock(),
+        out: std::io::stdout(),
+        err: std::io::stderr(),
+    };
     match rt.join(host, &mut ui, &cancel) {
         Ok(o) => {
             let how = match o.verified_by {
@@ -843,6 +853,60 @@ mod tests {
         assert_eq!(resolve_prefix(&all, "abcd01"), Ok(b));
         assert!(resolve_prefix(&all, "12").unwrap_err().contains("4 hex"));
         assert!(resolve_prefix(&all, "zzzz").is_err());
+    }
+
+    /// `sync-join` against an in-process existing device: the words go to stdout, the
+    /// adoption of the ring is reported line by line on stderr.
+    #[test]
+    fn join_reports_the_ring_being_adopted_on_stderr() {
+        use crate::sync::enroll::run_sync_join;
+        use crate::sync::protocol::tests::Dev;
+        let peer = Dev::new();
+        crate::sync::quorum::meta_set(&peer.store, "ring_id", peer.did.as_bytes()).unwrap();
+        let me = Dev::new();
+        let (a, b) = std::os::unix::net::UnixStream::pair().unwrap();
+        let (peer_store, peer_id) = (peer.store.clone(), peer.id.clone());
+        let hub = std::thread::spawn(move || {
+            let mut conn = Conn::new(
+                b.try_clone().unwrap(),
+                b,
+                Limits::default(),
+                Arc::new(AtomicBool::new(false)),
+            );
+            let mut ui = |_: &SasPrompt<'_>| true;
+            run_sync_enroll(&mut conn, &peer_store, &peer_id, "hub", true, Some(&mut ui))
+        });
+        let mut conn = Conn::new(
+            a.try_clone().unwrap(),
+            a,
+            Limits::default(),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let mut ui = JoinPrompt {
+            host: "hub",
+            input: std::io::Cursor::new(b"y\n".to_vec()),
+            out: Vec::new(),
+            err: Vec::new(),
+        };
+        run_sync_join(&mut conn, &me.store, &me.id, "me", true, Some(&mut ui)).unwrap();
+        hub.join().unwrap().unwrap();
+        let err = String::from_utf8(ui.err).unwrap();
+        let lines: Vec<&str> = err.lines().collect();
+        assert!(lines[0].starts_with("receiving the ring ("), "{err}");
+        assert!(
+            lines[lines.len() - 2].starts_with("adopting the ring ("),
+            "{err}"
+        );
+        assert!(
+            lines[lines.len() - 1].starts_with("adopted the ring ("),
+            "{err}"
+        );
+        let out = String::from_utf8(ui.out).unwrap();
+        assert!(
+            out.contains("Compare these words with the other device: "),
+            "{out}"
+        );
+        assert!(out.ends_with("Do they match? [y/N] "), "{out}");
     }
 
     #[test]
