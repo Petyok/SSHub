@@ -18,7 +18,12 @@ step emit-vectors cargo run -q --bin emit-vectors
 step js-replay node --test test/interop.test.js
 step emit-js-blobs node emit-js-blobs.node.mjs
 step verify-js-blobs cargo run -q --bin verify-js-blobs
+step build-single-file sh build-single-file.sh
+step browser-test node browser-test.mjs 5
+step verify-browser-blobs cargo run -q --bin verify-js-blobs -- blobs-browser.json
 if [ -d oracles ]; then
+  step oracle-browser-blobs python3 oracles/oracle_vectors.py vectors.json blobs-browser.json
+
   for f in oracles/*.py; do step "oracle $(basename "$f")" python3 "$f"; done
 fi
 exit $rc
