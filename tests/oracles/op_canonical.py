@@ -44,9 +44,10 @@ BODY_ORDER = {
     "IdentityUpsert": ["identity_uid", "fields"],
     "IdentityDelete": ["identity_uid"],
     "CredUpdate": ["host_uid", "ciphertext", "wrapped_shares"],
-    "DeviceAdd": ["device", "name", "role", "attendance", "kind"],
+    "DeviceAdd": ["device", "name", "role", "attendance", "kind", "verified_by"],
     "DeviceRevoke": ["device_id"],
-    "ShareRelease": ["host_uid", "request_id", "requester"],
+    "ShareRelease": ["host_uid", "request_id", "requester", "eph_x25519_pub"],
+    "ShareGrant": ["host_uid", "request_id", "requester", "epoch", "sealed"],
     "ShareReshareSession": ["epoch", "to", "sealed"],
     "ShareStorageKey": ["epoch", "sealed"],
     "ShareReshareBatch": ["epoch", "new_holders", "items"],
@@ -83,7 +84,7 @@ FIELDS_ORDER = {
 
 # Fixed 32-byte values: hex strings in the inputs and in the canonical form.
 HEX32_KEYS = {"ed25519_pub", "x25519_pub", "reenroll_hash", "chain_hash", "cert_id",
-              "state_hash", "prev_checkpoint", "proposal_hash", "op_hash"}
+              "state_hash", "prev_checkpoint", "proposal_hash", "op_hash", "eph_x25519_pub"}
 # Fixed 64-byte value (a signature): a 128 character hex string, or null.
 HEX64_KEYS = {"paper_sig"}
 # Vec<u8>: hex in the inputs, base64 in the canonical form.

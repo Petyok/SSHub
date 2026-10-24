@@ -50,6 +50,8 @@ pub struct DeviceRow {
     /// Generation of the current wrap keys (C14).
     pub wrap_epoch: u64,
     pub kind: DeviceKind,
+    /// How the device was admitted.
+    pub verified_by: VerifiedBy,
 }
 
 fn tx(conn: &Connection) -> Result<Transaction<'_>> {
@@ -59,6 +61,8 @@ fn tx(conn: &Connection) -> Result<Transaction<'_>> {
     )?)
 }
 
+// One column per argument of the device row; a struct would only rename them.
+#[allow(clippy::too_many_arguments)]
 fn register(
     conn: &Connection,
     public: &DevicePublic,
@@ -66,14 +70,15 @@ fn register(
     role: DeviceRole,
     attendance: Attendance,
     kind: DeviceKind,
+    verified_by: VerifiedBy,
     now: i64,
 ) -> Result<DeviceId> {
     public.validate().context("invalid device key")?;
     let id = public.device_id();
     conn.execute(
         "INSERT OR IGNORE INTO sync_devices
-           (device_id, ed25519, x25519, mlkem, name, role, attendance, kind, last_seen)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+           (device_id, ed25519, x25519, mlkem, name, role, attendance, kind, verified_by, last_seen)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             id,
             &public.ed25519_pub[..],
@@ -83,10 +88,19 @@ fn register(
             role_db(role),
             attendance_db(attendance),
             super::merge::kind_db(kind),
+            super::merge::verified_db(verified_by),
             now
         ],
     )?;
-    super::checkpoint::record_anchor_device(conn, public, name, role, attendance, kind)?;
+    super::checkpoint::record_anchor_device(
+        conn,
+        public,
+        name,
+        role,
+        attendance,
+        kind,
+        verified_by,
+    )?;
     Ok(id)
 }
 
@@ -100,10 +114,20 @@ impl LauncherStore {
         role: DeviceRole,
         attendance: Attendance,
         kind: DeviceKind,
+        verified_by: VerifiedBy,
     ) -> Result<DeviceId> {
         self.with_conn(|conn| {
             let tx = tx(conn)?;
-            let id = register(&tx, public, name, role, attendance, kind, now_ts())?;
+            let id = register(
+                &tx,
+                public,
+                name,
+                role,
+                attendance,
+                kind,
+                verified_by,
+                now_ts(),
+            )?;
             tx.commit()?;
             Ok(id)
         })
@@ -129,6 +153,7 @@ impl LauncherStore {
                 DeviceRole::Holder,
                 Attendance::Attended,
                 DeviceKind::Terminal,
+                VerifiedBy::Sas,
                 now,
             )?;
             let head: Option<(i64, Vec<u8>)> = tx
@@ -249,7 +274,7 @@ impl LauncherStore {
                         d.status, d.exempt, d.last_seen,
                         COALESCE((SELECT seq FROM sync_chain_heads h WHERE h.device_id = d.device_id), 0),
                         COALESCE((SELECT epoch FROM sync_epochs e WHERE e.device_id = d.device_id), 0),
-                        d.wrap_epoch, d.kind
+                        d.wrap_epoch, d.kind, d.verified_by
                  FROM sync_devices d ORDER BY d.device_id",
             )?;
             let rows = stmt.query_map([], |r| {
@@ -268,11 +293,12 @@ impl LauncherStore {
                     r.get::<_, i64>(11)?,
                     r.get::<_, i64>(12)?,
                     r.get::<_, String>(13)?,
+                    r.get::<_, String>(14)?,
                 ))
             })?;
             let mut out = Vec::new();
             for row in rows {
-                let (id, ed, x, mlkem, name, role, att, status, exempt, last_seen, head, epoch, wrap_epoch, kind) =
+                let (id, ed, x, mlkem, name, role, att, status, exempt, last_seen, head, epoch, wrap_epoch, kind, verified_by) =
                     row?;
                 let status = match status.as_str() {
                     "compromised" => DeviceStatus::Compromised,
@@ -299,6 +325,11 @@ impl LauncherStore {
                     last_seen,
                     head_seq: head as u64,
                     wrap_epoch: wrap_epoch as u64,
+                    verified_by: if verified_by == "ssh_host_key" {
+                        VerifiedBy::SshHostKey
+                    } else {
+                        VerifiedBy::Sas
+                    },
                     kind: if kind == "phone" {
                         DeviceKind::Phone
                     } else {
@@ -566,6 +597,10 @@ impl LauncherStore {
         proposal: &Op,
         state: &[u8],
     ) -> Result<Option<Op>> {
+        let me = id.public().device_id();
+        if !self.with_conn(|conn| checkpoint::attended_terminal(conn, &me))? {
+            return Ok(None); // unattended devices and phones never sign
+        }
         match self.sync_checkpoint_verify(proposal, state)? {
             CheckpointVerdict::Matches => Ok(Some(self.sync_append_local(
                 id,
