@@ -2541,10 +2541,14 @@ fn role_change_updates_the_device_and_a_mirror_revoke_is_yellow() {
     });
     assert_eq!(promote.tier(), OpTier::Red);
     assert_eq!(role(a), DeviceRole::Holder, "the author applied it locally");
-    assert!(matches!(
-        b.store.sync_ingest(promote.clone()).unwrap(),
-        IngestOutcome::Pending
-    ));
+    pull(b, a);
+    assert_eq!(
+        b.store
+            .sync_pending_reason(&promote.hash())
+            .unwrap()
+            .as_deref(),
+        Some("tier")
+    );
     assert_eq!(role(b), DeviceRole::Mirror);
     b.store.sync_resolve_pending(&promote.hash(), true).unwrap();
     assert_eq!(role(b), DeviceRole::Holder);
@@ -2552,7 +2556,7 @@ fn role_change_updates_the_device_and_a_mirror_revoke_is_yellow() {
         device_id: mirror.dev(),
         to: DeviceRole::Mirror,
     });
-    b.store.sync_ingest(demote.clone()).unwrap();
+    pull(b, a);
     b.store.sync_resolve_pending(&demote.hash(), true).unwrap();
     assert_eq!(role(b), DeviceRole::Mirror);
 }
