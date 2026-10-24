@@ -62,7 +62,9 @@ pub const ARGON2_MAX_MEM_KIB: u32 = 2 * 1_048_576;
 pub const ARGON2_MAX_ITERS: u32 = 16;
 /// QR payload bytes per frame (error correction level M) and animation settings.
 pub const QR_FRAME_PAYLOAD_BYTES: usize = 250;
-pub const QR_FPS: u32 = 4;
+/// Frames per second of the animated QR (PoC C measured the pipeline at 8; the real phone
+/// measurement, C4, tunes it).
+pub const QR_FPS: u32 = 8;
 pub const QR_PARITY_PERCENT: u32 = 25;
 /// Transport caps.
 pub const MAX_FRAME_BYTES: usize = 1 << 20;
@@ -76,6 +78,25 @@ pub const IDLE_TIMEOUT_SECS: u64 = 30;
 pub const WRAP_KEY_RETIRE_AFTER_SECS: i64 = 7 * DAY;
 /// Credentials per `ShareReshareBatch` or `ShareReshareConfirmBatch` op.
 pub const RESHARE_ITEMS_PER_OP: usize = 200;
+/// Checkpoints (docs/host-sync-design.md, "Checkpoints and pruning"): proposed after this many
+/// ops or bytes since the last accepted one, at most once per `CHECKPOINT_MIN_INTERVAL_SECS`,
+/// and `CHECKPOINT_AFTER_RESHARE_SECS` after a reshare finished.
+pub const CHECKPOINT_OPS: u64 = 5_000;
+pub const CHECKPOINT_BYTES: u64 = 8 * 1024 * 1024;
+pub const CHECKPOINT_MIN_INTERVAL_SECS: i64 = DAY;
+pub const CHECKPOINT_AFTER_RESHARE_SECS: i64 = 7 * DAY;
+/// Pruning waits this long after the newest checkpoint is accepted.
+pub const CHECKPOINT_PRUNE_DELAY_SECS: i64 = 7 * DAY;
+/// Accepted checkpoints whose span stays on disk (the cut of the older one is the prune floor).
+pub const CHECKPOINT_RETAIN_SPANS: usize = 2;
+/// Distinct attended terminals that must sign, besides every live attended terminal.
+pub const CHECKPOINT_SIGN_MIN: usize = 2;
+/// State blob chunk size on the wire (well under `MAX_FRAME_BYTES`).
+pub const CHECKPOINT_CHUNK_BYTES: usize = 256 * 1024;
+/// Tombstones are carried in checkpoint states this long (longer than `STALE_AFTER_SECS`).
+pub const TOMBSTONE_KEEP_SECS: i64 = 90 * DAY;
+/// Words of the ring fingerprint (88 bits: a static artifact can be ground offline).
+pub const RING_FINGERPRINT_WORDS: usize = 8;
 /// Quarantined (pending) ops accepted per device before the peer is throttled.
 pub const PENDING_QUARANTINE_MAX_PER_DEVICE: usize = 10_000;
 /// Informational clock skew grace; wall clocks never order ops.
