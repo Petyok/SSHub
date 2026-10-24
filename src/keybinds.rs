@@ -110,6 +110,7 @@ pub enum KeyAction {
     SessionSnippets,
     ProfilesManage,
     Update,
+    WhatsNew,
     GhostAccept,
     PaneSplitSideBySide,
     PaneSplitStacked,
@@ -122,7 +123,7 @@ pub enum KeyAction {
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 109] = [
+    pub const ALL: [KeyAction; 110] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -224,6 +225,7 @@ impl KeyAction {
         KeyAction::SessionSnippets,
         KeyAction::ProfilesManage,
         KeyAction::Update,
+        KeyAction::WhatsNew,
         KeyAction::GhostAccept,
         KeyAction::PaneSplitSideBySide,
         KeyAction::PaneSplitStacked,
@@ -337,6 +339,7 @@ impl KeyAction {
             KeyAction::SessionSnippets => "Session: run a command snippet",
             KeyAction::ProfilesManage => "Add or manage profiles",
             KeyAction::Update => "Install update / check for one",
+            KeyAction::WhatsNew => "What's new in this or the installed update",
             KeyAction::GhostAccept => "Session: accept ghost completion",
             KeyAction::PaneSplitSideBySide => "Split view: add a pane side by side",
             KeyAction::PaneSplitStacked => "Split view: add a pane below",
@@ -454,6 +457,7 @@ pub struct KeybindsConfig {
     pub session_snippets: Vec<String>,
     pub profiles_manage: Vec<String>,
     pub update: Vec<String>,
+    pub whats_new: Vec<String>,
     pub ghost_accept: Vec<String>,
     pub pane_split_side_by_side: Vec<String>,
     pub pane_split_stacked: Vec<String>,
@@ -568,6 +572,7 @@ impl Default for KeybindsConfig {
             session_snippets: vec!["Ctrl+N".into()],
             profiles_manage: vec!["Alt+P".into()],
             update: vec!["Shift+U".into()],
+            whats_new: vec!["Shift+W".into()],
             ghost_accept: vec!["Ctrl+F".into()],
             // Split view: Alt+letter chords that neither bash's readline nor
             // zsh's emacs keymap binds by default, so no shell loses a key.
@@ -787,6 +792,7 @@ impl KeybindsConfig {
             KeyAction::SessionSnippets => &self.session_snippets,
             KeyAction::ProfilesManage => &self.profiles_manage,
             KeyAction::Update => &self.update,
+            KeyAction::WhatsNew => &self.whats_new,
             KeyAction::GhostAccept => &self.ghost_accept,
             KeyAction::PaneSplitSideBySide => &self.pane_split_side_by_side,
             KeyAction::PaneSplitStacked => &self.pane_split_stacked,
@@ -901,6 +907,7 @@ impl KeybindsConfig {
             KeyAction::SessionSnippets => self.session_snippets = binds,
             KeyAction::ProfilesManage => self.profiles_manage = binds,
             KeyAction::Update => self.update = binds,
+            KeyAction::WhatsNew => self.whats_new = binds,
             KeyAction::GhostAccept => self.ghost_accept = binds,
             KeyAction::PaneSplitSideBySide => self.pane_split_side_by_side = binds,
             KeyAction::PaneSplitStacked => self.pane_split_stacked = binds,

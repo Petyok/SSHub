@@ -20,6 +20,9 @@ pub enum UpdateEvent {
     Checked(Result<Option<String>>),
     /// The install finished (or did not).
     Installed(Result<()>),
+    /// After a successful install: the release notes of the versions it
+    /// brings, `None` when GitHub did not serve them.
+    Notes(Option<String>),
 }
 
 /// Ask GitHub for the latest release on a worker thread.
@@ -31,9 +34,81 @@ pub fn spawn_check() -> Receiver<UpdateEvent> {
     })
 }
 
-/// Install release `tag` on a worker thread.
+/// Install release `tag` on a worker thread. The notes follow as a second
+/// event, so the install does not look unfinished while they download.
 pub fn spawn_install(tag: String) -> Receiver<UpdateEvent> {
-    spawn(move || UpdateEvent::Installed(install(&tag)))
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let result = install(&tag);
+        let installed = result.is_ok();
+        if tx.send(UpdateEvent::Installed(result)).is_ok() && installed {
+            let _ = tx.send(UpdateEvent::Notes(fetch_notes(&tag)));
+        }
+    });
+    rx
+}
+
+/// The changelog this binary was built from.
+const CHANGELOG: &str = include_str!("../CHANGELOG.md");
+
+/// The running version's own changelog section.
+pub fn running_notes() -> Option<String> {
+    let current = parse_version(env!("CARGO_PKG_VERSION"));
+    release_notes(CHANGELOG, |v| Some(v) == current)
+}
+
+/// Every changelog section between the running version and `tag`, read from
+/// the CHANGELOG.md of that tag. The install already happened: a failed fetch
+/// only costs the notes.
+fn fetch_notes(tag: &str) -> Option<String> {
+    let current = parse_version(env!("CARGO_PKG_VERSION"))?;
+    let target = parse_version(tag)?;
+    let changelog = run(Command::new("curl")
+        // The whole changelog (~90 KB), not a small JSON: more time than the
+        // check gets. The install is done, so only the notes wait on it.
+        .args(["-fsSL", "--proto-redir", "=https", "--max-time", "30"])
+        .arg(format!(
+            "https://raw.githubusercontent.com/{REPO}/{tag}/CHANGELOG.md"
+        )))
+    .ok()?;
+    release_notes(&changelog, |v| v > current && v <= target)
+}
+
+/// The `## [x.y.z]` sections of a Keep-a-Changelog file whose version `keep`
+/// accepts, in file order (newest first). `[Unreleased]` never parses, so it
+/// is never kept. The file is hard-wrapped at 80 columns, which a narrower
+/// popup would break again mid-line: an indented continuation line joins the
+/// bullet above it, and the `**` bold markers go.
+fn release_notes(changelog: &str, keep: impl Fn((u64, u64, u64)) -> bool) -> Option<String> {
+    let mut out = String::new();
+    let mut keeping = false;
+    for line in changelog.lines() {
+        if let Some(header) = line.strip_prefix("## [") {
+            keeping = header
+                .split_once(']')
+                .and_then(|(version, _)| parse_version(version))
+                .is_some_and(&keep);
+        }
+        if !keeping {
+            continue;
+        }
+        let text = line.trim_start();
+        let continues = !text.is_empty()
+            && text.len() < line.len()
+            && !text.starts_with("- ")
+            && out.ends_with('\n')
+            && !out.ends_with("\n\n");
+        if continues {
+            out.pop();
+            out.push(' ');
+            out.push_str(&text.replace("**", ""));
+        } else {
+            out.push_str(&line.replace("**", ""));
+        }
+        out.push('\n');
+    }
+    let out = out.trim();
+    (!out.is_empty()).then(|| out.to_string())
 }
 
 fn spawn(job: impl FnOnce() -> UpdateEvent + Send + 'static) -> Receiver<UpdateEvent> {
@@ -59,17 +134,19 @@ fn latest_tag() -> Result<String> {
         .ok_or_else(|| anyhow!("GitHub release info has no tag_name"))
 }
 
+/// A plain `MAJOR.MINOR.PATCH`, with or without a leading `v`.
+fn parse_version(s: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = s.trim().trim_start_matches('v').split('.');
+    let mut next = || parts.next()?.parse::<u64>().ok();
+    let version = (next()?, next()?, next()?);
+    parts.next().is_none().then_some(version)
+}
+
 /// Whether release `tag` (`v1.2.3`) is newer than version `current` (`1.2.2`).
 /// Anything that is not plain `MAJOR.MINOR.PATCH` (a pre-release, a typo) is
 /// never announced.
 fn is_newer(tag: &str, current: &str) -> bool {
-    fn parse(s: &str) -> Option<(u64, u64, u64)> {
-        let mut parts = s.trim().trim_start_matches('v').split('.');
-        let mut next = || parts.next()?.parse::<u64>().ok();
-        let version = (next()?, next()?, next()?);
-        parts.next().is_none().then_some(version)
-    }
-    matches!((parse(tag), parse(current)), (Some(latest), Some(current)) if latest > current)
+    matches!((parse_version(tag), parse_version(current)), (Some(latest), Some(current)) if latest > current)
 }
 
 fn install(tag: &str) -> Result<()> {
@@ -349,6 +426,42 @@ mod tests {
         assert!(!is_newer("v0.18", "0.17.6"));
         assert!(!is_newer("v0.18.0.1", "0.17.6"));
         assert!(!is_newer("latest", "0.17.6"));
+    }
+
+    #[test]
+    fn release_notes_take_the_versions_in_range() {
+        let log = "# Changelog\n\n## [Unreleased]\n\n- next\n\n\
+            ## [0.3.0] - 2026-10-03\n\n- three\n\n\
+            ## [0.2.1] - 2026-10-02\n\n- two-one\n\n\
+            ## [0.2.0] - 2026-10-01\n\n- two\n";
+        // An update from 0.2.0 to 0.3.0 brings 0.2.1 and 0.3.0, newest first.
+        let notes = release_notes(log, |v| v > (0, 2, 0) && v <= (0, 3, 0)).unwrap();
+        assert_eq!(
+            notes,
+            "## [0.3.0] - 2026-10-03\n\n- three\n\n## [0.2.1] - 2026-10-02\n\n- two-one"
+        );
+        assert_eq!(
+            release_notes(log, |v| v == (0, 2, 0)).as_deref(),
+            Some("## [0.2.0] - 2026-10-01\n\n- two")
+        );
+        // Unreleased is never a version; nothing in range is no notes.
+        assert_eq!(release_notes(log, |_| false), None);
+        assert_eq!(release_notes("## [Unreleased]\n- x\n", |_| true), None);
+    }
+
+    #[test]
+    fn release_notes_unwrap_bullets_for_the_popup_to_wrap() {
+        let log = "## [0.2.0] - 2026-10-01\n\n### Added\n\n\
+            - **Thing** - a long entry\n  wrapped over\n  three lines.\n  \n\
+            - Second, with a list:\n  - nested item\n    wrapped too\n\n\
+            ### Fixed\n\n- one\n";
+        assert_eq!(
+            release_notes(log, |_| true).unwrap(),
+            "## [0.2.0] - 2026-10-01\n\n### Added\n\n\
+             - Thing - a long entry wrapped over three lines.\n  \n\
+             - Second, with a list:\n  - nested item wrapped too\n\n\
+             ### Fixed\n\n- one"
+        );
     }
 
     #[test]
