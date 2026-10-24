@@ -60,14 +60,13 @@ fn connect_worker(
         return Err(1);
     }
 
-    let effective = entry
-        .managed()
-        .and_then(|m| ctx.store.resolve_connection(m).ok());
-    let (secret, _diag) = crate::app::resolve_pending_secret(
-        &entry,
-        effective.as_ref().and_then(|r| r.identity.as_ref()),
-        ctx.password_store(),
-    );
+    let secret = match stored_secret(ctx, &entry) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("sshub: {e:#}");
+            return Err(1);
+        }
+    };
     let agent = crate::ssh::agent::detect_agent();
     let (tx, rx) = crate::sftp::spawn_sftp_worker(ssh_host, secret, agent);
 
@@ -82,6 +81,20 @@ fn connect_worker(
             Err(1)
         }
     }
+}
+
+/// The stored secret for `entry`, after opening a locked synced credential.
+/// SFTP refuses ProxyJump, so no hop credentials are involved.
+fn stored_secret(
+    ctx: &CliContext,
+    entry: &crate::app::HostEntry,
+) -> Result<Option<crate::session::PendingSecret>> {
+    let effective = entry
+        .managed()
+        .and_then(|m| ctx.store.resolve_connection(m).ok());
+    let identity = effective.as_ref().and_then(|r| r.identity.as_ref());
+    ctx.ensure_unlocked_for(entry.name(), entry.managed(), identity, None)?;
+    Ok(crate::app::resolve_pending_secret(entry, identity, ctx.password_store()).0)
 }
 
 /// One JSON row for `ls --format json`.
@@ -391,5 +404,27 @@ fn run_op(rx: &Receiver<SftpEvent>) -> Result<i32> {
                 return Ok(1);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::context::gate_tests::{assert_needs_share, gated_ctx, open};
+
+    #[test]
+    fn locked_credential_stops_sftp_before_the_worker_spawns() {
+        let dir = tempfile::tempdir().unwrap();
+        let (ctx, gate, key) = gated_ctx(dir.path());
+        let entry = ctx.host_by_name("web").unwrap().clone();
+        assert_needs_share(stored_secret(&ctx, &entry).unwrap_err());
+        // connect_worker turns it into exit code 1 without spawning anything.
+        assert_eq!(connect_worker(&ctx, "web").err(), Some(1));
+
+        open(&gate, &key);
+        // connect_worker would spawn the libssh2 worker from here on; the
+        // secret it would be handed is the opened plaintext.
+        let secret = stored_secret(&ctx, &entry).unwrap().unwrap();
+        assert_eq!(secret.value(), "pw");
     }
 }

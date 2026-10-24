@@ -306,6 +306,8 @@ pub struct App {
     pub sync: sync::SyncView,
     /// The sync worker, once the protocol package attaches one.
     pub sync_worker: Option<crate::sync::client::SyncHandle>,
+    /// The action waiting for a credential unlock, if any.
+    pub(crate) unlock_resume: Option<sync::UnlockResume>,
     /// Tracker line an Esc dismiss applies to: the ghost stays hidden until
     /// the input line changes. `None` while nothing is dismissed.
     pub ghost_dismissed_for: Option<String>,
@@ -944,7 +946,7 @@ impl App {
         ));
         let keyring_available = crate::credentials::check_keyring_available();
         let prefix = paths.credential_prefix();
-        let password_store: Box<dyn crate::credentials::PasswordStore> = if keyring_available {
+        let inner_store: Box<dyn crate::credentials::PasswordStore> = if keyring_available {
             let _ = crate::credentials::migrate_fallback_to_keyring(&paths.credentials_file());
             Box::new(crate::credentials::NamespacedPasswordStore::new(
                 Box::new(crate::credentials::OsKeyring),
@@ -958,6 +960,9 @@ impl App {
                 prefix,
             ))
         };
+        // Synced credentials answer from the gate; local ones pass through.
+        let password_store: Box<dyn crate::credentials::PasswordStore> =
+            Box::new(crate::credentials::QuorumGatedStore::new(inner_store));
 
         let mut app = Self::new_with_deps(
             config,
@@ -1070,6 +1075,7 @@ impl App {
             snippet_form: None,
             snippet_picker: None,
             sync: sync::SyncView::default(),
+            unlock_resume: None,
             sync_worker: None,
             ghost_dismissed_for: None,
             ghost_host_cache: std::cell::RefCell::new(None),

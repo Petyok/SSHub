@@ -108,6 +108,12 @@ pub fn run(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
 
     let host_name = entry.name().to_string();
     let effective_identity = resolved.as_ref().and_then(|r| r.identity.as_ref());
+    ctx.ensure_unlocked_for(
+        &host_name,
+        entry.managed(),
+        effective_identity,
+        resolved.as_ref().and_then(|r| r.proxy_jump.as_deref()),
+    )?;
     let (pending_secret, credential_diag) =
         resolve_pending_secret(&entry, effective_identity, ctx.password_store());
     if verbose {

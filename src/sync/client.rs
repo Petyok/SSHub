@@ -50,6 +50,8 @@ impl std::error::Error for TransportError {}
 pub struct SshTransport {
     host: SshHost,
     remote_command: String,
+    /// A program to run instead of `ssh` from `PATH`.
+    program: Option<String>,
 }
 
 impl SshTransport {
@@ -57,7 +59,14 @@ impl SshTransport {
         Self {
             host,
             remote_command: remote_command.into(),
+            program: None,
         }
+    }
+
+    /// Run `program` where the argv names `ssh` (an ssh at a known path).
+    pub fn with_program(mut self, program: impl Into<String>) -> Self {
+        self.program = Some(program.into());
+        self
     }
 
     /// The ssh argv: the existing builder's, with `BatchMode=yes` and
@@ -99,7 +108,7 @@ impl SshTransport {
         round: impl FnOnce(&mut Conn) -> anyhow::Result<T>,
     ) -> Result<T, TransportError> {
         let argv = self.argv();
-        let mut child = Command::new(&argv[0])
+        let mut child = Command::new(self.program.as_deref().unwrap_or(&argv[0]))
             .args(&argv[1..])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -140,6 +149,9 @@ impl SshTransport {
             if let Some(first) = err.lines().next().map(str::trim).filter(|l| !l.is_empty()) {
                 reason.push_str(&format!(" | ssh stderr: {first}"));
             }
+            if let Some(hint) = host_key_hint(&err) {
+                reason.push_str(&format!(" | {hint}"));
+            }
             reason.push_str(&format!(" | exit {status:?}"));
             if hello_seen {
                 TransportError::Failed(reason)
@@ -147,6 +159,19 @@ impl SshTransport {
                 TransportError::Offline(reason)
             }
         })
+    }
+}
+
+/// What to tell the user when ssh refused the peer's host key. Sync forces
+/// `StrictHostKeyChecking=yes` and `BatchMode`, so nothing can ask the user:
+/// an unknown key must fail loudly and say how to fix it.
+fn host_key_hint(stderr: &str) -> Option<&'static str> {
+    if stderr.contains("REMOTE HOST IDENTIFICATION HAS CHANGED") {
+        Some("its host key has changed: check ~/.ssh/known_hosts before syncing with it")
+    } else if stderr.contains("Host key verification failed") {
+        Some("connect to this host once to verify its host key")
+    } else {
+        None
     }
 }
 
@@ -581,5 +606,66 @@ mod tests {
             handle.send(SyncCmd::SyncNow("d".into())).is_err(),
             "nobody is listening"
         );
+    }
+
+    #[test]
+    fn the_host_key_hint_covers_an_unknown_and_a_changed_key() {
+        let unknown = "No ED25519 host key is known for peer and you have requested strict checking.\nHost key verification failed.\n";
+        assert_eq!(
+            host_key_hint(unknown),
+            Some("connect to this host once to verify its host key")
+        );
+        let changed = "@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\nHost key verification failed.\n";
+        assert!(host_key_hint(changed).unwrap().contains("changed"));
+        assert_eq!(host_key_hint("Permission denied (publickey)."), None);
+    }
+
+    #[test]
+    fn an_unknown_host_key_fails_loudly_and_the_fix_reaches_the_sync_view() {
+        use std::os::unix::fs::PermissionsExt;
+        // An `ssh` that refuses the way OpenSSH does under strict checking.
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("ssh");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\necho 'No ED25519 host key is known for peer and you have requested strict checking.' >&2\necho 'Host key verification failed.' >&2\nexit 255\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let program = script.to_string_lossy().into_owned();
+
+        let mut app = crate::app::tests::test_app(vec![]);
+        app.attach_sync_worker(spawn_sync_thread(Box::new(move |_k, _d, ctx| {
+            let mut host = SshHost::new("peer");
+            host.hostname = Some("peer.example".into());
+            let transport =
+                SshTransport::new(host, "sshub sync-serve").with_program(program.clone());
+            transport.run(ctx.cancel_flag(), Limits::default(), |conn| {
+                conn.recv_hello_msg::<serde_json::Value>()?;
+                Ok(RoundSummary::default())
+            })?;
+            Ok(RoundSummary::default())
+        })));
+        app.sync
+            .intents
+            .push(crate::app::sync::SyncIntent::SyncNow {
+                device: "peer".into(),
+            });
+        let end = Instant::now() + Duration::from_secs(10);
+        while app.sync.last_error.is_none() {
+            assert!(Instant::now() < end, "no error reached the view");
+            app.poll_sync();
+            thread::sleep(Duration::from_millis(10));
+        }
+        let error = app.sync.last_error.clone().unwrap();
+        assert!(error.starts_with("offline:"), "no hello: {error}");
+        assert!(
+            error.contains("connect to this host once to verify its host key"),
+            "{error}"
+        );
+        assert!(app
+            .host_notice
+            .as_deref()
+            .is_some_and(|n| n.contains("verify its host key")));
     }
 }

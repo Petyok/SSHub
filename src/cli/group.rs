@@ -427,6 +427,7 @@ mod tests {
             metadata: Arc::new(crate::metadata::MetadataDb::default()),
             resolver: crate::ssh::SshConfigResolver::default(),
             password_store: std::cell::OnceCell::new(),
+            unlocker: None,
             hosts: Vec::new(),
             profile: crate::profile::ProfilePaths {
                 data_root: std::path::PathBuf::new(),
