@@ -676,7 +676,7 @@ fn b64_encode(data: &[u8]) -> String {
 
 pub(super) fn b64_decode(s: &str) -> Option<Vec<u8>> {
     let bytes = s.as_bytes();
-    if bytes.len() % 4 != 0 {
+    if !bytes.len().is_multiple_of(4) {
         return None;
     }
     let val = |c: u8| B64.iter().position(|x| *x == c).map(|p| p as u32);
