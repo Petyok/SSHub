@@ -529,6 +529,46 @@ fn certificates_are_enforced_by_the_holders() {
             .contains("budget")
     );
 
+    // R3b: only the issuing phone extends the day, by one extension per 24 hours.
+    append(
+        &d[2],
+        OpBody::CertExtend {
+            cert_id: cert3.id,
+            extra_hosts: 5,
+        },
+    );
+    all_to_all(&d);
+    assert_eq!(
+        crate::sync::cert::extension_budget(&d[2].store, &cert3, t).unwrap(),
+        0,
+        "a holder cannot extend"
+    );
+    let req = crate::sync::cert::cert_extend_request(cert3.id, 1).unwrap();
+    assert_eq!(
+        crate::sync::wire::CertExtendRequestWire::decode(&req.encode()).unwrap(),
+        req
+    );
+    append(phone, req.to_body());
+    append(
+        phone,
+        OpBody::CertExtend {
+            cert_id: cert3.id,
+            extra_hosts: 7,
+        },
+    );
+    all_to_all(&d);
+    assert_eq!(
+        crate::sync::cert::extension_budget(&d[2].store, &cert3, t).unwrap(),
+        1,
+        "the second extension inside 24 hours does not count"
+    );
+    assert!(cert_allows(&cert3, &pk, &d[2].store, &d[1].did, &host_c, t, t).is_ok());
+    assert_eq!(
+        crate::sync::cert::extension_budget(&d[2].store, &cert3, t + 2 * 86_400).unwrap(),
+        0,
+        "an extension covers its own day only"
+    );
+
     // Revocation arrives with the next sync.
     append(phone, OpBody::CertRevoke { cert_id: cert.id });
     all_to_all(&d);

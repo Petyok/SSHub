@@ -560,6 +560,53 @@ impl CertRequestWire {
     }
 }
 
+pub const KIND_CERT_EXTEND_REQUEST: u8 = 10;
+
+/// What the terminal shows the phone to extend a trust-session certificate's daily budget (R3b):
+/// `cert_id(32) || extra_hosts u32 BE`. The phone builds and signs `CertExtend` from it unchanged.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CertExtendRequestWire {
+    pub cert_id: [u8; 32],
+    pub extra_hosts: u32,
+}
+
+impl CertExtendRequestWire {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = frame_header(KIND_CERT_EXTEND_REQUEST);
+        out.extend_from_slice(&self.cert_id);
+        out.extend_from_slice(&self.extra_hosts.to_be_bytes());
+        out
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let body = unframe(bytes, KIND_CERT_EXTEND_REQUEST)?;
+        if body.len() != 36 {
+            bail!(
+                "a certificate extension request is 36 bytes, got {}",
+                body.len()
+            );
+        }
+        let extra_hosts = u32::from_be_bytes(body[32..].try_into().unwrap());
+        if extra_hosts == 0 || extra_hosts > super::limits::CERT_NEW_HOSTS_PER_DAY {
+            bail!(
+                "an extension is 1 to {} hosts",
+                super::limits::CERT_NEW_HOSTS_PER_DAY
+            );
+        }
+        Ok(Self {
+            cert_id: body[..32].try_into().unwrap(),
+            extra_hosts,
+        })
+    }
+
+    pub fn to_body(&self) -> super::oplog::OpBody {
+        super::oplog::OpBody::CertExtend {
+            cert_id: self.cert_id,
+            extra_hosts: self.extra_hosts,
+        }
+    }
+}
+
 fn frame_header(kind: u8) -> Vec<u8> {
     let mut out = Vec::with_capacity(HEADER + 64);
     out.extend_from_slice(&WIRE_MAGIC);

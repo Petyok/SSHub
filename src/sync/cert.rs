@@ -122,11 +122,59 @@ pub fn cert_allows(
     if !store.sync_cert_hosts_opened(&cert.id)?.contains(host) {
         let used = store.sync_cert_new_hosts_since(&cert.id, now - DAY)?;
         ensure!(
-            used < cert.max_new_hosts_per_day,
+            used < cert
+                .max_new_hosts_per_day
+                .saturating_add(extension_budget(store, cert, now)?),
             "the daily budget of new hosts is used up: the phone must extend the day"
         );
     }
     Ok(())
+}
+
+/// Extra new hosts the phone granted for the rolling day ending at `now` (R3b): `CertExtend` ops by the
+/// certificate's issuer before expiry, at most one counted per 24 hours, each valid for the 24 hours
+/// after it.
+pub fn extension_budget(store: &LauncherStore, cert: &DelegationCert, now: i64) -> Result<u32> {
+    let mut ops: Vec<_> = super::quorum::ops_of(store, "CertExtend", Some(&cert.issuer))?
+        .into_iter()
+        .filter_map(|o| match o.body {
+            OpBody::CertExtend {
+                cert_id,
+                extra_hosts,
+            } if cert_id == cert.id && o.timestamp < cert.expiry => {
+                Some((o.timestamp, extra_hosts))
+            }
+            _ => None,
+        })
+        .collect();
+    ops.sort();
+    let mut last: Option<i64> = None;
+    let mut sum = 0u32;
+    for (ts, extra) in ops {
+        if last.is_some_and(|l| ts - l < DAY) {
+            continue;
+        }
+        last = Some(ts);
+        if ts <= now && now - ts < DAY {
+            sum = sum.saturating_add(extra);
+        }
+    }
+    Ok(sum)
+}
+
+/// The request the terminal shows the phone when the daily budget is used up (kind 10).
+pub fn cert_extend_request(
+    cert_id: [u8; 32],
+    extra_hosts: u32,
+) -> Result<super::wire::CertExtendRequestWire> {
+    ensure!(
+        (1..=CERT_NEW_HOSTS_PER_DAY).contains(&extra_hosts),
+        "an extension is 1 to {CERT_NEW_HOSTS_PER_DAY} hosts"
+    );
+    Ok(super::wire::CertExtendRequestWire {
+        cert_id,
+        extra_hosts,
+    })
 }
 
 /// Checks a `CertIssue` op before it is shown for approval: structure, scope, term, budget and the
