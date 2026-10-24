@@ -224,30 +224,14 @@ impl DeviceIdentity {
     }
 
     pub fn open_sealed(&self, ciphertext: &[u8]) -> Result<Vec<u8>> {
-        if ciphertext.len() < 32 + 24 + 16 {
-            bail!("sealed box too short: {} bytes", ciphertext.len());
-        }
-        let eph_pub: [u8; 32] = ciphertext[..32].try_into().unwrap();
-        let nonce = &ciphertext[32..56];
+        let mut last = anyhow!("sealed box authentication failed");
         for keys in self.wrap_keys() {
-            let dh = keys.x_secret.diffie_hellman(&XPublic::from(eph_pub));
-            if !dh.was_contributory() {
-                bail!("sealed box with a low-order ephemeral key");
-            }
-            let my_pub = keys.x_public();
-            let key = seal_key(dh.as_bytes(), &eph_pub, &my_pub);
-            let aad = [eph_pub.as_slice(), my_pub.as_slice()].concat();
-            if let Ok(plain) = XChaCha20Poly1305::new((&*key).into()).decrypt(
-                nonce.into(),
-                Payload {
-                    msg: &ciphertext[56..],
-                    aad: &aad,
-                },
-            ) {
-                return Ok(plain);
+            match open_sealed_with_secret(&keys.x_secret_bytes(), ciphertext) {
+                Ok(plain) => return Ok(plain),
+                Err(e) => last = e,
             }
         }
-        Err(anyhow!("sealed box authentication failed"))
+        Err(last)
     }
 
     /// Key file form: `"SSHK" || 1 || mem u32 BE || iters u32 BE || salt(16) || nonce(24) || ct`;
@@ -354,6 +338,33 @@ impl DeviceIdentity {
             previous,
         })
     }
+}
+
+/// Opens a sealed box with a bare X25519 secret (the requester's ephemeral key for a share
+/// response, which is not a device identity).
+pub fn open_sealed_with_secret(x25519_secret: &[u8; 32], ciphertext: &[u8]) -> Result<Vec<u8>> {
+    if ciphertext.len() < 32 + 24 + 16 {
+        bail!("sealed box too short: {} bytes", ciphertext.len());
+    }
+    let secret = XSecret::from(*x25519_secret);
+    let eph_pub: [u8; 32] = ciphertext[..32].try_into().unwrap();
+    let nonce = &ciphertext[32..56];
+    let dh = secret.diffie_hellman(&XPublic::from(eph_pub));
+    if !dh.was_contributory() {
+        bail!("sealed box with a low-order ephemeral key");
+    }
+    let my_pub = XPublic::from(&secret).to_bytes();
+    let key = seal_key(dh.as_bytes(), &eph_pub, &my_pub);
+    let aad = [eph_pub.as_slice(), my_pub.as_slice()].concat();
+    XChaCha20Poly1305::new((&*key).into())
+        .decrypt(
+            nonce.into(),
+            Payload {
+                msg: &ciphertext[56..],
+                aad: &aad,
+            },
+        )
+        .map_err(|_| anyhow!("sealed box authentication failed"))
 }
 
 fn seal_key(dh: &[u8; 32], eph_pub: &[u8; 32], recipient_pub: &[u8; 32]) -> Zeroizing<[u8; 32]> {

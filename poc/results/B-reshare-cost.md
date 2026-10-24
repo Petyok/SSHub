@@ -103,3 +103,19 @@ No network or storage cost (the bench measures CPU and bytes; a real round also 
 multi-device concurrency (two simultaneous reshares); no phone-side rotation (PoC C/H territory); no measurement
 on slow or battery-powered hardware; the batched variant is a size computation over real ciphertexts, the batched
 op handling itself is not implemented yet (stage 3).
+
+## Addendum: the log after a checkpoint
+
+The bench also measured the live state a checkpoint would carry after the revocation (credentials only:
+ciphertext, the remaining holders' envelope shares, their storage key blobs; hosts, groups and identities are not
+modelled). Chapter "Checkpoints and pruning" of the design uses these numbers.
+
+| credentials x holders | log before | after, naive wraps | after, batched envelopes | checkpoint state |
+|---|---|---|---|---|
+| 200 x 4 | 1.44 MB | 4.95 MB | 1.81 MB | 0.126 MB |
+| 200 x 6 | 2.10 MB | 7.83 MB | 2.70 MB | 0.186 MB |
+| 1000 x 4 | 7.18 MB | 24.74 MB | 8.98 MB | 0.611 MB |
+| 1000 x 6 | 10.49 MB | 39.14 MB | 13.38 MB | 0.896 MB |
+
+The state is smaller than the log before the revocation because the reshare converts 1.2 KB hybrid wraps into
+73 byte envelopes. Credentials that were never resharded keep their 1.2 KB wraps in the state.
