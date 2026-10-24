@@ -369,7 +369,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     if (opts.qr) {
       const canvas = h('canvas', { class: 'qr', id: 'reverse-qr' });
       nodes.push(h('h2', {}, 'QR code'), h('p', { class: 'mut' }, 'Hold it in front of the laptop camera.'), canvas);
-      stops.push(loopQr(canvas, reverseQrFrames(out.full), Math.min(560, globalThis.innerWidth - 32)).stop);
+      stops.push(loopQr(canvas, reverseQrFrames(out.full)).stop);
     }
     if (opts.clip) {
       const text = toBase64(out.full);
@@ -470,7 +470,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
   function enrollShow(heading, hint, doc, next, extra = []) {
     const canvas = h('canvas', { class: 'qr', id: 'enroll-qr' });
     show(title(heading, hint), canvas, ...extra, next ? btn('Next', next, 'primary', 'enroll-next') : null, btn('Cancel', home, '', 'back'));
-    app.cleanup.push(loopQr(canvas, reverseQrFrames(doc), Math.min(560, globalThis.innerWidth - 32)).stop);
+    app.cleanup.push(loopQr(canvas, reverseQrFrames(doc)).stop);
   }
 
   function enrollStep3(me, theirCommit) {
@@ -581,7 +581,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     if (frame.length <= MAX_QR_DOC_BYTES) {
       const canvas = h('canvas', { class: 'qr', id: 'reverse-qr' });
       nodes.push(canvas);
-      stops.push(loopQr(canvas, reverseQrFrames(frame), Math.min(560, globalThis.innerWidth - 32)).stop);
+      stops.push(loopQr(canvas, reverseQrFrames(frame)).stop);
     } else nodes.push(h('p', { class: 'mut', id: 'ops-too-big' }, `${frame.length} bytes: too long for a QR code, use the text.`));
     const status = h('p', { class: 'mut', id: 'ops-status' }, `${ops.length} op(s), ${frame.length} bytes as text.`);
     nodes.push(

@@ -1125,6 +1125,7 @@ offline; no real credentials, no real user directories.
 | `QR_FRAME_PAYLOAD_BYTES` | `250` | frame size when the terminal area is unknown (QR byte capacity at level M, version 11); the unlock modal normally uses `fountain::frame_bytes_for_area` (84 bytes full 80x24, 331 bytes 120x40) |
 | `QR_FPS` | `8` | animated frame rate (PoC C measured the pipeline at 8; the real phone measurement tunes it) |
 | `QR_PARITY_PERCENT` | `25` | XOR parity frames in the loop |
+| phone page `QR_FRAME_BYTES`, `QR_FPS` | `106`, `4` | the companion page's reply QR (phone screen to the terminal's camera) uses QR version 6 level M frames (1.4 mm modules on a 68 mm screen), as wide as the screen with an integer number of device pixels per module, at 4 fps; the fountain format is the same (the decoder takes the block size from each frame), only the frame count grows (PoC H, "Reverse QR") |
 | `MAX_FRAME_BYTES` | `1 << 20` | transport frame cap |
 | `MAX_JSON_DEPTH` | `32` | frame JSON depth cap |
 | `MAX_OPS_PER_TAIL` | `2_000` | ops per `Tail` frame |

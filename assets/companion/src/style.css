@@ -23,7 +23,7 @@ label{display:block;margin:.5rem 0}label.inline{display:flex;gap:.6rem;align-ite
 .words span::before{counter-increment:w;content:counter(w) ". ";color:var(--mut)}
 .big{font:700 1.5rem ui-monospace,monospace;letter-spacing:.04em;text-align:center;margin:.6rem 0}
 .sas{font:700 1.4rem ui-monospace,monospace;text-align:center;margin:.8rem 0;color:var(--acc)}
-canvas.qr{display:block;margin:.6rem auto;max-width:100%;image-rendering:pixelated;background:#fff;border-radius:.3rem}
+canvas.qr{display:block;position:relative;margin:.6rem 0;max-width:none;image-rendering:pixelated;background:#fff;border-radius:.3rem}
 video{width:100%;border-radius:.6rem;background:#000;max-height:50vh;object-fit:cover}
 progress{width:100%}
 .tag{display:inline-block;font-size:.75rem;padding:.05rem .4rem;border-radius:.3rem;background:var(--line);color:var(--mut)}
