@@ -1281,3 +1281,16 @@ offline; no real credentials, no real user directories.
 
 The same table is appended to `docs/host-sync-design.md` as "Defaults chosen at
 implementation" by WP-DOCS.
+
+### 4f. Paper replication and the mandatory-paper rule (C5)
+
+`FactorRegister { Paper }` carries in `sealed` the paper's UNWRAP public key (`pub_to_bytes`: ed25519, x25519,
+ML-KEM-768; at most 1500 bytes) next to the recovery verifier in `public`. `quorum::paper_pub` reads the newest
+applied registration, so every device wraps new credentials to the paper and reshares include it
+(`quorum::paper_registration(phrase)` builds the op: the setup helper, a Red op whose first registration needs only
+the phone and a second device). Typed paper words open a credential as the second share next to the device's own:
+`unlock_paths::paper_second_share(store, host, epoch, phrase)`. A Quorum ring with exactly two live holders needs
+the paper (`quorum::paper_rule`): refused for new credentials, a mode change to Quorum and a revocation that would
+leave two holders. A reshare also runs when the holders differ from those the credentials are shared among
+(a promoted holder, an enabled or disabled exemption): `revocation::next_actions` returns `Contribute` and
+`Receive` without a rotation step.

@@ -739,8 +739,10 @@ pub(crate) fn factor_register(
     let (body, note) = match kind {
         FactorKind::Paper => {
             let phrase = phrase.context("the paper phrase is required")?;
-            let recover = paper_derive(phrase, PaperDomain::Recover).context("the paper phrase")?;
-            (ceremony::factor_register_paper(&recover), None)
+            (
+                ceremony::factor_register_paper(phrase).context("the paper phrase")?,
+                None,
+            )
         }
         FactorKind::Email => {
             let sender_id: DeviceId = match sender {

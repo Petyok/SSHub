@@ -49,6 +49,7 @@ pub fn is_gated(store: &LauncherStore, op: &Op) -> Result<bool> {
         | OpBody::CertIssue { .. }
         | OpBody::ModeChange { .. }
         | OpBody::FactorRegister { .. }
+        | OpBody::ExemptionSet { .. }
         | OpBody::BulkExport { .. } => true,
         OpBody::DeviceRevoke { device_id } => store
             .sync_devices()?
@@ -57,6 +58,11 @@ pub fn is_gated(store: &LauncherStore, op: &Op) -> Result<bool> {
             .is_none_or(|d| d.role == DeviceRole::Holder),
         _ => false,
     })
+}
+
+/// Pending only because its author is not an accepted device yet.
+pub(crate) fn awaits_author(store: &LauncherStore, op: &Op) -> Result<bool> {
+    Ok(store.sync_pending_reason(&op.hash())?.as_deref() == Some("unknown-author"))
 }
 
 fn factor_message(op_hash: &[u8; 32], proposer: &DeviceId) -> Vec<u8> {
@@ -68,9 +74,20 @@ type Registration = ([u8; 32], Vec<u8>, Option<DeviceId>);
 
 /// The newest applied registration of `factor`.
 fn registered(store: &LauncherStore, factor: ThirdFactor) -> Result<Option<Registration>> {
+    registered_but(store, factor, None)
+}
+
+/// [`registered`] without the op `except`: the proposer applied its own registration at once, but while
+/// that registration is itself under ceremony it is not yet a factor anyone can be asked for.
+fn registered_but(
+    store: &LauncherStore,
+    factor: ThirdFactor,
+    except: Option<&[u8; 32]>,
+) -> Result<Option<Registration>> {
     Ok(ops_of(store, "FactorRegister", None)?
         .into_iter()
         .rev()
+        .filter(|o| Some(&o.hash()) != except)
         .find_map(|o| match o.body {
             OpBody::FactorRegister {
                 factor: f,
@@ -129,15 +146,45 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
                 .iter()
                 .filter(|d| terminal_holder(d) && d.id != *device_id)
                 .count();
+            let holder_count = devices
+                .iter()
+                .filter(|d| {
+                    d.role == DeviceRole::Holder
+                        && !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
+                })
+                .count();
             if devices
                 .iter()
                 .any(|d| d.id == *device_id && d.role == DeviceRole::Holder)
+                && holder_count > 0
+            {
+                if let Err(e) = super::quorum::paper_rule(store, holder_count - 1) {
+                    blocked = Some(e.to_string());
+                }
+            }
+            if blocked.is_none()
+                && devices
+                    .iter()
+                    .any(|d| d.id == *device_id && d.role == DeviceRole::Holder)
                 && remaining < 2
             {
                 blocked = Some(
                     "revoking a holder needs at least two remaining terminal holders to contribute"
                         .to_string(),
                 );
+            }
+        }
+        OpBody::ExemptionSet {
+            device_id,
+            slot: Some(_),
+        } => {
+            let attended_terminal = devices.iter().any(|d| {
+                d.id == *device_id && terminal_holder(d) && d.attendance == Attendance::Attended
+            });
+            if store.sync_cred_mode()? != CredMode::Quorum {
+                blocked = Some("the exemption exists only in a Quorum ring".to_string());
+            } else if !attended_terminal {
+                blocked = Some("only an attended holder terminal can be exempt".to_string());
             }
         }
         OpBody::BulkExport { window_secs, .. } if *window_secs == 0 || *window_secs > 3600 => {
@@ -165,7 +212,9 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
 
     // Second attended holder terminal.
     let delegate = match &op.body {
-        OpBody::CertIssue { device_id, .. } => Some(device_id.clone()),
+        OpBody::CertIssue { device_id, .. } | OpBody::ExemptionSet { device_id, .. } => {
+            Some(device_id.clone())
+        }
         _ => None,
     };
     let cosigner = match &op.body {
@@ -209,8 +258,8 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
     }
 
     // Third factor.
-    let paper = registered(store, ThirdFactor::Paper)?;
-    let email = registered(store, ThirdFactor::EmailCode)?;
+    let paper = registered_but(store, ThirdFactor::Paper, Some(&hash))?;
+    let email = registered_but(store, ThirdFactor::EmailCode, Some(&hash))?;
     let replacing = match &op.body {
         OpBody::FactorRegister { factor, .. } => Some(factor.clone()),
         _ => None,
@@ -286,7 +335,8 @@ pub struct SettleReport {
 pub fn settle_red_ops(store: &LauncherStore, now: i64) -> Result<SettleReport> {
     let mut report = SettleReport::default();
     for op in store.sync_pending()? {
-        if !is_gated(store, &op)? {
+        // An op of an unknown author is unverifiable and inert: it waits for the author's admission.
+        if !is_gated(store, &op)? || awaits_author(store, &op)? {
             continue;
         }
         let st = red_status(store, &op, now)?;
@@ -366,14 +416,8 @@ pub fn red_factor_email(store: &LauncherStore, code: &str, op: &Op) -> Result<Op
 }
 
 /// Register the paper's recovery key as a factor (first registration needs phone + second device only).
-pub fn factor_register_paper(paper_recover: &DeviceIdentity) -> OpBody {
-    OpBody::FactorRegister {
-        factor: ThirdFactor::Paper,
-        public: paper_recover.public().ed25519_pub,
-        sealed: Vec::new(),
-        salt: [0; 16],
-        sender: None,
-    }
+pub fn factor_register_paper(phrase: &str) -> Result<OpBody> {
+    super::quorum::paper_registration(phrase)
 }
 
 /// Register the emailed-code factor: a random seed becomes the `email` key, sealed under a fresh code.

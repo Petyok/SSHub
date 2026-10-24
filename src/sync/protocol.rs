@@ -333,6 +333,18 @@ pub enum SyncMsg {
     },
     EnrollReveal(super::enroll::Reveal),
     EnrollConfirm(super::enroll::Confirm),
+    /// A chunk of the join anchor (contract 3c): the inviter's state, sent after the confirmation.
+    EnrollAnchor {
+        offset: u64,
+        total: u64,
+        #[serde(with = "b64")]
+        data: Vec<u8>,
+    },
+    /// The hash of the whole anchor, ending the transfer.
+    EnrollAnchorDone {
+        #[serde(with = "hex32")]
+        hash: [u8; 32],
+    },
     Bye {
         reason: String,
     },
@@ -360,6 +372,8 @@ impl SyncMsg {
             Self::EnrollCommit { .. } => "enroll_commit",
             Self::EnrollReveal(_) => "enroll_reveal",
             Self::EnrollConfirm(_) => "enroll_confirm",
+            Self::EnrollAnchor { .. } => "enroll_anchor",
+            Self::EnrollAnchorDone { .. } => "enroll_anchor_done",
             Self::Bye { .. } => "bye",
         }
     }
@@ -832,7 +846,7 @@ fn my_heads(store: &LauncherStore) -> Result<BTreeMap<DeviceId, (u64, [u8; 32])>
         .collect())
 }
 
-/// Sort per chain, ingest, and retry what failed only for order (unknown author, gap) once the rest landed.
+/// Sort per chain, ingest, and retry what failed only for order (gap) once the rest landed.
 pub(crate) fn ingest_ops(
     store: &LauncherStore,
     ops: Vec<Op>,
@@ -859,11 +873,7 @@ pub(crate) fn ingest_ops(
                     progress = true;
                 }
                 IngestOutcome::Rejected(why) if why == "duplicate op" => sum.duplicates += 1,
-                IngestOutcome::Rejected(why)
-                    if why == "unknown device" || why.starts_with("gap:") =>
-                {
-                    retry.push(op)
-                }
+                IngestOutcome::Rejected(why) if why.starts_with("gap:") => retry.push(op),
                 IngestOutcome::Rejected(why) => {
                     sum.rejected += 1;
                     if sum.reject_reasons.len() < 8 {
@@ -989,7 +999,7 @@ fn pull<L: SyncLink>(
 }
 
 /// Largest checkpoint bundle we accept from a peer.
-const MAX_CHECKPOINT_BYTES: u64 = 64 * 1024 * 1024;
+pub(crate) const MAX_CHECKPOINT_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Ask the peer for a checkpoint bundle chunk by chunk. `None`: it does not
 /// hold the blob. The bytes are untrusted; the store verifies them.

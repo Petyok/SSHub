@@ -121,5 +121,23 @@ pub fn full_entry_share(
     })
 }
 
+/// The paper path: the 24 typed paper words are the paper's key; its share of `host` at `epoch` (the
+/// credential op or a reshare) is the second share next to this device's own, so a lone terminal with
+/// the paper opens a credential without any other holder. The paper is a registered recipient
+/// (`FactorRegister { Paper }` replicates its public key), so the share is in the log.
+pub fn paper_second_share(
+    store: &LauncherStore,
+    host: &HostUid,
+    epoch: u64,
+    phrase: &str,
+) -> Result<Share> {
+    let paper = super::crypto::paper_derive(phrase, super::crypto::PaperDomain::Unwrap)?;
+    super::quorum::own_shares(store, &paper, host)?
+        .into_iter()
+        .find(|(e, _)| *e == epoch)
+        .map(|(_, s)| s)
+        .context("the paper holds no share of this credential at that epoch: wrong words, or the paper was not registered when it was made")
+}
+
 #[cfg(test)]
 mod tests;
