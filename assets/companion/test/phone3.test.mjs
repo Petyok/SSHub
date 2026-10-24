@@ -16,6 +16,8 @@ import {
   certRequestProblems, describeCertRequest, extendCert, extendProblems, issueCert, issuedCerts, revokeCert,
 } from '../src/cert.mjs';
 import { envelopeAad, planReshare } from '../src/reshare.mjs';
+import { DocumentCollector, SWITCH_AFTER_FRAMES } from '../src/scan.mjs';
+import { fountainEncode } from '../src/quorum.mjs';
 
 const here = new URL('./fixtures/', import.meta.url);
 const opVectors = JSON.parse(readFileSync(new URL('ops.vectors.json', here), 'utf8'));
@@ -267,4 +269,63 @@ test('planReshare on the committed Rust reshare fixture reproduces the committed
   assert.equal(planReshare(phone, subset, reshareFx.epoch, { ring }).ok, true);
   const batch = subset.map((o) => parseOp(o.canonical)).find((p) => p.kind === 'ShareReshareBatch');
   assert.equal(b64dec(batch.fields.items[0].commitments[0]).length, 32);
+});
+
+// ------------------------------------------------------------ the scan collector follows a document switch
+
+test('the collector ignores a stray foreign frame, but follows another document that keeps arriving', () => {
+  const doc = (n, seed) => Uint8Array.from({ length: n }, (_, i) => (i * 7 + seed) & 255);
+  const A = doc(1300, 1);
+  const B = doc(900, 2);
+  const fa = fountainEncode(A, 84, 25);
+  const fb = fountainEncode(B, 84, 25);
+  assert.ok(fa.length > 12 && fb.length > 12);
+  const have = (c) => c.progress().have;
+
+  // one stray frame of B in the middle of A: progress is kept and A completes
+  let c = new DocumentCollector();
+  for (let i = 0; i < 5; i++) assert.equal(c.push(fa[i]), null);
+  const kept = have(c);
+  assert.equal(c.push(fb[0]), null);
+  assert.equal(have(c), kept, 'a stray foreign frame does not reset progress');
+  let got = null;
+  for (let i = 5; i < fa.length && !got; i++) got = c.push(fa[i]);
+  assert.deepEqual(got, A);
+
+  // B alternating with A never counts as a switch (the frames are not consecutive)
+  c = new DocumentCollector();
+  got = null;
+  for (let i = 0; i < fa.length && !got; i++) {
+    got = c.push(fa[i]);
+    if (!got) c.push(fb[i % fb.length]);
+  }
+  assert.deepEqual(got, A, 'alternating frames keep following the first document');
+
+  // the terminal switches to B while the phone holds part of A: after SWITCH_AFTER_FRAMES of B it follows B
+  c = new DocumentCollector();
+  for (let i = 0; i < 8; i++) c.push(fa[i]);
+  assert.ok(have(c) > 0);
+  for (let i = 0; i < SWITCH_AFTER_FRAMES - 1; i++) assert.equal(c.push(fb[i]), null);
+  assert.ok(have(c) > 0, 'still holding the first document before the threshold');
+  got = null;
+  for (let i = SWITCH_AFTER_FRAMES - 1; i < fb.length * 2 && !got; i++) got = c.push(fb[i % fb.length]);
+  assert.deepEqual(got, B, 'the new document is followed and completes');
+
+  // a completed document followed by another one: the next document is taken up
+  c = new DocumentCollector();
+  got = null;
+  for (let i = 0; i < fa.length && !got; i++) got = c.push(fa[i]);
+  assert.deepEqual(got, A);
+  got = null;
+  for (let i = 0; i < fb.length * 2 && !got; i++) got = c.push(fb[i % fb.length]);
+  assert.deepEqual(got, B);
+
+  // a short foreign document (one lap shorter than the threshold) is taken up after one lap of its frames
+  const small = fountainEncode(doc(100, 3), 84, 25);
+  assert.ok(small.length < SWITCH_AFTER_FRAMES);
+  c = new DocumentCollector();
+  for (let i = 0; i < 4; i++) c.push(fa[i]);
+  got = null;
+  for (let i = 0; i < small.length * 2 && !got; i++) got = c.push(small[i % small.length]);
+  assert.deepEqual(got, doc(100, 3), 'a one-frame document is read even while another is partial');
 });

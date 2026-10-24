@@ -870,10 +870,8 @@ if (process.env.E2E_ENROLL_PEER) {
     await feedDoc(page, await waitFile(dir, 't-commit.bin'));
     await page.waitForSelector('#enroll-qr');
     putFile(dir, 'p-commit.bin', (await captureDoc(page, '#enroll-qr')).doc);
-    // The next document is put on the fake camera BEFORE the phone starts scanning: a collector locks onto the first
-    // document it reads, so a stale frame of the previous one would block it (see the report).
-    await feedDoc(page, await waitFile(dir, 't-reveal.bin'));
     await page.click('#enroll-next');
+    await feedDoc(page, await waitFile(dir, 't-reveal.bin'));
     await page.waitForSelector('#sas-words');
     const words = (await text(page, '#sas-words')).trim();
     const reveal = (await captureDoc(page, '#enroll-qr')).doc;
@@ -890,8 +888,8 @@ if (process.env.E2E_ENROLL_PEER) {
     await page.click('#sas-match');
     await page.waitForSelector('#enroll-next');
     putFile(dir, 'p-confirm.bin', (await captureDoc(page, '#enroll-qr')).doc);
-    await feedDoc(page, await waitFile(dir, 't-confirm.bin'));
     await page.click('#enroll-next');
+    await feedDoc(page, await waitFile(dir, 't-confirm.bin'));
     await page.waitForSelector('#enroll-done', { timeout: 60000 });
     const tid = (await waitFile(dir, 't-id.txt')).toString();
     await page.click('#enroll-done');
