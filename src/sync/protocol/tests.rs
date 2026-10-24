@@ -740,3 +740,323 @@ fn any_modified_frame_fails_the_round_and_commits_nothing() {
         }
     }
 }
+
+// ------------------------------------------------- checkpoints over the wire
+
+fn approve_all(d: &Dev) {
+    loop {
+        let pending = d.store.sync_pending().unwrap();
+        if pending.is_empty() {
+            return;
+        }
+        for op in pending {
+            let _ = d.store.sync_resolve_pending(&op.hash(), true);
+        }
+    }
+}
+
+fn converge(devs: &[&Dev]) {
+    for _ in 0..2 {
+        for a in devs {
+            for b in devs {
+                if a.did != b.did {
+                    ok(round(a, b));
+                }
+            }
+        }
+        for d in devs {
+            approve_all(d);
+        }
+    }
+}
+
+fn many_ops(devs: &[&Dev], base: u8, n: u8) {
+    for (i, d) in devs.iter().enumerate() {
+        for k in 0..n {
+            d.append(base + (i as u8) * 20 + k, &format!("h{base}-{i}-{k}"));
+        }
+    }
+}
+
+/// `proposer` proposes; the rounds carry the blob, the signs and the
+/// acceptance (the driver runs at the end of every round).
+fn checkpoint(devs: &[&Dev], proposer: usize, now: i64) -> [u8; 32] {
+    converge(devs);
+    let p = devs[proposer];
+    let (op, _) = p.store.sync_checkpoint_propose(&p.id, None, now).unwrap();
+    for _ in 0..3 {
+        converge(devs);
+    }
+    for d in devs {
+        let row = d
+            .store
+            .sync_checkpoints()
+            .unwrap()
+            .into_iter()
+            .find(|c| c.proposal_hash == op.hash())
+            .expect("every device learned the proposal");
+        assert_eq!(
+            row.status,
+            crate::sync::oplog::CheckpointStatus::Accepted,
+            "{} signers {:?} required {:?}; ops: {:?}",
+            d.did,
+            row.signers,
+            row.required,
+            d.store
+                .with_conn(|c| {
+                    let mut st = c.prepare(
+                        "SELECT device_id, kind, state FROM sync_ops WHERE kind LIKE 'Checkpoint%'",
+                    )?;
+                    let rows = st.query_map([], |r| {
+                        Ok(format!(
+                            "{} {} {}",
+                            r.get::<_, String>(0)?,
+                            r.get::<_, String>(1)?,
+                            r.get::<_, String>(2)?
+                        ))
+                    })?;
+                    Ok(rows.map(Result::unwrap).collect::<Vec<_>>())
+                })
+                .unwrap()
+        );
+    }
+    op.hash()
+}
+
+/// Ring of `n` devices with two accepted checkpoints and a prune on device 0.
+fn pruned_ring(n: usize, now: i64) -> (Vec<Dev>, crate::sync::oplog::PruneReport) {
+    let devs = ring(n);
+    let refs: Vec<&Dev> = devs.iter().collect();
+    many_ops(&refs, 1, 4);
+    checkpoint(&refs, 0, now);
+    many_ops(&refs, 100, 4);
+    checkpoint(&refs, 1, now + 100);
+    many_ops(&refs, 150, 2);
+    converge(&refs);
+    let report = devs[0].store.sync_prune(now + 8 * 86_400 + 1_000).unwrap();
+    (devs, report)
+}
+
+#[test]
+fn a_fresh_store_bootstraps_over_the_wire_from_a_pruned_peer() {
+    let now = crate::store::now_ts();
+    let (devs, report) = pruned_ring(3, now);
+    assert!(report.ops_deleted > 0, "{report:?}");
+    let (a, b) = (&devs[0], &devs[1]);
+    // The pruned peer cannot serve the old tails any more.
+    let first = a.store.sync_chain_tail(&b.did, 0).unwrap_err();
+    assert!(first.downcast_ref::<crate::sync::oplog::Pruned>().is_some());
+
+    let f = Dev::new();
+    f.trust(a);
+    a.trust(&f);
+    let (fs, _) = ok(round(&f, a));
+    assert!(fs.adopted.is_some(), "{fs:?}");
+    assert!(!fs.needs_checkpoint.is_empty());
+    // Work after the adoption reaches the newcomer by tail.
+    b.append(200, "after");
+    converge(&[&devs[0], &devs[1], &devs[2]]);
+    for _ in 0..2 {
+        ok(round(&f, a));
+        approve_all(&f);
+    }
+    assert_eq!(
+        f.hash(),
+        b.hash(),
+        "same state as a store with the full history"
+    );
+    assert_eq!(
+        f.store.sync_projection_hash().unwrap(),
+        b.store.sync_projection_hash().unwrap()
+    );
+}
+
+#[test]
+fn a_peer_behind_past_the_floor_is_told_pruned_and_adopts_the_checkpoint() {
+    let now = crate::store::now_ts();
+    let (a, b, c) = (Dev::new(), Dev::new(), Dev::new());
+    for x in [&a, &b, &c] {
+        for y in [&a, &b, &c] {
+            if x.did != y.did {
+                x.trust(y);
+            }
+        }
+    }
+    // c writes once, long ago, and then goes quiet.
+    c.store
+        .sync_append_local_at(
+            &c.id,
+            OpBody::HostUpsert {
+                host_uid: [90; 16],
+                fields: HostFields {
+                    name: Some("old".into()),
+                    ..Default::default()
+                },
+            },
+            now - 40 * 86_400,
+        )
+        .unwrap();
+    converge(&[&a, &b, &c]);
+    let live = [&a, &b];
+    many_ops(&live, 1, 4);
+    checkpoint(&live, 0, now);
+    many_ops(&live, 100, 4);
+    checkpoint(&live, 1, now + 100);
+    many_ops(&live, 150, 2);
+    converge(&live);
+    assert!(
+        a.store
+            .sync_prune(now + 8 * 86_400 + 1_000)
+            .unwrap()
+            .ops_deleted
+            > 0
+    );
+
+    let (cs, _) = ok(round(&c, &a));
+    assert!(cs.adopted.is_some(), "{cs:?}");
+    approve_all(&c);
+    ok(round(&c, &a));
+    approve_all(&c);
+    assert_eq!(c.hash(), a.hash());
+}
+
+#[test]
+fn a_lying_peers_checkpoint_chunk_fails_verification_and_changes_nothing() {
+    let now = crate::store::now_ts();
+    let (devs, _) = pruned_ring(3, now);
+    let a = &devs[0];
+    let f = Dev::new();
+    f.trust(a);
+    a.trust(&f);
+    let (cl, sl) = pipe_pair();
+    let mut flipped = false;
+    let sl = sl.with_hook(move |v| {
+        if v["t"] == "checkpoint_chunk" && !flipped {
+            flipped = true;
+            let data = v["data"].as_str().unwrap().to_string();
+            let mut bytes = data.into_bytes();
+            let i = bytes.len() / 2;
+            bytes[i] = if bytes[i] == b'A' { b'B' } else { b'A' };
+            v["data"] = Value::String(String::from_utf8(bytes).unwrap());
+        }
+        true
+    });
+    let pair = round_with(&f, &a.did, cl, sl, |l| run_sync_serve(&a.store, &a.id, l));
+    assert!(
+        pair.0.is_err(),
+        "the client must refuse the altered checkpoint"
+    );
+    assert!(f.store.sync_chain_heads().unwrap().is_empty());
+    assert!(f.store.sync_checkpoints().unwrap().is_empty());
+}
+
+#[test]
+fn an_offline_device_adopts_a_checkpoint_and_keeps_its_own_unsynced_ops_on_top() {
+    let now = crate::store::now_ts();
+    let (a, b, c) = (Dev::new(), Dev::new(), Dev::new());
+    for x in [&a, &b, &c] {
+        for y in [&a, &b, &c] {
+            if x.did != y.did {
+                x.trust(y);
+            }
+        }
+    }
+    c.store
+        .sync_append_local_at(
+            &c.id,
+            OpBody::HostUpsert {
+                host_uid: [90; 16],
+                fields: HostFields {
+                    name: Some("old".into()),
+                    ..Default::default()
+                },
+            },
+            now - 40 * 86_400,
+        )
+        .unwrap();
+    converge(&[&a, &b, &c]);
+    // c writes three more ops while it is offline.
+    let mine: Vec<[u8; 32]> = (0..3)
+        .map(|k| c.append(80 + k, &format!("offline{k}")).hash())
+        .collect();
+    let live = [&a, &b];
+    many_ops(&live, 1, 4);
+    checkpoint(&live, 0, now);
+    many_ops(&live, 100, 4);
+    checkpoint(&live, 1, now + 100);
+    many_ops(&live, 150, 2);
+    converge(&live);
+    assert!(
+        a.store
+            .sync_prune(now + 8 * 86_400 + 1_000)
+            .unwrap()
+            .ops_deleted
+            > 0
+    );
+
+    let (cs, _) = ok(round(&c, &a));
+    assert!(cs.adopted.is_some(), "{cs:?}");
+    // Its own ops are on top of the adopted base, unchanged.
+    let tail: Vec<[u8; 32]> = c
+        .store
+        .sync_chain_tail(&c.did, 1)
+        .unwrap()
+        .iter()
+        .map(|o| o.hash())
+        .collect();
+    assert_eq!(tail, mine);
+    // Everyone ends in the same state as a peer that got them normally.
+    for _ in 0..2 {
+        for (x, y) in [(&c, &a), (&a, &b), (&b, &a), (&c, &a)] {
+            ok(round(x, y));
+        }
+        for d in [&a, &b, &c] {
+            approve_all(d);
+        }
+    }
+    assert_eq!(c.hash(), b.hash());
+    assert_eq!(a.hash(), b.hash());
+    assert_eq!(
+        c.store.sync_projection_hash().unwrap(),
+        b.store.sync_projection_hash().unwrap()
+    );
+}
+
+#[test]
+fn an_own_chain_that_diverges_from_the_checkpoint_is_refused_naming_the_seq() {
+    let now = crate::store::now_ts();
+    let (devs, _) = pruned_ring(3, now);
+    let a = &devs[0];
+    // Another copy of device 2's key with a different first op: a fork of its own chain.
+    let twin = Dev::with(devs[2].id.clone());
+    twin.trust(a);
+    let head = a
+        .store
+        .sync_checkpoint_head()
+        .unwrap()
+        .expect("a serves a checkpoint");
+    let bytes = a.store.sync_checkpoint_bytes(&head).unwrap().unwrap();
+    let bundle = crate::sync::oplog::checkpoint::bundle_from_bytes(&bytes).unwrap();
+    let OpBody::CheckpointPropose { cut, .. } = &bundle.proposal.body else {
+        unreachable!()
+    };
+    let cut_seq = cut.iter().find(|c| c.device_id == twin.did).unwrap().seq;
+    // The twin wrote its own chain up to the cut: other ops, same seqs.
+    for k in 0..cut_seq {
+        twin.append(70 + (k as u8), &format!("twin{k}"));
+    }
+    let err = twin
+        .store
+        .sync_checkpoint_accept(&bytes, &a.did, true)
+        .unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("diverges") && msg.contains(&format!("seq {cut_seq}")),
+        "{msg}"
+    );
+    // Nothing changed: the twin's own op is still there.
+    assert_eq!(
+        twin.store.sync_chain_tail(&twin.did, 0).unwrap().len() as u64,
+        cut_seq
+    );
+}

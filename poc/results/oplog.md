@@ -34,7 +34,13 @@ Delete-before-rename ordering of rows; closure of name peers' referrers; rows of
 
 ## Not run
 
-- The long property runs predate the last small delta (ShareGrant, ShareRelease key, `verified_by`); the default-seed tests ran after it.
 - No NixOS/macOS run; no real keyring in the identity-store tests (in-memory credential store).
 - Reshare/credential effects beyond table bookkeeping, recovery state machine and release flow are stage 3.
 - Voiding does not undo effects of non-entity ops (certs, mode, devices); documented in contract 2a.
+
+## Update after the follow-ups
+
+- Long reruns on tip 0658917 (after the last delta): 3000 two-store seeds PASS (1034 s, hs-oplog-f2-20261024T170106.log), 1500 three-store seeds PASS (1286 s, hs-oplog-f3-...), 150 same-cut seeds PASS and 15 prune/bootstrap seeds PASS (hs-oplog-fc-...).
+- base64: canonical.rs now uses the `base64` crate (STANDARD engine: padded, canonical, no whitespace); vectors unchanged, Python oracle still passes.
+- Red ceremony ops (RedApprove, RedPhoneSign, RedFactor Green and inert; FactorRegister, DeviceRoleChange, BulkExport Red), `DeviceRoleChange` effect on `sync_devices.role` and the checkpoint fold, DeviceRevoke tier by target role (`merge::effective_tier`: mirror Yellow, holder or unknown Red). 48 vectors, oracle 150 checks 0 failures. Full verify PASS on the tip (a first attempt failed only on a transient ssh denial to gpu-serv).
+- Not done: C6 checkpoint wire (Pruned / WantCheckpoint / CheckpointChunk) and the propose/sign/prune driver; the store API they need already exists (`sync_checkpoint_*`, `sync_prune`, `sync_bootstrap`, `Pruned` error).
