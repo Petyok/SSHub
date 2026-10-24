@@ -358,6 +358,49 @@ impl crate::credentials::Replicator for StoreReplicator {
     }
 }
 
+/// What an admin job gets on the worker: the store, this device's identity and
+/// the profile's secrets.
+pub struct JobEnv {
+    pub store: Arc<LauncherStore>,
+    pub identity: Arc<DeviceIdentity>,
+    pub paths: ProfilePaths,
+    pub gate: Arc<SecretGate>,
+    pub argon: Argon2Profile,
+    pub open_secrets: fn(&ProfilePaths) -> Box<dyn PasswordStore>,
+}
+
+/// A job: runs once on the worker, returns the line to tell the user.
+pub type JobFn = Box<dyn FnOnce(&JobEnv) -> Result<String> + Send>;
+
+/// A [`JobFn`] that can ride in a command and an intent: cloneable, compared by
+/// identity, taken once.
+#[derive(Clone)]
+pub struct JobBox(Arc<Mutex<Option<JobFn>>>);
+
+impl JobBox {
+    pub fn new(job: impl FnOnce(&JobEnv) -> Result<String> + Send + 'static) -> Self {
+        Self(Arc::new(Mutex::new(Some(Box::new(job)))))
+    }
+
+    pub fn take(&self) -> Option<JobFn> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+}
+
+impl std::fmt::Debug for JobBox {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("JobBox(..)")
+    }
+}
+
+impl PartialEq for JobBox {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for JobBox {}
+
 /// Credential-store entry holding the ring secret of this profile's Vault.
 pub const RING_SECRET_KEY: &str = "sync-ring-secret";
 
@@ -503,7 +546,7 @@ fn release_round(deps: &RoundDeps, identity: &DeviceIdentity, spec: &str) -> Res
         .into_iter()
         .find(|o| o.hash() == hash)
         .context("that release request is no longer waiting")?;
-    deps.store.sync_resolve_pending(&hash, approve)?;
+    crate::sync::ceremony::resolve(&deps.store, &hash, approve, crate::store::now_ts())?;
     if approve {
         for body in crate::sync::quorum::grant_bodies(&deps.store, identity, &op)? {
             deps.store.sync_append_local(identity, body)?;
@@ -539,6 +582,26 @@ pub fn round_fn(deps: RoundDeps) -> RoundFn {
             }
             Round::Unlock => {
                 unlock_round(&deps, rt, device, ctx)?;
+                Ok(RoundSummary::default())
+            }
+            Round::Job => {
+                let job = ctx
+                    .take_job()
+                    .and_then(|j| j.take())
+                    .context("the job was already taken")?;
+                let env = JobEnv {
+                    store: deps.store.clone(),
+                    identity: rt.identity.clone(),
+                    paths: deps.paths.clone(),
+                    gate: deps.gate.clone(),
+                    argon: deps.argon,
+                    open_secrets: deps.open_secrets,
+                };
+                let outcome = job(&env);
+                // A job may have rotated the device keys: reload on the next round.
+                drop(env);
+                runtime = None;
+                ctx.emit(SyncEvent::Notice(outcome?));
                 Ok(RoundSummary::default())
             }
             Round::Identify => {

@@ -459,11 +459,19 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "R",
-        desc: "Review the changes waiting for approval (a approve, r reject, Esc close)",
+        desc: "Review every change waiting for approval, with why it waits (a approve, r reject, Esc close). A Red change shows its ceremony: a adds this device's approval, p types the paper phrase, e the emailed code",
     },
     HelpItem::Entry {
         key: "t",
-        desc: "Open a trust session: pick the scope first, then the term (7, 30 or 90 days)",
+        desc: "Open a trust session: pick the scope first (a group, or hosts marked with Space), then the term (7, 30 or 90 days)",
+    },
+    HelpItem::Entry {
+        key: "M",
+        desc: "Manage the ring: revoke a device, change roles, switch the credential mode, recovery, paper",
+    },
+    HelpItem::Entry {
+        key: "",
+        desc: "In the M menu: master-phrase exemption (enable on this machine, or switch off for a device: with it this machine alone plus the master phrase opens every credential), bulk export (propose, then Export: continue once the other devices approved; the file is written owner-only and never overwritten), and a printable paper phrase sheet (while the words are still in memory).",
     },
     HelpItem::Entry {
         key: "",

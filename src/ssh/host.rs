@@ -12,6 +12,10 @@ pub struct SshHost {
     /// `ssh -G` reported a `ProxyCommand`. Presence only: the command line is
     /// never stored or run (the network map shows it as an opaque hop).
     pub has_proxy_command: bool,
+    /// The private ssh-agent holding a synced identity's key: ssh is told to use
+    /// only it (`IdentityAgent`, `IdentitiesOnly`) with `identity_file` as the
+    /// public key that selects the key. Never set for a key on this disk.
+    pub identity_agent: Option<std::path::PathBuf>,
 }
 
 impl SshHost {
@@ -27,6 +31,7 @@ impl SshHost {
             remote_command: None,
             certificate_file: None,
             has_proxy_command: false,
+            identity_agent: None,
         }
     }
 }
@@ -42,6 +47,12 @@ pub fn build_ssh_argv(host: &SshHost) -> Vec<String> {
         }
     }
 
+    if let Some(ref sock) = host.identity_agent {
+        args.push("-o".into());
+        args.push(format!("IdentityAgent={}", sock.display()));
+        args.push("-o".into());
+        args.push("IdentitiesOnly=yes".into());
+    }
     if let Some(ref identity) = host.identity_file {
         args.push("-i".into());
         args.push(identity.clone());
@@ -53,6 +64,11 @@ pub fn build_ssh_argv(host: &SshHost) -> Vec<String> {
     }
 
     if let Some(ref jump) = host.proxy_jump {
+        // A jump host whose key lives in the private agent needs its own block.
+        if let Some(config) = crate::credentials::hop_agent_config(jump) {
+            args.push("-F".into());
+            args.push(config.display().to_string());
+        }
         args.push("-J".into());
         args.push(jump.clone());
     }

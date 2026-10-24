@@ -536,6 +536,10 @@ pub enum AppMode {
     SyncReleaseConfirm,
     /// Vault first run: the six words and the paper-kit rules.
     SyncOnboarding,
+    /// Generic Sync modals (see `app/sync_ui.rs`): a text prompt, a menu, a text panel.
+    SyncPrompt,
+    SyncMenu,
+    SyncInfo,
 }
 
 /// Which pane the log browser is showing.
