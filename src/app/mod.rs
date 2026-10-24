@@ -32,6 +32,7 @@ mod session_spawn;
 mod sftp;
 mod snippets;
 mod suggestions;
+pub mod sync;
 mod tags;
 pub mod test_connect;
 mod theme_picker;
@@ -301,6 +302,8 @@ pub struct App {
     pub snippet_form: Option<SnippetFormEdit>,
     /// Live snippet picker state ([`AppMode::SnippetPicker`]).
     pub snippet_picker: Option<SnippetPickerState>,
+    /// Everything the Sync tab and its modals draw; see [`sync::SyncView`].
+    pub sync: sync::SyncView,
     /// Tracker line an Esc dismiss applies to: the ghost stays hidden until
     /// the input line changes. `None` while nothing is dismissed.
     pub ghost_dismissed_for: Option<String>,
@@ -575,7 +578,7 @@ pub struct App {
 pub(crate) fn is_overlay_mode(mode: AppMode) -> bool {
     !matches!(
         mode,
-        AppMode::Normal | AppMode::Connecting | AppMode::Session
+        AppMode::Normal | AppMode::Connecting | AppMode::Session | AppMode::SyncForkAlert
     )
 }
 
@@ -1062,6 +1065,7 @@ impl App {
             snippet_manage_selected: 0,
             snippet_form: None,
             snippet_picker: None,
+            sync: sync::SyncView::default(),
             ghost_dismissed_for: None,
             ghost_host_cache: std::cell::RefCell::new(None),
             snippet_notice: None,

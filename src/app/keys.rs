@@ -2,6 +2,12 @@ use super::*;
 
 impl App {
     pub fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
+        // The fork alert owns the whole frame and every key, a live session's
+        // PTY included: a keystroke typed while it appears must not reach the
+        // remote shell, and the alert must be seen before anything else.
+        if self.mode == AppMode::SyncForkAlert {
+            return self.handle_key_sync_modal(key);
+        }
         if self.mode == AppMode::AuthPrompt {
             return self.handle_key_auth(key);
         }
@@ -173,6 +179,14 @@ impl App {
             AppMode::SnippetManage => self.handle_key_snippet_manage(key),
             AppMode::SnippetForm => self.handle_key_snippet_form(key),
             AppMode::SnippetPicker => self.handle_key_snippet_picker(key),
+            AppMode::SyncReview
+            | AppMode::SyncUnlock
+            | AppMode::SyncSas
+            | AppMode::SyncForkAlert
+            | AppMode::TrustSessionScope
+            | AppMode::TrustSessionTtl
+            | AppMode::SyncReleaseConfirm
+            | AppMode::SyncOnboarding => self.handle_key_sync_modal(key),
             AppMode::Connecting | AppMode::Session => self.handle_key_session(key),
             AppMode::Normal => self.handle_key_dashboard_tab(key),
         }
@@ -270,6 +284,7 @@ impl App {
             3 => self.handle_key_keychain(key),
             4 => self.handle_key_audit(key),
             5 => self.handle_key_map(key),
+            6 => self.handle_key_sync(key),
             _ => self.handle_key_normal(key),
         }
     }
@@ -322,6 +337,11 @@ impl App {
         }
         if self.is_action(KeyAction::Broadcast, &key) {
             self.open_broadcast();
+            return Ok(());
+        }
+        // Hosts tab: make the selected host one of my devices.
+        if self.is_action(KeyAction::SyncEnroll, &key) {
+            self.sync_enroll_selected_host();
             return Ok(());
         }
 
@@ -689,6 +709,10 @@ impl App {
         }
         if self.is_action(KeyAction::TabMap, key) {
             self.switch_to_map_tab();
+            return Ok(true);
+        }
+        if self.is_action(KeyAction::TabSync, key) {
+            self.switch_to_sync_tab();
             return Ok(true);
         }
         Ok(false)
