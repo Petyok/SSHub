@@ -904,6 +904,134 @@ mod reshare_fixture {
             );
         }
     }
+
+    /// The trust-session chain the page wrote (`cert-out.json`: CertIssue, two CertExtend, CertRevoke, a second
+    /// CertIssue, all signed by the 0x42 phone) on a terminal that enforces certificates: the certificate
+    /// validates, the budget refuses a new host, the extension opens it for its own rolling day only, and the
+    /// revocation stops the certificate.
+    pub fn check_cert_output(out: &Value) {
+        use crate::sync::cert::{
+            cert_allows, cert_opened_body, extension_budget, validate_cert_issue, DelegationCert,
+        };
+        use crate::sync::oplog::{Attendance, CertScope, DeviceRole};
+        // The delegate is the device of seed 0x71, the same one the page's test derives from the same bytes.
+        let delegate = Dev::with(Arc::new(DeviceIdentity::from_seed(&[0x71; 32], PHONE_CONTEXT)));
+        let phone = Dev::with(phone_identity());
+        let (t2, t3) = (Dev::new(), Dev::new());
+        for d in [&t2, &delegate, &t3] {
+            t2.store
+                .sync_register_device(
+                    &d.id.public(),
+                    "terminal",
+                    DeviceRole::Holder,
+                    Attendance::Attended,
+                    DeviceKind::Terminal,
+                    VerifiedBy::Sas,
+                )
+                .unwrap();
+        }
+        t2.store
+            .sync_register_device(
+                &phone.id.public(),
+                "my phone",
+                DeviceRole::Holder,
+                Attendance::Attended,
+                DeviceKind::Phone,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+        let ingest = |op: &Op| {
+            assert_eq!(op.device_id, phone.did, "the page signs as the phone");
+            assert!(
+                op.verify(&phone.id.public().ed25519_pub),
+                "the page's op signature verifies"
+            );
+            t2.store.sync_ingest(op.clone()).unwrap();
+            for p in t2.store.sync_pending().unwrap() {
+                if !crate::sync::ceremony::is_gated(&t2.store, &p).unwrap() {
+                    t2.store.sync_resolve_pending(&p.hash(), true).unwrap();
+                }
+            }
+        };
+        let ops: Vec<Op> = out["ops"].as_array().unwrap().iter().map(op_of).collect();
+        assert_eq!(ops.len(), 5, "issue, extend, extend, revoke, issue");
+        let mut rest = ops.iter();
+
+        let issue = rest.next().unwrap();
+        assert!(matches!(issue.body, OpBody::CertIssue { .. }));
+        ingest(issue);
+        validate_cert_issue(&t2.store, issue, &phone.did)
+            .expect("the certificate the page wrote validates");
+        let cert = DelegationCert::from_op(issue).unwrap();
+        assert_eq!(cert.device_id, delegate.did);
+        assert_eq!(cert.issuer, phone.did);
+        assert_eq!(cert.max_new_hosts_per_day, 2);
+        let CertScope::Hosts(hosts) = cert.scope.clone() else {
+            panic!("the first certificate lists hosts");
+        };
+        assert_eq!(hosts.len(), 3);
+        let pk = phone.id.public().ed25519_pub;
+        // The enforcing holder opens two new hosts: the budget of 2 is used.
+        for h in &hosts[..2] {
+            t2.store
+                .sync_append_local(&t2.id, cert_opened_body(&cert, h))
+                .unwrap();
+        }
+        let ext1 = rest.next().unwrap();
+        let OpBody::CertExtend {
+            cert_id,
+            extra_hosts: e1,
+        } = &ext1.body
+        else {
+            panic!("a CertExtend")
+        };
+        assert_eq!(*cert_id, cert.id, "the extension names the certificate");
+        let t = ext1.timestamp + 10;
+        let refused = cert_allows(&cert, &pk, &t2.store, &delegate.did, &hosts[2], t, t)
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("budget"), "{refused}");
+        ingest(ext1);
+        assert_eq!(extension_budget(&t2.store, &cert, t).unwrap(), *e1);
+        cert_allows(&cert, &pk, &t2.store, &delegate.did, &hosts[2], t, t)
+            .expect("the phone's extension opens the budget");
+
+        let ext2 = rest.next().unwrap();
+        let OpBody::CertExtend { extra_hosts: e2, .. } = &ext2.body else {
+            panic!("a second CertExtend")
+        };
+        assert!(ext2.timestamp - ext1.timestamp >= 86_400, "a day apart");
+        ingest(ext2);
+        assert_eq!(
+            extension_budget(&t2.store, &cert, ext2.timestamp + 10).unwrap(),
+            *e2
+        );
+        assert_eq!(
+            extension_budget(&t2.store, &cert, t).unwrap(),
+            *e1,
+            "each extension covers its own day"
+        );
+
+        let revoke = rest.next().unwrap();
+        let OpBody::CertRevoke { cert_id } = &revoke.body else {
+            panic!("a CertRevoke")
+        };
+        assert_eq!(*cert_id, cert.id);
+        ingest(revoke);
+        let err = cert_allows(&cert, &pk, &t2.store, &delegate.did, &hosts[0], t, t)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("revoked"), "{err}");
+
+        // The second certificate (a group) validates too.
+        let second = rest.next().unwrap();
+        ingest(second);
+        validate_cert_issue(&t2.store, second, &phone.did).expect("the group certificate validates");
+        let OpBody::CertIssue { scope, .. } = &second.body else {
+            panic!("a CertIssue")
+        };
+        assert!(matches!(scope, CertScope::Group(g) if *g == [0x06; 16]));
+    }
 }
 
 #[test]
@@ -926,4 +1054,16 @@ fn e2e_the_pages_reshare_ops_open_on_the_terminal() {
     )
     .unwrap();
     reshare_fixture::check_page_output(&out);
+}
+
+#[test]
+fn e2e_the_pages_trust_session_ops_validate_on_the_terminal() {
+    let Some(d) = std::env::var_os("SSHUB_PHONE_E2E_DIR") else {
+        return;
+    };
+    let out = serde_json::from_str::<Value>(
+        &std::fs::read_to_string(PathBuf::from(d).join("cert-out.json")).unwrap(),
+    )
+    .unwrap();
+    reshare_fixture::check_cert_output(&out);
 }

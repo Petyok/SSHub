@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PoC H reverse-QR receiver (laptop webcam)</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #111; color: #fff; font: 20px monospace; overflow: hidden; }
+  #wrap { position: relative; width: 100vw; height: 100vh; }
+  video { width: 100%; height: 100%; object-fit: contain; display: block; }
+  #ov { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #hud { position: absolute; left: 12px; top: 8px; padding: 8px 14px; border-radius: 6px; white-space: pre; background: #000b; }
+  #hud.seen { background: #860b; }
+  #hud.ok { background: #064d; }
+</style>
+</head>
+<body>
+<div id="wrap"><video id="cam" autoplay playsinline muted></video><canvas id="ov"></canvas><div id="hud">idle</div></div>
+<canvas id="scan" hidden></canvas>
+<script src="vendor/jsQR.js"></script>
+<script src="share-lib.js"></script>
+<script>
+// Laptop webcam receiver for the reverse QR (phone screen -> laptop). One getUserMedia. Shows the
+// live preview with an overlay (QR seen / chunks n of N / decoded) so the holder can aim, and
+// measures per frame: bright phone-screen region, edge sharpness, QR module size in webcam px.
+// Nothing is stored or sent; frames only live in memory.
+(function () {
+  "use strict";
+  const L = window.ShareLib;
+  const $ = (id) => document.getElementById(id);
+  const cam = $("cam"), scan = $("scan"), sctx = scan.getContext("2d", { willReadFrequently: true });
+  const ov = $("ov"), octx = ov.getContext("2d"), hud = $("hud");
+  let stream = null, running = false, rs = new L.Reassembler(), expect = null, banner = "";
+  let waiter = null, trialWait = null;
+  const log = [];
+  const cnt = { frames: 0, seen: 0, valid: 0 };
+  let last = { w: 0, h: 0, brightW: 0, sharp: 0, seen: 0, valid: 0, modulePx: 0, quad: null, box: null };
+
+  // Largest connected bright region on a coarse grid (the phone screen), as a bounding box.
+  function brightBox(d, w, h) {
+    const cw = Math.ceil(w / 160), ch = Math.ceil(h / 90), gx = Math.ceil(w / cw), gy = Math.ceil(h / ch);
+    const on = new Uint8Array(gx * gy);
+    for (let cy = 0; cy < gy; cy++) for (let cx = 0; cx < gx; cx++) {
+      let s = 0, n = 0;
+      for (let y = cy * ch; y < Math.min(h, (cy + 1) * ch); y += 2) for (let x = cx * cw; x < Math.min(w, (cx + 1) * cw); x += 2) { s += d[(y * w + x) * 4 + 1]; n++; }
+      on[cy * gx + cx] = n && s / n >= 225 ? 1 : 0;
+    }
+    const seen = new Uint8Array(gx * gy);
+    let best = null;
+    for (let i = 0; i < on.length; i++) {
+      if (!on[i] || seen[i]) continue;
+      const st = [i]; seen[i] = 1;
+      let x0 = gx, y0 = gy, x1 = 0, y1 = 0, cells = 0;
+      while (st.length) {
+        const k = st.pop(), x = k % gx, y = (k / gx) | 0;
+        cells++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= gx || ny >= gy) continue;
+          const j = ny * gx + nx;
+          if (on[j] && !seen[j]) { seen[j] = 1; st.push(j); }
+        }
+      }
+      if (!best || cells > best.cells) best = { cells, x0: x0 * cw, y0: y0 * ch, x1: (x1 + 1) * cw, y1: (y1 + 1) * ch };
+    }
+    return best && best.cells >= 6 ? best : null;
+  }
+  // Mean absolute horizontal step of the green channel inside the box: the code's contrast at pixel level.
+  function sharpness(d, w, b) {
+    let s = 0, n = 0;
+    for (let y = b.y0; y < b.y1; y += 4) for (let x = b.x0; x < b.x1 - 1; x++) { s += Math.abs(d[(y * w + x) * 4 + 1] - d[(y * w + x + 1) * 4 + 1]); n++; }
+    return n ? s / n : 0;
+  }
+
+  function validChunk(bytes) {
+    const st = new L.Reassembler().add(bytes);
+    return st.have >= 1 && st.total > 0;
+  }
+
+  function oneFrame() {
+    const w = cam.videoWidth, h = cam.videoHeight;
+    if (!w) return;
+    if (scan.width !== w || scan.height !== h) { scan.width = w; scan.height = h; }
+    sctx.drawImage(cam, 0, 0);
+    const img = sctx.getImageData(0, 0, w, h);
+    const box = brightBox(img.data, w, h);
+    const sharp = box ? sharpness(img.data, w, box) : 0;
+    const r = jsQR(img.data, w, h, { inversionAttempts: "dontInvert" });
+    let seen = 0, valid = 0, modulePx = 0, quad = null;
+    if (r) {
+      seen = 1;
+      const loc = r.location;
+      quad = [loc.topLeftCorner, loc.topRightCorner, loc.bottomRightCorner, loc.bottomLeftCorner];
+      const qw = Math.hypot(loc.topRightCorner.x - loc.topLeftCorner.x, loc.topRightCorner.y - loc.topLeftCorner.y);
+      modulePx = r.version ? qw / (17 + 4 * r.version) : 0;
+      const bytes = Uint8Array.from(r.binaryData);
+      if (validChunk(bytes)) { valid = 1; rs.add(bytes); }
+    }
+    cnt.frames++; cnt.seen += seen; cnt.valid += valid;
+    last = { w, h, brightW: box ? box.x1 - box.x0 : 0, sharp, seen, valid, modulePx, quad, box };
+    log.push([Math.round(performance.now()), last.brightW, +sharp.toFixed(2), valid, seen, +modulePx.toFixed(2)]);
+    if (valid && waiter) { const wt = waiter; waiter = null; wt.resolve({ ms: Math.round(performance.now() - wt.t0), modulePx, brightW: last.brightW, sharp }); }
+    if (rs.bytes && trialWait) { const tw = trialWait; trialWait = null; tw.resolve(); }
+    paint();
+  }
+
+  function paint() {
+    const st = rs.status();
+    const l = last;
+    hud.className = l.valid || st.have ? "ok" : l.seen ? "seen" : "";
+    hud.textContent = (banner ? banner + "\n" : "") +
+      `camera ${l.w}x${l.h}   phone screen ${l.brightW ? l.brightW + " px wide" : "not seen"}   sharp ${l.sharp.toFixed(1)}\n` +
+      `QR seen: ${l.seen ? "YES" : "no "}  module ${l.modulePx ? l.modulePx.toFixed(1) + " px" : "-"}   chunks ${st.have} of ${st.total < 0 ? "?" : st.total}   ${st.complete ? "DECODED" : "not decoded"}`;
+    const rect = cam.getBoundingClientRect();
+    if (ov.width !== Math.round(rect.width) || ov.height !== Math.round(rect.height)) { ov.width = Math.round(rect.width); ov.height = Math.round(rect.height); }
+    octx.clearRect(0, 0, ov.width, ov.height);
+    if (!l.w) return;
+    const sc = Math.min(rect.width / l.w, rect.height / l.h), ox = (rect.width - l.w * sc) / 2, oy = (rect.height - l.h * sc) / 2;
+    const X = (x) => ox + x * sc, Y = (y) => oy + y * sc;
+    if (l.box) { octx.strokeStyle = "#ff0"; octx.lineWidth = 2; octx.strokeRect(X(l.box.x0), Y(l.box.y0), (l.box.x1 - l.box.x0) * sc, (l.box.y1 - l.box.y0) * sc); }
+    if (l.quad) { octx.strokeStyle = l.valid ? "#0f0" : "#f90"; octx.lineWidth = 4; octx.beginPath(); l.quad.forEach((p, i) => (i ? octx.lineTo(X(p.x), Y(p.y)) : octx.moveTo(X(p.x), Y(p.y)))); octx.closePath(); octx.stroke(); }
+  }
+
+  async function loop() {
+    while (running) {
+      const t = performance.now();
+      try { oneFrame(); } catch (e) { hud.textContent = "error " + e.message; }
+      await new Promise((r) => setTimeout(r, Math.max(5, 60 - (performance.now() - t))));
+    }
+  }
+
+  window.__rx = {
+    async start() {
+      if (stream) return this.info();
+      stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+      cam.srcObject = stream;
+      await cam.play();
+      running = true;
+      loop();
+      return this.info();
+    },
+    info() {
+      const t = stream && stream.getVideoTracks()[0];
+      return { w: cam.videoWidth, h: cam.videoHeight, track: t && t.readyState, label: t && t.label };
+    },
+    stop() { running = false; if (stream) stream.getTracks().forEach((t) => t.stop()); stream = null; cam.srcObject = null; },
+    setBanner(t) { banner = t; },
+    reset(len, seed) { rs = new L.Reassembler(); expect = L.seededBytes(len, seed); log.length = 0; },
+    // Resolves with the first valid (CRC) chunk, or null after maxMs.
+    waitFirst(maxMs) {
+      return new Promise((resolve) => {
+        const t0 = performance.now();
+        waiter = { t0, resolve };
+        setTimeout(() => { if (waiter && waiter.t0 === t0) { waiter = null; resolve(null); } }, maxMs);
+      });
+    },
+    // One timed trial: a fresh reassembly until the payload matches or maxMs passes.
+    trial(maxMs) {
+      rs = new L.Reassembler();
+      const c0 = { ...cnt }, t0 = performance.now();
+      return new Promise((resolve) => {
+        const done = () => {
+          const st = rs.status();
+          resolve({ ok: st.complete && L.equalBytes(st.bytes, expect), ms: Math.round(performance.now() - t0), have: st.have, total: st.total, frames: cnt.frames - c0.frames, seen: cnt.seen - c0.seen, valid: cnt.valid - c0.valid });
+        };
+        trialWait = { resolve: done };
+        setTimeout(() => { if (trialWait) { trialWait = null; done(); } }, maxMs);
+      });
+    },
+    takeLog() { const l = log.slice(); log.length = 0; return l; },
+    counters() { return { ...cnt }; },
+  };
+})();
+</script>
+</body>
+</html>

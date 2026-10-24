@@ -6,9 +6,11 @@ const failures = (recs) => recs.filter((r) => !r.ok).map((r) => `${r.id}: ${r.er
 
 async function run() {
   const t0 = performance.now();
-  const crypto = await replayVectors(globalThis.__VECTORS__, globalThis.__EFF__);
+  // `#skip-master` leaves out the 1 GiB Argon2 vector (a phone should not be asked for a gigabyte).
+  const skipProfiles = globalThis.location && globalThis.location.hash === '#skip-master' ? ['MASTER'] : [];
+  const crypto = await replayVectors(globalThis.__VECTORS__, globalThis.__EFF__, { skipProfiles });
   const result = {
-    crypto: { total: crypto.length, expected: JSON.parse(globalThis.__VECTORS__).vectors.length, failures: failures(crypto) },
+    crypto: { total: crypto.length, skipped: crypto.filter((r) => r.skipped).length, expected: JSON.parse(globalThis.__VECTORS__).vectors.length, failures: failures(crypto) },
     ms: Math.round(performance.now() - t0),
   };
   result.pass = result.crypto.total === result.crypto.expected && result.crypto.failures.length === 0;

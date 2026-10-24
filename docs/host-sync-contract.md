@@ -1207,6 +1207,14 @@ share reply plaintext (inside the C11 sealed box of the kind 2 frame):
   blob), the user can declare a blob dead (never delivered, or DEK reissued).
 - Kind 5 list limits: at most 8 ops, each at most 256 KiB (a 200 item `ShareReshareBatch` for a few holders is
   about 100 KiB), at most 1 MiB in all.
+- Trust sessions on the page (4c-2, `assets/companion/src/cert.mjs`): kind 9 and kind 10 are scanned or pasted, shown from
+  their bytes, and signed on the phone's own chain. Before signing it refuses a term that is not 1 s to 90 days, a budget
+  outside 1..=50, a host list outside 1..=64, an inverted epoch range and a request that names the phone itself; a
+  `CertExtend` is refused for an unknown (not issued by this phone), revoked or expired certificate, for `extra_hosts`
+  outside 1..=50, and when this phone already extended that certificate less than 24 hours ago. The phone reads what it
+  issued back from its own chain (`CertIssue` hash = certificate id), so there is no second record. The page e2e writes
+  its chain to `cert-out.json` and `phone_fixtures::e2e_the_pages_trust_session_ops_validate_on_the_terminal` validates
+  it with `validate_cert_issue`, `cert_allows` and `extension_budget`.
 - Residual: the phone's wrap-key generations are derived from its secret and the generation number, so an old
   generation can always be re-derived: unlike a terminal it cannot really retire previous wrap keys, and the
   forward secrecy of C14 does not extend to the phone's own envelopes (it stays in the B6 residual list).
@@ -1262,6 +1270,7 @@ offline; no real credentials, no real user directories.
 | `QR_FRAME_PAYLOAD_BYTES` | `250` | frame size when the terminal area is unknown (QR byte capacity at level M, version 11); the unlock modal normally uses `fountain::frame_bytes_for_area` (84 bytes full 80x24, 331 bytes 120x40) |
 | `QR_FPS` | `8` | animated frame rate (PoC C measured the pipeline at 8; the real phone measurement tunes it) |
 | `QR_PARITY_PERCENT` | `25` | XOR parity frames in the loop |
+| phone page `QR_FRAME_BYTES`, `QR_FPS` | `106`, `4` | the companion page's reply QR (phone screen to the terminal's camera) uses QR version 6 level M frames (1.4 mm modules on a 68 mm screen), as wide as the screen with an integer number of device pixels per module, at 4 fps; the fountain format is the same (the decoder takes the block size from each frame), only the frame count grows (PoC H, "Reverse QR") |
 | `MAX_FRAME_BYTES` | `1 << 20` | transport frame cap |
 | `MAX_JSON_DEPTH` | `32` | frame JSON depth cap |
 | `MAX_OPS_PER_TAIL` | `2_000` | ops per `Tail` frame |
