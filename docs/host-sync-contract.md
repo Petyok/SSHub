@@ -856,6 +856,27 @@ prompt names the requester; plaintext never touches disk.
   words with `peer_has_screen = false` and the plain warning; the local machine invites when it has a ring,
   founds one when both are blank, joins P's ring when only P has one.
 
+### 3d. Synced identity keys: a private ssh-agent (C19)
+
+A synced identity's private key must never be written to disk on any OS (macOS has no tmpfs runtime dir,
+Linux sessions without logind have none either), so the earlier `materialise_key` file is replaced:
+
+* External `ssh` (sessions, tunnels, exec): `cred_ops::PrivateAgent` is one `ssh-agent -D -a <socket>` per
+  process in a 0700 temp dir, started on the first synced key. `add_key(pem, ttl, askpass)` feeds the key over
+  stdin to `ssh-add -t <ttl> -` (a passphrase through the existing askpass helper, `SSH_ASKPASS_REQUIRE=force`),
+  reads the new public line back with `ssh-add -L`, and writes the **public** key file. `ssh_args(&key)` returns
+  `-o IdentityAgent=<socket> -o IdentitiesOnly=yes -i <public file>`. Drop kills the agent and removes the dir.
+  TTL = the unlock TTL. A missing OpenSSH client makes the unlock fail loudly with that reason.
+* In-process libssh2 (SFTP): authenticate with the key bytes held in the gate, in memory
+  (`userauth_pubkey_memory`), no agent, no file.
+* Jump hosts: a `ProxyJump` hop must use the same `-o IdentityAgent` and `IdentitiesOnly`; the connect path
+  passes them to the jump command too (TUI worker, to verify on a real two-hop run).
+
+Who: core (me) `PrivateAgent`, `AskpassEnv`, `AgentKey` in `cred_ops.rs`; `materialise_key` is removed once the
+gate has moved over. TUI worker: the gate's `insert_private_key` starts or reuses one agent and stores the
+`AgentKey`; connect paths add `ssh_args`; lock/drop drops the agent; the sftp path uses memory auth.
+No private key byte on disk, ever; the agent socket and public files are the only artifacts.
+
 ### 3c. Join-time anchor (C18): spec
 
 After `EnrollConfirm` succeeds and the inviter appended `DeviceAdd` for the joiner, the inviter sends the
