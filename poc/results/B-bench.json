@@ -5,417 +5,462 @@
       "credentials": 50,
       "holders": 2,
       "log_bytes_before": {
-        "array": 469338,
+        "array": 469664,
         "base64": 193030,
         "hex": 275610
       },
       "revoke_one": "not possible: one remaining holder cannot supply k = 2 contributions, recovery needs the paper share or the phone"
     },
     {
+      "checkpoint_state_bytes_credentials_only": {
+        "array": 56826,
+        "base64": 26578,
+        "hex": 35558
+      },
       "credentials": 50,
       "holders": 3,
       "log_bytes_before": {
-        "array": 685270,
+        "array": 686111,
         "base64": 275880,
         "hex": 398460
       },
       "remaining": 2,
       "v1_hybrid_wrap_per_share": {
-        "first_sync_ms_parse_hash_verify": 9.624113,
+        "first_sync_ms_parse_hash_verify": 9.666218,
         "log_bytes_after_base64": 876364,
         "new_op_bytes": {
-          "array": 1416522,
+          "array": 1417115,
           "base64": 600484,
           "hex": 844484
         },
-        "op_build_and_sign_ms": 6.800609,
+        "op_build_and_sign_ms": 6.560499,
         "ops": 200,
-        "reshare_ms_busiest_holder": 26.620564,
-        "reshare_ms_total": 53.01639
+        "reshare_ms_busiest_holder": 25.371041,
+        "reshare_ms_total": 50.724087
       },
       "v2_batched_200_per_op": {
         "log_bytes_after_base64": 351224,
         "new_op_bytes": {
-          "array": 153378,
+          "array": 153284,
           "base64": 75344,
           "hex": 98544
         }
       },
       "v2_epoch_envelopes": {
-        "first_sync_ms_parse_hash_verify": 8.823852,
+        "first_sync_ms_parse_hash_verify": 8.882385,
         "log_bytes_after_base64": 429474,
         "new_op_bytes": {
-          "array": 231628,
+          "array": 231534,
           "base64": 153594,
           "hex": 176794
         },
         "ops": 206,
-        "reshare_ms_busiest_holder": 5.502765,
-        "reshare_ms_total": 10.898678
+        "reshare_ms_busiest_holder": 4.97361,
+        "reshare_ms_total": 9.944124
       }
     },
     {
+      "checkpoint_state_bytes_credentials_only": {
+        "array": 76003,
+        "base64": 35273,
+        "hex": 47453
+      },
       "credentials": 50,
       "holders": 4,
       "log_bytes_before": {
-        "array": 902898,
+        "array": 902261,
         "base64": 358730,
         "hex": 521310
       },
       "remaining": 3,
       "v1_hybrid_wrap_per_share": {
-        "first_sync_ms_parse_hash_verify": 12.007202,
+        "first_sync_ms_parse_hash_verify": 11.891021,
         "log_bytes_after_base64": 1236238,
         "new_op_bytes": {
-          "array": 2102001,
+          "array": 2102509,
           "base64": 877508,
           "hex": 1243508
         },
-        "op_build_and_sign_ms": 8.677004,
+        "op_build_and_sign_ms": 8.374713,
         "ops": 250,
-        "reshare_ms_busiest_holder": 31.00347,
-        "reshare_ms_total": 75.020478
+        "reshare_ms_busiest_holder": 29.674232,
+        "reshare_ms_total": 71.779445
       },
       "v2_batched_200_per_op": {
         "log_bytes_after_base64": 467405,
         "new_op_bytes": {
-          "array": 225486,
+          "array": 225516,
           "base64": 108675,
           "hex": 143475
         }
       },
       "v2_epoch_envelopes": {
-        "first_sync_ms_parse_hash_verify": 10.764469,
+        "first_sync_ms_parse_hash_verify": 10.825912,
         "log_bytes_after_base64": 565981,
         "new_op_bytes": {
-          "array": 324062,
+          "array": 324092,
           "base64": 207251,
           "hex": 242051
         },
         "ops": 259,
-        "reshare_ms_busiest_holder": 5.458461,
-        "reshare_ms_total": 11.337386
+        "reshare_ms_busiest_holder": 5.172613,
+        "reshare_ms_total": 10.811416
       }
     },
     {
+      "checkpoint_state_bytes_credentials_only": {
+        "array": 114748,
+        "base64": 52663,
+        "hex": 71243
+      },
       "credentials": 50,
       "holders": 6,
       "log_bytes_before": {
-        "array": 1335858,
+        "array": 1335023,
         "base64": 524430,
         "hex": 767010
       },
       "remaining": 5,
       "v1_hybrid_wrap_per_share": {
-        "first_sync_ms_parse_hash_verify": 16.266223,
+        "first_sync_ms_parse_hash_verify": 16.282627,
         "log_bytes_after_base64": 1955986,
         "new_op_bytes": {
-          "array": 3472899,
+          "array": 3473523,
           "base64": 1431556,
           "hex": 2041556
         },
-        "op_build_and_sign_ms": 13.030771,
+        "op_build_and_sign_ms": 12.408127,
         "ops": 350,
-        "reshare_ms_busiest_holder": 40.326918,
-        "reshare_ms_total": 119.883626
+        "reshare_ms_busiest_holder": 38.8115,
+        "reshare_ms_total": 115.714727
       },
       "v2_batched_200_per_op": {
         "log_bytes_after_base64": 699767,
         "new_op_bytes": {
-          "array": 370268,
+          "array": 369897,
           "base64": 175337,
           "hex": 233337
         }
       },
       "v2_epoch_envelopes": {
-        "first_sync_ms_parse_hash_verify": 14.578403,
+        "first_sync_ms_parse_hash_verify": 14.686784,
         "log_bytes_after_base64": 838995,
         "new_op_bytes": {
-          "array": 509496,
+          "array": 509125,
           "base64": 314565,
           "hex": 372565
         },
         "ops": 365,
-        "reshare_ms_busiest_holder": 5.7948,
-        "reshare_ms_total": 13.0554
+        "reshare_ms_busiest_holder": 5.550826,
+        "reshare_ms_total": 12.545619
       }
     },
     {
       "credentials": 200,
       "holders": 2,
       "log_bytes_before": {
-        "array": 1878997,
+        "array": 1878113,
         "base64": 772380,
         "hex": 1102960
       },
       "revoke_one": "not possible: one remaining holder cannot supply k = 2 contributions, recovery needs the paper share or the phone"
     },
     {
+      "checkpoint_state_bytes_credentials_only": {
+        "array": 201316,
+        "base64": 96328,
+        "hex": 127708
+      },
       "credentials": 200,
       "holders": 3,
       "log_bytes_before": {
-        "array": 2744617,
+        "array": 2744722,
         "base64": 1103780,
         "hex": 1594360
       },
       "remaining": 2,
       "v1_hybrid_wrap_per_share": {
-        "first_sync_ms_parse_hash_verify": 38.604966,
+        "first_sync_ms_parse_hash_verify": 38.727225,
         "log_bytes_after_base64": 3506664,
         "new_op_bytes": {
-          "array": 5668841,
+          "array": 5669543,
           "base64": 2402884,
           "hex": 3378884
         },
-        "op_build_and_sign_ms": 26.175599,
+        "op_build_and_sign_ms": 25.124005,
         "ops": 800,
-        "reshare_ms_busiest_holder": 105.866426,
-        "reshare_ms_total": 211.284345
+        "reshare_ms_busiest_holder": 101.023479,
+        "reshare_ms_total": 202.022229
       },
       "v2_batched_200_per_op": {
         "log_bytes_after_base64": 1364224,
         "new_op_bytes": {
-          "array": 523850,
+          "array": 524138,
           "base64": 260444,
           "hex": 338844
         }
       },
       "v2_epoch_envelopes": {
-        "first_sync_ms_parse_hash_verify": 34.66885,
+        "first_sync_ms_parse_hash_verify": 34.970364,
         "log_bytes_after_base64": 1682774,
         "new_op_bytes": {
-          "array": 842400,
+          "array": 842688,
           "base64": 578994,
           "hex": 657394
         },
         "ops": 806,
-        "reshare_ms_busiest_holder": 19.488966,
-        "reshare_ms_total": 38.857769
+        "reshare_ms_busiest_holder": 18.544473,
+        "reshare_ms_total": 37.158249
       }
     },
     {
+      "checkpoint_state_bytes_credentials_only": {
+        "array": 266115,
+        "base64": 126173,
+        "hex": 167953
+      },
       "credentials": 200,
       "holders": 4,
       "log_bytes_before": {
-        "array": 3610846,
+        "array": 3611200,
         "base64": 1435180,
         "hex": 2085760
       },
       "remaining": 3,
       "v1_hybrid_wrap_per_share": {
-        "first_sync_ms_parse_hash_verify": 51.492333,
+        "first_sync_ms_parse_hash_verify": 47.560137000000005,
         "log_bytes_after_base64": 4946388,
         "new_op_bytes": {
-          "array": 8410672,
+          "array": 8409676,
           "base64": 3511208,
           "hex": 4975208
         },
-        "op_build_and_sign_ms": 35.477282,
+        "op_build_and_sign_ms": 33.304448,
         "ops": 1000,
-        "reshare_ms_busiest_holder": 122.794721,
-        "reshare_ms_total": 297.977036
+        "reshare_ms_busiest_holder": 119.056262,
+        "reshare_ms_total": 288.02095
       },
       "v2_batched_200_per_op": {
         "log_bytes_after_base64": 1809655,
         "new_op_bytes": {
-          "array": 770131,
+          "array": 769833,
           "base64": 374475,
           "hex": 492075
         }
       },
       "v2_epoch_envelopes": {
-        "first_sync_ms_parse_hash_verify": 46.139854,
+        "first_sync_ms_parse_hash_verify": 42.354476000000005,
         "log_bytes_after_base64": 2210799,
         "new_op_bytes": {
-          "array": 1171275,
+          "array": 1170977,
           "base64": 775619,
           "hex": 893219
         },
         "ops": 1009,
-        "reshare_ms_busiest_holder": 19.779509,
-        "reshare_ms_total": 40.736521
+        "reshare_ms_busiest_holder": 19.259668,
+        "reshare_ms_total": 39.616751
       }
     },
     {
+      "checkpoint_state_bytes_credentials_only": {
+        "array": 395137,
+        "base64": 185863,
+        "hex": 248443
+      },
       "credentials": 200,
       "holders": 6,
       "log_bytes_before": {
-        "array": 5343239,
+        "array": 5343778,
         "base64": 2097980,
         "hex": 3068560
       },
       "remaining": 5,
       "v1_hybrid_wrap_per_share": {
-        "first_sync_ms_parse_hash_verify": 70.590639,
+        "first_sync_ms_parse_hash_verify": 65.180341,
         "log_bytes_after_base64": 7825836,
         "new_op_bytes": {
-          "array": 13891168,
+          "array": 13891511,
           "base64": 5727856,
           "hex": 8167856
         },
-        "op_build_and_sign_ms": 52.243743,
+        "op_build_and_sign_ms": 49.101517,
         "ops": 1400,
-        "reshare_ms_busiest_holder": 160.957552,
-        "reshare_ms_total": 480.709596
+        "reshare_ms_busiest_holder": 155.20384,
+        "reshare_ms_total": 462.229386
       },
       "v2_batched_200_per_op": {
         "log_bytes_after_base64": 2700517,
         "new_op_bytes": {
-          "array": 1261553,
+          "array": 1261779,
           "base64": 602537,
           "hex": 798537
         }
       },
       "v2_epoch_envelopes": {
-        "first_sync_ms_parse_hash_verify": 62.144436999999996,
+        "first_sync_ms_parse_hash_verify": 57.18061599999999,
         "log_bytes_after_base64": 3267625,
         "new_op_bytes": {
-          "array": 1828661,
+          "array": 1828887,
           "base64": 1169645,
           "hex": 1365645
         },
         "ops": 1415,
-        "reshare_ms_busiest_holder": 20.843431,
-        "reshare_ms_total": 45.220897
+        "reshare_ms_busiest_holder": 20.034403,
+        "reshare_ms_total": 43.67823
       }
     },
     {
       "credentials": 1000,
       "holders": 2,
       "log_bytes_before": {
-        "array": 9392351,
+        "array": 9392635,
         "base64": 3862780,
         "hex": 5516560
       },
       "revoke_one": "not possible: one remaining holder cannot supply k = 2 contributions, recovery needs the paper share or the phone"
     },
     {
+      "checkpoint_state_bytes_credentials_only": {
+        "array": 973464,
+        "base64": 468328,
+        "hex": 619708
+      },
       "credentials": 1000,
       "holders": 3,
       "log_bytes_before": {
-        "array": 13724201,
+        "array": 13723377,
         "base64": 5519780,
         "hex": 7973560
       },
       "remaining": 2,
       "v1_hybrid_wrap_per_share": {
-        "first_sync_ms_parse_hash_verify": 205.66049,
+        "first_sync_ms_parse_hash_verify": 193.915169,
         "log_bytes_after_base64": 17538664,
         "new_op_bytes": {
-          "array": 28343689,
+          "array": 28349318,
           "base64": 12018884,
           "hex": 16898884
         },
-        "op_build_and_sign_ms": 134.255473,
+        "op_build_and_sign_ms": 126.552779,
         "ops": 4000,
-        "reshare_ms_busiest_holder": 524.391806,
-        "reshare_ms_total": 1048.766643
+        "reshare_ms_busiest_holder": 511.858734,
+        "reshare_ms_total": 1022.596875
       },
       "v2_batched_200_per_op": {
         "log_bytes_after_base64": 6774072,
         "new_op_bytes": {
-          "array": 2507260,
+          "array": 2507643,
           "base64": 1254292,
           "hex": 1627092
         }
       },
       "v2_epoch_envelopes": {
-        "first_sync_ms_parse_hash_verify": 185.847299,
+        "first_sync_ms_parse_hash_verify": 174.112885,
         "log_bytes_after_base64": 8373586,
         "new_op_bytes": {
-          "array": 4106774,
+          "array": 4107157,
           "base64": 2853806,
           "hex": 3226606
         },
         "ops": 4006,
-        "reshare_ms_busiest_holder": 94.678744,
-        "reshare_ms_total": 189.312604
+        "reshare_ms_busiest_holder": 90.708667,
+        "reshare_ms_total": 181.853892
       }
     },
     {
+      "checkpoint_state_bytes_credentials_only": {
+        "array": 1279068,
+        "base64": 610973,
+        "hex": 811153
+      },
       "credentials": 1000,
       "holders": 4,
       "log_bytes_before": {
-        "array": 18060532,
+        "array": 18055080,
         "base64": 7176780,
         "hex": 10430560
       },
       "remaining": 3,
       "v1_hybrid_wrap_per_share": {
-        "first_sync_ms_parse_hash_verify": 253.099931,
+        "first_sync_ms_parse_hash_verify": 238.583719,
         "log_bytes_after_base64": 24738388,
         "new_op_bytes": {
-          "array": 42054602,
+          "array": 42054269,
           "base64": 17561608,
           "hex": 24881608
         },
-        "op_build_and_sign_ms": 174.911842,
+        "op_build_and_sign_ms": 166.873817,
         "ops": 5000,
-        "reshare_ms_busiest_holder": 605.038427,
-        "reshare_ms_total": 1464.279363
+        "reshare_ms_busiest_holder": 590.209145,
+        "reshare_ms_total": 1432.791234
       },
       "v2_batched_200_per_op": {
         "log_bytes_after_base64": 8977223,
         "new_op_bytes": {
-          "array": 3681121,
+          "array": 3680812,
           "base64": 1800443,
           "hex": 2359643
         }
       },
       "v2_epoch_envelopes": {
-        "first_sync_ms_parse_hash_verify": 224.96596,
+        "first_sync_ms_parse_hash_verify": 210.842317,
         "log_bytes_after_base64": 10991599,
         "new_op_bytes": {
-          "array": 5695497,
+          "array": 5695188,
           "base64": 3814819,
           "hex": 4374019
         },
         "ops": 5009,
-        "reshare_ms_busiest_holder": 95.196917,
-        "reshare_ms_total": 195.698772
+        "reshare_ms_busiest_holder": 92.612051,
+        "reshare_ms_total": 190.162184
       }
     },
     {
+      "checkpoint_state_bytes_credentials_only": {
+        "array": 1890123,
+        "base64": 896263,
+        "hex": 1194043
+      },
       "credentials": 1000,
       "holders": 6,
       "log_bytes_before": {
-        "array": 26723434,
+        "array": 26720155,
         "base64": 10490780,
         "hex": 15344560
       },
       "remaining": 5,
       "v1_hybrid_wrap_per_share": {
-        "first_sync_ms_parse_hash_verify": 346.74343000000005,
+        "first_sync_ms_parse_hash_verify": 326.774801,
         "log_bytes_after_base64": 39137836,
         "new_op_bytes": {
-          "array": 69469924,
+          "array": 69470095,
           "base64": 28647056,
           "hex": 40847056
         },
-        "op_build_and_sign_ms": 258.290308,
+        "op_build_and_sign_ms": 246.985737,
         "ops": 7000,
-        "reshare_ms_busiest_holder": 781.309804,
-        "reshare_ms_total": 2333.176645
+        "reshare_ms_busiest_holder": 772.621844,
+        "reshare_ms_total": 2303.01065
       },
       "v2_batched_200_per_op": {
         "log_bytes_after_base64": 13383525,
         "new_op_bytes": {
-          "array": 6025514,
+          "array": 6026835,
           "base64": 2892745,
           "hex": 3824745
         }
       },
       "v2_epoch_envelopes": {
-        "first_sync_ms_parse_hash_verify": 305.11353,
+        "first_sync_ms_parse_hash_verify": 283.776614,
         "log_bytes_after_base64": 16227625,
         "new_op_bytes": {
-          "array": 8869614,
+          "array": 8870935,
           "base64": 5736845,
           "hex": 6668845
         },
         "ops": 7015,
-        "reshare_ms_busiest_holder": 99.529879,
-        "reshare_ms_total": 213.706388
+        "reshare_ms_busiest_holder": 97.709723,
+        "reshare_ms_total": 209.372827
       }
     }
   ]

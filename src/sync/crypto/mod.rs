@@ -27,7 +27,7 @@ pub use argon::{
 };
 pub use dek::{aead_open, aead_seal, dek_generate, dek_open, dek_seal};
 pub use hash::{chain_hash, derive_key};
-pub use identity::{device_id_of, verify, DeviceIdentity, DevicePublic};
+pub use identity::{device_id_of, open_sealed_with_secret, verify, DeviceIdentity, DevicePublic};
 pub use paper::{paper_derive, PaperDomain};
 pub use sas::sas_words;
 pub use shamir::{

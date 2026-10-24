@@ -27,6 +27,16 @@ exclude = [
     ".github",
     ".codegraph",
     "poc",
+    # Host sync: the phone page ships only as its built single file
+    # (assets/companion/sshub-companion.html); its sources, vendored libraries
+    # and tests, the Hub stack and the PoC benches stay out of the crate.
+    "assets/companion/src",
+    "assets/companion/test",
+    "assets/companion/vendor",
+    "assets/companion/package*.json",
+    "assets/companion/build.mjs",
+    "assets/companion/poc",
+    "deploy",
 ]
 
 [[bin]]
@@ -72,6 +82,9 @@ libc = "0.2"
 notify = "7"
 nucleo = "0.3"
 portable-pty = "0.9"
+# Pure-Rust QR encoder for the host sync unlock modal (half-block frames in the
+# terminal). No image or svg features: only the core encoder.
+qrcode = { version = "0.14", default-features = false }
 # Exact Paragraph::line_count for the auth prompt scroll range (the plain
 # width estimate hides the final line on narrow terminals).
 ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }

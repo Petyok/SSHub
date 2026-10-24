@@ -196,6 +196,22 @@ fn run(n_creds: usize, m: usize) -> Value {
         }
         ops
     };
+    // the checkpoint state after this revocation: live credential data only (ciphertext, the live
+    // envelope shares of the remaining holders, their storage key blobs); hosts, groups and
+    // identities are not modelled by this bench
+    let state_bytes = |e: Enc| -> usize {
+        let creds: Vec<Value> = creds
+            .iter()
+            .zip(&r2)
+            .map(|(c, (_, adopts))| {
+                json!({ "host_uid": hex::encode(c.host_uid), "ciphertext": enc(&c.ciphertext, e),
+                        "shares": adopts.iter().map(|a| json!({ "recipient": ids[(a.holder - 1) as usize].1, "sealed": enc(&a.sealed_share, e) })).collect::<Vec<_>>() })
+            })
+            .collect();
+        let storage: Vec<Value> = epoch.storage_blobs.iter().map(|(h, b)| json!({ "recipient": ids[(*h - 1) as usize].1, "sealed": enc(b, e) })).collect();
+        serde_json::to_vec(&json!({ "epoch": 1, "creds": creds, "storage_keys": storage })).unwrap().len()
+    };
+    let state_sizes = sizes_of(&|e| state_bytes(e));
     let v2b_new = sizes_of(&|e| build_v2_batched(e).iter().map(|o| o.wire_len()).sum());
     let ops_v2_b64 = build_v2(Enc::Base64);
     let v2_new = sizes_of(&|e| build_v2(e).iter().map(|o| o.wire_len()).sum());
@@ -225,6 +241,7 @@ fn run(n_creds: usize, m: usize) -> Value {
             "ops": ops_v1_b64.len(), "new_op_bytes": sz(&v1_new), "log_bytes_after_base64": before.base64 + v1_new.base64,
             "first_sync_ms_parse_hash_verify": sync_v1,
         },
+        "checkpoint_state_bytes_credentials_only": sz(&state_sizes),
         "v2_batched_200_per_op": { "new_op_bytes": sz(&v2b_new), "log_bytes_after_base64": before.base64 + v2b_new.base64 },
         "v2_epoch_envelopes": {
             "reshare_ms_total": ms(v2_ns), "reshare_ms_busiest_holder": ms(timing2.max_ns()),
