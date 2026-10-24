@@ -656,3 +656,11 @@ fn tab_in_the_mkdir_prompt_leaves_the_name_alone() {
     );
     assert_eq!((p.hint.as_deref(), p.error.as_deref()), (None, None));
 }
+
+#[test]
+fn goto_prompt_accepts_a_bracketed_paste() {
+    let (mut app, _tmp) = local_browser();
+    app.handle_key(key_char('g')).unwrap();
+    app.handle_paste("/srv/www\n").unwrap();
+    assert_eq!(app.sftp_prompt.as_ref().unwrap().value, "/srv/www");
+}
