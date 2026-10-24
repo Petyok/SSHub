@@ -778,10 +778,59 @@ Code: `src/sync/{quorum,reshare,cred_ops,cert,modes,recovery}.rs` (plus the phon
   `ReplyExt::approved_by(phone_ed25519, binding_preimage)` is the check that ties an extension to the
   phone that was asked: replies are sealed to a public ephemeral key, so anyone can build one.
 
+### 4b. Second-share paths (how a terminal gets the share it does not hold)
+
+`ShareSource::second_share(host, epoch, mine)` is answered by one of five paths. Which ring device is
+the phone: the unique non-revoked device whose `DeviceRow.kind` is `Phone` (`quorum::phone_device(store)`,
+available when `DeviceKind` lands in the op-log; until then the phone paths report `NeedsShares`).
+
+**Peer, trust session (synchronous, inside an authenticated session).** After `Prove` the client may send
+`ShareRequest { host_uid, request_id, eph_x25519_pub, epoch }` instead of `Heads`; the holder's `sync-serve`
+answers `ShareGranted { request_id, sealed }` (`sealed` = `DeviceIdentity::seal_to(eph, share bytes)`, 105
+bytes) or `ShareDeferred { request_id, reason }`, then both sides finish the round as usual. It grants only
+when this device holds the share, the requester holds a non-revoked `CertIssue` from the phone for it, and
+`cert_allows` passes (scope, expiry, phone freshness, ring-wide budget); a new host is recorded with a
+`CertHostOpened` op. A holder that is attended or unattended is treated the same on this path: the
+certificate IS the consent. `Deferred` sends the requester to the next path. The client side is
+`protocol::run_share_request`.
+
+**Peer, attended (asynchronous, through the op-log).** The requester appends `ShareRelease { host_uid,
+request_id, requester, eph_x25519_pub }` (the op gains the ephemeral key; Yellow, so it shows up in the
+holder's review modal naming the requester on its next sync). On approve the holder's TUI appends one
+`ShareGrant { host_uid, request_id, requester, epoch, sealed }` per share epoch it holds (newest first, at
+most 3; Green, inert data) with `sealed` as above; the requester finds it on its next sync
+(`quorum::peer_request`, `quorum::peer_poll`). The grant is sealed to the EPHEMERAL key, never to the
+requester's wrap key: a grant wrapped to a long-lived key would let one stolen requester device open the
+credential forever. The ephemeral secret lives in the requester's memory only; if sshub exits the request
+is made again. No `sync-release` CLI verb: an attended holder approves in its TUI, an unattended holder
+releases only on the trust-session path.
+
+**Phone reply (QR, clipboard, audio).** The input is the bytes of a `ShareResponseWire`. The clipboard text
+is the base64 of exactly those bytes (standard alphabet, padded, whitespace ignored), what the page copies
+(948 characters in the e2e). `unlock_paths::open_phone_reply` / `open_phone_reply_clipboard` check the
+request id, open the share with the challenge's ephemeral secret and, when the reply carries the courier
+extension, require the phone's signature over `Challenge::binding_preimage()`: an extension that does not
+verify refuses the whole reply. The audio reply is the share only. `apply_reply_ext` chains the courier ops
+and keeps the snapshot blob.
+
+**Short code.** The 16 Crockford characters (case, spaces, hyphens and look-alike letters tolerated) open
+the snapshot blob this terminal stored from an earlier reply extension. Blobs are kept in `sync_meta` under
+`snapshot:<host uid hex>`: local only, never replicated, replaced by a newer one, expired after
+`SNAPSHOT_TTL_SECS` (`unlock_paths::share_from_code`).
+
+**Full entry.** The user types the 32 share bytes as 24 BIP39 words (the words the phone page shows). The
+share index is not typed: it is the holder's 1-based position in the sorted holder list of that credential's
+sharing at that epoch (`unlock_paths::full_entry_share`). A wrong word fails the BIP39 checksum; a wrong
+but valid phrase fails the credential's AEAD at `assemble_dek`.
+
 ## 5. Stage 3.5: Hub
 
-`deploy/hub/docker-compose.yml` and `sshub hub-serve` (headless branch in
-`main.rs`). Role in the ring: mirror, optionally unattended holder. Hard
+`deploy/hub/docker-compose.yml`. There is NO `hub-serve` verb and no daemon: the Hub is an ordinary ring
+device reached with `ssh hub sshub sync-serve` behind the container's sshd. What makes it a Hub is
+enforced in `src/sync/hub.rs`, `quorum::release_share_for` and the recovery state machine (see
+`poc/results/hub.md`): unattended devices neither approve nor acknowledge a recovery, an unattended holder
+releases only under a valid certificate, and `hub::run_sync_serve_notify` announces recovery ops (once per
+op, never with a code). Role in the ring: mirror, optionally unattended holder. Hard
 boundaries: no accounts, no authoritative copy, no Red-level vote; the ring
 works without it. Notifications use a sendmail-compatible command from
 `[sync.notify] command`, spawned by argv (no shell, no SMTP crate).

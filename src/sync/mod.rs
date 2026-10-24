@@ -25,6 +25,7 @@ pub mod reshare;
 pub mod share_release;
 pub mod snapshot;
 pub mod transport;
+pub mod unlock_paths;
 #[cfg(test)]
 mod vectors;
 pub mod wire;
