@@ -72,6 +72,20 @@ pub(crate) mod hex32 {
     }
 }
 
+pub(crate) mod hex16 {
+    use serde::{de::Error, Deserialize, Deserializer, Serializer};
+    pub fn serialize<S: Serializer>(v: &[u8; 16], s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&hex::encode(v))
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 16], D::Error> {
+        let s = String::deserialize(d)?;
+        hex::decode(&s)
+            .map_err(D::Error::custom)?
+            .try_into()
+            .map_err(|_| D::Error::custom("expected 16 bytes"))
+    }
+}
+
 pub(crate) mod hex64 {
     use serde::{de::Error, Deserialize, Deserializer, Serializer};
     pub fn serialize<S: Serializer>(v: &[u8; 64], s: S) -> Result<S::Ok, S::Error> {
@@ -284,6 +298,25 @@ pub enum SyncMsg {
         #[serde(with = "b64")]
         data: Vec<u8>,
     },
+    /// Trust-session path: ask the holder on the other end for its share of `host_uid` at `epoch`,
+    /// sealed to `eph`. Sent instead of `Heads`.
+    ShareRequest {
+        #[serde(with = "hex16")]
+        host_uid: [u8; 16],
+        request_id: u64,
+        #[serde(with = "hex32")]
+        eph: [u8; 32],
+        epoch: u64,
+    },
+    ShareGranted {
+        request_id: u64,
+        #[serde(with = "b64")]
+        sealed: Vec<u8>,
+    },
+    ShareDeferred {
+        request_id: u64,
+        reason: String,
+    },
     EndWants,
     Finish {
         #[serde(with = "hex32")]
@@ -293,6 +326,7 @@ pub enum SyncMsg {
         #[serde(with = "hex32")]
         mac: [u8; 32],
     },
+    EnrollHello(super::enroll::EnrollHello),
     EnrollCommit {
         #[serde(with = "hex32")]
         commit: [u8; 32],
@@ -316,9 +350,13 @@ impl SyncMsg {
             Self::Pruned { .. } => "pruned",
             Self::WantCheckpoint { .. } => "want_checkpoint",
             Self::CheckpointChunk { .. } => "checkpoint_chunk",
+            Self::ShareRequest { .. } => "share_request",
+            Self::ShareGranted { .. } => "share_granted",
+            Self::ShareDeferred { .. } => "share_deferred",
             Self::EndWants => "end_wants",
             Self::Finish { .. } => "finish",
             Self::Ack { .. } => "ack",
+            Self::EnrollHello(_) => "enroll_hello",
             Self::EnrollCommit { .. } => "enroll_commit",
             Self::EnrollReveal(_) => "enroll_reveal",
             Self::EnrollConfirm(_) => "enroll_confirm",
@@ -433,7 +471,7 @@ impl<'a, L: SyncLink> Session<'a, L> {
         Ok(m)
     }
 
-    fn bye(&mut self, reason: &str) {
+    pub(crate) fn bye(&mut self, reason: &str) {
         let _ = self.send(&SyncMsg::Bye {
             reason: reason.into(),
         });
@@ -793,7 +831,11 @@ fn my_heads(store: &LauncherStore) -> Result<BTreeMap<DeviceId, (u64, [u8; 32])>
 }
 
 /// Sort per chain, ingest, and retry what failed only for order (unknown author, gap) once the rest landed.
-fn ingest_ops(store: &LauncherStore, ops: Vec<Op>, sum: &mut RoundSummary) -> Result<bool> {
+pub(crate) fn ingest_ops(
+    store: &LauncherStore,
+    ops: Vec<Op>,
+    sum: &mut RoundSummary,
+) -> Result<bool> {
     let mut queue = ops;
     queue.sort_by(|a, b| (&a.device_id, a.seq).cmp(&(&b.device_id, b.seq)));
     let mut any = false;
@@ -970,6 +1012,7 @@ fn exchange<L: SyncLink>(
     store: &LauncherStore,
     id: &DeviceIdentity,
     client: bool,
+    peer: &DeviceId,
     sum: &mut RoundSummary,
 ) -> Result<()> {
     let mine = heads_msg(store, id)?;
@@ -982,6 +1025,31 @@ fn exchange<L: SyncLink>(
     } else {
         let h = match s.recv()? {
             SyncMsg::Heads(h) => h,
+            SyncMsg::ShareRequest {
+                host_uid,
+                request_id,
+                eph,
+                epoch,
+            } => {
+                // The trust-session path: this session carries one request instead of a sync.
+                let now = crate::store::now_ts();
+                let reply = match super::quorum::trust_grant(
+                    store, id, peer, &host_uid, epoch, &eph, now,
+                ) {
+                    Ok((sealed, opened)) => {
+                        if let Some(body) = opened {
+                            store.sync_append_local(id, body)?;
+                        }
+                        SyncMsg::ShareGranted { request_id, sealed }
+                    }
+                    Err(e) => SyncMsg::ShareDeferred {
+                        request_id,
+                        reason: format!("{e:#}").chars().take(MAX_REASON_BYTES).collect(),
+                    },
+                };
+                s.send(&reply)?;
+                return Ok(());
+            }
             other => return s.unexpected("heads", &other),
         };
         s.send(&SyncMsg::Heads(mine))?;
@@ -1120,8 +1188,65 @@ fn round<L: SyncLink>(
     sum.peer = ctx.peer.id.clone();
     sum.first_contact = ctx.pair.is_none();
     sum.peer_checkpoint = ctx.peer.checkpoint;
-    exchange(&mut s, store, id, client, sum)?;
+    exchange(&mut s, store, id, client, &ctx.peer.id.clone(), sum)?;
     finish(&mut s, store, ctx, sum)
+}
+
+/// Answer of the trust-session path.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ShareReply {
+    /// The share sealed to the request's ephemeral key (`share_release::unwrap_share_response`).
+    Granted(Vec<u8>),
+    /// The holder will not release under a certificate: try the attended path.
+    Deferred(String),
+}
+
+/// What a requester asks of a holder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShareAsk {
+    pub host_uid: [u8; 16],
+    pub epoch: u64,
+    /// Ephemeral X25519 public key the answer is sealed to.
+    pub eph: [u8; 32],
+    pub request_id: u64,
+}
+
+/// Client side of the trust-session path: an authenticated session against holder `peer` that carries
+/// one `ShareRequest` instead of a sync.
+pub fn run_share_request<L: SyncLink>(
+    conn: &mut L,
+    store: &LauncherStore,
+    id: &DeviceIdentity,
+    peer: &DeviceId,
+    ask: &ShareAsk,
+) -> Result<ShareReply> {
+    let mut s = Session::new(conn, true);
+    let mut seen = Some(peer.clone());
+    let ctx = handshake(&mut s, store, id, Some(peer), &mut seen)?;
+    let request_id = ask.request_id;
+    s.send(&SyncMsg::ShareRequest {
+        host_uid: ask.host_uid,
+        request_id,
+        eph: ask.eph,
+        epoch: ask.epoch,
+    })?;
+    let reply = match s.recv()? {
+        SyncMsg::ShareGranted {
+            request_id: r,
+            sealed,
+        } if r == request_id => ShareReply::Granted(sealed),
+        SyncMsg::ShareDeferred {
+            request_id: r,
+            reason,
+        } if r == request_id => ShareReply::Deferred(reason),
+        other => return s.unexpected("share_granted or share_deferred", &other),
+    };
+    let mut sum = RoundSummary {
+        peer: peer.clone(),
+        ..Default::default()
+    };
+    finish(&mut s, store, ctx, &mut sum)?;
+    Ok(reply)
 }
 
 /// Client side: one round against `peer` over `conn`.

@@ -4,6 +4,10 @@
 use anyhow::{anyhow, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 
+use super::checkpoint::{
+    self, BootstrapTrust, CheckpointBundle, CheckpointRow, CheckpointStatus, CheckpointVerdict,
+    PruneReport,
+};
 use super::fork::{self, ForkEvidence, HeadVerdict, SignedHead};
 use super::ingest::{ingest, max_lamport};
 use super::merge::{attendance_db, insert_op, load_op, role_db, Settler, State};
@@ -45,6 +49,7 @@ pub struct DeviceRow {
     pub head_seq: u64,
     /// Generation of the current wrap keys (C14).
     pub wrap_epoch: u64,
+    pub kind: DeviceKind,
 }
 
 fn tx(conn: &Connection) -> Result<Transaction<'_>> {
@@ -60,14 +65,15 @@ fn register(
     name: &str,
     role: DeviceRole,
     attendance: Attendance,
+    kind: DeviceKind,
     now: i64,
 ) -> Result<DeviceId> {
     public.validate().context("invalid device key")?;
     let id = public.device_id();
     conn.execute(
         "INSERT OR IGNORE INTO sync_devices
-           (device_id, ed25519, x25519, mlkem, name, role, attendance, last_seen)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+           (device_id, ed25519, x25519, mlkem, name, role, attendance, kind, last_seen)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             id,
             &public.ed25519_pub[..],
@@ -76,9 +82,11 @@ fn register(
             name,
             role_db(role),
             attendance_db(attendance),
+            super::merge::kind_db(kind),
             now
         ],
     )?;
+    super::checkpoint::record_anchor_device(conn, public, name, role, attendance, kind)?;
     Ok(id)
 }
 
@@ -91,10 +99,11 @@ impl LauncherStore {
         name: &str,
         role: DeviceRole,
         attendance: Attendance,
+        kind: DeviceKind,
     ) -> Result<DeviceId> {
         self.with_conn(|conn| {
             let tx = tx(conn)?;
-            let id = register(&tx, public, name, role, attendance, now_ts())?;
+            let id = register(&tx, public, name, role, attendance, kind, now_ts())?;
             tx.commit()?;
             Ok(id)
         })
@@ -103,10 +112,15 @@ impl LauncherStore {
     /// Chain, sign and apply a local change. The op is ours, so it is approved
     /// by definition; its effects are projected like any other.
     pub fn sync_append_local(&self, id: &DeviceIdentity, body: OpBody) -> Result<Op> {
+        self.sync_append_local_at(id, body, now_ts())
+    }
+
+    /// [`Self::sync_append_local`] with an explicit clock (checkpoint proposals
+    /// are built for the timestamp they carry; tests use it to age a ring).
+    pub fn sync_append_local_at(&self, id: &DeviceIdentity, body: OpBody, now: i64) -> Result<Op> {
         validate_body(&body).map_err(|e| anyhow!("invalid op: {e}"))?;
         self.with_conn(|conn| {
             let tx = tx(conn)?;
-            let now = now_ts();
             let public = id.public();
             let device = register(
                 &tx,
@@ -114,6 +128,7 @@ impl LauncherStore {
                 "this device",
                 DeviceRole::Holder,
                 Attendance::Attended,
+                DeviceKind::Terminal,
                 now,
             )?;
             let head: Option<(i64, Vec<u8>)> = tx
@@ -167,6 +182,18 @@ impl LauncherStore {
     /// Ops of `device` after `after_seq`, oldest first, at most one tail frame.
     pub fn sync_chain_tail(&self, device: &DeviceId, after_seq: u64) -> Result<Vec<Op>> {
         self.with_conn(|conn| {
+            let floor: Option<i64> = conn
+                .query_row(
+                    "SELECT seq FROM sync_prune_floor WHERE device_id = ?1",
+                    params![device],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if let Some(f) = floor {
+                if after_seq.saturating_add(1) < f as u64 {
+                    return Err(super::checkpoint::Pruned { floor_seq: f as u64 }.into());
+                }
+            }
             let after = i64::try_from(after_seq).unwrap_or(i64::MAX);
             let mut stmt = conn.prepare(
                 "SELECT op_hash FROM sync_ops WHERE device_id = ?1 AND seq > ?2 ORDER BY seq LIMIT ?3",
@@ -222,7 +249,7 @@ impl LauncherStore {
                         d.status, d.exempt, d.last_seen,
                         COALESCE((SELECT seq FROM sync_chain_heads h WHERE h.device_id = d.device_id), 0),
                         COALESCE((SELECT epoch FROM sync_epochs e WHERE e.device_id = d.device_id), 0),
-                        d.wrap_epoch
+                        d.wrap_epoch, d.kind
                  FROM sync_devices d ORDER BY d.device_id",
             )?;
             let rows = stmt.query_map([], |r| {
@@ -240,11 +267,12 @@ impl LauncherStore {
                     r.get::<_, i64>(10)?,
                     r.get::<_, i64>(11)?,
                     r.get::<_, i64>(12)?,
+                    r.get::<_, String>(13)?,
                 ))
             })?;
             let mut out = Vec::new();
             for row in rows {
-                let (id, ed, x, mlkem, name, role, att, status, exempt, last_seen, head, epoch, wrap_epoch) =
+                let (id, ed, x, mlkem, name, role, att, status, exempt, last_seen, head, epoch, wrap_epoch, kind) =
                     row?;
                 let status = match status.as_str() {
                     "compromised" => DeviceStatus::Compromised,
@@ -271,6 +299,11 @@ impl LauncherStore {
                     last_seen,
                     head_seq: head as u64,
                     wrap_epoch: wrap_epoch as u64,
+                    kind: if kind == "phone" {
+                        DeviceKind::Phone
+                    } else {
+                        DeviceKind::Terminal
+                    },
                 });
             }
             Ok(out)
@@ -316,7 +349,10 @@ impl LauncherStore {
                     Ok(WrappedShare {
                         recipient: s["recipient"].as_str().context("recipient")?.to_string(),
                         alg: crate::sync::crypto::AlgTag::from_bytes(alg)?,
-                        sealed: serde_json::from_value(s["sealed"].clone())?,
+                        sealed: super::canonical::b64_decode(
+                            s["sealed"].as_str().context("sealed")?,
+                        )
+                        .context("sealed is not base64")?,
                     })
                 })
                 .collect::<Result<Vec<_>>>()?;
@@ -447,6 +483,141 @@ impl LauncherStore {
     /// Readable form of what [`Self::sync_projection_hash`] hashes (diagnostics).
     pub fn sync_projection_dump(&self) -> Result<String> {
         self.with_conn(apply::projection_dump)
+    }
+
+    // --- checkpoints and pruning (C15) ---
+
+    pub fn sync_checkpoint_build(
+        &self,
+        cut: Option<Vec<CutEntry>>,
+        now: i64,
+    ) -> Result<(Vec<CutEntry>, Vec<u8>, [u8; 32])> {
+        self.with_conn(|conn| checkpoint::build(conn, cut, now))
+    }
+
+    pub fn sync_checkpoint_verify(&self, proposal: &Op, state: &[u8]) -> Result<CheckpointVerdict> {
+        self.with_conn(|conn| checkpoint::verify(conn, proposal, state))
+    }
+
+    pub fn sync_checkpoint_record(&self, bundle: &CheckpointBundle) -> Result<CheckpointStatus> {
+        self.with_conn(|conn| {
+            let tx = tx(conn)?;
+            let st = checkpoint::record(&tx, bundle, now_ts())?;
+            tx.commit()?;
+            Ok(st)
+        })
+    }
+
+    pub fn sync_checkpoints(&self) -> Result<Vec<CheckpointRow>> {
+        self.with_conn(checkpoint::list)
+    }
+
+    /// What a peer needs to adopt a recorded checkpoint (state kept for the two
+    /// newest accepted ones only).
+    pub fn sync_checkpoint_bundle(
+        &self,
+        proposal_hash: &[u8; 32],
+    ) -> Result<Option<CheckpointBundle>> {
+        self.with_conn(|conn| checkpoint::bundle_of(conn, proposal_hash))
+    }
+
+    /// Build a proposal for the local cut and append it (this device must be an
+    /// attended terminal). Returns the op and the state blob to serve.
+    pub fn sync_checkpoint_propose(
+        &self,
+        id: &DeviceIdentity,
+        cut: Option<Vec<CutEntry>>,
+        now: i64,
+    ) -> Result<(Op, Vec<u8>)> {
+        let me = id.public().device_id();
+        let (cut, state, hash, required, prev) = self.with_conn(|conn| {
+            let ok: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sync_devices WHERE device_id = ?1 AND kind = 'terminal'
+                   AND attendance = 'attended')",
+                params![me],
+                |r| r.get(0),
+            )?;
+            anyhow::ensure!(ok, "only an attended terminal proposes checkpoints");
+            let (cut, state, hash) = checkpoint::build(conn, cut, now)?;
+            let required = checkpoint::required_for(conn, &cut, now)?;
+            let prev = checkpoint::latest_accepted_hash(conn)?;
+            Ok((cut, state, hash, required, prev))
+        })?;
+        let op = self.sync_append_local_at(
+            id,
+            OpBody::CheckpointPropose {
+                state_len: state.len() as u64,
+                cut,
+                state_hash: hash,
+                prev_checkpoint: prev,
+                required,
+            },
+            now,
+        )?;
+        Ok((op, state))
+    }
+
+    /// Verify a proposal against the local store and sign it only when it
+    /// matches. A mismatch records the proposal as disputed and its proposer as
+    /// suspect (never compromised); `None` is returned for anything but a match.
+    pub fn sync_checkpoint_sign(
+        &self,
+        id: &DeviceIdentity,
+        proposal: &Op,
+        state: &[u8],
+    ) -> Result<Option<Op>> {
+        match self.sync_checkpoint_verify(proposal, state)? {
+            CheckpointVerdict::Matches => Ok(Some(self.sync_append_local(
+                id,
+                OpBody::CheckpointSign {
+                    proposal_hash: proposal.hash(),
+                },
+            )?)),
+            CheckpointVerdict::Differs { .. } => {
+                self.sync_checkpoint_record(&CheckpointBundle {
+                    proposal: proposal.clone(),
+                    signs: vec![],
+                    heads: vec![],
+                    state: state.to_vec(),
+                })?;
+                Ok(None)
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Delete what the policy allows; idempotent. Space is reclaimed with a
+    /// `VACUUM`, so deleted blobs do not linger in free pages.
+    pub fn sync_prune(&self, now: i64) -> Result<PruneReport> {
+        self.with_conn(|conn| {
+            let tx = tx(conn)?;
+            let report = checkpoint::prune(&tx, now)?;
+            tx.commit()?;
+            if report.ops_deleted > 0 {
+                conn.execute_batch("VACUUM")?;
+            }
+            Ok(report)
+        })
+    }
+
+    /// Materialise a fresh store from a bundle (see [`BootstrapTrust`]).
+    pub fn sync_bootstrap(&self, bundle: &CheckpointBundle, trust: &BootstrapTrust) -> Result<()> {
+        self.with_conn(|conn| {
+            let tx = tx(conn)?;
+            checkpoint::bootstrap(&tx, bundle, trust, now_ts())?;
+            tx.commit()?;
+            Ok(())
+        })
+    }
+
+    /// Live reshare envelopes of one credential: `(holder, epoch, sealed share)`.
+    pub fn sync_share_envelopes(&self, host: &HostUid) -> Result<Vec<(DeviceId, u64, Vec<u8>)>> {
+        self.with_conn(|conn| checkpoint::share_envelopes(conn, host))
+    }
+
+    /// The current storage-key envelope of a holder: `(epoch, sealed)`.
+    pub fn sync_storage_key(&self, device: &DeviceId) -> Result<Option<(u64, Vec<u8>)>> {
+        self.with_conn(|conn| checkpoint::storage_key(conn, device))
     }
 
     /// Host hop tokens as typed locally to the wire form (`#uid`).

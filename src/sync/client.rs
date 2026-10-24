@@ -15,7 +15,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use super::transport::{Conn, Limits, CANCEL_POLL};
-use crate::app::sync::OnboardingSecrets;
+use crate::app::sync::{OnboardingSecrets, UnlockPathKind};
 use crate::ssh::{build_ssh_argv, SshHost};
 
 // The worker speaks the protocol's own types.
@@ -236,6 +236,15 @@ pub enum SyncEvent {
     SasPrompt(String),
     /// What the running unlock asks the user for (shown in the unlock modal).
     UnlockPrompt(String),
+    /// Where one unlock path stands (`peer device: asked laptop`, `phone: waiting`).
+    UnlockPath(UnlockPathKind, String),
+    /// Shares collected so far of those needed.
+    UnlockProgress {
+        have: usize,
+        need: usize,
+    },
+    /// QR frames of a challenge for the phone, looped by the modal.
+    UnlockChallenge(Vec<Vec<u8>>),
     ForkDetected(DeviceId),
     BehindPeer(DeviceId),
     Done,

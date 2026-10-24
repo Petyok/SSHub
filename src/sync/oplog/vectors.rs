@@ -262,6 +262,7 @@ fn cases() -> Vec<(&'static str, Op)> {
                     name: "NAS \u{1F5C4}".into(),
                     role: DeviceRole::Mirror,
                     attendance: Attendance::Unattended,
+                    kind: DeviceKind::Terminal,
                 },
             ),
         ),
@@ -277,6 +278,7 @@ fn cases() -> Vec<(&'static str, Op)> {
                     name: "laptop".into(),
                     role: DeviceRole::Holder,
                     attendance: Attendance::Attended,
+                    kind: DeviceKind::Phone,
                 },
             ),
         ),
@@ -482,7 +484,7 @@ fn cases() -> Vec<(&'static str, Op)> {
                     initiated_at: 1_893_452_400,
                     signers: vec![dev.clone(), other.clone()],
                     via_paper: false,
-                    third_factor: ThirdFactor::HardwareKey(other.clone()),
+                    third_factor: ThirdFactor::Paper,
                     liveness: vec![
                         HeadAttest {
                             device_id: dev.clone(),
@@ -495,6 +497,7 @@ fn cases() -> Vec<(&'static str, Op)> {
                             chain_hash: [2; 32],
                         },
                     ],
+                    paper_sig: Some([0xa5; 64]),
                 },
             ),
         ),
@@ -511,6 +514,7 @@ fn cases() -> Vec<(&'static str, Op)> {
                     via_paper: true,
                     third_factor: ThirdFactor::Paper,
                     liveness: vec![],
+                    paper_sig: None,
                 },
             ),
         ),
@@ -527,6 +531,7 @@ fn cases() -> Vec<(&'static str, Op)> {
                     via_paper: false,
                     third_factor: ThirdFactor::EmailCode,
                     liveness: vec![],
+                    paper_sig: None,
                 },
             ),
         ),
@@ -596,6 +601,75 @@ fn cases() -> Vec<(&'static str, Op)> {
                     to: CredMode::Vault,
                     migrated_on: dev.clone(),
                     cosigner: None,
+                },
+            ),
+        ),
+        (
+            "recovery-approve",
+            mk(
+                35,
+                35,
+                1,
+                2,
+                OpBody::RecoveryApprove {
+                    reenroll_hash: [0x77; 32],
+                },
+            ),
+        ),
+        (
+            "checkpoint-propose",
+            mk(
+                36,
+                36,
+                1,
+                2,
+                OpBody::CheckpointPropose {
+                    cut: vec![
+                        CutEntry {
+                            device_id: dev.clone(),
+                            seq: 35,
+                            op_hash: [0x11; 32],
+                            lamport: 35,
+                        },
+                        CutEntry {
+                            device_id: other.clone(),
+                            seq: u64::MAX,
+                            op_hash: [0x22; 32],
+                            lamport: u64::MAX,
+                        },
+                    ],
+                    state_hash: [0x33; 32],
+                    state_len: 612_345,
+                    prev_checkpoint: [0; 32],
+                    required: vec![dev.clone(), other.clone()],
+                },
+            ),
+        ),
+        (
+            "checkpoint-propose-empty",
+            mk(
+                37,
+                37,
+                1,
+                2,
+                OpBody::CheckpointPropose {
+                    cut: vec![],
+                    state_hash: [0; 32],
+                    state_len: 0,
+                    prev_checkpoint: [0x44; 32],
+                    required: vec![],
+                },
+            ),
+        ),
+        (
+            "checkpoint-sign",
+            mk(
+                38,
+                38,
+                1,
+                2,
+                OpBody::CheckpointSign {
+                    proposal_hash: [0x55; 32],
                 },
             ),
         ),
@@ -737,5 +811,5 @@ fn every_body_variant_has_a_vector() {
         .iter()
         .map(|(_, op)| super::canonical::body_name(&op.body))
         .collect();
-    assert_eq!(names.len(), 23, "{names:?}");
+    assert_eq!(names.len(), 26, "{names:?}");
 }

@@ -44,7 +44,7 @@ BODY_ORDER = {
     "IdentityUpsert": ["identity_uid", "fields"],
     "IdentityDelete": ["identity_uid"],
     "CredUpdate": ["host_uid", "ciphertext", "wrapped_shares"],
-    "DeviceAdd": ["device", "name", "role", "attendance"],
+    "DeviceAdd": ["device", "name", "role", "attendance", "kind"],
     "DeviceRevoke": ["device_id"],
     "ShareRelease": ["host_uid", "request_id", "requester"],
     "ShareReshareSession": ["epoch", "to", "sealed"],
@@ -55,9 +55,12 @@ BODY_ORDER = {
     "CertIssue": ["device_id", "scope", "expiry", "max_new_hosts_per_day", "epoch_lo", "epoch_hi"],
     "CertRevoke": ["cert_id"],
     "CertHostOpened": ["cert_id", "host_uid"],
-    "PhoneReenroll": ["initiated_at", "signers", "via_paper", "third_factor", "liveness"],
+    "PhoneReenroll": ["initiated_at", "signers", "via_paper", "third_factor", "liveness", "paper_sig"],
     "PhoneReenrollCancel": ["reenroll_hash", "by_phone", "third_factor"],
+    "RecoveryApprove": ["reenroll_hash"],
     "RecoveryAck": ["reenroll_hash", "seen_at"],
+    "CheckpointPropose": ["cut", "state_hash", "state_len", "prev_checkpoint", "required"],
+    "CheckpointSign": ["proposal_hash"],
     "ModeChange": ["to", "migrated_on", "cosigner"],
     "HeadAttest": ["device_id", "seq", "chain_hash"],
 }
@@ -79,7 +82,10 @@ FIELDS_ORDER = {
 }
 
 # Fixed 32-byte values: hex strings in the inputs and in the canonical form.
-HEX32_KEYS = {"ed25519_pub", "x25519_pub", "reenroll_hash", "chain_hash", "cert_id"}
+HEX32_KEYS = {"ed25519_pub", "x25519_pub", "reenroll_hash", "chain_hash", "cert_id",
+              "state_hash", "prev_checkpoint", "proposal_hash", "op_hash"}
+# Fixed 64-byte value (a signature): a 128 character hex string, or null.
+HEX64_KEYS = {"paper_sig"}
 # Vec<u8>: hex in the inputs, base64 in the canonical form.
 VEC_KEYS = {"mlkem_pub", "ciphertext", "sealed", "sealed_share"}
 
@@ -123,6 +129,10 @@ def value(key, v):
         return "null"
     if key in VEC_KEYS:
         return b64(v)
+    if key in HEX64_KEYS:
+        assert len(v) == 128 and v == v.lower()
+        bytes.fromhex(v)
+        return s(v)
     if key in HEX32_KEYS:
         assert len(v) == 64 and v == v.lower()
         bytes.fromhex(v)
@@ -155,7 +165,9 @@ def nested_order(key, v):
         return ["recipient", "alg", "sealed"]
     if key == "liveness":
         return ["device_id", "seq", "chain_hash"]
-    # scope and third_factor are single-key externally tagged objects.
+    if key == "cut":
+        return ["device_id", "seq", "op_hash", "lamport"]
+    # scope is a single-key externally tagged object (third factor is a string).
     assert len(v) == 1, (key, v)
     return list(v)
 
@@ -170,7 +182,7 @@ def body(b):
             extra = set(inner["fields"]) - set(order)
             assert not extra, extra
             out.append((k, obj([(f, value(f, inner["fields"][f])) for f in order if f in inner["fields"]])))
-        elif k in ("liveness", "wrapped_shares"):
+        elif k in ("liveness", "wrapped_shares", "cut"):
             out.append((k, seq([value(k, x) for x in inner[k]])))
         elif k == "items":
             order = ITEM_ORDER[name]

@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PoC H share channel bench (offline)</title>
+<script src="vendor/qrcode.js"></script>
+<script src="vendor/jsQR.js"></script>
+<script src="share-lib.js"></script>
+</head>
+<body>
+<p>PoC H offline self-tests. Results are exposed on <code>window.runSelfTests()</code>.</p>
+<pre id="out"></pre>
+<script>
+"use strict";
+// Offline self-tests only. No camera, no microphone, no network.
+const L = window.ShareLib;
+
+function mean(a) { return a.reduce((s, x) => s + x, 0) / a.length; }
+
+// Shuffle with a fixed-seed PRNG so runs are repeatable.
+function rng(seed) {
+  let s = seed >>> 0;
+  return () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296);
+}
+
+// Frames to feed, looped: drop `dropRate` of the first cycle, then repeat the whole cycle.
+function lossyStream(frames, dropRate, cycles, seed) {
+  const r = rng(seed);
+  const out = [];
+  for (let c = 0; c < cycles; c++) {
+    const order = frames.map((f, i) => i);
+    for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+    for (const i of order) {
+      if (c === 0 && r() < dropRate) continue;
+      out.push(frames[i]);
+      if (r() < 0.1) out.push(frames[i]); // duplicates
+    }
+  }
+  return out;
+}
+
+function testFraming() {
+  const check = L.crc16(new TextEncoder().encode("123456789")).toString(16);
+  const p = L.randomBytes(56);
+  const f = L.frame(p);
+  const d = L.deframe(f);
+  const bad = f.slice(); bad[10] ^= 0x01;
+  return {
+    crc_check_value: check,
+    crc_check_ok: check === "29b1",
+    roundtrip_ok: d.ok && L.equalBytes(d.payload, p),
+    corrupt_rejected: L.deframe(bad).ok === false,
+    framed_len: f.length,
+  };
+}
+
+function testFskClean(n, F) {
+  let ok = 0, fails = [];
+  let durMs = 0;
+  for (let i = 0; i < n; i++) {
+    const p = L.randomBytes(56);
+    const sig = L.fskEncode(L.frame(p), F);
+    durMs = (sig.length / F.sampleRate) * 1000;
+    const d = L.fskDecode(sig, F);
+    if (d.ok && L.equalBytes(d.payload, p)) ok++; else fails.push(d.error || "mismatch");
+  }
+  return { trials: n, ok, burst_ms: durMs, fail_reasons: fails.slice(0, 5) };
+}
+
+// Simulated channel, NOT over-the-air. White noise at a stated SNR (signal = whole buffer power).
+function testFskNoise(n, snrs, F) {
+  const res = [];
+  for (const snr of snrs) {
+    let ok = 0;
+    for (let i = 0; i < n; i++) {
+      const p = L.randomBytes(56);
+      const sig = L.addNoise(L.fskEncode(L.frame(p), F), snr);
+      const d = L.fskDecode(sig, F);
+      if (d.ok && L.equalBytes(d.payload, p)) ok++;
+    }
+    res.push({ snr_db: snr, trials: n, ok });
+  }
+  return res;
+}
+
+function testChunksDirect(size) {
+  const data = L.randomBytes(size);
+  const chunks = L.fountainChunks(data, 100);
+  const ordered = L.equalBytes(L.fountainReassemble(chunks), data);
+  const shuffled = chunks.slice().reverse();
+  const withDupes = [];
+  for (const c of shuffled) { withDupes.push(c); withDupes.push(c); }
+  const dupOk = L.equalBytes(L.fountainReassemble(withDupes), data);
+  // 20% of the first cycle lost, then the sender loops; count cycles to complete
+  const stream = lossyStream(chunks, 0.2, 3, 7);
+  const re = new L.Reassembler();
+  let doneAt = -1;
+  for (let i = 0; i < stream.length; i++) { if (re.add(stream[i]).complete) { doneAt = i; break; } }
+  return {
+    payload: size, chunks: chunks.length,
+    ordered_ok: ordered, reverse_dupes_ok: dupOk,
+    gaps20_complete: doneAt >= 0 && L.equalBytes(re.bytes, data),
+    gaps20_frames_consumed: doneAt + 1,
+  };
+}
+
+// H Task 3 path: chunks carried as QR frames, rendered to canvas and decoded in memory.
+function testChunksViaQr(size, version) {
+  const cap = L.byteCapacity(version, "M");
+  const chunkSize = cap - L.CHUNK_HDR;
+  const data = L.randomBytes(size);
+  const chunks = L.fountainChunks(data, chunkSize);
+  const canvas = document.createElement("canvas");
+  const decoded = [];
+  let decodeFail = 0;
+  for (const c of chunks) {
+    L.drawQR(canvas, L.qrFor(c, version, "M"), 4, 4);
+    const got = L.scanCanvas(canvas);
+    if (got && L.equalBytes(got, c)) decoded.push(got); else decodeFail++;
+  }
+  const stream = lossyStream(decoded, 0, 1, 11);
+  const re = new L.Reassembler();
+  for (const f of stream) re.add(f);
+  return {
+    version, qr_capacity_bytes: cap, chunk_bytes: chunkSize,
+    payload: size, frames: chunks.length, qr_decode_fail: decodeFail,
+    reassembled_ok: re.bytes !== null && L.equalBytes(re.bytes, data),
+  };
+}
+
+window.runSelfTests = function (opts) {
+  const o = Object.assign({ fskClean: 50, fskNoise: 50, snrs: [20, 10, 5, 0] }, opts || {});
+  const t0 = performance.now();
+  const r = {};
+  r.framing = testFraming();
+  // Two MFSK profiles: slow = 60 ms symbols, fast = 30 ms symbols. Same frame and noise model.
+  r.fsk_clean = { slow: testFskClean(o.fskClean, L.FSK), fast: testFskClean(o.fskClean, L.FSK_FAST) };
+  r.fsk_noise_simulated = { slow: testFskNoise(o.fskNoise, o.snrs, L.FSK), fast: testFskNoise(o.fskNoise, o.snrs, L.FSK_FAST) };
+  r.chunks_direct = [testChunksDirect(4096), testChunksDirect(6144)];
+  r.chunks_qr = testChunksViaQr(6144, opts && opts.qrVersion ? opts.qrVersion : 10);
+  r.elapsed_ms = Math.round(performance.now() - t0);
+  document.getElementById("out").textContent = JSON.stringify(r, null, 2);
+  return r;
+};
+</script>
+</body>
+</html>

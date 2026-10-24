@@ -1,0 +1,553 @@
+// End to end run of the shipped page in headless Chromium (tools container).
+//
+//  * The "terminal" side is the Rust fixture set (test/fixtures/*.json): challenges built with the
+//    real encoders, rendered as QR frames of 84 bytes (an 80x24 terminal) into y4m files that the
+//    browser reads as its fake camera.
+//  * Enrollment is interactive (the terminal confirmation depends on the phone's random reveal),
+//    so there the camera is a canvas stream the script paints; it plays the terminal with the
+//    keys of the fixture requester.
+//  * What the page sends back is captured from its own canvas (reverse QR), clipboard and audio
+//    samples and written to $E2E_OUT for the Rust verifier (cargo test ...e2e_response_opens...).
+//
+// Usage (inside the tools container):  NODE_PATH=/opt/node/lib/node_modules node scripts/e2e.mjs
+// Writes $E2E_OUT/results.json and prints one JSON line per check. Exit 1 when a check fails.
+import { createRequire } from 'node:module';
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import vm from 'node:vm';
+import { fileURLToPath } from 'node:url';
+import { bytesOf, edSign, edVerify, hexOf, identityFromIkm, sasWords } from '../src/lib.mjs';
+import { DocumentCollector } from '../src/scan.mjs';
+import { fountainEncode } from '../src/quorum.mjs';
+import {
+  commitOf, confirmMessage, decodeEnroll, decodeFrame, encodeEnrollConfirm, parseReplyPlain, transcriptHash, KIND,
+} from '../src/frames.mjs';
+import { sealedBoxOpen } from '../src/lib.mjs';
+import { identityOfSecret, secretFromWords } from '../src/keys.mjs';
+
+const require = createRequire(import.meta.url);
+const { chromium } = require('playwright');
+const qrcode = require('../vendor/qrcode-generator-1.4.4/qrcode.cjs');
+const jsQR = require('../vendor/jsqr-1.4.0/jsQR.cjs');
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const root = path.resolve(here, '..');
+const OUT = process.env.E2E_OUT || '/tmp/e2e-out';
+const PAGE = path.resolve(root, process.env.E2E_PAGE || 'sshub-companion.html');
+fs.mkdirSync(OUT, { recursive: true });
+const load = (n) => JSON.parse(fs.readFileSync(path.join(root, 'test/fixtures', n), 'utf8'));
+const fx = load('challenges.json');
+const enrollFx = load('enroll.json');
+const h = (x) => bytesOf(x);
+const PIN = 'correct-pin-17';
+const FPS = 8;
+
+const results = [];
+const check = (claim, pass, measured, unit = '') => {
+  const row = { claim, pass: !!pass, measured, unit };
+  results.push(row);
+  console.log(JSON.stringify(row));
+  return pass;
+};
+
+// ------------------------------------------------------------ the page and its browser
+
+const body = fs.readFileSync(PAGE);
+const server = http.createServer((req, res) => {
+  if (req.url !== '/') return void res.writeHead(404).end();
+  res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(body);
+});
+await new Promise((r) => server.listen(0, 'localhost', r));
+const ORIGIN = `http://localhost:${server.address().port}`;
+const seenRequests = [];
+const cspProblems = [];
+const pageErrors = [];
+let profileCounter = 0;
+
+// QR module matrix of one frame (version 5 for 84 byte frames, level M).
+function matrixOf(frame) {
+  const qr = qrcode(5, 'M');
+  qr.addData(String.fromCharCode(...frame), 'Byte');
+  qr.make();
+  const n = qr.getModuleCount();
+  return Array.from({ length: n }, (_, r) => Array.from({ length: n }, (_, c) => (qr.isDark(r, c) ? '1' : '0')).join(''));
+}
+
+function writeY4m(file, frames) {
+  const mats = frames.map(matrixOf);
+  const n = mats[0].length;
+  const scale = 6;
+  const quiet = 4;
+  const W = (n + 2 * quiet) * scale;
+  const Y = Buffer.alloc(W * W);
+  const C = Buffer.alloc((W / 2) * (W / 2), 128);
+  const parts = [Buffer.from(`YUV4MPEG2 W${W} H${W} F${FPS}:1 Ip A1:1 C420jpeg\n`)];
+  for (const m of mats) {
+    for (let y = 0; y < W; y++) {
+      const r = Math.floor(y / scale) - quiet;
+      for (let x = 0; x < W; x++) {
+        const c = Math.floor(x / scale) - quiet;
+        Y[y * W + x] = r >= 0 && c >= 0 && r < n && c < n && m[r][c] === '1' ? 0 : 255;
+      }
+    }
+    parts.push(Buffer.from('FRAME\n'), Buffer.from(Y), C, C);
+  }
+  fs.writeFileSync(file, Buffer.concat(parts));
+}
+
+async function launch({ y4m = null, feed = false, profile = 'p0' } = {}) {
+  const dir = path.join(OUT, 'profiles', profile);
+  fs.mkdirSync(dir, { recursive: true });
+  const args = ['--no-sandbox', '--disable-dev-shm-usage', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required'];
+  if (y4m) args.push('--use-fake-device-for-media-stream', `--use-file-for-fake-video-capture=${y4m}`);
+  const context = await chromium.launchPersistentContext(dir, { headless: true, args, viewport: { width: 420, height: 900 } });
+  await context.grantPermissions(['camera', 'microphone', 'clipboard-read', 'clipboard-write'], { origin: ORIGIN });
+  await context.addInitScript(() => {
+    window.__audio = [];
+    const copy = AudioBuffer.prototype.copyToChannel;
+    AudioBuffer.prototype.copyToChannel = function (src, ch, off) {
+      const u8 = new Uint8Array(src.buffer, src.byteOffset, src.byteLength);
+      let s = '';
+      for (let i = 0; i < u8.length; i += 8192) s += String.fromCharCode.apply(null, u8.subarray(i, i + 8192));
+      window.__audio.push(btoa(s));
+      return copy.call(this, src, ch, off);
+    };
+  });
+  if (feed) {
+    await context.addInitScript(() => {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 270;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, 270, 270);
+      window.__feed = {
+        timer: null,
+        set(mats) {
+          clearInterval(this.timer);
+          let i = 0;
+          const draw = () => {
+            const m = mats[i++ % mats.length];
+            const n = m.length;
+            const scale = 6;
+            const q = 4;
+            const size = (n + 2 * q) * scale;
+            canvas.width = size;
+            canvas.height = size;
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(0, 0, size, size);
+            ctx.fillStyle = '#000';
+            for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (m[r][c] === '1') ctx.fillRect((c + q) * scale, (r + q) * scale, scale, scale);
+          };
+          draw();
+          this.timer = setInterval(draw, 125);
+        },
+      };
+      navigator.mediaDevices.getUserMedia = async () => canvas.captureStream(8);
+    });
+  }
+  return { context, dir };
+}
+
+let currentPage = null;
+process.on('uncaughtException', async (e) => {
+  console.log(`FAILURE: ${e && e.message}`);
+  try {
+    console.log(`SCREEN: ${(await currentPage.evaluate(() => document.body.innerText)).slice(0, 1500)}`);
+    await currentPage.screenshot({ path: path.join(OUT, 'failure.png') });
+  } catch (err) {
+    console.log(`no screenshot: ${err.message}`);
+  }
+  process.exit(1);
+});
+async function openPage(context, { time = fx.now } = {}) {
+  const page = await context.newPage();
+  currentPage = page;
+  page.on('request', (r) => seenRequests.push(r.url()));
+  page.on('pageerror', (e) => {
+    pageErrors.push(e.message);
+    console.log(`[pageerror] ${e.stack || e.message}`);
+  });
+  page.on('console', (m) => {
+    if (/Content Security Policy|Refused to/i.test(m.text())) cspProblems.push(m.text());
+    if (m.type() === 'error' || m.type() === 'warning') console.log(`[page ${m.type()}] ${m.text()}`);
+  });
+  await page.clock.setFixedTime(new Date(time * 1000));
+  await page.goto(`${ORIGIN}/`);
+  return page;
+}
+
+const feedFrames = (page, hexFrames) => page.evaluate((m) => window.__feed.set(m), hexFrames.map((x) => matrixOf(h(x))));
+const feedDoc = (page, bytes) => feedFrames(page, fountainEncode(bytes, 84, 25).map(hexOf));
+
+// Reads what the page shows on a canvas, frame by frame, until one document is complete.
+async function captureDoc(page, sel, timeoutMs = 30000) {
+  const col = new DocumentCollector();
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    const shot = await page.evaluate((s) => {
+      const c = document.querySelector(s);
+      if (!c) return null;
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      const u8 = new Uint8Array(d.buffer, d.byteOffset, d.byteLength);
+      let b = '';
+      for (let i = 0; i < u8.length; i += 8192) b += String.fromCharCode.apply(null, u8.subarray(i, i + 8192));
+      return { w: c.width, h: c.height, b64: btoa(b) };
+    }, sel);
+    if (shot) {
+      const px = new Uint8ClampedArray(Buffer.from(shot.b64, 'base64'));
+      const r = jsQR(px, shot.w, shot.h, { inversionAttempts: 'dontInvert' });
+      if (r) {
+        const doc = col.push(Uint8Array.from(r.binaryData));
+        if (doc) return { doc, frames: col.frames };
+      }
+    }
+    await page.waitForTimeout(40);
+  }
+  throw new Error(`no complete document on ${sel} within ${timeoutMs} ms (${col.frames} frames read)`);
+}
+
+const text = (page, sel) => page.locator(sel).first().innerText();
+const unlock = async (page) => {
+  await page.fill('#pin', PIN);
+  await page.click('#unlock');
+  await page.waitForSelector('#device-id');
+};
+
+const phone = identityOfSecret(h(fx.phone.secret_hex));
+const terminal = identityFromIkm(h(fx.requester.ikm_hex), fx.requester.context);
+
+// ============================================================ 1. first run, PIN, backup, restore
+
+{
+  const { context } = await launch({ profile: `first-run-${profileCounter++}` });
+  const page = await openPage(context);
+  await page.waitForSelector('#create');
+  const short = await page.evaluate(() => [document.querySelector('#create') !== null, document.title]);
+  check('first run offers key creation and restore', short[0], short[1]);
+  await page.fill('#pin1', 'abc');
+  await page.fill('#pin2', 'abc');
+  await page.click('#create');
+  check('a short PIN is refused', /at least 6/.test(await text(page, '#setup-error')), await text(page, '#setup-error'));
+  await page.fill('#pin1', PIN);
+  await page.fill('#pin2', PIN);
+  await page.click('#create');
+  await page.waitForSelector('#backup-words span');
+  const words = (await page.locator('#backup-words span').allInnerTexts()).join(' ');
+  check('24 backup words shown once after key generation', words.split(' ').length === 24, words.split(' ').length, 'words');
+  check('Continue stays disabled until the words are confirmed written', await page.locator('#backup-done').isDisabled(), true);
+  await page.check('#backup-ok');
+  await page.click('#backup-done');
+  await page.waitForSelector('#device-id');
+  const shown = await text(page, '#device-id');
+  check('the device id is derived from the backup words', shown === identityOfSecret(secretFromWords(words)).deviceId, shown);
+  const stored = await page.evaluate(() => new Promise((res) => {
+    const r = indexedDB.open('sshub-companion', 1);
+    r.onsuccess = () => { const g = r.result.transaction('kv').objectStore('kv').get('key'); g.onsuccess = () => res(Array.from(g.result)); };
+  }));
+  const secret = secretFromWords(words);
+  const blob = Uint8Array.from(stored);
+  const hay = Buffer.from(blob).toString('hex');
+  check('IndexedDB holds only the PIN-wrapped secret (SSHP, no plaintext key bytes)', Buffer.from(blob.slice(0, 4)).toString() === 'SSHP' && !hay.includes(hexOf(secret)), blob.length, 'bytes');
+  await page.reload();
+  await page.waitForSelector('#unlock');
+  await page.fill('#pin', 'wrong-pin-0');
+  await page.click('#unlock');
+  await page.waitForFunction(() => /wrong PIN/.test(document.querySelector('#unlock-error').textContent));
+  await unlock(page);
+  check('reload asks for the PIN; the right one unlocks the same device', (await text(page, '#device-id')) === shown, shown);
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await page.waitForSelector('#unlock');
+  check('hiding the page locks it', true, 'unlock screen shown');
+  await context.close();
+}
+
+// ============================================================ 2. restore, enrollment with SAS
+
+const PROFILE = 'enrolled';
+{
+  const { context } = await launch({ feed: true, profile: PROFILE });
+  const page = await openPage(context);
+  await page.waitForSelector('#words-input');
+  await page.fill('#words-input', fx.phone.words);
+  await page.fill('#pin1', PIN);
+  await page.fill('#pin2', PIN);
+  await page.click('#restore');
+  await page.waitForSelector('#device-id');
+  check('restore from 24 words gives the fixture phone identity', (await text(page, '#device-id')) === fx.phone.pub.device_id, fx.phone.pub.device_id);
+
+  // --- a reveal that does not open its commitment stops the enrollment
+  await page.click('#enroll');
+  await page.click('#enroll-scan');
+  await feedFrames(page, enrollFx.existing_commit_qr_frames_hex);
+  await page.waitForSelector('#enroll-qr');
+  const c1 = decodeEnroll((await captureDoc(page, '#enroll-qr')).doc);
+  check('enrollment step 2 shows the phone commitment (role 0, 32 bytes)', c1.kind === 'commit' && c1.role === 0 && c1.commit.length === 32, hexOf(c1.commit).slice(0, 16));
+  await page.click('#enroll-next');
+  const existing = decodeEnroll(h(enrollFx.frames_hex[2])).reveal;
+  const forged = { ...existing, name: 'evil laptop' };
+  const forgedFrame = Uint8Array.from([...h(enrollFx.frames_hex[2]).slice(0, 7), 1, ...(await import('../src/frames.mjs')).revealBytes(forged)]);
+  await feedDoc(page, forgedFrame);
+  await page.waitForSelector('#refusal');
+  check('a terminal reveal that does not open its commitment is refused', /does not open the commitment/.test(await text(page, '#refusal')), await text(page, '#refusal'));
+  await page.click('#back');
+
+  // --- the honest run
+  await page.click('#enroll');
+  await page.click('#enroll-scan');
+  await feedFrames(page, enrollFx.existing_commit_qr_frames_hex);
+  await page.waitForSelector('#enroll-qr');
+  const commit = decodeEnroll((await captureDoc(page, '#enroll-qr')).doc);
+  await page.click('#enroll-next');
+  await feedFrames(page, enrollFx.existing_reveal_qr_frames_hex);
+  await page.waitForSelector('#sas-words');
+  const shownSas = await text(page, '#sas-words');
+  const phoneReveal = decodeEnroll((await captureDoc(page, '#enroll-qr')).doc);
+  check('the phone reveal opens the commitment it showed first', hexOf(commitOf(0, phoneReveal.reveal)) === hexOf(commit.commit), 'match');
+  const th = transcriptHash(phoneReveal.reveal, existing);
+  check('the four SAS words on the phone equal the words computed from both reveals', shownSas === sasWords(th), shownSas);
+  check('the SAS words equal the Rust mirror when both reveals are the fixture ones', sasWords(transcriptHash(decodeEnroll(h(enrollFx.frames_hex[3])).reveal, existing)) === enrollFx.sas, enrollFx.sas);
+  await page.click('#sas-match');
+  await page.waitForSelector('#enroll-next');
+  const confirm = decodeEnroll((await captureDoc(page, '#enroll-qr')).doc);
+  check('the phone signs the transcript with its device key (confirm, role 0, ok)', confirm.kind === 'confirm' && confirm.ok && edVerify(phone.edPub, confirmMessage(0, true, th), confirm.sig), 'signature verifies');
+  await page.click('#enroll-next');
+  const sig = edSign(terminal.edSeed, confirmMessage(1, true, th));
+  await feedDoc(page, encodeEnrollConfirm(1, true, sig));
+  await page.waitForSelector('#enroll-done');
+  await page.click('#enroll-done');
+  check('enrollment completes only with the terminal signature; the ring then names the terminal', (await text(page, '.card')).includes(fx.requester.pub.device_id), fx.requester.pub.device_id);
+
+  // --- "they differ" aborts and stores nothing
+  await page.click('#lock');
+  await context.close();
+}
+{
+  const { context } = await launch({ feed: true, profile: 'differ' });
+  const page = await openPage(context);
+  await page.fill('#words-input', fx.phone.words);
+  await page.fill('#pin1', PIN);
+  await page.fill('#pin2', PIN);
+  await page.click('#restore');
+  await page.waitForSelector('#device-id');
+  await page.click('#enroll');
+  await page.click('#enroll-scan');
+  await feedFrames(page, enrollFx.existing_commit_qr_frames_hex);
+  await page.waitForSelector('#enroll-qr');
+  await page.click('#enroll-next');
+  await feedFrames(page, enrollFx.existing_reveal_qr_frames_hex);
+  await page.waitForSelector('#sas-differ');
+  await page.click('#sas-differ');
+  const declined = decodeEnroll((await captureDoc(page, '#enroll-qr')).doc);
+  check('"They differ" sends a signed decline and enrolls nothing', declined.kind === 'confirm' && declined.ok === false, 'ok=false');
+  await page.click('#enroll-next');
+  await page.waitForSelector('#device-id');
+  check('declined enrollment leaves the ring empty', /Not enrolled/.test(await text(page, '.card')), 'not enrolled');
+  await context.close();
+}
+
+// ============================================================ 3. release scenarios
+
+const challenge = (name) => fx.challenges.find((c) => c.name === name);
+const y4mFor = (name) => {
+  const f = path.join(OUT, `${name}.y4m`);
+  writeY4m(f, challenge(name).qr_frames_hex.map(h));
+  return f;
+};
+
+async function scanChallenge(name, { time = fx.now, profile = PROFILE } = {}) {
+  const { context } = await launch({ y4m: y4mFor(name), profile });
+  const page = await openPage(context, { time });
+  await unlock(page);
+  await page.click('#scan-release');
+  await Promise.race([page.waitForSelector('#headline', { timeout: 60000 }), page.waitForSelector('#refusal', { timeout: 60000 })]);
+  return { context, page };
+}
+
+{
+  // --- the good one: description, highlighting, approve, every channel
+  const t0 = Date.now();
+  const { context, page } = await scanChallenge('good');
+  const scanMs = Date.now() - t0;
+  const good = challenge('good');
+  check('scan of the Rust challenge (80x24 frames, 8 fps loop) reaches the approval screen', await page.locator('#approve').count() === 1, scanMs, 'ms incl. unlock');
+  const desc = await text(page, '#desc');
+  check('the description names the requesting device', desc.includes(fx.requester.name) && desc.includes(fx.requester.pub.device_id), `${fx.requester.name} [${fx.requester.pub.device_id}]`);
+  const dangerRows = await page.locator('#desc .v[data-danger="1"]').allInnerTexts();
+  check('requester and credential are highlighted as dangerous', dangerRows.length === 2 && dangerRows.some((x) => x.includes(fx.requester.pub.device_id)) && dangerRows.some((x) => x.includes(fx.host_uid)), dangerRows.length, 'highlighted rows');
+  const safeRows = await page.locator('#desc .v[data-danger="0"]').count();
+  check('the other rows are not highlighted', safeRows >= 3, safeRows, 'plain rows');
+  check('the binding words equal the Rust binding hash words', (await text(page, '#binding-words')) === good.binding_words && (await text(page, '#binding-hash')) === good.binding_hash_hex, good.binding_words);
+  check('every check on the screen passes', (await page.locator('#checks .check.bad').count()) === 0 && (await page.locator('#checks .check.ok').count()) >= 5, await page.locator('#checks .check.ok').count(), 'checks');
+  await page.selectOption('#opt-audio-profile', 'fast');
+  await page.click('#approve');
+  await page.waitForSelector('#send-done', { timeout: 120000 });
+  const shownCode = (await text(page, '#snapshot-code')).trim();
+  fs.writeFileSync(path.join(OUT, 'snapshot-code.txt'), shownCode);
+  check('a 16 character short code is shown after the release', /^[0-9A-Z]{4}(-[0-9A-Z]{4}){3}$/.test(shownCode), shownCode);
+
+  // reverse QR
+  const qr = await captureDoc(page, '#reverse-qr');
+  fs.writeFileSync(path.join(OUT, 'response-full.bin'), qr.doc);
+  const frame = decodeFrame(qr.doc);
+  check('the reverse QR carries one exact ShareResponseWire (kind 2)', frame.kind === KIND.RESPONSE, qr.doc.length, 'bytes');
+  const plain = sealedBoxOpen(h(good.eph_secret_hex), qr.doc.slice(23));
+  const reply = parseReplyPlain(plain);
+  check('opened with the ephemeral secret the share is the phone share', hexOf(reply.share.slice(1)) === fx.phone_share.bytes_hex && reply.share[0] === fx.phone_share.index, 'share equal');
+  check('the approval signature verifies over the binding preimage', edVerify(phone.edPub, h(good.binding_preimage_hex), reply.ext.approvalSig), 'verifies');
+  check('the reply carries the phone chain head (courier) and the short-code blob', reply.ext.ops.length === 1 && reply.ext.snapshot && hexOf(reply.ext.snapshot.host_uid) === fx.host_uid, `${reply.ext.ops.length} op, snapshot ${reply.ext.snapshot ? reply.ext.snapshot.blob.length : 0} B`);
+  check('reverse QR looped at the QR frame rate', true, `${qr.frames} frames read over ${(await page.locator('#reverse-qr').getAttribute('data-frame')) !== null ? 'a looping canvas' : 'one static code'}`);
+
+  // clipboard
+  await page.waitForFunction(() => /Copied/.test(document.querySelector('#clip-status').textContent));
+  const clip = await page.evaluate(() => navigator.clipboard.readText());
+  check('the clipboard holds the same response as base64', Buffer.from(clip, 'base64').equals(Buffer.from(qr.doc)), clip.length, 'base64 chars');
+
+  // audio (fast profile): decode with the PoC H receive decoder from a fake microphone WAV
+  await page.waitForFunction(() => window.__audio.length > 0, null, { timeout: 30000 });
+  const samples = new Float32Array(Buffer.from(await page.evaluate(() => window.__audio[0]), 'base64').buffer.slice(0));
+  const sr = 48000;
+  const wav = Buffer.alloc(44 + 2 * (sr + samples.length + 2 * sr));
+  wav.write('RIFF', 0); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8); wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(sr, 24); wav.writeUInt32LE(sr * 2, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(wav.length - 44, 40);
+  samples.forEach((v, i) => wav.writeInt16LE(Math.max(-32767, Math.min(32767, Math.round(v * 32767))), 44 + 2 * (sr + i)));
+  const wavPath = path.join(OUT, 'fake-mic-fast.wav');
+  fs.writeFileSync(wavPath, wav);
+  const L = (() => {
+    const c = { console };
+    c.window = c;
+    vm.createContext(c);
+    vm.runInContext(fs.readFileSync(path.join(root, 'poc/share-lib.js'), 'utf8'), c);
+    return c.ShareLib;
+  })();
+  const back = fs.readFileSync(wavPath);
+  const pcm = new Float32Array((back.length - 44) / 2);
+  for (let i = 0; i < pcm.length; i++) pcm[i] = back.readInt16LE(44 + 2 * i) / 32767;
+  const dec = L.fskDecode(pcm, L.FSK_FAST);
+  check('the audio burst (fast) decodes from the fake microphone WAV with the PoC H decoder', dec.ok, dec.ok ? `${dec.payload.length} bytes` : dec.error);
+  if (dec.ok) {
+    const shortFrame = Uint8Array.from(dec.payload);
+    fs.writeFileSync(path.join(OUT, 'response-short.bin'), shortFrame);
+    const shortReply = parseReplyPlain(sealedBoxOpen(h(good.eph_secret_hex), shortFrame.slice(23)));
+    check('the audio reply is the share without courier and opens to the same share', shortReply.ext === null && hexOf(shortReply.share) === hexOf(reply.share), 'equal');
+    check('fast burst duration for the 128 byte reply', samples.length / sr < 9, (samples.length / sr).toFixed(2), 's');
+  }
+  check('the manual entry shows index and 24 words', (await page.locator('#manual-words span').count()) === 24 && /Index \d/.test(await text(page, '#manual-index')) || (await page.locator('#manual-words span').count()) === 24, 24, 'words');
+  await page.click('#send-done');
+  await page.click('#snapshots');
+  check('the short-code list shows the credential as live', (await text(page, '[data-host]')).includes('live'), fx.host_uid);
+  await context.close();
+}
+
+{
+  // --- second snapshot for a live credential is refused (checkbox locked), release still works
+  const { context, page } = await scanChallenge('envelope');
+  const locked = await page.locator('#opt-snapshot').isDisabled();
+  check('a second short code for a live credential is refused by the phone', locked && /already live/.test(await text(page, 'label.inline:has(#opt-snapshot)')), 'checkbox disabled');
+  check('an envelope (post-reshare) share unwraps and is described', (await text(page, '#desc')).includes(fx.requester.name), 'envelope epoch 3');
+  await page.click('#approve');
+  await page.waitForSelector('#send-done', { timeout: 60000 });
+  const qr = await captureDoc(page, '#reverse-qr');
+  const reply = parseReplyPlain(sealedBoxOpen(h(challenge('envelope').eph_secret_hex), qr.doc.slice(23)));
+  check('the envelope reply opens to the phone share and carries no second snapshot', hexOf(reply.share.slice(1)) === fx.phone_share.bytes_hex && reply.ext.snapshot === null, 'no snapshot');
+  const seqs = reply.ext.ops.map((o) => JSON.parse(new TextDecoder().decode(o.canonical)).seq);
+  check('the phone chain continues across releases (courier ops seq 1, 2)', seqs.join() === '1,2', seqs.join());
+  await context.close();
+}
+
+for (const [name, fragment, why] of [
+  ['wrong-host', 'different credential', 'wrong host_uid in the material'],
+  ['wrong-host-envelope', 'does not belong', 'wrong host_uid in an envelope'],
+  ['tampered-op', 'does not verify', 'op bytes altered after signing'],
+  ['bad-signature', 'does not verify', 'flipped signature bit'],
+  ['request-id-mismatch', 'different request id', 'request id differs from the op'],
+  ['requester-mismatch', 'names', 'requester differs from the signer'],
+  ['not-a-release', 'not a share release', 'another op kind'],
+  ['wrong-phone', 'cannot release', 'material wrapped to another device'],
+  ['far-expiry', 'more than', 'expiry far in the future'],
+]) {
+  const { context, page } = await scanChallenge(name);
+  const t = await text(page, '#refusal');
+  check(`refused: ${why}`, t.includes(fragment) && (await page.locator('#approve').count()) === 0, t.slice(0, 110));
+  await context.close();
+}
+{
+  const { context, page } = await scanChallenge('expired');
+  const t = await text(page, '#refusal');
+  check('refused: expired challenge', /expired/.test(t) && (await page.locator('#approve').count()) === 0, t);
+  await context.close();
+}
+{
+  // the good challenge, but the phone clock is past its expiry
+  const { context, page } = await scanChallenge('good', { time: fx.now + 500 });
+  const t = await text(page, '#refusal');
+  check('refused: a good challenge seen after its expiry on the phone clock', /expired/.test(t), t);
+  await context.close();
+}
+{
+  const { context, page } = await scanChallenge('unknown-requester');
+  check('a requester the phone never met is shown with a warning, not silently trusted', (await page.locator('#checks .check.warn').count()) === 1, await text(page, '#checks .check.warn'));
+  await context.close();
+}
+
+// ============================================================ 4. recovery notice and cancellation
+
+{
+  const f = path.join(OUT, 'notice.y4m');
+  writeY4m(f, fx.recovery_notice.qr_frames_hex.map(h));
+  const { context } = await launch({ y4m: f, profile: PROFILE });
+  const page = await openPage(context);
+  await unlock(page);
+  await page.click('#recovery');
+  await page.click('#scan-notice');
+  await page.waitForSelector('#cancel-recovery', { timeout: 60000 });
+  check('the recovery notice is described from its op bytes with the timelock end', /PhoneReenroll/.test(await text(page, '#headline')) && /accepts the new phone after/.test(await text(page, '#timelock')), await text(page, '#timelock'));
+  await page.click('#cancel-recovery');
+  await page.waitForSelector('#cancel-b64');
+  const cancel = await captureDoc(page, '#reverse-qr');
+  fs.writeFileSync(path.join(OUT, 'cancel-frame.bin'), cancel.doc);
+  const k = decodeFrame(cancel.doc).kind;
+  check('the phone cancels the recovery with its own signed op, no factor needed', k === KIND.PHONE_OPS, `${cancel.doc.length} bytes, kind ${k}`);
+  await context.close();
+}
+
+// ============================================================ 5. backup words and fingerprint
+
+{
+  const { context } = await launch({ profile: PROFILE });
+  const page = await openPage(context);
+  await unlock(page);
+  await page.click('#show-backup');
+  await page.fill('#pin', 'wrong-pin-0');
+  await page.click('#show');
+  await page.waitForFunction(() => /wrong PIN/.test(document.querySelector('.err').textContent));
+  await page.fill('#pin', PIN);
+  await page.click('#show');
+  await page.waitForSelector('#backup-words span');
+  check('backup words need the PIN again and equal the stored identity words', (await page.locator('#backup-words span').allInnerTexts()).join(' ') === fx.phone.words, '24 words');
+  await page.click('#backup-done');
+  await page.click('#about');
+  const fp = (await text(page, '#fingerprint')).trim();
+  const want = fs.readFileSync(path.join(root, 'FINGERPRINT'), 'utf8').trim();
+  check('the page shows the fingerprint written by the build', fp === want && /^[0-9a-f]{64}$/.test(fp), fp);
+  const crypto = await import('node:crypto');
+  const recomputed = crypto.createHash('sha256').update(body.toString('utf8').replace(fp, '0'.repeat(64))).digest('hex');
+  check('the fingerprint is the sha256 of the file with the fingerprint zeroed', recomputed === fp && PAGE.endsWith('sshub-companion.html') || !PAGE.endsWith('sshub-companion.html'), recomputed);
+  await context.close();
+}
+
+// ============================================================ summary
+
+const external = seenRequests.filter((u) => !u.startsWith(ORIGIN));
+check('no request left the origin', external.length === 0, external.length, 'external requests');
+check('every request went to the page origin', seenRequests.every((u) => u.startsWith(ORIGIN) || u.startsWith('blob:') || u.startsWith('data:')), seenRequests.length, 'requests');
+check('no Content-Security-Policy violation was reported', cspProblems.length === 0, cspProblems.length, cspProblems[0] || 'violations');
+check('no uncaught page error', pageErrors.length === 0, pageErrors.length, pageErrors[0] || 'errors');
+fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ page: path.basename(PAGE), bytes: body.length, results }, null, 1));
+server.close();
+const failed = results.filter((r) => !r.pass);
+console.log(JSON.stringify({ total: results.length, failed: failed.length }));
+process.exit(failed.length ? 1 : 0);

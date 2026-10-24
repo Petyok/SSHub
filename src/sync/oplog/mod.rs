@@ -3,6 +3,7 @@
 //! [`store_impl`].
 
 pub mod canonical;
+pub mod checkpoint;
 pub mod fork;
 pub mod ingest;
 pub mod merge;
@@ -11,6 +12,10 @@ pub mod pending;
 pub mod store_impl;
 pub mod tier;
 
+pub use checkpoint::{
+    ring_fingerprint, BootstrapTrust, CheckpointBundle, CheckpointRow, CheckpointStatus,
+    CheckpointVerdict, PruneReport, Pruned,
+};
 pub use fork::{ForkEvidence, HeadVerdict, SignedHead};
 pub use merge::{tie_break, TieBreak};
 pub use op::*;

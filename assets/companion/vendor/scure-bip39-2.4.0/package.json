@@ -1,0 +1,69 @@
+{
+  "name": "@scure/bip39",
+  "version": "2.4.0",
+  "description": "Secure, audited & minimal implementation of BIP39 mnemonic phrases",
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "wordlists/*.js",
+    "wordlists/*.d.ts",
+    "src/index.ts"
+  ],
+  "dependencies": {
+    "@noble/hashes": "2.4.0"
+  },
+  "devDependencies": {
+    "@paulmillr/jsbt": "0.7.1",
+    "bismar": "0.1.8",
+    "prettier": "3.9.6",
+    "typescript": "6.0.3"
+  },
+  "scripts": {
+    "benchmark": "node test/benchmark.js",
+    "benchmark:size": "bismar -bsm",
+    "build": "tsc",
+    "check": "jsbt-check",
+    "format": "prettier --write 'src/**/*.ts' 'test/*.test.ts' 'test/scripts/*.js'",
+    "test": "node test/index.ts",
+    "test:wordlist": "node test/scripts/fetch-wordlist.test.js",
+    "fetch-wordlist": "./test/scripts/fetch-wordlist.js"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./wordlists/czech.js": "./wordlists/czech.js",
+    "./wordlists/english.js": "./wordlists/english.js",
+    "./wordlists/french.js": "./wordlists/french.js",
+    "./wordlists/italian.js": "./wordlists/italian.js",
+    "./wordlists/japanese.js": "./wordlists/japanese.js",
+    "./wordlists/korean.js": "./wordlists/korean.js",
+    "./wordlists/portuguese.js": "./wordlists/portuguese.js",
+    "./wordlists/simplified-chinese.js": "./wordlists/simplified-chinese.js",
+    "./wordlists/spanish.js": "./wordlists/spanish.js",
+    "./wordlists/traditional-chinese.js": "./wordlists/traditional-chinese.js"
+  },
+  "keywords": [
+    "bip39",
+    "mnemonic",
+    "phrase",
+    "code",
+    "bip0039",
+    "bip-39",
+    "wordlist",
+    "scure",
+    "noble",
+    "bitcoin"
+  ],
+  "homepage": "https://paulmillr.com/noble/#scure",
+  "funding": "https://paulmillr.com/funding/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/paulmillr/scure-bip39.git"
+  },
+  "type": "module",
+  "main": "index.js",
+  "module": "index.js",
+  "types": "index.d.ts",
+  "sideEffects": false,
+  "author": "Paul Miller (https://paulmillr.com)",
+  "license": "MIT"
+}

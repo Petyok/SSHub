@@ -156,6 +156,14 @@ impl UnlockPathKind {
     }
 }
 
+/// Set or add the status line of one unlock path.
+fn set_path_status(u: &mut UnlockView, kind: UnlockPathKind, status: String) {
+    match u.paths.iter_mut().find(|p| p.kind == kind) {
+        Some(p) => p.status = status,
+        None => u.paths.push(UnlockPathView { kind, status }),
+    }
+}
+
 /// One unlock path and where it stands, e.g. `(Clipboard, "listening")`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnlockPathView {
@@ -658,10 +666,23 @@ impl App {
             }
             SyncEvent::UnlockPrompt(text) => {
                 if let Some(u) = sync.unlock.as_mut() {
-                    u.paths = vec![UnlockPathView {
-                        kind: UnlockPathKind::Phrase,
-                        status: text,
-                    }];
+                    set_path_status(u, UnlockPathKind::Phrase, text);
+                }
+            }
+            SyncEvent::UnlockPath(kind, status) => {
+                if let Some(u) = sync.unlock.as_mut() {
+                    set_path_status(u, kind, status);
+                }
+            }
+            SyncEvent::UnlockProgress { have, need } => {
+                if let Some(u) = sync.unlock.as_mut() {
+                    (u.have, u.need) = (have, need);
+                }
+            }
+            SyncEvent::UnlockChallenge(frames) => {
+                sync.qr_frame = 0;
+                if let Some(u) = sync.unlock.as_mut() {
+                    u.frames = frames;
                 }
             }
             SyncEvent::ForkDetected(id) => {
@@ -1479,6 +1500,50 @@ mod tests {
         assert_eq!(app.sync.fork.as_ref().unwrap().device, "server");
         assert_eq!(app.sync.last_error.as_deref(), Some("peer said no"));
         assert_eq!(app.host_notice.as_deref(), Some("sync: peer said no"));
+    }
+
+    #[test]
+    fn unlock_path_events_fill_the_modal_per_path() {
+        use crate::sync::client::{RoundSummary, SyncEvent};
+        let mut app = app_with_worker(Box::new(|_k, _d, ctx| {
+            ctx.emit(SyncEvent::UnlockPrompt("type the words".into()));
+            ctx.emit(SyncEvent::UnlockPath(
+                UnlockPathKind::Peer,
+                "asked laptop".into(),
+            ));
+            ctx.emit(SyncEvent::UnlockPath(
+                UnlockPathKind::Peer,
+                "laptop is asking you".into(),
+            ));
+            ctx.emit(SyncEvent::UnlockProgress { have: 1, need: 2 });
+            ctx.emit(SyncEvent::UnlockChallenge(vec![vec![1, 2, 3]]));
+            Ok(RoundSummary::default())
+        }));
+        app.open_sync_unlock(UnlockView {
+            host: "web".into(),
+            have: 0,
+            need: 0,
+            paths: Vec::new(),
+            frames: Vec::new(),
+            code: String::new(),
+        });
+        app.sync.intents.push(SyncIntent::SyncNow {
+            device: "id-server".into(),
+        });
+        app.poll_sync();
+        pump(&mut app, |a| !a.sync.syncing);
+        let u = app.sync.unlock.as_ref().unwrap();
+        assert_eq!((u.have, u.need), (1, 2));
+        assert_eq!(u.frames, vec![vec![1, 2, 3]]);
+        let status = |k| {
+            u.paths
+                .iter()
+                .find(|p| p.kind == k)
+                .map(|p| p.status.as_str())
+        };
+        assert_eq!(status(UnlockPathKind::Phrase), Some("type the words"));
+        assert_eq!(status(UnlockPathKind::Peer), Some("laptop is asking you"));
+        assert_eq!(u.paths.len(), 2, "a path is updated, not repeated");
     }
 
     #[test]

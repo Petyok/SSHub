@@ -34,7 +34,7 @@ mod sftp;
 mod snippets;
 mod suggestions;
 pub mod sync;
-mod sync_view;
+pub(crate) mod sync_view;
 mod tags;
 pub mod test_connect;
 mod theme_picker;
