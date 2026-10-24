@@ -10,7 +10,10 @@ use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::fork;
-use super::merge::{desired_state, insert_op, load_op, op_at, OpRow, Settler, State};
+use super::merge::{
+    desired_state, forget_unverified, insert_op, insert_unverified, load_op, op_at, OpRow, Settler,
+    State,
+};
 use super::op::*;
 use super::store_impl::IngestOutcome;
 use crate::sync::apply::{reproject, validate_body};
@@ -19,6 +22,49 @@ use crate::sync::limits::{LAMPORT_JUMP_CAP, MAX_FRAME_BYTES, PENDING_QUARANTINE_
 
 fn reject(msg: impl Into<String>) -> Result<IngestOutcome> {
     Ok(IngestOutcome::Rejected(msg.into()))
+}
+
+/// Unverified ops held for review at most, over all unknown authors.
+const UNKNOWN_AUTHOR_MAX: i64 = 256;
+
+/// An op signed by nobody we know: its signature cannot be checked, so it only waits for a
+/// human (reason `unknown-author`). Nothing of it takes effect: no chain, no fold, never served.
+fn unknown_author(
+    conn: &Connection,
+    op: Op,
+    now: i64,
+    quarantine_cap: usize,
+) -> Result<IngestOutcome> {
+    if op.canonical_bytes().len() > MAX_FRAME_BYTES {
+        return reject("op is larger than a transport frame");
+    }
+    if let Err(why) = validate_body(&op.body) {
+        return reject(format!("invalid op: {why}"));
+    }
+    if load_op(conn, &op.hash())?.is_some() {
+        return reject("duplicate op");
+    }
+    let (per_author, all): (i64, i64) = conn.query_row(
+        "SELECT COALESCE(SUM(device_id = ?1), 0), COUNT(*) FROM sync_ops WHERE reason = 'unknown-author'",
+        params![op.device_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    if per_author as usize >= quarantine_cap || all >= UNKNOWN_AUTHOR_MAX {
+        return reject("quarantine full for unknown authors");
+    }
+    if conn
+        .query_row(
+            "SELECT 1 FROM sync_ops WHERE device_id = ?1 AND seq = ?2",
+            params![op.device_id, op.seq as i64],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some()
+    {
+        return reject("duplicate op");
+    }
+    insert_unverified(conn, &op, now)?;
+    Ok(IngestOutcome::Pending)
 }
 
 pub(crate) fn max_lamport(conn: &Connection) -> Result<u64> {
@@ -52,7 +98,7 @@ pub(crate) fn ingest_capped(
         )
         .optional()?;
     let Some((pub_raw, status)) = device else {
-        return reject("unknown device");
+        return unknown_author(conn, op, now, quarantine_cap);
     };
     if status == "compromised" {
         return reject("device is compromised");
@@ -92,6 +138,8 @@ pub(crate) fn ingest_capped(
         return reject("covered by an accepted checkpoint");
     }
 
+    // This author is known now: an unverified copy of the same slot gives way.
+    forget_unverified(conn, &op.device_id, Some(op.seq))?;
     let hash = op.hash();
     if let Some(stored) = op_at(conn, &op.device_id, op.seq)? {
         if stored.hash == hash {

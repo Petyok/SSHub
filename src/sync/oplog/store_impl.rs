@@ -1,7 +1,7 @@
 //! `LauncherStore::sync_*`: the op-log surface of the store (contract section 2).
 //! Every method is one short transaction; nothing here touches the network.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, ensure, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 
 use super::checkpoint::{
@@ -216,15 +216,21 @@ impl LauncherStore {
                 .optional()?;
             if let Some(f) = floor {
                 if after_seq.saturating_add(1) < f as u64 {
-                    return Err(super::checkpoint::Pruned { floor_seq: f as u64 }.into());
+                    return Err(super::checkpoint::Pruned {
+                        floor_seq: f as u64,
+                    }
+                    .into());
                 }
             }
             let after = i64::try_from(after_seq).unwrap_or(i64::MAX);
             let mut stmt = conn.prepare(
-                "SELECT op_hash FROM sync_ops WHERE device_id = ?1 AND seq > ?2 ORDER BY seq LIMIT ?3",
+                "SELECT op_hash FROM sync_ops WHERE device_id = ?1 AND seq > ?2
+                   AND COALESCE(reason, '') <> 'unknown-author' ORDER BY seq LIMIT ?3",
             )?;
             let hashes: Vec<Vec<u8>> = stmt
-                .query_map(params![device, after, MAX_OPS_PER_TAIL as i64], |r| r.get(0))?
+                .query_map(params![device, after, MAX_OPS_PER_TAIL as i64], |r| {
+                    r.get(0)
+                })?
                 .collect::<std::result::Result<_, _>>()?;
             hashes
                 .into_iter()
@@ -251,7 +257,13 @@ impl LauncherStore {
         self.with_conn(pending::list)
     }
 
-    /// Why an op is waiting: `tier`, `resurrection` or `revoke-conflict`.
+    /// EVERY pending op with the reason it waits (`tier`, `stale`, `resurrection`,
+    /// `revoke-conflict`, `unknown-author`), oldest first.
+    pub fn sync_pending_with_reasons(&self) -> Result<Vec<(Op, String)>> {
+        self.with_conn(pending::list_with_reasons)
+    }
+
+    /// Why an op is waiting: `tier`, `stale`, `resurrection`, `revoke-conflict` or `unknown-author`.
     pub fn sync_pending_reason(&self, op_hash: &[u8; 32]) -> Result<Option<String>> {
         self.with_conn(|conn| pending::reason(conn, op_hash))
     }
@@ -650,6 +662,23 @@ impl LauncherStore {
             tx.commit()?;
             Ok(())
         })
+    }
+
+    /// The join anchor an inviter hands to a device it enrolls: its resolved state at its chain
+    /// heads, signed by the inviter alone. It is not a checkpoint and prunes nothing.
+    pub fn sync_join_anchor_build(&self, id: &DeviceIdentity) -> Result<CheckpointBundle> {
+        self.with_conn(|conn| checkpoint::build_join_anchor(conn, id, now_ts()))
+    }
+
+    /// The joiner adopts the anchor as its starting state (only
+    /// [`BootstrapTrust::Enrollment`]): the ring's devices and hosts are not its to review, only
+    /// ops above the cut are.
+    pub fn sync_join_adopt(&self, bundle: &CheckpointBundle, trust: &BootstrapTrust) -> Result<()> {
+        ensure!(
+            matches!(trust, BootstrapTrust::Enrollment { .. }),
+            "a join anchor is adopted with the enrollment trust only"
+        );
+        self.sync_bootstrap(bundle, trust)
     }
 
     /// Newest accepted checkpoint we can serve (announced in the hello).
