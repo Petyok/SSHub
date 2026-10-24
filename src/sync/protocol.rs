@@ -1262,6 +1262,8 @@ pub fn run_round<L: SyncLink>(
     };
     let mut seen = Some(peer.clone());
     let res = round(conn, store, id, Some(peer), true, &mut sum, &mut seen);
+    // Whatever arrived is checked against the stage 3 rules even if the round ended badly.
+    let _ = super::screen::screen_pending(store, crate::store::now_ts());
     conclude(res, sum, Some(peer))
 }
 
@@ -1274,6 +1276,7 @@ pub fn run_sync_serve<L: SyncLink>(
     let mut sum = RoundSummary::default();
     let mut seen = None;
     let res = round(conn, store, id, None, false, &mut sum, &mut seen);
+    let _ = super::screen::screen_pending(store, crate::store::now_ts());
     conclude(res, sum, seen.as_ref())
 }
 

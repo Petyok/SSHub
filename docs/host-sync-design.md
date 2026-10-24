@@ -598,6 +598,53 @@ So the phone is not needed for every connection to a test server.
   day, rather than a ceremony per host. That confirmation is a prompt on a
   possibly-compromised machine; it extends the budget, never the scope.
 
+## The Red ceremony
+
+Red operations are: adding a holder or promoting a mirror (`DeviceAdd` with the holder role,
+`DeviceRoleChange`), revoking a holder (`DeviceRevoke`), enabling a trust session (`CertIssue`),
+changing the credential mode (`ModeChange`), registering or replacing a third factor
+(`FactorRegister`), and bulk export (`BulkExport`). Replacing the phone has its own path (below).
+
+A Red op is **proposed** by an attended terminal (the proposer, the author of the op itself) and
+**takes effect only when three proofs are in the log, each bound to the exact op hash**:
+
+1. **Phone participation**: a `RedPhoneSign` authored by the phone. The phone's signing key is key
+   material a compromised peer does not have. (For `CertIssue` the phone is the author, so this proof
+   is the op itself.)
+2. **A second attended device**: a `RedApprove` authored by an attended **holder** terminal other than
+   the proposer, written only after its user confirmed a screen that says "Red" and names the proposer
+   and the change. An unattended device never counts; a mirror never counts (so a mirror's vote can
+   admit a mirror at Yellow but never create a holder).
+3. **A third factor from outside the devices**: a `RedFactor` whose signature is made by a key that
+   exists only on the paper (the `paper/recover` key from the 24 words) or inside an emailed code (the
+   `email` key, below). The key is registered in the ring beforehand by `FactorRegister`, so every
+   peer verifies the signature itself: a compromised peer cannot skip a check, there is none to skip.
+
+The three come from three different participants: the phone, a second device, and a factor that is
+not a device. The proposer is the fourth party and its own approval counts for nothing. Every peer
+evaluates the same rule on the same log; there is no "ceremony server". A pending Red op is applied
+by each peer when its ceremony is complete and is dropped (never applied) when it has not completed
+within `RED_CEREMONY_TTL_SECS`; proofs older than the op or bound to another hash do not count.
+Because the proofs, not a click on each device, authorize it, peers show the applied change in a
+banner instead of asking again.
+
+A ring with a single attended terminal has no second device. For that ring the second-device proof is
+waived and the paper factor plus the phone are required; the Sync tab says "single-machine ring:
+no second device" next to every such change.
+
+**The emailed code (option).** At setup a random 32 byte seed becomes the `email` signing key; the seed
+is stored in the log as a blob sealed under a key derived by Argon2id from a random code of at least
+100 bits (the code is never stored in the log) and the code is kept by a **sender** device that is
+neither the proposer nor the second approver and has `[sync.notify]` configured. When a Red op has
+its phone and second-device proofs, the sender mails the code (a message that says what it is for and
+carries nothing else); the user pastes it into the proposer, which opens the blob, signs `RedFactor`
+and drops the seed. Without the mailbox the log alone yields nothing; without the log the code
+alone yields nothing. Sender and mailbox are one participant, which is why the sender may not be the
+proposer or the second approver.
+
+**Bulk export** is a loop of share releases made without a prompt per host for a short window
+after a completed Red ceremony (`BulkExport`), not a new kind of secret handling.
+
 ## Phone loss / re-enrollment (recovery without deadlock)
 
 Replacing the phone is Red, and the phone is what is missing. The recovery path

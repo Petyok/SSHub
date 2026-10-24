@@ -22,6 +22,7 @@ pub mod quorum;
 pub mod ratchet;
 pub mod recovery;
 pub mod reshare;
+pub mod screen;
 pub mod share_release;
 pub mod snapshot;
 pub mod transport;
