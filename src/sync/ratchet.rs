@@ -57,30 +57,42 @@ pub struct PairState {
     pub key: [u8; 32],
     /// `K(epoch + 1)`, held between verifying the client's finish and receiving its acknowledgement.
     pub next: Option<[u8; 32]>,
+    /// `K(epoch - 1)`, kept by the client only, so it still recognises a server whose
+    /// acknowledgement of the last round was lost. Dropped when the server proves a newer epoch.
+    pub prev: Option<[u8; 32]>,
 }
 
 impl PairState {
     pub fn fresh(key: [u8; 32]) -> Self {
-        Self { epoch: 0, key, next: None }
+        Self {
+            epoch: 0,
+            key,
+            next: None,
+            prev: None,
+        }
     }
 
-    /// The key to verify a peer that claims `claimed_epoch`, and whether that claim means the peer
-    /// did not commit the previous round (so a pending `next` is dropped).
-    pub fn key_for_claim(&self, claimed_epoch: u64) -> Option<([u8; 32], bool)> {
+    /// The key that verifies a peer claiming `claimed_epoch`. `allow_prev` is for a client
+    /// verifying its server; a server never accepts a client that is a round behind.
+    pub fn key_for_claim(&self, claimed_epoch: u64, allow_prev: bool) -> Option<[u8; 32]> {
         if claimed_epoch == self.epoch {
-            Some((self.key, true))
+            Some(self.key)
         } else if claimed_epoch == self.epoch + 1 {
-            self.next.map(|k| (k, false))
+            self.next
+        } else if allow_prev && claimed_epoch + 1 == self.epoch {
+            self.prev
         } else {
             None
         }
     }
 
-    /// Adopt the claimed epoch (promote `next` when the peer committed), returning the key in force.
+    /// The peer (a client) proved `claimed_epoch`: promote a pending `next` it committed, or drop it
+    /// when it did not.
     pub fn settle(&mut self, claimed_epoch: u64) {
         if claimed_epoch == self.epoch + 1 {
             if let Some(next) = self.next.take() {
                 self.epoch += 1;
+                self.prev = None;
                 self.key = next;
             }
         } else {
@@ -91,26 +103,48 @@ impl PairState {
     fn to_bytes(&self) -> Vec<u8> {
         let mut b = self.epoch.to_be_bytes().to_vec();
         b.extend_from_slice(&self.key);
-        match self.next {
-            Some(n) => {
-                b.push(1);
-                b.extend_from_slice(&n);
+        for k in [self.next, self.prev] {
+            match k {
+                Some(k) => {
+                    b.push(1);
+                    b.extend_from_slice(&k);
+                }
+                None => b.push(0),
             }
-            None => b.push(0),
         }
         b
     }
 
     fn from_bytes(b: &[u8]) -> Result<Self> {
-        if b.len() < 41 {
+        if b.len() < 42 {
             bail!("pair state too short");
         }
-        let next = match b[40] {
-            0 if b.len() == 41 => None,
-            1 if b.len() == 73 => Some(b[41..73].try_into().unwrap()),
-            _ => bail!("pair state malformed"),
+        let mut at = 40;
+        let mut opt = || -> Result<Option<[u8; 32]>> {
+            let flag = *b.get(at).ok_or_else(|| anyhow!("pair state truncated"))?;
+            at += 1;
+            match flag {
+                0 => Ok(None),
+                1 => {
+                    let k = b
+                        .get(at..at + 32)
+                        .ok_or_else(|| anyhow!("pair state truncated"))?;
+                    at += 32;
+                    Ok(Some(k.try_into().unwrap()))
+                }
+                _ => bail!("pair state malformed"),
+            }
         };
-        Ok(Self { epoch: u64::from_be_bytes(b[..8].try_into().unwrap()), key: b[8..40].try_into().unwrap(), next })
+        let (next, prev) = (opt()?, opt()?);
+        if at != b.len() {
+            bail!("pair state has trailing bytes");
+        }
+        Ok(Self {
+            epoch: u64::from_be_bytes(b[..8].try_into().unwrap()),
+            key: b[8..40].try_into().unwrap(),
+            next,
+            prev,
+        })
     }
 }
 
@@ -122,15 +156,24 @@ fn meta_key(peer: &DeviceId) -> String {
 pub fn load_pair(store: &LauncherStore, peer: &DeviceId) -> Result<Option<PairState>> {
     store.with_conn(|conn| {
         let raw: Option<Vec<u8>> = conn
-            .query_row("SELECT value FROM sync_meta WHERE key = ?1", params![meta_key(peer)], |r| r.get(0))
+            .query_row(
+                "SELECT value FROM sync_meta WHERE key = ?1",
+                params![meta_key(peer)],
+                |r| r.get(0),
+            )
             .optional()?;
-        raw.map(|b| PairState::from_bytes(&b)).transpose().map_err(|e| anyhow!("pair state of {peer}: {e}"))
+        raw.map(|b| PairState::from_bytes(&b))
+            .transpose()
+            .map_err(|e| anyhow!("pair state of {peer}: {e}"))
     })
 }
 
 pub fn save_pair(store: &LauncherStore, peer: &DeviceId, state: &PairState) -> Result<()> {
     store.with_conn(|conn| {
-        conn.execute("INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?1, ?2)", params![meta_key(peer), state.to_bytes()])?;
+        conn.execute(
+            "INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?1, ?2)",
+            params![meta_key(peer), state.to_bytes()],
+        )?;
         Ok(())
     })
 }
@@ -138,7 +181,10 @@ pub fn save_pair(store: &LauncherStore, peer: &DeviceId, state: &PairState) -> R
 /// Forget the pair (a rehabilitation re-enrolls and writes a new one).
 pub fn forget_pair(store: &LauncherStore, peer: &DeviceId) -> Result<()> {
     store.with_conn(|conn| {
-        conn.execute("DELETE FROM sync_meta WHERE key = ?1", params![meta_key(peer)])?;
+        conn.execute(
+            "DELETE FROM sync_meta WHERE key = ?1",
+            params![meta_key(peer)],
+        )?;
         Ok(())
     })
 }
@@ -198,8 +244,16 @@ mod tests {
         let k0 = [1u8; 32];
         let k1 = ratchet_epoch(&k0, &[2; 32]);
         assert_ne!(k1, k0);
-        assert_ne!(k1, ratchet_epoch(&k0, &[3; 32]), "another nonce, another key");
-        assert_ne!(k1, ratchet_epoch(&[9; 32], &[2; 32]), "another previous key, another key");
+        assert_ne!(
+            k1,
+            ratchet_epoch(&k0, &[3; 32]),
+            "another nonce, another key"
+        );
+        assert_ne!(
+            k1,
+            ratchet_epoch(&[9; 32], &[2; 32]),
+            "another previous key, another key"
+        );
         assert_eq!(k1, ratchet_epoch(&k0, &[2; 32]));
     }
 
@@ -217,16 +271,31 @@ mod tests {
 
     #[test]
     fn pair_state_round_trips_and_settles() {
-        let mut s = PairState { epoch: 4, key: [4; 32], next: Some([5; 32]) };
+        let mut s = PairState {
+            epoch: 4,
+            key: [4; 32],
+            next: Some([5; 32]),
+            prev: Some([3; 32]),
+        };
         assert_eq!(PairState::from_bytes(&s.to_bytes()).unwrap(), s);
-        assert_eq!(s.key_for_claim(4).unwrap(), ([4; 32], true));
-        assert_eq!(s.key_for_claim(5).unwrap(), ([5; 32], false));
-        assert!(s.key_for_claim(3).is_none() && s.key_for_claim(6).is_none());
+        assert_eq!(s.key_for_claim(4, false), Some([4; 32]));
+        assert_eq!(s.key_for_claim(5, false), Some([5; 32]));
+        assert_eq!(
+            s.key_for_claim(3, false),
+            None,
+            "a server never accepts a client a round behind"
+        );
+        assert_eq!(s.key_for_claim(3, true), Some([3; 32]));
+        assert!(s.key_for_claim(2, true).is_none() && s.key_for_claim(6, true).is_none());
         let mut a = s.clone();
         a.settle(5);
-        assert_eq!((a.epoch, a.key, a.next), (5, [5; 32], None));
+        assert_eq!((a.epoch, a.key, a.next, a.prev), (5, [5; 32], None, None));
         s.settle(4);
-        assert_eq!((s.epoch, s.next), (4, None), "the peer did not commit: drop the pending key");
+        assert_eq!(
+            (s.epoch, s.next),
+            (4, None),
+            "the peer did not commit: drop the pending key"
+        );
         assert!(PairState::from_bytes(&[0; 10]).is_err());
     }
 
