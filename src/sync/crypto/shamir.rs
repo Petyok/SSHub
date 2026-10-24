@@ -496,7 +496,7 @@ mod tests {
         let c0 = reshare_contribute_with(&old[0], &new_idx, 2, &mut r);
         let c1 = reshare_contribute_with(&old[1], &new_idx, 2, &mut r);
         // contributor 2 dropped: one contribution alone cannot form a new share
-        assert!(reshare_combine(4, &[c0.clone()]).is_err());
+        assert!(reshare_combine(4, std::slice::from_ref(&c0)).is_err());
         // the old set still opens at every step
         assert_eq!(
             shamir_combine(&[old[0].clone(), old[1].clone()]).unwrap(),

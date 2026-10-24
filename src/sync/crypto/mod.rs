@@ -12,6 +12,7 @@ mod hash;
 mod identity;
 mod mlkem;
 mod paper;
+mod sas;
 mod shamir;
 mod vault;
 mod words;
@@ -28,6 +29,7 @@ pub use dek::{aead_open, aead_seal, dek_generate, dek_open, dek_seal};
 pub use hash::{chain_hash, derive_key};
 pub use identity::{device_id_of, verify, DeviceIdentity, DevicePublic};
 pub use paper::{paper_derive, PaperDomain};
+pub use sas::sas_words;
 pub use shamir::{
     reshare_combine, reshare_contribute, reshare_verify, shamir_combine, shamir_split,
     shamir_split_at, ReshareContribution, Share,

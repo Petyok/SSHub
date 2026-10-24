@@ -275,6 +275,10 @@ def run(path):
             ent = Mnemonic("english").to_entropy(i["phrase"])
             ctx = {"unwrap": "sshub/sync/paper/unwrap/v1", "recover": "sshub/sync/paper/recover/v1"}[par["domain"]]
             check(vid, pubs_equal(identity_from_xof(ctx, bytes(ent)), o))
+        elif p == "sas_words":
+            wl = Mnemonic("english").wordlist
+            head = int.from_bytes(h(i["transcript_hash"])[:6], "big")
+            check(vid, "-".join(wl[(head >> (48 - 11 * (k + 1))) & 0x7FF] for k in range(4)) == o["words"])
         elif p == "shamir_split":
             sh = shamir_split(h(i["secret"]), par["k"], par["indices"], h(par["rng_seed"]))
             check(vid, [(x, b.hex()) for x, b in sh] == [(q["index"], q["bytes_hex"]) for q in o["shares"]])

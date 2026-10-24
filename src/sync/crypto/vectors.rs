@@ -14,6 +14,7 @@ use super::hash::{chain_hash, derive_key, derive_xof};
 use super::identity::{verify, DeviceIdentity};
 use super::mlkem;
 use super::paper::{paper_derive, PaperDomain};
+use super::sas::sas_words;
 use super::shamir::{
     reshare_combine, reshare_contribute_with, shamir_combine, split_at_indices, Share,
 };
@@ -333,6 +334,22 @@ pub(super) fn build(include_slow: bool) -> Vec<Value> {
             pubs(&pubk),
         ));
     }
+    // SAS words: four BIP39 words from the first 44 bits of a transcript hash.
+    for (id, hash) in [
+        ("sas-zeros", [0u8; 32]),
+        ("sas-ff", [0xFFu8; 32]),
+        ("sas-counting", counting(32, 0x10).try_into().unwrap()),
+        ("sas-chain-hash", chain_hash(b"sshub enrollment transcript")),
+    ] {
+        v.push(vector(
+            id,
+            "sas_words",
+            json!({}),
+            json!({ "transcript_hash": hx(&hash) }),
+            json!({ "words": sas_words(&hash) }),
+        ));
+    }
+
     // Shamir and resharing. Randomness is ChaCha20Rng seeded with the recorded seed; the k - 1
     // coefficient rows are drawn as consecutive 32 byte fills.
     {

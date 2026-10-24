@@ -670,6 +670,50 @@
       "primitive": "paper_derive"
     },
     {
+      "id": "sas-zeros",
+      "inputs": {
+        "transcript_hash": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "outputs": {
+        "words": "abandon-abandon-abandon-abandon"
+      },
+      "params": {},
+      "primitive": "sas_words"
+    },
+    {
+      "id": "sas-ff",
+      "inputs": {
+        "transcript_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "outputs": {
+        "words": "zoo-zoo-zoo-zoo"
+      },
+      "params": {},
+      "primitive": "sas_words"
+    },
+    {
+      "id": "sas-counting",
+      "inputs": {
+        "transcript_hash": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f"
+      },
+      "outputs": {
+        "words": "avoid-mass-luggage-choice"
+      },
+      "params": {},
+      "primitive": "sas_words"
+    },
+    {
+      "id": "sas-chain-hash",
+      "inputs": {
+        "transcript_hash": "59d53fdd0c2fcfbb37e8968a54a574a08d32fa596151c5e8953bdd96421515a2"
+      },
+      "outputs": {
+        "words": "flush-prepare-warrior-blue"
+      },
+      "params": {},
+      "primitive": "sas_words"
+    },
+    {
       "id": "shamir-2of3",
       "inputs": {
         "secret": "7777777777777777777777777777777777777777777777777777777777777777"
