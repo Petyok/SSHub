@@ -66,7 +66,15 @@ fn fetch_notes(tag: &str) -> Option<String> {
     let changelog = run(Command::new("curl")
         // The whole changelog (~90 KB), not a small JSON: more time than the
         // check gets. The install is done, so only the notes wait on it.
-        .args(["-fsSL", "--proto-redir", "=https", "--max-time", "30"])
+        .args([
+            "-fsSL",
+            "--proto-redir",
+            "=https",
+            "--max-time",
+            "30",
+            "--max-filesize",
+            "2000000",
+        ])
         .arg(format!(
             "https://raw.githubusercontent.com/{REPO}/{tag}/CHANGELOG.md"
         )))

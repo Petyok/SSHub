@@ -12,9 +12,10 @@ All notable changes to SSHub are documented in this file.
   a whole group) to push, `←` stages one from the right pane to pull, a queue
   strip shows what is staged and `c` continues. Pushes and pulls can be mixed;
   they run one direction at a time, each with its own plan review.
-- **Guided profile migration** - the staged hosts then go through five
-  checklists: hosts, the groups of those hosts, their tunnels, the identities
-  they (and the groups) use, and their audit logs. Only checked rows travel; a step with nothing to list is skipped, `b` steps back.
+- **Guided profile migration** - the staged hosts then go through up to four
+  more checklists: the groups of those hosts, their tunnels, the identities
+  they (and the groups) use, and their audit logs. Only checked rows travel; a step with nothing to list is skipped, `b` steps back
+  (as far as the host checklist the dual-pane screen already filled in).
   Audit events keep their timestamps and land under the host's name in the
   destination (a move deletes them from the source). A guided move keeps a group
   in the source while a host that is not moving still belongs to it.
@@ -31,8 +32,8 @@ All notable changes to SSHub are documented in this file.
   github:Petyok/SSHub` runs SSHub and `nix profile install github:Petyok/SSHub` or a
   NixOS flake input installs it declaratively (Linux x86_64 and aarch64). The package
   links nixpkgs' OpenSSL, installs the man page, icon and desktop entry, and runs
-  with `openssh` on the end of `PATH`. CI builds it on x86_64 and aarch64 for every push
-  and pull request, and pushes the build to the public `sshub.cachix.org` binary cache
+  with `openssh` on the end of `PATH`. CI builds it on x86_64 and aarch64 for every pull request
+  and every push to `main` and `development`, and pushes the build to the public `sshub.cachix.org` binary cache
   that the flake declares, so installs substitute it instead of compiling. A NixOS
   configuration gets that cache by importing `nixosModules.binaryCache`.
 - **What's new popup** - when `Shift+U` finishes installing an update, a
@@ -43,6 +44,13 @@ All notable changes to SSHub are documented in this file.
 
 ### Fixed
 
+- **A key generated with a passphrase could silently come out unencrypted** -
+  when the temp directory is mounted `noexec`, ssh-keygen could not run the
+  passphrase helper, ignored it and wrote the key without protection while
+  SSHub reported success; checking an identity's passphrase could likewise call
+  a correct one wrong. The helper is now tried in the temp directory and in
+  `$XDG_RUNTIME_DIR` and used only where it runs, and a generated key that is
+  not encrypted is deleted with an error.
 - **Moving hosts to another profile now keeps their saved passwords** - a move
   carries each moved host's password and each moved identity's passphrase into
   the destination profile's keyring (the new rows are flagged as having one),

@@ -17,10 +17,40 @@ struct KeygenAskpass {
     script: PathBuf,
 }
 
+/// Mode of the helper script. A test can make it non-executable, which is what
+/// a `noexec` temp dir does to the exec of it (EACCES).
+fn script_mode() -> u32 {
+    #[cfg(test)]
+    if let Some(mode) = TEST_SCRIPT_MODE.with(|m| m.get()) {
+        return mode;
+    }
+    0o700
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_SCRIPT_MODE: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
+}
+
 impl KeygenAskpass {
+    /// Stage the helper in the temp dir, else in `$XDG_RUNTIME_DIR`: a `noexec`
+    /// mount cannot run it, and ssh-keygen then ignores a missing askpass
+    /// instead of failing. A directory is used only if the helper really runs.
     fn new(passphrase: &str) -> std::io::Result<Self> {
+        let mut dirs = vec![std::env::temp_dir()];
+        dirs.extend(std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from));
+        let mut last = None;
+        for dir in dirs {
+            match Self::stage(&dir, passphrase) {
+                Ok(staged) => return Ok(staged),
+                Err(e) => last = Some(e),
+            }
+        }
+        Err(last.expect("at least the temp dir was tried"))
+    }
+
+    fn stage(dir: &Path, passphrase: &str) -> std::io::Result<Self> {
         use std::io::Write;
-        let dir = std::env::temp_dir();
         let n = ASKPASS_COUNTER.fetch_add(1, Ordering::Relaxed);
         let stem = format!("sshub-kg-{}-{}", std::process::id(), n);
         let secret = dir.join(format!("{stem}.secret"));
@@ -49,14 +79,37 @@ impl KeygenAskpass {
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
-            sopts.mode(0o700);
+            sopts.mode(script_mode());
         }
         let mut script_file = sopts.open(&script)?;
         guard.script = script;
         // The secret path is passed via env so the script needs no quoting.
         write!(script_file, "#!/bin/sh\nexec cat \"$SSHUB_KG_SECRET\"\n")?;
+        // Closed before the exec below: an open write handle is ETXTBSY.
+        drop(script_file);
 
-        Ok(guard)
+        // Run it once. A `noexec` dir fails here (EACCES); ETXTBSY is another
+        // thread's fork still holding the write handle, gone after a moment.
+        let mut attempt = 0;
+        loop {
+            let ran = Command::new(&guard.script)
+                .env("SSHUB_KG_SECRET", &guard.secret)
+                .output();
+            match ran {
+                Ok(out) if out.status.success() => return Ok(guard),
+                Ok(out) => {
+                    return Err(std::io::Error::other(format!(
+                        "the askpass helper exited with {}",
+                        out.status
+                    )))
+                }
+                Err(e) if e.raw_os_error() == Some(26) && attempt < 20 => {
+                    attempt += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(25));
+                }
+                Err(e) => return Err(e),
+            }
+        }
     }
 
     fn env(&self) -> Vec<(String, String)> {
@@ -103,6 +156,11 @@ fn probe_key(path: &Path, passphrase: &str) -> Option<KeyProbe> {
         return Some(KeyProbe::Ok);
     }
     let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
+    // The helper could not run: ssh-keygen then reports the key as unreadable
+    // without ever having asked, which says nothing about the passphrase.
+    if stderr.contains("ssh_askpass") {
+        return None;
+    }
     if stderr.contains("passphrase") || stderr.contains("incorrect") {
         Some(KeyProbe::WrongPassphrase)
     } else {
@@ -158,7 +216,6 @@ pub fn generate_key_pair(
         );
     }
 
-    let askpass = KeygenAskpass::new(passphrase).context("create askpass helper")?;
     let mut cmd = Command::new("ssh-keygen");
     cmd.arg("-t").arg(key_type);
     if let Some(b) = bits {
@@ -167,14 +224,31 @@ pub fn generate_key_pair(
     cmd.arg("-C").arg(comment);
     cmd.arg("-f").arg(target_path);
 
-    for (k, v) in askpass.env() {
-        cmd.env(k, v);
-    }
+    // No passphrase needs no helper (and `-N ""` keeps ssh-keygen from asking).
+    let _askpass = if passphrase.is_empty() {
+        cmd.arg("-N").arg("");
+        None
+    } else {
+        let askpass = KeygenAskpass::new(passphrase).context("create askpass helper")?;
+        for (k, v) in askpass.env() {
+            cmd.env(k, v);
+        }
+        Some(askpass)
+    };
 
     let output = cmd.output().context("run ssh-keygen")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("ssh-keygen failed: {}", stderr.trim());
+    }
+    // ssh-keygen skips an askpass it cannot run and writes the key without a
+    // passphrase. Never hand that back as the protected key the user asked for.
+    if !passphrase.is_empty() && key_is_encrypted(target_path) != Some(true) {
+        let _ = std::fs::remove_file(target_path);
+        let _ = std::fs::remove_file(&pub_path);
+        anyhow::bail!(
+            "the generated key is not passphrase-protected (ssh-keygen did not use the passphrase), so it was deleted"
+        );
     }
     Ok(())
 }
@@ -409,5 +483,86 @@ mod tests {
 
         let key = read_public_key(&key_path, None).unwrap();
         assert_eq!(key, expected_key);
+    }
+
+    /// Oracle (real ssh-keygen): with a helper that cannot run, as under a
+    /// `noexec` temp dir, ssh-keygen only prints `ssh_askpass: exec(...)` and
+    /// carries on. A passphrase the user asked for must never turn into a
+    /// silently unencrypted key, and a probe must not call a correct passphrase
+    /// wrong.
+    #[test]
+    fn a_helper_that_cannot_run_never_yields_an_unencrypted_key() {
+        if !ssh_keygen_available() {
+            eprintln!("skipping: ssh-keygen not available");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let key = dir.path().join("id");
+        TEST_SCRIPT_MODE.with(|m| m.set(Some(0o600)));
+        let generated = generate_key_pair("ed25519", None, "hunter22", "c", &key);
+        TEST_SCRIPT_MODE.with(|m| m.set(None));
+        let opens_without_passphrase = Command::new("ssh-keygen")
+            .args(["-y", "-P", "", "-f"])
+            .arg(&key)
+            .output()
+            .unwrap()
+            .status
+            .success();
+        assert!(
+            generated.is_err() || !opens_without_passphrase,
+            "ssh-keygen was told to encrypt the key and silently did not"
+        );
+        assert!(!key.exists() && !dir.path().join("id.pub").exists());
+    }
+
+    #[test]
+    fn a_key_without_a_passphrase_needs_no_helper() {
+        if !ssh_keygen_available() {
+            eprintln!("skipping: ssh-keygen not available");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let key = dir.path().join("id");
+        TEST_SCRIPT_MODE.with(|m| m.set(Some(0o600)));
+        let generated = generate_key_pair("ed25519", None, "", "c", &key);
+        TEST_SCRIPT_MODE.with(|m| m.set(None));
+        generated.unwrap();
+        assert!(Command::new("ssh-keygen")
+            .args(["-y", "-P", "", "-f"])
+            .arg(&key)
+            .output()
+            .unwrap()
+            .status
+            .success());
+    }
+
+    #[test]
+    fn a_helper_that_cannot_run_does_not_make_a_right_passphrase_wrong() {
+        if !ssh_keygen_available() {
+            eprintln!("skipping: ssh-keygen not available");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let key = dir.path().join("id");
+        generate_key_pair("ed25519", None, "hunter22", "c", &key).unwrap();
+        assert_eq!(passphrase_matches(&key, "hunter22"), Some(true));
+        TEST_SCRIPT_MODE.with(|m| m.set(Some(0o600)));
+        let verdict = passphrase_matches(&key, "hunter22");
+        TEST_SCRIPT_MODE.with(|m| m.set(None));
+        assert_ne!(verdict, Some(false), "a correct passphrase called wrong");
+    }
+
+    #[test]
+    fn a_generated_key_is_encrypted_and_opens_with_its_passphrase() {
+        if !ssh_keygen_available() {
+            eprintln!("skipping: ssh-keygen not available");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let key = dir.path().join("id");
+        generate_key_pair("ed25519", None, "hunter22", "c", &key).unwrap();
+        assert_eq!(key_is_encrypted(&key), Some(true));
+        assert_eq!(passphrase_matches(&key, "hunter22"), Some(true));
+        assert_eq!(passphrase_matches(&key, "other"), Some(false));
     }
 }

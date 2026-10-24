@@ -389,10 +389,14 @@ pub fn secret_carry_warning(failures: &[String], kept: &[String]) -> String {
     if kept.len() > SHOWN {
         names.push_str(&format!(" and {} more", kept.len() - SHOWN));
     }
-    let mut out = format!(
-        "{} problem(s) carrying secrets; these stay in the source profile: {names}",
-        failures.len()
-    );
+    let mut out = if kept.is_empty() {
+        format!("{} problem(s) finishing the move:", failures.len())
+    } else {
+        format!(
+            "{} problem(s) carrying secrets; these stay in the source profile: {names}",
+            failures.len()
+        )
+    };
     for failure in failures.iter().take(SHOWN) {
         out.push_str(&format!("\n  - {failure}"));
     }
@@ -743,10 +747,10 @@ pub fn apply_transfer_plan_with_secrets(
     secrets: Option<SecretStores<'_>>,
 ) -> anyhow::Result<TransferResult> {
     // Source rows captured up front (ids shift under us on move).
-    let src_hosts: Vec<ManagedHost> = src_store.list_hosts().unwrap_or_default();
-    let src_groups: Vec<HostGroup> = src_store.list_groups().unwrap_or_default();
-    let src_identities: Vec<Identity> = src_store.list_identities().unwrap_or_default();
-    let src_tunnels: Vec<Tunnel> = src_store.list_tunnels().unwrap_or_default();
+    let src_hosts: Vec<ManagedHost> = src_store.list_hosts()?;
+    let src_groups: Vec<HostGroup> = src_store.list_groups()?;
+    let src_identities: Vec<Identity> = src_store.list_identities()?;
+    let src_tunnels: Vec<Tunnel> = src_store.list_tunnels()?;
     // Audit events of runnable audit items, read before any write.
     let src_audit: HashMap<String, Vec<AuthEvent>> = plan
         .runnable()
@@ -1198,6 +1202,7 @@ pub fn apply_transfer_plan_with_secrets(
                 stores,
                 dest_store,
                 &keep_hosts,
+                &keep_identities,
                 audit_floor,
             );
         }
@@ -1211,7 +1216,7 @@ pub fn apply_transfer_plan_with_secrets(
             .into_iter()
             .map(|i| (i.name.clone(), i))
             .collect();
-        let (hosts, identities) = delete_source_originals(
+        match delete_source_originals(
             src_store,
             plan,
             &owned_hosts,
@@ -1221,9 +1226,18 @@ pub fn apply_transfer_plan_with_secrets(
                 hosts: &keep_hosts,
                 identities: &keep_identities,
             },
-        )?;
-        result.deleted_host_ids = hosts;
-        result.deleted_identity_ids = identities;
+        ) {
+            Ok((hosts, identities)) => {
+                result.deleted_host_ids = hosts;
+                result.deleted_identity_ids = identities;
+            }
+            // The destination is committed: an `Err` here would invite a retry
+            // that duplicates every row. The source stays whole, so nothing is
+            // purged, and the caller reports it like a failed carry.
+            Err(e) => result.carry_failures.push(format!(
+                "the originals could not be removed from the source profile and the destination already holds the copies, so do not repeat the move: {e:#}"
+            )),
+        }
     }
 
     Ok(result)
@@ -1241,6 +1255,7 @@ fn remove_kept_from_destination(
     stores: &SecretStores<'_>,
     dest_store: &LauncherStore,
     keep_hosts: &HashSet<i64>,
+    keep_identities: &HashSet<i64>,
     audit_floor: i64,
 ) {
     use crate::credentials::{host_key, identity_key};
@@ -1286,10 +1301,10 @@ fn remove_kept_from_destination(
             )),
         }
     }
-    if removed_any {
+    if removed_any || !keep_identities.is_empty() {
         let swept = dest_store.with_conn(|conn| {
             let mut gone = 0usize;
-            for group in &result.created_groups {
+            for group in result.created_groups.iter().filter(|_| removed_any) {
                 let used: i64 = conn.query_row(
                     "SELECT (SELECT COUNT(*) FROM hosts WHERE group_id = ?1)
                           + (SELECT COUNT(*) FROM host_group_memberships WHERE group_id = ?1)",
@@ -1306,7 +1321,12 @@ fn remove_kept_from_destination(
                 let unused =
                     super::identities::count_hosts_using_identity_on(conn, identity.dest_id)? == 0
                         && !super::hosts::group_default_uses_identity_on(conn, identity.dest_id)?;
-                if unused && super::identities::delete_identity_on(conn, identity.dest_id)? {
+                // An identity kept in the source (its secret did not carry) must
+                // not stay in the destination either; others only when a removed
+                // host left them unused.
+                let sweep = removed_any || keep_identities.contains(&identity.src_id);
+                if sweep && unused && super::identities::delete_identity_on(conn, identity.dest_id)?
+                {
                     gone += 1;
                     dropped_identities.push(identity.clone());
                 }
@@ -1465,4 +1485,50 @@ fn delete_source_originals(
             Ok((deleted_hosts, deleted_identities))
         })
         .context("delete moved source originals")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::NewHost;
+
+    /// The destination is committed before the source originals are deleted: a
+    /// failing delete must come back as a warning, not as an `Err` that arms a
+    /// retry which can only duplicate the rows or fail on their names.
+    #[test]
+    fn a_failed_source_delete_after_the_commit_is_a_warning_not_an_error() {
+        let mut src = LauncherStore::open_in_memory().unwrap();
+        src.create_host(&NewHost::launcher("web", "web.example.com"))
+            .unwrap();
+        src.with_conn(|c| {
+            c.execute_batch(
+                "CREATE TRIGGER no_delete BEFORE DELETE ON hosts
+                 BEGIN SELECT RAISE(ABORT, 'locked'); END;",
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        let mut dest = LauncherStore::open_in_memory().unwrap();
+        let plan = build_transfer_plan(
+            &TransferSnapshot::capture(&src).unwrap(),
+            &DestIndex::capture(&dest, "dest").unwrap(),
+            &TransferSelection {
+                host_names: vec!["web".into()],
+                ..Default::default()
+            },
+            TransferMode::Move,
+            GroupTransferMode::GroupOnly,
+            &HashSet::new(),
+        );
+        let result =
+            apply_transfer_plan_with_secrets(&mut src, &mut dest, &plan, TransferMode::Move, None)
+                .unwrap();
+        assert!(result.deleted_host_ids.is_empty());
+        assert!(result.carry_failures[0].contains("originals could not be removed"));
+        let warning = secret_carry_warning(&result.carry_failures, &result.kept_in_source);
+        assert!(!warning.contains("carrying secrets"), "{warning}");
+        assert!(warning.contains("do not repeat the move"), "{warning}");
+        assert_eq!(dest.list_hosts().unwrap().len(), 1);
+        assert_eq!(src.list_hosts().unwrap().len(), 1);
+    }
 }

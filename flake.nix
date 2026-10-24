@@ -46,7 +46,8 @@
                 --replace-fail 'Exec=@TERM@ --class sshub -e @BIN@' 'Exec=sshub' \
                 --replace-fail 'Terminal=false' 'Terminal=true'
               # ssh, ssh-keygen and ssh-add run at runtime; suffix so the user's own ssh wins.
-              wrapProgram $out/bin/sshub --suffix PATH : ${lib.makeBinPath [ pkgs.openssh ]}
+              # The channel makes `Shift+U` say "update it there" instead of trying to write /nix/store.
+              wrapProgram $out/bin/sshub --set SSHUB_INSTALL_CHANNEL nix --suffix PATH : ${lib.makeBinPath [ pkgs.openssh ]}
             '';
 
             meta = {

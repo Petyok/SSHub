@@ -675,4 +675,11 @@ fn identity_move_whose_secret_is_missing_keeps_the_identity() {
         .unwrap()
         .iter()
         .any(|i| i.name == "deploy"));
+    // Kept in the source means gone from the destination, or a retry adds
+    // `deploy (copy 1)` next to a passphrase-less copy.
+    assert!(dest
+        .list_identities()
+        .unwrap()
+        .iter()
+        .all(|i| !i.name.starts_with("deploy")));
 }
