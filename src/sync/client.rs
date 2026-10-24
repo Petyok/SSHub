@@ -15,6 +15,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use super::transport::{Conn, Limits, CANCEL_POLL};
+use crate::app::sync::OnboardingSecrets;
 use crate::ssh::{build_ssh_argv, SshHost};
 
 // The worker speaks the protocol's own types.
@@ -216,6 +217,14 @@ pub enum SyncCmd {
     SyncNow(DeviceId),
     EnrollBegin(DeviceId),
     EnrollConfirmSas(bool),
+    /// Open these synced credentials (store keys).
+    Unlock(Vec<String>),
+    /// The user's answer to an unlock prompt: the master phrase or a code.
+    UnlockCode(String),
+    /// Abandon the running unlock.
+    UnlockCancel,
+    /// Set up the Vault ring.
+    Onboard(Box<OnboardingSecrets>),
     Shutdown,
 }
 
@@ -225,6 +234,8 @@ pub enum SyncEvent {
     Progress(String),
     PendingArrived(usize),
     SasPrompt(String),
+    /// What the running unlock asks the user for (shown in the unlock modal).
+    UnlockPrompt(String),
     ForkDetected(DeviceId),
     BehindPeer(DeviceId),
     Done,
@@ -236,6 +247,11 @@ pub enum SyncEvent {
 pub enum Round {
     Sync,
     Enroll,
+    /// Open synced credentials; the device argument lists their store keys,
+    /// one per line.
+    Unlock,
+    /// Set up the Vault ring from the secrets [`RoundCtx::take_secrets`] holds.
+    Onboard,
 }
 
 /// A round's window onto the worker: report events, and wait for the UI's
@@ -244,11 +260,23 @@ pub struct RoundCtx<'a> {
     events: &'a Sender<SyncEvent>,
     cmds: &'a Receiver<SyncCmd>,
     cancel: Arc<AtomicBool>,
+    secrets: Option<OnboardingSecrets>,
 }
 
 impl RoundCtx<'_> {
     pub fn emit(&self, event: SyncEvent) {
         let _ = self.events.send(event);
+    }
+
+    /// A sender for code that outlives a borrow of the context (the unlock
+    /// thread), reporting to the same UI.
+    pub fn event_sender(&self) -> Sender<SyncEvent> {
+        self.events.clone()
+    }
+
+    /// The secrets an [`SyncCmd::Onboard`] command carried, once.
+    pub fn take_secrets(&mut self) -> Option<OnboardingSecrets> {
+        self.secrets.take()
     }
 
     /// The flag to hand to [`SshTransport::run`]: set when the worker is told
@@ -303,21 +331,30 @@ pub fn spawn_sync_thread(mut round: RoundFn) -> SyncHandle {
             if worker_cancel.load(Ordering::SeqCst) {
                 break;
             }
+            let mut secrets = None;
             let (kind, device) = match cmd {
                 SyncCmd::SyncNow(d) => (Round::Sync, d),
                 SyncCmd::EnrollBegin(d) => (Round::Enroll, d),
+                SyncCmd::Unlock(keys) => (Round::Unlock, keys.join("\n")),
+                SyncCmd::Onboard(s) => {
+                    secrets = Some(*s);
+                    (Round::Onboard, String::new())
+                }
                 SyncCmd::EnrollConfirmSas(_) => {
                     let _ = evt_tx.send(SyncEvent::Error(
                         "no enrollment is waiting for a confirmation".into(),
                     ));
                     continue;
                 }
+                // An answer or a cancel with no unlock waiting for it.
+                SyncCmd::UnlockCode(_) | SyncCmd::UnlockCancel => continue,
                 SyncCmd::Shutdown => break,
             };
             let mut ctx = RoundCtx {
                 events: &evt_tx,
                 cmds: &cmd_rx,
                 cancel: worker_cancel.clone(),
+                secrets,
             };
             let done = match catch_unwind(AssertUnwindSafe(|| round(kind, &device, &mut ctx))) {
                 Ok(Ok(summary)) => {

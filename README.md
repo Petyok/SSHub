@@ -576,6 +576,8 @@ A fork (a device that signed two different histories) takes over the whole scree
 
 Vault first run: the app issues a six-word master phrase (from the EFF list) and a ring secret, shows the words once, asks you to retype two of them, then writes the printable kit as two separate files at paths you choose: a phrase sheet and a ring secret sheet (the secret as a QR code and as text). Each carries the "do not photograph" warning, is created owner-only and never overwritten; the phrase is kept nowhere else on disk.
 
+When the first run finishes the ring exists on this machine: the master-phrase key is derived (one second or two, 1 GiB of memory), the ring secret goes to the profile's credential store, and this device becomes the ring's first entry. A synced credential stays locked until opened: a connect, SFTP, tunnel, broadcast or key push that needs one opens the unlock modal, where you type the six words of the master phrase (the CLI asks on the terminal without echo). Credentials that need a second device's share (Quorum rings) cannot be opened yet.
+
 ## Theming
 
 SSHub's colours live in TOML theme files you can copy, edit and switch at

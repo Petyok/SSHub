@@ -963,8 +963,9 @@ impl App {
             ))
         };
         // Synced credentials answer from the gate; local ones pass through.
-        let password_store: Box<dyn crate::credentials::PasswordStore> =
-            Box::new(crate::credentials::QuorumGatedStore::new(inner_store));
+        let gated = crate::credentials::QuorumGatedStore::new(inner_store);
+        let gate = gated.gate_handle();
+        let password_store: Box<dyn crate::credentials::PasswordStore> = Box::new(gated);
 
         let mut app = Self::new_with_deps(
             config,
@@ -996,8 +997,13 @@ impl App {
         // Sync: the view from the store, and the worker that runs rounds over
         // ssh (its identity loads on the first round, not now).
         app.refresh_sync_view();
+        crate::sync::runtime::guard_synced_credentials(&gate, app.store.clone());
         app.attach_sync_worker(crate::sync::client::spawn_sync_thread(
-            crate::sync::runtime::round_fn(paths, app.store.clone()),
+            crate::sync::runtime::round_fn(crate::sync::runtime::RoundDeps::for_profile(
+                paths,
+                app.store.clone(),
+                gate,
+            )),
         ));
 
         // Spawn the OS auto-detect worker here (the on-disk constructor) rather

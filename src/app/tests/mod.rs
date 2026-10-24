@@ -165,4 +165,5 @@ mod theme_picker;
 mod transfer_plan_confirm;
 mod transport;
 mod vault_onboarding;
+mod vault_unlock;
 mod workspaces;

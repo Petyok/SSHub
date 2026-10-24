@@ -139,6 +139,8 @@ pub enum UnlockPathKind {
     Clipboard,
     ShortCode,
     Words24,
+    /// The master phrase of a Vault ring.
+    Phrase,
 }
 
 impl UnlockPathKind {
@@ -149,6 +151,7 @@ impl UnlockPathKind {
             Self::Clipboard => "clipboard",
             Self::ShortCode => "short code",
             Self::Words24 => "24 words",
+            Self::Phrase => "master phrase",
         }
     }
 }
@@ -200,7 +203,7 @@ pub struct ReleaseView {
 
 /// What stage 3 stores for Vault: the master phrase and the ring secret.
 /// Zeroized on drop; `Debug` never prints them.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct OnboardingSecrets {
     pub phrase: zeroize::Zeroizing<String>,
     pub ring_secret: zeroize::Zeroizing<[u8; 16]>,
@@ -396,6 +399,9 @@ pub struct SyncView {
     pub last_error: Option<String>,
     /// The host an enrollment was started for (names the SAS peer).
     pub enrolling: Option<String>,
+    /// Store keys the open unlock modal is for, and whether its round runs.
+    pub unlock_keys: Vec<String>,
+    pub unlock_running: bool,
     /// Mode the fork alert interrupted, restored on dismissal.
     fork_return: Option<AppMode>,
 }
@@ -599,6 +605,23 @@ impl App {
                     SyncCmd::EnrollBegin(host.clone())
                 }
                 SyncIntent::SasMatches(ok) => SyncCmd::EnrollConfirmSas(*ok),
+                SyncIntent::Unlock { secrets } => {
+                    self.sync.unlock_keys = secrets.clone();
+                    self.sync.unlock_running = true;
+                    SyncCmd::Unlock(secrets.clone())
+                }
+                SyncIntent::UnlockCode(code) => {
+                    // A failed attempt ended the round: answering again
+                    // starts it over with the same credentials.
+                    if !self.sync.unlock_running && !self.sync.unlock_keys.is_empty() {
+                        self.sync.unlock_running = true;
+                        if let Some(w) = &self.sync_worker {
+                            let _ = w.send(SyncCmd::Unlock(self.sync.unlock_keys.clone()));
+                        }
+                    }
+                    SyncCmd::UnlockCode(code.clone())
+                }
+                SyncIntent::OnboardingDone(secrets) => SyncCmd::Onboard(Box::new(secrets.clone())),
                 // Answered by later stages, not by the transport worker.
                 _ => {
                     kept.push(intent);
@@ -633,6 +656,14 @@ impl App {
                 let peer = sync.enrolling.clone().unwrap_or_else(|| "peer".into());
                 self.open_sync_sas(SasView { peer, words });
             }
+            SyncEvent::UnlockPrompt(text) => {
+                if let Some(u) = sync.unlock.as_mut() {
+                    u.paths = vec![UnlockPathView {
+                        kind: UnlockPathKind::Phrase,
+                        status: text,
+                    }];
+                }
+            }
             SyncEvent::ForkDetected(id) => {
                 let device = sync
                     .devices
@@ -658,6 +689,7 @@ impl App {
                 sync.syncing = false;
                 sync.progress = None;
                 sync.enrolling = None;
+                sync.unlock_running = false;
                 // Whatever the round moved is in the store now.
                 self.refresh_sync_view();
             }
@@ -665,6 +697,7 @@ impl App {
                 sync.syncing = false;
                 sync.progress = None;
                 sync.enrolling = None;
+                sync.unlock_running = false;
                 if message == crate::sync::client::WORKER_STOPPED {
                     // The thread is gone: stop offering the keys that need it.
                     sync.worker = false;
@@ -848,6 +881,11 @@ impl App {
 
     /// Close a Sync modal and drop back to the dashboard.
     fn sync_close_modal(&mut self) {
+        if self.sync.unlock.is_some() && self.sync.unlock_running {
+            if let Some(w) = &self.sync_worker {
+                let _ = w.send(crate::sync::client::SyncCmd::UnlockCancel);
+            }
+        }
         let sync = &mut self.sync;
         sync.unlock = None;
         sync.sas = None;

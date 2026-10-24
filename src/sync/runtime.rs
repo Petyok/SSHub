@@ -5,22 +5,27 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use zeroize::Zeroizing;
 
+use crate::app::sync::OnboardingSecrets;
+use crate::credentials::{PasswordStore, SecretGate, SecretRef, UnlockError, Unlocker};
 use crate::profile::ProfilePaths;
 use crate::ssh::SshHost;
 use crate::store::LauncherStore;
 use crate::sync::client::{
     Round, RoundCtx, RoundFn, SshTransport, SyncCmd, SyncEvent, TransportError,
 };
-use crate::sync::crypto::DeviceIdentity;
+use crate::sync::crypto::{Argon2Profile, DeviceIdentity, Share, ARGON2_MASTER};
 use crate::sync::enroll::{run_sync_join, EnrollOutcome, SasConfirm};
 use crate::sync::identity_store::load_or_init_identity;
-use crate::sync::oplog::DeviceId;
+use crate::sync::oplog::{Attendance, DeviceId, DeviceRole, HostUid};
 use crate::sync::protocol::{run_round, RoundSummary};
+use crate::sync::quorum::{parse_ring_secret, ring_secret_text, QuorumUnlocker, ShareSource};
 use crate::sync::transport::Limits;
 
 /// What runs on the far side of the ssh connection.
@@ -212,15 +217,177 @@ impl SasConfirm for UiSas<'_, '_> {
     }
 }
 
-/// The TUI worker's round function over ssh. The device identity is loaded
-/// (or created) on the first round, not at start-up.
-pub fn round_fn(paths: ProfilePaths, store: Arc<LauncherStore>) -> RoundFn {
+/// Credential-store entry holding the ring secret of this profile's Vault.
+pub const RING_SECRET_KEY: &str = "sync-ring-secret";
+
+/// What the TUI worker's rounds need besides the store.
+#[derive(Clone)]
+pub struct RoundDeps {
+    pub paths: ProfilePaths,
+    pub store: Arc<LauncherStore>,
+    /// The gate of the app's credential store: unlocking fills it.
+    pub gate: Arc<SecretGate>,
+    /// Master-phrase stretching (tests use a cheap profile).
+    pub argon: Argon2Profile,
+    /// Opens the profile's UNGATED credential store: the device key
+    /// passphrase and the ring secret live there.
+    pub open_secrets: fn(&ProfilePaths) -> Box<dyn PasswordStore>,
+}
+
+impl RoundDeps {
+    pub fn for_profile(
+        paths: ProfilePaths,
+        store: Arc<LauncherStore>,
+        gate: Arc<SecretGate>,
+    ) -> Self {
+        Self {
+            paths,
+            store,
+            gate,
+            argon: ARGON2_MASTER,
+            open_secrets: crate::credentials::open_ungated_for_profile,
+        }
+    }
+}
+
+/// Make the gate guard every credential the ring holds: from now on those keys
+/// answer `Locked` until opened, and never fall through to the local store.
+pub fn guard_synced_credentials(gate: &SecretGate, store: Arc<LauncherStore>) {
+    gate.set_synced_check(move |key| {
+        crate::sync::quorum::secret_uid(&store, key)
+            .is_some_and(|u| store.sync_cred_ciphertext(&u).ok().flatten().is_some())
+    });
+}
+
+/// Asks the user through the unlock modal. The master phrase is what they
+/// type; a second share has no way in yet (see `second_share`).
+struct UiShares {
+    events: Sender<SyncEvent>,
+    answers: Mutex<Receiver<String>>,
+}
+
+impl ShareSource for UiShares {
+    fn master_phrase(&self) -> Option<Zeroizing<String>> {
+        let _ = self.events.send(SyncEvent::UnlockPrompt(
+            "Type the six words of the master phrase, then Enter".into(),
+        ));
+        let answers = self.answers.lock().ok()?;
+        answers
+            .recv_timeout(Duration::from_secs(600))
+            .ok()
+            .map(Zeroizing::new)
+    }
+
+    fn second_share(
+        &self,
+        _host: &HostUid,
+        _epoch: u64,
+        _mine: &Share,
+    ) -> std::result::Result<Share, UnlockError> {
+        // ponytail: the peer, phone, short-code and 24-word paths wait on the
+        // protocol pieces that carry them (ShareRequest, snapshot blobs).
+        Err(UnlockError::NeedsShares(
+            "no way to ask another holder from here yet: use a Vault ring, or unlock on a device that can".into(),
+        ))
+    }
+}
+
+fn read_ring_secret(deps: &RoundDeps) -> Option<[u8; 16]> {
+    let text = (deps.open_secrets)(&deps.paths)
+        .get(RING_SECRET_KEY)
+        .ok()??;
+    parse_ring_secret(&text).ok()
+}
+
+/// Run the unlock on its own thread and pump the UI's answers to it until it
+/// finishes: the share source blocks on the answers, the worker keeps reading
+/// commands.
+fn unlock_round(
+    deps: &RoundDeps,
+    identity: &Arc<DeviceIdentity>,
+    keys: &str,
+    ctx: &RoundCtx<'_>,
+) -> Result<()> {
+    let refs: Vec<SecretRef> = keys
+        .lines()
+        .map(|k| SecretRef::Key(k.to_string()))
+        .collect();
+    let (answer_tx, answer_rx) = mpsc::channel::<String>();
+    let source = UiShares {
+        events: ctx.event_sender(),
+        answers: Mutex::new(answer_rx),
+    };
+    let unlocker = QuorumUnlocker::with_profile(
+        deps.store.clone(),
+        identity.clone(),
+        deps.gate.clone(),
+        Box::new(source),
+        read_ring_secret(deps),
+        deps.argon,
+    );
+    let (done_tx, done_rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = done_tx.send(unlocker.unlock(&refs));
+    });
+    let mut answer_tx = Some(answer_tx);
+    let result = loop {
+        match done_rx.try_recv() {
+            Ok(result) => break result,
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => {
+                break Err(UnlockError::Failed(
+                    "the unlock stopped unexpectedly".into(),
+                ))
+            }
+        }
+        match ctx.recv_cmd(Duration::from_millis(100)) {
+            Some(SyncCmd::UnlockCode(code)) => {
+                if let Some(tx) = &answer_tx {
+                    let _ = tx.send(code);
+                }
+            }
+            Some(SyncCmd::UnlockCancel) => answer_tx = None,
+            _ if ctx.cancel_flag().load(std::sync::atomic::Ordering::SeqCst) => answer_tx = None,
+            _ => {}
+        }
+    };
+    result.map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// Set up the Vault ring: the recipient key from phrase and ring secret, the
+/// ring secret in the credential store, this device as the ring's first entry.
+fn onboard_round(deps: &RoundDeps, identity: &DeviceIdentity, s: &OnboardingSecrets) -> Result<()> {
+    crate::sync::crypto::eff_decode(&s.phrase)
+        .context("the master phrase is not 6 words of the EFF list")?;
+    crate::sync::quorum::vault_setup_with(&deps.store, &s.phrase, &s.ring_secret, deps.argon)?;
+    let text = Zeroizing::new(ring_secret_text(&s.ring_secret));
+    (deps.open_secrets)(&deps.paths)
+        .set(RING_SECRET_KEY, &text)
+        .context("keep the ring secret in the credential store")?;
+    if deps.store.sync_devices()?.is_empty() {
+        deps.store.sync_register_device(
+            &identity.public(),
+            &device_name(),
+            DeviceRole::Holder,
+            Attendance::Attended,
+        )?;
+    }
+    Ok(())
+}
+
+/// The TUI worker's round function. The device identity is loaded (or
+/// created) on the first round, not at start-up.
+pub fn round_fn(deps: RoundDeps) -> RoundFn {
     let mut runtime: Option<SyncRuntime> = None;
     Box::new(move |kind, device, ctx| {
         if runtime.is_none() {
-            let secrets = crate::credentials::open_for_profile(&paths);
-            let identity = load_or_init_identity(&paths, secrets.as_ref())?;
-            runtime = Some(SyncRuntime::new(paths.clone(), store.clone(), identity));
+            let secrets = (deps.open_secrets)(&deps.paths);
+            let identity = load_or_init_identity(&deps.paths, secrets.as_ref())?;
+            runtime = Some(SyncRuntime::new(
+                deps.paths.clone(),
+                deps.store.clone(),
+                identity,
+            ));
         }
         let rt = runtime.as_ref().expect("set above");
         let cancel = ctx.cancel_flag().clone();
@@ -234,6 +401,15 @@ pub fn round_fn(paths: ProfilePaths, store: Arc<LauncherStore>) -> RoundFn {
                     first_contact: true,
                     ..Default::default()
                 })
+            }
+            Round::Unlock => {
+                unlock_round(&deps, &rt.identity, device, ctx)?;
+                Ok(RoundSummary::default())
+            }
+            Round::Onboard => {
+                let secrets = ctx.take_secrets().context("no onboarding secrets")?;
+                onboard_round(&deps, &rt.identity, &secrets)?;
+                Ok(RoundSummary::default())
             }
         }
     })

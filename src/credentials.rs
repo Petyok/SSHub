@@ -24,6 +24,10 @@ pub trait PasswordStore: Send + Sync {
     fn gate(&self) -> Option<&SecretGate> {
         None
     }
+    /// The same gate as a shared handle, for the unlocker that fills it.
+    fn shared_gate(&self) -> Option<std::sync::Arc<SecretGate>> {
+        None
+    }
 }
 
 /// Enough to reopen a [`PasswordStore`] in another process: never a secret.
@@ -65,10 +69,18 @@ impl StoreLocator {
 }
 
 /// The credential store of one profile: the OS keyring when usable, else the
-/// profile's `credentials.json`, always under the profile's key prefix.
+/// profile's `credentials.json`, always under the profile's key prefix. Synced
+/// credentials are answered by the gate, never read from the inner store.
 pub fn open_for_profile(paths: &crate::profile::ProfilePaths) -> Box<dyn PasswordStore> {
+    Box::new(QuorumGatedStore::new(open_ungated_for_profile(paths)))
+}
+
+/// [`open_for_profile`] without the gate: for the one job that must read the
+/// local copies of secrets about to be synced (migration), and for keys the
+/// sync stage keeps itself (`sync-ring-secret`).
+pub fn open_ungated_for_profile(paths: &crate::profile::ProfilePaths) -> Box<dyn PasswordStore> {
     let prefix = paths.credential_prefix();
-    let inner: Box<dyn PasswordStore> = if check_keyring_available() {
+    if check_keyring_available() {
         let _ = migrate_fallback_to_keyring(&paths.credentials_file());
         Box::new(NamespacedPasswordStore::new(Box::new(OsKeyring), prefix))
     } else {
@@ -76,8 +88,7 @@ pub fn open_for_profile(paths: &crate::profile::ProfilePaths) -> Box<dyn Passwor
             Box::new(FilePasswordStore::new(paths.credentials_file())),
             prefix,
         ))
-    };
-    Box::new(QuorumGatedStore::new(inner))
+    }
 }
 
 /// Which credential-store entry holds a secret: a stored key (`host:3`,
@@ -670,6 +681,10 @@ impl PasswordStore for QuorumGatedStore {
 
     fn gate(&self) -> Option<&SecretGate> {
         Some(&self.gate)
+    }
+
+    fn shared_gate(&self) -> Option<std::sync::Arc<SecretGate>> {
+        Some(self.gate.clone())
     }
 }
 

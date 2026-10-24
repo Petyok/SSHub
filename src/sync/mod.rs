@@ -12,6 +12,7 @@ pub mod fountain;
 pub mod identity_store;
 pub mod limits;
 pub mod modes;
+pub mod notify;
 pub mod oplog;
 #[cfg(test)]
 mod phone_fixtures;
@@ -20,7 +21,6 @@ pub mod quorum;
 pub mod ratchet;
 pub mod recovery;
 pub mod reshare;
-pub mod notify;
 pub mod runtime;
 pub mod share_release;
 pub mod snapshot;
