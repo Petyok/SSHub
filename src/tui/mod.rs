@@ -1010,11 +1010,20 @@ fn render_sftp_prompt_popup(frame: &mut Frame, app: &App) {
         SftpPromptKind::Mkdir => (" New folder ", "New folder name:"),
         SftpPromptKind::Rename => (" Rename ", "Rename to:"),
         SftpPromptKind::Chmod => (" Permissions ", "Permissions (octal, e.g. 755):"),
+        SftpPromptKind::Goto => (
+            " Go to directory ",
+            "Directory (absolute, relative or ~/), Tab completes:",
+        ),
     };
 
     let area = frame.area();
     let popup_width = (area.width * 70 / 100).max(40).min(area.width);
-    let popup_height = if prompt.error.is_some() { 9 } else { 7 }.min(area.height);
+    let popup_height = if prompt.error.is_some() || prompt.hint.is_some() {
+        9
+    } else {
+        7
+    }
+    .min(area.height);
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
@@ -1044,9 +1053,23 @@ fn render_sftp_prompt_popup(frame: &mut Frame, app: &App) {
         ));
         lines.push((ratatui::text::Line::from(""), None));
     }
+    if let (None, Some(hint)) = (&prompt.error, &prompt.hint) {
+        lines.push((
+            ratatui::text::Line::from(Span::styled(
+                text::ellipsize(hint, (popup_width as usize).saturating_sub(4)),
+                theme.style(StyleRole::PopupHint),
+            )),
+            None,
+        ));
+        lines.push((ratatui::text::Line::from(""), None));
+    }
     lines.push((
         ratatui::text::Line::from(Span::styled(
-            "Enter: confirm  \u{2502}  Esc: cancel",
+            if prompt.kind == SftpPromptKind::Goto {
+                "Tab: complete  \u{2502}  Enter: go  \u{2502}  Esc: cancel"
+            } else {
+                "Enter: confirm  \u{2502}  Esc: cancel"
+            },
             theme.style(StyleRole::PopupHint),
         )),
         None,
@@ -1435,6 +1458,7 @@ fn footer_keybinds(
             ("c".into(), "run"),
             ("u".into(), "unstage"),
             ("d".into(), "delete"),
+            ("g".into(), "go to"),
             ("n".into(), "new dir"),
             ("R".into(), "rename"),
             ("M".into(), "chmod"),
@@ -7682,11 +7706,21 @@ marker = { foreground = \"#ab0005\" }\n\
                     value: "notes.txt".into(),
                     cursor: 0,
                     error: Some("exists".into()),
+                    hint: None,
                 });
                 app.mode = mode;
                 let buf = render_to_buffer(&app, w, h);
                 assert_eq!(buf.area.width, w, "{mode:?} at {w}x{h}");
                 assert_eq!(buf.area.height, h, "{mode:?} at {w}x{h}");
+                // The go-to-path prompt adds a hint line; it must clip too.
+                if let Some(p) = app.sftp_prompt.as_mut() {
+                    p.kind = crate::app::SftpPromptKind::Goto;
+                    p.error = None;
+                    p.hint = Some("docs/  data/  dumps/".into());
+                }
+                let buf = render_to_buffer(&app, w, h);
+                assert_eq!(buf.area.width, w, "{mode:?} goto at {w}x{h}");
+                assert_eq!(buf.area.height, h, "{mode:?} goto at {w}x{h}");
             }
         }
     }

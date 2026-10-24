@@ -1,10 +1,11 @@
 [package]
 name = "sshub"
-version = "0.19.0"
+version = "0.19.2"
 edition = "2021"
 description = "SSHub — TUI launcher for SSH hosts"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/Petyok/SSHub"
+homepage = "https://sshub.petruha.uk"
 readme = "README.md"
 keywords = ["ssh", "tui", "terminal", "launcher"]
 categories = ["command-line-utilities"]
@@ -47,7 +48,8 @@ path = "src/lib.rs"
 # without a system OpenSSL present. It is a feature only so local development
 # can opt OUT with `--no-default-features` (see the `test` recipe in the
 # Justfile): linking the system libs saves ~120 MB of target/ per profile and
-# most of a cold build's wall clock. Nothing that ships may pass that flag.
+# most of a cold build's wall clock. Nothing that ships may pass that flag,
+# except the Nix package (flake.nix), which links nixpkgs' OpenSSL on purpose.
 default = ["vendored"]
 vendored = ["ssh2/vendored-openssl"]
 

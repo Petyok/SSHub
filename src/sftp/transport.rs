@@ -120,6 +120,45 @@ impl Ssh2Transport {
             .ok_or_else(|| anyhow!("SFTP subsystem not opened"))
     }
 
+    /// Host-key algorithms already recorded in known_hosts for this host
+    /// (via `ssh-keygen -F`, so hashed entries work). None → nothing known (TOFU).
+    fn known_hostkey_prefs(host: &str, port: u16) -> Option<String> {
+        let name = if port == 22 {
+            host.to_string()
+        } else {
+            format!("[{host}]:{port}")
+        };
+        let out = std::process::Command::new("ssh-keygen")
+            .arg("-F")
+            .arg(&name)
+            .arg("-f")
+            .arg(Self::known_hosts_path())
+            .stdin(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let mut algs: Vec<&str> = Vec::new();
+        for e in crate::known_hosts::parse_known_hosts(&text) {
+            if e.marker.is_some() {
+                continue;
+            }
+            let t: &[&str] = match e.key_type.as_str() {
+                "ssh-rsa" => &["rsa-sha2-512", "rsa-sha2-256", "ssh-rsa"],
+                "ssh-ed25519" => &["ssh-ed25519"],
+                "ecdsa-sha2-nistp256" => &["ecdsa-sha2-nistp256"],
+                "ecdsa-sha2-nistp384" => &["ecdsa-sha2-nistp384"],
+                "ecdsa-sha2-nistp521" => &["ecdsa-sha2-nistp521"],
+                _ => &[],
+            };
+            for a in t {
+                if !algs.contains(a) {
+                    algs.push(a);
+                }
+            }
+        }
+        (!algs.is_empty()).then(|| algs.join(","))
+    }
+
     /// Trust-on-first-use host-key verification. Mirrors the app's
     /// `StrictHostKeyChecking=accept-new`: an unknown key is recorded + accepted,
     /// only a *changed* key is refused (possible MITM).
@@ -252,8 +291,13 @@ impl SftpTransport for Ssh2Transport {
             .ok_or_else(|| anyhow!("no address found for {host}:{port}"))?;
         let tcp = TcpStream::connect_timeout(&addr, Duration::from_secs(8))
             .with_context(|| format!("could not connect to {host}:{port}"))?;
-
         let mut session = Session::new().context("failed to create SSH session")?;
+        if let Some(prefs) = Self::known_hostkey_prefs(&host, port) {
+            // libssh2 reports Mismatch when the negotiated key type differs
+            // from the stored one; ask the server for the type we already trust.
+            // Best effort: on failure fall back to the default negotiation.
+            let _ = session.method_pref(ssh2::MethodType::HostKey, &prefs);
+        }
         session.set_tcp_stream(tcp);
         session.handshake().context("SSH handshake failed")?;
 
@@ -688,6 +732,76 @@ mod tests {
                 Some(want_fp.as_str()),
                 "entry does not round-trip to the source key: {line}"
             );
+        }
+    }
+
+    /// The pref list must name only algorithms OpenSSH itself knows (`ssh -Q`),
+    /// cover the key types recorded for the host (also when hashed) and stay
+    /// empty for unknown hosts and other ports.
+    #[test]
+    fn known_hostkey_prefs_follow_known_hosts() {
+        if Command::new("ssh-keygen").arg("-?").output().is_err() {
+            crate::test_support::tool_missing("ssh-keygen");
+            return;
+        }
+        let home = tempfile::tempdir().unwrap();
+        let ssh = home.path().join(".ssh");
+        std::fs::create_dir_all(&ssh).unwrap();
+        // "type blob" of a freshly generated public key.
+        let pubkey = |t: &str| {
+            let key = home.path().join(format!("k-{t}"));
+            let ok = Command::new("ssh-keygen")
+                .args(["-q", "-t", t, "-N", "", "-f"])
+                .arg(&key)
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok, "ssh-keygen -t {t} failed");
+            let p = std::fs::read_to_string(key.with_extension("pub")).unwrap();
+            p.split_whitespace().take(2).collect::<Vec<_>>().join(" ")
+        };
+        let (ed, rsa, ecdsa) = (pubkey("ed25519"), pubkey("rsa"), pubkey("ecdsa"));
+        let plain = format!("h-ed {ed}\nh-both {rsa}\nh-both {ed}\n[h-port]:2222 {ecdsa}\n");
+
+        let q = Command::new("ssh")
+            .args(["-Q", "HostKeyAlgorithms"])
+            .output()
+            .unwrap();
+        let known: Vec<String> = String::from_utf8_lossy(&q.stdout)
+            .lines()
+            .map(String::from)
+            .collect();
+
+        let kh = ssh.join("known_hosts");
+        for hash in [false, true] {
+            std::fs::write(&kh, &plain).unwrap();
+            if hash {
+                let out = Command::new("ssh-keygen")
+                    .args(["-H", "-f"])
+                    .arg(&kh)
+                    .output()
+                    .unwrap();
+                assert!(out.status.success());
+            }
+            crate::config::with_test_home(home.path(), || {
+                let prefs = |h, p| Ssh2Transport::known_hostkey_prefs(h, p);
+                assert_eq!(prefs("h-ed", 22).as_deref(), Some("ssh-ed25519"));
+                let both = prefs("h-both", 22).unwrap();
+                assert!(
+                    both.contains("ssh-ed25519") && both.contains("rsa-sha2-512"),
+                    "{both}"
+                );
+                let port = prefs("h-port", 2222).unwrap();
+                assert!(port.starts_with("ecdsa-sha2-nistp"), "{port}");
+                assert_eq!(prefs("h-port", 22), None);
+                assert_eq!(prefs("unknown", 22), None);
+                for a in both.split(',').chain(port.split(',')) {
+                    assert!(
+                        known.iter().any(|k| k == a),
+                        "{a} is not an OpenSSH algorithm"
+                    );
+                }
+            });
         }
     }
 }

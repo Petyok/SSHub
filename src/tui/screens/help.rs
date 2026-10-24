@@ -690,6 +690,10 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "Change permissions (chmod, octal)",
     },
     HelpItem::Entry {
+        key: "g",
+        desc: "Go to a typed directory (/abs, ../rel, ~/x); Tab completes the last segment",
+    },
+    HelpItem::Entry {
         key: "r",
         desc: "Refresh both panes",
     },

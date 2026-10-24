@@ -19,6 +19,31 @@ All notable changes to SSHub are documented in this file.
   destination (a move deletes them from the source). A guided move keeps a group
   in the source while a host that is not moving still belongs to it.
 
+- **Go to a path in the SFTP browser** (issue #162, requested by
+  [@Frysuni](https://github.com/Frysuni)) - the browser could only filter the
+  current directory, so reaching `/var/www` or `~/.ssh` meant walking there one
+  folder at a time. `g` opens a prompt on the focused pane that takes an absolute
+  path, a relative one (`../other`) or `~/x`, and `Tab` completes the last
+  segment: one match is filled in, several extend to what they share and are
+  shown below the field. On the remote pane `~` is the login directory. A local
+  path that is not a directory is refused in the prompt; a refusal from the
+  server shows as the usual notice and the pane keeps its directory.
+- **Nix flake** (issue #163, requested by [@Frysuni](https://github.com/Frysuni)) - `nix run
+  github:Petyok/SSHub` runs SSHub and `nix profile install github:Petyok/SSHub` or a
+  NixOS flake input installs it declaratively (Linux x86_64 and aarch64). The package
+  links nixpkgs' OpenSSL, installs the man page, icon and desktop entry, and runs
+  with `openssh` on the end of `PATH`. CI builds it on x86_64 and aarch64 for every push
+  and pull request, and pushes the build to the public `sshub.cachix.org` binary cache
+  that the flake declares, so installs substitute it instead of compiling. A NixOS
+  configuration gets that cache by importing `nixosModules.binaryCache`.
+
+### Changed
+
+- **README media trimmed to what matters** - five GIFs (hero, connect, map,
+  SFTP, broadcast) and four screenshots (hosts, map, add host, theme picker)
+  instead of eight and ten, with a new map GIF and screenshot. The demo hosts
+  now route Databases and Quad9 through jump hosts so the map has a tree to show.
+
 ### Fixed
 
 - **Moving hosts to another profile now keeps their saved passwords** - a move
@@ -32,12 +57,29 @@ All notable changes to SSHub are documented in this file.
   `sshub host|group|identity transfer --move`.
   A tunnel transferred without its host now lands with auto-connect off.
 
+## [0.19.2] - 2026-10-24
+
 ### Changed
 
-- **README media trimmed to what matters** - five GIFs (hero, connect, map,
-  SFTP, broadcast) and four screenshots (hosts, map, add host, theme picker)
-  instead of eight and ten, with a new map GIF and screenshot. The demo hosts
-  now route Databases and Quad9 through jump hosts so the map has a tree to show.
+- **New icon** - the launcher icon `just install` puts in place is now the hop chain: you,
+  the jump host, and the amber host you land on.
+- **Project website** - [sshub.petruha.uk](https://sshub.petruha.uk) is the homepage on
+  crates.io and npm and is linked from the README.
+
+### Fixed
+
+- **Session log viewer cut off at an invalid byte** (PR #164 by @56steve) - a log containing a
+  byte that is not valid UTF-8 (binary output, a legacy encoding) showed only the text
+  before it. The rest of the log is now shown, with the bad byte as a replacement
+  character.
+
+## [0.19.1] - 2026-10-21
+
+### Fixed
+
+- **SFTP false "host key changed"** - the SFTP tab negotiated a different host key
+  type (ECDSA) than the one in `known_hosts` (ed25519) and reported a MITM. It now
+  asks the server for the key types already recorded for that host.
 
 ## [0.19.0] - 2026-10-17
 

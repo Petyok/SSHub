@@ -1563,6 +1563,8 @@ pub enum SftpPromptKind {
     Rename,
     /// Octal-permission input; `old_path` holds the entry being chmod'd.
     Chmod,
+    /// Go-to-path: a directory to jump to; `Tab` completes the last segment.
+    Goto,
 }
 
 /// Single-field text prompt for an SFTP mkdir / rename ([`AppMode::SftpPrompt`]).
@@ -1577,6 +1579,9 @@ pub struct SftpPromptEdit {
     pub value: String,
     pub cursor: usize,
     pub error: Option<String>,
+    /// Neutral feedback under the field (completion candidates), as opposed
+    /// to `error`, which marks something that went wrong.
+    pub hint: Option<String>,
 }
 
 /// In-progress identity form while in [`AppMode::IdentityForm`].

@@ -1,10 +1,11 @@
-# SSHub
+# <img src="https://raw.githubusercontent.com/Petyok/SSHub/main/assets/sshub.svg" alt="" width="40" height="40" align="top"> SSHub
 
 [![crates.io](https://img.shields.io/crates/v/sshub.svg)](https://crates.io/crates/sshub)
 [![crates.io downloads](https://img.shields.io/crates/d/sshub.svg?label=crates.io%20downloads)](https://crates.io/crates/sshub)
 [![npm](https://img.shields.io/npm/v/sshub-tui.svg)](https://www.npmjs.com/package/sshub-tui)
 [![npm downloads](https://img.shields.io/npm/dm/sshub-tui.svg?label=npm%20downloads%2Fmonth)](https://www.npmjs.com/package/sshub-tui)
 [![vibecoded](https://img.shields.io/badge/vibecoded-~98.5%25-ff69b4)](#model-credits)
+[![website](https://img.shields.io/badge/website-sshub.petruha.uk-e0a84a)](https://sshub.petruha.uk)
 
 ```bash
 npm install -g sshub-tui
@@ -51,7 +52,7 @@ The jump-host map, the add/edit host form, and the theme picker (Settings, `Ctrl
 - **Embedded SSH sessions**: connect opens an in-TUI PTY; detach with `Ctrl+D` and return to the dashboard while SSH keeps running; multiple session tabs, and `Alt+S` switches between open sessions with a searchable picker
 - **Interactive SSH authentication**: masked password, passphrase and one-time-code modals. Eligible managed credentials get a remember option that starts clear and is saved only after SSH confirms authentication; generic challenges are never saved. `Enter` submits, `Tab` selects remember, `Space` toggles it, and `Esc` (or `Ctrl+C`) cancels. New host keys require explicit `y` acceptance; changed keys require uppercase `A` to remove the identified stale entry and reconnect for confirmation. Fingerprints are shown unchanged; `PgUp/PgDn` scroll long prompts. A ProxyJump hop that asks for a password is answered with that hop host's own stored secret, never the destination's, and the modal names the hop. OpenSSH may record accepted keys in its configured known_hosts file. Tunnels, headless commands and Mosh keep their existing authentication paths.
 - **Hosts** — browse, search, and connect. Fuzzy search with `/`, multi-tag AND filter with `#`, favorites, nested groups, manual sort order
-- **SFTP file transfer** — a dual-pane browser with a staged transfer queue: navigate both sides, queue uploads and downloads (files or whole folders, transferred recursively), and run them with a progress bar. Files can be staged while the queue runs. The left pane is your local filesystem by default, or point it at a **second server** with `o` (`O` sends it back to local) to move files between two hosts — relayed through a local temp file, since SSH has no server-to-server copy. Manage files in place too: delete (`d`), new folder (`n`), rename/move (`R`), and change permissions (`M`, octal chmod)
+- **SFTP file transfer** — a dual-pane browser with a staged transfer queue: navigate both sides, queue uploads and downloads (files or whole folders, transferred recursively), and run them with a progress bar. Files can be staged while the queue runs. Jump straight to a directory by typing its path with `g` (`/home/me`, `../other`, `~/.ssh`; `Tab` completes the last segment). The left pane is your local filesystem by default, or point it at a **second server** with `o` (`O` sends it back to local) to move files between two hosts — relayed through a local temp file, since SSH has no server-to-server copy. Manage files in place too: delete (`d`), new folder (`n`), rename/move (`R`), and change permissions (`M`, octal chmod)
 - **OS auto-detection** — on first connect a background probe detects the remote distro and the host card renders its logo (Braille art in brand colors), just like Termius
 - **Multiple groups & Favorites** — a host can belong to several groups at once; a reserved Favorites group and a ★ marker in the list, toggled with `f`
 - **Tunnels** — define and manage SSH tunnels (local/remote/dynamic SOCKS). Start, stop, and monitor from the TUI. Per-tunnel **keep alive** auto-starts on launch and reconnects dropped forwards with exponential backoff (configurable in `config.toml`).
@@ -127,6 +128,54 @@ sudo pacman -S --needed dbus
 ```
 
 Prebuilt binaries for Linux and macOS are attached to each [GitHub release](https://github.com/Petyok/SSHub/releases).
+
+From the [Nix flake](flake.nix) (Linux x86_64 and aarch64), no toolchain required:
+
+```bash
+nix run github:Petyok/SSHub               # run it without installing
+nix profile install github:Petyok/SSHub   # then just: sshub
+```
+
+On NixOS, add it as a flake input, install the package system-wide, and import the
+module that points Nix at the prebuilt binaries:
+
+```nix
+# flake.nix
+inputs.sshub.url = "github:Petyok/SSHub";
+
+# configuration.nix (pass `inputs` to your modules, e.g. via specialArgs)
+imports = [ inputs.sshub.nixosModules.binaryCache ];
+environment.systemPackages = [
+  inputs.sshub.packages.${pkgs.stdenv.hostPlatform.system}.default
+];
+```
+
+Prebuilt binaries come from the [sshub.cachix.org](https://sshub.cachix.org) cache, so
+nothing is compiled. `nixosModules.binaryCache` only sets `nix.settings.substituters` and
+`nix.settings.trusted-public-keys`; skip it and set them yourself if you prefer:
+
+```nix
+nix.settings.substituters = [ "https://sshub.cachix.org" ];
+nix.settings.trusted-public-keys = [
+  "sshub.cachix.org-1:yniNe6K3gkRhTgoJL6Rh2Kvqjfaw7ZjTYEFTwIpYjKA="
+];
+```
+
+For `nix run` and `nix profile install` the flake declares the cache itself, and Nix asks
+whether to trust it the first time (answer `y`, or pass `--accept-flake-config`). That
+declaration is ignored when the flake is an input of another flake, hence the module. On a
+multi-user install a user who is not in `trusted-users` has the flake's cache ignored: add
+it to `trusted-substituters` (with the key above in `trusted-public-keys`) or add the user
+to `trusted-users`.
+
+The cache holds the build for the nixpkgs this flake pins. Overriding that with
+`inputs.sshub.inputs.nixpkgs.follows` changes the store path, so Nix compiles locally,
+and an older channel can also fail on an older Rust toolchain. The flake follows the
+default branch (`main`), so it tracks releases. The package links nixpkgs' OpenSSL, puts
+`openssh` on the end of `PATH` (your own `ssh` still wins), and installs the man page,
+icon and desktop entry. Shell completions are not packaged: they embed your host names,
+so generate them yourself as described under [Headless CLI](#headless-cli)
+(`sshub completions <shell>` works the same for a Nix install).
 
 At runtime, a Secret Service provider (gnome-keyring, KWallet, …) is preferred for secure credential storage. If one is not running or unlocked (e.g. in WSL, Docker, or headless SSH sessions), SSHub will fallback to storing credentials in a local owner-only restricted file (`credentials.json`), notifying you in the status bar.
 
@@ -412,6 +461,7 @@ arrives as arrow keys, exactly as in a real terminal.
 | `Enter`            | Connect to host · enter directory (`..` walks up)    |
 | `Tab`              | Switch focus between the panes                       |
 | `Backspace`        | Up one directory                                     |
+| `g`                | Go to a typed path (`Tab` completes)                 |
 | `←` / `→`          | Stage the focused pane's selection toward the other  |
 | `c` / `u`          | Run the queue / unstage the last transfer            |
 | `o` / `O`          | Left pane to a second server / back to local files   |
