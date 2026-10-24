@@ -462,5 +462,14 @@ mod tests {
             .permissions()
             .mode();
         assert_eq!(mode & 0o077, 0);
+        let dir_mode = std::fs::metadata(Peers::file(&paths).parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(dir_mode & 0o077, 0, "the sync directory is owner-only too");
+        assert!(
+            Peers::file(&paths).starts_with(&paths.root),
+            "under the profile root"
+        );
     }
 }

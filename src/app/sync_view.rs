@@ -199,6 +199,23 @@ pub(crate) fn pending_view(
         OpBody::DeviceAdd { name, .. } => format!("add device {name}"),
         OpBody::DeviceRevoke { device_id } => format!("revoke device {}", short(device_id)),
         OpBody::ModeChange { to, .. } => format!("switch credential mode to {to:?}"),
+        OpBody::ShareRelease {
+            host_uid,
+            requester,
+            ..
+        } => {
+            let who = devices
+                .iter()
+                .find(|d| d.id == *requester)
+                .map_or_else(|| short(requester), |d| d.name.clone());
+            let what = store
+                .host_id_by_uid(host_uid)
+                .ok()
+                .flatten()
+                .and_then(|id| store.get_host(id).ok().flatten())
+                .map_or_else(|| short(&uid_hex(host_uid)), |m| m.name);
+            format!("release a share of {what} to {who}")
+        }
         other => {
             let dbg = format!("{other:?}");
             dbg.split([' ', '{', '('])

@@ -268,3 +268,27 @@ fn declining_the_words_joins_nothing_and_says_so() {
     assert!(!app.sync.configured);
     assert!(app.store.sync_devices().unwrap().is_empty());
 }
+
+#[test]
+fn a_share_release_names_the_requester_and_the_host_in_the_review() {
+    let (app, author) = app_with_author();
+    let host = app
+        .store
+        .create_host(&crate::store::NewHost::launcher("web", "10.0.0.1"))
+        .unwrap();
+    let uid = app.store.host_uid(host.id).unwrap().unwrap();
+    let op = author
+        .store
+        .sync_append_local(
+            &author.id,
+            OpBody::ShareRelease {
+                host_uid: uid,
+                request_id: 7,
+                requester: author.id.public().device_id(),
+            },
+        )
+        .unwrap();
+    let rows = app.store.sync_devices().unwrap();
+    let view = crate::app::sync_view::pending_view(&app.store, &op, &rows, None);
+    assert_eq!(view.summary, "release a share of web to laptop");
+}
