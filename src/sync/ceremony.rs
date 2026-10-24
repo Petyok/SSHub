@@ -60,6 +60,11 @@ pub fn is_gated(store: &LauncherStore, op: &Op) -> Result<bool> {
     })
 }
 
+/// Pending only because its author is not an accepted device yet.
+pub(crate) fn awaits_author(store: &LauncherStore, op: &Op) -> Result<bool> {
+    Ok(store.sync_pending_reason(&op.hash())?.as_deref() == Some("unknown-author"))
+}
+
 fn factor_message(op_hash: &[u8; 32], proposer: &DeviceId) -> Vec<u8> {
     [FACTOR_DOMAIN, op_hash.as_slice(), proposer.as_bytes()].concat()
 }
@@ -69,9 +74,20 @@ type Registration = ([u8; 32], Vec<u8>, Option<DeviceId>);
 
 /// The newest applied registration of `factor`.
 fn registered(store: &LauncherStore, factor: ThirdFactor) -> Result<Option<Registration>> {
+    registered_but(store, factor, None)
+}
+
+/// [`registered`] without the op `except`: the proposer applied its own registration at once, but while
+/// that registration is itself under ceremony it is not yet a factor anyone can be asked for.
+fn registered_but(
+    store: &LauncherStore,
+    factor: ThirdFactor,
+    except: Option<&[u8; 32]>,
+) -> Result<Option<Registration>> {
     Ok(ops_of(store, "FactorRegister", None)?
         .into_iter()
         .rev()
+        .filter(|o| Some(&o.hash()) != except)
         .find_map(|o| match o.body {
             OpBody::FactorRegister {
                 factor: f,
@@ -242,8 +258,8 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
     }
 
     // Third factor.
-    let paper = registered(store, ThirdFactor::Paper)?;
-    let email = registered(store, ThirdFactor::EmailCode)?;
+    let paper = registered_but(store, ThirdFactor::Paper, Some(&hash))?;
+    let email = registered_but(store, ThirdFactor::EmailCode, Some(&hash))?;
     let replacing = match &op.body {
         OpBody::FactorRegister { factor, .. } => Some(factor.clone()),
         _ => None,
@@ -319,7 +335,8 @@ pub struct SettleReport {
 pub fn settle_red_ops(store: &LauncherStore, now: i64) -> Result<SettleReport> {
     let mut report = SettleReport::default();
     for op in store.sync_pending()? {
-        if !is_gated(store, &op)? {
+        // An op of an unknown author is unverifiable and inert: it waits for the author's admission.
+        if !is_gated(store, &op)? || awaits_author(store, &op)? {
             continue;
         }
         let st = red_status(store, &op, now)?;
