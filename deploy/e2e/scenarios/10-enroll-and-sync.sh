@@ -16,6 +16,8 @@ rid() {
 reset_peers
 check "peer-a founds the ring with hub" "enroll_peer peer-a hub"
 check "peer-b joins via hub" "enroll_peer peer-b hub"
+st0=$(peer peer-b $SSHUB sync-status --format json 2>/dev/null || true)
+expect "joiner has 0 pending after join (ring state adopted, not reviewed)" "$st0" '.pending == 0'
 check "peer-a approves peer-b's admission" "approve_all peer-a"
 check "peer-b records peer-a directly" "enroll_peer peer-b peer-a"
 dump_state "after enrollment"
@@ -26,6 +28,8 @@ expect "peer-b sync-now reaches peer-a ok" "$out" '[.[] | select(.name=="peer-a"
 
 st=$(peer peer-b $SSHUB sync-status --format json 2>/dev/null || true)
 expect "address change held as pending on peer-b" "$st" '.pending >= 1'
+q=$(peer peer-b $SSHUB sync-review --format json 2>/dev/null || true)
+expect "web1 address change listed as dangerous with a summary" "$q" 'any(.[]; (any(.changes[]; .to == "web1.internal" and .dangerous == true)) and (.summary | length > 0))'
 # Raw review queue, so a failing rid lookup shows what peer-b actually reports.
 echo "--- peer-b sync-review (plain)"
 peer peer-b $SSHUB sync-review 2>&1 || true
