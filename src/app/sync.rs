@@ -250,6 +250,14 @@ pub struct SyncView {
     /// Unlock QR frame shown now; advanced from the app tick.
     pub qr_frame: usize,
     qr_last: Option<std::time::Instant>,
+    /// A round with a peer is running (set when a request goes to the worker).
+    pub syncing: bool,
+    /// The worker's latest progress line, while a round runs.
+    pub progress: Option<String>,
+    /// The last round's failure; cleared when the next request goes out.
+    pub last_error: Option<String>,
+    /// The host an enrollment was started for (names the SAS peer).
+    pub enrolling: Option<String>,
     /// Mode the fork alert interrupted, restored on dismissal.
     fork_return: Option<AppMode>,
 }
@@ -420,6 +428,110 @@ impl App {
     pub fn open_sync_sas(&mut self, view: SasView) {
         self.sync.sas = Some(view);
         self.mode = AppMode::SyncSas;
+    }
+
+    /// Hand the worker the protocol package built; the tab's keys then work.
+    pub fn attach_sync_worker(&mut self, handle: crate::sync::client::SyncHandle) {
+        self.sync.worker = true;
+        self.sync_worker = Some(handle);
+    }
+
+    /// Per-tick: pass the UI's queued requests to the worker, then fold the
+    /// worker's events into the [`SyncView`]. This is the one place worker
+    /// events become view state.
+    pub fn poll_sync(&mut self) {
+        self.forward_sync_intents();
+        while let Some(Ok(event)) = self.sync_worker.as_ref().map(|w| w.try_recv()) {
+            self.apply_sync_event(event);
+        }
+    }
+
+    fn forward_sync_intents(&mut self) {
+        use crate::sync::client::SyncCmd;
+        if self.sync_worker.is_none() || self.sync.intents.is_empty() {
+            return;
+        }
+        let mut kept = Vec::new();
+        for intent in std::mem::take(&mut self.sync.intents) {
+            let cmd = match &intent {
+                SyncIntent::SyncNow { device } => SyncCmd::SyncNow(device.clone()),
+                SyncIntent::Enroll { host } => {
+                    self.sync.enrolling = Some(host.clone());
+                    SyncCmd::EnrollBegin(host.clone())
+                }
+                SyncIntent::SasMatches(ok) => SyncCmd::EnrollConfirmSas(*ok),
+                // Answered by later stages, not by the transport worker.
+                _ => {
+                    kept.push(intent);
+                    continue;
+                }
+            };
+            if !matches!(cmd, SyncCmd::EnrollConfirmSas(_)) {
+                self.sync.syncing = true;
+                self.sync.progress = None;
+                self.sync.last_error = None;
+            }
+            let sent = self
+                .sync_worker
+                .as_ref()
+                .is_some_and(|w| w.send(cmd).is_ok());
+            if !sent {
+                self.apply_sync_event(crate::sync::client::SyncEvent::Error(
+                    crate::sync::client::WORKER_STOPPED.into(),
+                ));
+            }
+        }
+        self.sync.intents = kept;
+    }
+
+    fn apply_sync_event(&mut self, event: crate::sync::client::SyncEvent) {
+        use crate::sync::client::SyncEvent;
+        let sync = &mut self.sync;
+        match event {
+            SyncEvent::Progress(line) => sync.progress = Some(line),
+            SyncEvent::PendingArrived(n) => sync.pending += n,
+            SyncEvent::SasPrompt(words) => {
+                let peer = sync.enrolling.clone().unwrap_or_else(|| "peer".into());
+                self.open_sync_sas(SasView { peer, words });
+            }
+            SyncEvent::ForkDetected(id) => {
+                let device = sync
+                    .devices
+                    .iter()
+                    .find(|d| d.id == id)
+                    .map_or_else(|| id.clone(), |d| d.name.clone());
+                self.raise_sync_fork_alert(ForkView {
+                    device,
+                    detail: format!("device id {id}: two different histories under one identity"),
+                });
+            }
+            SyncEvent::BehindPeer(id) => {
+                if let Some(d) = sync
+                    .devices
+                    .iter_mut()
+                    .find(|d| d.id == id && d.status == DeviceStatusView::Operational)
+                {
+                    d.status = DeviceStatusView::Behind;
+                }
+            }
+            SyncEvent::Done => {
+                sync.syncing = false;
+                sync.progress = None;
+                sync.enrolling = None;
+            }
+            SyncEvent::Error(message) => {
+                sync.syncing = false;
+                sync.progress = None;
+                sync.enrolling = None;
+                if message == crate::sync::client::WORKER_STOPPED {
+                    // The thread is gone: stop offering the keys that need it.
+                    sync.worker = false;
+                    self.sync_worker = None;
+                }
+                self.sync.last_error = Some(message.clone());
+                self.host_notice = Some(format!("sync: {message}"));
+            }
+        }
     }
 
     pub fn open_sync_release_confirm(&mut self, view: ReleaseView) {
@@ -844,5 +956,124 @@ mod tests {
         app.mode = AppMode::Normal;
         app.advance_sync_qr(t0 + std::time::Duration::from_secs(2));
         assert_eq!(app.sync.qr_frame, 1, "no stepping behind another screen");
+    }
+
+    /// Poll the app until `done` holds; a worker thread needs real time.
+    fn pump(app: &mut App, done: impl Fn(&App) -> bool) {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !done(app) {
+            assert!(std::time::Instant::now() < end, "condition never held");
+            app.poll_sync();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    fn app_with_worker(round: crate::sync::client::RoundFn) -> App {
+        let mut app = configured_app();
+        app.sync.worker = false;
+        app.attach_sync_worker(crate::sync::client::spawn_sync_thread(round));
+        app
+    }
+
+    #[test]
+    fn a_queued_sync_now_reaches_the_worker_and_its_events_fill_the_view() {
+        use crate::sync::client::{RoundSummary, SyncEvent};
+        let mut app = app_with_worker(Box::new(|_k, device, ctx| {
+            assert_eq!(device, "id-server");
+            ctx.emit(SyncEvent::Progress("talking".into()));
+            Ok(RoundSummary { pending_arrived: 3 })
+        }));
+        app.sync.intents.push(SyncIntent::SyncNow {
+            device: "id-server".into(),
+        });
+        app.poll_sync();
+        assert!(app.sync.syncing, "a request marks the round as running");
+        assert!(app.sync.intents.is_empty());
+        pump(&mut app, |a| !a.sync.syncing);
+        assert_eq!(app.sync.pending, 2 + 3, "arrived ops add to the count");
+        assert_eq!(app.sync.progress, None);
+        assert_eq!(app.sync.last_error, None);
+    }
+
+    #[test]
+    fn enrollment_shows_the_sas_naming_the_host_and_the_answer_goes_back() {
+        use crate::sync::client::{Round, RoundSummary, SyncCmd, SyncEvent};
+        let mut app = app_with_worker(Box::new(|kind, _d, ctx| {
+            assert_eq!(kind, Round::Enroll);
+            ctx.emit(SyncEvent::SasPrompt("harbor-globe-lantern-mint".into()));
+            match ctx.recv_cmd(std::time::Duration::from_secs(5)) {
+                Some(SyncCmd::EnrollConfirmSas(true)) => Ok(RoundSummary::default()),
+                other => anyhow::bail!("not confirmed: {other:?}"),
+            }
+        }));
+        app.sync.intents.push(SyncIntent::Enroll {
+            host: "web-1".into(),
+        });
+        pump(&mut app, |a| a.mode == AppMode::SyncSas);
+        let sas = app.sync.sas.clone().unwrap();
+        assert_eq!(
+            (sas.peer.as_str(), sas.words.as_str()),
+            ("web-1", "harbor-globe-lantern-mint")
+        );
+        app.handle_key(press(KeyCode::Enter)).unwrap(); // the words match
+        pump(&mut app, |a| !a.sync.syncing && a.sync.enrolling.is_none());
+        assert_eq!(app.sync.last_error, None);
+        assert_eq!(app.mode, AppMode::Normal);
+    }
+
+    #[test]
+    fn fork_behind_and_failure_events_become_alert_status_and_notice() {
+        use crate::sync::client::{RoundSummary, SyncEvent};
+        let mut app = app_with_worker(Box::new(|_k, device, ctx| match device.as_str() {
+            "fork" => {
+                ctx.emit(SyncEvent::ForkDetected("id-server".into()));
+                Ok(RoundSummary::default())
+            }
+            "behind" => {
+                ctx.emit(SyncEvent::BehindPeer("id-laptop".into()));
+                Ok(RoundSummary::default())
+            }
+            _ => anyhow::bail!("peer said no"),
+        }));
+        for (device, check) in [
+            (
+                "behind",
+                (|a: &App| a.sync.devices[0].status == DeviceStatusView::Behind)
+                    as fn(&App) -> bool,
+            ),
+            ("fork", |a: &App| a.mode == AppMode::SyncForkAlert),
+            ("fail", |a: &App| a.sync.last_error.is_some()),
+        ] {
+            app.sync.intents.push(SyncIntent::SyncNow {
+                device: device.into(),
+            });
+            pump(&mut app, check);
+        }
+        assert_eq!(app.sync.fork.as_ref().unwrap().device, "server");
+        assert_eq!(app.sync.last_error.as_deref(), Some("peer said no"));
+        assert_eq!(app.host_notice.as_deref(), Some("sync: peer said no"));
+    }
+
+    #[test]
+    fn a_stopped_worker_clears_the_worker_flag_and_says_so() {
+        use crate::sync::client::{SyncCmd, WORKER_STOPPED};
+        let mut app = app_with_worker(Box::new(|_, _, _| Ok(Default::default())));
+        app.sync_worker
+            .as_ref()
+            .unwrap()
+            .send(SyncCmd::Shutdown)
+            .unwrap();
+        pump(&mut app, |a| a.sync_worker.is_none());
+        assert!(!app.sync.worker, "the keys that need a worker say so again");
+        assert_eq!(app.sync.last_error.as_deref(), Some(WORKER_STOPPED));
+    }
+
+    #[test]
+    fn without_a_worker_queued_requests_are_kept_not_dropped() {
+        let mut app = configured_app();
+        app.sync.worker = false;
+        app.sync.intents.push(SyncIntent::OnboardingDone);
+        app.poll_sync();
+        assert_eq!(app.sync.intents, vec![SyncIntent::OnboardingDone]);
     }
 }
