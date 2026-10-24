@@ -155,6 +155,12 @@ pub fn body_name(body: &OpBody) -> &'static str {
         OpBody::ModeChange { .. } => "ModeChange",
         OpBody::HeadAttest { .. } => "HeadAttest",
         OpBody::RecoveryApprove { .. } => "RecoveryApprove",
+        OpBody::RedApprove { .. } => "RedApprove",
+        OpBody::RedPhoneSign { .. } => "RedPhoneSign",
+        OpBody::RedFactor { .. } => "RedFactor",
+        OpBody::FactorRegister { .. } => "FactorRegister",
+        OpBody::DeviceRoleChange { .. } => "DeviceRoleChange",
+        OpBody::BulkExport { .. } => "BulkExport",
         OpBody::CheckpointPropose { .. } => "CheckpointPropose",
         OpBody::CheckpointSign { .. } => "CheckpointSign",
     }
@@ -393,6 +399,42 @@ fn body(b: &mut Vec<u8>, body: &OpBody) {
             }
         }
         OpBody::RecoveryApprove { reenroll_hash } => hex32(o.key("reenroll_hash"), reenroll_hash),
+        OpBody::RedApprove { op_hash } | OpBody::RedPhoneSign { op_hash } => {
+            hex32(o.key("op_hash"), op_hash)
+        }
+        OpBody::RedFactor {
+            op_hash,
+            factor,
+            sig,
+        } => {
+            hex32(o.key("op_hash"), op_hash);
+            third_factor(o.key("factor"), factor);
+            string(o.key("sig"), &hex_lower(sig));
+        }
+        OpBody::FactorRegister {
+            factor,
+            public,
+            sealed,
+            salt,
+            sender,
+        } => {
+            third_factor(o.key("factor"), factor);
+            hex32(o.key("public"), public);
+            b64(o.key("sealed"), sealed);
+            string(o.key("salt"), &hex_lower(salt));
+            opt_str(o.key("sender"), sender);
+        }
+        OpBody::DeviceRoleChange { device_id, to } => {
+            string(o.key("device_id"), device_id);
+            string(o.key("to"), role_str(*to));
+        }
+        OpBody::BulkExport {
+            requester,
+            window_secs,
+        } => {
+            string(o.key("requester"), requester);
+            write!(o.key("window_secs"), "{window_secs}").expect("vec write");
+        }
         OpBody::CheckpointPropose {
             cut,
             state_hash,
@@ -990,6 +1032,49 @@ fn decode_body(v: &Value) -> Result<OpBody> {
                 Value::Null => None,
                 v => Some(third_factor_of(v)?),
             },
+        },
+        "RedApprove" => OpBody::RedApprove {
+            op_hash: get_32(m, "op_hash")?,
+        },
+        "RedPhoneSign" => OpBody::RedPhoneSign {
+            op_hash: get_32(m, "op_hash")?,
+        },
+        "RedFactor" => OpBody::RedFactor {
+            op_hash: get_32(m, "op_hash")?,
+            factor: third_factor_of(get(m, "factor")?)?,
+            sig: get_64(get(m, "sig")?)?,
+        },
+        "FactorRegister" => OpBody::FactorRegister {
+            factor: third_factor_of(get(m, "factor")?)?,
+            public: get_32(m, "public")?,
+            sealed: get_bytes(m, "sealed")?,
+            salt: {
+                let h = get_string(m, "salt")?;
+                ensure!(
+                    h.len() == 32
+                        && h.bytes()
+                            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)),
+                    "salt must be 32 lowercase hex characters"
+                );
+                let mut out = [0u8; 16];
+                for (i, byte) in out.iter_mut().enumerate() {
+                    *byte = u8::from_str_radix(&h[2 * i..2 * i + 2], 16)?;
+                }
+                out
+            },
+            sender: opt_string(m, "sender")?,
+        },
+        "DeviceRoleChange" => OpBody::DeviceRoleChange {
+            device_id: get_string(m, "device_id")?,
+            to: match get_string(m, "to")?.as_str() {
+                "Holder" => DeviceRole::Holder,
+                "Mirror" => DeviceRole::Mirror,
+                r => bail!("unknown role {r}"),
+            },
+        },
+        "BulkExport" => OpBody::BulkExport {
+            requester: get_string(m, "requester")?,
+            window_secs: u32::try_from(get_u64(m, "window_secs")?)?,
         },
         "RecoveryApprove" => OpBody::RecoveryApprove {
             reenroll_hash: get_32(m, "reenroll_hash")?,

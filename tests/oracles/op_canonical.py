@@ -59,6 +59,12 @@ BODY_ORDER = {
     "PhoneReenroll": ["initiated_at", "signers", "via_paper", "third_factor", "liveness", "paper_sig"],
     "PhoneReenrollCancel": ["reenroll_hash", "by_phone", "third_factor"],
     "RecoveryApprove": ["reenroll_hash"],
+    "RedApprove": ["op_hash"],
+    "RedPhoneSign": ["op_hash"],
+    "RedFactor": ["op_hash", "factor", "sig"],
+    "FactorRegister": ["factor", "public", "sealed", "salt", "sender"],
+    "DeviceRoleChange": ["device_id", "to"],
+    "BulkExport": ["requester", "window_secs"],
     "RecoveryAck": ["reenroll_hash", "seen_at"],
     "CheckpointPropose": ["cut", "state_hash", "state_len", "prev_checkpoint", "required"],
     "CheckpointSign": ["proposal_hash"],
@@ -84,9 +90,12 @@ FIELDS_ORDER = {
 
 # Fixed 32-byte values: hex strings in the inputs and in the canonical form.
 HEX32_KEYS = {"ed25519_pub", "x25519_pub", "reenroll_hash", "chain_hash", "cert_id",
-              "state_hash", "prev_checkpoint", "proposal_hash", "op_hash", "eph_x25519_pub"}
+              "state_hash", "prev_checkpoint", "proposal_hash", "op_hash", "eph_x25519_pub",
+              "public"}
+# Fixed 16-byte value (a salt): 32 lowercase hex characters.
+HEX16_KEYS = {"salt"}
 # Fixed 64-byte value (a signature): a 128 character hex string, or null.
-HEX64_KEYS = {"paper_sig"}
+HEX64_KEYS = {"paper_sig", "sig"}
 # Vec<u8>: hex in the inputs, base64 in the canonical form.
 VEC_KEYS = {"mlkem_pub", "ciphertext", "sealed", "sealed_share"}
 
@@ -132,6 +141,10 @@ def value(key, v):
         return b64(v)
     if key in HEX64_KEYS:
         assert len(v) == 128 and v == v.lower()
+        bytes.fromhex(v)
+        return s(v)
+    if key in HEX16_KEYS:
+        assert len(v) == 32 and v == v.lower()
         bytes.fromhex(v)
         return s(v)
     if key in HEX32_KEYS:

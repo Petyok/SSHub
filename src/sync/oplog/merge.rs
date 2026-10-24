@@ -288,6 +288,24 @@ fn resurrects(conn: &Connection, op: &Op) -> Result<bool> {
     Ok(tomb.is_some_and(|t| op.lamport > t as u64))
 }
 
+/// The tier of an op in this store: a revoke is Yellow when the target is a
+/// mirror, Red when it is a holder or unknown.
+pub(crate) fn effective_tier(conn: &Connection, op: &Op) -> Result<OpTier> {
+    if let OpBody::DeviceRevoke { device_id } = &op.body {
+        let role: Option<String> = conn
+            .query_row(
+                "SELECT role FROM sync_devices WHERE device_id = ?1",
+                params![device_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if role.as_deref() == Some("mirror") {
+            return Ok(OpTier::Yellow);
+        }
+    }
+    Ok(op.tier())
+}
+
 /// The state an op should be in given everything else in the log.
 pub(crate) fn desired_state(
     conn: &Connection,
@@ -303,7 +321,7 @@ pub(crate) fn desired_state(
     if row.state == State::Approved || row.local {
         return Ok((State::Approved, None));
     }
-    if op.tier() != OpTier::Green {
+    if effective_tier(conn, op)? != OpTier::Green {
         return Ok((State::Pending, Some("tier")));
     }
     if super::checkpoint::stale_above_cut(conn, op)? {
@@ -460,6 +478,12 @@ fn effects(conn: &Connection, op: &Op, hash: &[u8; 32]) -> Result<()> {
                     ],
                 )?;
             }
+        }
+        OpBody::DeviceRoleChange { device_id, to } => {
+            conn.execute(
+                "UPDATE sync_devices SET role = ?2 WHERE device_id = ?1",
+                params![device_id, role_db(*to)],
+            )?;
         }
         OpBody::CredUpdate {
             host_uid,
