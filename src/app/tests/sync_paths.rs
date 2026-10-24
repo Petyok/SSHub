@@ -691,3 +691,38 @@ fn the_paper_phrase_is_shown_once_and_registered_only_when_typed_back_exactly() 
         1
     );
 }
+
+#[test]
+fn a_reply_heard_or_seen_opens_the_credential_and_a_reply_for_another_request_is_refused() {
+    use crate::app::sync::UnlockPathKind::{Audio, Camera};
+    use crate::sync::media::{MediaEvent, MediaKind};
+    let mut r = ring(None);
+    ask(&mut r);
+    let frames = wait_for_phone_prompt(&mut r);
+    // Each listener says what it is doing, or why it is not (feature off, no device).
+    pump(&mut r.app, "the listener statuses", |a| {
+        status(a, Audio).is_some() && status(a, Camera).is_some()
+    });
+    let tx = loop {
+        if let Some(tx) = crate::sync::ui_shares::test_hooks::channel(&r.paths.root) {
+            break tx;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+
+    // A reply sealed for some other request is refused and the wait goes on.
+    let bytes_of = |text: &str| B64.decode(text).unwrap();
+    let mut other = bytes_of(&phone_reply_text(&frames, &phone_share(&r)));
+    let at = other.len().min(8) - 1;
+    other[at] ^= 0x55; // damages the frame header or request id: not an acceptable reply
+    tx.send(MediaEvent::Reply(MediaKind::Audio, other)).unwrap();
+    pump(&mut r.app, "the refusal", |a| {
+        status(a, Audio).is_some_and(|s| s.starts_with("not accepted"))
+    });
+    assert!(!unlocked(&r));
+
+    // The phone's real reply, heard by the microphone, opens it.
+    let good = bytes_of(&phone_reply_text(&frames, &phone_share(&r)));
+    tx.send(MediaEvent::Reply(MediaKind::Audio, good)).unwrap();
+    assert_resumed_and_open(&mut r);
+}

@@ -163,6 +163,10 @@ pub enum UnlockPathKind {
     Words24,
     /// The master phrase of a Vault ring.
     Phrase,
+    /// The microphone listening for the phone's sound.
+    Audio,
+    /// The camera reading the phone's code.
+    Camera,
 }
 
 impl UnlockPathKind {
@@ -174,6 +178,8 @@ impl UnlockPathKind {
             Self::ShortCode => "short code",
             Self::Words24 => "24 words",
             Self::Phrase => "master phrase",
+            Self::Audio => "microphone",
+            Self::Camera => "camera",
         }
     }
 }
