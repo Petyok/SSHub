@@ -109,6 +109,7 @@ The theme picker, with its detail preview next to the list, and the known hosts 
 - **Configurable keybindings**: rebind any action via `Ctrl+K`; stored in `config.toml` under `[keybinds]`
 - **Profiles**: isolated workspaces, each with its own databases, config, themes, logs and keyring namespace (see [Usage](#usage)). In the profile manager (`Alt+P`), `t` transfers a host, group, identity or tunnel to another profile; headless, `sshub host|group|identity|tunnel transfer --to PROFILE` does the same
 - **Update notice** (`Shift+U`): on start SSHub asks GitHub for the latest release, and a newer one shows next to the version in the tab bar. `Shift+U` on the hosts tab installs it the way SSHub was installed (`npm install -g sshub-tui@<version>`, `cargo install sshub --version <version>`, or, for a release tarball, an in-place swap of the binary after checking it runs), then asks you to restart. While it installs, quitting always asks first. With no update known, `Shift+U` checks on demand. Needs `curl` (and `tar` for the tarball swap); `Check for updates` in Settings (`Ctrl+H`), or `[updates] check = false`, turns the start-up check off.
+- **What's new** (`Shift+W`): when `Shift+U` finishes an install, a popup shows the changelog of every version it brings (fetched from that release's `CHANGELOG.md`). `Shift+W` on the hosts tab reopens it until the restart, and otherwise shows the running version's notes.
 - **Mouse support**: click tabs, rows and hosts-tab panels, scroll lists, double-click to connect, start a tunnel or open an SFTP folder; on the SFTP tab a click picks a host or a pane's entry; in forms, dialogs and pickers a click focuses the field (cursor where you clicked) or highlights the row; a drag anywhere selects text and copies it on release
 
 ## Install
@@ -473,6 +474,7 @@ arrives as arrow keys, exactly as in a real terminal.
 | `b`                | Broadcast a command to a group or tag |
 | `x`                | Cancel a running broadcast / clear its error toasts |
 | `Shift+U`          | Install the sshub update, or check for one |
+| `Shift+W`          | What's new: release notes of this version or the installed update |
 
 ### SFTP (tab 2)
 

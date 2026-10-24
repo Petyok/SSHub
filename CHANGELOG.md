@@ -23,6 +23,11 @@ All notable changes to SSHub are documented in this file.
   and pull request, and pushes the build to the public `sshub.cachix.org` binary cache
   that the flake declares, so installs substitute it instead of compiling. A NixOS
   configuration gets that cache by importing `nixosModules.binaryCache`.
+- **What's new popup** - when `Shift+U` finishes installing an update, a
+  scrollable popup lists the changelog of every version between the running
+  one and the new one; off the dashboard it waits, and the "installed" toast
+  names the key. `Shift+W` on the hosts tab opens it again until the
+  restart, and otherwise shows the notes of the running version.
 
 ## [0.19.2] - 2026-10-24
 

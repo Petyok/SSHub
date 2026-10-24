@@ -10,6 +10,17 @@ use crate::update::UpdateEvent;
 pub struct UpdateState {
     pub status: UpdateStatus,
     rx: Option<Receiver<UpdateEvent>>,
+    /// Release notes of the installed (not yet running) update.
+    installed_notes: Option<String>,
+    /// The open "what's new" popup.
+    pub whats_new: Option<WhatsNew>,
+}
+
+/// The "what's new" popup: release notes and how far they are scrolled.
+pub struct WhatsNew {
+    pub title: String,
+    pub text: String,
+    pub scroll: u16,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -53,7 +64,7 @@ impl App {
                 format!("Updating sshub to {tag}…")
             }
             UpdateStatus::Installing(tag) => format!("Update to {tag} in progress…"),
-            UpdateStatus::Installed(tag) => format!("{tag} installed: restart sshub to use it"),
+            UpdateStatus::Installed(tag) => self.installed_notice(&tag),
         };
         self.host_notice = Some(notice);
     }
@@ -68,7 +79,10 @@ impl App {
         let Some(event) = self.update.rx.as_ref().and_then(|rx| rx.try_recv().ok()) else {
             return;
         };
-        self.update.rx = None;
+        // A successful install has its notes still to come on the same channel.
+        if !matches!(event, UpdateEvent::Installed(Ok(()))) {
+            self.update.rx = None;
+        }
         let key = self.config.keybinds.primary(KeyAction::Update).to_string();
         match (event, std::mem::take(&mut self.update.status)) {
             (UpdateEvent::Checked(result), UpdateStatus::Checking { manual }) => match result {
@@ -100,7 +114,20 @@ impl App {
                 _ => {}
             },
             (UpdateEvent::Installed(Ok(())), UpdateStatus::Installing(tag)) => {
-                self.host_notice = Some(format!("{tag} installed: restart sshub to use it"));
+                self.host_notice = Some(self.installed_notice(&tag));
+                self.update.status = UpdateStatus::Installed(tag);
+            }
+            (UpdateEvent::Notes(notes), UpdateStatus::Installed(tag)) => {
+                self.update.installed_notes = notes;
+                if self.update.installed_notes.is_some() {
+                    self.host_notice = Some(self.installed_notice(&tag));
+                    // Straight onto the dashboard only, and not while one of
+                    // its inline inputs takes keys: the popup would swallow
+                    // them. The toast names the key that opens it later.
+                    if self.mode == AppMode::Normal && !self.dashboard_text_input_active() {
+                        self.open_whats_new_for(&tag);
+                    }
+                }
                 self.update.status = UpdateStatus::Installed(tag);
             }
             (UpdateEvent::Installed(Err(err)), UpdateStatus::Installing(tag)) => {
@@ -111,6 +138,17 @@ impl App {
                 self.update.status = UpdateStatus::Available(tag);
             }
             (_, status) => self.update.status = status,
+        }
+    }
+
+    /// "Installed, restart", plus the what's-new key when there are notes for
+    /// it to show.
+    fn installed_notice(&self, tag: &str) -> String {
+        let key = self.config.keybinds.primary(KeyAction::WhatsNew);
+        if self.update.installed_notes.is_none() || key.is_empty() {
+            format!("{tag} installed: restart sshub to use it")
+        } else {
+            format!("{tag} installed: restart to use it · {key} what's new")
         }
     }
 
@@ -127,6 +165,59 @@ impl App {
         }
     }
 
+    /// The what's-new key: the notes of an installed update, else those of
+    /// the running version.
+    pub(crate) fn open_whats_new(&mut self) {
+        match self.update.status.clone() {
+            UpdateStatus::Installed(tag) if self.update.installed_notes.is_some() => {
+                self.open_whats_new_for(&tag)
+            }
+            _ => {
+                let version = format!("v{}", env!("CARGO_PKG_VERSION"));
+                let text = crate::update::running_notes()
+                    .unwrap_or_else(|| format!("No release notes for {version}."));
+                self.show_whats_new(format!(" What's new in {version} "), text);
+            }
+        }
+    }
+
+    fn open_whats_new_for(&mut self, tag: &str) {
+        let text = self.update.installed_notes.clone().unwrap_or_default();
+        self.show_whats_new(format!(" What's new in {tag} (restart to use it) "), text);
+    }
+
+    fn show_whats_new(&mut self, title: String, text: String) {
+        self.update.whats_new = Some(WhatsNew {
+            title,
+            text,
+            scroll: 0,
+        });
+        self.mode = AppMode::WhatsNew;
+    }
+
+    pub(crate) fn handle_key_whats_new(&mut self, key: KeyEvent) -> Result<()> {
+        let max = crate::tui::whats_new_max_scroll(self.terminal_area, self);
+        let Some(popup) = self.update.whats_new.as_mut() else {
+            self.mode = AppMode::Normal;
+            return Ok(());
+        };
+        popup.scroll = match key.code {
+            KeyCode::Up | KeyCode::Char('k') => popup.scroll.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => popup.scroll.saturating_add(1),
+            KeyCode::PageUp => popup.scroll.saturating_sub(10),
+            KeyCode::PageDown | KeyCode::Char(' ') => popup.scroll.saturating_add(10),
+            KeyCode::Home => 0,
+            KeyCode::End => max,
+            _ => {
+                self.update.whats_new = None;
+                self.mode = AppMode::Normal;
+                return Ok(());
+            }
+        }
+        .min(max);
+        Ok(())
+    }
+
     /// Short state shown after the version in the tab bar, when there is any.
     pub fn update_badge(&self) -> Option<String> {
         match &self.update.status {
@@ -135,5 +226,119 @@ impl App {
             UpdateStatus::Installed(tag) => Some(format!("restart for {tag}")),
             UpdateStatus::Idle | UpdateStatus::Checking { .. } => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::tests::{key, test_app};
+
+    fn shift_w() -> KeyEvent {
+        KeyEvent::new(KeyCode::Char('W'), KeyModifiers::SHIFT)
+    }
+
+    /// An app in the middle of installing `v9.0.0`, and the worker's end of
+    /// the channel.
+    fn installing() -> (App, std::sync::mpsc::Sender<UpdateEvent>) {
+        let mut app = test_app(vec![]);
+        app.terminal_area = ratatui::layout::Rect::new(0, 0, 80, 24);
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.update.rx = Some(rx);
+        app.update.status = UpdateStatus::Installing("v9.0.0".into());
+        (app, tx)
+    }
+
+    #[test]
+    fn installed_update_opens_its_notes_and_the_key_reopens_them() {
+        let (mut app, tx) = installing();
+        // Installed, notes still downloading: no longer "installing" (quit
+        // needs no warning), and nothing to show yet.
+        tx.send(UpdateEvent::Installed(Ok(()))).unwrap();
+        app.poll_update();
+        assert_eq!(app.update.status, UpdateStatus::Installed("v9.0.0".into()));
+        assert!(!app.update_installing());
+        assert_eq!(app.mode, AppMode::Normal);
+        assert_eq!(
+            app.host_notice.as_deref(),
+            Some("v9.0.0 installed: restart sshub to use it")
+        );
+
+        let notes: String = (0..60).map(|i| format!("- change {i}\n")).collect();
+        tx.send(UpdateEvent::Notes(Some(notes.clone()))).unwrap();
+        app.poll_update();
+        assert_eq!(app.mode, AppMode::WhatsNew);
+        assert_eq!(app.update.status, UpdateStatus::Installed("v9.0.0".into()));
+        let popup = app.update.whats_new.as_ref().unwrap();
+        assert!(popup.title.contains("v9.0.0"), "{}", popup.title);
+        assert_eq!(popup.text, notes);
+        // Scrolling stops where the last line is on screen: End and one more
+        // Down land on the same ceiling, and Up moves at once.
+        let max = crate::tui::whats_new_max_scroll(app.terminal_area, &app);
+        assert!(max > 0);
+        app.handle_key(key(KeyCode::End)).unwrap();
+        app.handle_key(key(KeyCode::Down)).unwrap();
+        assert_eq!(app.update.whats_new.as_ref().unwrap().scroll, max);
+        app.handle_key(key(KeyCode::Up)).unwrap();
+        assert_eq!(app.update.whats_new.as_ref().unwrap().scroll, max - 1);
+
+        app.handle_key(key(KeyCode::Esc)).unwrap();
+        assert_eq!(app.mode, AppMode::Normal);
+        assert!(app.update.whats_new.is_none());
+
+        app.handle_key(shift_w()).unwrap();
+        assert_eq!(app.mode, AppMode::WhatsNew);
+        let popup = app.update.whats_new.as_ref().unwrap();
+        assert!(popup.title.contains("v9.0.0"));
+        assert_eq!(popup.scroll, 0);
+    }
+
+    #[test]
+    fn without_an_installed_update_the_key_shows_the_running_version() {
+        let mut app = test_app(vec![]);
+        app.handle_key(shift_w()).unwrap();
+        assert_eq!(app.mode, AppMode::WhatsNew);
+        let popup = app.update.whats_new.as_ref().unwrap();
+        let version = env!("CARGO_PKG_VERSION");
+        assert!(popup.title.contains(&format!("v{version}")));
+        assert!(popup.text.starts_with(&format!("## [{version}]")));
+    }
+
+    #[test]
+    fn notes_wait_for_the_key_when_the_install_ends_off_the_dashboard() {
+        // Over another popup, and on the dashboard while a list filter is
+        // being typed (still `Normal`, but the keys belong to the filter).
+        for typing_filter in [false, true] {
+            let (mut app, tx) = installing();
+            if typing_filter {
+                app.active_tab = 2;
+                app.list_filter_editing = true;
+            } else {
+                app.mode = AppMode::Help;
+            }
+            let mode = app.mode;
+            tx.send(UpdateEvent::Installed(Ok(()))).unwrap();
+            tx.send(UpdateEvent::Notes(Some("- x".into()))).unwrap();
+            app.poll_update();
+            app.poll_update();
+            assert_eq!(app.mode, mode);
+            assert!(app.update.whats_new.is_none());
+            assert_eq!(app.update.installed_notes.as_deref(), Some("- x"));
+            // The popup waits, so the toast says which key opens it.
+            assert_eq!(
+                app.host_notice.as_deref(),
+                Some("v9.0.0 installed: restart to use it · Shift+W what's new")
+            );
+        }
+    }
+
+    #[test]
+    fn failed_install_waits_for_no_notes() {
+        let (mut app, tx) = installing();
+        tx.send(UpdateEvent::Installed(Err(anyhow::anyhow!("boom"))))
+            .unwrap();
+        app.poll_update();
+        assert_eq!(app.update.status, UpdateStatus::Available("v9.0.0".into()));
+        assert!(app.update.rx.is_none());
     }
 }
