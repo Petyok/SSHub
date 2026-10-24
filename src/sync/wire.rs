@@ -266,6 +266,182 @@ impl ShareResponseWire {
     }
 }
 
+/// Frame kinds that only the phone page uses (contract C16). Layouts:
+///
+/// ```text
+/// recovery notice (kind 3, terminal to phone) = op_len u32 BE || op_canonical || op_signature(64)
+/// phone ops       (kind 5, phone to terminal) = n u8 || n * (op_len u32 BE || op_canonical || signature(64))
+/// enroll commit   (kind 6) = role u8 || commit(32)
+/// enroll reveal   (kind 7) = role u8 || reveal bytes (the layout of `enroll.rs` `Reveal::bytes`, opaque here)
+/// enroll confirm  (kind 8) = role u8 || ok u8 || signature(64)
+/// ```
+pub const KIND_RECOVERY_NOTICE: u8 = 3;
+pub const KIND_PHONE_OPS: u8 = 5;
+pub const KIND_ENROLL_COMMIT: u8 = 6;
+pub const KIND_ENROLL_REVEAL: u8 = 7;
+pub const KIND_ENROLL_CONFIRM: u8 = 8;
+
+/// An op together with its signature, as the phone carries it.
+pub type SignedOpBytes = (Vec<u8>, [u8; 64]);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecoveryNoticeWire {
+    pub op_canonical: Vec<u8>,
+    pub op_signature: [u8; 64],
+}
+
+impl RecoveryNoticeWire {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = frame_header(KIND_RECOVERY_NOTICE);
+        out.extend_from_slice(&(self.op_canonical.len() as u32).to_be_bytes());
+        out.extend_from_slice(&self.op_canonical);
+        out.extend_from_slice(&self.op_signature);
+        out
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let body = unframe(bytes, KIND_RECOVERY_NOTICE)?;
+        if body.len() < 4 + 64 {
+            bail!("recovery notice too short");
+        }
+        let len = u32::from_be_bytes(body[..4].try_into().unwrap()) as usize;
+        if len > MAX_FRAME_BYTES || body.len() != 4 + len + 64 {
+            bail!("recovery notice length does not match its fields");
+        }
+        Ok(Self {
+            op_canonical: body[4..4 + len].to_vec(),
+            op_signature: body[4 + len..].try_into().unwrap(),
+        })
+    }
+}
+
+pub(crate) fn encode_op_list(ops: &[SignedOpBytes]) -> Vec<u8> {
+    assert!(ops.len() <= 255, "at most 255 ops per list");
+    let mut out = vec![ops.len() as u8];
+    for (op, sig) in ops {
+        out.extend_from_slice(&(op.len() as u32).to_be_bytes());
+        out.extend_from_slice(op);
+        out.extend_from_slice(sig);
+    }
+    out
+}
+
+/// Parses a list starting at `body[0]`; returns the ops and the number of bytes used.
+pub(crate) fn decode_op_list(body: &[u8]) -> Result<(Vec<SignedOpBytes>, usize)> {
+    let Some((&n, _)) = body.split_first() else {
+        bail!("op list truncated");
+    };
+    let mut at = 1;
+    let mut ops = Vec::with_capacity(n as usize);
+    for _ in 0..n {
+        if body.len() < at + 4 {
+            bail!("op list truncated");
+        }
+        let len = u32::from_be_bytes(body[at..at + 4].try_into().unwrap()) as usize;
+        at += 4;
+        if len > MAX_FRAME_BYTES || body.len() < at + len + 64 {
+            bail!("op list truncated");
+        }
+        ops.push((
+            body[at..at + len].to_vec(),
+            body[at + len..at + len + 64].try_into().unwrap(),
+        ));
+        at += len + 64;
+    }
+    Ok((ops, at))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PhoneOpsWire {
+    pub ops: Vec<SignedOpBytes>,
+}
+
+impl PhoneOpsWire {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = frame_header(KIND_PHONE_OPS);
+        out.extend_from_slice(&encode_op_list(&self.ops));
+        out
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let body = unframe(bytes, KIND_PHONE_OPS)?;
+        let (ops, used) = decode_op_list(body)?;
+        if used != body.len() {
+            bail!("phone ops frame has trailing bytes");
+        }
+        Ok(Self { ops })
+    }
+}
+
+/// One enrollment step between the terminal and the phone (QR in both directions).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EnrollFrame {
+    Commit { role: u8, commit: [u8; 32] },
+    Reveal { role: u8, reveal: Vec<u8> },
+    Confirm { role: u8, ok: bool, sig: [u8; 64] },
+}
+
+impl EnrollFrame {
+    pub fn encode(&self) -> Vec<u8> {
+        match self {
+            Self::Commit { role, commit } => {
+                let mut out = frame_header(KIND_ENROLL_COMMIT);
+                out.push(*role);
+                out.extend_from_slice(commit);
+                out
+            }
+            Self::Reveal { role, reveal } => {
+                let mut out = frame_header(KIND_ENROLL_REVEAL);
+                out.push(*role);
+                out.extend_from_slice(reveal);
+                out
+            }
+            Self::Confirm { role, ok, sig } => {
+                let mut out = frame_header(KIND_ENROLL_CONFIRM);
+                out.push(*role);
+                out.push(u8::from(*ok));
+                out.extend_from_slice(sig);
+                out
+            }
+        }
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < HEADER + 1 {
+            bail!("enrollment frame too short");
+        }
+        let kind = bytes[6];
+        let body = unframe(bytes, kind)?;
+        let role = body[0];
+        match kind {
+            KIND_ENROLL_COMMIT => {
+                if body.len() != 33 {
+                    bail!("enroll commit must be 33 bytes");
+                }
+                Ok(Self::Commit {
+                    role,
+                    commit: body[1..].try_into().unwrap(),
+                })
+            }
+            KIND_ENROLL_REVEAL => Ok(Self::Reveal {
+                role,
+                reveal: body[1..].to_vec(),
+            }),
+            KIND_ENROLL_CONFIRM => {
+                if body.len() != 66 || body[1] > 1 {
+                    bail!("enroll confirm must be 66 bytes with a boolean");
+                }
+                Ok(Self::Confirm {
+                    role,
+                    ok: body[1] == 1,
+                    sig: body[2..].try_into().unwrap(),
+                })
+            }
+            k => bail!("wire kind {k} is not an enrollment frame"),
+        }
+    }
+}
+
 fn frame_header(kind: u8) -> Vec<u8> {
     let mut out = Vec::with_capacity(HEADER + 64);
     out.extend_from_slice(&WIRE_MAGIC);
@@ -482,5 +658,39 @@ mod tests {
             );
         }
         assert!(h_total < 2000 && e_total < 2000, "{h_total} {e_total}");
+    }
+}
+
+#[cfg(test)]
+mod phone_frame_tests {
+    use super::*;
+
+    #[test]
+    fn phone_only_frames_round_trip_and_reject_damage() {
+        let notice = RecoveryNoticeWire {
+            op_canonical: b"{\"op\":1}".to_vec(),
+            op_signature: [9; 64],
+        };
+        assert_eq!(RecoveryNoticeWire::decode(&notice.encode()).unwrap(), notice);
+        let mut cut = notice.encode();
+        cut.pop();
+        assert!(RecoveryNoticeWire::decode(&cut).is_err());
+
+        let ops = PhoneOpsWire {
+            ops: vec![(b"a".to_vec(), [1; 64]), (b"bb".to_vec(), [2; 64])],
+        };
+        assert_eq!(PhoneOpsWire::decode(&ops.encode()).unwrap(), ops);
+        let mut long = ops.encode();
+        long.push(0);
+        assert!(PhoneOpsWire::decode(&long).is_err(), "trailing bytes");
+
+        for f in [
+            EnrollFrame::Commit { role: 1, commit: [3; 32] },
+            EnrollFrame::Reveal { role: 0, reveal: vec![4; 50] },
+            EnrollFrame::Confirm { role: 1, ok: false, sig: [5; 64] },
+        ] {
+            assert_eq!(EnrollFrame::decode(&f.encode()).unwrap(), f);
+        }
+        assert!(EnrollFrame::decode(&notice.encode()).is_err(), "a notice is not an enrollment frame");
     }
 }
