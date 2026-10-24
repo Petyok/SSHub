@@ -168,6 +168,10 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "Install the sshub update, or check for one",
     },
     HelpItem::Entry {
+        key: "Shift+W",
+        desc: "What's new: release notes of this version or the installed update",
+    },
+    HelpItem::Entry {
         key: "b",
         desc: "Broadcast a command to a group or tag (target, command, preview, y runs)",
     },

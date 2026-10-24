@@ -506,6 +506,8 @@ pub enum AppMode {
     /// A modal message popup (e.g. a connection error). Any key dismisses it;
     /// the text lives in `App::notice_popup`.
     Notice,
+    /// Scrollable release notes; the text lives in `App::update.whats_new`.
+    WhatsNew,
     /// Known-hosts manager overlay (Keys tab).
     KnownHosts,
     /// Session-log browser overlay: hosts, segments, and a searchable viewer.

@@ -46,7 +46,7 @@ pub(crate) mod tests;
 
 pub use theme_picker::{ThemePickerState, ThemeRecordSummary, ThemeRow, ThemeRowStatus};
 pub use types::*;
-pub use update::{UpdateState, UpdateStatus};
+pub use update::{UpdateState, UpdateStatus, WhatsNew};
 pub use util::*;
 
 use std::path::Path;
