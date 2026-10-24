@@ -915,7 +915,10 @@ mod reshare_fixture {
         };
         use crate::sync::oplog::{Attendance, CertScope, DeviceRole};
         // The delegate is the device of seed 0x71, the same one the page's test derives from the same bytes.
-        let delegate = Dev::with(Arc::new(DeviceIdentity::from_seed(&[0x71; 32], PHONE_CONTEXT)));
+        let delegate = Dev::with(Arc::new(DeviceIdentity::from_seed(
+            &[0x71; 32],
+            PHONE_CONTEXT,
+        )));
         let phone = Dev::with(phone_identity());
         let (t2, t3) = (Dev::new(), Dev::new());
         for d in [&t2, &delegate, &t3] {
@@ -997,7 +1000,10 @@ mod reshare_fixture {
             .expect("the phone's extension opens the budget");
 
         let ext2 = rest.next().unwrap();
-        let OpBody::CertExtend { extra_hosts: e2, .. } = &ext2.body else {
+        let OpBody::CertExtend {
+            extra_hosts: e2, ..
+        } = &ext2.body
+        else {
             panic!("a second CertExtend")
         };
         assert!(ext2.timestamp - ext1.timestamp >= 86_400, "a day apart");
@@ -1026,7 +1032,8 @@ mod reshare_fixture {
         // The second certificate (a group) validates too.
         let second = rest.next().unwrap();
         ingest(second);
-        validate_cert_issue(&t2.store, second, &phone.did).expect("the group certificate validates");
+        validate_cert_issue(&t2.store, second, &phone.did)
+            .expect("the group certificate validates");
         let OpBody::CertIssue { scope, .. } = &second.body else {
             panic!("a CertIssue")
         };
