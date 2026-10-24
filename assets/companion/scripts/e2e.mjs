@@ -21,7 +21,7 @@ import { bytesOf, edSign, edVerify, hexOf, identityFromIkm, sasWords } from '../
 import { DocumentCollector } from '../src/scan.mjs';
 import { fountainEncode } from '../src/quorum.mjs';
 import {
-  commitOf, confirmMessage, decodeEnroll, decodeFrame, decodePhoneOps, encodeCertExtendRequest, encodeCertRequest, encodeEnrollConfirm, encodeFrame, encodePhoneOps, parseReplyPlain, transcriptHash, KIND,
+  commitOf, confirmMessage, decodeEnroll, decodeFrame, decodePhoneOps, encodeCertExtendRequest, encodeCertRequest, encodeEnrollConfirm, encodeEnrollReveal, encodeFrame, encodePhoneOps, parseReplyPlain, transcriptHash, KIND,
 } from '../src/frames.mjs';
 import { b64dec, parseOp } from '../src/ops.mjs';
 import { envelopeAad, ownStorageKey } from '../src/reshare.mjs';
@@ -837,6 +837,88 @@ const restoreFlow = async (page) => {
   check('the phone chain is CertIssue, CertExtend, CertExtend, CertRevoke, CertIssue, all signed by the phone', kinds === 'CertIssue,CertExtend,CertExtend,CertRevoke,CertIssue' && signedByPhone(chain) && chain.every((o, i) => Number(parseOp(o.canonical).seq) === i + 1), kinds);
   fs.writeFileSync(path.join(OUT, 'cert-out.json'), JSON.stringify({ ops: chain.map(opJson) }, null, 1));
   await context.close();
+}
+
+// ============================================================ 4d. enrolling this page with the REAL Rust terminal (PhoneEnroll)
+
+// The terminal is the Rust test e2e_enrollment_peer_for_the_page running next to this script (verify-in-container.sh);
+// frames travel as files in E2E_ENROLL_PEER/<scenario>/ (t-* from the terminal, p-* from the page).
+if (process.env.E2E_ENROLL_PEER) {
+  const root = process.env.E2E_ENROLL_PEER;
+  const putFile = (dir, name, bytes) => {
+    const tmp = path.join(dir, `.${name}.tmp`);
+    fs.writeFileSync(tmp, bytes);
+    fs.renameSync(tmp, path.join(dir, name));
+  };
+  const waitFile = async (dir, name, ms = 240000) => {
+    const f = path.join(dir, name);
+    const t0 = Date.now();
+    while (!fs.existsSync(f)) {
+      if (Date.now() - t0 > ms) throw new Error(`the Rust terminal did not write ${name} within ${ms} ms`);
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return fs.readFileSync(f);
+  };
+  // Runs the page up to the words; returns what the scenario needs.
+  const enrollUpToWords = async (scenario) => {
+    const dir = path.join(root, scenario);
+    const { context } = await launch({ feed: true, profile: `enroll-rust-${scenario}` });
+    const page = await openPage(context);
+    await restoreFlow(page);
+    await page.click('#enroll');
+    await page.click('#enroll-scan');
+    await feedDoc(page, await waitFile(dir, 't-commit.bin'));
+    await page.waitForSelector('#enroll-qr');
+    putFile(dir, 'p-commit.bin', (await captureDoc(page, '#enroll-qr')).doc);
+    // The next document is put on the fake camera BEFORE the phone starts scanning: a collector locks onto the first
+    // document it reads, so a stale frame of the previous one would block it (see the report).
+    await feedDoc(page, await waitFile(dir, 't-reveal.bin'));
+    await page.click('#enroll-next');
+    await page.waitForSelector('#sas-words');
+    const words = (await text(page, '#sas-words')).trim();
+    const reveal = (await captureDoc(page, '#enroll-qr')).doc;
+    return { dir, context, page, words, reveal };
+  };
+  const rustVerdict = async (dir) => JSON.parse((await waitFile(dir, 'done.json')).toString());
+
+  {
+    const { dir, context, page, words, reveal } = await enrollUpToWords('ok');
+    putFile(dir, 'p-reveal.bin', reveal);
+    putFile(dir, 'p-words.txt', words);
+    const tWords = (await waitFile(dir, 't-words.txt')).toString();
+    check('the page and the Rust terminal show the same four words', tWords === words && words.split('-').length === 4, words);
+    await page.click('#sas-match');
+    await page.waitForSelector('#enroll-next');
+    putFile(dir, 'p-confirm.bin', (await captureDoc(page, '#enroll-qr')).doc);
+    await feedDoc(page, await waitFile(dir, 't-confirm.bin'));
+    await page.click('#enroll-next');
+    await page.waitForSelector('#enroll-done', { timeout: 60000 });
+    const tid = (await waitFile(dir, 't-id.txt')).toString();
+    await page.click('#enroll-done');
+    check('the page accepts the Rust terminal confirmation and names the terminal in its ring', (await text(page, '.card')).includes(tid), tid);
+    const v = await rustVerdict(dir);
+    check('the Rust terminal verifies the page: Verified, the admitted DevicePublic is the page identity, DeviceAdd proposed', v.pass, v.why || 'verified and admitted');
+    await context.close();
+  }
+  {
+    const { dir, context, reveal } = await enrollUpToWords('tampered');
+    const r = decodeEnroll(reveal).reveal;
+    putFile(dir, 'p-reveal.bin', encodeEnrollReveal(0, { ...r, name: 'evil phone' }));
+    const v = await rustVerdict(dir);
+    check('a page reveal altered on the way stops the Rust terminal', v.pass, v.why || 'Stopped: does not open the commitment');
+    await context.close();
+  }
+  {
+    const { dir, context, page, words, reveal } = await enrollUpToWords('differ');
+    putFile(dir, 'p-reveal.bin', reveal);
+    putFile(dir, 'p-words.txt', words);
+    await page.click('#sas-differ');
+    await page.waitForSelector('#enroll-qr');
+    putFile(dir, 'p-confirm.bin', (await captureDoc(page, '#enroll-qr')).doc);
+    const v = await rustVerdict(dir);
+    check('the page decline (signed, role 0, ok false) stops the Rust terminal and admits nothing', v.pass, v.why || 'Stopped: the phone says the words differ');
+    await context.close();
+  }
 }
 // ============================================================ 5. backup words and fingerprint
 

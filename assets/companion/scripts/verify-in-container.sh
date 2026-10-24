@@ -18,7 +18,17 @@ cmp sshub-companion.html /tmp/build1.html && echo "REPRODUCIBLE yes" || { echo "
 step build-selftest node build.mjs --selftest
 step node-tests node --test test/phone.test.mjs test/phone2.test.mjs test/phone3.test.mjs test/quorum.test.mjs test/replay.test.js
 step headless-replay node scripts/headless-check.mjs
+# The Rust terminal of the enrollment check (phone_fixtures e2e_enrollment_peer_for_the_page) runs next to the page flow
+# and exchanges the enrollment frames with it as files; compile first so it is ready when the page starts.
+step rust-build sh -c 'cd /work && cargo test --lib --no-run'
 rm -rf /tmp/e2e
-step e2e env E2E_OUT=/tmp/e2e node scripts/e2e.mjs
+mkdir -p /tmp/e2e/enroll-peer
+( cd /work && SSHUB_PHONE_ENROLL_PEER=/tmp/e2e/enroll-peer cargo test --lib sync::phone_fixtures::e2e_enrollment_peer_for_the_page -- --exact --nocapture >/tmp/enroll-peer.txt 2>&1; echo $? >/tmp/enroll-peer.rc ) &
+peer=$!
+step e2e env E2E_OUT=/tmp/e2e E2E_ENROLL_PEER=/tmp/e2e/enroll-peer node scripts/e2e.mjs
+wait $peer
+echo "STEP enroll-peer rc=$(cat /tmp/enroll-peer.rc)"
+cat /tmp/enroll-peer.txt
+[ "$(cat /tmp/enroll-peer.rc)" = 0 ] || fail=1
 step rust-verify sh -c 'cd /work && SSHUB_PHONE_E2E_DIR=/tmp/e2e cargo test --lib sync::phone_fixtures -- --nocapture'
 exit $fail
