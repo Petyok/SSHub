@@ -32,7 +32,10 @@ fn send_with_timeout(
     body: &str,
     timeout: Duration,
 ) -> Result<()> {
-    let command = cfg.command.as_deref().context("notify.command is not set")?;
+    let command = cfg
+        .command
+        .as_deref()
+        .context("notify.command is not set")?;
     let argv = split_command(command)?;
     let message = build_message(cfg, subject, body, SystemTime::now())?;
     run(&argv, message.as_bytes(), timeout)
@@ -105,12 +108,7 @@ fn split_command(line: &str) -> Result<Vec<String>> {
 }
 
 /// RFC 5322 message: headers, a blank line, then the body with CRLF line endings.
-fn build_message(
-    cfg: &NotifyConfig,
-    subject: &str,
-    body: &str,
-    now: SystemTime,
-) -> Result<String> {
+fn build_message(cfg: &NotifyConfig, subject: &str, body: &str, now: SystemTime) -> Result<String> {
     let from = cfg.from.as_deref().context("notify.from is not set")?;
     if cfg.to.is_empty() {
         bail!("notify.to lists no recipients");
@@ -232,7 +230,10 @@ fn run(argv: &[String], message: &[u8], timeout: Duration) -> Result<()> {
     let writer = std::thread::spawn(move || {
         let _ = stdin.write_all(&input);
     });
-    let mut stderr = child.stderr.take().context("notify command has no stderr")?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .context("notify command has no stderr")?;
     let reader = std::thread::spawn(move || {
         let mut buf = Vec::new();
         let _ = stderr.read_to_end(&mut buf);
@@ -280,7 +281,14 @@ mod tests {
     fn split_handles_quotes_and_backslashes() {
         assert_eq!(
             split_command("/usr/sbin/sendmail -t \"Sub dir/x\" 'a b' c\\ d \"q\\\"x\"").unwrap(),
-            ["/usr/sbin/sendmail", "-t", "Sub dir/x", "a b", "c d", "q\"x"]
+            [
+                "/usr/sbin/sendmail",
+                "-t",
+                "Sub dir/x",
+                "a b",
+                "c d",
+                "q\"x"
+            ]
         );
     }
 
@@ -310,8 +318,13 @@ mod tests {
     #[test]
     fn message_has_headers_then_crlf_body() {
         let now = UNIX_EPOCH + Duration::from_secs(EPOCH_2023);
-        let msg = build_message(&cfg(Some("sendmail -t")), "Recovery started", "code: ABC\nline 2\n", now)
-            .unwrap();
+        let msg = build_message(
+            &cfg(Some("sendmail -t")),
+            "Recovery started",
+            "code: ABC\nline 2\n",
+            now,
+        )
+        .unwrap();
         assert!(msg.starts_with("From: sshub <sshub@example.com>\r\nTo: ops@example.com\r\n"));
         assert!(msg.contains("\r\nSubject: Recovery started\r\n"));
         assert!(msg.contains("\r\nDate: Tue, 14 Nov 2023 22:13:20 +0000\r\n"));
@@ -375,8 +388,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let fake = recording_sendmail(dir.path());
         let command = format!("{} -t -i", fake.display());
-        send_with_timeout(&cfg(Some(&command)), "Subject line", "body text", Duration::from_secs(10))
-            .unwrap();
+        send_with_timeout(
+            &cfg(Some(&command)),
+            "Subject line",
+            "body text",
+            Duration::from_secs(10),
+        )
+        .unwrap();
         assert_eq!(read_lines(&dir.path().join("argv")), ["-t", "-i"]);
         let stdin = std::fs::read_to_string(dir.path().join("stdin")).unwrap();
         assert!(stdin.contains("\r\nSubject: Subject line\r\n"));

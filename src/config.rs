@@ -1393,7 +1393,10 @@ confirm_quit = false
             Some("/usr/sbin/sendmail -t -i")
         );
         assert_eq!(config.sync.notify.to, ["me@example.com"]);
-        assert_eq!(config.sync.notify.from.as_deref(), Some("sshub@example.com"));
+        assert_eq!(
+            config.sync.notify.from.as_deref(),
+            Some("sshub@example.com")
+        );
     }
 
     #[test]
