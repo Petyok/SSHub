@@ -1,0 +1,243 @@
+//! Revoking a holder without leaking its shares (C14), as a driver every remaining holder runs after
+//! each round. The Red ceremony authorizes the `DeviceRevoke`; everything after it is cryptographic
+//! bookkeeping that needs no further prompt:
+//!
+//! 1. every remaining software holder rotates its wrap keys and announces them (`WrapKeyRotate`);
+//! 2. once all have (or after [`ROTATION_GRACE_SECS`]), each contributes sub-shares for the new
+//!    holder set, wrapped to the NEW keys (`reshare::reissue_plan`); the paper is a permanent holder;
+//! 3. each new holder combines two contributors' sub-shares and publishes its envelope
+//!    (`reshare::reissue_receive`);
+//! 4. when every credential was confirmed by a real unlock (or after `WRAP_KEY_RETIRE_AFTER_SECS`) each
+//!    holder retires its previous wrap keys.
+//!
+//! The functions read the log, so a device that was offline simply finds its next step when it returns.
+//! Nothing here persists the identity file: after [`perform`] returned a `WrapKeyRotate` or `Retire`
+//! the caller must save the changed `DeviceIdentity` BEFORE appending the op.
+
+use std::collections::BTreeSet;
+
+use anyhow::{bail, ensure, Result};
+
+use super::crypto::DeviceIdentity;
+use super::limits::{LIVE_DEVICE_WINDOW_SECS, WRAP_KEY_RETIRE_AFTER_SECS};
+use super::oplog::{DeviceId, DeviceKind, DeviceRole, DeviceStatus, OpBody};
+use super::quorum::{ops_of, paper_pub};
+use super::reshare::{next_epoch, reissue_plan, reissue_receive, unadopted};
+use crate::store::LauncherStore;
+
+/// How long the others wait for a holder that has not rotated yet.
+pub const ROTATION_GRACE_SECS: i64 = 24 * 3600;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RevocationAction {
+    /// Rotate this device's wrap keys and announce them.
+    Rotate,
+    /// Contribute sub-shares at `epoch` for `new_holders`.
+    Contribute {
+        epoch: u64,
+        new_holders: Vec<DeviceId>,
+    },
+    /// Combine the sub-shares addressed to this device at `epoch`.
+    Receive { epoch: u64 },
+    /// Every credential was adopted: drop the previous wrap keys.
+    Retire,
+}
+
+fn live_holders(store: &LauncherStore) -> Result<Vec<super::oplog::DeviceRow>> {
+    Ok(store
+        .sync_devices()?
+        .into_iter()
+        .filter(|d| {
+            d.role == DeviceRole::Holder
+                && !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
+        })
+        .collect())
+}
+
+/// The rule that makes a revocation possible at all: two contributors must remain, so at least three
+/// holders exist before it. `target` is the holder to revoke.
+pub fn check_revocable(store: &LauncherStore, target: &DeviceId, now: i64) -> Result<()> {
+    let holders = live_holders(store)?;
+    ensure!(
+        holders.iter().any(|d| d.id == *target),
+        "{target} is not a live holder"
+    );
+    let remaining: Vec<_> = holders
+        .iter()
+        .filter(|d| d.id != *target && d.kind == DeviceKind::Terminal)
+        .collect();
+    ensure!(remaining.len() >= 2, "revoking a holder needs at least two remaining terminal holders to contribute: the ring has {}", remaining.len());
+    let fresh = remaining
+        .iter()
+        .filter(|d| now - d.last_seen <= LIVE_DEVICE_WINDOW_SECS)
+        .count();
+    ensure!(
+        fresh >= 2,
+        "fewer than two remaining holders were seen recently enough to contribute"
+    );
+    Ok(())
+}
+
+/// The newest revoked holder whose reshare is not finished: `(op lamport, timestamp, revoked id)`.
+fn open_revocation(store: &LauncherStore) -> Result<Option<(u64, i64, DeviceId)>> {
+    let devices = store.sync_devices()?;
+    let batches = ops_of(store, "ShareReshareBatch", None)?;
+    let mut open = None;
+    for op in ops_of(store, "DeviceRevoke", None)? {
+        let OpBody::DeviceRevoke { device_id } = &op.body else {
+            continue;
+        };
+        let was_holder = devices
+            .iter()
+            .any(|d| d.id == *device_id && d.role == DeviceRole::Holder);
+        if !was_holder {
+            continue;
+        }
+        let resolved = batches.iter().any(|b| {
+            b.lamport > op.lamport && matches!(&b.body, OpBody::ShareReshareBatch { new_holders, .. } if !new_holders.contains(device_id))
+        });
+        if !resolved {
+            open = Some((op.lamport, op.timestamp, device_id.clone()));
+        }
+    }
+    Ok(open)
+}
+
+fn rotated_since(store: &LauncherStore, holder: &DeviceId, lamport: u64) -> Result<bool> {
+    Ok(ops_of(store, "WrapKeyRotate", Some(holder))?
+        .iter()
+        .any(|o| o.lamport > lamport))
+}
+
+/// What this device should do next about a revocation, if anything. Safe to call after every round.
+pub fn next_actions(
+    store: &LauncherStore,
+    id: &DeviceIdentity,
+    now: i64,
+) -> Result<Vec<RevocationAction>> {
+    let me = id.public().device_id();
+    let devices = store.sync_devices()?;
+    let am_holder = devices
+        .iter()
+        .any(|d| d.id == me && d.role == DeviceRole::Holder && d.status != DeviceStatus::Revoked);
+    if !am_holder {
+        return Ok(Vec::new());
+    }
+    // Stage 4 first: it does not depend on an open revocation.
+    let mut out = Vec::new();
+    let latest_epoch = ops_of(store, "ShareReshareBatch", None)?
+        .iter()
+        .filter_map(|o| match &o.body {
+            OpBody::ShareReshareBatch { epoch, .. } => Some((*epoch, o.timestamp)),
+            _ => None,
+        })
+        .max();
+    if let Some((epoch, started)) = latest_epoch {
+        if id.wrap_key_generations() > 1
+            && (unadopted(store, epoch)?.is_empty() || now - started >= WRAP_KEY_RETIRE_AFTER_SECS)
+        {
+            out.push(RevocationAction::Retire);
+        }
+    }
+    // 3. Receive: the newest reshare, once two contributors' batches exist and this device, a new
+    // holder of it, has not confirmed. Independent of the revocation being open: the first batch
+    // already closes it.
+    if let Some((epoch, _)) = latest_epoch {
+        let batches: Vec<_> = ops_of(store, "ShareReshareBatch", None)?
+            .into_iter()
+            .filter(
+                |b| matches!(&b.body, OpBody::ShareReshareBatch { epoch: e, .. } if *e == epoch),
+            )
+            .collect();
+        let contributors: BTreeSet<&DeviceId> = batches.iter().map(|b| &b.device_id).collect();
+        let is_new_holder = batches
+            .iter()
+            .any(|b| matches!(&b.body, OpBody::ShareReshareBatch { new_holders, .. } if new_holders.contains(&me)));
+        let confirmed = ops_of(store, "ShareReshareConfirmBatch", Some(&me))?
+            .iter()
+            .any(|o| matches!(&o.body, OpBody::ShareReshareConfirmBatch { epoch: e, .. } if *e == epoch));
+        if contributors.len() >= 2 && is_new_holder && !confirmed {
+            out.push(RevocationAction::Receive { epoch });
+        }
+    }
+    let Some((lamport, revoked_at, _revoked)) = open_revocation(store)? else {
+        return Ok(out);
+    };
+    let remaining = live_holders(store)?;
+    let software: Vec<&super::oplog::DeviceRow> = remaining
+        .iter()
+        .filter(|d| d.kind == DeviceKind::Terminal)
+        .collect();
+    // 1. Rotate.
+    if !rotated_since(store, &me, lamport)? {
+        out.push(RevocationAction::Rotate);
+        return Ok(out);
+    }
+    // 2. Contribute, once every software holder rotated or the grace ran out.
+    let mut new_holders: Vec<DeviceId> = remaining.iter().map(|d| d.id.clone()).collect();
+    new_holders.sort();
+    let mut all_rotated = true;
+    for d in &software {
+        all_rotated &= rotated_since(store, &d.id, lamport)?;
+    }
+    if !(all_rotated || now - revoked_at >= ROTATION_GRACE_SECS) {
+        return Ok(out);
+    }
+    let mut expected: BTreeSet<DeviceId> = new_holders.iter().cloned().collect();
+    if let Some(p) = paper_pub(store)? {
+        expected.insert(p.device_id());
+    }
+    let epoch = ops_of(store, "ShareReshareBatch", None)?
+        .iter()
+        .filter(|b| b.lamport > lamport)
+        .find_map(|b| match &b.body {
+            OpBody::ShareReshareBatch {
+                epoch, new_holders, ..
+            } if new_holders.iter().cloned().collect::<BTreeSet<_>>() == expected => Some(*epoch),
+            _ => None,
+        });
+    let epoch = match epoch {
+        Some(e) => e,
+        None => next_epoch(store)?,
+    };
+    let contributed = ops_of(store, "ShareReshareSession", Some(&me))?
+        .iter()
+        .any(|o| matches!(&o.body, OpBody::ShareReshareSession { epoch: e, .. } if *e == epoch));
+    if !contributed {
+        out.push(RevocationAction::Contribute { epoch, new_holders });
+        return Ok(out);
+    }
+    Ok(out)
+}
+
+/// Do one action. Returns the bodies to append. `Rotate` and `Retire` change `id`: save it first.
+pub fn perform(
+    store: &LauncherStore,
+    id: &mut DeviceIdentity,
+    action: &RevocationAction,
+) -> Result<Vec<OpBody>> {
+    match action {
+        RevocationAction::Rotate => {
+            let me = id.public().device_id();
+            let row = store.sync_devices()?.into_iter().find(|d| d.id == me);
+            let wrap_epoch = row.map_or(0, |d| d.wrap_epoch) + 1;
+            let public = id.rotate_wrap_keys();
+            Ok(vec![OpBody::WrapKeyRotate {
+                device_id: me,
+                wrap_epoch,
+                x25519_pub: public.x25519_pub,
+                mlkem_pub: public.mlkem_pub,
+            }])
+        }
+        RevocationAction::Contribute { epoch, new_holders } => {
+            Ok(reissue_plan(store, id, new_holders, *epoch)?.bodies)
+        }
+        RevocationAction::Receive { epoch } => Ok(reissue_receive(store, id, *epoch)?.bodies),
+        RevocationAction::Retire => {
+            if id.retire_previous_wrap_keys() == 0 {
+                bail!("there were no previous wrap keys");
+            }
+            Ok(Vec::new())
+        }
+    }
+}

@@ -493,6 +493,14 @@ fn committed_fixtures_are_consistent_with_the_rust_code() {
             serde_json::to_string_pretty(&enroll).unwrap() + "\n",
         )
         .unwrap();
+        // The reshare fixture holds random polynomials: only rewritten when asked for by name.
+        if std::env::var_os("SSHUB_EMIT_RESHARE_FIXTURE").is_some() {
+            std::fs::write(
+                dir().join("reshare.json"),
+                serde_json::to_string_pretty(&reshare_fixture::emit()).unwrap() + "\n",
+            )
+            .unwrap();
+        }
         return;
     }
     let main = read("challenges.json");
@@ -639,4 +647,283 @@ fn e2e_response_opens_with_the_ephemeral_secret() {
                 && text.contains(notice["op_hash_hex"].as_str().unwrap())
         );
     }
+}
+
+// ---------------------------------------------------------------- resharing with the phone as a new holder
+
+mod reshare_fixture {
+    use super::*;
+    use crate::sync::cred_ops::{cred_put, CredPayload};
+    use crate::sync::oplog::{CredMode, DeviceKind, Op, OpBody, VerifiedBy};
+    use crate::sync::protocol::tests::Dev;
+    use crate::sync::quorum::own_shares;
+    use crate::sync::reshare::{next_epoch, reissue_plan, reissue_receive};
+    use std::sync::Arc;
+
+    fn phone_identity() -> Arc<DeviceIdentity> {
+        Arc::new(DeviceIdentity::from_seed(&[0x42; 32], PHONE_CONTEXT))
+    }
+
+    fn pub_of(v: &Value) -> DevicePublic {
+        DevicePublic {
+            ed25519_pub: unhex(&v["ed25519_pub"]).try_into().unwrap(),
+            x25519_pub: unhex(&v["x25519_pub"]).try_into().unwrap(),
+            mlkem_pub: unhex(&v["mlkem_pub"]),
+        }
+    }
+
+    fn op_json(op: &Op) -> Value {
+        json!({
+            "kind": super::super::oplog::canonical::body_name(&op.body),
+            "device_id": op.device_id, "seq": op.seq, "lamport": op.lamport,
+            "canonical_hex": hx(&op.canonical_bytes()), "sig_hex": hx(&op.signature),
+        })
+    }
+
+    fn op_of(v: &Value) -> Op {
+        Op::from_canonical(
+            &unhex(&v["canonical_hex"]),
+            unhex(&v["sig_hex"]).try_into().unwrap(),
+        )
+        .unwrap()
+    }
+
+    /// A store that knows `contributors` as terminal holders and the phone as a phone holder.
+    fn phone_store(contributors: &[DevicePublic]) -> Dev {
+        let phone = Dev::with(phone_identity());
+        for p in contributors {
+            phone
+                .store
+                .sync_register_device(
+                    p,
+                    "terminal",
+                    super::super::oplog::DeviceRole::Holder,
+                    super::super::oplog::Attendance::Attended,
+                    DeviceKind::Terminal,
+                    VerifiedBy::Sas,
+                )
+                .unwrap();
+        }
+        phone
+            .store
+            .sync_register_device(
+                &phone.id.public(),
+                "my phone",
+                super::super::oplog::DeviceRole::Holder,
+                super::super::oplog::Attendance::Attended,
+                DeviceKind::Phone,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+        phone
+    }
+
+    /// Builds the fixture: terminals A, B, C share two credentials; the phone becomes a holder and A, B
+    /// (the two contributors) reshare to {A, B, phone}.
+    pub fn emit() -> Value {
+        let (a, b, cc) = (Dev::new(), Dev::new(), Dev::new());
+        let phone = Dev::with(phone_identity());
+        let all = [&a, &b, &cc];
+        for x in all {
+            for y in all {
+                if x.did != y.did {
+                    x.trust(y);
+                }
+            }
+            x.store
+                .sync_register_device(
+                    &x.id.public(),
+                    "self",
+                    super::super::oplog::DeviceRole::Holder,
+                    super::super::oplog::Attendance::Attended,
+                    DeviceKind::Terminal,
+                    VerifiedBy::Sas,
+                )
+                .unwrap();
+        }
+        let hosts = [HOST, OTHER_HOST];
+        a.store
+            .sync_append_local(
+                &a.id,
+                OpBody::ModeChange {
+                    to: CredMode::Quorum,
+                    migrated_on: a.did.clone(),
+                    cosigner: None,
+                },
+            )
+            .unwrap();
+        for h in &hosts {
+            cred_put(
+                &a.store,
+                &a.id,
+                h,
+                &CredPayload {
+                    password: Some("pw".into()),
+                    private_key: None,
+                },
+            )
+            .unwrap();
+        }
+        // B and C learn A's chain (credentials arrive as pending Yellow and are approved).
+        for x in [&b, &cc] {
+            for op in a.store.sync_chain_tail(&a.did, 0).unwrap() {
+                x.store.sync_ingest(op).unwrap();
+            }
+            for op in x.store.sync_pending().unwrap() {
+                x.store.sync_resolve_pending(&op.hash(), true).unwrap();
+            }
+        }
+        for x in [&a, &b] {
+            x.store
+                .sync_register_device(
+                    &phone.id.public(),
+                    "my phone",
+                    super::super::oplog::DeviceRole::Holder,
+                    super::super::oplog::Attendance::Attended,
+                    DeviceKind::Phone,
+                    VerifiedBy::Sas,
+                )
+                .unwrap();
+        }
+        let holders = vec![a.did.clone(), b.did.clone(), phone.did.clone()];
+        let epoch = next_epoch(&a.store).unwrap();
+        for x in [&a, &b] {
+            for body in reissue_plan(&x.store, &x.id, &holders, epoch)
+                .unwrap()
+                .bodies
+            {
+                x.store.sync_append_local(&x.id, body).unwrap();
+            }
+        }
+        // The whole chains of the two contributors (the page needs only the sessions and batches; the
+        // Rust receiver ingests them like a terminal would, so the chains must be contiguous).
+        let mut ops: Vec<Value> = Vec::new();
+        for x in [&a, &b] {
+            ops.extend(
+                x.store
+                    .sync_chain_tail(&x.did, 0)
+                    .unwrap()
+                    .iter()
+                    .map(op_json),
+            );
+        }
+        // What the phone must end up with, computed by the Rust receiver.
+        let contributors = [a.id.public(), b.id.public()];
+        let rx = phone_store(&contributors);
+        for o in &ops {
+            rx.store.sync_ingest(op_of(o)).unwrap();
+        }
+        for body in reissue_receive(&rx.store, &rx.id, epoch).unwrap().bodies {
+            rx.store.sync_append_local(&rx.id, body).unwrap();
+        }
+        let mut shares = serde_json::Map::new();
+        for h in &hosts {
+            let (e, s) = own_shares(&rx.store, &rx.id, h)
+                .unwrap_or_else(|e| panic!("phone shares: {e:#}"))
+                .remove(0);
+            assert_eq!(e, epoch);
+            shares.insert(
+                hx(h),
+                json!({ "epoch": e, "index": s.index, "bytes_hex": hx(&s.bytes) }),
+            );
+        }
+        let mut sorted_holders = holders.clone();
+        sorted_holders.sort();
+        json!({
+            "meta": { "note": "synthetic keys, random polynomials: regenerate only on purpose", "regenerate": "SSHUB_EMIT_PHONE_FIXTURES=1 cargo test sync::phone_fixtures" },
+            "epoch": epoch,
+            "host_uids": hosts.iter().map(|h| hx(h)).collect::<Vec<_>>(),
+            "new_holders": { "sorted_ids": sorted_holders, "phone": phone.did },
+            "contributors": [pub_json(&a.id.public()), pub_json(&b.id.public())],
+            "phone_pub": pub_json(&phone.id.public()),
+            "ops": ops,
+            "expected_phone_shares": Value::Object(shares),
+        })
+    }
+
+    fn receive_from_fixture(v: &Value) -> Dev {
+        let contributors: Vec<DevicePublic> = v["contributors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(pub_of)
+            .collect();
+        let rx = phone_store(&contributors);
+        for o in v["ops"].as_array().unwrap() {
+            rx.store.sync_ingest(op_of(o)).unwrap();
+        }
+        rx
+    }
+
+    /// The Rust receiver, run on the committed ops, still produces the committed shares.
+    pub fn check_committed() {
+        let v = read("reshare.json");
+        let epoch = v["epoch"].as_u64().unwrap();
+        let rx = receive_from_fixture(&v);
+        for body in reissue_receive(&rx.store, &rx.id, epoch).unwrap().bodies {
+            rx.store.sync_append_local(&rx.id, body).unwrap();
+        }
+        for (host_hex, want) in v["expected_phone_shares"].as_object().unwrap() {
+            let host: [u8; 16] = hex::decode(host_hex).unwrap().try_into().unwrap();
+            let (e, s) = own_shares(&rx.store, &rx.id, &host).unwrap().remove(0);
+            assert_eq!((e, s.index), (epoch, want["index"].as_u64().unwrap() as u8));
+            assert_eq!(
+                hx(&s.bytes),
+                want["bytes_hex"].as_str().unwrap(),
+                "the new share of {host_hex}"
+            );
+        }
+    }
+
+    /// What the page produced for the same ops (`reshare-out.json`: its `ShareStorageKey` and
+    /// `ShareReshareConfirmBatch` ops, canonical and signature in hex): the terminal ingests them and the
+    /// phone's envelope opens to the committed share.
+    pub fn check_page_output(out: &Value) {
+        let v = read("reshare.json");
+        let epoch = v["epoch"].as_u64().unwrap();
+        let rx = receive_from_fixture(&v);
+        for o in out["ops"].as_array().unwrap() {
+            let op = op_of(o);
+            assert_eq!(op.device_id, rx.did, "the page signs as the phone");
+            assert!(
+                op.verify(&rx.id.public().ed25519_pub),
+                "the page's op signature verifies"
+            );
+            rx.store.sync_ingest(op).unwrap();
+        }
+        for (host_hex, want) in v["expected_phone_shares"].as_object().unwrap() {
+            let host: [u8; 16] = hex::decode(host_hex).unwrap().try_into().unwrap();
+            let (e, s) = own_shares(&rx.store, &rx.id, &host)
+                .expect("the page's envelope opens")
+                .remove(0);
+            assert_eq!(e, epoch, "the page confirmed the new sharing");
+            assert_eq!(
+                hx(&s.bytes),
+                want["bytes_hex"].as_str().unwrap(),
+                "the page combined to the same share as Rust"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_rust_receiver_reproduces_the_committed_reshare_shares() {
+    if std::env::var_os("SSHUB_EMIT_PHONE_FIXTURES").is_some()
+        || !dir().join("reshare.json").exists()
+    {
+        return;
+    }
+    reshare_fixture::check_committed();
+}
+
+#[test]
+fn e2e_the_pages_reshare_ops_open_on_the_terminal() {
+    let Some(d) = std::env::var_os("SSHUB_PHONE_E2E_DIR") else {
+        return;
+    };
+    let out = serde_json::from_str::<Value>(
+        &std::fs::read_to_string(PathBuf::from(d).join("reshare-out.json")).unwrap(),
+    )
+    .unwrap();
+    reshare_fixture::check_page_output(&out);
 }

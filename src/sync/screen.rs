@@ -44,5 +44,7 @@ pub fn screen_pending(store: &LauncherStore, now: i64) -> Result<ScreenReport> {
             report.rejected.push((op.hash(), why));
         }
     }
+    // Red ops whose ceremony completed (or can never complete) are settled here too.
+    super::ceremony::settle_red_ops(store, now)?;
     Ok(report)
 }

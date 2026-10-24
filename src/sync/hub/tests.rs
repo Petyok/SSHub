@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use super::*;
 use crate::sync::cert::DelegationCert;
 use crate::sync::cred_ops::cred_put;
-use crate::sync::oplog::{Attendance, CertScope, DeviceKind, DeviceRole, ThirdFactor, VerifiedBy};
+use crate::sync::oplog::{CertScope, ThirdFactor};
 use crate::sync::protocol::tests::{ring, Dev};
 use crate::sync::quorum::tests::{all_to_all, append, deliver, payload, quorum_mode};
 use crate::sync::quorum::{own_shares, release_share_for, Grant};
@@ -25,16 +25,7 @@ fn an_unattended_holder_releases_only_under_a_valid_certificate() {
     cred_put(&d[0].store, &d[0].id, &host, &payload("x")).unwrap();
     all_to_all(&d);
     // The VPS knows itself as unattended.
-    d[2].store
-        .sync_register_device(
-            &d[2].id.public(),
-            "vps",
-            DeviceRole::Holder,
-            Attendance::Unattended,
-            DeviceKind::Terminal,
-            VerifiedBy::Sas,
-        )
-        .unwrap();
+    d[2].make_unattended();
 
     let now = crate::store::now_ts();
     let op = append(
