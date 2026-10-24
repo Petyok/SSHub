@@ -1,6 +1,7 @@
 //! Host sync (epic #13). Interface contract: `docs/host-sync-contract.md`.
 
 pub mod apply;
+pub mod ceremony;
 pub mod cert;
 pub mod checkpoint_driver;
 pub mod client;
@@ -23,6 +24,7 @@ pub mod quorum;
 pub mod ratchet;
 pub mod recovery;
 pub mod reshare;
+pub mod revocation;
 pub mod runtime;
 pub mod screen;
 pub mod share_release;
