@@ -21,3 +21,5 @@ pub use crate::store::{GroupUid, HostUid, IdentityUid, Uid};
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod vectors;
