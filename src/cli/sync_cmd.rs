@@ -19,7 +19,7 @@ use crate::profile::ProfilePaths;
 use crate::store::LauncherStore;
 use crate::sync::client::TransportError;
 use crate::sync::crypto::DeviceIdentity;
-use crate::sync::enroll::{run_sync_enroll, EnrollRole, SasConfirm, SasPrompt};
+use crate::sync::enroll::{run_sync_enroll, EnrollProgress, EnrollRole, SasConfirm, SasPrompt};
 use crate::sync::identity_store::load_or_init_identity;
 use crate::sync::oplog::VerifiedBy;
 use crate::sync::protocol::RoundSummary;
@@ -328,10 +328,13 @@ fn runtime(paths: &ProfilePaths) -> Result<SyncRuntime> {
     Ok(SyncRuntime::new(paths.clone(), Arc::new(store), identity))
 }
 
-fn join(paths: &ProfilePaths, host: &str) -> Result<i32> {
-    let rt = runtime(paths)?;
-    let cancel = Arc::new(AtomicBool::new(false));
-    let mut ui = |p: &SasPrompt<'_>| {
+/// `sync-join`'s prompt: the words on stdout, the anchor's progress on stderr.
+struct JoinPrompt<'a> {
+    host: &'a str,
+}
+
+impl SasConfirm for JoinPrompt<'_> {
+    fn confirm(&mut self, p: &SasPrompt<'_>) -> bool {
         if p.peer_has_screen {
             println!("Compare these words with the other device: {}", p.sas);
             println!("Peer: {}", p.peer_name);
@@ -339,13 +342,23 @@ fn join(paths: &ProfilePaths, host: &str) -> Result<i32> {
         } else {
             println!("SAS words: {}", p.sas);
             println!("Peer: {}", p.peer_name);
-            println!("{NO_SCREEN_NOTE} {host}.");
+            println!("{NO_SCREEN_NOTE} {}.", self.host);
             print!("Admit this device? [y/N] ");
         }
         let _ = std::io::stdout().flush();
         let mut line = String::new();
         std::io::stdin().read_line(&mut line).is_ok() && is_yes(&line)
-    };
+    }
+
+    fn progress(&mut self, p: EnrollProgress) {
+        eprintln!("{}", crate::sync::runtime::progress_line(p));
+    }
+}
+
+fn join(paths: &ProfilePaths, host: &str) -> Result<i32> {
+    let rt = runtime(paths)?;
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut ui = JoinPrompt { host };
     match rt.join(host, &mut ui, &cancel) {
         Ok(o) => {
             let how = match o.verified_by {
@@ -584,9 +597,9 @@ fn verified_str(v: VerifiedBy) -> &'static str {
 
 fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
     let store = open_store(paths)?;
-    let rows = store.sync_devices()?;
+    let rows = crate::sync::ceremony::effective_devices(&store, None)?;
     let pending = store.sync_pending_with_reasons()?.len();
-    let mode = lower(store.sync_cred_mode()?);
+    let mode = lower(crate::sync::ceremony::effective_cred_mode(&store)?);
     let peers = Peers::load(paths)?;
     if json_out {
         let devices: Vec<_> = rows

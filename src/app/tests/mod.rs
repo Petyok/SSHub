@@ -161,6 +161,7 @@ mod snippets;
 mod suggestions;
 mod sync_flows_more;
 mod sync_paths;
+mod sync_phone;
 mod sync_store;
 mod synced_keys;
 mod tags;

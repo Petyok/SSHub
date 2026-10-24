@@ -531,7 +531,8 @@ Register a third factor.
 Phone re-enrollment.
 .TP
 .B sshub sync\-mode \fBvault\fR|\fBquorum\fR \fR[\fB\-\-cosigner\fR \fIDEVICE\fR]
-Change the credential mode (Red).
+Change the credential mode (Red), in two steps: the first call proposes the change
+and shows the ceremony, a later call (after the ring agreed) re-encrypts the credentials.
 .TP
 .B sshub sync\-exemption \fBon\fR|\fBoff\fR \fIDEVICE\fR
 Master-phrase exemption of a device.
