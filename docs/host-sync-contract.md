@@ -941,6 +941,36 @@ Rules, evaluated by `ceremony::red_status(store, op, now)` over the log (core, n
 * `BulkExport`: once complete, each holder releases shares for any host to `requester` until
   `op.timestamp + window_secs` without a prompt per host (like a certificate, recorded the same way).
 
+### 4c-2. Trust-session certificates on the phone (P1) and the phone in resharing
+
+* **CertIssue.** The phone is the AUTHOR and signer of the op; the user's choices reach it as a kind 9
+  `CertRequestWire` (`device_id`, scope, `expiry`, `max_new_hosts_per_day` 1..=50, `epoch_lo`, `epoch_hi`) that the
+  terminal shows (`cert::cert_request`). The phone shows the request, and on approval builds
+  `CertIssue { device_id, scope, expiry, max_new_hosts_per_day, epoch_lo, epoch_hi }` with the fields of the request
+  UNCHANGED (`CertRequestWire::to_body`), chains it on its own chain (header as for its `HeadAttest` ops) and returns it
+  in a kind 5 list. Limits the phone enforces before signing: `expiry - now` between 1 s and 90 days, budget 1..=50,
+  at most 64 hosts, scope never empty, no wildcard (there is none in the type).
+* **Attaching the ceremony.** `CertIssue` is a Red op proposed by the phone, so its phone proof is the op itself. The
+  second proof is a `RedApprove` by an attended Holder terminal that is neither the phone nor the delegate; the third
+  is a `RedFactor` (paper or email) bound to `op_hash` and the proposer (the phone's device id). Both are authored on
+  terminals; the phone does nothing more. The cert is valid for `cert_allows` once `settle_red_ops` applied it.
+* **CertRevoke** `{ cert_id }` (Yellow): written by the phone or by any attended holder; peers stop honouring the
+  certificate on their next sync. The phone page signs it like its cancel op.
+* **R3b daily budget extension.** New op `CertExtend { cert_id: [u8;32], extra_hosts: u32 }` (Green, inert), authored
+  by the phone that issued the certificate. It adds `extra_hosts` to the certificate's budget for the rolling day
+  that contains its timestamp (`max_new_hosts_per_day + sum of extensions in the last 24 hours`); limits:
+  `extra_hosts` between 1 and `CERT_NEW_HOSTS_PER_DAY`, at most one extension per certificate per rolling 24 hours,
+  none after expiry; it never changes scope or expiry. A holder that refuses for the budget answers
+  `ShareDeferred` with the reason; the terminal then shows a `CertExtendRequest` (wire kind 10:
+  `cert_id(32) || extra_hosts u32 BE`) for the phone to confirm and sign.
+* **The phone in resharing.** The phone is a RECEIVER only: it never contributes (it keeps no shares), so
+  `reissue_plan` needs only terminal holders as contributors. It receives its `ShareReshareSession` and the
+  epoch's `ShareReshareBatch` ops in a kind 5 list, unwraps its session keys with its wrap key, combines two
+  contributors' sub-shares and publishes `ShareStorageKey` and `ShareReshareConfirmBatch` exactly as a terminal does
+  (`reshare::reissue_receive`). Consequence for the rules: the contributor count is the number of remaining TERMINAL
+  holders, so a revocation needs at least two remaining terminal holders (a ring of two terminals and a phone cannot
+  revoke a terminal by resharing; the paper is offline and cannot contribute either).
+
 ### 4d. Builders and screening for the UI (C4, C7)
 
 * `recovery::start_body(store, me, now, paper_recover: Option<&DeviceIdentity>, third_factor)` builds the
@@ -1051,8 +1081,10 @@ Additive to `SYNC_WIRE_V1` (frame kinds 1 and 2 are unchanged). Rust: `wire.rs`
 the share and ignores an extension.
 
 ```text
-kind 3 recovery notice (terminal to phone) = op_len u32 BE || op_canonical || op_signature(64)
-kind 5 phone ops       (phone to terminal) = n u8 || n * (op_len u32 BE || op_canonical || signature(64))
+kind 3 Red notice      (terminal to phone; any Red op, PhoneReenroll included) = op_len u32 BE || op_canonical || op_signature(64)
+kind 5 ops list        (BOTH directions) = n u8 || n * (op_len u32 BE || op_canonical || signature(64))
+                       phone to terminal: the phone's own ops; terminal to phone: the epoch's ShareReshareSession
+                       addressed to the phone and that epoch's ShareReshareBatch ops (it combines them, see 4c)
 kind 6 enroll commit   = role u8 || commit(32)
 kind 7 enroll reveal   = role u8 || reveal bytes (enroll.rs Reveal::bytes, opaque to the wire)
 kind 8 enroll confirm  = role u8 || ok u8 || signature(64)       role 0 = joining (phone), 1 = existing terminal
@@ -1073,6 +1105,11 @@ share reply plaintext (inside the C11 sealed box of the kind 2 frame):
 - The snapshot blob is the contract `SnapshotBlob::to_bytes` and `host_uid` names the credential it
   opens; the phone issues one per credential only while none is live (TTL 7 days recorded in the
   blob), the user can declare a blob dead (never delivered, or DEK reissued).
+- Kind 5 list limits: at most 8 ops, each at most 256 KiB (a 200 item `ShareReshareBatch` for a few holders is
+  about 100 KiB), at most 1 MiB in all.
+- Residual: the phone's wrap-key generations are derived from its secret and the generation number, so an old
+  generation can always be re-derived: unlike a terminal it cannot really retire previous wrap keys, and the
+  forward secrecy of C14 does not extend to the phone's own envelopes (it stays in the B6 residual list).
 - Manual entry: the phone shows `index` and the 24 BIP39 words of the 32 share bytes.
 - Phone identity: 32 random bytes are the secret; `BLAKE3 derive_key("sshub/sync/phone/v1", secret)`
   as 128 bytes = the usual identity split (section 1); the 24 BIP39 words are the backup. At rest
