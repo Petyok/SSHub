@@ -459,7 +459,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "R",
-        desc: "Review the changes waiting for approval (a approve, r reject, Esc close)",
+        desc: "Review every change waiting for approval, with why it waits (a approve, r reject, Esc close). A Red change shows its ceremony: a adds this device's approval, p types the paper phrase, e the emailed code",
     },
     HelpItem::Entry {
         key: "t",

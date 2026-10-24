@@ -245,6 +245,11 @@ HOST SYNC (headless; encrypted peer-to-peer over ssh):
     sshub sync-now [<device>] [--format plain|json]   Sync with ring devices
     sshub sync-status [--format plain|json]  Ring devices, pending changes, credential mode
     sshub sync-review [--approve <id> | --reject <id>] [--format plain|json]   Review pending changes
+    sshub sync-revoke <device> | sync-role <device> holder|mirror | sync-approve <op-id>
+    sshub sync-factor <op-id> (--paper | --email-code) | sync-factor-register paper|email
+    sshub sync-recovery start|approve|ack|cancel|status | sync-mode vault|quorum
+    sshub sync-exemption on|off <device> | sync-export --window <s> --out <path>
+    sshub sync-migrate [--remove-local] | sync-import-kit   (sshub help <verb> for each)
     sshub sync-serve | sync-enroll           Run by a peer over ssh (frames on stdin/stdout)
 
 INVENTORY / CONFIG:
