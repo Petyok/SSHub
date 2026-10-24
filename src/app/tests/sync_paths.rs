@@ -77,6 +77,7 @@ pub(super) fn ring(ssh_program: Option<String>) -> Ring {
     app.profile = Some(paths.clone());
 
     let me = Arc::new(load_or_init_identity(&paths, file_secrets(&paths).as_ref()).unwrap());
+    crate::sync::ceremony::test_force(&app.store, true);
     let mine = Dev {
         store: app.store.clone(),
         did: me.public().device_id(),

@@ -87,11 +87,10 @@ impl Dev {
 
     pub(crate) fn with(id: Arc<DeviceIdentity>) -> Self {
         let did = id.public().device_id();
-        Self {
-            store: Arc::new(LauncherStore::open_in_memory().unwrap()),
-            id,
-            did,
-        }
+        let store = Arc::new(LauncherStore::open_in_memory().unwrap());
+        // Most fixtures start after the ceremonies; the tests of the ceremony switch this off.
+        crate::sync::ceremony::test_force(&store, true);
+        Self { store, id, did }
     }
 
     pub(crate) fn trust(&self, other: &Dev) {

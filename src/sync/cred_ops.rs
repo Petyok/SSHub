@@ -17,7 +17,7 @@ use super::oplog::{CredMode, HostUid, Op, OpBody, WrappedShare};
 use super::quorum::{share_recipients, vault_pub, vault_wrap, SHARE_K};
 use super::share_release::wrapped_share_plaintext;
 use crate::credentials::PasswordStore;
-use crate::store::{uid_hex, LauncherStore};
+use crate::store::LauncherStore;
 
 /// The plaintext of a credential before it is sealed under its DEK. Strict: unknown fields and
 /// versions are refused, so an old build never half-reads a newer record.
@@ -94,7 +94,13 @@ pub fn cred_update_body(
     host: &HostUid,
     payload: &CredPayload,
 ) -> Result<OpBody> {
-    cred_update_body_for(store, me, host, payload, store.sync_cred_mode()?)
+    cred_update_body_for(
+        store,
+        me,
+        host,
+        payload,
+        super::ceremony::effective_cred_mode(store)?,
+    )
 }
 
 /// [`cred_update_body`] for an explicit mode (a mode change writes the new shape before the mode
@@ -150,62 +156,6 @@ pub fn cred_put(
     payload: &CredPayload,
 ) -> Result<Op> {
     store.sync_append_local(id, cred_update_body(store, &id.public(), host, payload)?)
-}
-
-/// An identity key written to a file ssh can read; removed on drop.
-pub struct MaterialisedKey {
-    path: PathBuf,
-}
-
-impl MaterialisedKey {
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for MaterialisedKey {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
-    }
-}
-
-/// Write the key of an opened identity credential to `dir/<uid>` with mode 0600 (create-new, so an
-/// existing file is never followed or overwritten). `dir` should be tmpfs: the caller decides.
-pub fn materialise_key(
-    payload: &CredPayload,
-    dir: &Path,
-    identity_uid: &HostUid,
-) -> Result<Option<MaterialisedKey>> {
-    let Some(key) = &payload.private_key else {
-        return Ok(None);
-    };
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(dir)?;
-        let path = dir.join(uid_hex(identity_uid));
-        let _ = fs::remove_file(&path);
-        let mut f = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&path)?;
-        f.write_all(key.as_bytes())?;
-        if !key.ends_with('\n') {
-            f.write_all(b"\n")?;
-        }
-        f.flush()?;
-        let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
-        Ok(Some(MaterialisedKey { path }))
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (dir, identity_uid, key);
-        bail!("materialising keys needs a unix file mode")
-    }
 }
 
 /// What a migration read and would replicate.

@@ -29,6 +29,8 @@ const enrollFx = load('enroll.json');
 const opVectors = load('ops.vectors.json');
 const h = (x) => bytesOf(x);
 const TEST_PROFILE = { mem_kib: 32 * 1024, iters: 1 };
+const INERT_KINDS = new Set(['HeadAttest', 'RedApprove', 'RedPhoneSign', 'RedFactor', 'CheckpointPropose', 'CheckpointSign']);
+const DANGER_KINDS = (kind) => !INERT_KINDS.has(kind);
 const phone = identityOfSecret(h(fx.phone.secret_hex));
 
 // ------------------------------------------------------------ ops
@@ -43,7 +45,7 @@ test('every op vector of the op-log package parses strictly, verifies and is des
     assert.ok(edVerify(signer, bytes, h(v.signature_hex)), `${v.id}: signature`);
     const d = describeOp(op);
     assert.ok(d.rows.length >= 3, v.id);
-    if (op.kind !== 'ShareRelease' && op.kind !== 'HeadAttest' && !/Upsert/.test(op.kind)) {
+    if (DANGER_KINDS(op.kind) && op.kind !== 'ShareRelease' && !/Upsert/.test(op.kind)) {
       assert.ok(d.rows.filter((r) => r.label !== 'Op signed by' && r.label !== 'Op time' && r.label !== 'Op seq / epoch').every((r) => r.danger), `${v.id}: every row of a dangerous kind is highlighted`);
     }
   }

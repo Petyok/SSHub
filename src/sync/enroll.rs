@@ -74,6 +74,41 @@ impl Reveal {
         b
     }
 
+    /// Strict inverse of [`Reveal::bytes`] (the phone's reveal arrives as these bytes in a kind 7 frame).
+    pub(crate) fn from_bytes(b: &[u8]) -> Result<Self> {
+        let short = || anyhow!("reveal is truncated");
+        let mut at = 0usize;
+        let mut take = |n: usize| -> Result<&[u8]> {
+            let s = b.get(at..at + n).ok_or_else(short)?;
+            at += n;
+            Ok(s)
+        };
+        let ed25519_pub: [u8; 32] = take(32)?.try_into().unwrap();
+        let x25519_pub: [u8; 32] = take(32)?.try_into().unwrap();
+        let ml = u16::from_be_bytes(take(2)?.try_into().unwrap()) as usize;
+        let mlkem_pub = take(ml)?.to_vec();
+        let eph: [u8; 32] = take(32)?.try_into().unwrap();
+        let nonce: [u8; 32] = take(32)?.try_into().unwrap();
+        let nl = u16::from_be_bytes(take(2)?.try_into().unwrap()) as usize;
+        let name =
+            String::from_utf8(take(nl)?.to_vec()).map_err(|_| anyhow!("name is not UTF-8"))?;
+        let attended = match take(1)?[0] {
+            0 => false,
+            1 => true,
+            _ => bail!("bad attended flag"),
+        };
+        ensure!(at == b.len(), "reveal has trailing bytes");
+        Ok(Self {
+            ed25519_pub,
+            x25519_pub,
+            mlkem_pub,
+            eph,
+            nonce,
+            name,
+            attended,
+        })
+    }
+
     pub fn public(&self) -> DevicePublic {
         DevicePublic {
             ed25519_pub: self.ed25519_pub,
@@ -167,6 +202,45 @@ pub struct SasPrompt<'a> {
 /// implementation at all and never confirms as if a human had.
 pub trait SasConfirm {
     fn confirm(&mut self, prompt: &SasPrompt<'_>) -> bool;
+    /// Progress of the join anchor on the joining side (a screen can show "adopting the ring (N hosts)").
+    /// The default ignores it.
+    fn progress(&mut self, _p: EnrollProgress) {}
+}
+
+/// What the joiner reports while it takes over the ring that existed (contract 3c). `hosts` is the
+/// number of live hosts in the bundle's state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EnrollProgress {
+    /// Chunk `chunk` of `total` (both 1-based counts) of the anchor arrived.
+    Receiving {
+        chunk: u32,
+        total: u32,
+    },
+    Adopting {
+        hosts: usize,
+    },
+    Adopted {
+        hosts: usize,
+    },
+}
+
+fn note(ui: &mut Option<&mut dyn SasConfirm>, p: EnrollProgress) {
+    if let Some(ui) = ui.as_deref_mut() {
+        ui.progress(p);
+    }
+}
+
+fn hosts_in(state: &[u8]) -> usize {
+    serde_json::from_slice::<serde_json::Value>(state)
+        .ok()
+        .and_then(|v| {
+            v["entities"].as_array().map(|e| {
+                e.iter()
+                    .filter(|x| x["kind"] == "host" && x["alive"] == true)
+                    .count()
+            })
+        })
+        .unwrap_or(0)
 }
 
 impl<F: FnMut(&SasPrompt<'_>) -> bool> SasConfirm for F {
@@ -256,7 +330,10 @@ fn send_anchor<L: SyncLink>(s: &mut Session<'_, L>, bytes: &[u8]) -> Result<()> 
 }
 
 /// Joiner side: reassemble in order, bounded, and check the hash before anything is parsed.
-fn recv_anchor<L: SyncLink>(s: &mut Session<'_, L>) -> Result<Vec<u8>> {
+fn recv_anchor<L: SyncLink>(
+    s: &mut Session<'_, L>,
+    ui: &mut Option<&mut dyn SasConfirm>,
+) -> Result<Vec<u8>> {
     let mut buf: Vec<u8> = Vec::new();
     let mut total: Option<u64> = None;
     loop {
@@ -276,6 +353,13 @@ fn recv_anchor<L: SyncLink>(s: &mut Session<'_, L>) -> Result<Vec<u8>> {
                 );
                 total = Some(t);
                 buf.extend_from_slice(&data);
+                note(
+                    ui,
+                    EnrollProgress::Receiving {
+                        chunk: (offset / CHECKPOINT_CHUNK_BYTES as u64 + 1) as u32,
+                        total: t.div_ceil(CHECKPOINT_CHUNK_BYTES as u64) as u32,
+                    },
+                );
                 ensure!(
                     buf.len() as u64 <= t,
                     "protocol violation: join anchor longer than announced"
@@ -482,7 +566,9 @@ fn run<L: SyncLink>(
             let ring = peer_hello.ring.clone().unwrap_or_else(|| peer_id.clone());
             set_ring_id(store, &ring)?;
             // The ring that existed is the starting state, not something to review (contract 3c).
-            let bundle = bundle_from_bytes(&recv_anchor(&mut s)?)?;
+            let bundle = bundle_from_bytes(&recv_anchor(&mut s, &mut ui)?)?;
+            let hosts = hosts_in(&bundle.state);
+            note(&mut ui, EnrollProgress::Adopting { hosts });
             store.sync_join_adopt(
                 &bundle,
                 &BootstrapTrust::Enrollment {
@@ -497,6 +583,7 @@ fn run<L: SyncLink>(
                 )?;
                 Ok(())
             })?;
+            note(&mut ui, EnrollProgress::Adopted { hosts });
             store.sync_register_device(
                 &peer_pub,
                 &peer_reveal.name,
