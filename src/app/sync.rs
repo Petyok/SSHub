@@ -1254,10 +1254,7 @@ impl App {
                     self.mode = AppMode::TrustSessionScope;
                 } else if confirm {
                     self.mode = AppMode::Normal;
-                    super::sync_trust::begin(
-                        self,
-                        TRUST_TTL_DAYS[self.sync.trust_ttl_selected],
-                    );
+                    super::sync_trust::begin(self, TRUST_TTL_DAYS[self.sync.trust_ttl_selected]);
                 } else if down {
                     self.sync.trust_ttl_selected =
                         (self.sync.trust_ttl_selected + 1).min(TRUST_TTL_DAYS.len() - 1);
