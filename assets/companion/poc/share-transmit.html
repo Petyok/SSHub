@@ -44,7 +44,7 @@
   $("send").onclick = () => {
     // ponytail: no unlock/retry handling; the user gesture from this click starts the context
     ctx = ctx || new AudioContext({ sampleRate: L.FSK.sampleRate });
-    const samples = L.fskEncode(payload, profile());
+    const samples = L.fskEncode(L.frame(payload), profile());
     const buf = ctx.createBuffer(1, samples.length, L.FSK.sampleRate);
     buf.copyToChannel(samples, 0);
     const src = ctx.createBufferSource();
